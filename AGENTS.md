@@ -3,11 +3,13 @@
 This repository is a clean-room implementation of a self-hostable, no-custody AI agent for Base.
 
 Core documents:
+
 - docs/VISION.md
 - docs/TECH-PLAN.md
 - skills/orbitlab-base-agent-patterns/SKILL.md
 
 Important rules:
+
 - Do not copy OrbitLab source code.
 - Reimplement everything from scratch using clean-room interfaces and invariants.
 - Keep external edges behind interfaces: LLM, Base MCP, chain/signer, data providers, x402 facilitator.
@@ -18,6 +20,7 @@ Important rules:
 - Do not commit secrets, .env files, private keys, OAuth tokens, API keys, or RPC URLs.
 
 Workflow:
+
 - Work in small phases.
 - Keep tasks aligned with docs/TECH-PLAN.md.
 - Run checks before every commit.
