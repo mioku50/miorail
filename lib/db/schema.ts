@@ -1,10 +1,33 @@
-import { pgTable, text, timestamp, jsonb } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, jsonb, index } from 'drizzle-orm/pg-core';
 
 export const users = pgTable('users', {
   id: text('id').primaryKey(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
+
+export const actions = pgTable(
+  'actions',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .references(() => users.id)
+      .notNull(),
+    kind: text('kind').notNull(),
+    status: text('status').notNull(),
+    suggestedPrompt: text('suggested_prompt'),
+    tokens: jsonb('tokens'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('actions_user_status_created_idx').on(
+      table.userId,
+      table.status,
+      table.createdAt
+    ),
+  ]
+);
 
 export const userSettings = pgTable('user_settings', {
   userId: text('user_id')
