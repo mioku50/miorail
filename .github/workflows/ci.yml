@@ -25,7 +25,7 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else pnpm install; fi
+        run: if [ -f package.json ]; then if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else pnpm install; fi; else echo "No package.json found, skipping"; fi
 
       - name: Typecheck
         run: if [ -f package.json ] && pnpm run | grep -q typecheck; then pnpm typecheck; else echo "No typecheck script found, skipping"; fi
