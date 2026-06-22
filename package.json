@@ -1,0 +1,13 @@
+{
+  "name": "mioagent-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "typecheck": "tsc --build tsconfig.base.json --dry",
+    "test": "echo \"No tests specified\""
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}
