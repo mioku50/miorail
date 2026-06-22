@@ -5,7 +5,8 @@
   "main": "index.ts",
   "scripts": {
     "push": "drizzle-kit push",
-    "generate": "drizzle-kit generate"
+    "generate": "drizzle-kit generate",
+    "test": "tsx --test *.test.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

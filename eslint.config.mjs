@@ -13,6 +13,9 @@ export default tseslint.config(
         module: 'readonly',
         process: 'readonly',
         console: 'readonly',
+        exports: 'readonly',
+        setTimeout: 'readonly',
+        __dirname: 'readonly',
       },
     },
     rules: {
