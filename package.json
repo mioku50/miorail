@@ -5,7 +5,8 @@
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "typecheck": "tsc --build tsconfig.base.json --dry",
-    "test": "echo \"No tests specified\""
+    "test": "node --test scripts/",
+    "validate:tasks": "node scripts/validate_tasks.js"
   },
   "devDependencies": {
     "typescript": "^5.4.5"
