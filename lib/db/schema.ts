@@ -1,7 +1,20 @@
-import { pgTable, text, timestamp, jsonb, index } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, jsonb, index, integer } from 'drizzle-orm/pg-core';
 
 export const users = pgTable('users', {
   id: text('id').primaryKey(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const workflows = pgTable('workflows', {
+  id: text('id').primaryKey(),
+  userId: text('user_id')
+    .references(() => users.id)
+    .notNull(),
+  instructions: text('instructions'),
+  toolAllowlist: jsonb('tool_allowlist'),
+  intervalMs: integer('interval_ms'),
+  lastRun: timestamp('last_run'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
