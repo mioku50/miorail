@@ -6,6 +6,16 @@ export const users = pgTable('users', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
+export const chats = pgTable('chats', {
+  id: text('id').primaryKey(),
+  userId: text('user_id')
+    .references(() => users.id)
+    .notNull(),
+  messages: jsonb('messages'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
 export const workflows = pgTable('workflows', {
   id: text('id').primaryKey(),
   userId: text('user_id')

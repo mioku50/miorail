@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import { db } from './index';
 
-import { users, userSettings, actions, workflows } from './index';
+import { users, userSettings, actions, workflows, chats } from './index';
 
 describe('db connection', () => {
   it('should export the db client', () => {
@@ -26,5 +26,9 @@ describe('db connection', () => {
 
   it('should export the workflows schema', () => {
     assert.ok(workflows, 'workflows schema should be defined');
+  });
+
+  it('should export the chats schema', () => {
+    assert.ok(chats, 'chats schema should be defined');
   });
 });
