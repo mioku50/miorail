@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import { db } from './index';
 
-import { users, userSettings } from './index';
+import { users, userSettings, actions } from './index';
 
 describe('db connection', () => {
   it('should export the db client', () => {
@@ -18,5 +18,9 @@ describe('db connection', () => {
 
   it('should export the userSettings schema', () => {
     assert.ok(userSettings, 'userSettings schema should be defined');
+  });
+
+  it('should export the actions schema', () => {
+    assert.ok(actions, 'actions schema should be defined');
   });
 });
