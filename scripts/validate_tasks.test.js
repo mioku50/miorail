@@ -10,9 +10,9 @@ describe('validateTasks', () => {
           id: 'T1',
           title: 'Test',
           status: 'todo',
-          instructions: 'Do something'
-        }
-      ]
+          instructions: 'Do something',
+        },
+      ],
     };
     assert.strictEqual(validateTasks(validData), true);
   });
@@ -24,7 +24,10 @@ describe('validateTasks', () => {
 
   it('should throw if tasks is missing or not an array', () => {
     assert.throws(() => validateTasks({}), /Missing or invalid "tasks" array/);
-    assert.throws(() => validateTasks({ tasks: 'not an array' }), /Missing or invalid "tasks" array/);
+    assert.throws(
+      () => validateTasks({ tasks: 'not an array' }),
+      /Missing or invalid "tasks" array/,
+    );
   });
 
   it('should throw if a task is missing a required field', () => {
@@ -33,12 +36,15 @@ describe('validateTasks', () => {
         {
           id: 'T1',
           title: 'Test',
-          status: 'todo'
+          status: 'todo',
           // instructions missing
-        }
-      ]
+        },
+      ],
     };
-    assert.throws(() => validateTasks(invalidData), /Task T1 is missing required field: instructions/);
+    assert.throws(
+      () => validateTasks(invalidData),
+      /Task T1 is missing required field: instructions/,
+    );
   });
 
   it('should throw if a task has an empty field', () => {
@@ -48,9 +54,9 @@ describe('validateTasks', () => {
           id: 'T1',
           title: '   ',
           status: 'todo',
-          instructions: 'instructions'
-        }
-      ]
+          instructions: 'instructions',
+        },
+      ],
     };
     assert.throws(() => validateTasks(invalidData), /Task T1 has invalid or empty field: title/);
   });

@@ -14,7 +14,7 @@ description: >
 
 > **Legal guardrail.** OrbitLab is licensed **AGPL-3.0-or-later** (network
 > copyleft). Do NOT copy, paste, or translate its source. This skill captures
-> *ideas, interfaces, and invariants* (not protected the same way as source)
+> _ideas, interfaces, and invariants_ (not protected the same way as source)
 > so you can build a clean-room implementation. If in doubt, write it yourself
 > from the contract below without looking at their file.
 
@@ -38,11 +38,13 @@ which provider a tool came from.
 
 ```ts
 export interface ToolProvider {
-  id: string;                       // "base-mcp" | "moralis" | "native" | ...
-  listTools(): Promise<ToolDef[]>;  // catalog, filtered by isProtocolEnabled(id)
+  id: string; // "base-mcp" | "moralis" | "native" | ...
+  listTools(): Promise<ToolDef[]>; // catalog, filtered by isProtocolEnabled(id)
   findTool(name: string): ToolDef | undefined;
-  callTool(name: string, args: Record<string, unknown>):
-    Promise<{ content: string; isError: boolean }>;
+  callTool(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<{ content: string; isError: boolean }>;
 }
 ```
 
@@ -60,8 +62,8 @@ export interface LlmProvider {
   id: string;
   chatCompletionsUrl: string;
   modelsUrl: string;
-  fallbackModels: string[];     // tried in order if stored model fails/unset
-  authScheme: "Bearer" | "Wallet";
+  fallbackModels: string[]; // tried in order if stored model fails/unset
+  authScheme: 'Bearer' | 'Wallet';
 }
 ```
 
@@ -77,7 +79,7 @@ export interface LlmProvider {
   against the Base MCP server.
 - OAuth: PKCE flow; store `clientInformation`, `tokens`, `codeVerifier`,
   `oauthState`. **Anonymous-before-auth problem:** the wallet address (and
-  therefore the userId) is only known *after* the OAuth callback. Hold anon
+  therefore the userId) is only known _after_ the OAuth callback. Hold anon
   state in an in-memory map keyed by a random id with a TTL (~30 min), then
   migrate it into the user's DB-backed settings once the callback completes.
 - Keep transport injectable so tests use a mock transport.
@@ -101,11 +103,15 @@ inbox. Screen only the executable text — never the display title/description
 (a warning that says "this contract can drain your wallet" is informational).
 
 ```ts
-export interface ScreenResult { allowed: boolean; reason?: string }
+export interface ScreenResult {
+  allowed: boolean;
+  reason?: string;
+}
 export function screenAction(a: ScreenableAction): ScreenResult;
 ```
 
 Block on suspicion of:
+
 - wallet-drain (`send/transfer/withdraw/sweep/drain ... all/everything/100%`),
 - unlimited token approval,
 - credential exfiltration (seed phrase / private key),
@@ -124,20 +130,24 @@ One DB row per user-authored scanner:
 
 ```ts
 interface Workflow {
-  id: string; userId: string; name: string;
-  source: "native" | "custom";
+  id: string;
+  userId: string;
+  name: string;
+  source: 'native' | 'custom';
   enabled: boolean;
-  intervalMs: number;            // scheduler ticks once/min; <60_000 rounds up
-  instructions: string;          // freeform: what to watch, when to alert/recommend
+  intervalMs: number; // scheduler ticks once/min; <60_000 rounds up
+  instructions: string; // freeform: what to watch, when to alert/recommend
   toolAllowlist: string[] | null; // null = all enabled; [] = read-only (emit_* only)
-  lastRunAt?: Date; lastRunStatus?: "ok" | "error"; lastRunError?: string;
+  lastRunAt?: Date;
+  lastRunStatus?: 'ok' | 'error';
+  lastRunError?: string;
 }
 ```
 
 - A scanner is the SAME agent loop as chat, with **write tools denied** and two
   pseudo-tools added: `emit_alert` and `emit_recommendation`.
 - Scheduler is a once-per-minute tick that runs due scanners (`now - lastRunAt >=
-  intervalMs`). Enforce `toolAllowlist` at dispatch time, not by prompt.
+intervalMs`). Enforce `toolAllowlist` at dispatch time, not by prompt.
 
 ## 7. Actions feed (persistence + lifecycle)
 
