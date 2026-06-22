@@ -34,6 +34,8 @@ jobs:
         run: if [ -f package.json ] && pnpm run | grep -q lint; then pnpm lint; else echo "No lint script found, skipping"; fi
 
       - name: Test
+        env:
+          DATABASE_URL: "postgres://postgres:postgres@localhost:5432/postgres"
         run: if [ -f package.json ] && pnpm run | grep -q test; then pnpm test; else echo "No test script found, skipping"; fi
 
       - name: Validate tasks
