@@ -10,7 +10,7 @@ export class MockDataProvider implements DataProvider {
   }
   async getPortfolio(_wallet: string): Promise<any> {
     return {
-      wallet,
+      wallet: _wallet,
       totalValueUsd: 15000,
       tokens: [
         { symbol: 'ETH', balance: 2.0, valueUsd: 7000 },
