@@ -5,7 +5,11 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mioagent/data-providers": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.22.4",

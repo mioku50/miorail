@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import * as apiClient from './index.ts';
+import * as apiClient from './index.js';
 
 describe('api-client-react', () => {
   it('should export query and mutation hooks', () => {

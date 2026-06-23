@@ -40,7 +40,7 @@ export async function setEncryptedKey(userId: string, keyName: string, keyValue:
     memoryMd: settings?.memoryMd || undefined,
     model: settings?.model || undefined,
     protocolToggles: settings?.protocolToggles as Record<string, boolean> | undefined,
-    encryptedKeys: encryptedKeys as Record<string, unknown>
+    encryptedKeys: encryptedKeys as Record<string, string>
   });
 }
 

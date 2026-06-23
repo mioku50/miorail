@@ -56,6 +56,11 @@ app.use((req: Request, res: Response, _next: NextFunction) => {
   _next();
 });
 
+import { routes } from './routes';
+
+// API Routes
+app.use('/api', routes);
+
 // Health route
 app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({ status: 'ok' });
