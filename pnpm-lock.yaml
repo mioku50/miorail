@@ -44,6 +44,9 @@ importers:
       '@mioagent/api-zod':
         specifier: workspace:*
         version: link:../../lib/api-zod
+      '@mioagent/db':
+        specifier: workspace:*
+        version: link:../../lib/db
       '@mioagent/llm':
         specifier: workspace:*
         version: link:../../lib/llm
