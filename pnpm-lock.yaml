@@ -35,6 +35,9 @@ importers:
 
   artifacts/api-server:
     dependencies:
+      '@mioagent/utils':
+        specifier: workspace:*
+        version: link:../../lib/utils
       cors:
         specifier: ^2.8.6
         version: 2.8.6
