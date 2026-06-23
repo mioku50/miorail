@@ -2,5 +2,19 @@
   "name": "@mioagent/api-server",
   "version": "0.0.0",
   "private": true,
-  "main": "index.ts"
+  "main": "index.ts",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "express-request-context": "^1.0.1",
+    "express-session": "^1.19.0",
+    "helmet": "^8.2.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/express-session": "^1.19.0",
+    "@types/supertest": "^7.2.0",
+    "supertest": "^7.2.2"
+  }
 }
