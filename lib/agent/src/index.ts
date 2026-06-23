@@ -10,7 +10,7 @@ export interface AgentConfig {
 export type AgentEvent =
   | { type: 'message'; content: string }
   | { type: 'tool_call'; toolName: string; args: string }
-  | { type: 'tool_result'; toolName: string; result: string; isError: boolean };
+  | { type: 'tool_result'; toolName: string; result: string; isError: boolean; approvalUrl?: string; requestId?: string };
 
 export class Agent {
   constructor(private config: AgentConfig) {}
@@ -78,7 +78,21 @@ export class Agent {
             isErr = true;
           }
 
-          yield { type: 'tool_result', toolName: tc.function.name, result: resultStr, isError: isErr };
+          let approvalUrl: string | undefined;
+          let requestId: string | undefined;
+          try {
+            if (resultStr) {
+              const parsedResult = JSON.parse(resultStr);
+              if (parsedResult && typeof parsedResult === 'object') {
+                if (typeof parsedResult.approvalUrl === 'string') approvalUrl = parsedResult.approvalUrl;
+                if (typeof parsedResult.requestId === 'string') requestId = parsedResult.requestId;
+              }
+            }
+          } catch {
+            // skip
+          }
+
+          yield { type: 'tool_result', toolName: tc.function.name, result: resultStr, isError: isErr, approvalUrl, requestId };
 
           messages.push({
             role: 'tool',

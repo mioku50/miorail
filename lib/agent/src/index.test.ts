@@ -58,3 +58,49 @@ test('Agent loop runs correctly', async () => {
     await client.end();
   }
 });
+
+test('Agent loop extracts approvalUrl and requestId from tool results', async () => {
+  const llm = new MockLlmProvider((req: LlmRequest) => {
+    if (req.messages.length <= 2) {
+      return 'TOOL:send_calls|{"chain":"base","calls":[{"to":"0x123"}]}';
+    }
+    return 'Transaction approved';
+  });
+
+  const tools = new ToolAggregator();
+  class DummyMcpProvider implements ToolProvider {
+    id = 'mock-mcp';
+    async listTools(): Promise<ToolDef[]> {
+      return [{ name: 'send_calls', description: 'Sends calls', inputSchema: { type: 'object' } }];
+    }
+    findTool(name: string) {
+      return name === 'send_calls' ? { name: 'send_calls', description: 'Sends calls', inputSchema: { type: 'object' } } : undefined;
+    }
+    async callTool(_name: string, _args: Record<string, unknown>) {
+      return { content: JSON.stringify({ approvalUrl: 'https://mock.base.org/approve/123', requestId: '123' }), isError: false };
+    }
+  }
+  tools.registerProvider(new DummyMcpProvider());
+
+  const agent = new Agent({ llmProvider: llm, toolAggregator: tools });
+
+  const events = [];
+  const { MemoryService } = await import('@mioagent/memory');
+  const originalGetUserSettings = MemoryService.getUserSettings;
+  MemoryService.getUserSettings = async () => null;
+
+  try {
+    for await (const ev of agent.chatStream('test-user', 'Send 1 ETH to 0x123')) {
+      events.push(ev);
+    }
+
+    const toolResultEvent = events.find(e => e.type === 'tool_result') as any;
+    assert.ok(toolResultEvent);
+    assert.strictEqual(toolResultEvent.approvalUrl, 'https://mock.base.org/approve/123');
+    assert.strictEqual(toolResultEvent.requestId, '123');
+  } finally {
+    MemoryService.getUserSettings = originalGetUserSettings;
+    const { client } = await import('@mioagent/db');
+    await client.end();
+  }
+});
