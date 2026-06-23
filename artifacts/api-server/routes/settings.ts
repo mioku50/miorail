@@ -10,7 +10,7 @@ export const settingsRouter = Router();
 
 settingsRouter.get('/', async (req, res, next) => {
   try {
-    const userId = (req as any).session?.user?.id || 'default-user'; // Mock auth for now
+    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user'; // Mock auth for now
     const settings = await MemoryService.getUserSettings(userId);
 
     res.json(
@@ -27,10 +27,10 @@ settingsRouter.get('/', async (req, res, next) => {
 
 settingsRouter.post('/', async (req, res, next) => {
   try {
-    const userId = (req as any).session?.user?.id || 'default-user'; // Mock auth for now
+    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user'; // Mock auth for now
     const data = UpdateSettingsRequestSchema.parse(req.body);
 
-    const updateData: any = {};
+    const updateData: Record<string, unknown> = {};
     if (data.chosenModel !== undefined) updateData.model = data.chosenModel;
     if (data.protocolToggles !== undefined) updateData.protocolToggles = data.protocolToggles;
 

@@ -38,7 +38,7 @@ export class MockLlmProvider implements LlmProvider {
       message: {
         role: 'assistant',
         content: messageContent,
-        tool_calls: tool_calls as any,
+        tool_calls: tool_calls as Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }> | undefined,
       },
       usage: {
         promptTokens: 10,

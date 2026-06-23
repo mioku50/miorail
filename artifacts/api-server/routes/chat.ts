@@ -14,7 +14,7 @@ const agent = new Agent({ llmProvider: llm, toolAggregator: tools });
 chatRouter.post('/', async (req, res, next) => {
   try {
     const { message } = ChatMessageRequestSchema.parse(req.body);
-    const userId = (req as any).session?.user?.id || 'default-user';
+    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
 
     // We will buffer the stream into a single response for now to fulfill the basic API contract
     let finalContent = '';
