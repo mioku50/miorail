@@ -3,7 +3,6 @@ import assert from 'node:assert';
 import { Agent } from './index.js';
 import { MockLlmProvider, LlmRequest } from '@mioagent/llm';
 import { ToolAggregator, ToolProvider, ToolDef } from '@mioagent/tools';
-import { db, userSettings } from '@mioagent/db';
 
 class DummyToolProvider implements ToolProvider {
   id = 'dummy';
