@@ -20,10 +20,12 @@ export const LoginResponseSchema = z.object({
 });
 
 export const SessionResponseSchema = z.object({
-  user: z.object({
-    id: z.string(),
-    address: z.string(),
-  }).nullable(),
+  user: z
+    .object({
+      id: z.string(),
+      address: z.string(),
+    })
+    .nullable(),
 });
 
 // Chat
@@ -46,12 +48,14 @@ export const ChatHistoryResponseSchema = z.object({
 });
 
 export const ChatListResponseSchema = z.object({
-  chats: z.array(z.object({
-    id: z.string(),
-    title: z.string().nullable(),
-    createdAt: z.string(),
-    updatedAt: z.string(),
-  })),
+  chats: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string().nullable(),
+      createdAt: z.string(),
+      updatedAt: z.string(),
+    }),
+  ),
   nextCursor: z.string().optional(),
 });
 

@@ -45,7 +45,7 @@ test('InMemoryRateLimiter - reset after window expires', async () => {
   assert.strictEqual(res2.success, false);
 
   // Wait for window to expire
-  await new Promise(resolve => setTimeout(resolve, 60));
+  await new Promise((resolve) => setTimeout(resolve, 60));
 
   const res3 = await limiter.consume('user-5');
   assert.strictEqual(res3.success, true);
@@ -57,7 +57,7 @@ test('InMemoryRateLimiter - cleanup removes expired records', async () => {
   await limiter.consume('user-6');
 
   // Wait for window to expire
-  await new Promise(resolve => setTimeout(resolve, 60));
+  await new Promise((resolve) => setTimeout(resolve, 60));
 
   limiter.cleanup();
 

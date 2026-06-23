@@ -10,7 +10,9 @@ export interface LogEntry {
 export class Logger {
   constructor(
     private readonly context: Record<string, unknown> = {},
-    private readonly format: 'json' | 'text' = process.env.NODE_ENV === 'development' ? 'text' : 'json'
+    private readonly format: 'json' | 'text' = process.env.NODE_ENV === 'development'
+      ? 'text'
+      : 'json',
   ) {}
 
   child(context: Record<string, unknown>): Logger {
@@ -34,7 +36,8 @@ export class Logger {
         .map((k) => `${k}=${JSON.stringify(entry[k])}`)
         .join(' ');
 
-      const formattedMessage = `[${entry.timestamp}] ${level.toUpperCase()}: ${message} ${metaStr}`.trim();
+      const formattedMessage =
+        `[${entry.timestamp}] ${level.toUpperCase()}: ${message} ${metaStr}`.trim();
       console[level](formattedMessage);
     }
   }

@@ -2,5 +2,9 @@
   "name": "@mioagent/api-client-react",
   "version": "0.0.0",
   "private": true,
-  "main": "index.ts"
+  "main": "index.ts",
+  "dependencies": {
+    "@mioagent/api-spec": "workspace:*",
+    "@tanstack/react-query": "^5.101.0"
+  }
 }

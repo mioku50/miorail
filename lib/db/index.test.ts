@@ -2,7 +2,16 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import { db } from './index';
 
-import { users, userSettings, actions, workflows, chats, apiCache, appMeta, recommendationExecutions } from './index';
+import {
+  users,
+  userSettings,
+  actions,
+  workflows,
+  chats,
+  apiCache,
+  appMeta,
+  recommendationExecutions,
+} from './index';
 
 describe('db connection', () => {
   it('should export the db client', () => {

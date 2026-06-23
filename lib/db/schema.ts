@@ -62,12 +62,8 @@ export const actions = pgTable(
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
   (table) => [
-    index('actions_user_status_created_idx').on(
-      table.userId,
-      table.status,
-      table.createdAt
-    ),
-  ]
+    index('actions_user_status_created_idx').on(table.userId, table.status, table.createdAt),
+  ],
 );
 
 export const userSettings = pgTable('user_settings', {
