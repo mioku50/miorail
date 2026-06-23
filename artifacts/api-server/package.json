@@ -8,7 +8,11 @@
   },
   "dependencies": {
     "@mioagent/agent": "workspace:*",
+    "@mioagent/api-zod": "workspace:*",
+    "@mioagent/db": "workspace:*",
     "@mioagent/llm": "workspace:*",
+    "@mioagent/memory": "workspace:*",
+    "@mioagent/security": "workspace:*",
     "@mioagent/tools": "workspace:*",
     "@mioagent/utils": "workspace:*",
     "cors": "^2.8.6",
@@ -16,8 +20,7 @@
     "express-request-context": "^1.0.1",
     "express-session": "^1.19.0",
     "helmet": "^8.2.0",
-    "@mioagent/memory": "workspace:*",
-    "@mioagent/api-zod": "workspace:*"
+    "ulidx": "^2.4.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
