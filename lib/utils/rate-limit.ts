@@ -20,7 +20,11 @@ export class InMemoryRateLimiter {
 
   constructor(private readonly defaultOptions: RateLimitOptions) {}
 
-  async consume(key: string, cost: number = 1, options?: Partial<RateLimitOptions>): Promise<RateLimitResult> {
+  async consume(
+    key: string,
+    cost: number = 1,
+    options?: Partial<RateLimitOptions>,
+  ): Promise<RateLimitResult> {
     const opts = { ...this.defaultOptions, ...options };
     const now = Date.now();
 

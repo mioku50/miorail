@@ -24,7 +24,11 @@ test('encrypt and decrypt work correctly', () => {
   assert.notStrictEqual(encrypted, plaintext, 'Encrypted text should not match plaintext');
 
   const parts = encrypted.split(':');
-  assert.strictEqual(parts.length, 3, 'Encrypted string should have 3 parts (iv:authTag:ciphertext)');
+  assert.strictEqual(
+    parts.length,
+    3,
+    'Encrypted string should have 3 parts (iv:authTag:ciphertext)',
+  );
 
   const decrypted = decrypt(encrypted, key);
   assert.strictEqual(decrypted, plaintext, 'Decrypted text should match original plaintext');

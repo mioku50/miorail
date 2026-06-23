@@ -26,5 +26,5 @@ export const requestContext = {
     if (store) {
       store[key] = value;
     }
-  }
+  },
 };

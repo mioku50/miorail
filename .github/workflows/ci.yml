@@ -35,7 +35,7 @@ jobs:
 
       - name: Test
         env:
-          DATABASE_URL: "postgres://postgres:postgres@localhost:5432/postgres"
+          DATABASE_URL: 'postgres://postgres:postgres@localhost:5432/postgres'
         run: if [ -f package.json ] && pnpm run | grep -q test; then pnpm test; else echo "No test script found, skipping"; fi
 
       - name: Validate tasks

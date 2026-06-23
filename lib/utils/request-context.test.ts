@@ -5,7 +5,7 @@ import { requestContext } from './request-context.js';
 test('requestContext - run and getStore', async () => {
   const result = await requestContext.run({ requestId: 'req-1', userId: 'user-A' }, async () => {
     // Simulate async work
-    await new Promise(resolve => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 10));
 
     const store = requestContext.getStore();
     return store;
@@ -18,12 +18,12 @@ test('requestContext - run and getStore', async () => {
 
 test('requestContext - isolation between runs', async () => {
   const p1 = requestContext.run({ requestId: 'req-1' }, async () => {
-    await new Promise(resolve => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 20));
     return requestContext.getStore()?.requestId;
   });
 
   const p2 = requestContext.run({ requestId: 'req-2' }, async () => {
-    await new Promise(resolve => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 10));
     return requestContext.getStore()?.requestId;
   });
 
