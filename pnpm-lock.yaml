@@ -122,6 +122,9 @@ importers:
       '@mioagent/tools':
         specifier: workspace:*
         version: link:../tools
+      drizzle-orm:
+        specifier: ^0.36.4
+        version: 0.36.4(postgres@3.4.9)(react@19.2.7)
     devDependencies:
       '@types/node':
         specifier: ^20.0.0
