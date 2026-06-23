@@ -102,6 +102,15 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
+  lib/data-providers:
+    devDependencies:
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+
   lib/db:
     dependencies:
       dotenv:
