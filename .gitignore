@@ -5,3 +5,4 @@ dist
 !scripts/validate_tasks.js
 !scripts/validate_tasks.test.js
 !eslint.config.mjs
+*.tsbuildinfo
