@@ -80,8 +80,8 @@ export class NativeToolProvider implements ToolProvider {
       }
       return { content: `Unknown tool: ${name}`, isError: true };
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      return { content: errorMessage, isError: true };
-    }
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  return { content: errorMessage, isError: true };
+}
   }
 }

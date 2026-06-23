@@ -48,12 +48,12 @@ app.use(
 app.use(requestContext());
 
 // Basic trace ID middleware to leverage requestContext
-app.use((req: Request, res: Response, next: NextFunction) => {
+app.use((req: Request, res: Response, _next: NextFunction) => {
   const traceId = crypto.randomUUID();
-  (req as any).context = (req as any).context || {};
-  (req as any).context.traceId = traceId;
+  (req as Request & { context?: Record<string, unknown> }).context = (req as Request & { context?: Record<string, unknown> }).context || {};
+  (req as Request & { context?: Record<string, unknown> }).context.traceId = traceId;
   res.setHeader('X-Trace-Id', traceId);
-  next();
+  _next();
 });
 
 import { routes } from './routes';

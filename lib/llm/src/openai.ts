@@ -31,7 +31,7 @@ export class OpenAiCompatibleClient implements LlmProvider {
       throw new Error(`OpenAI API error (${response.status}): ${errorText}`);
     }
 
-    const data = await response.json() as unknown;
+    const data = await response.json() as any;
 
     if (
       typeof data !== 'object' ||
