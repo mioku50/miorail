@@ -22,7 +22,8 @@ export class OpenAiCompatibleClient implements LlmProvider {
       body: JSON.stringify({
         model,
         messages: request.messages,
-        temperature: request.temperature
+        temperature: request.temperature,
+        ...(request.tools && request.tools.length > 0 ? { tools: request.tools } : {})
       })
     });
 
@@ -31,34 +32,42 @@ export class OpenAiCompatibleClient implements LlmProvider {
       throw new Error(`OpenAI API error (${response.status}): ${errorText}`);
     }
 
-    const data = await response.json() as any;
+    const data = await response.json() as {
+      choices?: Array<{
+        message?: {
+          role?: string;
+          content?: string;
+          name?: string;
+          tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
+        };
+      }>;
+      usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+    };
 
     if (
       typeof data !== 'object' ||
       data === null ||
-      !('choices' in data) ||
-      !Array.isArray((data as any).choices) ||
-      (data as any).choices.length === 0 ||
-      !('message' in (data as any).choices[0])
+      !Array.isArray(data.choices) ||
+      data.choices.length === 0 ||
+      !data.choices[0].message
     ) {
       throw new Error('Invalid response structure from OpenAI API');
     }
 
-    const typedData = data as {
-      choices: { message: { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; name?: string } }[];
-      usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
-    };
+    const firstMessage = data.choices[0].message;
+    const role = firstMessage.role as 'system' | 'user' | 'assistant' | 'tool' | undefined;
 
     return {
       message: {
-        role: typedData.choices[0].message.role,
-        content: typedData.choices[0].message.content,
-        name: typedData.choices[0].message.name
+        role: role || 'assistant',
+        content: firstMessage.content ?? '',
+        name: firstMessage.name,
+        tool_calls: firstMessage.tool_calls
       },
-      usage: typedData.usage ? {
-        promptTokens: typedData.usage.prompt_tokens,
-        completionTokens: typedData.usage.completion_tokens,
-        totalTokens: typedData.usage.total_tokens
+      usage: data.usage ? {
+        promptTokens: data.usage.prompt_tokens,
+        completionTokens: data.usage.completion_tokens,
+        totalTokens: data.usage.total_tokens
       } : undefined
     };
   }

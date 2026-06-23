@@ -10,7 +10,7 @@ export const memoryRouter = Router();
 
 memoryRouter.get('/', async (req, res, next) => {
   try {
-    const userId = (req as any).session?.user?.id || 'default-user'; // Mock auth for now
+    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user'; // Mock auth for now
     const settings = await MemoryService.getUserSettings(userId);
 
     res.json(
@@ -26,7 +26,7 @@ memoryRouter.get('/', async (req, res, next) => {
 
 memoryRouter.post('/', async (req, res, next) => {
   try {
-    const userId = (req as any).session?.user?.id || 'default-user'; // Mock auth for now
+    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user'; // Mock auth for now
     const { memoryMd } = UpdateMemoryRequestSchema.parse(req.body);
 
     await MemoryService.updateUserSettings(userId, { memoryMd });

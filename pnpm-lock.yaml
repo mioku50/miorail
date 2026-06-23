@@ -38,12 +38,21 @@ importers:
 
   artifacts/api-server:
     dependencies:
+      '@mioagent/agent':
+        specifier: workspace:*
+        version: link:../../lib/agent
       '@mioagent/api-zod':
         specifier: workspace:*
         version: link:../../lib/api-zod
+      '@mioagent/llm':
+        specifier: workspace:*
+        version: link:../../lib/llm
       '@mioagent/memory':
         specifier: workspace:*
         version: link:../../lib/memory
+      '@mioagent/tools':
+        specifier: workspace:*
+        version: link:../../lib/tools
       '@mioagent/utils':
         specifier: workspace:*
         version: link:../../lib/utils
@@ -86,6 +95,25 @@ importers:
         version: 5.9.3
 
   artifacts/interface: {}
+
+  lib/agent:
+    dependencies:
+      '@mioagent/db':
+        specifier: workspace:*
+        version: link:../db
+      '@mioagent/llm':
+        specifier: workspace:*
+        version: link:../llm
+      '@mioagent/memory':
+        specifier: workspace:*
+        version: link:../memory
+      '@mioagent/tools':
+        specifier: workspace:*
+        version: link:../tools
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.43
 
   lib/api-client-react:
     dependencies:

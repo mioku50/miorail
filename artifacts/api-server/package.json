@@ -7,6 +7,9 @@
     "test": "tsx --test **/*.test.ts"
   },
   "dependencies": {
+    "@mioagent/agent": "workspace:*",
+    "@mioagent/llm": "workspace:*",
+    "@mioagent/tools": "workspace:*",
     "@mioagent/utils": "workspace:*",
     "cors": "^2.8.6",
     "express": "^5.2.1",
