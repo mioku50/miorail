@@ -47,3 +47,8 @@ test('Settings and Memory functions', async (t) => {
   await db.delete(userSettings).where(eq(userSettings.userId, userId));
   await db.delete(users).where(eq(users.id, userId));
 });
+
+test('Cleanup DB', async () => {
+  const { client } = await import('@mioagent/db');
+  await client.end();
+});

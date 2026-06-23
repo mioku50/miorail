@@ -9,6 +9,20 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:latest
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -32,6 +46,11 @@ jobs:
 
       - name: Lint
         run: if [ -f package.json ] && pnpm run | grep -q lint; then pnpm lint; else echo "No lint script found, skipping"; fi
+
+      - name: Setup Database
+        env:
+          DATABASE_URL: 'postgres://postgres:postgres@localhost:5432/postgres'
+        run: pnpm --filter @mioagent/db run push
 
       - name: Test
         env:

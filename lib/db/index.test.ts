@@ -1,6 +1,6 @@
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
-import { db } from './index';
+import { db, client } from './index';
 
 import {
   users,
@@ -51,5 +51,9 @@ describe('db connection', () => {
 
   it('should export the recommendationExecutions schema', () => {
     assert.ok(recommendationExecutions, 'recommendationExecutions schema should be defined');
+  });
+
+  after(async () => {
+    await client.end();
   });
 });

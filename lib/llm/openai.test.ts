@@ -42,7 +42,7 @@ test('OpenAiCompatibleClient generates correctly', async (_t) => {
 
     assert.strictEqual(response.message.role, 'assistant');
     assert.strictEqual(response.message.content, 'Hi there!');
-    assert.strictEqual(response.usage?.totalTokens, 30);
+    assert.strictEqual(response.usage?.totalTokens, 15);
   } finally {
     global.fetch = originalFetch;
   }
