@@ -7,10 +7,11 @@
     "test": "tsx --test **/*.test.ts"
   },
   "dependencies": {
+    "@mioagent/db": "workspace:*",
     "@mioagent/llm": "workspace:*",
-    "@mioagent/tools": "workspace:*",
     "@mioagent/memory": "workspace:*",
-    "@mioagent/db": "workspace:*"
+    "@mioagent/tools": "workspace:*",
+    "drizzle-orm": "^0.36.4"
   },
   "devDependencies": {
     "@types/node": "^20.0.0"
