@@ -20,10 +20,25 @@ export class MockLlmProvider implements LlmProvider {
         this.responseIndex++;
     }
 
+    let messageContent = content;
+    let tool_calls = undefined;
+    if (content.startsWith('TOOL:')) {
+      tool_calls = [{
+        id: 'call_123',
+        type: 'function',
+        function: {
+          name: content.substring(5).split('|')[0],
+          arguments: content.substring(5).split('|')[1] || '{}'
+        }
+      }];
+      messageContent = '';
+    }
+
     return {
       message: {
         role: 'assistant',
-        content: content,
+        content: messageContent,
+        tool_calls: tool_calls as any,
       },
       usage: {
         promptTokens: 10,

@@ -22,7 +22,8 @@ export class OpenAiCompatibleClient implements LlmProvider {
       body: JSON.stringify({
         model,
         messages: request.messages,
-        temperature: request.temperature
+        temperature: request.temperature,
+        ...(request.tools && request.tools.length > 0 ? { tools: request.tools } : {})
       })
     });
 
@@ -45,15 +46,16 @@ export class OpenAiCompatibleClient implements LlmProvider {
     }
 
     const typedData = data as {
-      choices: { message: { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; name?: string } }[];
+      choices: { message: { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; name?: string; tool_calls?: any[] } }[];
       usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
     };
 
     return {
       message: {
         role: typedData.choices[0].message.role,
-        content: typedData.choices[0].message.content,
-        name: typedData.choices[0].message.name
+        content: typedData.choices[0].message.content ?? '',
+        name: typedData.choices[0].message.name,
+        tool_calls: typedData.choices[0].message.tool_calls
       },
       usage: typedData.usage ? {
         promptTokens: typedData.usage.prompt_tokens,
