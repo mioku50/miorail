@@ -94,7 +94,7 @@ test('Agent loop extracts approvalUrl and requestId from tool results', async ()
       events.push(ev);
     }
 
-    const toolResultEvent = events.find(e => e.type === 'tool_result') as any;
+    const toolResultEvent = events.find(e => e.type === 'tool_result') as { type: 'tool_result'; approvalUrl?: string; requestId?: string } | undefined;
     assert.ok(toolResultEvent);
     assert.strictEqual(toolResultEvent.approvalUrl, 'https://mock.base.org/approve/123');
     assert.strictEqual(toolResultEvent.requestId, '123');

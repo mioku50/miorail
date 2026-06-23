@@ -80,7 +80,7 @@ export class MockMcpToolProvider implements ToolProvider {
     return tools.find(t => t.name === name);
   }
 
-  async callTool(name: string, args: Record<string, unknown>): Promise<{ content: string; isError: boolean }> {
+  async callTool(name: string, _args: Record<string, unknown>): Promise<{ content: string; isError: boolean }> {
     if (name === 'send_calls') {
       const requestId = 'mock-req-' + Math.random().toString(36).substring(7);
       const approvalUrl = 'https://mock.base.org/approve/' + requestId;
