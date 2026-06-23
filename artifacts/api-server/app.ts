@@ -56,6 +56,11 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
+import { routes } from './routes';
+
+// API Routes
+app.use('/api', routes);
+
 // Health route
 app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({ status: 'ok' });
@@ -67,7 +72,7 @@ app.use((req: Request, res: Response) => {
 });
 
 // Global error handler
-app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
   console.error(err);
   res.status(500).json({ error: 'Internal Server Error' });
 });

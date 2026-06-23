@@ -1,0 +1,17 @@
+{
+  "name": "@mioagent/memory",
+  "version": "0.0.0",
+  "private": true,
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@mioagent/db": "workspace:*",
+    "drizzle-orm": "^0.36.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.0.0"
+  }
+}

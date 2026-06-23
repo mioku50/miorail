@@ -12,7 +12,7 @@ export class MockLlmProvider implements LlmProvider {
   async generate(request: LlmRequest): Promise<LlmResponse> {
     this.requests.push(request);
 
-    let content = '';
+    let content: string;
     if (typeof this.responses === 'function') {
         content = this.responses(request);
     } else {

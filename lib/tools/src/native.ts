@@ -1,10 +1,13 @@
 import { ToolDef, ToolProvider } from './provider.js';
-import { DataProvider } from './data-providers.js';
+import { CoinGeckoProvider, MoralisProvider } from '@mioagent/data-providers';
 
 export class NativeToolProvider implements ToolProvider {
   id = 'native';
 
-  constructor(private dataProvider: DataProvider) {}
+  constructor(
+    private coinGecko: CoinGeckoProvider,
+    private moralis: MoralisProvider
+  ) {}
 
   async listTools(): Promise<ToolDef[]> {
     return [
@@ -65,18 +68,20 @@ export class NativeToolProvider implements ToolProvider {
       if (name === 'get_token_price') {
         const token = args.token as string;
         if (!token) return { content: 'Missing token parameter', isError: true };
-        const price = await this.dataProvider.getPrice(token);
+        const prices = await this.coinGecko.getSimplePrice([token.toLowerCase()], ['usd']);
+        const price = prices[token.toLowerCase()]?.usd || 0;
         return { content: JSON.stringify({ token, priceUsd: price }), isError: false };
       }
       if (name === 'get_wallet_portfolio') {
         const wallet = args.wallet as string;
         if (!wallet) return { content: 'Missing wallet parameter', isError: true };
-        const portfolio = await this.dataProvider.getPortfolio(wallet);
-        return { content: JSON.stringify(portfolio), isError: false };
+        const balances = await this.moralis.getWalletTokenBalances(wallet);
+        return { content: JSON.stringify({ wallet, tokens: balances }), isError: false };
       }
       return { content: `Unknown tool: ${name}`, isError: true };
-    } catch (error: any) {
-      return { content: error.message, isError: true };
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { content: errorMessage, isError: true };
     }
   }
 }

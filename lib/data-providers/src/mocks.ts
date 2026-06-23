@@ -1,7 +1,7 @@
 import { MoralisProvider, CoinGeckoProvider, DeFiLlamaProvider, GoPlusProvider } from './interfaces.js';
 
 export class MockMoralisProvider implements MoralisProvider {
-  async getWalletTokenBalances(address: string) {
+  async getWalletTokenBalances(_address: string) {
     return [
       { tokenAddress: '0x123', balance: '1000000000000000000', decimals: 18, symbol: 'MTK' }
     ];
@@ -22,13 +22,13 @@ export class MockCoinGeckoProvider implements CoinGeckoProvider {
 }
 
 export class MockDeFiLlamaProvider implements DeFiLlamaProvider {
-  async getProtocolTvl(protocol: string) {
+  async getProtocolTvl(_protocol: string) {
     return 50000000;
   }
 }
 
 export class MockGoPlusProvider implements GoPlusProvider {
-  async tokenSecurityCheck(chainId: number, tokenAddress: string) {
+  async tokenSecurityCheck(_chainId: number, _tokenAddress: string) {
     return {
       is_open_source: "1",
       is_proxy: "0",

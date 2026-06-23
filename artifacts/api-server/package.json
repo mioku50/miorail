@@ -3,19 +3,26 @@
   "version": "0.0.0",
   "private": true,
   "main": "index.ts",
+  "scripts": {
+    "test": "tsx --test **/*.test.ts"
+  },
   "dependencies": {
     "@mioagent/utils": "workspace:*",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "express-request-context": "^1.0.1",
     "express-session": "^1.19.0",
-    "helmet": "^8.2.0"
+    "helmet": "^8.2.0",
+    "@mioagent/memory": "workspace:*",
+    "@mioagent/api-zod": "workspace:*"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/express-session": "^1.19.0",
     "@types/supertest": "^7.2.0",
-    "supertest": "^7.2.2"
+    "supertest": "^7.2.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.0.0"
   }
 }

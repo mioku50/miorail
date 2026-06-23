@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { NativeToolProvider } from '../src/native.js';
-import { MockDataProvider } from '../src/data-providers.js';
+import { MockCoinGeckoProvider, MockMoralisProvider } from '@mioagent/data-providers';
 
 test('NativeToolProvider', async (t) => {
-  const provider = new NativeToolProvider(new MockDataProvider());
+  const provider = new NativeToolProvider(new MockCoinGeckoProvider(), new MockMoralisProvider());
 
   await t.test('listTools returns native tools', async () => {
     const tools = await provider.listTools();
@@ -25,13 +25,13 @@ test('NativeToolProvider', async (t) => {
   await t.test('callTool get_token_price', async () => {
     const result = await provider.callTool('get_token_price', { token: 'ETH' });
     assert.strictEqual(result.isError, false);
-    assert.ok(result.content.includes('3500'));
+    assert.ok(result.content.includes('100.5')); // MockCoinGeckoProvider returns 100.50
   });
 
   await t.test('callTool get_wallet_portfolio', async () => {
     const result = await provider.callTool('get_wallet_portfolio', { wallet: '0x123' });
     assert.strictEqual(result.isError, false);
-    assert.ok(result.content.includes('15000'));
+    assert.ok(result.content.includes('MTK')); // MockMoralisProvider returns MTK balance
   });
 
   await t.test('callTool with missing parameters', async () => {

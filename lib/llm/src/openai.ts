@@ -31,22 +31,34 @@ export class OpenAiCompatibleClient implements LlmProvider {
       throw new Error(`OpenAI API error (${response.status}): ${errorText}`);
     }
 
-    const data = await response.json() as any;
+    const data = await response.json() as unknown;
 
-    if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+    if (
+      typeof data !== 'object' ||
+      data === null ||
+      !('choices' in data) ||
+      !Array.isArray((data as any).choices) ||
+      (data as any).choices.length === 0 ||
+      !('message' in (data as any).choices[0])
+    ) {
       throw new Error('Invalid response structure from OpenAI API');
     }
 
+    const typedData = data as {
+      choices: { message: { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; name?: string } }[];
+      usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+    };
+
     return {
       message: {
-        role: data.choices[0].message.role,
-        content: data.choices[0].message.content,
-        name: data.choices[0].message.name
+        role: typedData.choices[0].message.role,
+        content: typedData.choices[0].message.content,
+        name: typedData.choices[0].message.name
       },
-      usage: data.usage ? {
-        promptTokens: data.usage.prompt_tokens,
-        completionTokens: data.usage.completion_tokens,
-        totalTokens: data.usage.total_tokens
+      usage: typedData.usage ? {
+        promptTokens: typedData.usage.prompt_tokens,
+        completionTokens: typedData.usage.completion_tokens,
+        totalTokens: typedData.usage.total_tokens
       } : undefined
     };
   }
