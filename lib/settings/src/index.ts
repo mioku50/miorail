@@ -6,7 +6,7 @@ export interface UpdateSettingsData {
   memoryMd?: string;
   model?: string;
   protocolToggles?: Record<string, boolean>;
-  encryptedKeys?: Record<string, string> | any;
+  encryptedKeys?: Record<string, string>;
 }
 
 export async function getUserSettings(userId: string) {
@@ -40,7 +40,7 @@ export async function setEncryptedKey(userId: string, keyName: string, keyValue:
     memoryMd: settings?.memoryMd || undefined,
     model: settings?.model || undefined,
     protocolToggles: settings?.protocolToggles as Record<string, boolean> | undefined,
-    encryptedKeys: encryptedKeys as any
+    encryptedKeys: encryptedKeys as Record<string, unknown>
   });
 }
 

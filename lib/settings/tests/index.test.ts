@@ -40,7 +40,7 @@ test('Settings and Memory functions', async (t) => {
 
     const settings = await getUserSettings(userId);
     assert.ok(settings?.encryptedKeys);
-    assert.notStrictEqual((settings.encryptedKeys as any)['openai'], 'sk-secret-key'); // should be encrypted
+    assert.notStrictEqual((settings.encryptedKeys as Record<string, unknown>)['openai'], 'sk-secret-key'); // should be encrypted
   });
 
   // Cleanup

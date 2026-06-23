@@ -24,7 +24,7 @@ test('OpenAiCompatibleClient generates correctly', async (_t) => {
         ],
         usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 }
       })
-    } as any;
+    } as Record<string, unknown>;
   };
 
   try {
