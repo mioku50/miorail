@@ -158,6 +158,22 @@ importers:
         specifier: ^5.4.5
         version: 5.9.3
 
+  lib/settings:
+    dependencies:
+      '@mioagent/crypto':
+        specifier: workspace:*
+        version: link:../crypto
+      '@mioagent/db':
+        specifier: workspace:*
+        version: link:../db
+      drizzle-orm:
+        specifier: ^0.36.1
+        version: 0.36.4(postgres@3.4.9)(react@19.2.7)
+    devDependencies:
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
   lib/tools:
     devDependencies:
       tsx:
