@@ -22,13 +22,13 @@ export function parseX402PaymentRequirements(headerOrBody: unknown): X402Payment
       const parsed = JSON.parse(headerOrBody);
       return x402PaymentRequiredSchema.parse(parsed);
     } catch (err) {
-      throw new Error(`Failed to parse x402 payment requirements from string: ${err instanceof Error ? err.message : String(err)}`);
+      throw new Error(`Failed to parse x402 payment requirements from string: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
     }
   }
 
   try {
     return x402PaymentRequiredSchema.parse(headerOrBody);
   } catch (err) {
-    throw new Error(`Failed to parse x402 payment requirements from object: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`Failed to parse x402 payment requirements from object: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
   }
 }

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { parseX402PaymentRequirements, x402PaymentOptionSchema, x402PaymentRequiredSchema } from './index.js';
+import { parseX402PaymentRequirements } from './index.js';
 
 describe('x402-parser', () => {
   it('parses valid x402 payment requirements object', () => {
