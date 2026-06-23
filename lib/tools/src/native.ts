@@ -75,7 +75,7 @@ export class NativeToolProvider implements ToolProvider {
         return { content: JSON.stringify(portfolio), isError: false };
       }
       return { content: `Unknown tool: ${name}`, isError: true };
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { content: error.message, isError: true };
     }
   }

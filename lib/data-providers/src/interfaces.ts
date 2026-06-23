@@ -11,5 +11,5 @@ export interface DeFiLlamaProvider {
 }
 
 export interface GoPlusProvider {
-  tokenSecurityCheck(chainId: number, tokenAddress: string): Promise<Record<string, any>>;
+  tokenSecurityCheck(chainId: number, tokenAddress: string): Promise<Record<string, unknown>>;
 }

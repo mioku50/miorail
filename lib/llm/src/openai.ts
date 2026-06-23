@@ -31,7 +31,7 @@ export class OpenAiCompatibleClient implements LlmProvider {
       throw new Error(`OpenAI API error (${response.status}): ${errorText}`);
     }
 
-    const data = await response.json() as any;
+    const data = await response.json() as Record<string, unknown>;
 
     if (!data.choices || !data.choices[0] || !data.choices[0].message) {
       throw new Error('Invalid response structure from OpenAI API');
