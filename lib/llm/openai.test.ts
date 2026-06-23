@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 import { OpenAiCompatibleClient } from './src/openai.js';
 
-test('OpenAiCompatibleClient generates correctly', async (t) => {
+test('OpenAiCompatibleClient generates correctly', async (_t) => {
   const originalFetch = global.fetch;
 
   // Mock global.fetch

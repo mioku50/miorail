@@ -11,7 +11,7 @@ class MockProvider implements ToolProvider {
 
   async listTools() { return this.tools; }
   findTool(name: string) { return this.tools.find(t => t.name === name); }
-  async callTool(name: string, args: Record<string, unknown>) {
+  async callTool(name: string, _args: Record<string, unknown>) {
     if (name === 'mock-tool') return { content: 'mock success', isError: false };
     throw new Error('Not found');
   }

@@ -32,7 +32,7 @@ export async function setEncryptedKey(userId: string, keyName: string, keyValue:
   const derivedKey = deriveKey(sessionSecret, 'settings-key-salt');
   const encryptedValue = encrypt(keyValue, derivedKey);
 
-  let settings = await getUserSettings(userId);
+  const settings = await getUserSettings(userId);
   const encryptedKeys = (settings?.encryptedKeys as Record<string, string>) || {};
   encryptedKeys[keyName] = encryptedValue;
 

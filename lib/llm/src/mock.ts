@@ -12,7 +12,6 @@ export class MockLlmProvider implements LlmProvider {
   async generate(request: LlmRequest): Promise<LlmResponse> {
     this.requests.push(request);
 
-    let content = '';
     if (typeof this.responses === 'function') {
         content = this.responses(request);
     } else {

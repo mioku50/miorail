@@ -1,6 +1,6 @@
 export interface DataProvider {
   getPrice(token: string): Promise<number>;
-  getPortfolio(wallet: string): Promise<any>;
+  getPortfolio(_wallet: string): Promise<any>;
 }
 
 export class MockDataProvider implements DataProvider {
@@ -8,7 +8,7 @@ export class MockDataProvider implements DataProvider {
     if (token.toLowerCase() === 'eth') return 3500.00;
     return 100.50;
   }
-  async getPortfolio(wallet: string): Promise<any> {
+  async getPortfolio(_wallet: string): Promise<any> {
     return {
       wallet,
       totalValueUsd: 15000,
@@ -21,11 +21,11 @@ export class MockDataProvider implements DataProvider {
 }
 
 export interface MoralisProvider {
-  getWalletTokenBalances(wallet: string): Promise<{ token: string; balance: string }[]>;
+  getWalletTokenBalances(_wallet: string): Promise<{ token: string; balance: string }[]>;
 }
 
 export class MockMoralisProvider implements MoralisProvider {
-  async getWalletTokenBalances(wallet: string): Promise<{ token: string; balance: string }[]> {
+  async getWalletTokenBalances(_wallet: string): Promise<{ token: string; balance: string }[]> {
     return [
       { token: 'ETH', balance: '2.5' },
       { token: 'USDC', balance: '1000' }
@@ -57,11 +57,11 @@ export class MockDeFiLlamaProvider implements DeFiLlamaProvider {
 }
 
 export interface GoPlusProvider {
-  getTokenSecurity(address: string, chainId: string): Promise<any>;
+  getTokenSecurity(_address: string, _chainId: string): Promise<any>;
 }
 
 export class MockGoPlusProvider implements GoPlusProvider {
-  async getTokenSecurity(address: string, chainId: string): Promise<any> {
+  async getTokenSecurity(_address: string, _chainId: string): Promise<any> {
     return {
       is_honeypot: "0",
       is_blacklisted: "0",
