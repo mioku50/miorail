@@ -3,7 +3,7 @@ import { actions } from '@mioagent/db/schema';
 import { screenAction } from '@mioagent/security';
 import { ulid } from 'ulidx';
 
-export async function insertAction(userId: string, kind: string, instruction: string, tokens?: any) {
+export async function insertAction(userId: string, kind: string, instruction: string, tokens?: unknown[]) {
   // Security screening logic
   const screenResult = screenAction({ instruction });
   if (!screenResult.allowed) {

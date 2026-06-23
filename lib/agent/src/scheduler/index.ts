@@ -102,7 +102,9 @@ export class WorkflowRunner {
     });
 
     const prompt = workflow.instructions || 'Run workflow';
-    for await (const _ev of agent.chatStream(workflow.userId, prompt)) {
+    for await (const ev of agent.chatStream(workflow.userId, prompt)) {
+        void ev;
+
       // Drain the stream
     }
   }
