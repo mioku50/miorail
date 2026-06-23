@@ -4,8 +4,19 @@ import cors from 'cors';
 import session from 'express-session';
 import requestContext from 'express-request-context';
 import crypto from 'node:crypto';
+import { InMemoryRateLimiter } from '@mioagent/utils';
+import { rateLimit } from './middleware/rate-limit';
 
 export const app = express();
+
+// Global rate limiter instance
+const globalLimiter = new InMemoryRateLimiter({
+  windowMs: 60 * 1000, // 1 minute
+  max: 100, // 100 requests per window
+});
+
+// Apply rate limiting early
+app.use(rateLimit(globalLimiter));
 
 // Security middleware
 app.use(helmet());

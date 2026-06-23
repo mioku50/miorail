@@ -4,6 +4,7 @@
   "private": true,
   "main": "index.ts",
   "dependencies": {
+    "@mioagent/utils": "workspace:*",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "express-request-context": "^1.0.1",
