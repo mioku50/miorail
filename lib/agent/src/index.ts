@@ -1,6 +1,7 @@
 import { LlmProvider, LlmMessage } from '@mioagent/llm';
 import { ToolAggregator } from '@mioagent/tools';
 import { MemoryService } from '@mioagent/memory';
+import { logger } from '@mioagent/utils';
 
 export interface AgentConfig {
   llmProvider: LlmProvider;
@@ -44,10 +45,13 @@ export class Agent {
     let isFinished = false;
 
     while (!isFinished) {
+      logger.info('Agent generating response');
+      const llmStart = Date.now();
       const response = await this.config.llmProvider.generate({
         messages,
         tools: llmTools
       });
+      logger.info('Agent generated response', { durationMs: Date.now() - llmStart, hasToolCalls: !!(response.message.tool_calls && response.message.tool_calls.length > 0) });
 
       const msg = response.message;
       messages.push(msg);
@@ -69,13 +73,17 @@ export class Agent {
 
           let resultStr;
           let isErr;
+          logger.info('Agent calling tool', { toolName: tc.function.name });
+          const toolStart = Date.now();
           try {
             const res = await this.config.toolAggregator.callTool(tc.function.name, argsObj);
             resultStr = res.content;
             isErr = res.isError;
+            logger.info('Agent tool call success', { toolName: tc.function.name, durationMs: Date.now() - toolStart });
           } catch (e) {
             resultStr = e instanceof Error ? e.message : String(e);
             isErr = true;
+            logger.error('Agent tool call error', { toolName: tc.function.name, error: String(e), durationMs: Date.now() - toolStart });
           }
 
           let approvalUrl: string | undefined;
