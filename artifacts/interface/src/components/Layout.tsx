@@ -4,6 +4,7 @@ import { Link, useRoute } from 'wouter';
 export function Layout({ children }: { children: ReactNode }) {
   const [isHome] = useRoute('/');
   const [isChat] = useRoute('/chat');
+  const [isActions] = useRoute('/actions');
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
@@ -17,6 +18,9 @@ export function Layout({ children }: { children: ReactNode }) {
           </Link>
           <Link href="/chat">
             <a className={`px-3 py-1 rounded-md transition-colors ${isChat ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-600 hover:bg-slate-100'}`}>Chat</a>
+          </Link>
+          <Link href="/actions">
+            <a className={`px-3 py-1 rounded-md transition-colors ${isActions ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-600 hover:bg-slate-100'}`}>Actions</a>
           </Link>
         </nav>
       </header>
