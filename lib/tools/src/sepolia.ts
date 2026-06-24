@@ -59,6 +59,20 @@ export class SepoliaToolProvider implements ToolProvider {
         },
         required: ['requestId']
       }
+    },
+    {
+      name: 'sepolia_simulate_transaction',
+      description: 'Simulate a transaction on Base Sepolia using eth_call to check for reverts and side-effects without submitting.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          to: { type: 'string', description: 'Target contract address' },
+          from: { type: 'string', description: 'Optional sender address' },
+          value: { type: 'string', description: 'Hex-encoded value' },
+          data: { type: 'string', description: 'Hex-encoded calldata' }
+        },
+        required: ['to']
+      }
     }
   ];
 
@@ -156,6 +170,30 @@ export class SepoliaToolProvider implements ToolProvider {
         // We will simulate the request structure for now, as EIP-5792 status usually requires the wallet provider API
         // or a specific MCP endpoint
         return { content: JSON.stringify({ status: 'confirmed', requestId }), isError: false };
+      }
+
+      if (name === 'sepolia_simulate_transaction') {
+        const to = args.to as string;
+        if (!to) return { content: 'Missing to parameter', isError: true };
+        const from = (args.from as string) || '0x0000000000000000000000000000000000000000';
+        const value = (args.value as string) || '0x0';
+        const dataParam = (args.data as string) || '0x';
+
+        const res = await fetch(this.rpcUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'eth_call',
+            params: [{ from, to, value, data: dataParam }, 'latest']
+          })
+        });
+        const data = await res.json();
+        if (data.error) {
+          return { content: JSON.stringify({ success: false, error: data.error.message, code: data.error.code }), isError: false }; // It simulated successfully but tx reverts
+        }
+        return { content: JSON.stringify({ success: true, result: data.result }), isError: false };
       }
 
       return { content: `Unknown tool: ${name}`, isError: true };
