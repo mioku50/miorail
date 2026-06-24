@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { PaymentPolicy, ApprovalGuard } from './payment-policy.js';
-import type { X402PaymentRequired } from '@workspace/x402-parser';
+import type { X402PaymentRequired } from '@mioagent/x402-parser';
 
 test('PaymentPolicy validates exact match', () => {
   const policy = new PaymentPolicy(['0xusdc'], ['8453']);

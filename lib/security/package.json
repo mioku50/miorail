@@ -10,7 +10,7 @@
     "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
-    "@workspace/x402-parser": "workspace:*"
+    "@mioagent/x402-parser": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.22.4",
