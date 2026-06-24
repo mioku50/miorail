@@ -9,6 +9,9 @@
   "scripts": {
     "test": "tsx --test src/**/*.test.ts"
   },
+  "dependencies": {
+    "@workspace/x402-parser": "workspace:*"
+  },
   "devDependencies": {
     "tsx": "^4.22.4",
     "typescript": "^5.4.5"

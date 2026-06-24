@@ -233,6 +233,10 @@ importers:
         version: 5.9.3
 
   lib/security:
+    dependencies:
+      '@workspace/x402-parser':
+        specifier: workspace:*
+        version: link:../x402-parser
     devDependencies:
       tsx:
         specifier: ^4.22.4
