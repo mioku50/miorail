@@ -8,7 +8,7 @@ test('observability middleware logs request details', async () => {
   const req = { method: 'GET', url: '/test', context: { traceId: '123' } } as unknown as Request;
 
   // We need to wait for the finish event
-  let resolveFinish: () => void;
+  let resolveFinish!: () => void;
   const finishPromise = new Promise<void>((resolve) => { resolveFinish = resolve; });
 
   let finishCallback: () => void = () => {};
