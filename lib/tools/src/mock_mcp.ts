@@ -93,7 +93,7 @@ export class MockMcpToolProvider implements ToolProvider {
         return { content: 'Missing or empty calls array', isError: true };
       }
 
-      const canonicalUSDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+      const canonicalUSDC = '0x036cbd53842c5426634e7929541ec2318f3dcf7e';
       for (const call of calls) {
         if (!call.to) {
           return { content: 'Missing to address in call', isError: true };

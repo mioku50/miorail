@@ -33,6 +33,7 @@ export class SepoliaToolProvider implements ToolProvider {
       inputSchema: {
         type: 'object',
         properties: {
+          chain: { type: 'string', description: 'The chain to execute on' },
           calls: {
             type: 'array',
             items: {
@@ -46,7 +47,7 @@ export class SepoliaToolProvider implements ToolProvider {
             }
           }
         },
-        required: ['calls']
+        required: ['chain', 'calls']
       }
     },
     {
@@ -125,12 +126,18 @@ export class SepoliaToolProvider implements ToolProvider {
       }
 
       if (name === 'sepolia_send_calls') {
+        const chain = args.chain as string;
         const calls = args.calls as { to: string; value?: string; data?: string }[];
+
+        if (chain !== 'eip155:84532' && chain !== '84532') {
+          return { content: 'Unsupported chain. Only Base Sepolia (eip155:84532 or 84532) is supported.', isError: true };
+        }
+
         if (!calls || !Array.isArray(calls) || calls.length === 0) {
           return { content: 'Missing or empty calls array', isError: true };
         }
 
-        const canonicalUSDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+        const canonicalUSDC = '0x036cbd53842c5426634e7929541ec2318f3dcf7e';
         for (const call of calls) {
           if (!call.to) {
             return { content: 'Missing to address in call', isError: true };

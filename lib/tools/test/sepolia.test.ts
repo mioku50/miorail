@@ -36,7 +36,7 @@ test('SepoliaToolProvider calls sepolia_send_calls', async (t) => {
   });
 
   const provider = new SepoliaToolProvider();
-  const res = await provider.callTool('sepolia_send_calls', { calls: [{ to: '0x123' }] });
+  const res = await provider.callTool('sepolia_send_calls', { chain: '84532', calls: [{ to: '0x123' }] });
   assert.strictEqual(res.isError, false);
   const data = JSON.parse(res.content);
   assert.ok(data.approvalUrl);
@@ -77,6 +77,7 @@ test('SepoliaToolProvider calls sepolia_simulate_transaction', async (t) => {
 test('SepoliaToolProvider sepolia_send_calls validates USDC for approve', async () => {
   const provider = new SepoliaToolProvider();
   const res = await provider.callTool('sepolia_send_calls', {
+    chain: '84532',
     calls: [{ to: '0xBAD', data: '0x095ea7b30000' }]
   });
   assert.strictEqual(res.isError, true);
@@ -90,7 +91,38 @@ test('SepoliaToolProvider sepolia_send_calls accepts USDC for approve', async (t
 
   const provider = new SepoliaToolProvider();
   const res = await provider.callTool('sepolia_send_calls', {
-    calls: [{ to: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', data: '0x095ea7b30000' }]
+    chain: '84532',
+    calls: [{ to: '0x036cbd53842c5426634e7929541ec2318f3dcf7e', data: '0x095ea7b30000' }]
   });
   assert.strictEqual(res.isError, false);
+});
+
+test('SepoliaToolProvider sepolia_send_calls rejects unsupported chain', async () => {
+  const provider = new SepoliaToolProvider();
+  const res = await provider.callTool('sepolia_send_calls', {
+    chain: '1',
+    calls: [{ to: '0x123' }]
+  });
+  assert.strictEqual(res.isError, true);
+  assert.ok(res.content.includes('Unsupported chain'));
+});
+
+test('SepoliaToolProvider sepolia_send_calls rejects empty calls array', async () => {
+  const provider = new SepoliaToolProvider();
+  const res = await provider.callTool('sepolia_send_calls', {
+    chain: '84532',
+    calls: []
+  });
+  assert.strictEqual(res.isError, true);
+  assert.ok(res.content.includes('Missing or empty calls array'));
+});
+
+test('SepoliaToolProvider sepolia_send_calls rejects malformed call object (missing to)', async () => {
+  const provider = new SepoliaToolProvider();
+  const res = await provider.callTool('sepolia_send_calls', {
+    chain: '84532',
+    calls: [{ data: '0xabc' }]
+  });
+  assert.strictEqual(res.isError, true);
+  assert.ok(res.content.includes('Missing to address'));
 });
