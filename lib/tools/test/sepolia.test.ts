@@ -28,7 +28,7 @@ test('SepoliaToolProvider calls sepolia_send_calls', async (t) => {
       json: async () => ({
         result: '0x123'
       })
-    } as any;
+    } as unknown as Response;
   };
 
   t.after(() => {
@@ -54,15 +54,15 @@ test('SepoliaToolProvider calls sepolia_get_request_status', async () => {
 test('SepoliaToolProvider calls sepolia_simulate_transaction', async (t) => {
   const originalFetch = global.fetch;
   global.fetch = async (url, options) => {
-    const reqData = JSON.parse((options as any).body);
+    const reqData = JSON.parse((options as unknown as { body: string }).body);
     if (reqData.method === 'eth_call') {
       return {
         json: async () => ({
           result: '0x1337'
         })
-      } as any;
+      } as unknown as Response;
     }
-    return { json: async () => ({}) } as any;
+    return { json: async () => ({}) } as unknown as Response;
   };
   t.after(() => { global.fetch = originalFetch; });
 
@@ -86,7 +86,7 @@ test('SepoliaToolProvider sepolia_send_calls validates USDC for approve', async 
 
 test('SepoliaToolProvider sepolia_send_calls accepts USDC for approve', async (t) => {
   const originalFetch = global.fetch;
-  global.fetch = async () => ({ json: async () => ({}) }) as any;
+  global.fetch = async () => ({ json: async () => ({}) }) as unknown as Response;
   t.after(() => { global.fetch = originalFetch; });
 
   const provider = new SepoliaToolProvider();
