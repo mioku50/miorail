@@ -130,6 +130,18 @@ export class SepoliaToolProvider implements ToolProvider {
           return { content: 'Missing or empty calls array', isError: true };
         }
 
+        const canonicalUSDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+        for (const call of calls) {
+          if (!call.to) {
+            return { content: 'Missing to address in call', isError: true };
+          }
+          if (call.data && (call.data.toLowerCase().startsWith('0x095ea7b3') || call.data.toLowerCase().startsWith('0xa9059cbb'))) {
+            if (call.to.toLowerCase() !== canonicalUSDC) {
+              return { content: 'Invalid token address. Only canonical USDC on Base Sepolia is supported.', isError: true };
+            }
+          }
+        }
+
         // Hit real Base Sepolia endpoint to estimate gas for each call to validate it
         // Since we don't have a from address, we use a dummy one for estimation
         const dummyFrom = '0x0000000000000000000000000000000000000000';

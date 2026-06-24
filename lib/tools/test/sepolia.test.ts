@@ -73,3 +73,24 @@ test('SepoliaToolProvider calls sepolia_simulate_transaction', async (t) => {
   assert.strictEqual(data.success, true);
   assert.strictEqual(data.result, '0x1337');
 });
+
+test('SepoliaToolProvider sepolia_send_calls validates USDC for approve', async () => {
+  const provider = new SepoliaToolProvider();
+  const res = await provider.callTool('sepolia_send_calls', {
+    calls: [{ to: '0xBAD', data: '0x095ea7b30000' }]
+  });
+  assert.strictEqual(res.isError, true);
+  assert.ok(res.content.includes('Invalid token address'));
+});
+
+test('SepoliaToolProvider sepolia_send_calls accepts USDC for approve', async (t) => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ json: async () => ({}) }) as any;
+  t.after(() => { global.fetch = originalFetch; });
+
+  const provider = new SepoliaToolProvider();
+  const res = await provider.callTool('sepolia_send_calls', {
+    calls: [{ to: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', data: '0x095ea7b30000' }]
+  });
+  assert.strictEqual(res.isError, false);
+});
