@@ -1,21 +1,19 @@
 import { Route, Switch } from "wouter";
+import { Layout } from "./components/Layout";
+import { Chat } from "./pages/Chat";
 
-const Home = () => <div className="p-4"><h1 className="text-2xl font-bold">MioAgent Dashboard</h1><p>Welcome to the agent interface.</p></div>;
-const NotFound = () => <div className="p-4">404 - Not Found</div>;
+const Home = () => <div className="p-6"><h2 className="text-2xl font-bold mb-4">Dashboard</h2><p className="text-slate-600">Welcome to the MioAgent interface.</p></div>;
+const NotFound = () => <div className="p-6 text-red-500 font-medium">404 - Not Found</div>;
 
 function App() {
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="bg-white shadow-sm border-b p-4">
-        <h2 className="text-xl font-semibold">MioAgent</h2>
-      </header>
-      <main className="container mx-auto p-4">
-        <Switch>
-          <Route path="/" component={Home} />
-          <Route component={NotFound} />
-        </Switch>
-      </main>
-    </div>
+    <Layout>
+      <Switch>
+        <Route path="/" component={Home} />
+        <Route path="/chat" component={Chat} />
+        <Route component={NotFound} />
+      </Switch>
+    </Layout>
   )
 }
 
