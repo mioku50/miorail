@@ -77,3 +77,10 @@ export const userSettings = pgTable('user_settings', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
+
+export const x402Receipts = pgTable('x402_receipts', {
+  id: text('id').primaryKey(),
+  receipt: jsonb('receipt'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
