@@ -3,7 +3,7 @@ import { logger } from '@mioagent/utils';
 
 export const observability = (req: Request, res: Response, next: NextFunction) => {
   const start = Date.now();
-  const traceId = (req as unknown).context?.traceId;
+  const traceId = (req as unknown as { context?: { traceId?: string } }).context?.traceId;
 
   logger.info('Request started', {
     traceId,

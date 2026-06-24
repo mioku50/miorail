@@ -82,7 +82,7 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
   logger.error('Unhandled API Error', {
     error: err.message,
     stack: err.stack,
-    traceId: (req as unknown).context?.traceId
+    traceId: (req as unknown as { context?: { traceId?: string } }).context?.traceId
   });
   res.status(500).json({ error: 'Internal Server Error' });
 });
