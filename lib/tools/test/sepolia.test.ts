@@ -5,11 +5,12 @@ import { SepoliaToolProvider } from '../src/sepolia.js';
 test('SepoliaToolProvider lists tools', async () => {
   const provider = new SepoliaToolProvider();
   const tools = await provider.listTools();
-  assert.strictEqual(tools.length, 4);
+  assert.strictEqual(tools.length, 5);
   assert.strictEqual(tools[0].name, 'sepolia_get_balance');
   assert.strictEqual(tools[1].name, 'sepolia_get_transaction');
   assert.strictEqual(tools[2].name, 'sepolia_send_calls');
   assert.strictEqual(tools[3].name, 'sepolia_get_request_status');
+  assert.strictEqual(tools[4].name, 'sepolia_simulate_transaction');
 });
 
 test('SepoliaToolProvider finds tool', () => {
@@ -48,4 +49,27 @@ test('SepoliaToolProvider calls sepolia_get_request_status', async () => {
   assert.strictEqual(res.isError, false);
   const data = JSON.parse(res.content);
   assert.strictEqual(data.status, 'confirmed');
+});
+
+test('SepoliaToolProvider calls sepolia_simulate_transaction', async (t) => {
+  const originalFetch = global.fetch;
+  global.fetch = async (url, options) => {
+    const reqData = JSON.parse((options as any).body);
+    if (reqData.method === 'eth_call') {
+      return {
+        json: async () => ({
+          result: '0x1337'
+        })
+      } as any;
+    }
+    return { json: async () => ({}) } as any;
+  };
+  t.after(() => { global.fetch = originalFetch; });
+
+  const provider = new SepoliaToolProvider();
+  const res = await provider.callTool('sepolia_simulate_transaction', { to: '0xabc' });
+  assert.strictEqual(res.isError, false);
+  const data = JSON.parse(res.content);
+  assert.strictEqual(data.success, true);
+  assert.strictEqual(data.result, '0x1337');
 });
