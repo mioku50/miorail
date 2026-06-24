@@ -82,6 +82,29 @@ export class MockMcpToolProvider implements ToolProvider {
 
   async callTool(name: string, _args: Record<string, unknown>): Promise<{ content: string; isError: boolean }> {
     if (name === 'send_calls') {
+      const chain = _args.chain as string;
+      const calls = _args.calls as { to: string; value?: string; data?: string }[];
+
+      if (chain !== 'eip155:84532' && chain !== '84532') {
+        return { content: 'Unsupported chain. Only Base Sepolia (eip155:84532 or 84532) is supported.', isError: true };
+      }
+
+      if (!calls || !Array.isArray(calls) || calls.length === 0) {
+        return { content: 'Missing or empty calls array', isError: true };
+      }
+
+      const canonicalUSDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+      for (const call of calls) {
+        if (!call.to) {
+          return { content: 'Missing to address in call', isError: true };
+        }
+        if (call.data && (call.data.toLowerCase().startsWith('0x095ea7b3') || call.data.toLowerCase().startsWith('0xa9059cbb'))) {
+          if (call.to.toLowerCase() !== canonicalUSDC) {
+            return { content: 'Invalid token address. Only canonical USDC on Base Sepolia is supported.', isError: true };
+          }
+        }
+      }
+
       const requestId = 'mock-req-' + Math.random().toString(36).substring(7);
       const approvalUrl = 'https://mock.base.org/approve/' + requestId;
       return { content: JSON.stringify({ approvalUrl, requestId }), isError: false };
