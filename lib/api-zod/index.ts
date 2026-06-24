@@ -155,3 +155,36 @@ export const PortfolioResponseSchema = z.object({
   tokens: z.array(PortfolioTokenSchema),
   updatedAt: z.string(),
 });
+
+// Workflows
+export const WorkflowSchema = z.object({
+  id: z.string(),
+  instructions: z.string().nullable(),
+  toolAllowlist: z.array(z.string()).nullable().optional(),
+  intervalMs: z.number().nullable(),
+  lastRun: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const WorkflowsListResponseSchema = z.object({
+  workflows: z.array(WorkflowSchema),
+});
+
+export const CreateWorkflowRequestSchema = z.object({
+  instructions: z.string().min(1),
+  intervalMs: z.number().int().min(60000), // Min 1 minute
+});
+
+export const CreateWorkflowResponseSchema = z.object({
+  success: z.boolean(),
+  workflow: WorkflowSchema,
+});
+
+export const DeleteWorkflowRequestSchema = z.object({
+  workflowId: z.string(),
+});
+
+export const DeleteWorkflowResponseSchema = z.object({
+  success: z.boolean(),
+});

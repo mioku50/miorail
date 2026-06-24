@@ -1,4 +1,4 @@
-import { useQuery, useMutation, UseQueryOptions, UseMutationOptions } from '@tanstack/react-query';
+import { useQuery, useMutation, UseQueryOptions, UseMutationOptions, useQueryClient } from '@tanstack/react-query';
 import * as apiSpec from '@mioagent/api-spec';
 
 // Simple fetch wrapper
@@ -198,5 +198,55 @@ export function useLogout(options?: UseMutationOptions<{ success: boolean }, Err
         headers: { 'Content-Type': 'application/json' },
       }),
     ...options,
+  });
+}
+
+export function useWorkflows(
+  options?: UseQueryOptions<apiSpec.WorkflowsListResponse>
+) {
+  return useQuery<apiSpec.WorkflowsListResponse>({
+    queryKey: ['workflows'],
+    queryFn: () => {
+      return fetchApi<apiSpec.WorkflowsListResponse>('/api/workflows');
+    },
+    ...options,
+  });
+}
+
+export function useCreateWorkflow() {
+  const queryClient = useQueryClient();
+  return useMutation<
+    apiSpec.CreateWorkflowResponse,
+    Error,
+    apiSpec.CreateWorkflowRequest
+  >({
+    mutationFn: (data) => {
+      return fetchApi<apiSpec.CreateWorkflowResponse>('/api/workflows', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['workflows'] });
+    },
+  });
+}
+
+export function useDeleteWorkflow() {
+  const queryClient = useQueryClient();
+  return useMutation<
+    apiSpec.DeleteWorkflowResponse,
+    Error,
+    { workflowId: string }
+  >({
+    mutationFn: ({ workflowId }) => {
+      return fetchApi<apiSpec.DeleteWorkflowResponse>(`/api/workflows/${workflowId}`, {
+        method: 'DELETE',
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['workflows'] });
+    },
   });
 }
