@@ -5,7 +5,7 @@ import { Actions } from "./pages/Actions";
 import { Settings } from "./pages/Settings";
 import { Workflows } from "./pages/Workflows";
 
-const Home = () => <div className="p-6"><h2 className="text-2xl font-bold mb-4">Dashboard</h2><p className="text-slate-600">Welcome to the MioAgent interface.</p></div>;
+import { Home } from "./pages/Home";
 const NotFound = () => <div className="p-6 text-red-500 font-medium">404 - Not Found</div>;
 
 function App() {
