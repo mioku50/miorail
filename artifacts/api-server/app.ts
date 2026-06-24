@@ -47,6 +47,8 @@ app.use(
 // Request context middleware
 app.use(requestContext());
 
+import { observability } from './middleware/observability.js';
+
 // Basic trace ID middleware to leverage requestContext
 app.use((req: Request, res: Response, _next: NextFunction) => {
   const traceId = crypto.randomUUID();
@@ -55,6 +57,9 @@ app.use((req: Request, res: Response, _next: NextFunction) => {
   res.setHeader('X-Trace-Id', traceId);
   _next();
 });
+
+// Observability and metrics middleware
+app.use(observability);
 
 import { routes } from './routes';
 
@@ -71,8 +76,13 @@ app.use((req: Request, res: Response) => {
   res.status(404).json({ error: 'Not Found' });
 });
 
+import { logger } from '@mioagent/utils';
 // Global error handler
 app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
-  console.error(err);
+  logger.error('Unhandled API Error', {
+    error: err.message,
+    stack: err.stack,
+    traceId: (req as any).context?.traceId
+  });
   res.status(500).json({ error: 'Internal Server Error' });
 });
