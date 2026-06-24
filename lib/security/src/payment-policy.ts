@@ -1,4 +1,4 @@
-import type { X402PaymentRequired } from '@workspace/x402-parser';
+import type { X402PaymentRequired } from '@mioagent/x402-parser';
 
 export interface PaymentReceipt {
   amount: string;

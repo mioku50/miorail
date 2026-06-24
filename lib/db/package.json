@@ -9,9 +9,9 @@
     "test": "tsx --test *.test.ts"
   },
   "dependencies": {
-    "dotenv": "^16.4.5",
-    "drizzle-orm": "^0.36.1",
-    "postgres": "^3.4.5"
+    "dotenv": "^16.6.1",
+    "drizzle-orm": "^0.36.4",
+    "postgres": "^3.4.9"
   },
   "devDependencies": {
     "drizzle-kit": "^0.28.0",
