@@ -15,7 +15,7 @@ test('insertAction throws if security screen blocks', async () => {
 
 test('insertAction successfully inserts action when allowed', async () => {
   const mockInsert = mock.fn(() => ({
-    values: mock.fn(async (val: any) => val)
+    values: mock.fn(async (val: unknown) => val)
   }));
   mock.method(db, 'insert', mockInsert);
 
