@@ -169,6 +169,9 @@ importers:
       '@mioagent/llm':
         specifier: workspace:*
         version: link:../llm
+      '@mioagent/mcp':
+        specifier: workspace:*
+        version: link:../mcp
       '@mioagent/memory':
         specifier: workspace:*
         version: link:../memory
