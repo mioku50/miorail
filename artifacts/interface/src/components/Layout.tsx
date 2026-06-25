@@ -1,5 +1,6 @@
 import { ReactNode } from 'react';
 import { Link, useRoute } from 'wouter';
+import { WalletConnect } from './WalletConnect';
 
 export function Layout({ children }: { children: ReactNode }) {
   const [isHome] = useRoute('/');
@@ -31,6 +32,9 @@ export function Layout({ children }: { children: ReactNode }) {
             <a className={`px-3 py-1 rounded-md transition-colors ${isSettings ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-600 hover:bg-slate-100'}`}>Settings</a>
           </Link>
         </nav>
+        <div className="ml-4 border-l pl-4 border-slate-200 flex items-center">
+          <WalletConnect />
+        </div>
       </header>
       <main className="flex-1 container mx-auto">
         {children}
