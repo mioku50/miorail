@@ -1,5 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { BaseMcpOAuthProvider } from "./oauth.js";
 
 export class BaseMcpClient {
   private client: Client;
@@ -24,4 +26,10 @@ export class BaseMcpClient {
   getClient() {
     return this.client;
   }
+}
+
+export function createBaseMcpSseTransport(url: URL, oauthProvider?: BaseMcpOAuthProvider) {
+  return new SSEClientTransport(url, {
+    authProvider: oauthProvider
+  });
 }

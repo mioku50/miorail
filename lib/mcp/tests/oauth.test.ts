@@ -1,6 +1,6 @@
 import { describe, it, mock, afterEach } from "node:test";
 import assert from "node:assert";
-import { generateAuthorizationUrl, exchangeCodeForToken, OAuthConfig } from "../src/oauth.js";
+import { generateAuthorizationUrl, exchangeCodeForToken, OAuthConfig, BaseMcpOAuthProvider } from "../src/oauth.js";
 
 const mockConfig: OAuthConfig = {
   clientId: "test-client",
@@ -55,9 +55,9 @@ describe("OAuth utilities", () => {
 
     const tokens = await exchangeCodeForToken(mockConfig, "mock-code", "mock-verifier");
 
-    assert.strictEqual(tokens.accessToken, "mock-access-token");
-    assert.strictEqual(tokens.refreshToken, "mock-refresh-token");
-    assert.strictEqual(tokens.expiresIn, 3600);
+    assert.strictEqual(tokens.access_token, "mock-access-token");
+    assert.strictEqual(tokens.refresh_token, "mock-refresh-token");
+    assert.strictEqual(tokens.expires_in, 3600);
   });
 
   it("exchangeCodeForToken should throw an error if the response is not ok", async () => {
@@ -72,5 +72,42 @@ describe("OAuth utilities", () => {
       exchangeCodeForToken(mockConfig, "mock-code", "mock-verifier"),
       (err: Error) => err.message === "Failed to exchange code for token: Bad Request"
     );
+  });
+});
+
+describe("BaseMcpOAuthProvider", () => {
+  it("should initialize and return correctly", () => {
+    const provider = new BaseMcpOAuthProvider({
+      redirectUrl: "http://localhost/callback"
+    });
+
+    assert.strictEqual(provider.redirectUrl, "http://localhost/callback");
+    assert.deepStrictEqual(provider.clientMetadata, {
+      client_name: "MioAgent",
+      redirect_uris: ["http://localhost/callback"]
+    });
+
+    provider.saveTokens({ access_token: "token123", token_type: "Bearer" });
+    assert.deepStrictEqual(provider.tokens(), { access_token: "token123", token_type: "Bearer" });
+
+    provider.saveCodeVerifier("verifier123");
+    assert.strictEqual(provider.codeVerifier(), "verifier123");
+  });
+
+  it("should throw on redirect if no callback provided", () => {
+    const provider = new BaseMcpOAuthProvider();
+    assert.throws(() => provider.redirectToAuthorization(new URL("http://example.com")));
+  });
+
+  it("should call callback on redirect", () => {
+    let called = false;
+    const provider = new BaseMcpOAuthProvider({
+      onRedirectToAuthorization: (url) => {
+        called = true;
+        assert.strictEqual(url.toString(), "http://example.com/");
+      }
+    });
+    provider.redirectToAuthorization(new URL("http://example.com"));
+    assert.ok(called);
   });
 });
