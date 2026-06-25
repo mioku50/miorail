@@ -9,6 +9,7 @@
   "dependencies": {
     "@mioagent/db": "workspace:*",
     "@mioagent/llm": "workspace:*",
+    "@mioagent/mcp": "workspace:*",
     "@mioagent/memory": "workspace:*",
     "@mioagent/tools": "workspace:*",
     "@mioagent/utils": "workspace:*",
