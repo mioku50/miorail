@@ -6,7 +6,7 @@
   "scripts": {
     "push": "drizzle-kit push",
     "generate": "drizzle-kit generate",
-    "test": "tsx --test *.test.ts"
+    "test": "tsx --test **/*.test.ts *.test.ts"
   },
   "dependencies": {
     "dotenv": "^16.6.1",
