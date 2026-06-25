@@ -1,0 +1,32 @@
+import { describe, it, before, after } from 'node:test';
+import assert from 'node:assert';
+import { db, client, users } from '../index.js';
+import { eq } from 'drizzle-orm';
+
+describe('db integration tests', () => {
+  it('should insert and query a user', async () => {
+    const testId = 'test-user-1';
+
+    // Insert user
+    await db.insert(users).values({
+      id: testId,
+    });
+
+    try {
+      // Query user
+      const userResult = await db.select().from(users).where(eq(users.id, testId));
+
+      assert.strictEqual(userResult.length, 1);
+      assert.strictEqual(userResult[0].id, testId);
+      assert.ok(userResult[0].createdAt);
+      assert.ok(userResult[0].updatedAt);
+    } finally {
+      // Cleanup
+      await db.delete(users).where(eq(users.id, testId));
+    }
+  });
+
+  after(async () => {
+    await client.end();
+  });
+});
