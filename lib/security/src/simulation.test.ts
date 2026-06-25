@@ -35,7 +35,7 @@ test('simulateTrade handles full input object with missing instruction', async (
 test('simulateTrade handles full input object with missing calls', async () => {
   const res = await simulateTrade({
       chain: '84532',
-      calls: undefined as any
+      calls: undefined as never
   });
   assert.strictEqual(res.success, false);
   assert.ok(res.error?.includes('No calls provided'));
