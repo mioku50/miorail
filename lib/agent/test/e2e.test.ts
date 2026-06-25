@@ -36,9 +36,9 @@ test('T6.3 E2E mock happy-path: chat -> recommendation -> execute approval URL',
             if (name === 'emit_recommendation') return { name, description: 'Emit a recommendation', inputSchema: { type: 'object' } };
             return undefined;
         }
-        async callTool(name: string, args: Record<string, unknown>) {
+        async callTool(name: string, _args: Record<string, unknown>) {
             if (name === 'emit_recommendation') {
-                const message = typeof args.message === 'string' ? args.message : 'Recommendation';
+                const message = typeof _args.message === 'string' ? _args.message : 'Recommendation';
                 await db.insert(actions).values({
                     id: randomUUID(),
                     userId,
@@ -60,7 +60,7 @@ test('T6.3 E2E mock happy-path: chat -> recommendation -> execute approval URL',
             if (name === 'send_calls') return { name, description: 'Sends calls', inputSchema: { type: 'object' } };
             return undefined;
         }
-        async callTool(name: string, args: Record<string, unknown>) {
+        async callTool(name: string, _args: Record<string, unknown>) {
             if (name === 'send_calls') {
                 return { content: JSON.stringify({ approvalUrl: 'https://mock.base.org/approve/e2e', requestId: 'e2e-req' }), isError: false };
             }
@@ -151,7 +151,7 @@ test('T6.4 E2E scanner test: scanner tick -> emit -> feed -> execute', async () 
             if (name === 'send_calls') return { name, description: 'Sends calls', inputSchema: { type: 'object' } };
             return undefined;
         }
-        async callTool(name: string, args: Record<string, unknown>) {
+        async callTool(name: string, _args: Record<string, unknown>) {
             if (name === 'send_calls') {
                 return { content: JSON.stringify({ approvalUrl: 'https://mock.base.org/approve/scanner', requestId: 'scanner-req' }), isError: false };
             }
