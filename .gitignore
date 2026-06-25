@@ -6,3 +6,4 @@ dist
 !scripts/validate_tasks.test.js
 !eslint.config.mjs
 *.tsbuildinfo
+coverage/
