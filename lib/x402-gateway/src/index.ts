@@ -59,7 +59,7 @@ export function x402Gateway(config: X402GatewayConfig) {
       }
 
       next();
-    } catch (err) {
+    } catch {
       res.status(400).json({ error: 'Invalid X-402-Payment header' });
     }
   };
