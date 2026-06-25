@@ -19,6 +19,7 @@ Core documents:
 - agent_tasks.json is updated correctly
 
 In those cases, proceed automatically:
+
 1. implement the task
 2. run validation
 3. update agent_tasks.json
@@ -26,6 +27,7 @@ In those cases, proceed automatically:
 5. summarize changes and validation results
 
 Only stop and ask me if:
+
 - there is a scope ambiguity
 - validation fails for reasons related to your changes
 - the task would require secrets, live wallet execution, mainnet behavior, or a major architecture decision
