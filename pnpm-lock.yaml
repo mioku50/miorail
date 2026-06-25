@@ -210,6 +210,15 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
 
+  lib/autonomy:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.12.7
+        version: 20.19.43
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+
   lib/crypto:
     devDependencies:
       typescript:
@@ -3264,11 +3273,11 @@ snapshots:
   '@types/body-parser@1.19.6':
     dependencies:
       '@types/connect': 3.4.38
-      '@types/node': 26.0.0
+      '@types/node': 20.19.43
 
   '@types/connect@3.4.38':
     dependencies:
-      '@types/node': 26.0.0
+      '@types/node': 20.19.43
 
   '@types/cookiejar@2.1.5': {}
 
@@ -3286,7 +3295,7 @@ snapshots:
 
   '@types/express-serve-static-core@5.1.1':
     dependencies:
-      '@types/node': 26.0.0
+      '@types/node': 20.19.43
       '@types/qs': 6.15.1
       '@types/range-parser': 1.2.7
       '@types/send': 1.2.1
@@ -3337,18 +3346,18 @@ snapshots:
 
   '@types/send@1.2.1':
     dependencies:
-      '@types/node': 26.0.0
+      '@types/node': 20.19.43
 
   '@types/serve-static@2.2.0':
     dependencies:
       '@types/http-errors': 2.0.5
-      '@types/node': 26.0.0
+      '@types/node': 20.19.43
 
   '@types/superagent@8.1.10':
     dependencies:
       '@types/cookiejar': 2.1.5
       '@types/methods': 1.1.4
-      '@types/node': 26.0.0
+      '@types/node': 20.19.43
       form-data: 4.0.6
 
   '@types/supertest@7.2.0':

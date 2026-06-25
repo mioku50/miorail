@@ -1,0 +1,18 @@
+{
+  "name": "@mioagent/autonomy",
+  "version": "1.0.0",
+  "description": "Autonomy engine: session keys / spend permissions",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "npx tsx --test src/**/*.test.ts"
+  },
+  "dependencies": {
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "typescript": "^5.4.5"
+  }
+}
