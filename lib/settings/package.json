@@ -8,8 +8,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mioagent/db": "workspace:*",
     "@mioagent/crypto": "workspace:*",
+    "@mioagent/db": "workspace:*",
+    "@mioagent/x402-parser": "workspace:*",
     "drizzle-orm": "^0.36.1"
   },
   "devDependencies": {
