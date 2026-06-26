@@ -23,7 +23,7 @@ test('T7.7 E2E on Sepolia: autonomous action within session-key limits', async (
         to: '0xsub',
         data: '0xdata',
         value: 0n // BigInt as expected by the latest version of base-org/account
-    }]) as any;
+    }]) as unknown as ReturnType<typeof base.subscription.prepareCharge>;
 
     try {
         const calls = [{ to: '0x036cbd53842c5426634e7929541ec2318f3dcf7e', data: '0x', value: '0' }];
@@ -32,7 +32,7 @@ test('T7.7 E2E on Sepolia: autonomous action within session-key limits', async (
         assert.strictEqual(res.success, true);
         assert.ok(res.sendCallsRequest);
 
-        const prepared = res.sendCallsRequest as any;
+        const prepared = res.sendCallsRequest as { calls: { to: string }[] };
         assert.strictEqual(prepared.calls.length, 2);
         assert.strictEqual(prepared.calls[0].to, '0xsub');
         assert.strictEqual(prepared.calls[1].to, '0x036cbd53842c5426634e7929541ec2318f3dcf7e');

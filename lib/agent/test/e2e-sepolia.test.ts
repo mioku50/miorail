@@ -6,7 +6,7 @@ import { ToolAggregator, ToolProvider, ToolDef } from '@mioagent/tools';
 import { randomUUID } from 'crypto';
 import { eq } from 'drizzle-orm';
 import { db, actions, users } from '@mioagent/db';
-import { AutonomyEngine } from '@mioagent/autonomy';
+
 import { SepoliaToolProvider } from '@mioagent/tools/src/sepolia.js';
 import { McpSendCallsClient } from '@mioagent/mcp/src/send_calls.js';
 import { BaseMcpClient } from '@mioagent/mcp/src/client.js';
@@ -61,7 +61,7 @@ test('T7.7 E2E on Sepolia: chat -> execute', async () => {
           callTool: async () => ({
             content: [{ type: 'text', text: JSON.stringify({ approvalUrl: 'https://mock.base.org/approve/sepolia', requestId: 'sepolia-req' }) }]
           })
-        } as any;
+        } as unknown as ReturnType<BaseMcpClient['getClient']>;
       }
     }
     const testMcpClient = new McpSendCallsClient(new TestBaseClient());
@@ -104,7 +104,7 @@ test('T7.7 E2E on Sepolia: chat -> execute', async () => {
         for await (const ev of agent.chatStream(userId, recommendation.suggestedPrompt!)) {
             events2.push(ev);
         }
-        const sendCallsResult = events2.find(e => e.type === 'tool_result' && e.toolName === 'sepolia_send_calls') as any;
+        const sendCallsResult = events2.find(e => e.type === 'tool_result' && e.toolName === 'sepolia_send_calls') as { approvalUrl?: string, requestId?: string } | undefined;
         assert.ok(sendCallsResult);
         assert.strictEqual(sendCallsResult.approvalUrl, 'https://mock.base.org/approve/sepolia');
         assert.strictEqual(sendCallsResult.requestId, 'sepolia-req');
