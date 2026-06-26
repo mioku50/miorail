@@ -5,7 +5,7 @@ import { ObservabilityService } from './index.js';
 import { eq } from 'drizzle-orm';
 import * as crypto from 'crypto';
 
-test('ObservabilityService', async (t) => {
+test('ObservabilityService', async () => {
   const userId = crypto.randomUUID();
 
   await test('setup', async () => {
