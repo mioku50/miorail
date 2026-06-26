@@ -1,8 +1,11 @@
 import { ToolDef, ToolProvider } from './provider.js';
+import { McpSendCallsClient } from '@mioagent/mcp';
 
 export class SepoliaToolProvider implements ToolProvider {
   id = 'sepolia-read-only';
   private rpcUrl = 'https://sepolia.base.org';
+
+  constructor(private mcpClient?: McpSendCallsClient) {}
 
   private tools: ToolDef[] = [
     {
@@ -176,10 +179,16 @@ export class SepoliaToolProvider implements ToolProvider {
           }
         }
 
-        const requestId = 'sepolia-req-' + Math.random().toString(36).substring(7);
-        // Using real builder MCP pattern
-        const approvalUrl = 'https://mcp.base.org/approve/' + requestId;
-        return { content: JSON.stringify({ approvalUrl, requestId, validatedOnSepolia: true }), isError: false };
+        if (!this.mcpClient) {
+          return { content: 'Base MCP is not configured/connected. Real execution is unavailable.', isError: true };
+        }
+
+        try {
+          const response = await this.mcpClient.sendCalls(chain, calls);
+          return { content: JSON.stringify({ approvalUrl: response.approvalUrl, requestId: response.requestId, validatedOnSepolia: true }), isError: false };
+        } catch (error) {
+          return { content: error instanceof Error ? error.message : String(error), isError: true };
+        }
       }
 
       if (name === 'sepolia_get_request_status') {
