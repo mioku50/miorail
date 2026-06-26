@@ -1,30 +1,33 @@
 import { ToolAggregator } from './aggregator.js';
 import { NativeToolProvider } from './native.js';
-import { getUserSettings, getDecryptedKey } from '@mioagent/settings';
+import * as settingsModule from '@mioagent/settings';
 import {
-  MockCoinGeckoProvider, MockMoralisProvider, MockDeFiLlamaProvider, MockGoPlusProvider,
-  RealCoinGeckoProvider, RealMoralisProvider, RealDeFiLlamaProvider, RealGoPlusProvider
+  MockCoinGeckoProvider, MockMoralisProvider,
+  RealCoinGeckoProvider, RealMoralisProvider
 } from '@mioagent/data-providers';
+
+// Allow overriding settings in tests via an injected interface or similar, or just let node:test mock handle it if configured right.
+// We can expose an internal configurable getter.
+export const settingsAPI = {
+    getUserSettings: settingsModule.getUserSettings,
+    getDecryptedKey: settingsModule.getDecryptedKey
+};
 
 export async function createToolAggregatorForUser(userId: string, sessionSecret: string): Promise<ToolAggregator> {
   const aggregator = new ToolAggregator();
-  const settings = await getUserSettings(userId);
+  const settings = await settingsAPI.getUserSettings(userId);
 
   const toggles = settings?.protocolToggles as Record<string, boolean> | undefined;
 
   const useCoinGecko = toggles?.coingecko === true;
   const useMoralis = toggles?.moralis === true;
-  // While we created defi_llama and goplus real providers, the native tool provider currently only uses coingecko and moralis.
-  // We'll prepare them here just in case they get added to native tools later, or to a different provider.
-  // But currently native only takes CoinGecko and Moralis.
-  // Let's stick to Native for now.
 
   const coinGeckoProvider = useCoinGecko ? new RealCoinGeckoProvider() : new MockCoinGeckoProvider();
   let moralisProvider: MockMoralisProvider | RealMoralisProvider = new MockMoralisProvider();
 
   if (useMoralis) {
     try {
-      const moralisKey = await getDecryptedKey(userId, 'moralis_api_key', sessionSecret);
+      const moralisKey = await settingsAPI.getDecryptedKey(userId, 'moralis_api_key', sessionSecret);
       if (moralisKey) {
         moralisProvider = new RealMoralisProvider(moralisKey);
       }
