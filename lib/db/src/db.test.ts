@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { db, client, users } from '../index.js';
 import { eq } from 'drizzle-orm';
 
-describe('db integration tests', () => {
+describe('db integration tests', { skip: process.env.SKIP_DB_INTEGRATION_TESTS === 'true' }, () => {
   it('should insert and query a user', async () => {
     const testId = 'test-user-1';
 
