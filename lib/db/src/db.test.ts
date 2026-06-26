@@ -5,6 +5,9 @@ import { eq } from 'drizzle-orm';
 
 describe('db integration tests', { skip: process.env.SKIP_DB_INTEGRATION_TESTS === 'true' }, () => {
   it('should insert and query a user', async () => {
+    if (process.env.SKIP_DB_INTEGRATION_TESTS === 'true') {
+        return;
+    }
     const testId = 'test-user-1';
 
     // Insert user
@@ -27,6 +30,8 @@ describe('db integration tests', { skip: process.env.SKIP_DB_INTEGRATION_TESTS =
   });
 
   after(async () => {
-    await client.end();
+    if (process.env.SKIP_DB_INTEGRATION_TESTS !== 'true') {
+      await client.end();
+    }
   });
 });
