@@ -65,6 +65,9 @@ importers:
       '@mioagent/x402-gateway':
         specifier: workspace:*
         version: link:../../lib/x402-gateway
+      '@mioagent/x402-parser':
+        specifier: workspace:*
+        version: link:../../lib/x402-parser
       cors:
         specifier: ^2.8.6
         version: 2.8.6
@@ -210,7 +213,7 @@ importers:
         specifier: workspace:*
         version: link:../api-spec
       '@tanstack/react-query':
-        specifier: ^5.101.0
+        specifier: ^5.101.1
         version: 5.101.1(react@19.2.7)
 
   lib/api-spec:
@@ -340,6 +343,9 @@ importers:
       '@mioagent/db':
         specifier: workspace:*
         version: link:../db
+      '@mioagent/x402-parser':
+        specifier: workspace:*
+        version: link:../x402-parser
       drizzle-orm:
         specifier: ^0.36.1
         version: 0.36.4(@types/react@19.2.17)(postgres@3.4.9)(react@19.2.7)
@@ -386,13 +392,13 @@ importers:
         version: 5.2.1
     devDependencies:
       '@types/express':
-        specifier: ^5.0.0
+        specifier: ^5.0.6
         version: 5.0.6
       '@types/supertest':
         specifier: ^7.2.0
         version: 7.2.0
       supertest:
-        specifier: ^7.0.0
+        specifier: ^7.2.2
         version: 7.2.2
       tsx:
         specifier: ^4.22.4

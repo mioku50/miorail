@@ -52,7 +52,7 @@ export class AutonomyEngine {
       }
     }
 
-    let executionCalls = [...calls];
+    let executionCalls: Call[] = [...calls];
 
     // Integrate real Spend Permissions: prepare a charge against the subscription
     if (cost > 0) {
@@ -62,7 +62,15 @@ export class AutonomyEngine {
           amount: cost.toString(),
           testnet: true // Enforce Sepolia testnet
         });
-        executionCalls = [...chargeCalls, ...executionCalls];
+
+        // Ensure the returned structure from prepareCharge matches our Call interface (value needs to be string, not bigint if that is what it returns)
+        const mappedChargeCalls: Call[] = chargeCalls.map(c => ({
+            to: c.to as string,
+            data: c.data as string,
+            value: (c.value || '0').toString()
+        }));
+
+        executionCalls = [...mappedChargeCalls, ...executionCalls];
       } catch (err: any) {
         return { success: false, error: `Failed to prepare spend permission charge: ${err.message}` };
       }

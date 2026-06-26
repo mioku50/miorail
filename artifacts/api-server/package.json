@@ -16,6 +16,7 @@
     "@mioagent/tools": "workspace:*",
     "@mioagent/utils": "workspace:*",
     "@mioagent/x402-gateway": "workspace:*",
+    "@mioagent/x402-parser": "workspace:*",
     "cors": "^2.8.6",
     "drizzle-orm": "^0.36.4",
     "express": "^5.2.1",
