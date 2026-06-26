@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { SepoliaToolProvider } from '../src/sepolia.js';
+import { McpSendCallsClient } from '@mioagent/mcp';
 
 test('SepoliaToolProvider lists tools', async () => {
   const provider = new SepoliaToolProvider();
@@ -17,79 +18,75 @@ test('SepoliaToolProvider finds tool', () => {
   const provider = new SepoliaToolProvider();
   const tool = provider.findTool('sepolia_get_balance');
   assert.ok(tool);
-  assert.strictEqual(tool?.name, 'sepolia_get_balance');
+  assert.strictEqual(tool.name, 'sepolia_get_balance');
+
+  const missing = provider.findTool('unknown');
+  assert.strictEqual(missing, undefined);
 });
 
-test('SepoliaToolProvider calls sepolia_send_calls', async (t) => {
-  // Mock fetch to avoid real network requests in tests
-  const originalFetch = global.fetch;
-  global.fetch = async () => {
-    return {
-      json: async () => ({
-        result: '0x123'
-      })
-    } as unknown as Response;
-  };
-
-  t.after(() => {
-    global.fetch = originalFetch;
+test('SepoliaToolProvider calls sepolia_send_calls with mock mcpClient', async (t) => {
+  let fetchedUrl = '';
+  t.mock.method(global, 'fetch', async (url: string) => {
+    fetchedUrl = url;
+    return { json: async () => ({ result: '0x123' }) };
   });
 
-  const provider = new SepoliaToolProvider();
+  const mockMcpClient = {
+    sendCalls: async () => ({
+      approvalUrl: 'https://mcp.base.org/approve/mcp-req-mock',
+      requestId: 'mcp-req-mock'
+    })
+  } as unknown as McpSendCallsClient;
+
+  const provider = new SepoliaToolProvider(mockMcpClient);
   const res = await provider.callTool('sepolia_send_calls', { chain: '84532', calls: [{ to: '0x123' }] });
   assert.strictEqual(res.isError, false);
-  const data = JSON.parse(res.content);
-  assert.ok(data.approvalUrl);
-  assert.ok(data.requestId);
+  const parsed = JSON.parse(res.content);
+  assert.strictEqual(parsed.approvalUrl, 'https://mcp.base.org/approve/mcp-req-mock');
+  assert.strictEqual(parsed.requestId, 'mcp-req-mock');
+  assert.strictEqual(fetchedUrl, 'https://sepolia.base.org');
 });
 
 test('SepoliaToolProvider calls sepolia_get_request_status', async () => {
   const provider = new SepoliaToolProvider();
   const res = await provider.callTool('sepolia_get_request_status', { requestId: 'req-123' });
   assert.strictEqual(res.isError, false);
-  const data = JSON.parse(res.content);
-  assert.strictEqual(data.status, 'confirmed');
+  const parsed = JSON.parse(res.content);
+  assert.strictEqual(parsed.status, 'confirmed');
+  assert.strictEqual(parsed.requestId, 'req-123');
 });
 
 test('SepoliaToolProvider calls sepolia_simulate_transaction', async (t) => {
-  const originalFetch = global.fetch;
-  global.fetch = async (url, options) => {
-    const reqData = JSON.parse((options as unknown as { body: string }).body);
-    if (reqData.method === 'eth_call') {
-      return {
-        json: async () => ({
-          result: '0x1337'
-        })
-      } as unknown as Response;
-    }
-    return { json: async () => ({}) } as unknown as Response;
-  };
-  t.after(() => { global.fetch = originalFetch; });
-
+  t.mock.method(global, 'fetch', async () => ({ json: async () => ({ result: '0xabc' }) }));
   const provider = new SepoliaToolProvider();
-  const res = await provider.callTool('sepolia_simulate_transaction', { to: '0xabc' });
+  const res = await provider.callTool('sepolia_simulate_transaction', { to: '0x123' });
   assert.strictEqual(res.isError, false);
-  const data = JSON.parse(res.content);
-  assert.strictEqual(data.success, true);
-  assert.strictEqual(data.result, '0x1337');
+  const parsed = JSON.parse(res.content);
+  assert.strictEqual(parsed.success, true);
+  assert.strictEqual(parsed.result, '0xabc');
 });
 
 test('SepoliaToolProvider sepolia_send_calls validates USDC for approve', async () => {
   const provider = new SepoliaToolProvider();
   const res = await provider.callTool('sepolia_send_calls', {
     chain: '84532',
-    calls: [{ to: '0xBAD', data: '0x095ea7b30000' }]
+    calls: [{ to: '0xevil', data: '0x095ea7b30000' }]
   });
   assert.strictEqual(res.isError, true);
-  assert.ok(res.content.includes('Invalid token address'));
+  assert.match(res.content, /Only canonical USDC on Base Sepolia is supported/);
 });
 
 test('SepoliaToolProvider sepolia_send_calls accepts USDC for approve', async (t) => {
-  const originalFetch = global.fetch;
-  global.fetch = async () => ({ json: async () => ({}) }) as unknown as Response;
-  t.after(() => { global.fetch = originalFetch; });
+  t.mock.method(global, 'fetch', async () => ({ json: async () => ({ result: '0x123' }) }));
 
-  const provider = new SepoliaToolProvider();
+  const mockMcpClient = {
+    sendCalls: async () => ({
+      approvalUrl: 'https://mcp.base.org/approve/mcp-req-mock',
+      requestId: 'mcp-req-mock'
+    })
+  } as unknown as McpSendCallsClient;
+
+  const provider = new SepoliaToolProvider(mockMcpClient);
   const res = await provider.callTool('sepolia_send_calls', {
     chain: '84532',
     calls: [{ to: '0x036cbd53842c5426634e7929541ec2318f3dcf7e', data: '0x095ea7b30000' }]
@@ -104,7 +101,7 @@ test('SepoliaToolProvider sepolia_send_calls rejects unsupported chain', async (
     calls: [{ to: '0x123' }]
   });
   assert.strictEqual(res.isError, true);
-  assert.ok(res.content.includes('Unsupported chain'));
+  assert.match(res.content, /Unsupported chain/);
 });
 
 test('SepoliaToolProvider sepolia_send_calls rejects empty calls array', async () => {
@@ -114,15 +111,37 @@ test('SepoliaToolProvider sepolia_send_calls rejects empty calls array', async (
     calls: []
   });
   assert.strictEqual(res.isError, true);
-  assert.ok(res.content.includes('Missing or empty calls array'));
+  assert.match(res.content, /Missing or empty calls array/);
 });
 
 test('SepoliaToolProvider sepolia_send_calls rejects malformed call object (missing to)', async () => {
   const provider = new SepoliaToolProvider();
   const res = await provider.callTool('sepolia_send_calls', {
     chain: '84532',
-    calls: [{ data: '0xabc' }]
+    calls: [{ value: '0x0' }]
   });
   assert.strictEqual(res.isError, true);
-  assert.ok(res.content.includes('Missing to address'));
+  assert.match(res.content, /Missing to address in call/);
+});
+
+test('SepoliaToolProvider sepolia_send_calls rejects when mcpClient is absent', async (t) => {
+  t.mock.method(global, 'fetch', async () => ({ json: async () => ({ result: '0x123' }) }));
+
+  const provider = new SepoliaToolProvider(); // no mcpClient passed
+  const res = await provider.callTool('sepolia_send_calls', { chain: '84532', calls: [{ to: '0x123' }] });
+  assert.strictEqual(res.isError, true);
+  assert.strictEqual(res.content, 'Base MCP is not configured/connected. Real execution is unavailable.');
+});
+
+test('SepoliaToolProvider sepolia_send_calls fails if MCP client throws', async (t) => {
+  t.mock.method(global, 'fetch', async () => ({ json: async () => ({ result: '0x123' }) }));
+
+  const mockMcpClient = {
+    sendCalls: async () => { throw new Error('MCP server down'); }
+  } as unknown as McpSendCallsClient;
+
+  const provider = new SepoliaToolProvider(mockMcpClient);
+  const res = await provider.callTool('sepolia_send_calls', { chain: '84532', calls: [{ to: '0x123' }] });
+  assert.strictEqual(res.isError, true);
+  assert.strictEqual(res.content, 'MCP server down');
 });

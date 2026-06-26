@@ -349,6 +349,9 @@ importers:
       '@mioagent/data-providers':
         specifier: workspace:*
         version: link:../data-providers
+      '@mioagent/mcp':
+        specifier: workspace:*
+        version: link:../mcp
     devDependencies:
       tsx:
         specifier: ^4.22.4

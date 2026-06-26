@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mioagent/data-providers": "workspace:*"
+    "@mioagent/data-providers": "workspace:*",
+    "@mioagent/mcp": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.22.4",
