@@ -1,4 +1,5 @@
-import { useQuery, useMutation, UseQueryOptions, UseMutationOptions, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import type { UseQueryOptions, UseMutationOptions } from '@tanstack/react-query';
 import * as apiSpec from '@mioagent/api-spec';
 
 // Simple fetch wrapper
@@ -11,7 +12,7 @@ async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
 }
 
 // Queries
-export function useSession(options?: UseQueryOptions<apiSpec.SessionResponse>) {
+export function useSession(options?: Omit<UseQueryOptions<apiSpec.SessionResponse, Error, apiSpec.SessionResponse, string[]>, 'queryKey' | 'queryFn'>) {
   return useQuery({
     queryKey: ['session'],
     queryFn: () => fetchApi<apiSpec.SessionResponse>('/api/auth/session'),
@@ -21,7 +22,7 @@ export function useSession(options?: UseQueryOptions<apiSpec.SessionResponse>) {
 
 export function useChatHistory(
   params?: apiSpec.PaginationParams,
-  options?: UseQueryOptions<apiSpec.ChatHistoryResponse>,
+  options?: Omit<UseQueryOptions<apiSpec.ChatHistoryResponse, Error, apiSpec.ChatHistoryResponse, (string | apiSpec.PaginationParams | undefined)[]>, 'queryKey' | 'queryFn'>,
 ) {
   return useQuery({
     queryKey: ['chat', 'history', params],
@@ -37,7 +38,7 @@ export function useChatHistory(
 
 export function useActionsFeed(
   params?: apiSpec.PaginationParams,
-  options?: UseQueryOptions<apiSpec.ActionsFeedResponse>,
+  options?: Omit<UseQueryOptions<apiSpec.ActionsFeedResponse, Error, apiSpec.ActionsFeedResponse, (string | apiSpec.PaginationParams | undefined)[]>, 'queryKey' | 'queryFn'>,
 ) {
   return useQuery({
     queryKey: ['actions', 'feed', params],
@@ -51,7 +52,7 @@ export function useActionsFeed(
   });
 }
 
-export function useSettings(options?: UseQueryOptions<apiSpec.SettingsResponse>) {
+export function useSettings(options?: Omit<UseQueryOptions<apiSpec.SettingsResponse, Error, apiSpec.SettingsResponse, string[]>, 'queryKey' | 'queryFn'>) {
   return useQuery({
     queryKey: ['settings'],
     queryFn: () => fetchApi<apiSpec.SettingsResponse>('/api/settings'),
@@ -59,7 +60,7 @@ export function useSettings(options?: UseQueryOptions<apiSpec.SettingsResponse>)
   });
 }
 
-export function useMemory(options?: UseQueryOptions<apiSpec.MemoryResponse>) {
+export function useMemory(options?: Omit<UseQueryOptions<apiSpec.MemoryResponse, Error, apiSpec.MemoryResponse, string[]>, 'queryKey' | 'queryFn'>) {
   return useQuery({
     queryKey: ['memory'],
     queryFn: () => fetchApi<apiSpec.MemoryResponse>('/api/memory'),
@@ -67,7 +68,7 @@ export function useMemory(options?: UseQueryOptions<apiSpec.MemoryResponse>) {
   });
 }
 
-export function useProtocols(options?: UseQueryOptions<apiSpec.ProtocolsListResponse>) {
+export function useProtocols(options?: Omit<UseQueryOptions<apiSpec.ProtocolsListResponse, Error, apiSpec.ProtocolsListResponse, string[]>, 'queryKey' | 'queryFn'>) {
   return useQuery({
     queryKey: ['protocols'],
     queryFn: () => fetchApi<apiSpec.ProtocolsListResponse>('/api/protocols'),
@@ -75,7 +76,7 @@ export function useProtocols(options?: UseQueryOptions<apiSpec.ProtocolsListResp
   });
 }
 
-export function usePortfolio(options?: UseQueryOptions<apiSpec.PortfolioResponse>) {
+export function usePortfolio(options?: Omit<UseQueryOptions<apiSpec.PortfolioResponse, Error, apiSpec.PortfolioResponse, string[]>, 'queryKey' | 'queryFn'>) {
   return useQuery({
     queryKey: ['portfolio'],
     queryFn: () => fetchApi<apiSpec.PortfolioResponse>('/api/portfolio'),
@@ -85,7 +86,7 @@ export function usePortfolio(options?: UseQueryOptions<apiSpec.PortfolioResponse
 
 // Mutations
 export function useSendMessage(
-  options?: UseMutationOptions<apiSpec.ChatMessageResponse, Error, apiSpec.ChatMessageRequest>,
+  options?: Omit<UseMutationOptions<apiSpec.ChatMessageResponse, Error, apiSpec.ChatMessageRequest>, 'mutationFn'>,
 ) {
   return useMutation({
     mutationFn: (data: apiSpec.ChatMessageRequest) =>
@@ -99,7 +100,7 @@ export function useSendMessage(
 }
 
 export function useExecuteAction(
-  options?: UseMutationOptions<apiSpec.ExecuteActionResponse, Error, apiSpec.ExecuteActionRequest>,
+  options?: Omit<UseMutationOptions<apiSpec.ExecuteActionResponse, Error, apiSpec.ExecuteActionRequest>, 'mutationFn'>,
 ) {
   return useMutation({
     mutationFn: (data: apiSpec.ExecuteActionRequest) =>
@@ -113,7 +114,7 @@ export function useExecuteAction(
 }
 
 export function useDismissAction(
-  options?: UseMutationOptions<apiSpec.DismissActionResponse, Error, apiSpec.DismissActionRequest>,
+  options?: Omit<UseMutationOptions<apiSpec.DismissActionResponse, Error, apiSpec.DismissActionRequest>, 'mutationFn'>,
 ) {
   return useMutation({
     mutationFn: (data: apiSpec.DismissActionRequest) =>
@@ -127,11 +128,7 @@ export function useDismissAction(
 }
 
 export function useUpdateSettings(
-  options?: UseMutationOptions<
-    apiSpec.UpdateSettingsResponse,
-    Error,
-    apiSpec.UpdateSettingsRequest
-  >,
+  options?: Omit<UseMutationOptions<apiSpec.UpdateSettingsResponse, Error, apiSpec.UpdateSettingsRequest>, 'mutationFn'>,
 ) {
   return useMutation({
     mutationFn: (data: apiSpec.UpdateSettingsRequest) =>
@@ -145,7 +142,7 @@ export function useUpdateSettings(
 }
 
 export function useUpdateMemory(
-  options?: UseMutationOptions<apiSpec.UpdateMemoryResponse, Error, apiSpec.UpdateMemoryRequest>,
+  options?: Omit<UseMutationOptions<apiSpec.UpdateMemoryResponse, Error, apiSpec.UpdateMemoryRequest>, 'mutationFn'>,
 ) {
   return useMutation({
     mutationFn: (data: apiSpec.UpdateMemoryRequest) =>
@@ -159,11 +156,7 @@ export function useUpdateMemory(
 }
 
 export function useToggleProtocol(
-  options?: UseMutationOptions<
-    apiSpec.ToggleProtocolResponse,
-    Error,
-    apiSpec.ToggleProtocolRequest
-  >,
+  options?: Omit<UseMutationOptions<apiSpec.ToggleProtocolResponse, Error, apiSpec.ToggleProtocolRequest>, 'mutationFn'>,
 ) {
   return useMutation({
     mutationFn: (data: apiSpec.ToggleProtocolRequest) =>
@@ -177,7 +170,7 @@ export function useToggleProtocol(
 }
 
 export function useLogin(
-  options?: UseMutationOptions<apiSpec.LoginResponse, Error, apiSpec.LoginRequest>,
+  options?: Omit<UseMutationOptions<apiSpec.LoginResponse, Error, apiSpec.LoginRequest>, 'mutationFn'>,
 ) {
   return useMutation({
     mutationFn: (data: apiSpec.LoginRequest) =>
@@ -190,7 +183,7 @@ export function useLogin(
   });
 }
 
-export function useLogout(options?: UseMutationOptions<{ success: boolean }, Error, void>) {
+export function useLogout(options?: Omit<UseMutationOptions<{ success: boolean }, Error, void>, 'mutationFn'>) {
   return useMutation({
     mutationFn: () =>
       fetchApi<{ success: boolean }>('/api/auth/logout', {
@@ -202,9 +195,9 @@ export function useLogout(options?: UseMutationOptions<{ success: boolean }, Err
 }
 
 export function useWorkflows(
-  options?: UseQueryOptions<apiSpec.WorkflowsListResponse>
+  options?: Omit<UseQueryOptions<apiSpec.WorkflowsListResponse, Error, apiSpec.WorkflowsListResponse, string[]>, 'queryKey' | 'queryFn'>
 ) {
-  return useQuery<apiSpec.WorkflowsListResponse>({
+  return useQuery<apiSpec.WorkflowsListResponse, Error, apiSpec.WorkflowsListResponse, string[]>({
     queryKey: ['workflows'],
     queryFn: () => {
       return fetchApi<apiSpec.WorkflowsListResponse>('/api/workflows');
@@ -215,11 +208,7 @@ export function useWorkflows(
 
 export function useCreateWorkflow() {
   const queryClient = useQueryClient();
-  return useMutation<
-    apiSpec.CreateWorkflowResponse,
-    Error,
-    apiSpec.CreateWorkflowRequest
-  >({
+  return useMutation<apiSpec.CreateWorkflowResponse, Error, apiSpec.CreateWorkflowRequest>({
     mutationFn: (data) => {
       return fetchApi<apiSpec.CreateWorkflowResponse>('/api/workflows', {
         method: 'POST',
@@ -235,11 +224,7 @@ export function useCreateWorkflow() {
 
 export function useDeleteWorkflow() {
   const queryClient = useQueryClient();
-  return useMutation<
-    apiSpec.DeleteWorkflowResponse,
-    Error,
-    { workflowId: string }
-  >({
+  return useMutation<apiSpec.DeleteWorkflowResponse, Error, { workflowId: string }>({
     mutationFn: ({ workflowId }) => {
       return fetchApi<apiSpec.DeleteWorkflowResponse>(`/api/workflows/${workflowId}`, {
         method: 'DELETE',
