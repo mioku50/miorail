@@ -7,6 +7,7 @@
     "test": "tsx --test **/*.test.ts"
   },
   "dependencies": {
+    "@base-org/account": "^2.5.6",
     "@mioagent/db": "workspace:*",
     "@mioagent/llm": "workspace:*",
     "@mioagent/mcp": "workspace:*",
