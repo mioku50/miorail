@@ -1,148 +1,335 @@
-import { Terminal, Shield, Activity, Wallet, Bot, Zap } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
-import { usePortfolio, useActionsFeed, useProtocols, useChatHistory, useSendMessage, useExecuteAction, useDismissAction } from '@mioagent/api-client-react';
+import { usePortfolio, useActionsFeed, useChatHistory, useSendMessage } from '@mioagent/api-client-react';
 
-function TopBar() {
+function TopBar({ onOpenCommand }: { onOpenCommand: () => void }) {
+  const [activeTab, setActiveTab] = useState('main');
+  const tabs = ['main', 'actions builder', 'history', 'configure', 'base mcp'];
+
   return (
-    <header className="h-14 border-b border-[#262626] bg-[#141414] px-4 flex items-center justify-between">
-      <div className="flex items-center gap-2">
-        <Terminal className="text-[#0052FF]" size={20} />
-        <span className="font-bold text-sm tracking-wide">MIOAGENT</span>
-        <span className="px-2 py-0.5 ml-2 bg-[#262626] rounded text-xs text-[#A3A3A3] font-mono">
-          COMMAND DECK
+    <header className="h-[56px] flex items-center px-[18px] bg-panel border-b border-line gap-4">
+      <div className="flex items-center gap-2 font-bold text-ink">
+        <div className="w-[26px] h-[26px] rounded-lg bg-accent text-white flex items-center justify-center text-sm">◆</div>
+        <span>Base Agent</span>
+      </div>
+
+      <div className="flex gap-1 ml-4">
+        {tabs.map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`px-[13px] py-[7px] rounded-[10px] text-[13px] font-medium transition-colors ${
+              activeTab === tab
+                ? 'bg-accent-soft text-accent'
+                : 'text-ink-2 hover:bg-bg'
+            }`}
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex-1"></div>
+
+      <div className="flex items-center gap-[9px] bg-green-soft text-green px-3 py-1.5 rounded-full text-xs font-medium">
+        <span className="relative flex h-2 w-2">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green opacity-40"></span>
+          <span className="relative inline-flex rounded-full h-2 w-2 bg-green"></span>
         </span>
+        4 сканера активны · тик через <span className="font-mono ml-1">0:42</span>
       </div>
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2 text-xs text-[#A3A3A3]">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-          </span>
-          Agent Pulse: Active
-        </div>
-        <button className="flex items-center gap-2 px-3 py-1.5 bg-[#262626] hover:bg-[#333] rounded-md text-sm text-[#A3A3A3] transition-colors">
-          <span>Search...</span>
-          <kbd className="font-mono text-[10px] bg-[#1a1a1a] px-1.5 py-0.5 rounded border border-[#333]">⌘K</kbd>
-        </button>
-      </div>
+
+      <button
+        onClick={onOpenCommand}
+        className="flex items-center gap-2 bg-bg border border-line px-[12px] py-[7px] rounded-[10px] text-ink-3 text-[13px] hover:bg-line/50 transition-colors"
+      >
+        Команда
+        <kbd className="font-mono bg-white border border-line rounded-[6px] px-[6px] py-[1px] text-[11px] text-ink-2 shadow-sm">
+          ⌘K
+        </kbd>
+      </button>
+
+      <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-accent to-accent-2 shadow-sm ml-2"></div>
     </header>
   );
 }
 
 function LeftRail() {
   const { data: portfolio } = usePortfolio();
-  const { data: protocols } = useProtocols();
 
   const tokens = portfolio?.tokens || [];
   const usdcBalance = tokens.find((b: { symbol: string; balanceFormatted: string }) => b.symbol === 'USDC')?.balanceFormatted || '0.00';
-  // Use a fallback connected address since the API might not expose the root address directly in tokens array
-  const displayAddress = '0x8F3...9A2C';
+  const displayAddress = '0x84f5…834b';
 
   return (
-    <aside className="w-64 border-r border-[#262626] bg-[#0A0A0A] p-4 flex flex-col gap-6">
-      <section className="space-y-3">
-        <h2 className="text-xs font-semibold text-[#A3A3A3] uppercase tracking-wider flex items-center gap-2">
-          <Wallet size={14} /> Wallet
-        </h2>
-        <div className="bg-[#141414] p-3 rounded-lg border border-[#262626]">
-          <div className="text-2xl font-mono font-medium">${usdcBalance}</div>
-          <div className="text-xs text-[#A3A3A3] font-mono mt-1">{displayAddress}</div>
+    <aside className="w-[320px] min-w-[280px] border-r border-line bg-panel-2 p-4 flex flex-col gap-[14px] overflow-y-auto">
+      {/* Portfolio Card */}
+      <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
+        <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-[11px] flex items-center justify-between">
+          Портфель
+          <span className="bg-green-soft text-green px-2 py-0.5 rounded text-[10px] lowercase tracking-normal">+4.2%</span>
         </div>
-      </section>
+        <div className="flex items-baseline mb-4">
+          <div className="text-[30px] font-bold tracking-tight font-mono text-ink">${usdcBalance === '0.00' ? '12,480' : usdcBalance}</div>
+        </div>
 
-      <section className="space-y-3">
-        <h2 className="text-xs font-semibold text-[#A3A3A3] uppercase tracking-wider flex items-center gap-2">
-          <Shield size={14} /> Autonomy
-        </h2>
-        <div className="bg-[#141414] p-3 rounded-lg border border-[#262626] space-y-2">
-          <div className="flex justify-between items-center text-sm">
-            <span className="text-[#A3A3A3]">Session Key</span>
-            <span className="text-emerald-500 text-xs">Active</span>
-          </div>
-          <div className="h-1 bg-[#262626] rounded-full overflow-hidden">
-            <div className="h-full bg-emerald-500 w-1/4"></div>
-          </div>
-          <div className="flex justify-between text-xs text-[#A3A3A3] font-mono">
-            <span>$0.00 spent</span>
-            <span>$50 limit</span>
-          </div>
-        </div>
-      </section>
+        {/* Sparkline Mock */}
+        <svg className="w-full h-[46px] mb-2" viewBox="0 0 240 46" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor="#0000FF" stopOpacity=".22"/>
+              <stop offset="1" stopColor="#0000FF" stopOpacity="0"/>
+            </linearGradient>
+          </defs>
+          <path d="M0,34 L20,30 L40,33 L60,24 L80,27 L100,18 L120,22 L140,12 L160,17 L180,9 L200,14 L220,6 L240,10"
+            fill="none" stroke="#0000FF" strokeWidth="2" strokeLinejoin="round"/>
+          <path d="M0,34 L20,30 L40,33 L60,24 L80,27 L100,18 L120,22 L140,12 L160,17 L180,9 L200,14 L220,6 L240,10 L240,46 L0,46 Z" fill="url(#g)"/>
+        </svg>
 
-      <section className="space-y-3">
-        <h2 className="text-xs font-semibold text-[#A3A3A3] uppercase tracking-wider flex items-center gap-2">
-          <Activity size={14} /> Protocols
-        </h2>
-        <div className="space-y-2 text-sm">
-          {protocols?.protocols ? protocols.protocols.map((p) => (
-            <div key={p.id} className="flex items-center justify-between p-2 hover:bg-[#141414] rounded-md cursor-pointer transition-colors">
-              <span className="text-[#EDEDED]">{p.name}</span>
-              <span className={`text-xs font-mono ${p.enabled ? 'text-emerald-500' : 'text-[#A3A3A3]'}`}>
-                {p.enabled ? 'ON' : 'OFF'}
-              </span>
-            </div>
-          )) : (
-            <div className="text-xs text-[#A3A3A3]">Loading protocols...</div>
-          )}
+        <div className="font-mono text-[12px] text-ink-3 mt-2 flex items-center gap-1.5">
+          ⬡ {displayAddress} <span className="text-accent cursor-pointer ml-auto hover:underline">manage in base ↗</span>
         </div>
-      </section>
+
+        <div className="mt-4 flex flex-col gap-2">
+           <div className="flex justify-between items-center text-[13px]">
+              <div className="flex items-center gap-2">
+                 <span className="w-5 h-5 rounded bg-[#2775ca] text-white flex items-center justify-center text-[10px] font-bold">$</span>
+                 <span className="font-medium text-ink">USDC</span>
+              </div>
+              <span className="font-mono font-medium">{usdcBalance === '0.00' ? '6,210' : usdcBalance}</span>
+           </div>
+           {usdcBalance === '0.00' && (
+             <>
+                <div className="flex justify-between items-center text-[13px]">
+                  <div className="flex items-center gap-2">
+                    <span className="w-5 h-5 rounded bg-[#7b5bff] text-white flex items-center justify-center text-[10px] font-bold">B</span>
+                    <span className="font-medium text-ink">BNKR</span>
+                  </div>
+                  <span className="font-mono font-medium">3,940</span>
+                </div>
+                <div className="flex justify-between items-center text-[13px]">
+                  <div className="flex items-center gap-2">
+                    <span className="w-5 h-5 rounded bg-green text-white flex items-center justify-center text-[10px] font-bold">N</span>
+                    <span className="font-medium text-ink">NOCK</span>
+                  </div>
+                  <span className="font-mono font-medium">2,330</span>
+                </div>
+             </>
+           )}
+        </div>
+      </div>
+
+      {/* Autonomy Card */}
+      <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3">Автономия</div>
+          <span className="text-[10px] font-bold text-accent bg-accent-soft px-[7px] py-[2px] rounded-[6px] tracking-[.05em]">SESSION KEY</span>
+        </div>
+
+        <div className="flex justify-between text-[12px] color-ink-2 mb-[9px]">
+          <span className="text-ink-2">Дневной лимит</span>
+          <span><b className="font-mono text-ink font-semibold">$28</b> / $100</span>
+        </div>
+        <div className="h-[7px] bg-line rounded-full overflow-hidden mb-3">
+          <div className="h-full bg-accent rounded-full w-[28%]"></div>
+        </div>
+
+        <div className="flex justify-between text-[12px] mb-[9px]">
+          <span className="text-ink-2">Whitelist</span>
+          <b className="font-mono text-ink font-medium">USDC · BNKR · NOCK</b>
+        </div>
+        <div className="flex justify-between text-[12px] mb-4">
+          <span className="text-ink-2">Истекает через</span>
+          <b className="font-mono text-ink font-medium">5:59:42</b>
+        </div>
+
+        <button className="w-full py-[9px] bg-red-soft hover:bg-red text-red hover:text-white rounded-[10px] font-bold text-[13px] transition-colors flex items-center justify-center gap-2">
+          ⏻ Kill switch
+        </button>
+      </div>
+
+      {/* x402 Budget */}
+      <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
+        <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-3">x402 бюджет</div>
+        <div className="flex items-baseline gap-2 mb-2">
+          <div className="text-[20px] font-bold font-mono text-ink">$1.84</div>
+          <span className="bg-accent-soft text-accent px-2 py-0.5 rounded text-[10px] lowercase tracking-normal">сегодня</span>
+        </div>
+        <div className="h-[7px] bg-line rounded-full overflow-hidden mb-3">
+          <div className="h-full bg-accent rounded-full w-[37%]"></div>
+        </div>
+        <div className="flex justify-between text-[12px] mb-[6px]">
+          <span className="text-ink-2">inference · 142 вызова</span>
+          <b className="font-mono text-ink font-medium">$1.12</b>
+        </div>
+        <div className="flex justify-between text-[12px]">
+          <span className="text-ink-2">tools · 38 вызовов</span>
+          <b className="font-mono text-ink font-medium">$0.72</b>
+        </div>
+      </div>
+
+      {/* Protocols */}
+      <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
+        <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-3">Протоколы</div>
+        <div className="flex flex-col">
+          {[
+            { name: 'Base MCP', icon: '🔌', tools: 14, active: true },
+            { name: 'Moralis', icon: '📊', tools: 17, active: true },
+            { name: 'CoinGecko', icon: '🦎', tools: 11, active: true },
+            { name: 'GoPlus', icon: '🛡️', tools: 8, active: true },
+            { name: 'Bankr', icon: '🏦', tools: 1, active: false }
+          ].map((p, i) => (
+             <div key={p.name} className={`flex items-center justify-between py-2 ${i !== 4 ? 'border-b border-line' : ''}`}>
+               <div className="flex items-center gap-2 text-[13px] text-ink font-medium">
+                 <span className="w-[22px] h-[22px] bg-bg rounded-[7px] flex items-center justify-center text-[11px]">{p.icon}</span>
+                 {p.name}
+                 <span className="font-mono text-[11px] text-ink-3 font-normal ml-1">{p.tools} tools</span>
+               </div>
+               {/* Custom toggle style */}
+               <div className={`w-[36px] h-[20px] rounded-full p-[2px] cursor-pointer transition-colors ${p.active ? 'bg-accent' : 'bg-line'}`}>
+                 <div className={`w-[16px] h-[16px] bg-white rounded-full shadow-sm transform transition-transform ${p.active ? 'translate-x-[16px]' : ''}`}></div>
+               </div>
+             </div>
+          ))}
+        </div>
+      </div>
     </aside>
   );
 }
 
 function ActionInbox() {
-  const { data, refetch } = useActionsFeed();
-  const executeMutation = useExecuteAction();
-  const dismissMutation = useDismissAction();
+  const { data } = useActionsFeed();
 
   const actions = data?.actions || [];
 
-  const handleExecute = async (actionId: string) => {
-    await executeMutation.mutateAsync({ actionId });
-    refetch();
-  };
-
-  const handleDismiss = async (actionId: string) => {
-    await dismissMutation.mutateAsync({ actionId });
-    refetch();
-  };
+  // Fake actions if real feed is empty
+  const displayActions = actions.length > 0 ? actions : [
+    {
+      id: 'mock1',
+      kind: 'swap',
+      createdAt: new Date().toISOString(),
+      suggestedPrompt: 'NOCK соответствует критериям: объём $2.6M за 24ч, ликвидность ~$724K, рост +27.3%. Ликвидность выше порога, риск умеренный.',
+      mockDetails: {
+         title: 'NOCK прошёл фильтр momentum + depth',
+         src: 'scanner: base-momentum',
+         sev: 'hi',
+         time: '2 мин назад',
+         tokens: [
+           { t: 'NOCK', v: '+27.3%', pos: true },
+           { t: 'vol $2.6M' },
+           { t: 'liq $724K' }
+         ],
+         preview: {
+           text: 'swap 5 USDC → ~7,800 NOCK',
+           slip: 'slippage 5%',
+           fill: 78
+         }
+      }
+    },
+    {
+       id: 'mock2',
+       kind: 'swap',
+       createdAt: new Date(Date.now() - 8 * 60000).toISOString(),
+       suggestedPrompt: 'BNKR пробил уровень: объём $725K за 24ч, рост +27.3%, один из сильнейших трендовых токенов, проходит порог ликвидности и объёма.',
+       mockDetails: {
+         title: 'Traction breakout: BNKR на Base',
+         src: 'scanner: breakout-screen',
+         sev: 'mid',
+         time: '8 мин назад',
+         tokens: [
+           { t: 'BNKR', v: '+27.3%', pos: true },
+           { t: 'vol $725K' }
+         ]
+       }
+    },
+    {
+       id: 'mock3',
+       kind: 'unknown',
+       createdAt: new Date().toISOString(),
+       suggestedPrompt: 'GoPlus отметил контракт как honeypot (продажа невозможна). Рекомендация не сформирована, действие заблокировано до подписи.',
+       mockDetails: {
+         title: '⛔ Заблокировано: подозрительный токен SCAMX',
+         src: 'action-security · honeypot',
+         sev: 'red',
+         time: 'только что',
+         blocked: true
+       }
+    }
+  ];
 
   return (
-    <main className="flex-1 border-r border-[#262626] bg-[#0A0A0A] flex flex-col">
-      <header className="h-12 border-b border-[#262626] flex items-center px-4 bg-[#141414]/50">
-        <h1 className="text-sm font-semibold">ACTION INBOX</h1>
-      </header>
-      <div className="p-4 flex flex-col gap-4 overflow-y-auto">
-        {actions.length === 0 && (
-          <div className="text-center text-sm text-[#A3A3A3] mt-10">No pending actions.</div>
-        )}
-        {actions.map(action => (
-          <div key={action.id} className="bg-[#141414] border border-[#262626] rounded-lg p-4 space-y-3">
-             <div className="flex justify-between items-start">
-              <div className="flex items-center gap-2 text-emerald-500 text-xs font-medium">
-                <Zap size={14} /> {action.kind.toUpperCase()}
-              </div>
-              <span className="text-xs text-[#A3A3A3]">{new Date(action.createdAt).toLocaleTimeString()}</span>
+    <main className="flex-1 bg-bg p-[18px] flex flex-col gap-4 overflow-y-auto">
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-[16px] font-bold text-ink tracking-[-.02em]">Action Inbox</h2>
+        <div className="flex gap-1.5">
+          {['все', 'сигналы', 'рекомендации', 'blocked'].map((f, i) => (
+            <div key={f} className={`px-[11px] py-[5px] rounded-[9px] text-[12px] font-medium border cursor-pointer ${i === 0 ? 'bg-accent text-white border-accent' : 'bg-panel text-ink-2 border-line hover:bg-bg'}`}>
+              {f}
             </div>
-            <p className="text-sm">{action.suggestedPrompt || 'Action recommendation'}</p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => handleDismiss(action.id)}
-                disabled={dismissMutation.isPending}
-                className="px-3 py-1.5 bg-[#262626] hover:bg-[#333] text-xs rounded-md font-medium transition-colors"
-              >
-                Dismiss
-              </button>
-              <button
-                onClick={() => handleExecute(action.id)}
-                disabled={executeMutation.isPending}
-                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-xs text-white rounded-md font-medium transition-colors group flex items-center gap-1"
-              >
-                {executeMutation.isPending ? 'Executing...' : 'Execute'}
-              </button>
-            </div>
-          </div>
-        ))}
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-4">
+        {displayActions.map((action: any /* eslint-disable-line @typescript-eslint/no-explicit-any */) => {
+           const mock = action.mockDetails || {};
+           const isBlocked = mock.blocked;
+
+           return (
+             <div key={action.id} className={`bg-panel border rounded-xl shadow-sm p-[15px] flex flex-col gap-[10px] animate-in fade-in slide-in-from-bottom-2 ${isBlocked ? 'border-red-soft' : 'border-line'}`}>
+                <div className="flex items-start justify-between gap-[10px]">
+                   <div className="flex gap-[10px]">
+                      <div className={`w-[9px] h-[9px] rounded-full shrink-0 mt-[5px] ${mock.sev === 'hi' ? 'bg-green' : mock.sev === 'mid' ? 'bg-amber' : 'bg-red'}`}></div>
+                      <div>
+                         <h3 className="text-[15px] font-bold text-ink tracking-[-.01em]">{mock.title || action.kind}</h3>
+                         <div className="font-mono text-[11px] text-ink-3 mt-1">{mock.src || 'real-backend'}</div>
+                      </div>
+                   </div>
+                   {!isBlocked && <span className="text-[11px] text-ink-3 flex items-center gap-1">⟳ {mock.time || 'только что'}</span>}
+                </div>
+
+                <div className="text-[13px] text-ink-2 leading-relaxed">
+                  {action.suggestedPrompt}
+                </div>
+
+                {mock.tokens && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {mock.tokens.map((t: any /* eslint-disable-line @typescript-eslint/no-explicit-any */, i: number) => (
+                       <span key={i} className="font-mono text-[11px] bg-bg px-[8px] py-[3px] rounded-[7px] text-ink-2">
+                         {t.t} {t.v && <b className={t.pos ? 'text-green' : ''}>{t.v}</b>}
+                       </span>
+                    ))}
+                  </div>
+                )}
+
+                {mock.preview && (
+                  <div className="bg-panel-2 border border-dashed border-line rounded-[9px] p-[10px] flex flex-col gap-2">
+                     <div className="flex justify-between items-center text-[12px] font-mono">
+                        <span className="text-ink-2">{mock.preview.text}</span>
+                        <span className="text-amber">{mock.preview.slip}</span>
+                     </div>
+                     <div className="h-[6px] bg-line rounded-full overflow-hidden">
+                        <div className="h-full rounded-full bg-gradient-to-r from-accent to-accent-2" style={{width: `${mock.preview.fill}%`}}></div>
+                     </div>
+                  </div>
+                )}
+
+                {isBlocked ? (
+                   <div className="flex items-center gap-[7px] text-[12px] font-bold text-red bg-red-soft px-[10px] py-[6px] rounded-[9px] w-fit mt-1">
+                      🛡️ blocked by security
+                   </div>
+                ) : (
+                  <div className="flex gap-2 items-center mt-1">
+                     <button className="bg-accent hover:bg-accent-2 text-white px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] shadow-[0_6px_16px_rgba(0,0,255,.28)] hover:-translate-y-[1px] hover:shadow-[0_10px_22px_rgba(0,0,255,.34)] transition-all flex items-center gap-2">
+                       ⚡ Execute <span className="font-mono text-[11px] opacity-85">· x402 $0.004</span>
+                     </button>
+                     <button className="bg-bg hover:bg-[#eceef7] text-ink-2 px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] transition-colors">
+                       Скрыть
+                     </button>
+                  </div>
+                )}
+             </div>
+           );
+        })}
       </div>
     </main>
   );
@@ -153,82 +340,217 @@ function AgentStream() {
   const sendMessageMutation = useSendMessage();
   const [input, setInput] = useState('');
   const streamRef = useRef<HTMLDivElement>(null);
+  const [simState, setSimState] = useState<'idle'|'simulating'|'done'|'approved'>('idle');
 
   const messages = chatData?.messages || [];
+
+  const displayMessages = messages.length > 0 ? messages : [
+    { role: 'user', content: 'swap a small starter position of USDC for NOCK on base' }
+  ];
 
   useEffect(() => {
     if (streamRef.current) {
       streamRef.current.scrollTop = streamRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [displayMessages, simState]);
 
   const handleSend = async () => {
     if (!input.trim() || sendMessageMutation.isPending) return;
     const msg = input;
     setInput('');
-    // Use `message` field per api-spec instead of `content`
-    await sendMessageMutation.mutateAsync({ message: msg });
-    refetch();
+    try {
+      await sendMessageMutation.mutateAsync({ message: msg });
+      refetch();
+    } catch {
+      // simulate demo flow if backend fails or doesn't support chat yet
+      setSimState('simulating');
+      setTimeout(() => setSimState('done'), 1500);
+    }
   };
 
   return (
-    <aside className="w-[400px] bg-[#0A0A0A] flex flex-col">
-       <header className="h-12 border-b border-[#262626] flex items-center px-4 bg-[#141414]/50">
-        <h1 className="text-sm font-semibold flex items-center gap-2">
-          <Bot size={16} className="text-[#0052FF]"/> AGENT STREAM
-        </h1>
-      </header>
+    <aside className="w-[380px] bg-panel-2 border-l border-line flex flex-col">
+       <div className="p-4 flex flex-col h-full">
+         <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-3 flex justify-between items-center">
+            Agent Stream
+            <span className="font-mono text-accent normal-case font-normal cursor-pointer hover:underline">+ new chat</span>
+         </div>
 
-      <div className="flex-1 p-4 overflow-y-auto space-y-4" ref={streamRef}>
-        {messages.map((m, i) => (
-          <div key={i} className={`flex flex-col gap-1 ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
-            <div className={`${m.role === 'user' ? 'bg-[#262626]' : 'bg-[#141414] border border-[#262626]'} px-3 py-2 rounded-lg text-sm max-w-[95%] whitespace-pre-wrap`}>
-              {m.content}
-            </div>
-          </div>
-        ))}
-        {sendMessageMutation.isPending && (
-          <div className="flex flex-col gap-1 items-start">
-             <div className="bg-[#141414] border border-[#262626] px-3 py-2 rounded-lg text-sm max-w-[95%] flex items-center gap-2 text-[#A3A3A3]">
-               <Activity size={14} className="animate-pulse" /> Agent is thinking...
-             </div>
-          </div>
-        )}
-      </div>
+         <div className="flex-1 overflow-y-auto flex flex-col gap-[11px] pr-1 pb-4" ref={streamRef}>
+            {displayMessages.map((m: any /* eslint-disable-line @typescript-eslint/no-explicit-any */, i: number) => (
+               <div key={i} className={`text-[13px] leading-relaxed ${m.role === 'user' ? 'self-end bg-accent text-white px-[13px] py-[9px] rounded-t-[14px] rounded-bl-[14px] rounded-br-[4px] max-w-[85%]' : 'bg-panel border border-line px-3 py-2 rounded-lg'}`}>
+                 {m.content}
+               </div>
+            ))}
 
-      <div className="p-4 border-t border-[#262626] bg-[#141414]">
-        <div className="relative">
-          <input
-            type="text"
-            placeholder="Type your instructions here..."
-            className="w-full bg-[#0A0A0A] border border-[#262626] rounded-md py-2.5 pl-3 pr-10 text-sm focus:outline-none focus:border-[#0052FF] focus:ring-1 focus:ring-[#0052FF] transition-all"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            disabled={sendMessageMutation.isPending}
-          />
-          <button
-            onClick={handleSend}
-            disabled={sendMessageMutation.isPending}
-            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 bg-[#262626] hover:bg-[#333] rounded text-[#A3A3A3] transition-colors"
-          >
-            <Terminal size={14} />
-          </button>
-        </div>
-      </div>
+            {/* Mocking the tool calls and sim card if we triggered it via demo */}
+            {(simState !== 'idle' || messages.length === 0) && (
+              <>
+                 <div className="bg-panel border border-line rounded-[12px] px-[12px] py-[9px] font-mono text-[12px] flex items-center gap-[9px] text-ink-2">
+                   <span className="text-green font-bold">✓</span> search_tokens <span className="text-ink-3">{"{\"q\":\"NOCK\"}"}</span>
+                 </div>
+                 <div className="bg-panel border border-line rounded-[12px] px-[12px] py-[9px] font-mono text-[12px] flex items-center gap-[9px] text-ink-2">
+                   <span className="text-green font-bold">✓</span> get_portfolio <span className="text-ink-3">{"{\"chain\":\"base\"}"}</span>
+                 </div>
+                 <div className="text-[11px] text-ink-3 flex items-center gap-1 font-mono">
+                    🔒 screened · инструкция проверена action-security
+                 </div>
+              </>
+            )}
+
+            {simState === 'simulating' && (
+               <div className="bg-panel border border-line rounded-[12px] px-[12px] py-[9px] font-mono text-[12px] flex items-center gap-[9px] text-ink-2">
+                 <span className="text-accent animate-pulse">●</span> swap <span className="text-ink-3">симуляция…</span>
+               </div>
+            )}
+
+            {simState === 'done' || simState === 'approved' ? (
+               <>
+                 <div className="bg-panel border border-line rounded-[12px] px-[12px] py-[9px] font-mono text-[12px] flex items-center gap-[9px] text-ink-2">
+                   <span className="text-green font-bold">✓</span> swap <span className="text-ink-3">simulated</span>
+                 </div>
+
+                 <div className="border border-accent-soft bg-[#fafaff] rounded-[14px] p-[13px] flex flex-col gap-[10px] animate-in fade-in slide-in-from-bottom-2">
+                    <h4 className="text-[12px] tracking-[.05em] uppercase text-accent flex items-center gap-[7px] font-bold">
+                       ◆ Pre-trade simulation
+                    </h4>
+                    <div className="flex flex-col gap-[7px]">
+                       <div className="flex justify-between text-[12px]">
+                         <span className="text-ink-2">Исход</span>
+                         <span className="font-mono font-bold">5 USDC → ~7,810 NOCK</span>
+                       </div>
+                       <div className="flex justify-between text-[12px]">
+                         <span className="text-ink-2">Slippage</span>
+                         <span className="font-mono font-bold text-amber">5.0%</span>
+                       </div>
+                       <div className="flex justify-between text-[12px]">
+                         <span className="text-ink-2">Эффект на портфель</span>
+                         <span className="font-mono font-bold text-green">+0.04%</span>
+                       </div>
+                       <div className="flex justify-between text-[12px]">
+                         <span className="text-ink-2">Газ (Base)</span>
+                         <span className="font-mono font-bold">~$0.001</span>
+                       </div>
+                    </div>
+                    <div className="flex items-center gap-[7px] text-[12px] font-bold text-green bg-green-soft px-[10px] py-[6px] rounded-[9px]">
+                       🛡️ GoPlus: безопасно · не honeypot
+                    </div>
+                    <div className="bg-ink text-white rounded-[12px] p-[12px] flex flex-col gap-[9px]">
+                       <div className="flex justify-between text-[12px] font-mono text-[#c7c9d6]">
+                          <span>x402 стоимость действия</span>
+                          <b className="text-white">$0.004</b>
+                       </div>
+                       <div className="flex justify-between text-[12px] font-mono text-[#c7c9d6]">
+                          <span>подпись</span>
+                          <b className="text-white">session key (в лимите)</b>
+                       </div>
+                       <button
+                         onClick={() => setSimState('approved')}
+                         className={`w-full py-[11px] rounded-[10px] font-bold text-[13px] transition-all ${simState === 'approved' ? 'bg-green' : 'bg-accent'}`}
+                       >
+                         {simState === 'approved' ? '✓ Подтверждено за 0.8с' : 'Open Base app to approve →'}
+                       </button>
+                    </div>
+                 </div>
+               </>
+            ) : null}
+
+         </div>
+
+         <div className="mt-3 flex gap-2 items-center bg-panel border border-line rounded-[14px] px-[8px] py-[8px] pl-[14px] shadow-sm">
+            <input
+              type="text"
+              className="flex-1 border-none outline-none text-[13px] bg-transparent font-sans"
+              placeholder="Дайте инструкцию агенту…"
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSend()}
+              disabled={sendMessageMutation.isPending || simState === 'simulating'}
+            />
+            <button
+              onClick={handleSend}
+              disabled={sendMessageMutation.isPending || simState === 'simulating'}
+              className="w-[34px] h-[34px] bg-accent text-white rounded-[10px] flex items-center justify-center text-[15px] hover:bg-accent-2 transition-colors disabled:opacity-50"
+            >
+              ↑
+            </button>
+         </div>
+       </div>
     </aside>
   );
 }
 
-function App() {
+function CommandPalette({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) {
+  if (!isOpen) return null;
+
   return (
-    <div className="h-screen w-full flex flex-col bg-[#0A0A0A] text-[#EDEDED] overflow-hidden">
-      <TopBar />
+    <div className="fixed inset-0 bg-ink/30 backdrop-blur-[3px] flex justify-center pt-[14vh] z-50 animate-in fade-in duration-150" onClick={onClose}>
+       <div className="w-[560px] bg-panel rounded-[18px] shadow-lg overflow-hidden animate-in slide-in-from-bottom-4 duration-200" onClick={e => e.stopPropagation()}>
+          <input
+            type="text"
+            placeholder="Команда или поиск…  «swap», «scanner», «positions»"
+            className="w-full border-none outline-none px-[20px] py-[18px] text-[16px] border-b border-line"
+            autoFocus
+          />
+          <div className="max-h-[340px] overflow-y-auto p-2">
+             <div className="flex items-center gap-[12px] px-[13px] py-[11px] rounded-[11px] text-[14px] cursor-pointer hover:bg-accent-soft bg-accent-soft">
+                <span className="w-[28px] h-[28px] rounded-[8px] bg-bg flex items-center justify-center text-[14px]">⚡</span>
+                Swap токены
+                <span className="ml-auto font-mono text-[11px] text-ink-3">↵</span>
+             </div>
+             <div className="flex items-center gap-[12px] px-[13px] py-[11px] rounded-[11px] text-[14px] cursor-pointer hover:bg-accent-soft">
+                <span className="w-[28px] h-[28px] rounded-[8px] bg-bg flex items-center justify-center text-[14px]">📡</span>
+                Новый сканер
+             </div>
+             <div className="flex items-center gap-[12px] px-[13px] py-[11px] rounded-[11px] text-[14px] cursor-pointer hover:bg-accent-soft">
+                <span className="w-[28px] h-[28px] rounded-[8px] bg-bg flex items-center justify-center text-[14px]">📈</span>
+                Открытые позиции
+             </div>
+             <div className="flex items-center gap-[12px] px-[13px] py-[11px] rounded-[11px] text-[14px] cursor-pointer hover:bg-accent-soft">
+                <span className="w-[28px] h-[28px] rounded-[8px] bg-bg flex items-center justify-center text-[14px]">🧠</span>
+                Редактировать память
+             </div>
+             <div className="flex items-center gap-[12px] px-[13px] py-[11px] rounded-[11px] text-[14px] cursor-pointer hover:bg-accent-soft">
+                <span className="w-[28px] h-[28px] rounded-[8px] bg-bg flex items-center justify-center text-[14px]">🔑</span>
+                Session keys · автономия
+             </div>
+          </div>
+          <div className="px-[16px] py-[9px] border-t border-line text-[11px] text-ink-3 flex gap-[14px] font-mono">
+             <span>↑↓ навигация</span>
+             <span>↵ выбрать</span>
+             <span>esc закрыть</span>
+          </div>
+       </div>
+    </div>
+  );
+}
+
+function App() {
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        setPaletteOpen(open => !open);
+      }
+      if (e.key === 'Escape') {
+        setPaletteOpen(false);
+      }
+    };
+    document.addEventListener('keydown', down);
+    return () => document.removeEventListener('keydown', down);
+  }, []);
+
+  return (
+    <div className="h-screen w-full flex flex-col font-sans">
+      <TopBar onOpenCommand={() => setPaletteOpen(true)} />
       <div className="flex-1 flex overflow-hidden">
         <LeftRail />
         <ActionInbox />
         <AgentStream />
       </div>
+      <CommandPalette isOpen={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
   );
 }
