@@ -34,7 +34,7 @@ function LeftRail() {
   const { data: protocols } = useProtocols();
 
   const tokens = portfolio?.tokens || [];
-  const usdcBalance = tokens.find((b: any) => b.symbol === 'USDC')?.balanceFormatted || '0.00';
+  const usdcBalance = tokens.find((b: { symbol: string; balanceFormatted: string }) => b.symbol === 'USDC')?.balanceFormatted || '0.00';
   // Use a fallback connected address since the API might not expose the root address directly in tokens array
   const displayAddress = '0x8F3...9A2C';
 
