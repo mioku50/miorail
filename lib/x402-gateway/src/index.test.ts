@@ -10,8 +10,8 @@ describe('x402-gateway', () => {
       {
         amount: '1000000',
         payTo: '0x1234',
-        asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-        network: '8453',
+        asset: '0x036cbd53842c5426634e7929541ec2318f3dcf7e', // USDC on Base Sepolia
+        network: '84532', // Base Sepolia
       }
     ]
   };
