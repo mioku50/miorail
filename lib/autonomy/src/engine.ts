@@ -27,7 +27,7 @@ export class AutonomyEngine {
     permissionId: string,
     calls: Call[],
     cost: number = 0
-  ): Promise<{ success: boolean; sendCallsRequest?: any; error?: string }> {
+  ): Promise<{ success: boolean; sendCallsRequest?: unknown; error?: string }> {
     const perm = this.permissions.get(permissionId);
 
     if (!perm) {
@@ -71,8 +71,11 @@ export class AutonomyEngine {
         }));
 
         executionCalls = [...mappedChargeCalls, ...executionCalls];
-      } catch (err: any) {
-        return { success: false, error: `Failed to prepare spend permission charge: ${err.message}` };
+      } catch (err: unknown) {
+        if (err instanceof Error) {
+            return { success: false, error: `Failed to prepare spend permission charge: ${err.message}` };
+        }
+        return { success: false, error: `Failed to prepare spend permission charge: Unknown error` };
       }
     }
 

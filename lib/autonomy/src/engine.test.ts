@@ -2,6 +2,7 @@ import test, { mock } from 'node:test';
 import assert from 'node:assert';
 import { base } from '@base-org/account';
 import { AutonomyEngine } from './engine';
+import { Call } from './types';
 
 test('AutonomyEngine execution preparation (no cost)', async () => {
   const engine = new AutonomyEngine();
@@ -50,8 +51,8 @@ test('AutonomyEngine base.subscription integration with cost', async (t) => {
   });
 
   const mockGetStatus = mock.method(base.subscription, 'getStatus', async () => ({ isSubscribed: true }));
-  const mockPrepareCharge = mock.method(base.subscription, 'prepareCharge', async (opts: any) => [{ to: '0xcharge', data: '0x' + opts.amount, value: '0' }]);
-  const mockPrepareRevoke = mock.method(base.subscription, 'prepareRevoke', async () => ({ to: '0xrevoke', data: '0x', value: '0' }));
+  const mockPrepareCharge = mock.method(base.subscription, 'prepareCharge', async (opts: { id: string; amount: string; testnet: boolean }) => [{ to: '0xcharge', data: '0x' + opts.amount, value: 0n }]);
+  const mockPrepareRevoke = mock.method(base.subscription, 'prepareRevoke', async () => ({ to: '0xrevoke', data: '0x', value: 0n }));
 
   t.after(() => {
     mockGetStatus.mock.restore();
@@ -61,7 +62,7 @@ test('AutonomyEngine base.subscription integration with cost', async (t) => {
 
   const res = await engine.validateAndPrepareExecution('sub1', [{ to: '0xallowed', data: '0x', value: '0' }], 50);
   assert.strictEqual(res.success, true);
-  assert.deepStrictEqual(res.sendCallsRequest.calls, [
+  assert.deepStrictEqual((res.sendCallsRequest as { calls: Call[] }).calls, [
     { to: '0xcharge', data: '0x50', value: '0' },
     { to: '0xallowed', data: '0x', value: '0' }
   ]);
@@ -72,5 +73,5 @@ test('AutonomyEngine base.subscription integration with cost', async (t) => {
   assert.deepStrictEqual(status, { isSubscribed: true });
 
   const revoke = await engine.prepareSubscriptionRevoke('sub1');
-  assert.deepStrictEqual(revoke, { to: '0xrevoke', data: '0x', value: '0' });
+  assert.deepStrictEqual(revoke, { to: '0xrevoke', data: '0x', value: 0n });
 });
