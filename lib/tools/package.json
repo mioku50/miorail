@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@mioagent/data-providers": "workspace:*",
-    "@mioagent/mcp": "workspace:*"
+    "@mioagent/mcp": "workspace:*",
+    "@mioagent/settings": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.22.4",
