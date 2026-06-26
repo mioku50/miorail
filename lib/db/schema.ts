@@ -84,3 +84,16 @@ export const x402Receipts = pgTable('x402_receipts', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
+
+export const auditLogs = pgTable('audit_logs', {
+  id: text('id').primaryKey(),
+  userId: text('user_id')
+    .references(() => users.id)
+    .notNull(),
+  actionId: text('action_id').notNull(),
+  actionType: text('action_type').notNull(),
+  details: jsonb('details'),
+  cost: text('cost'),
+  txHash: text('tx_hash'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
