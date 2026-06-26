@@ -1,3 +1,4 @@
+import { base } from '@base-org/account';
 import { SpendPermission, Call } from './types';
 
 export class AutonomyEngine {
@@ -19,8 +20,14 @@ export class AutonomyEngine {
     }
   }
 
-  // Simplified logic for mock signer, returns a mock approval or throws
-  validateAndSign(permissionId: string, calls: Call[], cost: number = 0): { success: boolean; mockSignature?: string; error?: string } {
+  // Prepares execution for autonomous actions within boundaries, integrating
+  // actual Base Spend Permissions (subscriptions) for billing, and returning
+  // a valid EIP-5792 batch for Base Sepolia (0x14a34) execution.
+  async validateAndPrepareExecution(
+    permissionId: string,
+    calls: Call[],
+    cost: number = 0
+  ): Promise<{ success: boolean; sendCallsRequest?: any; error?: string }> {
     const perm = this.permissions.get(permissionId);
 
     if (!perm) {
@@ -45,10 +52,42 @@ export class AutonomyEngine {
       }
     }
 
-    // Mock signing execution
+    let executionCalls = [...calls];
+
+    // Integrate real Spend Permissions: prepare a charge against the subscription
+    if (cost > 0) {
+      try {
+        const chargeCalls = await base.subscription.prepareCharge({
+          id: permissionId,
+          amount: cost.toString(),
+          testnet: true // Enforce Sepolia testnet
+        });
+        executionCalls = [...chargeCalls, ...executionCalls];
+      } catch (err: any) {
+        return { success: false, error: `Failed to prepare spend permission charge: ${err.message}` };
+      }
+    }
+
     perm.spent += cost;
     this.permissions.set(permissionId, perm);
 
-    return { success: true, mockSignature: '0xmocksignature' + Date.now().toString(16) };
+    return {
+      success: true,
+      sendCallsRequest: {
+        version: '2.0.0',
+        from: perm.userId,
+        chainId: '0x14a34', // Base Sepolia
+        atomicRequired: true,
+        calls: executionCalls
+      }
+    };
+  }
+
+  async getSubscriptionStatus(subscriptionId: string, testnet: boolean = true) {
+    return await base.subscription.getStatus({ id: subscriptionId, testnet });
+  }
+
+  async prepareSubscriptionRevoke(subscriptionId: string, testnet: boolean = true) {
+    return await base.subscription.prepareRevoke({ id: subscriptionId, testnet });
   }
 }
