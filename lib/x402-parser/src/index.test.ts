@@ -9,8 +9,8 @@ describe('x402-parser', () => {
         {
           amount: '1.50',
           payTo: '0x1234567890123456789012345678901234567890',
-          asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC on Base
-          network: '8453',
+          asset: '0x036cbd53842c5426634e7929541ec2318f3dcf7e', // USDC on Base Sepolia
+          network: '84532',
         }
       ]
     };
@@ -25,8 +25,8 @@ describe('x402-parser', () => {
         {
           amount: '5.00',
           payTo: '0x0987654321098765432109876543210987654321',
-          asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-          network: '8453',
+          asset: '0x036cbd53842c5426634e7929541ec2318f3dcf7e', // USDC on Base Sepolia
+          network: '84532',
           version: '1.0',
         }
       ]
@@ -41,7 +41,7 @@ describe('x402-parser', () => {
       accepts: [
         {
           // missing amount, etc
-          network: '8453',
+          network: '84532',
         }
       ]
     };

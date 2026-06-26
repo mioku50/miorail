@@ -8,8 +8,8 @@ const paymentRequired = {
     {
       amount: '1000000', // 1 USDC
       payTo: '0x1234567890123456789012345678901234567890',
-      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC on Base
-      network: '8453', // Base Mainnet
+      asset: '0x036cbd53842c5426634e7929541ec2318f3dcf7e', // USDC on Base Sepolia
+      network: '84532', // Base Sepolia
     }
   ]
 };
