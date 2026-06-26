@@ -9,6 +9,19 @@ export class McpSendCallsClient {
   constructor(private client: BaseMcpClient) {}
 
   async sendCalls(chain: string, calls: { to: string; value?: string; data?: string }[]): Promise<SendCallsResponse> {
+    if (chain !== 'eip155:84532' && chain !== '84532' && chain !== 'base') {
+      throw new Error('Security check failed: Unsupported chain');
+    }
+
+    const canonicalUSDC = '0x036cbd53842c5426634e7929541ec2318f3dcf7e';
+    for (const call of calls) {
+      if (call.data && (call.data.toLowerCase().startsWith('0x095ea7b3') || call.data.toLowerCase().startsWith('0xa9059cbb'))) {
+        if (call.to.toLowerCase() !== canonicalUSDC) {
+          throw new Error('Security check failed: Invalid token address. Only canonical USDC on Base Sepolia is supported.');
+        }
+      }
+    }
+
     const result = await this.client.getClient().callTool({
       name: "send_calls",
       arguments: { chain, calls }
