@@ -2,6 +2,11 @@ import { useState, useRef, useEffect } from 'react';
 import { usePortfolio, useActionsFeed, useChatHistory, useSendMessage, useProtocols, useToggleProtocol, useExecuteAction, useDismissAction } from '@mioagent/api-client-react';
 
 function TopBar({ activeTab, setActiveTab, onOpenCommand }: { activeTab: string; setActiveTab: (t: string) => void; onOpenCommand: () => void }) {
+     const [tick, setTick] = useState(42);
+     useEffect(() => {
+       const timer = setInterval(() => setTick(t => t <= 0 ? 59 : t - 1), 1000);
+       return () => clearInterval(timer);
+     }, []);
   const tabs = ['main', 'actions builder', 'history', 'configure', 'base mcp'];
 
   return (
@@ -34,7 +39,7 @@ function TopBar({ activeTab, setActiveTab, onOpenCommand }: { activeTab: string;
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green opacity-40"></span>
           <span className="relative inline-flex rounded-full h-2 w-2 bg-green"></span>
         </span>
-        4 сканера активны · тик через <span className="font-mono ml-1">0:42</span>
+        4 сканера активны · тик через <span className="font-mono ml-1">{`0:${String(tick).padStart(2, "0")}`}</span>
       </div>
 
       <button
@@ -52,7 +57,7 @@ function TopBar({ activeTab, setActiveTab, onOpenCommand }: { activeTab: string;
   );
 }
 
-function LeftRail() {
+function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
   const { data: portfolio, isError: isPortfolioError } = usePortfolio();
   const { data: protocolsData, isError: isProtocolsError } = useProtocols();
   const { mutate: toggleProtocol } = useToggleProtocol();
@@ -114,16 +119,26 @@ function LeftRail() {
       {/* Autonomy Card */}
       <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
         <div className="flex items-center justify-between mb-3">
-          <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3">Автономия</div>
+          <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3">Автономия <span className="lowercase font-normal tracking-normal text-ink-3/70 ml-1">(demo fixture)</span></div>
           <span className="text-[10px] font-bold text-accent bg-accent-soft px-[7px] py-[2px] rounded-[6px] tracking-[.05em]">SESSION KEY</span>
         </div>
-        <div className="text-[13px] text-ink-3 italic py-2">Coming soon</div>
+        <div className="flex justify-between text-[12px] text-ink-2 mb-2"><span>Дневной лимит</span><span><b className="font-mono text-ink">$28</b> / $100</span></div>
+        <div className="h-[7px] bg-line rounded-full overflow-hidden mb-1"><div className="h-full bg-accent" style={{width: "28%"}}></div></div>
+        <div className="flex justify-between text-[12px] text-ink-2 mt-[8px] mb-[9px]"><span>Whitelist</span><b className="font-mono text-ink">USDC · BNKR · NOCK</b></div>
+        <div className="flex justify-between text-[12px] text-ink-2 mb-[9px]"><span>Истекает через</span><b className="font-mono text-ink">5:59:42</b></div>
+        <button onClick={() => showToast("Автономия остановлена. Агент ждёт ручного подтверждения.")} className="w-full py-[9px] rounded-[10px] bg-red-soft text-red font-bold text-[13px] flex items-center justify-center gap-[7px] hover:bg-red hover:text-white transition-colors">⏻ Kill switch</button>
       </div>
 
       {/* x402 Budget */}
       <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
-        <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-3">x402 бюджет</div>
-        <div className="text-[13px] text-ink-3 italic py-2">Coming soon</div>
+        <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-3">x402 бюджет <span className="lowercase font-normal tracking-normal text-ink-3/70 ml-1">(demo fixture)</span></div>
+        <div className="flex items-baseline justify-between mb-2">
+           <div className="font-mono text-[20px] font-bold text-ink">$1.84</div>
+           <span className="text-[12px] font-bold bg-accent-soft text-accent px-[8px] py-[3px] rounded-[8px]">сегодня</span>
+        </div>
+        <div className="h-[7px] bg-line rounded-full overflow-hidden mb-[6px]"><div className="h-full bg-accent" style={{width: "37%"}}></div></div>
+        <div className="flex justify-between text-[12px] text-ink-2 mt-[6px] mb-[9px]"><span>inference · 142 вызова</span><b className="font-mono text-ink">$1.12</b></div>
+        <div className="flex justify-between text-[12px] text-ink-2"><span>tools · 38 вызовов</span><b className="font-mono text-ink">$0.72</b></div>
       </div>
 
       {/* Protocols */}
@@ -197,9 +212,14 @@ function ActionInbox() {
                    <span className="text-[11px] text-ink-3 flex items-center gap-1">⟳ {new Date(action.createdAt).toLocaleTimeString()}</span>
                 </div>
 
-                <div className="text-[13px] text-ink-2 leading-relaxed">
+                                <div className="text-[13px] text-ink-2 leading-relaxed">
                   {action.suggestedPrompt}
                 </div>
+                {action.status === "failed" && (
+                  <div className="flex items-center gap-[7px] text-[12px] font-bold text-red bg-red-soft px-[10px] py-[6px] rounded-[9px] mt-2 w-fit">
+                    🛡️ blocked by security
+                  </div>
+                )}
 
                 {action.tokens && action.tokens.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
@@ -464,7 +484,22 @@ function CommandPalette({ isOpen, onClose, onSelect }: { isOpen: boolean, onClos
   );
 }
 
-function App() {
+function Toast({ msg }: { msg: string }) {
+     if (!msg) return null;
+     return (
+       <div className="fixed bottom-[22px] left-1/2 -translate-x-1/2 bg-ink text-white px-[18px] py-[12px] rounded-[12px] text-[13px] font-medium flex items-center gap-[9px] z-[60] shadow-lg animate-in slide-in-from-bottom-4">
+         <span className="w-[9px] h-[9px] rounded-full bg-green"></span>
+         {msg}
+       </div>
+     );
+   }
+
+   function App() {
+     const [toastMsg, setToastMsg] = useState("");
+     const showToast = (msg: string) => {
+       setToastMsg(msg);
+       setTimeout(() => setToastMsg(""), 3200);
+     };
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('main');
 
@@ -486,7 +521,7 @@ function App() {
     <div className="h-screen w-full flex flex-col font-sans">
       <TopBar activeTab={activeTab} setActiveTab={setActiveTab} onOpenCommand={() => setPaletteOpen(true)} />
       <div className="flex-1 flex overflow-hidden">
-        <LeftRail />
+        <LeftRail showToast={showToast} />
         <ActionInbox />
         <AgentStream />
       </div>
@@ -498,6 +533,7 @@ function App() {
           setPaletteOpen(false);
         }}
       />
+      <Toast msg={toastMsg} />
     </div>
   );
 }
