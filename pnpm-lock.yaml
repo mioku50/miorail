@@ -23,6 +23,9 @@ importers:
       markdownlint-cli:
         specifier: ^0.49.0
         version: 0.49.0
+      playwright:
+        specifier: ^1.61.1
+        version: 1.61.1
       prettier:
         specifier: ^3.8.4
         version: 3.8.4
