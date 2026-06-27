@@ -1,8 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { usePortfolio, useActionsFeed, useChatHistory, useSendMessage, useProtocols, useToggleProtocol, useExecuteAction, useDismissAction } from '@mioagent/api-client-react';
 
-function TopBar({ onOpenCommand }: { onOpenCommand: () => void }) {
-  const [activeTab, setActiveTab] = useState('main');
+function TopBar({ activeTab, setActiveTab, onOpenCommand }: { activeTab: string; setActiveTab: (t: string) => void; onOpenCommand: () => void }) {
   const tabs = ['main', 'actions builder', 'history', 'configure', 'base mcp'];
 
   return (
@@ -383,7 +382,48 @@ function AgentStream() {
   );
 }
 
-function CommandPalette({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) {
+const COMMANDS = [
+  { id: 'swap', icon: '⚡', label: 'Swap токены', tab: 'actions builder' },
+  { id: 'scanner', icon: '📡', label: 'Новый сканер', tab: 'actions builder' },
+  { id: 'positions', icon: '📈', label: 'Открытые позиции', tab: 'main' },
+  { id: 'memory', icon: '🧠', label: 'Редактировать память', tab: 'history' },
+  { id: 'keys', icon: '🔑', label: 'Session keys · автономия', tab: 'configure' },
+];
+
+function CommandPalette({ isOpen, onClose, onSelect }: { isOpen: boolean, onClose: () => void, onSelect: (tab: string) => void }) {
+  const [query, setQuery] = useState('');
+  const [selectedIndex, setSelectedIndex] = useState(0);
+
+  useEffect(() => {
+    if (isOpen) {
+      setQuery('');
+      setSelectedIndex(0);
+    }
+  }, [isOpen]);
+
+  const filteredCommands = COMMANDS.filter(c => c.label.toLowerCase().includes(query.toLowerCase()) || c.id.toLowerCase().includes(query.toLowerCase()));
+
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [query]);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (filteredCommands.length === 0) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setSelectedIndex(i => (i + 1) % filteredCommands.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setSelectedIndex(i => (i - 1 + filteredCommands.length) % filteredCommands.length);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (filteredCommands[selectedIndex]) {
+        onSelect(filteredCommands[selectedIndex].tab);
+      }
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -394,29 +434,25 @@ function CommandPalette({ isOpen, onClose }: { isOpen: boolean, onClose: () => v
             placeholder="Команда или поиск…  «swap», «scanner», «positions»"
             className="w-full border-none outline-none px-[20px] py-[18px] text-[16px] border-b border-line"
             autoFocus
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            onKeyDown={handleKeyDown}
           />
           <div className="max-h-[340px] overflow-y-auto p-2">
-             <div className="flex items-center gap-[12px] px-[13px] py-[11px] rounded-[11px] text-[14px] cursor-pointer hover:bg-accent-soft bg-accent-soft">
-                <span className="w-[28px] h-[28px] rounded-[8px] bg-bg flex items-center justify-center text-[14px]">⚡</span>
-                Swap токены
-                <span className="ml-auto font-mono text-[11px] text-ink-3">↵</span>
-             </div>
-             <div className="flex items-center gap-[12px] px-[13px] py-[11px] rounded-[11px] text-[14px] cursor-pointer hover:bg-accent-soft">
-                <span className="w-[28px] h-[28px] rounded-[8px] bg-bg flex items-center justify-center text-[14px]">📡</span>
-                Новый сканер
-             </div>
-             <div className="flex items-center gap-[12px] px-[13px] py-[11px] rounded-[11px] text-[14px] cursor-pointer hover:bg-accent-soft">
-                <span className="w-[28px] h-[28px] rounded-[8px] bg-bg flex items-center justify-center text-[14px]">📈</span>
-                Открытые позиции
-             </div>
-             <div className="flex items-center gap-[12px] px-[13px] py-[11px] rounded-[11px] text-[14px] cursor-pointer hover:bg-accent-soft">
-                <span className="w-[28px] h-[28px] rounded-[8px] bg-bg flex items-center justify-center text-[14px]">🧠</span>
-                Редактировать память
-             </div>
-             <div className="flex items-center gap-[12px] px-[13px] py-[11px] rounded-[11px] text-[14px] cursor-pointer hover:bg-accent-soft">
-                <span className="w-[28px] h-[28px] rounded-[8px] bg-bg flex items-center justify-center text-[14px]">🔑</span>
-                Session keys · автономия
-             </div>
+             {filteredCommands.map((cmd, i) => (
+               <div
+                 key={cmd.id}
+                 onClick={() => onSelect(cmd.tab)}
+                 className={`flex items-center gap-[12px] px-[13px] py-[11px] rounded-[11px] text-[14px] cursor-pointer hover:bg-accent-soft ${selectedIndex === i ? 'bg-accent-soft' : ''}`}
+               >
+                  <span className="w-[28px] h-[28px] rounded-[8px] bg-bg flex items-center justify-center text-[14px]">{cmd.icon}</span>
+                  {cmd.label}
+                  {selectedIndex === i && <span className="ml-auto font-mono text-[11px] text-ink-3">↵</span>}
+               </div>
+             ))}
+             {filteredCommands.length === 0 && (
+               <div className="px-[13px] py-[11px] text-[14px] text-ink-3">Нет команд</div>
+             )}
           </div>
           <div className="px-[16px] py-[9px] border-t border-line text-[11px] text-ink-3 flex gap-[14px] font-mono">
              <span>↑↓ навигация</span>
@@ -430,6 +466,7 @@ function CommandPalette({ isOpen, onClose }: { isOpen: boolean, onClose: () => v
 
 function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState('main');
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -447,13 +484,20 @@ function App() {
 
   return (
     <div className="h-screen w-full flex flex-col font-sans">
-      <TopBar onOpenCommand={() => setPaletteOpen(true)} />
+      <TopBar activeTab={activeTab} setActiveTab={setActiveTab} onOpenCommand={() => setPaletteOpen(true)} />
       <div className="flex-1 flex overflow-hidden">
         <LeftRail />
         <ActionInbox />
         <AgentStream />
       </div>
-      <CommandPalette isOpen={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <CommandPalette
+        isOpen={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onSelect={(tab) => {
+          setActiveTab(tab);
+          setPaletteOpen(false);
+        }}
+      />
     </div>
   );
 }
