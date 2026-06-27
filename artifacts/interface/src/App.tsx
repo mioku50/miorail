@@ -251,9 +251,7 @@ function AgentStream() {
 
   const messages = chatData?.messages || [];
 
-  const displayMessages = messages.length > 0 ? messages : [
-    { role: 'user', content: 'swap a small starter position of USDC for NOCK on base' }
-  ];
+  const displayMessages = messages;
 
   useEffect(() => {
     if (streamRef.current) {
@@ -268,10 +266,8 @@ function AgentStream() {
     try {
       await sendMessageMutation.mutateAsync({ message: msg });
       refetch();
-    } catch {
-      // simulate demo flow if backend fails or doesn't support chat yet
-      setSimState('simulating');
-      setTimeout(() => setSimState('done'), 1500);
+    } catch (err) {
+      console.error(err);
     }
   };
 
