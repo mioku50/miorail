@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { usePortfolio, useActionsFeed, useChatHistory, useSendMessage, useProtocols, useToggleProtocol } from '@mioagent/api-client-react';
+import { usePortfolio, useActionsFeed, useChatHistory, useSendMessage, useProtocols, useToggleProtocol, useExecuteAction, useDismissAction } from '@mioagent/api-client-react';
 
 function TopBar({ onOpenCommand }: { onOpenCommand: () => void }) {
   const [activeTab, setActiveTab] = useState('main');
@@ -156,64 +156,11 @@ function LeftRail() {
 }
 
 function ActionInbox() {
-  const { data } = useActionsFeed();
+  const { data, isLoading, refetch } = useActionsFeed();
+  const executeAction = useExecuteAction();
+  const dismissAction = useDismissAction();
 
   const actions = data?.actions || [];
-
-  // Fake actions if real feed is empty
-  const displayActions = actions.length > 0 ? actions : [
-    {
-      id: 'mock1',
-      kind: 'swap',
-      createdAt: new Date().toISOString(),
-      suggestedPrompt: 'NOCK соответствует критериям: объём $2.6M за 24ч, ликвидность ~$724K, рост +27.3%. Ликвидность выше порога, риск умеренный.',
-      mockDetails: {
-         title: 'NOCK прошёл фильтр momentum + depth',
-         src: 'scanner: base-momentum',
-         sev: 'hi',
-         time: '2 мин назад',
-         tokens: [
-           { t: 'NOCK', v: '+27.3%', pos: true },
-           { t: 'vol $2.6M' },
-           { t: 'liq $724K' }
-         ],
-         preview: {
-           text: 'swap 5 USDC → ~7,800 NOCK',
-           slip: 'slippage 5%',
-           fill: 78
-         }
-      }
-    },
-    {
-       id: 'mock2',
-       kind: 'swap',
-       createdAt: new Date(Date.now() - 8 * 60000).toISOString(),
-       suggestedPrompt: 'BNKR пробил уровень: объём $725K за 24ч, рост +27.3%, один из сильнейших трендовых токенов, проходит порог ликвидности и объёма.',
-       mockDetails: {
-         title: 'Traction breakout: BNKR на Base',
-         src: 'scanner: breakout-screen',
-         sev: 'mid',
-         time: '8 мин назад',
-         tokens: [
-           { t: 'BNKR', v: '+27.3%', pos: true },
-           { t: 'vol $725K' }
-         ]
-       }
-    },
-    {
-       id: 'mock3',
-       kind: 'unknown',
-       createdAt: new Date().toISOString(),
-       suggestedPrompt: 'GoPlus отметил контракт как honeypot (продажа невозможна). Рекомендация не сформирована, действие заблокировано до подписи.',
-       mockDetails: {
-         title: '⛔ Заблокировано: подозрительный токен SCAMX',
-         src: 'action-security · honeypot',
-         sev: 'red',
-         time: 'только что',
-         blocked: true
-       }
-    }
-  ];
 
   return (
     <main className="flex-1 bg-bg p-[18px] flex flex-col gap-4 overflow-y-auto">
@@ -229,60 +176,61 @@ function ActionInbox() {
       </div>
 
       <div className="flex flex-col gap-4">
-        {displayActions.map((action: any /* eslint-disable-line @typescript-eslint/no-explicit-any */) => {
-           const mock = action.mockDetails || {};
-           const isBlocked = mock.blocked;
+        {isLoading && <div className="text-sm text-ink-3">Загрузка...</div>}
+        {!isLoading && actions.length === 0 && (
+          <div className="text-sm text-ink-3">Нет активных действий</div>
+        )}
+        {actions.map((action: any /* eslint-disable-line @typescript-eslint/no-explicit-any */) => {
+           const isPending = action.status === 'pending';
+           const isExecuting = executeAction.isPending && executeAction.variables?.actionId === action.id;
+           const isDismissing = dismissAction.isPending && dismissAction.variables?.actionId === action.id;
 
            return (
-             <div key={action.id} className={`bg-panel border rounded-xl shadow-sm p-[15px] flex flex-col gap-[10px] animate-in fade-in slide-in-from-bottom-2 ${isBlocked ? 'border-red-soft' : 'border-line'}`}>
+             <div key={action.id} className={`bg-panel border rounded-xl shadow-sm p-[15px] flex flex-col gap-[10px] animate-in fade-in slide-in-from-bottom-2 ${action.status === 'failed' ? 'border-red-soft' : 'border-line'}`}>
                 <div className="flex items-start justify-between gap-[10px]">
                    <div className="flex gap-[10px]">
-                      <div className={`w-[9px] h-[9px] rounded-full shrink-0 mt-[5px] ${mock.sev === 'hi' ? 'bg-green' : mock.sev === 'mid' ? 'bg-amber' : 'bg-red'}`}></div>
+                      <div className={`w-[9px] h-[9px] rounded-full shrink-0 mt-[5px] ${action.status === 'executed' ? 'bg-green' : action.status === 'pending' ? 'bg-amber' : 'bg-red'}`}></div>
                       <div>
-                         <h3 className="text-[15px] font-bold text-ink tracking-[-.01em]">{mock.title || action.kind}</h3>
-                         <div className="font-mono text-[11px] text-ink-3 mt-1">{mock.src || 'real-backend'}</div>
+                         <h3 className="text-[15px] font-bold text-ink tracking-[-.01em] uppercase">{action.kind}</h3>
+                         <div className="font-mono text-[11px] text-ink-3 mt-1">real-backend</div>
                       </div>
                    </div>
-                   {!isBlocked && <span className="text-[11px] text-ink-3 flex items-center gap-1">⟳ {mock.time || 'только что'}</span>}
+                   <span className="text-[11px] text-ink-3 flex items-center gap-1">⟳ {new Date(action.createdAt).toLocaleTimeString()}</span>
                 </div>
 
                 <div className="text-[13px] text-ink-2 leading-relaxed">
                   {action.suggestedPrompt}
                 </div>
 
-                {mock.tokens && (
+                {action.tokens && action.tokens.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
-                    {mock.tokens.map((t: any /* eslint-disable-line @typescript-eslint/no-explicit-any */, i: number) => (
+                    {action.tokens.map((t: string, i: number) => (
                        <span key={i} className="font-mono text-[11px] bg-bg px-[8px] py-[3px] rounded-[7px] text-ink-2">
-                         {t.t} {t.v && <b className={t.pos ? 'text-green' : ''}>{t.v}</b>}
+                         {t}
                        </span>
                     ))}
                   </div>
                 )}
 
-                {mock.preview && (
-                  <div className="bg-panel-2 border border-dashed border-line rounded-[9px] p-[10px] flex flex-col gap-2">
-                     <div className="flex justify-between items-center text-[12px] font-mono">
-                        <span className="text-ink-2">{mock.preview.text}</span>
-                        <span className="text-amber">{mock.preview.slip}</span>
-                     </div>
-                     <div className="h-[6px] bg-line rounded-full overflow-hidden">
-                        <div className="h-full rounded-full bg-gradient-to-r from-accent to-accent-2" style={{width: `${mock.preview.fill}%`}}></div>
-                     </div>
-                  </div>
-                )}
-
-                {isBlocked ? (
+                {action.status === 'failed' ? (
                    <div className="flex items-center gap-[7px] text-[12px] font-bold text-red bg-red-soft px-[10px] py-[6px] rounded-[9px] w-fit mt-1">
-                      🛡️ blocked by security
+                      🛡️ failed
                    </div>
                 ) : (
                   <div className="flex gap-2 items-center mt-1">
-                     <button className="bg-accent hover:bg-accent-2 text-white px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] shadow-[0_6px_16px_rgba(0,0,255,.28)] hover:-translate-y-[1px] hover:shadow-[0_10px_22px_rgba(0,0,255,.34)] transition-all flex items-center gap-2">
-                       ⚡ Execute <span className="font-mono text-[11px] opacity-85">· x402 $0.004</span>
+                     <button
+                       onClick={() => executeAction.mutate({ actionId: action.id }, { onSuccess: () => refetch() })}
+                       disabled={!isPending || isExecuting || isDismissing}
+                       className="bg-accent hover:bg-accent-2 text-white px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] shadow-[0_6px_16px_rgba(0,0,255,.28)] hover:-translate-y-[1px] hover:shadow-[0_10px_22px_rgba(0,0,255,.34)] transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                     >
+                       ⚡ {isExecuting ? 'Executing...' : 'Execute'}
                      </button>
-                     <button className="bg-bg hover:bg-[#eceef7] text-ink-2 px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] transition-colors">
-                       Скрыть
+                     <button
+                       onClick={() => dismissAction.mutate({ actionId: action.id }, { onSuccess: () => refetch() })}
+                       disabled={!isPending || isExecuting || isDismissing}
+                       className="bg-bg hover:bg-[#eceef7] text-ink-2 px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                     >
+                       {isDismissing ? 'Dismissing...' : 'Скрыть'}
                      </button>
                   </div>
                 )}
