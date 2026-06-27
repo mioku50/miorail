@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { usePortfolio, useActionsFeed, useChatHistory, useSendMessage } from '@mioagent/api-client-react';
+import { usePortfolio, useActionsFeed, useChatHistory, useSendMessage, useProtocols, useToggleProtocol } from '@mioagent/api-client-react';
 
 function TopBar({ onOpenCommand }: { onOpenCommand: () => void }) {
   const [activeTab, setActiveTab] = useState('main');
@@ -54,7 +54,9 @@ function TopBar({ onOpenCommand }: { onOpenCommand: () => void }) {
 }
 
 function LeftRail() {
-  const { data: portfolio } = usePortfolio();
+  const { data: portfolio, isError: isPortfolioError } = usePortfolio();
+  const { data: protocolsData, isError: isProtocolsError } = useProtocols();
+  const { mutate: toggleProtocol } = useToggleProtocol();
 
   const tokens = portfolio?.tokens || [];
   const usdcBalance = tokens.find((b: { symbol: string; balanceFormatted: string }) => b.symbol === 'USDC')?.balanceFormatted || '0.00';
@@ -66,56 +68,48 @@ function LeftRail() {
       <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
         <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-[11px] flex items-center justify-between">
           Портфель
-          <span className="bg-green-soft text-green px-2 py-0.5 rounded text-[10px] lowercase tracking-normal">+4.2%</span>
-        </div>
-        <div className="flex items-baseline mb-4">
-          <div className="text-[30px] font-bold tracking-tight font-mono text-ink">${usdcBalance === '0.00' ? '12,480' : usdcBalance}</div>
+          {!isPortfolioError && portfolio && <span className="bg-green-soft text-green px-2 py-0.5 rounded text-[10px] lowercase tracking-normal">+4.2%</span>}
         </div>
 
-        {/* Sparkline Mock */}
-        <svg className="w-full h-[46px] mb-2" viewBox="0 0 240 46" preserveAspectRatio="none">
-          <defs>
-            <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" stopColor="#0000FF" stopOpacity=".22"/>
-              <stop offset="1" stopColor="#0000FF" stopOpacity="0"/>
-            </linearGradient>
-          </defs>
-          <path d="M0,34 L20,30 L40,33 L60,24 L80,27 L100,18 L120,22 L140,12 L160,17 L180,9 L200,14 L220,6 L240,10"
-            fill="none" stroke="#0000FF" strokeWidth="2" strokeLinejoin="round"/>
-          <path d="M0,34 L20,30 L40,33 L60,24 L80,27 L100,18 L120,22 L140,12 L160,17 L180,9 L200,14 L220,6 L240,10 L240,46 L0,46 Z" fill="url(#g)"/>
-        </svg>
+        {isPortfolioError || !portfolio ? (
+           <div className="text-[13px] text-ink-3 italic py-4">Not connected</div>
+        ) : (
+          <>
+            <div className="flex items-baseline mb-4">
+              <div className="text-[30px] font-bold tracking-tight font-mono text-ink">${usdcBalance}</div>
+            </div>
 
-        <div className="font-mono text-[12px] text-ink-3 mt-2 flex items-center gap-1.5">
-          ⬡ {displayAddress} <span className="text-accent cursor-pointer ml-auto hover:underline">manage in base ↗</span>
-        </div>
+            <svg className="w-full h-[46px] mb-2" viewBox="0 0 240 46" preserveAspectRatio="none">
+              <defs>
+                <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stopColor="#0000FF" stopOpacity=".22"/>
+                  <stop offset="1" stopColor="#0000FF" stopOpacity="0"/>
+                </linearGradient>
+              </defs>
+              <path d="M0,34 L20,30 L40,33 L60,24 L80,27 L100,18 L120,22 L140,12 L160,17 L180,9 L200,14 L220,6 L240,10"
+                fill="none" stroke="#0000FF" strokeWidth="2" strokeLinejoin="round"/>
+              <path d="M0,34 L20,30 L40,33 L60,24 L80,27 L100,18 L120,22 L140,12 L160,17 L180,9 L200,14 L220,6 L240,10 L240,46 L0,46 Z" fill="url(#g)"/>
+            </svg>
 
-        <div className="mt-4 flex flex-col gap-2">
-           <div className="flex justify-between items-center text-[13px]">
-              <div className="flex items-center gap-2">
-                 <span className="w-5 h-5 rounded bg-[#2775ca] text-white flex items-center justify-center text-[10px] font-bold">$</span>
-                 <span className="font-medium text-ink">USDC</span>
-              </div>
-              <span className="font-mono font-medium">{usdcBalance === '0.00' ? '6,210' : usdcBalance}</span>
-           </div>
-           {usdcBalance === '0.00' && (
-             <>
-                <div className="flex justify-between items-center text-[13px]">
-                  <div className="flex items-center gap-2">
-                    <span className="w-5 h-5 rounded bg-[#7b5bff] text-white flex items-center justify-center text-[10px] font-bold">B</span>
-                    <span className="font-medium text-ink">BNKR</span>
+            <div className="font-mono text-[12px] text-ink-3 mt-2 flex items-center gap-1.5">
+              ⬡ {displayAddress} <span className="text-accent cursor-pointer ml-auto hover:underline">manage in base ↗</span>
+            </div>
+
+            <div className="mt-4 flex flex-col gap-2">
+               {tokens.map((token: any, idx: number) => (
+                  <div key={idx} className="flex justify-between items-center text-[13px]">
+                    <div className="flex items-center gap-2">
+                      <span className="w-5 h-5 rounded bg-[#2775ca] text-white flex items-center justify-center text-[10px] font-bold">
+                         {token.symbol[0]}
+                      </span>
+                      <span className="font-medium text-ink">{token.symbol}</span>
+                    </div>
+                    <span className="font-mono font-medium">{token.balanceFormatted}</span>
                   </div>
-                  <span className="font-mono font-medium">3,940</span>
-                </div>
-                <div className="flex justify-between items-center text-[13px]">
-                  <div className="flex items-center gap-2">
-                    <span className="w-5 h-5 rounded bg-green text-white flex items-center justify-center text-[10px] font-bold">N</span>
-                    <span className="font-medium text-ink">NOCK</span>
-                  </div>
-                  <span className="font-mono font-medium">2,330</span>
-                </div>
-             </>
-           )}
-        </div>
+               ))}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Autonomy Card */}
@@ -124,73 +118,38 @@ function LeftRail() {
           <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3">Автономия</div>
           <span className="text-[10px] font-bold text-accent bg-accent-soft px-[7px] py-[2px] rounded-[6px] tracking-[.05em]">SESSION KEY</span>
         </div>
-
-        <div className="flex justify-between text-[12px] color-ink-2 mb-[9px]">
-          <span className="text-ink-2">Дневной лимит</span>
-          <span><b className="font-mono text-ink font-semibold">$28</b> / $100</span>
-        </div>
-        <div className="h-[7px] bg-line rounded-full overflow-hidden mb-3">
-          <div className="h-full bg-accent rounded-full w-[28%]"></div>
-        </div>
-
-        <div className="flex justify-between text-[12px] mb-[9px]">
-          <span className="text-ink-2">Whitelist</span>
-          <b className="font-mono text-ink font-medium">USDC · BNKR · NOCK</b>
-        </div>
-        <div className="flex justify-between text-[12px] mb-4">
-          <span className="text-ink-2">Истекает через</span>
-          <b className="font-mono text-ink font-medium">5:59:42</b>
-        </div>
-
-        <button className="w-full py-[9px] bg-red-soft hover:bg-red text-red hover:text-white rounded-[10px] font-bold text-[13px] transition-colors flex items-center justify-center gap-2">
-          ⏻ Kill switch
-        </button>
+        <div className="text-[13px] text-ink-3 italic py-2">Coming soon</div>
       </div>
 
       {/* x402 Budget */}
       <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
         <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-3">x402 бюджет</div>
-        <div className="flex items-baseline gap-2 mb-2">
-          <div className="text-[20px] font-bold font-mono text-ink">$1.84</div>
-          <span className="bg-accent-soft text-accent px-2 py-0.5 rounded text-[10px] lowercase tracking-normal">сегодня</span>
-        </div>
-        <div className="h-[7px] bg-line rounded-full overflow-hidden mb-3">
-          <div className="h-full bg-accent rounded-full w-[37%]"></div>
-        </div>
-        <div className="flex justify-between text-[12px] mb-[6px]">
-          <span className="text-ink-2">inference · 142 вызова</span>
-          <b className="font-mono text-ink font-medium">$1.12</b>
-        </div>
-        <div className="flex justify-between text-[12px]">
-          <span className="text-ink-2">tools · 38 вызовов</span>
-          <b className="font-mono text-ink font-medium">$0.72</b>
-        </div>
+        <div className="text-[13px] text-ink-3 italic py-2">Coming soon</div>
       </div>
 
       {/* Protocols */}
       <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
         <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-3">Протоколы</div>
-        <div className="flex flex-col">
-          {[
-            { name: 'Base MCP', icon: '🔌', tools: 14, active: true },
-            { name: 'Moralis', icon: '📊', tools: 17, active: true },
-            { name: 'CoinGecko', icon: '🦎', tools: 11, active: true },
-            { name: 'GoPlus', icon: '🛡️', tools: 8, active: true },
-            { name: 'Bankr', icon: '🏦', tools: 1, active: false }
-          ].map((p, i) => (
-             <div key={p.name} className={`flex items-center justify-between py-2 ${i !== 4 ? 'border-b border-line' : ''}`}>
-               <div className="flex items-center gap-2 text-[13px] text-ink font-medium">
-                 <span className="w-[22px] h-[22px] bg-bg rounded-[7px] flex items-center justify-center text-[11px]">{p.icon}</span>
-                 {p.name}
-                 <span className="font-mono text-[11px] text-ink-3 font-normal ml-1">{p.tools} tools</span>
+        {isProtocolsError || !protocolsData ? (
+           <div className="text-[13px] text-ink-3 italic py-2">Not connected</div>
+        ) : (
+          <div className="flex flex-col">
+            {protocolsData.protocols.map((p: any, i: number) => (
+               <div key={p.id} className={`flex items-center justify-between py-2 ${i !== protocolsData.protocols.length - 1 ? 'border-b border-line' : ''}`}>
+                 <div className="flex items-center gap-2 text-[13px] text-ink font-medium">
+                   <span className="w-[22px] h-[22px] bg-bg rounded-[7px] flex items-center justify-center text-[11px]">🔌</span>
+                   {p.name}
+                 </div>
+                 <div
+                   onClick={() => toggleProtocol({ protocolId: p.id, enabled: !p.enabled })}
+                   className={`w-[36px] h-[20px] rounded-full p-[2px] cursor-pointer transition-colors ${p.enabled ? 'bg-accent' : 'bg-line'}`}
+                 >
+                   <div className={`w-[16px] h-[16px] bg-white rounded-full shadow-sm transform transition-transform ${p.enabled ? 'translate-x-[16px]' : ''}`}></div>
+                 </div>
                </div>
-               {/* Custom toggle style */}
-               <div className={`w-[36px] h-[20px] rounded-full p-[2px] cursor-pointer transition-colors ${p.active ? 'bg-accent' : 'bg-line'}`}>
-                 <div className={`w-[16px] h-[16px] bg-white rounded-full shadow-sm transform transition-transform ${p.active ? 'translate-x-[16px]' : ''}`}></div>
-               </div>
-             </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
     </aside>
   );
