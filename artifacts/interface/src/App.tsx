@@ -14,6 +14,11 @@ function TopBar({ activeTab, setActiveTab, onOpenCommand }: { activeTab: string;
       <div className="flex items-center gap-2 font-bold text-ink">
         <div className="w-[26px] h-[26px] rounded-lg bg-accent text-white flex items-center justify-center text-sm">◆</div>
         <span>Base Agent</span>
+        {(!import.meta.env.VITE_CHAIN_ENV || import.meta.env.VITE_CHAIN_ENV === 'sepolia') ? (
+          <span className="text-[10px] bg-accent-soft text-accent px-1.5 py-0.5 rounded ml-1">Base Sepolia</span>
+        ) : (
+          <span className="text-[10px] bg-red-soft text-red px-1.5 py-0.5 rounded ml-1">Invalid Env</span>
+        )}
       </div>
 
       <div className="flex gap-1 ml-4">
@@ -76,11 +81,11 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
         </div>
 
         {isPortfolioError || !portfolio ? (
-           <div className="text-[13px] text-ink-3 italic py-4">Not connected</div>
+           <div className="text-[13px] text-red bg-red-soft p-3 rounded-md font-medium border border-red/20">RPC disconnected / Missing API keys</div>
         ) : (
           <>
             <div className="flex items-baseline mb-4">
-              <div className="text-[30px] font-bold tracking-tight font-mono text-ink">${usdcBalance}</div>
+              <div className="text-[30px] font-bold tracking-tight font-mono text-ink">{usdcBalance} <span className="text-[16px] text-ink-2">testnet-USDC</span></div>
             </div>
 
             <svg className="w-full h-[46px] mb-2" viewBox="0 0 240 46" preserveAspectRatio="none">
@@ -131,7 +136,7 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
 
       {/* x402 Budget */}
       <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
-        <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-3">x402 бюджет <span className="lowercase font-normal tracking-normal text-ink-3/70 ml-1">(demo fixture)</span></div>
+        <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-3">x402 бюджет <span className="lowercase font-normal tracking-normal text-ink-3/70 ml-1">(testnet-USDC)</span></div>
         <div className="flex items-baseline justify-between mb-2">
            <div className="font-mono text-[20px] font-bold text-ink">$1.84</div>
            <span className="text-[12px] font-bold bg-accent-soft text-accent px-[8px] py-[3px] rounded-[8px]">сегодня</span>
@@ -145,7 +150,7 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
       <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
         <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-3">Протоколы</div>
         {isProtocolsError || !protocolsData ? (
-           <div className="text-[13px] text-ink-3 italic py-2">Not connected</div>
+           <div className="text-[13px] text-red bg-red-soft p-3 rounded-md font-medium border border-red/20 mt-2">Provider disconnected</div>
         ) : (
           <div className="flex flex-col">
             {protocolsData.protocols.map((p: any, i: number) => (
@@ -238,7 +243,7 @@ function ActionInbox() {
                 ) : (
                   <div className="flex gap-2 items-center mt-1">
                      <button
-                       onClick={() => executeAction.mutate({ actionId: action.id }, { onSuccess: () => refetch() })}
+                       onClick={() => executeAction.mutate({ actionId: action.id }, { onSuccess: (data) => { if (data?.approvalUrl) { window.open(data.approvalUrl, '_blank'); } refetch(); } })}
                        disabled={!isPending || isExecuting || isDismissing}
                        className="bg-accent hover:bg-accent-2 text-white px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] shadow-[0_6px_16px_rgba(0,0,255,.28)] hover:-translate-y-[1px] hover:shadow-[0_10px_22px_rgba(0,0,255,.34)] transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                      >
