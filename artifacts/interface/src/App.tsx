@@ -274,7 +274,6 @@ function AgentStream() {
   const [simState, setSimState] = useState<'idle'|'simulating'|'done'|'approved'>('idle');
 
   const messages = chatData?.messages || [];
-
   const displayMessages = messages;
 
   useEffect(() => {
@@ -296,114 +295,142 @@ function AgentStream() {
   };
 
   return (
-    <aside className="w-[380px] bg-panel-2 border-l border-line flex flex-col">
-       <div className="p-4 flex flex-col h-full">
-         <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-3 flex justify-between items-center">
-            Agent Stream
-            <span className="font-mono text-accent normal-case font-normal cursor-pointer hover:underline">+ new chat</span>
-         </div>
-
-         <div className="flex-1 overflow-y-auto flex flex-col gap-[11px] pr-1 pb-4" ref={streamRef}>
-            {displayMessages.map((m: any /* eslint-disable-line @typescript-eslint/no-explicit-any */, i: number) => (
-               <div key={i} className={`text-[13px] leading-relaxed ${m.role === 'user' ? 'self-end bg-accent text-white px-[13px] py-[9px] rounded-t-[14px] rounded-bl-[14px] rounded-br-[4px] max-w-[85%]' : 'bg-panel border border-line px-3 py-2 rounded-lg'}`}>
-                 {m.content}
-               </div>
-            ))}
-
-            {/* Mocking the tool calls and sim card if we triggered it via demo */}
-            {(simState !== 'idle' || messages.length === 0) && (
-              <>
-                 <div className="bg-panel border border-line rounded-[12px] px-[12px] py-[9px] font-mono text-[12px] flex items-center gap-[9px] text-ink-2">
-                   <span className="text-green font-bold">✓</span> search_tokens <span className="text-ink-3">{"{\"q\":\"NOCK\"}"}</span>
-                 </div>
-                 <div className="bg-panel border border-line rounded-[12px] px-[12px] py-[9px] font-mono text-[12px] flex items-center gap-[9px] text-ink-2">
-                   <span className="text-green font-bold">✓</span> get_portfolio <span className="text-ink-3">{"{\"chain\":\"base\"}"}</span>
-                 </div>
-                 <div className="text-[11px] text-ink-3 flex items-center gap-1 font-mono">
-                    🔒 screened · инструкция проверена action-security
-                 </div>
-              </>
-            )}
-
-            {simState === 'simulating' && (
-               <div className="bg-panel border border-line rounded-[12px] px-[12px] py-[9px] font-mono text-[12px] flex items-center gap-[9px] text-ink-2">
-                 <span className="text-accent animate-pulse">●</span> swap <span className="text-ink-3">симуляция…</span>
-               </div>
-            )}
-
-            {simState === 'done' || simState === 'approved' ? (
-               <>
-                 <div className="bg-panel border border-line rounded-[12px] px-[12px] py-[9px] font-mono text-[12px] flex items-center gap-[9px] text-ink-2">
-                   <span className="text-green font-bold">✓</span> swap <span className="text-ink-3">simulated</span>
-                 </div>
-
-                 <div className="border border-accent-soft bg-[#fafaff] rounded-[14px] p-[13px] flex flex-col gap-[10px] animate-in fade-in slide-in-from-bottom-2">
-                    <h4 className="text-[12px] tracking-[.05em] uppercase text-accent flex items-center gap-[7px] font-bold">
-                       ◆ Pre-trade simulation
-                    </h4>
-                    <div className="flex flex-col gap-[7px]">
-                       <div className="flex justify-between text-[12px]">
-                         <span className="text-ink-2">Исход</span>
-                         <span className="font-mono font-bold">5 USDC → ~7,810 NOCK</span>
-                       </div>
-                       <div className="flex justify-between text-[12px]">
-                         <span className="text-ink-2">Slippage</span>
-                         <span className="font-mono font-bold text-amber">5.0%</span>
-                       </div>
-                       <div className="flex justify-between text-[12px]">
-                         <span className="text-ink-2">Эффект на портфель</span>
-                         <span className="font-mono font-bold text-green">+0.04%</span>
-                       </div>
-                       <div className="flex justify-between text-[12px]">
-                         <span className="text-ink-2">Газ (Base)</span>
-                         <span className="font-mono font-bold">~$0.001</span>
-                       </div>
-                    </div>
-                    <div className="flex items-center gap-[7px] text-[12px] font-bold text-green bg-green-soft px-[10px] py-[6px] rounded-[9px]">
-                       🛡️ GoPlus: безопасно · не honeypot
-                    </div>
-                    <div className="bg-ink text-white rounded-[12px] p-[12px] flex flex-col gap-[9px]">
-                       <div className="flex justify-between text-[12px] font-mono text-[#c7c9d6]">
-                          <span>x402 стоимость действия</span>
-                          <b className="text-white">$0.004</b>
-                       </div>
-                       <div className="flex justify-between text-[12px] font-mono text-[#c7c9d6]">
-                          <span>подпись</span>
-                          <b className="text-white">session key (в лимите)</b>
-                       </div>
-                       <button
-                         onClick={() => setSimState('approved')}
-                         className={`w-full py-[11px] rounded-[10px] font-bold text-[13px] transition-all ${simState === 'approved' ? 'bg-green' : 'bg-accent'}`}
-                       >
-                         {simState === 'approved' ? '✓ Подтверждено за 0.8с' : 'Open Base app to approve →'}
-                       </button>
-                    </div>
-                 </div>
-               </>
-            ) : null}
-
-         </div>
-
-         <div className="mt-3 flex gap-2 items-center bg-panel border border-line rounded-[14px] px-[8px] py-[8px] pl-[14px] shadow-sm">
-            <input
-              type="text"
-              className="flex-1 border-none outline-none text-[13px] bg-transparent font-sans"
-              placeholder="Дайте инструкцию агенту…"
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSend()}
-              disabled={sendMessageMutation.isPending || simState === 'simulating'}
-            />
-            <button
-              onClick={handleSend}
-              disabled={sendMessageMutation.isPending || simState === 'simulating'}
-              className="w-[34px] h-[34px] bg-accent text-white rounded-[10px] flex items-center justify-center text-[15px] hover:bg-accent-2 transition-colors disabled:opacity-50"
-            >
-              ↑
-            </button>
-         </div>
+    <div className="chat">
+       <div className="chat-head">
+         Agent Stream
+         <span className="mono" style={{color:'var(--color-accent)', cursor:'pointer'}} onClick={() => setInput('')}>+ new chat</span>
        </div>
-    </aside>
+
+       <div className="stream" ref={streamRef}>
+          {displayMessages.length === 0 && (
+             <div style={{display:'flex', alignItems:'center', justifyContent:'center', fontSize:'14px', color:'var(--color-ink-3)', height:'100%'}}>
+               Send a message to start...
+             </div>
+          )}
+
+          {displayMessages.map((m: any, i: number) => {
+            if (m.role === 'user') {
+              return (
+                <div key={i} className="msg user">
+                  {m.content}
+                </div>
+              );
+            }
+            if (m.role === 'assistant') {
+              if (m.content) {
+                 return (
+                   <div key={i} className="msg" style={{background:'var(--color-panel)', border:'1px solid var(--color-line)', padding:'9px 13px', borderRadius:'4px 14px 14px 14px'}}>
+                     {m.content}
+                   </div>
+                 );
+              }
+              if (m.toolCalls && m.toolCalls.length > 0) {
+                 return (
+                   <div key={i} style={{display:'flex', flexDirection:'column', gap:'8px', width:'100%'}}>
+                     {m.toolCalls.map((tc: any, idx: number) => (
+                       <div key={idx} className="toolcall">
+                          <span className="ok">✓</span> {tc.name} <span style={{color:'var(--color-ink-3)'}}>{JSON.stringify(tc.arguments)}</span>
+                       </div>
+                     ))}
+                   </div>
+                 );
+              }
+            }
+            return null;
+          })}
+
+          {/* Mocking the tool calls and sim card if we triggered it via demo */}
+          {(simState !== 'idle' || messages.length === 0) && (
+            <>
+               <div className="toolcall">
+                 <span className="ok">✓</span> search_tokens <span style={{color:'var(--color-ink-3)'}}>{"{\"q\":\"NOCK\"}"}</span>
+               </div>
+               <div className="toolcall">
+                 <span className="ok">✓</span> get_portfolio <span style={{color:'var(--color-ink-3)'}}>{"{\"chain\":\"base\"}"}</span>
+               </div>
+               <div className="screened">
+                  🔒 screened · инструкция проверена action-security
+               </div>
+            </>
+          )}
+
+          {simState === 'simulating' && (
+             <div className="toolcall">
+               <span className="run">●</span> swap <span style={{color:'var(--color-ink-3)'}}>симуляция…</span>
+             </div>
+          )}
+
+          {simState === 'done' || simState === 'approved' ? (
+             <>
+               <div className="toolcall">
+                 <span className="ok">✓</span> swap <span style={{color:'var(--color-ink-3)'}}>simulated</span>
+               </div>
+
+               <div className="sim">
+                  <h4>
+                     ◆ Pre-trade simulation (demo fixture)
+                  </h4>
+                  <div className="sim-grid">
+                     <div className="sg">
+                       <span className="k">Исход</span>
+                       <span className="v">5 USDC → ~7,810 NOCK</span>
+                     </div>
+                     <div className="sg">
+                       <span className="k">Slippage</span>
+                       <span className="v" style={{color:'var(--color-amber)'}}>5.0%</span>
+                     </div>
+                     <div className="sg">
+                       <span className="k">Эффект на портфель</span>
+                       <span className="v" style={{color:'var(--color-green)'}}>+0.04%</span>
+                     </div>
+                     <div className="sg">
+                       <span className="k">Газ (Base)</span>
+                       <span className="v">~$0.001</span>
+                     </div>
+                  </div>
+                  <div className="verdict">
+                     🛡️ GoPlus: безопасно · не honeypot
+                  </div>
+                  <div className="approve">
+                     <div className="ar">
+                        <span>x402 стоимость действия</span>
+                        <b>$0.004</b>
+                     </div>
+                     <div className="ar">
+                        <span>подпись</span>
+                        <b>session key (в лимите)</b>
+                     </div>
+                     <button
+                       onClick={() => setSimState('approved')}
+                       style={simState === 'approved' ? {background:'var(--color-green)'} : {}}
+                     >
+                       {simState === 'approved' ? '✓ Подтверждено за 0.8с' : 'Open Base app to approve →'}
+                     </button>
+                  </div>
+               </div>
+             </>
+          ) : null}
+
+       </div>
+
+       <div className="composer">
+          <input
+            type="text"
+            placeholder="Дайте инструкцию агенту…"
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleSend()}
+            disabled={sendMessageMutation.isPending || simState === 'simulating'}
+          />
+          <button
+            onClick={handleSend}
+            disabled={sendMessageMutation.isPending || simState === 'simulating'}
+            className="send"
+          >
+            ↑
+          </button>
+       </div>
+    </div>
   );
 }
 
