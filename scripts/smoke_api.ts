@@ -3,7 +3,7 @@ import assert from 'node:assert';
 const BASE_URL = process.env.API_URL || 'http://localhost:8080';
 
 async function run() {
-  console.log('--- Smoke Test: Backend API ---');
+  console.log('--- Strict Smoke Test: Backend API ---');
   console.log(`Checking against: ${BASE_URL}`);
 
   try {
@@ -11,8 +11,8 @@ async function run() {
     console.log('\n⏳ Checking /health...');
     const healthRes = await fetch(`${BASE_URL}/health`).catch(() => null);
     if (!healthRes) {
-      console.log('⚠️ Could not connect to API. Is it running? Skipping remaining API smoke tests.');
-      return;
+      console.error('❌ Strict smoke failed: Could not connect to API. Start the backend first.');
+      process.exit(1);
     }
     assert.ok(healthRes.ok, '/health should return 200 OK');
     const healthData = await healthRes.json();
@@ -26,7 +26,6 @@ async function run() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: 'Hello' })
     });
-    // It might require auth depending on session middleware.
     assert.ok(chatRes.ok || chatRes.status === 401 || chatRes.status === 500, '/api/chat responded');
     if (chatRes.ok) {
        const chatData = await chatRes.json();
@@ -51,23 +50,41 @@ async function run() {
     // 5. Actions list
     console.log('\n⏳ Checking /api/actions...');
     const actionsRes = await fetch(`${BASE_URL}/api/actions`);
-    assert.ok(actionsRes.ok || actionsRes.status === 401, '/api/actions responded');
+    assert.ok(actionsRes.ok, '/api/actions should return 200 OK');
+    const actionsData = await actionsRes.json();
     console.log('✅ /api/actions works');
 
+    // Find pending smoke action
+    const pendingActions = actionsData.actions?.filter((a: any) => a.status === 'pending' && a.id.startsWith('action_smoke_'));
+    if (!pendingActions || pendingActions.length === 0) {
+      console.error('❌ Strict smoke failed: No seeded pending action found. Run seed script first.');
+      process.exit(1);
+    }
+    
+    const targetAction = pendingActions[0];
+    console.log(`✅ Found pending action: ${targetAction.id}`);
+
     // 6. Action execute
-    console.log('\n⏳ Checking /api/actions/1/execute...');
-    const execRes = await fetch(`${BASE_URL}/api/actions/1/execute`, {
+    console.log(`\n⏳ Executing /api/actions/${targetAction.id}/execute...`);
+    const execRes = await fetch(`${BASE_URL}/api/actions/${targetAction.id}/execute`, {
       method: 'POST'
     });
-    assert.ok(!execRes.ok || execRes.ok, '/api/actions/1/execute responded');
-    if (!execRes.ok) {
-        console.log(`✅ /api/actions/1/execute failed as expected (status ${execRes.status}) - indicates MCP or DB lack of specific record`);
+    
+    const execData = await execRes.json();
+    
+    const isMcpConfigured = !!process.env.MCP_SERVER_URL;
+    
+    if (isMcpConfigured) {
+      assert.ok(execRes.ok && execData.success === true, 'Execute should succeed when MCP is configured');
+      assert.ok(execData.approvalUrl && execData.requestId, 'Execute must return approvalUrl and requestId');
+      console.log('✅ Execute succeeded and returned approvalUrl and requestId');
     } else {
-        const execData = await execRes.json();
-        console.log(`✅ /api/actions/1/execute returned:`, execData);
+      assert.ok(!execRes.ok || execData.success === false, 'Execute should fail or return success: false when MCP is missing');
+      assert.ok(execData.error, 'Execute must return a clear fail-closed error');
+      console.log(`✅ Execute failed closed as expected (No MCP): ${execData.error}`);
     }
 
-    console.log('\n🎉 API Smoke Test Finished');
+    console.log('\n🎉 API Strict Smoke Test Finished Successfully');
 
   } catch (err: any) {
     console.error('\n❌ Smoke test failed:', err.message);
