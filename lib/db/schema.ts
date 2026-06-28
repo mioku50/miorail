@@ -58,6 +58,7 @@ export const actions = pgTable(
     status: text('status').notNull(),
     suggestedPrompt: text('suggested_prompt'),
     tokens: jsonb('tokens'),
+    executionPayload: jsonb('execution_payload'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },

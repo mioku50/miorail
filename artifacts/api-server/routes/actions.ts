@@ -26,6 +26,7 @@ actionsRouter.get('/', async (req, res, next) => {
       status: a.status as 'pending' | 'executed' | 'dismissed' | 'failed',
       suggestedPrompt: a.suggestedPrompt,
       tokens: Array.isArray(a.tokens) ? a.tokens.map(String) : undefined,
+      executionPayload: a.executionPayload,
       createdAt: a.createdAt.toISOString(),
       executedAt: null, // we don't have executedAt in db schema right now, returning null
     }));
@@ -65,23 +66,38 @@ actionsRouter.post('/:actionId/execute', async (req, res, next) => {
       return res.json({ success: false, error: 'Failed to initialize tool aggregator' });
     }
 
-    // Temporary helper for execution payload until DB migration adds execution_payload column
-    // Do not treat tokens as execution payload long-term.
-    function extractExecutionPayload(actionTokens: unknown): { chain: string; calls: { to: string; value?: string; data?: string }[] } {
-      if (Array.isArray(actionTokens) && actionTokens.length > 0) {
+    function extractExecutionPayload(action: typeof actionToExecute): { chain: string; calls: { to: string; value?: string; data?: string }[] } {
+      if (action.executionPayload) {
         try {
-          const parsed = JSON.parse(String(actionTokens[0]));
-          if (parsed.chain && Array.isArray(parsed.calls)) {
+          const parsed = typeof action.executionPayload === 'string' ? JSON.parse(action.executionPayload) : action.executionPayload;
+          if (parsed && parsed.chain && Array.isArray(parsed.calls)) {
+             return parsed;
+          }
+        } catch {
+          // ignore
+        }
+      }
+      
+      // Fallback to old tokens[0]
+      if (Array.isArray(action.tokens) && action.tokens.length > 0) {
+        try {
+          const parsed = JSON.parse(String(action.tokens[0]));
+          if (parsed && parsed.chain && Array.isArray(parsed.calls)) {
             return parsed;
           }
         } catch {
           // ignore
         }
       }
-      return { chain: 'base', calls: [] };
+      throw new Error('Malformed or missing execution payload');
     }
 
-    const payload = extractExecutionPayload(actionToExecute.tokens);
+    let payload;
+    try {
+      payload = extractExecutionPayload(actionToExecute);
+    } catch (e) {
+      return res.status(400).json({ success: false, error: e instanceof Error ? e.message : 'Invalid payload' });
+    }
 
     // If we have calls, execute them using the tool
     let toolResult;

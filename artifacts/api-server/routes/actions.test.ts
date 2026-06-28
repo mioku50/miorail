@@ -19,7 +19,8 @@ test('Actions API', async (t) => {
                 kind: 'test-action',
                 status: 'pending',
                 suggestedPrompt: 'Do it',
-                tokens: ['{"chain":"base","calls":[{"to":"0x123"}]}'],
+                tokens: ['USDC', 'transfer'],
+                executionPayload: { chain: 'base', calls: [{ to: '0x123' }] },
                 createdAt: new Date('2024-01-01T00:00:00Z'),
                 updatedAt: new Date('2024-01-01T00:00:00Z'),
               }
@@ -35,11 +36,12 @@ test('Actions API', async (t) => {
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.actions.length, 1);
     assert.strictEqual(response.body.actions[0].id, 'action-1');
+    assert.deepStrictEqual(response.body.actions[0].executionPayload, { chain: 'base', calls: [{ to: '0x123' }] });
 
     mock.restoreAll();
   });
 
-  await t.test('POST /api/actions/:actionId/execute executes action', async () => {
+  await t.test('POST /api/actions/:actionId/execute executes action with executionPayload', async () => {
     process.env.SESSION_SECRET = '00000000000000000000000000000000';
 
     const mockSelect = mock.fn(() => ({
@@ -51,7 +53,8 @@ test('Actions API', async (t) => {
             kind: 'test-action',
             status: 'pending',
             suggestedPrompt: 'Do it',
-            tokens: ['{"chain":"base","calls":[{"to":"0x123"}]}'],
+            tokens: ['tag1'],
+            executionPayload: { chain: 'base', calls: [{ to: '0x123' }] },
             createdAt: new Date('2024-01-01T00:00:00Z'),
             updatedAt: new Date('2024-01-01T00:00:00Z'),
           }
@@ -72,19 +75,81 @@ test('Actions API', async (t) => {
     mock.method(MemoryService, 'getUserSettings', async () => null);
 
     mock.method(toolsModule.ToolAggregator.prototype, 'findTool', () => { return { name: 'send_calls' }; });
-    mock.method(toolsModule.ToolAggregator.prototype, 'callTool', async () => {
+    mock.method(toolsModule.ToolAggregator.prototype, 'callTool', async (name: any, payload: any) => {
+       assert.deepStrictEqual(payload, { chain: 'base', calls: [{ to: '0x123' }] });
        return { content: JSON.stringify({ approvalUrl: "https://mock.base.org/approve/123", requestId: "123" }), isError: false };
     });
 
     const response = await request(app).post('/api/actions/action-1/execute');
 
-    if (response.body.success !== true) {
-      console.log('Execution failed. response:', response.body);
-    }
-
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.success, true);
     assert.ok(response.body.approvalUrl);
+
+    mock.restoreAll();
+  });
+
+  await t.test('POST /api/actions/:actionId/execute supports legacy tokens[0]', async () => {
+    process.env.SESSION_SECRET = '00000000000000000000000000000000';
+
+    const mockSelect = mock.fn(() => ({
+      from: mock.fn(() => ({
+        where: mock.fn(async () => [
+          {
+            id: 'action-1',
+            userId: 'default-user',
+            kind: 'test-action',
+            status: 'pending',
+            suggestedPrompt: 'Do it',
+            tokens: ['{"chain":"base","calls":[{"to":"0x456"}]}'],
+            executionPayload: null,
+            createdAt: new Date('2024-01-01T00:00:00Z'),
+            updatedAt: new Date('2024-01-01T00:00:00Z'),
+          }
+        ]),
+      })),
+    }));
+
+    const mockUpdate = mock.fn(() => ({ set: mock.fn(() => ({ where: mock.fn(async () => []) })) }));
+    mock.method(db, 'select', mockSelect);
+    mock.method(db, 'update', mockUpdate);
+    const { MemoryService } = await import('@mioagent/memory');
+    mock.method(MemoryService, 'getUserSettings', async () => null);
+    mock.method(toolsModule.ToolAggregator.prototype, 'findTool', () => ({ name: 'send_calls' }));
+    mock.method(toolsModule.ToolAggregator.prototype, 'callTool', async (name: any, payload: any) => {
+       assert.deepStrictEqual(payload, { chain: 'base', calls: [{ to: '0x456' }] });
+       return { content: JSON.stringify({ approvalUrl: "url", requestId: "123" }), isError: false };
+    });
+
+    const response = await request(app).post('/api/actions/action-1/execute');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, true);
+
+    mock.restoreAll();
+  });
+
+  await t.test('POST /api/actions/:actionId/execute fails closed on malformed payload', async () => {
+    const mockSelect = mock.fn(() => ({
+      from: mock.fn(() => ({
+        where: mock.fn(async () => [
+          {
+            id: 'action-1',
+            userId: 'default-user',
+            kind: 'test-action',
+            status: 'pending',
+            tokens: ['invalid_json'],
+            executionPayload: { broken: 'yes' }, // no chain, no calls
+            createdAt: new Date(), updatedAt: new Date(),
+          }
+        ]),
+      })),
+    }));
+    mock.method(db, 'select', mockSelect);
+    
+    const response = await request(app).post('/api/actions/action-1/execute');
+    assert.strictEqual(response.status, 400);
+    assert.strictEqual(response.body.success, false);
+    assert.strictEqual(response.body.error, 'Malformed or missing execution payload');
 
     mock.restoreAll();
   });

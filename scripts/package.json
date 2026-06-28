@@ -2,5 +2,8 @@
   "name": "@mioagent/scripts",
   "version": "0.0.0",
   "private": true,
-  "main": "index.ts"
+  "main": "index.ts",
+  "dependencies": {
+    "@mioagent/db": "workspace:*"
+  }
 }

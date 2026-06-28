@@ -195,7 +195,7 @@ importers:
     dependencies:
       '@base-org/account':
         specifier: ^2.5.6
-        version: 2.5.6(@types/react@19.2.17)(react@19.2.7)(typescript@6.0.3)(use-sync-external-store@1.6.0(react@19.2.7))(zod@3.25.76)
+        version: 2.5.6(@types/react@19.2.17)(react@19.2.7)(typescript@5.9.3)(use-sync-external-store@1.6.0(react@19.2.7))(zod@3.25.76)
       '@mioagent/db':
         specifier: workspace:*
         version: link:../db
@@ -460,7 +460,11 @@ importers:
         specifier: ^5.4.5
         version: 5.9.3
 
-  scripts: {}
+  scripts:
+    dependencies:
+      '@mioagent/db':
+        specifier: workspace:*
+        version: link:../lib/db
 
 packages:
 
@@ -3966,29 +3970,6 @@ snapshots:
       preact: 10.24.2
       viem: 2.53.1(typescript@6.0.3)(zod@3.25.76)
       zustand: 5.0.3(@types/react@19.2.17)(react@19.2.7)(use-sync-external-store@1.4.0(react@19.2.7))
-    transitivePeerDependencies:
-      - '@types/react'
-      - bufferutil
-      - debug
-      - fastestsmallesttextencoderdecoder
-      - immer
-      - react
-      - typescript
-      - use-sync-external-store
-      - utf-8-validate
-      - zod
-
-  '@base-org/account@2.5.6(@types/react@19.2.17)(react@19.2.7)(typescript@6.0.3)(use-sync-external-store@1.6.0(react@19.2.7))(zod@3.25.76)':
-    dependencies:
-      '@coinbase/cdp-sdk': 1.51.2(typescript@6.0.3)
-      brotli-wasm: 3.0.1
-      clsx: 1.2.1
-      eventemitter3: 5.0.1
-      idb-keyval: 6.2.1
-      ox: 0.6.9(typescript@6.0.3)(zod@3.25.76)
-      preact: 10.24.2
-      viem: 2.53.1(typescript@6.0.3)(zod@3.25.76)
-      zustand: 5.0.3(@types/react@19.2.17)(react@19.2.7)(use-sync-external-store@1.6.0(react@19.2.7))
     transitivePeerDependencies:
       - '@types/react'
       - bufferutil

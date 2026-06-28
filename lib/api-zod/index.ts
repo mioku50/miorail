@@ -60,12 +60,24 @@ export const ChatListResponseSchema = z.object({
 });
 
 // Actions
+export const ExecutionPayloadSchema = z.object({
+  chain: z.string(),
+  calls: z.array(
+    z.object({
+      to: z.string(),
+      value: z.string().optional(),
+      data: z.string().optional(),
+    })
+  ),
+});
+
 export const ActionResponseSchema = z.object({
   id: z.string(),
   kind: z.string(),
   status: z.enum(['pending', 'executed', 'dismissed', 'failed']),
   suggestedPrompt: z.string().nullable(),
   tokens: z.array(z.string()).optional(),
+  executionPayload: ExecutionPayloadSchema.optional().nullable(),
   createdAt: z.string(),
   executedAt: z.string().nullable(),
 });

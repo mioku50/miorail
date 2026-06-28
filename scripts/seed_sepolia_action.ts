@@ -28,7 +28,8 @@ async function run() {
     kind: 'transfer',
     status: 'pending',
     suggestedPrompt: 'Test transfer of Sepolia USDC',
-    tokens: [JSON.stringify(executionPayload)], // stored in tokens array temporarily until schema includes executionPayload
+    tokens: ['USDC', 'transfer'],
+    executionPayload: executionPayload,
   });
 
   console.log(`✅ Seeded pending action: ${actionId}`);
