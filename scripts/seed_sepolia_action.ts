@@ -9,7 +9,7 @@ async function run() {
   await db.insert(users).values({ id: defaultUserId }).onConflictDoNothing();
 
   // Create an action with the structure expected for Sepolia
-  // The backend looks at `tokens[0]` for `{ chain: string; calls: ... }`
+  // executionPayload is canonical, tokens are UI tags only.
   const executionPayload = {
     chain: 'eip155:84532',
     calls: [
