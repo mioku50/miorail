@@ -11,7 +11,8 @@
     "format": "prettier --write .",
     "smoke:llm": "tsx scripts/smoke_runtime.ts",
     "smoke:api": "tsx scripts/smoke_api.ts",
-    "smoke:sepolia-action": "tsx scripts/seed_sepolia_action.ts && pnpm smoke:api"
+    "smoke:sepolia-action": "tsx scripts/seed_sepolia_action.ts && pnpm smoke:api",
+    "db:probe": "tsx scripts/db_probe.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

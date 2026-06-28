@@ -1,6 +1,9 @@
 import { defineConfig } from 'drizzle-kit';
 import * as dotenv from 'dotenv';
 import { resolve } from 'path';
+import dns from 'node:dns';
+
+dns.setDefaultResultOrder('ipv4first');
 
 // Load .env relative to the workspace root
 dotenv.config({ path: resolve(__dirname, '../../.env') });
@@ -18,5 +21,6 @@ export default defineConfig({
   dialect: 'postgresql',
   dbCredentials: {
     url,
+    ssl: url.includes('neon.tech') ? true : false,
   },
 });

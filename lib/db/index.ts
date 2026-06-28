@@ -3,6 +3,9 @@ import postgres from 'postgres';
 import * as schema from './schema';
 import * as dotenv from 'dotenv';
 import { resolve } from 'path';
+import dns from 'node:dns';
+
+dns.setDefaultResultOrder('ipv4first');
 
 // Load .env relative to the workspace root
 dotenv.config({ path: resolve(__dirname, '../../.env') });
@@ -19,7 +22,13 @@ const globalForDb = globalThis as unknown as {
   conn: postgres.Sql | undefined;
 };
 
-const conn = globalForDb.conn ?? postgres(url);
+const conn = globalForDb.conn ?? postgres(url, {
+  ssl: url.includes('neon.tech') ? 'require' : undefined,
+  prepare: false,
+  connect_timeout: 15,
+  idle_timeout: 20,
+  max: 5
+});
 if (process.env.NODE_ENV !== 'production') globalForDb.conn = conn;
 
 export const db = drizzle(conn, { schema });
