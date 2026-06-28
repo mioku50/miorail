@@ -39,5 +39,26 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
   // Register NativeToolProvider
   aggregator.registerProvider(new NativeToolProvider(coinGeckoProvider, moralisProvider));
 
+  if (process.env.CHAIN_ENV === 'sepolia') {
+    const { SepoliaToolProvider } = await import('./sepolia.js');
+    const { BaseMcpClient, createBaseMcpSseTransport, McpSendCallsClient } = await import('@mioagent/mcp');
+
+    let mcpClient: any;
+    if (process.env.MCP_SERVER_URL) {
+      try {
+        const baseClient = new BaseMcpClient();
+        const transport = createBaseMcpSseTransport(new URL(process.env.MCP_SERVER_URL));
+        await baseClient.connect(transport);
+        mcpClient = new McpSendCallsClient(baseClient);
+      } catch (e) {
+        console.error('Failed to initialize MCP client:', e);
+      }
+    }
+    aggregator.registerProvider(new SepoliaToolProvider(mcpClient));
+  } else if (process.env.NODE_ENV === 'test') {
+    const { MockMcpToolProvider } = await import('./mock_mcp.js');
+    aggregator.registerProvider(new MockMcpToolProvider());
+  }
+
   return aggregator;
 }

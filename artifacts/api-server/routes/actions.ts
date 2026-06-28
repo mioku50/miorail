@@ -65,18 +65,23 @@ actionsRouter.post('/:actionId/execute', async (req, res, next) => {
       return res.json({ success: false, error: 'Failed to initialize tool aggregator' });
     }
 
-    // We assume the action has the needed information in its tokens
-    let payload = { chain: 'base', calls: [] };
-    if (Array.isArray(actionToExecute.tokens) && actionToExecute.tokens.length > 0) {
-      try {
-        const parsed = JSON.parse(actionToExecute.tokens[0]);
-        if (parsed.chain && Array.isArray(parsed.calls)) {
-          payload = parsed;
+    // Temporary helper for execution payload until DB migration adds execution_payload column
+    // Do not treat tokens as execution payload long-term.
+    function extractExecutionPayload(actionTokens: unknown): { chain: string; calls: { to: string; value?: string; data?: string }[] } {
+      if (Array.isArray(actionTokens) && actionTokens.length > 0) {
+        try {
+          const parsed = JSON.parse(String(actionTokens[0]));
+          if (parsed.chain && Array.isArray(parsed.calls)) {
+            return parsed;
+          }
+        } catch {
+          // ignore
         }
-      } catch {
-        // use default empty payload
       }
+      return { chain: 'base', calls: [] };
     }
+
+    const payload = extractExecutionPayload(actionToExecute.tokens);
 
     // If we have calls, execute them using the tool
     let toolResult;
@@ -103,15 +108,15 @@ actionsRouter.post('/:actionId/execute', async (req, res, next) => {
          const approvalUrl = parsedContent.approvalUrl;
          const requestId = parsedContent.requestId;
 
-         if (!approvalUrl) {
-           return res.json({ success: false, error: 'MCP returned no approval URL' });
+         if (!approvalUrl || !requestId) {
+           return res.json({ success: false, error: 'Backend failed to produce approvalUrl/requestId' });
          }
 
          await db.update(actions)
           .set({ status: 'executed', updatedAt: new Date() })
           .where(and(eq(actions.id, actionId), eq(actions.userId, userId)));
 
-         return res.json(ExecuteActionResponseSchema.parse({ success: true, approvalUrl, txHash: requestId }));
+         return res.json(ExecuteActionResponseSchema.parse({ success: true, approvalUrl, requestId }));
       }
     } catch (e) {
       return res.json({ success: false, error: e instanceof Error ? e.message : 'Tool execution failed' });

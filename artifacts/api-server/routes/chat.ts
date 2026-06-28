@@ -1,15 +1,13 @@
 import { Router } from 'express';
 import { ChatMessageRequestSchema, ChatHistoryResponseSchema } from '@mioagent/api-zod';
 import { Agent } from '@mioagent/agent';
-import { MockLlmProvider } from '@mioagent/llm';
+import { MockLlmProvider, OpenAiCompatibleClient } from '@mioagent/llm';
 import { createToolAggregatorForUser } from '@mioagent/tools';
 import { db, chats } from '@mioagent/db';
 import { eq, desc } from 'drizzle-orm';
 import crypto from 'node:crypto';
 
 export const chatRouter = Router();
-
-const llm = new MockLlmProvider('This is a mock response from the agent.');
 
 chatRouter.get('/history', async (req, res, next) => {
   try {
@@ -37,6 +35,21 @@ chatRouter.post('/', async (req, res, next) => {
     const { message } = ChatMessageRequestSchema.parse(req.body);
     const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
     const tools = await createToolAggregatorForUser(userId, process.env.SESSION_SECRET || 'test-secret');
+
+    let llm;
+    if (process.env.OPENAI_API_KEY) {
+      llm = new OpenAiCompatibleClient({
+        apiKey: process.env.OPENAI_API_KEY,
+        baseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com',
+        defaultModel: process.env.OPENAI_MODEL || 'gpt-4o'
+      });
+    } else {
+      if (process.env.CHAIN_ENV === 'sepolia' && process.env.NODE_ENV !== 'test') {
+        return res.status(500).json({ error: 'LLM provider is not configured. OPENAI_API_KEY is required for Sepolia runtime.' });
+      }
+      llm = new MockLlmProvider('This is a mock response from the agent.');
+    }
+
     const agent = new Agent({ llmProvider: llm, toolAggregator: tools });
 
     const userChats = await db

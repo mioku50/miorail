@@ -82,6 +82,7 @@ export const ExecuteActionRequestSchema = z.object({
 export const ExecuteActionResponseSchema = z.object({
   success: z.boolean(),
   txHash: z.string().optional(),
+  requestId: z.string().optional(),
   approvalUrl: z.string().optional(),
   error: z.string().optional(),
 });
