@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { ChatMessageRequestSchema, ChatHistoryResponseSchema } from '@mioagent/api-zod';
 import { Agent } from '@mioagent/agent';
-import { MockLlmProvider, OpenAiCompatibleClient, createLlmProvider } from '@mioagent/llm';
+import { createLlmProvider } from '@mioagent/llm';
 import { createToolAggregatorForUser } from '@mioagent/tools';
 import { db, chats } from '@mioagent/db';
 import { eq, desc } from 'drizzle-orm';

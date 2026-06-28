@@ -3,7 +3,8 @@ import { MockLlmProvider } from './mock';
 import { OpenAiCompatibleClient } from './openai';
 
 export function createLlmProvider(): LlmProvider {
-  const providerType = process.env.LLM_PROVIDER || 'mock';
+  const explicitProvider = process.env.LLM_PROVIDER;
+  const providerType = explicitProvider || 'mock';
 
   if (providerType === 'openai') {
     if (!process.env.OPENAI_API_KEY) {
@@ -11,7 +12,7 @@ export function createLlmProvider(): LlmProvider {
     }
     return new OpenAiCompatibleClient({
       apiKey: process.env.OPENAI_API_KEY,
-      baseUrl: 'https://api.openai.com/v1',
+      baseUrl: 'https://api.openai.com',
       defaultModel: process.env.OPENAI_MODEL || 'gpt-4o-mini'
     });
   }
@@ -27,7 +28,7 @@ export function createLlmProvider(): LlmProvider {
     });
   }
 
-  if (process.env.CHAIN_ENV === 'sepolia' && providerType !== 'mock' && process.env.NODE_ENV !== 'test') {
+  if (process.env.CHAIN_ENV === 'sepolia' && explicitProvider !== 'mock' && process.env.NODE_ENV !== 'test') {
       throw new Error('LLM provider is not configured. Real LLM configuration is required for Sepolia runtime unless LLM_PROVIDER=mock is explicitly set.');
   }
 

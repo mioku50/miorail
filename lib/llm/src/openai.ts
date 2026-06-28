@@ -11,7 +11,7 @@ export class OpenAiCompatibleClient implements LlmProvider {
 
   async generate(request: LlmRequest): Promise<LlmResponse> {
     const model = request.model || this.config.defaultModel;
-    const url = `${this.config.baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
+    const url = `${this.config.baseUrl.replace(/(?:\/v1)?\/?$/, '')}/v1/chat/completions`;
 
     const response = await fetch(url, {
       method: 'POST',

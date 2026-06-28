@@ -50,8 +50,8 @@ test('createLlmProvider', async (t) => {
     delete process.env.OPENAI_API_KEY;
     try {
       createLlmProvider();
-    } catch (err: any) {
-      assert.ok(!err.message.includes('sk-'));
+    } catch (err: unknown) {
+      assert.ok(!(err as Error).message.includes('sk-'));
     }
   });
 

@@ -47,3 +47,48 @@ test('OpenAiCompatibleClient generates correctly', async (_t) => {
     global.fetch = originalFetch;
   }
 });
+
+test('OpenAiCompatibleClient baseUrl normalization', async (t) => {
+  const originalFetch = global.fetch;
+  let lastUrl = '';
+
+  global.fetch = (async (url: RequestInfo | URL, _options?: RequestInit) => {
+    lastUrl = url.toString();
+    return {
+      ok: true,
+      status: 200,
+      text: async () => '',
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: 'Hi' } }]
+      })
+    } as Response;
+  }) as typeof fetch;
+
+  try {
+    await t.test('OpenAI URL becomes https://api.openai.com/v1/chat/completions', async () => {
+      const client = new OpenAiCompatibleClient({ baseUrl: 'https://api.openai.com', apiKey: 'test', defaultModel: 'm' });
+      await client.generate({ messages: [] });
+      assert.strictEqual(lastUrl, 'https://api.openai.com/v1/chat/completions');
+    });
+
+    await t.test('FreeModel URL becomes https://api.freemodel.dev/v1/chat/completions', async () => {
+      const client = new OpenAiCompatibleClient({ baseUrl: 'https://api.freemodel.dev', apiKey: 'test', defaultModel: 'm' });
+      await client.generate({ messages: [] });
+      assert.strictEqual(lastUrl, 'https://api.freemodel.dev/v1/chat/completions');
+    });
+
+    await t.test('passing LLM_BASE_URL with /v1 does not produce /v1/v1', async () => {
+      const client = new OpenAiCompatibleClient({ baseUrl: 'https://api.openai.com/v1', apiKey: 'test', defaultModel: 'm' });
+      await client.generate({ messages: [] });
+      assert.strictEqual(lastUrl, 'https://api.openai.com/v1/chat/completions');
+    });
+
+    await t.test('trailing slashes are stripped', async () => {
+      const client = new OpenAiCompatibleClient({ baseUrl: 'https://api.openai.com/v1/', apiKey: 'test', defaultModel: 'm' });
+      await client.generate({ messages: [] });
+      assert.strictEqual(lastUrl, 'https://api.openai.com/v1/chat/completions');
+    });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
