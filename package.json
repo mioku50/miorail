@@ -8,7 +8,9 @@
     "test": "node --test scripts/ && pnpm -r test",
     "validate:tasks": "node scripts/validate_tasks.js",
     "lint": "eslint . && markdownlint '**/*.md'",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "smoke:llm": "tsx scripts/smoke_runtime.ts",
+    "smoke:api": "tsx scripts/smoke_api.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
