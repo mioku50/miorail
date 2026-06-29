@@ -2,10 +2,15 @@ import { client, closeDb } from '@mioagent/db';
 
 async function probe() {
   try {
-    const result = await client`select current_database(), now()`;
+    const result = await client`select current_database() as db, now() as now`;
     console.log('✅ Successfully connected to database.');
-    console.log(`Database: ${result.rows[0].current_database}`);
-    console.log(`Time: ${result.rows[0].now}`);
+    console.log('Raw result type:', typeof result, Array.isArray(result) ? `Array(${result.length})` : '');
+    
+    const row = Array.isArray(result) ? result[0] : undefined;
+    if (!row) throw new Error("Database probe returned no rows");
+    
+    console.log(`Database: ${row.db}`);
+    console.log(`Time: ${row.now}`);
     await closeDb();
     process.exit(0);
   } catch (error) {
