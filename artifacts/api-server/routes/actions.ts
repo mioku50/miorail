@@ -11,14 +11,17 @@ export const actionsRouter = Router();
 
 actionsRouter.get('/', async (req, res, next) => {
   try {
+    console.log("TRACE: actions GET start");
     const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user'; // Mock auth for now
 
+    console.log("TRACE: actions GET querying db");
     const userActions = await db
       .select()
       .from(actions)
       .where(eq(actions.userId, userId))
       .orderBy(desc(actions.createdAt))
       .limit(50); // Basic limit
+    console.log(`TRACE: actions GET query done, found ${userActions.length}`);
 
     const formattedActions = userActions.map(a => ({
       id: a.id,
@@ -41,10 +44,12 @@ import { createToolAggregatorForUser } from '@mioagent/tools';
 
 actionsRouter.post('/:actionId/execute', async (req, res, next) => {
   try {
+    console.log("TRACE: execute start");
     const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user'; // Mock auth for now
     const actionId = req.params.actionId;
 
     const [actionToExecute] = await db.select().from(actions).where(and(eq(actions.id, actionId), eq(actions.userId, userId)));
+    console.log("TRACE: execute db.select done");
 
     if (!actionToExecute) {
       return res.status(404).json({ success: false, error: 'Action not found' });

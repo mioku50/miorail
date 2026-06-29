@@ -49,6 +49,6 @@ test('Settings and Memory functions', async (t) => {
 });
 
 test('Cleanup DB', async () => {
-  const { client } = await import('@mioagent/db');
-  await client.end();
+  const { closeDb } = await import('@mioagent/db');
+  await closeDb();
 });

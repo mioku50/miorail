@@ -54,8 +54,8 @@ test('Agent loop runs correctly', async () => {
     MemoryService.getUserSettings = originalGetUserSettings;
 
     // Explicitly disconnect from the database to unblock test exit
-    const { client } = await import('@mioagent/db');
-    await client.end();
+    const { closeDb } = await import('@mioagent/db');
+    await closeDb();
   }
 });
 
@@ -100,7 +100,7 @@ test('Agent loop extracts approvalUrl and requestId from tool results', async ()
     assert.strictEqual(toolResultEvent.requestId, '123');
   } finally {
     MemoryService.getUserSettings = originalGetUserSettings;
-    const { client } = await import('@mioagent/db');
-    await client.end();
+    const { closeDb } = await import('@mioagent/db');
+    await closeDb();
   }
 });

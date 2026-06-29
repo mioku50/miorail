@@ -17,9 +17,12 @@ export class Agent {
   constructor(private config: AgentConfig) {}
 
   async *chatStream(userId: string, userMessage: string, history: LlmMessage[] = []): AsyncGenerator<AgentEvent, void, unknown> {
+    console.log("TRACE: agent.chatStream started");
     const basePrompt = 'You are a helpful assistant. Use tools if necessary.';
 
+    console.log("TRACE: getting user settings");
     const userSettings = await MemoryService.getUserSettings(userId);
+    console.log("TRACE: got user settings");
     const memory = userSettings?.memoryMd;
     let systemPrompt = basePrompt;
     if (memory && memory.trim().length > 0) {
@@ -32,7 +35,9 @@ export class Agent {
       { role: 'user', content: userMessage }
     ];
 
+    console.log("TRACE: listing tools");
     const tools = await this.config.toolAggregator.listTools();
+    console.log("TRACE: listed tools");
     const llmTools = tools.length > 0 ? tools.map(t => ({
       type: 'function' as const,
       function: {

@@ -19,6 +19,7 @@ export class OpenAiCompatibleClient implements LlmProvider {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${this.config.apiKey}`
       },
+      signal: AbortSignal.timeout(60000),
       body: JSON.stringify({
         model,
         messages: request.messages,

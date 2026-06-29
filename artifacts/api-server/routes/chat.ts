@@ -35,16 +35,21 @@ chatRouter.post('/', async (req, res, next) => {
     const { message } = ChatMessageRequestSchema.parse(req.body);
     const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
     const tools = await createToolAggregatorForUser(userId, process.env.SESSION_SECRET || 'test-secret');
+    console.log("TRACE: tools created");
 
     const llm = createLlmProvider();
+    console.log("TRACE: llm created");
     const agent = new Agent({ llmProvider: llm, toolAggregator: tools });
+    console.log("TRACE: agent created");
 
+    console.log("TRACE: querying chats db");
     const userChats = await db
       .select()
       .from(chats)
       .where(eq(chats.userId, userId))
       .orderBy(desc(chats.updatedAt))
       .limit(1);
+    console.log("TRACE: chats db query done");
 
     let chatId: string = crypto.randomUUID();
     let currentMessages: any[] = [];
@@ -66,10 +71,13 @@ chatRouter.post('/', async (req, res, next) => {
     currentMessages.push(userMsg);
 
     if (userChats.length > 0) {
+      console.log("TRACE: updating chats db");
       await db.update(chats)
         .set({ messages: currentMessages, updatedAt: new Date() })
         .where(eq(chats.id, chatId));
+      console.log("TRACE: updated chats db");
     } else {
+      console.log("TRACE: inserting chats db");
       await db.insert(chats).values({
         id: chatId,
         userId,
@@ -77,6 +85,7 @@ chatRouter.post('/', async (req, res, next) => {
         createdAt: new Date(),
         updatedAt: new Date()
       });
+      console.log("TRACE: inserted chats db");
     }
 
     let finalContent = '';

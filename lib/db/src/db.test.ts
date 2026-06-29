@@ -1,6 +1,6 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
-import { db, client, users } from '../index.js';
+import { db, client, closeDb, users } from '../index.js';
 import { eq } from 'drizzle-orm';
 
 describe('db integration tests', { skip: process.env.SKIP_DB_INTEGRATION_TESTS === 'true' }, () => {
@@ -31,7 +31,7 @@ describe('db integration tests', { skip: process.env.SKIP_DB_INTEGRATION_TESTS =
 
   after(async () => {
     if (process.env.SKIP_DB_INTEGRATION_TESTS !== 'true') {
-      await client.end();
+      await closeDb();
     }
   });
 });

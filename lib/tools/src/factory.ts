@@ -15,7 +15,9 @@ export const settingsAPI = {
 
 export async function createToolAggregatorForUser(userId: string, sessionSecret: string): Promise<ToolAggregator> {
   const aggregator = new ToolAggregator();
+  console.log("TRACE: createToolAggregatorForUser before getUserSettings");
   const settings = await settingsAPI.getUserSettings(userId);
+  console.log("TRACE: createToolAggregatorForUser after getUserSettings");
 
   const toggles = settings?.protocolToggles as Record<string, boolean> | undefined;
 

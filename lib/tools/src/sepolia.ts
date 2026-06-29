@@ -97,6 +97,7 @@ export class SepoliaToolProvider implements ToolProvider {
         const res = await fetch(this.rpcUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(5000),
           body: JSON.stringify({
             jsonrpc: '2.0',
             id: 1,
@@ -116,6 +117,7 @@ export class SepoliaToolProvider implements ToolProvider {
         const res = await fetch(this.rpcUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(5000),
           body: JSON.stringify({
             jsonrpc: '2.0',
             id: 1,
@@ -159,6 +161,7 @@ export class SepoliaToolProvider implements ToolProvider {
           const res = await fetch(this.rpcUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            signal: AbortSignal.timeout(5000),
             body: JSON.stringify({
               jsonrpc: '2.0',
               id: 1,
@@ -210,6 +213,7 @@ export class SepoliaToolProvider implements ToolProvider {
         const res = await fetch(this.rpcUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(5000),
           body: JSON.stringify({
             jsonrpc: '2.0',
             id: 1,

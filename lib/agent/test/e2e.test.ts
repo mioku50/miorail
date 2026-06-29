@@ -200,6 +200,6 @@ test('T6.4 E2E scanner test: scanner tick -> emit -> feed -> execute', async () 
 });
 
 test('Clean up DB connection', async () => {
-    const { client } = await import('@mioagent/db');
-    await client.end();
+    const { closeDb } = await import('@mioagent/db');
+    await closeDb();
 });

@@ -8,6 +8,13 @@
       "when": 1782474345078,
       "tag": "0000_light_mystique",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1782662127875,
+      "tag": "0001_nosy_shotgun",
+      "breakpoints": true
     }
   ]
 }

@@ -73,6 +73,6 @@ test('WorkflowRunner emit pseudo-tools', async () => {
   await db.delete(actions).where(eq(actions.userId, userId));
   await db.delete(workflows).where(eq(workflows.id, workflowId));
 
-  const { client } = await import('@mioagent/db');
-  await client.end();
+  const { closeDb } = await import('@mioagent/db');
+  await closeDb();
 });

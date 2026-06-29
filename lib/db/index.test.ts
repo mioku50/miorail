@@ -1,6 +1,6 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
-import { db, client } from './index';
+import { db, client, closeDb } from './index';
 
 import {
   users,
@@ -59,6 +59,6 @@ describe('db connection', () => {
   });
 
   after(async () => {
-    await client.end();
+    await closeDb();
   });
 });

@@ -68,8 +68,8 @@ test('Integration: Agent uses MockLlm + MockMcp + mock-chain', async () => {
 
   } finally {
     MemoryService.getUserSettings = originalGetUserSettings;
-    const { client } = await import('@mioagent/db');
-    await client.end();
+    const { closeDb } = await import('@mioagent/db');
+    await closeDb();
     await mcpProvider.close();
   }
 });

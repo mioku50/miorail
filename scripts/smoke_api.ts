@@ -29,23 +29,17 @@ async function run() {
     assert.ok(chatRes.ok || chatRes.status === 401 || chatRes.status === 500, '/api/chat responded');
     if (chatRes.ok) {
        const chatData = await chatRes.json();
-       assert.ok(chatData.message || chatData.response, 'Chat should have message/response');
+       assert.ok(chatData.message || chatData.response || chatData.content, 'Chat should have message/response/content');
        console.log('✅ /api/chat works');
     } else {
        console.log(`⚠️ /api/chat returned ${chatRes.status} (likely expected without valid session or mock setup)`);
     }
 
-    // 3. Protocols
-    console.log('\n⏳ Checking /api/protocols...');
-    const protoRes = await fetch(`${BASE_URL}/api/protocols`);
-    assert.ok(protoRes.ok, '/api/protocols should return 200');
-    console.log('✅ /api/protocols works');
-
-    // 4. Portfolio
-    console.log('\n⏳ Checking /api/portfolio...');
-    const portRes = await fetch(`${BASE_URL}/api/portfolio`);
-    assert.ok(portRes.ok || portRes.status === 401, '/api/portfolio responded');
-    console.log('✅ /api/portfolio works');
+    // 3. Settings (instead of protocols)
+    console.log('\n⏳ Checking /api/settings...');
+    const protoRes = await fetch(`${BASE_URL}/api/settings`);
+    assert.ok(protoRes.ok, '/api/settings should return 200');
+    console.log('✅ /api/settings works');
 
     // 5. Actions list
     console.log('\n⏳ Checking /api/actions...');

@@ -1,42 +1,51 @@
-import { db, actions, users } from '@mioagent/db';
+import { db, actions, users, closeDb } from '@mioagent/db';
+import { eq } from 'drizzle-orm';
 
 async function run() {
   console.log('--- Seed Sepolia Action ---');
   
-  const defaultUserId = 'default-user'; // the api defaults to this if unauthenticated
+  const defaultUserId = 'default-user';
 
-  // ensure default user exists
-  await db.insert(users).values({ id: defaultUserId }).onConflictDoNothing();
+  console.log('ensuring default user');
+  const defaultUser = await db.select().from(users).where(eq(users.id, defaultUserId));
+  if (defaultUser.length === 0) {
+    await db.insert(users).values({ id: defaultUserId }).onConflictDoNothing();
+  }
 
-  // Create an action with the structure expected for Sepolia
-  // executionPayload is canonical, tokens are UI tags only.
   const executionPayload = {
     chain: 'eip155:84532',
     calls: [
       {
-        to: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', // Sepolia USDC
-        data: '0xa9059cbb00000000000000000000000012345678901234567890123456789012345678900000000000000000000000000000000000000000000000000000000000000001' // fake transfer
+        to: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+        data: '0xa9059cbb00000000000000000000000012345678901234567890123456789012345678900000000000000000000000000000000000000000000000000000000000000001'
       }
     ]
   };
 
   const actionId = `action_smoke_${Date.now()}`;
   
-  await db.insert(actions).values({
-    id: actionId,
-    userId: defaultUserId,
-    kind: 'transfer',
-    status: 'pending',
-    suggestedPrompt: 'Test transfer of Sepolia USDC',
-    tokens: ['USDC', 'transfer'],
-    executionPayload: executionPayload,
-  });
+  console.log('creating action');
+  await Promise.race([
+    db.insert(actions).values({
+      id: actionId,
+      userId: defaultUserId,
+      kind: 'transfer',
+      status: 'pending',
+      suggestedPrompt: 'Test transfer of Sepolia USDC',
+      tokens: ['USDC', 'transfer'],
+      executionPayload: executionPayload,
+    }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('DB operation timed out (creating action)')), 5000))
+  ]);
 
+  console.log('done');
   console.log(`✅ Seeded pending action: ${actionId}`);
+  await closeDb();
   process.exit(0);
 }
 
-run().catch((e) => {
-  console.error(e);
+run().catch(async (e) => {
+  console.error(e.message || e);
+  await closeDb().catch(() => {});
   process.exit(1);
 });

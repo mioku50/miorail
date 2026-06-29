@@ -1,15 +1,11 @@
-import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/neon-http';
+import { neon } from '@neondatabase/serverless';
 import * as schema from './schema';
 import * as dotenv from 'dotenv';
 import { resolve } from 'path';
-import dns from 'node:dns';
 
-dns.setDefaultResultOrder('ipv4first');
-
-// Load .env relative to the workspace root
 dotenv.config({ path: resolve(__dirname, '../../.env') });
-dotenv.config({ path: resolve(__dirname, '../../.env.example') }); // fallback
+dotenv.config({ path: resolve(__dirname, '../../.env.example') });
 
 const url = process.env.DATABASE_URL;
 
@@ -17,21 +13,34 @@ if (!url) {
   throw new Error('DATABASE_URL is not set in environment variables');
 }
 
-// Global client to prevent multiple instances during hot reloading or tests
-const globalForDb = globalThis as unknown as {
-  conn: postgres.Sql | undefined;
+const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  let attempt = 0;
+  while (attempt < 3) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
+      const options = { ...init, signal: controller.signal };
+      const res = await fetch(input, options);
+      clearTimeout(timeout);
+      return res;
+    } catch (e: any) {
+      attempt++;
+      console.warn(`[Neon DB] fetch attempt ${attempt} failed: ${e.message}`);
+      if (attempt >= 3) throw e;
+      await new Promise(r => setTimeout(r, 1000 * attempt));
+    }
+  }
+  throw new Error('Unreachable');
 };
 
-const conn = globalForDb.conn ?? postgres(url, {
-  ssl: url.includes('neon.tech') ? 'require' : undefined,
-  prepare: false,
-  connect_timeout: 15,
-  idle_timeout: 20,
-  max: 5
-});
-if (process.env.NODE_ENV !== 'production') globalForDb.conn = conn;
+import { neonConfig } from '@neondatabase/serverless';
+neonConfig.fetchFunction = customFetch;
+const sql = neon(url);
 
-export const db = drizzle(conn, { schema });
-export const client = conn;
+export const db = drizzle(sql, { schema });
+export const client = async (strings: TemplateStringsArray, ...values: any[]) => {
+  return await sql(strings, ...values);
+};
+export const closeDb = async () => {};
 export * from './schema';
 export { auditLogs } from './schema';
