@@ -44,20 +44,22 @@ function TopBar({ activeTab, setActiveTab, onOpenCommand }: { activeTab: string;
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green opacity-40"></span>
           <span className="relative inline-flex rounded-full h-2 w-2 bg-green"></span>
         </span>
-        4 сканера активны · тик через <span className="font-mono ml-1">{`0:${String(tick).padStart(2, "0")}`}</span>
+        4 scanners active · tick in <span className="font-mono ml-1">{`0:${String(tick).padStart(2, "0")}`}</span>
       </div>
 
       <button
         onClick={onOpenCommand}
         className="flex items-center gap-2 bg-bg border border-line px-[12px] py-[7px] rounded-[10px] text-ink-3 text-[13px] hover:bg-line/50 transition-colors"
       >
-        Команда
+        Command
         <kbd className="font-mono bg-white border border-line rounded-[6px] px-[6px] py-[1px] text-[11px] text-ink-2 shadow-sm">
           ⌘K
         </kbd>
       </button>
 
-      <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-accent to-accent-2 shadow-sm ml-2"></div>
+      <button className="bg-bg border border-line px-[12px] py-[7px] rounded-[10px] text-ink-3 text-[13px] hover:bg-line/50 transition-colors cursor-not-allowed opacity-50" title="Wallet connection not configured for this demo">
+        Connect Wallet
+      </button>
     </header>
   );
 }
@@ -76,7 +78,7 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
       {/* Portfolio Card */}
       <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
         <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-[11px] flex items-center justify-between">
-          Портфель
+          Portfolio
           {!isPortfolioError && portfolio && <span className="bg-green-soft text-green px-2 py-0.5 rounded text-[10px] lowercase tracking-normal">+4.2%</span>}
         </div>
 
@@ -124,31 +126,31 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
       {/* Autonomy Card */}
       <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
         <div className="flex items-center justify-between mb-3">
-          <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3">Автономия <span className="lowercase font-normal tracking-normal text-ink-3/70 ml-1">(demo fixture)</span></div>
+          <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3">Autonomy <span className="lowercase font-normal tracking-normal text-ink-3/70 ml-1">(demo fixture)</span></div>
           <span className="text-[10px] font-bold text-accent bg-accent-soft px-[7px] py-[2px] rounded-[6px] tracking-[.05em]">SESSION KEY</span>
         </div>
-        <div className="flex justify-between text-[12px] text-ink-2 mb-2"><span>Дневной лимит</span><span><b className="font-mono text-ink">$28</b> / $100</span></div>
+        <div className="flex justify-between text-[12px] text-ink-2 mb-2"><span>Daily limit</span><span><b className="font-mono text-ink">$28</b> / $100</span></div>
         <div className="h-[7px] bg-line rounded-full overflow-hidden mb-1"><div className="h-full bg-accent" style={{width: "28%"}}></div></div>
         <div className="flex justify-between text-[12px] text-ink-2 mt-[8px] mb-[9px]"><span>Whitelist</span><b className="font-mono text-ink">USDC · BNKR · NOCK</b></div>
-        <div className="flex justify-between text-[12px] text-ink-2 mb-[9px]"><span>Истекает через</span><b className="font-mono text-ink">5:59:42</b></div>
-        <button onClick={() => showToast("Автономия остановлена. Агент ждёт ручного подтверждения.")} className="w-full py-[9px] rounded-[10px] bg-red-soft text-red font-bold text-[13px] flex items-center justify-center gap-[7px] hover:bg-red hover:text-white transition-colors">⏻ Kill switch</button>
+        <div className="flex justify-between text-[12px] text-ink-2 mb-[9px]"><span>Expires in</span><b className="font-mono text-ink">5:59:42</b></div>
+        <button onClick={() => showToast("Autonomy остановлена. Агент ждёт ручного подтверждения.")} className="w-full py-[9px] rounded-[10px] bg-red-soft text-red font-bold text-[13px] flex items-center justify-center gap-[7px] hover:bg-red hover:text-white transition-colors">⏻ Kill switch</button>
       </div>
 
       {/* x402 Budget */}
       <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
-        <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-3">x402 бюджет <span className="lowercase font-normal tracking-normal text-ink-3/70 ml-1">(testnet-USDC)</span></div>
+        <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-3">x402 budget <span className="lowercase font-normal tracking-normal text-ink-3/70 ml-1">(testnet-USDC)</span></div>
         <div className="flex items-baseline justify-between mb-2">
            <div className="font-mono text-[20px] font-bold text-ink">$1.84</div>
-           <span className="text-[12px] font-bold bg-accent-soft text-accent px-[8px] py-[3px] rounded-[8px]">сегодня</span>
+           <span className="text-[12px] font-bold bg-accent-soft text-accent px-[8px] py-[3px] rounded-[8px]">today</span>
         </div>
         <div className="h-[7px] bg-line rounded-full overflow-hidden mb-[6px]"><div className="h-full bg-accent" style={{width: "37%"}}></div></div>
-        <div className="flex justify-between text-[12px] text-ink-2 mt-[6px] mb-[9px]"><span>inference · 142 вызова</span><b className="font-mono text-ink">$1.12</b></div>
-        <div className="flex justify-between text-[12px] text-ink-2"><span>tools · 38 вызовов</span><b className="font-mono text-ink">$0.72</b></div>
+        <div className="flex justify-between text-[12px] text-ink-2 mt-[6px] mb-[9px]"><span>inference · 142 calls</span><b className="font-mono text-ink">$1.12</b></div>
+        <div className="flex justify-between text-[12px] text-ink-2"><span>tools · 38 calls</span><b className="font-mono text-ink">$0.72</b></div>
       </div>
 
       {/* Protocols */}
       <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
-        <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-3">Протоколы</div>
+        <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-3">Protocols</div>
         {isProtocolsError || !protocolsData ? (
            <div className="text-[13px] text-red bg-red-soft p-3 rounded-md font-medium border border-red/20 mt-2">Provider disconnected</div>
         ) : (
@@ -174,7 +176,7 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
   );
 }
 
-function ActionInbox() {
+function ActionInbox({ showToast }: { showToast: (msg: string) => void }) {
   const { data, isLoading, refetch } = useActionsFeed();
   const executeAction = useExecuteAction();
   const dismissAction = useDismissAction();
@@ -186,7 +188,7 @@ function ActionInbox() {
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-[16px] font-bold text-ink tracking-[-.02em]">Action Inbox</h2>
         <div className="flex gap-1.5">
-          {['все', 'сигналы', 'рекомендации', 'blocked'].map((f, i) => (
+          {['all', 'signals', 'recommendations', 'blocked'].map((f, i) => (
             <div key={f} className={`px-[11px] py-[5px] rounded-[9px] text-[12px] font-medium border cursor-pointer ${i === 0 ? 'bg-accent text-white border-accent' : 'bg-panel text-ink-2 border-line hover:bg-bg'}`}>
               {f}
             </div>
@@ -195,9 +197,9 @@ function ActionInbox() {
       </div>
 
       <div className="flex flex-col gap-4">
-        {isLoading && <div className="text-sm text-ink-3">Загрузка...</div>}
+        {isLoading && <div className="text-sm text-ink-3">Loading...</div>}
         {!isLoading && actions.length === 0 && (
-          <div className="text-sm text-ink-3">Нет активных действий</div>
+          <div className="text-sm text-ink-3">No active actions</div>
         )}
         {actions.map((action: any /* eslint-disable-line @typescript-eslint/no-explicit-any */) => {
            const isPending = action.status === 'pending';
@@ -243,7 +245,26 @@ function ActionInbox() {
                 ) : (
                   <div className="flex gap-2 items-center mt-1">
                      <button
-                       onClick={() => executeAction.mutate({ actionId: action.id }, { onSuccess: (data) => { if (data?.approvalUrl) { window.open(data.approvalUrl, '_blank'); } refetch(); } })}
+                       onClick={() => executeAction.mutate({ actionId: action.id }, { 
+    onSuccess: (data: any) => { 
+      if (data?.success && data?.approvalUrl) { 
+        window.open(data.approvalUrl, '_blank'); 
+      } else if (data?.error) {
+        if (data.error.includes('MCP') || data.error.includes('Approval provider') || data.error.includes('Backend failed')) {
+          showToast('Approval provider is not configured. Action was not executed.');
+        } else {
+          showToast('Error: ' + data.error);
+        }
+      } else {
+        showToast('Approval provider is not configured. Action was not executed.');
+      }
+      refetch(); 
+    },
+    onError: (err: any) => {
+      showToast('Error: ' + err.message);
+      refetch();
+    }
+  })}
                        disabled={!isPending || isExecuting || isDismissing}
                        className="bg-accent hover:bg-accent-2 text-white px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] shadow-[0_6px_16px_rgba(0,0,255,.28)] hover:-translate-y-[1px] hover:shadow-[0_10px_22px_rgba(0,0,255,.34)] transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                      >
@@ -254,7 +275,7 @@ function ActionInbox() {
                        disabled={!isPending || isExecuting || isDismissing}
                        className="bg-bg hover:bg-[#eceef7] text-ink-2 px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                      >
-                       {isDismissing ? 'Dismissing...' : 'Скрыть'}
+                       {isDismissing ? 'Dismissing...' : 'Dismiss'}
                      </button>
                   </div>
                 )}
@@ -266,12 +287,12 @@ function ActionInbox() {
   );
 }
 
-function AgentStream() {
+function AgentStream({ showToast }: { showToast: (msg: string) => void }) {
   const { data: chatData, refetch } = useChatHistory();
   const sendMessageMutation = useSendMessage();
   const [input, setInput] = useState('');
   const streamRef = useRef<HTMLDivElement>(null);
-  const [simState, setSimState] = useState<'idle'|'simulating'|'done'|'approved'>('idle');
+  
 
   const messages = chatData?.messages || [];
   const displayMessages = messages;
@@ -280,7 +301,7 @@ function AgentStream() {
     if (streamRef.current) {
       streamRef.current.scrollTop = streamRef.current.scrollHeight;
     }
-  }, [displayMessages, simState]);
+  }, [displayMessages]);
 
   const handleSend = async () => {
     if (!input.trim() || sendMessageMutation.isPending) return;
@@ -289,8 +310,9 @@ function AgentStream() {
     try {
       await sendMessageMutation.mutateAsync({ message: msg });
       refetch();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      showToast('Error: ' + err.message);
     }
   };
 
@@ -339,92 +361,22 @@ function AgentStream() {
             return null;
           })}
 
-          {/* Mocking the tool calls and sim card if we triggered it via demo */}
-          {(simState !== 'idle' || messages.length === 0) && (
-            <>
-               <div className="toolcall">
-                 <span className="ok">✓</span> search_tokens <span style={{color:'var(--color-ink-3)'}}>{"{\"q\":\"NOCK\"}"}</span>
-               </div>
-               <div className="toolcall">
-                 <span className="ok">✓</span> get_portfolio <span style={{color:'var(--color-ink-3)'}}>{"{\"chain\":\"base\"}"}</span>
-               </div>
-               <div className="screened">
-                  🔒 screened · инструкция проверена action-security
-               </div>
-            </>
-          )}
-
-          {simState === 'simulating' && (
-             <div className="toolcall">
-               <span className="run">●</span> swap <span style={{color:'var(--color-ink-3)'}}>симуляция…</span>
-             </div>
-          )}
-
-          {simState === 'done' || simState === 'approved' ? (
-             <>
-               <div className="toolcall">
-                 <span className="ok">✓</span> swap <span style={{color:'var(--color-ink-3)'}}>simulated</span>
-               </div>
-
-               <div className="sim">
-                  <h4>
-                     ◆ Pre-trade simulation (demo fixture)
-                  </h4>
-                  <div className="sim-grid">
-                     <div className="sg">
-                       <span className="k">Исход</span>
-                       <span className="v">5 USDC → ~7,810 NOCK</span>
-                     </div>
-                     <div className="sg">
-                       <span className="k">Slippage</span>
-                       <span className="v" style={{color:'var(--color-amber)'}}>5.0%</span>
-                     </div>
-                     <div className="sg">
-                       <span className="k">Эффект на портфель</span>
-                       <span className="v" style={{color:'var(--color-green)'}}>+0.04%</span>
-                     </div>
-                     <div className="sg">
-                       <span className="k">Газ (Base)</span>
-                       <span className="v">~$0.001</span>
-                     </div>
-                  </div>
-                  <div className="verdict">
-                     🛡️ GoPlus: безопасно · не honeypot
-                  </div>
-                  <div className="approve">
-                     <div className="ar">
-                        <span>x402 стоимость действия</span>
-                        <b>$0.004</b>
-                     </div>
-                     <div className="ar">
-                        <span>подпись</span>
-                        <b>session key (в лимите)</b>
-                     </div>
-                     <button
-                       onClick={() => setSimState('approved')}
-                       style={simState === 'approved' ? {background:'var(--color-green)'} : {}}
-                     >
-                       {simState === 'approved' ? '✓ Подтверждено за 0.8с' : 'Open Base app to approve →'}
-                     </button>
-                  </div>
-               </div>
-             </>
-          ) : null}
+          
 
        </div>
 
        <div className="composer">
           <input
             type="text"
-            placeholder="Дайте инструкцию агенту…"
+            placeholder="Give the agent an instruction..."
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSend()}
-            disabled={sendMessageMutation.isPending || simState === 'simulating'}
+            disabled={sendMessageMutation.isPending}
           />
           <button
             onClick={handleSend}
-            disabled={sendMessageMutation.isPending || simState === 'simulating'}
+            disabled={sendMessageMutation.isPending}
             className="send"
           >
             ↑
@@ -435,11 +387,11 @@ function AgentStream() {
 }
 
 const COMMANDS = [
-  { id: 'swap', icon: '⚡', label: 'Swap токены', tab: 'actions builder' },
-  { id: 'scanner', icon: '📡', label: 'Новый сканер', tab: 'actions builder' },
-  { id: 'positions', icon: '📈', label: 'Открытые позиции', tab: 'main' },
-  { id: 'memory', icon: '🧠', label: 'Редактировать память', tab: 'history' },
-  { id: 'keys', icon: '🔑', label: 'Session keys · автономия', tab: 'configure' },
+  { id: 'swap', icon: '⚡', label: 'Swap tokens', tab: 'actions builder' },
+  { id: 'scanner', icon: '📡', label: 'New scanner', tab: 'actions builder' },
+  { id: 'positions', icon: '📈', label: 'Open positions', tab: 'main' },
+  { id: 'memory', icon: '🧠', label: 'Edit memory', tab: 'history' },
+  { id: 'keys', icon: '🔑', label: 'Session keys · autonomy', tab: 'configure' },
 ];
 
 function CommandPalette({ isOpen, onClose, onSelect }: { isOpen: boolean, onClose: () => void, onSelect: (tab: string) => void }) {
@@ -483,7 +435,7 @@ function CommandPalette({ isOpen, onClose, onSelect }: { isOpen: boolean, onClos
        <div className="w-[560px] bg-panel rounded-[18px] shadow-lg overflow-hidden animate-in slide-in-from-bottom-4 duration-200" onClick={e => e.stopPropagation()}>
           <input
             type="text"
-            placeholder="Команда или поиск…  «swap», «scanner», «positions»"
+            placeholder="Command or search... 'swap', 'scanner', 'positions'"
             className="w-full border-none outline-none px-[20px] py-[18px] text-[16px] border-b border-line"
             autoFocus
             value={query}
@@ -503,13 +455,13 @@ function CommandPalette({ isOpen, onClose, onSelect }: { isOpen: boolean, onClos
                </div>
              ))}
              {filteredCommands.length === 0 && (
-               <div className="px-[13px] py-[11px] text-[14px] text-ink-3">Нет команд</div>
+               <div className="px-[13px] py-[11px] text-[14px] text-ink-3">No commands</div>
              )}
           </div>
           <div className="px-[16px] py-[9px] border-t border-line text-[11px] text-ink-3 flex gap-[14px] font-mono">
-             <span>↑↓ навигация</span>
-             <span>↵ выбрать</span>
-             <span>esc закрыть</span>
+             <span>↑↓ navigate</span>
+             <span>↵ select</span>
+             <span>esc to close</span>
           </div>
        </div>
     </div>
@@ -554,8 +506,8 @@ function Toast({ msg }: { msg: string }) {
       <TopBar activeTab={activeTab} setActiveTab={setActiveTab} onOpenCommand={() => setPaletteOpen(true)} />
       <div className="flex-1 flex overflow-hidden">
         <LeftRail showToast={showToast} />
-        <ActionInbox />
-        <AgentStream />
+        <ActionInbox showToast={showToast} />
+        <AgentStream showToast={showToast} />
       </div>
       <CommandPalette
         isOpen={paletteOpen}
