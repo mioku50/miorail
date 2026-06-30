@@ -93,6 +93,21 @@ export function usePortfolio(
 
 // Mutations
 
+export function useCreateRecommendation(
+  options?: Omit<UseMutationOptions<{ success: boolean; actionId: string }, Error, { instruction: string }>, 'mutationFn'>
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data) => fetchApi<{ success: boolean; actionId: string }>('/api/actions/recommend', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['actions', 'feed'] }),
+    ...options,
+  });
+}
+
+
 export function useClearChatHistory(
   options?: Omit<UseMutationOptions<{ success: boolean }, Error, void>, 'mutationFn'>
 ) {

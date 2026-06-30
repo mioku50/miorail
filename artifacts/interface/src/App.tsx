@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from 'wagmi';
-import { usePortfolio, useActionsFeed, useChatHistory, useSendMessage, useProtocols, useToggleProtocol, useExecuteAction, useDismissAction, useClearChatHistory, useClearActions } from '@mioagent/api-client-react';
+import { usePortfolio, useActionsFeed, useChatHistory, useSendMessage, useProtocols, useToggleProtocol, useExecuteAction, useDismissAction, useClearChatHistory, useClearActions, useCreateRecommendation } from '@mioagent/api-client-react';
 
 
 function WalletConnect({ showToast }: { showToast: (msg: string) => void }) {
@@ -132,8 +132,12 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
   const { mutate: toggleProtocol } = useToggleProtocol();
 
   const tokens = portfolio?.tokens || [];
-  const usdcBalance = tokens.find((b: { symbol: string; balanceFormatted: string }) => b.symbol === 'USDC')?.balanceFormatted || '0.00';
-  const displayAddress = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : '0x84f5…834b';
+  const ethToken = tokens.find((b: any) => b.symbol === 'ETH');
+  const ethBalance = ethToken?.balanceFormatted || '0.00';
+  const usdcToken = tokens.find((b: any) => b.symbol === 'USDC');
+  const usdcBalance = usdcToken?.balanceFormatted;
+  const displayAddress = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : '';
+  const isMainnetReadonly = import.meta.env.VITE_CHAIN_ENV === 'mainnet-readonly';
 
   return (
     <aside className="w-[320px] min-w-[280px] border-r border-line bg-panel-2 p-4 flex flex-col gap-[14px] overflow-y-auto">
@@ -152,15 +156,23 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
               portfolioError?.message?.includes('key') ? 'Provider key missing' :
               'Unable to load portfolio'}
            </div>
-        ) : !portfolio || tokens.length === 0 ? (
+        ) : !portfolio || (!address) ? (
            <div className="text-[13px] text-ink-2 bg-panel-2 p-3 rounded-md border border-line">
              Connect wallet to view portfolio
            </div>
         ) : (
 
           <>
-            <div className="flex items-baseline mb-4">
-              <div className="text-[30px] font-bold tracking-tight font-mono text-ink">{usdcBalance} <span className="text-[16px] text-ink-2">testnet-USDC</span></div>
+            {portfolio.providerStatus && (
+              <div className="text-[11px] text-amber bg-amber-soft p-2 rounded border border-amber/20 mb-3 font-medium">
+                {portfolio.providerStatus}
+              </div>
+            )}
+            <div className="flex items-baseline mb-4 flex-col">
+              <div className="text-[30px] font-bold tracking-tight font-mono text-ink">{ethBalance} <span className="text-[16px] text-ink-2">ETH</span></div>
+              {usdcBalance && !isMainnetReadonly && (
+                 <div className="text-[20px] font-bold tracking-tight font-mono text-ink mt-1">{usdcBalance} <span className="text-[14px] text-ink-2">testnet-USDC</span></div>
+              )}
             </div>
 
             <svg className="w-full h-[46px] mb-2" viewBox="0 0 240 46" preserveAspectRatio="none">
@@ -197,6 +209,7 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
       </div>
 
       {/* Autonomy Card */}
+      {!isMainnetReadonly && (
       <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
         <div className="flex items-center justify-between mb-3">
           <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3">Autonomy <span className="lowercase font-normal tracking-normal text-ink-3/70 ml-1">(demo fixture)</span></div>
@@ -208,8 +221,10 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
         <div className="flex justify-between text-[12px] text-ink-2 mb-[9px]"><span>Expires in</span><b className="font-mono text-ink">5:59:42</b></div>
         <button onClick={() => showToast("Autonomy stopped. Agent is waiting for manual confirmation.")} className="w-full py-[9px] rounded-[10px] bg-red-soft text-red font-bold text-[13px] flex items-center justify-center gap-[7px] hover:bg-red hover:text-white transition-colors">⏻ Kill switch</button>
       </div>
+      )}
 
       {/* x402 Budget */}
+      {!isMainnetReadonly && (
       <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
         <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-3">x402 budget <span className="lowercase font-normal tracking-normal text-ink-3/70 ml-1">(testnet-USDC)</span></div>
         <div className="flex items-baseline justify-between mb-2">
@@ -220,11 +235,35 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
         <div className="flex justify-between text-[12px] text-ink-2 mt-[6px] mb-[9px]"><span>inference · 142 calls</span><b className="font-mono text-ink">$1.12</b></div>
         <div className="flex justify-between text-[12px] text-ink-2"><span>tools · 38 calls</span><b className="font-mono text-ink">$0.72</b></div>
       </div>
+      )}
 
       {/* Protocols */}
       <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
         <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-3">Protocols</div>
-        {isProtocolsError || !protocolsData ? (
+        {isMainnetReadonly ? (
+           <div className="flex flex-col gap-2">
+             <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
+               <span className="text-ink-2">Base RPC</span>
+               {address ? <span className="text-green font-medium">Connected</span> : <span className="text-amber font-medium">Missing</span>}
+             </div>
+             <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
+               <span className="text-ink-2">Token balances</span>
+               <span className="text-amber font-medium">Missing</span>
+             </div>
+             <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
+               <span className="text-ink-2">GoPlus</span>
+               <span className="text-amber font-medium">Missing</span>
+             </div>
+             <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
+               <span className="text-ink-2">DeFiLlama/CoinGecko</span>
+               <span className="text-amber font-medium">Missing</span>
+             </div>
+             <div className="flex items-center justify-between py-1 text-[12px]">
+               <span className="text-ink-2">Base MCP</span>
+               {import.meta.env.VITE_MCP_SERVER_URL ? <span className="text-green font-medium">Configured</span> : <span className="text-red font-medium">Missing</span>}
+             </div>
+           </div>
+        ) : isProtocolsError || !protocolsData ? (
            <div className="text-[13px] text-red bg-red-soft p-3 rounded-md font-medium border border-red/20 mt-2">Provider disconnected</div>
         ) : (
           <div className="flex flex-col">
@@ -475,20 +514,44 @@ const COMMANDS = [
 ];
 
 
+
 function ActionsBuilder({ showToast }: { showToast: (msg: string) => void }) {
   const { address } = useAccount();
+  const [instruction, setInstruction] = useState('');
+  const createAction = useCreateRecommendation();
+
+  const handleCreate = () => {
+    if (!instruction) return;
+    createAction.mutate({ instruction }, {
+      onSuccess: () => {
+        showToast('Recommendation created in Action Inbox');
+        setInstruction('');
+      },
+      onError: (e) => showToast('Failed to create: ' + e.message)
+    });
+  };
+
   return (
     <main className="flex-1 bg-bg p-[18px] flex flex-col gap-4 overflow-y-auto">
       <h2 className="text-[16px] font-bold text-ink">Actions Builder</h2>
       <div className="bg-panel border border-line rounded-xl p-4 flex flex-col gap-4">
          <div>
            <label className="text-sm font-medium text-ink-2">Instruction</label>
-           <textarea placeholder="e.g. swap 1 USDC to ETH..." className="w-full mt-2 border border-line rounded-md p-2 text-sm bg-bg resize-none h-[100px]" />
+           <textarea 
+             value={instruction}
+             onChange={e => setInstruction(e.target.value)}
+             placeholder="e.g. swap 1 USDC to ETH..." 
+             className="w-full mt-2 border border-line rounded-md p-2 text-sm bg-bg resize-none h-[100px] text-ink" 
+           />
          </div>
-         <div className="text-sm text-ink-2">Current mode: {import.meta.env.VITE_CHAIN_ENV || 'sepolia'}</div>
-         <div className="text-sm text-ink-2">Wallet: {address || 'Not connected'}</div>
-         <button className="bg-accent text-white px-4 py-2 rounded-lg text-sm w-fit opacity-50 cursor-not-allowed" onClick={() => showToast('Not implemented in UI yet')}>
-           Create recommendation
+         <div className="text-sm text-ink-2">Current mode: <span className="font-medium text-ink">{import.meta.env.VITE_CHAIN_ENV || 'sepolia'}</span></div>
+         <div className="text-sm text-ink-2">Wallet: <span className="font-mono text-ink">{address || 'Not connected'}</span></div>
+         <button 
+           disabled={!instruction || createAction.isPending}
+           className="bg-accent text-white px-4 py-2 rounded-lg text-sm w-fit font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors" 
+           onClick={handleCreate}
+         >
+           {createAction.isPending ? 'Creating...' : 'Create recommendation'}
          </button>
       </div>
     </main>

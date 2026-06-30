@@ -167,6 +167,7 @@ export const PortfolioResponseSchema = z.object({
   totalUsdValue: z.string().optional(),
   tokens: z.array(PortfolioTokenSchema),
   updatedAt: z.string(),
+  providerStatus: z.string().optional(),
 });
 
 // Workflows

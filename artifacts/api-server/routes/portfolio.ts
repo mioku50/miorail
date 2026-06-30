@@ -68,7 +68,8 @@ portfolioRouter.get('/', async (req, res, next) => {
           usdValue: '0.00'
         }
       ],
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      providerStatus: 'Token balances provider not configured'
     }));
 
   } catch (error) {

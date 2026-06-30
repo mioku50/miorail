@@ -57,6 +57,51 @@ actionsRouter.get('/', async (req, res, next) => {
 
 import { createToolAggregatorForUser } from '@mioagent/tools';
 
+
+actionsRouter.post('/recommend', async (req, res, next) => {
+  try {
+    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const { instruction } = req.body;
+    
+    if (!instruction) {
+      return res.status(400).json({ success: false, error: 'Instruction required' });
+    }
+
+    const { db, actions } = require('@mioagent/db');
+    const crypto = require('node:crypto');
+
+    const chainEnv = process.env.CHAIN_ENV || 'sepolia';
+    const chainId = chainEnv === 'sepolia' ? 'eip155:84532' : 'eip155:8453';
+    
+    const actionId = crypto.randomUUID();
+    const payload = {
+      chain: chainId,
+      calls: [
+        {
+          to: '0x0000000000000000000000000000000000000000',
+          value: '0',
+          data: '0x'
+        }
+      ]
+    };
+
+    await db.insert(actions).values({
+      id: actionId,
+      userId,
+      kind: 'recommendation',
+      status: 'pending',
+      suggestedPrompt: 'Builder: ' + instruction,
+      executionPayload: JSON.stringify(payload),
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+
+    res.json({ success: true, actionId });
+  } catch (error) {
+    next(error);
+  }
+});
+
 actionsRouter.post('/:actionId/execute', async (req, res, next) => {
   try {
     console.log("TRACE: execute start");
