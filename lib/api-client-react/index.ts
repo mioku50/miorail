@@ -76,10 +76,17 @@ export function useProtocols(options?: Omit<UseQueryOptions<apiSpec.ProtocolsLis
   });
 }
 
-export function usePortfolio(options?: Omit<UseQueryOptions<apiSpec.PortfolioResponse, Error, apiSpec.PortfolioResponse, string[]>, 'queryKey' | 'queryFn'>) {
+export function usePortfolio(
+  address?: string,
+  options?: Omit<UseQueryOptions<apiSpec.PortfolioResponse, Error, apiSpec.PortfolioResponse, (string | undefined)[]>, 'queryKey' | 'queryFn'>
+) {
   return useQuery({
-    queryKey: ['portfolio'],
-    queryFn: () => fetchApi<apiSpec.PortfolioResponse>('/api/portfolio'),
+    queryKey: ['portfolio', address],
+    queryFn: () => {
+      const url = new URL('/api/portfolio', 'http://localhost');
+      if (address) url.searchParams.set('address', address);
+      return fetchApi<apiSpec.PortfolioResponse>(url.pathname + url.search);
+    },
     ...options,
   });
 }

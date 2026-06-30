@@ -1,7 +1,66 @@
 import { useState, useRef, useEffect } from 'react';
+import { useAccount, useConnect, useDisconnect, useSwitchChain } from 'wagmi';
 import { usePortfolio, useActionsFeed, useChatHistory, useSendMessage, useProtocols, useToggleProtocol, useExecuteAction, useDismissAction } from '@mioagent/api-client-react';
 
-function TopBar({ activeTab, setActiveTab, onOpenCommand }: { activeTab: string; setActiveTab: (t: string) => void; onOpenCommand: () => void }) {
+
+function WalletConnect({ showToast }: { showToast: (msg: string) => void }) {
+  const { address, isConnected, isConnecting, chainId } = useAccount();
+  const { connect, connectors, error } = useConnect();
+  const { disconnect } = useDisconnect();
+  const { switchChain } = useSwitchChain();
+  
+  const expectedChainId = import.meta.env.VITE_CHAIN_ENV === 'sepolia' ? 84532 : 8453;
+  const isWrongNetwork = isConnected && chainId !== expectedChainId;
+
+  useEffect(() => {
+    if (error) {
+       showToast('Connection error: ' + error.message.split('\n')[0]);
+    }
+  }, [error]);
+
+  if (isConnecting) {
+    return (
+      <button disabled className="bg-bg border border-line px-[12px] py-[7px] rounded-[10px] text-ink-3 text-[13px] opacity-50 cursor-wait">
+        Connecting...
+      </button>
+    );
+  }
+
+  if (isConnected) {
+    if (isWrongNetwork) {
+      return (
+        <button 
+          onClick={() => switchChain && switchChain({ chainId: expectedChainId })}
+          className="bg-amber-soft text-amber border border-amber/20 px-[12px] py-[7px] rounded-[10px] text-[13px] hover:bg-amber-soft/80 transition-colors font-medium"
+        >
+          Switch to Base{expectedChainId === 84532 ? ' Sepolia' : ''}
+        </button>
+      );
+    }
+
+    return (
+      <button 
+        onClick={() => disconnect()}
+        className="bg-bg border border-line px-[12px] py-[7px] rounded-[10px] text-ink-3 text-[13px] hover:bg-line/50 transition-colors flex items-center gap-2"
+        title="Disconnect Wallet"
+      >
+        <span className="w-2 h-2 rounded-full bg-green"></span>
+        {address?.slice(0, 6)}…{address?.slice(-4)}
+      </button>
+    );
+  }
+
+  return (
+    <button 
+      onClick={() => connect({ connector: connectors[0] })}
+      className="bg-accent hover:bg-accent-2 text-white px-[12px] py-[7px] rounded-[10px] text-[13px] transition-colors font-medium shadow-sm"
+    >
+      Connect Wallet
+    </button>
+  );
+}
+
+function TopBar({ showToast, activeTab, setActiveTab, onOpenCommand }: { showToast: (msg: string) => void; activeTab: string; setActiveTab: (t: string) => void; onOpenCommand: () => void }) {
      const [tick, setTick] = useState(42);
      useEffect(() => {
        const timer = setInterval(() => setTick(t => t <= 0 ? 59 : t - 1), 1000);
@@ -61,21 +120,20 @@ function TopBar({ activeTab, setActiveTab, onOpenCommand }: { activeTab: string;
         </kbd>
       </button>
 
-      <button className="bg-bg border border-line px-[12px] py-[7px] rounded-[10px] text-ink-3 text-[13px] hover:bg-line/50 transition-colors cursor-not-allowed opacity-50" title="Wallet connection not configured for this demo">
-        Connect Wallet
-      </button>
+      <WalletConnect showToast={showToast} />
     </header>
   );
 }
 
 function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
-  const { data: portfolio, isError: isPortfolioError, error: portfolioError } = usePortfolio();
+  const { address } = useAccount();
+  const { data: portfolio, isError: isPortfolioError, error: portfolioError } = usePortfolio(address);
   const { data: protocolsData, isError: isProtocolsError } = useProtocols();
   const { mutate: toggleProtocol } = useToggleProtocol();
 
   const tokens = portfolio?.tokens || [];
   const usdcBalance = tokens.find((b: { symbol: string; balanceFormatted: string }) => b.symbol === 'USDC')?.balanceFormatted || '0.00';
-  const displayAddress = '0x84f5…834b';
+  const displayAddress = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : '0x84f5…834b';
 
   return (
     <aside className="w-[320px] min-w-[280px] border-r border-line bg-panel-2 p-4 flex flex-col gap-[14px] overflow-y-auto">
@@ -96,7 +154,7 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
            </div>
         ) : !portfolio || tokens.length === 0 ? (
            <div className="text-[13px] text-ink-2 bg-panel-2 p-3 rounded-md border border-line">
-             Connect or configure a wallet address to view Base Mainnet portfolio.
+             Connect wallet to view portfolio
            </div>
         ) : (
 
@@ -522,7 +580,7 @@ function Toast({ msg }: { msg: string }) {
 
   return (
     <div className="h-screen w-full flex flex-col font-sans">
-      <TopBar activeTab={activeTab} setActiveTab={setActiveTab} onOpenCommand={() => setPaletteOpen(true)} />
+      <TopBar showToast={showToast} activeTab={activeTab} setActiveTab={setActiveTab} onOpenCommand={() => setPaletteOpen(true)} />
       <div className="flex-1 flex overflow-hidden">
         <LeftRail showToast={showToast} />
         <ActionInbox showToast={showToast} />

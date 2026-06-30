@@ -7,7 +7,7 @@ export const portfolioRouter = Router();
 portfolioRouter.get('/', async (req, res, next) => {
   try {
     const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
-    const address = (req as { session?: { user?: { address?: string } } }).session?.user?.address;
+    const address = (req.query.address as string) || (req as { session?: { user?: { address?: string } } }).session?.user?.address;
 
     if (!address) {
       return res.json(PortfolioResponseSchema.parse({
