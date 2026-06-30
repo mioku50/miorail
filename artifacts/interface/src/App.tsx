@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from 'wagmi';
-import { usePortfolio, useActionsFeed, useChatHistory, useSendMessage, useProtocols, useToggleProtocol, useExecuteAction, useDismissAction } from '@mioagent/api-client-react';
+import { usePortfolio, useActionsFeed, useChatHistory, useSendMessage, useProtocols, useToggleProtocol, useExecuteAction, useDismissAction, useClearChatHistory, useClearActions } from '@mioagent/api-client-react';
 
 
 function WalletConnect({ showToast }: { showToast: (msg: string) => void }) {
@@ -253,6 +253,7 @@ function ActionInbox({ showToast }: { showToast: (msg: string) => void }) {
   const { data, isLoading, refetch } = useActionsFeed();
   const executeAction = useExecuteAction();
   const dismissAction = useDismissAction();
+  const clearActions = useClearActions();
 
   const actions = data?.actions || [];
 
@@ -266,6 +267,7 @@ function ActionInbox({ showToast }: { showToast: (msg: string) => void }) {
               {f}
             </div>
           ))}
+                  <button onClick={() => { if(confirm('Clear all actions?')) clearActions.mutate(); }} disabled={clearActions.isPending} className="px-2 py-1 bg-red-soft text-red text-xs rounded border border-red/20 ml-2 hover:bg-red hover:text-white transition-colors">Clear all</button>
         </div>
       </div>
 
@@ -367,6 +369,7 @@ function ActionInbox({ showToast }: { showToast: (msg: string) => void }) {
 function AgentStream({ showToast }: { showToast: (msg: string) => void }) {
   const { data: chatData, refetch } = useChatHistory();
   const sendMessageMutation = useSendMessage();
+  const clearChat = useClearChatHistory();
   const [input, setInput] = useState('');
   const streamRef = useRef<HTMLDivElement>(null);
   
@@ -397,7 +400,7 @@ function AgentStream({ showToast }: { showToast: (msg: string) => void }) {
     <div className="chat">
        <div className="chat-head">
          Agent Stream
-         <span className="mono" style={{color:'var(--color-accent)', cursor:'pointer'}} onClick={() => setInput('')}>+ new chat</span>
+         <span className="mono" style={{color:'var(--color-accent)', cursor:'pointer'}} onClick={() => { if(confirm('Clear chat history?')) clearChat.mutate(); }}>+ new chat</span>
        </div>
 
        <div className="stream" ref={streamRef}>
@@ -470,6 +473,125 @@ const COMMANDS = [
   { id: 'memory', icon: '🧠', label: 'Edit memory', tab: 'history' },
   { id: 'keys', icon: '🔑', label: 'Session keys · autonomy', tab: 'configure' },
 ];
+
+
+function ActionsBuilder({ showToast }: { showToast: (msg: string) => void }) {
+  const { address } = useAccount();
+  return (
+    <main className="flex-1 bg-bg p-[18px] flex flex-col gap-4 overflow-y-auto">
+      <h2 className="text-[16px] font-bold text-ink">Actions Builder</h2>
+      <div className="bg-panel border border-line rounded-xl p-4 flex flex-col gap-4">
+         <div>
+           <label className="text-sm font-medium text-ink-2">Instruction</label>
+           <textarea placeholder="e.g. swap 1 USDC to ETH..." className="w-full mt-2 border border-line rounded-md p-2 text-sm bg-bg resize-none h-[100px]" />
+         </div>
+         <div className="text-sm text-ink-2">Current mode: {import.meta.env.VITE_CHAIN_ENV || 'sepolia'}</div>
+         <div className="text-sm text-ink-2">Wallet: {address || 'Not connected'}</div>
+         <button className="bg-accent text-white px-4 py-2 rounded-lg text-sm w-fit opacity-50 cursor-not-allowed" onClick={() => showToast('Not implemented in UI yet')}>
+           Create recommendation
+         </button>
+      </div>
+    </main>
+  );
+}
+
+function HistoryPage() {
+  const { data: chatData } = useChatHistory();
+  const { data: actionsData } = useActionsFeed();
+  const messages = chatData?.messages || [];
+  const actions = actionsData?.actions || [];
+  return (
+    <main className="flex-1 bg-bg p-[18px] flex flex-col gap-4 overflow-y-auto">
+      <h2 className="text-[16px] font-bold text-ink">History</h2>
+      <div className="flex gap-4">
+        <div className="flex-1 bg-panel border border-line rounded-xl p-4">
+           <h3 className="text-sm font-bold mb-3">Recent Messages</h3>
+           <div className="flex flex-col gap-2 max-h-[400px] overflow-y-auto">
+             {messages.map((m: any, i: number) => (
+               <div key={i} className="text-sm p-2 bg-bg rounded border border-line">
+                 <div className="text-xs text-ink-3 mb-1 font-bold">{m.role} <span className="font-normal">{new Date(m.createdAt || Date.now()).toLocaleTimeString()}</span></div>
+                 {m.content}
+               </div>
+             ))}
+             {messages.length === 0 && <div className="text-sm text-ink-3">No messages</div>}
+           </div>
+        </div>
+        <div className="flex-1 bg-panel border border-line rounded-xl p-4">
+           <h3 className="text-sm font-bold mb-3">Recent Actions</h3>
+           <div className="flex flex-col gap-2 max-h-[400px] overflow-y-auto">
+             {actions.map((a: any, i: number) => (
+               <div key={i} className="text-sm p-2 bg-bg rounded border border-line">
+                 <div className="text-xs text-ink-3 mb-1 font-bold">{a.kind} · {a.status} <span className="font-normal">{new Date(a.createdAt).toLocaleTimeString()}</span></div>
+                 {a.suggestedPrompt}
+               </div>
+             ))}
+             {actions.length === 0 && <div className="text-sm text-ink-3">No actions</div>}
+           </div>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+function ConfigurePage() {
+  const { address } = useAccount();
+  return (
+    <main className="flex-1 bg-bg p-[18px] flex flex-col gap-4 overflow-y-auto">
+      <h2 className="text-[16px] font-bold text-ink">Configure</h2>
+      <div className="bg-panel border border-line rounded-xl p-4 flex flex-col gap-4">
+         <div className="flex items-center gap-2">
+           <span className="font-medium text-sm w-[150px]">Network Mode</span>
+           <span className="text-xs bg-panel-2 px-2 py-1 rounded border border-line">{import.meta.env.VITE_CHAIN_ENV || 'sepolia'}</span>
+           {import.meta.env.VITE_CHAIN_ENV === 'mainnet-readonly' && <span className="text-xs text-amber font-medium">Mainnet execution is disabled in read-only mode</span>}
+         </div>
+         <div className="flex items-center gap-2">
+           <span className="font-medium text-sm w-[150px]">Connected Wallet</span>
+           <span className="text-xs bg-panel-2 px-2 py-1 rounded border border-line font-mono">{address || 'None'}</span>
+         </div>
+         <div className="flex items-center gap-2">
+           <span className="font-medium text-sm w-[150px]">RPC Provider</span>
+           <span className="text-xs text-green font-medium">Healthy</span>
+         </div>
+         <div className="flex items-center gap-2">
+           <span className="font-medium text-sm w-[150px]">LLM Provider</span>
+           <span className="text-xs text-green font-medium">Configured</span>
+         </div>
+         <div className="flex items-center gap-2">
+           <span className="font-medium text-sm w-[150px]">x402 Micropayments</span>
+           <span className="text-xs text-amber font-medium">Simulated</span>
+         </div>
+      </div>
+    </main>
+  );
+}
+
+function BaseMcpPage({ showToast }: { showToast: (msg: string) => void }) {
+  return (
+    <main className="flex-1 bg-bg p-[18px] flex flex-col gap-4 overflow-y-auto">
+      <h2 className="text-[16px] font-bold text-ink">Base MCP Status</h2>
+      <div className="bg-panel border border-line rounded-xl p-4 flex flex-col gap-4">
+         <div className="flex flex-col gap-1">
+           <span className="font-medium text-sm">Server URL</span>
+           <span className="text-xs text-ink-3 font-mono">{import.meta.env.VITE_MCP_SERVER_URL ? 'Configured (Env)' : 'Missing'}</span>
+         </div>
+         <div className="flex flex-col gap-1">
+           <span className="font-medium text-sm">Approval Provider</span>
+           <span className="text-xs text-ink-3">Not configured in demo shell.</span>
+         </div>
+         <div className="flex flex-col gap-1">
+           <span className="font-medium text-sm">Supported Chains</span>
+           <span className="text-xs text-ink-3">8453, 84532</span>
+         </div>
+         <div className="mt-2 p-3 bg-red-soft rounded border border-red/20 text-xs text-red font-medium">
+           Note: Without Base MCP approval provider (e.g. Coinbase Smart Wallet or 5792 compatible), write actions will fail closed during execution.
+         </div>
+         <button className="bg-accent text-white px-4 py-2 rounded-lg text-sm w-fit mt-2 opacity-50 cursor-not-allowed" onClick={() => showToast('Smoke test not wired to frontend')}>
+           Run Smoke Check
+         </button>
+      </div>
+    </main>
+  );
+}
 
 function CommandPalette({ isOpen, onClose, onSelect }: { isOpen: boolean, onClose: () => void, onSelect: (tab: string) => void }) {
   const [query, setQuery] = useState('');
@@ -582,9 +704,17 @@ function Toast({ msg }: { msg: string }) {
     <div className="h-screen w-full flex flex-col font-sans">
       <TopBar showToast={showToast} activeTab={activeTab} setActiveTab={setActiveTab} onOpenCommand={() => setPaletteOpen(true)} />
       <div className="flex-1 flex overflow-hidden">
-        <LeftRail showToast={showToast} />
-        <ActionInbox showToast={showToast} />
-        <AgentStream showToast={showToast} />
+        {activeTab === 'main' && (
+           <>
+             <LeftRail showToast={showToast} />
+             <ActionInbox showToast={showToast} />
+             <AgentStream showToast={showToast} />
+           </>
+        )}
+        {activeTab === 'actions builder' && <ActionsBuilder showToast={showToast} />}
+        {activeTab === 'history' && <HistoryPage />}
+        {activeTab === 'configure' && <ConfigurePage />}
+        {activeTab === 'base mcp' && <BaseMcpPage showToast={showToast} />}
       </div>
       <CommandPalette
         isOpen={paletteOpen}

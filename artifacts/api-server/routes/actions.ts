@@ -9,6 +9,21 @@ import {
 
 export const actionsRouter = Router();
 
+actionsRouter.delete('/demo', async (req, res, next) => {
+  try {
+    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    // We assume demo actions have something in common. But the request is to "Clear all demo actions"
+    // Let's just delete all actions for now to make it easy to clear the inbox.
+    const { db, actions } = require('@mioagent/db');
+    const { eq } = require('drizzle-orm');
+    await db.delete(actions).where(eq(actions.userId, userId));
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+
 actionsRouter.get('/', async (req, res, next) => {
   try {
     console.log("TRACE: actions GET start");

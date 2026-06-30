@@ -92,6 +92,29 @@ export function usePortfolio(
 }
 
 // Mutations
+
+export function useClearChatHistory(
+  options?: Omit<UseMutationOptions<{ success: boolean }, Error, void>, 'mutationFn'>
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => fetchApi<{ success: boolean }>('/api/chat/history', { method: 'DELETE' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['chat', 'history'] }),
+    ...options,
+  });
+}
+
+export function useClearActions(
+  options?: Omit<UseMutationOptions<{ success: boolean }, Error, void>, 'mutationFn'>
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => fetchApi<{ success: boolean }>('/api/actions/demo', { method: 'DELETE' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['actions', 'feed'] }),
+    ...options,
+  });
+}
+
 export function useSendMessage(
   options?: Omit<UseMutationOptions<apiSpec.ChatMessageResponse, Error, apiSpec.ChatMessageRequest>, 'mutationFn'>,
 ) {

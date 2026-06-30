@@ -30,6 +30,17 @@ chatRouter.get('/history', async (req, res, next) => {
   }
 });
 
+chatRouter.delete('/history', async (req, res, next) => {
+  try {
+    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    await db.delete(chats).where(eq(chats.userId, userId));
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+
 chatRouter.post('/', async (req, res, next) => {
   try {
     const { message } = ChatMessageRequestSchema.parse(req.body);
