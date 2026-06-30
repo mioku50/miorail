@@ -104,6 +104,15 @@ actionsRouter.post('/:actionId/execute', async (req, res, next) => {
       return res.status(400).json({ success: false, error: e instanceof Error ? e.message : 'Invalid payload' });
     }
 
+    const chainEnv = process.env.CHAIN_ENV || 'sepolia';
+    if (chainEnv === 'mainnet-readonly') {
+      return res.json({ success: false, error: 'Mainnet execution is disabled in read-only mode.' });
+    }
+
+    if (payload.chain === 'eip155:8453' && process.env.MAINNET_EXECUTION_ENABLED !== 'true') {
+      return res.json({ success: false, error: 'Mainnet execution is not enabled.' });
+    }
+
     // If we have calls, execute them using the tool
     let toolResult;
     try {

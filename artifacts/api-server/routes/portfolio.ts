@@ -30,26 +30,31 @@ portfolioRouter.get('/', async (req, res, next) => {
       }));
     }
 
-    const isSepolia = process.env.CHAIN_ENV === 'sepolia';
-    const toolName = isSepolia ? 'sepolia_get_balance' : 'get_balance';
-    
-    const tool = aggregator.findTool(toolName);
+    const chainEnv = process.env.CHAIN_ENV || 'sepolia';
     let balanceFormatted = '0.00';
     let balance = '0';
 
-    if (tool) {
-      const toolResult = await aggregator.callTool(toolName, { address });
-      if (toolResult && toolResult.content) {
-        try {
-          const parsed = JSON.parse(toolResult.content);
-          if (parsed.balanceWei) {
-             balance = parsed.balanceWei;
-             balanceFormatted = (Number(balance) / 1e18).toFixed(4);
-          }
-        } catch {
-          // ignore
-        }
+    const rpcUrl = chainEnv === 'sepolia' ? process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org' : process.env.BASE_MAINNET_RPC_URL || 'https://mainnet.base.org';
+
+    try {
+      const res = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(5000),
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'eth_getBalance',
+          params: [address, 'latest']
+        })
+      });
+      const data = await res.json();
+      if (!data.error && data.result) {
+        balance = BigInt(data.result).toString();
+        balanceFormatted = (Number(balance) / 1e18).toFixed(4);
       }
+    } catch {
+      // Ignore errors and fallback to 0
     }
 
     res.json(PortfolioResponseSchema.parse({

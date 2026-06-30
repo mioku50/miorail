@@ -16,6 +16,10 @@ function TopBar({ activeTab, setActiveTab, onOpenCommand }: { activeTab: string;
         <span>Base Agent</span>
         {(!import.meta.env.VITE_CHAIN_ENV || import.meta.env.VITE_CHAIN_ENV === 'sepolia') ? (
           <span className="text-[10px] bg-accent-soft text-accent px-1.5 py-0.5 rounded ml-1">Base Sepolia</span>
+        ) : import.meta.env.VITE_CHAIN_ENV === 'mainnet-readonly' ? (
+          <span className="text-[10px] bg-amber-soft text-amber px-1.5 py-0.5 rounded ml-1 text-[#d97706] bg-[#fef3c7]">Base Mainnet · Read-only</span>
+        ) : (import.meta.env.VITE_CHAIN_ENV === 'mainnet' && import.meta.env.VITE_MAINNET_EXECUTION_ENABLED === 'true') ? (
+          <span className="text-[10px] bg-accent-soft text-accent px-1.5 py-0.5 rounded ml-1">Base Mainnet</span>
         ) : (
           <span className="text-[10px] bg-red-soft text-red px-1.5 py-0.5 rounded ml-1">Invalid Env</span>
         )}
@@ -65,7 +69,7 @@ function TopBar({ activeTab, setActiveTab, onOpenCommand }: { activeTab: string;
 }
 
 function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
-  const { data: portfolio, isError: isPortfolioError } = usePortfolio();
+  const { data: portfolio, isError: isPortfolioError, error: portfolioError } = usePortfolio();
   const { data: protocolsData, isError: isProtocolsError } = useProtocols();
   const { mutate: toggleProtocol } = useToggleProtocol();
 
@@ -82,9 +86,20 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
           {!isPortfolioError && portfolio && <span className="bg-green-soft text-green px-2 py-0.5 rounded text-[10px] lowercase tracking-normal">+4.2%</span>}
         </div>
 
-        {isPortfolioError || !portfolio ? (
-           <div className="text-[13px] text-red bg-red-soft p-3 rounded-md font-medium border border-red/20">RPC disconnected / Missing API keys</div>
+        
+        {isPortfolioError ? (
+           <div className="text-[13px] text-red bg-red-soft p-3 rounded-md font-medium border border-red/20">
+             {portfolioError?.message?.includes('wallet') || portfolioError?.message?.includes('address') ? 'Wallet address not configured' :
+              portfolioError?.message?.includes('RPC') ? 'RPC provider not configured' :
+              portfolioError?.message?.includes('key') ? 'Provider key missing' :
+              'Unable to load portfolio'}
+           </div>
+        ) : !portfolio || tokens.length === 0 ? (
+           <div className="text-[13px] text-ink-2 bg-panel-2 p-3 rounded-md border border-line">
+             Connect or configure a wallet address to view Base Mainnet portfolio.
+           </div>
         ) : (
+
           <>
             <div className="flex items-baseline mb-4">
               <div className="text-[30px] font-bold tracking-tight font-mono text-ink">{usdcBalance} <span className="text-[16px] text-ink-2">testnet-USDC</span></div>
@@ -253,7 +268,11 @@ function ActionInbox({ showToast }: { showToast: (msg: string) => void }) {
         if (data.error.includes('MCP') || data.error.includes('Approval provider') || data.error.includes('Backend failed')) {
           showToast('Approval provider is not configured. Action was not executed.');
         } else {
-          showToast('Error: ' + data.error);
+          if (data.error.includes('Mainnet execution is disabled')) {
+            showToast(data.error);
+          } else {
+            showToast('Error: ' + data.error);
+          }
         }
       } else {
         showToast('Approval provider is not configured. Action was not executed.');

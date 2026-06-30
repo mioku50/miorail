@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 import request from 'supertest';
 import { app } from '../app';
+process.env.CHAIN_ENV = 'sepolia';
 import { mock } from 'node:test';
 import { db } from '@mioagent/db';
 import * as toolsModule from '@mioagent/tools';
@@ -81,7 +82,6 @@ test('Actions API', async (t) => {
     });
 
     const response = await request(app).post('/api/actions/action-1/execute');
-
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.success, true);
     assert.ok(response.body.approvalUrl);
@@ -152,6 +152,57 @@ test('Actions API', async (t) => {
     assert.strictEqual(response.body.error, 'Malformed or missing execution payload');
 
     mock.restoreAll();
+  });
+
+  
+  await t.test('POST /api/actions/:actionId/execute blocks execution in mainnet-readonly mode', async () => {
+    process.env.CHAIN_ENV = 'mainnet-readonly';
+
+    const mockSelect = mock.fn(() => ({
+      from: mock.fn(() => ({
+        where: mock.fn(async () => [
+          {
+            id: 'action-1', userId: 'default-user', status: 'pending',
+            executionPayload: { chain: 'eip155:8453', calls: [{ to: '0x123' }] },
+          }
+        ]),
+      })),
+    }));
+    mock.method(db, 'select', mockSelect);
+    
+    const response = await request(app).post('/api/actions/action-1/execute');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, false);
+    assert.strictEqual(response.body.error, 'Mainnet execution is disabled in read-only mode.');
+
+    mock.restoreAll();
+    process.env.CHAIN_ENV = 'sepolia';
+  });
+
+  await t.test('POST /api/actions/:actionId/execute blocks mainnet execution if MAINNET_EXECUTION_ENABLED is not true', async () => {
+    process.env.CHAIN_ENV = "mainnet";
+    process.env.MAINNET_EXECUTION_ENABLED = "false";
+    process.env.MAINNET_EXECUTION_ENABLED = 'false';
+
+    const mockSelect = mock.fn(() => ({
+      from: mock.fn(() => ({
+        where: mock.fn(async () => [
+          {
+            id: 'action-1', userId: 'default-user', status: 'pending',
+            executionPayload: { chain: 'eip155:8453', calls: [{ to: '0x123' }] },
+          }
+        ]),
+      })),
+    }));
+    mock.method(db, 'select', mockSelect);
+    
+    const response = await request(app).post('/api/actions/action-1/execute');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, false);
+    assert.strictEqual(response.body.error, 'Mainnet execution is not enabled.');
+
+    mock.restoreAll();
+    process.env.CHAIN_ENV = 'sepolia';
   });
 
   await t.test('POST /api/actions/:actionId/dismiss dismisses action', async () => {
