@@ -48,6 +48,7 @@ actionsRouter.get('/', async (req, res, next) => {
       suggestedPrompt: a.suggestedPrompt,
       tokens: Array.isArray(a.tokens) ? a.tokens.map(String) : undefined,
       executionPayload: a.executionPayload,
+      metadata: a.metadata,
       createdAt: a.createdAt.toISOString(),
       executedAt: null, // we don't have executedAt in db schema right now, returning null
     }));
@@ -75,6 +76,9 @@ actionsRouter.post('/recommend', async (req, res, next) => {
 
     const chainEnv = process.env.CHAIN_ENV || 'sepolia';
     const chainId = chainEnv === 'sepolia' ? 'eip155:84532' : 'eip155:8453';
+    const isReadonly = chainEnv === 'mainnet-readonly';
+    const isMainnetExecEnabled = process.env.MAINNET_EXECUTION_ENABLED === 'true';
+    const canExecute = !isReadonly && (chainEnv !== 'mainnet' || isMainnetExecEnabled);
     
     const actionId = crypto.randomUUID();
     const payload = {
@@ -88,6 +92,15 @@ actionsRouter.post('/recommend', async (req, res, next) => {
       ]
     };
 
+    const metadata = {
+      reason: `Automated recommendation for: "${instruction}"`,
+      risk: isReadonly ? 'None (read-only mode)' : 'Low',
+      expectedEffect: `Simulate action execution on ${chainEnv}`,
+      chainMode: chainEnv,
+      safetyState: isReadonly ? 'blocked - read only mode' : (canExecute ? 'executable' : 'blocked - execution disabled'),
+      executable: canExecute
+    };
+
     await db.insert(actions).values({
       id: actionId,
       userId,
@@ -95,11 +108,13 @@ actionsRouter.post('/recommend', async (req, res, next) => {
       status: 'pending',
       suggestedPrompt: 'Builder: ' + instruction,
       executionPayload: JSON.stringify(payload),
+      metadata,
       createdAt: new Date(),
       updatedAt: new Date()
     });
 
     res.json({ success: true, actionId });
+
   } catch (error) {
     next(error);
   }

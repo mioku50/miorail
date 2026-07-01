@@ -13,3 +13,21 @@ export interface DeFiLlamaProvider {
 export interface GoPlusProvider {
   tokenSecurityCheck(chainId: number, tokenAddress: string): Promise<Record<string, unknown>>;
 }
+
+export interface TokenBalance {
+  symbol: string;
+  address: string;
+  balance: string;
+  balanceFormatted: string;
+  decimals?: number;
+  usdValue?: string;
+  logoUrl?: string;
+}
+
+export interface TokenBalancesProvider {
+  getTokenBalances(params: {
+    address: string;
+    chainId: number;
+  }): Promise<TokenBalance[]>;
+}
+

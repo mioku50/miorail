@@ -55,4 +55,12 @@ describe('Mock Providers', () => {
     const altSecurity = await provider.tokenSecurityCheck(8453, '0x036cbd53842c5426634e7929541ec2318f3dcf7e');
     assert.deepStrictEqual(altSecurity, security, 'Should accept different chainId/tokenAddress inputs without throwing and return deterministic security flags');
   });
+
+  test('MockTokenBalancesProvider', async () => {
+    const provider = new (await import('../src/mocks.js')).MockTokenBalancesProvider();
+    const balances = await provider.getTokenBalances({ address: '0x123', chainId: 8453 });
+    assert.strictEqual(balances.length, 1);
+    assert.strictEqual(balances[0].symbol, 'USDC');
+  });
 });
+

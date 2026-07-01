@@ -334,12 +334,50 @@ function ActionInbox({ showToast }: { showToast: (msg: string) => void }) {
                    <span className="text-[11px] text-ink-3 flex items-center gap-1">⟳ {new Date(action.createdAt).toLocaleTimeString()}</span>
                 </div>
 
-                                <div className="text-[13px] text-ink-2 leading-relaxed">
+                <div className="text-[13px] text-ink-2 leading-relaxed">
                   {action.suggestedPrompt}
                 </div>
+                {(() => {
+                   const meta = action.metadata || {};
+                   const reason = meta.reason;
+                   const expectedEffect = meta.expectedEffect;
+                   const risk = meta.risk || 'medium';
+                   const chainMode = meta.chainMode || (isMainnetReadonly ? 'mainnet-readonly' : 'sepolia');
+                   const safetyState = meta.safetyState || (action.status === 'failed' ? 'blocked' : 'safe');
+                   const riskColor = risk === 'low' ? 'bg-green-soft text-green border-green/20' : risk === 'high' ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20';
+                   const safetyColor = safetyState === 'blocked' || safetyState === 'failed' ? 'bg-red-soft text-red border-red/20' : 'bg-green-soft text-green border-green/20';
+
+                   return (
+                     <div className="flex flex-col gap-2 bg-bg/50 border border-line rounded-lg p-3 text-xs mt-1">
+                       {reason && (
+                         <div>
+                           <span className="font-semibold text-ink-2">Reason: </span>
+                           <span className="text-ink-3">{reason}</span>
+                         </div>
+                       )}
+                       {expectedEffect && (
+                         <div>
+                           <span className="font-semibold text-ink-2">Expected Effect: </span>
+                           <span className="text-ink-3">{expectedEffect}</span>
+                         </div>
+                       )}
+                       <div className="flex flex-wrap gap-1.5 mt-1">
+                         <span className={`px-2 py-0.5 rounded text-[11px] font-medium border ${riskColor}`}>
+                           Risk: {risk}
+                         </span>
+                         <span className="px-2 py-0.5 rounded text-[11px] font-medium border bg-panel text-ink-2 border-line">
+                           Chain: {chainMode}
+                         </span>
+                         <span className={`px-2 py-0.5 rounded text-[11px] font-medium border ${safetyColor}`}>
+                           Safety: {safetyState}
+                         </span>
+                       </div>
+                     </div>
+                   );
+                })()}
                 {action.status === "failed" && (
-                  <div className="flex items-center gap-[7px] text-[12px] font-bold text-red bg-red-soft px-[10px] py-[6px] rounded-[9px] mt-2 w-fit">
-                    🛡️ blocked by security
+                  <div className="flex items-center gap-[7px] text-[12px] font-bold text-red bg-red-soft px-[10px] py-[6px] rounded-[9px] mt-1 w-fit">
+                     🛡️ blocked by security
                   </div>
                 )}
 
@@ -359,10 +397,10 @@ function ActionInbox({ showToast }: { showToast: (msg: string) => void }) {
                    </div>
                 ) : (
                   <div className="flex gap-2 items-center mt-1">
-                     <span title={isMainnetReadonly ? "Mainnet execution is disabled in read-only mode." : undefined} onClick={() => { if(isMainnetReadonly) showToast("Mainnet execution is disabled in read-only mode."); }}>
+                     <span title={(isMainnetReadonly || action.metadata?.chainMode === 'mainnet-readonly' || action.metadata?.chainMode === 'mainnet') ? "Mainnet execution is disabled in read-only mode." : undefined} onClick={() => { if(isMainnetReadonly || action.metadata?.chainMode === 'mainnet-readonly' || action.metadata?.chainMode === 'mainnet') showToast("Mainnet execution is disabled in read-only mode."); }}>
                      <button
                        onClick={() => {
-                         if (isMainnetReadonly) {
+                         if (isMainnetReadonly || action.metadata?.chainMode === 'mainnet-readonly' || action.metadata?.chainMode === 'mainnet') {
                            showToast("Mainnet execution is disabled in read-only mode.");
                            return;
                          }
@@ -391,10 +429,10 @@ function ActionInbox({ showToast }: { showToast: (msg: string) => void }) {
     }
   });
                        }}
-                       disabled={!isPending || isExecuting || isDismissing || isMainnetReadonly}
+                       disabled={!isPending || isExecuting || isDismissing || isMainnetReadonly || action.metadata?.chainMode === 'mainnet-readonly' || action.metadata?.chainMode === 'mainnet'}
                        className="bg-accent hover:bg-accent-2 text-white px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] shadow-[0_6px_16px_rgba(0,0,255,.28)] hover:-translate-y-[1px] hover:shadow-[0_10px_22px_rgba(0,0,255,.34)] transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                      >
-                       ⚡ {isExecuting ? 'Executing...' : isMainnetReadonly ? 'Read-only' : 'Execute'}
+                       ⚡ {isExecuting ? 'Executing...' : (isMainnetReadonly || action.metadata?.chainMode === 'mainnet-readonly' || action.metadata?.chainMode === 'mainnet') ? 'Read-only' : 'Execute'}
                      </button>
                      </span>
                      <button

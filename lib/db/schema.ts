@@ -59,9 +59,11 @@ export const actions = pgTable(
     suggestedPrompt: text('suggested_prompt'),
     tokens: jsonb('tokens'),
     executionPayload: jsonb('execution_payload'),
+    metadata: jsonb('metadata'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
+
   (table) => [
     index('actions_user_status_created_idx').on(table.userId, table.status, table.createdAt),
   ],

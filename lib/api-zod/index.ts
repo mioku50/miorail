@@ -78,6 +78,7 @@ export const ActionResponseSchema = z.object({
   suggestedPrompt: z.string().nullable(),
   tokens: z.array(z.string()).optional(),
   executionPayload: ExecutionPayloadSchema.optional().nullable(),
+  metadata: z.record(z.any()).optional().nullable(),
   createdAt: z.string(),
   executedAt: z.string().nullable(),
 });
@@ -139,6 +140,7 @@ export const ProtocolSchema = z.object({
   name: z.string(),
   description: z.string(),
   enabled: z.boolean(),
+  status: z.string().optional(),
 });
 
 export const ProtocolsListResponseSchema = z.object({
@@ -160,8 +162,11 @@ export const PortfolioTokenSchema = z.object({
   address: z.string(),
   balance: z.string(),
   balanceFormatted: z.string(),
+  decimals: z.number().optional(),
   usdValue: z.string().optional(),
+  logoUrl: z.string().optional(),
 });
+
 
 export const PortfolioResponseSchema = z.object({
   totalUsdValue: z.string().optional(),

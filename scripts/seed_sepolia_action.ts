@@ -34,7 +34,16 @@ async function run() {
       suggestedPrompt: 'Test transfer of Sepolia USDC',
       tokens: ['USDC', 'transfer'],
       executionPayload: executionPayload,
+      metadata: {
+        reason: 'Seeded transfer action for testing Base Sepolia validation',
+        risk: 'Low',
+        expectedEffect: 'Transfer 0.000001 USDC to test address on Sepolia',
+        chainMode: 'sepolia',
+        safetyState: 'executable',
+        executable: true
+      },
     }),
+
     new Promise((_, reject) => setTimeout(() => reject(new Error('DB operation timed out (creating action)')), 5000))
   ]);
 

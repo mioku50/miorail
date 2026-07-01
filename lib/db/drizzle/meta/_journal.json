@@ -15,6 +15,13 @@
       "when": 1782662127875,
       "tag": "0001_nosy_shotgun",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782898233873,
+      "tag": "0002_handy_vin_gonzales",
+      "breakpoints": true
     }
   ]
 }

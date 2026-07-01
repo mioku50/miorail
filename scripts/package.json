@@ -4,6 +4,11 @@
   "private": true,
   "main": "index.ts",
   "dependencies": {
-    "@mioagent/db": "workspace:*"
+    "@mioagent/db": "workspace:*",
+    "drizzle-orm": "^0.36.4"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
   }
 }
+

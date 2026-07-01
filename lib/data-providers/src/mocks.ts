@@ -1,4 +1,4 @@
-import { MoralisProvider, CoinGeckoProvider, DeFiLlamaProvider, GoPlusProvider } from './interfaces.js';
+import { MoralisProvider, CoinGeckoProvider, DeFiLlamaProvider, GoPlusProvider, TokenBalancesProvider, TokenBalance } from './interfaces.js';
 
 export class MockMoralisProvider implements MoralisProvider {
   async getWalletTokenBalances(_address: string) {
@@ -37,3 +37,19 @@ export class MockGoPlusProvider implements GoPlusProvider {
     };
   }
 }
+
+export class MockTokenBalancesProvider implements TokenBalancesProvider {
+  async getTokenBalances(_params: { address: string; chainId: number }): Promise<TokenBalance[]> {
+    return [
+      {
+        symbol: 'USDC',
+        address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        balance: '15000000',
+        balanceFormatted: '15.0000',
+        decimals: 6,
+        usdValue: '15.00',
+      }
+    ];
+  }
+}
+

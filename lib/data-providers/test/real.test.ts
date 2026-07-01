@@ -91,4 +91,14 @@ describe('Real Providers', () => {
         assert.strictEqual((mockFetch.mock.calls[0].arguments[1] as unknown as typeof fetch).headers['X-API-Key'], 'fake-key');
         mock.restoreAll();
     });
+
+    test('getTokenBalancesProviderFromEnv returns None by default', async () => {
+        const { getTokenBalancesProviderFromEnv } = await import('../src/real.js');
+        delete process.env.TOKEN_BALANCES_PROVIDER;
+        delete process.env.ALCHEMY_API_KEY;
+        delete process.env.MORALIS_API_KEY;
+        const res = getTokenBalancesProviderFromEnv();
+        assert.strictEqual(res.status, 'Token balances provider not configured');
+    });
 });
+

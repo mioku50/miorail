@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS "actions" (
 	"status" text NOT NULL,
 	"suggested_prompt" text,
 	"tokens" jsonb,
+	"execution_payload" jsonb,
+	"metadata" jsonb,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL
 );

@@ -25,7 +25,7 @@ const migrationClient = postgres(url, {
 async function run() {
   console.log('Running migrations...');
   const db = drizzle(migrationClient);
-  await migrate(db, { migrationsFolder: './drizzle' });
+  await migrate(db, { migrationsFolder: resolve(__dirname, './drizzle') });
   console.log('✅ Migrations completed successfully');
   process.exit(0);
 }
