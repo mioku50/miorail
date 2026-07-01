@@ -351,7 +351,7 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
   );
 }
 
-function ActionInbox({ showToast }: { showToast: (msg: string) => void }) {
+function ActionInbox({ showToast, onSelectTab }: { showToast: (msg: string) => void; onSelectTab?: (tab: string) => void }) {
   const { data, isLoading, refetch } = useActionsFeed();
   const executeAction = useExecuteAction();
   const dismissAction = useDismissAction();
@@ -386,6 +386,23 @@ function ActionInbox({ showToast }: { showToast: (msg: string) => void }) {
             <div className="text-xs text-ink-3 font-medium bg-bg px-3 py-1.5 rounded-lg border border-line mt-1">
               Create a new action recommendation below or interact with Agent Stream.
             </div>
+            <div className="flex gap-2 mt-2">
+              <button 
+                onClick={() => onSelectTab && onSelectTab('actions builder')}
+                className="px-3 py-1.5 bg-accent text-white text-xs rounded-lg font-medium hover:opacity-90 transition-opacity shadow-sm"
+              >
+                Create in Actions Builder
+              </button>
+              <button 
+                onClick={() => {
+                  const el = document.getElementById('agent-stream-input');
+                  if (el) el.focus();
+                }}
+                className="px-3 py-1.5 bg-bg border border-line text-ink text-xs rounded-lg font-medium hover:bg-panel transition-colors"
+              >
+                Ask Agent Stream
+              </button>
+            </div>
           </div>
         )}
         {actions.map((action: any /* eslint-disable-line @typescript-eslint/no-explicit-any */) => {
@@ -400,7 +417,9 @@ function ActionInbox({ showToast }: { showToast: (msg: string) => void }) {
                       <div className={`w-[9px] h-[9px] rounded-full shrink-0 mt-[5px] ${action.status === 'executed' ? 'bg-green' : action.status === 'pending' ? 'bg-amber' : 'bg-red'}`}></div>
                       <div>
                          <h3 className="text-[15px] font-bold text-ink tracking-[-.01em] uppercase">{action.kind}</h3>
-                         <div className="font-mono text-[11px] text-ink-3 mt-1">real-backend</div>
+                         <div className="font-mono text-[11px] text-ink-3 mt-1">
+                           Created by: {action.metadata?.createdBy === 'agent-stream' ? 'Agent Stream' : action.metadata?.createdBy === 'actions-builder' ? 'Actions Builder' : action.metadata?.createdBy === 'scanner' || action.kind === 'alert' || action.kind === 'recommendation' ? 'Scanner' : 'System'}
+                         </div>
                       </div>
                    </div>
                    <span className="text-[11px] text-ink-3 flex items-center gap-1">⟳ {new Date(action.createdAt).toLocaleTimeString()}</span>
@@ -529,7 +548,8 @@ function ActionInbox({ showToast }: { showToast: (msg: string) => void }) {
   );
 }
 
-function AgentStream({ showToast }: { showToast: (msg: string) => void }) {
+function AgentStream({ showToast, onSelectTab }: { showToast: (msg: string) => void; onSelectTab?: (tab: string) => void }) {
+  const { address } = useAccount();
   const { data: chatData, refetch } = useChatHistory();
   const sendMessageMutation = useSendMessage();
   const clearChat = useClearChatHistory();
@@ -551,7 +571,11 @@ function AgentStream({ showToast }: { showToast: (msg: string) => void }) {
     const msg = input;
     setInput('');
     try {
-      await sendMessageMutation.mutateAsync({ message: msg });
+      await sendMessageMutation.mutateAsync({ 
+        message: msg,
+        walletAddress: address,
+        chainEnv: import.meta.env.VITE_CHAIN_ENV || 'sepolia'
+      });
       refetch();
     } catch (err: any) {
       console.error(err);
@@ -582,10 +606,22 @@ function AgentStream({ showToast }: { showToast: (msg: string) => void }) {
               );
             }
             if (m.role === 'assistant') {
+              const actionIdVal = m.actionId || m.metadata?.actionId;
               if (m.content) {
                  return (
                    <div key={i} className="msg" style={{background:'var(--color-panel)', border:'1px solid var(--color-line)', padding:'9px 13px', borderRadius:'4px 14px 14px 14px'}}>
                      {m.content}
+                     {actionIdVal && (
+                       <div className="mt-2 pt-2 border-t border-line flex items-center justify-between">
+                         <span className="text-[11px] text-ink-3 font-mono">Action ID: {actionIdVal.slice(0, 8)}...</span>
+                         <button
+                           onClick={() => onSelectTab && onSelectTab('main')}
+                           className="text-[11px] bg-accent-soft text-accent px-2 py-1 rounded font-medium hover:bg-accent hover:text-white transition-colors"
+                         >
+                           View recommendation →
+                         </button>
+                       </div>
+                     )}
                    </div>
                  );
               }
@@ -610,6 +646,7 @@ function AgentStream({ showToast }: { showToast: (msg: string) => void }) {
 
        <div className="composer">
           <input
+            id="agent-stream-input"
             type="text"
             placeholder="Give the agent an instruction..."
             value={input}
@@ -1012,8 +1049,8 @@ function Toast({ msg }: { msg: string }) {
         {activeTab === 'main' && (
            <>
              <LeftRail showToast={showToast} />
-             <ActionInbox showToast={showToast} />
-             <AgentStream showToast={showToast} />
+             <ActionInbox showToast={showToast} onSelectTab={setActiveTab} />
+             <AgentStream showToast={showToast} onSelectTab={setActiveTab} />
            </>
         )}
         {activeTab === 'actions builder' && <ActionsBuilder showToast={showToast} />}

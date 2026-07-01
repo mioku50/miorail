@@ -81,7 +81,11 @@ actionsRouter.post('/recommend', async (req, res, next) => {
     const canExecute = !isReadonly && (chainEnv !== 'mainnet' || isMainnetExecEnabled);
     
     const actionId = crypto.randomUUID();
-    const payload = {
+    const payload = isReadonly ? {
+      chain: chainId,
+      readOnly: true,
+      calls: []
+    } : {
       chain: chainId,
       calls: [
         {
@@ -93,12 +97,17 @@ actionsRouter.post('/recommend', async (req, res, next) => {
     };
 
     const metadata = {
+      type: "recommendation",
+      title: "Action Recommendation",
+      instruction: instruction,
       reason: `Automated recommendation for: "${instruction}"`,
-      risk: isReadonly ? 'None (read-only mode)' : 'Low',
+      risk: isReadonly ? 'unknown' : 'low',
       expectedEffect: `Simulate action execution on ${chainEnv}`,
       chainMode: chainEnv,
-      safetyState: isReadonly ? 'blocked - read only mode' : (canExecute ? 'executable' : 'blocked - execution disabled'),
-      executable: canExecute
+      safetyState: isReadonly ? 'blocked' : (canExecute ? 'executable' : 'blocked'),
+      executable: canExecute,
+      executionStatus: isReadonly ? 'read-only' : (canExecute ? 'executable' : 'blocked'),
+      createdBy: 'actions-builder'
     };
 
     await db.insert(actions).values({

@@ -147,6 +147,7 @@ export function useClearActions(
 export function useSendMessage(
   options?: Omit<UseMutationOptions<apiSpec.ChatMessageResponse, Error, apiSpec.ChatMessageRequest>, 'mutationFn'>,
 ) {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data: apiSpec.ChatMessageRequest) =>
       fetchApi<apiSpec.ChatMessageResponse>('/api/chat', {
@@ -154,6 +155,12 @@ export function useSendMessage(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       }),
+    onSuccess: (data, variables, context, mutCtx) => {
+      queryClient.invalidateQueries({ queryKey: ['actions', 'feed'] });
+      if (options?.onSuccess) {
+        (options.onSuccess as any)(data, variables, context, mutCtx);
+      }
+    },
     ...options,
   });
 }

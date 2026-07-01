@@ -32,6 +32,8 @@ export const SessionResponseSchema = z.object({
 export const ChatMessageRequestSchema = z.object({
   message: z.string().min(1),
   chatId: z.string().optional(),
+  walletAddress: z.string().optional(),
+  chainEnv: z.string().optional(),
 });
 
 export const ChatMessageResponseSchema = z.object({
@@ -40,6 +42,8 @@ export const ChatMessageResponseSchema = z.object({
   content: z.string(),
   role: z.enum(['user', 'assistant', 'system']),
   createdAt: z.string(),
+  actionId: z.string().optional(),
+  metadata: z.record(z.any()).optional(),
 });
 
 export const ChatHistoryResponseSchema = z.object({

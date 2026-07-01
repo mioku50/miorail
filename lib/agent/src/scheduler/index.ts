@@ -42,7 +42,8 @@ class PseudoToolProvider implements ToolProvider {
       userId: this.userId,
       kind,
       status: 'pending',
-      suggestedPrompt: message
+      suggestedPrompt: message,
+      metadata: { createdBy: 'scanner' }
     });
     return { content: `Successfully emitted ${kind}`, isError: false };
   }
