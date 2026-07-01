@@ -154,7 +154,7 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
   const displayedTokens = showLowConfidence ? sortedTokens : highConfidenceTokens;
 
   return (
-    <aside className="w-[320px] min-w-[280px] border-r border-line bg-panel-2 p-4 flex flex-col gap-[14px] overflow-y-auto">
+    <aside className="w-[320px] min-w-[280px] shrink-0 border-r border-line bg-panel-2 p-4 flex flex-col gap-[14px] overflow-y-auto">
       {/* Portfolio Card */}
       <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
         <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-[11px] flex items-center justify-between">
@@ -411,7 +411,7 @@ function ActionInbox({ showToast, onSelectTab }: { showToast: (msg: string) => v
            const isDismissing = dismissAction.isPending && dismissAction.variables?.actionId === action.id;
 
            return (
-             <div key={action.id} className={`bg-panel border rounded-xl shadow-sm p-[15px] flex flex-col gap-[10px] animate-in fade-in slide-in-from-bottom-2 ${action.status === 'failed' ? 'border-red-soft' : 'border-line'}`}>
+             <div key={action.id} id={`action-${action.id}`} data-action-id={action.id} className={`bg-panel border rounded-xl shadow-sm p-[15px] flex flex-col gap-[10px] animate-in fade-in slide-in-from-bottom-2 ${action.status === 'failed' ? 'border-red-soft' : 'border-line'}`}>
                 <div className="flex items-start justify-between gap-[10px]">
                    <div className="flex gap-[10px]">
                       <div className={`w-[9px] h-[9px] rounded-full shrink-0 mt-[5px] ${action.status === 'executed' ? 'bg-green' : action.status === 'pending' ? 'bg-amber' : 'bg-red'}`}></div>
@@ -554,8 +554,10 @@ function AgentStream({ showToast, onSelectTab }: { showToast: (msg: string) => v
   const sendMessageMutation = useSendMessage();
   const clearChat = useClearChatHistory();
   const [input, setInput] = useState('');
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const streamRef = useRef<HTMLDivElement>(null);
-  
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const messages = chatData?.messages || [];
   const displayMessages = messages;
@@ -564,105 +566,304 @@ function AgentStream({ showToast, onSelectTab }: { showToast: (msg: string) => v
     if (streamRef.current) {
       streamRef.current.scrollTop = streamRef.current.scrollHeight;
     }
-  }, [displayMessages]);
+  }, [displayMessages, isCollapsed]);
 
-  const handleSend = async () => {
-    if (!input.trim() || sendMessageMutation.isPending) return;
-    const msg = input;
+  const handleSendMsg = async (msgText: string) => {
+    if (!msgText.trim() || sendMessageMutation.isPending) return;
+    setErrorMsg(null);
     setInput('');
     try {
-      await sendMessageMutation.mutateAsync({ 
-        message: msg,
-        walletAddress: address,
-        chainEnv: import.meta.env.VITE_CHAIN_ENV || 'sepolia'
-      });
-      refetch();
+       await sendMessageMutation.mutateAsync({ 
+         message: msgText,
+         walletAddress: address,
+         chainEnv: import.meta.env.VITE_CHAIN_ENV || 'sepolia'
+       });
+       refetch();
+       setTimeout(() => textareaRef.current?.focus(), 50);
     } catch (err: any) {
-      console.error(err);
-      showToast('Error: ' + err.message);
+       console.error(err);
+       const errMsg = err.message || "Failed to send instruction";
+       setErrorMsg(errMsg);
+       showToast('Error: ' + errMsg);
     }
   };
 
+  const handleNewChat = () => {
+    if (displayMessages.length > 0 && !confirm('Start a new chat? This clears the current visible thread.')) {
+      return;
+    }
+    clearChat.mutate(undefined, {
+      onSuccess: () => {
+        refetch();
+        showToast('New chat started');
+        setErrorMsg(null);
+      }
+    });
+  };
+
+  const PROMPT_CHIPS = [
+    "Review my Base tokens",
+    "Flag risky assets",
+    "Create a read-only rebalance plan",
+    "Check spend permissions",
+    "Find yield opportunities"
+  ];
+
+  if (isCollapsed) {
+    return (
+      <aside className="w-[54px] shrink-0 border-l border-line bg-panel flex flex-col items-center py-4 justify-between select-none shadow-sm z-10">
+        <button
+          onClick={() => setIsCollapsed(false)}
+          className="p-2.5 rounded-xl hover:bg-bg text-ink-2 hover:text-ink transition-colors flex flex-col items-center gap-2 shadow-sm border border-transparent hover:border-line cursor-pointer"
+          title="Expand Agent Stream"
+          aria-label="Expand Agent Stream"
+        >
+          <span className="text-base">💬</span>
+          <span className="text-[11px] font-bold tracking-wider uppercase text-ink-3 [writing-mode:vertical-rl] rotate-180 py-2">Agent</span>
+        </button>
+        <div className="w-2.5 h-2.5 rounded-full bg-green animate-pulse" title="Agent Ready" />
+      </aside>
+    );
+  }
+
   return (
-    <div className="chat">
-       <div className="chat-head">
-         Agent Stream
-         <span className="mono" style={{color:'var(--color-accent)', cursor:'pointer'}} onClick={() => { if(confirm('Clear chat history?')) clearChat.mutate(); }}>+ new chat</span>
+    <aside className="w-[400px] shrink-0 border-l border-line bg-panel flex flex-col h-full overflow-hidden shadow-sm z-10">
+       {/* Header */}
+       <div className="px-4 py-3 border-b border-line bg-panel flex items-center justify-between shrink-0">
+         <div className="flex items-center gap-2.5">
+           <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${sendMessageMutation.isPending ? 'bg-amber animate-ping' : sendMessageMutation.isError ? 'bg-red' : 'bg-green animate-pulse'}`} title="Status" />
+           <div>
+             <div className="text-sm font-bold text-ink flex items-center gap-2">
+               <span>Agent Stream</span>
+               <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${sendMessageMutation.isPending ? 'bg-amber-soft text-amber' : sendMessageMutation.isError ? 'bg-red-soft text-red' : 'bg-green-soft text-green'}`}>
+                 {sendMessageMutation.isPending ? "Thinking..." : sendMessageMutation.isError ? "Error" : displayMessages.some((m: any) => m.role === 'assistant' && (m.actionId || m.metadata?.actionId)) ? "Recommendation created" : "Ready"}
+               </span>
+             </div>
+             <div className="text-[11px] text-ink-3 font-medium">
+               Base Mainnet · Read-only {address ? "· Connected" : ""}
+             </div>
+           </div>
+         </div>
+         <div className="flex items-center gap-1.5">
+           <button
+             onClick={handleNewChat}
+             className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-panel-2 border border-line hover:bg-bg text-ink-2 hover:text-ink transition-colors flex items-center gap-1 shadow-sm cursor-pointer"
+             aria-label="New chat"
+           >
+             <span>+ New chat</span>
+           </button>
+           <button
+             onClick={() => setIsCollapsed(true)}
+             className="p-1.5 rounded-lg text-ink-3 hover:text-ink hover:bg-bg transition-colors cursor-pointer text-xs font-bold"
+             title="Collapse panel"
+             aria-label="Collapse panel"
+           >
+             ⇥
+           </button>
+         </div>
        </div>
 
-       <div className="stream" ref={streamRef}>
+       {/* Stream */}
+       <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-bg/40" ref={streamRef}>
           {displayMessages.length === 0 && (
-             <div style={{display:'flex', alignItems:'center', justifyContent:'center', fontSize:'14px', color:'var(--color-ink-3)', height:'100%'}}>
-               Send a message to start...
+             <div className="h-full flex flex-col items-center justify-center p-2 text-center my-auto animate-in fade-in">
+               <div className="w-12 h-12 rounded-2xl bg-accent-soft text-accent flex items-center justify-center text-2xl mb-3 shadow-sm">
+                 ✨
+               </div>
+               <h3 className="text-sm font-bold text-ink mb-1.5">
+                 Ask MioAgent anything about your Base wallet
+               </h3>
+               <p className="text-xs text-ink-2 max-w-[280px] leading-relaxed mb-6">
+                 MioAgent can review your portfolio, flag suspicious tokens, create read-only recommendations, and explain what it would do before any execution.
+               </p>
+               <div className="flex flex-wrap gap-2 justify-center max-w-[340px]">
+                 {PROMPT_CHIPS.map((chip, idx) => (
+                   <button
+                     key={idx}
+                     onClick={() => handleSendMsg(chip)}
+                     disabled={sendMessageMutation.isPending}
+                     className="px-3 py-1.5 rounded-xl text-xs font-medium bg-panel border border-line text-ink-2 hover:text-accent hover:border-accent/40 shadow-sm transition-all text-left cursor-pointer disabled:opacity-50"
+                   >
+                     {chip}
+                   </button>
+                 ))}
+               </div>
              </div>
           )}
 
           {displayMessages.map((m: any, i: number) => {
             if (m.role === 'user') {
               return (
-                <div key={i} className="msg user">
-                  {m.content}
+                <div key={i} className="flex flex-col items-end gap-1 animate-in fade-in slide-in-from-right-1">
+                  <div className="bg-accent text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-[13px] font-medium leading-relaxed max-w-[88%] shadow-sm break-words">
+                    {m.content}
+                  </div>
+                  <span className="text-[10px] text-ink-3 font-mono mr-1">User</span>
                 </div>
               );
             }
             if (m.role === 'assistant') {
               const actionIdVal = m.actionId || m.metadata?.actionId;
-              if (m.content) {
-                 return (
-                   <div key={i} className="msg" style={{background:'var(--color-panel)', border:'1px solid var(--color-line)', padding:'9px 13px', borderRadius:'4px 14px 14px 14px'}}>
-                     {m.content}
-                     {actionIdVal && (
-                       <div className="mt-2 pt-2 border-t border-line flex items-center justify-between">
-                         <span className="text-[11px] text-ink-3 font-mono">Action ID: {actionIdVal.slice(0, 8)}...</span>
-                         <button
-                           onClick={() => onSelectTab && onSelectTab('main')}
-                           className="text-[11px] bg-accent-soft text-accent px-2 py-1 rounded font-medium hover:bg-accent hover:text-white transition-colors"
-                         >
-                           View recommendation →
-                         </button>
-                       </div>
-                     )}
-                   </div>
-                 );
-              }
-              if (m.toolCalls && m.toolCalls.length > 0) {
-                 return (
-                   <div key={i} style={{display:'flex', flexDirection:'column', gap:'8px', width:'100%'}}>
-                     {m.toolCalls.map((tc: any, idx: number) => (
-                       <div key={idx} className="toolcall">
-                          <span className="ok">✓</span> {tc.name} <span style={{color:'var(--color-ink-3)'}}>{JSON.stringify(tc.arguments)}</span>
-                       </div>
-                     ))}
-                   </div>
-                 );
-              }
+              const meta = m.metadata || {};
+              const riskVal = meta.risk || 'low';
+              return (
+                <div key={i} className="flex flex-col items-start gap-1 w-full animate-in fade-in slide-in-from-left-1">
+                  {m.content && (
+                    <div className="bg-panel border border-line rounded-2xl rounded-tl-sm px-4 py-3 text-[13px] text-ink font-normal leading-relaxed max-w-[92%] shadow-sm break-words mb-1.5">
+                      {m.content}
+                    </div>
+                  )}
+                  {actionIdVal && (
+                    <div className="w-full bg-panel border-2 border-accent/20 rounded-2xl p-4 shadow-md bg-gradient-to-br from-panel to-panel-2">
+                      <div className="flex items-center justify-between mb-3 pb-2 border-b border-line">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-ink">
+                          <span className="text-accent">⚡</span> Read-only recommendation created
+                        </div>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider bg-accent-soft text-accent">
+                          New
+                        </span>
+                      </div>
+                      
+                      <div className="space-y-2 text-xs text-ink-2 mb-4">
+                        <div className="flex items-center justify-between">
+                          <span className="text-ink-3">Action ID</span>
+                          <span className="font-mono font-medium text-ink bg-bg px-1.5 py-0.5 rounded text-[11px]">
+                            {actionIdVal.slice(0, 10)}...
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-ink-3">Source</span>
+                          <span className="font-medium text-ink">Agent Stream</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-ink-3">Mode</span>
+                          <span className="font-medium text-ink">Base Mainnet · Read-only</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-ink-3">Safety</span>
+                          <span className="font-medium text-red flex items-center gap-1 bg-red-soft px-2 py-0.5 rounded-full text-[11px]">
+                            🛡️ Execution blocked
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-ink-3">Risk Level</span>
+                          <span className={`font-semibold px-2 py-0.5 rounded-full text-[11px] uppercase tracking-wide ${
+                            riskVal === 'high' ? 'bg-red-soft text-red' :
+                            riskVal === 'medium' ? 'bg-amber-soft text-amber' :
+                            'bg-green-soft text-green'
+                          }`}>
+                            {riskVal}
+                          </span>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => {
+                          if (onSelectTab) onSelectTab('main');
+                          showToast("Focused Action Inbox recommendation");
+                          setTimeout(() => {
+                            const el = document.getElementById(`action-${actionIdVal}`) || document.querySelector(`[data-action-id="${actionIdVal}"]`);
+                            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          }, 150);
+                        }}
+                        className="w-full py-2 px-3 bg-accent hover:bg-accent-2 text-white font-semibold text-xs rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        aria-label="View in Action Inbox"
+                      >
+                        <span>View in Action Inbox</span>
+                        <span>→</span>
+                      </button>
+                    </div>
+                  )}
+                  {!actionIdVal && !m.content && m.toolCalls && m.toolCalls.length > 0 && (
+                    <div className="w-full bg-panel border border-line rounded-xl p-3 space-y-2 text-xs font-mono shadow-sm">
+                      {m.toolCalls.map((tc: any, idx: number) => (
+                        <div key={idx} className="flex items-center gap-2 text-ink-2">
+                          <span className="text-green font-bold">✓</span>
+                          <span className="font-semibold text-ink">{tc.name}</span>
+                          <span className="text-ink-3 truncate">{JSON.stringify(tc.arguments)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <span className="text-[10px] text-ink-3 font-mono ml-1">MioAgent</span>
+                </div>
+              );
             }
             return null;
           })}
-
-          
-
        </div>
 
-       <div className="composer">
-          <input
-            id="agent-stream-input"
-            type="text"
-            placeholder="Give the agent an instruction..."
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleSend()}
-            disabled={sendMessageMutation.isPending}
-          />
-          <button
-            onClick={handleSend}
-            disabled={sendMessageMutation.isPending}
-            className="send"
-          >
-            ↑
-          </button>
+       {/* Prompt chips when thread has messages */}
+       {displayMessages.length > 0 && (
+         <div className="overflow-x-auto no-scrollbar flex gap-2 px-4 py-2 border-t border-line bg-panel-2/70 shrink-0">
+           {PROMPT_CHIPS.map((chip, idx) => (
+             <button
+               key={idx}
+               onClick={() => handleSendMsg(chip)}
+               disabled={sendMessageMutation.isPending}
+               className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-panel border border-line text-ink-2 hover:text-accent hover:border-accent/40 shadow-sm transition-all shrink-0 cursor-pointer disabled:opacity-50"
+             >
+               {chip}
+             </button>
+           ))}
+         </div>
+       )}
+
+       {/* Composer */}
+       <div className="p-3 border-t border-line bg-panel shrink-0 flex flex-col gap-2 shadow-sm">
+         {errorMsg && (
+           <div className="text-xs text-red bg-red-soft px-3 py-1.5 rounded-lg flex items-center justify-between">
+             <span className="truncate">⚠️ {errorMsg}</span>
+             <button onClick={() => setErrorMsg(null)} className="font-bold ml-2 hover:opacity-80">×</button>
+           </div>
+         )}
+         <div className="relative flex items-end gap-2 bg-panel-2 border border-line rounded-xl p-2 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/10 transition-all shadow-inner">
+           <textarea
+             id="agent-stream-input"
+             ref={textareaRef}
+             rows={2}
+             placeholder="Ask MioAgent to review your Base portfolio, flag risky tokens, or create a read-only recommendation..."
+             value={input}
+             onChange={e => setInput(e.target.value)}
+             onKeyDown={e => {
+               if (e.key === 'Enter' && !e.shiftKey) {
+                 e.preventDefault();
+                 handleSendMsg(input);
+               }
+             }}
+             disabled={sendMessageMutation.isPending}
+             className="w-full bg-transparent border-0 resize-none text-[13px] text-ink placeholder:text-ink-3 focus:outline-none max-h-32 min-h-[44px] py-1 leading-relaxed"
+             aria-label="Agent Stream Instruction Input"
+           />
+           <button
+             onClick={() => handleSendMsg(input)}
+             disabled={!input.trim() || sendMessageMutation.isPending}
+             className={`shrink-0 h-9 px-3.5 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 transition-all shadow-sm ${
+               !input.trim() || sendMessageMutation.isPending
+                 ? 'bg-line text-ink-3 cursor-not-allowed'
+                 : 'bg-accent text-white hover:bg-accent-2 cursor-pointer active:scale-[0.98]'
+             }`}
+             aria-label="Send message"
+           >
+             {sendMessageMutation.isPending ? (
+               <span className="flex items-center gap-1.5">
+                 <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                 <span>Sending...</span>
+               </span>
+             ) : (
+               <>
+                 <span>Send</span>
+                 <span>↑</span>
+               </>
+             )}
+           </button>
+         </div>
+         <div className="text-[11px] text-ink-3 flex items-center gap-1.5 px-1 font-medium">
+           <span className="text-green shrink-0">🛡️</span>
+           <span className="leading-snug">Read-only mode: MioAgent can create recommendations, but cannot execute mainnet transactions.</span>
+         </div>
        </div>
-    </div>
+    </aside>
   );
 }
 
