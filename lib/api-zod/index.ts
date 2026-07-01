@@ -159,20 +159,31 @@ export const ToggleProtocolResponseSchema = z.object({
 // Portfolio
 export const PortfolioTokenSchema = z.object({
   symbol: z.string(),
+  name: z.string().optional(),
   address: z.string(),
   balance: z.string(),
   balanceFormatted: z.string(),
   decimals: z.number().optional(),
   usdValue: z.string().optional(),
   logoUrl: z.string().optional(),
+  verified: z.boolean().optional(),
+  possibleSpam: z.boolean().optional(),
 });
 
+export const PortfolioProvidersSchema = z.object({
+  rpc: z.enum(["connected", "missing", "failed"]),
+  tokenBalances: z.enum(["connected", "missing", "failed"]),
+  tokenBalancesProvider: z.enum(["moralis", "alchemy", "mock", "none"]).optional(),
+  prices: z.enum(["connected", "missing", "failed"]),
+  risk: z.enum(["connected", "missing", "failed"]),
+});
 
 export const PortfolioResponseSchema = z.object({
   totalUsdValue: z.string().optional(),
   tokens: z.array(PortfolioTokenSchema),
   updatedAt: z.string(),
   providerStatus: z.string().optional(),
+  providers: PortfolioProvidersSchema.optional(),
 });
 
 // Workflows

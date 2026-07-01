@@ -130,6 +130,7 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
   const { data: portfolio, isError: isPortfolioError, error: portfolioError } = usePortfolio(address);
   const { data: protocolsData, isError: isProtocolsError } = useProtocols();
   const { mutate: toggleProtocol } = useToggleProtocol();
+  const [showLowConfidence, setShowLowConfidence] = useState(false);
 
   const tokens = portfolio?.tokens || [];
   const ethToken = tokens.find((b: any) => b.symbol === 'ETH');
@@ -138,6 +139,18 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
   const usdcBalance = usdcToken?.balanceFormatted;
   const displayAddress = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : '';
   const isMainnetReadonly = import.meta.env.VITE_CHAIN_ENV === 'mainnet-readonly';
+  const explorerBaseUrl = isMainnetReadonly ? 'https://basescan.org' : 'https://sepolia.basescan.org';
+
+  const nonEthTokens = tokens.filter((b: any) => b.symbol !== 'ETH');
+  const sortedTokens = [...nonEthTokens].sort((a: any, b: any) => {
+    const valA = parseFloat(a.usdValue || '0');
+    const valB = parseFloat(b.usdValue || '0');
+    if (valB !== valA) return valB - valA;
+    return a.symbol.localeCompare(b.symbol);
+  });
+  const highConfidenceTokens = sortedTokens.filter((b: any) => !b.possibleSpam && (b.verified || parseFloat(b.usdValue || '0') > 0 || b.logoUrl || b.symbol === 'USDC'));
+  const lowConfidenceTokens = sortedTokens.filter((b: any) => !highConfidenceTokens.includes(b));
+  const displayedTokens = showLowConfidence ? sortedTokens : highConfidenceTokens;
 
   return (
     <aside className="w-[320px] min-w-[280px] border-r border-line bg-panel-2 p-4 flex flex-col gap-[14px] overflow-y-auto">
@@ -145,7 +158,11 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
       <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
         <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-[11px] flex items-center justify-between">
           Portfolio
-          {!isPortfolioError && portfolio && <span className="bg-green-soft text-green px-2 py-0.5 rounded text-[10px] lowercase tracking-normal">+4.2%</span>}
+          {portfolio?.providerStatus && (
+            <span className="text-[10px] font-mono font-normal text-ink-3 lowercase bg-panel-2 px-1.5 py-0.5 rounded border border-line/60">
+              {portfolio.providerStatus}
+            </span>
+          )}
         </div>
 
         
@@ -163,11 +180,6 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
         ) : (
 
           <>
-            {portfolio.providerStatus && (
-              <div className="text-[11px] text-amber bg-amber-soft p-2 rounded border border-amber/20 mb-3 font-medium">
-                {portfolio.providerStatus}
-              </div>
-            )}
             <div className="flex items-baseline mb-4 flex-col">
               <div className="text-[30px] font-bold tracking-tight font-mono text-ink">{ethBalance} <span className="text-[16px] text-ink-2">ETH</span></div>
               {usdcBalance && !isMainnetReadonly && (
@@ -175,34 +187,42 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
               )}
             </div>
 
-            <svg className="w-full h-[46px] mb-2" viewBox="0 0 240 46" preserveAspectRatio="none">
-              <defs>
-                <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stopColor="#0000FF" stopOpacity=".22"/>
-                  <stop offset="1" stopColor="#0000FF" stopOpacity="0"/>
-                </linearGradient>
-              </defs>
-              <path d="M0,34 L20,30 L40,33 L60,24 L80,27 L100,18 L120,22 L140,12 L160,17 L180,9 L200,14 L220,6 L240,10"
-                fill="none" stroke="#0000FF" strokeWidth="2" strokeLinejoin="round"/>
-              <path d="M0,34 L20,30 L40,33 L60,24 L80,27 L100,18 L120,22 L140,12 L160,17 L180,9 L200,14 L220,6 L240,10 L240,46 L0,46 Z" fill="url(#g)"/>
-            </svg>
-
             <div className="font-mono text-[12px] text-ink-3 mt-2 flex items-center gap-1.5">
-              ⬡ {displayAddress} <span className="text-accent cursor-pointer ml-auto hover:underline">manage in base ↗</span>
+              ⬡ {displayAddress} <a href={`${explorerBaseUrl}/address/${address}`} target="_blank" rel="noopener noreferrer" className="text-accent cursor-pointer ml-auto hover:underline">basescan ↗</a>
             </div>
 
             <div className="mt-4 flex flex-col gap-2">
-               {tokens.map((token: any, idx: number) => (
-                  <div key={idx} className="flex justify-between items-center text-[13px]">
-                    <div className="flex items-center gap-2">
-                      <span className="w-5 h-5 rounded bg-[#2775ca] text-white flex items-center justify-center text-[10px] font-bold">
-                         {token.symbol[0]}
-                      </span>
-                      <span className="font-medium text-ink">{token.symbol}</span>
+               {displayedTokens.map((token: any, idx: number) => (
+                  <div key={idx} className="flex justify-between items-center text-[13px] py-1 border-b border-line/40 last:border-0">
+                    <div className="flex items-center gap-2 overflow-hidden">
+                      {token.logoUrl ? (
+                        <img src={token.logoUrl} alt={token.symbol} className="w-5 h-5 rounded-full object-cover shrink-0" />
+                      ) : (
+                        <span className="w-5 h-5 rounded bg-[#2775ca] text-white flex items-center justify-center text-[10px] font-bold shrink-0">
+                           {token.symbol[0]}
+                        </span>
+                      )}
+                      <div className="flex items-center gap-1 min-w-0">
+                        <span className="font-medium text-ink truncate" title={token.name || token.symbol}>{token.symbol}</span>
+                        {token.possibleSpam && <span className="text-[9px] bg-red-soft text-red px-1 rounded uppercase font-bold">spam</span>}
+                      </div>
                     </div>
-                    <span className="font-mono font-medium">{token.balanceFormatted}</span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="font-mono font-medium">{token.balanceFormatted}</span>
+                      {token.address && token.address !== 'native' && (
+                        <a href={`${explorerBaseUrl}/token/${token.address}?a=${address}`} target="_blank" rel="noopener noreferrer" className="text-accent text-[11px] hover:underline font-mono" title="View on BaseScan">↗</a>
+                      )}
+                    </div>
                   </div>
                ))}
+               {highConfidenceTokens.length === 0 && lowConfidenceTokens.length > 0 && !showLowConfidence && (
+                 <div className="text-xs text-ink-3 italic py-1">Only unverified or low-value tokens found.</div>
+               )}
+               {lowConfidenceTokens.length > 0 && (
+                 <button onClick={() => setShowLowConfidence(!showLowConfidence)} className="text-[11px] text-accent font-medium mt-1 text-left hover:underline">
+                   {showLowConfidence ? 'Hide unverified/low-value tokens' : `Show ${lowConfidenceTokens.length} unverified/low-value tokens`}
+                 </button>
+               )}
             </div>
           </>
         )}
@@ -314,7 +334,16 @@ function ActionInbox({ showToast }: { showToast: (msg: string) => void }) {
       <div className="flex flex-col gap-4">
         {isLoading && <div className="text-sm text-ink-3">Loading...</div>}
         {!isLoading && actions.length === 0 && (
-          <div className="text-sm text-ink-3">No active actions</div>
+          <div className="bg-panel border border-line rounded-xl p-8 text-center flex flex-col items-center gap-3 my-4">
+            <div className="w-10 h-10 rounded-full bg-accent-soft text-accent flex items-center justify-center text-lg font-bold">⚡</div>
+            <div className="text-base font-bold text-ink">No pending automated actions right now</div>
+            <div className="text-xs text-ink-2 max-w-md leading-relaxed">
+              Actions represent automated operations recommendations, token approvals, rebalances, or security screens.
+            </div>
+            <div className="text-xs text-ink-3 font-medium bg-bg px-3 py-1.5 rounded-lg border border-line mt-1">
+              Create a new action recommendation below or interact with Agent Stream.
+            </div>
+          </div>
         )}
         {actions.map((action: any /* eslint-disable-line @typescript-eslint/no-explicit-any */) => {
            const isPending = action.status === 'pending';
@@ -566,6 +595,13 @@ function ActionsBuilder({ showToast }: { showToast: (msg: string) => void }) {
   const { address } = useAccount();
   const [instruction, setInstruction] = useState('');
   const createAction = useCreateRecommendation();
+  const isMainnetReadonly = import.meta.env.VITE_CHAIN_ENV === 'mainnet-readonly';
+
+  const presets = [
+    "Rebalance portfolio: Swap 0.1 ETH for USDC when gas is below 15 gwei",
+    "Monitor wallet for unauthorized spend permissions and revoke if found",
+    "Automate daily yield collection from Base liquidity pools"
+  ];
 
   const handleCreate = () => {
     const trimmed = instruction.trim();
@@ -582,25 +618,57 @@ function ActionsBuilder({ showToast }: { showToast: (msg: string) => void }) {
   return (
     <main className="flex-1 bg-bg p-[18px] flex flex-col gap-4 overflow-y-auto">
       <h2 className="text-[16px] font-bold text-ink">Actions Builder</h2>
-      <div className="bg-panel border border-line rounded-xl p-4 flex flex-col gap-4">
+      <div className="bg-panel border border-line rounded-xl p-5 flex flex-col gap-4 shadow-sm">
          <div>
-           <label className="text-sm font-medium text-ink-2">Instruction</label>
+           <label className="text-sm font-bold text-ink flex justify-between items-center">
+             <span>Instruction</span>
+             <span className="text-xs font-normal text-ink-3">Natural language operation</span>
+           </label>
            <textarea 
              value={instruction}
              onChange={e => setInstruction(e.target.value)}
              placeholder="e.g. swap 1 USDC to ETH..." 
-             className="w-full mt-2 border border-line rounded-md p-2 text-sm bg-bg resize-none h-[100px] text-ink" 
+             className="w-full mt-2 border border-line rounded-lg p-3 text-sm bg-bg resize-none h-[100px] text-ink focus:outline-none focus:border-accent font-mono" 
            />
          </div>
-         <div className="text-sm text-ink-2">Current mode: <span className="font-medium text-ink">{import.meta.env.VITE_CHAIN_ENV || 'sepolia'}</span></div>
-         <div className="text-sm text-ink-2">Wallet: <span className="font-mono text-ink">{address || 'Not connected'}</span></div>
-         <button 
-           disabled={!instruction.trim() || createAction.isPending}
-           className="bg-accent text-white px-4 py-2 rounded-lg text-sm w-fit font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors" 
-           onClick={handleCreate}
-         >
-           {createAction.isPending ? 'Creating...' : 'Create recommendation'}
-         </button>
+
+         <div>
+           <div className="text-xs font-bold uppercase text-ink-3 tracking-wider mb-2">Quick Presets</div>
+           <div className="flex flex-col gap-1.5">
+             {presets.map((preset, idx) => (
+               <button
+                 key={idx}
+                 onClick={() => setInstruction(preset)}
+                 className="text-left text-xs bg-bg/60 hover:bg-line/40 border border-line/60 rounded-lg p-2.5 text-ink-2 hover:text-ink transition-colors truncate"
+               >
+                 + {preset}
+               </button>
+             ))}
+           </div>
+         </div>
+
+         <div className="flex flex-wrap gap-4 text-xs bg-bg p-3 rounded-lg border border-line text-ink-2">
+           <div>Current mode: <span className="font-bold text-ink">{isMainnetReadonly ? 'Base Mainnet (Read-only)' : import.meta.env.VITE_CHAIN_ENV || 'sepolia'}</span></div>
+           <div>Wallet: <span className="font-mono text-ink">{address ? `${address.slice(0, 6)}…${address.slice(-4)}` : 'Not connected'}</span></div>
+           <div>Security: <span className="text-green font-bold">Action-Security Screening Enabled</span></div>
+         </div>
+         {isMainnetReadonly && (
+           <div className="text-[11px] text-amber bg-amber-soft p-2.5 rounded-lg border border-amber/20 font-medium flex items-center gap-2">
+             <span>🔒</span>
+             <span>In Read-only mode, recommendations will be generated with execution blocked.</span>
+           </div>
+         )}
+
+         <div className="flex items-center justify-between pt-1">
+           <button 
+             disabled={!instruction.trim() || createAction.isPending}
+             className="bg-accent text-white px-5 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:bg-accent-2 shadow-[0_4px_12px_rgba(0,0,255,.2)] transition-all flex items-center gap-2" 
+             onClick={handleCreate}
+           >
+             {createAction.isPending ? 'Creating recommendation...' : 'Create recommendation'}
+           </button>
+           <span className="text-xs text-ink-3">Generates structured action card in Inbox</span>
+         </div>
       </div>
     </main>
   );

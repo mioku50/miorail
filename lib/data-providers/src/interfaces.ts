@@ -16,12 +16,15 @@ export interface GoPlusProvider {
 
 export interface TokenBalance {
   symbol: string;
+  name?: string;
   address: string;
   balance: string;
   balanceFormatted: string;
   decimals?: number;
   usdValue?: string;
   logoUrl?: string;
+  verified?: boolean;
+  possibleSpam?: boolean;
 }
 
 export interface TokenBalancesProvider {

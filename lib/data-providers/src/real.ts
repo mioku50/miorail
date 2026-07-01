@@ -99,7 +99,7 @@ export class AlchemyTokenBalancesProvider implements TokenBalancesProvider {
             params: [item.contractAddress]
           })
         });
-        const metaData = await metaRes.json() as { result?: { symbol?: string; decimals?: number; logo?: string } };
+        const metaData = await metaRes.json() as { result?: { symbol?: string; name?: string; decimals?: number; logo?: string } };
         const meta = metaData.result || {};
         const decimals = typeof meta.decimals === 'number' ? meta.decimals : 18;
         const balanceBigInt = BigInt(item.tokenBalance);
@@ -107,11 +107,14 @@ export class AlchemyTokenBalancesProvider implements TokenBalancesProvider {
         const balanceFormatted = (Number(balanceBigInt) / Math.pow(10, decimals)).toFixed(4);
         results.push({
           symbol,
+          name: meta.name || symbol,
           address: item.contractAddress,
           balance: balanceBigInt.toString(),
           balanceFormatted,
           decimals,
-          logoUrl: meta.logo || undefined
+          logoUrl: meta.logo || undefined,
+          verified: false,
+          possibleSpam: false
         });
       } catch {
         // ignore individual metadata fetch error
@@ -134,44 +137,48 @@ export class MoralisTokenBalancesProvider implements TokenBalancesProvider {
       }
     });
     if (!res.ok) throw new Error(`Moralis API error: ${res.statusText}`);
-    const data = await res.json() as Array<{ token_address: string; balance: string; decimals: number; symbol: string; logo?: string }>;
+    const data = await res.json() as Array<{ token_address: string; balance: string; decimals: number; symbol: string; name?: string; logo?: string; possible_spam?: boolean; verified_contract?: boolean }>;
     return data.map(d => {
       const decimals = typeof d.decimals === 'number' ? d.decimals : 18;
       const balanceBigInt = BigInt(d.balance || '0');
+      const symbol = d.symbol || 'ERC20';
       return {
-        symbol: d.symbol || 'ERC20',
+        symbol,
+        name: d.name || symbol,
         address: d.token_address,
         balance: balanceBigInt.toString(),
         balanceFormatted: (Number(balanceBigInt) / Math.pow(10, decimals)).toFixed(4),
         decimals,
-        logoUrl: d.logo || undefined
+        logoUrl: d.logo || undefined,
+        verified: d.verified_contract || false,
+        possibleSpam: d.possible_spam || false
       };
     });
   }
 }
 
-export function getTokenBalancesProviderFromEnv(): { provider: TokenBalancesProvider; status: string } {
+export function getTokenBalancesProviderFromEnv(): { provider: TokenBalancesProvider; status: string; providerName: "moralis" | "alchemy" | "mock" | "none" } {
   const mode = (process.env.TOKEN_BALANCES_PROVIDER || 'none').toLowerCase();
   if (mode === 'none') {
-    return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured' };
+    return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', providerName: 'none' };
   }
   if (mode === 'alchemy' || (!process.env.TOKEN_BALANCES_PROVIDER && (process.env.ALCHEMY_API_KEY || process.env.ALCHEMY_BASE_MAINNET_RPC_URL))) {
     if (!process.env.ALCHEMY_API_KEY && !process.env.ALCHEMY_BASE_MAINNET_RPC_URL) {
-      return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured' };
+      return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', providerName: 'none' };
     }
-    return { provider: new AlchemyTokenBalancesProvider(process.env.ALCHEMY_API_KEY, process.env.ALCHEMY_BASE_MAINNET_RPC_URL), status: 'Connected' };
+    return { provider: new AlchemyTokenBalancesProvider(process.env.ALCHEMY_API_KEY, process.env.ALCHEMY_BASE_MAINNET_RPC_URL), status: 'Alchemy connected', providerName: 'alchemy' };
   }
   if (mode === 'moralis' || (!process.env.TOKEN_BALANCES_PROVIDER && process.env.MORALIS_API_KEY)) {
     if (!process.env.MORALIS_API_KEY) {
-      return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured' };
+      return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', providerName: 'none' };
     }
-    return { provider: new MoralisTokenBalancesProvider(process.env.MORALIS_API_KEY), status: 'Connected' };
+    return { provider: new MoralisTokenBalancesProvider(process.env.MORALIS_API_KEY), status: 'Moralis connected', providerName: 'moralis' };
   }
   if (mode === 'mock') {
     const { MockTokenBalancesProvider } = require('./mocks.js');
-    return { provider: new MockTokenBalancesProvider(), status: 'mock' };
+    return { provider: new MockTokenBalancesProvider(), status: 'mock', providerName: 'mock' };
   }
-  return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured' };
+  return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', providerName: 'none' };
 }
 
 

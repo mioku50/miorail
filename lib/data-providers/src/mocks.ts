@@ -43,11 +43,14 @@ export class MockTokenBalancesProvider implements TokenBalancesProvider {
     return [
       {
         symbol: 'USDC',
+        name: 'USD Coin',
         address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
         balance: '15000000',
         balanceFormatted: '15.0000',
         decimals: 6,
         usdValue: '15.00',
+        verified: true,
+        possibleSpam: false,
       }
     ];
   }
