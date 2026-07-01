@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from 'wagmi';
-import { usePortfolio, useActionsFeed, useChatHistory, useSendMessage, useProtocols, useToggleProtocol, useExecuteAction, useDismissAction, useClearChatHistory, useClearActions, useCreateRecommendation } from '@mioagent/api-client-react';
+import { usePortfolio, useActionsFeed, useChatHistory, useSendMessage, useProtocols, useToggleProtocol, useExecuteAction, useDismissAction, useClearChatHistory, useClearActions, useCreateRecommendation, useStatus } from '@mioagent/api-client-react';
 
 
 function WalletConnect({ showToast }: { showToast: (msg: string) => void }) {
@@ -129,6 +129,7 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
   const { address } = useAccount();
   const { data: portfolio, isError: isPortfolioError, error: portfolioError } = usePortfolio(address);
   const { data: protocolsData, isError: isProtocolsError } = useProtocols();
+  const { data: statusData } = useStatus();
   const { mutate: toggleProtocol } = useToggleProtocol();
   const [showLowConfidence, setShowLowConfidence] = useState(false);
 
@@ -158,9 +159,15 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
       <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
         <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-[11px] flex items-center justify-between">
           Portfolio
-          {portfolio?.providerStatus && (
+          {(statusData || portfolio?.providerStatus) && (
             <span className="text-[10px] font-mono font-normal text-ink-3 lowercase bg-panel-2 px-1.5 py-0.5 rounded border border-line/60">
-              {portfolio.providerStatus}
+              {statusData ? (
+                statusData.tokenBalances.status === 'failed' ? 'token provider failed' :
+                statusData.tokenBalances.status === 'missing' ? 'eth only' :
+                statusData.tokenBalances.provider === 'moralis' ? 'moralis connected' :
+                statusData.tokenBalances.provider === 'alchemy' ? 'alchemy connected' :
+                portfolio?.providerStatus || 'connected'
+              ) : (portfolio?.providerStatus === 'moralis connected' ? 'moralis connected' : portfolio?.providerStatus)}
             </span>
           )}
         </div>
@@ -264,23 +271,59 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
            <div className="flex flex-col gap-2">
              <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
                <span className="text-ink-2">Base RPC</span>
-               {address ? <span className="text-green font-medium">Connected</span> : <span className="text-amber font-medium">Missing</span>}
+               {statusData ? (
+                 <span className={statusData.rpc.status === 'connected' ? 'text-green font-medium' : statusData.rpc.status === 'failed' ? 'text-red font-medium' : 'text-amber font-medium'}>
+                   {statusData.rpc.status === 'connected' ? 'Connected' : statusData.rpc.status === 'failed' ? 'Failed' : 'Missing'}
+                 </span>
+               ) : address ? (
+                 <span className="text-green font-medium">Connected</span>
+               ) : (
+                 <span className="text-amber font-medium">Missing</span>
+               )}
              </div>
              <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
                <span className="text-ink-2">Token balances</span>
-               <span className="text-amber font-medium">Missing</span>
+               {statusData ? (
+                 <span className={statusData.tokenBalances.status === 'connected' ? 'text-green font-medium' : statusData.tokenBalances.status === 'failed' ? 'text-red font-medium' : 'text-amber font-medium'}>
+                   {statusData.tokenBalances.status === 'connected' 
+                     ? (statusData.tokenBalances.provider === 'moralis' ? 'Moralis connected' : statusData.tokenBalances.provider === 'alchemy' ? 'Alchemy connected' : 'Connected')
+                     : statusData.tokenBalances.status === 'failed' ? 'Failed' : 'Missing'}
+                 </span>
+               ) : (
+                 <span className="text-amber font-medium">Missing</span>
+               )}
              </div>
              <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
                <span className="text-ink-2">GoPlus</span>
-               <span className="text-amber font-medium">Missing</span>
+               {statusData ? (
+                 <span className={statusData.risk.status === 'connected' ? 'text-green font-medium' : statusData.risk.status === 'failed' ? 'text-red font-medium' : 'text-amber font-medium'}>
+                   {statusData.risk.status === 'connected' ? 'Connected' : statusData.risk.status === 'failed' ? 'Failed' : 'Missing'}
+                 </span>
+               ) : (
+                 <span className="text-amber font-medium">Missing</span>
+               )}
              </div>
              <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
                <span className="text-ink-2">DeFiLlama/CoinGecko</span>
-               <span className="text-amber font-medium">Missing</span>
+               {statusData ? (
+                 <span className={statusData.prices.status === 'connected' ? 'text-green font-medium' : statusData.prices.status === 'failed' ? 'text-red font-medium' : 'text-amber font-medium'}>
+                   {statusData.prices.status === 'connected' ? 'Connected' : statusData.prices.status === 'failed' ? 'Failed' : 'Missing'}
+                 </span>
+               ) : (
+                 <span className="text-amber font-medium">Missing</span>
+               )}
              </div>
              <div className="flex items-center justify-between py-1 text-[12px]">
                <span className="text-ink-2">Base MCP</span>
-               {import.meta.env.VITE_MCP_SERVER_URL ? <span className="text-green font-medium">Configured</span> : <span className="text-red font-medium">Missing</span>}
+               {statusData ? (
+                 <span className={statusData.baseMcp.status === 'configured' ? 'text-green font-medium' : 'text-amber font-medium'}>
+                   {statusData.baseMcp.status === 'configured' ? 'Configured' : 'Missing'}
+                 </span>
+               ) : import.meta.env.VITE_MCP_SERVER_URL ? (
+                 <span className="text-green font-medium">Configured</span>
+               ) : (
+                 <span className="text-red font-medium">Missing</span>
+               )}
              </div>
            </div>
         ) : isProtocolsError || !protocolsData ? (
@@ -401,6 +444,11 @@ function ActionInbox({ showToast }: { showToast: (msg: string) => void }) {
                            Safety: {safetyState}
                          </span>
                        </div>
+                        <div className={`mt-1 font-medium px-2 py-1 rounded border text-[11px] w-fit ${(isMainnetReadonly || chainMode === 'mainnet-readonly' || chainMode === 'mainnet') ? 'bg-amber-soft text-amber border-amber/20' : 'bg-green-soft text-green border-green/20'}`}>
+                          {(isMainnetReadonly || chainMode === 'mainnet-readonly' || chainMode === 'mainnet') 
+                            ? 'Read-only recommendation (execution disabled on mainnet)' 
+                            : 'Executable testnet recommendation'}
+                        </div>
                      </div>
                    );
                 })()}
@@ -608,7 +656,10 @@ function ActionsBuilder({ showToast }: { showToast: (msg: string) => void }) {
     if (!trimmed) return;
     createAction.mutate({ instruction: trimmed }, {
       onSuccess: () => {
-        showToast('Recommendation created in Action Inbox');
+        const toastMsg = isMainnetReadonly 
+          ? 'Read-only recommendation created in Action Inbox' 
+          : 'Testnet recommendation created in Action Inbox';
+        showToast(toastMsg);
         setInstruction('');
       },
       onError: (e) => showToast('Failed to create: ' + e.message)
@@ -658,6 +709,49 @@ function ActionsBuilder({ showToast }: { showToast: (msg: string) => void }) {
              <span>In Read-only mode, recommendations will be generated with execution blocked.</span>
            </div>
          )}
+
+         {/* Action Preview Card */}
+         <div className="bg-bg border border-line rounded-xl p-4 flex flex-col gap-3">
+           <div className="text-xs font-bold uppercase text-ink-3 tracking-wider flex items-center justify-between">
+             <span>Recommendation Preview</span>
+             <span className="text-[10px] bg-panel px-2 py-0.5 rounded text-ink-2 font-mono">Live Preview</span>
+           </div>
+           {instruction.trim() ? (
+             <div className="flex flex-col gap-2 text-xs">
+               <div>
+                 <span className="font-semibold text-ink-2">Reason: </span>
+                 <span className="text-ink">{`Automated recommendation for: "${instruction.trim()}"`}</span>
+               </div>
+               <div className="flex flex-wrap gap-2 items-center">
+                 <span className="font-semibold text-ink-2">Risk: </span>
+                 <span className="px-2 py-0.5 rounded text-[11px] font-medium border bg-green-soft text-green border-green/20">
+                   {isMainnetReadonly ? 'None (read-only mode)' : 'Low'}
+                 </span>
+               </div>
+               <div>
+                 <span className="font-semibold text-ink-2">Expected Effect: </span>
+                 <span className="text-ink">{isMainnetReadonly ? 'Simulate action execution on mainnet-readonly' : `Simulate action execution on ${import.meta.env.VITE_CHAIN_ENV || 'sepolia'}`}</span>
+               </div>
+               <div className="flex flex-wrap gap-1.5 mt-1">
+                 <span className="px-2 py-0.5 rounded text-[11px] font-medium border bg-panel text-ink-2 border-line">
+                   Chain: {isMainnetReadonly ? 'mainnet-readonly' : 'sepolia'}
+                 </span>
+                 <span className={`px-2 py-0.5 rounded text-[11px] font-medium border ${isMainnetReadonly ? 'bg-red-soft text-red border-red/20' : 'bg-green-soft text-green border-green/20'}`}>
+                   Safety: {isMainnetReadonly ? 'blocked - read only mode' : 'executable'}
+                 </span>
+               </div>
+               <div className={`mt-1 font-medium px-2 py-1 rounded border text-[11px] w-fit ${isMainnetReadonly ? 'bg-amber-soft text-amber border-amber/20' : 'bg-green-soft text-green border-green/20'}`}>
+                 {isMainnetReadonly 
+                   ? 'Read-only recommendation (execution disabled on mainnet)' 
+                   : 'Executable testnet recommendation'}
+               </div>
+             </div>
+           ) : (
+             <div className="text-xs text-ink-3 italic py-2">
+               Enter an instruction above or select a quick preset to see real-time recommendation preview.
+             </div>
+           )}
+         </div>
 
          <div className="flex items-center justify-between pt-1">
            <button 
@@ -714,30 +808,61 @@ function HistoryPage() {
 
 function ConfigurePage() {
   const { address } = useAccount();
+  const { data: statusData } = useStatus();
+  const isMainnetReadonly = import.meta.env.VITE_CHAIN_ENV === 'mainnet-readonly';
+
   return (
     <main className="flex-1 bg-bg p-[18px] flex flex-col gap-4 overflow-y-auto">
       <h2 className="text-[16px] font-bold text-ink">Configure</h2>
-      <div className="bg-panel border border-line rounded-xl p-4 flex flex-col gap-4">
-         <div className="flex items-center gap-2">
-           <span className="font-medium text-sm w-[150px]">Network Mode</span>
-           <span className="text-xs bg-panel-2 px-2 py-1 rounded border border-line">{import.meta.env.VITE_CHAIN_ENV || 'sepolia'}</span>
-           {import.meta.env.VITE_CHAIN_ENV === 'mainnet-readonly' && <span className="text-xs text-amber font-medium">Mainnet execution is disabled in read-only mode</span>}
+      <div className="bg-panel border border-line rounded-xl p-4 flex flex-col gap-3">
+         <div className="flex items-center justify-between py-1.5 border-b border-line">
+           <span className="font-medium text-sm text-ink">Execution Mode</span>
+           <div className="flex items-center gap-2">
+             <span className="text-xs bg-panel-2 px-2.5 py-1 rounded border border-line font-mono text-ink">{statusData?.execution.mode || import.meta.env.VITE_CHAIN_ENV || 'sepolia'}</span>
+             {isMainnetReadonly && <span className="text-xs text-amber bg-amber-soft px-2 py-0.5 rounded border border-amber/20 font-medium">Mainnet execution is disabled in read-only mode</span>}
+           </div>
          </div>
-         <div className="flex items-center gap-2">
-           <span className="font-medium text-sm w-[150px]">Connected Wallet</span>
-           <span className="text-xs bg-panel-2 px-2 py-1 rounded border border-line font-mono">{address || 'None'}</span>
+         <div className="flex items-center justify-between py-1.5 border-b border-line">
+           <span className="font-medium text-sm text-ink">Connected Wallet</span>
+           <span className="text-xs bg-panel-2 px-2.5 py-1 rounded border border-line font-mono text-ink">{address || 'None'}</span>
          </div>
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-sm w-[150px]">RPC Provider</span>
-            <span className="text-xs text-green font-medium">Configured</span>
-          </div>
-         <div className="flex items-center gap-2">
-           <span className="font-medium text-sm w-[150px]">LLM Provider</span>
-           <span className="text-xs text-green font-medium">Configured</span>
+         <div className="flex items-center justify-between py-1.5 border-b border-line">
+           <span className="font-medium text-sm text-ink">Base RPC Provider</span>
+           <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.rpc.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.rpc.status === 'failed' ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20'}`}>
+             {statusData ? (statusData.rpc.status === 'connected' ? `Connected (${statusData.rpc.provider})` : statusData.rpc.status === 'failed' ? 'Failed' : 'Missing') : 'Checking...'}
+           </span>
          </div>
-         <div className="flex items-center gap-2">
-           <span className="font-medium text-sm w-[150px]">x402 Micropayments</span>
-           <span className="text-xs text-amber font-medium">Simulated</span>
+         <div className="flex items-center justify-between py-1.5 border-b border-line">
+           <span className="font-medium text-sm text-ink">Token Balances Provider</span>
+           <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.tokenBalances.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.tokenBalances.status === 'failed' ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20'}`}>
+             {statusData ? (statusData.tokenBalances.status === 'connected' ? `${statusData.tokenBalances.provider} connected` : statusData.tokenBalances.status === 'failed' ? 'Failed' : 'Missing') : 'Checking...'}
+           </span>
+         </div>
+         <div className="flex items-center justify-between py-1.5 border-b border-line">
+           <span className="font-medium text-sm text-ink">Price / CoinGecko Provider</span>
+           <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.prices.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.prices.status === 'failed' ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20'}`}>
+             {statusData ? (statusData.prices.status === 'connected' ? `${statusData.prices.provider} connected` : statusData.prices.status === 'failed' ? 'Failed' : 'Missing') : 'Checking...'}
+           </span>
+         </div>
+         <div className="flex items-center justify-between py-1.5 border-b border-line">
+           <span className="font-medium text-sm text-ink">Risk / GoPlus Provider</span>
+           <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.risk.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.risk.status === 'failed' ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20'}`}>
+             {statusData ? (statusData.risk.status === 'connected' ? `${statusData.risk.provider} connected` : statusData.risk.status === 'failed' ? 'Failed' : 'Missing') : 'Checking...'}
+           </span>
+         </div>
+         <div className="flex items-center justify-between py-1.5 border-b border-line">
+           <span className="font-medium text-sm text-ink">Base MCP</span>
+           <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.baseMcp.status === 'configured' ? 'bg-green-soft text-green border-green/20' : 'bg-amber-soft text-amber border-amber/20'}`}>
+             {statusData ? (statusData.baseMcp.status === 'configured' ? 'Configured' : 'Missing') : (import.meta.env.VITE_MCP_SERVER_URL ? 'Configured' : 'Missing')}
+           </span>
+         </div>
+         <div className="flex items-center justify-between py-1.5 border-b border-line">
+           <span className="font-medium text-sm text-ink">x402 Micropayments</span>
+           <span className="text-xs font-medium px-2.5 py-0.5 rounded border bg-amber-soft text-amber border-amber/20">{statusData ? (statusData.x402.status === 'configured' ? 'Configured' : 'Simulated') : 'Simulated'}</span>
+         </div>
+         <div className="flex items-center justify-between py-1.5">
+           <span className="font-medium text-sm text-ink">LLM Provider</span>
+           <span className="text-xs font-medium px-2.5 py-0.5 rounded border bg-green-soft text-green border-green/20">Configured</span>
          </div>
       </div>
     </main>
@@ -745,13 +870,14 @@ function ConfigurePage() {
 }
 
 function BaseMcpPage(_props: { showToast: (msg: string) => void }) {
+  const { data: statusData } = useStatus();
   return (
     <main className="flex-1 bg-bg p-[18px] flex flex-col gap-4 overflow-y-auto">
       <h2 className="text-[16px] font-bold text-ink">Base MCP Status</h2>
       <div className="bg-panel border border-line rounded-xl p-4 flex flex-col gap-4">
          <div className="flex flex-col gap-1">
            <span className="font-medium text-sm">Server URL</span>
-           <span className="text-xs text-ink-3 font-mono">{import.meta.env.VITE_MCP_SERVER_URL ? 'Configured (Env)' : 'Missing'}</span>
+           <span className="text-xs text-ink-3 font-mono">{statusData ? (statusData.baseMcp.status === 'configured' ? 'Configured (Env)' : 'Missing') : (import.meta.env.VITE_MCP_SERVER_URL ? 'Configured (Env)' : 'Missing')}</span>
          </div>
          <div className="flex flex-col gap-1">
            <span className="font-medium text-sm">Approval Provider</span>

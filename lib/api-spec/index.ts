@@ -45,6 +45,7 @@ export type ToggleProtocolResponse = z.infer<typeof schemas.ToggleProtocolRespon
 // Portfolio
 export type PortfolioToken = z.infer<typeof schemas.PortfolioTokenSchema>;
 export type PortfolioResponse = z.infer<typeof schemas.PortfolioResponseSchema>;
+export type StatusResponse = z.infer<typeof schemas.StatusResponseSchema>;
 
 // Workflows
 export type Workflow = z.infer<typeof schemas.WorkflowSchema>;

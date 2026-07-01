@@ -7,6 +7,7 @@ import { x402Router } from './x402';
 import { workflowsRouter } from './workflows';
 import { portfolioRouter } from './portfolio';
 import { protocolsRouter } from './protocols';
+import { statusRouter } from './status';
 
 export const routes = Router();
 
@@ -18,4 +19,5 @@ routes.use('/x402', x402Router);
 routes.use('/workflows', workflowsRouter);
 routes.use('/portfolio', portfolioRouter);
 routes.use('/protocols', protocolsRouter);
+routes.use('/status', statusRouter);
 

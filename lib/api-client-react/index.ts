@@ -96,6 +96,14 @@ export function usePortfolio(
   });
 }
 
+export function useStatus(options?: Omit<UseQueryOptions<apiSpec.StatusResponse, Error, apiSpec.StatusResponse, string[]>, 'queryKey' | 'queryFn'>) {
+  return useQuery({
+    queryKey: ['status'],
+    queryFn: () => fetchApi<apiSpec.StatusResponse>('/api/status'),
+    ...options,
+  });
+}
+
 // Mutations
 
 export function useCreateRecommendation(

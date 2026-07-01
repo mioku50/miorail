@@ -186,6 +186,38 @@ export const PortfolioResponseSchema = z.object({
   providers: PortfolioProvidersSchema.optional(),
 });
 
+export const StatusResponseSchema = z.object({
+  chainEnv: z.string(),
+  chainId: z.number(),
+  rpc: z.object({
+    status: z.enum(["connected", "missing", "failed"]),
+    provider: z.string(),
+  }),
+  tokenBalances: z.object({
+    status: z.enum(["connected", "missing", "failed"]),
+    provider: z.string(),
+  }),
+  prices: z.object({
+    status: z.enum(["connected", "missing", "failed"]),
+    provider: z.string(),
+  }),
+  risk: z.object({
+    status: z.enum(["connected", "missing", "failed"]),
+    provider: z.string(),
+  }),
+  baseMcp: z.object({
+    status: z.enum(["configured", "missing"]),
+  }),
+  x402: z.object({
+    status: z.enum(["simulated", "configured", "missing"]),
+  }),
+  execution: z.object({
+    mode: z.string(),
+    enabled: z.boolean(),
+    reason: z.string(),
+  }),
+});
+
 // Workflows
 export const WorkflowSchema = z.object({
   id: z.string(),
