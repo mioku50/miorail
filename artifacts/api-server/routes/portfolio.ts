@@ -10,10 +10,7 @@ portfolioRouter.get('/', async (req, res, next) => {
     const address = (req.query.address as string) || (req as { session?: { user?: { address?: string } } }).session?.user?.address;
 
     if (!address) {
-      return res.json(PortfolioResponseSchema.parse({
-        tokens: [],
-        updatedAt: new Date().toISOString()
-      }));
+      return res.status(400).json({ error: 'Wallet address not configured' });
     }
 
     let aggregator;

@@ -5,6 +5,8 @@ import { chatRouter } from './chat';
 import { actionsRouter } from './actions';
 import { x402Router } from './x402';
 import { workflowsRouter } from './workflows';
+import { portfolioRouter } from './portfolio';
+import { protocolsRouter } from './protocols';
 
 export const routes = Router();
 
@@ -14,3 +16,6 @@ routes.use('/chat', chatRouter);
 routes.use('/actions', actionsRouter);
 routes.use('/x402', x402Router);
 routes.use('/workflows', workflowsRouter);
+routes.use('/portfolio', portfolioRouter);
+routes.use('/protocols', protocolsRouter);
+

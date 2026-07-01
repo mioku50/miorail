@@ -293,6 +293,7 @@ function ActionInbox({ showToast }: { showToast: (msg: string) => void }) {
   const executeAction = useExecuteAction();
   const dismissAction = useDismissAction();
   const clearActions = useClearActions();
+  const isMainnetReadonly = import.meta.env.VITE_CHAIN_ENV === 'mainnet-readonly';
 
   const actions = data?.actions || [];
 
@@ -306,7 +307,7 @@ function ActionInbox({ showToast }: { showToast: (msg: string) => void }) {
               {f}
             </div>
           ))}
-                  <button onClick={() => { if(confirm('Clear all actions?')) clearActions.mutate(); }} disabled={clearActions.isPending} className="px-2 py-1 bg-red-soft text-red text-xs rounded border border-red/20 ml-2 hover:bg-red hover:text-white transition-colors">Clear all</button>
+                  <button onClick={() => { if(confirm('Clear demo actions?')) clearActions.mutate(); }} disabled={clearActions.isPending} className="px-2 py-1 bg-red-soft text-red text-xs rounded border border-red/20 ml-2 hover:bg-red hover:text-white transition-colors">Clear demo actions</button>
         </div>
       </div>
 
@@ -358,8 +359,14 @@ function ActionInbox({ showToast }: { showToast: (msg: string) => void }) {
                    </div>
                 ) : (
                   <div className="flex gap-2 items-center mt-1">
+                     <span title={isMainnetReadonly ? "Mainnet execution is disabled in read-only mode." : undefined} onClick={() => { if(isMainnetReadonly) showToast("Mainnet execution is disabled in read-only mode."); }}>
                      <button
-                       onClick={() => executeAction.mutate({ actionId: action.id }, { 
+                       onClick={() => {
+                         if (isMainnetReadonly) {
+                           showToast("Mainnet execution is disabled in read-only mode.");
+                           return;
+                         }
+                         executeAction.mutate({ actionId: action.id }, { 
     onSuccess: (data: any) => { 
       if (data?.success && data?.approvalUrl) { 
         window.open(data.approvalUrl, '_blank'); 
@@ -382,12 +389,14 @@ function ActionInbox({ showToast }: { showToast: (msg: string) => void }) {
       showToast('Error: ' + err.message);
       refetch();
     }
-  })}
-                       disabled={!isPending || isExecuting || isDismissing}
+  });
+                       }}
+                       disabled={!isPending || isExecuting || isDismissing || isMainnetReadonly}
                        className="bg-accent hover:bg-accent-2 text-white px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] shadow-[0_6px_16px_rgba(0,0,255,.28)] hover:-translate-y-[1px] hover:shadow-[0_10px_22px_rgba(0,0,255,.34)] transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                      >
-                       ⚡ {isExecuting ? 'Executing...' : 'Execute'}
+                       ⚡ {isExecuting ? 'Executing...' : isMainnetReadonly ? 'Read-only' : 'Execute'}
                      </button>
+                     </span>
                      <button
                        onClick={() => dismissAction.mutate({ actionId: action.id }, { onSuccess: () => refetch() })}
                        disabled={!isPending || isExecuting || isDismissing}
@@ -521,8 +530,9 @@ function ActionsBuilder({ showToast }: { showToast: (msg: string) => void }) {
   const createAction = useCreateRecommendation();
 
   const handleCreate = () => {
-    if (!instruction) return;
-    createAction.mutate({ instruction }, {
+    const trimmed = instruction.trim();
+    if (!trimmed) return;
+    createAction.mutate({ instruction: trimmed }, {
       onSuccess: () => {
         showToast('Recommendation created in Action Inbox');
         setInstruction('');
@@ -547,7 +557,7 @@ function ActionsBuilder({ showToast }: { showToast: (msg: string) => void }) {
          <div className="text-sm text-ink-2">Current mode: <span className="font-medium text-ink">{import.meta.env.VITE_CHAIN_ENV || 'sepolia'}</span></div>
          <div className="text-sm text-ink-2">Wallet: <span className="font-mono text-ink">{address || 'Not connected'}</span></div>
          <button 
-           disabled={!instruction || createAction.isPending}
+           disabled={!instruction.trim() || createAction.isPending}
            className="bg-accent text-white px-4 py-2 rounded-lg text-sm w-fit font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors" 
            onClick={handleCreate}
          >
@@ -611,10 +621,10 @@ function ConfigurePage() {
            <span className="font-medium text-sm w-[150px]">Connected Wallet</span>
            <span className="text-xs bg-panel-2 px-2 py-1 rounded border border-line font-mono">{address || 'None'}</span>
          </div>
-         <div className="flex items-center gap-2">
-           <span className="font-medium text-sm w-[150px]">RPC Provider</span>
-           <span className="text-xs text-green font-medium">Healthy</span>
-         </div>
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-sm w-[150px]">RPC Provider</span>
+            <span className="text-xs text-green font-medium">Configured</span>
+          </div>
          <div className="flex items-center gap-2">
            <span className="font-medium text-sm w-[150px]">LLM Provider</span>
            <span className="text-xs text-green font-medium">Configured</span>
@@ -628,7 +638,7 @@ function ConfigurePage() {
   );
 }
 
-function BaseMcpPage({ showToast }: { showToast: (msg: string) => void }) {
+function BaseMcpPage(_props: { showToast: (msg: string) => void }) {
   return (
     <main className="flex-1 bg-bg p-[18px] flex flex-col gap-4 overflow-y-auto">
       <h2 className="text-[16px] font-bold text-ink">Base MCP Status</h2>
@@ -648,9 +658,9 @@ function BaseMcpPage({ showToast }: { showToast: (msg: string) => void }) {
          <div className="mt-2 p-3 bg-red-soft rounded border border-red/20 text-xs text-red font-medium">
            Note: Without Base MCP approval provider (e.g. Coinbase Smart Wallet or 5792 compatible), write actions will fail closed during execution.
          </div>
-         <button className="bg-accent text-white px-4 py-2 rounded-lg text-sm w-fit mt-2 opacity-50 cursor-not-allowed" onClick={() => showToast('Smoke test not wired to frontend')}>
-           Run Smoke Check
-         </button>
+          <button disabled className="bg-accent text-white px-4 py-2 rounded-lg text-sm w-fit mt-2 opacity-50 cursor-not-allowed disabled:cursor-not-allowed">
+            Run Smoke Check
+          </button>
       </div>
     </main>
   );

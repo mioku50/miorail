@@ -6,7 +6,12 @@ import * as apiSpec from '@mioagent/api-spec';
 async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, options);
   if (!response.ok) {
-    throw new Error(`API error: ${response.status} ${response.statusText}`);
+    let errorMsg = `API error: ${response.status} ${response.statusText}`;
+    try {
+      const errJson = await response.json();
+      if (errJson.error) errorMsg = errJson.error;
+    } catch {}
+    throw new Error(errorMsg);
   }
   return response.json();
 }
@@ -100,6 +105,7 @@ export function useCreateRecommendation(
   return useMutation({
     mutationFn: (data) => fetchApi<{ success: boolean; actionId: string }>('/api/actions/recommend', {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['actions', 'feed'] }),
