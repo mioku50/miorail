@@ -8,6 +8,7 @@ import { eq, desc } from 'drizzle-orm';
 import crypto from 'node:crypto';
 import { detectActionIntent } from '../lib/intent.js';
 import { getSystemStatus } from './status.js';
+import { fetchInternalPortfolio, analyzePortfolioForRisk, buildRecommendationMetadataFromAnalysis } from '../lib/portfolioAnalysis.js';
 
 export const chatRouter = Router();
 
@@ -122,7 +123,7 @@ chatRouter.post('/', async (req, res, next) => {
         // ignore fallback
       }
 
-      const metadata = {
+      let metadata: any = {
         type: "recommendation",
         title: intent.title || "Action Recommendation",
         instruction: message,
@@ -142,6 +143,40 @@ chatRouter.post('/', async (req, res, next) => {
           risk: riskStatus
         }
       };
+
+      let assistantContent = isReadonly 
+        ? 'I created a read-only recommendation in Action Inbox. You can review and manage it in your Action Inbox tab.'
+        : 'I created a recommendation in Action Inbox. You can review and manage it in your Action Inbox tab.';
+      let tokensList: string[] | undefined;
+
+      if (['portfolio', 'risk', 'rebalance', 'security', 'yield'].includes(intent.intentType || '') && walletAddress) {
+        try {
+          const portfolio = await fetchInternalPortfolio(walletAddress, chainEnvVal);
+          const analysis = analyzePortfolioForRisk(portfolio, walletAddress, chainEnvVal);
+          metadata = buildRecommendationMetadataFromAnalysis({
+            intent,
+            message,
+            walletAddress,
+            chainEnv: chainEnvVal,
+            analysis,
+            providerContext: {
+              tokenBalances: tokenBalancesProvider,
+              prices: pricesStatus,
+              risk: riskStatus
+            }
+          });
+          const suspiciousCount = analysis.portfolioSnapshot.suspiciousTokenCount;
+          const monitorCount = Math.max(0, analysis.portfolioSnapshot.tokenCount - suspiciousCount);
+          if (isReadonly) {
+            assistantContent = `I reviewed your Base token list and created a read-only risk recommendation. I found ${suspiciousCount} suspicious/low-confidence tokens and ${monitorCount} tokens worth monitoring. No transaction was executed.`;
+          } else {
+            assistantContent = `I reviewed your Base token list and created a risk recommendation. I found ${suspiciousCount} suspicious/low-confidence tokens and ${monitorCount} tokens worth monitoring.`;
+          }
+          tokensList = analysis.tokenFindings.map(f => `${f.balanceFormatted || ''} ${f.symbol}`.trim()).slice(0, 5);
+        } catch (err) {
+          console.error("Failed portfolio analysis in chat:", err);
+        }
+      }
 
       const payload = isReadonly ? {
         chain: 'eip155:8453',
@@ -164,6 +199,7 @@ chatRouter.post('/', async (req, res, next) => {
         kind: 'recommendation',
         status: 'pending',
         suggestedPrompt: message,
+        tokens: tokensList,
         executionPayload: JSON.stringify(payload),
         metadata,
         createdAt: new Date(),
@@ -173,9 +209,7 @@ chatRouter.post('/', async (req, res, next) => {
       const assistantMsg = {
         chatId,
         messageId: crypto.randomUUID(),
-        content: isReadonly 
-          ? 'I created a read-only recommendation in Action Inbox. You can review and manage it in your Action Inbox tab.'
-          : 'I created a recommendation in Action Inbox. You can review and manage it in your Action Inbox tab.',
+        content: assistantContent,
         role: 'assistant' as const,
         createdAt: new Date().toISOString(),
         actionId,

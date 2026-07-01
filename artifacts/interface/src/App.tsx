@@ -463,11 +463,96 @@ function ActionInbox({ showToast, onSelectTab }: { showToast: (msg: string) => v
                            Safety: {safetyState}
                          </span>
                        </div>
-                        <div className={`mt-1 font-medium px-2 py-1 rounded border text-[11px] w-fit ${(isMainnetReadonly || chainMode === 'mainnet-readonly' || chainMode === 'mainnet') ? 'bg-amber-soft text-amber border-amber/20' : 'bg-green-soft text-green border-green/20'}`}>
-                          {(isMainnetReadonly || chainMode === 'mainnet-readonly' || chainMode === 'mainnet') 
-                            ? 'Read-only recommendation (execution disabled on mainnet)' 
-                            : 'Executable testnet recommendation'}
-                        </div>
+                       <div className={`mt-1 font-medium px-2 py-1 rounded border text-[11px] w-fit ${(isMainnetReadonly || chainMode === 'mainnet-readonly' || chainMode === 'mainnet') ? 'bg-amber-soft text-amber border-amber/20' : 'bg-green-soft text-green border-green/20'}`}>
+                         {(isMainnetReadonly || chainMode === 'mainnet-readonly' || chainMode === 'mainnet') 
+                           ? 'Read-only recommendation (execution disabled on mainnet)' 
+                           : 'Executable testnet recommendation'}
+                       </div>
+                       {meta.analysis && (
+                         <div className="flex flex-col gap-3 bg-panel-2/50 border border-line rounded-lg p-3.5 text-xs mt-2">
+                           <div className="font-semibold text-ink leading-snug border-b border-line pb-2">
+                             📊 Portfolio Risk Analysis Summary
+                           </div>
+                           <div className="text-ink-2 leading-relaxed">
+                             {meta.analysis.summary}
+                           </div>
+                           
+                           {meta.analysis.portfolioSnapshot && (
+                             <div className="flex flex-wrap gap-3 bg-bg p-2.5 rounded border border-line text-[11px]">
+                               <div>
+                                 <span className="text-ink-3">Total Tokens: </span>
+                                 <span className="font-semibold text-ink">{meta.analysis.portfolioSnapshot.tokenCount}</span>
+                               </div>
+                               <div>
+                                 <span className="text-ink-3">Suspicious: </span>
+                                 <span className={`font-semibold ${meta.analysis.portfolioSnapshot.suspiciousTokenCount > 0 ? 'text-red' : 'text-green'}`}>
+                                   {meta.analysis.portfolioSnapshot.suspiciousTokenCount}
+                                 </span>
+                               </div>
+                               <div>
+                                 <span className="text-ink-3">Provider: </span>
+                                 <span className="font-mono text-ink">{meta.analysis.portfolioSnapshot.provider}</span>
+                               </div>
+                             </div>
+                           )}
+
+                           {meta.analysis.tokenFindings && meta.analysis.tokenFindings.length > 0 && (
+                             <div className="flex flex-col gap-1.5 mt-1">
+                               <div className="text-[11px] font-semibold text-ink-3 uppercase tracking-wider">
+                                 Token Findings ({meta.analysis.tokenFindings.length})
+                               </div>
+                               <div className="flex flex-col gap-1.5 max-h-[240px] overflow-y-auto pr-1">
+                                 {meta.analysis.tokenFindings.map((finding: any, idx: number) => {
+                                   const fRiskColor = finding.risk === 'low' ? 'bg-green-soft text-green border-green/20' : finding.risk === 'high' ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20';
+                                   const basescanLink = finding.address && finding.address !== 'native' && !finding.address.includes('native')
+                                     ? `https://${(isMainnetReadonly || chainMode === 'mainnet-readonly' || chainMode === 'mainnet') ? '' : 'sepolia.'}basescan.org/token/${finding.address}`
+                                     : null;
+                                   
+                                   return (
+                                     <div key={idx} className="flex flex-col gap-1 bg-bg/80 border border-line rounded p-2.5 text-[11px]">
+                                       <div className="flex items-center justify-between gap-2">
+                                         <div className="flex items-center gap-1.5 font-bold text-ink">
+                                           <span>{finding.symbol}</span>
+                                           {finding.balanceFormatted && <span className="font-normal font-mono text-ink-3">({finding.balanceFormatted})</span>}
+                                         </div>
+                                         <div className="flex items-center gap-1.5">
+                                           <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase border ${fRiskColor}`}>
+                                             {finding.risk}
+                                           </span>
+                                           {basescanLink && (
+                                             <a href={basescanLink} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline text-[10px]" onClick={e => e.stopPropagation()}>
+                                               BaseScan ↗
+                                             </a>
+                                           )}
+                                         </div>
+                                       </div>
+                                       <div className="text-ink-2 text-[11px] leading-snug mt-0.5">
+                                         {finding.reason}
+                                       </div>
+                                       <div className="text-[10px] text-ink-3 font-mono mt-0.5">
+                                         Suggested handling: <span className="text-ink-2 font-semibold">{finding.suggestedHandling}</span>
+                                       </div>
+                                     </div>
+                                   );
+                                 })}
+                               </div>
+                             </div>
+                           )}
+
+                           {meta.analysis.suggestedNextSteps && meta.analysis.suggestedNextSteps.length > 0 && (
+                             <div className="flex flex-col gap-1 mt-1 border-t border-line pt-2">
+                               <div className="text-[11px] font-semibold text-ink-3 uppercase tracking-wider">
+                                 Suggested Next Steps
+                               </div>
+                               <ul className="list-disc list-inside space-y-1 text-ink-2 text-[11px]">
+                                 {meta.analysis.suggestedNextSteps.map((step: string, sIdx: number) => (
+                                   <li key={sIdx}>{step}</li>
+                                 ))}
+                               </ul>
+                             </div>
+                           )}
+                         </div>
+                       )}
                      </div>
                    );
                 })()}
@@ -892,7 +977,7 @@ function ActionsBuilder({ showToast }: { showToast: (msg: string) => void }) {
   const handleCreate = () => {
     const trimmed = instruction.trim();
     if (!trimmed) return;
-    createAction.mutate({ instruction: trimmed }, {
+    createAction.mutate({ instruction: trimmed, walletAddress: address, chainEnv: import.meta.env.VITE_CHAIN_ENV }, {
       onSuccess: () => {
         const toastMsg = isMainnetReadonly 
           ? 'Read-only recommendation created in Action Inbox' 

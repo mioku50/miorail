@@ -107,7 +107,7 @@ export function useStatus(options?: Omit<UseQueryOptions<apiSpec.StatusResponse,
 // Mutations
 
 export function useCreateRecommendation(
-  options?: Omit<UseMutationOptions<{ success: boolean; actionId: string }, Error, { instruction: string }>, 'mutationFn'>
+  options?: Omit<UseMutationOptions<{ success: boolean; actionId: string }, Error, { instruction: string; walletAddress?: string; chainEnv?: string }>, 'mutationFn'>
 ) {
   const queryClient = useQueryClient();
   return useMutation({

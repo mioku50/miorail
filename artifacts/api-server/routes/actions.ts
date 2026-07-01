@@ -6,6 +6,8 @@ import {
   ExecuteActionResponseSchema,
   DismissActionResponseSchema,
 } from '@mioagent/api-zod';
+import { detectActionIntent } from '../lib/intent.js';
+import { fetchInternalPortfolio, analyzePortfolioForRisk, buildRecommendationMetadataFromAnalysis } from '../lib/portfolioAnalysis.js';
 
 export const actionsRouter = Router();
 
@@ -65,7 +67,8 @@ import { createToolAggregatorForUser } from '@mioagent/tools';
 actionsRouter.post('/recommend', async (req, res, next) => {
   try {
     const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
-    const { instruction } = req.body;
+    const { instruction, walletAddress: reqWallet, chainEnv: reqChainEnv } = req.body;
+    const walletAddress = reqWallet || (req as { session?: { user?: { address?: string } } }).session?.user?.address;
     
     if (!instruction) {
       return res.status(400).json({ success: false, error: 'Instruction required' });
@@ -74,7 +77,7 @@ actionsRouter.post('/recommend', async (req, res, next) => {
     const { db, actions } = require('@mioagent/db');
     const crypto = require('node:crypto');
 
-    const chainEnv = process.env.CHAIN_ENV || 'sepolia';
+    const chainEnv = reqChainEnv || process.env.CHAIN_ENV || 'sepolia';
     const chainId = chainEnv === 'sepolia' ? 'eip155:84532' : 'eip155:8453';
     const isReadonly = chainEnv === 'mainnet-readonly';
     const isMainnetExecEnabled = process.env.MAINNET_EXECUTION_ENABLED === 'true';
@@ -96,19 +99,45 @@ actionsRouter.post('/recommend', async (req, res, next) => {
       ]
     };
 
-    const metadata = {
+    const intent = detectActionIntent(instruction);
+    let metadata: any = {
       type: "recommendation",
-      title: "Action Recommendation",
+      title: intent.title || "Action Recommendation",
       instruction: instruction,
-      reason: `Automated recommendation for: "${instruction}"`,
+      reason: intent.reason || `Automated recommendation for: "${instruction}"`,
       risk: isReadonly ? 'unknown' : 'low',
-      expectedEffect: `Simulate action execution on ${chainEnv}`,
+      expectedEffect: intent.expectedEffect || `Simulate action execution on ${chainEnv}`,
       chainMode: chainEnv,
       safetyState: isReadonly ? 'blocked' : (canExecute ? 'executable' : 'blocked'),
       executable: canExecute,
       executionStatus: isReadonly ? 'read-only' : (canExecute ? 'executable' : 'blocked'),
-      createdBy: 'actions-builder'
+      createdBy: 'actions-builder',
+      walletAddress
     };
+
+    let tokensList: string[] | undefined;
+
+    if (walletAddress && ['portfolio', 'risk', 'rebalance', 'security', 'yield'].includes(intent.intentType || '')) {
+      try {
+        const portfolio = await fetchInternalPortfolio(walletAddress, chainEnv);
+        const analysis = analyzePortfolioForRisk(portfolio, walletAddress, chainEnv);
+        metadata = buildRecommendationMetadataFromAnalysis({
+          intent: { ...intent, createdBy: 'actions-builder' },
+          message: instruction,
+          walletAddress,
+          chainEnv,
+          analysis,
+          providerContext: {
+            tokenBalances: portfolio.providers.tokenBalancesProvider,
+            prices: portfolio.providers.prices,
+            risk: portfolio.providers.risk
+          }
+        });
+        tokensList = analysis.tokenFindings.map(f => `${f.balanceFormatted || ''} ${f.symbol}`.trim()).slice(0, 5);
+      } catch (err) {
+        console.error("Failed portfolio analysis in action builder:", err);
+      }
+    }
 
     await db.insert(actions).values({
       id: actionId,
@@ -116,6 +145,7 @@ actionsRouter.post('/recommend', async (req, res, next) => {
       kind: 'recommendation',
       status: 'pending',
       suggestedPrompt: 'Builder: ' + instruction,
+      tokens: tokensList,
       executionPayload: JSON.stringify(payload),
       metadata,
       createdAt: new Date(),

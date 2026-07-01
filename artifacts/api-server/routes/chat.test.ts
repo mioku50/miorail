@@ -38,11 +38,34 @@ describe('Chat API & Recommendation Guardrails', () => {
     assert.strictEqual(createdAction.kind, 'recommendation');
     assert.strictEqual((createdAction.metadata as any).safetyState, 'blocked');
     assert.strictEqual((createdAction.metadata as any).chainMode, 'mainnet-readonly');
+    assert.ok((createdAction.metadata as any).analysis);
+    assert.strictEqual((createdAction.metadata as any).analysis.portfolioSnapshot.walletAddress, '0x1234567890123456789012345678901234567890');
+    assert.ok(Array.isArray(createdAction.tokens));
 
     const payload = typeof createdAction.executionPayload === 'string'
       ? JSON.parse(createdAction.executionPayload)
       : createdAction.executionPayload;
     assert.strictEqual(payload.readOnly, true);
     assert.deepStrictEqual(payload.calls, []);
+  });
+
+  test('POST /api/actions/recommend with portfolio intent generates analysis metadata', async () => {
+    const response = await request(app)
+      .post('/api/actions/recommend')
+      .send({
+        instruction: 'analyze my wallet tokens for risk',
+        walletAddress: '0x1234567890123456789012345678901234567890',
+        chainEnv: 'mainnet-readonly'
+      });
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, true);
+    assert.ok(response.body.actionId);
+
+    const dbActions = await db.select().from(actions).where(eq(actions.id, response.body.actionId));
+    assert.strictEqual(dbActions.length, 1);
+    const createdAction = dbActions[0];
+    assert.ok((createdAction.metadata as any).analysis);
+    assert.ok((createdAction.metadata as any).analysis.portfolioSnapshot.tokenCount >= 1);
   });
 });
