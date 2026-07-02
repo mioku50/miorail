@@ -181,6 +181,32 @@ export const ToggleProtocolResponseSchema = z.object({
 });
 
 // Portfolio
+export const PortfolioTokenSecuritySchema = z.object({
+  provider: z.enum(["goplus", "none"]),
+  status: z.enum(["ok", "warning", "high-risk", "unknown", "failed"]),
+  summary: z.string().optional(),
+  riskLabels: z.array(z.string()).optional(),
+  flags: z.object({
+    isHoneypot: z.boolean().optional(),
+    isMintable: z.boolean().optional(),
+    isProxy: z.boolean().optional(),
+    isOpenSource: z.boolean().optional(),
+    hiddenOwner: z.boolean().optional(),
+    canTakeBackOwnership: z.boolean().optional(),
+    ownerCanChangeBalance: z.boolean().optional(),
+    hasBlacklist: z.boolean().optional(),
+    hasWhitelist: z.boolean().optional(),
+    tradingCooldown: z.boolean().optional(),
+    selfdestruct: z.boolean().optional(),
+    externalCall: z.boolean().optional(),
+    buyTax: z.string().optional(),
+    sellTax: z.string().optional(),
+    cannotSellAll: z.boolean().optional(),
+    isInDex: z.boolean().optional(),
+    holderCount: z.string().optional(),
+  }).optional(),
+});
+
 export const PortfolioTokenSchema = z.object({
   symbol: z.string(),
   name: z.string().optional(),
@@ -194,6 +220,7 @@ export const PortfolioTokenSchema = z.object({
   logoUrl: z.string().optional(),
   verified: z.boolean().optional(),
   possibleSpam: z.boolean().optional(),
+  security: PortfolioTokenSecuritySchema.optional(),
 });
 
 export const PortfolioProvidersSchema = z.object({
@@ -203,6 +230,7 @@ export const PortfolioProvidersSchema = z.object({
   prices: z.enum(["connected", "missing", "failed"]),
   priceProvider: z.enum(["coingecko", "moralis", "mock", "none"]).optional(),
   risk: z.enum(["connected", "missing", "failed"]),
+  riskProvider: z.enum(["goplus", "none"]).optional(),
 });
 
 

@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
-import { MockMoralisProvider, MockCoinGeckoProvider, MockDeFiLlamaProvider, MockGoPlusProvider } from '../src/mocks.js';
-import type { MoralisProvider, CoinGeckoProvider, DeFiLlamaProvider, GoPlusProvider } from '../src/interfaces.js';
+import { MockMoralisProvider, MockCoinGeckoProvider, MockDeFiLlamaProvider, MockGoPlusProvider, MockTokenSecurityProvider } from '../src/mocks.js';
+import type { MoralisProvider, CoinGeckoProvider, DeFiLlamaProvider, GoPlusProvider, TokenSecurityProvider } from '../src/interfaces.js';
 
 describe('Mock Providers', () => {
   test('MockMoralisProvider', async () => {
@@ -61,6 +61,15 @@ describe('Mock Providers', () => {
     const balances = await provider.getTokenBalances({ address: '0x123', chainId: 8453 });
     assert.strictEqual(balances.length, 1);
     assert.strictEqual(balances[0].symbol, 'USDC');
+  });
+
+  test('MockTokenSecurityProvider', async () => {
+    const provider: TokenSecurityProvider = new MockTokenSecurityProvider();
+    const security = await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: ['native', '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'] });
+    assert.strictEqual(security.length, 1);
+    assert.strictEqual(security[0].provider, 'goplus');
+    assert.strictEqual(security[0].status, 'ok');
+    assert.strictEqual(security[0].flags.isHoneypot, false);
   });
 });
 

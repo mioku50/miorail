@@ -1,4 +1,15 @@
-import { MoralisProvider, CoinGeckoProvider, DeFiLlamaProvider, GoPlusProvider, TokenBalancesProvider, TokenBalance, PriceProvider, TokenPrice } from './interfaces.js';
+import {
+  MoralisProvider,
+  CoinGeckoProvider,
+  DeFiLlamaProvider,
+  GoPlusProvider,
+  TokenBalancesProvider,
+  TokenBalance,
+  PriceProvider,
+  TokenPrice,
+  TokenSecurityProvider,
+  TokenSecurityResult
+} from './interfaces.js';
 
 export class MockMoralisProvider implements MoralisProvider {
   async getWalletTokenBalances(_address: string) {
@@ -36,6 +47,27 @@ export class MockGoPlusProvider implements GoPlusProvider {
       is_mintable: "0",
       is_honeypot: "0"
     };
+  }
+}
+
+export class MockTokenSecurityProvider implements TokenSecurityProvider {
+  async getTokenSecurity(params: { chainId: number; tokenAddresses: string[] }): Promise<TokenSecurityResult[]> {
+    return params.tokenAddresses
+      .filter(address => /^0x[a-fA-F0-9]{40}$/.test(address))
+      .slice(0, 50)
+      .map(address => ({
+        address: address.toLowerCase(),
+        provider: 'goplus' as const,
+        status: 'ok' as const,
+        flags: {
+          isOpenSource: true,
+          isProxy: false,
+          isMintable: false,
+          isHoneypot: false,
+        },
+        rawRiskLabels: [],
+        summary: 'No major warnings detected by configured providers.'
+      }));
   }
 }
 

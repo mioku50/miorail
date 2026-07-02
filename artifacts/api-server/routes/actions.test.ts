@@ -278,6 +278,14 @@ test('Actions API', async (t) => {
   });
 
   await t.test('POST /api/actions/:actionId/regenerate creates new recommendation and dismisses old', async () => {
+    process.env.TOKEN_BALANCES_PROVIDER = 'none';
+    process.env.PRICE_PROVIDER = 'none';
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    const mockFetch = mock.fn(async () => ({
+      ok: true,
+      json: async () => ({ result: '0xde0b6b3a7640000' })
+    } as Response));
+    global.fetch = mockFetch as unknown as typeof fetch;
     const mockSelect = mock.fn(() => ({ from: mock.fn(() => ({ where: mock.fn(async () => [{ id: 'act-1', userId: 'default-user', kind: 'recommendation', status: 'pending', suggestedPrompt: 'Test Prompt', metadata: { createdBy: 'agent-stream' } }]) })) }));
     mock.method(db, 'select', mockSelect);
     const mockInsert = mock.fn(() => ({

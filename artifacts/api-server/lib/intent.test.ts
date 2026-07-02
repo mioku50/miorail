@@ -24,3 +24,16 @@ test('detectActionIntent detects rebalance plan', () => {
   assert.strictEqual(result.isActionIntent, true);
   assert.strictEqual(result.intentType, 'rebalance');
 });
+
+test('detectActionIntent detects token security scan phrases', () => {
+  for (const phrase of [
+    'Check risky tokens',
+    'Check token security',
+    'Are any tokens dangerous?',
+    'Scan my wallet',
+    'Check approvals and token risks'
+  ]) {
+    const result = detectActionIntent(phrase);
+    assert.strictEqual(result.isActionIntent, true, phrase);
+  }
+});

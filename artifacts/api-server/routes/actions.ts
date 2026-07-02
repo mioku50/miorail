@@ -175,8 +175,9 @@ actionsRouter.post('/recommend', async (req, res, next) => {
           analysis,
           providerContext: {
             tokenBalances: portfolio.providers.tokenBalancesProvider,
-            prices: portfolio.providers.prices,
-            risk: portfolio.providers.risk
+            prices: portfolio.providers.priceProvider || portfolio.providers.prices,
+            risk: portfolio.providers.risk,
+            securityProvider: portfolio.providers.riskProvider || 'none'
           }
         });
         tokensList = analysis.tokenFindings.map(f => `${f.balanceFormatted || ''} ${f.symbol}`.trim()).slice(0, 5);

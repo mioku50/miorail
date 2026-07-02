@@ -1,4 +1,18 @@
-import { MoralisProvider, CoinGeckoProvider, DeFiLlamaProvider, GoPlusProvider, TokenBalancesProvider, TokenBalance, PriceProvider, TokenPrice } from './interfaces.js';
+import {
+  MoralisProvider,
+  CoinGeckoProvider,
+  DeFiLlamaProvider,
+  GoPlusProvider,
+  TokenBalancesProvider,
+  TokenBalance,
+  PriceProvider,
+  TokenPrice,
+  TokenSecurityProvider,
+  TokenSecurityProviderEnvResult,
+  TokenSecurityResult,
+  TokenSecurityFlags,
+  TokenSecurityStatus
+} from './interfaces.js';
 
 export class RealMoralisProvider implements MoralisProvider {
   constructor(private readonly apiKey: string) {}
@@ -47,6 +61,278 @@ export class RealGoPlusProvider implements GoPlusProvider {
     const data = await res.json() as { result: Record<string, Record<string, unknown>> };
     return data.result[tokenAddress.toLowerCase()] || {};
   }
+}
+
+const TOKEN_SECURITY_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const TOKEN_SECURITY_SCAN_LIMIT = 50;
+const ERC20_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+
+type TokenSecurityCacheEntry = {
+  expiresAt: number;
+  result: TokenSecurityResult;
+};
+
+const tokenSecurityCache = new Map<string, TokenSecurityCacheEntry>();
+let tokenSecurityHealth: { providerName: 'goplus' | 'none'; statusCode: 'connected' | 'missing' | 'failed' } = {
+  providerName: 'none',
+  statusCode: 'missing'
+};
+
+export function clearTokenSecurityCacheForTests() {
+  tokenSecurityCache.clear();
+  tokenSecurityHealth = { providerName: 'none', statusCode: 'missing' };
+}
+
+function cacheKey(chainId: number, address: string) {
+  return `token-security:goplus:${chainId}:${address.toLowerCase()}`;
+}
+
+function normalizeAddresses(addresses: string[]) {
+  return Array.from(new Set(
+    addresses
+      .filter((a): a is string => typeof a === 'string')
+      .map(a => a.trim().toLowerCase())
+      .filter(a => ERC20_ADDRESS_RE.test(a))
+  )).slice(0, TOKEN_SECURITY_SCAN_LIMIT);
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === '1' || normalized === 'true' || normalized === 'yes') return true;
+    if (normalized === '0' || normalized === 'false' || normalized === 'no') return false;
+  }
+  return undefined;
+}
+
+function asString(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  return String(value);
+}
+
+function parseTax(value?: string): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number(value.replace('%', '').trim());
+  if (!Number.isFinite(parsed)) return undefined;
+  return parsed > 1 ? parsed / 100 : parsed;
+}
+
+function isHighTax(value?: string) {
+  const parsed = parseTax(value);
+  return parsed !== undefined && parsed >= 0.1;
+}
+
+function field(data: Record<string, unknown>, ...names: string[]) {
+  for (const name of names) {
+    if (data[name] !== undefined) return data[name];
+  }
+  return undefined;
+}
+
+export function mapGoPlusTokenSecurity(address: string, data: Record<string, unknown>): TokenSecurityResult {
+  const flags: TokenSecurityFlags = {
+    isHoneypot: asBoolean(field(data, 'is_honeypot', 'honeypot')),
+    isMintable: asBoolean(field(data, 'is_mintable', 'mintable')),
+    isProxy: asBoolean(field(data, 'is_proxy', 'proxy')),
+    isOpenSource: asBoolean(field(data, 'is_open_source', 'open_source')),
+    hiddenOwner: asBoolean(field(data, 'hidden_owner')),
+    canTakeBackOwnership: asBoolean(field(data, 'can_take_back_ownership')),
+    ownerCanChangeBalance: asBoolean(field(data, 'owner_change_balance', 'owner_can_change_balance')),
+    hasBlacklist: asBoolean(field(data, 'is_blacklisted', 'blacklist', 'has_blacklist')),
+    hasWhitelist: asBoolean(field(data, 'is_whitelisted', 'whitelist', 'has_whitelist')),
+    tradingCooldown: asBoolean(field(data, 'trading_cooldown', 'cooldown')),
+    selfdestruct: asBoolean(field(data, 'selfdestruct', 'self_destruct')),
+    externalCall: asBoolean(field(data, 'external_call')),
+    buyTax: asString(field(data, 'buy_tax')),
+    sellTax: asString(field(data, 'sell_tax')),
+    cannotSellAll: asBoolean(field(data, 'cannot_sell_all')),
+    isInDex: asBoolean(field(data, 'is_in_dex', 'in_dex')),
+    holderCount: asString(field(data, 'holder_count')),
+  };
+
+  const highRiskLabels: string[] = [];
+  const warningLabels: string[] = [];
+
+  if (flags.isHoneypot) highRiskLabels.push('Honeypot-like behavior');
+  if (flags.cannotSellAll) highRiskLabels.push('Cannot sell all');
+  if (flags.hasBlacklist) highRiskLabels.push('Blacklist enabled');
+  if (flags.ownerCanChangeBalance) highRiskLabels.push('Owner can change balances');
+  if (flags.hiddenOwner) highRiskLabels.push('Hidden owner');
+  if (flags.canTakeBackOwnership) highRiskLabels.push('Owner can take back ownership');
+  if (flags.selfdestruct) highRiskLabels.push('Selfdestruct capability');
+  if (flags.externalCall) highRiskLabels.push('External call capability');
+  if (isHighTax(flags.buyTax)) highRiskLabels.push(`High buy tax (${flags.buyTax})`);
+  if (isHighTax(flags.sellTax)) highRiskLabels.push(`High sell tax (${flags.sellTax})`);
+
+  if (flags.isProxy) warningLabels.push('Proxy contract');
+  if (flags.isOpenSource === false) warningLabels.push('Source code not open');
+  if (flags.isMintable) warningLabels.push('Mintable token');
+  if (flags.hasWhitelist) warningLabels.push('Whitelist enabled');
+  if (flags.tradingCooldown) warningLabels.push('Trading cooldown');
+  if (flags.isInDex === false) warningLabels.push('No DEX/liquidity signal');
+
+  let status: TokenSecurityStatus = 'unknown';
+  if (highRiskLabels.length > 0) {
+    status = 'high-risk';
+  } else if (warningLabels.length > 0) {
+    status = 'warning';
+  } else if (Object.values(flags).some(v => v !== undefined)) {
+    status = 'ok';
+  }
+
+  const rawRiskLabels = [...highRiskLabels, ...warningLabels];
+  const summary = status === 'high-risk'
+    ? `GoPlus reported high-risk contract flags: ${highRiskLabels.slice(0, 3).join(', ')}.`
+    : status === 'warning'
+      ? `GoPlus reported warning-level contract flags: ${warningLabels.slice(0, 3).join(', ')}.`
+      : status === 'ok'
+        ? 'No major warnings detected by configured providers.'
+        : 'GoPlus returned insufficient token security data.';
+
+  return {
+    address: address.toLowerCase(),
+    provider: 'goplus',
+    status,
+    flags,
+    rawRiskLabels,
+    summary
+  };
+}
+
+function failedSecurityResult(address: string, summary = 'GoPlus token security check failed; contract-level risk is unknown.'): TokenSecurityResult {
+  return {
+    address: address.toLowerCase(),
+    provider: 'goplus',
+    status: 'failed',
+    flags: {},
+    rawRiskLabels: [],
+    summary
+  };
+}
+
+export class NoneTokenSecurityProvider implements TokenSecurityProvider {
+  async getTokenSecurity(params: { chainId: number; tokenAddresses: string[] }): Promise<TokenSecurityResult[]> {
+    return normalizeAddresses(params.tokenAddresses).map(address => ({
+      address,
+      provider: 'none' as const,
+      status: 'unknown' as const,
+      flags: {},
+      rawRiskLabels: [],
+      summary: 'Token security provider is not configured.'
+    }));
+  }
+}
+
+class MockTokenSecurityProvider implements TokenSecurityProvider {
+  async getTokenSecurity(params: { chainId: number; tokenAddresses: string[] }): Promise<TokenSecurityResult[]> {
+    return normalizeAddresses(params.tokenAddresses).map(address => ({
+      address,
+      provider: 'goplus' as const,
+      status: 'ok' as const,
+      flags: {
+        isOpenSource: true,
+        isProxy: false,
+        isMintable: false,
+        isHoneypot: false,
+      },
+      rawRiskLabels: [],
+      summary: 'No major warnings detected by configured providers.'
+    }));
+  }
+}
+
+export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
+  constructor(private readonly apiKey?: string, private readonly timeoutMs = 6000) {}
+
+  async getTokenSecurity(params: { chainId: number; tokenAddresses: string[] }): Promise<TokenSecurityResult[]> {
+    const addresses = normalizeAddresses(params.tokenAddresses);
+    if (addresses.length === 0) return [];
+
+    const now = Date.now();
+    const results = new Map<string, TokenSecurityResult>();
+    const missing: string[] = [];
+
+    for (const address of addresses) {
+      const cached = tokenSecurityCache.get(cacheKey(params.chainId, address));
+      if (cached && cached.expiresAt > now) {
+        results.set(address, cached.result);
+      } else {
+        missing.push(address);
+      }
+    }
+
+    if (missing.length > 0) {
+      const fetched = await this.fetchTokenSecurity(params.chainId, missing);
+      for (const result of fetched) {
+        results.set(result.address, result);
+        if (result.status !== 'failed') {
+          tokenSecurityCache.set(cacheKey(params.chainId, result.address), {
+            expiresAt: Date.now() + TOKEN_SECURITY_CACHE_TTL_MS,
+            result
+          });
+        }
+      }
+    }
+
+    return addresses.map(address => results.get(address) || failedSecurityResult(address));
+  }
+
+  private async fetchTokenSecurity(chainId: number, addresses: string[]): Promise<TokenSecurityResult[]> {
+    const url = new URL(`https://api.gopluslabs.io/api/v1/token_security/${chainId}`);
+    url.searchParams.set('contract_addresses', addresses.join(','));
+
+    const headers: Record<string, string> = { accept: 'application/json' };
+    if (this.apiKey) {
+      headers.Authorization = `Bearer ${this.apiKey}`;
+      headers['X-API-Key'] = this.apiKey;
+    }
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch(url.toString(), {
+          headers,
+          signal: AbortSignal.timeout(this.timeoutMs)
+        });
+        if (!res.ok) {
+          if (attempt === 0 && (res.status === 408 || res.status === 429 || res.status >= 500)) {
+            continue;
+          }
+          throw new Error(`GoPlus API error: ${res.statusText || res.status}`);
+        }
+        const data = await res.json() as { result?: Record<string, Record<string, unknown>> };
+        const rawResults = data.result || {};
+        tokenSecurityHealth = { providerName: 'goplus', statusCode: 'connected' };
+        return addresses.map(address => mapGoPlusTokenSecurity(address, rawResults[address.toLowerCase()] || {}));
+      } catch (err) {
+        if (attempt === 0) continue;
+        tokenSecurityHealth = { providerName: 'goplus', statusCode: 'failed' };
+        return addresses.map(address => failedSecurityResult(address, err instanceof Error ? err.message : undefined));
+      }
+    }
+
+    tokenSecurityHealth = { providerName: 'goplus', statusCode: 'failed' };
+    return addresses.map(address => failedSecurityResult(address));
+  }
+}
+
+export function getTokenSecurityProviderFromEnv(): TokenSecurityProviderEnvResult {
+  const mode = (process.env.TOKEN_SECURITY_PROVIDER || 'none').toLowerCase();
+  if (mode === 'none') {
+    tokenSecurityHealth = { providerName: 'none', statusCode: 'missing' };
+    return { provider: new NoneTokenSecurityProvider(), status: 'Token security provider not configured', statusCode: 'missing', providerName: 'none' };
+  }
+  if (mode === 'goplus') {
+    const statusCode = tokenSecurityHealth.providerName === 'goplus' && tokenSecurityHealth.statusCode === 'failed' ? 'failed' : 'connected';
+    return { provider: new GoPlusTokenSecurityProvider(process.env.GOPLUS_API_KEY), status: statusCode === 'failed' ? 'GoPlus failed' : 'GoPlus connected', statusCode, providerName: 'goplus' };
+  }
+  if (mode === 'mock') {
+    return { provider: new MockTokenSecurityProvider(), status: 'mock', statusCode: 'connected', providerName: 'goplus' };
+  }
+  tokenSecurityHealth = { providerName: 'none', statusCode: 'missing' };
+  return { provider: new NoneTokenSecurityProvider(), status: 'Token security provider not configured', statusCode: 'missing', providerName: 'none' };
 }
 
 export class NoneTokenBalancesProvider implements TokenBalancesProvider {

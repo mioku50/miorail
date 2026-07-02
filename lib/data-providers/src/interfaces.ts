@@ -54,4 +54,49 @@ export interface PriceProvider {
   }): Promise<TokenPrice[]>;
 }
 
+export type TokenSecurityProviderName = "goplus" | "none";
 
+export type TokenSecurityStatus = "ok" | "warning" | "high-risk" | "unknown" | "failed";
+
+export interface TokenSecurityFlags {
+  isHoneypot?: boolean;
+  isMintable?: boolean;
+  isProxy?: boolean;
+  isOpenSource?: boolean;
+  hiddenOwner?: boolean;
+  canTakeBackOwnership?: boolean;
+  ownerCanChangeBalance?: boolean;
+  hasBlacklist?: boolean;
+  hasWhitelist?: boolean;
+  tradingCooldown?: boolean;
+  selfdestruct?: boolean;
+  externalCall?: boolean;
+  buyTax?: string;
+  sellTax?: string;
+  cannotSellAll?: boolean;
+  isInDex?: boolean;
+  holderCount?: string;
+}
+
+export interface TokenSecurityResult {
+  address: string;
+  provider: TokenSecurityProviderName;
+  status: TokenSecurityStatus;
+  flags: TokenSecurityFlags;
+  rawRiskLabels: string[];
+  summary: string;
+}
+
+export interface TokenSecurityProvider {
+  getTokenSecurity(params: {
+    chainId: number;
+    tokenAddresses: string[];
+  }): Promise<TokenSecurityResult[]>;
+}
+
+export interface TokenSecurityProviderEnvResult {
+  provider: TokenSecurityProvider;
+  status: string;
+  statusCode: "connected" | "missing" | "failed";
+  providerName: TokenSecurityProviderName;
+}

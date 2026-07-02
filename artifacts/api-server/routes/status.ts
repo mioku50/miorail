@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { StatusResponseSchema } from '@mioagent/api-zod';
-import { getTokenBalancesProviderFromEnv, getPriceProviderFromEnv } from '@mioagent/data-providers';
+import { getTokenBalancesProviderFromEnv, getPriceProviderFromEnv, getTokenSecurityProviderFromEnv } from '@mioagent/data-providers';
 
 export function getSystemStatus(envOverride?: string) {
   const chainEnv = envOverride || process.env.CHAIN_ENV || 'sepolia';
@@ -33,8 +33,7 @@ export function getSystemStatus(envOverride?: string) {
   const priceStatus: "connected" | "missing" | "failed" = priceProviderName !== 'none' ? "connected" : "missing";
 
 
-  const riskProvider = process.env.GOPLUS_API_KEY || process.env.RISK_PROVIDER === 'goplus' ? 'goplus' : 'none';
-  const riskStatus: "connected" | "missing" | "failed" = riskProvider !== 'none' ? "connected" : "missing";
+  const { providerName: riskProvider, statusCode: riskStatus } = getTokenSecurityProviderFromEnv();
 
   const baseMcpStatus: "configured" | "missing" = process.env.BASE_MCP_URL || process.env.BASE_MCP_ENABLED === 'true' ? "configured" : "missing";
   

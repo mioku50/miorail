@@ -1,6 +1,14 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert';
-import { analyzePortfolioForRisk, buildRecommendationMetadataFromAnalysis, fetchInternalPortfolio, type PortfolioData } from './portfolioAnalysis.js';
+import { analyzePortfolioForRisk, buildRecommendationMetadataFromAnalysis, fetchInternalPortfolio, type PortfolioData, type PortfolioRiskAnalysis } from './portfolioAnalysis.js';
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}
 
 describe('Portfolio Risk Analysis Utility', () => {
   test('analyzePortfolioForRisk flags spam token as high risk', () => {
@@ -149,18 +157,61 @@ describe('Portfolio Risk Analysis Utility', () => {
   test('fetchInternalPortfolio computes USD values when mock price provider is configured', async () => {
     const origPriceProvider = process.env.PRICE_PROVIDER;
     const origBalancesProvider = process.env.TOKEN_BALANCES_PROVIDER;
+    const origSecurityProvider = process.env.TOKEN_SECURITY_PROVIDER;
     process.env.PRICE_PROVIDER = 'mock';
     process.env.TOKEN_BALANCES_PROVIDER = 'mock';
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
 
     try {
       const portfolio = await fetchInternalPortfolio('0x123', 'sepolia');
       assert.strictEqual(portfolio.providers?.priceProvider, 'mock');
+      assert.strictEqual(portfolio.providers?.risk, 'missing');
       assert.ok(portfolio.totalUsdValue);
       assert.ok(Number(portfolio.totalUsdValue) > 0);
     } finally {
-      process.env.PRICE_PROVIDER = origPriceProvider;
-      process.env.TOKEN_BALANCES_PROVIDER = origBalancesProvider;
+      restoreEnv('PRICE_PROVIDER', origPriceProvider);
+      restoreEnv('TOKEN_BALANCES_PROVIDER', origBalancesProvider);
+      restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurityProvider);
     }
+  });
+
+
+  test('analyzePortfolioForRisk upgrades honeypot token to high risk', () => {
+    const mockPortfolio: PortfolioData = {
+      updatedAt: new Date().toISOString(),
+      providerStatus: 'connected',
+      providers: {
+        rpc: 'connected',
+        tokenBalances: 'connected',
+        tokenBalancesProvider: 'moralis',
+        prices: 'missing',
+        risk: 'connected',
+        riskProvider: 'goplus'
+      },
+      tokens: [
+        {
+          symbol: 'RUG',
+          name: 'Rug Token',
+          address: '0x9999999999999999999999999999999999999999',
+          balance: '1000000000000000000',
+          balanceFormatted: '1.0000',
+          verified: false,
+          security: {
+            provider: 'goplus',
+            status: 'high-risk',
+            summary: 'GoPlus reported high-risk contract flags: Honeypot-like behavior.',
+            riskLabels: ['Honeypot-like behavior'],
+            flags: { isHoneypot: true, hasBlacklist: true }
+          }
+        }
+      ]
+    };
+
+    const analysis = analyzePortfolioForRisk(mockPortfolio, '0x123', 'mainnet-readonly');
+    assert.strictEqual(analysis.tokenFindings[0].risk, 'high');
+    assert.strictEqual(analysis.tokenFindings[0].security?.status, 'high-risk');
+    assert.strictEqual(analysis.portfolioSnapshot.securityHighRiskCount, 1);
+    assert.strictEqual(analysis.securityProvider.provider, 'goplus');
   });
 
   test('buildRecommendationMetadataFromAnalysis creates complete metadata with blocked safetyState', () => {
@@ -176,11 +227,19 @@ describe('Portfolio Risk Analysis Utility', () => {
         priceProvider: 'coingecko',
         totalUsdValue: '100.00',
         pricedTokenCount: 1,
-        unpricedTokenCount: 1
+        unpricedTokenCount: 1,
+        securityCheckedTokenCount: 1,
+        securityHighRiskCount: 0,
+        securityWarningCount: 0,
+        securityProvider: 'goplus'
+      },
+      securityProvider: {
+        provider: 'goplus',
+        status: 'connected'
       },
       tokenFindings: [],
       suggestedNextSteps: ['Monitor']
-    };
+    } satisfies PortfolioRiskAnalysis;
 
     const meta = buildRecommendationMetadataFromAnalysis({
       intent: { title: 'Risk Review', reason: 'User asked' },

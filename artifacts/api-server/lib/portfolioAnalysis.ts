@@ -1,4 +1,12 @@
-import { getTokenBalancesProviderFromEnv, getPriceProviderFromEnv } from '@mioagent/data-providers';
+import { getTokenBalancesProviderFromEnv, getPriceProviderFromEnv, getTokenSecurityProviderFromEnv, type TokenSecurityResult, type TokenSecurityFlags, type TokenSecurityProviderName, type TokenSecurityStatus } from '@mioagent/data-providers';
+
+export interface TokenInfoSecurity {
+  provider: TokenSecurityProviderName;
+  status: TokenSecurityStatus;
+  summary?: string;
+  riskLabels?: string[];
+  flags?: TokenSecurityFlags;
+}
 
 export interface TokenInfo {
   symbol: string;
@@ -13,6 +21,7 @@ export interface TokenInfo {
   logoUrl?: string;
   verified?: boolean;
   possibleSpam?: boolean;
+  security?: TokenInfoSecurity;
 }
 
 export interface PortfolioData {
@@ -26,7 +35,8 @@ export interface PortfolioData {
     tokenBalancesProvider: string;
     prices: string;
     priceProvider?: string;
-    risk: string;
+    risk: "connected" | "missing" | "failed";
+    riskProvider?: TokenSecurityProviderName;
   };
 }
 
@@ -40,6 +50,13 @@ export interface TokenFinding {
   risk: "low" | "medium" | "high" | "unknown";
   reason: string;
   suggestedHandling: "monitor" | "ignore" | "verify" | "review-permissions" | "keep-watchlist";
+  security?: {
+    provider: TokenSecurityProviderName;
+    status: TokenSecurityStatus;
+    labels: string[];
+    summary: string;
+    flags?: TokenSecurityFlags;
+  };
 }
 
 export interface PortfolioRiskAnalysis {
@@ -56,11 +73,57 @@ export interface PortfolioRiskAnalysis {
     pricedTokenCount: number;
     unpricedTokenCount: number;
     providerStatus?: string;
+    securityCheckedTokenCount: number;
+    securityHighRiskCount: number;
+    securityWarningCount: number;
+    securityProvider: TokenSecurityProviderName;
+  };
+  securityProvider: {
+    provider: TokenSecurityProviderName;
+    status: "connected" | "missing" | "failed";
   };
   tokenFindings: TokenFinding[];
   suggestedNextSteps: string[];
 }
 
+function toPortfolioSecurity(result: TokenSecurityResult): TokenInfoSecurity {
+  return {
+    provider: result.provider,
+    status: result.status,
+    summary: result.summary,
+    riskLabels: result.rawRiskLabels,
+    flags: result.flags
+  };
+}
+
+function isErc20Address(address?: string) {
+  return !!address && /^0x[a-fA-F0-9]{40}$/.test(address);
+}
+
+function isTokenPriced(t: Pick<TokenInfo, 'usdValue' | 'usdPrice'>) {
+  return !!((t.usdValue && !isNaN(Number(t.usdValue)) && Number(t.usdValue) > 0) || (t.usdValue === '0.00' && t.usdPrice) || (t.usdValue && t.usdValue !== '0.00'));
+}
+
+function prioritizeSecurityScanTokens(tokens: TokenInfo[]) {
+  return [...tokens]
+    .filter(t => isErc20Address(t.address))
+    .sort((a, b) => {
+      const aVal = a.usdValue && !isNaN(Number(a.usdValue)) ? Number(a.usdValue) : 0;
+      const bVal = b.usdValue && !isNaN(Number(b.usdValue)) ? Number(b.usdValue) : 0;
+      const aLowConfidence = a.possibleSpam || !a.verified || !a.logoUrl || !isTokenPriced(a);
+      const bLowConfidence = b.possibleSpam || !b.verified || !b.logoUrl || !isTokenPriced(b);
+      if (aVal !== bVal) return bVal - aVal;
+      if (aLowConfidence !== bLowConfidence) return aLowConfidence ? -1 : 1;
+      return Number(b.balanceFormatted || '0') - Number(a.balanceFormatted || '0');
+    })
+    .slice(0, 50);
+}
+
+function providerStatusToSecurityStatus(status: string): "connected" | "missing" | "failed" {
+  if (status === 'failed') return 'failed';
+  if (status === 'missing') return 'missing';
+  return 'connected';
+}
 
 export async function fetchInternalPortfolio(address: string, chainEnv: string = 'sepolia'): Promise<PortfolioData> {
   const chainId = chainEnv === 'sepolia' ? 84532 : 8453;
@@ -186,7 +249,41 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
   }
 
   const totalUsdValue = pricedCount > 0 ? totalUsd.toFixed(2) : undefined;
-  const riskStatus: "connected" | "missing" | "failed" = process.env.GOPLUS_API_KEY || process.env.RISK_PROVIDER ? "connected" : "missing";
+
+  const { provider: tokenSecurityProvider, statusCode: initialRiskStatus, providerName: riskProviderName } = getTokenSecurityProviderFromEnv();
+  let riskStatus: "connected" | "missing" | "failed" = initialRiskStatus;
+  if (riskProviderName !== 'none') {
+    const securityScanTokens = prioritizeSecurityScanTokens(tokens);
+    if (securityScanTokens.length > 0) {
+      try {
+        const securityResults = await tokenSecurityProvider.getTokenSecurity({
+          chainId,
+          tokenAddresses: securityScanTokens.map(t => t.address)
+        });
+        const securityMap = new Map(securityResults.map(result => [result.address.toLowerCase(), result]));
+        let hasFailure = false;
+        for (const token of securityScanTokens) {
+          const result = securityMap.get(token.address.toLowerCase());
+          if (result) {
+            token.security = toPortfolioSecurity(result);
+            if (result.status === 'failed') hasFailure = true;
+          }
+        }
+        riskStatus = hasFailure ? 'failed' : 'connected';
+      } catch {
+        riskStatus = 'failed';
+        for (const token of securityScanTokens) {
+          token.security = {
+            provider: riskProviderName,
+            status: 'failed',
+            summary: 'Token security provider failed; contract-level checks are unavailable.',
+            riskLabels: [],
+            flags: {}
+          };
+        }
+      }
+    }
+  }
 
   return {
     totalUsdValue,
@@ -200,10 +297,61 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
       prices: pricesStatus,
       priceProvider: priceProviderName,
       risk: riskStatus,
+      riskProvider: riskProviderName,
     }
   };
 }
 
+function tokenHasHighSecurityRisk(t: TokenInfo) {
+  const f = t.security?.flags || {};
+  return t.security?.status === 'high-risk'
+    || !!f.isHoneypot
+    || !!f.cannotSellAll
+    || !!f.hasBlacklist
+    || !!f.ownerCanChangeBalance
+    || !!f.hiddenOwner
+    || !!f.canTakeBackOwnership
+    || !!f.selfdestruct
+    || !!f.externalCall
+    || isHighTaxValue(f.buyTax)
+    || isHighTaxValue(f.sellTax);
+}
+
+function tokenHasMediumSecurityRisk(t: TokenInfo) {
+  const f = t.security?.flags || {};
+  return t.security?.status === 'warning'
+    || !!f.isProxy
+    || f.isOpenSource === false
+    || !!f.isMintable
+    || f.isInDex === false
+    || !!f.hasWhitelist
+    || !!f.tradingCooldown;
+}
+
+function isHighTaxValue(value?: string) {
+  if (!value) return false;
+  const parsed = Number(value.replace('%', '').trim());
+  if (!Number.isFinite(parsed)) return false;
+  const normalized = parsed > 1 ? parsed / 100 : parsed;
+  return normalized >= 0.1;
+}
+
+function securityFinding(t: TokenInfo): TokenFinding['security'] | undefined {
+  if (!t.security) return undefined;
+  return {
+    provider: t.security.provider,
+    status: t.security.status,
+    labels: t.security.riskLabels || [],
+    summary: t.security.summary || 'Token security status unavailable.',
+    flags: t.security.flags
+  };
+}
+
+function describeSecurityFlags(t: TokenInfo) {
+  const labels = t.security?.riskLabels || [];
+  if (labels.length > 0) return labels.slice(0, 3).join(', ');
+  return t.security?.summary || 'contract-level warning';
+}
 
 export function analyzePortfolioForRisk(
   portfolio: PortfolioData,
@@ -212,6 +360,8 @@ export function analyzePortfolioForRisk(
 ): PortfolioRiskAnalysis {
   const findings: TokenFinding[] = [];
   const tokens = portfolio.tokens || [];
+  const securityProviderName: TokenSecurityProviderName = portfolio.providers?.riskProvider || (portfolio.providers?.risk === 'connected' ? 'goplus' : 'none');
+  const securityProviderStatus = securityProviderName === 'none' ? 'missing' : providerStatusToSecurityStatus(portfolio.providers?.risk || 'missing');
 
   for (const t of tokens) {
     const isNative = t.address === 'native' || (t.symbol === 'ETH' && t.address === 'native');
@@ -228,6 +378,10 @@ export function analyzePortfolioForRisk(
       risk = "low";
       reason = "Native Ethereum base asset on Base network.";
       suggestedHandling = "monitor";
+    } else if (tokenHasHighSecurityRisk(t) || (t.security?.flags?.isMintable && !t.verified && noPrice)) {
+      risk = "high";
+      reason = `Contract-level security provider reported high-risk flags: ${describeSecurityFlags(t)}.`;
+      suggestedHandling = "review-permissions";
     } else if (t.possibleSpam || hasSuspiciousRegex || (numBalance > 100000 && noPrice && !t.verified && !t.logoUrl)) {
       risk = "high";
       if (t.possibleSpam) {
@@ -240,10 +394,24 @@ export function analyzePortfolioForRisk(
         reason = "Large unexplained balance with no price or verification metadata (low-confidence asset).";
         suggestedHandling = "review-permissions";
       }
+    } else if (tokenHasMediumSecurityRisk(t)) {
+      risk = "medium";
+      reason = `Contract-level security provider reported warning flags: ${describeSecurityFlags(t)}.`;
+      suggestedHandling = "verify";
+    } else if (t.security?.status === 'failed' || securityProviderStatus === 'missing') {
+      risk = "unknown";
+      reason = securityProviderStatus === 'missing'
+        ? "Token security provider is not configured, so contract-level checks are limited."
+        : "Token security scan failed, so contract-level checks are unknown.";
+      suggestedHandling = "verify";
     } else if (isKnownStable && (t.verified || !t.possibleSpam)) {
       risk = "low";
-      reason = !noPrice ? `Verified well-known token on Base network with confirmed USD value ($${t.usdValue}).` : "Verified well-known token on Base network.";
+      reason = !noPrice ? `Verified well-known token on Base network with confirmed USD value ($${t.usdValue}). No major warnings detected by configured providers.` : "Verified well-known token on Base network. No major warnings detected by configured providers.";
       suggestedHandling = "keep-watchlist";
+    } else if (noPrice && !t.verified && numBalance > 1000) {
+      risk = "medium";
+      reason = "Unverified token with missing USD price and a notable balance (low-confidence asset).";
+      suggestedHandling = "verify";
     } else if (noPrice && !t.verified) {
       risk = "medium";
       reason = "Unverified token with missing USD price or logo metadata (low-confidence asset).";
@@ -252,9 +420,9 @@ export function analyzePortfolioForRisk(
       risk = "medium";
       reason = "Token lacks logo and standard identification metadata.";
       suggestedHandling = "verify";
-    } else if (t.verified || !noPrice) {
+    } else if (t.verified || !noPrice || t.security?.status === 'ok') {
       risk = "low";
-      reason = !noPrice ? `Token has confirmed USD price ($${t.usdValue}) and no suspicious indicators.` : "Token has price metadata and no suspicious indicators.";
+      reason = !noPrice ? `Token has confirmed USD price ($${t.usdValue}). No major warnings detected by configured providers.` : "No major warnings detected by configured providers.";
       suggestedHandling = "monitor";
     }
 
@@ -267,7 +435,8 @@ export function analyzePortfolioForRisk(
       priceStatus: noPrice ? "missing" : undefined,
       risk,
       reason,
-      suggestedHandling
+      suggestedHandling,
+      security: securityFinding(t)
     });
   }
 
@@ -298,11 +467,19 @@ export function analyzePortfolioForRisk(
     }
   }
 
+  const securityCheckedTokenCount = tokens.filter(t => t.security && t.security.provider !== 'none' && t.security.status !== 'failed' && t.security.status !== 'unknown').length;
+  const securityHighRiskCount = tokens.filter(t => t.security?.status === 'high-risk').length;
+  const securityWarningCount = tokens.filter(t => t.security?.status === 'warning').length;
+
   let summary: string;
-  if (suspiciousTokenCount > 0) {
-    summary = `Detected ${suspiciousTokenCount} low-confidence or suspicious tokens out of ${tokenCount} assets. Most appear to be unverified or spam assets. No execution is possible in read-only mode.`;
+  if (securityHighRiskCount > 0) {
+    summary = `Detected ${securityHighRiskCount} tokens with high-risk security flags and ${suspiciousTokenCount} suspicious or low-confidence tokens out of ${tokenCount} assets. No execution is possible in read-only mode.`;
+  } else if (suspiciousTokenCount > 0) {
+    summary = `Detected ${suspiciousTokenCount} low-confidence or suspicious tokens out of ${tokenCount} assets. Some may be unverified, unpriced, or have warning-level provider signals. No execution is possible in read-only mode.`;
+  } else if (securityProviderStatus === 'missing') {
+    summary = `Reviewed ${tokenCount} Base portfolio assets using available metadata. Token security provider is not configured, so contract-level checks are limited. No execution is possible in read-only mode.`;
   } else {
-    summary = `Reviewed ${tokenCount} Base portfolio assets. All tokens appear low-risk or verified with no suspicious indicators. No execution is possible in read-only mode.`;
+    summary = `Reviewed ${tokenCount} Base portfolio assets. No major warnings detected by configured providers. No execution is possible in read-only mode.`;
   }
 
   const isPriceMissing = portfolio.providers?.prices === "missing" || priceProvider === "none" || priceProvider === "missing";
@@ -310,11 +487,18 @@ export function analyzePortfolioForRisk(
     ? "Price provider is missing, so value-based ranking is limited."
     : "Ranked findings using available USD values.";
 
+  const securityStep = securityProviderStatus === 'missing'
+    ? "Token security provider is missing, so contract-level checks are limited."
+    : securityProviderStatus === 'failed'
+      ? "Token security scan failed for one or more tokens; retry later before interacting."
+      : "Reviewed configured token security provider signals where available.";
+
   const suggestedNextSteps = [
     priceStep,
-    "Review permissions and consider ignoring high-risk or unverified tokens in your wallet interface.",
-    "Do not visit web URLs or claim links found in token symbols or names.",
-    "Verify token contract addresses on BaseScan before interacting or approving spend permissions."
+    securityStep,
+    "Review permissions and verify token contracts before interacting.",
+    "Avoid interacting with tokens that show high-risk flags or suspicious claim/URL labels.",
+    "Use a trusted wallet interface to revoke approvals if needed; MioAgent will not auto-revoke or create transactions in read-only mode."
   ];
 
   return {
@@ -330,7 +514,15 @@ export function analyzePortfolioForRisk(
       totalUsdValue: portfolio.totalUsdValue,
       pricedTokenCount,
       unpricedTokenCount,
-      providerStatus: portfolio.providerStatus
+      providerStatus: portfolio.providerStatus,
+      securityCheckedTokenCount,
+      securityHighRiskCount,
+      securityWarningCount,
+      securityProvider: securityProviderName
+    },
+    securityProvider: {
+      provider: securityProviderName,
+      status: securityProviderStatus
     },
     tokenFindings: findings.slice(0, 10),
     suggestedNextSteps
@@ -350,7 +542,7 @@ export function buildRecommendationMetadataFromAnalysis(input: {
   const isMainnetExecEnabled = process.env.MAINNET_EXECUTION_ENABLED === 'true';
   const canExecute = !isReadonly && (chainEnv !== 'mainnet' || isMainnetExecEnabled);
 
-  const overallRisk = analysis.portfolioSnapshot.suspiciousTokenCount > 0 ? "high" : "low";
+  const overallRisk = analysis.portfolioSnapshot.securityHighRiskCount > 0 || analysis.portfolioSnapshot.suspiciousTokenCount > 0 ? "high" : "low";
 
   return {
     type: "recommendation",
@@ -358,8 +550,8 @@ export function buildRecommendationMetadataFromAnalysis(input: {
     instruction: message,
     reason: intent?.reason || `Automated risk analysis created by Agent Stream for: "${message}"`,
     expectedEffect: intent?.expectedEffect || "Analyze Base token list, filter spam/airdrop tokens, and flag any high-risk assets.",
-    risk: isReadonly ? (analysis.portfolioSnapshot.suspiciousTokenCount > 0 ? "medium" : "low") : overallRisk,
-    riskScore: analysis.portfolioSnapshot.suspiciousTokenCount > 0 ? 75 : 15,
+    risk: isReadonly ? (overallRisk === 'high' ? "medium" : "low") : overallRisk,
+    riskScore: analysis.portfolioSnapshot.securityHighRiskCount > 0 ? 85 : analysis.portfolioSnapshot.suspiciousTokenCount > 0 ? 75 : 15,
     chainMode: chainEnv,
     safetyState: isReadonly ? "blocked" : (canExecute ? "executable" : "blocked"),
     executable: canExecute,
@@ -369,7 +561,8 @@ export function buildRecommendationMetadataFromAnalysis(input: {
     providerContext: providerContext || {
       tokenBalances: analysis.portfolioSnapshot.provider,
       prices: analysis.portfolioSnapshot.priceProvider || "missing",
-      risk: "missing"
+      risk: analysis.securityProvider.status,
+      securityProvider: analysis.securityProvider.provider
     },
     analysis: analysis
   };

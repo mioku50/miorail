@@ -2,6 +2,15 @@ import test, { describe, mock } from 'node:test';
 import assert from 'node:assert';
 import request from 'supertest';
 import { app } from '../app';
+import { clearTokenSecurityCacheForTests } from '@mioagent/data-providers';
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}
 
 describe('Portfolio API', () => {
   test('GET /api/portfolio returns 400 when address is missing', async () => {
@@ -12,6 +21,7 @@ describe('Portfolio API', () => {
 
   test('GET /api/portfolio returns ETH balance and token status when address is provided', async () => {
     process.env.TOKEN_BALANCES_PROVIDER = 'none';
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
     const mockFetch = mock.fn(async () => ({
       ok: true,
       json: async () => ({
@@ -26,12 +36,15 @@ describe('Portfolio API', () => {
     assert.strictEqual(response.body.tokens[0].symbol, 'ETH');
     assert.strictEqual(response.body.tokens[0].balanceFormatted, '1.0000');
     assert.strictEqual(response.body.providerStatus, 'Token balances provider not configured');
+    assert.strictEqual(response.body.providers.risk, 'missing');
+    assert.strictEqual(response.body.providers.riskProvider, 'none');
 
     mock.restoreAll();
   });
 
   test('GET /api/portfolio returns ERC-20 balances when provider is configured to mock', async () => {
     process.env.TOKEN_BALANCES_PROVIDER = 'mock';
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
     const mockFetch = mock.fn(async () => ({
       ok: true,
       json: async () => ({
@@ -53,6 +66,7 @@ describe('Portfolio API', () => {
 
   test('GET /api/portfolio returns ETH-only partial response when provider fails', async () => {
     process.env.TOKEN_BALANCES_PROVIDER = 'moralis';
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
     process.env.MORALIS_API_KEY = 'test-key';
     const mockFetch = mock.fn(async (url: string | URL | Request) => {
       if (url.toString().includes('moralis.io')) {
@@ -77,6 +91,7 @@ describe('Portfolio API', () => {
 
   test('GET /api/portfolio returns Moralis connected status and includes suspicious tokens', async () => {
     process.env.TOKEN_BALANCES_PROVIDER = 'moralis';
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
     process.env.MORALIS_API_KEY = 'test-key';
     const mockFetch = mock.fn(async (url: string | URL | Request) => {
       if (url.toString().includes('moralis.io')) {
@@ -111,6 +126,77 @@ describe('Portfolio API', () => {
     assert.ok(spamToken);
     assert.strictEqual(spamToken.possibleSpam, true);
 
+    mock.restoreAll();
+  });
+
+  test('GET /api/portfolio returns token security when GoPlus provider is configured', async () => {
+    clearTokenSecurityCacheForTests();
+    const origTokenProvider = process.env.TOKEN_BALANCES_PROVIDER;
+    const origPriceProvider = process.env.PRICE_PROVIDER;
+    const origSecurityProvider = process.env.TOKEN_SECURITY_PROVIDER;
+    process.env.TOKEN_BALANCES_PROVIDER = 'mock';
+    process.env.PRICE_PROVIDER = 'mock';
+    process.env.TOKEN_SECURITY_PROVIDER = 'goplus';
+    const mockFetch = mock.fn(async (url: string | URL | Request) => {
+      if (url.toString().includes('gopluslabs.io')) {
+        return {
+          ok: true,
+          json: async () => ({
+            result: {
+              '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': {
+                is_honeypot: '0',
+                is_open_source: '1',
+                is_proxy: '0',
+                is_mintable: '0'
+              }
+            }
+          })
+        } as Response;
+      }
+      return { ok: true, json: async () => ({ result: '0xde0b6b3a7640000' }) } as Response;
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const response = await request(app).get('/api/portfolio?address=0x1234567890123456789012345678901234567890');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.providers.risk, 'connected');
+    assert.strictEqual(response.body.providers.riskProvider, 'goplus');
+    const usdc = response.body.tokens.find((t: { symbol: string }) => t.symbol === 'USDC');
+    assert.ok(usdc.security);
+    assert.strictEqual(usdc.security.status, 'ok');
+
+    restoreEnv('TOKEN_BALANCES_PROVIDER', origTokenProvider);
+    restoreEnv('PRICE_PROVIDER', origPriceProvider);
+    restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurityProvider);
+    mock.restoreAll();
+  });
+
+  test('GET /api/portfolio keeps balances visible when GoPlus fails', async () => {
+    clearTokenSecurityCacheForTests();
+    const origTokenProvider = process.env.TOKEN_BALANCES_PROVIDER;
+    const origPriceProvider = process.env.PRICE_PROVIDER;
+    const origSecurityProvider = process.env.TOKEN_SECURITY_PROVIDER;
+    process.env.TOKEN_BALANCES_PROVIDER = 'mock';
+    process.env.PRICE_PROVIDER = 'mock';
+    process.env.TOKEN_SECURITY_PROVIDER = 'goplus';
+    const mockFetch = mock.fn(async (url: string | URL | Request) => {
+      if (url.toString().includes('gopluslabs.io')) {
+        return { ok: false, status: 500, statusText: 'Internal Server Error' } as Response;
+      }
+      return { ok: true, json: async () => ({ result: '0xde0b6b3a7640000' }) } as Response;
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const response = await request(app).get('/api/portfolio?address=0x1234567890123456789012345678901234567890');
+    assert.strictEqual(response.status, 200);
+    assert.ok(response.body.tokens.length > 1);
+    assert.strictEqual(response.body.providers.risk, 'failed');
+    const usdc = response.body.tokens.find((t: { symbol: string }) => t.symbol === 'USDC');
+    assert.strictEqual(usdc.security.status, 'failed');
+
+    restoreEnv('TOKEN_BALANCES_PROVIDER', origTokenProvider);
+    restoreEnv('PRICE_PROVIDER', origPriceProvider);
+    restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurityProvider);
     mock.restoreAll();
   });
 });

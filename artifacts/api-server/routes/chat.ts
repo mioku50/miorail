@@ -114,11 +114,13 @@ chatRouter.post('/', async (req, res, next) => {
       let tokenBalancesProvider = 'none';
       let pricesStatus = 'missing';
       let riskStatus = 'missing';
+      let securityProvider = 'none';
       try {
         const statusRes = getSystemStatus(chainEnvVal);
         tokenBalancesProvider = statusRes.tokenBalances.provider;
         pricesStatus = statusRes.prices.status;
         riskStatus = statusRes.risk.status;
+        securityProvider = statusRes.risk.provider;
       } catch (e) {
         // ignore fallback
       }
@@ -140,7 +142,8 @@ chatRouter.post('/', async (req, res, next) => {
         providerContext: {
           tokenBalances: tokenBalancesProvider,
           prices: pricesStatus,
-          risk: riskStatus
+          risk: riskStatus,
+          securityProvider
         }
       };
 
@@ -160,17 +163,20 @@ chatRouter.post('/', async (req, res, next) => {
             chainEnv: chainEnvVal,
             analysis,
             providerContext: {
-              tokenBalances: tokenBalancesProvider,
-              prices: pricesStatus,
-              risk: riskStatus
+              tokenBalances: portfolio.providers.tokenBalancesProvider || tokenBalancesProvider,
+              prices: portfolio.providers.priceProvider || pricesStatus,
+              risk: portfolio.providers.risk || riskStatus,
+              securityProvider: portfolio.providers.riskProvider || 'none'
             }
           });
           const suspiciousCount = analysis.portfolioSnapshot.suspiciousTokenCount;
           const monitorCount = Math.max(0, analysis.portfolioSnapshot.tokenCount - suspiciousCount);
-          if (isReadonly) {
-            assistantContent = `I reviewed your Base token list and created a read-only risk recommendation. I found ${suspiciousCount} suspicious/low-confidence tokens and ${monitorCount} tokens worth monitoring. No transaction was executed.`;
+          if (analysis.securityProvider.status === 'missing') {
+            assistantContent = 'I created a read-only recommendation using available metadata. Token security provider is not configured, so contract-level checks are limited.';
+          } else if (isReadonly) {
+            assistantContent = `I reviewed your Base token list and created a read-only risk recommendation with ${analysis.securityProvider.provider} security context. I found ${suspiciousCount} suspicious/low-confidence tokens and ${monitorCount} tokens worth monitoring. No transaction was executed.`;
           } else {
-            assistantContent = `I reviewed your Base token list and created a risk recommendation. I found ${suspiciousCount} suspicious/low-confidence tokens and ${monitorCount} tokens worth monitoring.`;
+            assistantContent = `I reviewed your Base token list and created a risk recommendation with ${analysis.securityProvider.provider} security context. I found ${suspiciousCount} suspicious/low-confidence tokens and ${monitorCount} tokens worth monitoring.`;
           }
           tokensList = analysis.tokenFindings.map(f => `${f.balanceFormatted || ''} ${f.symbol}`.trim()).slice(0, 5);
         } catch (err) {

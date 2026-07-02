@@ -125,6 +125,47 @@ function TopBar({ showToast, activeTab, setActiveTab, onOpenCommand }: { showToa
   );
 }
 
+function formatRiskProvider(statusData: any, pendingLabel = 'Checking...') {
+  if (!statusData) return pendingLabel;
+  if (statusData.risk.status === 'connected') return statusData.risk.provider === 'goplus' ? 'GoPlus connected' : 'Connected';
+  if (statusData.risk.status === 'failed') return 'Failed';
+  return 'Missing';
+}
+
+function tokenSecurityIndicator(token: any, riskProviderStatus?: string) {
+  const status = token.security?.status || (riskProviderStatus === 'missing' ? 'missing' : 'unknown');
+  if (status === 'ok') return { className: 'bg-green/70', title: 'GoPlus: no major warnings detected' };
+  if (status === 'warning') return { className: 'bg-amber', title: 'GoPlus: warning flags detected' };
+  if (status === 'high-risk') return { className: 'bg-red', title: 'GoPlus: high-risk flags detected' };
+  if (status === 'failed') return { className: 'bg-ink-3', title: 'GoPlus: security scan failed' };
+  if (status === 'missing') return { className: 'bg-ink-3/50', title: 'Security provider missing' };
+  return { className: 'bg-ink-3/50', title: 'Security not checked' };
+}
+
+function securityBadgeClass(status?: string) {
+  if (status === 'high-risk') return 'bg-red-soft text-red border-red/20';
+  if (status === 'warning') return 'bg-amber-soft text-amber border-amber/20';
+  if (status === 'ok') return 'bg-green-soft text-green border-green/20';
+  return 'bg-panel text-ink-3 border-line';
+}
+
+function securityFlagLabels(flags: any = {}) {
+  const labels: string[] = [];
+  if (flags.isHoneypot) labels.push('Honeypot');
+  if (flags.isMintable) labels.push('Mintable');
+  if (flags.isProxy) labels.push('Proxy');
+  if (flags.hasBlacklist) labels.push('Blacklist');
+  if (flags.hiddenOwner) labels.push('Hidden owner');
+  const parseTax = (value?: string) => {
+    if (!value) return 0;
+    const n = Number(String(value).replace('%', '').trim());
+    if (!Number.isFinite(n)) return 0;
+    return n > 1 ? n / 100 : n;
+  };
+  if (parseTax(flags.buyTax) >= 0.1 || parseTax(flags.sellTax) >= 0.1) labels.push('High tax');
+  return labels;
+}
+
 function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
   const { address } = useAccount();
   const { data: portfolio, isError: isPortfolioError, error: portfolioError } = usePortfolio(address);
@@ -218,6 +259,7 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
                       )}
                       <div className="flex items-center gap-1 min-w-0">
                         <span className="font-medium text-ink truncate" title={token.name || token.symbol}>{token.symbol}</span>
+                        <span className={`w-2 h-2 rounded-full shrink-0 ${tokenSecurityIndicator(token, portfolio?.providers?.risk).className}`} title={tokenSecurityIndicator(token, portfolio?.providers?.risk).title}></span>
                         {token.possibleSpam && <span className="text-[9px] bg-red-soft text-red px-1 rounded uppercase font-bold">spam</span>}
                       </div>
                     </div>
@@ -306,10 +348,10 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
                )}
              </div>
              <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
-                <span className="text-ink-2">GoPlus</span>
+                <span className="text-ink-2">Risk provider</span>
                 {statusData ? (
                   <span className={statusData.risk.status === 'connected' ? 'text-green font-medium' : statusData.risk.status === 'failed' ? 'text-red font-medium' : 'text-amber font-medium'}>
-                    {statusData.risk.status === 'connected' ? 'Connected' : statusData.risk.status === 'failed' ? 'Failed' : 'Missing'}
+                    {formatRiskProvider(statusData, 'Missing')}
                   </span>
                 ) : (
                   <span className="text-amber font-medium">Missing</span>
@@ -592,15 +634,31 @@ function ActionInbox({ showToast, onSelectTab }: { showToast: (msg: string) => v
                                  </span>
                                </div>
                                <div>
+                                 <span className="text-ink-3">Priced / Unpriced: </span>
+                                 <span className="font-semibold text-ink">{meta.analysis.portfolioSnapshot.pricedTokenCount} / {meta.analysis.portfolioSnapshot.unpricedTokenCount}</span>
+                               </div>
+                               <div>
+                                 <span className="text-ink-3">Security checked: </span>
+                                 <span className="font-semibold text-ink">{meta.analysis.portfolioSnapshot.securityCheckedTokenCount || 0}</span>
+                               </div>
+                               <div>
+                                 <span className="text-ink-3">High-risk security flags: </span>
+                                 <span className={`font-semibold ${(meta.analysis.portfolioSnapshot.securityHighRiskCount || 0) > 0 ? 'text-red' : 'text-green'}`}>{meta.analysis.portfolioSnapshot.securityHighRiskCount || 0}</span>
+                               </div>
+                               <div>
                                  <span className="text-ink-3">Provider: </span>
                                  <span className="font-mono text-ink">{meta.analysis.portfolioSnapshot.provider}</span>
                                </div>
                                {meta.analysis.portfolioSnapshot.priceProvider && (
                                  <div>
-                                   <span className="text-ink-3">Prices: </span>
+                                   <span className="text-ink-3">Price provider: </span>
                                    <span className="font-mono text-ink">{meta.analysis.portfolioSnapshot.priceProvider}</span>
                                  </div>
                                )}
+                               <div>
+                                 <span className="text-ink-3">Security provider: </span>
+                                 <span className="font-mono text-ink">{meta.analysis.securityProvider?.provider === 'goplus' ? (meta.analysis.securityProvider.status === 'failed' ? 'GoPlus failed' : 'GoPlus') : 'Missing'}</span>
+                               </div>
                              </div>
                            )}
 
@@ -612,6 +670,7 @@ function ActionInbox({ showToast, onSelectTab }: { showToast: (msg: string) => v
                                <div className="flex flex-col gap-1.5 max-h-[240px] overflow-y-auto pr-1">
                                  {meta.analysis.tokenFindings.map((finding: any, idx: number) => {
                                    const fRiskColor = finding.risk === 'low' ? 'bg-green-soft text-green border-green/20' : finding.risk === 'high' ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20';
+                                   const securityFlags = securityFlagLabels(finding.security?.flags);
                                    const basescanLink = finding.address && finding.address !== 'native' && !finding.address.includes('native')
                                      ? `https://${(isMainnetReadonly || chainMode === 'mainnet-readonly' || chainMode === 'mainnet') ? '' : 'sepolia.'}basescan.org/token/${finding.address}`
                                      : null;
@@ -631,6 +690,11 @@ function ActionInbox({ showToast, onSelectTab }: { showToast: (msg: string) => v
                                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase border ${fRiskColor}`}>
                                              {finding.risk}
                                            </span>
+                                           {finding.security && (
+                                             <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase border ${securityBadgeClass(finding.security.status)}`}>
+                                               Security: {finding.security.status}
+                                             </span>
+                                           )}
                                            {basescanLink && (
                                              <a href={basescanLink} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline text-[10px]" onClick={e => e.stopPropagation()}>
                                                BaseScan ↗
@@ -641,6 +705,15 @@ function ActionInbox({ showToast, onSelectTab }: { showToast: (msg: string) => v
                                        <div className="text-ink-2 text-[11px] leading-snug mt-0.5">
                                          {finding.reason}
                                        </div>
+                                       {securityFlags.length > 0 && (
+                                         <div className="flex flex-wrap gap-1 mt-1">
+                                           {securityFlags.map((label: string) => (
+                                             <span key={label} className="px-1.5 py-0.5 rounded bg-amber-soft text-amber border border-amber/20 text-[10px] font-semibold">
+                                               {label}
+                                             </span>
+                                           ))}
+                                         </div>
+                                       )}
                                        <div className="text-[10px] text-ink-3 font-mono mt-0.5">
                                          Suggested handling: <span className="text-ink-2 font-semibold">{finding.suggestedHandling}</span>
                                        </div>
@@ -820,7 +893,7 @@ function AgentStream({ showToast, onSelectTab }: { showToast: (msg: string) => v
 
   const PROMPT_CHIPS = [
     "Review my Base tokens",
-    "Flag risky assets",
+    "Check token security",
     "Create a read-only rebalance plan",
     "Check spend permissions",
     "Find yield opportunities"
@@ -1320,7 +1393,7 @@ function ConfigurePage() {
          <div className="flex items-center justify-between py-1.5 border-b border-line">
            <span className="font-medium text-sm text-ink">Risk / GoPlus Provider</span>
            <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.risk.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.risk.status === 'failed' ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20'}`}>
-             {statusData ? (statusData.risk.status === 'connected' ? `${statusData.risk.provider} connected` : statusData.risk.status === 'failed' ? 'Failed' : 'Missing') : 'Checking...'}
+             {formatRiskProvider(statusData)}
            </span>
          </div>
          <div className="flex items-center justify-between py-1.5 border-b border-line">

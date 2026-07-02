@@ -13,18 +13,18 @@ export function detectActionIntent(message: string): ActionIntent {
   // Check for greetings and normal chat that shouldn't trigger an action
   const greetings = ['hello', 'hi', 'hey', 'hi there', 'hello there', 'hey there', 'good morning', 'good afternoon', 'good evening', 'who are you?', 'what can you do?', 'help', 'thanks', 'thank you'];
   if (greetings.includes(lower) || lower.startsWith('hello ') || lower.startsWith('hi ') || lower.startsWith('hey ')) {
-    if (!lower.includes('token') && !lower.includes('portfolio') && !lower.includes('risk') && !lower.includes('rebalance') && !lower.includes('swap') && !lower.includes('approval') && !lower.includes('permission') && !lower.includes('yield') && !lower.includes('liquidity') && !lower.includes('monitor')) {
+    if (!lower.includes('token') && !lower.includes('portfolio') && !lower.includes('risk') && !lower.includes('rebalance') && !lower.includes('swap') && !lower.includes('approval') && !lower.includes('permission') && !lower.includes('yield') && !lower.includes('liquidity') && !lower.includes('monitor') && !lower.includes('security') && !lower.includes('dangerous')) {
       return { isActionIntent: false };
     }
   }
 
-  if (lower.includes('approval') || lower.includes('permission') || lower.includes('revoke') || lower.includes('suspicious') || lower.includes('unauthorized') || lower.includes('watch for')) {
+  if (lower.includes('approval') || lower.includes('permission') || lower.includes('revoke') || lower.includes('suspicious') || lower.includes('unauthorized') || lower.includes('watch for') || lower.includes('token security') || lower.includes('dangerous') || lower.includes('scan my wallet')) {
     return {
       isActionIntent: true,
       intentType: 'security',
-      title: 'Security & Permission Monitoring',
-      reason: `Automated recommendation created by Agent Stream to monitor spend permissions and watch for suspicious approvals: "${message}"`,
-      expectedEffect: 'Scan connected wallet permissions and flag unauthorized or suspicious spend allowances.',
+      title: 'Token Security & Permission Review',
+      reason: `Automated recommendation created by Agent Stream to review token security and permission risks: "${message}"`,
+      expectedEffect: 'Scan connected wallet tokens with available metadata and token security provider signals, then flag contract-level warnings without creating transactions.',
       risk: 'low'
     };
   }

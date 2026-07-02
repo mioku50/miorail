@@ -4,6 +4,15 @@ import request from 'supertest';
 import { app } from '../app.js';
 import { db, actions } from '@mioagent/db';
 import { eq } from 'drizzle-orm';
+import { clearTokenSecurityCacheForTests } from '@mioagent/data-providers';
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}
 
 describe('Chat API & Recommendation Guardrails', () => {
   test('DELETE /api/chat/history clears chat history and GET returns empty list', async () => {
@@ -17,6 +26,9 @@ describe('Chat API & Recommendation Guardrails', () => {
   });
 
   test('POST /api/chat with action intent in mainnet-readonly generates blocked read-only recommendation', async () => {
+    clearTokenSecurityCacheForTests();
+    const origSecurityProvider = process.env.TOKEN_SECURITY_PROVIDER;
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
     await request(app).delete('/api/chat/history');
 
     const response = await request(app)
@@ -39,6 +51,7 @@ describe('Chat API & Recommendation Guardrails', () => {
     assert.strictEqual((createdAction.metadata as any).safetyState, 'blocked');
     assert.strictEqual((createdAction.metadata as any).chainMode, 'mainnet-readonly');
     assert.ok((createdAction.metadata as any).analysis);
+    assert.ok((createdAction.metadata as any).analysis.securityProvider);
     assert.strictEqual((createdAction.metadata as any).analysis.portfolioSnapshot.walletAddress, '0x1234567890123456789012345678901234567890');
     assert.ok(Array.isArray(createdAction.tokens));
 
@@ -47,9 +60,13 @@ describe('Chat API & Recommendation Guardrails', () => {
       : createdAction.executionPayload;
     assert.strictEqual(payload.readOnly, true);
     assert.deepStrictEqual(payload.calls, []);
+    restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurityProvider);
   });
 
   test('POST /api/actions/recommend with portfolio intent generates analysis metadata', async () => {
+    clearTokenSecurityCacheForTests();
+    const origSecurityProvider = process.env.TOKEN_SECURITY_PROVIDER;
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
     const response = await request(app)
       .post('/api/actions/recommend')
       .send({
@@ -66,6 +83,8 @@ describe('Chat API & Recommendation Guardrails', () => {
     assert.strictEqual(dbActions.length, 1);
     const createdAction = dbActions[0];
     assert.ok((createdAction.metadata as any).analysis);
+    assert.ok((createdAction.metadata as any).analysis.securityProvider);
     assert.ok((createdAction.metadata as any).analysis.portfolioSnapshot.tokenCount >= 1);
+    restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurityProvider);
   });
 });

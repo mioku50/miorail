@@ -1,6 +1,24 @@
 import { test, describe, mock } from 'node:test';
 import assert from 'node:assert';
-import { RealCoinGeckoProvider, RealDeFiLlamaProvider, RealGoPlusProvider, RealMoralisProvider } from '../src/real.js';
+import {
+  RealCoinGeckoProvider,
+  RealDeFiLlamaProvider,
+  RealGoPlusProvider,
+  RealMoralisProvider,
+  GoPlusTokenSecurityProvider,
+  NoneTokenSecurityProvider,
+  clearTokenSecurityCacheForTests,
+  getTokenSecurityProviderFromEnv,
+  mapGoPlusTokenSecurity
+} from '../src/real.js';
+
+function restoreEnv(name: string, value: string | undefined) {
+    if (value === undefined) {
+        delete process.env[name];
+    } else {
+        process.env[name] = value;
+    }
+}
 
 describe('Real Providers', () => {
     test('CoinGeckoProvider calls correct endpoint', async () => {
@@ -99,6 +117,94 @@ describe('Real Providers', () => {
         delete process.env.MORALIS_API_KEY;
         const res = getTokenBalancesProviderFromEnv();
         assert.strictEqual(res.status, 'Token balances provider not configured');
+    });
+
+    test('NoneTokenSecurityProvider returns unknown without throwing', async () => {
+        const provider = new NoneTokenSecurityProvider();
+        const security = await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: ['native', '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'] });
+        assert.strictEqual(security.length, 1);
+        assert.strictEqual(security[0].provider, 'none');
+        assert.strictEqual(security[0].status, 'unknown');
+    });
+
+    test('GoPlusTokenSecurityProvider maps high-risk flags correctly', async () => {
+        clearTokenSecurityCacheForTests();
+        const token = '0x1111111111111111111111111111111111111111';
+        const mockFetch = mock.fn(async () => ({
+            ok: true,
+            json: async () => ({
+                result: {
+                    [token]: {
+                        is_honeypot: '1',
+                        is_blacklisted: '1',
+                        is_mintable: '1',
+                        is_open_source: '0',
+                        buy_tax: '0.12',
+                        sell_tax: '0.15',
+                    }
+                }
+            })
+        } as Response));
+        global.fetch = mockFetch as unknown as typeof fetch;
+
+        const provider = new GoPlusTokenSecurityProvider(undefined, 1000);
+        const [security] = await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [token] });
+
+        assert.strictEqual(security.status, 'high-risk');
+        assert.strictEqual(security.flags.isHoneypot, true);
+        assert.strictEqual(security.flags.hasBlacklist, true);
+        assert.strictEqual(security.flags.isMintable, true);
+        assert.ok(security.rawRiskLabels.some(label => label.includes('Honeypot')));
+        mock.restoreAll();
+    });
+
+    test('GoPlusTokenSecurityProvider uses API key header only and never private key env', async () => {
+        clearTokenSecurityCacheForTests();
+        process.env.PRIVATE_KEY = 'super-secret-private-key';
+        const token = '0x2222222222222222222222222222222222222222';
+        const mockFetch = mock.fn(async (_url: string | URL | Request, options?: RequestInit) => {
+            const serializedOptions = JSON.stringify(options || {});
+            assert.ok(!serializedOptions.includes('super-secret-private-key'));
+            assert.ok(serializedOptions.includes('test-goplus-key'));
+            return {
+                ok: true,
+                json: async () => ({ result: { [token]: { is_honeypot: '0', is_open_source: '1' } } })
+            } as Response;
+        });
+        global.fetch = mockFetch as unknown as typeof fetch;
+
+        const provider = new GoPlusTokenSecurityProvider('test-goplus-key', 1000);
+        const [security] = await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [token] });
+        assert.strictEqual(security.status, 'ok');
+        assert.strictEqual(mockFetch.mock.calls.length, 1);
+        delete process.env.PRIVATE_KEY;
+        mock.restoreAll();
+    });
+
+    test('GoPlusTokenSecurityProvider failure returns failed results', async () => {
+        clearTokenSecurityCacheForTests();
+        const originalProvider = process.env.TOKEN_SECURITY_PROVIDER;
+        process.env.TOKEN_SECURITY_PROVIDER = 'goplus';
+        const mockFetch = mock.fn(async () => ({ ok: false, status: 500, statusText: 'Internal Server Error' }) as Response);
+        global.fetch = mockFetch as unknown as typeof fetch;
+        const provider = new GoPlusTokenSecurityProvider(undefined, 1000);
+        const security = await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: ['0x3333333333333333333333333333333333333333'] });
+        assert.strictEqual(security[0].status, 'failed');
+        assert.strictEqual(getTokenSecurityProviderFromEnv().statusCode, 'failed');
+        restoreEnv('TOKEN_SECURITY_PROVIDER', originalProvider);
+        clearTokenSecurityCacheForTests();
+        mock.restoreAll();
+    });
+
+    test('mapGoPlusTokenSecurity handles warning-only proxy token', () => {
+        const security = mapGoPlusTokenSecurity('0x4444444444444444444444444444444444444444', {
+            is_proxy: '1',
+            is_open_source: '1',
+            is_mintable: '0',
+            is_honeypot: '0'
+        });
+        assert.strictEqual(security.status, 'warning');
+        assert.strictEqual(security.flags.isProxy, true);
     });
 });
 
