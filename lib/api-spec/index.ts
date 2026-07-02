@@ -25,6 +25,10 @@ export type ExecuteActionRequest = z.infer<typeof schemas.ExecuteActionRequestSc
 export type ExecuteActionResponse = z.infer<typeof schemas.ExecuteActionResponseSchema>;
 export type DismissActionRequest = z.infer<typeof schemas.DismissActionRequestSchema>;
 export type DismissActionResponse = z.infer<typeof schemas.DismissActionResponseSchema>;
+export type DismissAllRecommendationsResponse = z.infer<typeof schemas.DismissAllRecommendationsResponseSchema>;
+export type DeleteRecommendationsResponse = z.infer<typeof schemas.DeleteRecommendationsResponseSchema>;
+export type DeleteSingleActionResponse = z.infer<typeof schemas.DeleteSingleActionResponseSchema>;
+export type RegenerateRecommendationResponse = z.infer<typeof schemas.RegenerateRecommendationResponseSchema>;
 
 // Memory
 export type MemoryResponse = z.infer<typeof schemas.MemoryResponseSchema>;

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from 'wagmi';
-import { usePortfolio, useActionsFeed, useChatHistory, useSendMessage, useProtocols, useToggleProtocol, useExecuteAction, useDismissAction, useClearChatHistory, useClearActions, useCreateRecommendation, useStatus } from '@mioagent/api-client-react';
+import { usePortfolio, useActionsFeed, useChatHistory, useSendMessage, useProtocols, useToggleProtocol, useExecuteAction, useDismissAction, useClearChatHistory, useClearActions, useCreateRecommendation, useStatus, useDismissAllRecommendations, useDeleteAllRecommendations, useDeleteAction, useRegenerateAction } from '@mioagent/api-client-react';
 
 
 function WalletConnect({ showToast }: { showToast: (msg: string) => void }) {
@@ -352,25 +352,107 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
 }
 
 function ActionInbox({ showToast, onSelectTab }: { showToast: (msg: string) => void; onSelectTab?: (tab: string) => void }) {
+  const { address } = useAccount();
   const { data, isLoading, refetch } = useActionsFeed();
   const executeAction = useExecuteAction();
   const dismissAction = useDismissAction();
   const clearActions = useClearActions();
+  const dismissAllRecs = useDismissAllRecommendations();
+  const deleteAllRecs = useDeleteAllRecommendations();
+  const deleteAction = useDeleteAction();
+  const regenerateAction = useRegenerateAction();
   const isMainnetReadonly = import.meta.env.VITE_CHAIN_ENV === 'mainnet-readonly';
 
-  const actions = data?.actions || [];
+  const [filter, setFilter] = useState<string>('all');
+  const [showManageMenu, setShowManageMenu] = useState<boolean>(false);
+
+  const allActions = data?.actions || [];
+  const actions = allActions.filter((a: any) => {
+    if (filter === 'all') return a.status === 'pending';
+    if (filter === 'signals') return a.status === 'pending' && (a.kind === 'signal' || a.kind === 'alert' || a.kind === 'transfer' || a.kind === 'swap');
+    if (filter === 'recommendations') return a.status === 'pending' && a.kind === 'recommendation';
+    if (filter === 'blocked') return a.status === 'pending' && (a.status === 'failed' || a.metadata?.safetyState === 'blocked' || a.metadata?.safetyState === 'failed');
+    if (filter === 'history') return a.status === 'dismissed' || a.status === 'executed' || a.status === 'failed';
+    return a.status === 'pending';
+  });
 
   return (
     <main className="flex-1 bg-bg p-[18px] flex flex-col gap-4 overflow-y-auto">
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-[16px] font-bold text-ink tracking-[-.02em]">Action Inbox</h2>
-        <div className="flex gap-1.5">
-          {['all', 'signals', 'recommendations', 'blocked'].map((f, i) => (
-            <div key={f} className={`px-[11px] py-[5px] rounded-[9px] text-[12px] font-medium border cursor-pointer ${i === 0 ? 'bg-accent text-white border-accent' : 'bg-panel text-ink-2 border-line hover:bg-bg'}`}>
+        <div className="flex gap-1.5 items-center flex-wrap">
+          {['all', 'signals', 'recommendations', 'blocked', 'history'].map((f) => (
+            <div key={f} onClick={() => setFilter(f)} className={`px-[11px] py-[5px] rounded-[9px] text-[12px] font-medium border cursor-pointer capitalize ${filter === f ? 'bg-accent text-white border-accent' : 'bg-panel text-ink-2 border-line hover:bg-bg'}`}>
               {f}
             </div>
           ))}
-                  <button onClick={() => { if(confirm('Clear demo actions?')) clearActions.mutate(); }} disabled={clearActions.isPending} className="px-2 py-1 bg-red-soft text-red text-xs rounded border border-red/20 ml-2 hover:bg-red hover:text-white transition-colors">Clear demo actions</button>
+
+          <div className="relative ml-2">
+            <button 
+              onClick={() => setShowManageMenu(!showManageMenu)} 
+              className="px-3 py-1.5 bg-panel border border-line rounded-[9px] text-xs font-semibold text-ink hover:bg-bg transition-colors flex items-center gap-1 shadow-sm"
+            >
+              Manage ▾
+            </button>
+            {showManageMenu && (
+              <div className="absolute right-0 mt-1 w-64 bg-panel border border-line rounded-xl shadow-lg py-1 z-50 animate-in fade-in zoom-in-95">
+                <button
+                  onClick={() => {
+                    setShowManageMenu(false);
+                    dismissAllRecs.mutate(undefined, {
+                      onSuccess: (res: any) => {
+                        showToast(`Dismissed ${res?.count || 'all'} recommendations`);
+                        refetch();
+                      }
+                    });
+                  }}
+                  disabled={dismissAllRecs.isPending}
+                  className="w-full text-left px-3 py-2 text-xs text-ink hover:bg-bg transition-colors block font-medium"
+                >
+                  Dismiss all recommendations
+                </button>
+                <button
+                  onClick={() => {
+                    setShowManageMenu(false);
+                    if (confirm('Permanently delete all recommendations? This cannot be undone.')) {
+                      deleteAllRecs.mutate({ confirm: true }, {
+                        onSuccess: (res: any) => {
+                          showToast(`Deleted ${res?.count || 'all'} recommendations`);
+                          refetch();
+                        }
+                      });
+                    }
+                  }}
+                  disabled={deleteAllRecs.isPending}
+                  className="w-full text-left px-3 py-2 text-xs text-red hover:bg-red-soft transition-colors block font-medium border-t border-line"
+                >
+                  Delete all recommendations
+                </button>
+                <button
+                  onClick={() => {
+                    setShowManageMenu(false);
+                    if (confirm('This removes seeded demo actions only. Your recommendations will stay. Proceed?')) {
+                      clearActions.mutate(undefined, {
+                        onSuccess: (res: any) => {
+                          if (res && res.count === 0) {
+                            showToast('No demo actions to clear.');
+                          } else {
+                            showToast('Seeded demo actions cleared');
+                          }
+                          refetch();
+                        }
+                      });
+                    }
+                  }}
+                  disabled={clearActions.isPending}
+                  title="This removes seeded demo actions only. Your recommendations will stay."
+                  className="w-full text-left px-3 py-2 text-xs text-ink-2 hover:bg-bg transition-colors block border-t border-line"
+                >
+                  Clear demo actions
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -409,6 +491,8 @@ function ActionInbox({ showToast, onSelectTab }: { showToast: (msg: string) => v
            const isPending = action.status === 'pending';
            const isExecuting = executeAction.isPending && executeAction.variables?.actionId === action.id;
            const isDismissing = dismissAction.isPending && dismissAction.variables?.actionId === action.id;
+           const isDeleting = deleteAction.isPending && deleteAction.variables?.actionId === action.id;
+           const isRegenerating = regenerateAction.isPending && regenerateAction.variables?.actionId === action.id;
 
            return (
              <div key={action.id} id={`action-${action.id}`} data-action-id={action.id} className={`bg-panel border rounded-xl shadow-sm p-[15px] flex flex-col gap-[10px] animate-in fade-in slide-in-from-bottom-2 ${action.status === 'failed' ? 'border-red-soft' : 'border-line'}`}>
@@ -577,7 +661,7 @@ function ActionInbox({ showToast, onSelectTab }: { showToast: (msg: string) => v
                       🛡️ failed
                    </div>
                 ) : (
-                  <div className="flex gap-2 items-center mt-1">
+                  <div className="flex gap-2 items-center flex-wrap mt-1">
                      <span title={(isMainnetReadonly || action.metadata?.chainMode === 'mainnet-readonly' || action.metadata?.chainMode === 'mainnet') ? "Mainnet execution is disabled in read-only mode." : undefined} onClick={() => { if(isMainnetReadonly || action.metadata?.chainMode === 'mainnet-readonly' || action.metadata?.chainMode === 'mainnet') showToast("Mainnet execution is disabled in read-only mode."); }}>
                      <button
                        onClick={() => {
@@ -610,18 +694,38 @@ function ActionInbox({ showToast, onSelectTab }: { showToast: (msg: string) => v
     }
   });
                        }}
-                       disabled={!isPending || isExecuting || isDismissing || isMainnetReadonly || action.metadata?.chainMode === 'mainnet-readonly' || action.metadata?.chainMode === 'mainnet'}
+                       disabled={!isPending || isExecuting || isDismissing || isDeleting || isRegenerating || isMainnetReadonly || action.metadata?.chainMode === 'mainnet-readonly' || action.metadata?.chainMode === 'mainnet'}
                        className="bg-accent hover:bg-accent-2 text-white px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] shadow-[0_6px_16px_rgba(0,0,255,.28)] hover:-translate-y-[1px] hover:shadow-[0_10px_22px_rgba(0,0,255,.34)] transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                      >
                        ⚡ {isExecuting ? 'Executing...' : (isMainnetReadonly || action.metadata?.chainMode === 'mainnet-readonly' || action.metadata?.chainMode === 'mainnet') ? 'Read-only' : 'Execute'}
                      </button>
                      </span>
+                     {action.kind === 'recommendation' && (
+                       <button
+                         onClick={() => regenerateAction.mutate({ actionId: action.id, walletAddress: address, chainEnv: import.meta.env.VITE_CHAIN_ENV || 'mainnet-readonly' }, { onSuccess: () => { showToast('Recommendation analysis regenerated'); refetch(); } })}
+                         disabled={isExecuting || isDismissing || isDeleting || isRegenerating}
+                         className="bg-bg hover:bg-panel border border-line text-ink px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                       >
+                         {isRegenerating ? 'Regenerating...' : 'Regenerate analysis'}
+                       </button>
+                     )}
                      <button
                        onClick={() => dismissAction.mutate({ actionId: action.id }, { onSuccess: () => refetch() })}
-                       disabled={!isPending || isExecuting || isDismissing}
+                       disabled={!isPending || isExecuting || isDismissing || isDeleting || isRegenerating}
                        className="bg-bg hover:bg-[#eceef7] text-ink-2 px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                      >
                        {isDismissing ? 'Dismissing...' : 'Dismiss'}
+                     </button>
+                     <button
+                       onClick={() => {
+                         if (confirm('Permanently delete this action?')) {
+                           deleteAction.mutate({ actionId: action.id }, { onSuccess: () => { showToast('Action deleted'); refetch(); } });
+                         }
+                       }}
+                       disabled={isExecuting || isDismissing || isDeleting || isRegenerating}
+                       className="bg-bg hover:bg-red-soft text-red px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                     >
+                       {isDeleting ? 'Deleting...' : 'Delete'}
                      </button>
                   </div>
                 )}
@@ -1114,14 +1218,32 @@ function HistoryPage() {
         </div>
         <div className="flex-1 bg-panel border border-line rounded-xl p-4">
            <h3 className="text-sm font-bold mb-3">Recent Actions</h3>
-           <div className="flex flex-col gap-2 max-h-[400px] overflow-y-auto">
-             {actions.map((a: any, i: number) => (
-               <div key={i} className="text-sm p-2 bg-bg rounded border border-line">
-                 <div className="text-xs text-ink-3 mb-1 font-bold">{a.kind} · {a.status} <span className="font-normal">{new Date(a.createdAt).toLocaleTimeString()}</span></div>
-                 {a.suggestedPrompt}
-               </div>
-             ))}
-             {actions.length === 0 && <div className="text-sm text-ink-3">No actions</div>}
+           <div className="flex flex-col gap-2.5 max-h-[400px] overflow-y-auto">
+             {actions.map((a: any, i: number) => {
+               const source = a.metadata?.createdBy || a.metadata?.source || 'system';
+               const provider = a.metadata?.analysis?.provider || a.metadata?.provider || (a.kind === 'recommendation' ? 'moralis' : null);
+               const statusBadge = a.status === 'executed' ? 'bg-green-soft text-green' : a.status === 'dismissed' ? 'bg-panel-2 text-ink-3' : a.status === 'failed' ? 'bg-red-soft text-red' : 'bg-amber-soft text-amber';
+
+               return (
+                 <div key={i} className="text-sm p-3 bg-bg rounded-lg border border-line flex flex-col gap-1.5 shadow-sm">
+                   <div className="flex items-center justify-between text-xs">
+                     <div className="flex items-center gap-2">
+                       <span className="font-bold uppercase tracking-wider text-[11px] text-ink">{a.kind}</span>
+                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold capitalize ${statusBadge}`}>{a.status}</span>
+                     </div>
+                     <span className="text-[11px] text-ink-3 font-mono">{new Date(a.createdAt).toLocaleString()}</span>
+                   </div>
+                   <div className="text-ink text-xs leading-relaxed font-medium">
+                     {a.suggestedPrompt || a.metadata?.reason || 'Automated action'}
+                   </div>
+                   <div className="flex items-center justify-between text-[11px] text-ink-3 font-mono pt-1 border-t border-line/50">
+                     <span>Source: <span className="text-ink-2 font-medium capitalize">{source}</span></span>
+                     {provider && <span>Provider: <span className="text-ink-2 font-medium capitalize">{provider}</span></span>}
+                   </div>
+                 </div>
+               );
+             })}
+             {actions.length === 0 && <div className="text-sm text-ink-3 text-center py-6">No actions recorded in history yet</div>}
            </div>
         </div>
       </div>

@@ -222,4 +222,73 @@ test('Actions API', async (t) => {
 
     mock.restoreAll();
   });
+
+  await t.test('DELETE /api/actions/demo deletes only demo seeded actions', async () => {
+    const mockSelect = mock.fn(() => ({ from: mock.fn(() => ({ where: mock.fn(async () => [{ id: 'demo-1', userId: 'default-user', kind: 'recommendation', status: 'pending', createdAt: new Date(), updatedAt: new Date(), metadata: { createdBy: 'seed' } }]) })) }));
+    mock.method(db, 'select', mockSelect);
+    const mockDelete = mock.fn(() => ({ where: mock.fn(async () => []) }));
+    mock.method(db, 'delete', mockDelete);
+
+    const response = await request(app).delete('/api/actions/demo');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, true);
+    assert.strictEqual(response.body.count, 1);
+    mock.restoreAll();
+  });
+
+  await t.test('PATCH /api/actions/recommendations/dismiss-all dismisses all recommendations', async () => {
+    const mockSelect = mock.fn(() => ({ from: mock.fn(() => ({ where: mock.fn(async () => [{ id: 'rec-1', userId: 'default-user', kind: 'recommendation', status: 'pending', createdAt: new Date(), updatedAt: new Date() }]) })) }));
+    mock.method(db, 'select', mockSelect);
+    const mockUpdate = mock.fn(() => ({ set: mock.fn(() => ({ where: mock.fn(async () => []) })) }));
+    mock.method(db, 'update', mockUpdate);
+
+    const response = await request(app).patch('/api/actions/recommendations/dismiss-all');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, true);
+    assert.strictEqual(response.body.count, 1);
+    mock.restoreAll();
+  });
+
+  await t.test('DELETE /api/actions/recommendations deletes recommendations when confirm=true', async () => {
+    const responseNoConfirm = await request(app).delete('/api/actions/recommendations');
+    assert.strictEqual(responseNoConfirm.status, 400);
+
+    const mockSelect = mock.fn(() => ({ from: mock.fn(() => ({ where: mock.fn(async () => [{ id: 'rec-1' }]) })) }));
+    mock.method(db, 'select', mockSelect);
+    const mockDelete = mock.fn(() => ({ where: mock.fn(async () => []) }));
+    mock.method(db, 'delete', mockDelete);
+
+    const response = await request(app).delete('/api/actions/recommendations?confirm=true');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, true);
+    assert.strictEqual(response.body.count, 1);
+    mock.restoreAll();
+  });
+
+  await t.test('DELETE /api/actions/:actionId deletes a single action', async () => {
+    const mockSelect = mock.fn(() => ({ from: mock.fn(() => ({ where: mock.fn(async () => [{ id: 'act-1' }]) })) }));
+    mock.method(db, 'select', mockSelect);
+    const mockDelete = mock.fn(() => ({ where: mock.fn(async () => []) }));
+    mock.method(db, 'delete', mockDelete);
+
+    const response = await request(app).delete('/api/actions/act-1');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, true);
+    mock.restoreAll();
+  });
+
+  await t.test('POST /api/actions/:actionId/regenerate creates new recommendation and dismisses old', async () => {
+    const mockSelect = mock.fn(() => ({ from: mock.fn(() => ({ where: mock.fn(async () => [{ id: 'act-1', userId: 'default-user', kind: 'recommendation', status: 'pending', suggestedPrompt: 'Test Prompt', metadata: { createdBy: 'agent-stream' } }]) })) }));
+    mock.method(db, 'select', mockSelect);
+    const mockInsert = mock.fn(() => ({ values: mock.fn(async () => []) }));
+    mock.method(db, 'insert', mockInsert);
+    const mockUpdate = mock.fn(() => ({ set: mock.fn(() => ({ where: mock.fn(async () => []) })) }));
+    mock.method(db, 'update', mockUpdate);
+
+    const response = await request(app).post('/api/actions/act-1/regenerate').send({ walletAddress: '0x1111111111111111111111111111111111111111', chainEnv: 'mainnet-readonly' });
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, true);
+    assert.ok(response.body.actionId.startsWith('rec_'));
+    mock.restoreAll();
+  });
 });

@@ -112,6 +112,26 @@ export const DismissActionResponseSchema = z.object({
   success: z.boolean(),
 });
 
+export const DismissAllRecommendationsResponseSchema = z.object({
+  success: z.boolean(),
+  count: z.number().optional(),
+});
+
+export const DeleteRecommendationsResponseSchema = z.object({
+  success: z.boolean(),
+  count: z.number().optional(),
+});
+
+export const DeleteSingleActionResponseSchema = z.object({
+  success: z.boolean(),
+});
+
+export const RegenerateRecommendationResponseSchema = z.object({
+  success: z.boolean(),
+  actionId: z.string().optional(),
+  error: z.string().optional(),
+});
+
 // Memory
 export const MemoryResponseSchema = z.object({
   memoryMd: z.string().nullable(),

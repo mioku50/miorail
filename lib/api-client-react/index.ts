@@ -134,11 +134,60 @@ export function useClearChatHistory(
 }
 
 export function useClearActions(
-  options?: Omit<UseMutationOptions<{ success: boolean }, Error, void>, 'mutationFn'>
+  options?: Omit<UseMutationOptions<{ success: boolean; count?: number }, Error, void>, 'mutationFn'>
 ) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => fetchApi<{ success: boolean }>('/api/actions/demo', { method: 'DELETE' }),
+    mutationFn: () => fetchApi<{ success: boolean; count?: number }>('/api/actions/demo', { method: 'DELETE' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['actions', 'feed'] }),
+    ...options,
+  });
+}
+
+export function useDismissAllRecommendations(
+  options?: Omit<UseMutationOptions<apiSpec.DismissAllRecommendationsResponse, Error, void>, 'mutationFn'>
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => fetchApi<apiSpec.DismissAllRecommendationsResponse>('/api/actions/recommendations/dismiss-all', { method: 'PATCH' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['actions', 'feed'] }),
+    ...options,
+  });
+}
+
+export function useDeleteAllRecommendations(
+  options?: Omit<UseMutationOptions<apiSpec.DeleteRecommendationsResponse, Error, { confirm?: boolean }>, 'mutationFn'>
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ confirm = true }: { confirm?: boolean }) => fetchApi<apiSpec.DeleteRecommendationsResponse>(`/api/actions/recommendations?confirm=${confirm}`, { method: 'DELETE' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['actions', 'feed'] }),
+    ...options,
+  });
+}
+
+export function useDeleteAction(
+  options?: Omit<UseMutationOptions<apiSpec.DeleteSingleActionResponse, Error, { actionId: string }>, 'mutationFn'>
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ actionId }: { actionId: string }) => fetchApi<apiSpec.DeleteSingleActionResponse>(`/api/actions/${actionId}`, { method: 'DELETE' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['actions', 'feed'] }),
+    ...options,
+  });
+}
+
+export function useRegenerateAction(
+  options?: Omit<UseMutationOptions<apiSpec.RegenerateRecommendationResponse, Error, { actionId: string; walletAddress?: string; chainEnv?: string }>, 'mutationFn'>
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ actionId, walletAddress, chainEnv }: { actionId: string; walletAddress?: string; chainEnv?: string }) =>
+      fetchApi<apiSpec.RegenerateRecommendationResponse>(`/api/actions/${actionId}/regenerate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ walletAddress, chainEnv }),
+      }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['actions', 'feed'] }),
     ...options,
   });

@@ -1,10 +1,14 @@
 import { Router } from 'express';
 import { db, actions } from '@mioagent/db';
-import { desc, eq, and } from 'drizzle-orm';
+import { desc, eq, and, ne, inArray } from 'drizzle-orm';
 import {
   ActionsFeedResponseSchema,
   ExecuteActionResponseSchema,
   DismissActionResponseSchema,
+  DismissAllRecommendationsResponseSchema,
+  DeleteRecommendationsResponseSchema,
+  DeleteSingleActionResponseSchema,
+  RegenerateRecommendationResponseSchema,
 } from '@mioagent/api-zod';
 import { detectActionIntent } from '../lib/intent.js';
 import { fetchInternalPortfolio, analyzePortfolioForRisk, buildRecommendationMetadataFromAnalysis } from '../lib/portfolioAnalysis.js';
@@ -14,15 +18,57 @@ export const actionsRouter = Router();
 actionsRouter.delete('/demo', async (req, res, next) => {
   try {
     const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
-    const { db, actions } = require('@mioagent/db');
-    const { eq, and, ne } = require('drizzle-orm');
-    await db.delete(actions).where(
-      and(
-        eq(actions.userId, userId),
-        ne(actions.kind, 'recommendation')
-      )
-    );
-    res.json({ success: true });
+    const userActions = await db.select().from(actions).where(eq(actions.userId, userId));
+    const demoIds = userActions
+      .filter(a => {
+        const meta = (a.metadata || {}) as any;
+        if (a.suggestedPrompt?.includes('Test transfer of Sepolia USDC')) return true;
+        if (meta.demo === true || meta.source === 'demo' || meta.createdBy === 'seed' || meta.source === 'seed') return true;
+        if (a.kind !== 'recommendation') return true;
+        return false;
+      })
+      .map(a => a.id);
+
+    if (demoIds.length > 0) {
+      await db.delete(actions).where(and(eq(actions.userId, userId), inArray(actions.id, demoIds)));
+    }
+    res.json({ success: true, count: demoIds.length });
+  } catch (error) {
+    next(error);
+  }
+});
+
+actionsRouter.patch('/recommendations/dismiss-all', async (req, res, next) => {
+  try {
+    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userActions = await db.select().from(actions).where(and(eq(actions.userId, userId), eq(actions.kind, 'recommendation'), eq(actions.status, 'pending')));
+    const targetIds = userActions.map(a => a.id);
+
+    if (targetIds.length > 0) {
+      await db.update(actions)
+        .set({ status: 'dismissed', updatedAt: new Date() })
+        .where(and(eq(actions.userId, userId), inArray(actions.id, targetIds)));
+    }
+    res.json(DismissAllRecommendationsResponseSchema.parse({ success: true, count: targetIds.length }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+actionsRouter.delete('/recommendations', async (req, res, next) => {
+  try {
+    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const confirm = req.query.confirm === 'true' || req.body?.confirm === true || req.body?.confirm === 'true';
+    if (!confirm) {
+      return res.status(400).json({ success: false, error: 'Confirmation required' });
+    }
+    const userActions = await db.select().from(actions).where(and(eq(actions.userId, userId), eq(actions.kind, 'recommendation')));
+    const targetIds = userActions.map(a => a.id);
+
+    if (targetIds.length > 0) {
+      await db.delete(actions).where(and(eq(actions.userId, userId), inArray(actions.id, targetIds)));
+    }
+    res.json(DeleteRecommendationsResponseSchema.parse({ success: true, count: targetIds.length }));
   } catch (error) {
     next(error);
   }
@@ -289,3 +335,97 @@ actionsRouter.post('/:actionId/dismiss', async (req, res, next) => {
     next(error);
   }
 });
+
+actionsRouter.delete('/:actionId', async (req, res, next) => {
+  try {
+    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const actionId = req.params.actionId;
+
+    await db.delete(actions).where(and(eq(actions.id, actionId), eq(actions.userId, userId)));
+    res.json(DeleteSingleActionResponseSchema.parse({ success: true }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+actionsRouter.post('/:actionId/regenerate', async (req, res, next) => {
+  try {
+    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const actionId = req.params.actionId;
+
+    const existing = await db.select().from(actions).where(and(eq(actions.id, actionId), eq(actions.userId, userId)));
+    if (existing.length === 0) {
+      return res.status(404).json({ success: false, error: 'Action not found' });
+    }
+    const oldAction = existing[0];
+    const oldMeta = (oldAction.metadata || {}) as any;
+
+    const walletAddress = req.body?.walletAddress || oldMeta.analysis?.portfolioSnapshot?.walletAddress || '0x0000000000000000000000000000000000000000';
+    const chainEnv = req.body?.chainEnv || oldMeta.chainMode || 'mainnet-readonly';
+
+    const portfolioData = await fetchInternalPortfolio(walletAddress, chainEnv);
+    const analysis = analyzePortfolioForRisk(portfolioData, walletAddress, chainEnv);
+    const baseMeta = buildRecommendationMetadataFromAnalysis({
+      intent: {
+        intentType: 'risk',
+        confidence: 0.9,
+        actionKind: 'recommendation',
+        title: 'Regenerated Risk Analysis',
+        reason: 'Regenerating portfolio risk evaluation',
+        expectedEffect: 'Fresh read-only token analysis',
+        tokens: [],
+        createdBy: oldMeta.createdBy || 'agent-stream'
+      },
+      message: oldAction.suggestedPrompt || 'Regenerate portfolio analysis',
+      walletAddress,
+      chainEnv,
+      analysis,
+      providerContext: {
+        tokenBalances: portfolioData.providers.tokenBalancesProvider,
+        prices: portfolioData.providers.prices,
+        risk: portfolioData.providers.risk
+      }
+    });
+    const newMeta = {
+      ...baseMeta,
+      source: oldMeta.source || oldMeta.createdBy || 'regenerated',
+      createdBy: oldMeta.createdBy || 'agent-stream',
+      regeneratedFrom: oldAction.id,
+      chainMode: chainEnv,
+      safetyState: chainEnv === 'mainnet-readonly' ? 'blocked' : 'safe',
+    };
+
+    const tokensList = analysis.tokenFindings.map(f => `${f.balanceFormatted || ''} ${f.symbol}`.trim()).slice(0, 5);
+    const payload = chainEnv === 'mainnet-readonly' ? {
+      chain: 'eip155:8453',
+      readOnly: true,
+      calls: []
+    } : {
+      chain: chainEnv === 'mainnet' ? 'eip155:8453' : 'eip155:84532',
+      calls: []
+    };
+
+    const newActionId = `rec_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    await db.insert(actions).values({
+      id: newActionId,
+      userId,
+      kind: 'recommendation',
+      status: 'pending',
+      suggestedPrompt: oldAction.suggestedPrompt || 'Portfolio Risk Analysis',
+      tokens: tokensList,
+      executionPayload: JSON.stringify(payload),
+      metadata: newMeta,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+
+    await db.update(actions)
+      .set({ status: 'dismissed', updatedAt: new Date() })
+      .where(and(eq(actions.id, actionId), eq(actions.userId, userId)));
+
+    res.json(RegenerateRecommendationResponseSchema.parse({ success: true, actionId: newActionId }));
+  } catch (error) {
+    next(error);
+  }
+});
+
