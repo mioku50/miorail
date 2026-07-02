@@ -119,10 +119,27 @@ function prioritizeSecurityScanTokens(tokens: TokenInfo[]) {
     .slice(0, 50);
 }
 
-function providerStatusToSecurityStatus(status: string): "connected" | "missing" | "failed" {
+function providerStatusToSecurityStatus(status: string): "connected" | "missing" | "failed" | "partial" {
   if (status === 'failed') return 'failed';
   if (status === 'missing') return 'missing';
+  if (status === 'partial') return 'partial';
   return 'connected';
+}
+
+interface CachedTokenBalances {
+  tokens: TokenInfo[];
+  expiresAt: number;
+}
+const tokenBalancesCacheMap = new Map<string, CachedTokenBalances>();
+const TOKEN_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+export function setTokenBalancesCacheForTests(chainId: number, address: string, tokens: TokenInfo[], ttlMs = TOKEN_CACHE_TTL_MS) {
+  const cacheKey = `portfolio-tokens:${chainId}:${address.toLowerCase()}`;
+  tokenBalancesCacheMap.set(cacheKey, { tokens, expiresAt: Date.now() + ttlMs });
+}
+
+export function clearTokenBalancesCacheForTests() {
+  tokenBalancesCacheMap.clear();
 }
 
 export async function fetchInternalPortfolio(address: string, chainEnv: string = 'sepolia'): Promise<PortfolioData> {
@@ -171,7 +188,7 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
 
   const { provider, status, providerName } = getTokenBalancesProviderFromEnv();
   let providerStatus = status;
-  let tokenBalancesStatus: "connected" | "missing" | "failed" = providerName === "none" ? "missing" : "connected";
+  let tokenBalancesStatus: "connected" | "missing" | "failed" | "stale" = providerName === "none" ? "missing" : "connected";
 
   if (provider && providerName !== 'none') {
     try {
@@ -190,24 +207,47 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
           logoUrl: tb.logoUrl,
           verified: tb.verified,
           possibleSpam: tb.possibleSpam,
+          dataFreshness: "live",
         });
       }
+      tokens[0].dataFreshness = "live";
       if (tokens.length === 1 && (providerName === 'moralis' || providerName === 'alchemy')) {
         providerStatus = 'No ERC-20 tokens found for this wallet';
       }
+      const cacheKey = `portfolio-tokens:${chainId}:${address.toLowerCase()}`;
+      tokenBalancesCacheMap.set(cacheKey, {
+        tokens: tokens.slice(1).map(t => ({ ...t, dataFreshness: "cached" })),
+        expiresAt: Date.now() + TOKEN_CACHE_TTL_MS
+      });
     } catch {
-      providerStatus = 'Token balances provider failed. Showing native ETH only.';
-      tokenBalancesStatus = 'failed';
+      const cacheKey = `portfolio-tokens:${chainId}:${address.toLowerCase()}`;
+      const cached = tokenBalancesCacheMap.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        for (const ct of cached.tokens) {
+          tokens.push({
+            ...ct,
+            dataFreshness: "cached"
+          });
+        }
+        tokens[0].dataFreshness = "cached";
+        tokenBalancesStatus = 'stale';
+        providerStatus = 'Using cached token balances because live provider failed.';
+      } else {
+        providerStatus = 'Token balances provider failed. Showing native ETH only.';
+        tokenBalancesStatus = 'failed';
+      }
     }
   }
 
   const { provider: priceProvider, status: priceStatusText, providerName: priceProviderName } = getPriceProviderFromEnv();
-  let pricesStatus: "connected" | "missing" | "failed" = priceProviderName === "none" ? "missing" : "connected";
+  let pricesStatus: "connected" | "missing" | "failed" | "partial" = priceProviderName === "none" ? "missing" : "connected";
 
   if (priceProvider && priceProviderName !== 'none') {
     try {
       const prices = await priceProvider.getTokenPrices({ chainId, tokens });
       const priceMap = new Map(prices.map(p => [(p.address || p.symbol).toLowerCase(), p]));
+      let missingPriceCount = 0;
+      let pricedTokensCount = 0;
       for (const t of tokens) {
         const key = (t.address === 'native' || !t.address ? 'ETH' : t.address).toLowerCase();
         const p = priceMap.get(key) || priceMap.get(t.symbol.toLowerCase());
@@ -216,11 +256,20 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
           t.priceConfidence = p.confidence;
           const val = Number(t.balanceFormatted) * Number(p.usdPrice);
           t.usdValue = val.toFixed(2);
+          pricedTokensCount++;
         } else if (!t.usdValue && !t.usdPrice) {
           t.usdPrice = undefined;
           t.usdValue = undefined;
           t.priceConfidence = "unknown";
+          missingPriceCount++;
+        } else if (t.usdValue) {
+          pricedTokensCount++;
         }
+      }
+      if (missingPriceCount > 0 && pricedTokensCount > 0) {
+        pricesStatus = "partial";
+      } else if (pricedTokensCount === 0 && tokens.length > 0) {
+        pricesStatus = "failed";
       }
     } catch (err) {
       pricesStatus = "failed";
@@ -251,7 +300,7 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
   const totalUsdValue = pricedCount > 0 ? totalUsd.toFixed(2) : undefined;
 
   const { provider: tokenSecurityProvider, statusCode: initialRiskStatus, providerName: riskProviderName } = getTokenSecurityProviderFromEnv();
-  let riskStatus: "connected" | "missing" | "failed" = initialRiskStatus;
+  let riskStatus: "connected" | "missing" | "failed" | "partial" = initialRiskStatus as any;
   if (riskProviderName !== 'none') {
     const securityScanTokens = prioritizeSecurityScanTokens(tokens);
     if (securityScanTokens.length > 0) {
@@ -261,17 +310,33 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
           tokenAddresses: securityScanTokens.map(t => t.address)
         });
         const securityMap = new Map(securityResults.map(result => [result.address.toLowerCase(), result]));
+        let checkedCount = 0;
         let hasFailure = false;
         for (const token of securityScanTokens) {
           const result = securityMap.get(token.address.toLowerCase());
-          if (result) {
+          if (result && result.status !== 'failed' && result.status !== 'unknown') {
+            token.security = toPortfolioSecurity(result);
+            checkedCount++;
+          } else if (result) {
             token.security = toPortfolioSecurity(result);
             if (result.status === 'failed') hasFailure = true;
           }
         }
-        riskStatus = hasFailure ? 'failed' : 'connected';
+        const { setTokenSecurityHealthStatus } = require('@mioagent/data-providers');
+        if (checkedCount === 0) {
+          riskStatus = 'failed';
+          setTokenSecurityHealthStatus('failed');
+        } else if (checkedCount < securityScanTokens.length || hasFailure) {
+          riskStatus = 'partial';
+          setTokenSecurityHealthStatus('partial');
+        } else {
+          riskStatus = 'connected';
+          setTokenSecurityHealthStatus('connected');
+        }
       } catch {
         riskStatus = 'failed';
+        const { setTokenSecurityHealthStatus } = require('@mioagent/data-providers');
+        setTokenSecurityHealthStatus('failed');
         for (const token of securityScanTokens) {
           token.security = {
             provider: riskProviderName,
@@ -361,7 +426,7 @@ export function analyzePortfolioForRisk(
   const findings: TokenFinding[] = [];
   const tokens = portfolio.tokens || [];
   const securityProviderName: TokenSecurityProviderName = portfolio.providers?.riskProvider || (portfolio.providers?.risk === 'connected' ? 'goplus' : 'none');
-  const securityProviderStatus = securityProviderName === 'none' ? 'missing' : providerStatusToSecurityStatus(portfolio.providers?.risk || 'missing');
+  let securityProviderStatus = securityProviderName === 'none' ? 'missing' : providerStatusToSecurityStatus(portfolio.providers?.risk || 'missing');
 
   for (const t of tokens) {
     const isNative = t.address === 'native' || (t.symbol === 'ETH' && t.address === 'native');
@@ -453,8 +518,8 @@ export function analyzePortfolioForRisk(
   const suspiciousTokenCount = suspiciousTokens.length;
   const tokenCount = tokens.length;
   const visibleTokenCount = tokens.length;
-  const provider = portfolio.providers?.tokenBalancesProvider || "none";
-  const priceProvider = portfolio.providers?.priceProvider || portfolio.providers?.prices || "none";
+  const provider = portfolio.providers?.tokenBalancesProvider || (portfolio.providers?.tokenBalances !== 'missing' && portfolio.providers?.tokenBalances !== 'none' ? 'moralis' : 'none');
+  const priceProvider = portfolio.providers?.prices === 'failed' ? 'failed' : (portfolio.providers?.priceProvider || portfolio.providers?.prices || "none");
   const chain = (chainEnv === 'mainnet-readonly' || chainEnv === 'mainnet') ? "base-mainnet" : "base-sepolia";
 
   let pricedTokenCount = 0;
@@ -468,6 +533,9 @@ export function analyzePortfolioForRisk(
   }
 
   const securityCheckedTokenCount = tokens.filter(t => t.security && t.security.provider !== 'none' && t.security.status !== 'failed' && t.security.status !== 'unknown').length;
+  if (securityProviderStatus === 'connected' && securityCheckedTokenCount === 0 && tokens.filter(t => t.address !== 'native' && t.symbol !== 'ETH').length > 0 && securityProviderName !== 'none') {
+    securityProviderStatus = 'failed';
+  }
   const securityHighRiskCount = tokens.filter(t => t.security?.status === 'high-risk').length;
   const securityWarningCount = tokens.filter(t => t.security?.status === 'warning').length;
 
@@ -483,23 +551,31 @@ export function analyzePortfolioForRisk(
   }
 
   const isPriceMissing = portfolio.providers?.prices === "missing" || priceProvider === "none" || priceProvider === "missing";
-  const priceStep = isPriceMissing
-    ? "Price provider is missing, so value-based ranking is limited."
-    : "Ranked findings using available USD values.";
+  const isPriceFailed = portfolio.providers?.prices === "failed" || priceProvider === "failed";
+  const priceStep = isPriceFailed
+    ? "USD values unavailable; value ranking limited."
+    : isPriceMissing
+      ? "Price provider is missing, so value-based ranking is limited."
+      : "Ranked findings using available USD values.";
 
   const securityStep = securityProviderStatus === 'missing'
     ? "Token security provider is missing, so contract-level checks are limited."
     : securityProviderStatus === 'failed'
-      ? "Token security scan failed for one or more tokens; retry later before interacting."
-      : "Reviewed configured token security provider signals where available.";
+      ? "Security scan did not return token-level results."
+      : securityProviderStatus === 'partial'
+        ? "Token security scan was partial; some contract-level checks may be unavailable."
+        : "Reviewed configured token security provider signals where available.";
 
-  const suggestedNextSteps = [
-    priceStep,
-    securityStep,
+  const suggestedNextSteps: string[] = [];
+  if (portfolio.providers?.tokenBalances === 'stale') {
+    suggestedNextSteps.push("Analysis used cached Moralis token balances.");
+  }
+  suggestedNextSteps.push(priceStep, securityStep);
+  suggestedNextSteps.push(
     "Review permissions and verify token contracts before interacting.",
     "Avoid interacting with tokens that show high-risk flags or suspicious claim/URL labels.",
     "Use a trusted wallet interface to revoke approvals if needed; MioAgent will not auto-revoke or create transactions in read-only mode."
-  ];
+  );
 
   return {
     summary,
@@ -556,6 +632,7 @@ export function buildRecommendationMetadataFromAnalysis(input: {
     safetyState: isReadonly ? "blocked" : (canExecute ? "executable" : "blocked"),
     executable: canExecute,
     executionStatus: isReadonly ? "read-only" : (canExecute ? "executable" : "blocked"),
+    calls: [],
     createdBy: intent?.createdBy || "agent-stream",
     walletAddress: walletAddress,
     providerContext: providerContext || {

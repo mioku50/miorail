@@ -1,8 +1,9 @@
-import test, { describe, mock } from 'node:test';
+import test, { describe, mock, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import request from 'supertest';
 import { app } from '../app';
 import { clearTokenSecurityCacheForTests } from '@mioagent/data-providers';
+import { clearTokenBalancesCacheForTests } from '../lib/portfolioAnalysis';
 
 function restoreEnv(name: string, value: string | undefined) {
   if (value === undefined) {
@@ -13,6 +14,9 @@ function restoreEnv(name: string, value: string | undefined) {
 }
 
 describe('Portfolio API', () => {
+  beforeEach(() => {
+    clearTokenBalancesCacheForTests();
+  });
   test('GET /api/portfolio returns 400 when address is missing', async () => {
     const response = await request(app).get('/api/portfolio');
     assert.strictEqual(response.status, 400);
@@ -79,7 +83,7 @@ describe('Portfolio API', () => {
     });
     global.fetch = mockFetch as unknown as typeof fetch;
 
-    const response = await request(app).get('/api/portfolio?address=0x1234567890123456789012345678901234567890');
+    const response = await request(app).get('/api/portfolio?address=0x8888567890123456789012345678901234568888');
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.tokens.length, 1);
     assert.strictEqual(response.body.tokens[0].symbol, 'ETH');

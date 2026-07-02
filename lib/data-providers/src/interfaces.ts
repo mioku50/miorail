@@ -97,6 +97,6 @@ export interface TokenSecurityProvider {
 export interface TokenSecurityProviderEnvResult {
   provider: TokenSecurityProvider;
   status: string;
-  statusCode: "connected" | "missing" | "failed";
+  statusCode: "connected" | "missing" | "failed" | "partial";
   providerName: TokenSecurityProviderName;
 }

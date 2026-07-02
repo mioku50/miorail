@@ -128,7 +128,8 @@ function TopBar({ showToast, activeTab, setActiveTab, onOpenCommand }: { showToa
 function formatRiskProvider(statusData: any, pendingLabel = 'Checking...') {
   if (!statusData) return pendingLabel;
   if (statusData.risk.status === 'connected') return statusData.risk.provider === 'goplus' ? 'GoPlus connected' : 'Connected';
-  if (statusData.risk.status === 'failed') return 'Failed';
+  if (statusData.risk.status === 'partial') return statusData.risk.provider === 'goplus' ? 'GoPlus partial' : 'Partial';
+  if (statusData.risk.status === 'failed') return statusData.risk.provider === 'goplus' ? 'GoPlus failed' : 'Failed';
   return 'Missing';
 }
 
@@ -200,17 +201,33 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
       <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
         <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-[11px] flex items-center justify-between">
           Portfolio
-          {(statusData || portfolio?.providerStatus) && (
-            <span className="text-[10px] font-mono font-normal text-ink-3 lowercase bg-panel-2 px-1.5 py-0.5 rounded border border-line/60">
-              {statusData ? (
-                statusData.tokenBalances.status === 'failed' ? 'token provider failed' :
-                statusData.tokenBalances.status === 'missing' ? 'eth only' :
-                statusData.tokenBalances.provider === 'moralis' ? 'moralis connected' :
-                statusData.tokenBalances.provider === 'alchemy' ? 'alchemy connected' :
-                portfolio?.providerStatus || 'connected'
-              ) : (portfolio?.providerStatus === 'moralis connected' ? 'moralis connected' : portfolio?.providerStatus)}
-            </span>
-          )}
+          <div className="flex items-center gap-1.5">
+            {(statusData || portfolio?.providerStatus) && (
+              <span className="text-[10px] font-mono font-normal text-ink-3 lowercase bg-panel-2 px-1.5 py-0.5 rounded border border-line/60">
+                {statusData ? (
+                  statusData.tokenBalances.status === 'stale' ? `${statusData.tokenBalances.provider || 'moralis'} cached` :
+                  statusData.tokenBalances.status === 'failed' ? 'token provider failed' :
+                  statusData.tokenBalances.status === 'missing' ? 'eth only' :
+                  statusData.tokenBalances.provider === 'moralis' ? 'moralis connected' :
+                  statusData.tokenBalances.provider === 'alchemy' ? 'alchemy connected' :
+                  portfolio?.providerStatus || 'connected'
+                ) : (
+                  portfolio?.providers?.tokenBalances === 'stale' ? `${portfolio?.providers?.tokenBalancesProvider || 'moralis'} cached` :
+                  portfolio?.providerStatus === 'moralis connected' ? 'moralis connected' : portfolio?.providerStatus
+                )}
+              </span>
+            )}
+            {(statusData?.prices.status === 'failed' || portfolio?.providers?.prices === 'failed') && (
+              <span className="text-[10px] font-mono font-normal text-red lowercase bg-red-soft px-1.5 py-0.5 rounded border border-red/20">
+                Prices failed
+              </span>
+            )}
+            {(statusData?.risk.status === 'partial' || portfolio?.providers?.risk === 'partial') && (
+              <span className="text-[10px] font-mono font-normal text-amber lowercase bg-amber-soft px-1.5 py-0.5 rounded border border-amber/20">
+                GoPlus partial
+              </span>
+            )}
+          </div>
         </div>
 
         
@@ -338,14 +355,16 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
              <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
                <span className="text-ink-2">Token balances</span>
                {statusData ? (
-                 <span className={statusData.tokenBalances.status === 'connected' ? 'text-green font-medium' : statusData.tokenBalances.status === 'failed' ? 'text-red font-medium' : 'text-amber font-medium'}>
-                   {statusData.tokenBalances.status === 'connected' 
-                     ? (statusData.tokenBalances.provider === 'moralis' ? 'Moralis connected' : statusData.tokenBalances.provider === 'alchemy' ? 'Alchemy connected' : 'Connected')
-                     : statusData.tokenBalances.status === 'failed' ? 'Failed' : 'Missing'}
-                 </span>
-               ) : (
-                 <span className="text-amber font-medium">Missing</span>
-               )}
+                  <span className={statusData.tokenBalances.status === 'connected' ? 'text-green font-medium' : statusData.tokenBalances.status === 'failed' ? 'text-red font-medium' : 'text-amber font-medium'}>
+                    {statusData.tokenBalances.status === 'connected' 
+                      ? (statusData.tokenBalances.provider === 'moralis' ? 'Moralis connected' : statusData.tokenBalances.provider === 'alchemy' ? 'Alchemy connected' : 'Connected')
+                      : statusData.tokenBalances.status === 'stale'
+                        ? (statusData.tokenBalances.provider === 'moralis' ? 'Moralis cached' : 'Cached')
+                        : statusData.tokenBalances.status === 'failed' ? (statusData.tokenBalances.provider === 'moralis' ? 'Moralis failed' : 'Failed') : 'Missing'}
+                  </span>
+                ) : (
+                  <span className="text-amber font-medium">Missing</span>
+                )}
              </div>
              <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
                 <span className="text-ink-2">Risk provider</span>
@@ -361,7 +380,7 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
                 <span className="text-ink-2">Price Provider</span>
                 {statusData ? (
                   <span className={statusData.prices.status === 'connected' ? 'text-green font-medium' : statusData.prices.status === 'failed' ? 'text-red font-medium' : 'text-amber font-medium'}>
-                    {statusData.prices.status === 'connected' ? `Connected (${statusData.prices.provider})` : statusData.prices.status === 'failed' ? 'Failed' : 'Missing'}
+                    {statusData.prices.status === 'connected' ? `Connected (${statusData.prices.provider})` : statusData.prices.status === 'failed' ? 'Price provider failed' : 'Missing'}
                   </span>
                 ) : (
                   <span className="text-amber font-medium">Missing</span>
@@ -656,9 +675,9 @@ function ActionInbox({ showToast, onSelectTab }: { showToast: (msg: string) => v
                                  </div>
                                )}
                                <div>
-                                 <span className="text-ink-3">Security provider: </span>
-                                 <span className="font-mono text-ink">{meta.analysis.securityProvider?.provider === 'goplus' ? (meta.analysis.securityProvider.status === 'failed' ? 'GoPlus failed' : 'GoPlus') : 'Missing'}</span>
-                               </div>
+                                  <span className="text-ink-3">Security provider: </span>
+                                  <span className="font-mono text-ink">{meta.analysis.securityProvider?.provider === 'goplus' ? (meta.analysis.securityProvider.status === 'failed' ? 'GoPlus failed' : meta.analysis.securityProvider.status === 'partial' ? 'GoPlus partial' : 'GoPlus') : 'Missing'}</span>
+                                </div>
                              </div>
                            )}
 
@@ -1158,7 +1177,7 @@ function AgentStream({ showToast, onSelectTab }: { showToast: (msg: string) => v
 }
 
 const COMMANDS = [
-  { id: 'swap', icon: '⚡', label: 'Swap tokens', tab: 'actions builder' },
+  { id: 'scan', icon: '⚡', label: 'Review tokens', tab: 'actions builder' },
   { id: 'scanner', icon: '📡', label: 'New scanner', tab: 'actions builder' },
   { id: 'positions', icon: '📈', label: 'Open positions', tab: 'main' },
   { id: 'memory', icon: '🧠', label: 'Edit memory', tab: 'history' },
@@ -1174,9 +1193,9 @@ function ActionsBuilder({ showToast }: { showToast: (msg: string) => void }) {
   const isMainnetReadonly = import.meta.env.VITE_CHAIN_ENV === 'mainnet-readonly';
 
   const presets = [
-    "Rebalance portfolio: Swap 0.1 ETH for USDC when gas is below 15 gwei",
-    "Monitor wallet for unauthorized spend permissions and revoke if found",
-    "Automate daily yield collection from Base liquidity pools"
+    "Create a read-only swap plan for 0.1 ETH to USDC",
+    "Create a recommendation to detect malicious token approvals",
+    "Create a read-only portfolio rebalance report"
   ];
 
   const handleCreate = () => {
@@ -1206,7 +1225,7 @@ function ActionsBuilder({ showToast }: { showToast: (msg: string) => void }) {
            <textarea 
              value={instruction}
              onChange={e => setInstruction(e.target.value)}
-             placeholder="e.g. swap 1 USDC to ETH..." 
+             placeholder="e.g. Review my Base token list and flag risky assets" 
              className="w-full mt-2 border border-line rounded-lg p-3 text-sm bg-bg resize-none h-[100px] text-ink focus:outline-none focus:border-accent font-mono" 
            />
          </div>
@@ -1381,13 +1400,17 @@ function ConfigurePage() {
          <div className="flex items-center justify-between py-1.5 border-b border-line">
            <span className="font-medium text-sm text-ink">Token Balances Provider</span>
            <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.tokenBalances.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.tokenBalances.status === 'failed' ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20'}`}>
-             {statusData ? (statusData.tokenBalances.status === 'connected' ? `${statusData.tokenBalances.provider} connected` : statusData.tokenBalances.status === 'failed' ? 'Failed' : 'Missing') : 'Checking...'}
+             {statusData ? (
+               statusData.tokenBalances.status === 'connected' ? `${statusData.tokenBalances.provider} connected` :
+               statusData.tokenBalances.status === 'stale' ? `${statusData.tokenBalances.provider || 'moralis'} cached` :
+               statusData.tokenBalances.status === 'failed' ? `${statusData.tokenBalances.provider || 'moralis'} failed` : 'Missing'
+             ) : 'Checking...'}
            </span>
          </div>
          <div className="flex items-center justify-between py-1.5 border-b border-line">
            <span className="font-medium text-sm text-ink">Price Provider</span>
            <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.prices.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.prices.status === 'failed' ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20'}`}>
-             {statusData ? (statusData.prices.status === 'connected' ? `${statusData.prices.provider} connected` : statusData.prices.status === 'failed' ? 'Failed' : 'Missing') : 'Checking...'}
+             {statusData ? (statusData.prices.status === 'connected' ? `${statusData.prices.provider} connected` : statusData.prices.status === 'failed' ? 'Price provider failed' : 'Missing') : 'Checking...'}
            </span>
          </div>
          <div className="flex items-center justify-between py-1.5 border-b border-line">

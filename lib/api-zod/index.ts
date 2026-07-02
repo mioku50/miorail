@@ -221,15 +221,16 @@ export const PortfolioTokenSchema = z.object({
   verified: z.boolean().optional(),
   possibleSpam: z.boolean().optional(),
   security: PortfolioTokenSecuritySchema.optional(),
+  dataFreshness: z.enum(["live", "cached"]).optional(),
 });
 
 export const PortfolioProvidersSchema = z.object({
   rpc: z.enum(["connected", "missing", "failed"]),
-  tokenBalances: z.enum(["connected", "missing", "failed"]),
+  tokenBalances: z.enum(["connected", "missing", "failed", "stale"]),
   tokenBalancesProvider: z.enum(["moralis", "alchemy", "mock", "none"]).optional(),
-  prices: z.enum(["connected", "missing", "failed"]),
+  prices: z.enum(["connected", "missing", "failed", "partial"]),
   priceProvider: z.enum(["coingecko", "moralis", "mock", "none"]).optional(),
-  risk: z.enum(["connected", "missing", "failed"]),
+  risk: z.enum(["connected", "missing", "failed", "partial"]),
   riskProvider: z.enum(["goplus", "none"]).optional(),
 });
 
@@ -250,15 +251,15 @@ export const StatusResponseSchema = z.object({
     provider: z.string(),
   }),
   tokenBalances: z.object({
-    status: z.enum(["connected", "missing", "failed"]),
+    status: z.enum(["connected", "missing", "failed", "stale"]),
     provider: z.string(),
   }),
   prices: z.object({
-    status: z.enum(["connected", "missing", "failed"]),
+    status: z.enum(["connected", "missing", "failed", "partial"]),
     provider: z.string(),
   }),
   risk: z.object({
-    status: z.enum(["connected", "missing", "failed"]),
+    status: z.enum(["connected", "missing", "failed", "partial"]),
     provider: z.string(),
   }),
   baseMcp: z.object({

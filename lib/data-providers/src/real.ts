@@ -73,10 +73,16 @@ type TokenSecurityCacheEntry = {
 };
 
 const tokenSecurityCache = new Map<string, TokenSecurityCacheEntry>();
-let tokenSecurityHealth: { providerName: 'goplus' | 'none'; statusCode: 'connected' | 'missing' | 'failed' } = {
+let tokenSecurityHealth: { providerName: 'goplus' | 'none'; statusCode: 'connected' | 'missing' | 'failed' | 'partial' } = {
   providerName: 'none',
   statusCode: 'missing'
 };
+
+export function setTokenSecurityHealthStatus(statusCode: 'connected' | 'missing' | 'failed' | 'partial') {
+  if (tokenSecurityHealth.providerName === 'goplus') {
+    tokenSecurityHealth.statusCode = statusCode;
+  }
+}
 
 export function clearTokenSecurityCacheForTests() {
   tokenSecurityCache.clear();
@@ -325,8 +331,12 @@ export function getTokenSecurityProviderFromEnv(): TokenSecurityProviderEnvResul
     return { provider: new NoneTokenSecurityProvider(), status: 'Token security provider not configured', statusCode: 'missing', providerName: 'none' };
   }
   if (mode === 'goplus') {
-    const statusCode = tokenSecurityHealth.providerName === 'goplus' && tokenSecurityHealth.statusCode === 'failed' ? 'failed' : 'connected';
-    return { provider: new GoPlusTokenSecurityProvider(process.env.GOPLUS_API_KEY), status: statusCode === 'failed' ? 'GoPlus failed' : 'GoPlus connected', statusCode, providerName: 'goplus' };
+    if (tokenSecurityHealth.providerName !== 'goplus') {
+      tokenSecurityHealth = { providerName: 'goplus', statusCode: 'connected' };
+    }
+    const statusCode = tokenSecurityHealth.statusCode;
+    const statusText = statusCode === 'failed' ? 'GoPlus failed' : statusCode === 'partial' ? 'GoPlus partial' : 'GoPlus connected';
+    return { provider: new GoPlusTokenSecurityProvider(process.env.GOPLUS_API_KEY), status: statusText, statusCode, providerName: 'goplus' };
   }
   if (mode === 'mock') {
     return { provider: new MockTokenSecurityProvider(), status: 'mock', statusCode: 'connected', providerName: 'goplus' };
@@ -410,36 +420,64 @@ export class AlchemyTokenBalancesProvider implements TokenBalancesProvider {
   }
 }
 
+function logMoralisDiagnostics(params: {
+  endpointType: 'balances' | 'prices';
+  walletAddress?: string;
+  chainId: number;
+  statusCode?: number;
+  tokenCount?: number;
+  durationMs: number;
+  errorMessage?: string;
+}) {
+  const shortAddr = params.walletAddress ? `${params.walletAddress.substring(0, 6)}...${params.walletAddress.substring(params.walletAddress.length - 4)}` : undefined;
+  const safeError = params.errorMessage ? params.errorMessage.replace(/([A-Za-z0-9_-]{20,})/g, '[REDACTED]') : undefined;
+  console.log(`[Moralis Diagnostics] endpoint=${params.endpointType} chainId=${params.chainId}${shortAddr ? ` wallet=${shortAddr}` : ''}${params.statusCode !== undefined ? ` status=${params.statusCode}` : ''}${params.tokenCount !== undefined ? ` count=${params.tokenCount}` : ''} durationMs=${params.durationMs}${safeError ? ` error="${safeError}"` : ''}`);
+}
+
 export class MoralisTokenBalancesProvider implements TokenBalancesProvider {
   constructor(private readonly apiKey?: string) {}
 
   async getTokenBalances(params: { address: string; chainId: number }): Promise<TokenBalance[]> {
-    if (!this.apiKey) throw new Error('Moralis API key missing');
+    const startTime = Date.now();
+    if (!this.apiKey) {
+      logMoralisDiagnostics({ endpointType: 'balances', walletAddress: params.address, chainId: params.chainId, durationMs: Date.now() - startTime, errorMessage: 'Moralis API key missing' });
+      throw new Error('Moralis API key missing');
+    }
     const chainParam = params.chainId === 84532 ? 'base%20sepolia' : 'base';
-    const res = await fetch(`https://deep-index.moralis.io/api/v2.2/${params.address}/erc20?chain=${chainParam}`, {
-      headers: {
-        'X-API-Key': this.apiKey,
-        'accept': 'application/json'
+    try {
+      const res = await fetch(`https://deep-index.moralis.io/api/v2.2/${params.address}/erc20?chain=${chainParam}`, {
+        headers: {
+          'X-API-Key': this.apiKey,
+          'accept': 'application/json'
+        }
+      });
+      if (!res.ok) {
+        throw new Error(`Moralis API error: ${res.statusText || res.status}`);
       }
-    });
-    if (!res.ok) throw new Error(`Moralis API error: ${res.statusText}`);
-    const data = await res.json() as Array<{ token_address: string; balance: string; decimals: number; symbol: string; name?: string; logo?: string; possible_spam?: boolean; verified_contract?: boolean }>;
-    return data.map(d => {
-      const decimals = typeof d.decimals === 'number' ? d.decimals : 18;
-      const balanceBigInt = BigInt(d.balance || '0');
-      const symbol = d.symbol || 'ERC20';
-      return {
-        symbol,
-        name: d.name || symbol,
-        address: d.token_address,
-        balance: balanceBigInt.toString(),
-        balanceFormatted: (Number(balanceBigInt) / Math.pow(10, decimals)).toFixed(4),
-        decimals,
-        logoUrl: d.logo || undefined,
-        verified: d.verified_contract || false,
-        possibleSpam: d.possible_spam || false
-      };
-    });
+      const data = await res.json() as Array<{ token_address: string; balance: string; decimals: number; symbol: string; name?: string; logo?: string; possible_spam?: boolean; verified_contract?: boolean }>;
+      const durationMs = Date.now() - startTime;
+      logMoralisDiagnostics({ endpointType: 'balances', walletAddress: params.address, chainId: params.chainId, statusCode: res.status, tokenCount: data.length, durationMs });
+      return data.map(d => {
+        const decimals = typeof d.decimals === 'number' ? d.decimals : 18;
+        const balanceBigInt = BigInt(d.balance || '0');
+        const symbol = d.symbol || 'ERC20';
+        return {
+          symbol,
+          name: d.name || symbol,
+          address: d.token_address,
+          balance: balanceBigInt.toString(),
+          balanceFormatted: (Number(balanceBigInt) / Math.pow(10, decimals)).toFixed(4),
+          decimals,
+          logoUrl: d.logo || undefined,
+          verified: d.verified_contract || false,
+          possibleSpam: d.possible_spam || false
+        };
+      });
+    } catch (err: any) {
+      const durationMs = Date.now() - startTime;
+      logMoralisDiagnostics({ endpointType: 'balances', walletAddress: params.address, chainId: params.chainId, durationMs, errorMessage: err?.message || 'Unknown error' });
+      throw err;
+    }
   }
 }
 
@@ -549,40 +587,54 @@ export class MoralisPriceProvider implements PriceProvider {
   constructor(private readonly apiKey?: string) {}
 
   async getTokenPrices(params: { chainId: number; tokens: { symbol: string; address?: string }[] }): Promise<TokenPrice[]> {
-    if (!this.apiKey) throw new Error('Moralis API key missing');
+    const startTime = Date.now();
+    if (!this.apiKey) {
+      logMoralisDiagnostics({ endpointType: 'prices', chainId: params.chainId, durationMs: Date.now() - startTime, errorMessage: 'Moralis API key missing' });
+      throw new Error('Moralis API key missing');
+    }
     const chainParam = params.chainId === 84532 ? 'base%20sepolia' : 'base';
     const results: TokenPrice[] = [];
+    let lastStatus: number | undefined = undefined;
 
-    for (const token of params.tokens) {
-      let addr = token.address;
-      if (!addr || token.symbol.toUpperCase() === 'ETH') {
-        addr = '0x4200000000000000000000000000000000000006'; // Base WETH
-      }
-      try {
-        const res = await fetch(`https://deep-index.moralis.io/api/v2.2/erc20/${addr}/price?chain=${chainParam}`, {
-          headers: { 'X-API-Key': this.apiKey, 'accept': 'application/json' }
-        });
-        if (!res.ok) {
-          if (res.status === 404 || res.status === 400) {
-            results.push({ symbol: token.symbol, address: token.address, usdPrice: undefined, source: 'none', confidence: 'unknown' });
-            continue;
-          }
-          throw new Error(`Moralis API error: ${res.statusText}`);
+    try {
+      for (const token of params.tokens) {
+        let addr = token.address;
+        if (!addr || token.symbol.toUpperCase() === 'ETH') {
+          addr = '0x4200000000000000000000000000000000000006'; // Base WETH
         }
-        const data = await res.json() as { usdPrice?: number };
-        if (typeof data.usdPrice === 'number') {
-          results.push({ symbol: token.symbol, address: token.address, usdPrice: data.usdPrice.toString(), source: 'moralis', confidence: 'high' });
-        } else {
+        try {
+          const res = await fetch(`https://deep-index.moralis.io/api/v2.2/erc20/${addr}/price?chain=${chainParam}`, {
+            headers: { 'X-API-Key': this.apiKey, 'accept': 'application/json' }
+          });
+          lastStatus = res.status;
+          if (!res.ok) {
+            if (res.status === 404 || res.status === 400) {
+              results.push({ symbol: token.symbol, address: token.address, usdPrice: undefined, source: 'none', confidence: 'unknown' });
+              continue;
+            }
+            throw new Error(`Moralis API error: ${res.statusText || res.status}`);
+          }
+          const data = await res.json() as { usdPrice?: number };
+          if (typeof data.usdPrice === 'number') {
+            results.push({ symbol: token.symbol, address: token.address, usdPrice: data.usdPrice.toString(), source: 'moralis', confidence: 'high' });
+          } else {
+            results.push({ symbol: token.symbol, address: token.address, usdPrice: undefined, source: 'none', confidence: 'unknown' });
+          }
+        } catch (err: any) {
+          if (err.message?.includes('Moralis API error')) {
+            throw err;
+          }
           results.push({ symbol: token.symbol, address: token.address, usdPrice: undefined, source: 'none', confidence: 'unknown' });
         }
-      } catch (err: any) {
-        if (err.message?.includes('Moralis API error')) {
-          throw err;
-        }
-        results.push({ symbol: token.symbol, address: token.address, usdPrice: undefined, source: 'none', confidence: 'unknown' });
       }
+      const durationMs = Date.now() - startTime;
+      logMoralisDiagnostics({ endpointType: 'prices', chainId: params.chainId, statusCode: lastStatus, tokenCount: results.length, durationMs });
+      return results;
+    } catch (err: any) {
+      const durationMs = Date.now() - startTime;
+      logMoralisDiagnostics({ endpointType: 'prices', chainId: params.chainId, statusCode: lastStatus, durationMs, errorMessage: err?.message || 'Unknown error' });
+      throw err;
     }
-    return results;
   }
 }
 
