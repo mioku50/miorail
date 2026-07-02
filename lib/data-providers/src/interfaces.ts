@@ -22,6 +22,8 @@ export interface TokenBalance {
   balanceFormatted: string;
   decimals?: number;
   usdValue?: string;
+  usdPrice?: string;
+  priceConfidence?: "high" | "medium" | "low" | "unknown";
   logoUrl?: string;
   verified?: boolean;
   possibleSpam?: boolean;
@@ -33,4 +35,23 @@ export interface TokenBalancesProvider {
     chainId: number;
   }): Promise<TokenBalance[]>;
 }
+
+export interface TokenPrice {
+  symbol: string;
+  address?: string;
+  usdPrice?: string;
+  source: "coingecko" | "moralis" | "alchemy" | "none";
+  confidence: "high" | "medium" | "low" | "unknown";
+}
+
+export interface PriceProvider {
+  getTokenPrices(params: {
+    chainId: number;
+    tokens: {
+      symbol: string;
+      address?: string;
+    }[];
+  }): Promise<TokenPrice[]>;
+}
+
 

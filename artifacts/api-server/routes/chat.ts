@@ -204,7 +204,7 @@ chatRouter.post('/', async (req, res, next) => {
         metadata,
         createdAt: new Date(),
         updatedAt: new Date()
-      });
+      }).onConflictDoNothing();
 
       const assistantMsg = {
         chatId,

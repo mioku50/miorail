@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { StatusResponseSchema } from '@mioagent/api-zod';
-import { getTokenBalancesProviderFromEnv } from '@mioagent/data-providers';
+import { getTokenBalancesProviderFromEnv, getPriceProviderFromEnv } from '@mioagent/data-providers';
 
 export function getSystemStatus(envOverride?: string) {
   const chainEnv = envOverride || process.env.CHAIN_ENV || 'sepolia';
@@ -28,8 +28,10 @@ export function getSystemStatus(envOverride?: string) {
     tokenStatus = 'missing';
   }
 
-  const priceProvider = process.env.COINGECKO_API_KEY || process.env.PRICE_PROVIDER === 'coingecko' ? 'coingecko' : 'none';
-  const priceStatus: "connected" | "missing" | "failed" = priceProvider !== 'none' ? "connected" : "missing";
+  const { providerName: priceProviderName } = getPriceProviderFromEnv();
+  const priceProvider = priceProviderName;
+  const priceStatus: "connected" | "missing" | "failed" = priceProviderName !== 'none' ? "connected" : "missing";
+
 
   const riskProvider = process.env.GOPLUS_API_KEY || process.env.RISK_PROVIDER === 'goplus' ? 'goplus' : 'none';
   const riskStatus: "connected" | "missing" | "failed" = riskProvider !== 'none' ? "connected" : "missing";

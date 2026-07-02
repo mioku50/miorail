@@ -1,4 +1,4 @@
-import { MoralisProvider, CoinGeckoProvider, DeFiLlamaProvider, GoPlusProvider, TokenBalancesProvider, TokenBalance } from './interfaces.js';
+import { MoralisProvider, CoinGeckoProvider, DeFiLlamaProvider, GoPlusProvider, TokenBalancesProvider, TokenBalance, PriceProvider, TokenPrice } from './interfaces.js';
 
 export class MockMoralisProvider implements MoralisProvider {
   async getWalletTokenBalances(_address: string) {
@@ -7,6 +7,7 @@ export class MockMoralisProvider implements MoralisProvider {
     ];
   }
 }
+
 
 export class MockCoinGeckoProvider implements CoinGeckoProvider {
   async getSimplePrice(ids: string[], vsCurrencies: string[]) {
@@ -55,4 +56,19 @@ export class MockTokenBalancesProvider implements TokenBalancesProvider {
     ];
   }
 }
+
+export class MockPriceProvider implements PriceProvider {
+  async getTokenPrices(params: { chainId: number; tokens: { symbol: string; address?: string }[] }): Promise<TokenPrice[]> {
+    return params.tokens.map(t => {
+      if (t.symbol === 'ETH' || t.symbol === 'WETH') {
+        return { symbol: t.symbol, address: t.address, usdPrice: '3000.00', source: 'coingecko', confidence: 'high' };
+      }
+      if (t.symbol === 'USDC') {
+        return { symbol: t.symbol, address: t.address, usdPrice: '1.00', source: 'coingecko', confidence: 'high' };
+      }
+      return { symbol: t.symbol, address: t.address, usdPrice: undefined, source: 'none', confidence: 'unknown' };
+    });
+  }
+}
+
 

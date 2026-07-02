@@ -189,6 +189,8 @@ export const PortfolioTokenSchema = z.object({
   balanceFormatted: z.string(),
   decimals: z.number().optional(),
   usdValue: z.string().optional(),
+  usdPrice: z.string().optional(),
+  priceConfidence: z.enum(["high", "medium", "low", "unknown"]).optional(),
   logoUrl: z.string().optional(),
   verified: z.boolean().optional(),
   possibleSpam: z.boolean().optional(),
@@ -199,8 +201,10 @@ export const PortfolioProvidersSchema = z.object({
   tokenBalances: z.enum(["connected", "missing", "failed"]),
   tokenBalancesProvider: z.enum(["moralis", "alchemy", "mock", "none"]).optional(),
   prices: z.enum(["connected", "missing", "failed"]),
+  priceProvider: z.enum(["coingecko", "moralis", "mock", "none"]).optional(),
   risk: z.enum(["connected", "missing", "failed"]),
 });
+
 
 export const PortfolioResponseSchema = z.object({
   totalUsdValue: z.string().optional(),

@@ -21,6 +21,6 @@ export async function insertAction(userId: string, kind: string, instruction: st
     updatedAt: new Date()
   };
 
-  await db.insert(actions).values(newAction);
+  await db.insert(actions).values(newAction).onConflictDoNothing();
   return newAction;
 }

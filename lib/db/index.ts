@@ -15,7 +15,7 @@ if (!url) {
 
 const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   let attempt = 0;
-  while (attempt < 3) {
+  while (attempt < 5) {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
@@ -26,8 +26,8 @@ const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promis
     } catch (e: any) {
       attempt++;
       console.warn(`[Neon DB] fetch attempt ${attempt} failed: ${e.message}`);
-      if (attempt >= 3) throw e;
-      await new Promise(r => setTimeout(r, 1000 * attempt));
+      if (attempt >= 5) throw e;
+      await new Promise(r => setTimeout(r, 2000 * attempt));
     }
   }
   throw new Error('Unreachable');

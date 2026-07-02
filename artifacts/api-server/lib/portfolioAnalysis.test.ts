@@ -1,6 +1,6 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert';
-import { analyzePortfolioForRisk, buildRecommendationMetadataFromAnalysis, type PortfolioData } from './portfolioAnalysis.js';
+import { analyzePortfolioForRisk, buildRecommendationMetadataFromAnalysis, fetchInternalPortfolio, type PortfolioData } from './portfolioAnalysis.js';
 
 describe('Portfolio Risk Analysis Utility', () => {
   test('analyzePortfolioForRisk flags spam token as high risk', () => {
@@ -103,6 +103,66 @@ describe('Portfolio Risk Analysis Utility', () => {
     assert.strictEqual(analysis.tokenFindings.length, 10);
   });
 
+  test('analyzePortfolioForRisk ranks findings by USD value within same risk tier', () => {
+    const mockPortfolio: PortfolioData = {
+      totalUsdValue: '1500.00',
+      updatedAt: new Date().toISOString(),
+      providerStatus: 'connected',
+      providers: {
+        rpc: 'connected',
+        tokenBalances: 'connected',
+        tokenBalancesProvider: 'moralis',
+        prices: 'connected',
+        priceProvider: 'coingecko',
+        risk: 'connected'
+      },
+      tokens: [
+        {
+          symbol: 'SMALL',
+          name: 'Small Coin',
+          address: '0x1000000000000000000000000000000000000001',
+          balance: '10000000000000000000',
+          balanceFormatted: '10.0000',
+          usdValue: '10.00',
+          verified: true,
+          possibleSpam: false
+        },
+        {
+          symbol: 'LARGE',
+          name: 'Large Coin',
+          address: '0x2000000000000000000000000000000000000002',
+          balance: '1000000000000000000000',
+          balanceFormatted: '1000.0000',
+          usdValue: '1490.00',
+          verified: true,
+          possibleSpam: false
+        }
+      ]
+    };
+
+    const analysis = analyzePortfolioForRisk(mockPortfolio, '0x123', 'mainnet-readonly');
+    assert.strictEqual(analysis.tokenFindings.length, 2);
+    assert.strictEqual(analysis.tokenFindings[0].symbol, 'LARGE');
+    assert.strictEqual(analysis.tokenFindings[1].symbol, 'SMALL');
+  });
+
+  test('fetchInternalPortfolio computes USD values when mock price provider is configured', async () => {
+    const origPriceProvider = process.env.PRICE_PROVIDER;
+    const origBalancesProvider = process.env.TOKEN_BALANCES_PROVIDER;
+    process.env.PRICE_PROVIDER = 'mock';
+    process.env.TOKEN_BALANCES_PROVIDER = 'mock';
+
+    try {
+      const portfolio = await fetchInternalPortfolio('0x123', 'sepolia');
+      assert.strictEqual(portfolio.providers?.priceProvider, 'mock');
+      assert.ok(portfolio.totalUsdValue);
+      assert.ok(Number(portfolio.totalUsdValue) > 0);
+    } finally {
+      process.env.PRICE_PROVIDER = origPriceProvider;
+      process.env.TOKEN_BALANCES_PROVIDER = origBalancesProvider;
+    }
+  });
+
   test('buildRecommendationMetadataFromAnalysis creates complete metadata with blocked safetyState', () => {
     const mockAnalysis = {
       summary: 'Detected 1 suspicious tokens',
@@ -112,7 +172,11 @@ describe('Portfolio Risk Analysis Utility', () => {
         tokenCount: 2,
         visibleTokenCount: 2,
         suspiciousTokenCount: 1,
-        provider: 'moralis'
+        provider: 'moralis',
+        priceProvider: 'coingecko',
+        totalUsdValue: '100.00',
+        pricedTokenCount: 1,
+        unpricedTokenCount: 1
       },
       tokenFindings: [],
       suggestedNextSteps: ['Monitor']
@@ -133,3 +197,4 @@ describe('Portfolio Risk Analysis Utility', () => {
     assert.deepStrictEqual(meta.analysis, mockAnalysis);
   });
 });
+

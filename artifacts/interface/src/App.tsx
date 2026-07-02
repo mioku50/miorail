@@ -188,9 +188,16 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
 
           <>
             <div className="flex items-baseline mb-4 flex-col">
-              <div className="text-[30px] font-bold tracking-tight font-mono text-ink">{ethBalance} <span className="text-[16px] text-ink-2">ETH</span></div>
+              {portfolio?.totalUsdValue ? (
+                <div className="text-[28px] font-bold tracking-tight font-mono text-ink mb-1">
+                  ${portfolio.totalUsdValue} <span className="text-[14px] font-normal text-ink-3">total USD</span>
+                </div>
+              ) : null}
+              <div className={`${portfolio?.totalUsdValue ? 'text-[20px]' : 'text-[30px]'} font-bold tracking-tight font-mono text-ink`}>
+                {ethBalance} <span className={`${portfolio?.totalUsdValue ? 'text-[14px]' : 'text-[16px]'} text-ink-2`}>ETH</span>
+              </div>
               {usdcBalance && !isMainnetReadonly && (
-                 <div className="text-[20px] font-bold tracking-tight font-mono text-ink mt-1">{usdcBalance} <span className="text-[14px] text-ink-2">testnet-USDC</span></div>
+                 <div className="text-[18px] font-bold tracking-tight font-mono text-ink mt-1">{usdcBalance} <span className="text-[14px] text-ink-2">testnet-USDC</span></div>
               )}
             </div>
 
@@ -215,7 +222,12 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <span className="font-mono font-medium">{token.balanceFormatted}</span>
+                      <div className="flex flex-col items-end">
+                        <span className="font-mono font-medium">{token.balanceFormatted}</span>
+                        {token.usdValue && (
+                          <span className="font-mono text-[11px] text-ink-3">${token.usdValue}</span>
+                        )}
+                      </div>
                       {token.address && token.address !== 'native' && (
                         <a href={`${explorerBaseUrl}/token/${token.address}?a=${address}`} target="_blank" rel="noopener noreferrer" className="text-accent text-[11px] hover:underline font-mono" title="View on BaseScan">↗</a>
                       )}
@@ -294,25 +306,25 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
                )}
              </div>
              <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
-               <span className="text-ink-2">GoPlus</span>
-               {statusData ? (
-                 <span className={statusData.risk.status === 'connected' ? 'text-green font-medium' : statusData.risk.status === 'failed' ? 'text-red font-medium' : 'text-amber font-medium'}>
-                   {statusData.risk.status === 'connected' ? 'Connected' : statusData.risk.status === 'failed' ? 'Failed' : 'Missing'}
-                 </span>
-               ) : (
-                 <span className="text-amber font-medium">Missing</span>
-               )}
-             </div>
-             <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
-               <span className="text-ink-2">DeFiLlama/CoinGecko</span>
-               {statusData ? (
-                 <span className={statusData.prices.status === 'connected' ? 'text-green font-medium' : statusData.prices.status === 'failed' ? 'text-red font-medium' : 'text-amber font-medium'}>
-                   {statusData.prices.status === 'connected' ? 'Connected' : statusData.prices.status === 'failed' ? 'Failed' : 'Missing'}
-                 </span>
-               ) : (
-                 <span className="text-amber font-medium">Missing</span>
-               )}
-             </div>
+                <span className="text-ink-2">GoPlus</span>
+                {statusData ? (
+                  <span className={statusData.risk.status === 'connected' ? 'text-green font-medium' : statusData.risk.status === 'failed' ? 'text-red font-medium' : 'text-amber font-medium'}>
+                    {statusData.risk.status === 'connected' ? 'Connected' : statusData.risk.status === 'failed' ? 'Failed' : 'Missing'}
+                  </span>
+                ) : (
+                  <span className="text-amber font-medium">Missing</span>
+                )}
+              </div>
+              <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
+                <span className="text-ink-2">Price Provider</span>
+                {statusData ? (
+                  <span className={statusData.prices.status === 'connected' ? 'text-green font-medium' : statusData.prices.status === 'failed' ? 'text-red font-medium' : 'text-amber font-medium'}>
+                    {statusData.prices.status === 'connected' ? `Connected (${statusData.prices.provider})` : statusData.prices.status === 'failed' ? 'Failed' : 'Missing'}
+                  </span>
+                ) : (
+                  <span className="text-amber font-medium">Missing</span>
+                )}
+              </div>
              <div className="flex items-center justify-between py-1 text-[12px]">
                <span className="text-ink-2">Base MCP</span>
                {statusData ? (
@@ -563,6 +575,12 @@ function ActionInbox({ showToast, onSelectTab }: { showToast: (msg: string) => v
                            
                            {meta.analysis.portfolioSnapshot && (
                              <div className="flex flex-wrap gap-3 bg-bg p-2.5 rounded border border-line text-[11px]">
+                               {meta.analysis.portfolioSnapshot.totalUsdValue && (
+                                 <div>
+                                   <span className="text-ink-3">Total Value: </span>
+                                   <span className="font-semibold text-ink">${meta.analysis.portfolioSnapshot.totalUsdValue}</span>
+                                 </div>
+                               )}
                                <div>
                                  <span className="text-ink-3">Total Tokens: </span>
                                  <span className="font-semibold text-ink">{meta.analysis.portfolioSnapshot.tokenCount}</span>
@@ -577,6 +595,12 @@ function ActionInbox({ showToast, onSelectTab }: { showToast: (msg: string) => v
                                  <span className="text-ink-3">Provider: </span>
                                  <span className="font-mono text-ink">{meta.analysis.portfolioSnapshot.provider}</span>
                                </div>
+                               {meta.analysis.portfolioSnapshot.priceProvider && (
+                                 <div>
+                                   <span className="text-ink-3">Prices: </span>
+                                   <span className="font-mono text-ink">{meta.analysis.portfolioSnapshot.priceProvider}</span>
+                                 </div>
+                               )}
                              </div>
                            )}
 
@@ -597,7 +621,11 @@ function ActionInbox({ showToast, onSelectTab }: { showToast: (msg: string) => v
                                        <div className="flex items-center justify-between gap-2">
                                          <div className="flex items-center gap-1.5 font-bold text-ink">
                                            <span>{finding.symbol}</span>
-                                           {finding.balanceFormatted && <span className="font-normal font-mono text-ink-3">({finding.balanceFormatted})</span>}
+                                           {finding.balanceFormatted && (
+                                              <span className="font-normal font-mono text-ink-3">
+                                                ({finding.balanceFormatted}{finding.usdValue ? ` ~ $${finding.usdValue}` : ''})
+                                              </span>
+                                            )}
                                          </div>
                                          <div className="flex items-center gap-1.5">
                                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase border ${fRiskColor}`}>
@@ -1284,7 +1312,7 @@ function ConfigurePage() {
            </span>
          </div>
          <div className="flex items-center justify-between py-1.5 border-b border-line">
-           <span className="font-medium text-sm text-ink">Price / CoinGecko Provider</span>
+           <span className="font-medium text-sm text-ink">Price Provider</span>
            <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.prices.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.prices.status === 'failed' ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20'}`}>
              {statusData ? (statusData.prices.status === 'connected' ? `${statusData.prices.provider} connected` : statusData.prices.status === 'failed' ? 'Failed' : 'Missing') : 'Checking...'}
            </span>

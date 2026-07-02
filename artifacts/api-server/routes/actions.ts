@@ -196,7 +196,7 @@ actionsRouter.post('/recommend', async (req, res, next) => {
       metadata,
       createdAt: new Date(),
       updatedAt: new Date()
-    });
+    }).onConflictDoNothing();
 
     res.json({ success: true, actionId });
 
@@ -417,7 +417,7 @@ actionsRouter.post('/:actionId/regenerate', async (req, res, next) => {
       metadata: newMeta,
       createdAt: new Date(),
       updatedAt: new Date()
-    });
+    }).onConflictDoNothing();
 
     await db.update(actions)
       .set({ status: 'dismissed', updatedAt: new Date() })

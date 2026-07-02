@@ -280,7 +280,11 @@ test('Actions API', async (t) => {
   await t.test('POST /api/actions/:actionId/regenerate creates new recommendation and dismisses old', async () => {
     const mockSelect = mock.fn(() => ({ from: mock.fn(() => ({ where: mock.fn(async () => [{ id: 'act-1', userId: 'default-user', kind: 'recommendation', status: 'pending', suggestedPrompt: 'Test Prompt', metadata: { createdBy: 'agent-stream' } }]) })) }));
     mock.method(db, 'select', mockSelect);
-    const mockInsert = mock.fn(() => ({ values: mock.fn(async () => []) }));
+    const mockInsert = mock.fn(() => ({
+      values: mock.fn(() => ({
+        onConflictDoNothing: mock.fn(async () => [])
+      }))
+    }));
     mock.method(db, 'insert', mockInsert);
     const mockUpdate = mock.fn(() => ({ set: mock.fn(() => ({ where: mock.fn(async () => []) })) }));
     mock.method(db, 'update', mockUpdate);

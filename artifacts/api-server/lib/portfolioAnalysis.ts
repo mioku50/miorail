@@ -1,4 +1,4 @@
-import { getTokenBalancesProviderFromEnv } from '@mioagent/data-providers';
+import { getTokenBalancesProviderFromEnv, getPriceProviderFromEnv } from '@mioagent/data-providers';
 
 export interface TokenInfo {
   symbol: string;
@@ -8,13 +8,15 @@ export interface TokenInfo {
   balanceFormatted: string;
   decimals?: number;
   usdValue?: string;
+  usdPrice?: string;
+  priceConfidence?: "high" | "medium" | "low" | "unknown";
   logoUrl?: string;
   verified?: boolean;
   possibleSpam?: boolean;
 }
 
 export interface PortfolioData {
-  totalUsdValue: string;
+  totalUsdValue?: string;
   tokens: TokenInfo[];
   updatedAt: string;
   providerStatus: string;
@@ -23,6 +25,7 @@ export interface PortfolioData {
     tokenBalances: string;
     tokenBalancesProvider: string;
     prices: string;
+    priceProvider?: string;
     risk: string;
   };
 }
@@ -32,6 +35,8 @@ export interface TokenFinding {
   name?: string;
   address?: string;
   balanceFormatted?: string;
+  usdValue?: string;
+  priceStatus?: string;
   risk: "low" | "medium" | "high" | "unknown";
   reason: string;
   suggestedHandling: "monitor" | "ignore" | "verify" | "review-permissions" | "keep-watchlist";
@@ -46,11 +51,16 @@ export interface PortfolioRiskAnalysis {
     visibleTokenCount: number;
     suspiciousTokenCount: number;
     provider: string;
+    priceProvider?: string;
+    totalUsdValue?: string;
+    pricedTokenCount: number;
+    unpricedTokenCount: number;
     providerStatus?: string;
   };
   tokenFindings: TokenFinding[];
   suggestedNextSteps: string[];
 }
+
 
 export async function fetchInternalPortfolio(address: string, chainEnv: string = 'sepolia'): Promise<PortfolioData> {
   const chainId = chainEnv === 'sepolia' ? 84532 : 8453;
@@ -90,7 +100,7 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
       address: 'native',
       balance,
       balanceFormatted,
-      usdValue: '0.00',
+      usdValue: undefined,
       verified: true,
       possibleSpam: false,
     }
@@ -111,7 +121,9 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
           balance: tb.balance,
           balanceFormatted: tb.balanceFormatted,
           decimals: tb.decimals,
-          usdValue: tb.usdValue || '0.00',
+          usdValue: tb.usdValue || undefined,
+          usdPrice: tb.usdPrice || undefined,
+          priceConfidence: tb.priceConfidence || undefined,
           logoUrl: tb.logoUrl,
           verified: tb.verified,
           possibleSpam: tb.possibleSpam,
@@ -126,18 +138,58 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
     }
   }
 
-  let totalUsd = 0;
-  for (const t of tokens) {
-    if (t.usdValue && !isNaN(Number(t.usdValue))) {
-      totalUsd += Number(t.usdValue);
+  const { provider: priceProvider, status: priceStatusText, providerName: priceProviderName } = getPriceProviderFromEnv();
+  let pricesStatus: "connected" | "missing" | "failed" = priceProviderName === "none" ? "missing" : "connected";
+
+  if (priceProvider && priceProviderName !== 'none') {
+    try {
+      const prices = await priceProvider.getTokenPrices({ chainId, tokens });
+      const priceMap = new Map(prices.map(p => [(p.address || p.symbol).toLowerCase(), p]));
+      for (const t of tokens) {
+        const key = (t.address === 'native' || !t.address ? 'ETH' : t.address).toLowerCase();
+        const p = priceMap.get(key) || priceMap.get(t.symbol.toLowerCase());
+        if (p && p.usdPrice && !isNaN(Number(p.usdPrice))) {
+          t.usdPrice = p.usdPrice;
+          t.priceConfidence = p.confidence;
+          const val = Number(t.balanceFormatted) * Number(p.usdPrice);
+          t.usdValue = val.toFixed(2);
+        } else if (!t.usdValue && !t.usdPrice) {
+          t.usdPrice = undefined;
+          t.usdValue = undefined;
+          t.priceConfidence = "unknown";
+        }
+      }
+    } catch (err) {
+      pricesStatus = "failed";
+      if (tokenBalancesStatus !== 'failed') {
+        providerStatus = `Price provider (${priceProviderName}) failed to fetch prices. Showing token balances without USD values.`;
+      }
+    }
+  } else {
+    for (const t of tokens) {
+      if (t.usdValue === '0.00' && !t.usdPrice) {
+        t.usdValue = undefined;
+      }
     }
   }
 
-  const pricesStatus: "connected" | "missing" | "failed" = process.env.COINGECKO_API_KEY || process.env.PRICE_PROVIDER ? "connected" : "missing";
+  let totalUsd = 0;
+  let pricedCount = 0;
+  for (const t of tokens) {
+    if (t.usdValue && !isNaN(Number(t.usdValue))) {
+      const val = Number(t.usdValue);
+      if (val > 0 || t.usdPrice || t.balanceFormatted === '0.0000' || t.usdValue !== '0.00') {
+        totalUsd += val;
+        pricedCount++;
+      }
+    }
+  }
+
+  const totalUsdValue = pricedCount > 0 ? totalUsd.toFixed(2) : undefined;
   const riskStatus: "connected" | "missing" | "failed" = process.env.GOPLUS_API_KEY || process.env.RISK_PROVIDER ? "connected" : "missing";
 
   return {
-    totalUsdValue: totalUsd.toFixed(2),
+    totalUsdValue,
     tokens,
     updatedAt: new Date().toISOString(),
     providerStatus,
@@ -146,10 +198,12 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
       tokenBalances: tokenBalancesStatus,
       tokenBalancesProvider: providerName,
       prices: pricesStatus,
+      priceProvider: priceProviderName,
       risk: riskStatus,
     }
   };
 }
+
 
 export function analyzePortfolioForRisk(
   portfolio: PortfolioData,
@@ -183,16 +237,16 @@ export function analyzePortfolioForRisk(
         reason = "Symbol or name contains suspicious URL or claim keyword.";
         suggestedHandling = "ignore";
       } else {
-        reason = "Large unexplained balance with no price or verification metadata.";
+        reason = "Large unexplained balance with no price or verification metadata (low-confidence asset).";
         suggestedHandling = "review-permissions";
       }
     } else if (isKnownStable && (t.verified || !t.possibleSpam)) {
       risk = "low";
-      reason = "Verified well-known token on Base network.";
+      reason = !noPrice ? `Verified well-known token on Base network with confirmed USD value ($${t.usdValue}).` : "Verified well-known token on Base network.";
       suggestedHandling = "keep-watchlist";
     } else if (noPrice && !t.verified) {
       risk = "medium";
-      reason = "Unverified token with missing price or logo metadata.";
+      reason = "Unverified token with missing USD price or logo metadata (low-confidence asset).";
       suggestedHandling = "verify";
     } else if (!t.logoUrl && (!t.name || t.symbol.length > 10)) {
       risk = "medium";
@@ -200,7 +254,7 @@ export function analyzePortfolioForRisk(
       suggestedHandling = "verify";
     } else if (t.verified || !noPrice) {
       risk = "low";
-      reason = "Token has price metadata and no suspicious indicators.";
+      reason = !noPrice ? `Token has confirmed USD price ($${t.usdValue}) and no suspicious indicators.` : "Token has price metadata and no suspicious indicators.";
       suggestedHandling = "monitor";
     }
 
@@ -209,6 +263,8 @@ export function analyzePortfolioForRisk(
       name: t.name,
       address: t.address,
       balanceFormatted: t.balanceFormatted,
+      usdValue: !noPrice ? t.usdValue : undefined,
+      priceStatus: noPrice ? "missing" : undefined,
       risk,
       reason,
       suggestedHandling
@@ -216,14 +272,31 @@ export function analyzePortfolioForRisk(
   }
 
   const riskOrder: Record<string, number> = { high: 0, medium: 1, unknown: 2, low: 3 };
-  findings.sort((a, b) => (riskOrder[a.risk] ?? 4) - (riskOrder[b.risk] ?? 4));
+  findings.sort((a, b) => {
+    const rDiff = (riskOrder[a.risk] ?? 4) - (riskOrder[b.risk] ?? 4);
+    if (rDiff !== 0) return rDiff;
+    const aVal = a.usdValue && !isNaN(Number(a.usdValue)) ? Number(a.usdValue) : 0;
+    const bVal = b.usdValue && !isNaN(Number(b.usdValue)) ? Number(b.usdValue) : 0;
+    return bVal - aVal;
+  });
 
   const suspiciousTokens = findings.filter(f => f.risk === 'high' || f.risk === 'medium');
   const suspiciousTokenCount = suspiciousTokens.length;
   const tokenCount = tokens.length;
   const visibleTokenCount = tokens.length;
   const provider = portfolio.providers?.tokenBalancesProvider || "none";
+  const priceProvider = portfolio.providers?.priceProvider || portfolio.providers?.prices || "none";
   const chain = (chainEnv === 'mainnet-readonly' || chainEnv === 'mainnet') ? "base-mainnet" : "base-sepolia";
+
+  let pricedTokenCount = 0;
+  let unpricedTokenCount = 0;
+  for (const t of tokens) {
+    if ((t.usdValue && !isNaN(Number(t.usdValue)) && Number(t.usdValue) > 0) || (t.usdValue === '0.00' && t.usdPrice) || (t.usdValue && t.usdValue !== '0.00')) {
+      pricedTokenCount++;
+    } else {
+      unpricedTokenCount++;
+    }
+  }
 
   let summary: string;
   if (suspiciousTokenCount > 0) {
@@ -232,7 +305,13 @@ export function analyzePortfolioForRisk(
     summary = `Reviewed ${tokenCount} Base portfolio assets. All tokens appear low-risk or verified with no suspicious indicators. No execution is possible in read-only mode.`;
   }
 
+  const isPriceMissing = portfolio.providers?.prices === "missing" || priceProvider === "none" || priceProvider === "missing";
+  const priceStep = isPriceMissing
+    ? "Price provider is missing, so value-based ranking is limited."
+    : "Ranked findings using available USD values.";
+
   const suggestedNextSteps = [
+    priceStep,
     "Review permissions and consider ignoring high-risk or unverified tokens in your wallet interface.",
     "Do not visit web URLs or claim links found in token symbols or names.",
     "Verify token contract addresses on BaseScan before interacting or approving spend permissions."
@@ -247,6 +326,10 @@ export function analyzePortfolioForRisk(
       visibleTokenCount,
       suspiciousTokenCount,
       provider,
+      priceProvider,
+      totalUsdValue: portfolio.totalUsdValue,
+      pricedTokenCount,
+      unpricedTokenCount,
       providerStatus: portfolio.providerStatus
     },
     tokenFindings: findings.slice(0, 10),
@@ -285,9 +368,10 @@ export function buildRecommendationMetadataFromAnalysis(input: {
     walletAddress: walletAddress,
     providerContext: providerContext || {
       tokenBalances: analysis.portfolioSnapshot.provider,
-      prices: "missing",
+      prices: analysis.portfolioSnapshot.priceProvider || "missing",
       risk: "missing"
     },
     analysis: analysis
   };
 }
+
