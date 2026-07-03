@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useAccount } from 'wagmi';
 import { useChatHistory, useSendMessage, useClearChatHistory } from '@mioagent/api-client-react';
 import { useUiStore } from '../../lib/state';
+import { useNetworkLabel } from '../../lib/useNetworkLabel';
 import { ChatMessage } from './ChatMessage';
 import { AgentComposer } from './AgentComposer';
 
@@ -19,6 +20,7 @@ export function AgentStream() {
   const sendMessageMutation = useSendMessage();
   const clearChat = useClearChatHistory();
   const showToast = useUiStore((s) => s.showToast);
+  const { label: networkLabel } = useNetworkLabel();
   const [input, setInput] = useState('');
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -78,7 +80,7 @@ export function AgentStream() {
           <span className="text-base">💬</span>
           <span className="text-[11px] font-bold tracking-wider uppercase text-ink-3 [writing-mode:vertical-rl] rotate-180 py-2">Agent</span>
         </button>
-        <div className="w-2.5 h-2.5 rounded-full bg-green animate-pulse" title="Agent Ready" />
+        <div className="w-2.5 h-2.5 rounded-full bg-ok animate-pulse" title="Agent Ready" />
       </aside>
     );
   }
@@ -88,15 +90,15 @@ export function AgentStream() {
       {/* Header */}
       <div className="px-4 py-3 border-b border-line bg-panel flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2.5">
-          <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${sendMessageMutation.isPending ? 'bg-amber animate-ping' : sendMessageMutation.isError ? 'bg-red' : 'bg-green animate-pulse'}`} title="Status" />
+          <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${sendMessageMutation.isPending ? 'bg-warn animate-ping' : sendMessageMutation.isError ? 'bg-risk' : 'bg-ok animate-pulse'}`} title="Status" />
           <div>
             <div className="text-sm font-bold text-ink flex items-center gap-2">
               <span>Agent Stream</span>
-              <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${sendMessageMutation.isPending ? 'bg-amber-soft text-amber' : sendMessageMutation.isError ? 'bg-red-soft text-red' : 'bg-green-soft text-green'}`}>
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${sendMessageMutation.isPending ? 'bg-warn-soft text-warn' : sendMessageMutation.isError ? 'bg-risk-soft text-risk' : 'bg-ok-soft text-ok'}`}>
                 {sendMessageMutation.isPending ? 'Thinking...' : sendMessageMutation.isError ? 'Error' : displayMessages.some((m: any) => m.role === 'assistant' && (m.actionId || m.metadata?.actionId)) ? 'Recommendation created' : 'Ready'}
               </span>
             </div>
-            <div className="text-[11px] text-ink-3 font-medium">Base Mainnet · Read-only {address ? '· Connected' : ''}</div>
+            <div className="text-[11px] text-ink-3 font-medium">{networkLabel} {address ? '· Connected' : ''}</div>
           </div>
         </div>
         <div className="flex items-center gap-1.5">
@@ -143,7 +145,7 @@ export function AgentStream() {
         )}
 
         {displayMessages.map((m: any, i: number) => (
-          <ChatMessage key={i} m={m} />
+          <ChatMessage key={i} m={m} networkLabel={networkLabel} />
         ))}
       </div>
 

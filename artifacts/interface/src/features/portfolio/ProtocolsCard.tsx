@@ -19,19 +19,19 @@ export function ProtocolsCard({ statusData, protocolsData, isProtocolsError, add
           <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
             <span className="text-ink-2">Base RPC</span>
             {statusData ? (
-              <span className={statusData.rpc.status === 'connected' ? 'text-green font-medium' : statusData.rpc.status === 'failed' ? 'text-red font-medium' : 'text-amber font-medium'}>
+              <span className={statusData.rpc.status === 'connected' ? 'text-ok font-medium' : statusData.rpc.status === 'failed' ? 'text-risk font-medium' : 'text-warn font-medium'}>
                 {statusData.rpc.status === 'connected' ? 'Connected' : statusData.rpc.status === 'failed' ? 'Failed' : 'Missing'}
               </span>
             ) : address ? (
-              <span className="text-green font-medium">Connected</span>
+              <span className="text-ok font-medium">Connected</span>
             ) : (
-              <span className="text-amber font-medium">Missing</span>
+              <span className="text-warn font-medium">Missing</span>
             )}
           </div>
           <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
             <span className="text-ink-2">Token balances</span>
             {statusData ? (
-               <span className={statusData.tokenBalances.status === 'connected' ? 'text-green font-medium' : statusData.tokenBalances.status === 'failed' ? 'text-red font-medium' : statusData.tokenBalances.status === 'disabled' ? 'text-ink-3 font-medium' : 'text-amber font-medium'}>
+               <span className={statusData.tokenBalances.status === 'connected' ? 'text-ok font-medium' : statusData.tokenBalances.status === 'failed' ? 'text-risk font-medium' : statusData.tokenBalances.status === 'disabled' ? 'text-ink-3 font-medium' : 'text-warn font-medium'}>
                  {statusData.tokenBalances.status === 'connected'
                    ? (statusData.tokenBalances.provider === 'moralis' ? 'Moralis connected' : statusData.tokenBalances.provider === 'alchemy' ? 'Alchemy connected' : 'Connected')
                    : statusData.tokenBalances.status === 'stale'
@@ -40,44 +40,44 @@ export function ProtocolsCard({ statusData, protocolsData, isProtocolsError, add
                      : statusData.tokenBalances.status === 'disabled' ? 'Disabled by config' : 'Missing'}
                </span>
              ) : (
-               <span className="text-amber font-medium">Missing</span>
+               <span className="text-warn font-medium">Missing</span>
              )}
           </div>
           <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
              <span className="text-ink-2">Risk provider</span>
              {statusData ? (
-               <span className={statusData.risk.status === 'connected' ? 'text-green font-medium' : statusData.risk.status === 'failed' ? 'text-red font-medium' : statusData.risk.status === 'disabled' ? 'text-ink-3 font-medium' : 'text-amber font-medium'}>
+               <span className={statusData.risk.status === 'connected' ? 'text-ok font-medium' : statusData.risk.status === 'failed' ? 'text-risk font-medium' : statusData.risk.status === 'disabled' ? 'text-ink-3 font-medium' : 'text-warn font-medium'}>
                  {formatRiskProvider(statusData, 'Missing')}
                </span>
              ) : (
-               <span className="text-amber font-medium">Missing</span>
+               <span className="text-warn font-medium">Missing</span>
              )}
            </div>
            <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
              <span className="text-ink-2">Price Provider</span>
              {statusData ? (
-               <span className={statusData.prices.status === 'connected' ? 'text-green font-medium' : statusData.prices.status === 'failed' ? 'text-red font-medium' : statusData.prices.status === 'disabled' ? 'text-ink-3 font-medium' : 'text-amber font-medium'}>
+               <span className={statusData.prices.status === 'connected' ? 'text-ok font-medium' : statusData.prices.status === 'failed' ? 'text-risk font-medium' : statusData.prices.status === 'disabled' ? 'text-ink-3 font-medium' : 'text-warn font-medium'}>
                  {statusData.prices.status === 'connected' ? `Connected (${statusData.prices.provider})` : statusData.prices.status === 'failed' ? 'Price provider failed' : statusData.prices.status === 'disabled' ? 'Disabled by config' : 'Missing'}
                </span>
              ) : (
-               <span className="text-amber font-medium">Missing</span>
+               <span className="text-warn font-medium">Missing</span>
              )}
            </div>
           <div className="flex items-center justify-between py-1 text-[12px]">
             <span className="text-ink-2">Base MCP</span>
             {statusData ? (
-              <span className={statusData.baseMcp.status === 'configured' ? 'text-green font-medium' : 'text-amber font-medium'}>
+              <span className={statusData.baseMcp.status === 'configured' ? 'text-ok font-medium' : 'text-warn font-medium'}>
                 {statusData.baseMcp.status === 'configured' ? 'Configured' : 'Missing'}
               </span>
             ) : import.meta.env.VITE_MCP_SERVER_URL ? (
-              <span className="text-green font-medium">Configured</span>
+              <span className="text-ok font-medium">Configured</span>
             ) : (
-              <span className="text-red font-medium">Missing</span>
+              <span className="text-risk font-medium">Missing</span>
             )}
           </div>
         </div>
       ) : isProtocolsError || !protocolsData ? (
-        <div className="text-[13px] text-red bg-red-soft p-3 rounded-md font-medium border border-red/20 mt-2">Provider disconnected</div>
+        <div className="text-[13px] text-risk bg-risk-soft p-3 rounded-md font-medium border border-risk/20 mt-2">Provider disconnected</div>
       ) : (
         <div className="flex flex-col">
           {protocolsData.protocols.map((p: any, i: number) => (

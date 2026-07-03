@@ -1,21 +1,24 @@
-import { useUiStore } from '../../lib/state';
+import { Link } from 'wouter';
 
-// F2 parity fixture — F3 (T12.3) replaces with an honest "not configured"
-// state and F4 (T12.4) moves autonomy into the /autonomy route. Kept verbatim
-// for behavioral parity during the structural refactor.
+// Honest state: no session key is configured (no backend autonomy data exists).
+// The rail card points to the /autonomy route, which F4 (T12.4) expands into
+// the full cockpit. No fixture numbers.
 export function AutonomyCard() {
-  const showToast = useUiStore((s) => s.showToast);
   return (
     <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
       <div className="flex items-center justify-between mb-3">
-        <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3">Autonomy <span className="lowercase font-normal tracking-normal text-ink-3/70 ml-1">(demo fixture)</span></div>
-        <span className="text-[10px] font-bold text-accent bg-accent-soft px-[7px] py-[2px] rounded-[6px] tracking-[.05em]">SESSION KEY</span>
+        <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3">Autonomy</div>
+        <span className="text-[10px] font-bold text-ink-3 bg-panel-2 border border-line px-[7px] py-[2px] rounded-[6px] tracking-[.05em]">OFF</span>
       </div>
-      <div className="flex justify-between text-[12px] text-ink-2 mb-2"><span>Daily limit</span><span><b className="font-mono text-ink">$28</b> / $100</span></div>
-      <div className="h-[7px] bg-line rounded-full overflow-hidden mb-1"><div className="h-full bg-accent" style={{ width: '28%' }}></div></div>
-      <div className="flex justify-between text-[12px] text-ink-2 mt-[8px] mb-[9px]"><span>Whitelist</span><b className="font-mono text-ink">USDC · BNKR · NOCK</b></div>
-      <div className="flex justify-between text-[12px] text-ink-2 mb-[9px]"><span>Expires in</span><b className="font-mono text-ink">5:59:42</b></div>
-      <button onClick={() => showToast('Autonomy stopped. Agent is waiting for manual confirmation.')} className="w-full py-[9px] rounded-[10px] bg-red-soft text-red font-bold text-[13px] flex items-center justify-center gap-[7px] hover:bg-red hover:text-white transition-colors">⏻ Kill switch</button>
+      <div className="text-[12px] text-ink-2 mb-3 leading-relaxed">
+        No session key active. The agent waits for manual confirmation on every action.
+      </div>
+      <Link
+        href="/autonomy"
+        className="block text-center text-[12px] font-semibold text-accent border border-accent/30 bg-accent-soft rounded-[10px] py-[9px] hover:bg-accent hover:text-white transition-colors"
+      >
+        Configure autonomy →
+      </Link>
     </div>
   );
 }

@@ -1,17 +1,31 @@
-// F2 parity fixture — F3 (T12.3) replaces with an honest state reading
-// useStatus().x402.status; F4 (T12.4) moves the full fuel meter into /fuel.
-// Kept verbatim for behavioral parity during the structural refactor.
+import { Link } from 'wouter';
+import { useStatus } from '@mioagent/api-client-react';
+
+// Honest state: the only real datum is useStatus().x402.status. Spend, balance,
+// and the inference/tools breakdown have no backend yet. The rail card points
+// to /fuel, which F4 (T12.4) expands. No fixture numbers.
 export function FuelCard() {
+  const { data: statusData } = useStatus();
+  const status = statusData?.x402?.status;
+  const label = status === 'configured' ? 'Configured' : status === 'missing' ? 'Not configured' : 'Simulated';
+
   return (
     <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
-      <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-3">x402 budget <span className="lowercase font-normal tracking-normal text-ink-3/70 ml-1">(testnet-USDC)</span></div>
-      <div className="flex items-baseline justify-between mb-2">
-        <div className="font-mono text-[20px] font-bold text-ink">$1.84</div>
-        <span className="text-[12px] font-bold bg-accent-soft text-accent px-[8px] py-[3px] rounded-[8px]">today</span>
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3">x402 fuel</div>
+        <span className={`text-[10px] font-bold px-[7px] py-[2px] rounded-[6px] tracking-[.05em] border ${status === 'configured' ? 'text-ok bg-ok-soft border-ok/30' : 'text-ink-3 bg-panel-2 border-line'}`}>
+          {label}
+        </span>
       </div>
-      <div className="h-[7px] bg-line rounded-full overflow-hidden mb-[6px]"><div className="h-full bg-accent" style={{ width: '37%' }}></div></div>
-      <div className="flex justify-between text-[12px] text-ink-2 mt-[6px] mb-[9px]"><span>inference · 142 calls</span><b className="font-mono text-ink">$1.12</b></div>
-      <div className="flex justify-between text-[12px] text-ink-2"><span>tools · 38 calls</span><b className="font-mono text-ink">$0.72</b></div>
+      <div className="text-[12px] text-ink-2 mb-3 leading-relaxed">
+        No live spend data. Per-action pricing, the USDC balance, and the inference/tools breakdown appear once the backend exposes them.
+      </div>
+      <Link
+        href="/fuel"
+        className="block text-center text-[12px] font-semibold text-accent border border-accent/30 bg-accent-soft rounded-[10px] py-[9px] hover:bg-accent hover:text-white transition-colors"
+      >
+        Open fuel meter →
+      </Link>
     </div>
   );
 }

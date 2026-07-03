@@ -56,7 +56,7 @@ export function PortfolioCard({ portfolio, statusData, address, isPortfolioFetch
             </span>
           )}
           {portfolio.providerBudgetStatus?.exhausted && (
-            <span className="text-[10px] font-mono font-normal text-amber lowercase bg-amber-soft px-1.5 py-0.5 rounded border border-amber/20">
+            <span className="text-[10px] font-mono font-normal text-warn lowercase bg-warn-soft px-1.5 py-0.5 rounded border border-warn/20">
               Provider budget reached — showing cached/stale data.
             </span>
           )}
@@ -65,7 +65,7 @@ export function PortfolioCard({ portfolio, statusData, address, isPortfolioFetch
 
 
       {isPortfolioError ? (
-         <div className="text-[13px] text-red bg-red-soft p-3 rounded-md font-medium border border-red/20">
+         <div className="text-[13px] text-risk bg-risk-soft p-3 rounded-md font-medium border border-risk/20">
            {portfolioError?.message?.includes('wallet') || portfolioError?.message?.includes('address') ? 'Wallet address not configured' :
             portfolioError?.message?.includes('RPC') ? 'RPC provider not configured' :
             portfolioError?.message?.includes('key') ? 'Provider key missing' :
@@ -122,7 +122,7 @@ export function PortfolioCard({ portfolio, statusData, address, isPortfolioFetch
                     <div className="flex items-center gap-1 min-w-0">
                       <span className="font-medium text-ink truncate" title={token.name || token.symbol}>{token.symbol}</span>
                       <span className={`w-2 h-2 rounded-full shrink-0 ${tokenSecurityIndicator(token, portfolio?.providers?.risk).className}`} title={tokenSecurityIndicator(token, portfolio?.providers?.risk).title}></span>
-                      {token.possibleSpam && <span className="text-[9px] bg-red-soft text-red px-1 rounded uppercase font-bold">spam</span>}
+                      {token.possibleSpam && <span className="text-[9px] bg-risk-soft text-risk px-1 rounded uppercase font-bold">spam</span>}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">

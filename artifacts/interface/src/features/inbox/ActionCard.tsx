@@ -25,10 +25,10 @@ export function ActionCard({ action, onRefresh }: ActionCardProps) {
   const isRegenerating = regenerateAction.isPending;
 
   return (
-    <div id={`action-${action.id}`} data-action-id={action.id} className={`bg-panel border rounded-xl shadow-sm p-[15px] flex flex-col gap-[10px] animate-in fade-in slide-in-from-bottom-2 ${action.status === 'failed' ? 'border-red-soft' : 'border-line'}`}>
+    <div id={`action-${action.id}`} data-action-id={action.id} className={`bg-panel border rounded-xl shadow-sm p-[15px] flex flex-col gap-[10px] animate-in fade-in slide-in-from-bottom-2 ${action.status === 'failed' ? 'border-risk-soft' : 'border-line'}`}>
       <div className="flex items-start justify-between gap-[10px]">
         <div className="flex gap-[10px]">
-          <div className={`w-[9px] h-[9px] rounded-full shrink-0 mt-[5px] ${action.status === 'executed' ? 'bg-green' : action.status === 'pending' ? 'bg-amber' : 'bg-red'}`}></div>
+          <div className={`w-[9px] h-[9px] rounded-full shrink-0 mt-[5px] ${action.status === 'executed' ? 'bg-ok' : action.status === 'pending' ? 'bg-warn' : 'bg-risk'}`}></div>
           <div>
             <h3 className="text-[15px] font-bold text-ink tracking-[-.01em] uppercase">{action.kind}</h3>
             <div className="font-mono text-[11px] text-ink-3 mt-1">
@@ -44,7 +44,7 @@ export function ActionCard({ action, onRefresh }: ActionCardProps) {
       <ActionDiffPreview action={action} />
 
       {action.status === 'failed' && (
-        <div className="flex items-center gap-[7px] text-[12px] font-bold text-red bg-red-soft px-[10px] py-[6px] rounded-[9px] mt-1 w-fit">🛡️ blocked by security</div>
+        <div className="flex items-center gap-[7px] text-[12px] font-bold text-risk bg-risk-soft px-[10px] py-[6px] rounded-[9px] mt-1 w-fit">🛡️ blocked by security</div>
       )}
 
       {action.tokens && action.tokens.length > 0 && (
@@ -56,7 +56,7 @@ export function ActionCard({ action, onRefresh }: ActionCardProps) {
       )}
 
       {action.status === 'failed' ? (
-        <div className="flex items-center gap-[7px] text-[12px] font-bold text-red bg-red-soft px-[10px] py-[6px] rounded-[9px] w-fit mt-1">🛡️ failed</div>
+        <div className="flex items-center gap-[7px] text-[12px] font-bold text-risk bg-risk-soft px-[10px] py-[6px] rounded-[9px] w-fit mt-1">🛡️ failed</div>
       ) : (
         <div className="flex gap-2 items-center flex-wrap mt-1">
           {(!isMainnetReadonly && action.metadata?.chainMode !== 'mainnet-readonly' && action.metadata?.chainMode !== 'mainnet' && action.calls && action.calls.length > 0) && (
@@ -122,7 +122,7 @@ export function ActionCard({ action, onRefresh }: ActionCardProps) {
               }
             }}
             disabled={isExecuting || isDismissing || isDeleting || isRegenerating}
-            className="bg-bg hover:bg-red-soft text-red px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="bg-bg hover:bg-risk-soft text-risk px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isDeleting ? 'Deleting...' : 'Delete'}
           </button>

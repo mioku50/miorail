@@ -64,10 +64,10 @@ export function ActionsBuilder() {
         <div className="flex flex-wrap gap-4 text-xs bg-bg p-3 rounded-lg border border-line text-ink-2">
           <div>Current mode: <span className="font-bold text-ink">{isMainnetReadonly ? 'Base Mainnet (Read-only)' : import.meta.env.VITE_CHAIN_ENV || 'sepolia'}</span></div>
           <div>Wallet: <span className="font-mono text-ink">{address ? `${address.slice(0, 6)}…${address.slice(-4)}` : 'Not connected'}</span></div>
-          <div>Security: <span className="text-green font-bold">Action-Security Screening Enabled</span></div>
+          <div>Security: <span className="text-ink-3 font-medium">screening not active (verdicts not stored)</span></div>
         </div>
         {isMainnetReadonly && (
-          <div className="text-[11px] text-amber bg-amber-soft p-2.5 rounded-lg border border-amber/20 font-medium flex items-center gap-2">
+          <div className="text-[11px] text-warn bg-warn-soft p-2.5 rounded-lg border border-warn/20 font-medium flex items-center gap-2">
             <span>🔒</span>
             <span>In Read-only mode, recommendations will be generated with execution blocked.</span>
           </div>
@@ -87,7 +87,7 @@ export function ActionsBuilder() {
               </div>
               <div className="flex flex-wrap gap-2 items-center">
                 <span className="font-semibold text-ink-2">Risk: </span>
-                <span className="px-2 py-0.5 rounded text-[11px] font-medium border bg-green-soft text-green border-green/20">
+                <span className="px-2 py-0.5 rounded text-[11px] font-medium border bg-ok-soft text-ok border-ok/20">
                   {isMainnetReadonly ? 'None (read-only mode)' : 'Low'}
                 </span>
               </div>
@@ -99,11 +99,11 @@ export function ActionsBuilder() {
                 <span className="px-2 py-0.5 rounded text-[11px] font-medium border bg-panel text-ink-2 border-line">
                   Chain: {isMainnetReadonly ? 'mainnet-readonly' : 'sepolia'}
                 </span>
-                <span className={`px-2 py-0.5 rounded text-[11px] font-medium border ${isMainnetReadonly ? 'bg-red-soft text-red border-red/20' : 'bg-green-soft text-green border-green/20'}`}>
+                <span className={`px-2 py-0.5 rounded text-[11px] font-medium border ${isMainnetReadonly ? 'bg-risk-soft text-risk border-risk/20' : 'bg-ok-soft text-ok border-ok/20'}`}>
                   Safety: {isMainnetReadonly ? 'blocked - read only mode' : 'executable'}
                 </span>
               </div>
-              <div className={`mt-1 font-medium px-2 py-1 rounded border text-[11px] w-fit ${isMainnetReadonly ? 'bg-amber-soft text-amber border-amber/20' : 'bg-green-soft text-green border-green/20'}`}>
+              <div className={`mt-1 font-medium px-2 py-1 rounded border text-[11px] w-fit ${isMainnetReadonly ? 'bg-warn-soft text-warn border-warn/20' : 'bg-ok-soft text-ok border-ok/20'}`}>
                 {isMainnetReadonly ? 'Read-only recommendation (execution disabled on mainnet)' : 'Executable testnet recommendation'}
               </div>
             </div>

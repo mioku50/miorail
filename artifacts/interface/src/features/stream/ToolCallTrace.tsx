@@ -9,7 +9,7 @@ export function ToolCallTrace({ toolCalls }: { toolCalls?: any[] }) {
     <div className="w-full bg-panel border border-line rounded-xl p-3 space-y-2 text-xs font-mono shadow-sm">
       {toolCalls.map((tc: any, idx: number) => (
         <div key={idx} className="flex items-center gap-2 text-ink-2">
-          <span className="text-green font-bold">✓</span>
+          <span className="text-ok font-bold">✓</span>
           <span className="font-semibold text-ink">{tc.name}</span>
           <span className="text-ink-3 truncate">{JSON.stringify(tc.arguments)}</span>
         </div>

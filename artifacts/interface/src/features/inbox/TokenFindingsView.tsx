@@ -8,7 +8,7 @@ export function TokenFindingsView({ findings, chainMode }: { findings: any[]; ch
       <div className="text-[11px] font-semibold text-ink-3 uppercase tracking-wider">Token Findings ({findings.length})</div>
       <div className="flex flex-col gap-1.5 max-h-[240px] overflow-y-auto pr-1">
         {findings.map((finding: any, idx: number) => {
-          const fRiskColor = finding.risk === 'low' ? 'bg-green-soft text-green border-green/20' : finding.risk === 'high' ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20';
+          const fRiskColor = finding.risk === 'low' ? 'bg-ok-soft text-ok border-ok/20' : finding.risk === 'high' ? 'bg-risk-soft text-risk border-risk/20' : 'bg-warn-soft text-warn border-warn/20';
           const securityFlags = securityFlagLabels(finding.security?.flags);
           const basescanLink = finding.address && finding.address !== 'native' && !finding.address.includes('native')
             ? `https://${(isMainnetReadonly || chainMode === 'mainnet-readonly' || chainMode === 'mainnet') ? '' : 'sepolia.'}basescan.org/token/${finding.address}`
@@ -39,7 +39,7 @@ export function TokenFindingsView({ findings, chainMode }: { findings: any[]; ch
               {securityFlags.length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-1">
                   {securityFlags.map((label: string) => (
-                    <span key={label} className="px-1.5 py-0.5 rounded bg-amber-soft text-amber border border-amber/20 text-[10px] font-semibold">{label}</span>
+                    <span key={label} className="px-1.5 py-0.5 rounded bg-warn-soft text-warn border border-warn/20 text-[10px] font-semibold">{label}</span>
                   ))}
                 </div>
               )}

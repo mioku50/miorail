@@ -87,7 +87,7 @@ export function ActionInbox() {
                     }
                   }}
                   disabled={deleteAllRecs.isPending}
-                  className="w-full text-left px-3 py-2 text-xs text-red hover:bg-red-soft transition-colors block font-medium border-t border-line"
+                  className="w-full text-left px-3 py-2 text-xs text-risk hover:bg-risk-soft transition-colors block font-medium border-t border-line"
                 >
                   Delete all recommendations
                 </button>

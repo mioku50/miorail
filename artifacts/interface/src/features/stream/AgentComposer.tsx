@@ -11,7 +11,7 @@ export function AgentComposer({ input, setInput, onSend, isPending, errorMsg, on
   return (
     <div className="p-3 border-t border-line bg-panel shrink-0 flex flex-col gap-2 shadow-sm">
       {errorMsg && (
-        <div className="text-xs text-red bg-red-soft px-3 py-1.5 rounded-lg flex items-center justify-between">
+        <div className="text-xs text-risk bg-risk-soft px-3 py-1.5 rounded-lg flex items-center justify-between">
           <span className="truncate">⚠️ {errorMsg}</span>
           <button onClick={onClearError} className="font-bold ml-2 hover:opacity-80">×</button>
         </div>
@@ -55,7 +55,7 @@ export function AgentComposer({ input, setInput, onSend, isPending, errorMsg, on
         </button>
       </div>
       <div className="text-[11px] text-ink-3 flex items-center gap-1.5 px-1 font-medium">
-        <span className="text-green shrink-0">🛡️</span>
+        <span className="text-ok shrink-0">🛡️</span>
         <span className="leading-snug">Read-only mode: MioAgent can create recommendations, but cannot execute mainnet transactions.</span>
       </div>
     </div>

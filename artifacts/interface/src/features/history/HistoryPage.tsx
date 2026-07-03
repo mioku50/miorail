@@ -27,7 +27,7 @@ export function HistoryPage() {
             {actions.map((a: any, i: number) => {
               const source = a.metadata?.createdBy || a.metadata?.source || 'system';
               const provider = a.metadata?.analysis?.provider || a.metadata?.provider || (a.kind === 'recommendation' ? 'moralis' : null);
-              const statusBadge = a.status === 'executed' ? 'bg-green-soft text-green' : a.status === 'dismissed' ? 'bg-panel-2 text-ink-3' : a.status === 'failed' ? 'bg-red-soft text-red' : 'bg-amber-soft text-amber';
+              const statusBadge = a.status === 'executed' ? 'bg-ok-soft text-ok' : a.status === 'dismissed' ? 'bg-panel-2 text-ink-3' : a.status === 'failed' ? 'bg-risk-soft text-risk' : 'bg-warn-soft text-warn';
 
               return (
                 <div key={i} className="text-sm p-3 bg-bg rounded-lg border border-line flex flex-col gap-1.5 shadow-sm">

@@ -37,19 +37,19 @@ export function PortfolioProviderChips({ portfolio, statusData, address, isPortf
         </span>
       )}
       {(statusData?.prices.status === 'failed' || portfolio?.providers?.prices === 'failed') && (
-        <span className="text-[10px] font-mono font-normal text-red lowercase bg-red-soft px-1.5 py-0.5 rounded border border-red/20">Prices failed</span>
+        <span className="text-[10px] font-mono font-normal text-risk lowercase bg-risk-soft px-1.5 py-0.5 rounded border border-risk/20">Prices failed</span>
       )}
       {(statusData?.risk.status === 'partial' || portfolio?.providers?.risk === 'partial') && (
-        <span className="text-[10px] font-mono font-normal text-amber lowercase bg-amber-soft px-1.5 py-0.5 rounded border border-amber/20">GoPlus partial</span>
+        <span className="text-[10px] font-mono font-normal text-warn lowercase bg-warn-soft px-1.5 py-0.5 rounded border border-warn/20">GoPlus partial</span>
       )}
       {(statusData?.approvals?.status === 'connected' || portfolio?.providers?.approvals === 'connected') ? (
-        <span className="text-[10px] font-mono font-normal text-green lowercase bg-green-soft px-1.5 py-0.5 rounded border border-green/20">approvals connected</span>
+        <span className="text-[10px] font-mono font-normal text-ok lowercase bg-ok-soft px-1.5 py-0.5 rounded border border-ok/20">approvals connected</span>
       ) : (statusData?.approvals?.status === 'failed' || portfolio?.providers?.approvals === 'failed') ? (
-        <span className="text-[10px] font-mono font-normal text-red lowercase bg-red-soft px-1.5 py-0.5 rounded border border-red/20">approvals failed</span>
+        <span className="text-[10px] font-mono font-normal text-risk lowercase bg-risk-soft px-1.5 py-0.5 rounded border border-risk/20">approvals failed</span>
       ) : (statusData?.approvals?.status === 'disabled' || portfolio?.providers?.approvals === 'disabled') ? (
         <span className="text-[10px] font-mono font-normal text-ink-3 lowercase bg-panel-2 px-1.5 py-0.5 rounded border border-line/60">approvals off</span>
       ) : (
-        <span className="text-[10px] font-mono font-normal text-amber lowercase bg-amber-soft px-1.5 py-0.5 rounded border border-amber/20">approvals missing</span>
+        <span className="text-[10px] font-mono font-normal text-warn lowercase bg-warn-soft px-1.5 py-0.5 rounded border border-warn/20">approvals missing</span>
       )}
       <button
         type="button"

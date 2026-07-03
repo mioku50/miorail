@@ -12,18 +12,18 @@ export function formatRiskProvider(statusData: any, pendingLabel = 'Checking...'
 
 export function tokenSecurityIndicator(token: any, riskProviderStatus?: string) {
   const status = token.security?.status || (riskProviderStatus === 'missing' ? 'missing' : 'unknown');
-  if (status === 'ok') return { className: 'bg-green/70', title: 'GoPlus: no major warnings detected' };
-  if (status === 'warning') return { className: 'bg-amber', title: 'GoPlus: warning flags detected' };
-  if (status === 'high-risk') return { className: 'bg-red', title: 'GoPlus: high-risk flags detected' };
+  if (status === 'ok') return { className: 'bg-ok/70', title: 'GoPlus: no major warnings detected' };
+  if (status === 'warning') return { className: 'bg-warn', title: 'GoPlus: warning flags detected' };
+  if (status === 'high-risk') return { className: 'bg-risk', title: 'GoPlus: high-risk flags detected' };
   if (status === 'failed') return { className: 'bg-ink-3', title: 'GoPlus: security scan failed' };
   if (status === 'missing') return { className: 'bg-ink-3/50', title: 'Security provider missing' };
   return { className: 'bg-ink-3/50', title: 'Security not checked' };
 }
 
 export function securityBadgeClass(status?: string) {
-  if (status === 'high-risk') return 'bg-red-soft text-red border-red/20';
-  if (status === 'warning') return 'bg-amber-soft text-amber border-amber/20';
-  if (status === 'ok') return 'bg-green-soft text-green border-green/20';
+  if (status === 'high-risk') return 'bg-risk-soft text-risk border-risk/20';
+  if (status === 'warning') return 'bg-warn-soft text-warn border-warn/20';
+  if (status === 'ok') return 'bg-ok-soft text-ok border-ok/20';
   return 'bg-panel text-ink-3 border-line';
 }
 
@@ -48,11 +48,11 @@ export function portfolioFreshnessChip(portfolio: any): { className: string; lab
   const df = portfolio?.dataFreshness;
   if (!df) return null;
   const map: Record<string, { className: string; label: string }> = {
-    live: { className: 'bg-green-soft text-green border-green/20', label: 'Live' },
+    live: { className: 'bg-ok-soft text-ok border-ok/20', label: 'Live' },
     cached: { className: 'bg-panel-2 text-ink-3 border-line/60', label: 'Cached' },
-    stale: { className: 'bg-amber-soft text-amber border-amber/20', label: 'Stale' },
-    partial: { className: 'bg-amber-soft text-amber border-amber/20', label: 'Partial' },
-    failed: { className: 'bg-red-soft text-red border-red/20', label: 'Provider failed' },
+    stale: { className: 'bg-warn-soft text-warn border-warn/20', label: 'Stale' },
+    partial: { className: 'bg-warn-soft text-warn border-warn/20', label: 'Partial' },
+    failed: { className: 'bg-risk-soft text-risk border-risk/20', label: 'Provider failed' },
   };
   return map[df] || null;
 }

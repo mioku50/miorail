@@ -34,15 +34,6 @@
   --color-risk: #E5484D;
   --color-risk-soft: #2A1418;
 
-  /* Aliases — temporary during F2/F3 migration. New code MUST use ok/warn/risk.
-     Removed once no `green/amber/red` class usages remain. */
-  --color-green: var(--color-ok);
-  --color-green-soft: var(--color-ok-soft);
-  --color-amber: var(--color-warn);
-  --color-amber-soft: var(--color-warn-soft);
-  --color-red: var(--color-risk);
-  --color-red-soft: var(--color-risk-soft);
-
   /* Type */
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: "Geist Mono", "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;

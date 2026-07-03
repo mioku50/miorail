@@ -31,7 +31,7 @@ export function WalletConnect() {
       return (
         <button
           onClick={() => switchChain && switchChain({ chainId: expectedChainId })}
-          className="bg-amber-soft text-amber border border-amber/20 px-[12px] py-[7px] rounded-[10px] text-[13px] hover:bg-amber-soft/80 transition-colors font-medium"
+          className="bg-warn-soft text-warn border border-warn/20 px-[12px] py-[7px] rounded-[10px] text-[13px] hover:bg-warn-soft/80 transition-colors font-medium"
         >
           Switch to Base{expectedChainId === 84532 ? ' Sepolia' : ''}
         </button>
@@ -44,7 +44,7 @@ export function WalletConnect() {
         className="bg-bg border border-line px-[12px] py-[7px] rounded-[10px] text-ink-3 text-[13px] hover:bg-line/50 transition-colors flex items-center gap-2"
         title="Disconnect Wallet"
       >
-        <span className="w-2 h-2 rounded-full bg-green"></span>
+        <span className="w-2 h-2 rounded-full bg-ok"></span>
         {address?.slice(0, 6)}…{address?.slice(-4)}
       </button>
     );

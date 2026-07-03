@@ -1,80 +1,83 @@
+import { type ReactNode } from 'react';
 import { useAccount } from 'wagmi';
 import { useStatus } from '@mioagent/api-client-react';
 import { CHAIN_ENV, isMainnetReadonly } from '../../lib/chain';
 import { formatRiskProvider } from '../../lib/format';
+import { StateBadge, type StateKind } from '../../ui';
+
+function tbState(s?: string): StateKind {
+  if (s === 'connected') return 'live';
+  if (s === 'stale') return 'stale';
+  if (s === 'failed') return 'failed';
+  if (s === 'disabled') return 'disabled';
+  return 'missing';
+}
+
+function Row({ label, children, last }: { label: string; children: ReactNode; last?: boolean }) {
+  return (
+    <div className={`flex items-center justify-between py-1.5 ${last ? '' : 'border-b border-line'}`}>
+      <span className="font-medium text-sm text-ink">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+const Checking = () => <span className="text-xs text-ink-3 font-mono">Checking...</span>;
 
 export function ConfigureView() {
   const { address } = useAccount();
-  const { data: statusData } = useStatus();
+  const { data: sd } = useStatus();
 
   return (
     <main className="flex-1 bg-bg p-[18px] flex flex-col gap-4 overflow-y-auto">
       <h2 className="text-[16px] font-bold text-ink">Configure</h2>
       <div className="bg-panel border border-line rounded-xl p-4 flex flex-col gap-3">
-        <div className="flex items-center justify-between py-1.5 border-b border-line">
-          <span className="font-medium text-sm text-ink">Execution Mode</span>
+        <Row label="Execution Mode">
           <div className="flex items-center gap-2">
-            <span className="text-xs bg-panel-2 px-2.5 py-1 rounded border border-line font-mono text-ink">{statusData?.execution.mode || CHAIN_ENV}</span>
-            {isMainnetReadonly && <span className="text-xs text-amber bg-amber-soft px-2 py-0.5 rounded border border-amber/20 font-medium">Mainnet execution is disabled in read-only mode</span>}
+            <span className="text-xs bg-panel-2 px-2.5 py-1 rounded border border-line font-mono text-ink">{sd?.execution?.mode || CHAIN_ENV}</span>
+            {isMainnetReadonly && <span className="text-xs text-warn bg-warn-soft px-2 py-0.5 rounded border border-warn/20 font-medium">Mainnet execution is disabled in read-only mode</span>}
           </div>
-        </div>
-        <div className="flex items-center justify-between py-1.5 border-b border-line">
-          <span className="font-medium text-sm text-ink">Connected Wallet</span>
+        </Row>
+        <Row label="Connected Wallet">
           <span className="text-xs bg-panel-2 px-2.5 py-1 rounded border border-line font-mono text-ink">{address || 'None'}</span>
-        </div>
-        <div className="flex items-center justify-between py-1.5 border-b border-line">
-          <span className="font-medium text-sm text-ink">Base RPC Provider</span>
-          <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.rpc.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.rpc.status === 'failed' ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20'}`}>
-            {statusData ? (statusData.rpc.status === 'connected' ? `Connected (${statusData.rpc.provider})` : statusData.rpc.status === 'failed' ? 'Failed' : 'Missing') : 'Checking...'}
-          </span>
-        </div>
-        <div className="flex items-center justify-between py-1.5 border-b border-line">
-          <span className="font-medium text-sm text-ink">Token Balances Provider</span>
-          <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.tokenBalances.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.tokenBalances.status === 'failed' ? 'bg-red-soft text-red border-red/20' : statusData?.tokenBalances.status === 'disabled' ? 'bg-panel-2 text-ink-3 border-line/60' : 'bg-amber-soft text-amber border-amber/20'}`}>
-            {statusData ? (
-              statusData.tokenBalances.status === 'connected' ? `${statusData.tokenBalances.provider} connected` :
-              statusData.tokenBalances.status === 'stale' ? `${statusData.tokenBalances.provider || 'moralis'} cached` :
-              statusData.tokenBalances.status === 'failed' ? `${statusData.tokenBalances.provider || 'moralis'} failed` :
-              statusData.tokenBalances.status === 'disabled' ? 'Disabled by config' : 'Missing'
-            ) : 'Checking...'}
-          </span>
-        </div>
-        <div className="flex items-center justify-between py-1.5 border-b border-line">
-          <span className="font-medium text-sm text-ink">Price Provider</span>
-          <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.prices.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.prices.status === 'failed' ? 'bg-red-soft text-red border-red/20' : statusData?.prices.status === 'disabled' ? 'bg-panel-2 text-ink-3 border-line/60' : 'bg-amber-soft text-amber border-amber/20'}`}>
-            {statusData ? (statusData.prices.status === 'connected' ? `${statusData.prices.provider} connected` : statusData.prices.status === 'failed' ? 'Price provider failed' : statusData.prices.status === 'disabled' ? 'Disabled by config' : 'Missing') : 'Checking...'}
-          </span>
-        </div>
-        <div className="flex items-center justify-between py-1.5 border-b border-line">
-          <span className="font-medium text-sm text-ink">Risk / GoPlus Provider</span>
-          <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.risk.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.risk.status === 'failed' ? 'bg-red-soft text-red border-red/20' : statusData?.risk.status === 'disabled' ? 'bg-panel-2 text-ink-3 border-line/60' : 'bg-amber-soft text-amber border-amber/20'}`}>
-            {formatRiskProvider(statusData)}
-          </span>
-        </div>
-        <div className="flex items-center justify-between py-1.5 border-b border-line">
-          <span className="font-medium text-sm text-ink">Approval Scanner</span>
-          <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.approvals?.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.approvals?.status === 'failed' ? 'bg-red-soft text-red border-red/20' : statusData?.approvals?.status === 'disabled' ? 'bg-panel-2 text-ink-3 border-line/60' : 'bg-amber-soft text-amber border-amber/20'}`}>
-            {statusData ? (
-              statusData.approvals?.status === 'connected' ? `${statusData.approvals?.provider || 'moralis'} connected` :
-              statusData.approvals?.status === 'failed' ? 'Failed' :
-              statusData.approvals?.status === 'disabled' ? 'Disabled by config' : 'Missing'
-            ) : 'Checking...'}
-          </span>
-        </div>
-        <div className="flex items-center justify-between py-1.5 border-b border-line">
-          <span className="font-medium text-sm text-ink">Base MCP</span>
-          <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.baseMcp.status === 'configured' ? 'bg-green-soft text-green border-green/20' : 'bg-amber-soft text-amber border-amber/20'}`}>
-            {statusData ? (statusData.baseMcp.status === 'configured' ? 'Configured' : 'Missing') : (import.meta.env.VITE_MCP_SERVER_URL ? 'Configured' : 'Missing')}
-          </span>
-        </div>
-        <div className="flex items-center justify-between py-1.5 border-b border-line">
-          <span className="font-medium text-sm text-ink">x402 Micropayments</span>
-          <span className="text-xs font-medium px-2.5 py-0.5 rounded border bg-amber-soft text-amber border-amber/20">{statusData ? (statusData.x402.status === 'configured' ? 'Configured' : 'Simulated') : 'Simulated'}</span>
-        </div>
-        <div className="flex items-center justify-between py-1.5">
-          <span className="font-medium text-sm text-ink">LLM Provider</span>
-          <span className="text-xs font-medium px-2.5 py-0.5 rounded border bg-green-soft text-green border-green/20">Configured</span>
-        </div>
+        </Row>
+        <Row label="Base RPC Provider">
+          {sd ? <StateBadge state={sd.rpc.status === 'connected' ? 'live' : sd.rpc.status === 'failed' ? 'failed' : 'missing'} label={sd.rpc.status === 'connected' ? `Connected (${sd.rpc.provider})` : sd.rpc.status === 'failed' ? 'Failed' : 'Missing'} /> : <Checking />}
+        </Row>
+        <Row label="Token Balances Provider">
+          {sd ? <StateBadge state={tbState(sd.tokenBalances.status)} label={
+            sd.tokenBalances.status === 'connected' ? `${sd.tokenBalances.provider} connected` :
+            sd.tokenBalances.status === 'stale' ? `${sd.tokenBalances.provider || 'moralis'} cached` :
+            sd.tokenBalances.status === 'failed' ? `${sd.tokenBalances.provider || 'moralis'} failed` :
+            sd.tokenBalances.status === 'disabled' ? 'Disabled by config' : 'Missing'
+          } /> : <Checking />}
+        </Row>
+        <Row label="Price Provider">
+          {sd ? <StateBadge state={sd.prices.status === 'connected' ? 'live' : sd.prices.status === 'failed' ? 'failed' : sd.prices.status === 'disabled' ? 'disabled' : 'missing'} label={
+            sd.prices.status === 'connected' ? `${sd.prices.provider} connected` :
+            sd.prices.status === 'failed' ? 'Price provider failed' :
+            sd.prices.status === 'disabled' ? 'Disabled by config' : 'Missing'
+          } /> : <Checking />}
+        </Row>
+        <Row label="Risk / GoPlus Provider">
+          {sd ? <StateBadge state={sd.risk.status === 'connected' ? 'live' : sd.risk.status === 'partial' ? 'stale' : sd.risk.status === 'failed' ? 'failed' : sd.risk.status === 'disabled' ? 'disabled' : 'missing'} label={formatRiskProvider(sd)} /> : <Checking />}
+        </Row>
+        <Row label="Approval Scanner">
+          {sd ? <StateBadge state={sd.approvals?.status === 'connected' ? 'live' : sd.approvals?.status === 'failed' ? 'failed' : sd.approvals?.status === 'disabled' ? 'disabled' : 'missing'} label={
+            sd.approvals?.status === 'connected' ? `${sd.approvals?.provider || 'moralis'} connected` :
+            sd.approvals?.status === 'failed' ? 'Failed' :
+            sd.approvals?.status === 'disabled' ? 'Disabled by config' : 'Missing'
+          } /> : <Checking />}
+        </Row>
+        <Row label="Base MCP">
+          {sd ? <StateBadge state={sd.baseMcp.status === 'configured' ? 'live' : 'missing'} label={sd.baseMcp.status === 'configured' ? 'Configured' : 'Missing'} /> : <Checking />}
+        </Row>
+        <Row label="x402 Micropayments">
+          {sd ? <StateBadge state={sd.x402.status === 'configured' ? 'live' : sd.x402.status === 'missing' ? 'missing' : 'mock'} label={sd.x402.status === 'configured' ? 'Configured' : sd.x402.status === 'missing' ? 'Not configured' : 'Simulated'} /> : <Checking />}
+        </Row>
+        <Row label="LLM Provider" last>
+          <span className="text-xs font-medium px-2.5 py-0.5 rounded border bg-panel-2 text-ink-3 border-line" title="LLM provider status is not reported by /api/status">Not reported</span>
+        </Row>
       </div>
     </main>
   );

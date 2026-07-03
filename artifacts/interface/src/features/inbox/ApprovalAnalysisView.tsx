@@ -7,10 +7,10 @@ export function ApprovalAnalysisView({ approvalAnalysis }: { approvalAnalysis: a
         <div className="flex items-center gap-1.5 text-[10px] font-mono">
           <span className="bg-panel-2 border border-line px-1.5 py-0.5 rounded">Total: {approvalAnalysis.totalApprovals}</span>
           {approvalAnalysis.unlimitedApprovals > 0 && (
-            <span className="bg-amber-soft text-amber border border-amber/20 px-1.5 py-0.5 rounded font-bold">Unlimited: {approvalAnalysis.unlimitedApprovals}</span>
+            <span className="bg-warn-soft text-warn border border-warn/20 px-1.5 py-0.5 rounded font-bold">Unlimited: {approvalAnalysis.unlimitedApprovals}</span>
           )}
           {approvalAnalysis.riskySpenderApprovals > 0 && (
-            <span className="bg-red-soft text-red border border-red/20 px-1.5 py-0.5 rounded font-bold">Risky: {approvalAnalysis.riskySpenderApprovals}</span>
+            <span className="bg-risk-soft text-risk border border-risk/20 px-1.5 py-0.5 rounded font-bold">Risky: {approvalAnalysis.riskySpenderApprovals}</span>
           )}
         </div>
       </div>
@@ -18,7 +18,7 @@ export function ApprovalAnalysisView({ approvalAnalysis }: { approvalAnalysis: a
       {approvalAnalysis.findings && approvalAnalysis.findings.length > 0 && (
         <div className="flex flex-col gap-1.5 max-h-[200px] overflow-y-auto pr-1 mt-1">
           {approvalAnalysis.findings.map((f: any, fIdx: number) => {
-            const fColor = f.riskLevel === 'critical' || f.riskLevel === 'high' ? 'bg-red-soft text-red border-red/20' : f.riskLevel === 'medium' ? 'bg-amber-soft text-amber border-amber/20' : 'bg-green-soft text-green border-green/20';
+            const fColor = f.riskLevel === 'critical' || f.riskLevel === 'high' ? 'bg-risk-soft text-risk border-risk/20' : f.riskLevel === 'medium' ? 'bg-warn-soft text-warn border-warn/20' : 'bg-ok-soft text-ok border-ok/20';
             return (
               <div key={fIdx} className="flex flex-col gap-1 bg-bg/80 border border-line rounded p-2 text-[11px]">
                 <div className="flex items-center justify-between gap-2">
@@ -28,7 +28,7 @@ export function ApprovalAnalysisView({ approvalAnalysis }: { approvalAnalysis: a
                   </div>
                   <div className="flex items-center gap-1.5">
                     {f.isUnlimited && (
-                      <span className="bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300 border border-orange-300 dark:border-orange-800 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase">Unlimited</span>
+                      <span className="bg-warn-soft text-warn border border-warn/30 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase">Unlimited</span>
                     )}
                     <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase border ${fColor}`}>{f.riskLevel}</span>
                   </div>

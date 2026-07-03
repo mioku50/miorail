@@ -3,7 +3,7 @@ import { useUiStore } from '../../lib/state';
 import { ToolCallTrace } from './ToolCallTrace';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function ChatMessage({ m }: { m: any }) {
+export function ChatMessage({ m, networkLabel }: { m: any; networkLabel: string }) {
   const [, navigate] = useLocation();
   const showToast = useUiStore((s) => s.showToast);
   const focusAction = useUiStore((s) => s.focusAction);
@@ -50,16 +50,16 @@ export function ChatMessage({ m }: { m: any }) {
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-ink-3">Mode</span>
-                <span className="font-medium text-ink">Base Mainnet · Read-only</span>
+                <span className="font-mono text-ink">{networkLabel}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-ink-3">Safety</span>
-                <span className="font-medium text-red flex items-center gap-1 bg-red-soft px-2 py-0.5 rounded-full text-[11px]">🛡️ Execution blocked</span>
+                <span className="font-medium text-risk flex items-center gap-1 bg-risk-soft px-2 py-0.5 rounded-full text-[11px]">🛡️ Execution blocked</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-ink-3">Risk Level</span>
                 <span className={`font-semibold px-2 py-0.5 rounded-full text-[11px] uppercase tracking-wide ${
-                  riskVal === 'high' ? 'bg-red-soft text-red' : riskVal === 'medium' ? 'bg-amber-soft text-amber' : 'bg-green-soft text-green'
+                  riskVal === 'high' ? 'bg-risk-soft text-risk' : riskVal === 'medium' ? 'bg-warn-soft text-warn' : 'bg-ok-soft text-ok'
                 }`}>
                   {riskVal}
                 </span>

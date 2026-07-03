@@ -24,7 +24,7 @@ export function PortfolioAnalysisView({ analysis, chainMode }: { analysis: any; 
           </div>
           <div>
             <span className="text-ink-3">Suspicious: </span>
-            <span className={`font-semibold ${analysis.portfolioSnapshot.suspiciousTokenCount > 0 ? 'text-red' : 'text-green'}`}>{analysis.portfolioSnapshot.suspiciousTokenCount}</span>
+            <span className={`font-semibold ${analysis.portfolioSnapshot.suspiciousTokenCount > 0 ? 'text-risk' : 'text-ok'}`}>{analysis.portfolioSnapshot.suspiciousTokenCount}</span>
           </div>
           <div>
             <span className="text-ink-3">Priced / Unpriced: </span>
@@ -36,7 +36,7 @@ export function PortfolioAnalysisView({ analysis, chainMode }: { analysis: any; 
           </div>
           <div>
             <span className="text-ink-3">High-risk security flags: </span>
-            <span className={`font-semibold ${(analysis.portfolioSnapshot.securityHighRiskCount || 0) > 0 ? 'text-red' : 'text-green'}`}>{analysis.portfolioSnapshot.securityHighRiskCount || 0}</span>
+            <span className={`font-semibold ${(analysis.portfolioSnapshot.securityHighRiskCount || 0) > 0 ? 'text-risk' : 'text-ok'}`}>{analysis.portfolioSnapshot.securityHighRiskCount || 0}</span>
           </div>
           <div>
             <span className="text-ink-3">Provider: </span>
@@ -55,7 +55,7 @@ export function PortfolioAnalysisView({ analysis, chainMode }: { analysis: any; 
           {analysis.portfolioSnapshot.snapshotTimestamp && (
             <div className="ml-auto">
               <span className="text-ink-3">Snapshot: </span>
-              <span className={`font-mono ${analysis.portfolioSnapshot.dataFreshness === 'stale' ? 'text-amber' : 'text-ink-3'}`}>
+              <span className={`font-mono ${analysis.portfolioSnapshot.dataFreshness === 'stale' ? 'text-warn' : 'text-ink-3'}`}>
                 {new Date(analysis.portfolioSnapshot.snapshotTimestamp).toLocaleString()}{analysis.portfolioSnapshot.dataFreshness === 'stale' ? ' (stale)' : ''}
               </span>
             </div>
