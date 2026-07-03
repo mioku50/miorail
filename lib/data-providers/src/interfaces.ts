@@ -100,3 +100,30 @@ export interface TokenSecurityProviderEnvResult {
   statusCode: "connected" | "missing" | "failed" | "partial";
   providerName: TokenSecurityProviderName;
 }
+
+export interface TokenApproval {
+  tokenAddress: string;
+  tokenSymbol?: string;
+  tokenName?: string;
+  spenderAddress: string;
+  spenderLabel?: string;
+  allowanceRaw: string;
+  allowanceFormatted?: string;
+  isUnlimited: boolean;
+  lastUpdatedAt?: string;
+  source: "moralis" | "alchemy" | "basescan" | "none";
+}
+
+export interface ApprovalProvider {
+  getTokenApprovals(params: {
+    walletAddress: string;
+    chainId: number;
+  }): Promise<TokenApproval[]>;
+}
+
+export interface ApprovalProviderEnvResult {
+  provider: ApprovalProvider;
+  status: string;
+  statusCode: "connected" | "missing" | "failed" | "partial";
+  providerName: "moralis" | "alchemy" | "none" | "mock";
+}

@@ -227,6 +227,19 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
                 GoPlus partial
               </span>
             )}
+            {(statusData?.approvals?.status === 'connected' || portfolio?.providers?.approvals === 'connected') ? (
+              <span className="text-[10px] font-mono font-normal text-green lowercase bg-green-soft px-1.5 py-0.5 rounded border border-green/20">
+                approvals connected
+              </span>
+            ) : (statusData?.approvals?.status === 'failed' || portfolio?.providers?.approvals === 'failed') ? (
+              <span className="text-[10px] font-mono font-normal text-red lowercase bg-red-soft px-1.5 py-0.5 rounded border border-red/20">
+                approvals failed
+              </span>
+            ) : (
+              <span className="text-[10px] font-mono font-normal text-amber lowercase bg-amber-soft px-1.5 py-0.5 rounded border border-amber/20">
+                approvals missing
+              </span>
+            )}
           </div>
         </div>
 
@@ -755,6 +768,69 @@ function ActionInbox({ showToast, onSelectTab }: { showToast: (msg: string) => v
                                </ul>
                              </div>
                            )}
+
+                           {meta.analysis?.approvalAnalysis && (
+                             <div className="flex flex-col gap-1.5 mt-2 border-t border-line pt-2">
+                               <div className="flex items-center justify-between">
+                                 <div className="text-[11px] font-semibold text-ink-3 uppercase tracking-wider">
+                                   Approval Summary
+                                 </div>
+                                 <div className="flex items-center gap-1.5 text-[10px] font-mono">
+                                   <span className="bg-panel-2 border border-line px-1.5 py-0.5 rounded">
+                                     Total: {meta.analysis.approvalAnalysis.totalApprovals}
+                                   </span>
+                                   {meta.analysis.approvalAnalysis.unlimitedApprovals > 0 && (
+                                     <span className="bg-amber-soft text-amber border border-amber/20 px-1.5 py-0.5 rounded font-bold">
+                                       Unlimited: {meta.analysis.approvalAnalysis.unlimitedApprovals}
+                                     </span>
+                                   )}
+                                   {meta.analysis.approvalAnalysis.riskySpenderApprovals > 0 && (
+                                     <span className="bg-red-soft text-red border border-red/20 px-1.5 py-0.5 rounded font-bold">
+                                       Risky: {meta.analysis.approvalAnalysis.riskySpenderApprovals}
+                                     </span>
+                                   )}
+                                 </div>
+                               </div>
+                               <div className="text-xs font-medium text-ink bg-panel-2 p-2 rounded border border-line">
+                                 {meta.analysis.approvalAnalysis.summary}
+                               </div>
+                               {meta.analysis.approvalAnalysis.findings && meta.analysis.approvalAnalysis.findings.length > 0 && (
+                                 <div className="flex flex-col gap-1.5 max-h-[200px] overflow-y-auto pr-1 mt-1">
+                                   {meta.analysis.approvalAnalysis.findings.map((f: any, fIdx: number) => {
+                                     const fColor = f.riskLevel === 'critical' || f.riskLevel === 'high' ? 'bg-red-soft text-red border-red/20' : f.riskLevel === 'medium' ? 'bg-amber-soft text-amber border-amber/20' : 'bg-green-soft text-green border-green/20';
+                                     return (
+                                       <div key={fIdx} className="flex flex-col gap-1 bg-bg/80 border border-line rounded p-2 text-[11px]">
+                                         <div className="flex items-center justify-between gap-2">
+                                           <div className="flex items-center gap-1.5 font-bold text-ink">
+                                             <span>{f.tokenSymbol}</span>
+                                             <span className="font-normal font-mono text-ink-3 text-[10px] truncate max-w-[140px]">
+                                               → {f.spenderLabel || f.spenderAddress}
+                                             </span>
+                                           </div>
+                                           <div className="flex items-center gap-1.5">
+                                             {f.isUnlimited && (
+                                               <span className="bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300 border border-orange-300 dark:border-orange-800 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase">
+                                                 Unlimited
+                                               </span>
+                                             )}
+                                             <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase border ${fColor}`}>
+                                               {f.riskLevel}
+                                             </span>
+                                           </div>
+                                         </div>
+                                         <div className="flex items-center justify-between text-[10px] font-mono text-ink-3">
+                                           <span>Allowance: {f.allowanceFormatted}</span>
+                                         </div>
+                                         <div className="text-ink-2 text-[11px] leading-snug mt-0.5">
+                                           {f.reason} Consider reviewing this permission in a trusted wallet or revoke interface.
+                                         </div>
+                                       </div>
+                                     );
+                                   })}
+                                 </div>
+                               )}
+                             </div>
+                           )}
                          </div>
                        )}
                      </div>
@@ -782,6 +858,7 @@ function ActionInbox({ showToast, onSelectTab }: { showToast: (msg: string) => v
                    </div>
                 ) : (
                   <div className="flex gap-2 items-center flex-wrap mt-1">
+                     {(!isMainnetReadonly && action.metadata?.chainMode !== 'mainnet-readonly' && action.metadata?.chainMode !== 'mainnet' && action.calls && action.calls.length > 0) && (
                      <span title={(isMainnetReadonly || action.metadata?.chainMode === 'mainnet-readonly' || action.metadata?.chainMode === 'mainnet') ? "Mainnet execution is disabled in read-only mode." : undefined} onClick={() => { if(isMainnetReadonly || action.metadata?.chainMode === 'mainnet-readonly' || action.metadata?.chainMode === 'mainnet') showToast("Mainnet execution is disabled in read-only mode."); }}>
                      <button
                        onClick={() => {
@@ -820,6 +897,7 @@ function ActionInbox({ showToast, onSelectTab }: { showToast: (msg: string) => v
                        ⚡ {isExecuting ? 'Executing...' : (isMainnetReadonly || action.metadata?.chainMode === 'mainnet-readonly' || action.metadata?.chainMode === 'mainnet') ? 'Read-only' : 'Execute'}
                      </button>
                      </span>
+                     )}
                      {action.kind === 'recommendation' && (
                        <button
                          onClick={() => regenerateAction.mutate({ actionId: action.id, walletAddress: address, chainEnv: import.meta.env.VITE_CHAIN_ENV || 'mainnet-readonly' }, { onSuccess: () => { showToast('Recommendation analysis regenerated'); refetch(); } })}
@@ -1194,7 +1272,7 @@ function ActionsBuilder({ showToast }: { showToast: (msg: string) => void }) {
 
   const presets = [
     "Create a read-only swap plan for 0.1 ETH to USDC",
-    "Create a recommendation to detect malicious token approvals",
+    "Scan Token Approvals",
     "Create a read-only portfolio rebalance report"
   ];
 
@@ -1417,6 +1495,17 @@ function ConfigurePage() {
            <span className="font-medium text-sm text-ink">Risk / GoPlus Provider</span>
            <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.risk.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.risk.status === 'failed' ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20'}`}>
              {formatRiskProvider(statusData)}
+           </span>
+         </div>
+         <div className="flex items-center justify-between py-1.5 border-b border-line">
+           <span className="font-medium text-sm text-ink">Approval Scanner</span>
+           <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${(statusData?.approvals?.status === 'connected' || portfolio?.providers?.approvals === 'connected') ? 'bg-green-soft text-green border-green/20' : (statusData?.approvals?.status === 'failed' || portfolio?.providers?.approvals === 'failed') ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20'}`}>
+             {statusData ? (
+               statusData.approvals?.status === 'connected' ? `${statusData.approvals?.provider || 'moralis'} connected` :
+               statusData.approvals?.status === 'failed' ? 'Failed' : 'Missing'
+             ) : (
+               portfolio?.providers?.approvals === 'connected' ? `${portfolio?.providers?.approvalProvider || 'moralis'} connected` : 'Missing'
+             )}
            </span>
          </div>
          <div className="flex items-center justify-between py-1.5 border-b border-line">

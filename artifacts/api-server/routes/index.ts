@@ -6,6 +6,7 @@ import { actionsRouter } from './actions';
 import { x402Router } from './x402';
 import { workflowsRouter } from './workflows';
 import { portfolioRouter } from './portfolio';
+import { approvalsRouter } from './approvals';
 import { protocolsRouter } from './protocols';
 import { statusRouter } from './status';
 
@@ -18,6 +19,7 @@ routes.use('/actions', actionsRouter);
 routes.use('/x402', x402Router);
 routes.use('/workflows', workflowsRouter);
 routes.use('/portfolio', portfolioRouter);
+routes.use('/approvals', approvalsRouter);
 routes.use('/protocols', protocolsRouter);
 routes.use('/status', statusRouter);
 

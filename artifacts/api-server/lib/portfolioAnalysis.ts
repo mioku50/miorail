@@ -1,4 +1,36 @@
-import { getTokenBalancesProviderFromEnv, getPriceProviderFromEnv, getTokenSecurityProviderFromEnv, type TokenSecurityResult, type TokenSecurityFlags, type TokenSecurityProviderName, type TokenSecurityStatus } from '@mioagent/data-providers';
+import { getTokenBalancesProviderFromEnv, getPriceProviderFromEnv, getTokenSecurityProviderFromEnv, getApprovalProviderFromEnv, type TokenSecurityResult, type TokenSecurityFlags, type TokenSecurityProviderName, type TokenSecurityStatus, type TokenApproval } from '@mioagent/data-providers';
+
+export interface ApprovalFinding {
+  tokenSymbol: string;
+  tokenAddress: string;
+  spenderAddress: string;
+  spenderLabel?: string;
+  allowanceFormatted: string;
+  isUnlimited: boolean;
+  riskLevel: "critical" | "high" | "medium" | "low";
+  reason: string;
+}
+
+export interface ApprovalRecommendation {
+  id: string;
+  title: string;
+  description: string;
+  riskLevel: "critical" | "high" | "medium" | "low";
+  tokenSymbol: string;
+  spenderAddress: string;
+  spenderLabel?: string;
+  calls: [];
+  kind: "recommendation";
+}
+
+export interface ApprovalRiskAnalysis {
+  summary: string;
+  totalApprovals: number;
+  unlimitedApprovals: number;
+  riskySpenderApprovals: number;
+  findings: ApprovalFinding[];
+  recommendations: ApprovalRecommendation[];
+}
 
 export interface TokenInfoSecurity {
   provider: TokenSecurityProviderName;
@@ -37,7 +69,10 @@ export interface PortfolioData {
     priceProvider?: string;
     risk: "connected" | "missing" | "failed";
     riskProvider?: TokenSecurityProviderName;
+    approvals?: string;
+    approvalProvider?: string;
   };
+  approvals?: TokenApproval[];
 }
 
 export interface TokenFinding {
@@ -84,6 +119,7 @@ export interface PortfolioRiskAnalysis {
   };
   tokenFindings: TokenFinding[];
   suggestedNextSteps: string[];
+  approvalAnalysis?: ApprovalRiskAnalysis;
 }
 
 function toPortfolioSecurity(result: TokenSecurityResult): TokenInfoSecurity {
@@ -350,6 +386,18 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
     }
   }
 
+  let approvalsData: TokenApproval[] = [];
+  let approvalsStatus: "connected" | "missing" | "failed" | "partial" = "missing";
+  let approvalProviderName = "none";
+  try {
+    const appRes = await fetchInternalApprovals(address, chainEnv);
+    approvalsData = appRes.approvals;
+    approvalsStatus = appRes.status;
+    approvalProviderName = appRes.provider;
+  } catch {
+    approvalsStatus = "failed";
+  }
+
   return {
     totalUsdValue,
     tokens,
@@ -363,7 +411,10 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
       priceProvider: priceProviderName,
       risk: riskStatus,
       riskProvider: riskProviderName,
-    }
+      approvals: approvalsStatus,
+      approvalProvider: approvalProviderName,
+    },
+    approvals: approvalsData
   };
 }
 
@@ -416,6 +467,154 @@ function describeSecurityFlags(t: TokenInfo) {
   const labels = t.security?.riskLabels || [];
   if (labels.length > 0) return labels.slice(0, 3).join(', ');
   return t.security?.summary || 'contract-level warning';
+}
+
+export function analyzeApprovalsForRisk(
+  approvals: TokenApproval[],
+  portfolio?: PortfolioData
+): ApprovalRiskAnalysis {
+  const findings: ApprovalFinding[] = [];
+  const majorSymbols = ['ETH', 'WETH', 'USDC', 'USDT', 'DAI', 'CBETH', 'DEGEN', 'EURC', 'AERO'];
+
+  for (const a of approvals) {
+    const hasVerifiedLabel = Boolean(a.spenderLabel && a.spenderLabel.trim() !== '');
+    const isZero = a.allowanceRaw === '0' || (!a.isUnlimited && Number(a.allowanceFormatted) === 0);
+
+    let isMajorValueToken = majorSymbols.includes(a.tokenSymbol.toUpperCase());
+    if (portfolio?.tokens) {
+      const match = portfolio.tokens.find(
+        t => t.address.toLowerCase() === a.tokenAddress.toLowerCase() || t.symbol.toUpperCase() === a.tokenSymbol.toUpperCase()
+      );
+      if (match && match.usdValue && Number(match.usdValue) > 0) {
+        isMajorValueToken = true;
+      }
+    }
+
+    let riskLevel: "critical" | "high" | "medium" | "low" = "low";
+    let reason = "Well-known protocol with limited spend access.";
+
+    if (isZero) {
+      riskLevel = "low";
+      reason = "Zero allowance permission.";
+    } else if (!hasVerifiedLabel && a.isUnlimited && isMajorValueToken) {
+      riskLevel = "critical";
+      reason = `Unverified spender has unlimited spend access to valuable token (${a.tokenSymbol}).`;
+    } else if (!hasVerifiedLabel || (a.isUnlimited && isMajorValueToken)) {
+      riskLevel = "high";
+      if (!hasVerifiedLabel) {
+        reason = `Unverified spender has spend access to ${a.tokenSymbol}.`;
+      } else {
+        reason = `Unlimited spend access to valuable token (${a.tokenSymbol}) even for known protocol (${a.spenderLabel}).`;
+      }
+    } else {
+      let isOld = false;
+      if (a.lastUpdatedAt) {
+        const ts = new Date(a.lastUpdatedAt).getTime();
+        if (!isNaN(ts) && Date.now() - ts > 180 * 24 * 60 * 60 * 1000) {
+          isOld = true;
+        }
+      }
+      if (isOld) {
+        riskLevel = "medium";
+        reason = `Permission was granted over 180 days ago (${a.spenderLabel || a.spenderAddress}).`;
+      } else {
+        riskLevel = "low";
+        reason = `Limited allowance granted to known protocol (${a.spenderLabel || a.spenderAddress}).`;
+      }
+    }
+
+    findings.push({
+      tokenSymbol: a.tokenSymbol,
+      tokenAddress: a.tokenAddress,
+      spenderAddress: a.spenderAddress,
+      spenderLabel: a.spenderLabel,
+      allowanceFormatted: a.allowanceFormatted,
+      isUnlimited: a.isUnlimited,
+      riskLevel,
+      reason,
+    });
+  }
+
+  const totalApprovals = approvals.length;
+  const unlimitedApprovals = approvals.filter(a => a.isUnlimited).length;
+  const riskySpenderApprovals = findings.filter(f => f.riskLevel === 'critical' || f.riskLevel === 'high').length;
+
+  let summary = `All ${totalApprovals} spend permission(s) appear well-scoped and low risk.`;
+  if (totalApprovals === 0) {
+    summary = "No active spend permissions detected.";
+  } else if (riskySpenderApprovals > 0) {
+    summary = `Found ${riskySpenderApprovals} risky spend permission(s) across ${totalApprovals} total approval(s).`;
+  } else if (unlimitedApprovals > 0) {
+    summary = `Found ${unlimitedApprovals} unlimited spend permission(s) to known protocols across ${totalApprovals} total approval(s).`;
+  }
+
+  const recommendations: ApprovalRecommendation[] = findings
+    .filter(f => f.riskLevel === 'critical' || f.riskLevel === 'high')
+    .map((f, idx) => ({
+      id: `approval-risk-${f.tokenAddress}-${f.spenderAddress}-${idx}`,
+      title: `${f.riskLevel.toUpperCase()} Risk: ${f.tokenSymbol} Spend Permission`,
+      description: `${f.reason} Consider reviewing this permission in a trusted wallet or revoke interface.`,
+      riskLevel: f.riskLevel,
+      tokenSymbol: f.tokenSymbol,
+      spenderAddress: f.spenderAddress,
+      spenderLabel: f.spenderLabel,
+      calls: [] as [],
+      kind: "recommendation" as const,
+    }));
+
+  return {
+    summary,
+    totalApprovals,
+    unlimitedApprovals,
+    riskySpenderApprovals,
+    findings,
+    recommendations,
+  };
+}
+
+export async function fetchInternalApprovals(address: string, chainEnv: string = 'sepolia'): Promise<{
+  approvals: TokenApproval[];
+  status: "connected" | "missing" | "failed" | "partial";
+  provider: string;
+  tokenCount: number;
+  unlimitedCount: number;
+  riskySpenderCount: number;
+}> {
+  const chainId = chainEnv === 'sepolia' ? 84532 : 8453;
+  const { provider, statusCode, providerName } = getApprovalProviderFromEnv();
+  
+  if (providerName === 'none') {
+    return {
+      approvals: [],
+      status: "missing",
+      provider: "none",
+      tokenCount: 0,
+      unlimitedCount: 0,
+      riskySpenderCount: 0
+    };
+  }
+
+  try {
+    const approvals = await provider.getTokenApprovals({ walletAddress: address, chainId });
+    const analysis = analyzeApprovalsForRisk(approvals);
+    return {
+      approvals,
+      status: statusCode,
+      provider: providerName,
+      tokenCount: new Set(approvals.map(a => a.tokenAddress)).size || approvals.length,
+      unlimitedCount: analysis.unlimitedApprovals,
+      riskySpenderCount: analysis.riskySpenderApprovals
+    };
+  } catch (err) {
+    return {
+      approvals: [],
+      status: "failed",
+      provider: providerName,
+      tokenCount: 0,
+      unlimitedCount: 0,
+      riskySpenderCount: 0
+    };
+  }
 }
 
 export function analyzePortfolioForRisk(
@@ -601,7 +800,8 @@ export function analyzePortfolioForRisk(
       status: securityProviderStatus
     },
     tokenFindings: findings.slice(0, 10),
-    suggestedNextSteps
+    suggestedNextSteps,
+    approvalAnalysis: analyzeApprovalsForRisk(portfolio.approvals || [], portfolio)
   };
 }
 
@@ -639,9 +839,12 @@ export function buildRecommendationMetadataFromAnalysis(input: {
       tokenBalances: analysis.portfolioSnapshot.provider,
       prices: analysis.portfolioSnapshot.priceProvider || "missing",
       risk: analysis.securityProvider.status,
-      securityProvider: analysis.securityProvider.provider
+      securityProvider: analysis.securityProvider.provider,
+      approvals: analysis.approvalAnalysis ? "connected" : "missing",
+      approvalProvider: "moralis"
     },
-    analysis: analysis
+    analysis: analysis,
+    approvalAnalysis: analysis.approvalAnalysis
   };
 }
 

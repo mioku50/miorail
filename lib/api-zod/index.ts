@@ -243,6 +243,28 @@ export const PortfolioResponseSchema = z.object({
   providers: PortfolioProvidersSchema.optional(),
 });
 
+export const TokenApprovalSchema = z.object({
+  tokenAddress: z.string(),
+  tokenSymbol: z.string(),
+  tokenName: z.string().optional(),
+  spenderAddress: z.string(),
+  spenderLabel: z.string().optional(),
+  allowanceRaw: z.string(),
+  allowanceFormatted: z.string(),
+  isUnlimited: z.boolean(),
+  lastUpdatedAt: z.string().optional(),
+  source: z.enum(["moralis", "alchemy", "none", "mock", "unknown"]),
+});
+
+export const ApprovalsResponseSchema = z.object({
+  approvals: z.array(TokenApprovalSchema),
+  status: z.enum(["connected", "missing", "failed", "partial"]),
+  provider: z.string(),
+  tokenCount: z.number(),
+  unlimitedCount: z.number(),
+  riskySpenderCount: z.number(),
+});
+
 export const StatusResponseSchema = z.object({
   chainEnv: z.string(),
   chainId: z.number(),
@@ -259,6 +281,10 @@ export const StatusResponseSchema = z.object({
     provider: z.string(),
   }),
   risk: z.object({
+    status: z.enum(["connected", "missing", "failed", "partial"]),
+    provider: z.string(),
+  }),
+  approvals: z.object({
     status: z.enum(["connected", "missing", "failed", "partial"]),
     provider: z.string(),
   }),

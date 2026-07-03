@@ -14,9 +14,22 @@ test('detectActionIntent detects portfolio review', () => {
 });
 
 test('detectActionIntent detects security monitoring', () => {
-  const result = detectActionIntent('check spend permissions and watch for suspicious approvals');
+  const result = detectActionIntent('watch for suspicious tokens and token security risks');
   assert.strictEqual(result.isActionIntent, true);
   assert.strictEqual(result.intentType, 'security');
+});
+
+test('detectActionIntent detects approval review', () => {
+  for (const phrase of [
+    'Check my token approvals',
+    'Who can spend my USDC?',
+    'Do I have any unlimited allowances?',
+    'Scan spend permissions'
+  ]) {
+    const result = detectActionIntent(phrase);
+    assert.strictEqual(result.isActionIntent, true, phrase);
+    assert.strictEqual(result.intentType, 'approvals', phrase);
+  }
 });
 
 test('detectActionIntent detects rebalance plan', () => {
@@ -30,8 +43,7 @@ test('detectActionIntent detects token security scan phrases', () => {
     'Check risky tokens',
     'Check token security',
     'Are any tokens dangerous?',
-    'Scan my wallet',
-    'Check approvals and token risks'
+    'Scan my wallet'
   ]) {
     const result = detectActionIntent(phrase);
     assert.strictEqual(result.isActionIntent, true, phrase);

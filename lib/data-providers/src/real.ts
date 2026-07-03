@@ -11,8 +11,11 @@ import {
   TokenSecurityProviderEnvResult,
   TokenSecurityResult,
   TokenSecurityFlags,
-  TokenSecurityStatus
+  TokenSecurityStatus,
+  ApprovalProvider,
+  TokenApproval
 } from './interfaces.js';
+import { MockPriceProvider, MockApprovalProvider, MockTokenBalancesProvider } from './mocks.js';
 
 export class RealMoralisProvider implements MoralisProvider {
   constructor(private readonly apiKey: string) {}
@@ -421,7 +424,7 @@ export class AlchemyTokenBalancesProvider implements TokenBalancesProvider {
 }
 
 function logMoralisDiagnostics(params: {
-  endpointType: 'balances' | 'prices';
+  endpointType: 'balances' | 'prices' | 'approvals';
   walletAddress?: string;
   chainId: number;
   statusCode?: number;
@@ -499,7 +502,6 @@ export function getTokenBalancesProviderFromEnv(): { provider: TokenBalancesProv
     return { provider: new MoralisTokenBalancesProvider(process.env.MORALIS_API_KEY), status: 'Moralis connected', providerName: 'moralis' };
   }
   if (mode === 'mock') {
-    const { MockTokenBalancesProvider } = require('./mocks.js');
     return { provider: new MockTokenBalancesProvider(), status: 'mock', providerName: 'mock' };
   }
   return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', providerName: 'none' };
@@ -653,10 +655,112 @@ export function getPriceProviderFromEnv(): { provider: PriceProvider; status: st
     return { provider: new MoralisPriceProvider(process.env.MORALIS_API_KEY), status: 'Moralis prices connected', providerName: 'moralis' };
   }
   if (mode === 'mock') {
-    const { MockPriceProvider } = require('./mocks.js');
     return { provider: new MockPriceProvider(), status: 'mock', providerName: 'mock' };
   }
   return { provider: new NonePriceProvider(), status: 'Price provider not configured', providerName: 'none' };
+}
+
+function checkIsUnlimited(raw: string): boolean {
+  if (!raw || raw === '0') return false;
+  if (raw.toLowerCase() === 'unlimited' || raw.includes('115792089237316195423570985008687907853269984665640564039457584007913129639935')) return true;
+  try {
+    const val = BigInt(raw);
+    const limit30 = BigInt('1000000000000000000000000000000'); // 1e30
+    return val >= limit30;
+  } catch {
+    return false;
+  }
+}
+
+export class NoneApprovalProvider implements ApprovalProvider {
+  async getTokenApprovals(_params: { walletAddress: string; chainId: number }): Promise<TokenApproval[]> {
+    return [];
+  }
+}
+
+export class MoralisApprovalProvider implements ApprovalProvider {
+  constructor(private readonly apiKey: string) {}
+
+  async getTokenApprovals(params: { walletAddress: string; chainId: number }): Promise<TokenApproval[]> {
+    if (!this.apiKey) throw new Error('Moralis API key missing');
+    const startTime = Date.now();
+    let lastStatus = 0;
+    const chainParam = params.chainId === 84532 ? 'base%20sepolia' : 'base';
+    try {
+      const res = await fetch(`https://deep-index.moralis.io/api/v2.2/wallets/${params.walletAddress}/approvals?chain=${chainParam}`, {
+        headers: {
+          'X-API-Key': this.apiKey,
+          'accept': 'application/json'
+        }
+      });
+      lastStatus = res.status;
+      if (!res.ok) {
+        throw new Error(`Moralis API error: ${res.statusText || res.status}`);
+      }
+      const data = await res.json() as any;
+      const list = Array.isArray(data) ? data : (Array.isArray(data?.result) ? data.result : []);
+      const results: TokenApproval[] = list.map((item: any) => {
+        const tokenAddress = (item.token?.address || item.token_address || item.contract_address || '').toLowerCase();
+        const tokenSymbol = item.token?.symbol || item.token_symbol || item.symbol || 'UNKNOWN';
+        const tokenName = item.token?.name || item.token_name || item.name || 'Unknown Token';
+        const decimals = Number(item.token?.decimals || item.token_decimals || item.decimals || 18);
+        const spenderAddress = (item.spender?.address || item.spender_address || (typeof item.spender === 'string' ? item.spender : '') || '').toLowerCase();
+        const spenderLabel = item.spender?.label || item.spender?.name || item.spender_label || item.spender_name || undefined;
+        const allowanceRaw = (item.value || item.allowance || item.allowance_raw || '0').toString();
+        const isUnlim = checkIsUnlimited(allowanceRaw);
+        let allowanceFormatted = item.value_formatted || item.allowance_formatted;
+        if (!allowanceFormatted || allowanceFormatted === allowanceRaw) {
+          if (isUnlim) {
+            allowanceFormatted = 'Unlimited';
+          } else {
+            try {
+              const val = Number(allowanceRaw) / Math.pow(10, !isNaN(decimals) && decimals > 0 ? decimals : 18);
+              allowanceFormatted = isNaN(val) ? allowanceRaw : val.toFixed(4);
+            } catch {
+              allowanceFormatted = allowanceRaw;
+            }
+          }
+        }
+        const lastUpdatedAt = item.block_timestamp || item.updated_at || item.last_updated_at || undefined;
+        return {
+          tokenAddress,
+          tokenSymbol,
+          tokenName,
+          spenderAddress,
+          spenderLabel,
+          allowanceRaw,
+          allowanceFormatted,
+          isUnlimited: isUnlim,
+          lastUpdatedAt,
+          source: 'moralis' as const
+        };
+      });
+      const durationMs = Date.now() - startTime;
+      logMoralisDiagnostics({ endpointType: 'approvals', walletAddress: params.walletAddress, chainId: params.chainId, statusCode: lastStatus, tokenCount: results.length, durationMs });
+      return results;
+    } catch (err: any) {
+      const durationMs = Date.now() - startTime;
+      logMoralisDiagnostics({ endpointType: 'approvals', walletAddress: params.walletAddress, chainId: params.chainId, statusCode: lastStatus, durationMs, errorMessage: err?.message || 'Unknown error' });
+      throw err;
+    }
+  }
+}
+
+export function getApprovalProviderFromEnv(): { provider: ApprovalProvider; status: string; statusCode: "connected" | "missing" | "failed" | "partial"; providerName: "moralis" | "alchemy" | "none" | "mock" } {
+  const mode = (process.env.APPROVAL_PROVIDER || 'none').toLowerCase();
+  if (mode === 'none') {
+    return { provider: new NoneApprovalProvider(), status: 'Approval provider not configured', statusCode: 'missing', providerName: 'none' };
+  }
+  if (mode === 'moralis' || (!process.env.APPROVAL_PROVIDER && process.env.MORALIS_API_KEY)) {
+    if (!process.env.MORALIS_API_KEY) {
+      return { provider: new NoneApprovalProvider(), status: 'Approval provider not configured', statusCode: 'missing', providerName: 'none' };
+    }
+    return { provider: new MoralisApprovalProvider(process.env.MORALIS_API_KEY), status: 'Moralis approvals connected', statusCode: 'connected', providerName: 'moralis' };
+  }
+  if (mode === 'mock') {
+    return { provider: new MockApprovalProvider(), status: 'mock', statusCode: 'connected', providerName: 'mock' };
+  }
+  return { provider: new NoneApprovalProvider(), status: 'Approval provider not configured', statusCode: 'missing', providerName: 'none' };
 }
 
 

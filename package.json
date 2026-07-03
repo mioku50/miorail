@@ -12,6 +12,7 @@
     "smoke:llm": "tsx scripts/smoke_runtime.ts",
     "smoke:api": "tsx scripts/smoke_api.ts",
     "smoke:sepolia-action": "tsx scripts/seed_sepolia_action.ts && pnpm smoke:api",
+    "smoke:approvals": "tsx scripts/smoke_approvals.ts",
     "db:probe": "tsx scripts/db_probe.ts"
   },
   "pnpm": {

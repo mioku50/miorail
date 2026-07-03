@@ -1,6 +1,6 @@
 export interface ActionIntent {
   isActionIntent: boolean;
-  intentType?: 'portfolio' | 'risk' | 'rebalance' | 'security' | 'yield' | 'general_recommendation';
+  intentType?: 'portfolio' | 'risk' | 'rebalance' | 'security' | 'yield' | 'general_recommendation' | 'approvals';
   title?: string;
   reason?: string;
   expectedEffect?: string;
@@ -13,17 +13,28 @@ export function detectActionIntent(message: string): ActionIntent {
   // Check for greetings and normal chat that shouldn't trigger an action
   const greetings = ['hello', 'hi', 'hey', 'hi there', 'hello there', 'hey there', 'good morning', 'good afternoon', 'good evening', 'who are you?', 'what can you do?', 'help', 'thanks', 'thank you'];
   if (greetings.includes(lower) || lower.startsWith('hello ') || lower.startsWith('hi ') || lower.startsWith('hey ')) {
-    if (!lower.includes('token') && !lower.includes('portfolio') && !lower.includes('risk') && !lower.includes('rebalance') && !lower.includes('swap') && !lower.includes('approval') && !lower.includes('permission') && !lower.includes('yield') && !lower.includes('liquidity') && !lower.includes('monitor') && !lower.includes('security') && !lower.includes('dangerous')) {
+    if (!lower.includes('token') && !lower.includes('portfolio') && !lower.includes('risk') && !lower.includes('rebalance') && !lower.includes('swap') && !lower.includes('approval') && !lower.includes('permission') && !lower.includes('yield') && !lower.includes('liquidity') && !lower.includes('monitor') && !lower.includes('security') && !lower.includes('dangerous') && !lower.includes('allowance')) {
       return { isActionIntent: false };
     }
   }
 
-  if (lower.includes('approval') || lower.includes('permission') || lower.includes('revoke') || lower.includes('suspicious') || lower.includes('unauthorized') || lower.includes('watch for') || lower.includes('token security') || lower.includes('dangerous') || lower.includes('scan my wallet')) {
+  if (lower.includes('approval') || lower.includes('permission') || lower.includes('allowance') || lower.includes('revoke') || lower.includes('who can spend') || lower.includes('spend permission') || lower.includes('unlimited allowance')) {
+    return {
+      isActionIntent: true,
+      intentType: 'approvals',
+      title: 'Token Approval & Permission Review',
+      reason: `Automated recommendation created by Agent Stream to review spend permissions and allowances: "${message}"`,
+      expectedEffect: 'Scan connected wallet ERC-20 allowances and spend permissions, flag risky or unlimited allowances without creating revoke transactions.',
+      risk: 'low'
+    };
+  }
+
+  if (lower.includes('suspicious') || lower.includes('unauthorized') || lower.includes('watch for') || lower.includes('token security') || lower.includes('dangerous') || lower.includes('scan my wallet')) {
     return {
       isActionIntent: true,
       intentType: 'security',
-      title: 'Token Security & Permission Review',
-      reason: `Automated recommendation created by Agent Stream to review token security and permission risks: "${message}"`,
+      title: 'Token Security Review',
+      reason: `Automated recommendation created by Agent Stream to review token security risks: "${message}"`,
       expectedEffect: 'Scan connected wallet tokens with available metadata and token security provider signals, then flag contract-level warnings without creating transactions.',
       risk: 'low'
     };

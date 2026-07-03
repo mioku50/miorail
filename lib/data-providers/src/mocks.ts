@@ -8,7 +8,9 @@ import {
   PriceProvider,
   TokenPrice,
   TokenSecurityProvider,
-  TokenSecurityResult
+  TokenSecurityResult,
+  ApprovalProvider,
+  TokenApproval
 } from './interfaces.js';
 
 export class MockMoralisProvider implements MoralisProvider {
@@ -100,6 +102,35 @@ export class MockPriceProvider implements PriceProvider {
       }
       return { symbol: t.symbol, address: t.address, usdPrice: undefined, source: 'none', confidence: 'unknown' };
     });
+  }
+}
+
+export class MockApprovalProvider implements ApprovalProvider {
+  async getTokenApprovals(_params: { walletAddress: string; chainId: number }): Promise<TokenApproval[]> {
+    return [
+      {
+        tokenAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        tokenSymbol: 'USDC',
+        tokenName: 'USD Coin',
+        spenderAddress: '0x9999999999999999999999999999999999999999',
+        spenderLabel: undefined,
+        allowanceRaw: '115792089237316195423570985008687907853269984665640564039457584007913129639935',
+        allowanceFormatted: 'Unlimited',
+        isUnlimited: true,
+        source: 'moralis'
+      },
+      {
+        tokenAddress: '0x4200000000000000000000000000000000000006',
+        tokenSymbol: 'WETH',
+        tokenName: 'Wrapped Ether',
+        spenderAddress: '0x2626664c2603336e57b271c5c0b26f421741e481',
+        spenderLabel: 'Uniswap V3 Router',
+        allowanceRaw: '1000000000000000000',
+        allowanceFormatted: '1.0',
+        isUnlimited: false,
+        source: 'moralis'
+      }
+    ];
   }
 }
 
