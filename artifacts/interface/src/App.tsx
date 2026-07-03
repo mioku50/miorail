@@ -167,9 +167,33 @@ function securityFlagLabels(flags: any = {}) {
   return labels;
 }
 
+function portfolioFreshnessChip(portfolio: any): { className: string; label: string } | null {
+  const df = portfolio?.dataFreshness;
+  if (!df) return null;
+  const map: Record<string, { className: string; label: string }> = {
+    live: { className: 'bg-green-soft text-green border-green/20', label: 'Live' },
+    cached: { className: 'bg-panel-2 text-ink-3 border-line/60', label: 'Cached' },
+    stale: { className: 'bg-amber-soft text-amber border-amber/20', label: 'Stale' },
+    partial: { className: 'bg-amber-soft text-amber border-amber/20', label: 'Partial' },
+    failed: { className: 'bg-red-soft text-red border-red/20', label: 'Provider failed' },
+  };
+  return map[df] || null;
+}
+
+function portfolioFreshnessLabel(portfolio: any): string {
+  const df = portfolio?.dataFreshness;
+  const age = Number(portfolio?.cacheAgeSeconds ?? 0);
+  if (df === 'live') return 'live just now';
+  if (df === 'cached') return age > 0 ? `cached ${Math.max(1, Math.round(age / 60))} min ago` : 'cached just now';
+  if (df === 'stale') return 'stale — showing cached data';
+  if (df === 'partial') return 'partial — some providers unavailable';
+  if (df === 'failed') return 'provider failed';
+  return '';
+}
+
 function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
   const { address } = useAccount();
-  const { data: portfolio, isError: isPortfolioError, error: portfolioError } = usePortfolio(address);
+  const { data: portfolio, isError: isPortfolioError, error: portfolioError, refetch: refetchPortfolio, isFetching: isPortfolioFetching } = usePortfolio(address);
   const { data: protocolsData, isError: isProtocolsError } = useProtocols();
   const { data: statusData } = useStatus();
   const { mutate: toggleProtocol } = useToggleProtocol();
@@ -202,6 +226,11 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
         <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-[11px] flex items-center justify-between">
           Portfolio
           <div className="flex items-center gap-1.5">
+            {portfolioFreshnessChip(portfolio) && (
+              <span className={`text-[10px] font-mono font-normal lowercase px-1.5 py-0.5 rounded border ${portfolioFreshnessChip(portfolio)!.className}`} title={`Provider calls: ${portfolio?.providerCallsMade ?? 0}`}>
+                {portfolioFreshnessChip(portfolio)!.label}
+              </span>
+            )}
             {(statusData || portfolio?.providerStatus) && (
               <span className="text-[10px] font-mono font-normal text-ink-3 lowercase bg-panel-2 px-1.5 py-0.5 rounded border border-line/60">
                 {statusData ? (
@@ -240,10 +269,34 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
                 approvals missing
               </span>
             )}
+            <button
+              type="button"
+              onClick={() => { refetchPortfolio(); showToast('Refreshing portfolio'); }}
+              disabled={isPortfolioFetching || !address}
+              title="Refresh portfolio"
+              className="text-[10px] font-mono font-normal lowercase px-1.5 py-0.5 rounded border border-line/60 bg-panel-2 text-ink-2 hover:text-ink hover:border-line disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {isPortfolioFetching ? 'refreshing…' : 'refresh'}
+            </button>
           </div>
         </div>
 
-        
+        {portfolio && (portfolio.dataFreshness || portfolio.providerBudgetStatus?.exhausted) && (
+          <div className="flex items-center gap-1.5 -mt-1 mb-2 flex-wrap">
+            {portfolio.dataFreshness && (
+              <span className="text-[10px] font-mono font-normal text-ink-3 lowercase">
+                {portfolioFreshnessLabel(portfolio)}
+              </span>
+            )}
+            {portfolio.providerBudgetStatus?.exhausted && (
+              <span className="text-[10px] font-mono font-normal text-amber lowercase bg-amber-soft px-1.5 py-0.5 rounded border border-amber/20">
+                Provider budget reached. Showing cached data.
+              </span>
+            )}
+          </div>
+        )}
+
+
         {isPortfolioError ? (
            <div className="text-[13px] text-red bg-red-soft p-3 rounded-md font-medium border border-red/20">
              {portfolioError?.message?.includes('wallet') || portfolioError?.message?.includes('address') ? 'Wallet address not configured' :

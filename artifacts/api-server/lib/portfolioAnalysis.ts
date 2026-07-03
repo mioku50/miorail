@@ -1,4 +1,15 @@
-import { getTokenBalancesProviderFromEnv, getPriceProviderFromEnv, getTokenSecurityProviderFromEnv, getApprovalProviderFromEnv, type TokenSecurityResult, type TokenSecurityFlags, type TokenSecurityProviderName, type TokenSecurityStatus, type TokenApproval } from '@mioagent/data-providers';
+import { getTokenBalancesProviderFromEnv, getPriceProviderFromEnv, getTokenSecurityProviderFromEnv, getApprovalProviderFromEnv, type TokenSecurityResult, type TokenSecurityFlags, type TokenSecurityProviderName, type TokenSecurityStatus, type TokenApproval, type TokenBalance, type TokenPrice } from '@mioagent/data-providers';
+import {
+  cachedProviderCall,
+  getProviderCacheOrchestratorFromEnv,
+  setProviderCacheForTests,
+  clearProviderCacheForTests,
+  InMemoryProviderCacheStore,
+  ProviderBudget,
+  type CacheStatus,
+  type CachedCallResult,
+  type ProviderName,
+} from './providerCache.js';
 
 export type { TokenApproval } from '@mioagent/data-providers';
 
@@ -64,6 +75,10 @@ export interface PortfolioData {
   tokens: TokenInfo[];
   updatedAt: string;
   providerStatus: string;
+  dataFreshness?: "live" | "cached" | "stale" | "partial" | "failed";
+  cacheAgeSeconds?: number;
+  providerBudgetStatus?: { exhausted: boolean; providers: string[] };
+  providerCallsMade?: number;
   providers: {
     rpc: string;
     tokenBalances: string;
@@ -115,6 +130,10 @@ export interface PortfolioRiskAnalysis {
     securityHighRiskCount: number;
     securityWarningCount: number;
     securityProvider: TokenSecurityProviderName;
+    dataFreshness?: "live" | "cached" | "stale" | "partial" | "failed";
+    cacheAgeSeconds?: number;
+    providerBudgetStatus?: { exhausted: boolean; providers: string[] };
+    providerCallsMade?: number;
   };
   securityProvider: {
     provider: TokenSecurityProviderName;
@@ -165,20 +184,66 @@ function providerStatusToSecurityStatus(status: string): "connected" | "missing"
   return 'connected';
 }
 
-interface CachedTokenBalances {
-  tokens: TokenInfo[];
-  expiresAt: number;
-}
-const tokenBalancesCacheMap = new Map<string, CachedTokenBalances>();
-const TOKEN_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
-
-export function setTokenBalancesCacheForTests(chainId: number, address: string, tokens: TokenInfo[], ttlMs = TOKEN_CACHE_TTL_MS) {
-  const cacheKey = `portfolio-tokens:${chainId}:${address.toLowerCase()}`;
-  tokenBalancesCacheMap.set(cacheKey, { tokens, expiresAt: Date.now() + ttlMs });
-}
-
+// Test helpers: force an in-memory orchestrator so portfolio/route tests stay
+// hermetic (no DB writes) and budget counters reset between tests.
 export function clearTokenBalancesCacheForTests() {
-  tokenBalancesCacheMap.clear();
+  clearProviderCacheForTests();
+  setProviderCacheForTests(new InMemoryProviderCacheStore(), new ProviderBudget(20, 300));
+}
+
+// Seed an already-expired balances cache entry so a failing live provider returns
+// cached balances with stale status (mirrors the pre-T11.6 resilience behavior).
+export function setTokenBalancesCacheForTests(chainId: number, address: string, tokens: TokenInfo[]) {
+  const orch = getProviderCacheOrchestratorFromEnv();
+  const key = `provider:moralis:balances:${chainId}:${address.toLowerCase()}`;
+  const now = Date.now();
+  void orch.store.set({
+    key,
+    provider: 'moralis',
+    chainId,
+    payload: tokens,
+    status: 'stale',
+    createdAt: now - 60_000,
+    updatedAt: now - 60_000,
+    expiresAt: now - 1000,
+  });
+}
+
+type FreshnessTrack = {
+  status: CacheStatus;
+  cacheAgeSeconds?: number;
+  providerCalled: boolean;
+  budgetExhausted: boolean;
+  provider: ProviderName;
+};
+
+function computePortfolioFreshness(track: FreshnessTrack[]): {
+  dataFreshness: "live" | "cached" | "stale" | "partial" | "failed";
+  cacheAgeSeconds: number;
+  providerBudgetStatus: { exhausted: boolean; providers: string[] };
+  providerCallsMade: number;
+} {
+  if (track.length === 0) {
+    return { dataFreshness: 'live', cacheAgeSeconds: 0, providerBudgetStatus: { exhausted: false, providers: [] }, providerCallsMade: 0 };
+  }
+  const hasStale = track.some(t => t.status === 'stale');
+  const hasFailed = track.some(t => t.status === 'failed');
+  const hasCached = track.some(t => t.status === 'cached');
+  const hasLive = track.some(t => t.status === 'live');
+  let dataFreshness: "live" | "cached" | "stale" | "partial" | "failed";
+  if (hasStale) dataFreshness = 'stale';
+  else if (hasFailed && (hasLive || hasCached)) dataFreshness = 'partial';
+  else if (hasCached) dataFreshness = 'cached';
+  else if (hasLive) dataFreshness = 'live';
+  else dataFreshness = 'failed';
+  const cacheAgeSeconds = Math.max(0, ...track.map(t => t.cacheAgeSeconds ?? 0));
+  const exhaustedProviders = Array.from(new Set(track.filter(t => t.budgetExhausted).map(t => t.provider)));
+  return {
+    dataFreshness,
+    cacheAgeSeconds,
+    providerBudgetStatus: { exhausted: exhaustedProviders.length > 0, providers: exhaustedProviders },
+    providerCallsMade: track.filter(t => t.providerCalled).length,
+  };
 }
 
 export async function fetchInternalPortfolio(address: string, chainEnv: string = 'sepolia'): Promise<PortfolioData> {
@@ -225,13 +290,43 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
     }
   ];
 
+  const orch = getProviderCacheOrchestratorFromEnv();
+  const freshnessTrack: FreshnessTrack[] = [];
+
+  // --- Token balances (cached + budget-guarded) ---
   const { provider, status, providerName } = getTokenBalancesProviderFromEnv();
   let providerStatus = status;
   let tokenBalancesStatus: "connected" | "missing" | "failed" | "stale" = providerName === "none" ? "missing" : "connected";
 
   if (provider && providerName !== 'none') {
-    try {
-      const erc20Balances = await provider.getTokenBalances({ address, chainId });
+    const balKey = `provider:${providerName}:balances:${chainId}:${address.toLowerCase()}`;
+    const balRes = await cachedProviderCall<TokenBalance[]>({
+      key: balKey,
+      provider: providerName as ProviderName,
+      chainId,
+      ttlSeconds: orch.ttls.balances,
+      store: orch.store,
+      budget: orch.budget,
+      fetcher: () => provider.getTokenBalances({ address, chainId }),
+    }).catch((err: unknown): CachedCallResult<TokenBalance[]> => ({
+      data: undefined,
+      status: 'failed',
+      fromCache: false,
+      providerCalled: false,
+      budgetExhausted: false,
+      error: err instanceof Error ? err.message : String(err),
+    }));
+    freshnessTrack.push({
+      status: balRes.status,
+      cacheAgeSeconds: balRes.cacheAgeSeconds,
+      providerCalled: balRes.providerCalled,
+      budgetExhausted: balRes.budgetExhausted,
+      provider: providerName as ProviderName,
+    });
+
+    const erc20Balances = balRes.data || [];
+    if (balRes.status === 'live' || balRes.status === 'cached' || balRes.status === 'stale') {
+      const df: "live" | "cached" = balRes.status === 'live' ? 'live' : 'cached';
       for (const tb of erc20Balances) {
         tokens.push({
           symbol: tb.symbol,
@@ -246,44 +341,57 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
           logoUrl: tb.logoUrl,
           verified: tb.verified,
           possibleSpam: tb.possibleSpam,
-          dataFreshness: "live",
+          dataFreshness: df,
         });
       }
-      tokens[0].dataFreshness = "live";
-      if (tokens.length === 1 && (providerName === 'moralis' || providerName === 'alchemy')) {
-        providerStatus = 'No ERC-20 tokens found for this wallet';
-      }
-      const cacheKey = `portfolio-tokens:${chainId}:${address.toLowerCase()}`;
-      tokenBalancesCacheMap.set(cacheKey, {
-        tokens: tokens.slice(1).map(t => ({ ...t, dataFreshness: "cached" })),
-        expiresAt: Date.now() + TOKEN_CACHE_TTL_MS
-      });
-    } catch {
-      const cacheKey = `portfolio-tokens:${chainId}:${address.toLowerCase()}`;
-      const cached = tokenBalancesCacheMap.get(cacheKey);
-      if (cached && cached.expiresAt > Date.now()) {
-        for (const ct of cached.tokens) {
-          tokens.push({
-            ...ct,
-            dataFreshness: "cached"
-          });
-        }
-        tokens[0].dataFreshness = "cached";
+      tokens[0].dataFreshness = df;
+      if (balRes.status === 'stale') {
         tokenBalancesStatus = 'stale';
         providerStatus = 'Using cached token balances because live provider failed.';
-      } else {
-        providerStatus = 'Token balances provider failed. Showing native ETH only.';
-        tokenBalancesStatus = 'failed';
+      } else if (tokens.length === 1 && (providerName === 'moralis' || providerName === 'alchemy')) {
+        providerStatus = 'No ERC-20 tokens found for this wallet';
       }
+      // 'live' / 'cached' keep the factory status string (e.g. 'Moralis connected').
+    } else {
+      tokenBalancesStatus = 'failed';
+      providerStatus = balRes.budgetExhausted
+        ? 'Provider budget reached for token balances. Showing native ETH only.'
+        : 'Token balances provider failed. Showing native ETH only.';
     }
   }
 
+  // --- Token prices (cached + budget-guarded) ---
   const { provider: priceProvider, status: priceStatusText, providerName: priceProviderName } = getPriceProviderFromEnv();
   let pricesStatus: "connected" | "missing" | "failed" | "partial" = priceProviderName === "none" ? "missing" : "connected";
 
   if (priceProvider && priceProviderName !== 'none') {
-    try {
-      const prices = await priceProvider.getTokenPrices({ chainId, tokens });
+    const priceKey = `provider:${priceProviderName}:prices:${chainId}:${address.toLowerCase()}`;
+    const priceRes = await cachedProviderCall<TokenPrice[]>({
+      key: priceKey,
+      provider: priceProviderName as ProviderName,
+      chainId,
+      ttlSeconds: orch.ttls.prices,
+      store: orch.store,
+      budget: orch.budget,
+      fetcher: () => priceProvider.getTokenPrices({ chainId, tokens }),
+    }).catch((err: unknown): CachedCallResult<TokenPrice[]> => ({
+      data: undefined,
+      status: 'failed',
+      fromCache: false,
+      providerCalled: false,
+      budgetExhausted: false,
+      error: err instanceof Error ? err.message : String(err),
+    }));
+    freshnessTrack.push({
+      status: priceRes.status,
+      cacheAgeSeconds: priceRes.cacheAgeSeconds,
+      providerCalled: priceRes.providerCalled,
+      budgetExhausted: priceRes.budgetExhausted,
+      provider: priceProviderName as ProviderName,
+    });
+
+    const prices = priceRes.data || [];
+    if (prices.length > 0) {
       const priceMap = new Map(prices.map(p => [(p.address || p.symbol).toLowerCase(), p]));
       let missingPriceCount = 0;
       let pricedTokensCount = 0;
@@ -305,15 +413,17 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
           pricedTokensCount++;
         }
       }
-      if (missingPriceCount > 0 && pricedTokensCount > 0) {
-        pricesStatus = "partial";
-      } else if (pricedTokensCount === 0 && tokens.length > 0) {
+      if (pricedTokensCount === 0 && tokens.length > 0) {
         pricesStatus = "failed";
+      } else if (missingPriceCount > 0 || priceRes.status === 'stale') {
+        pricesStatus = "partial";
       }
-    } catch (err) {
-      pricesStatus = "failed";
+    } else {
+      pricesStatus = priceRes.budgetExhausted ? "partial" : "failed";
       if (tokenBalancesStatus !== 'failed') {
-        providerStatus = `Price provider (${priceProviderName}) failed to fetch prices. Showing token balances without USD values.`;
+        providerStatus = priceRes.budgetExhausted
+          ? `Price provider budget reached; showing token balances without fresh USD values.`
+          : `Price provider (${priceProviderName}) failed to fetch prices. Showing token balances without USD values.`;
       }
     }
   } else {
@@ -338,16 +448,50 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
 
   const totalUsdValue = pricedCount > 0 ? totalUsd.toFixed(2) : undefined;
 
+  // --- Token security / GoPlus (cached + budget-guarded) ---
   const { provider: tokenSecurityProvider, statusCode: initialRiskStatus, providerName: riskProviderName } = getTokenSecurityProviderFromEnv();
   let riskStatus: "connected" | "missing" | "failed" | "partial" = initialRiskStatus as any;
   if (riskProviderName !== 'none') {
     const securityScanTokens = prioritizeSecurityScanTokens(tokens);
     if (securityScanTokens.length > 0) {
-      try {
-        const securityResults = await tokenSecurityProvider.getTokenSecurity({
-          chainId,
-          tokenAddresses: securityScanTokens.map(t => t.address)
-        });
+      const addrHash = securityScanTokens.map(t => t.address.toLowerCase()).sort().join(',');
+      const secKey = `provider:${riskProviderName}:security:${chainId}:${addrHash}`;
+      const secRes = await cachedProviderCall<TokenSecurityResult[]>({
+        key: secKey,
+        provider: riskProviderName,
+        chainId,
+        ttlSeconds: orch.ttls.security,
+        store: orch.store,
+        budget: orch.budget,
+        fetcher: async () => {
+          const results = await tokenSecurityProvider.getTokenSecurity({
+            chainId,
+            tokenAddresses: securityScanTokens.map(t => t.address)
+          });
+          // Treat an all-failed/all-unknown response as a provider failure so the
+          // orchestrator falls back to stale cache instead of poisoning the L2.
+          const anyUsable = results.some(r => r.status !== 'failed' && r.status !== 'unknown');
+          if (!anyUsable && results.length > 0) throw new Error('Token security provider returned no usable results');
+          return results;
+        },
+      }).catch((err: unknown): CachedCallResult<TokenSecurityResult[]> => ({
+        data: undefined,
+        status: 'failed',
+        fromCache: false,
+        providerCalled: false,
+        budgetExhausted: false,
+        error: err instanceof Error ? err.message : String(err),
+      }));
+      freshnessTrack.push({
+        status: secRes.status,
+        cacheAgeSeconds: secRes.cacheAgeSeconds,
+        providerCalled: secRes.providerCalled,
+        budgetExhausted: secRes.budgetExhausted,
+        provider: riskProviderName,
+      });
+
+      if (secRes.data) {
+        const securityResults = secRes.data;
         const securityMap = new Map(securityResults.map(result => [result.address.toLowerCase(), result]));
         let checkedCount = 0;
         let hasFailure = false;
@@ -362,7 +506,10 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
           }
         }
         const { setTokenSecurityHealthStatus } = require('@mioagent/data-providers');
-        if (checkedCount === 0) {
+        if (secRes.status === 'stale') {
+          riskStatus = checkedCount > 0 ? 'partial' : 'failed';
+          setTokenSecurityHealthStatus(riskStatus === 'failed' ? 'failed' : 'partial');
+        } else if (checkedCount === 0) {
           riskStatus = 'failed';
           setTokenSecurityHealthStatus('failed');
         } else if (checkedCount < securityScanTokens.length || hasFailure) {
@@ -372,7 +519,7 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
           riskStatus = 'connected';
           setTokenSecurityHealthStatus('connected');
         }
-      } catch {
+      } else {
         riskStatus = 'failed';
         const { setTokenSecurityHealthStatus } = require('@mioagent/data-providers');
         setTokenSecurityHealthStatus('failed');
@@ -389,6 +536,7 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
     }
   }
 
+  // --- Approvals (cached + budget-guarded, via fetchInternalApprovals) ---
   let approvalsData: TokenApproval[] = [];
   let approvalsStatus: "connected" | "missing" | "failed" | "partial" = "missing";
   let approvalProviderName = "none";
@@ -397,15 +545,29 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
     approvalsData = appRes.approvals;
     approvalsStatus = appRes.status;
     approvalProviderName = appRes.provider;
+    if (appRes.cache && approvalProviderName !== 'none') {
+      freshnessTrack.push({
+        status: appRes.cache.status,
+        cacheAgeSeconds: appRes.cache.cacheAgeSeconds,
+        providerCalled: appRes.cache.providerCalled,
+        budgetExhausted: appRes.cache.budgetExhausted,
+        provider: approvalProviderName as ProviderName,
+      });
+    }
   } catch {
     approvalsStatus = "failed";
   }
 
+  const freshness = computePortfolioFreshness(freshnessTrack);
   return {
     totalUsdValue,
     tokens,
     updatedAt: new Date().toISOString(),
     providerStatus,
+    dataFreshness: freshness.dataFreshness,
+    cacheAgeSeconds: freshness.cacheAgeSeconds,
+    providerBudgetStatus: freshness.providerBudgetStatus,
+    providerCallsMade: freshness.providerCallsMade,
     providers: {
       rpc: rpcStatus,
       tokenBalances: tokenBalancesStatus,
@@ -583,10 +745,11 @@ export async function fetchInternalApprovals(address: string, chainEnv: string =
   tokenCount: number;
   unlimitedCount: number;
   riskySpenderCount: number;
+  cache?: { status: CacheStatus; cacheAgeSeconds?: number; providerCalled: boolean; budgetExhausted: boolean };
 }> {
   const chainId = chainEnv === 'sepolia' ? 84532 : 8453;
   const { provider, statusCode, providerName } = getApprovalProviderFromEnv();
-  
+
   if (providerName === 'none') {
     return {
       approvals: [],
@@ -598,27 +761,55 @@ export async function fetchInternalApprovals(address: string, chainEnv: string =
     };
   }
 
-  try {
-    const approvals = await provider.getTokenApprovals({ walletAddress: address, chainId });
+  const orch = getProviderCacheOrchestratorFromEnv();
+  const appKey = `provider:${providerName}:approvals:${chainId}:${address.toLowerCase()}`;
+  const appRes = await cachedProviderCall<TokenApproval[]>({
+    key: appKey,
+    provider: providerName as ProviderName,
+    chainId,
+    ttlSeconds: orch.ttls.approvals,
+    store: orch.store,
+    budget: orch.budget,
+    fetcher: () => provider.getTokenApprovals({ walletAddress: address, chainId }),
+  }).catch((err: unknown): CachedCallResult<TokenApproval[]> => ({
+    data: undefined,
+    status: 'failed',
+    fromCache: false,
+    providerCalled: false,
+    budgetExhausted: false,
+    error: err instanceof Error ? err.message : String(err),
+  }));
+  const cache = {
+    status: appRes.status,
+    cacheAgeSeconds: appRes.cacheAgeSeconds,
+    providerCalled: appRes.providerCalled,
+    budgetExhausted: appRes.budgetExhausted,
+  };
+
+  const approvals = appRes.data || [];
+  if (approvals.length > 0 || appRes.status === 'live' || appRes.status === 'cached') {
     const analysis = analyzeApprovalsForRisk(approvals);
+    let status: "connected" | "missing" | "failed" | "partial" = statusCode;
+    if (appRes.status === 'stale') status = 'partial';
     return {
       approvals,
-      status: statusCode,
+      status,
       provider: providerName,
       tokenCount: new Set(approvals.map(a => a.tokenAddress)).size || approvals.length,
       unlimitedCount: analysis.unlimitedApprovals,
-      riskySpenderCount: analysis.riskySpenderApprovals
-    };
-  } catch (err) {
-    return {
-      approvals: [],
-      status: "failed",
-      provider: providerName,
-      tokenCount: 0,
-      unlimitedCount: 0,
-      riskySpenderCount: 0
+      riskySpenderCount: analysis.riskySpenderApprovals,
+      cache
     };
   }
+  return {
+    approvals: [],
+    status: appRes.budgetExhausted ? 'partial' : 'failed',
+    provider: providerName,
+    tokenCount: 0,
+    unlimitedCount: 0,
+    riskySpenderCount: 0,
+    cache
+  };
 }
 
 export function analyzePortfolioForRisk(
@@ -797,7 +988,11 @@ export function analyzePortfolioForRisk(
       securityCheckedTokenCount,
       securityHighRiskCount,
       securityWarningCount,
-      securityProvider: securityProviderName
+      securityProvider: securityProviderName,
+      dataFreshness: portfolio.dataFreshness,
+      cacheAgeSeconds: portfolio.cacheAgeSeconds,
+      providerBudgetStatus: portfolio.providerBudgetStatus,
+      providerCallsMade: portfolio.providerCallsMade
     },
     securityProvider: {
       provider: securityProviderName,

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { StatusResponseSchema } from '@mioagent/api-zod';
 import { getTokenBalancesProviderFromEnv, getPriceProviderFromEnv, getTokenSecurityProviderFromEnv, getApprovalProviderFromEnv } from '@mioagent/data-providers';
+import { getProviderBudgetSnapshot, getProviderCacheDiagnostics } from '../lib/providerCache.js';
 
 export function getSystemStatus(envOverride?: string) {
   const chainEnv = envOverride || process.env.CHAIN_ENV || 'sepolia';
@@ -47,6 +48,9 @@ export function getSystemStatus(envOverride?: string) {
     reason: isReadonly ? 'Mainnet execution is disabled in read-only mode' : 'Execution enabled on testnet',
   };
 
+  const cache = getProviderCacheDiagnostics();
+  const budgets = getProviderBudgetSnapshot();
+
   return {
     chainEnv,
     chainId,
@@ -70,6 +74,8 @@ export function getSystemStatus(envOverride?: string) {
       status: approvalStatus,
       provider: approvalProvider,
     },
+    cache,
+    budgets,
     baseMcp: {
       status: baseMcpStatus,
     },

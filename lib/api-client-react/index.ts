@@ -92,6 +92,12 @@ export function usePortfolio(
       if (address) url.searchParams.set('address', address);
       return fetchApi<apiSpec.PortfolioResponse>(url.pathname + url.search);
     },
+    // Smart polling: the backend provider cache makes repeated calls cheap, but
+    // the frontend should not hammer the API every tick. Auto-refetch on a slow
+    // cadence; rely on the cache + manual refresh for everything else.
+    enabled: !!address,
+    refetchInterval: 60000,
+    refetchOnWindowFocus: false,
     ...options,
   });
 }
@@ -100,6 +106,9 @@ export function useStatus(options?: Omit<UseQueryOptions<apiSpec.StatusResponse,
   return useQuery({
     queryKey: ['status'],
     queryFn: () => fetchApi<apiSpec.StatusResponse>('/api/status'),
+    // Status is cheap and triggers no expensive provider calls, so it can poll
+    // more often to surface cache/budget diagnostics.
+    refetchInterval: 15000,
     ...options,
   });
 }

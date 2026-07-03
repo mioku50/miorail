@@ -12,6 +12,18 @@ export const apiCache = pgTable('api_cache', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
+export const providerCache = pgTable('provider_cache', {
+  key: text('key').primaryKey(),
+  provider: text('provider').notNull(),
+  chainId: integer('chain_id').notNull(),
+  payload: jsonb('payload'),
+  status: text('status').notNull(),
+  lastError: text('last_error'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  expiresAt: timestamp('expires_at').notNull(),
+});
+
 export const appMeta = pgTable('app_meta', {
   id: text('id').primaryKey(),
   createdAt: timestamp('created_at').defaultNow().notNull(),

@@ -22,6 +22,13 @@
       "when": 1782898233873,
       "tag": "0002_handy_vin_gonzales",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1783078491982,
+      "tag": "0003_free_warhawk",
+      "breakpoints": true
     }
   ]
 }

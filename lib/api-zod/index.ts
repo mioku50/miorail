@@ -242,6 +242,13 @@ export const PortfolioResponseSchema = z.object({
   tokens: z.array(PortfolioTokenSchema),
   updatedAt: z.string(),
   providerStatus: z.string().optional(),
+  dataFreshness: z.enum(["live", "cached", "stale", "partial", "failed"]).optional(),
+  cacheAgeSeconds: z.number().optional(),
+  providerBudgetStatus: z.object({
+    exhausted: z.boolean(),
+    providers: z.array(z.string()),
+  }).optional(),
+  providerCallsMade: z.number().optional(),
   providers: PortfolioProvidersSchema.optional(),
 });
 
@@ -290,6 +297,18 @@ export const StatusResponseSchema = z.object({
     status: z.enum(["connected", "missing", "failed", "partial"]),
     provider: z.string(),
   }),
+  cache: z.object({
+    enabled: z.boolean(),
+    balancesTtlSeconds: z.number(),
+    pricesTtlSeconds: z.number(),
+    securityTtlSeconds: z.number(),
+    approvalsTtlSeconds: z.number(),
+  }).optional(),
+  budgets: z.record(z.string(), z.object({
+    status: z.enum(["ok", "rate-limited", "disabled"]),
+    callsLastMinute: z.number(),
+    callsLastHour: z.number(),
+  })).optional(),
   baseMcp: z.object({
     status: z.enum(["configured", "missing"]),
   }),

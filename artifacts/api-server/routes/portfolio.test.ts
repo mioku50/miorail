@@ -203,5 +203,51 @@ describe('Portfolio API', () => {
     restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurityProvider);
     mock.restoreAll();
   });
+
+  test('GET /api/portfolio caches provider results within TTL (second request does not re-fetch)', async () => {
+    const origTokenProvider = process.env.TOKEN_BALANCES_PROVIDER;
+    const origPriceProvider = process.env.PRICE_PROVIDER;
+    const origSecurityProvider = process.env.TOKEN_SECURITY_PROVIDER;
+    const origApprovalProvider = process.env.APPROVAL_PROVIDER;
+    const origMoralisKey = process.env.MORALIS_API_KEY;
+    process.env.TOKEN_BALANCES_PROVIDER = 'moralis';
+    process.env.PRICE_PROVIDER = 'none';
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    process.env.APPROVAL_PROVIDER = 'none';
+    process.env.MORALIS_API_KEY = 'test-key';
+    const mockFetch = mock.fn(async (url: string | URL | Request) => {
+      if (url.toString().includes('moralis.io')) {
+        return {
+          ok: true,
+          json: async () => ([
+            { token_address: '0x1111111111111111111111111111111111111111', balance: '1000000000000000000', decimals: 18, symbol: 'TST', name: 'Test Token' }
+          ])
+        } as Response;
+      }
+      return { ok: true, json: async () => ({ result: '0xde0b6b3a7640000' }) } as Response;
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const addr = '0x1234567890123456789012345678901234567890';
+    const first = await request(app).get(`/api/portfolio?address=${addr}`);
+    assert.strictEqual(first.status, 200);
+    assert.strictEqual(first.body.dataFreshness, 'live');
+    const moralisCallsAfterFirst = mockFetch.mock.calls.filter((c: any) => String(c.arguments[0]).includes('moralis.io')).length;
+    assert.strictEqual(moralisCallsAfterFirst, 1);
+
+    const second = await request(app).get(`/api/portfolio?address=${addr}`);
+    assert.strictEqual(second.status, 200);
+    assert.strictEqual(second.body.dataFreshness, 'cached');
+    const moralisCallsAfterSecond = mockFetch.mock.calls.filter((c: any) => String(c.arguments[0]).includes('moralis.io')).length;
+    // Second request must be served from cache — no additional Moralis call.
+    assert.strictEqual(moralisCallsAfterSecond, 1);
+
+    restoreEnv('TOKEN_BALANCES_PROVIDER', origTokenProvider);
+    restoreEnv('PRICE_PROVIDER', origPriceProvider);
+    restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurityProvider);
+    restoreEnv('APPROVAL_PROVIDER', origApprovalProvider);
+    restoreEnv('MORALIS_API_KEY', origMoralisKey);
+    mock.restoreAll();
+  });
 });
 

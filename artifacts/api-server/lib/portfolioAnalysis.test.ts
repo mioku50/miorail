@@ -1,6 +1,6 @@
-import test, { describe } from 'node:test';
+import test, { describe, beforeEach } from 'node:test';
 import assert from 'node:assert';
-import { analyzePortfolioForRisk, buildRecommendationMetadataFromAnalysis, fetchInternalPortfolio, type PortfolioData, type PortfolioRiskAnalysis } from './portfolioAnalysis.js';
+import { analyzePortfolioForRisk, buildRecommendationMetadataFromAnalysis, fetchInternalPortfolio, clearTokenBalancesCacheForTests, type PortfolioData, type PortfolioRiskAnalysis } from './portfolioAnalysis.js';
 
 function restoreEnv(name: string, value: string | undefined) {
   if (value === undefined) {
@@ -11,6 +11,10 @@ function restoreEnv(name: string, value: string | undefined) {
 }
 
 describe('Portfolio Risk Analysis Utility', () => {
+  beforeEach(() => {
+    // Force an in-memory orchestrator so unit tests stay hermetic (no DB writes).
+    clearTokenBalancesCacheForTests();
+  });
   test('analyzePortfolioForRisk flags spam token as high risk', () => {
     const mockPortfolio: PortfolioData = {
       totalUsdValue: '100.00',
@@ -168,11 +172,62 @@ describe('Portfolio Risk Analysis Utility', () => {
       assert.strictEqual(portfolio.providers?.risk, 'missing');
       assert.ok(portfolio.totalUsdValue);
       assert.ok(Number(portfolio.totalUsdValue) > 0);
+      // T11.6: portfolio exposes cache/freshness diagnostics.
+      assert.strictEqual(portfolio.dataFreshness, 'live');
+      assert.strictEqual(portfolio.providerCallsMade, 2); // balances + prices
+      assert.ok(portfolio.providerBudgetStatus);
+      assert.strictEqual(portfolio.providerBudgetStatus?.exhausted, false);
     } finally {
       restoreEnv('PRICE_PROVIDER', origPriceProvider);
       restoreEnv('TOKEN_BALANCES_PROVIDER', origBalancesProvider);
       restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurityProvider);
     }
+  });
+
+  test('analyzePortfolioForRisk surfaces cache freshness fields in portfolioSnapshot', () => {
+    const mockPortfolio: PortfolioData = {
+      totalUsdValue: '100.00',
+      updatedAt: new Date().toISOString(),
+      providerStatus: 'connected',
+      dataFreshness: 'cached',
+      cacheAgeSeconds: 42,
+      providerBudgetStatus: { exhausted: false, providers: [] },
+      providerCallsMade: 0,
+      providers: {
+        rpc: 'connected',
+        tokenBalances: 'connected',
+        tokenBalancesProvider: 'moralis',
+        prices: 'connected',
+        risk: 'connected'
+      },
+      tokens: [
+        {
+          symbol: 'USDC',
+          name: 'USD Coin',
+          address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+          balance: '500000000',
+          balanceFormatted: '500.0000',
+          usdValue: '500.00',
+          verified: true
+        }
+      ]
+    };
+
+    const analysis = analyzePortfolioForRisk(mockPortfolio, '0x123', 'mainnet-readonly');
+    assert.strictEqual(analysis.portfolioSnapshot.dataFreshness, 'cached');
+    assert.strictEqual(analysis.portfolioSnapshot.cacheAgeSeconds, 42);
+    assert.strictEqual(analysis.portfolioSnapshot.providerCallsMade, 0);
+    assert.strictEqual(analysis.portfolioSnapshot.providerBudgetStatus?.exhausted, false);
+
+    const meta = buildRecommendationMetadataFromAnalysis({
+      message: 'check portfolio',
+      walletAddress: '0x123',
+      chainEnv: 'mainnet-readonly',
+      analysis
+    });
+    assert.strictEqual(meta.analysis?.portfolioSnapshot.dataFreshness, 'cached');
+    assert.strictEqual(meta.analysis?.portfolioSnapshot.cacheAgeSeconds, 42);
+    assert.deepStrictEqual(meta.calls, []);
   });
 
 
