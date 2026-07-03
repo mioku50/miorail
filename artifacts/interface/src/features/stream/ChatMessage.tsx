@@ -80,7 +80,7 @@ export function ChatMessage({ m, networkLabel }: { m: any; networkLabel: string 
             </button>
           </div>
         )}
-        <ToolCallTrace toolCalls={!actionIdVal && !m.content ? m.toolCalls : undefined} />
+        <ToolCallTrace toolCalls={m.toolCalls} />
         <span className="text-[10px] text-ink-3 font-mono ml-1">MioAgent</span>
       </div>
     );

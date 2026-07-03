@@ -24,6 +24,23 @@ export function ActionCard({ action, onRefresh }: ActionCardProps) {
   const isDeleting = deleteAction.isPending;
   const isRegenerating = regenerateAction.isPending;
 
+  // F5 risk gating: execute is blocked until screening verdicts AND a simulation
+  // are available. screenAction() and simulateTrade() are not wired into live
+  // paths today, so both are unavailable — Execute stays disabled (fail closed).
+  // The ActionDiffPreview surfaces the honest "not screened / no simulation"
+  // states so the reason is visible.
+  const calls = action.executionPayload?.calls || [];
+  const hasCalls = calls.length > 0;
+  const SCREENING_AVAILABLE = false;
+  const SIMULATION_AVAILABLE = false;
+  const canExecute =
+    !isMainnetReadonly &&
+    action.metadata?.chainMode !== 'mainnet-readonly' &&
+    action.metadata?.chainMode !== 'mainnet' &&
+    hasCalls &&
+    SCREENING_AVAILABLE &&
+    SIMULATION_AVAILABLE;
+
   return (
     <div id={`action-${action.id}`} data-action-id={action.id} className={`bg-panel border rounded-xl shadow-sm p-[15px] flex flex-col gap-[10px] animate-in fade-in slide-in-from-bottom-2 ${action.status === 'failed' ? 'border-risk-soft' : 'border-line'}`}>
       <div className="flex items-start justify-between gap-[10px]">
@@ -59,45 +76,33 @@ export function ActionCard({ action, onRefresh }: ActionCardProps) {
         <div className="flex items-center gap-[7px] text-[12px] font-bold text-risk bg-risk-soft px-[10px] py-[6px] rounded-[9px] w-fit mt-1">🛡️ failed</div>
       ) : (
         <div className="flex gap-2 items-center flex-wrap mt-1">
-          {(!isMainnetReadonly && action.metadata?.chainMode !== 'mainnet-readonly' && action.metadata?.chainMode !== 'mainnet' && action.calls && action.calls.length > 0) && (
-            <span title={(isMainnetReadonly || action.metadata?.chainMode === 'mainnet-readonly' || action.metadata?.chainMode === 'mainnet') ? 'Mainnet execution is disabled in read-only mode.' : undefined} onClick={() => { if (isMainnetReadonly || action.metadata?.chainMode === 'mainnet-readonly' || action.metadata?.chainMode === 'mainnet') showToast('Mainnet execution is disabled in read-only mode.'); }}>
-              <button
-                onClick={() => {
-                  if (isMainnetReadonly || action.metadata?.chainMode === 'mainnet-readonly' || action.metadata?.chainMode === 'mainnet') {
-                    showToast('Mainnet execution is disabled in read-only mode.');
-                    return;
-                  }
-                  executeAction.mutate({ actionId: action.id }, {
-                    onSuccess: (data: any) => {
-                      if (data?.success && data?.approvalUrl) {
-                        window.open(data.approvalUrl, '_blank');
-                      } else if (data?.error) {
-                        if (data.error.includes('MCP') || data.error.includes('Approval provider') || data.error.includes('Backend failed')) {
-                          showToast('Approval provider is not configured. Action was not executed.');
-                        } else {
-                          if (data.error.includes('Mainnet execution is disabled')) {
-                            showToast(data.error);
-                          } else {
-                            showToast('Error: ' + data.error);
-                          }
-                        }
-                      } else {
-                        showToast('Approval provider is not configured. Action was not executed.');
-                      }
-                      onRefresh();
-                    },
-                    onError: (err: any) => {
-                      showToast('Error: ' + err.message);
-                      onRefresh();
-                    },
-                  });
-                }}
-                disabled={!isPending || isExecuting || isDismissing || isDeleting || isRegenerating || isMainnetReadonly || action.metadata?.chainMode === 'mainnet-readonly' || action.metadata?.chainMode === 'mainnet'}
-                className="bg-accent hover:bg-accent-2 text-white px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] shadow-[0_6px_16px_rgba(0,0,255,.28)] hover:-translate-y-[1px] hover:shadow-[0_10px_22px_rgba(0,0,255,.34)] transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                ⚡ {isExecuting ? 'Executing...' : (isMainnetReadonly || action.metadata?.chainMode === 'mainnet-readonly' || action.metadata?.chainMode === 'mainnet') ? 'Read-only' : 'Execute'}
-              </button>
-            </span>
+          {hasCalls && (
+            <button
+              onClick={() => {
+                if (!canExecute) return;
+                executeAction.mutate({ actionId: action.id }, {
+                  onSuccess: (data: any) => {
+                    if (data?.success && data?.approvalUrl) {
+                      window.open(data.approvalUrl, '_blank');
+                    } else if (data?.error) {
+                      showToast(data.error.includes('Mainnet execution is disabled') ? data.error : 'Error: ' + data.error);
+                    } else {
+                      showToast('Approval provider is not configured. Action was not executed.');
+                    }
+                    onRefresh();
+                  },
+                  onError: (err: any) => {
+                    showToast('Error: ' + err.message);
+                    onRefresh();
+                  },
+                });
+              }}
+              disabled={!isPending || isExecuting || isDismissing || isDeleting || isRegenerating || !canExecute}
+              title="Screening & simulation not available — execution blocked until the backend wires screenAction() and simulateTrade()."
+              className="bg-accent hover:bg-accent-2 text-white px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] shadow-[0_6px_16px_rgba(0,0,255,.28)] hover:-translate-y-[1px] hover:shadow-[0_10px_22px_rgba(0,0,255,.34)] transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              ⚡ {isExecuting ? 'Executing...' : 'Execute'}
+            </button>
           )}
           {action.kind === 'recommendation' && (
             <button
