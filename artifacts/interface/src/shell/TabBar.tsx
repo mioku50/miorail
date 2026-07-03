@@ -7,7 +7,11 @@ export function TabBar() {
   return (
     <div className="flex gap-1 ml-4">
       {NAV_TABS.map((tab) => {
-        const active = tab.path === '/' ? location === '/' || location.startsWith('/inbox') : location === tab.path;
+        const active = tab.path === '/'
+          ? location === '/' || location === '/autonomy'
+          : tab.path === '/actions'
+          ? location === '/actions' || location.startsWith('/inbox') || location === '/build'
+          : location === tab.path || location.startsWith(`${tab.path}/`);
         return (
           <Link
             key={tab.path}
