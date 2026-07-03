@@ -1,0 +1,86 @@
+/*
+ * MioAgent design tokens — dark-first.
+ * Dark is the :root default; `.light` (toggled by ThemeProvider) overrides the
+ * surface/text/semantic vars for the optional light theme. Tailwind v4 reads
+ * these `@theme` vars to generate `bg-*` / `text-*` / `border-*` utilities, so
+ * overriding the CSS variable under `.light` cascades into every utility.
+ *
+ * Palette is intentionally distinct from the OrbitLab terminal (which is
+ * black/white + green accent): our accent is an indigo-blue (#3B5BFF) and our
+ * semantic colors are tuned for dark surfaces.
+ */
+@theme {
+  /* Surfaces */
+  --color-bg: #0A0B0F;
+  --color-panel: #12141A;
+  --color-panel-2: #191C24;
+  --color-line: #242833;
+
+  /* Text */
+  --color-ink: #EDEFF5;
+  --color-ink-2: #9AA0B4;
+  --color-ink-3: #5D6478;
+
+  /* Accent (indigo-blue — differentiator vs. Bunny's green) */
+  --color-accent: #3B5BFF;
+  --color-accent-2: #5B7BFF;
+  --color-accent-soft: #161D3A;
+
+  /* Semantic states */
+  --color-ok: #2FBF71;
+  --color-ok-soft: #0E2A1C;
+  --color-warn: #E7A33E;
+  --color-warn-soft: #2A2113;
+  --color-risk: #E5484D;
+  --color-risk-soft: #2A1418;
+
+  /* Aliases — temporary during F2/F3 migration. New code MUST use ok/warn/risk.
+     Removed once no `green/amber/red` class usages remain. */
+  --color-green: var(--color-ok);
+  --color-green-soft: var(--color-ok-soft);
+  --color-amber: var(--color-warn);
+  --color-amber-soft: var(--color-warn-soft);
+  --color-red: var(--color-risk);
+  --color-red-soft: var(--color-risk-soft);
+
+  /* Type */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Geist Mono", "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
+
+  /* Elevation — subtle on dark; prefer `border border-line` over shadows. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.5);
+
+  /* Radii — tightened to the 6–12px engineering-terminal range. */
+  --radius-xl: 12px;
+  --radius-lg: 10px;
+  --radius-md: 8px;
+  --radius-sm: 6px;
+}
+
+/* Optional light theme — applied via <html class="light">. Unlayered so it
+   overrides @theme's :root (which Tailwind emits into @layer theme). */
+.light {
+  --color-bg: #f5f6fa;
+  --color-panel: #ffffff;
+  --color-panel-2: #fbfbfe;
+  --color-line: #eceef5;
+
+  --color-ink: #0d1020;
+  --color-ink-2: #5b6076;
+  --color-ink-3: #6b7080;
+
+  --color-accent: #2B4AE6;
+  --color-accent-2: #3a3aff;
+  --color-accent-soft: #e9e9ff;
+
+  --color-ok: #0a9d5a;
+  --color-ok-soft: #e3f7ec;
+  --color-warn: #b9770a;
+  --color-warn-soft: #fdf2dd;
+  --color-risk: #d6334a;
+  --color-risk-soft: #fde7ea;
+
+  --shadow-sm: 0 1px 2px rgba(13, 16, 32, 0.04), 0 8px 24px rgba(13, 16, 32, 0.06);
+  --shadow-lg: 0 12px 48px rgba(13, 16, 32, 0.16);
+}

@@ -1,34 +1,5 @@
 @import "tailwindcss";
-
-@theme {
-  --color-accent: #0000FF;
-  --color-accent-soft: #e9e9ff;
-  --color-accent-2: #3a3aff;
-  --color-bg: #f5f6fa;
-  --color-panel: #ffffff;
-  --color-panel-2: #fbfbfe;
-  --color-ink: #0d1020;
-  --color-ink-2: #5b6076;
-  --color-ink-3: #9499ad;
-  --color-line: #eceef5;
-  --color-green: #0a9d5a;
-  --color-green-soft: #e3f7ec;
-  --color-amber: #b9770a;
-  --color-amber-soft: #fdf2dd;
-  --color-red: #d6334a;
-  --color-red-soft: #fde7ea;
-
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-mono: "Geist Mono", "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
-
-  --shadow-sm: 0 1px 2px rgba(13,16,32,.04), 0 8px 24px rgba(13,16,32,.06);
-  --shadow-lg: 0 12px 48px rgba(13,16,32,.16);
-
-  --radius-xl: 18px;
-  --radius-lg: 14px;
-  --radius-md: 12px;
-  --radius-sm: 9px;
-}
+@import "./theme/tokens.css";
 
 body {
   background-color: var(--color-bg);
@@ -46,6 +17,9 @@ body {
   height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #dadce6;
+  background: #3a4150;
   border-radius: 8px;
+}
+.light ::-webkit-scrollbar-thumb {
+  background: #dadce6;
 }
