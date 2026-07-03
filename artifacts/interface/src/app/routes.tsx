@@ -27,4 +27,6 @@ export const COMMANDS: AppCommand[] = [
   { id: 'positions', icon: '📈', label: 'Open positions', path: '/' },
   { id: 'memory', icon: '🧠', label: 'Edit memory', path: '/history' },
   { id: 'keys', icon: '🔑', label: 'Session keys · autonomy', path: '/configure' },
+  { id: 'autonomy', icon: '⏻', label: 'Autonomy cockpit', path: '/autonomy' },
+  { id: 'fuel', icon: '⛽', label: 'x402 fuel meter', path: '/fuel' },
 ];
