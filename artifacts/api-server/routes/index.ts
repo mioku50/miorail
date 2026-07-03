@@ -9,6 +9,7 @@ import { portfolioRouter } from './portfolio';
 import { approvalsRouter } from './approvals';
 import { protocolsRouter } from './protocols';
 import { statusRouter } from './status';
+import { autonomyRouter } from './autonomy';
 
 export const routes = Router();
 
@@ -22,4 +23,6 @@ routes.use('/portfolio', portfolioRouter);
 routes.use('/approvals', approvalsRouter);
 routes.use('/protocols', protocolsRouter);
 routes.use('/status', statusRouter);
+routes.use('/autonomy', autonomyRouter);
+
 

@@ -62,6 +62,9 @@ importers:
       '@mioagent/memory':
         specifier: workspace:*
         version: link:../../lib/memory
+      '@mioagent/observability':
+        specifier: workspace:*
+        version: link:../../lib/observability
       '@mioagent/security':
         specifier: workspace:*
         version: link:../../lib/security

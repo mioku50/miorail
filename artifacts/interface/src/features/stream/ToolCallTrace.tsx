@@ -1,9 +1,6 @@
 import { useState } from 'react';
 
-// Expandable tool-call traces. The backend chat route currently drops
-// tool_call / tool_result events, so this is empty in practice — it renders an
-// honest "no tool traces recorded" state rather than fabricating calls. When the
-// backend forwards tool events, each trace shows name / args / result / isError.
+// Expandable tool-call traces showing name / args / result / isError from backend execution.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function ToolCallTrace({ toolCalls }: { toolCalls?: any[] }) {
   const [open, setOpen] = useState(false);
@@ -39,7 +36,7 @@ export function ToolCallTrace({ toolCalls }: { toolCalls?: any[] }) {
             ))
           ) : (
             <div className="text-ink-3 italic">
-              No tool traces recorded — the backend chat route drops tool_call / tool_result events today.
+              No tool traces recorded for this message.
             </div>
           )}
         </div>

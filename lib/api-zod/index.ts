@@ -43,6 +43,7 @@ export const ChatMessageResponseSchema = z.object({
   role: z.enum(['user', 'assistant', 'system']),
   createdAt: z.string(),
   actionId: z.string().optional(),
+  toolCalls: z.array(z.record(z.any())).optional(),
   metadata: z.record(z.any()).optional(),
 });
 
@@ -354,3 +355,89 @@ export const DeleteWorkflowRequestSchema = z.object({
 export const DeleteWorkflowResponseSchema = z.object({
   success: z.boolean(),
 });
+
+// Autonomy
+export const AutonomyStateResponseSchema = z.object({
+  status: z.enum(['active', 'inactive', 'unconfigured']),
+  sessionKey: z.object({
+    status: z.enum(['configured', 'unconfigured', 'inactive']),
+    dailyLimitUsdc: z.string().nullable(),
+    spentTodayUsdc: z.string(),
+    maxPerActionUsdc: z.string().nullable(),
+    ttlSeconds: z.number().nullable(),
+    expiresAt: z.string().nullable(),
+    whitelist: z.array(z.string()),
+    scope: z.string(),
+    killSwitch: z.boolean(),
+  }),
+  autonomy: z.object({
+    dailySpendLimit: z.string().nullable(),
+    maxActionSpend: z.string().nullable(),
+    whitelistedProtocolsCount: z.number(),
+    mode: z.string(),
+  }),
+});
+
+export const ConfigureAutonomyRequestSchema = z.object({
+  dailyLimitUsdc: z.string().optional(),
+  maxPerActionUsdc: z.string().optional(),
+  whitelist: z.array(z.string()).optional(),
+  scope: z.string().optional(),
+  ttlSeconds: z.number().optional(),
+});
+
+export const ConfigureAutonomyResponseSchema = z.object({
+  success: z.boolean(),
+  state: AutonomyStateResponseSchema,
+});
+
+export const KillAutonomyResponseSchema = z.object({
+  success: z.boolean(),
+  state: AutonomyStateResponseSchema,
+});
+
+// x402 Ledger & Pricing
+export const X402LedgerEntrySchema = z.object({
+  id: z.string(),
+  actionId: z.string(),
+  actionType: z.string(),
+  cost: z.string().nullable(),
+  txHash: z.string().nullable(),
+  createdAt: z.string(),
+  details: z.record(z.any()).optional().nullable(),
+});
+
+export const X402LedgerResponseSchema = z.object({
+  entries: z.array(X402LedgerEntrySchema),
+  summary: z.object({
+    totalSpentUsdc: z.string(),
+    inferenceSpentUsdc: z.string(),
+    toolsSpentUsdc: z.string(),
+    inferenceCallsCount: z.number(),
+    toolsCallsCount: z.number(),
+  }),
+});
+
+export const X402PricingResponseSchema = z.object({
+  pricing: z.array(
+    z.object({
+      actionType: z.string(),
+      label: z.string(),
+      priceUsdc: z.string(),
+      description: z.string(),
+    })
+  ),
+});
+
+// Simulate Action
+export const SimulateActionResponseSchema = z.object({
+  success: z.boolean(),
+  allowed: z.boolean(),
+  riskLevel: z.string(),
+  reason: z.string().optional(),
+  error: z.string().optional(),
+  estimatedGas: z.string().optional(),
+  expectedOutput: z.string().optional(),
+  checks: z.array(z.string()),
+});
+
