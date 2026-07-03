@@ -4,12 +4,15 @@ import { useUiStore } from '../lib/state';
 import { TopBar } from '../shell/TopBar';
 import { CommandPalette } from '../shell/CommandPalette';
 import { Toaster } from '../shell/Toast';
-import { MainRoute } from '../features/MainRoute';
+import { CockpitRoute } from '../features/cockpit/CockpitRoute';
+import { OpsRail } from '../features/cockpit/OpsRail';
+import { StatusBar } from '../features/cockpit/StatusBar';
+import { ActionsPage } from '../features/actions/ActionsPage';
+import { StreamPage } from '../features/stream/StreamPage';
 import { ActionsBuilder } from '../features/inbox/ActionsBuilder';
 import { HistoryPage } from '../features/history/HistoryPage';
 import { ConfigureView } from '../features/configure/ConfigureView';
 import { BaseMcpView } from '../features/configure/BaseMcpView';
-import { AutonomyCockpit } from '../features/autonomy/AutonomyCockpit';
 import { FuelMeter } from '../features/x402/FuelMeter';
 
 export function App() {
@@ -32,17 +35,23 @@ export function App() {
     <div className="h-screen w-full flex flex-col font-sans">
       <TopBar />
       <div className="flex-1 flex overflow-hidden">
-        <Switch>
-          <Route path="/build"><ActionsBuilder /></Route>
-          <Route path="/history"><HistoryPage /></Route>
-          <Route path="/configure"><ConfigureView /></Route>
-          <Route path="/base-mcp"><BaseMcpView /></Route>
-          <Route path="/autonomy"><AutonomyCockpit /></Route>
-          <Route path="/fuel"><FuelMeter /></Route>
-          <Route path="/inbox/:actionId">{(params) => <MainRoute actionId={params.actionId} />}</Route>
-          <Route path="/"><MainRoute /></Route>
-        </Switch>
+        <OpsRail />
+        <div className="flex-1 flex overflow-hidden">
+          <Switch>
+            <Route path="/actions"><ActionsPage /></Route>
+            <Route path="/stream"><StreamPage /></Route>
+            <Route path="/fuel"><FuelMeter /></Route>
+            <Route path="/configure"><ConfigureView /></Route>
+            <Route path="/build"><ActionsBuilder /></Route>
+            <Route path="/history"><HistoryPage /></Route>
+            <Route path="/base-mcp"><BaseMcpView /></Route>
+            <Route path="/autonomy"><CockpitRoute /></Route>
+            <Route path="/inbox/:actionId">{(params) => <ActionsPage actionId={params.actionId} />}</Route>
+            <Route path="/"><CockpitRoute /></Route>
+          </Switch>
+        </div>
       </div>
+      <StatusBar />
       <CommandPalette />
       <Toaster />
     </div>

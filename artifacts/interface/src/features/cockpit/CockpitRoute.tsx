@@ -1,0 +1,138 @@
+import { useUiStore } from '../../lib/state';
+import { StateBadge } from '@mioagent/ui';
+import { RiskQueue } from './RiskQueue';
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bg-panel-2 border border-line rounded-lg p-2.5">
+      <div className="text-[10px] font-mono uppercase tracking-[0.06em] text-ink-3">{label}</div>
+      <div className="text-[15px] font-mono font-bold text-ink mt-0.5">{value}</div>
+    </div>
+  );
+}
+
+function SectionHeader({ title }: { title: string }) {
+  return (
+    <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-ink-3 mb-3">
+      <span className="text-accent">▸</span>
+      <span>{title}</span>
+    </div>
+  );
+}
+
+export function CockpitRoute() {
+  const showToast = useUiStore((s) => s.showToast);
+
+  return (
+    <div className="flex-1 flex overflow-hidden w-full h-full">
+      {/* Center: Cockpit Canvas */}
+      <main className="flex-1 bg-bg p-5 flex flex-col gap-4 overflow-y-auto select-none">
+        <div className="flex items-center justify-between border-b border-line pb-3">
+          <div>
+            <h1 className="text-[18px] font-bold text-ink tracking-[-0.02em]">Autonomy Cockpit</h1>
+            <p className="text-[12px] text-ink-3 mt-0.5">
+              Mission control for automated execution, x402 fuel budgets, and contract risk boundaries.
+            </p>
+          </div>
+          <StateBadge state="missing" label="not configured" title="No session key is active" />
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Session key status */}
+          <section className="bg-panel border border-line rounded-xl p-4 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <SectionHeader title="Session Key" />
+                <span className="text-[10px] font-mono text-ink-3 bg-panel-2 px-2 py-0.5 rounded border border-line">inactive</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2.5 text-xs">
+                <Metric label="Daily limit" value="—" />
+                <Metric label="Spent today" value="—" />
+                <Metric label="Max / action" value="—" />
+                <Metric label="TTL" value="—" />
+              </div>
+            </div>
+            <div className="mt-3 text-[11px] text-ink-3 font-mono border-t border-line/50 pt-2 flex justify-between">
+              <span>Whitelist: <span className="text-ink-2">—</span></span>
+              <span>Scope: <span className="text-ink-2">none</span></span>
+            </div>
+          </section>
+
+          {/* Kill switch & Autonomy boundaries */}
+          <div className="flex flex-col gap-4">
+            <section className="bg-panel border border-line rounded-xl p-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <SectionHeader title="Kill Switch" />
+                  <div className="text-[11px] text-ink-3 leading-relaxed">
+                    Revokes the active session key instantly. The agent will revert to manual confirmation on every transaction.
+                  </div>
+                </div>
+                <button
+                  onClick={() => showToast('No active session key to revoke.')}
+                  className="shrink-0 px-4 py-2 rounded-lg bg-risk-soft text-risk font-bold text-xs border border-risk/30 hover:bg-risk hover:text-white transition-colors"
+                >
+                  ⏻ Kill
+                </button>
+              </div>
+            </section>
+
+            <section className="bg-panel border border-line rounded-xl p-4 flex-1">
+              <SectionHeader title="Autonomy Boundaries" />
+              <div className="grid grid-cols-3 gap-2.5 text-xs">
+                <Metric label="Daily spend" value="—" />
+                <Metric label="Max action" value="—" />
+                <Metric label="Protocols" value="—" />
+              </div>
+            </section>
+          </div>
+        </div>
+
+        {/* Next Autonomous Action & Setup Checklist */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <section className="bg-panel border border-line rounded-xl p-4 flex flex-col">
+            <SectionHeader title="Next Autonomous Action" />
+            <div className="flex-1 flex items-center justify-center p-6 border border-dashed border-line rounded-lg bg-bg/50">
+              <div className="text-center">
+                <div className="text-[13px] font-medium text-ink-2">No pending autonomous execution</div>
+                <div className="text-[11px] text-ink-3 mt-1 max-w-[280px]">
+                  Scanners and automated action builders will queue their pre-screened transactions here.
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="bg-panel-2 border border-line rounded-xl p-4">
+            <SectionHeader title="Setup Checklist" />
+            <div className="space-y-2 text-xs">
+              <div className="flex items-start gap-2 bg-panel p-2 rounded border border-line">
+                <span className="text-ok font-bold">☑</span>
+                <div>
+                  <div className="font-semibold text-ink">1. Read-Only Providers Wired</div>
+                  <div className="text-[11px] text-ink-3">Moralis balances, CoinGecko prices, and GoPlus security active.</div>
+                </div>
+              </div>
+              <div className="flex items-start gap-2 bg-panel p-2 rounded border border-line opacity-80">
+                <span className="text-ink-3 font-bold">☐</span>
+                <div>
+                  <div className="font-semibold text-ink">2. Configure Session Key & Whitelist</div>
+                  <div className="text-[11px] text-ink-3">Assign daily USDC spend limits and approved contract targets.</div>
+                </div>
+              </div>
+              <div className="flex items-start gap-2 bg-panel p-2 rounded border border-line opacity-80">
+                <span className="text-ink-3 font-bold">☐</span>
+                <div>
+                  <div className="font-semibold text-ink">3. Enable Background Scanners</div>
+                  <div className="text-[11px] text-ink-3">Wire autonomous scanners to evaluate yield and rebalance signals.</div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+
+      {/* Right: Risk Queue */}
+      <RiskQueue />
+    </div>
+  );
+}

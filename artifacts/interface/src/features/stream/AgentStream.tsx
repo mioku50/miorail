@@ -14,7 +14,7 @@ const PROMPT_CHIPS = [
   'Find yield opportunities',
 ];
 
-export function AgentStream() {
+export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
   const { address } = useAccount();
   const { data: chatData, refetch } = useChatHistory();
   const sendMessageMutation = useSendMessage();
@@ -68,7 +68,7 @@ export function AgentStream() {
     });
   };
 
-  if (isCollapsed) {
+  if (isCollapsed && !fullWidth) {
     return (
       <aside className="w-[54px] shrink-0 border-l border-line bg-panel flex flex-col items-center py-4 justify-between select-none shadow-sm z-10">
         <button
@@ -86,7 +86,7 @@ export function AgentStream() {
   }
 
   return (
-    <aside className="w-[400px] shrink-0 border-l border-line bg-panel flex flex-col h-full overflow-hidden shadow-sm z-10">
+    <aside className={fullWidth ? "flex-1 bg-bg flex flex-col h-full overflow-hidden z-10" : "w-[400px] shrink-0 border-l border-line bg-panel flex flex-col h-full overflow-hidden shadow-sm z-10"}>
       {/* Header */}
       <div className="px-4 py-3 border-b border-line bg-panel flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2.5">
@@ -109,14 +109,16 @@ export function AgentStream() {
           >
             <span>+ New chat</span>
           </button>
-          <button
-            onClick={() => setIsCollapsed(true)}
-            className="p-1.5 rounded-lg text-ink-3 hover:text-ink hover:bg-bg transition-colors cursor-pointer text-xs font-bold"
-            title="Collapse panel"
-            aria-label="Collapse panel"
-          >
-            ⇥
-          </button>
+          {!fullWidth && (
+            <button
+              onClick={() => setIsCollapsed(true)}
+              className="p-1.5 rounded-lg text-ink-3 hover:text-ink hover:bg-bg transition-colors cursor-pointer text-xs font-bold"
+              title="Collapse panel"
+              aria-label="Collapse panel"
+            >
+              ⇥
+            </button>
+          )}
         </div>
       </div>
 

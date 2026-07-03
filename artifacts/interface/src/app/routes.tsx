@@ -7,11 +7,11 @@ export interface AppRoute {
 }
 
 export const NAV_TABS: AppRoute[] = [
-  { path: '/', label: 'main' },
-  { path: '/build', label: 'actions builder' },
-  { path: '/history', label: 'history' },
+  { path: '/', label: 'cockpit' },
+  { path: '/actions', label: 'actions' },
+  { path: '/stream', label: 'stream' },
+  { path: '/fuel', label: 'fuel' },
   { path: '/configure', label: 'configure' },
-  { path: '/base-mcp', label: 'base mcp' },
 ];
 
 export interface AppCommand {
@@ -22,11 +22,11 @@ export interface AppCommand {
 }
 
 export const COMMANDS: AppCommand[] = [
-  { id: 'scan', icon: '⚡', label: 'Review tokens', path: '/build' },
-  { id: 'scanner', icon: '📡', label: 'New scanner', path: '/build' },
-  { id: 'positions', icon: '📈', label: 'Open positions', path: '/' },
-  { id: 'memory', icon: '🧠', label: 'Edit memory', path: '/history' },
-  { id: 'keys', icon: '🔑', label: 'Session keys · autonomy', path: '/configure' },
-  { id: 'autonomy', icon: '⏻', label: 'Autonomy cockpit', path: '/autonomy' },
+  { id: 'cockpit', icon: '⏻', label: 'Autonomy cockpit', path: '/' },
+  { id: 'actions', icon: '⚡', label: 'Action inbox · review', path: '/actions' },
+  { id: 'stream', icon: '💬', label: 'Agent stream · chat', path: '/stream' },
   { id: 'fuel', icon: '⛽', label: 'x402 fuel meter', path: '/fuel' },
+  { id: 'configure', icon: '🔑', label: 'Configure providers · keys', path: '/configure' },
+  { id: 'scan', icon: '📡', label: 'Actions builder · scan', path: '/build' },
+  { id: 'memory', icon: '🧠', label: 'Agent history · memory', path: '/history' },
 ];
