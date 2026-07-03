@@ -97,11 +97,11 @@ export function OpsRail() {
               {sd?.x402?.status === 'configured' ? 'live' : 'simulated'}
             </span>
           </div>
-          <div className="text-[14px] font-bold text-ink">
-            — <span className="text-[11px] font-normal text-ink-3">USDC</span>
+          <div className="text-[11px] font-medium text-ink-2 bg-panel-2 px-2 py-1.5 rounded border border-line my-1 text-center">
+            No spend source wired
           </div>
           <div className="text-[10px] text-ink-3 mt-1 font-sans leading-tight">
-            No live balance source wired. Click for details.
+            Micropayments simulated. Click to configure.
           </div>
         </Link>
       </div>
@@ -113,10 +113,13 @@ export function OpsRail() {
           <div className="flex items-center justify-between">
             <span className="text-ink-2 text-[11px]">Session Key</span>
             <span className="text-[10px] font-bold bg-panel-2 border border-line px-1.5 py-0.5 rounded text-ink-3">
-              OFF
+              unconfigured
             </span>
           </div>
-          <div className="flex items-center justify-between">
+          <div className="text-[11px] font-medium text-ink-2 bg-panel-2 px-2 py-1.5 rounded border border-line my-0.5 text-center">
+            Session key not configured
+          </div>
+          <div className="flex items-center justify-between mt-0.5">
             <span className="text-ink-2 text-[11px]">Mode</span>
             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${isMainnetReadonly ? 'bg-warn-soft text-warn border-warn/30' : 'bg-accent-soft text-accent border-accent/30'}`}>
               {isMainnetReadonly ? 'read-only' : 'execution'}

@@ -41,8 +41,11 @@ export function RiskQueue() {
       <div>
         <SectionHeader title="Risk Queue" count={pendingActions.length} />
         {pendingActions.length === 0 ? (
-          <div className="bg-panel border border-line rounded-lg p-3 text-center text-ink-3 font-sans text-[11px] italic">
-            No pending actions in risk queue.
+          <div className="bg-panel border border-line rounded-lg p-4 text-center flex flex-col items-center justify-center gap-1">
+            <div className="text-[12px] font-medium text-ink-2">No autonomous queue yet</div>
+            <div className="text-[10px] text-ink-3 font-sans leading-tight max-w-[200px]">
+              When scanners or AI recommendations propose execution, actions appear here for screening.
+            </div>
           </div>
         ) : (
           <div className="flex flex-col gap-2 max-h-[380px] overflow-y-auto pr-1">
@@ -55,7 +58,13 @@ export function RiskQueue() {
                   ? 'bg-warn-soft text-warn border-warn/30'
                   : 'bg-ok-soft text-ok border-ok/30';
 
-              const title = action.title || action.prompt || 'Untitled Action';
+              const title =
+                action.title ||
+                action.metadata?.title ||
+                action.metadata?.summary ||
+                action.suggestedPrompt ||
+                action.prompt ||
+                (action.kind ? `${action.kind.toUpperCase()} Action` : 'Autonomous Action');
               const createdBy = action.createdBy || 'agent';
 
               return (
