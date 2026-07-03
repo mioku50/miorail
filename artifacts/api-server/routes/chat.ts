@@ -171,7 +171,7 @@ chatRouter.post('/', async (req, res, next) => {
           });
           const suspiciousCount = analysis.portfolioSnapshot.suspiciousTokenCount;
           const monitorCount = Math.max(0, analysis.portfolioSnapshot.tokenCount - suspiciousCount);
-          if (analysis.securityProvider.status === 'missing') {
+          if (analysis.securityProvider.status === 'missing' || analysis.securityProvider.status === 'disabled') {
             assistantContent = 'I created a read-only recommendation using available metadata. Token security provider is not configured, so contract-level checks are limited.';
           } else if (isReadonly) {
             assistantContent = `I reviewed your Base token list and created a read-only risk recommendation with ${analysis.securityProvider.provider} security context. I found ${suspiciousCount} suspicious/low-confidence tokens and ${monitorCount} tokens worth monitoring. No transaction was executed.`;

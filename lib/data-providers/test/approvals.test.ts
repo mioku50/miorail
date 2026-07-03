@@ -80,6 +80,14 @@ suite('Approval Providers', () => {
     assert.ok(provider instanceof NoneApprovalProvider);
   });
 
+  test('getApprovalProviderFromEnv reports disabled when APPROVAL_PROVIDER=none (explicit)', () => {
+    process.env.APPROVAL_PROVIDER = 'none';
+    const { statusCode, providerName } = getApprovalProviderFromEnv();
+    assert.strictEqual(providerName, 'none');
+    assert.strictEqual(statusCode, 'disabled');
+    delete process.env.APPROVAL_PROVIDER;
+  });
+
   test('getApprovalProviderFromEnv returns mock when APPROVAL_PROVIDER=mock', () => {
     process.env.APPROVAL_PROVIDER = 'mock';
     const { provider, statusCode, providerName } = getApprovalProviderFromEnv();

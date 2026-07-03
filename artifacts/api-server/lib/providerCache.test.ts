@@ -185,4 +185,29 @@ describe('Provider Cache Orchestration', () => {
     assert.strictEqual(result.budgetExhausted, true);
     assert.strictEqual(fetcher.mock.calls.length, 0);
   });
+
+  test('per-provider budget override disables one provider while leaving others running', async () => {
+    // Global default 20/300, but Moralis is capped to 0 hourly calls -> disabled via budget.
+    const budget = new ProviderBudget(20, 300, {
+      moralis: { maxPerMinute: 20, maxPerHour: 0 },
+    });
+    assert.strictEqual(budget.canCall('moralis'), false);
+    assert.strictEqual(budget.snapshot('moralis').status, 'disabled');
+    // Other providers still use the global default and remain callable.
+    assert.strictEqual(budget.canCall('goplus'), true);
+    assert.strictEqual(budget.snapshot('goplus').status, 'ok');
+    assert.strictEqual(budget.canCall('coingecko'), true);
+  });
+
+  test('per-provider budget override enforces an independent hourly cap', async () => {
+    const budget = new ProviderBudget(20, 300, {
+      goplus: { maxPerMinute: 20, maxPerHour: 1 },
+    });
+    assert.strictEqual(budget.canCall('goplus'), true);
+    budget.record('goplus');
+    // One hourly call recorded -> goplus is now rate-limited, moralis is unaffected.
+    assert.strictEqual(budget.canCall('goplus'), false);
+    assert.strictEqual(budget.snapshot('goplus').status, 'rate-limited');
+    assert.strictEqual(budget.canCall('moralis'), true);
+  });
 });

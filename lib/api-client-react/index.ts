@@ -92,11 +92,11 @@ export function usePortfolio(
       if (address) url.searchParams.set('address', address);
       return fetchApi<apiSpec.PortfolioResponse>(url.pathname + url.search);
     },
-    // Smart polling: the backend provider cache makes repeated calls cheap, but
-    // the frontend should not hammer the API every tick. Auto-refetch on a slow
-    // cadence; rely on the cache + manual refresh for everything else.
+    // No automatic polling: provider calls are budgeted, so the frontend must not
+    // burn them on a timer. The query is gated by `enabled` (default: wallet connected)
+    // and is only fetched on explicit refresh/analyze unless the caller overrides.
     enabled: !!address,
-    refetchInterval: 60000,
+    refetchInterval: false,
     refetchOnWindowFocus: false,
     ...options,
   });

@@ -130,6 +130,7 @@ function formatRiskProvider(statusData: any, pendingLabel = 'Checking...') {
   if (statusData.risk.status === 'connected') return statusData.risk.provider === 'goplus' ? 'GoPlus connected' : 'Connected';
   if (statusData.risk.status === 'partial') return statusData.risk.provider === 'goplus' ? 'GoPlus partial' : 'Partial';
   if (statusData.risk.status === 'failed') return statusData.risk.provider === 'goplus' ? 'GoPlus failed' : 'Failed';
+  if (statusData.risk.status === 'disabled') return 'Disabled by config';
   return 'Missing';
 }
 
@@ -193,11 +194,22 @@ function portfolioFreshnessLabel(portfolio: any): string {
 
 function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
   const { address } = useAccount();
-  const { data: portfolio, isError: isPortfolioError, error: portfolioError, refetch: refetchPortfolio, isFetching: isPortfolioFetching } = usePortfolio(address);
+  // Portfolio is fetched only on explicit refresh/analyze — never automatically on mount or on a
+  // timer — so free provider limits are not burned by page loads. `portfolioRequested` flips the
+  // query enabled; subsequent refreshes call refetch().
+  const [portfolioRequested, setPortfolioRequested] = useState(false);
+  const { data: portfolio, isError: isPortfolioError, error: portfolioError, refetch: refetchPortfolio, isFetching: isPortfolioFetching } = usePortfolio(address, { enabled: !!address && portfolioRequested, refetchInterval: false });
   const { data: protocolsData, isError: isProtocolsError } = useProtocols();
   const { data: statusData } = useStatus();
   const { mutate: toggleProtocol } = useToggleProtocol();
   const [showLowConfidence, setShowLowConfidence] = useState(false);
+
+  const handleRefreshPortfolio = () => {
+    if (!address) return;
+    if (!portfolioRequested) setPortfolioRequested(true);
+    else refetchPortfolio();
+    showToast('Refreshing portfolio');
+  };
 
   const tokens = portfolio?.tokens || [];
   const ethToken = tokens.find((b: any) => b.symbol === 'ETH');
@@ -236,12 +248,14 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
                 {statusData ? (
                   statusData.tokenBalances.status === 'stale' ? `${statusData.tokenBalances.provider || 'moralis'} cached` :
                   statusData.tokenBalances.status === 'failed' ? 'token provider failed' :
+                  statusData.tokenBalances.status === 'disabled' ? 'balances off' :
                   statusData.tokenBalances.status === 'missing' ? 'eth only' :
                   statusData.tokenBalances.provider === 'moralis' ? 'moralis connected' :
                   statusData.tokenBalances.provider === 'alchemy' ? 'alchemy connected' :
                   portfolio?.providerStatus || 'connected'
                 ) : (
                   portfolio?.providers?.tokenBalances === 'stale' ? `${portfolio?.providers?.tokenBalancesProvider || 'moralis'} cached` :
+                  portfolio?.providers?.tokenBalances === 'disabled' ? 'balances off' :
                   portfolio?.providerStatus === 'moralis connected' ? 'moralis connected' : portfolio?.providerStatus
                 )}
               </span>
@@ -264,6 +278,10 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
               <span className="text-[10px] font-mono font-normal text-red lowercase bg-red-soft px-1.5 py-0.5 rounded border border-red/20">
                 approvals failed
               </span>
+            ) : (statusData?.approvals?.status === 'disabled' || portfolio?.providers?.approvals === 'disabled') ? (
+              <span className="text-[10px] font-mono font-normal text-ink-3 lowercase bg-panel-2 px-1.5 py-0.5 rounded border border-line/60">
+                approvals off
+              </span>
             ) : (
               <span className="text-[10px] font-mono font-normal text-amber lowercase bg-amber-soft px-1.5 py-0.5 rounded border border-amber/20">
                 approvals missing
@@ -271,7 +289,7 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
             )}
             <button
               type="button"
-              onClick={() => { refetchPortfolio(); showToast('Refreshing portfolio'); }}
+              onClick={handleRefreshPortfolio}
               disabled={isPortfolioFetching || !address}
               title="Refresh portfolio"
               className="text-[10px] font-mono font-normal lowercase px-1.5 py-0.5 rounded border border-line/60 bg-panel-2 text-ink-2 hover:text-ink hover:border-line disabled:opacity-40 disabled:cursor-not-allowed"
@@ -290,7 +308,7 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
             )}
             {portfolio.providerBudgetStatus?.exhausted && (
               <span className="text-[10px] font-mono font-normal text-amber lowercase bg-amber-soft px-1.5 py-0.5 rounded border border-amber/20">
-                Provider budget reached. Showing cached data.
+                Provider budget reached — showing cached/stale data.
               </span>
             )}
           </div>
@@ -304,9 +322,21 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
               portfolioError?.message?.includes('key') ? 'Provider key missing' :
               'Unable to load portfolio'}
            </div>
-        ) : !portfolio || (!address) ? (
+        ) : !address ? (
            <div className="text-[13px] text-ink-2 bg-panel-2 p-3 rounded-md border border-line">
              Connect wallet to view portfolio
+           </div>
+        ) : !portfolio ? (
+           <div className="text-[13px] text-ink-2 bg-panel-2 p-3 rounded-md border border-line flex flex-col gap-2">
+             <span>Wallet connected. Refresh to load your portfolio.</span>
+             <button
+               type="button"
+               onClick={handleRefreshPortfolio}
+               disabled={isPortfolioFetching}
+               className="self-start text-[11px] font-mono lowercase px-2 py-1 rounded border border-line/60 bg-bg text-ink-2 hover:text-ink hover:border-line disabled:opacity-40 disabled:cursor-not-allowed"
+             >
+               {isPortfolioFetching ? 'loading…' : 'analyze portfolio'}
+             </button>
            </div>
         ) : (
 
@@ -421,12 +451,13 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
              <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
                <span className="text-ink-2">Token balances</span>
                {statusData ? (
-                  <span className={statusData.tokenBalances.status === 'connected' ? 'text-green font-medium' : statusData.tokenBalances.status === 'failed' ? 'text-red font-medium' : 'text-amber font-medium'}>
-                    {statusData.tokenBalances.status === 'connected' 
+                  <span className={statusData.tokenBalances.status === 'connected' ? 'text-green font-medium' : statusData.tokenBalances.status === 'failed' ? 'text-red font-medium' : statusData.tokenBalances.status === 'disabled' ? 'text-ink-3 font-medium' : 'text-amber font-medium'}>
+                    {statusData.tokenBalances.status === 'connected'
                       ? (statusData.tokenBalances.provider === 'moralis' ? 'Moralis connected' : statusData.tokenBalances.provider === 'alchemy' ? 'Alchemy connected' : 'Connected')
                       : statusData.tokenBalances.status === 'stale'
                         ? (statusData.tokenBalances.provider === 'moralis' ? 'Moralis cached' : 'Cached')
-                        : statusData.tokenBalances.status === 'failed' ? (statusData.tokenBalances.provider === 'moralis' ? 'Moralis failed' : 'Failed') : 'Missing'}
+                        : statusData.tokenBalances.status === 'failed' ? (statusData.tokenBalances.provider === 'moralis' ? 'Moralis failed' : 'Failed')
+                        : statusData.tokenBalances.status === 'disabled' ? 'Disabled by config' : 'Missing'}
                   </span>
                 ) : (
                   <span className="text-amber font-medium">Missing</span>
@@ -435,7 +466,7 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
              <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
                 <span className="text-ink-2">Risk provider</span>
                 {statusData ? (
-                  <span className={statusData.risk.status === 'connected' ? 'text-green font-medium' : statusData.risk.status === 'failed' ? 'text-red font-medium' : 'text-amber font-medium'}>
+                  <span className={statusData.risk.status === 'connected' ? 'text-green font-medium' : statusData.risk.status === 'failed' ? 'text-red font-medium' : statusData.risk.status === 'disabled' ? 'text-ink-3 font-medium' : 'text-amber font-medium'}>
                     {formatRiskProvider(statusData, 'Missing')}
                   </span>
                 ) : (
@@ -445,8 +476,8 @@ function LeftRail({ showToast }: { showToast: (msg: string) => void }) {
               <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
                 <span className="text-ink-2">Price Provider</span>
                 {statusData ? (
-                  <span className={statusData.prices.status === 'connected' ? 'text-green font-medium' : statusData.prices.status === 'failed' ? 'text-red font-medium' : 'text-amber font-medium'}>
-                    {statusData.prices.status === 'connected' ? `Connected (${statusData.prices.provider})` : statusData.prices.status === 'failed' ? 'Price provider failed' : 'Missing'}
+                  <span className={statusData.prices.status === 'connected' ? 'text-green font-medium' : statusData.prices.status === 'failed' ? 'text-red font-medium' : statusData.prices.status === 'disabled' ? 'text-ink-3 font-medium' : 'text-amber font-medium'}>
+                    {statusData.prices.status === 'connected' ? `Connected (${statusData.prices.provider})` : statusData.prices.status === 'failed' ? 'Price provider failed' : statusData.prices.status === 'disabled' ? 'Disabled by config' : 'Missing'}
                   </span>
                 ) : (
                   <span className="text-amber font-medium">Missing</span>
@@ -742,8 +773,16 @@ function ActionInbox({ showToast, onSelectTab }: { showToast: (msg: string) => v
                                )}
                                <div>
                                   <span className="text-ink-3">Security provider: </span>
-                                  <span className="font-mono text-ink">{meta.analysis.securityProvider?.provider === 'goplus' ? (meta.analysis.securityProvider.status === 'failed' ? 'GoPlus failed' : meta.analysis.securityProvider.status === 'partial' ? 'GoPlus partial' : 'GoPlus') : 'Missing'}</span>
+                                  <span className="font-mono text-ink">{meta.analysis.securityProvider?.provider === 'goplus' ? (meta.analysis.securityProvider.status === 'failed' ? 'GoPlus failed' : meta.analysis.securityProvider.status === 'partial' ? 'GoPlus partial' : 'GoPlus') : meta.analysis.securityProvider?.status === 'disabled' ? 'Disabled by config' : 'Missing'}</span>
                                 </div>
+                               {meta.analysis.portfolioSnapshot.snapshotTimestamp && (
+                                 <div className="ml-auto">
+                                   <span className="text-ink-3">Snapshot: </span>
+                                   <span className={`font-mono ${meta.analysis.portfolioSnapshot.dataFreshness === 'stale' ? 'text-amber' : 'text-ink-3'}`}>
+                                     {new Date(meta.analysis.portfolioSnapshot.snapshotTimestamp).toLocaleString()}{meta.analysis.portfolioSnapshot.dataFreshness === 'stale' ? ' (stale)' : ''}
+                                   </span>
+                                 </div>
+                               )}
                              </div>
                            )}
 
@@ -1530,32 +1569,34 @@ function ConfigurePage() {
          </div>
          <div className="flex items-center justify-between py-1.5 border-b border-line">
            <span className="font-medium text-sm text-ink">Token Balances Provider</span>
-           <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.tokenBalances.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.tokenBalances.status === 'failed' ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20'}`}>
+           <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.tokenBalances.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.tokenBalances.status === 'failed' ? 'bg-red-soft text-red border-red/20' : statusData?.tokenBalances.status === 'disabled' ? 'bg-panel-2 text-ink-3 border-line/60' : 'bg-amber-soft text-amber border-amber/20'}`}>
              {statusData ? (
                statusData.tokenBalances.status === 'connected' ? `${statusData.tokenBalances.provider} connected` :
                statusData.tokenBalances.status === 'stale' ? `${statusData.tokenBalances.provider || 'moralis'} cached` :
-               statusData.tokenBalances.status === 'failed' ? `${statusData.tokenBalances.provider || 'moralis'} failed` : 'Missing'
+               statusData.tokenBalances.status === 'failed' ? `${statusData.tokenBalances.provider || 'moralis'} failed` :
+               statusData.tokenBalances.status === 'disabled' ? 'Disabled by config' : 'Missing'
              ) : 'Checking...'}
            </span>
          </div>
          <div className="flex items-center justify-between py-1.5 border-b border-line">
            <span className="font-medium text-sm text-ink">Price Provider</span>
-           <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.prices.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.prices.status === 'failed' ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20'}`}>
-             {statusData ? (statusData.prices.status === 'connected' ? `${statusData.prices.provider} connected` : statusData.prices.status === 'failed' ? 'Price provider failed' : 'Missing') : 'Checking...'}
+           <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.prices.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.prices.status === 'failed' ? 'bg-red-soft text-red border-red/20' : statusData?.prices.status === 'disabled' ? 'bg-panel-2 text-ink-3 border-line/60' : 'bg-amber-soft text-amber border-amber/20'}`}>
+             {statusData ? (statusData.prices.status === 'connected' ? `${statusData.prices.provider} connected` : statusData.prices.status === 'failed' ? 'Price provider failed' : statusData.prices.status === 'disabled' ? 'Disabled by config' : 'Missing') : 'Checking...'}
            </span>
          </div>
          <div className="flex items-center justify-between py-1.5 border-b border-line">
            <span className="font-medium text-sm text-ink">Risk / GoPlus Provider</span>
-           <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.risk.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.risk.status === 'failed' ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20'}`}>
+           <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.risk.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.risk.status === 'failed' ? 'bg-red-soft text-red border-red/20' : statusData?.risk.status === 'disabled' ? 'bg-panel-2 text-ink-3 border-line/60' : 'bg-amber-soft text-amber border-amber/20'}`}>
              {formatRiskProvider(statusData)}
            </span>
          </div>
          <div className="flex items-center justify-between py-1.5 border-b border-line">
            <span className="font-medium text-sm text-ink">Approval Scanner</span>
-           <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.approvals?.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.approvals?.status === 'failed' ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20'}`}>
+           <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.approvals?.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.approvals?.status === 'failed' ? 'bg-red-soft text-red border-red/20' : statusData?.approvals?.status === 'disabled' ? 'bg-panel-2 text-ink-3 border-line/60' : 'bg-amber-soft text-amber border-amber/20'}`}>
              {statusData ? (
                statusData.approvals?.status === 'connected' ? `${statusData.approvals?.provider || 'moralis'} connected` :
-               statusData.approvals?.status === 'failed' ? 'Failed' : 'Missing'
+               statusData.approvals?.status === 'failed' ? 'Failed' :
+               statusData.approvals?.status === 'disabled' ? 'Disabled by config' : 'Missing'
              ) : 'Checking...'}
            </span>
          </div>

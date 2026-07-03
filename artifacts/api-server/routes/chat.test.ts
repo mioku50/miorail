@@ -54,6 +54,7 @@ describe('Chat API & Recommendation Guardrails', () => {
     assert.ok((createdAction.metadata as any).analysis.securityProvider);
     assert.strictEqual((createdAction.metadata as any).analysis.portfolioSnapshot.walletAddress, '0x1234567890123456789012345678901234567890');
     assert.ok((createdAction.metadata as any).analysis.portfolioSnapshot.dataFreshness !== undefined);
+    assert.ok((createdAction.metadata as any).analysis.portfolioSnapshot.snapshotTimestamp !== undefined);
     assert.ok(Array.isArray(createdAction.tokens));
 
     const payload = typeof createdAction.executionPayload === 'string'

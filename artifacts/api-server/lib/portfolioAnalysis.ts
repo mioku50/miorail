@@ -85,7 +85,7 @@ export interface PortfolioData {
     tokenBalancesProvider: string;
     prices: string;
     priceProvider?: string;
-    risk: "connected" | "missing" | "failed" | "partial";
+    risk: "connected" | "missing" | "failed" | "partial" | "disabled";
     riskProvider?: TokenSecurityProviderName;
     approvals?: string;
     approvalProvider?: string;
@@ -134,10 +134,11 @@ export interface PortfolioRiskAnalysis {
     cacheAgeSeconds?: number;
     providerBudgetStatus?: { exhausted: boolean; providers: string[] };
     providerCallsMade?: number;
+    snapshotTimestamp?: string;
   };
   securityProvider: {
     provider: TokenSecurityProviderName;
-    status: "connected" | "missing" | "failed" | "partial";
+    status: "connected" | "missing" | "failed" | "partial" | "disabled";
   };
   tokenFindings: TokenFinding[];
   suggestedNextSteps: string[];
@@ -177,10 +178,11 @@ function prioritizeSecurityScanTokens(tokens: TokenInfo[]) {
     .slice(0, 50);
 }
 
-function providerStatusToSecurityStatus(status: string): "connected" | "missing" | "failed" | "partial" {
+function providerStatusToSecurityStatus(status: string): "connected" | "missing" | "failed" | "partial" | "disabled" {
   if (status === 'failed') return 'failed';
   if (status === 'missing') return 'missing';
   if (status === 'partial') return 'partial';
+  if (status === 'disabled') return 'disabled';
   return 'connected';
 }
 
@@ -294,9 +296,9 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
   const freshnessTrack: FreshnessTrack[] = [];
 
   // --- Token balances (cached + budget-guarded) ---
-  const { provider, status, providerName } = getTokenBalancesProviderFromEnv();
+  const { provider, status, statusCode, providerName } = getTokenBalancesProviderFromEnv();
   let providerStatus = status;
-  let tokenBalancesStatus: "connected" | "missing" | "failed" | "stale" = providerName === "none" ? "missing" : "connected";
+  let tokenBalancesStatus: "connected" | "missing" | "failed" | "stale" | "disabled" = statusCode;
 
   if (provider && providerName !== 'none') {
     const balKey = `provider:${providerName}:balances:${chainId}:${address.toLowerCase()}`;
@@ -361,8 +363,8 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
   }
 
   // --- Token prices (cached + budget-guarded) ---
-  const { provider: priceProvider, status: priceStatusText, providerName: priceProviderName } = getPriceProviderFromEnv();
-  let pricesStatus: "connected" | "missing" | "failed" | "partial" = priceProviderName === "none" ? "missing" : "connected";
+  const { provider: priceProvider, status: priceStatusText, statusCode: priceStatusCode, providerName: priceProviderName } = getPriceProviderFromEnv();
+  let pricesStatus: "connected" | "missing" | "failed" | "partial" | "disabled" = priceStatusCode;
 
   if (priceProvider && priceProviderName !== 'none') {
     const priceKey = `provider:${priceProviderName}:prices:${chainId}:${address.toLowerCase()}`;
@@ -450,7 +452,7 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
 
   // --- Token security / GoPlus (cached + budget-guarded) ---
   const { provider: tokenSecurityProvider, statusCode: initialRiskStatus, providerName: riskProviderName } = getTokenSecurityProviderFromEnv();
-  let riskStatus: "connected" | "missing" | "failed" | "partial" = initialRiskStatus as any;
+  let riskStatus: "connected" | "missing" | "failed" | "partial" | "disabled" = initialRiskStatus as any;
   if (riskProviderName !== 'none') {
     const securityScanTokens = prioritizeSecurityScanTokens(tokens);
     if (securityScanTokens.length > 0) {
@@ -538,7 +540,7 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
 
   // --- Approvals (cached + budget-guarded, via fetchInternalApprovals) ---
   let approvalsData: TokenApproval[] = [];
-  let approvalsStatus: "connected" | "missing" | "failed" | "partial" = "missing";
+  let approvalsStatus: "connected" | "missing" | "failed" | "partial" | "disabled" = "missing";
   let approvalProviderName = "none";
   try {
     const appRes = await fetchInternalApprovals(address, chainEnv);
@@ -740,7 +742,7 @@ export function analyzeApprovalsForRisk(
 
 export async function fetchInternalApprovals(address: string, chainEnv: string = 'sepolia'): Promise<{
   approvals: TokenApproval[];
-  status: "connected" | "missing" | "failed" | "partial";
+  status: "connected" | "missing" | "failed" | "partial" | "disabled";
   provider: string;
   tokenCount: number;
   unlimitedCount: number;
@@ -753,7 +755,7 @@ export async function fetchInternalApprovals(address: string, chainEnv: string =
   if (providerName === 'none') {
     return {
       approvals: [],
-      status: "missing",
+      status: statusCode,
       provider: "none",
       tokenCount: 0,
       unlimitedCount: 0,
@@ -789,7 +791,7 @@ export async function fetchInternalApprovals(address: string, chainEnv: string =
   const approvals = appRes.data || [];
   if (approvals.length > 0 || appRes.status === 'live' || appRes.status === 'cached') {
     const analysis = analyzeApprovalsForRisk(approvals);
-    let status: "connected" | "missing" | "failed" | "partial" = statusCode;
+    let status: "connected" | "missing" | "failed" | "partial" | "disabled" = statusCode;
     if (appRes.status === 'stale') status = 'partial';
     return {
       approvals,
@@ -820,7 +822,10 @@ export function analyzePortfolioForRisk(
   const findings: TokenFinding[] = [];
   const tokens = portfolio.tokens || [];
   const securityProviderName: TokenSecurityProviderName = portfolio.providers?.riskProvider || (portfolio.providers?.risk === 'connected' ? 'goplus' : 'none');
-  let securityProviderStatus = securityProviderName === 'none' ? 'missing' : providerStatusToSecurityStatus(portfolio.providers?.risk || 'missing');
+  let securityProviderStatus: "connected" | "missing" | "failed" | "partial" | "disabled" =
+    securityProviderName === 'none'
+      ? (portfolio.providers?.risk === 'disabled' ? 'disabled' : 'missing')
+      : providerStatusToSecurityStatus(portfolio.providers?.risk || 'missing');
 
   for (const t of tokens) {
     const isNative = t.address === 'native' || (t.symbol === 'ETH' && t.address === 'native');
@@ -938,22 +943,22 @@ export function analyzePortfolioForRisk(
     summary = `Detected ${securityHighRiskCount} tokens with high-risk security flags and ${suspiciousTokenCount} suspicious or low-confidence tokens out of ${tokenCount} assets. No execution is possible in read-only mode.`;
   } else if (suspiciousTokenCount > 0) {
     summary = `Detected ${suspiciousTokenCount} low-confidence or suspicious tokens out of ${tokenCount} assets. Some may be unverified, unpriced, or have warning-level provider signals. No execution is possible in read-only mode.`;
-  } else if (securityProviderStatus === 'missing') {
+  } else if (securityProviderStatus === 'missing' || securityProviderStatus === 'disabled') {
     summary = `Reviewed ${tokenCount} Base portfolio assets using available metadata. Token security provider is not configured, so contract-level checks are limited. No execution is possible in read-only mode.`;
   } else {
     summary = `Reviewed ${tokenCount} Base portfolio assets. No major warnings detected by configured providers. No execution is possible in read-only mode.`;
   }
 
-  const isPriceMissing = portfolio.providers?.prices === "missing" || priceProvider === "none" || priceProvider === "missing";
+  const isPriceMissing = portfolio.providers?.prices === "missing" || portfolio.providers?.prices === "disabled" || priceProvider === "none" || priceProvider === "missing";
   const isPriceFailed = portfolio.providers?.prices === "failed" || priceProvider === "failed";
   const priceStep = isPriceFailed
     ? "USD values unavailable; value ranking limited."
     : isPriceMissing
-      ? "Price provider is missing, so value-based ranking is limited."
+      ? "Price provider is not configured, so value-based ranking is limited."
       : "Ranked findings using available USD values.";
 
-  const securityStep = securityProviderStatus === 'missing'
-    ? "Token security provider is missing, so contract-level checks are limited."
+  const securityStep = securityProviderStatus === 'missing' || securityProviderStatus === 'disabled'
+    ? "Token security provider is not configured, so contract-level checks are limited."
     : securityProviderStatus === 'failed'
       ? "Security scan did not return token-level results."
       : securityProviderStatus === 'partial'
@@ -992,7 +997,8 @@ export function analyzePortfolioForRisk(
       dataFreshness: portfolio.dataFreshness,
       cacheAgeSeconds: portfolio.cacheAgeSeconds,
       providerBudgetStatus: portfolio.providerBudgetStatus,
-      providerCallsMade: portfolio.providerCallsMade
+      providerCallsMade: portfolio.providerCallsMade,
+      snapshotTimestamp: portfolio.updatedAt
     },
     securityProvider: {
       provider: securityProviderName,

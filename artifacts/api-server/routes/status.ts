@@ -17,10 +17,11 @@ export function getSystemStatus(envOverride?: string) {
     rpcProvider = 'base-public';
   }
 
-  const { providerName } = getTokenBalancesProviderFromEnv();
+  const { providerName, statusCode: tokenStatusCode } = getTokenBalancesProviderFromEnv();
   const mode = (process.env.TOKEN_BALANCES_PROVIDER || '').toLowerCase();
   let tokenProvider = providerName;
-  let tokenStatus: "connected" | "missing" | "failed" = providerName === 'none' ? "missing" : "connected";
+  let tokenStatus: "connected" | "missing" | "failed" | "disabled" = tokenStatusCode;
+  // Preserve the intended provider label when a provider was configured but its key is absent.
   if (mode === 'moralis' && !process.env.MORALIS_API_KEY) {
     tokenProvider = 'moralis';
     tokenStatus = 'missing';
@@ -29,9 +30,9 @@ export function getSystemStatus(envOverride?: string) {
     tokenStatus = 'missing';
   }
 
-  const { providerName: priceProviderName } = getPriceProviderFromEnv();
+  const { providerName: priceProviderName, statusCode: priceStatusCode } = getPriceProviderFromEnv();
   const priceProvider = priceProviderName;
-  const priceStatus: "connected" | "missing" | "failed" = priceProviderName !== 'none' ? "connected" : "missing";
+  const priceStatus: "connected" | "missing" | "failed" | "disabled" = priceStatusCode;
 
 
   const { providerName: riskProvider, statusCode: riskStatus } = getTokenSecurityProviderFromEnv();

@@ -117,6 +117,16 @@ describe('Real Providers', () => {
         delete process.env.MORALIS_API_KEY;
         const res = getTokenBalancesProviderFromEnv();
         assert.strictEqual(res.status, 'Token balances provider not configured');
+        assert.strictEqual(res.statusCode, 'missing');
+    });
+
+    test('getTokenBalancesProviderFromEnv reports disabled when TOKEN_BALANCES_PROVIDER=none (explicit)', async () => {
+        const { getTokenBalancesProviderFromEnv } = await import('../src/real.js');
+        process.env.TOKEN_BALANCES_PROVIDER = 'none';
+        const res = getTokenBalancesProviderFromEnv();
+        assert.strictEqual(res.providerName, 'none');
+        assert.strictEqual(res.statusCode, 'disabled');
+        delete process.env.TOKEN_BALANCES_PROVIDER;
     });
 
     test('NoneTokenSecurityProvider returns unknown without throwing', async () => {

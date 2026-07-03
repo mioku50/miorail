@@ -40,7 +40,7 @@ describe('Portfolio API', () => {
     assert.strictEqual(response.body.tokens[0].symbol, 'ETH');
     assert.strictEqual(response.body.tokens[0].balanceFormatted, '1.0000');
     assert.strictEqual(response.body.providerStatus, 'Token balances provider not configured');
-    assert.strictEqual(response.body.providers.risk, 'missing');
+    assert.strictEqual(response.body.providers.risk, 'disabled');
     assert.strictEqual(response.body.providers.riskProvider, 'none');
 
     mock.restoreAll();
@@ -247,6 +247,41 @@ describe('Portfolio API', () => {
     restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurityProvider);
     restoreEnv('APPROVAL_PROVIDER', origApprovalProvider);
     restoreEnv('MORALIS_API_KEY', origMoralisKey);
+    mock.restoreAll();
+  });
+
+  test('GET /api/portfolio makes no external provider calls and reports disabled when all providers = none', async () => {
+    const origBalances = process.env.TOKEN_BALANCES_PROVIDER;
+    const origPrice = process.env.PRICE_PROVIDER;
+    const origSecurity = process.env.TOKEN_SECURITY_PROVIDER;
+    const origApproval = process.env.APPROVAL_PROVIDER;
+    process.env.TOKEN_BALANCES_PROVIDER = 'none';
+    process.env.PRICE_PROVIDER = 'none';
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    process.env.APPROVAL_PROVIDER = 'none';
+
+    // Any fetch that is not the Base RPC eth_getBalance would be an unwanted external provider call.
+    const mockFetch = mock.fn(async (url: string | URL | Request) => {
+      assert.ok(
+        String(url).includes('base.org') || String(url).includes('alchemy.com'),
+        `Unexpected external provider HTTP call: ${String(url)}`,
+      );
+      return { ok: true, json: async () => ({ result: '0xde0b6b3a7640000' }) } as Response;
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const response = await request(app).get('/api/portfolio?address=0x1234567890123456789012345678901234567890');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.providers.tokenBalances, 'disabled');
+    assert.strictEqual(response.body.providers.prices, 'disabled');
+    assert.strictEqual(response.body.providers.risk, 'disabled');
+    assert.strictEqual(response.body.providers.approvals, 'disabled');
+    assert.strictEqual(response.body.providerCallsMade, 0);
+
+    restoreEnv('TOKEN_BALANCES_PROVIDER', origBalances);
+    restoreEnv('PRICE_PROVIDER', origPrice);
+    restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurity);
+    restoreEnv('APPROVAL_PROVIDER', origApproval);
     mock.restoreAll();
   });
 });

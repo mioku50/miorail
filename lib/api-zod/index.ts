@@ -226,13 +226,13 @@ export const PortfolioTokenSchema = z.object({
 
 export const PortfolioProvidersSchema = z.object({
   rpc: z.enum(["connected", "missing", "failed"]),
-  tokenBalances: z.enum(["connected", "missing", "failed", "stale"]),
+  tokenBalances: z.enum(["connected", "missing", "failed", "stale", "disabled"]),
   tokenBalancesProvider: z.enum(["moralis", "alchemy", "mock", "none"]).optional(),
-  prices: z.enum(["connected", "missing", "failed", "partial"]),
+  prices: z.enum(["connected", "missing", "failed", "partial", "disabled"]),
   priceProvider: z.enum(["coingecko", "moralis", "mock", "none"]).optional(),
-  risk: z.enum(["connected", "missing", "failed", "partial"]),
+  risk: z.enum(["connected", "missing", "failed", "partial", "disabled"]),
   riskProvider: z.enum(["goplus", "none"]).optional(),
-  approvals: z.enum(["connected", "missing", "failed", "partial"]).optional(),
+  approvals: z.enum(["connected", "missing", "failed", "partial", "disabled"]).optional(),
   approvalProvider: z.enum(["moralis", "alchemy", "mock", "none"]).optional(),
 });
 
@@ -267,7 +267,7 @@ export const TokenApprovalSchema = z.object({
 
 export const ApprovalsResponseSchema = z.object({
   approvals: z.array(TokenApprovalSchema),
-  status: z.enum(["connected", "missing", "failed", "partial"]),
+  status: z.enum(["connected", "missing", "failed", "partial", "disabled"]),
   provider: z.string(),
   tokenCount: z.number(),
   unlimitedCount: z.number(),
@@ -282,19 +282,19 @@ export const StatusResponseSchema = z.object({
     provider: z.string(),
   }),
   tokenBalances: z.object({
-    status: z.enum(["connected", "missing", "failed", "stale"]),
+    status: z.enum(["connected", "missing", "failed", "stale", "disabled"]),
     provider: z.string(),
   }),
   prices: z.object({
-    status: z.enum(["connected", "missing", "failed", "partial"]),
+    status: z.enum(["connected", "missing", "failed", "partial", "disabled"]),
     provider: z.string(),
   }),
   risk: z.object({
-    status: z.enum(["connected", "missing", "failed", "partial"]),
+    status: z.enum(["connected", "missing", "failed", "partial", "disabled"]),
     provider: z.string(),
   }),
   approvals: z.object({
-    status: z.enum(["connected", "missing", "failed", "partial"]),
+    status: z.enum(["connected", "missing", "failed", "partial", "disabled"]),
     provider: z.string(),
   }),
   cache: z.object({

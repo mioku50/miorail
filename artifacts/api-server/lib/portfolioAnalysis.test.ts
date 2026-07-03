@@ -169,7 +169,7 @@ describe('Portfolio Risk Analysis Utility', () => {
     try {
       const portfolio = await fetchInternalPortfolio('0x123', 'sepolia');
       assert.strictEqual(portfolio.providers?.priceProvider, 'mock');
-      assert.strictEqual(portfolio.providers?.risk, 'missing');
+      assert.strictEqual(portfolio.providers?.risk, 'disabled');
       assert.ok(portfolio.totalUsdValue);
       assert.ok(Number(portfolio.totalUsdValue) > 0);
       // T11.6: portfolio exposes cache/freshness diagnostics.
@@ -218,6 +218,7 @@ describe('Portfolio Risk Analysis Utility', () => {
     assert.strictEqual(analysis.portfolioSnapshot.cacheAgeSeconds, 42);
     assert.strictEqual(analysis.portfolioSnapshot.providerCallsMade, 0);
     assert.strictEqual(analysis.portfolioSnapshot.providerBudgetStatus?.exhausted, false);
+    assert.strictEqual(analysis.portfolioSnapshot.snapshotTimestamp, mockPortfolio.updatedAt);
 
     const meta = buildRecommendationMetadataFromAnalysis({
       message: 'check portfolio',
@@ -227,6 +228,7 @@ describe('Portfolio Risk Analysis Utility', () => {
     });
     assert.strictEqual(meta.analysis?.portfolioSnapshot.dataFreshness, 'cached');
     assert.strictEqual(meta.analysis?.portfolioSnapshot.cacheAgeSeconds, 42);
+    assert.strictEqual(meta.analysis?.portfolioSnapshot.snapshotTimestamp, mockPortfolio.updatedAt);
     assert.deepStrictEqual(meta.calls, []);
   });
 

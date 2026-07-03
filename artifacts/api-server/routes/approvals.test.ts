@@ -25,11 +25,11 @@ describe('Approvals API & Risk Analysis', () => {
     assert.strictEqual(response.body.error, 'Wallet address not configured');
   });
 
-  test('GET /api/approvals returns missing when APPROVAL_PROVIDER=none', async () => {
+  test('GET /api/approvals returns disabled when APPROVAL_PROVIDER=none', async () => {
     process.env.APPROVAL_PROVIDER = 'none';
     const response = await request(app).get('/api/approvals?address=0x1234567890123456789012345678901234567890');
     assert.strictEqual(response.status, 200);
-    assert.strictEqual(response.body.status, 'missing');
+    assert.strictEqual(response.body.status, 'disabled');
     assert.strictEqual(response.body.provider, 'none');
     assert.strictEqual(response.body.approvals.length, 0);
   });

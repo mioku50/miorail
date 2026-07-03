@@ -43,4 +43,27 @@ describe('Status API', () => {
     restoreEnv('TOKEN_SECURITY_PROVIDER', original);
     restoreEnv('GOPLUS_API_KEY', originalApiKey);
   });
+
+  test('GET /api/status reports disabled (not failed) when providers are explicitly none', async () => {
+    const origBalances = process.env.TOKEN_BALANCES_PROVIDER;
+    const origPrice = process.env.PRICE_PROVIDER;
+    const origSecurity = process.env.TOKEN_SECURITY_PROVIDER;
+    const origApproval = process.env.APPROVAL_PROVIDER;
+    process.env.TOKEN_BALANCES_PROVIDER = 'none';
+    process.env.PRICE_PROVIDER = 'none';
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    process.env.APPROVAL_PROVIDER = 'none';
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.tokenBalances.status, 'disabled');
+    assert.strictEqual(response.body.prices.status, 'disabled');
+    assert.strictEqual(response.body.risk.status, 'disabled');
+    assert.strictEqual(response.body.approvals.status, 'disabled');
+
+    restoreEnv('TOKEN_BALANCES_PROVIDER', origBalances);
+    restoreEnv('PRICE_PROVIDER', origPrice);
+    restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurity);
+    restoreEnv('APPROVAL_PROVIDER', origApproval);
+  });
 });

@@ -76,7 +76,7 @@ type TokenSecurityCacheEntry = {
 };
 
 const tokenSecurityCache = new Map<string, TokenSecurityCacheEntry>();
-let tokenSecurityHealth: { providerName: 'goplus' | 'none'; statusCode: 'connected' | 'missing' | 'failed' | 'partial' } = {
+let tokenSecurityHealth: { providerName: 'goplus' | 'none'; statusCode: 'connected' | 'missing' | 'failed' | 'partial' | 'disabled' } = {
   providerName: 'none',
   statusCode: 'missing'
 };
@@ -330,8 +330,12 @@ export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
 export function getTokenSecurityProviderFromEnv(): TokenSecurityProviderEnvResult {
   const mode = (process.env.TOKEN_SECURITY_PROVIDER || 'none').toLowerCase();
   if (mode === 'none') {
-    tokenSecurityHealth = { providerName: 'none', statusCode: 'missing' };
-    return { provider: new NoneTokenSecurityProvider(), status: 'Token security provider not configured', statusCode: 'missing', providerName: 'none' };
+    // "disabled" = explicitly turned off via *_PROVIDER=none; "missing" = unset / not configured.
+    const explicitNone = typeof process.env.TOKEN_SECURITY_PROVIDER === 'string'
+      && process.env.TOKEN_SECURITY_PROVIDER.trim().toLowerCase() === 'none';
+    const statusCode = explicitNone ? 'disabled' : 'missing';
+    tokenSecurityHealth = { providerName: 'none', statusCode };
+    return { provider: new NoneTokenSecurityProvider(), status: 'Token security provider not configured', statusCode, providerName: 'none' };
   }
   if (mode === 'goplus') {
     if (tokenSecurityHealth.providerName !== 'goplus') {
@@ -484,27 +488,30 @@ export class MoralisTokenBalancesProvider implements TokenBalancesProvider {
   }
 }
 
-export function getTokenBalancesProviderFromEnv(): { provider: TokenBalancesProvider; status: string; providerName: "moralis" | "alchemy" | "mock" | "none" } {
+export function getTokenBalancesProviderFromEnv(): { provider: TokenBalancesProvider; status: string; statusCode: "connected" | "missing" | "disabled"; providerName: "moralis" | "alchemy" | "mock" | "none" } {
   const mode = (process.env.TOKEN_BALANCES_PROVIDER || 'none').toLowerCase();
   if (mode === 'none') {
-    return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', providerName: 'none' };
+    // "disabled" = explicitly turned off via TOKEN_BALANCES_PROVIDER=none; "missing" = unset / key absent.
+    const explicitNone = typeof process.env.TOKEN_BALANCES_PROVIDER === 'string'
+      && process.env.TOKEN_BALANCES_PROVIDER.trim().toLowerCase() === 'none';
+    return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', statusCode: explicitNone ? 'disabled' : 'missing', providerName: 'none' };
   }
   if (mode === 'alchemy' || (!process.env.TOKEN_BALANCES_PROVIDER && (process.env.ALCHEMY_API_KEY || process.env.ALCHEMY_BASE_MAINNET_RPC_URL))) {
     if (!process.env.ALCHEMY_API_KEY && !process.env.ALCHEMY_BASE_MAINNET_RPC_URL) {
-      return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', providerName: 'none' };
+      return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', statusCode: 'missing', providerName: 'none' };
     }
-    return { provider: new AlchemyTokenBalancesProvider(process.env.ALCHEMY_API_KEY, process.env.ALCHEMY_BASE_MAINNET_RPC_URL), status: 'Alchemy connected', providerName: 'alchemy' };
+    return { provider: new AlchemyTokenBalancesProvider(process.env.ALCHEMY_API_KEY, process.env.ALCHEMY_BASE_MAINNET_RPC_URL), status: 'Alchemy connected', statusCode: 'connected', providerName: 'alchemy' };
   }
   if (mode === 'moralis' || (!process.env.TOKEN_BALANCES_PROVIDER && process.env.MORALIS_API_KEY)) {
     if (!process.env.MORALIS_API_KEY) {
-      return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', providerName: 'none' };
+      return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', statusCode: 'missing', providerName: 'none' };
     }
-    return { provider: new MoralisTokenBalancesProvider(process.env.MORALIS_API_KEY), status: 'Moralis connected', providerName: 'moralis' };
+    return { provider: new MoralisTokenBalancesProvider(process.env.MORALIS_API_KEY), status: 'Moralis connected', statusCode: 'connected', providerName: 'moralis' };
   }
   if (mode === 'mock') {
-    return { provider: new MockTokenBalancesProvider(), status: 'mock', providerName: 'mock' };
+    return { provider: new MockTokenBalancesProvider(), status: 'mock', statusCode: 'connected', providerName: 'mock' };
   }
-  return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', providerName: 'none' };
+  return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', statusCode: 'missing', providerName: 'none' };
 }
 
 export class NonePriceProvider implements PriceProvider {
@@ -640,24 +647,27 @@ export class MoralisPriceProvider implements PriceProvider {
   }
 }
 
-export function getPriceProviderFromEnv(): { provider: PriceProvider; status: string; providerName: "coingecko" | "moralis" | "none" | "mock" } {
+export function getPriceProviderFromEnv(): { provider: PriceProvider; status: string; statusCode: "connected" | "missing" | "disabled"; providerName: "coingecko" | "moralis" | "none" | "mock" } {
   const mode = (process.env.PRICE_PROVIDER || 'none').toLowerCase();
   if (mode === 'none') {
-    return { provider: new NonePriceProvider(), status: 'Price provider not configured', providerName: 'none' };
+    // "disabled" = explicitly turned off via PRICE_PROVIDER=none; "missing" = unset / key absent.
+    const explicitNone = typeof process.env.PRICE_PROVIDER === 'string'
+      && process.env.PRICE_PROVIDER.trim().toLowerCase() === 'none';
+    return { provider: new NonePriceProvider(), status: 'Price provider not configured', statusCode: explicitNone ? 'disabled' : 'missing', providerName: 'none' };
   }
   if (mode === 'coingecko' || (!process.env.PRICE_PROVIDER && process.env.COINGECKO_API_KEY)) {
-    return { provider: new CoinGeckoPriceProvider(process.env.COINGECKO_API_KEY), status: 'CoinGecko connected', providerName: 'coingecko' };
+    return { provider: new CoinGeckoPriceProvider(process.env.COINGECKO_API_KEY), status: 'CoinGecko connected', statusCode: 'connected', providerName: 'coingecko' };
   }
   if (mode === 'moralis' || (!process.env.PRICE_PROVIDER && process.env.MORALIS_API_KEY)) {
     if (!process.env.MORALIS_API_KEY) {
-      return { provider: new NonePriceProvider(), status: 'Price provider not configured', providerName: 'none' };
+      return { provider: new NonePriceProvider(), status: 'Price provider not configured', statusCode: 'missing', providerName: 'none' };
     }
-    return { provider: new MoralisPriceProvider(process.env.MORALIS_API_KEY), status: 'Moralis prices connected', providerName: 'moralis' };
+    return { provider: new MoralisPriceProvider(process.env.MORALIS_API_KEY), status: 'Moralis prices connected', statusCode: 'connected', providerName: 'moralis' };
   }
   if (mode === 'mock') {
-    return { provider: new MockPriceProvider(), status: 'mock', providerName: 'mock' };
+    return { provider: new MockPriceProvider(), status: 'mock', statusCode: 'connected', providerName: 'mock' };
   }
-  return { provider: new NonePriceProvider(), status: 'Price provider not configured', providerName: 'none' };
+  return { provider: new NonePriceProvider(), status: 'Price provider not configured', statusCode: 'missing', providerName: 'none' };
 }
 
 function checkIsUnlimited(raw: string): boolean {
@@ -746,10 +756,13 @@ export class MoralisApprovalProvider implements ApprovalProvider {
   }
 }
 
-export function getApprovalProviderFromEnv(): { provider: ApprovalProvider; status: string; statusCode: "connected" | "missing" | "failed" | "partial"; providerName: "moralis" | "alchemy" | "none" | "mock" } {
+export function getApprovalProviderFromEnv(): { provider: ApprovalProvider; status: string; statusCode: "connected" | "missing" | "failed" | "partial" | "disabled"; providerName: "moralis" | "alchemy" | "none" | "mock" } {
   const mode = (process.env.APPROVAL_PROVIDER || 'none').toLowerCase();
   if (mode === 'none') {
-    return { provider: new NoneApprovalProvider(), status: 'Approval provider not configured', statusCode: 'missing', providerName: 'none' };
+    // "disabled" = explicitly turned off via APPROVAL_PROVIDER=none; "missing" = unset / key absent.
+    const explicitNone = typeof process.env.APPROVAL_PROVIDER === 'string'
+      && process.env.APPROVAL_PROVIDER.trim().toLowerCase() === 'none';
+    return { provider: new NoneApprovalProvider(), status: 'Approval provider not configured', statusCode: explicitNone ? 'disabled' : 'missing', providerName: 'none' };
   }
   if (mode === 'moralis' || (!process.env.APPROVAL_PROVIDER && process.env.MORALIS_API_KEY)) {
     if (!process.env.MORALIS_API_KEY) {

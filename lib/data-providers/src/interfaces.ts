@@ -97,7 +97,7 @@ export interface TokenSecurityProvider {
 export interface TokenSecurityProviderEnvResult {
   provider: TokenSecurityProvider;
   status: string;
-  statusCode: "connected" | "missing" | "failed" | "partial";
+  statusCode: "connected" | "missing" | "failed" | "partial" | "disabled";
   providerName: TokenSecurityProviderName;
 }
 
@@ -124,6 +124,6 @@ export interface ApprovalProvider {
 export interface ApprovalProviderEnvResult {
   provider: ApprovalProvider;
   status: string;
-  statusCode: "connected" | "missing" | "failed" | "partial";
+  statusCode: "connected" | "missing" | "failed" | "partial" | "disabled";
   providerName: "moralis" | "alchemy" | "none" | "mock";
 }

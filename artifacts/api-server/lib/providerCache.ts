@@ -172,8 +172,13 @@ export class ProviderBudget {
   constructor(
     private readonly maxPerMinute: number,
     private readonly maxPerHour: number,
+    private readonly perProvider: Partial<Record<ProviderName, { maxPerMinute: number; maxPerHour: number }>> = {},
     private readonly now: () => number = Date.now,
   ) {}
+
+  private limitsFor(provider: ProviderName): { maxPerMinute: number; maxPerHour: number } {
+    return this.perProvider[provider] ?? { maxPerMinute: this.maxPerMinute, maxPerHour: this.maxPerHour };
+  }
 
   private prune(provider: ProviderName, now: number): void {
     const m = this.minuteHits.get(provider);
@@ -183,12 +188,13 @@ export class ProviderBudget {
   }
 
   canCall(provider: ProviderName): boolean {
-    if (this.maxPerMinute <= 0 || this.maxPerHour <= 0) return false;
+    const { maxPerMinute, maxPerHour } = this.limitsFor(provider);
+    if (maxPerMinute <= 0 || maxPerHour <= 0) return false;
     const now = this.now();
     this.prune(provider, now);
     const m = this.minuteHits.get(provider)?.length ?? 0;
     const h = this.hourHits.get(provider)?.length ?? 0;
-    return m < this.maxPerMinute && h < this.maxPerHour;
+    return m < maxPerMinute && h < maxPerHour;
   }
 
   record(provider: ProviderName): void {
@@ -201,7 +207,8 @@ export class ProviderBudget {
   }
 
   snapshot(provider: ProviderName): ProviderBudgetSnapshot {
-    if (this.maxPerMinute <= 0 || this.maxPerHour <= 0) {
+    const { maxPerMinute, maxPerHour } = this.limitsFor(provider);
+    if (maxPerMinute <= 0 || maxPerHour <= 0) {
       return { status: "disabled", callsLastMinute: 0, callsLastHour: 0 };
     }
     const now = this.now();
@@ -393,7 +400,15 @@ export function getProviderCacheOrchestratorFromEnv(): ProviderCacheOrchestrator
   };
   const maxPerMinute = envInt('PROVIDER_MAX_CALLS_PER_MINUTE', 20);
   const maxPerHour = envInt('PROVIDER_MAX_CALLS_PER_HOUR', 300);
-  const budget = new ProviderBudget(maxPerMinute, maxPerHour);
+  // Per-provider hourly budgets (per-minute stays the shared global default). Setting a per-provider
+  // hour limit to 0 disables that provider via the budget guard while leaving the others running.
+  const perProvider: Partial<Record<ProviderName, { maxPerMinute: number; maxPerHour: number }>> = {
+    moralis: { maxPerMinute, maxPerHour: envInt('MORALIS_MAX_CALLS_PER_HOUR', maxPerHour) },
+    goplus: { maxPerMinute, maxPerHour: envInt('GOPLUS_MAX_CALLS_PER_HOUR', maxPerHour) },
+    coingecko: { maxPerMinute, maxPerHour: envInt('COINGECKO_MAX_CALLS_PER_HOUR', maxPerHour) },
+    alchemy: { maxPerMinute, maxPerHour: envInt('ALCHEMY_MAX_CALLS_PER_HOUR', maxPerHour) },
+  };
+  const budget = new ProviderBudget(maxPerMinute, maxPerHour, perProvider);
   let store: ProviderCacheStore;
   if (enabled && process.env.DATABASE_URL) {
     store = new DbProviderCacheStore();
@@ -406,7 +421,7 @@ export function getProviderCacheOrchestratorFromEnv(): ProviderCacheOrchestrator
 
 export function getProviderBudgetSnapshot(): Record<string, ProviderBudgetSnapshot> {
   const { budget } = getProviderCacheOrchestratorFromEnv();
-  const providers: ProviderName[] = ['moralis', 'goplus', 'alchemy'];
+  const providers: ProviderName[] = ['moralis', 'goplus', 'alchemy', 'coingecko'];
   const out: Record<string, ProviderBudgetSnapshot> = {};
   for (const p of providers) out[p] = budget.snapshot(p);
   return out;
