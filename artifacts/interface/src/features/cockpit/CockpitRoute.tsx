@@ -1,6 +1,6 @@
 import { useUiStore } from '../../lib/state';
 import { StateBadge } from '@mioagent/ui';
-import { useStatus } from '@mioagent/api-client-react';
+import { useStatus, useAutonomy, useKillAutonomy } from '@mioagent/api-client-react';
 import { RiskQueue } from './RiskQueue';
 
 function Metric({ label, value }: { label: string; value: string }) {
@@ -24,6 +24,8 @@ function SectionHeader({ title }: { title: string }) {
 export function CockpitRoute() {
   const showToast = useUiStore((s) => s.showToast);
   const { data: sd } = useStatus();
+  const { data: autonomyState } = useAutonomy();
+  const killAutonomy = useKillAutonomy();
 
   const balancesLive = sd?.tokenBalances?.status === 'connected';
   const pricesLive = sd?.prices?.status === 'connected';
@@ -41,45 +43,73 @@ export function CockpitRoute() {
               Mission control for automated execution, x402 fuel budgets, and contract risk boundaries.
             </p>
           </div>
-          <StateBadge state="missing" label="not configured" title="No session key is active" />
+          <StateBadge
+            state={autonomyState?.sessionKey?.status === 'configured' ? 'ok' : autonomyState?.sessionKey?.status === 'inactive' ? 'risk' : 'missing'}
+            label={autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory' ? 'configured in app' : autonomyState?.autonomy?.source === 'onchain' ? 'onchain active' : autonomyState?.sessionKey?.status === 'inactive' ? 'kill switch active' : 'not configured'}
+            title={autonomyState?.sessionKey?.status === 'configured' ? 'Session key configured in app memory' : 'No session key is active'}
+          />
         </div>
 
-        {/* Operator Capabilities & Explainer Blocks */}
-        <section className="bg-panel-2 border border-line rounded-xl p-4">
-          <SectionHeader title="System Capabilities & Roadmap" />
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-            <div className="bg-panel border border-line rounded-lg p-3 flex flex-col gap-1">
-              <div className="font-bold text-ok flex items-center gap-1.5">
-                <span>🟢</span> What MioAgent can do now
+        {/* What MioAgent can do now / What is blocked / What unlocks */}
+        <section className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+          <div className="bg-panel border border-line rounded-xl p-3.5 flex flex-col justify-between gap-2">
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-ink-3 mb-1">What MioAgent Can Do Now</div>
+              <div className="text-[11px] text-ink-2 leading-relaxed">
+                Scan wallet token balances via Moralis, query prices via CoinGecko, evaluate token security via GoPlus, and generate risk recommendations.
               </div>
-              <ul className="text-[11px] text-ink-2 space-y-1 mt-1 list-disc list-inside">
-                <li>Read-only wallet token balance scanning</li>
-                <li>ERC-20 spend allowance & risk inspection</li>
-                <li>GoPlus contract security threat detection</li>
-                <li>Natural language action recommendations</li>
-              </ul>
             </div>
-            <div className="bg-panel border border-line rounded-lg p-3 flex flex-col gap-1">
-              <div className="font-bold text-warn flex items-center gap-1.5">
-                <span>🟡</span> What is blocked in read-only
-              </div>
-              <ul className="text-[11px] text-ink-2 space-y-1 mt-1 list-disc list-inside">
-                <li>Mainnet transaction execution & broadcasting</li>
-                <li>Token approvals & spend allowance revokes</li>
-                <li>Automated background swap / yield execution</li>
-                <li>Direct wallet custody or private key usage</li>
-              </ul>
+            <div className="text-[10px] font-mono text-ok bg-ok-soft px-2 py-0.5 rounded border border-ok/20 w-fit">
+              Status: Active & Live
             </div>
-            <div className="bg-panel border border-line rounded-lg p-3 flex flex-col gap-1">
-              <div className="font-bold text-accent flex items-center gap-1.5">
-                <span>⚡</span> What unlocks after wiring
+          </div>
+
+          <div className="bg-panel border border-line rounded-xl p-3.5 flex flex-col justify-between gap-2">
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-ink-3 mb-1">Blocked in Read-Only Mode</div>
+              <div className="text-[11px] text-ink-2 leading-relaxed">
+                Onchain execution is disabled on Base Mainnet. No revoke transactions or batched swaps can be broadcast until explicitly unlocked.
               </div>
-              <ul className="text-[11px] text-ink-2 space-y-1 mt-1 list-disc list-inside">
-                <li>Session-key bounded autonomous execution</li>
-                <li>x402 micropayments for premium agent APIs</li>
-                <li>Background workflow scanners with kill-switch</li>
-                <li>No-custody EIP-5792 batched transaction flows</li>
-              </ul>
+            </div>
+            <div className="text-[10px] font-mono text-warn bg-warn-soft px-2 py-0.5 rounded border border-warn/20 w-fit">
+              Safety: 100% Read-Only
+            </div>
+          </div>
+
+          <div className="bg-panel border border-line rounded-xl p-3.5 flex flex-col justify-between gap-2">
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-ink-3 mb-1">Unlocks After x402 / Session Key</div>
+              <div className="text-[11px] text-ink-2 leading-relaxed">
+                Autonomous background execution within strict USDC daily limits, paid HTTP 402 data queries, and automated portfolio rebalancing.
+              </div>
+            </div>
+            <div className="text-[10px] font-mono text-accent bg-accent-soft px-2 py-0.5 rounded border border-accent/20 w-fit">
+              Next: Phase 7.4
+            </div>
+          </div>
+        </section>
+
+        {/* Cockpit Overview Architecture Card */}
+        <section className="bg-panel border border-line rounded-xl p-4">
+          <SectionHeader title="System Autonomy Engine" />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+            <div className="bg-panel-2 p-3 rounded-lg border border-line">
+              <div className="font-semibold text-ink mb-1">1. Read-Only Intelligence</div>
+              <p className="text-ink-3 text-[11px] leading-relaxed">
+                Continuous scanning of wallet token balances, price deviations, and GoPlus contract security heuristics without holding keys.
+              </p>
+            </div>
+            <div className="bg-panel-2 p-3 rounded-lg border border-line">
+              <div className="font-semibold text-ink mb-1">2. Action Security & Simulation</div>
+              <p className="text-ink-3 text-[11px] leading-relaxed">
+                Every candidate action is pre-screened for drainers, prompt injection, unlimited approvals, and simulated before surfacing.
+              </p>
+            </div>
+            <div className="bg-panel-2 p-3 rounded-lg border border-line">
+              <div className="font-semibold text-ink mb-1">3. Autonomous Execution Gateway</div>
+              <p className="text-ink-3 text-[11px] leading-relaxed">
+                When unlocked, session keys enforce daily spend caps and whitelist targets over x402 micropayments.
+              </p>
             </div>
           </div>
         </section>
@@ -90,18 +120,32 @@ export function CockpitRoute() {
             <div>
               <div className="flex items-center justify-between mb-3">
                 <SectionHeader title="Session Key" />
-                <span className="text-[10px] font-mono text-ink-3 bg-panel-2 px-2 py-0.5 rounded border border-line">unconfigured</span>
+                <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                  autonomyState?.sessionKey?.status === 'configured' 
+                    ? 'bg-ok-soft text-ok border-ok/20 font-bold' 
+                    : autonomyState?.sessionKey?.status === 'inactive' 
+                      ? 'bg-risk-soft text-risk border-risk/20 font-bold' 
+                      : 'bg-panel-2 text-ink-3 border-line'
+                }`}>
+                  {autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory'
+                    ? 'configured in app' 
+                    : autonomyState?.autonomy?.source === 'onchain' 
+                      ? 'onchain active' 
+                      : autonomyState?.sessionKey?.status === 'inactive' 
+                        ? 'kill switch active' 
+                        : 'unconfigured'}
+                </span>
               </div>
               <div className="grid grid-cols-2 gap-2.5 text-xs">
-                <Metric label="Daily limit" value="Not set" />
-                <Metric label="Spent today" value="0 USDC" />
-                <Metric label="Max / action" value="Not set" />
-                <Metric label="TTL" value="Inactive" />
+                <Metric label="Daily limit" value={autonomyState?.sessionKey?.dailyLimitUsdc ? `${autonomyState.sessionKey.dailyLimitUsdc} USDC` : 'Not set'} />
+                <Metric label="Spent today" value={autonomyState?.sessionKey?.spentTodayUsdc ? `${autonomyState.sessionKey.spentTodayUsdc} USDC` : '0 USDC'} />
+                <Metric label="Max / action" value={autonomyState?.sessionKey?.maxPerActionUsdc ? `${autonomyState.sessionKey.maxPerActionUsdc} USDC` : 'Not set'} />
+                <Metric label="TTL" value={autonomyState?.sessionKey?.ttlSeconds ? `${autonomyState.sessionKey.ttlSeconds}s (${Math.round(autonomyState.sessionKey.ttlSeconds / 3600)}h)` : 'Inactive'} />
               </div>
             </div>
             <div className="mt-3 text-[11px] text-ink-3 font-mono border-t border-line/50 pt-2 flex justify-between">
-              <span>Whitelist: <span className="text-ink-2">Not configured</span></span>
-              <span>Scope: <span className="text-ink-2">No spend scope wired</span></span>
+              <span>Whitelist: <span className="text-ink-2">{autonomyState?.sessionKey?.whitelist?.length ? `${autonomyState.sessionKey.whitelist.length} contract(s)` : 'Not configured'}</span></span>
+              <span>Scope: <span className="text-ink-2">{autonomyState?.sessionKey?.scope !== 'none' && autonomyState?.sessionKey?.scope ? autonomyState.sessionKey.scope : 'No spend scope wired'}</span></span>
             </div>
           </section>
 
@@ -116,10 +160,17 @@ export function CockpitRoute() {
                   </div>
                 </div>
                 <button
-                  onClick={() => showToast('No active session key to revoke.')}
-                  className="shrink-0 px-4 py-2 rounded-lg bg-risk-soft text-risk font-bold text-xs border border-risk/30 hover:bg-risk hover:text-white transition-colors cursor-pointer"
+                  onClick={() => {
+                    if (autonomyState?.sessionKey?.status === 'configured') {
+                      killAutonomy.mutate(undefined, { onSuccess: () => showToast('Session key revoked.') });
+                    } else {
+                      showToast('No active session key to revoke.');
+                    }
+                  }}
+                  disabled={killAutonomy.isPending}
+                  className="shrink-0 px-4 py-2 rounded-lg bg-risk-soft text-risk font-bold text-xs border border-risk/30 hover:bg-risk hover:text-white transition-colors cursor-pointer disabled:opacity-50"
                 >
-                  ⏻ Kill
+                  {killAutonomy.isPending ? 'Killing…' : '⏻ Kill'}
                 </button>
               </div>
             </section>
@@ -127,9 +178,9 @@ export function CockpitRoute() {
             <section className="bg-panel border border-line rounded-xl p-4 flex-1">
               <SectionHeader title="Autonomy Boundaries" />
               <div className="grid grid-cols-3 gap-2.5 text-xs">
-                <Metric label="Daily spend" value="No limit set" />
-                <Metric label="Max action" value="No limit set" />
-                <Metric label="Protocols" value="0 whitelisted" />
+                <Metric label="Daily spend" value={autonomyState?.autonomy?.dailySpendLimit ? `${autonomyState.autonomy.dailySpendLimit} USDC` : 'No limit set'} />
+                <Metric label="Max action" value={autonomyState?.autonomy?.maxActionSpend ? `${autonomyState.autonomy.maxActionSpend} USDC` : 'No limit set'} />
+                <Metric label="Protocols" value={`${autonomyState?.autonomy?.whitelistedProtocolsCount || 0} whitelisted`} />
               </div>
             </section>
           </div>
@@ -162,10 +213,10 @@ export function CockpitRoute() {
                 </div>
               </div>
               <div className="flex items-start gap-2 bg-panel p-2.5 rounded border border-line opacity-80">
-                <span className="text-ink-3 font-bold">☐</span>
+                <span className={autonomyState?.sessionKey?.status === 'configured' ? "text-ok font-bold" : "text-ink-3 font-bold"}>{autonomyState?.sessionKey?.status === 'configured' ? "☑" : "☐"}</span>
                 <div>
                   <div className="font-semibold text-ink">2. Configure Session Key & Whitelist</div>
-                  <div className="text-[11px] text-ink-3 mt-0.5">Assign daily USDC spend limits and approved contract targets.</div>
+                  <div className="text-[11px] text-ink-3 mt-0.5">{autonomyState?.sessionKey?.status === 'configured' ? `Configured in app memory: ${autonomyState.sessionKey.dailyLimitUsdc} USDC daily limit.` : 'Assign daily USDC spend limits and approved contract targets.'}</div>
                 </div>
               </div>
               <div className="flex items-start gap-2 bg-panel p-2.5 rounded border border-line opacity-80">

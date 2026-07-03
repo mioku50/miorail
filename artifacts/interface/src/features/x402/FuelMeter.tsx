@@ -1,4 +1,4 @@
-import { useStatus } from '@mioagent/api-client-react';
+import { useStatus, useX402Ledger, useX402Pricing } from '@mioagent/api-client-react';
 import { StateBadge } from '@mioagent/ui';
 
 function Metric({ label, amount, sub }: { label: string; amount: string; sub: string }) {
@@ -17,6 +17,9 @@ function Metric({ label, amount, sub }: { label: string; amount: string; sub: st
 // Shows honest empty states and operator guidance without fabricated numbers.
 export function FuelMeter() {
   const { data: statusData } = useStatus();
+  const { data: ledger } = useX402Ledger();
+  const { data: pricing } = useX402Pricing();
+
   const status = statusData?.x402?.status;
   const badgeState = status === 'configured' ? 'live' : status === 'missing' ? 'missing' : 'mock';
   const badgeLabel = status === 'configured' ? 'configured' : status === 'missing' ? 'not configured' : 'simulated';
@@ -95,15 +98,16 @@ export function FuelMeter() {
           <div>
             <div className="flex items-center justify-between mb-3">
               <div className="text-[11px] font-bold tracking-[0.08em] uppercase text-ink-3">Spend today</div>
-              <span className="text-[10px] font-mono bg-panel-2 px-2 py-0.5 rounded border border-line text-ink-3">0 calls recorded</span>
+              <span className="text-[10px] font-mono bg-panel-2 px-2 py-0.5 rounded border border-line text-ink-3">{ledger?.entries?.length || 0} calls recorded</span>
             </div>
             <div className="grid grid-cols-2 gap-3 text-xs">
-              <Metric label="Inference" amount="Not set" sub="0 calls" />
-              <Metric label="Tools" amount="Not set" sub="0 calls" />
+              <Metric label="Inference" amount={ledger?.summary?.inferenceSpentUsdc ? `${ledger.summary.inferenceSpentUsdc} USDC` : "0.0000 USDC"} sub={`${ledger?.summary?.inferenceCallsCount || 0} calls`} />
+              <Metric label="Tools" amount={ledger?.summary?.toolsSpentUsdc ? `${ledger.summary.toolsSpentUsdc} USDC` : "0.0000 USDC"} sub={`${ledger?.summary?.toolsCallsCount || 0} calls`} />
             </div>
           </div>
-          <div className="text-[11px] text-ink-3 mt-3 border-t border-line/50 pt-2">
-            No live spend data — per-action pricing and ledger deduction unconfigured.
+          <div className="text-[11px] text-warn font-mono mt-3 border-t border-line/50 pt-2 flex items-center justify-between">
+            <span>Settlement mode:</span>
+            <span className="font-bold bg-warn-soft px-2 py-0.5 rounded border border-warn/20">{ledger?.summary?.settlement || 'estimated/audit-log until facilitator settlement is wired'}</span>
           </div>
         </section>
       </div>
@@ -112,11 +116,22 @@ export function FuelMeter() {
         {/* Per-action price (next action) */}
         <section className="bg-panel border border-line rounded-xl p-4 flex flex-col justify-between">
           <div>
-            <div className="text-[11px] font-bold tracking-[0.08em] uppercase text-ink-3 mb-2">Next action price</div>
-            <div className="text-[15px] font-mono text-ink font-semibold">Not priced</div>
+            <div className="text-[11px] font-bold tracking-[0.08em] uppercase text-ink-3 mb-2">Per-Action Pricing Schedule</div>
+            <div className="space-y-2">
+              {pricing?.pricing && pricing.pricing.length > 0 ? (
+                pricing.pricing.map(p => (
+                  <div key={p.actionType} className="flex items-center justify-between bg-panel-2 p-2 rounded border border-line text-xs font-mono">
+                    <span className="text-ink font-medium">{p.label}</span>
+                    <span className="text-accent font-bold">{p.priceUsdc} USDC <span className="text-[10px] text-ink-3 font-normal">(est.)</span></span>
+                  </div>
+                ))
+              ) : (
+                <div className="text-[15px] font-mono text-ink font-semibold">Not priced</div>
+              )}
+            </div>
           </div>
           <div className="text-[11px] text-ink-3 mt-2 border-t border-line/50 pt-2">
-            Each agent/scanner action will show its micro-price before execution once pricing is wired.
+            Costs are estimated/audit-log until facilitator settlement is wired.
           </div>
         </section>
 
@@ -124,12 +139,29 @@ export function FuelMeter() {
         <section className="bg-panel border border-line rounded-xl p-4 flex flex-col justify-between">
           <div>
             <div className="text-[11px] font-bold tracking-[0.08em] uppercase text-ink-3 mb-3">Spend history</div>
-            <div className="text-xs text-ink-3 italic bg-panel-2 p-3 rounded border border-line">
-              No spend history — no x402 micropayments have been recorded yet.
-            </div>
+            {ledger?.entries && ledger.entries.length > 0 ? (
+              <div className="space-y-1.5 max-h-[140px] overflow-y-auto">
+                {ledger.entries.map(e => (
+                  <div key={e.id} className="flex items-center justify-between bg-panel-2 p-2 rounded border border-line text-xs font-mono">
+                    <div>
+                      <span className="text-ink font-semibold">{e.actionType}</span>
+                      <div className="text-[10px] text-ink-3">{new Date(e.createdAt).toLocaleTimeString()}</div>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-ink font-bold">{e.cost || '0'} USDC</span>
+                      <div className="text-[9px] text-warn">{e.settlement || 'estimated/audit-log'}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-xs text-ink-3 italic bg-panel-2 p-3 rounded border border-line">
+                No spend history — no x402 micropayments have been recorded yet.
+              </div>
+            )}
           </div>
           <div className="text-[11px] text-ink-3 mt-2 border-t border-line/50 pt-2">
-            Ledger export will unlock after Phase 7.4 x402 integration.
+            All ledger entries recorded as estimated/audit-log until facilitator settlement is wired.
           </div>
         </section>
       </div>

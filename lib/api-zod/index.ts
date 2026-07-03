@@ -359,8 +359,10 @@ export const DeleteWorkflowResponseSchema = z.object({
 // Autonomy
 export const AutonomyStateResponseSchema = z.object({
   status: z.enum(['active', 'inactive', 'unconfigured']),
+  source: z.enum(['memory', 'onchain', 'missing']),
   sessionKey: z.object({
     status: z.enum(['configured', 'unconfigured', 'inactive']),
+    source: z.enum(['memory', 'onchain', 'missing']).optional(),
     dailyLimitUsdc: z.string().nullable(),
     spentTodayUsdc: z.string(),
     maxPerActionUsdc: z.string().nullable(),
@@ -375,15 +377,16 @@ export const AutonomyStateResponseSchema = z.object({
     maxActionSpend: z.string().nullable(),
     whitelistedProtocolsCount: z.number(),
     mode: z.string(),
+    source: z.enum(['memory', 'onchain', 'missing']),
   }),
 });
 
 export const ConfigureAutonomyRequestSchema = z.object({
-  dailyLimitUsdc: z.string().optional(),
-  maxPerActionUsdc: z.string().optional(),
-  whitelist: z.array(z.string()).optional(),
+  dailyLimitUsdc: z.string(),
+  maxPerActionUsdc: z.string(),
+  whitelist: z.array(z.string()),
   scope: z.string().optional(),
-  ttlSeconds: z.number().optional(),
+  ttlSeconds: z.number(),
 });
 
 export const ConfigureAutonomyResponseSchema = z.object({
@@ -404,6 +407,7 @@ export const X402LedgerEntrySchema = z.object({
   cost: z.string().nullable(),
   txHash: z.string().nullable(),
   createdAt: z.string(),
+  settlement: z.string().optional(),
   details: z.record(z.any()).optional().nullable(),
 });
 
@@ -415,6 +419,7 @@ export const X402LedgerResponseSchema = z.object({
     toolsSpentUsdc: z.string(),
     inferenceCallsCount: z.number(),
     toolsCallsCount: z.number(),
+    settlement: z.string().optional(),
   }),
 });
 

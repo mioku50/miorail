@@ -359,3 +359,71 @@ export function useDeleteWorkflow() {
     },
   });
 }
+
+// Autonomy hooks
+export function useAutonomy(options?: Omit<UseQueryOptions<apiSpec.AutonomyStateResponse, Error, apiSpec.AutonomyStateResponse, string[]>, 'queryKey' | 'queryFn'>) {
+  return useQuery({
+    queryKey: ['autonomy'],
+    queryFn: () => fetchApi<apiSpec.AutonomyStateResponse>('/api/autonomy'),
+    ...options,
+  });
+}
+
+export function useConfigureAutonomy(options?: Omit<UseMutationOptions<apiSpec.ConfigureAutonomyResponse, Error, apiSpec.ConfigureAutonomyRequest>, 'mutationFn'>) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: apiSpec.ConfigureAutonomyRequest) =>
+      fetchApi<apiSpec.ConfigureAutonomyResponse>('/api/autonomy/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['autonomy'] }),
+    ...options,
+  });
+}
+
+export function useKillAutonomy(options?: Omit<UseMutationOptions<apiSpec.KillAutonomyResponse, Error, void>, 'mutationFn'>) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      fetchApi<apiSpec.KillAutonomyResponse>('/api/autonomy/kill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['autonomy'] }),
+    ...options,
+  });
+}
+
+export function useResetAutonomy(options?: Omit<UseMutationOptions<apiSpec.KillAutonomyResponse, Error, void>, 'mutationFn'>) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      fetchApi<apiSpec.KillAutonomyResponse>('/api/autonomy/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['autonomy'] }),
+    ...options,
+  });
+}
+
+// x402 hooks
+export function useX402Ledger(options?: Omit<UseQueryOptions<apiSpec.X402LedgerResponse, Error, apiSpec.X402LedgerResponse, string[]>, 'queryKey' | 'queryFn'>) {
+  return useQuery({
+    queryKey: ['x402', 'ledger'],
+    queryFn: () => fetchApi<apiSpec.X402LedgerResponse>('/api/x402/ledger'),
+    ...options,
+  });
+}
+
+export function useX402Pricing(options?: Omit<UseQueryOptions<apiSpec.X402PricingResponse, Error, apiSpec.X402PricingResponse, string[]>, 'queryKey' | 'queryFn'>) {
+  return useQuery({
+    queryKey: ['x402', 'pricing'],
+    queryFn: () => fetchApi<apiSpec.X402PricingResponse>('/api/x402/pricing'),
+    ...options,
+  });
+}

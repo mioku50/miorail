@@ -194,18 +194,26 @@ actionsRouter.post('/recommend', async (req, res, next) => {
       }
     }
 
-    const screenRes = screenAction({ instruction });
+    const secProvider = process.env.TOKEN_SECURITY_PROVIDER || 'none';
+    const screenRes = screenAction({
+      instruction,
+      providerContext: {
+        risk: secProvider === 'goplus' ? 'connected' : 'missing',
+        riskProvider: secProvider,
+        securityProvider: secProvider
+      }
+    });
     const securityScreening = {
       screenedAt: new Date().toISOString(),
       allowed: screenRes.allowed,
       verdict: screenRes.allowed ? 'PASSED' : 'BLOCKED',
-      reason: screenRes.reason || 'All action-security heuristics and contract security checks passed cleanly.',
-      checks: [
+      reason: screenRes.reason || 'All action-security heuristics and contract security checks evaluated.',
+      checks: screenRes.checks || [
         { name: 'Prompt Injection / Jailbreak', status: 'PASSED' },
         { name: 'Credential Exfiltration', status: 'PASSED' },
         { name: 'Wallet Drain / Sweep', status: screenRes.allowed ? 'PASSED' : 'BLOCKED' },
         { name: 'Unlimited Token Approval', status: screenRes.allowed ? 'PASSED' : 'BLOCKED' },
-        { name: 'GoPlus Contract Security', status: 'PASSED' }
+        { name: 'GoPlus Contract Security', status: secProvider === 'goplus' ? 'PASSED' : 'SKIPPED' }
       ]
     };
 

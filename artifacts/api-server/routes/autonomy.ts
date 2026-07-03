@@ -18,11 +18,14 @@ async function getAutonomyState(userId: string) {
 
   const status = isKillSwitch ? 'inactive' : (isConfigured ? 'active' : 'unconfigured');
   const sessionKeyStatus = isKillSwitch ? 'inactive' : (isConfigured ? 'configured' : 'unconfigured');
+  const source = isConfigured ? 'memory' : 'missing';
 
   return {
     status,
+    source,
     sessionKey: {
       status: sessionKeyStatus,
+      source,
       dailyLimitUsdc: autonomy.dailyLimitUsdc || null,
       spentTodayUsdc: autonomy.spentTodayUsdc || '0',
       maxPerActionUsdc: autonomy.maxPerActionUsdc || null,
@@ -37,6 +40,7 @@ async function getAutonomyState(userId: string) {
       maxActionSpend: autonomy.maxPerActionUsdc || null,
       whitelistedProtocolsCount: (autonomy.whitelist || []).length,
       mode: process.env.CHAIN_ENV || 'mainnet-readonly',
+      source,
     },
   };
 }
@@ -54,7 +58,11 @@ autonomyRouter.get('/', async (req, res, next) => {
 autonomyRouter.post('/config', async (req, res, next) => {
   try {
     const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
-    const data = ConfigureAutonomyRequestSchema.parse(req.body);
+    const parsed = ConfigureAutonomyRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid autonomy configuration payload', details: parsed.error });
+    }
+    const data = parsed.data;
 
     const settings = await MemoryService.getUserSettings(userId);
     const existingToggles = (settings?.protocolToggles as any) || {};
@@ -64,12 +72,12 @@ autonomyRouter.post('/config', async (req, res, next) => {
       ...existingAutonomy,
       status: 'configured',
       killSwitch: false,
-      dailyLimitUsdc: data.dailyLimitUsdc !== undefined ? data.dailyLimitUsdc : (existingAutonomy.dailyLimitUsdc || '100'),
-      maxPerActionUsdc: data.maxPerActionUsdc !== undefined ? data.maxPerActionUsdc : (existingAutonomy.maxPerActionUsdc || '10'),
-      whitelist: data.whitelist !== undefined ? data.whitelist : (existingAutonomy.whitelist || ['0x036cbd53842c5426634e7929541ec2318f3dcf7e']),
-      scope: data.scope !== undefined ? data.scope : (existingAutonomy.scope || 'Yield + Rebalance'),
-      ttlSeconds: data.ttlSeconds !== undefined ? data.ttlSeconds : (existingAutonomy.ttlSeconds || 86400),
-      expiresAt: new Date(Date.now() + (data.ttlSeconds || 86400) * 1000).toISOString(),
+      dailyLimitUsdc: data.dailyLimitUsdc,
+      maxPerActionUsdc: data.maxPerActionUsdc,
+      whitelist: data.whitelist,
+      scope: data.scope || existingAutonomy.scope || 'Yield + Rebalance',
+      ttlSeconds: data.ttlSeconds,
+      expiresAt: new Date(Date.now() + data.ttlSeconds * 1000).toISOString(),
     };
 
     const newToggles = {
@@ -101,6 +109,28 @@ autonomyRouter.post('/kill', async (req, res, next) => {
     const newToggles = {
       ...existingToggles,
       autonomy: newAutonomy,
+    };
+
+    await MemoryService.updateUserSettings(userId, { protocolToggles: newToggles });
+    const state = await getAutonomyState(userId);
+    res.json(KillAutonomyResponseSchema.parse({ success: true, state }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+autonomyRouter.post('/reset', async (req, res, next) => {
+  try {
+    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const settings = await MemoryService.getUserSettings(userId);
+    const existingToggles = (settings?.protocolToggles as any) || {};
+
+    const newToggles = {
+      ...existingToggles,
+      autonomy: {
+        status: 'unconfigured',
+        killSwitch: false,
+      },
     };
 
     await MemoryService.updateUserSettings(userId, { protocolToggles: newToggles });

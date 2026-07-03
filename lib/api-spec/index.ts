@@ -58,3 +58,14 @@ export type CreateWorkflowRequest = z.infer<typeof schemas.CreateWorkflowRequest
 export type CreateWorkflowResponse = z.infer<typeof schemas.CreateWorkflowResponseSchema>;
 export type DeleteWorkflowRequest = z.infer<typeof schemas.DeleteWorkflowRequestSchema>;
 export type DeleteWorkflowResponse = z.infer<typeof schemas.DeleteWorkflowResponseSchema>;
+
+// Autonomy
+export type AutonomyStateResponse = z.infer<typeof schemas.AutonomyStateResponseSchema>;
+export type ConfigureAutonomyRequest = z.infer<typeof schemas.ConfigureAutonomyRequestSchema>;
+export type ConfigureAutonomyResponse = z.infer<typeof schemas.ConfigureAutonomyResponseSchema>;
+export type KillAutonomyResponse = z.infer<typeof schemas.KillAutonomyResponseSchema>;
+
+// x402 Ledger & Pricing
+export type X402LedgerEntry = z.infer<typeof schemas.X402LedgerEntrySchema>;
+export type X402LedgerResponse = z.infer<typeof schemas.X402LedgerResponseSchema>;
+export type X402PricingResponse = z.infer<typeof schemas.X402PricingResponseSchema>;

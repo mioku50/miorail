@@ -62,6 +62,7 @@ x402Router.get('/ledger', async (req: Request, res: Response, next) => {
         cost: l.cost || null,
         txHash: l.txHash || null,
         createdAt: l.createdAt.toISOString(),
+        settlement: 'estimated/audit-log',
         details: (l.details as Record<string, unknown>) || null,
       };
     });
@@ -74,6 +75,7 @@ x402Router.get('/ledger', async (req: Request, res: Response, next) => {
         toolsSpentUsdc: toolsSpent.toFixed(4),
         inferenceCallsCount: inferenceCount,
         toolsCallsCount: toolsCount,
+        settlement: 'estimated/audit-log',
       },
     };
 

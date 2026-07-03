@@ -3,9 +3,9 @@ import assert from 'node:assert';
 import { screenAction } from './index.js';
 
 test('allows safe actions', () => {
-  assert.deepStrictEqual(screenAction({ instruction: 'send 10 usdc to bob' }), { allowed: true });
-  assert.deepStrictEqual(screenAction({ instruction: 'approve 50 usdc' }), { allowed: true });
-  assert.deepStrictEqual(screenAction({ instruction: 'swap 1 eth for usdc' }), { allowed: true });
+  assert.strictEqual(screenAction({ instruction: 'send 10 usdc to bob' }).allowed, true);
+  assert.strictEqual(screenAction({ instruction: 'approve 50 usdc' }).allowed, true);
+  assert.strictEqual(screenAction({ instruction: 'swap 1 eth for usdc' }).allowed, true);
 });
 
 test('blocks wallet drain', () => {

@@ -1,10 +1,21 @@
 export interface ScreenableAction {
   instruction: string;
+  providerContext?: {
+    risk?: string;
+    riskProvider?: string;
+    securityProvider?: string;
+  };
+}
+
+export interface SecurityCheck {
+  name: string;
+  status: 'PASSED' | 'BLOCKED' | 'SKIPPED';
 }
 
 export interface ScreenResult {
   allowed: boolean;
   reason?: string;
+  checks?: SecurityCheck[];
 }
 
 function deobfuscate(text: string): string {
@@ -25,9 +36,21 @@ function deobfuscate(text: string): string {
   return s;
 }
 
+function buildChecks(failedCheck?: string, goPlusRan?: boolean): SecurityCheck[] {
+  const goPlusStatus: 'PASSED' | 'SKIPPED' = goPlusRan ? 'PASSED' : 'SKIPPED';
+  return [
+    { name: 'Prompt Injection / Jailbreak', status: failedCheck === 'prompt' ? 'BLOCKED' : 'PASSED' },
+    { name: 'Credential Exfiltration', status: failedCheck === 'exfil' ? 'BLOCKED' : 'PASSED' },
+    { name: 'Wallet Drain / Sweep', status: failedCheck === 'drain' ? 'BLOCKED' : 'PASSED' },
+    { name: 'Unlimited Token Approval', status: failedCheck === 'approval' ? 'BLOCKED' : 'PASSED' },
+    { name: 'GoPlus Contract Security', status: goPlusStatus }
+  ];
+}
+
 export function screenAction(a: ScreenableAction): ScreenResult {
   const raw = a.instruction;
   const clean = deobfuscate(raw);
+  const goPlusRan = a.providerContext?.risk === 'connected' || a.providerContext?.risk === 'ok' || a.providerContext?.riskProvider === 'goplus' || a.providerContext?.securityProvider === 'goplus';
 
   // 1. Prompt injection / jailbreaks
   const promptInjections = [
@@ -37,7 +60,7 @@ export function screenAction(a: ScreenableAction): ScreenResult {
   ];
   for (const p of promptInjections) {
     if (clean.includes(p)) {
-      return { allowed: false, reason: 'Prompt injection detected' };
+      return { allowed: false, reason: 'Prompt injection detected', checks: buildChecks('prompt', goPlusRan) };
     }
   }
 
@@ -48,7 +71,7 @@ export function screenAction(a: ScreenableAction): ScreenResult {
   ];
   for (const p of exfilPatterns) {
     if (clean.includes(p)) {
-      return { allowed: false, reason: 'Credential exfiltration detected' };
+      return { allowed: false, reason: 'Credential exfiltration detected', checks: buildChecks('exfil', goPlusRan) };
     }
   }
 
@@ -59,22 +82,22 @@ export function screenAction(a: ScreenableAction): ScreenResult {
   for (const action of drainActions) {
     for (const target of drainTargets) {
       if (clean.includes(action + target)) {
-        return { allowed: false, reason: 'Wallet drain detected' };
+        return { allowed: false, reason: 'Wallet drain detected', checks: buildChecks('drain', goPlusRan) };
       }
     }
   }
 
   // Special case: just "drain" or "sweep" might be enough, but let's stick to combinations or explicit drainall
   if (clean.includes('drainwallet') || clean.includes('sweepwallet')) {
-    return { allowed: false, reason: 'Wallet drain detected' };
+    return { allowed: false, reason: 'Wallet drain detected', checks: buildChecks('drain', goPlusRan) };
   }
 
   // 4. Unlimited token approval
   if (clean.includes('unlimitedapproval') || clean.includes('approveunlimited') || clean.includes('infiniteapproval') || clean.includes('approveinfinite') || clean.includes('maxapproval')) {
-    return { allowed: false, reason: 'Unlimited token approval detected' };
+    return { allowed: false, reason: 'Unlimited token approval detected', checks: buildChecks('approval', goPlusRan) };
   }
 
-  return { allowed: true };
+  return { allowed: true, checks: buildChecks(undefined, goPlusRan) };
 }
 export * from './payment-policy.js';
 export * from './budget.js';
