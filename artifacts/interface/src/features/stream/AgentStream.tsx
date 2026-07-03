@@ -1,0 +1,176 @@
+import { useEffect, useRef, useState } from 'react';
+import { useAccount } from 'wagmi';
+import { useChatHistory, useSendMessage, useClearChatHistory } from '@mioagent/api-client-react';
+import { useUiStore } from '../../lib/state';
+import { ChatMessage } from './ChatMessage';
+import { AgentComposer } from './AgentComposer';
+
+const PROMPT_CHIPS = [
+  'Review my Base tokens',
+  'Check token security',
+  'Create a read-only rebalance plan',
+  'Check spend permissions',
+  'Find yield opportunities',
+];
+
+export function AgentStream() {
+  const { address } = useAccount();
+  const { data: chatData, refetch } = useChatHistory();
+  const sendMessageMutation = useSendMessage();
+  const clearChat = useClearChatHistory();
+  const showToast = useUiStore((s) => s.showToast);
+  const [input, setInput] = useState('');
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const streamRef = useRef<HTMLDivElement>(null);
+
+  const messages = chatData?.messages || [];
+  const displayMessages = messages;
+
+  useEffect(() => {
+    if (streamRef.current) {
+      streamRef.current.scrollTop = streamRef.current.scrollHeight;
+    }
+  }, [displayMessages, isCollapsed]);
+
+  const handleSendMsg = async (msgText: string) => {
+    if (!msgText.trim() || sendMessageMutation.isPending) return;
+    setErrorMsg(null);
+    setInput('');
+    try {
+      await sendMessageMutation.mutateAsync({
+        message: msgText,
+        walletAddress: address,
+        chainEnv: import.meta.env.VITE_CHAIN_ENV || 'sepolia',
+      });
+      refetch();
+      setTimeout(() => document.getElementById('agent-stream-input')?.focus(), 50);
+    } catch (err: any) {
+      console.error(err);
+      const errMsg = err.message || 'Failed to send instruction';
+      setErrorMsg(errMsg);
+      showToast('Error: ' + errMsg);
+    }
+  };
+
+  const handleNewChat = () => {
+    if (displayMessages.length > 0 && !confirm('Start a new chat? This clears the current visible thread.')) {
+      return;
+    }
+    clearChat.mutate(undefined, {
+      onSuccess: () => {
+        refetch();
+        showToast('New chat started');
+        setErrorMsg(null);
+      },
+    });
+  };
+
+  if (isCollapsed) {
+    return (
+      <aside className="w-[54px] shrink-0 border-l border-line bg-panel flex flex-col items-center py-4 justify-between select-none shadow-sm z-10">
+        <button
+          onClick={() => setIsCollapsed(false)}
+          className="p-2.5 rounded-xl hover:bg-bg text-ink-2 hover:text-ink transition-colors flex flex-col items-center gap-2 shadow-sm border border-transparent hover:border-line cursor-pointer"
+          title="Expand Agent Stream"
+          aria-label="Expand Agent Stream"
+        >
+          <span className="text-base">💬</span>
+          <span className="text-[11px] font-bold tracking-wider uppercase text-ink-3 [writing-mode:vertical-rl] rotate-180 py-2">Agent</span>
+        </button>
+        <div className="w-2.5 h-2.5 rounded-full bg-green animate-pulse" title="Agent Ready" />
+      </aside>
+    );
+  }
+
+  return (
+    <aside className="w-[400px] shrink-0 border-l border-line bg-panel flex flex-col h-full overflow-hidden shadow-sm z-10">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-line bg-panel flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-2.5">
+          <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${sendMessageMutation.isPending ? 'bg-amber animate-ping' : sendMessageMutation.isError ? 'bg-red' : 'bg-green animate-pulse'}`} title="Status" />
+          <div>
+            <div className="text-sm font-bold text-ink flex items-center gap-2">
+              <span>Agent Stream</span>
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${sendMessageMutation.isPending ? 'bg-amber-soft text-amber' : sendMessageMutation.isError ? 'bg-red-soft text-red' : 'bg-green-soft text-green'}`}>
+                {sendMessageMutation.isPending ? 'Thinking...' : sendMessageMutation.isError ? 'Error' : displayMessages.some((m: any) => m.role === 'assistant' && (m.actionId || m.metadata?.actionId)) ? 'Recommendation created' : 'Ready'}
+              </span>
+            </div>
+            <div className="text-[11px] text-ink-3 font-medium">Base Mainnet · Read-only {address ? '· Connected' : ''}</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={handleNewChat}
+            className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-panel-2 border border-line hover:bg-bg text-ink-2 hover:text-ink transition-colors flex items-center gap-1 shadow-sm cursor-pointer"
+            aria-label="New chat"
+          >
+            <span>+ New chat</span>
+          </button>
+          <button
+            onClick={() => setIsCollapsed(true)}
+            className="p-1.5 rounded-lg text-ink-3 hover:text-ink hover:bg-bg transition-colors cursor-pointer text-xs font-bold"
+            title="Collapse panel"
+            aria-label="Collapse panel"
+          >
+            ⇥
+          </button>
+        </div>
+      </div>
+
+      {/* Stream */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-bg/40" ref={streamRef}>
+        {displayMessages.length === 0 && (
+          <div className="h-full flex flex-col items-center justify-center p-2 text-center my-auto animate-in fade-in">
+            <div className="w-12 h-12 rounded-2xl bg-accent-soft text-accent flex items-center justify-center text-2xl mb-3 shadow-sm">✨</div>
+            <h3 className="text-sm font-bold text-ink mb-1.5">Ask MioAgent anything about your Base wallet</h3>
+            <p className="text-xs text-ink-2 max-w-[280px] leading-relaxed mb-6">
+              MioAgent can review your portfolio, flag suspicious tokens, create read-only recommendations, and explain what it would do before any execution.
+            </p>
+            <div className="flex flex-wrap gap-2 justify-center max-w-[340px]">
+              {PROMPT_CHIPS.map((chip, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleSendMsg(chip)}
+                  disabled={sendMessageMutation.isPending}
+                  className="px-3 py-1.5 rounded-xl text-xs font-medium bg-panel border border-line text-ink-2 hover:text-accent hover:border-accent/40 shadow-sm transition-all text-left cursor-pointer disabled:opacity-50"
+                >
+                  {chip}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {displayMessages.map((m: any, i: number) => (
+          <ChatMessage key={i} m={m} />
+        ))}
+      </div>
+
+      {/* Prompt chips when thread has messages */}
+      {displayMessages.length > 0 && (
+        <div className="overflow-x-auto no-scrollbar flex gap-2 px-4 py-2 border-t border-line bg-panel-2/70 shrink-0">
+          {PROMPT_CHIPS.map((chip, idx) => (
+            <button
+              key={idx}
+              onClick={() => handleSendMsg(chip)}
+              disabled={sendMessageMutation.isPending}
+              className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-panel border border-line text-ink-2 hover:text-accent hover:border-accent/40 shadow-sm transition-all shrink-0 cursor-pointer disabled:opacity-50"
+            >
+              {chip}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <AgentComposer
+        input={input}
+        setInput={setInput}
+        onSend={() => handleSendMsg(input)}
+        isPending={sendMessageMutation.isPending}
+        errorMsg={errorMsg}
+        onClearError={() => setErrorMsg(null)}
+      />
+    </aside>
+  );
+}

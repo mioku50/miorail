@@ -6,7 +6,7 @@ import { base, baseSepolia } from 'wagmi/chains';
 import { coinbaseWallet, injected } from 'wagmi/connectors';
 import { ThemeProvider } from './theme/ThemeProvider';
 import './index.css';
-import App from './App.tsx';
+import App from './app/App';
 import { UiPreview } from './ui/_preview';
 
 const queryClient = new QueryClient();

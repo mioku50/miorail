@@ -1,0 +1,65 @@
+import { portfolioFreshnessChip } from '../../lib/format';
+
+// The per-provider status chips + refresh control in the Portfolio card header.
+// Extracted to keep PortfolioCard under the ~200-line view budget.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+interface PortfolioProviderChipsProps {
+  portfolio: any;
+  statusData: any;
+  address?: string;
+  isPortfolioFetching: boolean;
+  onRefresh: () => void;
+}
+
+export function PortfolioProviderChips({ portfolio, statusData, address, isPortfolioFetching, onRefresh }: PortfolioProviderChipsProps) {
+  return (
+    <div className="flex items-center gap-1.5">
+      {portfolioFreshnessChip(portfolio) && (
+        <span className={`text-[10px] font-mono font-normal lowercase px-1.5 py-0.5 rounded border ${portfolioFreshnessChip(portfolio)!.className}`} title={`Provider calls: ${portfolio?.providerCallsMade ?? 0}`}>
+          {portfolioFreshnessChip(portfolio)!.label}
+        </span>
+      )}
+      {(statusData || portfolio?.providerStatus) && (
+        <span className="text-[10px] font-mono font-normal text-ink-3 lowercase bg-panel-2 px-1.5 py-0.5 rounded border border-line/60">
+          {statusData ? (
+            statusData.tokenBalances.status === 'stale' ? `${statusData.tokenBalances.provider || 'moralis'} cached` :
+            statusData.tokenBalances.status === 'failed' ? 'token provider failed' :
+            statusData.tokenBalances.status === 'disabled' ? 'balances off' :
+            statusData.tokenBalances.status === 'missing' ? 'eth only' :
+            statusData.tokenBalances.provider === 'moralis' ? 'moralis connected' :
+            statusData.tokenBalances.provider === 'alchemy' ? 'alchemy connected' :
+            portfolio?.providerStatus || 'connected'
+          ) : (
+            portfolio?.providers?.tokenBalances === 'stale' ? `${portfolio?.providers?.tokenBalancesProvider || 'moralis'} cached` :
+            portfolio?.providers?.tokenBalances === 'disabled' ? 'balances off' :
+            portfolio?.providerStatus === 'moralis connected' ? 'moralis connected' : portfolio?.providerStatus
+          )}
+        </span>
+      )}
+      {(statusData?.prices.status === 'failed' || portfolio?.providers?.prices === 'failed') && (
+        <span className="text-[10px] font-mono font-normal text-red lowercase bg-red-soft px-1.5 py-0.5 rounded border border-red/20">Prices failed</span>
+      )}
+      {(statusData?.risk.status === 'partial' || portfolio?.providers?.risk === 'partial') && (
+        <span className="text-[10px] font-mono font-normal text-amber lowercase bg-amber-soft px-1.5 py-0.5 rounded border border-amber/20">GoPlus partial</span>
+      )}
+      {(statusData?.approvals?.status === 'connected' || portfolio?.providers?.approvals === 'connected') ? (
+        <span className="text-[10px] font-mono font-normal text-green lowercase bg-green-soft px-1.5 py-0.5 rounded border border-green/20">approvals connected</span>
+      ) : (statusData?.approvals?.status === 'failed' || portfolio?.providers?.approvals === 'failed') ? (
+        <span className="text-[10px] font-mono font-normal text-red lowercase bg-red-soft px-1.5 py-0.5 rounded border border-red/20">approvals failed</span>
+      ) : (statusData?.approvals?.status === 'disabled' || portfolio?.providers?.approvals === 'disabled') ? (
+        <span className="text-[10px] font-mono font-normal text-ink-3 lowercase bg-panel-2 px-1.5 py-0.5 rounded border border-line/60">approvals off</span>
+      ) : (
+        <span className="text-[10px] font-mono font-normal text-amber lowercase bg-amber-soft px-1.5 py-0.5 rounded border border-amber/20">approvals missing</span>
+      )}
+      <button
+        type="button"
+        onClick={onRefresh}
+        disabled={isPortfolioFetching || !address}
+        title="Refresh portfolio"
+        className="text-[10px] font-mono font-normal lowercase px-1.5 py-0.5 rounded border border-line/60 bg-panel-2 text-ink-2 hover:text-ink hover:border-line disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        {isPortfolioFetching ? 'refreshing…' : 'refresh'}
+      </button>
+    </div>
+  );
+}
