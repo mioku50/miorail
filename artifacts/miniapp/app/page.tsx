@@ -1,14 +1,15 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
-import { useMiniKit } from "@coinbase/onchainkit/minikit";
+import { useRef, useState } from "react";
 import { useStatus, useActionsFeed, useChatHistory, useSendMessage } from "@mioagent/api-client-react";
 import { Card, StateBadge, Button } from "@mioagent/ui";
+import { WalletConnect } from "./components/WalletConnect";
 
 // Reduced mobile IA: Autonomy status + kill, Action Inbox, Agent Stream.
 // Shares the data layer (@mioagent/api-client-react) and UI (@mioagent/ui) with
-// the web interface — no logic fork. Honest states only; no fixtures.
+// the web interface — no logic fork. Honest states only; no fixtures. Standard
+// web app (no MiniKit): wallet context comes from the WagmiProvider + Base
+// Account connector; no signing/execution from this UI (no-custody).
 export default function Home() {
-  const { setMiniAppReady, isMiniAppReady } = useMiniKit();
   const { data: statusData } = useStatus();
   const { data: actionsData } = useActionsFeed();
   const { data: chatData } = useChatHistory();
@@ -16,10 +17,6 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [killMsg, setKillMsg] = useState(false);
   const streamRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!isMiniAppReady) setMiniAppReady();
-  }, [setMiniAppReady, isMiniAppReady]);
 
   const messages = chatData?.messages || [];
   const actions = (actionsData?.actions || []).filter((a) => a.status === "pending").slice(0, 5);
@@ -39,7 +36,10 @@ export default function Home() {
           <span className="w-6 h-6 rounded-md bg-accent text-white flex items-center justify-center text-xs font-bold">M</span>
           MioAgent
         </div>
-        <StateBadge state={readOnly ? "disabled" : "live"} label={chainEnv} />
+        <div className="flex items-center gap-2">
+          <WalletConnect />
+          <StateBadge state={readOnly ? "disabled" : "live"} label={chainEnv} />
+        </div>
       </header>
 
       <Card className="p-3">

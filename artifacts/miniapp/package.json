@@ -9,26 +9,25 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@coinbase/onchainkit": "^1.1.2",
-    "@farcaster/miniapp-sdk": "^0.1.8",
+    "@base-org/account": "^2.5.6",
+    "@coinbase/wallet-sdk": "^4.3.7",
     "@mioagent/api-client-react": "workspace:*",
     "@mioagent/ui": "workspace:*",
     "@tailwindcss/postcss": "4.3.1",
-    "@tanstack/react-query": "^5.81.5",
+    "@tanstack/react-query": "^5.101.1",
     "next": "15.3.4",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
     "tailwindcss": "4.3.1",
-    "viem": "^2.31.6",
-    "wagmi": "^2.16.3"
+    "viem": "^2.53.1",
+    "wagmi": "^3.6.21"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
-    "@farcaster/quick-auth": "^0.0.7",
     "@next/eslint-plugin-next": "^15.3.4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
     "eslint": "^9",
     "eslint-config-next": "15.3.4",
     "typescript": "^5"
