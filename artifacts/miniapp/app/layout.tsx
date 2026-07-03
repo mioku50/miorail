@@ -1,24 +1,25 @@
 import type { Metadata } from "next";
 import { Inter, Source_Code_Pro } from "next/font/google";
-import { SafeArea } from "@coinbase/onchainkit/minikit";
-import { minikitConfig } from "@/minikit.config";
+import { appManifest } from "@/manifest";
 import { RootProvider } from "./rootProvider";
 import "./globals.css";
 
 export async function generateMetadata(): Promise<Metadata> {
   return {
-    title: minikitConfig.miniapp.name,
-    description: minikitConfig.miniapp.description,
+    title: appManifest.miniapp.name,
+    description: appManifest.miniapp.description,
     other: {
       // Base App registration (base.dev). Replace with your registered app id.
       "base:app_id": "mioagent-placeholder",
+      // Optional Farcaster distribution embed (static metadata only — no
+      // Farcaster runtime SDK is imported anywhere in this app).
       "fc:miniapp": JSON.stringify({
-        version: minikitConfig.miniapp.version,
-        imageUrl: minikitConfig.miniapp.heroImageUrl,
+        version: appManifest.miniapp.version,
+        imageUrl: appManifest.miniapp.heroImageUrl,
         button: {
-          title: `Launch ${minikitConfig.miniapp.name}`,
+          title: `Launch ${appManifest.miniapp.name}`,
           action: {
-            name: `Launch ${minikitConfig.miniapp.name}`,
+            name: `Launch ${appManifest.miniapp.name}`,
             type: "launch_miniapp",
           },
         },
@@ -43,12 +44,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <RootProvider>
-      <html lang="en">
-        <body className={`${inter.variable} ${sourceCodePro.variable}`}>
-          <SafeArea>{children}</SafeArea>
-        </body>
-      </html>
-    </RootProvider>
+    <html lang="en">
+      <body className={`${inter.variable} ${sourceCodePro.variable}`}>
+        <RootProvider>{children}</RootProvider>
+      </body>
+    </html>
   );
 }

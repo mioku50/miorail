@@ -1,35 +1,20 @@
 "use client";
 import { ReactNode, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { base } from "wagmi/chains";
-import { OnchainKitProvider } from "@coinbase/onchainkit";
+import { WagmiProvider } from "wagmi";
 import { ThemeProvider } from "@mioagent/ui";
-import "@coinbase/onchainkit/styles.css";
+import { wagmiConfig } from "./wagmi";
 
+// Standard web-app providers (the previous OnchainKit wrapper was removed).
+// WagmiProvider must wrap QueryClientProvider. ThemeProvider (dark-first) is
+// shared with the web interface via @mioagent/ui.
 export function RootProvider({ children }: { children: ReactNode }) {
   const [queryClient] = useState(() => new QueryClient());
   return (
     <ThemeProvider>
-      <OnchainKitProvider
-        apiKey={process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY}
-        chain={base}
-        config={{
-          appearance: {
-            mode: "auto",
-          },
-          wallet: {
-            display: "modal",
-            preference: "all",
-          },
-        }}
-        miniKit={{
-          enabled: true,
-          autoConnect: true,
-          notificationProxyUrl: undefined,
-        }}
-      >
+      <WagmiProvider config={wagmiConfig}>
         <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-      </OnchainKitProvider>
+      </WagmiProvider>
     </ThemeProvider>
   );
 }
