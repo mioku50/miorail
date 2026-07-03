@@ -15,11 +15,6 @@
     "smoke:approvals": "tsx scripts/smoke_approvals.ts",
     "db:probe": "tsx scripts/db_probe.ts"
   },
-  "pnpm": {
-    "overrides": {
-      "@neondatabase/serverless": "0.10.4"
-    }
-  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^20.0.0",

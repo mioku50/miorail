@@ -2,5 +2,20 @@ packages:
   - 'lib/*'
   - 'artifacts/*'
   - 'scripts'
+
+# pnpm 11-supported workspace config (also read by pnpm 10).
+# Moved from the deprecated `pnpm.overrides` field in package.json.
+overrides:
+  '@neondatabase/serverless': 0.10.4
+
+# Supply-chain policy: refuse to resolve any package (incl. transitive)
+# published within the last 7 days. Guards against dependency-confusion and
+# typosquat injections riding on freshly published versions. Keep strict —
+# do not bypass via minimumReleaseAgeExclude without justification.
+minimumReleaseAge: 10080 # 7 days, in minutes
+
+# Build-script approval (pnpm 11 `allowBuilds` map). Only esbuild — the
+# repo's bundler (tsx/vite) — is allowed; everything else stays disallowed
+# by default. Narrow allowlist, not a blanket approval.
 allowBuilds:
-  esbuild: set this to true or false
+  esbuild: true
