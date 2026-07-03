@@ -1,4 +1,4 @@
-import { cn } from '../lib/cn';
+import { cn } from './cn';
 
 // Honest-states system: any widget that shows data must wrap it in a StateBadge
 // (or a StateBadge-equivalent) so the source/freshness is always visible.

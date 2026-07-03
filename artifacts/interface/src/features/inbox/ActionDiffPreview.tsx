@@ -1,5 +1,5 @@
 import { isMainnetReadonly } from '../../lib/chain';
-import { StateBadge, type StateKind } from '../../ui';
+import { StateBadge, type StateKind } from '@mioagent/ui';
 import { PortfolioAnalysisView } from './PortfolioAnalysisView';
 
 // The Inbox card as a risk-control center. Shows what would change before any

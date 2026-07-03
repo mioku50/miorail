@@ -1,5 +1,5 @@
 import { forwardRef, type HTMLAttributes } from 'react';
-import { cn } from '../lib/cn';
+import { cn } from './cn';
 
 // Thin border instead of a soft shadow — the engineering-terminal look.
 export const Card = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(

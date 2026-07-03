@@ -1,13 +1,14 @@
 /*
- * MioAgent design tokens — dark-first.
+ * MioAgent design tokens — dark-first. Shared by the web interface and the
+ * BaseApp Mini App via the @mioagent/ui workspace package.
+ *
  * Dark is the :root default; `.light` (toggled by ThemeProvider) overrides the
  * surface/text/semantic vars for the optional light theme. Tailwind v4 reads
  * these `@theme` vars to generate `bg-*` / `text-*` / `border-*` utilities, so
  * overriding the CSS variable under `.light` cascades into every utility.
  *
- * Palette is intentionally distinct from the OrbitLab terminal (which is
- * black/white + green accent): our accent is an indigo-blue (#3B5BFF) and our
- * semantic colors are tuned for dark surfaces.
+ * The accent is an indigo-blue (#3B5BFF), distinct from the OrbitLab terminal's
+ * black/white + green palette.
  */
 @theme {
   /* Surfaces */

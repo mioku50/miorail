@@ -1,6 +1,6 @@
 import { useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { cn } from '../lib/cn';
+import { cn } from './cn';
 
 export interface DialogProps {
   open: boolean;

@@ -1,5 +1,5 @@
 import { useStatus } from '@mioagent/api-client-react';
-import { StateBadge } from '../../ui';
+import { StateBadge } from '@mioagent/ui';
 
 export function BaseMcpView() {
   const { data: sd } = useStatus();

@@ -3,7 +3,7 @@ import { useAccount } from 'wagmi';
 import { useStatus } from '@mioagent/api-client-react';
 import { CHAIN_ENV, isMainnetReadonly } from '../../lib/chain';
 import { formatRiskProvider } from '../../lib/format';
-import { StateBadge, type StateKind } from '../../ui';
+import { StateBadge, type StateKind } from '@mioagent/ui';
 
 function tbState(s?: string): StateKind {
   if (s === 'connected') return 'live';

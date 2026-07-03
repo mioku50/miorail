@@ -1,5 +1,5 @@
 import { useUiStore } from '../../lib/state';
-import { StateBadge } from '../../ui';
+import { StateBadge } from '@mioagent/ui';
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (

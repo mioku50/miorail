@@ -10,3 +10,6 @@ export { Tooltip } from './Tooltip';
 export { Tabs } from './Tabs';
 export type { TabItem } from './Tabs';
 export { Kbd } from './Kbd';
+export { ThemeProvider, useTheme } from './ThemeProvider';
+export { cn } from './cn';
+export type { ClassValue } from './cn';
