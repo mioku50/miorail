@@ -1499,13 +1499,11 @@ function ConfigurePage() {
          </div>
          <div className="flex items-center justify-between py-1.5 border-b border-line">
            <span className="font-medium text-sm text-ink">Approval Scanner</span>
-           <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${(statusData?.approvals?.status === 'connected' || portfolio?.providers?.approvals === 'connected') ? 'bg-green-soft text-green border-green/20' : (statusData?.approvals?.status === 'failed' || portfolio?.providers?.approvals === 'failed') ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20'}`}>
+           <span className={`text-xs font-medium px-2.5 py-0.5 rounded border ${statusData?.approvals?.status === 'connected' ? 'bg-green-soft text-green border-green/20' : statusData?.approvals?.status === 'failed' ? 'bg-red-soft text-red border-red/20' : 'bg-amber-soft text-amber border-amber/20'}`}>
              {statusData ? (
                statusData.approvals?.status === 'connected' ? `${statusData.approvals?.provider || 'moralis'} connected` :
                statusData.approvals?.status === 'failed' ? 'Failed' : 'Missing'
-             ) : (
-               portfolio?.providers?.approvals === 'connected' ? `${portfolio?.providers?.approvalProvider || 'moralis'} connected` : 'Missing'
-             )}
+             ) : 'Checking...'}
            </span>
          </div>
          <div className="flex items-center justify-between py-1.5 border-b border-line">

@@ -232,6 +232,8 @@ export const PortfolioProvidersSchema = z.object({
   priceProvider: z.enum(["coingecko", "moralis", "mock", "none"]).optional(),
   risk: z.enum(["connected", "missing", "failed", "partial"]),
   riskProvider: z.enum(["goplus", "none"]).optional(),
+  approvals: z.enum(["connected", "missing", "failed", "partial"]).optional(),
+  approvalProvider: z.enum(["moralis", "alchemy", "mock", "none"]).optional(),
 });
 
 

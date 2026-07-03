@@ -1,11 +1,13 @@
 import { getTokenBalancesProviderFromEnv, getPriceProviderFromEnv, getTokenSecurityProviderFromEnv, getApprovalProviderFromEnv, type TokenSecurityResult, type TokenSecurityFlags, type TokenSecurityProviderName, type TokenSecurityStatus, type TokenApproval } from '@mioagent/data-providers';
 
+export type { TokenApproval } from '@mioagent/data-providers';
+
 export interface ApprovalFinding {
-  tokenSymbol: string;
+  tokenSymbol?: string;
   tokenAddress: string;
   spenderAddress: string;
   spenderLabel?: string;
-  allowanceFormatted: string;
+  allowanceFormatted?: string;
   isUnlimited: boolean;
   riskLevel: "critical" | "high" | "medium" | "low";
   reason: string;
@@ -16,7 +18,7 @@ export interface ApprovalRecommendation {
   title: string;
   description: string;
   riskLevel: "critical" | "high" | "medium" | "low";
-  tokenSymbol: string;
+  tokenSymbol?: string;
   spenderAddress: string;
   spenderLabel?: string;
   calls: [];
@@ -54,6 +56,7 @@ export interface TokenInfo {
   verified?: boolean;
   possibleSpam?: boolean;
   security?: TokenInfoSecurity;
+  dataFreshness?: "live" | "cached";
 }
 
 export interface PortfolioData {
@@ -67,7 +70,7 @@ export interface PortfolioData {
     tokenBalancesProvider: string;
     prices: string;
     priceProvider?: string;
-    risk: "connected" | "missing" | "failed";
+    risk: "connected" | "missing" | "failed" | "partial";
     riskProvider?: TokenSecurityProviderName;
     approvals?: string;
     approvalProvider?: string;
@@ -115,7 +118,7 @@ export interface PortfolioRiskAnalysis {
   };
   securityProvider: {
     provider: TokenSecurityProviderName;
-    status: "connected" | "missing" | "failed";
+    status: "connected" | "missing" | "failed" | "partial";
   };
   tokenFindings: TokenFinding[];
   suggestedNextSteps: string[];
@@ -480,10 +483,11 @@ export function analyzeApprovalsForRisk(
     const hasVerifiedLabel = Boolean(a.spenderLabel && a.spenderLabel.trim() !== '');
     const isZero = a.allowanceRaw === '0' || (!a.isUnlimited && Number(a.allowanceFormatted) === 0);
 
-    let isMajorValueToken = majorSymbols.includes(a.tokenSymbol.toUpperCase());
+    const tokenSymbolUpper = (a.tokenSymbol || '').toUpperCase();
+    let isMajorValueToken = tokenSymbolUpper !== '' && majorSymbols.includes(tokenSymbolUpper);
     if (portfolio?.tokens) {
       const match = portfolio.tokens.find(
-        t => t.address.toLowerCase() === a.tokenAddress.toLowerCase() || t.symbol.toUpperCase() === a.tokenSymbol.toUpperCase()
+        t => t.address.toLowerCase() === a.tokenAddress.toLowerCase() || (tokenSymbolUpper !== '' && t.symbol.toUpperCase() === tokenSymbolUpper)
       );
       if (match && match.usdValue && Number(match.usdValue) > 0) {
         isMajorValueToken = true;
