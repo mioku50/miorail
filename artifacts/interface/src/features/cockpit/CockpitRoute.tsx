@@ -44,7 +44,7 @@ export function CockpitRoute() {
             </p>
           </div>
           <StateBadge
-            state={autonomyState?.sessionKey?.status === 'configured' ? 'ok' : autonomyState?.sessionKey?.status === 'inactive' ? 'risk' : 'missing'}
+            state={autonomyState?.sessionKey?.status === 'configured' ? 'live' : autonomyState?.sessionKey?.status === 'inactive' ? 'failed' : 'missing'}
             label={autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory' ? 'configured in app' : autonomyState?.autonomy?.source === 'onchain' ? 'onchain active' : autonomyState?.sessionKey?.status === 'inactive' ? 'kill switch active' : 'not configured'}
             title={autonomyState?.sessionKey?.status === 'configured' ? 'Session key configured in app memory' : 'No session key is active'}
           />
