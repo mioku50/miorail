@@ -10,8 +10,19 @@ export function TopBar() {
   return (
     <header className="h-[56px] flex items-center px-[18px] bg-panel border-b border-line gap-4">
       <div className="flex items-center gap-2 font-bold text-ink">
-        <div className="w-[26px] h-[26px] rounded-lg bg-accent text-white flex items-center justify-center text-sm font-bold">M</div>
-        <span>MioAgent</span>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="26" height="26" fill="none" aria-hidden="true">
+          <path d="M 10 50 L 10 14" stroke="#3D46F2" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round"/>
+          <path d="M 10 14 L 32 36" stroke="#3D46F2" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round"/>
+          <path d="M 32 36 L 54 14" stroke="#3D46F2" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round"/>
+          <path d="M 54 14 L 54 50" stroke="#3D46F2" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round"/>
+          <line x1="10" y1="22" x2="2"  y2="18" stroke="#F27EE0" strokeWidth="3" strokeLinecap="round"/>
+          <line x1="10" y1="30" x2="1"  y2="30" stroke="#F27EE0" strokeWidth="3" strokeLinecap="round"/>
+          <line x1="10" y1="38" x2="2"  y2="42" stroke="#F27EE0" strokeWidth="3" strokeLinecap="round"/>
+          <line x1="54" y1="22" x2="62" y2="18" stroke="#F27EE0" strokeWidth="3" strokeLinecap="round"/>
+          <line x1="54" y1="30" x2="63" y2="30" stroke="#F27EE0" strokeWidth="3" strokeLinecap="round"/>
+          <line x1="54" y1="38" x2="62" y2="42" stroke="#F27EE0" strokeWidth="3" strokeLinecap="round"/>
+        </svg>
+        <span>Miorail</span>
         <span className={`text-[10px] px-1.5 py-0.5 rounded ml-1 font-mono normal-case tracking-normal border ${readOnly ? 'bg-warn-soft text-warn border-warn/30' : 'bg-accent-soft text-accent border-accent/30'}`}>
           {networkLabel}
         </span>

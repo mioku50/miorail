@@ -1,8 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" fill="none">
   <!-- M letterform with rounded strokes, royal blue #3D46F2 -->
+  <!-- Left leg of M -->
   <path d="M 10 50 L 10 14" stroke="#3D46F2" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Left diagonal down to center valley -->
   <path d="M 10 14 L 32 36" stroke="#3D46F2" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Right diagonal up from center valley -->
   <path d="M 32 36 L 54 14" stroke="#3D46F2" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Right leg of M -->
   <path d="M 54 14 L 54 50" stroke="#3D46F2" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
 
   <!-- Left whiskers: 3 pink short strokes fanning left from left leg -->

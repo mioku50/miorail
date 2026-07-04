@@ -12,7 +12,7 @@ const queryClient = new QueryClient();
 
 const config = createConfig({
   chains: [base, baseSepolia],
-  connectors: [injected(), coinbaseWallet({ appName: 'MioAgent' })],
+  connectors: [injected(), coinbaseWallet({ appName: 'Miorail' })],
   transports: {
     [base.id]: http(),
     [baseSepolia.id]: http(),

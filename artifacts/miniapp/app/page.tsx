@@ -33,8 +33,19 @@ export default function Home() {
     <main className="min-h-screen bg-bg text-ink flex flex-col gap-3 p-3">
       <header className="flex items-center justify-between">
         <div className="flex items-center gap-2 font-bold">
-          <span className="w-6 h-6 rounded-md bg-accent text-white flex items-center justify-center text-xs font-bold">M</span>
-          MioAgent
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="24" height="24" fill="none" aria-hidden="true">
+            <path d="M 10 50 L 10 14" stroke="#3D46F2" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M 10 14 L 32 36" stroke="#3D46F2" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M 32 36 L 54 14" stroke="#3D46F2" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M 54 14 L 54 50" stroke="#3D46F2" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round"/>
+            <line x1="10" y1="22" x2="2"  y2="18" stroke="#F27EE0" strokeWidth="3" strokeLinecap="round"/>
+            <line x1="10" y1="30" x2="1"  y2="30" stroke="#F27EE0" strokeWidth="3" strokeLinecap="round"/>
+            <line x1="10" y1="38" x2="2"  y2="42" stroke="#F27EE0" strokeWidth="3" strokeLinecap="round"/>
+            <line x1="54" y1="22" x2="62" y2="18" stroke="#F27EE0" strokeWidth="3" strokeLinecap="round"/>
+            <line x1="54" y1="30" x2="63" y2="30" stroke="#F27EE0" strokeWidth="3" strokeLinecap="round"/>
+            <line x1="54" y1="38" x2="62" y2="42" stroke="#F27EE0" strokeWidth="3" strokeLinecap="round"/>
+          </svg>
+          Miorail
         </div>
         <div className="flex items-center gap-2">
           <WalletConnect />
@@ -79,7 +90,7 @@ export default function Home() {
         <div className="text-[11px] font-mono uppercase tracking-wider text-ink-3 mb-2">Agent Stream</div>
         <div ref={streamRef} className="flex-1 flex flex-col gap-2 overflow-y-auto min-h-[160px] mb-2">
           {messages.length === 0 ? (
-            <p className="text-xs text-ink-3 italic">Ask MioAgent about your Base wallet.</p>
+            <p className="text-xs text-ink-3 italic">Ask Miorail about your Base wallet.</p>
           ) : (
             messages.slice(-8).map((m, i) => (
               <div key={i} className={m.role === "user" ? "text-right" : ""}>
@@ -101,7 +112,7 @@ export default function Home() {
             onKeyDown={(e) => {
               if (e.key === "Enter") send(input);
             }}
-            placeholder="Ask MioAgent…"
+            placeholder="Ask Miorail…"
             className="flex-1 bg-panel-2 border border-line rounded-md px-2 py-1.5 text-xs text-ink placeholder:text-ink-3 focus:outline-none focus:border-accent"
           />
           <Button size="sm" onClick={() => send(input)} disabled={!input.trim() || sendMessage.isPending}>

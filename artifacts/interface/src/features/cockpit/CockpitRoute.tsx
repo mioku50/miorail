@@ -50,11 +50,11 @@ export function CockpitRoute() {
           />
         </div>
 
-        {/* What MioAgent can do now / What is blocked / What unlocks */}
+        {/* What Miorail can do now / What is blocked / What unlocks */}
         <section className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
           <div className="bg-panel border border-line rounded-xl p-3.5 flex flex-col justify-between gap-2">
             <div>
-              <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-ink-3 mb-1">What MioAgent Can Do Now</div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-ink-3 mb-1">What Miorail Can Do Now</div>
               <div className="text-[11px] text-ink-2 leading-relaxed">
                 Scan wallet token balances via Moralis, query prices via CoinGecko, evaluate token security via GoPlus, and generate risk recommendations.
               </div>

@@ -20,7 +20,7 @@ export function AgentComposer({ input, setInput, onSend, isPending, errorMsg, on
         <textarea
           id="agent-stream-input"
           rows={2}
-          placeholder="Ask MioAgent to review your Base portfolio, flag risky tokens, or create a read-only recommendation..."
+          placeholder="Ask Miorail to review your Base portfolio, flag risky tokens, or create a read-only recommendation..."
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
@@ -56,7 +56,7 @@ export function AgentComposer({ input, setInput, onSend, isPending, errorMsg, on
       </div>
       <div className="text-[11px] text-ink-3 flex items-center gap-1.5 px-1 font-medium">
         <span className="text-ok shrink-0">🛡️</span>
-        <span className="leading-snug">Read-only mode: MioAgent can create recommendations, but cannot execute mainnet transactions.</span>
+        <span className="leading-snug">Read-only mode: Miorail can create recommendations, but cannot execute mainnet transactions.</span>
       </div>
     </div>
   );

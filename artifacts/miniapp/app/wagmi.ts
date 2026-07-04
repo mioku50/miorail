@@ -11,8 +11,8 @@ import { baseAccount, coinbaseWallet, injected } from "wagmi/connectors";
 export const wagmiConfig = createConfig({
   chains: [base, baseSepolia],
   connectors: [
-    baseAccount({ appName: "MioAgent" }),
-    coinbaseWallet({ appName: "MioAgent" }),
+    baseAccount({ appName: "Miorail" }),
+    coinbaseWallet({ appName: "Miorail" }),
     injected(),
   ],
   storage: createStorage({ storage: cookieStorage }),

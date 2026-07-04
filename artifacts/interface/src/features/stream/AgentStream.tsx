@@ -127,9 +127,9 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
         {displayMessages.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center p-2 text-center my-auto animate-in fade-in">
             <div className="w-12 h-12 rounded-2xl bg-accent-soft text-accent flex items-center justify-center text-2xl mb-3 shadow-sm">✨</div>
-            <h3 className="text-sm font-bold text-ink mb-1.5">Ask MioAgent anything about your Base wallet</h3>
+            <h3 className="text-sm font-bold text-ink mb-1.5">Ask Miorail anything about your Base wallet</h3>
             <p className="text-xs text-ink-2 max-w-[280px] leading-relaxed mb-6">
-              MioAgent can review your portfolio, flag suspicious tokens, create read-only recommendations, and explain what it would do before any execution.
+              Miorail can review your portfolio, flag suspicious tokens, create read-only recommendations, and explain what it would do before any execution.
             </p>
             <div className="flex flex-wrap gap-2 justify-center max-w-[340px]">
               {PROMPT_CHIPS.map((chip, idx) => (

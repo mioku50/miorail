@@ -10,7 +10,7 @@ export async function generateMetadata(): Promise<Metadata> {
     description: appManifest.miniapp.description,
     other: {
       // Base App registration (base.dev). Replace with your registered app id.
-      "base:app_id": "mioagent-placeholder",
+      "base:app_id": "miorail-placeholder",
       // Optional Farcaster distribution embed (static metadata only — no
       // Farcaster runtime SDK is imported anywhere in this app).
       "fc:miniapp": JSON.stringify({

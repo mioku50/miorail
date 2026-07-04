@@ -26,10 +26,10 @@ export const appManifest = {
   },
   miniapp: {
     version: "1",
-    name: "MioAgent",
-    subtitle: "Honest onchain agent cockpit",
+    name: "Miorail",
+    subtitle: "Autonomous Base agent on rails",
     description:
-      "MioAgent reviews your Base portfolio, flags risky tokens, and creates read-only recommendations — with honest states, x402 pay-per-action, and safe autonomy via session keys.",
+      "Miorail reviews your Base portfolio, flags risky tokens, and creates read-only recommendations — with honest states, x402 pay-per-action, and safe autonomy via session keys.",
     iconUrl: `${ROOT_URL}/icon.png`,
     splashImageUrl: `${ROOT_URL}/splash.png`,
     splashBackgroundColor: "#0A0B0F",
@@ -37,9 +37,9 @@ export const appManifest = {
     primaryCategory: "utility",
     tags: ["base", "agent", "portfolio", "security"],
     heroImageUrl: `${ROOT_URL}/hero.png`,
-    tagline: "Honest onchain agent cockpit for Base",
-    ogTitle: "MioAgent",
-    ogDescription: "Honest onchain agent cockpit for Base — portfolio risk, x402, safe autonomy.",
+    tagline: "Autonomous Base agent on rails — safe autonomy, x402 metering",
+    ogTitle: "Miorail",
+    ogDescription: "Autonomous Base agent on rails — portfolio risk, x402, safe autonomy.",
     ogImageUrl: `${ROOT_URL}/hero.png`,
   },
 } as const;

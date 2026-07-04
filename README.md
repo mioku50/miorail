@@ -1,6 +1,8 @@
-# MioAgent
+# Miorail
 
-**MioAgent** is a Base-native AI command center for users who want an agent that can watch the market, understand their preferences, prepare onchain actions, and execute only inside clearly defined safety limits.
+> formerly MioAgent
+
+**Miorail** is a Base-native AI command center for users who want an agent that can watch the market, understand their preferences, prepare onchain actions, and execute only inside clearly defined safety limits.
 
 It is designed as an open-source, self-hostable alternative to Base agent terminals: the same useful primitives — chat, tools, scanners, memory, wallet actions — but with two important upgrades:
 
@@ -16,7 +18,7 @@ It is designed as an open-source, self-hostable alternative to Base agent termin
 
 ## Product vision
 
-MioAgent is not just a chatbot and not just a wallet dashboard.
+Miorail is not just a chatbot and not just a wallet dashboard.
 
 The goal is to become a personal AI operator for Base:
 
@@ -27,7 +29,7 @@ The goal is to become a personal AI operator for Base:
 - it charges compute transparently with x402;
 - it can graduate from manual approval to limited safe autonomy.
 
-The user should not need to jump between explorers, dashboards, portfolio trackers, protocol UIs, risk tools, and wallet popups. MioAgent brings those workflows into one Base-native terminal.
+The user should not need to jump between explorers, dashboards, portfolio trackers, protocol UIs, risk tools, and wallet popups. Miorail brings those workflows into one Base-native terminal.
 
 ---
 
@@ -42,7 +44,7 @@ A normal Base user faces several problems:
 - autonomous agents are risky if they have unlimited permissions;
 - compute costs are unclear when the agent runs continuously.
 
-MioAgent solves this by separating **thinking**, **preparation**, **payment**, and **execution**.
+Miorail solves this by separating **thinking**, **preparation**, **payment**, and **execution**.
 
 The agent can think and recommend, but actions are routed through safety checks, the Action Inbox, x402 metering, and eventually bounded autonomy.
 
@@ -58,7 +60,7 @@ They can ask:
 Watch my Base portfolio, alert me if risk changes, find useful actions, and only execute inside my daily limit.
 ```
 
-MioAgent should be able to:
+Miorail should be able to:
 
 1. read the user's configured memory and policy;
 2. check Base data through enabled tools and MCP servers;
@@ -74,7 +76,7 @@ This turns the product into a Base-native agent terminal for everyday onchain op
 
 ---
 
-## How MioAgent works
+## How Miorail works
 
 ```text
 User
@@ -100,7 +102,7 @@ The user talks to the agent in natural language. The agent can answer, call tool
 
 ### 2. Memory and policy
 
-MioAgent is designed around explicit user memory:
+Miorail is designed around explicit user memory:
 
 - preferred tokens;
 - blocked protocols;
@@ -114,7 +116,7 @@ The target model is **markdown-as-memory + Postgres for structured data**. The a
 
 ### 3. Tool layer and Base MCP
 
-MioAgent uses a tool layer where each source can be enabled or disabled.
+Miorail uses a tool layer where each source can be enabled or disabled.
 
 Target integrations include:
 
@@ -175,7 +177,7 @@ This is the main safety boundary between AI reasoning and onchain execution.
 
 Base MCP is the execution bridge between the agent and Base-native wallet actions.
 
-In the target architecture, MioAgent uses Base MCP to:
+In the target architecture, Miorail uses Base MCP to:
 
 - prepare wallet-aware calls;
 - build EIP-5792 call bundles;
@@ -183,7 +185,7 @@ In the target architecture, MioAgent uses Base MCP to:
 - receive approval URLs or request IDs;
 - keep execution no-custody and user-controlled.
 
-Without the approval provider configured, MioAgent must fail closed:
+Without the approval provider configured, Miorail must fail closed:
 
 ```text
 Approval provider is not configured. Action was not executed.
@@ -204,7 +206,7 @@ Continuous agents consume real compute:
 - protocol queries;
 - background jobs.
 
-MioAgent's target model is to meter billable actions through **x402**.
+Miorail's target model is to meter billable actions through **x402**.
 
 The desired flow:
 
@@ -242,7 +244,7 @@ Target x402 features:
 
 Manual approval is safe, but slow. Full autonomy is powerful, but dangerous.
 
-MioAgent's answer is **bounded autonomy**.
+Miorail's answer is **bounded autonomy**.
 
 The user can grant a limited session key or spend permission with:
 
@@ -269,7 +271,7 @@ Outside those boundaries, execution must be blocked and logged.
 
 ## Differentiator 3: Security as a product
 
-MioAgent should make safety visible, not hidden.
+Miorail should make safety visible, not hidden.
 
 Every prepared action should eventually include:
 
@@ -379,7 +381,7 @@ This is not the final product yet. The current version proves the architecture a
 
 ## Safety notice
 
-MioAgent is an experimental MVP.
+Miorail is an experimental MVP.
 
 Do not use it with real funds until the wallet approval flow, action simulation, permission boundaries, x402 validation, and security checks are production hardened.
 
@@ -387,9 +389,9 @@ Do not use it with real funds until the wallet approval flow, action simulation,
 
 # Русская версия
 
-# MioAgent
+# Miorail
 
-**MioAgent** — это Base-native AI command center для пользователей, которым нужен агент, способный следить за рынком, понимать их предпочтения, готовить onchain-действия и выполнять их только внутри заранее заданных границ безопасности.
+**Miorail** — это Base-native AI command center для пользователей, которым нужен агент, способный следить за рынком, понимать их предпочтения, готовить onchain-действия и выполнять их только внутри заранее заданных границ безопасности.
 
 Проект задуман как open-source, self-hostable альтернатива Base agent terminal: те же полезные элементы — чат, tools, scanners, memory, wallet actions — но с двумя важными усилениями:
 
@@ -416,7 +418,7 @@ MioAgent — это не просто chatbot и не просто wallet dashbo
 - прозрачно считает compute через x402;
 - может перейти от manual approval к ограниченной безопасной автономии.
 
-Пользователь не должен постоянно прыгать между explorers, dashboards, portfolio trackers, protocol UIs, risk tools и wallet popups. MioAgent собирает эти workflows в один Base-native terminal.
+Пользователь не должен постоянно прыгать между explorers, dashboards, portfolio trackers, protocol UIs, risk tools и wallet popups. Miorail собирает эти workflows в один Base-native terminal.
 
 ---
 
@@ -431,7 +433,7 @@ MioAgent — это не просто chatbot и не просто wallet dashbo
 - автономные агенты опасны, если им дать неограниченные права;
 - compute costs непрозрачны при постоянной работе агента.
 
-MioAgent решает это через разделение **мышления**, **подготовки**, **оплаты** и **исполнения**.
+Miorail решает это через разделение **мышления**, **подготовки**, **оплаты** и **исполнения**.
 
 Агент может думать и рекомендовать, но действия проходят через safety checks, Action Inbox, x402 metering и в будущем bounded autonomy.
 
@@ -447,7 +449,7 @@ MioAgent решает это через разделение **мышления*
 Watch my Base portfolio, alert me if risk changes, find useful actions, and only execute inside my daily limit.
 ```
 
-MioAgent должен уметь:
+Miorail должен уметь:
 
 1. читать user memory и policy;
 2. проверять Base data через включённые tools и MCP servers;
@@ -463,7 +465,7 @@ MioAgent должен уметь:
 
 ---
 
-## Как работает MioAgent
+## Как работает Miorail
 
 ```text
 User
@@ -489,7 +491,7 @@ Base Smart Wallet / Base Account
 
 ### 2. Memory and policy
 
-MioAgent строится вокруг явной пользовательской памяти:
+Miorail строится вокруг явной пользовательской памяти:
 
 - preferred tokens;
 - blocked protocols;
@@ -503,7 +505,7 @@ MioAgent строится вокруг явной пользовательско
 
 ### 3. Tool layer and Base MCP
 
-MioAgent использует tool layer, где каждый источник можно включить или выключить.
+Miorail использует tool layer, где каждый источник можно включить или выключить.
 
 Целевые интеграции:
 
@@ -564,7 +566,7 @@ Scanners — это фоновые agent loops с отключёнными write
 
 Base MCP — это execution bridge между агентом и Base-native wallet actions.
 
-В целевой архитектуре MioAgent использует Base MCP, чтобы:
+В целевой архитектуре Miorail использует Base MCP, чтобы:
 
 - готовить wallet-aware calls;
 - собирать EIP-5792 call bundles;
@@ -572,7 +574,7 @@ Base MCP — это execution bridge между агентом и Base-native wa
 - получать approval URLs или request IDs;
 - сохранять execution no-custody и user-controlled.
 
-Если approval provider не настроен, MioAgent обязан fail closed:
+Если approval provider не настроен, Miorail обязан fail closed:
 
 ```text
 Approval provider is not configured. Action was not executed.
@@ -593,7 +595,7 @@ Approval provider is not configured. Action was not executed.
 - protocol queries;
 - background jobs.
 
-Целевая модель MioAgent — metering billable actions через **x402**.
+Целевая модель Miorail — metering billable actions через **x402**.
 
 Желаемый flow:
 
@@ -631,7 +633,7 @@ Ledger records action → cost → payment proof
 
 Manual approval безопасен, но медленный. Полная автономия мощная, но опасная.
 
-Ответ MioAgent — **bounded autonomy**.
+Ответ Miorail — **bounded autonomy**.
 
 Пользователь может выдать ограниченный session key или spend permission с параметрами:
 
@@ -658,7 +660,7 @@ Manual approval безопасен, но медленный. Полная авт
 
 ## Дифференциатор 3: Security as a product
 
-MioAgent должен делать безопасность видимой.
+Miorail должен делать безопасность видимой.
 
 Каждое подготовленное действие в целевой версии должно включать:
 
@@ -768,7 +770,7 @@ MioAgent должен делать безопасность видимой.
 
 ## Safety notice
 
-MioAgent — экспериментальный MVP.
+Miorail — экспериментальный MVP.
 
 Не используйте его с реальными средствами, пока wallet approval flow, action simulation, permission boundaries, x402 validation и security checks не будут production hardened.
 
