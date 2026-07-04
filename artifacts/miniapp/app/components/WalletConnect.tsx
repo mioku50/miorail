@@ -30,12 +30,21 @@ export function WalletConnect() {
   if (isConnected && address) {
     return (
       <div className="flex items-center gap-2">
-        <span className="font-mono text-[11px] text-ink-2 bg-panel-2 border border-line rounded-md px-2 py-1">
-          {truncateAddress(address)}
-        </span>
-        <Button size="sm" variant="ghost" onClick={() => disconnect()}>
-          Disconnect
-        </Button>
+        {/* Pill chip — address + disconnect */}
+        <button
+          type="button"
+          onClick={() => disconnect()}
+          className="flex items-center gap-1.5 bg-panel-2 border border-line rounded-full pl-3 pr-2 py-1 hover:border-ink-3 transition-colors"
+          title="Disconnect wallet"
+        >
+          <span
+            className="text-[11px] text-ink-2"
+            style={{ fontFamily: "var(--font-mono)" }}
+          >
+            {truncateAddress(address)}
+          </span>
+          <span className="text-[10px] text-ink-3">✕</span>
+        </button>
       </div>
     );
   }
@@ -55,7 +64,7 @@ export function WalletConnect() {
 
   return (
     <>
-      <Button size="sm" onClick={() => setOpen(true)}>
+      <Button size="sm" onClick={() => setOpen(true)} className="rounded-full px-4">
         Connect
       </Button>
       {open && (

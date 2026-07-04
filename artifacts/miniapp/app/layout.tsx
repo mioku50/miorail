@@ -1,5 +1,5 @@
-import type { Metadata } from "next";
-import { Inter, Source_Code_Pro } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import { Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import { appManifest } from "@/manifest";
 import { RootProvider } from "./rootProvider";
 import "./globals.css";
@@ -28,14 +28,33 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
+export const viewport: Viewport = {
+  themeColor: "#070A17",
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
+
+// Fonts aligned with Miorail Ink design tokens (lib/ui/src/tokens.css).
+// --font-sans  → Inter (body)
+// --font-display → Space Grotesk (headings/brand)
+// --font-mono  → JetBrains Mono (data/code)
 const inter = Inter({
-  variable: "--font-inter",
+  variable: "--font-sans",
   subsets: ["latin"],
+  display: "swap",
 });
 
-const sourceCodePro = Source_Code_Pro({
-  variable: "--font-source-code-pro",
+const spaceGrotesk = Space_Grotesk({
+  variable: "--font-display",
   subsets: ["latin"],
+  display: "swap",
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  variable: "--font-mono",
+  subsets: ["latin"],
+  display: "swap",
 });
 
 export default function RootLayout({
@@ -45,7 +64,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${inter.variable} ${sourceCodePro.variable}`}>
+      <body className={`${inter.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable}`}>
         <RootProvider>{children}</RootProvider>
       </body>
     </html>
