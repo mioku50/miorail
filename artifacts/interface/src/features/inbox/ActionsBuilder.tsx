@@ -30,8 +30,8 @@ export function ActionsBuilder() {
   };
 
   return (
-    <main className="flex-1 bg-bg p-[18px] flex flex-col gap-4 overflow-y-auto">
-      <h2 className="text-[16px] font-bold text-ink">Actions Builder</h2>
+    <main className="flex-1 bg-bg p-5 flex flex-col gap-4 overflow-y-auto pb-16 md:pb-5">
+      <h1 className="text-[20px] font-display font-bold text-ink tracking-[-0.02em]">Actions Builder</h1>
       <div className="bg-panel border border-line rounded-xl p-5 flex flex-col gap-4 shadow-sm">
         <div>
           <label className="text-sm font-bold text-ink flex justify-between items-center">

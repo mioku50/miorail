@@ -6,8 +6,8 @@ export function HistoryPage() {
   const messages = chatData?.messages || [];
   const actions = actionsData?.actions || [];
   return (
-    <main className="flex-1 bg-bg p-[18px] flex flex-col gap-4 overflow-y-auto">
-      <h2 className="text-[16px] font-bold text-ink">History</h2>
+    <main className="flex-1 bg-bg p-5 flex flex-col gap-4 overflow-y-auto pb-16 md:pb-5">
+      <h1 className="text-[20px] font-display font-bold text-ink tracking-[-0.02em]">History</h1>
       <div className="flex gap-4">
         <div className="flex-1 bg-panel border border-line rounded-xl p-4">
           <h3 className="text-sm font-bold mb-3">Recent Messages</h3>

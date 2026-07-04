@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Route, Switch } from 'wouter';
 import { useUiStore } from '../lib/state';
 import { TopBar } from '../shell/TopBar';
+import { BottomNav } from '../shell/TabBar';
 import { CommandPalette } from '../shell/CommandPalette';
 import { Toaster } from '../shell/Toast';
 import { CockpitRoute } from '../features/cockpit/CockpitRoute';
@@ -18,6 +19,7 @@ import { FuelMeter } from '../features/x402/FuelMeter';
 export function App() {
   const togglePalette = useUiStore((s) => s.togglePalette);
   const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -25,18 +27,51 @@ export function App() {
         e.preventDefault();
         togglePalette();
       }
-      if (e.key === 'Escape') setPaletteOpen(false);
+      if (e.key === 'Escape') {
+        setPaletteOpen(false);
+        setDrawerOpen(false);
+      }
     };
     document.addEventListener('keydown', down);
     return () => document.removeEventListener('keydown', down);
   }, [togglePalette, setPaletteOpen]);
 
+  // Close drawer when viewport grows to lg
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)');
+    const handler = (e: MediaQueryListEvent) => {
+      if (e.matches) setDrawerOpen(false);
+    };
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
   return (
-    <div className="h-screen w-full flex flex-col font-sans">
-      <TopBar />
-      <div className="flex-1 flex overflow-hidden">
-        <OpsRail />
-        <div className="flex-1 flex overflow-hidden">
+    /* Desktop: h-screen overflow-hidden; mobile: natural scroll */
+    <div className="w-full flex flex-col font-sans lg:h-screen lg:overflow-hidden">
+      <TopBar onHamburgerClick={() => setDrawerOpen((v) => !v)} drawerOpen={drawerOpen} />
+
+      {/* Mobile drawer overlay */}
+      {drawerOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm lg:hidden"
+          onClick={() => setDrawerOpen(false)}
+        />
+      )}
+
+      <div className="flex-1 flex lg:overflow-hidden min-h-0">
+        {/* OpsRail: fixed sidebar on lg; slide-over drawer on <lg */}
+        <div
+          className={[
+            'fixed top-0 left-0 h-full z-50 transition-transform duration-200 ease-out',
+            'lg:static lg:translate-x-0 lg:z-auto lg:h-auto',
+            drawerOpen ? 'translate-x-0' : '-translate-x-full',
+          ].join(' ')}
+        >
+          <OpsRail onClose={() => setDrawerOpen(false)} />
+        </div>
+
+        <div className="flex-1 flex overflow-hidden min-h-0">
           <Switch>
             <Route path="/actions"><ActionsPage /></Route>
             <Route path="/stream"><StreamPage /></Route>
@@ -51,7 +86,10 @@ export function App() {
           </Switch>
         </div>
       </div>
+
       <StatusBar />
+      <BottomNav />
+      {/* Add bottom padding on mobile so content isn't hidden under bottom nav */}
       <CommandPalette />
       <Toaster />
     </div>

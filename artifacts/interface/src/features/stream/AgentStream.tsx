@@ -90,9 +90,9 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
       {/* Header */}
       <div className="px-4 py-3 border-b border-line bg-panel flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2.5">
-          <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${sendMessageMutation.isPending ? 'bg-warn animate-ping' : sendMessageMutation.isError ? 'bg-risk' : 'bg-ok animate-pulse'}`} title="Status" />
+          <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${sendMessageMutation.isPending ? 'bg-warn animate-ping' : sendMessageMutation.isError ? 'bg-risk' : 'bg-pop animate-pulse'}`} title="Status" style={sendMessageMutation.isPending || sendMessageMutation.isError ? undefined : { boxShadow: '0 0 6px var(--color-pop)' }} />
           <div>
-            <div className="text-sm font-bold text-ink flex items-center gap-2">
+            <div className="text-sm font-display font-bold text-ink flex items-center gap-2">
               <span>Agent Stream</span>
               <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${sendMessageMutation.isPending ? 'bg-warn-soft text-warn' : sendMessageMutation.isError ? 'bg-risk-soft text-risk' : 'bg-ok-soft text-ok'}`}>
                 {sendMessageMutation.isPending ? 'Thinking...' : sendMessageMutation.isError ? 'Error' : displayMessages.some((m: any) => m.role === 'assistant' && (m.actionId || m.metadata?.actionId)) ? 'Recommendation created' : 'Ready'}
@@ -127,7 +127,7 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
         {displayMessages.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center p-2 text-center my-auto animate-in fade-in">
             <div className="w-12 h-12 rounded-2xl bg-accent-soft text-accent flex items-center justify-center text-2xl mb-3 shadow-sm">✨</div>
-            <h3 className="text-sm font-bold text-ink mb-1.5">Ask Miorail anything about your Base wallet</h3>
+            <h3 className="text-sm font-display font-bold text-ink mb-1.5">Ask Miorail anything about your Base wallet</h3>
             <p className="text-xs text-ink-2 max-w-[280px] leading-relaxed mb-6">
               Miorail can review your portfolio, flag suspicious tokens, create read-only recommendations, and explain what it would do before any execution.
             </p>

@@ -13,14 +13,14 @@ export type StateKind =
   | 'failed';
 
 const MAP: Record<StateKind, { tone: string; dot: string; label: string }> = {
-  live: { tone: 'text-ok border-ok/30 bg-ok-soft', dot: 'bg-ok', label: 'live' },
-  cached: { tone: 'text-ink-2 border-line bg-panel-2', dot: 'bg-ink-3', label: 'cached' },
-  stale: { tone: 'text-warn border-warn/30 bg-warn-soft', dot: 'bg-warn', label: 'stale' },
-  mock: { tone: 'text-ink-2 border-line bg-panel-2', dot: 'bg-ink-3', label: 'mock' },
-  disconnected: { tone: 'text-risk border-risk/30 bg-risk-soft', dot: 'bg-risk', label: 'disconnected' },
-  missing: { tone: 'text-warn border-warn/30 bg-warn-soft', dot: 'bg-warn', label: 'missing' },
-  disabled: { tone: 'text-ink-3 border-line bg-panel-2', dot: 'bg-ink-3', label: 'disabled' },
-  failed: { tone: 'text-risk border-risk/30 bg-risk-soft', dot: 'bg-risk', label: 'failed' },
+  live: { tone: 'text-ok bg-ok-soft', dot: 'bg-ok', label: 'live' },
+  cached: { tone: 'text-ink-2 bg-panel-2', dot: 'bg-ink-3', label: 'cached' },
+  stale: { tone: 'text-warn bg-warn-soft', dot: 'bg-warn', label: 'stale' },
+  mock: { tone: 'text-ink-2 bg-panel-2', dot: 'bg-ink-3', label: 'mock' },
+  disconnected: { tone: 'text-risk bg-risk-soft', dot: 'bg-risk', label: 'disconnected' },
+  missing: { tone: 'text-warn bg-warn-soft', dot: 'bg-warn', label: 'missing' },
+  disabled: { tone: 'text-ink-3 bg-panel-2', dot: 'bg-ink-3', label: 'disabled' },
+  failed: { tone: 'text-risk bg-risk-soft', dot: 'bg-risk', label: 'failed' },
 };
 
 export interface StateBadgeProps {
@@ -38,12 +38,12 @@ export function StateBadge({ state, label, title, className }: StateBadgeProps) 
     <span
       title={title ?? label ?? m.label}
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-sm border px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-[0.06em]',
+        'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium font-sans',
         m.tone,
         className,
       )}
     >
-      <span className={cn('h-1.5 w-1.5 rounded-full', m.dot)} />
+      <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', m.dot)} />
       {label ?? m.label}
     </span>
   );

@@ -15,15 +15,17 @@ export interface TabsProps {
 
 export function Tabs({ tabs, value, onChange, className }: TabsProps) {
   return (
-    <div className={cn('flex items-center gap-1 border-b border-line', className)}>
+    <div className={cn('flex items-center gap-1', className)}>
       {tabs.map((t) => (
         <button
           key={t.id}
           type="button"
           onClick={() => onChange(t.id)}
           className={cn(
-            'border-b-2 px-3 py-2 text-[13px] transition-colors',
-            value === t.id ? 'border-accent text-ink' : 'border-transparent text-ink-2 hover:text-ink',
+            'px-3 py-1.5 rounded-full text-[13px] font-medium transition-colors duration-150',
+            value === t.id
+              ? 'bg-accent-soft text-accent-2'
+              : 'text-ink-2 hover:text-ink hover:bg-panel-2',
           )}
         >
           {t.label}

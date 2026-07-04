@@ -40,9 +40,9 @@ export function ActionInbox() {
   }, [focusActionId, actions, clearFocus]);
 
   return (
-    <main className="flex-1 bg-bg p-[18px] flex flex-col gap-4 overflow-y-auto">
+    <main className="flex-1 bg-bg p-5 flex flex-col gap-4 overflow-y-auto pb-16 md:pb-5">
       <div className="flex items-center justify-between mb-2">
-        <h2 className="text-[16px] font-bold text-ink tracking-[-.02em]">Action Inbox</h2>
+        <h1 className="text-[20px] font-display font-bold text-ink tracking-[-0.02em]">Action Inbox</h1>
         <div className="flex gap-1.5 items-center flex-wrap">
           {FILTERS.map((f) => (
             <div key={f} onClick={() => setFilter(f)} className={`px-[11px] py-[5px] rounded-[9px] text-[12px] font-medium border cursor-pointer capitalize ${filter === f ? 'bg-accent text-white border-accent' : 'bg-panel text-ink-2 border-line hover:bg-bg'}`}>

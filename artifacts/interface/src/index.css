@@ -8,18 +8,34 @@ body {
   -webkit-font-smoothing: antialiased;
   margin: 0;
   padding: 0;
-  height: 100vh;
-  overflow: hidden;
+  /* Removed height:100vh and overflow:hidden — mobile can scroll.
+     Desktop layout (lg) enforces h-screen/overflow-hidden via container class. */
 }
 
+/* Thin scrollbars */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #3a4150;
-  border-radius: 8px;
+  background: var(--color-panel-2);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-3);
 }
 .light ::-webkit-scrollbar-thumb {
-  background: #dadce6;
+  background: var(--color-line);
+}
+.light ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-3);
+}
+
+/* Selection */
+::selection {
+  background-color: var(--color-accent-soft);
+  color: var(--color-ink);
 }

@@ -106,10 +106,10 @@ export function ConfigureView() {
   };
 
   return (
-    <main className="flex-1 bg-bg p-[18px] flex flex-col gap-5 overflow-y-auto select-none">
+    <main className="flex-1 bg-bg p-5 flex flex-col gap-5 overflow-y-auto select-none pb-16 md:pb-5">
       <div className="flex items-center justify-between border-b border-line pb-3">
         <div>
-          <h1 className="text-[18px] font-bold text-ink tracking-[-0.02em]">System & Autonomy Configuration</h1>
+          <h1 className="text-[20px] font-display font-bold text-ink tracking-[-0.02em]">System & Autonomy Configuration</h1>
           <p className="text-[12px] text-ink-3 mt-0.5">
             Manage provider connections, testnet spend permissions, and autonomy kill-switch boundaries.
           </p>
