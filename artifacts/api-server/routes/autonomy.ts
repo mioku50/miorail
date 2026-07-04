@@ -29,8 +29,8 @@ async function getAutonomyState(userId: string, query?: { owner?: string; execut
   const isConfigured = autonomy.status === 'configured' || !!autonomy.dailyLimitUsdc;
   const isKillSwitch = autonomy.killSwitch === true;
 
-  let status: 'active' | 'inactive' | 'unconfigured' | 'configured' | 'revoked' | 'expired' = isKillSwitch ? 'inactive' : (isConfigured ? 'active' : 'unconfigured');
-  let sessionKeyStatus: 'configured' | 'unconfigured' | 'inactive' | 'revoked' | 'expired' | 'active' = isKillSwitch ? 'inactive' : (isConfigured ? 'configured' : 'unconfigured');
+  let status: 'active' | 'inactive' | 'unconfigured' | 'configured' | 'revoked' | 'expired' = (isKillSwitch || autonomy.status === 'revoked') ? 'revoked' : (isConfigured ? 'active' : 'unconfigured');
+  let sessionKeyStatus: 'configured' | 'unconfigured' | 'inactive' | 'revoked' | 'expired' | 'active' = (isKillSwitch || autonomy.status === 'revoked') ? 'revoked' : (isConfigured ? 'configured' : 'unconfigured');
   let source: 'memory' | 'onchain' | 'base-sepolia-contract' | 'missing' = isConfigured ? 'memory' : 'missing';
 
   let chainId: number | undefined;
@@ -51,9 +51,11 @@ async function getAutonomyState(userId: string, query?: { owner?: string; execut
   if (isTestnetAutonomyEnabled()) {
     contractAddress = getBaseSepoliaControllerAddress();
     if (!contractAddress) {
-      status = 'unconfigured';
-      sessionKeyStatus = 'unconfigured';
-      source = 'missing';
+      if (!isKillSwitch && autonomy.status !== 'revoked') {
+        status = 'unconfigured';
+        sessionKeyStatus = 'unconfigured';
+        source = 'missing';
+      }
     } else {
       chainId = 84532;
       const queryOwner = query?.owner || owner;
@@ -84,11 +86,19 @@ async function getAutonomyState(userId: string, query?: { owner?: string; execut
             status = 'configured';
             sessionKeyStatus = 'configured';
           }
+        } else if (isKillSwitch || autonomy.status === 'revoked') {
+          status = 'revoked';
+          sessionKeyStatus = 'revoked';
+          source = 'memory';
         } else if (!isConfigured) {
           status = 'unconfigured';
           sessionKeyStatus = 'unconfigured';
           source = 'missing';
         }
+      } else if (isKillSwitch || autonomy.status === 'revoked') {
+        status = 'revoked';
+        sessionKeyStatus = 'revoked';
+        source = 'memory';
       } else if (!isConfigured) {
         status = 'unconfigured';
         sessionKeyStatus = 'unconfigured';
