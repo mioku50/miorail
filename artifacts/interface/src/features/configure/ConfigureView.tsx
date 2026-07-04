@@ -11,7 +11,7 @@ import {
 import { CHAIN_ENV, isMainnetReadonly } from '../../lib/chain';
 import { formatRiskProvider } from '../../lib/format';
 import { StateBadge, type StateKind } from '@mioagent/ui';
-import { useUiStore } from '../../lib/store';
+import { useUiStore } from '../../lib/state';
 
 function tbState(s?: string): StateKind {
   if (s === 'connected') return 'live';
