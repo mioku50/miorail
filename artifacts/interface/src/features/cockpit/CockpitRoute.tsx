@@ -44,9 +44,9 @@ export function CockpitRoute() {
             </p>
           </div>
           <StateBadge
-            state={autonomyState?.sessionKey?.status === 'configured' ? 'live' : autonomyState?.sessionKey?.status === 'inactive' ? 'failed' : 'missing'}
-            label={autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory' ? 'configured in app' : autonomyState?.autonomy?.source === 'onchain' ? 'onchain active' : autonomyState?.sessionKey?.status === 'inactive' ? 'kill switch active' : 'not configured'}
-            title={autonomyState?.sessionKey?.status === 'configured' ? 'Session key configured in app memory' : 'No session key is active'}
+            state={autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'live' : autonomyState?.sessionKey?.status === 'configured' ? 'live' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'failed' : 'missing'}
+            label={autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'testnet verified' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'revoked' : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory' ? 'configured in app' : 'missing'}
+            title={autonomyState?.autonomy?.source === 'base-sepolia-contract' ? 'Verified on Base Sepolia contract' : autonomyState?.sessionKey?.status === 'configured' ? 'Session key configured in app memory' : 'No session key is active'}
           />
         </div>
 
@@ -121,19 +121,21 @@ export function CockpitRoute() {
               <div className="flex items-center justify-between mb-3">
                 <SectionHeader title="Session Key" />
                 <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
-                  autonomyState?.sessionKey?.status === 'configured' 
-                    ? 'bg-ok-soft text-ok border-ok/20 font-bold' 
-                    : autonomyState?.sessionKey?.status === 'inactive' 
-                      ? 'bg-risk-soft text-risk border-risk/20 font-bold' 
-                      : 'bg-panel-2 text-ink-3 border-line'
+                  autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract'
+                    ? 'bg-ok-soft text-ok border-ok/20 font-bold'
+                    : autonomyState?.sessionKey?.status === 'configured'
+                      ? 'bg-ok-soft text-ok border-ok/20 font-bold'
+                      : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch
+                        ? 'bg-risk-soft text-risk border-risk/20 font-bold'
+                        : 'bg-panel-2 text-ink-3 border-line'
                 }`}>
-                  {autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory'
-                    ? 'configured in app' 
-                    : autonomyState?.autonomy?.source === 'onchain' 
-                      ? 'onchain active' 
-                      : autonomyState?.sessionKey?.status === 'inactive' 
-                        ? 'kill switch active' 
-                        : 'unconfigured'}
+                  {autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract'
+                    ? 'testnet verified'
+                    : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch
+                      ? 'revoked'
+                      : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory'
+                        ? 'configured in app'
+                        : 'missing'}
                 </span>
               </div>
               <div className="grid grid-cols-2 gap-2.5 text-xs">

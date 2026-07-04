@@ -11,7 +11,6 @@
     "@mioagent/api-zod": "workspace:*",
     "@mioagent/data-providers": "workspace:*",
     "@mioagent/db": "workspace:*",
-
     "@mioagent/llm": "workspace:*",
     "@mioagent/memory": "workspace:*",
     "@mioagent/observability": "workspace:*",
@@ -26,7 +25,8 @@
     "express-request-context": "^1.0.1",
     "express-session": "^1.19.0",
     "helmet": "^8.2.0",
-    "ulidx": "^2.4.1"
+    "ulidx": "^2.4.1",
+    "viem": "^2.53.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
@@ -38,4 +38,3 @@
     "typescript": "^5.6.3"
   }
 }
-

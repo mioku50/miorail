@@ -5,6 +5,7 @@ export interface ActionIntent {
   reason?: string;
   expectedEffect?: string;
   risk?: 'low' | 'medium' | 'high' | 'unknown';
+  confidence?: number;
 }
 
 export function detectActionIntent(message: string): ActionIntent {
@@ -14,7 +15,7 @@ export function detectActionIntent(message: string): ActionIntent {
   const greetings = ['hello', 'hi', 'hey', 'hi there', 'hello there', 'hey there', 'good morning', 'good afternoon', 'good evening', 'who are you?', 'what can you do?', 'help', 'thanks', 'thank you'];
   if (greetings.includes(lower) || lower.startsWith('hello ') || lower.startsWith('hi ') || lower.startsWith('hey ')) {
     if (!lower.includes('token') && !lower.includes('portfolio') && !lower.includes('risk') && !lower.includes('rebalance') && !lower.includes('swap') && !lower.includes('approval') && !lower.includes('permission') && !lower.includes('yield') && !lower.includes('liquidity') && !lower.includes('monitor') && !lower.includes('security') && !lower.includes('dangerous') && !lower.includes('allowance')) {
-      return { isActionIntent: false };
+      return { isActionIntent: false, confidence: 0.1 };
     }
   }
 
@@ -25,7 +26,8 @@ export function detectActionIntent(message: string): ActionIntent {
       title: 'Token Approval & Permission Review',
       reason: `Automated recommendation created by Agent Stream to review spend permissions and allowances: "${message}"`,
       expectedEffect: 'Scan connected wallet ERC-20 allowances and spend permissions, flag risky or unlimited allowances without creating revoke transactions.',
-      risk: 'low'
+      risk: 'low',
+      confidence: 0.95
     };
   }
 
@@ -36,7 +38,8 @@ export function detectActionIntent(message: string): ActionIntent {
       title: 'Token Security Review',
       reason: `Automated recommendation created by Agent Stream to review token security risks: "${message}"`,
       expectedEffect: 'Scan connected wallet tokens with available metadata and token security provider signals, then flag contract-level warnings without creating transactions.',
-      risk: 'low'
+      risk: 'low',
+      confidence: 0.95
     };
   }
 
@@ -47,7 +50,8 @@ export function detectActionIntent(message: string): ActionIntent {
       title: 'Yield Opportunity Report',
       reason: `Automated recommendation created by Agent Stream to scan for yield opportunities: "${message}"`,
       expectedEffect: 'Analyze Base liquidity pools and generate a read-only yield opportunity report without executing transactions.',
-      risk: 'low'
+      risk: 'low',
+      confidence: 0.95
     };
   }
 
@@ -58,7 +62,8 @@ export function detectActionIntent(message: string): ActionIntent {
       title: 'Portfolio Rebalance Plan',
       reason: `Automated recommendation created by Agent Stream to formulate a rebalance/swap plan: "${message}"`,
       expectedEffect: 'Formulate a read-only execution plan for swapping or rebalancing portfolio assets when conditions are safe.',
-      risk: 'medium'
+      risk: 'medium',
+      confidence: 0.95
     };
   }
 
@@ -69,9 +74,10 @@ export function detectActionIntent(message: string): ActionIntent {
       title: 'Token Risk & Portfolio Review',
       reason: `Automated recommendation created by Agent Stream to review portfolio and flag risky assets: "${message}"`,
       expectedEffect: 'Analyze Base token list, filter spam/airdrop tokens, and flag any high-risk assets.',
-      risk: 'low'
+      risk: 'low',
+      confidence: 0.95
     };
   }
 
-  return { isActionIntent: false };
+  return { isActionIntent: false, confidence: 0.1 };
 }

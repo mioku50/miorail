@@ -358,11 +358,13 @@ export const DeleteWorkflowResponseSchema = z.object({
 
 // Autonomy
 export const AutonomyStateResponseSchema = z.object({
-  status: z.enum(['active', 'inactive', 'unconfigured']),
-  source: z.enum(['memory', 'onchain', 'missing']),
+  status: z.enum(['active', 'inactive', 'unconfigured', 'configured', 'revoked', 'expired']),
+  source: z.enum(['memory', 'onchain', 'base-sepolia-contract', 'missing']),
+  chainId: z.number().optional(),
+  contractAddress: z.string().nullable().optional(),
   sessionKey: z.object({
-    status: z.enum(['configured', 'unconfigured', 'inactive']),
-    source: z.enum(['memory', 'onchain', 'missing']).optional(),
+    status: z.enum(['configured', 'unconfigured', 'inactive', 'revoked', 'expired', 'active']),
+    source: z.enum(['memory', 'onchain', 'base-sepolia-contract', 'missing']).optional(),
     dailyLimitUsdc: z.string().nullable(),
     spentTodayUsdc: z.string(),
     maxPerActionUsdc: z.string().nullable(),
@@ -371,13 +373,19 @@ export const AutonomyStateResponseSchema = z.object({
     whitelist: z.array(z.string()),
     scope: z.string(),
     killSwitch: z.boolean(),
+    owner: z.string().nullable().optional(),
+    executor: z.string().nullable().optional(),
+    token: z.string().nullable().optional(),
+    validUntil: z.union([z.number(), z.string()]).nullable().optional(),
+    txHashLastConfigured: z.string().nullable().optional(),
+    txHashLastRevoked: z.string().nullable().optional(),
   }),
   autonomy: z.object({
     dailySpendLimit: z.string().nullable(),
     maxActionSpend: z.string().nullable(),
     whitelistedProtocolsCount: z.number(),
     mode: z.string(),
-    source: z.enum(['memory', 'onchain', 'missing']),
+    source: z.enum(['memory', 'onchain', 'base-sepolia-contract', 'missing']),
   }),
 });
 
@@ -392,11 +400,36 @@ export const ConfigureAutonomyRequestSchema = z.object({
 export const ConfigureAutonomyResponseSchema = z.object({
   success: z.boolean(),
   state: AutonomyStateResponseSchema,
+  txHash: z.string().optional(),
 });
 
 export const KillAutonomyResponseSchema = z.object({
   success: z.boolean(),
   state: AutonomyStateResponseSchema,
+  txHash: z.string().optional(),
+});
+
+export const TestnetConfigureAutonomyRequestSchema = z.object({
+  dailyLimitUsdc: z.string(),
+  maxPerActionUsdc: z.string(),
+  whitelist: z.array(z.string()),
+  ttlSeconds: z.number(),
+  executor: z.string().optional(),
+  token: z.string().optional(),
+  owner: z.string().optional(),
+});
+
+export const TestnetRevokeAutonomyRequestSchema = z.object({
+  executor: z.string().optional(),
+  token: z.string().optional(),
+  owner: z.string().optional(),
+});
+
+export const TestnetExecuteActionRequestSchema = z.object({
+  target: z.string(),
+  amountUsdc: z.string(),
+  owner: z.string().optional(),
+  token: z.string().optional(),
 });
 
 // x402 Ledger & Pricing

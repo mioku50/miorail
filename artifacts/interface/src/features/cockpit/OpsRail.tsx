@@ -114,15 +114,21 @@ export function OpsRail() {
           <div className="flex items-center justify-between">
             <span className="text-ink-2 text-[11px]">Session Key</span>
             <span className={`text-[10px] font-bold bg-panel-2 border border-line px-1.5 py-0.5 rounded ${
-              autonomyState?.sessionKey?.status === 'configured' ? 'text-ok border-ok/20' : 'text-ink-3'
+              autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract'
+                ? 'text-ok border-ok/20'
+                : autonomyState?.sessionKey?.status === 'configured'
+                  ? 'text-ok border-ok/20'
+                  : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch
+                    ? 'text-risk border-risk/20'
+                    : 'text-ink-3'
             }`}>
-              {autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory'
-                ? 'configured in app'
-                : autonomyState?.autonomy?.source === 'onchain'
-                  ? 'onchain active'
-                  : autonomyState?.sessionKey?.status === 'inactive'
-                    ? 'inactive'
-                    : 'unconfigured'}
+              {autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract'
+                ? 'testnet verified'
+                : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch
+                  ? 'revoked'
+                  : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory'
+                    ? 'configured in app'
+                    : 'missing'}
             </span>
           </div>
           <div className="text-[11px] font-medium text-ink-2 bg-panel-2 px-2 py-1.5 rounded border border-line my-0.5 text-center">

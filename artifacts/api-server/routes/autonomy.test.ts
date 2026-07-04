@@ -62,4 +62,43 @@ describe('Autonomy API Hardening Guarantees', () => {
     assert.strictEqual(res.body.state.sessionKey.scope, 'Custom Yield Scope');
     assert.strictEqual(res.body.state.sessionKey.ttlSeconds, 43200);
   });
+
+  test('POST /api/autonomy/testnet/configure rejects with 403 when ENABLE_TESTNET_AUTONOMY is not true', async () => {
+    delete process.env.ENABLE_TESTNET_AUTONOMY;
+    const res = await request(app).post('/api/autonomy/testnet/configure').send({
+      dailyLimitUsdc: '100',
+      maxPerActionUsdc: '20',
+      whitelist: ['0x1111111111111111111111111111111111111111'],
+      ttlSeconds: 3600,
+    });
+    assert.strictEqual(res.status, 403);
+  });
+
+  test('POST /api/autonomy/testnet/configure succeeds when ENABLE_TESTNET_AUTONOMY=true', async () => {
+    process.env.ENABLE_TESTNET_AUTONOMY = 'true';
+    const payload = {
+      dailyLimitUsdc: '100',
+      maxPerActionUsdc: '20',
+      whitelist: ['0x1111111111111111111111111111111111111111'],
+      ttlSeconds: 3600,
+      txHash: '0xabc1234567890123456789012345678901234567890123456789012345678901',
+    };
+
+    const res = await request(app).post('/api/autonomy/testnet/configure').send(payload);
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.success, true);
+    assert.strictEqual(res.body.txHash, payload.txHash);
+    assert.strictEqual(res.body.state.autonomy.mode, 'base-sepolia');
+    assert.strictEqual(res.body.state.sessionKey.dailyLimitUsdc, '100');
+
+    // Test revoke
+    const revokeRes = await request(app).post('/api/autonomy/testnet/revoke').send({
+      txHash: '0xdef1234567890123456789012345678901234567890123456789012345678901',
+    });
+    assert.strictEqual(revokeRes.status, 200);
+    assert.strictEqual(revokeRes.body.state.status, 'revoked');
+    assert.strictEqual(revokeRes.body.state.sessionKey.killSwitch, true);
+
+    delete process.env.ENABLE_TESTNET_AUTONOMY;
+  });
 });

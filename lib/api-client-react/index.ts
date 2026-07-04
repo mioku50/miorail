@@ -411,6 +411,46 @@ export function useResetAutonomy(options?: Omit<UseMutationOptions<apiSpec.KillA
   });
 }
 
+export function useTestnetConfigureAutonomy(options?: any) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: any) =>
+      fetchApi<any>('/api/autonomy/testnet/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['autonomy'] }),
+    ...options,
+  });
+}
+
+export function useTestnetRevokeAutonomy(options?: any) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data?: any) =>
+      fetchApi<any>('/api/autonomy/testnet/revoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data || {}),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['autonomy'] }),
+    ...options,
+  });
+}
+
+export function useTestnetExecuteAction(options?: any) {
+  return useMutation({
+    mutationFn: (data: any) =>
+      fetchApi<any>('/api/autonomy/testnet/execute-test-action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }),
+    ...options,
+  });
+}
+
 // x402 hooks
 export function useX402Ledger(options?: Omit<UseQueryOptions<apiSpec.X402LedgerResponse, Error, apiSpec.X402LedgerResponse, string[]>, 'queryKey' | 'queryFn'>) {
   return useQuery({

@@ -113,6 +113,7 @@ export interface TokenFinding {
 }
 
 export interface PortfolioRiskAnalysis {
+  overallRiskLevel?: 'low' | 'medium' | 'high' | 'critical' | 'unknown';
   summary: string;
   portfolioSnapshot: {
     walletAddress: string;
@@ -977,6 +978,7 @@ export function analyzePortfolioForRisk(
   );
 
   return {
+    overallRiskLevel: findings.some(f => f.risk === 'high') || securityHighRiskCount > 0 ? 'high' : findings.some(f => f.risk === 'medium') || securityWarningCount > 0 ? 'medium' : 'low',
     summary,
     portfolioSnapshot: {
       walletAddress,
