@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import { appManifest } from "@/manifest";
 import { RootProvider } from "./rootProvider";
 import "./globals.css";
@@ -35,28 +34,6 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-// Fonts aligned with Miorail Ink design tokens (lib/ui/src/tokens.css).
-// --font-sans  → Inter (body)
-// --font-display → Space Grotesk (headings/brand)
-// --font-mono  → JetBrains Mono (data/code)
-const inter = Inter({
-  variable: "--font-sans",
-  subsets: ["latin"],
-  display: "swap",
-});
-
-const spaceGrotesk = Space_Grotesk({
-  variable: "--font-display",
-  subsets: ["latin"],
-  display: "swap",
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  variable: "--font-mono",
-  subsets: ["latin"],
-  display: "swap",
-});
-
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -64,7 +41,18 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${inter.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable}`}>
+      <head>
+        {/* Fonts loaded at runtime (not build-time) so next build works offline.
+            Families and weights match artifacts/interface/index.html and
+            lib/ui/src/tokens.css. */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap"
+          rel="stylesheet"
+        />
+      </head>
+      <body>
         <RootProvider>{children}</RootProvider>
       </body>
     </html>

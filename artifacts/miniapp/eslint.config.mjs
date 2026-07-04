@@ -20,6 +20,9 @@ const eslintConfig = [
           varsIgnorePattern: "^_",
         },
       ],
+      // Fonts are intentionally loaded via runtime <link> tags (not next/font)
+      // so that `next build` works in offline/proxied environments.
+      "@next/next/no-page-custom-font": "off",
     },
   },
 ];
