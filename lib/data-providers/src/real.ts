@@ -498,13 +498,13 @@ export function getTokenBalancesProviderFromEnv(): { provider: TokenBalancesProv
   }
   if (mode === 'alchemy' || (!process.env.TOKEN_BALANCES_PROVIDER && (process.env.ALCHEMY_API_KEY || process.env.ALCHEMY_BASE_MAINNET_RPC_URL))) {
     if (!process.env.ALCHEMY_API_KEY && !process.env.ALCHEMY_BASE_MAINNET_RPC_URL) {
-      return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', statusCode: 'missing', providerName: 'none' };
+      return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', statusCode: 'missing', providerName: 'alchemy' };
     }
     return { provider: new AlchemyTokenBalancesProvider(process.env.ALCHEMY_API_KEY, process.env.ALCHEMY_BASE_MAINNET_RPC_URL), status: 'Alchemy connected', statusCode: 'connected', providerName: 'alchemy' };
   }
   if (mode === 'moralis' || (!process.env.TOKEN_BALANCES_PROVIDER && process.env.MORALIS_API_KEY)) {
     if (!process.env.MORALIS_API_KEY) {
-      return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', statusCode: 'missing', providerName: 'none' };
+      return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', statusCode: 'missing', providerName: 'moralis' };
     }
     return { provider: new MoralisTokenBalancesProvider(process.env.MORALIS_API_KEY), status: 'Moralis connected', statusCode: 'connected', providerName: 'moralis' };
   }
@@ -660,7 +660,7 @@ export function getPriceProviderFromEnv(): { provider: PriceProvider; status: st
   }
   if (mode === 'moralis' || (!process.env.PRICE_PROVIDER && process.env.MORALIS_API_KEY)) {
     if (!process.env.MORALIS_API_KEY) {
-      return { provider: new NonePriceProvider(), status: 'Price provider not configured', statusCode: 'missing', providerName: 'none' };
+      return { provider: new NonePriceProvider(), status: 'Price provider not configured', statusCode: 'missing', providerName: 'moralis' };
     }
     return { provider: new MoralisPriceProvider(process.env.MORALIS_API_KEY), status: 'Moralis prices connected', statusCode: 'connected', providerName: 'moralis' };
   }
@@ -766,7 +766,7 @@ export function getApprovalProviderFromEnv(): { provider: ApprovalProvider; stat
   }
   if (mode === 'moralis' || (!process.env.APPROVAL_PROVIDER && process.env.MORALIS_API_KEY)) {
     if (!process.env.MORALIS_API_KEY) {
-      return { provider: new NoneApprovalProvider(), status: 'Approval provider not configured', statusCode: 'missing', providerName: 'none' };
+      return { provider: new NoneApprovalProvider(), status: 'Approval provider not configured', statusCode: 'missing', providerName: 'moralis' };
     }
     return { provider: new MoralisApprovalProvider(process.env.MORALIS_API_KEY), status: 'Moralis approvals connected', statusCode: 'connected', providerName: 'moralis' };
   }

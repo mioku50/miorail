@@ -82,9 +82,9 @@ export function PortfolioCard({ portfolio, statusData, address, isPortfolioFetch
              type="button"
              onClick={handleRefreshPortfolio}
              disabled={isPortfolioFetching}
-             className="self-start text-[11px] font-mono lowercase px-2 py-1 rounded border border-line/60 bg-bg text-ink-2 hover:text-ink hover:border-line disabled:opacity-40 disabled:cursor-not-allowed"
+             className="self-start text-[11px] font-mono px-2 py-1 rounded border border-line/60 bg-bg text-ink-2 hover:text-ink hover:border-line disabled:opacity-40 disabled:cursor-not-allowed"
            >
-             {isPortfolioFetching ? 'loading…' : 'analyze portfolio'}
+             {isPortfolioFetching ? 'loading…' : 'Analyze Base Portfolio'}
            </button>
          </div>
       ) : (

@@ -295,7 +295,7 @@ autonomyRouter.post('/testnet/configure', async (req, res, next) => {
     };
 
     await MemoryService.updateUserSettings(userId, { protocolToggles: newToggles });
-    const state = await getAutonomyState(userId, { owner, executor, token });
+    const state = await getAutonomyState(userId, { owner: owner || undefined, executor: executor || undefined, token });
     res.json({ success: true, state, txHash });
   } catch (error) {
     next(error);
@@ -338,7 +338,7 @@ autonomyRouter.post('/testnet/revoke', async (req, res, next) => {
     };
 
     await MemoryService.updateUserSettings(userId, { protocolToggles: newToggles });
-    const state = await getAutonomyState(userId, { owner, executor, token });
+    const state = await getAutonomyState(userId, { owner: owner || undefined, executor: executor || undefined, token });
     res.json({ success: true, state, txHash });
   } catch (error) {
     next(error);
