@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import { useAccount } from 'wagmi';
 import { Link } from 'wouter';
-import { useStatus, useAutonomy, useResetAutonomy } from '@mioagent/api-client-react';
+import { useStatus, useAutonomy, useResetAutonomy, usePortfolio, useCreateRecommendation } from '@mioagent/api-client-react';
+import { useUiStore } from '../../lib/state';
 import { isMainnetReadonly } from '../../lib/chain';
+import { portfolioFreshnessLabel } from '../../lib/format';
 import { X } from 'lucide-react';
 
 function Dot({ status }: { status?: string }) {
@@ -33,6 +36,49 @@ export function OpsRail({ onClose }: OpsRailProps) {
   const { data: sd } = useStatus();
   const { data: autonomyState } = useAutonomy();
   const resetAutonomy = useResetAutonomy();
+
+  const [portfolioRequested, setPortfolioRequested] = useState(false);
+  const showToast = useUiStore((s) => s.showToast);
+  const { data: portfolio, isError: isPortfolioError, error: portfolioError, refetch: refetchPortfolio, isFetching: isPortfolioFetching } = usePortfolio(address, {
+    enabled: !!address && portfolioRequested,
+    refetchInterval: false,
+  });
+  const createRecommendation = useCreateRecommendation();
+
+  const handleAnalyzePortfolio = () => {
+    if (!address) return;
+    if (!portfolioRequested) {
+      setPortfolioRequested(true);
+    } else {
+      refetchPortfolio();
+    }
+
+    createRecommendation.mutate(
+      {
+        instruction: 'Review my Base token list and flag risky assets',
+        walletAddress: address,
+        chainEnv: import.meta.env.VITE_CHAIN_ENV,
+      },
+      {
+        onSuccess: () => {
+          const toastMsg = isMainnetReadonly
+            ? 'Read-only recommendation created in Action Inbox'
+            : 'Testnet recommendation created in Action Inbox';
+          showToast(toastMsg);
+        },
+        onError: (e) => showToast('Failed to analyze portfolio: ' + e.message),
+      }
+    );
+  };
+
+  const isProviderMissingOrDisabled =
+    !sd ||
+    sd.tokenBalances?.status === 'missing' ||
+    sd.tokenBalances?.status === 'disabled' ||
+    sd.tokenBalances?.provider === 'none' ||
+    sd.prices?.status === 'missing' ||
+    sd.prices?.status === 'disabled' ||
+    sd.prices?.provider === 'none';
 
   const shortAddr = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : 'Disconnected';
   const isStale = autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory;
@@ -110,6 +156,48 @@ export function OpsRail({ onClose }: OpsRailProps) {
                 <Dot status={sd?.baseMcp?.status} />
                 <span className="text-xs text-ink font-sans font-medium">{sd?.baseMcp?.status || 'none'}</span>
               </div>
+            </div>
+            <div className="border-t border-line/50 pt-2.5 mt-0.5 flex flex-col gap-2">
+              {isProviderMissingOrDisabled && (
+                <div className="text-[10px] font-sans text-warn bg-warn-soft px-2 py-1.5 rounded border border-warn/20 leading-normal">
+                  Read providers missing or disabled. Configure MORALIS_API_KEY / TOKEN_BALANCES_PROVIDER.
+                </div>
+              )}
+              {isPortfolioError && (
+                <div className="text-[10px] font-sans text-risk bg-risk-soft px-2 py-1 rounded border border-risk/20">
+                  {portfolioError?.message || 'Failed to load portfolio'}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={handleAnalyzePortfolio}
+                disabled={!address || isPortfolioFetching || createRecommendation.isPending}
+                className="w-full text-[11px] font-mono px-2.5 py-1.5 rounded border border-line/60 bg-panel-2 text-ink hover:bg-bg hover:border-line font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 shadow-sm"
+              >
+                {isPortfolioFetching || createRecommendation.isPending ? 'Analyzing…' : 'Analyze Base Portfolio'}
+              </button>
+              {portfolio && (
+                <div className="flex flex-col gap-1 text-[10px] font-sans text-ink-3">
+                  <div className="flex items-center justify-between">
+                    <span>Last scan:</span>
+                    <span className="text-ink-2 font-mono font-medium">
+                      {portfolio.updatedAt || (portfolio as any).snapshotTimestamp || (portfolio as any).timestamp
+                        ? new Date(portfolio.updatedAt || (portfolio as any).snapshotTimestamp || (portfolio as any).timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        : 'Just now'}
+                    </span>
+                  </div>
+                  {portfolio.dataFreshness && (
+                    <div className="text-ink-3 lowercase">
+                      {portfolioFreshnessLabel(portfolio)}
+                    </div>
+                  )}
+                  {portfolio.providerBudgetStatus?.exhausted && (
+                    <div className="text-warn bg-warn-soft px-1.5 py-1 rounded border border-warn/20 leading-tight">
+                      Provider budget reached — showing cached/stale data.
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
