@@ -1,6 +1,6 @@
 import { useAccount } from 'wagmi';
 import { Link } from 'wouter';
-import { useStatus, useAutonomy } from '@mioagent/api-client-react';
+import { useStatus, useAutonomy, useResetAutonomy } from '@mioagent/api-client-react';
 import { isMainnetReadonly } from '../../lib/chain';
 import { X } from 'lucide-react';
 
@@ -32,6 +32,7 @@ export function OpsRail({ onClose }: OpsRailProps) {
   const { address, isConnected } = useAccount();
   const { data: sd } = useStatus();
   const { data: autonomyState } = useAutonomy();
+  const resetAutonomy = useResetAutonomy();
 
   const shortAddr = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : 'Disconnected';
 
@@ -137,23 +138,36 @@ export function OpsRail({ onClose }: OpsRailProps) {
             <div className="flex items-center justify-between">
               <span className="text-xs text-ink-2 font-sans">Session Key</span>
               <span className={`text-[10px] font-sans font-medium px-2 py-0.5 rounded-full ${
-                autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract'
-                  ? 'bg-ok-soft text-ok'
-                  : autonomyState?.sessionKey?.status === 'configured'
+                autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory
+                  ? 'bg-warn-soft text-warn'
+                  : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract'
                     ? 'bg-ok-soft text-ok'
-                    : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch
-                      ? 'bg-risk-soft text-risk'
-                      : 'bg-panel-2 text-ink-3'
+                    : autonomyState?.sessionKey?.status === 'configured'
+                      ? 'bg-ok-soft text-ok'
+                      : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch
+                        ? 'bg-risk-soft text-risk'
+                        : 'bg-panel-2 text-ink-3'
               }`}>
-                {autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract'
-                  ? 'testnet verified'
-                  : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch
-                    ? 'revoked'
-                    : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory'
-                      ? 'configured in app'
-                      : 'missing'}
+                {autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory
+                  ? 'stale test memory'
+                  : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract'
+                    ? 'testnet verified'
+                    : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch
+                      ? 'revoked'
+                      : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory'
+                        ? 'configured in app'
+                        : 'missing'}
               </span>
             </div>
+            {(autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory) && (
+              <button
+                onClick={() => resetAutonomy.mutate()}
+                disabled={resetAutonomy.isPending}
+                className="w-full mt-1 text-[11px] font-medium bg-panel-2 text-ink-2 hover:text-ink border border-line py-1 rounded transition-colors"
+              >
+                {resetAutonomy.isPending ? 'Resetting...' : 'Reset Memory State'}
+              </button>
+            )}
             <div className="text-xs font-sans font-medium text-ink-2 bg-panel-2 px-2 py-1.5 rounded-[var(--radius-sm)] border border-line my-0.5 text-center">
               {autonomyState?.sessionKey?.status === 'configured'
                 ? `Active limit: ${autonomyState.sessionKey.dailyLimitUsdc} USDC/day`

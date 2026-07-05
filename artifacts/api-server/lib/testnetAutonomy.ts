@@ -79,15 +79,15 @@ export async function readOnchainPermission(owner: Hex, executor: Hex, token?: H
 }
 
 export async function executeTestnetConfigureOnchain(
-  executor: Hex,
-  token: Hex,
+  executor: Hex | null,
+  token: Hex | null,
   dailyLimitUsdc: string,
   maxPerActionUsdc: string,
   ttlSeconds: number,
   whitelist: Hex[]
 ): Promise<string | null> {
   const contractAddress = getBaseSepoliaControllerAddress();
-  if (!contractAddress) return null;
+  if (!contractAddress || !executor || !token) return null;
 
   const wallet = getWalletClient();
   if (!wallet) return null;
@@ -113,11 +113,11 @@ export async function executeTestnetConfigureOnchain(
 }
 
 export async function executeTestnetRevokeOnchain(
-  executor: Hex,
-  token: Hex
+  executor: Hex | null,
+  token: Hex | null
 ): Promise<string | null> {
   const contractAddress = getBaseSepoliaControllerAddress();
-  if (!contractAddress) return null;
+  if (!contractAddress || !executor || !token) return null;
 
   const wallet = getWalletClient();
   if (!wallet) return null;
@@ -137,13 +137,13 @@ export async function executeTestnetRevokeOnchain(
 }
 
 export async function executeTestnetSpendOnchain(
-  owner: Hex,
-  token: Hex,
-  target: Hex,
+  owner: Hex | null,
+  token: Hex | null,
+  target: Hex | null,
   amountUsdc: string
 ): Promise<string | null> {
   const contractAddress = getBaseSepoliaControllerAddress();
-  if (!contractAddress) return null;
+  if (!contractAddress || !owner || !token || !target) return null;
 
   const wallet = getWalletClient();
   if (!wallet) return null;

@@ -101,4 +101,18 @@ describe('Autonomy API Hardening Guarantees', () => {
 
     delete process.env.ENABLE_TESTNET_AUTONOMY;
   });
+
+  test('GET /api/autonomy returns unconfigured and isStaleTestMemory=true when memory contains dummy T16 test identities', async () => {
+    await request(app).post('/api/autonomy/config').send({
+      dailyLimitUsdc: '100',
+      maxPerActionUsdc: '20',
+      whitelist: ['0x036cbd53842c5426634e7929541ec2318f3dcf7e'],
+      ttlSeconds: 3600,
+    });
+    const res = await request(app).get('/api/autonomy?owner=0x1111111111111111111111111111111111111111');
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.status, 'unconfigured');
+    assert.strictEqual(res.body.sessionKey.status, 'unconfigured');
+    assert.strictEqual(res.body.isStaleTestMemory, true);
+  });
 });

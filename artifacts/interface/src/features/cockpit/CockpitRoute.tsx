@@ -1,6 +1,6 @@
 import { useUiStore } from '../../lib/state';
 import { StateBadge } from '@mioagent/ui';
-import { useStatus, useAutonomy, useKillAutonomy } from '@mioagent/api-client-react';
+import { useStatus, useAutonomy, useKillAutonomy, useResetAutonomy } from '@mioagent/api-client-react';
 import { RiskQueue, RiskQueueContent } from './RiskQueue';
 import { useActionsFeed, useChatHistory } from '@mioagent/api-client-react';
 
@@ -26,6 +26,7 @@ export function CockpitRoute() {
   const { data: sd } = useStatus();
   const { data: autonomyState } = useAutonomy();
   const killAutonomy = useKillAutonomy();
+  const resetAutonomy = useResetAutonomy({ onSuccess: () => showToast('Memory state reset to unconfigured') });
   const { data: actionsData } = useActionsFeed();
   const { data: chatData } = useChatHistory();
 
@@ -56,11 +57,22 @@ export function CockpitRoute() {
               Mission control for automated execution, x402 fuel budgets, and contract risk boundaries.
             </p>
           </div>
-          <StateBadge
-            state={autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'live' : autonomyState?.sessionKey?.status === 'configured' ? 'live' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'failed' : 'missing'}
-            label={autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'testnet verified' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'revoked' : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory' ? 'configured in app' : 'missing'}
-            title={autonomyState?.autonomy?.source === 'base-sepolia-contract' ? 'Verified on Base Sepolia contract' : autonomyState?.sessionKey?.status === 'configured' ? 'Session key configured in app memory' : 'No session key is active'}
-          />
+          <div className="flex items-center gap-3">
+            <StateBadge
+              state={autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory ? 'stale' : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'live' : autonomyState?.sessionKey?.status === 'configured' ? 'live' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'failed' : 'missing'}
+              label={autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory ? 'stale test memory' : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'testnet verified' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'revoked' : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory' ? 'configured in app' : 'missing'}
+              title={autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory ? 'Stale test memory detected. Click Reset to clear.' : autonomyState?.autonomy?.source === 'base-sepolia-contract' ? 'Verified on Base Sepolia contract' : autonomyState?.sessionKey?.status === 'configured' ? 'Session key configured in app memory' : 'No session key is active'}
+            />
+            {(autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory) && (
+              <button
+                onClick={() => resetAutonomy.mutate()}
+                disabled={resetAutonomy.isPending}
+                className="text-[11px] font-medium bg-panel-2 text-ink-2 hover:text-ink border border-line px-2.5 py-1 rounded transition-colors shadow-sm"
+              >
+                {resetAutonomy.isPending ? 'Resetting...' : 'Reset Memory'}
+              </button>
+            )}
+          </div>
         </div>
 
         {/* What Miorail can do now / What is blocked / What unlocks */}

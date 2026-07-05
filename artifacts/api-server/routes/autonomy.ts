@@ -35,9 +35,9 @@ async function getAutonomyState(userId: string, query?: { owner?: string; execut
 
   let chainId: number | undefined;
   let contractAddress: string | null | undefined;
-  let owner: string | null = autonomy.owner || null;
-  let executor: string | null = autonomy.executor || null;
-  let token: string | null = autonomy.token || null;
+  let owner: string | null = autonomy.owner || query?.owner || null;
+  let executor: string | null = autonomy.executor || query?.executor || null;
+  let token: string | null = autonomy.token || query?.token || null;
   let validUntil: number | string | null = autonomy.expiresAt || null;
   let dailyLimitUsdc = autonomy.dailyLimitUsdc || null;
   let spentTodayUsdc = autonomy.spentTodayUsdc || '0';
@@ -107,14 +107,41 @@ async function getAutonomyState(userId: string, query?: { owner?: string; execut
     }
   }
 
+  const isDummyAddr = (val?: string | null) => {
+    if (!val) return false;
+    const v = val.toLowerCase();
+    return v === '0x1111111111111111111111111111111111111111' ||
+           v === '0x2222222222222222222222222222222222222222' ||
+           v.startsWith('0x1111') || v.startsWith('0x2222');
+  };
+  const isFakeHash = (val?: string | null) => {
+    if (!val) return false;
+    const v = val.toLowerCase();
+    return v.startsWith('0xmock') || v.startsWith('0xfake') ||
+           v.includes('mock') || v.includes('fake') || isDummyAddr(val);
+  };
+  const isStaleTestMemory = source === 'memory' && (
+    isDummyAddr(owner) || isDummyAddr(executor) ||
+    isFakeHash(txHashLastConfigured) || isFakeHash(txHashLastRevoked) ||
+    isDummyAddr(autonomy.owner) || isDummyAddr(autonomy.executor) ||
+    isFakeHash(autonomy.txHashLastConfigured) || isFakeHash(autonomy.txHashLastRevoked)
+  );
+
+  if (isStaleTestMemory) {
+    status = 'unconfigured';
+    sessionKeyStatus = 'unconfigured';
+  }
+
   return {
     status,
     source,
+    isStaleTestMemory,
     chainId,
     contractAddress,
     sessionKey: {
       status: sessionKeyStatus,
       source,
+      isStaleTestMemory,
       dailyLimitUsdc,
       spentTodayUsdc,
       maxPerActionUsdc,
@@ -136,6 +163,7 @@ async function getAutonomyState(userId: string, query?: { owner?: string; execut
       whitelistedProtocolsCount: whitelist.length,
       mode: isTestnetAutonomyEnabled() ? 'base-sepolia' : (process.env.CHAIN_ENV || 'mainnet-readonly'),
       source,
+      isStaleTestMemory,
     },
   };
 }
@@ -207,8 +235,8 @@ autonomyRouter.post('/testnet/configure', async (req, res, next) => {
 
     let txHash: string | undefined = (req.body as any).txHash;
     const token = (data.token || getBaseSepoliaUsdcAddress()) as Hex;
-    const executor = (data.executor || '0x2222222222222222222222222222222222222222') as Hex;
-    const owner = (data.owner || '0x1111111111111111111111111111111111111111') as Hex;
+    const executor = (data.executor || null) as Hex | null;
+    const owner = (data.owner || null) as Hex | null;
 
     if (!txHash) {
       const hash = await executeTestnetConfigureOnchain(
@@ -268,8 +296,8 @@ autonomyRouter.post('/testnet/revoke', async (req, res, next) => {
     const existingAutonomy = existingToggles.autonomy || {};
 
     const token = (data.token || existingAutonomy.token || getBaseSepoliaUsdcAddress()) as Hex;
-    const executor = (data.executor || existingAutonomy.executor || '0x2222222222222222222222222222222222222222') as Hex;
-    const owner = (data.owner || existingAutonomy.owner || '0x1111111111111111111111111111111111111111') as Hex;
+    const executor = (data.executor || existingAutonomy.executor || null) as Hex | null;
+    const owner = (data.owner || existingAutonomy.owner || null) as Hex | null;
 
     let txHash: string | undefined = (req.body as any).txHash;
     if (!txHash) {
@@ -313,7 +341,7 @@ autonomyRouter.post('/testnet/execute-test-action', async (req, res, next) => {
     const existingAutonomy = (settings?.protocolToggles as any)?.autonomy || {};
 
     const token = (data.token || existingAutonomy.token || getBaseSepoliaUsdcAddress()) as Hex;
-    const owner = (data.owner || existingAutonomy.owner || '0x1111111111111111111111111111111111111111') as Hex;
+    const owner = (data.owner || existingAutonomy.owner || null) as Hex | null;
     const target = data.target as Hex;
 
     let txHash: string | undefined = (req.body as any).txHash;

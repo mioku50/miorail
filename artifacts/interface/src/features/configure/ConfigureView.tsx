@@ -43,7 +43,7 @@ export function ConfigureView() {
   const [dailyLimit, setDailyLimit] = useState('100');
   const [maxPerAction, setMaxPerAction] = useState('20');
   const [ttlHours, setTtlHours] = useState('24');
-  const [whitelistAddr, setWhitelistAddr] = useState('0x1111111111111111111111111111111111111111');
+  const [whitelistAddr, setWhitelistAddr] = useState('');
   const [actionStatus, setActionStatus] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
 
   const configMut = useTestnetConfigureAutonomy({
@@ -126,8 +126,9 @@ export function ConfigureView() {
             </p>
           </div>
           <StateBadge
-            state={autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'live' : autonomyState?.sessionKey?.status === 'configured' ? 'live' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'failed' : 'missing'}
-            label={autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'testnet verified' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'revoked' : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory' ? 'configured in app' : 'missing'}
+            state={autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory ? 'stale' : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'live' : autonomyState?.sessionKey?.status === 'configured' ? 'live' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'failed' : 'missing'}
+            label={autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory ? 'stale test memory' : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'testnet verified' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'revoked' : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory' ? 'configured in app' : 'missing'}
+            title={autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory ? 'Stale test memory detected. Click Reset Memory State below.' : autonomyState?.autonomy?.source === 'base-sepolia-contract' ? 'Verified on Base Sepolia contract' : autonomyState?.sessionKey?.status === 'configured' ? 'Session key configured in app memory' : 'No session key is active'}
           />
         </div>
 
