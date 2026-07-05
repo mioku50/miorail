@@ -237,6 +237,40 @@ export function useExecuteAction(
   });
 }
 
+// T19: user-confirmed flow. `prepare` returns an unsigned EIP-5792 payload;
+// `confirm` records the wallet's onchain result. Neither broadcasts from the
+// server. The wagmi orchestration (sendCalls + getCallsStatus) lives in
+// @mioagent/wallet-actions so this package stays wagmi-free.
+export function usePrepareAction(
+  options?: Omit<UseMutationOptions<apiSpec.PrepareActionResponse, Error, apiSpec.PrepareActionRequest>, 'mutationFn'>,
+) {
+  return useMutation({
+    mutationFn: (data: apiSpec.PrepareActionRequest) =>
+      fetchApi<apiSpec.PrepareActionResponse>(`/api/actions/${data.actionId}/prepare`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      }),
+    ...options,
+  });
+}
+
+export function useConfirmAction(
+  options?: Omit<UseMutationOptions<apiSpec.ConfirmActionResponse, Error, apiSpec.ConfirmActionRequest>, 'mutationFn'>,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: apiSpec.ConfirmActionRequest) =>
+      fetchApi<apiSpec.ConfirmActionResponse>(`/api/actions/${data.actionId}/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batchId: data.batchId, status: data.status, txHash: data.txHash, receipts: data.receipts }),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['actions', 'feed'] }),
+    ...options,
+  });
+}
+
 export function useDismissAction(
   options?: Omit<UseMutationOptions<apiSpec.DismissActionResponse, Error, apiSpec.DismissActionRequest>, 'mutationFn'>,
 ) {

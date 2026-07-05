@@ -66,4 +66,20 @@ describe('Status API', () => {
     restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurity);
     restoreEnv('APPROVAL_PROVIDER', origApproval);
   });
+
+  test('GET /api/status reports the T19 user-confirmed execution mode with broadcast disabled', async () => {
+    const origChain = process.env.CHAIN_ENV;
+    const origMainnetExec = process.env.MAINNET_EXECUTION_ENABLED;
+    process.env.CHAIN_ENV = 'mainnet-readonly';
+    process.env.MAINNET_EXECUTION_ENABLED = 'false';
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.execution.mode, 'user-confirmed');
+    assert.strictEqual(response.body.execution.enabled, true);
+    assert.strictEqual(response.body.execution.broadcastEnabled, false);
+
+    restoreEnv('CHAIN_ENV', origChain);
+    restoreEnv('MAINNET_EXECUTION_ENABLED', origMainnetExec);
+  });
 });

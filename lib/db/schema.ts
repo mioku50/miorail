@@ -74,6 +74,9 @@ export const actions = pgTable(
     metadata: jsonb('metadata'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
+    // T19: set when a user-confirmed action is recorded by /actions/:id/confirm.
+    // Null until the wallet confirmation lands onchain (or is recorded as failed).
+    executedAt: timestamp('executed_at'),
   },
 
   (table) => [

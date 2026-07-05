@@ -303,4 +303,119 @@ test('Actions API', async (t) => {
     assert.ok(response.body.actionId.startsWith('rec_'));
     mock.restoreAll();
   });
+
+  // T19: user-confirmed flow — prepare returns an UNSIGNED EIP-5792 payload and
+  // never broadcasts. confirm records the result with no server-side signing.
+  const BASE_MAINNET_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+
+  await t.test('POST /api/actions/:actionId/prepare returns an unsigned EIP-5792 payload for a safe USDC transfer', async () => {
+    process.env.CHAIN_ENV = 'mainnet-readonly';
+    process.env.MAINNET_EXECUTION_ENABLED = 'false';
+    const mockSelect = mock.fn(() => ({
+      from: mock.fn(() => ({
+        where: mock.fn(async () => [
+          {
+            id: 'act-prepare',
+            userId: 'default-user',
+            kind: 'recommendation',
+            status: 'pending',
+            suggestedPrompt: 'Transfer 1 USDC to 0x1111111111111111111111111111111111111111',
+            executionPayload: {
+              chain: 'eip155:8453',
+              calls: [{ to: BASE_MAINNET_USDC, value: '0', data: '0xa9059cbb0000000000000000000000001111111111111111111111111111111111111111000000000000000000000000000000000000000000000000000000000000000a' }],
+            },
+            metadata: { instruction: 'Transfer 1 USDC to 0x1111111111111111111111111111111111111111' },
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        ]),
+      })),
+    }));
+    mock.method(db, 'select', mockSelect);
+
+    const response = await request(app).post('/api/actions/act-prepare/prepare');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, true);
+    assert.strictEqual(response.body.chainId, '0x2105');
+    assert.strictEqual(response.body.atomicRequired, true);
+    assert.ok(Array.isArray(response.body.calls) && response.body.calls.length === 1);
+    assert.strictEqual(response.body.screening.allowed, true);
+    assert.strictEqual(response.body.simulation.success, true);
+
+    mock.restoreAll();
+    process.env.CHAIN_ENV = 'sepolia';
+  });
+
+  await t.test('POST /api/actions/:actionId/prepare rejects an action with no calls', async () => {
+    process.env.CHAIN_ENV = 'mainnet-readonly';
+    const mockSelect = mock.fn(() => ({
+      from: mock.fn(() => ({
+        where: mock.fn(async () => [
+          {
+            id: 'act-readonly', userId: 'default-user', status: 'pending',
+            executionPayload: { chain: 'eip155:8453', readOnly: true, calls: [] },
+            metadata: { instruction: 'check my portfolio' },
+            createdAt: new Date(), updatedAt: new Date(),
+          },
+        ]),
+      })),
+    }));
+    mock.method(db, 'select', mockSelect);
+
+    const response = await request(app).post('/api/actions/act-readonly/prepare');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, false);
+    assert.ok(response.body.error.includes('no onchain calls'));
+
+    mock.restoreAll();
+    process.env.CHAIN_ENV = 'sepolia';
+  });
+
+  await t.test('POST /api/actions/:actionId/confirm records an executed result without a txHash (no RPC)', async () => {
+    const mockSelect = mock.fn(() => ({
+      from: mock.fn(() => ({
+        where: mock.fn(async () => [
+          {
+            id: 'act-confirm', userId: 'default-user', status: 'pending',
+            executionPayload: { chain: 'eip155:8453', calls: [{ to: BASE_MAINNET_USDC }] },
+            metadata: { instruction: 'Transfer 1 USDC to 0x1111111111111111111111111111111111111111' },
+            createdAt: new Date(), updatedAt: new Date(),
+          },
+        ]),
+      })),
+    }));
+    const mockUpdate = mock.fn(() => ({ set: mock.fn(() => ({ where: mock.fn(async () => []) })) }));
+    mock.method(db, 'select', mockSelect);
+    mock.method(db, 'update', mockUpdate);
+    const { ObservabilityService } = await import('@mioagent/observability');
+    mock.method(ObservabilityService, 'logAction', async () => {});
+
+    const response = await request(app).post('/api/actions/act-confirm/confirm').send({
+      batchId: 'batch-1',
+      status: 200,
+      // no txHash → route skips the read-only RPC integrity check
+    });
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, true);
+    assert.strictEqual(response.body.status, 'executed');
+
+    mock.restoreAll();
+  });
+
+  await t.test('POST /api/actions/:actionId/confirm replays are rejected for a non-pending action', async () => {
+    const mockSelect = mock.fn(() => ({
+      from: mock.fn(() => ({
+        where: mock.fn(async () => [
+          { id: 'act-done', userId: 'default-user', status: 'executed', metadata: {}, createdAt: new Date(), updatedAt: new Date() },
+        ]),
+      })),
+    }));
+    mock.method(db, 'select', mockSelect);
+
+    const response = await request(app).post('/api/actions/act-done/confirm').send({ batchId: 'batch-1', status: 200 });
+    assert.strictEqual(response.status, 400);
+    assert.strictEqual(response.body.success, false);
+
+    mock.restoreAll();
+  });
 });

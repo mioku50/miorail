@@ -1,8 +1,13 @@
 import { useAccount } from 'wagmi';
-import { useExecuteAction, useDismissAction, useDeleteAction, useRegenerateAction } from '@mioagent/api-client-react';
+import { useDismissAction, useDeleteAction, useRegenerateAction } from '@mioagent/api-client-react';
+import { WalletConfirmButton, builderCodeToDataSuffix } from '@mioagent/wallet-actions';
 import { useUiStore } from '../../lib/state';
 import { isMainnetReadonly } from '../../lib/chain';
 import { ActionDiffPreview } from './ActionDiffPreview';
+
+// T19: Builder Code (ERC-8021) attribution. Public value from base.dev; empty
+// → transactions send unattributed (with a one-time console warning).
+const DATA_SUFFIX = builderCodeToDataSuffix(import.meta.env.VITE_BUILDER_CODE);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 interface ActionCardProps {
@@ -12,34 +17,23 @@ interface ActionCardProps {
 
 export function ActionCard({ action, onRefresh }: ActionCardProps) {
   const { address } = useAccount();
-  const executeAction = useExecuteAction();
   const dismissAction = useDismissAction();
   const deleteAction = useDeleteAction();
   const regenerateAction = useRegenerateAction();
   const showToast = useUiStore((s) => s.showToast);
 
   const isPending = action.status === 'pending';
-  const isExecuting = executeAction.isPending;
   const isDismissing = dismissAction.isPending;
   const isDeleting = deleteAction.isPending;
   const isRegenerating = regenerateAction.isPending;
 
-  // F5 risk gating: execute is blocked until screening verdicts AND a simulation
-  // are available. screenAction() and simulateTrade() are not wired into live
-  // paths today, so both are unavailable — Execute stays disabled (fail closed).
-  // The ActionDiffPreview surfaces the honest "not screened / no simulation"
-  // states so the reason is visible.
+  // T19: execute gate now reflects REAL verdicts stored on the action by
+  // /recommend + /chat (metadata.securityScreening / simulationResult). The
+  // user-confirmed flow is intentionally allowed in mainnet-readonly — the
+  // server never broadcasts; the wallet signs. WalletConfirmButton enforces
+  // the connected-wallet + screening + simulation + hasCalls gate internally.
   const calls = action.executionPayload?.calls || [];
   const hasCalls = calls.length > 0;
-  const SCREENING_AVAILABLE = false;
-  const SIMULATION_AVAILABLE = false;
-  const canExecute =
-    !isMainnetReadonly &&
-    action.metadata?.chainMode !== 'mainnet-readonly' &&
-    action.metadata?.chainMode !== 'mainnet' &&
-    hasCalls &&
-    SCREENING_AVAILABLE &&
-    SIMULATION_AVAILABLE;
 
   return (
     <div id={`action-${action.id}`} data-action-id={action.id} className={`bg-panel border rounded-xl shadow-sm p-[15px] flex flex-col gap-[10px] animate-in fade-in slide-in-from-bottom-2 ${action.status === 'failed' ? 'border-risk-soft' : 'border-line'}`}>
@@ -77,37 +71,27 @@ export function ActionCard({ action, onRefresh }: ActionCardProps) {
       ) : (
         <div className="flex gap-2 items-center flex-wrap mt-1">
           {hasCalls && (
-            <button
-              onClick={() => {
-                if (!canExecute) return;
-                executeAction.mutate({ actionId: action.id }, {
-                  onSuccess: (data: any) => {
-                    if (data?.success && data?.approvalUrl) {
-                      window.open(data.approvalUrl, '_blank');
-                    } else if (data?.error) {
-                      showToast(data.error.includes('Mainnet execution is disabled') ? data.error : 'Error: ' + data.error);
-                    } else {
-                      showToast('Approval provider is not configured. Action was not executed.');
-                    }
-                    onRefresh();
-                  },
-                  onError: (err: any) => {
-                    showToast('Error: ' + err.message);
-                    onRefresh();
-                  },
-                });
+            <WalletConfirmButton
+              action={action}
+              dataSuffix={DATA_SUFFIX}
+              className="bg-accent hover:bg-accent-2 text-white px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] shadow-[0_6px_16px_rgba(0,0,255,.28)] hover:-translate-y-[1px] hover:shadow-[0_10px_22px_rgba(0,0,255,.34)] transition-all"
+              onConfirmed={({ status, txHash, error }) => {
+                if (status === 'success') {
+                  showToast(txHash ? `Confirmed onchain · ${txHash.slice(0, 10)}…` : 'Confirmed onchain');
+                } else if (status === 'failed') {
+                  showToast(error ?? 'Confirmation failed');
+                }
+                onRefresh();
               }}
-              disabled={!isPending || isExecuting || isDismissing || isDeleting || isRegenerating || !canExecute}
-              title="Screening & simulation not available — execution blocked until the backend wires screenAction() and simulateTrade()."
-              className="bg-accent hover:bg-accent-2 text-white px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] shadow-[0_6px_16px_rgba(0,0,255,.28)] hover:-translate-y-[1px] hover:shadow-[0_10px_22px_rgba(0,0,255,.34)] transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              ⚡ {isExecuting ? 'Executing...' : 'Execute'}
-            </button>
+            />
+          )}
+          {!hasCalls && isPending && isMainnetReadonly && (
+            <span className="text-[11px] text-ink-3 italic">Read-only recommendation — nothing to confirm onchain.</span>
           )}
           {action.kind === 'recommendation' && (
             <button
               onClick={() => regenerateAction.mutate({ actionId: action.id, walletAddress: address, chainEnv: import.meta.env.VITE_CHAIN_ENV || 'mainnet-readonly' }, { onSuccess: () => { showToast('Recommendation analysis regenerated'); onRefresh(); } })}
-              disabled={isExecuting || isDismissing || isDeleting || isRegenerating}
+              disabled={isDismissing || isDeleting || isRegenerating}
               className="bg-bg hover:bg-panel border border-line text-ink px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isRegenerating ? 'Regenerating...' : 'Regenerate analysis'}
@@ -115,7 +99,7 @@ export function ActionCard({ action, onRefresh }: ActionCardProps) {
           )}
           <button
             onClick={() => dismissAction.mutate({ actionId: action.id }, { onSuccess: () => onRefresh() })}
-            disabled={!isPending || isExecuting || isDismissing || isDeleting || isRegenerating}
+            disabled={!isPending || isDismissing || isDeleting || isRegenerating}
             className="bg-bg hover:bg-[#eceef7] text-ink-2 px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isDismissing ? 'Dismissing...' : 'Dismiss'}
@@ -126,7 +110,7 @@ export function ActionCard({ action, onRefresh }: ActionCardProps) {
                 deleteAction.mutate({ actionId: action.id }, { onSuccess: () => { showToast('Action deleted'); onRefresh(); } });
               }
             }}
-            disabled={isExecuting || isDismissing || isDeleting || isRegenerating}
+            disabled={isDismissing || isDeleting || isRegenerating}
             className="bg-bg hover:bg-risk-soft text-risk px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isDeleting ? 'Deleting...' : 'Delete'}

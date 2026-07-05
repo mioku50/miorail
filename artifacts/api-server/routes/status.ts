@@ -43,10 +43,18 @@ export function getSystemStatus(envOverride?: string) {
   const x402Status: "simulated" | "configured" | "missing" = process.env.X402_FACILITATOR_URL ? "configured" : "simulated";
 
   const isReadonly = chainEnv === 'mainnet-readonly';
+  // T19: the user-confirmed flow (Base Account wallet_sendCalls) is always
+  // available — the server only prepares unsigned payloads and records results.
+  // `broadcastEnabled` is the separate, legacy server-broadcast capability,
+  // gated by MAINNET_EXECUTION_ENABLED (stays false in production).
+  const broadcastEnabled = !isReadonly && (chainEnv !== 'mainnet' || process.env.MAINNET_EXECUTION_ENABLED === 'true');
   const execution = {
-    mode: isReadonly ? 'read-only' : chainEnv,
-    enabled: !isReadonly,
-    reason: isReadonly ? 'Mainnet execution is disabled in read-only mode' : 'Execution enabled on testnet',
+    mode: 'user-confirmed',
+    enabled: true,
+    broadcastEnabled,
+    reason: isReadonly
+      ? 'User-confirmed flow via Base Account; server never broadcasts'
+      : (broadcastEnabled ? 'Server-broadcast enabled (testnet/dev)' : 'User-confirmed flow via Base Account; server-broadcast disabled'),
   };
 
   const cache = getProviderCacheDiagnostics();

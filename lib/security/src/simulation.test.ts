@@ -116,3 +116,46 @@ test('simulateTrade allows calls with unrecognized data', async () => {
     assert.strictEqual(res.success, true);
     assert.strictEqual(res.allowed, true);
 });
+
+// T19: Base Mainnet is now an allowed chain for the user-confirmed flow (the
+// server never broadcasts; the wallet signs). Static validation only.
+test('simulateTrade accepts Base Mainnet chain (eip155:8453)', async () => {
+  const res = await simulateTrade({
+    chain: 'eip155:8453',
+    calls: [{ to: '0x123', value: '0x0' }]
+  });
+  assert.strictEqual(res.success, true);
+  assert.strictEqual(res.allowed, true);
+  assert.strictEqual(res.method, 'static-validation');
+});
+
+test('simulateTrade accepts Base Mainnet chain (8453 numeric string)', async () => {
+  const res = await simulateTrade('8453', [{ to: '0x123', value: '0x0' }]);
+  assert.strictEqual(res.success, true);
+  assert.strictEqual(res.allowed, true);
+});
+
+test('simulateTrade accepts canonical Base Mainnet native USDC transfer', async () => {
+  const res = await simulateTrade({
+    chain: 'eip155:8453',
+    calls: [{ to: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', data: '0xa9059cbb0000000000000000000000000000000000000000000000000000000000000001' }]
+  });
+  assert.strictEqual(res.success, true);
+  assert.strictEqual(res.allowed, true);
+});
+
+test('simulateTrade labels itself as static validation (no fork sim)', async () => {
+  const res = await simulateTrade('84532', [{ to: '0x123', value: '0x0' }]);
+  assert.strictEqual(res.method, 'static-validation');
+  assert.ok(res.checks.some((c) => c.includes('Static validation')));
+  assert.ok(!res.checks.some((c) => c.includes('Mock execution')));
+});
+
+test('simulateTrade rejects uncanonical token on Base Mainnet', async () => {
+  const res = await simulateTrade({
+    chain: 'eip155:8453',
+    calls: [{ to: '0xdeadbeef', data: '0xa9059cbb0000' }]
+  });
+  assert.strictEqual(res.success, false);
+  assert.ok(res.error?.includes('Invalid token address'));
+});

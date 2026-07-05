@@ -9,9 +9,16 @@ import {
   DeleteRecommendationsResponseSchema,
   DeleteSingleActionResponseSchema,
   RegenerateRecommendationResponseSchema,
+  PrepareActionResponseSchema,
+  ConfirmActionRequestSchema,
+  ConfirmActionResponseSchema,
 } from '@mioagent/api-zod';
+import { createPublicClient, http, type Hex } from 'viem';
+import { base } from 'viem/chains';
+import { ObservabilityService } from '@mioagent/observability';
 import { detectActionIntent } from '../lib/intent.js';
 import { fetchInternalPortfolio, analyzePortfolioForRisk, buildRecommendationMetadataFromAnalysis } from '../lib/portfolioAnalysis.js';
+import { buildActionPlan, planHasCalls, getBaseMainnetUsdcAddress } from '../lib/actionPlan.js';
 import { screenAction, simulateTrade } from '@mioagent/security';
 
 export const actionsRouter = Router();
@@ -106,7 +113,7 @@ actionsRouter.get('/', async (req, res, next) => {
         executionPayload: a.executionPayload,
         metadata: a.metadata,
         createdAt: a.createdAt.toISOString(),
-        executedAt: null, // we don't have executedAt in db schema right now, returning null
+        executedAt: a.executedAt ? a.executedAt.toISOString() : null,
       }));
 
     res.json(ActionsFeedResponseSchema.parse({ actions: formattedActions }));
@@ -138,20 +145,26 @@ actionsRouter.post('/recommend', async (req, res, next) => {
     const canExecute = !isReadonly && (chainEnv !== 'mainnet' || isMainnetExecEnabled);
     
     const actionId = crypto.randomUUID();
-    const payload = isReadonly ? {
-      chain: chainId,
-      readOnly: true,
-      calls: []
-    } : {
-      chain: chainId,
-      calls: [
-        {
-          to: '0x0000000000000000000000000000000000000000',
-          value: '0',
-          data: '0x'
-        }
-      ]
-    };
+    // T19: build a real (unsigned, never server-broadcast) action plan for
+    // mainnet — `buildActionPlan` encodes canonical USDC transfers for
+    // recognized safe instructions and falls back to read-only (no calls) for
+    // anything else. Sepolia keeps the existing placeholder call shape.
+    let payload: { chain: string; readOnly?: boolean; calls: { to: string; value?: string; data?: string }[] };
+    if (isReadonly || chainEnv === 'mainnet') {
+      payload = buildActionPlan(instruction, { chainEnv, walletAddress });
+    } else {
+      payload = {
+        chain: chainId,
+        calls: [
+          {
+            to: '0x0000000000000000000000000000000000000000',
+            value: '0',
+            data: '0x'
+          }
+        ]
+      };
+    }
+    const hasPlanCalls = planHasCalls(payload);
 
     const intent = detectActionIntent(instruction);
     let metadata: any = {
@@ -162,9 +175,15 @@ actionsRouter.post('/recommend', async (req, res, next) => {
       risk: isReadonly ? 'unknown' : 'low',
       expectedEffect: intent.expectedEffect || `Simulate action execution on ${chainEnv}`,
       chainMode: chainEnv,
-      safetyState: isReadonly ? 'blocked' : (canExecute ? 'executable' : 'blocked'),
+      safetyState: 'safe',
       executable: canExecute,
-      executionStatus: isReadonly ? 'read-only' : (canExecute ? 'executable' : 'blocked'),
+      // T19: a read-only mainnet action with real calls is user-confirmable
+      // (signed in the user's Base Account) even though the server never
+      // broadcasts. `executable` refers to server-broadcast (stays false here).
+      userConfirmable: isReadonly && hasPlanCalls,
+      executionStatus: isReadonly
+        ? (hasPlanCalls ? 'user-confirmable' : 'read-only')
+        : (canExecute ? 'executable' : 'blocked'),
       createdBy: 'actions-builder',
       walletAddress
     };
@@ -218,7 +237,11 @@ actionsRouter.post('/recommend', async (req, res, next) => {
     };
 
     let simRes;
-    if (!isReadonly && payload.calls && payload.calls.length > 0) {
+    // T19: run the static validator on any payload with calls — including
+    // mainnet-readonly user-confirmable plans — so the gate
+    // (screening.allowed && simulation.success && hasCalls) works for the
+    // user-confirmed flow. Read-only plans with no calls get the safe mock.
+    if (payload.calls && payload.calls.length > 0) {
       try {
         simRes = await simulateTrade(payload as any);
       } catch (e) {
@@ -235,6 +258,15 @@ actionsRouter.post('/recommend', async (req, res, next) => {
         checks: ['Chain validation: PASSED (Read-only)', 'Address check: PASSED', 'Permission bounds: SAFE']
       };
     }
+
+    // Re-apply T19 user-confirmable flags after the portfolio-analysis block
+    // may have replaced `metadata` wholesale, so the gate hints are consistent
+    // for every intent type.
+    metadata.userConfirmable = isReadonly && hasPlanCalls && screenRes.allowed;
+    metadata.executionStatus = isReadonly
+      ? (hasPlanCalls ? 'user-confirmable' : 'read-only')
+      : (canExecute ? 'executable' : 'blocked');
+    metadata.safetyState = screenRes.allowed ? (hasPlanCalls ? 'user-confirmable' : 'safe') : 'blocked';
 
     metadata.securityScreening = securityScreening;
     metadata.simulationResult = simRes;
@@ -370,6 +402,236 @@ actionsRouter.post('/:actionId/execute', async (req, res, next) => {
     }
 
     return res.json({ success: false, error: 'Failed to execute action' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// T19: Prepare an UNSIGNED EIP-5792 payload for the user to confirm in their
+// Base Account. The server never broadcasts here, never reads
+// MAINNET_EXECUTION_ENABLED, and uses no backend key. Screening + simulation
+// are re-derived LIVE (stored metadata is advisory only) and gate the response.
+actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
+  try {
+    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userAddress = (req as { session?: { user?: { address?: string } } }).session?.user?.address || null;
+    const actionId = req.params.actionId;
+
+    const [action] = await db.select().from(actions).where(and(eq(actions.id, actionId), eq(actions.userId, userId)));
+    if (!action) {
+      return res.status(404).json({ success: false, error: 'Action not found' });
+    }
+    if (action.status !== 'pending') {
+      return res.status(400).json({ success: false, error: 'Action is not pending' });
+    }
+
+    // Extract execution payload (same logic as /execute).
+    let payload: { chain: string; calls: { to: string; value?: string; data?: string }[] };
+    try {
+      const raw = action.executionPayload;
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (!parsed || !parsed.chain || !Array.isArray(parsed.calls)) {
+        throw new Error('Malformed or missing execution payload');
+      }
+      payload = parsed;
+    } catch (e) {
+      return res.status(400).json({ success: false, error: e instanceof Error ? e.message : 'Invalid payload' });
+    }
+
+    if (!payload.calls || payload.calls.length === 0) {
+      return res.json({ success: false, error: 'Action has no onchain calls to confirm' });
+    }
+
+    // Re-derive screening live. The instruction is stored on metadata.
+    const meta = (action.metadata || {}) as any;
+    const instruction = meta.instruction || action.suggestedPrompt || '';
+    const secProvider = process.env.TOKEN_SECURITY_PROVIDER || 'none';
+    const screenRes = screenAction({
+      instruction,
+      providerContext: {
+        risk: secProvider === 'goplus' ? 'connected' : 'missing',
+        riskProvider: secProvider,
+        securityProvider: secProvider,
+      },
+    });
+    if (!screenRes.allowed) {
+      return res.json(PrepareActionResponseSchema.parse({
+        success: false,
+        actionId,
+        chainId: '0x2105',
+        from: userAddress,
+        calls: payload.calls,
+        atomicRequired: true,
+        screening: {
+          screenedAt: new Date().toISOString(),
+          allowed: false,
+          verdict: 'BLOCKED',
+          reason: screenRes.reason || 'Blocked by security screening',
+          checks: screenRes.checks || [],
+        },
+        simulation: {
+          success: false, allowed: false, riskLevel: 'blocked',
+          reason: 'Screening blocked; simulation skipped',
+          checks: ['Instruction screening: Failed'],
+        },
+        builderCodeAttached: false,
+        error: `Security screening blocked: ${screenRes.reason || 'unsafe instruction'}`,
+      }));
+    }
+
+    // Re-derive simulation live. Reject any non-canon-token calldata.
+    let simRes;
+    try {
+      simRes = await simulateTrade(payload as any);
+    } catch (e) {
+      simRes = { success: false, allowed: false, riskLevel: 'blocked', checks: ['Simulation failed'] };
+    }
+    if (!simRes.success) {
+      return res.json(PrepareActionResponseSchema.parse({
+        success: false,
+        actionId,
+        chainId: '0x2105',
+        from: userAddress,
+        calls: payload.calls,
+        atomicRequired: true,
+        screening: {
+          screenedAt: new Date().toISOString(),
+          allowed: true,
+          verdict: 'PASSED',
+          reason: screenRes.reason || 'Passed',
+          checks: screenRes.checks || [],
+        },
+        simulation: simRes,
+        builderCodeAttached: false,
+        error: `Simulation rejected: ${simRes.error || simRes.reason || 'unsafe calls'}`,
+      }));
+    }
+
+    // Builder Code attribution is applied client-side (public env); the server
+    // only reports whether a code is configured so the UI can show it.
+    const builderCodeAttached = !!(process.env.BUILDER_CODE || process.env.VITE_BUILDER_CODE || process.env.NEXT_PUBLIC_BUILDER_CODE);
+
+    return res.json(PrepareActionResponseSchema.parse({
+      success: true,
+      actionId,
+      chainId: '0x2105',
+      from: userAddress,
+      calls: payload.calls,
+      atomicRequired: true,
+      screening: {
+        screenedAt: new Date().toISOString(),
+        allowed: true,
+        verdict: 'PASSED',
+        reason: screenRes.reason || 'Passed',
+        checks: screenRes.checks || [],
+      },
+      simulation: simRes,
+      builderCodeAttached,
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+// T19: Record the result of a user-confirmed wallet action. The server does
+// NOT broadcast — it only verifies the tx exists onchain via a read-only
+// public client and persists the outcome. Replay-guarded by `status='pending'`.
+actionsRouter.post('/:actionId/confirm', async (req, res, next) => {
+  try {
+    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userAddress = (req as { session?: { user?: { address?: string } } }).session?.user?.address || null;
+    const actionId = req.params.actionId;
+
+    const parsed = ConfirmActionRequestSchema.safeParse({ actionId, ...req.body });
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, error: 'Invalid confirm payload' });
+    }
+    const { batchId, status, txHash, receipts } = parsed.data;
+
+    const [action] = await db.select().from(actions).where(and(eq(actions.id, actionId), eq(actions.userId, userId)));
+    if (!action) {
+      return res.status(404).json({ success: false, error: 'Action not found' });
+    }
+    // Replay / double-record guard: only a pending action can be confirmed.
+    if (action.status !== 'pending') {
+      return res.status(400).json({ success: false, error: `Action is already ${action.status}` });
+    }
+
+    const isSuccess = status === 200;
+    let verifiedTxHash: string | undefined = txHash;
+    let verifiedFrom: string | null = null;
+    let verifiedTo: string | null = null;
+    let recordStatus: 'executed' | 'failed' = isSuccess ? 'executed' : 'failed';
+
+    // Read-only integrity check: when a txHash is provided, confirm the tx is
+    // actually included and successful on Base Mainnet via a read-only public
+    // client. On any RPC error or a reverted receipt, fail closed (record
+    // `failed`). No key, no broadcast.
+    //
+    // Note: we deliberately do NOT require tx.from to equal the session user.
+    // Base Account is an ERC-4337 smart wallet — `wallet_sendCalls` batches are
+    // relayed by a bundler, so the transaction's `from` is the relayer, not the
+    // user. The real protections are: only the user's wallet could have signed
+    // the batch (their Base Account session), the replay guard
+    // (`WHERE status='pending'`), and the audit-ledger trail. We still record
+    // `from`/`to` for forensic purposes.
+    if (isSuccess && txHash) {
+      try {
+        const rpcUrl = process.env.BASE_MAINNET_RPC_URL || 'https://mainnet.base.org';
+        const publicClient = createPublicClient({ chain: base, transport: http(rpcUrl) });
+        const receipt = await publicClient.getTransactionReceipt({ hash: txHash as Hex });
+        if (receipt.status !== 'success') {
+          recordStatus = 'failed';
+        }
+        // Record the originating account/target for the audit trail (best-effort).
+        try {
+          const tx = await publicClient.getTransaction({ hash: txHash as Hex });
+          verifiedFrom = (tx.from as string) ?? null;
+          verifiedTo = (tx.to as string) ?? null;
+        } catch {
+          // getTransaction failure is non-fatal — the receipt already proved inclusion.
+        }
+      } catch {
+        // Tx not found / RPC error → fail closed.
+        recordStatus = 'failed';
+      }
+    }
+
+    const meta = (action.metadata || {}) as any;
+    const confirmation = {
+      batchId,
+      txHash: verifiedTxHash ?? null,
+      confirmedAt: new Date().toISOString(),
+      from: verifiedFrom ?? userAddress ?? null,
+      to: verifiedTo,
+      statusCode: status,
+      receipts: receipts ?? null,
+    };
+
+    await db.update(actions)
+      .set({
+        status: recordStatus,
+        executedAt: new Date(),
+        updatedAt: new Date(),
+        metadata: { ...meta, confirmation },
+      })
+      .where(and(eq(actions.id, actionId), eq(actions.userId, userId), eq(actions.status, 'pending')));
+
+    // Spend/audit ledger trail (reuse the existing audit_logs table + service).
+    await ObservabilityService.logAction({
+      userId,
+      actionId,
+      actionType: recordStatus === 'executed' ? 'wallet-confirm' : 'wallet-confirm-failed',
+      txHash: verifiedTxHash,
+      details: { batchId, statusCode: status, from: verifiedFrom ?? userAddress, to: verifiedTo },
+    });
+
+    return res.json(ConfirmActionResponseSchema.parse({
+      success: recordStatus === 'executed',
+      status: recordStatus,
+      txHash: verifiedTxHash ?? null,
+      error: recordStatus === 'failed' ? 'Confirmation could not be verified onchain' : undefined,
+    }));
   } catch (error) {
     next(error);
   }

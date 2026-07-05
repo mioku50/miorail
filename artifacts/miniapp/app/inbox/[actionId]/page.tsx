@@ -3,6 +3,11 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useActionsFeed } from "@mioagent/api-client-react";
 import { Card, StateBadge } from "@mioagent/ui";
+import { WalletConfirmButton, builderCodeToDataSuffix } from "@mioagent/wallet-actions";
+
+// T19: Builder Code (ERC-8021) attribution. Public value from base.dev; empty
+// → transactions send unattributed (with a one-time console warning).
+const DATA_SUFFIX = builderCodeToDataSuffix(process.env.NEXT_PUBLIC_BUILDER_CODE);
 
 // Deep-link target: /inbox/:actionId. Opens a specific action (e.g. from a
 // scanner notification). Shares the data layer with the web interface.
@@ -128,6 +133,19 @@ export default function ActionDeepLink() {
               <p className="text-[13px] text-ink-2 leading-relaxed">{action.suggestedPrompt}</p>
             </div>
 
+            {/* T19: user-confirmed flow. Show the confirm button only for a
+                pending action that actually carries onchain calls. */}
+            {action.status === "pending" &&
+              (action.executionPayload?.calls?.length ?? 0) > 0 && (
+                <div className="mb-3">
+                  <WalletConfirmButton
+                    action={action}
+                    dataSuffix={DATA_SUFFIX}
+                    className="w-full"
+                  />
+                </div>
+              )}
+
             {/* Safety note */}
             <p
               className="text-[11px] text-ink-3"
@@ -135,7 +153,9 @@ export default function ActionDeepLink() {
             >
               {action.metadata?.safetyState === "blocked"
                 ? "Execution blocked — read-only mode active."
-                : "Review in Action Inbox before approving."}
+                : (action.executionPayload?.calls?.length ?? 0) > 0
+                  ? "Review the calls above, then confirm in your Base Account."
+                  : "Read-only recommendation — nothing to confirm onchain."}
             </p>
           </Card>
         )}

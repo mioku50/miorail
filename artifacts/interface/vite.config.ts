@@ -10,6 +10,13 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), tailwindcss()],
     server: {
+      // Required for the Base Account popup (sign-in / connect / sendCalls).
+      // `same-origin` would block the popup window; `same-origin-allow-popups`
+      // lets it communicate back. See @base-org/account docs. Mirror this in
+      // production via the edge/proxy that serves the built app.
+      headers: {
+        'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
+      },
       proxy: {
         '/api': {
           target: proxyTarget,

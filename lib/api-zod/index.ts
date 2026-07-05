@@ -105,6 +105,70 @@ export const ExecuteActionResponseSchema = z.object({
   error: z.string().optional(),
 });
 
+// T19: user-confirmed flow. `prepare` returns an UNSIGNED EIP-5792 payload the
+// client submits via Base Account `wallet_sendCalls`. The server never
+// broadcasts and never reads MAINNET_EXECUTION_ENABLED for these routes.
+export const SecurityScreeningSchema = z.object({
+  screenedAt: z.string(),
+  allowed: z.boolean(),
+  verdict: z.string(),
+  reason: z.string().optional(),
+  checks: z.array(z.object({ name: z.string(), status: z.string() })).optional(),
+});
+
+export const SimulationResultSchema = z.object({
+  success: z.boolean(),
+  allowed: z.boolean(),
+  riskLevel: z.string(),
+  reason: z.string().optional(),
+  error: z.string().optional(),
+  estimatedGas: z.string().optional(),
+  expectedOutput: z.string().optional(),
+  checks: z.array(z.string()),
+  method: z.string().optional(),
+});
+
+export const PrepareActionRequestSchema = z.object({
+  actionId: z.string(),
+});
+
+export const PrepareActionResponseSchema = z.object({
+  success: z.boolean(),
+  actionId: z.string(),
+  // EIP-5792 batch target. Base Mainnet = '0x2105'.
+  chainId: z.string(),
+  from: z.string().nullable().optional(),
+  calls: z.array(z.object({
+    to: z.string(),
+    value: z.string().optional(),
+    data: z.string().optional(),
+  })),
+  atomicRequired: z.boolean(),
+  // Live-rederived verdicts (advisory echo; the route re-runs both and gates on them).
+  screening: SecurityScreeningSchema,
+  simulation: SimulationResultSchema,
+  // True when a Builder Code dataSuffix will be attached client-side.
+  builderCodeAttached: z.boolean(),
+  error: z.string().optional(),
+});
+
+export const ConfirmActionRequestSchema = z.object({
+  actionId: z.string(),
+  // EIP-5792 batch id returned by wallet_sendCalls.
+  batchId: z.string(),
+  // EIP-5792 status code (200 = success, 400/500/600 = failure).
+  status: z.number(),
+  txHash: z.string().optional(),
+  receipts: z.array(z.record(z.any())).optional(),
+});
+
+export const ConfirmActionResponseSchema = z.object({
+  success: z.boolean(),
+  status: z.enum(['executed', 'failed']),
+  txHash: z.string().nullable().optional(),
+  error: z.string().optional(),
+});
+
 export const DismissActionRequestSchema = z.object({
   actionId: z.string(),
 });
@@ -319,6 +383,9 @@ export const StatusResponseSchema = z.object({
   execution: z.object({
     mode: z.string(),
     enabled: z.boolean(),
+    // T19: server-broadcast is a separate, legacy capability gated by
+    // MAINNET_EXECUTION_ENABLED. The user-confirmed flow is always enabled.
+    broadcastEnabled: z.boolean().optional(),
     reason: z.string(),
   }),
 });

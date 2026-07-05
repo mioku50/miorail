@@ -4,7 +4,7 @@ const API_URL = process.env.MIOAGENT_API_URL || "http://localhost:8080";
 
 const nextConfig: NextConfig = {
   // Workspace packages ship TS source; Next.js must transpile them.
-  transpilePackages: ["@mioagent/api-client-react", "@mioagent/api-spec", "@mioagent/ui"],
+  transpilePackages: ["@mioagent/api-client-react", "@mioagent/api-spec", "@mioagent/ui", "@mioagent/wallet-actions"],
   webpack: (config) => {
     // pino-pretty / lokijs / encoding are optional server deps of the api-client
     // workspace packages — never needed in the browser. `accounts` is an optional
