@@ -52,8 +52,10 @@ export function ActionDiffPreview({ action }: { action: any }) {
         <span className="px-2 py-0.5 rounded text-[11px] font-medium border bg-panel text-ink-2 border-line">Chain: {chainMode}</span>
         <span className={`px-2 py-0.5 rounded text-[11px] font-medium border ${safetyColor}`}>Safety: {safetyState}</span>
       </div>
-      <div className={`mt-1 font-medium px-2 py-1 rounded border text-[11px] w-fit ${isReadOnlyMode ? 'bg-warn-soft text-warn border-warn/20' : 'bg-ok-soft text-ok border-ok/20'}`}>
-        {isReadOnlyMode ? 'Read-only recommendation (execution disabled on mainnet)' : 'Executable testnet recommendation'}
+      <div className={`mt-1 font-medium px-2 py-1 rounded border text-[11px] w-fit ${isReadOnlyMode ? (executionStatus === 'user-confirmable' ? 'bg-ok-soft text-ok border-ok/20' : 'bg-warn-soft text-warn border-warn/20') : 'bg-ok-soft text-ok border-ok/20'}`}>
+        {isReadOnlyMode
+          ? (executionStatus === 'user-confirmable' ? 'Confirmable via Base Account' : 'Read-only recommendation')
+          : 'Executable testnet recommendation'}
       </div>
 
       {/* Execution status */}

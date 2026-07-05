@@ -65,8 +65,25 @@ export const ChatListResponseSchema = z.object({
 });
 
 // Actions
+// T19.1: the only onchain action types the user-confirmed flow may surface in
+// production. `revoke_approval` (ERC-20 approve(spender,0)) is the preferred
+// first mainnet action — no funds move. `limited_transfer` is a bounded USDC
+// transfer (capped server-side by MAX_LIMITED_TRANSFER_USDC). Anything else
+// stays a read-only recommendation with no confirm button.
+export const ProductionActionTypeSchema = z.enum(['revoke_approval', 'limited_transfer']);
+export const PRODUCTION_ACTION_TYPES = ProductionActionTypeSchema.options as readonly [
+  'revoke_approval',
+  'limited_transfer',
+];
+export function isProductionActionType(t?: string | null): boolean {
+  return t === 'revoke_approval' || t === 'limited_transfer';
+}
+
 export const ExecutionPayloadSchema = z.object({
   chain: z.string(),
+  // T19.1: present only for whitelisted production action types; absent on
+  // read-only plans. The UI gates the confirm button on isProductionActionType.
+  actionType: ProductionActionTypeSchema.optional(),
   calls: z.array(
     z.object({
       to: z.string(),
@@ -144,6 +161,9 @@ export const PrepareActionResponseSchema = z.object({
     data: z.string().optional(),
   })),
   atomicRequired: z.boolean(),
+  // T19.1: the whitelisted action type this batch encodes (revoke_approval |
+  // limited_transfer). The client gates the confirm button on this.
+  actionType: ProductionActionTypeSchema.optional(),
   // Live-rederived verdicts (advisory echo; the route re-runs both and gates on them).
   screening: SecurityScreeningSchema,
   simulation: SimulationResultSchema,
@@ -380,11 +400,19 @@ export const StatusResponseSchema = z.object({
   x402: z.object({
     status: z.enum(["simulated", "configured", "missing"]),
   }),
+  // T19.1: split into explicit flags. The UI may show "Confirm in Base Account"
+  // ONLY when userConfirmedEnabled is true, and must never infer "Execute" from
+  // a single generic flag. Legacy server-broadcast routes gate on
+  // serverBroadcastEnabled / mainnetExecutionEnabled, never on userConfirmedEnabled.
   execution: z.object({
-    mode: z.string(),
-    enabled: z.boolean(),
-    // T19: server-broadcast is a separate, legacy capability gated by
-    // MAINNET_EXECUTION_ENABLED. The user-confirmed flow is always enabled.
+    mode: z.enum(['read-only', 'user-confirmed', 'server-execution']),
+    // Base Account wallet_sendCalls flow is available.
+    userConfirmedEnabled: z.boolean(),
+    // Legacy /execute server-broadcast capability (testnet, or mainnet+flag).
+    serverBroadcastEnabled: z.boolean(),
+    // === MAINNET_EXECUTION_ENABLED === 'true'. Stays false in production.
+    mainnetExecutionEnabled: z.boolean(),
+    // Back-compat alias === serverBroadcastEnabled.
     broadcastEnabled: z.boolean().optional(),
     reason: z.string(),
   }),

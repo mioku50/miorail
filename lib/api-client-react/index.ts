@@ -2,6 +2,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { UseQueryOptions, UseMutationOptions } from '@tanstack/react-query';
 import * as apiSpec from '@mioagent/api-spec';
 
+// T19.1: re-export the production action-type whitelist so both surfaces can
+// gate the confirm button without a new dep (api-spec already re-exports it
+// from api-zod). Runtime values, not just types.
+export const isProductionActionType = apiSpec.isProductionActionType;
+export const PRODUCTION_ACTION_TYPES = apiSpec.PRODUCTION_ACTION_TYPES;
+
 // Simple fetch wrapper
 async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, options);

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { StatusResponseSchema } from '@mioagent/api-zod';
 import { getTokenBalancesProviderFromEnv, getPriceProviderFromEnv, getTokenSecurityProviderFromEnv, getApprovalProviderFromEnv } from '@mioagent/data-providers';
 import { getProviderBudgetSnapshot, getProviderCacheDiagnostics } from '../lib/providerCache.js';
+import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
 
 export function getSystemStatus(envOverride?: string) {
   const chainEnv = envOverride || process.env.CHAIN_ENV || 'sepolia';
@@ -43,19 +44,11 @@ export function getSystemStatus(envOverride?: string) {
   const x402Status: "simulated" | "configured" | "missing" = process.env.X402_FACILITATOR_URL ? "configured" : "simulated";
 
   const isReadonly = chainEnv === 'mainnet-readonly';
-  // T19: the user-confirmed flow (Base Account wallet_sendCalls) is always
-  // available — the server only prepares unsigned payloads and records results.
-  // `broadcastEnabled` is the separate, legacy server-broadcast capability,
-  // gated by MAINNET_EXECUTION_ENABLED (stays false in production).
-  const broadcastEnabled = !isReadonly && (chainEnv !== 'mainnet' || process.env.MAINNET_EXECUTION_ENABLED === 'true');
-  const execution = {
-    mode: 'user-confirmed',
-    enabled: true,
-    broadcastEnabled,
-    reason: isReadonly
-      ? 'User-confirmed flow via Base Account; server never broadcasts'
-      : (broadcastEnabled ? 'Server-broadcast enabled (testnet/dev)' : 'User-confirmed flow via Base Account; server-broadcast disabled'),
-  };
+  // T19.1: split execution into explicit flags via a shared helper. The UI may
+  // show "Confirm in Base Account" only when userConfirmedEnabled is true, and
+  // must never infer "Execute" from a single generic flag. `serverBroadcastEnabled`
+  // is the ONLY flag that authorizes a server-side broadcast.
+  const execution = getExecutionCapabilities(chainEnv);
 
   const cache = getProviderCacheDiagnostics();
   const budgets = getProviderBudgetSnapshot();

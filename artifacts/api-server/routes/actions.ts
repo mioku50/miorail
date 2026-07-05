@@ -19,7 +19,9 @@ import { ObservabilityService } from '@mioagent/observability';
 import { detectActionIntent } from '../lib/intent.js';
 import { fetchInternalPortfolio, analyzePortfolioForRisk, buildRecommendationMetadataFromAnalysis } from '../lib/portfolioAnalysis.js';
 import { buildActionPlan, planHasCalls, getBaseMainnetUsdcAddress } from '../lib/actionPlan.js';
+import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
 import { screenAction, simulateTrade } from '@mioagent/security';
+import { isProductionActionType } from '@mioagent/api-zod';
 
 export const actionsRouter = Router();
 
@@ -149,7 +151,7 @@ actionsRouter.post('/recommend', async (req, res, next) => {
     // mainnet — `buildActionPlan` encodes canonical USDC transfers for
     // recognized safe instructions and falls back to read-only (no calls) for
     // anything else. Sepolia keeps the existing placeholder call shape.
-    let payload: { chain: string; readOnly?: boolean; calls: { to: string; value?: string; data?: string }[] };
+    let payload: { chain: string; readOnly?: boolean; actionType?: 'revoke_approval' | 'limited_transfer'; calls: { to: string; value?: string; data?: string }[] };
     if (isReadonly || chainEnv === 'mainnet') {
       payload = buildActionPlan(instruction, { chainEnv, walletAddress });
     } else {
@@ -270,6 +272,11 @@ actionsRouter.post('/recommend', async (req, res, next) => {
 
     metadata.securityScreening = securityScreening;
     metadata.simulationResult = simRes;
+    // T19.1: surface the whitelisted action type + preferred-first-action hint
+    // so the UI can gate the confirm button and badge revoke_approval as the
+    // recommended first mainnet action (no funds move).
+    metadata.actionType = payload.actionType;
+    metadata.preferredFirstAction = payload.actionType === 'revoke_approval';
 
     await db.insert(actions).values({
       id: actionId,
@@ -354,12 +361,17 @@ actionsRouter.post('/:actionId/execute', async (req, res, next) => {
     }
 
     const chainEnv = process.env.CHAIN_ENV || 'sepolia';
-    if (chainEnv === 'mainnet-readonly') {
-      return res.json({ success: false, error: 'Mainnet execution is disabled in read-only mode.' });
-    }
-
-    if (payload.chain === 'eip155:8453' && process.env.MAINNET_EXECUTION_ENABLED !== 'true') {
-      return res.json({ success: false, error: 'Mainnet execution is not enabled.' });
+    // T19.1: gate on the SERVER-BROADCAST capability (never on
+    // userConfirmedEnabled). This is the legacy /execute path that calls the
+    // Base MCP send_calls tool; the user-confirmed flow lives in /prepare + /confirm.
+    const execCaps = getExecutionCapabilities(chainEnv);
+    if (!execCaps.serverBroadcastEnabled) {
+      return res.json({
+        success: false,
+        error: chainEnv === 'mainnet-readonly'
+          ? 'Mainnet execution is disabled in read-only mode.'
+          : 'Mainnet execution is not enabled.',
+      });
     }
 
     // If we have calls, execute them using the tool
@@ -426,7 +438,7 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
     }
 
     // Extract execution payload (same logic as /execute).
-    let payload: { chain: string; calls: { to: string; value?: string; data?: string }[] };
+    let payload: { chain: string; actionType?: 'revoke_approval' | 'limited_transfer'; calls: { to: string; value?: string; data?: string }[] };
     try {
       const raw = action.executionPayload;
       const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
@@ -440,6 +452,13 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
 
     if (!payload.calls || payload.calls.length === 0) {
       return res.json({ success: false, error: 'Action has no onchain calls to confirm' });
+    }
+
+    // T19.1: defensive whitelist gate. actionPlan only ever produces
+    // whitelisted action types, but prepare re-checks so a stale/hand-edited
+    // payload can never reach the user's wallet.
+    if (!isProductionActionType(payload.actionType)) {
+      return res.json({ success: false, error: 'Action type is not on the production whitelist' });
     }
 
     // Re-derive screening live. The instruction is stored on metadata.
@@ -518,6 +537,7 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
       from: userAddress,
       calls: payload.calls,
       atomicRequired: true,
+      actionType: payload.actionType,
       screening: {
         screenedAt: new Date().toISOString(),
         allowed: true,

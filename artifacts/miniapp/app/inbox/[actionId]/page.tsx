@@ -1,13 +1,19 @@
 "use client";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
-import { useActionsFeed } from "@mioagent/api-client-react";
+import { useActionsFeed, isProductionActionType } from "@mioagent/api-client-react";
 import { Card, StateBadge } from "@mioagent/ui";
-import { WalletConfirmButton, builderCodeToDataSuffix } from "@mioagent/wallet-actions";
 
-// T19: Builder Code (ERC-8021) attribution. Public value from base.dev; empty
-// → transactions send unattributed (with a one-time console warning).
-const DATA_SUFFIX = builderCodeToDataSuffix(process.env.NEXT_PUBLIC_BUILDER_CODE);
+// T19.1: code-split the wallet/crypto deps — load WalletConfirmButton
+// client-side only, so `ox`/wagmi confirm-flow code isn't in the initial
+// bundle. The raw builder code (public env string) is passed through; the
+// suffix is computed inside the lazy chunk.
+const WalletConfirmButton = dynamic(
+  () => import("@mioagent/wallet-actions").then((m) => m.WalletConfirmButton),
+  { ssr: false },
+);
+const BUILDER_CODE = process.env.NEXT_PUBLIC_BUILDER_CODE;
 
 // Deep-link target: /inbox/:actionId. Opens a specific action (e.g. from a
 // scanner notification). Shares the data layer with the web interface.
@@ -133,14 +139,23 @@ export default function ActionDeepLink() {
               <p className="text-[13px] text-ink-2 leading-relaxed">{action.suggestedPrompt}</p>
             </div>
 
-            {/* T19: user-confirmed flow. Show the confirm button only for a
-                pending action that actually carries onchain calls. */}
+            {/* T19.1: user-confirmed flow. Show the confirm button only for a
+                pending, whitelisted action type that carries onchain calls. */}
             {action.status === "pending" &&
-              (action.executionPayload?.calls?.length ?? 0) > 0 && (
-                <div className="mb-3">
+              (action.executionPayload?.calls?.length ?? 0) > 0 &&
+              isProductionActionType(action.executionPayload?.actionType) && (
+                <div className="mb-3 flex flex-col gap-1.5">
+                  {action.metadata?.preferredFirstAction === true && (
+                    <span className="text-[10px] font-semibold text-accent-2 bg-accent-soft px-2 py-0.5 rounded-full w-fit" title="Revoke approval is the safest first mainnet action — no funds move.">
+                      ★ Recommended first action
+                    </span>
+                  )}
+                  <span className="text-[10px] font-medium text-ink-3 bg-panel-2 px-2 py-0.5 rounded-full w-fit border border-line" title="No fork sim or before/after portfolio projection; only chain, call-structure, screening, and canonical-token checks.">
+                    ⚠ Static validation — not a real simulation
+                  </span>
                   <WalletConfirmButton
                     action={action}
-                    dataSuffix={DATA_SUFFIX}
+                    builderCode={BUILDER_CODE}
                     className="w-full"
                   />
                 </div>
@@ -152,8 +167,8 @@ export default function ActionDeepLink() {
               style={{ fontFamily: "var(--font-mono)" }}
             >
               {action.metadata?.safetyState === "blocked"
-                ? "Execution blocked — read-only mode active."
-                : (action.executionPayload?.calls?.length ?? 0) > 0
+                ? "Blocked by security screening."
+                : (action.executionPayload?.calls?.length ?? 0) > 0 && isProductionActionType(action.executionPayload?.actionType)
                   ? "Review the calls above, then confirm in your Base Account."
                   : "Read-only recommendation — nothing to confirm onchain."}
             </p>

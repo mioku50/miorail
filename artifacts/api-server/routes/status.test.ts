@@ -67,7 +67,7 @@ describe('Status API', () => {
     restoreEnv('APPROVAL_PROVIDER', origApproval);
   });
 
-  test('GET /api/status reports the T19 user-confirmed execution mode with broadcast disabled', async () => {
+  test('GET /api/status reports the T19.1 split execution flags with broadcast disabled', async () => {
     const origChain = process.env.CHAIN_ENV;
     const origMainnetExec = process.env.MAINNET_EXECUTION_ENABLED;
     process.env.CHAIN_ENV = 'mainnet-readonly';
@@ -75,9 +75,33 @@ describe('Status API', () => {
 
     const response = await request(app).get('/api/status');
     assert.strictEqual(response.status, 200);
-    assert.strictEqual(response.body.execution.mode, 'user-confirmed');
-    assert.strictEqual(response.body.execution.enabled, true);
-    assert.strictEqual(response.body.execution.broadcastEnabled, false);
+    const exec = response.body.execution;
+    assert.strictEqual(exec.mode, 'user-confirmed');
+    assert.strictEqual(exec.userConfirmedEnabled, true);
+    assert.strictEqual(exec.serverBroadcastEnabled, false);
+    assert.strictEqual(exec.mainnetExecutionEnabled, false);
+    assert.strictEqual(exec.broadcastEnabled, false);
+    // T19.1: the generic `enabled` flag is removed so the UI can never infer
+    // "Execute" from a single flag.
+    assert.strictEqual(exec.enabled, undefined);
+
+    restoreEnv('CHAIN_ENV', origChain);
+    restoreEnv('MAINNET_EXECUTION_ENABLED', origMainnetExec);
+  });
+
+  test('GET /api/status reports server-execution mode + broadcast enabled on sepolia', async () => {
+    const origChain = process.env.CHAIN_ENV;
+    const origMainnetExec = process.env.MAINNET_EXECUTION_ENABLED;
+    process.env.CHAIN_ENV = 'sepolia';
+    delete process.env.MAINNET_EXECUTION_ENABLED;
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    const exec = response.body.execution;
+    assert.strictEqual(exec.mode, 'server-execution');
+    assert.strictEqual(exec.userConfirmedEnabled, true);
+    assert.strictEqual(exec.serverBroadcastEnabled, true);
+    assert.strictEqual(exec.mainnetExecutionEnabled, false);
 
     restoreEnv('CHAIN_ENV', origChain);
     restoreEnv('MAINNET_EXECUTION_ENABLED', origMainnetExec);

@@ -68,11 +68,11 @@ export function ConfigureView() {
 
   const executeMut = useTestnetExecuteAction({
     onSuccess: (res: any) => {
-      showToast('Test action spend executed!');
-      setActionStatus({ type: 'success', msg: `Test action executed successfully! Amount: ${res.amountUsdc} USDC to ${res.target}. Tx: ${res.txHash || 'Simulated/Verified'}` });
+      showToast('Test spend ran on testnet!');
+      setActionStatus({ type: 'success', msg: `Test action ran successfully! Amount: ${res.amountUsdc} USDC to ${res.target}. Tx: ${res.txHash || 'Simulated/Verified'}` });
     },
     onError: (err: any) => {
-      setActionStatus({ type: 'error', msg: err?.message || 'Action execution failed (check nonce or spend limits)' });
+      setActionStatus({ type: 'error', msg: err?.message || 'Test action failed (check nonce or spend limits)' });
     },
   });
 
@@ -217,7 +217,7 @@ export function ConfigureView() {
             disabled={executeMut.isPending}
             className="text-xs font-bold bg-panel-2 text-ink border border-line px-3.5 py-2 rounded-lg hover:bg-line/50 disabled:opacity-50 transition-colors"
           >
-            {executeMut.isPending ? 'Executing...' : 'Execute Test Action ($5 USDC)'}
+            {executeMut.isPending ? 'Running…' : 'Run Test Action (testnet, $5 USDC)'}
           </button>
           <button
             onClick={() => {

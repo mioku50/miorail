@@ -69,7 +69,7 @@ export function ActionsBuilder() {
         {isMainnetReadonly && (
           <div className="text-[11px] text-warn bg-warn-soft p-2.5 rounded-lg border border-warn/20 font-medium flex items-center gap-2">
             <span>🔒</span>
-            <span>In Read-only mode, recommendations will be generated with execution blocked.</span>
+            <span>In read-only mode, recommendations are confirmable via your Base Account — the server never broadcasts.</span>
           </div>
         )}
 
@@ -93,18 +93,18 @@ export function ActionsBuilder() {
               </div>
               <div>
                 <span className="font-semibold text-ink-2">Expected Effect: </span>
-                <span className="text-ink">{isMainnetReadonly ? 'Simulate action execution on mainnet-readonly' : `Simulate action execution on ${import.meta.env.VITE_CHAIN_ENV || 'sepolia'}`}</span>
+                <span className="text-ink">{isMainnetReadonly ? 'User-confirmed action plan on mainnet-readonly' : `Simulate action execution on ${import.meta.env.VITE_CHAIN_ENV || 'sepolia'}`}</span>
               </div>
               <div className="flex flex-wrap gap-1.5 mt-1">
                 <span className="px-2 py-0.5 rounded text-[11px] font-medium border bg-panel text-ink-2 border-line">
                   Chain: {isMainnetReadonly ? 'mainnet-readonly' : 'sepolia'}
                 </span>
-                <span className={`px-2 py-0.5 rounded text-[11px] font-medium border ${isMainnetReadonly ? 'bg-risk-soft text-risk border-risk/20' : 'bg-ok-soft text-ok border-ok/20'}`}>
-                  Safety: {isMainnetReadonly ? 'blocked - read only mode' : 'executable'}
+                <span className={`px-2 py-0.5 rounded text-[11px] font-medium border ${isMainnetReadonly ? 'bg-ok-soft text-ok border-ok/20' : 'bg-ok-soft text-ok border-ok/20'}`}>
+                  Safety: {isMainnetReadonly ? 'confirmable via Base Account' : 'executable'}
                 </span>
               </div>
-              <div className={`mt-1 font-medium px-2 py-1 rounded border text-[11px] w-fit ${isMainnetReadonly ? 'bg-warn-soft text-warn border-warn/20' : 'bg-ok-soft text-ok border-ok/20'}`}>
-                {isMainnetReadonly ? 'Read-only recommendation (execution disabled on mainnet)' : 'Executable testnet recommendation'}
+              <div className={`mt-1 font-medium px-2 py-1 rounded border text-[11px] w-fit ${isMainnetReadonly ? 'bg-ok-soft text-ok border-ok/20' : 'bg-ok-soft text-ok border-ok/20'}`}>
+                {isMainnetReadonly ? 'Confirmable via Base Account (server never broadcasts)' : 'Executable testnet recommendation'}
               </div>
             </div>
           ) : (

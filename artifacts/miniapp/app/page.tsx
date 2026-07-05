@@ -100,10 +100,13 @@ export default function Home() {
   const messages = chatData?.messages || [];
   const actions = (actionsData?.actions || []).filter((a) => a.status === "pending").slice(0, 5);
   const chainEnv = statusData?.chainEnv || "mainnet-readonly";
-  const readOnly = statusData?.execution?.mode === "read-only" || chainEnv === "mainnet-readonly";
-  const autonomyActive = statusData?.execution?.enabled === true && !readOnly;
+  // T19.1: derive from the explicit broadcast flag, NOT a generic `enabled`.
+  // Autonomy = server-side broadcast capability, which is false in production
+  // (mainnet-readonly). The user-confirmed Base Account flow is separate.
+  const serverBroadcastEnabled = statusData?.execution?.serverBroadcastEnabled === true;
+  const readOnly = !serverBroadcastEnabled;
+  const autonomyActive = serverBroadcastEnabled;
   const executionMode = statusData?.execution?.mode ?? "—";
-  const executionReason = statusData?.execution?.reason ?? "—";
 
   const send = (text: string) => {
     if (!text.trim() || sendMessage.isPending) return;
@@ -172,8 +175,8 @@ export default function Home() {
             {[
               { label: "Chain", value: chainEnv },
               { label: "Mode", value: executionMode },
-              { label: "Enabled", value: statusData?.execution?.enabled ? "yes" : "no" },
-              { label: "Reason", value: executionReason },
+              { label: "Server broadcast", value: serverBroadcastEnabled ? "yes" : "no" },
+              { label: "User-confirmed", value: statusData?.execution?.userConfirmedEnabled ? "yes" : "no" },
             ].map(({ label, value }) => (
               <div key={label} className="bg-panel-2 rounded-[var(--radius-sm)] px-3 py-2">
                 <div className="text-[11px] text-ink-3 mb-0.5">{label}</div>

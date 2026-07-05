@@ -155,8 +155,9 @@ test('Actions API', async (t) => {
   });
 
   
-  await t.test('POST /api/actions/:actionId/execute blocks execution in mainnet-readonly mode', async () => {
+  await t.test('POST /api/actions/:actionId/execute blocks execution in mainnet-readonly mode and never broadcasts', async () => {
     process.env.CHAIN_ENV = 'mainnet-readonly';
+    process.env.SESSION_SECRET = '00000000000000000000000000000000';
 
     const mockSelect = mock.fn(() => ({
       from: mock.fn(() => ({
@@ -169,20 +170,28 @@ test('Actions API', async (t) => {
       })),
     }));
     mock.method(db, 'select', mockSelect);
-    
+
+    // T19.1 regression: the server must NEVER invoke the broadcast tool on Base
+    // Mainnet when MAINNET_EXECUTION_ENABLED=false. callTool throws if reached.
+    const callToolMock = mock.method(toolsModule.ToolAggregator.prototype, 'callTool', async () => {
+      throw new Error('BROADCAST_ATTEMPTED');
+    });
+    mock.method(toolsModule.ToolAggregator.prototype, 'findTool', () => ({ name: 'send_calls' }));
+
     const response = await request(app).post('/api/actions/action-1/execute');
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.success, false);
     assert.strictEqual(response.body.error, 'Mainnet execution is disabled in read-only mode.');
+    assert.strictEqual(callToolMock.mock.calls.length, 0, 'server must not broadcast in mainnet-readonly');
 
     mock.restoreAll();
     process.env.CHAIN_ENV = 'sepolia';
   });
 
-  await t.test('POST /api/actions/:actionId/execute blocks mainnet execution if MAINNET_EXECUTION_ENABLED is not true', async () => {
+  await t.test('POST /api/actions/:actionId/execute blocks mainnet execution if MAINNET_EXECUTION_ENABLED is not true and never broadcasts', async () => {
     process.env.CHAIN_ENV = "mainnet";
-    process.env.MAINNET_EXECUTION_ENABLED = "false";
     process.env.MAINNET_EXECUTION_ENABLED = 'false';
+    process.env.SESSION_SECRET = '00000000000000000000000000000000';
 
     const mockSelect = mock.fn(() => ({
       from: mock.fn(() => ({
@@ -195,11 +204,19 @@ test('Actions API', async (t) => {
       })),
     }));
     mock.method(db, 'select', mockSelect);
-    
+
+    // T19.1 regression: MAINNET_EXECUTION_ENABLED=false ⇒ serverBroadcastEnabled=false
+    // ⇒ the broadcast tool is never called.
+    const callToolMock = mock.method(toolsModule.ToolAggregator.prototype, 'callTool', async () => {
+      throw new Error('BROADCAST_ATTEMPTED');
+    });
+    mock.method(toolsModule.ToolAggregator.prototype, 'findTool', () => ({ name: 'send_calls' }));
+
     const response = await request(app).post('/api/actions/action-1/execute');
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.success, false);
     assert.strictEqual(response.body.error, 'Mainnet execution is not enabled.');
+    assert.strictEqual(callToolMock.mock.calls.length, 0, 'server must not broadcast when MAINNET_EXECUTION_ENABLED=false');
 
     mock.restoreAll();
     process.env.CHAIN_ENV = 'sepolia';
@@ -322,6 +339,7 @@ test('Actions API', async (t) => {
             suggestedPrompt: 'Transfer 1 USDC to 0x1111111111111111111111111111111111111111',
             executionPayload: {
               chain: 'eip155:8453',
+              actionType: 'limited_transfer',
               calls: [{ to: BASE_MAINNET_USDC, value: '0', data: '0xa9059cbb0000000000000000000000001111111111111111111111111111111111111111000000000000000000000000000000000000000000000000000000000000000a' }],
             },
             metadata: { instruction: 'Transfer 1 USDC to 0x1111111111111111111111111111111111111111' },
@@ -338,9 +356,35 @@ test('Actions API', async (t) => {
     assert.strictEqual(response.body.success, true);
     assert.strictEqual(response.body.chainId, '0x2105');
     assert.strictEqual(response.body.atomicRequired, true);
+    assert.strictEqual(response.body.actionType, 'limited_transfer');
     assert.ok(Array.isArray(response.body.calls) && response.body.calls.length === 1);
     assert.strictEqual(response.body.screening.allowed, true);
     assert.strictEqual(response.body.simulation.success, true);
+
+    mock.restoreAll();
+    process.env.CHAIN_ENV = 'sepolia';
+  });
+
+  await t.test('POST /api/actions/:actionId/prepare rejects a payload whose actionType is not whitelisted', async () => {
+    process.env.CHAIN_ENV = 'mainnet-readonly';
+    const mockSelect = mock.fn(() => ({
+      from: mock.fn(() => ({
+        where: mock.fn(async () => [
+          {
+            id: 'act-bad-type', userId: 'default-user', status: 'pending',
+            executionPayload: { chain: 'eip155:8453', actionType: 'swap', calls: [{ to: BASE_MAINNET_USDC }] },
+            metadata: { instruction: 'swap something' },
+            createdAt: new Date(), updatedAt: new Date(),
+          },
+        ]),
+      })),
+    }));
+    mock.method(db, 'select', mockSelect);
+
+    const response = await request(app).post('/api/actions/act-bad-type/prepare');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, false);
+    assert.ok(response.body.error.includes('whitelist'));
 
     mock.restoreAll();
     process.env.CHAIN_ENV = 'sepolia';
