@@ -115,4 +115,22 @@ describe('Autonomy API Hardening Guarantees', () => {
     assert.strictEqual(res.body.sessionKey.status, 'unconfigured');
     assert.strictEqual(res.body.isStaleTestMemory, true);
   });
+
+  test('GET /api/autonomy returns status=expired and null limits when memory config is expired', async () => {
+    await request(app).post('/api/autonomy/config').send({
+      dailyLimitUsdc: '100',
+      maxPerActionUsdc: '20',
+      whitelist: ['0x036cbd53842c5426634e7929541ec2318f3dcf7e'],
+      ttlSeconds: -10, // expired in the past
+    });
+    const res = await request(app).get('/api/autonomy?owner=0x8888888888888888888888888888888888888888');
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.status, 'expired');
+    assert.strictEqual(res.body.sessionKey.status, 'expired');
+    assert.strictEqual(res.body.isExpiredMemory, true);
+    assert.strictEqual(res.body.sessionKey.dailyLimitUsdc, null);
+    assert.strictEqual(res.body.sessionKey.maxPerActionUsdc, null);
+    assert.strictEqual(res.body.autonomy.dailySpendLimit, null);
+    assert.strictEqual(res.body.autonomy.maxActionSpend, null);
+  });
 });

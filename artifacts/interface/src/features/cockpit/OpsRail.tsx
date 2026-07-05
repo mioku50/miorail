@@ -35,6 +35,8 @@ export function OpsRail({ onClose }: OpsRailProps) {
   const resetAutonomy = useResetAutonomy();
 
   const shortAddr = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : 'Disconnected';
+  const isStale = autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory;
+  const isExpired = autonomyState?.isExpiredMemory || autonomyState?.sessionKey?.isExpiredMemory || autonomyState?.status === 'expired' || autonomyState?.sessionKey?.status === 'expired';
 
   return (
     <aside className="w-[240px] min-w-[240px] shrink-0 border-r border-line bg-panel-2 flex flex-col gap-4 overflow-y-auto select-none h-full">
@@ -138,7 +140,7 @@ export function OpsRail({ onClose }: OpsRailProps) {
             <div className="flex items-center justify-between">
               <span className="text-xs text-ink-2 font-sans">Session Key</span>
               <span className={`text-[10px] font-sans font-medium px-2 py-0.5 rounded-full ${
-                autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory
+                isStale || isExpired
                   ? 'bg-warn-soft text-warn'
                   : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract'
                     ? 'bg-ok-soft text-ok'
@@ -148,18 +150,20 @@ export function OpsRail({ onClose }: OpsRailProps) {
                         ? 'bg-risk-soft text-risk'
                         : 'bg-panel-2 text-ink-3'
               }`}>
-                {autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory
+                {isStale
                   ? 'stale test memory'
-                  : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract'
-                    ? 'testnet verified'
-                    : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch
-                      ? 'revoked'
-                      : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory'
-                        ? 'configured in app'
-                        : 'missing'}
+                  : isExpired
+                    ? 'expired memory config'
+                    : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract'
+                      ? 'testnet verified'
+                      : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch
+                        ? 'revoked'
+                        : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory'
+                          ? 'configured in app'
+                          : 'missing'}
               </span>
             </div>
-            {(autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory) && (
+            {(isStale || isExpired) && (
               <button
                 onClick={() => resetAutonomy.mutate()}
                 disabled={resetAutonomy.isPending}

@@ -361,12 +361,14 @@ export const AutonomyStateResponseSchema = z.object({
   status: z.enum(['active', 'inactive', 'unconfigured', 'configured', 'revoked', 'expired']),
   source: z.enum(['memory', 'onchain', 'base-sepolia-contract', 'missing']),
   isStaleTestMemory: z.boolean().optional(),
+  isExpiredMemory: z.boolean().optional(),
   chainId: z.number().optional(),
   contractAddress: z.string().nullable().optional(),
   sessionKey: z.object({
     status: z.enum(['configured', 'unconfigured', 'inactive', 'revoked', 'expired', 'active']),
     source: z.enum(['memory', 'onchain', 'base-sepolia-contract', 'missing']).optional(),
     isStaleTestMemory: z.boolean().optional(),
+    isExpiredMemory: z.boolean().optional(),
     dailyLimitUsdc: z.string().nullable(),
     spentTodayUsdc: z.string(),
     maxPerActionUsdc: z.string().nullable(),
@@ -389,6 +391,7 @@ export const AutonomyStateResponseSchema = z.object({
     mode: z.string(),
     source: z.enum(['memory', 'onchain', 'base-sepolia-contract', 'missing']),
     isStaleTestMemory: z.boolean().optional(),
+    isExpiredMemory: z.boolean().optional(),
   }),
 });
 

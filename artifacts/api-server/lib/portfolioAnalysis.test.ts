@@ -162,9 +162,11 @@ describe('Portfolio Risk Analysis Utility', () => {
     const origPriceProvider = process.env.PRICE_PROVIDER;
     const origBalancesProvider = process.env.TOKEN_BALANCES_PROVIDER;
     const origSecurityProvider = process.env.TOKEN_SECURITY_PROVIDER;
+    const origApprovalProvider = process.env.APPROVAL_PROVIDER;
     process.env.PRICE_PROVIDER = 'mock';
     process.env.TOKEN_BALANCES_PROVIDER = 'mock';
     process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    process.env.APPROVAL_PROVIDER = 'none';
 
     try {
       const portfolio = await fetchInternalPortfolio('0x123', 'sepolia');
@@ -181,6 +183,7 @@ describe('Portfolio Risk Analysis Utility', () => {
       restoreEnv('PRICE_PROVIDER', origPriceProvider);
       restoreEnv('TOKEN_BALANCES_PROVIDER', origBalancesProvider);
       restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurityProvider);
+      restoreEnv('APPROVAL_PROVIDER', origApprovalProvider);
     }
   });
 

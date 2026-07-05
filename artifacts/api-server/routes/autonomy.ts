@@ -127,21 +127,40 @@ async function getAutonomyState(userId: string, query?: { owner?: string; execut
     isFakeHash(autonomy.txHashLastConfigured) || isFakeHash(autonomy.txHashLastRevoked)
   );
 
+  const isPastDate = (val?: number | string | null) => {
+    if (!val) return false;
+    const now = Date.now();
+    if (typeof val === 'number') {
+      return (val > 10000000000 ? val : val * 1000) <= now;
+    }
+    const parsed = new Date(val).getTime();
+    return !isNaN(parsed) && parsed <= now;
+  };
+
+  const isExpiredMemory = source === 'memory' && !isStaleTestMemory && isPastDate(autonomy.expiresAt);
+
   if (isStaleTestMemory) {
     status = 'unconfigured';
     sessionKeyStatus = 'unconfigured';
+  } else if (isExpiredMemory) {
+    status = 'expired';
+    sessionKeyStatus = 'expired';
+    dailyLimitUsdc = null;
+    maxPerActionUsdc = null;
   }
 
   return {
     status,
     source,
     isStaleTestMemory,
+    isExpiredMemory,
     chainId,
     contractAddress,
     sessionKey: {
       status: sessionKeyStatus,
       source,
       isStaleTestMemory,
+      isExpiredMemory,
       dailyLimitUsdc,
       spentTodayUsdc,
       maxPerActionUsdc,
@@ -164,6 +183,7 @@ async function getAutonomyState(userId: string, query?: { owner?: string; execut
       mode: isTestnetAutonomyEnabled() ? 'base-sepolia' : (process.env.CHAIN_ENV || 'mainnet-readonly'),
       source,
       isStaleTestMemory,
+      isExpiredMemory,
     },
   };
 }

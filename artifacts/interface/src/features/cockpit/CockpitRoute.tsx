@@ -46,6 +46,9 @@ export function CockpitRoute() {
     }
   }
 
+  const isStale = autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory;
+  const isExpired = autonomyState?.isExpiredMemory || autonomyState?.sessionKey?.isExpiredMemory || autonomyState?.status === 'expired' || autonomyState?.sessionKey?.status === 'expired';
+
   return (
     <div className="flex-1 flex overflow-hidden w-full h-full">
       {/* Center: Cockpit Canvas */}
@@ -59,11 +62,11 @@ export function CockpitRoute() {
           </div>
           <div className="flex items-center gap-3">
             <StateBadge
-              state={autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory ? 'stale' : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'live' : autonomyState?.sessionKey?.status === 'configured' ? 'live' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'failed' : 'missing'}
-              label={autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory ? 'stale test memory' : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'testnet verified' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'revoked' : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory' ? 'configured in app' : 'missing'}
-              title={autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory ? 'Stale test memory detected. Click Reset to clear.' : autonomyState?.autonomy?.source === 'base-sepolia-contract' ? 'Verified on Base Sepolia contract' : autonomyState?.sessionKey?.status === 'configured' ? 'Session key configured in app memory' : 'No session key is active'}
+              state={isStale ? 'stale' : isExpired ? 'stale' : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'live' : autonomyState?.sessionKey?.status === 'configured' ? 'live' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'failed' : 'missing'}
+              label={isStale ? 'stale test memory' : isExpired ? 'expired memory config' : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'testnet verified' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'revoked' : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory' ? 'configured in app' : 'missing'}
+              title={isStale ? 'Stale test memory detected. Click Reset to clear.' : isExpired ? 'Memory autonomy config has expired. Click Reset Memory to clear.' : autonomyState?.autonomy?.source === 'base-sepolia-contract' ? 'Verified on Base Sepolia contract' : autonomyState?.sessionKey?.status === 'configured' ? 'Session key configured in app memory' : 'No session key is active'}
             />
-            {(autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory) && (
+            {(isStale || isExpired) && (
               <button
                 onClick={() => resetAutonomy.mutate()}
                 disabled={resetAutonomy.isPending}

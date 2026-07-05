@@ -84,6 +84,8 @@ export function ConfigureView() {
   });
 
   const isBaseSepolia = chainId === 84532;
+  const isStale = autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory;
+  const isExpired = autonomyState?.isExpiredMemory || autonomyState?.sessionKey?.isExpiredMemory || autonomyState?.status === 'expired' || autonomyState?.sessionKey?.status === 'expired';
 
   const handleSetupPermission = () => {
     setActionStatus(null);
@@ -126,9 +128,9 @@ export function ConfigureView() {
             </p>
           </div>
           <StateBadge
-            state={autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory ? 'stale' : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'live' : autonomyState?.sessionKey?.status === 'configured' ? 'live' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'failed' : 'missing'}
-            label={autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory ? 'stale test memory' : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'testnet verified' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'revoked' : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory' ? 'configured in app' : 'missing'}
-            title={autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory ? 'Stale test memory detected. Click Reset Memory State below.' : autonomyState?.autonomy?.source === 'base-sepolia-contract' ? 'Verified on Base Sepolia contract' : autonomyState?.sessionKey?.status === 'configured' ? 'Session key configured in app memory' : 'No session key is active'}
+            state={isStale ? 'stale' : isExpired ? 'stale' : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'live' : autonomyState?.sessionKey?.status === 'configured' ? 'live' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'failed' : 'missing'}
+            label={isStale ? 'stale test memory' : isExpired ? 'expired memory config' : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'testnet verified' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'revoked' : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory' ? 'configured in app' : 'missing'}
+            title={isStale ? 'Stale test memory detected. Click Reset Memory State below.' : isExpired ? 'Memory autonomy config has expired. Click Reset Memory State below.' : autonomyState?.autonomy?.source === 'base-sepolia-contract' ? 'Verified on Base Sepolia contract' : autonomyState?.sessionKey?.status === 'configured' ? 'Session key configured in app memory' : 'No session key is active'}
           />
         </div>
 
@@ -233,9 +235,9 @@ export function ConfigureView() {
               resetMut.mutate();
             }}
             disabled={resetMut.isPending}
-            className="text-xs font-medium bg-panel-2 text-ink-3 border border-line px-3 py-2 rounded-lg hover:text-ink transition-colors"
+            className={`text-xs font-medium border px-3 py-2 rounded-lg transition-colors ${isStale || isExpired ? 'bg-warn-soft text-warn border-warn/30 hover:bg-warn/10' : 'bg-panel-2 text-ink-3 border-line hover:text-ink'}`}
           >
-            Reset Memory State
+            {resetMut.isPending ? 'Resetting...' : isStale ? 'Reset Stale Memory' : isExpired ? 'Reset Expired Memory' : 'Reset Memory State'}
           </button>
         </div>
       </section>
