@@ -217,7 +217,7 @@ export default function Home() {
                 return (
                   <Link
                     key={a.id}
-                    href={`/inbox/${a.id}`}
+                    href={`/actions/${a.id}`}
                     className="flex gap-2.5 bg-panel border border-line rounded-[var(--radius-md)] p-3 hover:border-accent/40 transition-colors"
                     style={{ textDecoration: "none" }}
                   >

@@ -89,7 +89,7 @@ export function RiskQueueContent({
               return (
                 <Link
                   key={action.id}
-                  href={`/inbox/${action.id}`}
+                  href={`/actions/${action.id}`}
                   className="flex gap-2.5 bg-panel border border-line rounded-[var(--radius-md)] p-2.5 hover:border-accent/40 hover:-translate-y-px transition-all duration-150 shadow-[var(--shadow-card)]"
                 >
                   <RiskRail risk={risk} />

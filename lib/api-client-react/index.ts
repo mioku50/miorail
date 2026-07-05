@@ -121,17 +121,30 @@ export function useStatus(options?: Omit<UseQueryOptions<apiSpec.StatusResponse,
 
 // Mutations
 
+// T19.2: /recommend now returns success:false (HTTP 200) for honest
+// non-action outcomes — e.g. "No active approval found for this spender —
+// nothing to revoke." — with no actionId. actionId/error are optional so
+// consumers can branch on `success` and surface the message.
+export type CreateRecommendationResponse = {
+  success: boolean;
+  actionId?: string;
+  error?: string;
+};
+
 export function useCreateRecommendation(
-  options?: Omit<UseMutationOptions<{ success: boolean; actionId: string }, Error, { instruction: string; walletAddress?: string; chainEnv?: string }>, 'mutationFn'>
+  options?: Omit<UseMutationOptions<CreateRecommendationResponse, Error, { instruction: string; walletAddress?: string; chainEnv?: string }>, 'mutationFn'>
 ) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data) => fetchApi<{ success: boolean; actionId: string }>('/api/actions/recommend', {
+    mutationFn: (data) => fetchApi<CreateRecommendationResponse>('/api/actions/recommend', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['actions', 'feed'] }),
+    onSuccess: (res) => {
+      // Only refresh the feed when an action was actually created.
+      if (res?.success) queryClient.invalidateQueries({ queryKey: ['actions', 'feed'] });
+    },
     ...options,
   });
 }

@@ -15,6 +15,7 @@
 
 import { encodeFunctionData, parseUnits, isAddress, type Address, type Hex, erc20Abi } from 'viem';
 import { screenAction } from '@mioagent/security';
+import type { TokenApproval } from '@mioagent/data-providers';
 
 /** The only onchain action types the user-confirmed flow may surface. */
 export type ProductionActionType = 'revoke_approval' | 'limited_transfer';
@@ -36,6 +37,15 @@ export interface ExecutionPayload {
 export interface BuildActionPlanContext {
   chainEnv: string;
   walletAddress?: string;
+  /**
+   * T19.2: provider-discovered token approvals for the wallet. When present,
+   * a `revoke_approval` intent is only encoded if a real NONZERO allowance
+   * exists for the parsed spender — so we never surface a confirmable revoke
+   * for a spender the wallet hasn't actually approved. When absent, revoke
+   * fails closed to read-only (the caller — /recommend — handles the
+   * "no active approval found" response before reaching this path).
+   */
+  approvals?: TokenApproval[];
 }
 
 // Canonical Base Mainnet native USDC (Circle, 6 decimals). NOT the bridged
@@ -72,12 +82,40 @@ function parseUsdcTransfer(instruction: string): { amount: string; recipient: Ad
 
 // T19.1: parses "revoke (USDC)? approval (for|to) <0x spender>" — the preferred
 // first mainnet action (no funds move). Returns null if it does not match.
-function parseRevokeApproval(instruction: string): { spender: Address } | null {
+// T19.2: exported so /recommend can run the approval lookup before deciding
+// whether to surface a confirmable revoke or a "no active approval found" note.
+export function parseRevokeApproval(instruction: string): { spender: Address } | null {
   const match = instruction.match(/\brevoke\s+(?:usdc\s+)?approval\s+(?:for|to)\s+(0x[a-fA-F0-9]{40})\b/i);
   if (!match) return null;
   const spender = match[1] as Address;
   if (!isAddress(spender)) return null;
   return { spender };
+}
+
+// T19.2: finds a real, NONZERO provider-discovered approval for `spender`.
+// Returns the matching approval (the canonical spender address from the
+// provider) or null. A zero allowance is treated as "already revoked" — not
+// an active approval — so we never offer a confirmable revoke for nothing.
+//
+// `tokenAddress` scopes the match (case-insensitive). The user-confirmed flow
+// only encodes `approve(spender, 0)` on canonical USDC, so callers pass the
+// canonical USDC address here — a spender with only a non-USDC allowance is
+// NOT revokable via this flow and surfaces as "no active approval found".
+export function findActiveApproval(
+  approvals: TokenApproval[] | undefined,
+  spender: Address,
+  tokenAddress?: Address,
+): TokenApproval | null {
+  if (!Array.isArray(approvals)) return null;
+  const target = spender.toLowerCase();
+  const token = tokenAddress?.toLowerCase();
+  for (const a of approvals) {
+    if (a.spenderAddress.toLowerCase() !== target) continue;
+    if (a.allowanceRaw === '0') continue;
+    if (token && a.tokenAddress.toLowerCase() !== token) continue;
+    return a;
+  }
+  return null;
 }
 
 // Builds an execution payload for a recognized safe action. Falls back to a
@@ -108,6 +146,15 @@ export function buildActionPlan(instruction: string, ctx: BuildActionPlanContext
     // T19.1: prefer revoke_approval (safest first mainnet action) over transfer.
     const revoke = parseRevokeApproval(instruction);
     if (revoke) {
+      // T19.2: approval-gated. Only encode a confirmable revoke when the wallet
+      // has a real nonzero allowance to this spender — never for a spender that
+      // isn't in the provider's approval data. No approval data ⇒ fail closed
+      // (read-only). /recommend surfaces the "no active approval found" note
+      // before reaching here, but buildActionPlan stays safe on its own.
+      const active = findActiveApproval(ctx.approvals, revoke.spender, usdc);
+      if (!active) {
+        return { chain: 'eip155:8453', readOnly: true, calls: [] };
+      }
       try {
         const data = encodeFunctionData({
           abi: erc20Abi,

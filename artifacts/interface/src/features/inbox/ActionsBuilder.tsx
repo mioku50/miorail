@@ -20,13 +20,38 @@ export function ActionsBuilder() {
     const trimmed = instruction.trim();
     if (!trimmed) return;
     createAction.mutate({ instruction: trimmed, walletAddress: address, chainEnv: import.meta.env.VITE_CHAIN_ENV }, {
-      onSuccess: () => {
+      onSuccess: (res) => {
+        // T19.2: /recommend returns success:false for honest non-action
+        // outcomes (e.g. "No active approval found — nothing to revoke").
+        // Surface the message; don't claim an action was created.
+        if (!res?.success) {
+          showToast(res?.error || 'No action created.');
+          return;
+        }
         const toastMsg = isMainnetReadonly ? 'Read-only recommendation created in Action Inbox' : 'Testnet recommendation created in Action Inbox';
         showToast(toastMsg);
         setInstruction('');
       },
       onError: (e) => showToast('Failed to create: ' + e.message),
     });
+  };
+
+  // T19.2: one-click "check spend permissions" CTA — runs the approval scan so
+  // the user can discover revokable approvals without typing an instruction.
+  const checkSpendPermissions = () => {
+    createAction.mutate(
+      { instruction: 'Scan my wallet for revokable spend permissions', walletAddress: address, chainEnv: import.meta.env.VITE_CHAIN_ENV },
+      {
+        onSuccess: (res) => {
+          if (!res?.success) {
+            showToast(res?.error || 'No action created.');
+            return;
+          }
+          showToast('Scanning spend permissions — results in Action Inbox');
+        },
+        onError: (e) => showToast('Failed to scan: ' + e.message),
+      },
+    );
   };
 
   return (
@@ -114,7 +139,7 @@ export function ActionsBuilder() {
           )}
         </div>
 
-        <div className="flex items-center justify-between pt-1">
+        <div className="flex items-center justify-between pt-1 gap-2 flex-wrap">
           <button
             disabled={!instruction.trim() || createAction.isPending}
             className="bg-accent text-white px-5 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:bg-accent-2 shadow-[0_4px_12px_rgba(0,0,255,.2)] transition-all flex items-center gap-2"
@@ -122,7 +147,14 @@ export function ActionsBuilder() {
           >
             {createAction.isPending ? 'Creating recommendation...' : 'Create recommendation'}
           </button>
-          <span className="text-xs text-ink-3">Generates structured action card in Inbox</span>
+          <button
+            disabled={createAction.isPending}
+            onClick={checkSpendPermissions}
+            className="bg-bg border border-line text-ink px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:bg-panel transition-colors flex items-center gap-2"
+            title="Scan your wallet for revokable ERC-20 spend permissions."
+          >
+            🔍 Check spend permissions
+          </button>
         </div>
       </div>
     </main>

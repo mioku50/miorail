@@ -17,8 +17,8 @@ import { createPublicClient, http, type Hex } from 'viem';
 import { base } from 'viem/chains';
 import { ObservabilityService } from '@mioagent/observability';
 import { detectActionIntent } from '../lib/intent.js';
-import { fetchInternalPortfolio, analyzePortfolioForRisk, buildRecommendationMetadataFromAnalysis } from '../lib/portfolioAnalysis.js';
-import { buildActionPlan, planHasCalls, getBaseMainnetUsdcAddress } from '../lib/actionPlan.js';
+import { fetchInternalPortfolio, analyzePortfolioForRisk, buildRecommendationMetadataFromAnalysis, fetchInternalApprovals, type TokenApproval } from '../lib/portfolioAnalysis.js';
+import { buildActionPlan, planHasCalls, getBaseMainnetUsdcAddress, parseRevokeApproval, findActiveApproval } from '../lib/actionPlan.js';
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
 import { screenAction, simulateTrade } from '@mioagent/security';
 import { isProductionActionType } from '@mioagent/api-zod';
@@ -152,8 +152,42 @@ actionsRouter.post('/recommend', async (req, res, next) => {
     // recognized safe instructions and falls back to read-only (no calls) for
     // anything else. Sepolia keeps the existing placeholder call shape.
     let payload: { chain: string; readOnly?: boolean; actionType?: 'revoke_approval' | 'limited_transfer'; calls: { to: string; value?: string; data?: string }[] };
-    if (isReadonly || chainEnv === 'mainnet') {
-      payload = buildActionPlan(instruction, { chainEnv, walletAddress });
+
+    // T19.2: revoke-approval discovery. A revoke intent must be backed by a
+    // REAL provider-discovered nonzero allowance before we encode a confirmable
+    // action. If the wallet has no active approval for the spender, return an
+    // honest "nothing to revoke" note and do NOT create a generic read-only
+    // recommendation (which would imply an action that doesn't exist). No
+    // action row is inserted in the not-found / no-wallet / lookup-failed cases.
+    const isMainnetLike = isReadonly || chainEnv === 'mainnet';
+    const revokeIntent = isMainnetLike ? parseRevokeApproval(instruction) : null;
+    let approvalsForPlan: TokenApproval[] | undefined;
+    if (revokeIntent) {
+      if (!walletAddress) {
+        return res.json({
+          success: false,
+          error: 'Connect your wallet to check spend permissions before revoking.',
+        });
+      }
+      try {
+        const appRes = await fetchInternalApprovals(walletAddress, chainEnv);
+        approvalsForPlan = appRes.approvals;
+      } catch {
+        return res.json({
+          success: false,
+          error: 'Could not verify spend permissions. Please try again.',
+        });
+      }
+      if (!findActiveApproval(approvalsForPlan, revokeIntent.spender, getBaseMainnetUsdcAddress())) {
+        return res.json({
+          success: false,
+          error: 'No active approval found for this spender — nothing to revoke.',
+        });
+      }
+    }
+
+    if (isMainnetLike) {
+      payload = buildActionPlan(instruction, { chainEnv, walletAddress, approvals: approvalsForPlan });
     } else {
       payload = {
         chain: chainId,
@@ -192,7 +226,7 @@ actionsRouter.post('/recommend', async (req, res, next) => {
 
     let tokensList: string[] | undefined;
 
-    if (walletAddress && ['portfolio', 'risk', 'rebalance', 'security', 'yield'].includes(intent.intentType || '')) {
+    if (walletAddress && ['portfolio', 'risk', 'rebalance', 'security', 'yield', 'approvals'].includes(intent.intentType || '')) {
       try {
         const portfolio = await fetchInternalPortfolio(walletAddress, chainEnv);
         const analysis = analyzePortfolioForRisk(portfolio, walletAddress, chainEnv);

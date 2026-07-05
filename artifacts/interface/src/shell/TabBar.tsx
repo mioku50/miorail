@@ -8,7 +8,7 @@ function isTabActive(tab: { path: string }, location: string): boolean {
   return tab.path === '/'
     ? location === '/' || location === '/autonomy'
     : tab.path === '/actions'
-    ? location === '/actions' || location.startsWith('/inbox') || location === '/build'
+    ? location === '/actions' || location.startsWith('/actions/') || location.startsWith('/inbox') || location === '/build'
     : location === tab.path || location.startsWith(`${tab.path}/`);
 }
 

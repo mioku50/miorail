@@ -462,4 +462,82 @@ test('Actions API', async (t) => {
 
     mock.restoreAll();
   });
+
+  // T19.2: revoke-approval discovery. A revoke for a spender with no real
+  // provider-discovered USDC allowance must NOT create a confirmable action —
+  // and must NOT create a generic read-only recommendation either. It returns
+  // an honest "nothing to revoke" note and inserts nothing.
+  const FAKE_SPENDER = '0x1111111111111111111111111111111111111111';
+  const MOCK_USDC_SPENDER = '0x9999999999999999999999999999999999999999'; // MockApprovalProvider: unlimited USDC
+
+  await t.test('POST /api/actions/recommend revoke for a fake spender returns "no active approval" and inserts nothing', async () => {
+    const origChain = process.env.CHAIN_ENV;
+    const origApproval = process.env.APPROVAL_PROVIDER;
+    process.env.CHAIN_ENV = 'mainnet-readonly';
+    process.env.APPROVAL_PROVIDER = 'none';
+
+    // If the route reaches db.insert, throw — nothing should be inserted.
+    const insertMock = mock.fn(() => { throw new Error('INSERT_ATTEMPTED'); });
+    mock.method(db, 'insert', insertMock);
+
+    const response = await request(app).post('/api/actions/recommend').send({
+      instruction: `revoke approval for ${FAKE_SPENDER}`,
+      walletAddress: '0x1234567890123456789012345678901234567890',
+      chainEnv: 'mainnet-readonly',
+    });
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, false);
+    assert.ok(String(response.body.error).includes('No active approval found'), `expected no-approval error, got: ${JSON.stringify(response.body)}`);
+    assert.strictEqual(insertMock.mock.calls.length, 0, 'must not insert an action for a missing approval');
+
+    mock.restoreAll();
+    if (origChain === undefined) delete process.env.CHAIN_ENV; else process.env.CHAIN_ENV = origChain;
+    if (origApproval === undefined) delete process.env.APPROVAL_PROVIDER; else process.env.APPROVAL_PROVIDER = origApproval;
+  });
+
+  await t.test('POST /api/actions/recommend revoke for a real USDC approval creates a confirmable revoke_approval', async () => {
+    const origChain = process.env.CHAIN_ENV;
+    const origApproval = process.env.APPROVAL_PROVIDER;
+    const origBalances = process.env.TOKEN_BALANCES_PROVIDER;
+    const origPrice = process.env.PRICE_PROVIDER;
+    const origSecurity = process.env.TOKEN_SECURITY_PROVIDER;
+    process.env.CHAIN_ENV = 'mainnet-readonly';
+    process.env.APPROVAL_PROVIDER = 'mock';
+    process.env.TOKEN_BALANCES_PROVIDER = 'none';
+    process.env.PRICE_PROVIDER = 'none';
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
+
+    // Capture the inserted row via the db.insert().values() chain.
+    const onConflictMock = mock.fn(async () => []);
+    const valuesMock = mock.fn(() => ({ onConflictDoNothing: onConflictMock }));
+    const insertMock = mock.fn(() => ({ values: valuesMock }));
+    mock.method(db, 'insert', insertMock);
+
+    const response = await request(app).post('/api/actions/recommend').send({
+      instruction: `revoke approval for ${MOCK_USDC_SPENDER}`,
+      walletAddress: '0x1234567890123456789012345678901234567890',
+      chainEnv: 'mainnet-readonly',
+    });
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, true);
+    assert.ok(response.body.actionId, 'expected an actionId for a created revoke');
+    assert.strictEqual(insertMock.mock.calls.length, 1, 'expected exactly one insert');
+
+    const insertedRow = valuesMock.mock.calls[0].arguments[0] as any;
+    const payload = typeof insertedRow.executionPayload === 'string'
+      ? JSON.parse(insertedRow.executionPayload)
+      : insertedRow.executionPayload;
+    assert.strictEqual(payload.actionType, 'revoke_approval');
+    assert.ok(Array.isArray(payload.calls) && payload.calls.length === 1);
+    // ERC-20 approve(address,uint256) selector = 0x095ea7b3
+    assert.ok(String(payload.calls[0].data).toLowerCase().startsWith('0x095ea7b3'));
+    assert.ok(String(payload.calls[0].data).toLowerCase().includes(MOCK_USDC_SPENDER.toLowerCase().slice(2)));
+
+    mock.restoreAll();
+    if (origChain === undefined) delete process.env.CHAIN_ENV; else process.env.CHAIN_ENV = origChain;
+    if (origApproval === undefined) delete process.env.APPROVAL_PROVIDER; else process.env.APPROVAL_PROVIDER = origApproval;
+    if (origBalances === undefined) delete process.env.TOKEN_BALANCES_PROVIDER; else process.env.TOKEN_BALANCES_PROVIDER = origBalances;
+    if (origPrice === undefined) delete process.env.PRICE_PROVIDER; else process.env.PRICE_PROVIDER = origPrice;
+    if (origSecurity === undefined) delete process.env.TOKEN_SECURITY_PROVIDER; else process.env.TOKEN_SECURITY_PROVIDER = origSecurity;
+  });
 });

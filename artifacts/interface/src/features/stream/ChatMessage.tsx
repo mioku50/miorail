@@ -68,7 +68,9 @@ export function ChatMessage({ m, networkLabel }: { m: any; networkLabel: string 
 
             <button
               onClick={() => {
-                navigate('/');
+                // T19.2: route to the canonical Action Inbox deep link (not the
+                // Cockpit "/"). ActionsPage reads :actionId and focuses the card.
+                navigate(`/actions/${actionIdVal}`);
                 focusAction(actionIdVal);
                 showToast('Focused Action Inbox recommendation');
               }}

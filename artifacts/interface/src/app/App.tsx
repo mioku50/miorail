@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Route, Switch } from 'wouter';
+import { Route, Switch, Redirect } from 'wouter';
 import { useUiStore } from '../lib/state';
 import { TopBar } from '../shell/TopBar';
 import { BottomNav } from '../shell/TabBar';
@@ -74,6 +74,7 @@ export function App() {
         <div className="flex-1 flex overflow-hidden min-h-0">
           <Switch>
             <Route path="/actions"><ActionsPage /></Route>
+            <Route path="/actions/:actionId">{(params) => <ActionsPage actionId={params.actionId} />}</Route>
             <Route path="/stream"><StreamPage /></Route>
             <Route path="/fuel"><FuelMeter /></Route>
             <Route path="/configure"><ConfigureView /></Route>
@@ -81,7 +82,9 @@ export function App() {
             <Route path="/history"><HistoryPage /></Route>
             <Route path="/base-mcp"><BaseMcpView /></Route>
             <Route path="/autonomy"><CockpitRoute /></Route>
-            <Route path="/inbox/:actionId">{(params) => <ActionsPage actionId={params.actionId} />}</Route>
+            {/* T19.2: /inbox/:actionId is a legacy alias — redirect to the
+                canonical /actions/:actionId deep link (still focuses the card). */}
+            <Route path="/inbox/:actionId">{(params) => <Redirect to={`/actions/${params.actionId}`} />}</Route>
             <Route path="/"><CockpitRoute /></Route>
           </Switch>
         </div>

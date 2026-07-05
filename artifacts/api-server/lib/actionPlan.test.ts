@@ -1,10 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { buildActionPlan, planHasCalls } from './actionPlan.js';
+import type { TokenApproval } from '@mioagent/data-providers';
 
 const RECIPI = '0x1111111111111111111111111111111111111111';
 const SPENDER = '0x2222222222222222222222222222222222222222';
 const BASE_MAINNET_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+
+// T19.2: a real provider-discovered active (nonzero) approval for SPENDER.
+function activeApproval(spender: string = SPENDER, allowanceRaw = '1000000000'): TokenApproval {
+  return {
+    tokenAddress: BASE_MAINNET_USDC,
+    tokenSymbol: 'USDC',
+    spenderAddress: spender,
+    spenderLabel: 'Test Spender',
+    allowanceRaw,
+    allowanceFormatted: '1000',
+    isUnlimited: false,
+    source: 'moralis',
+  };
+}
 
 test('buildActionPlan encodes a safe USDC transfer on mainnet-readonly', () => {
   const plan = buildActionPlan(`Transfer 1 USDC to ${RECIPI}`, { chainEnv: 'mainnet-readonly' });
@@ -26,8 +41,11 @@ test('buildActionPlan encodes decimal USDC amounts (6 decimals)', () => {
   assert.ok((plan.calls[0].data || '').toLowerCase().endsWith('00000000000000000000000000000000000000000000000000000000002625a0'));
 });
 
-test('buildActionPlan encodes revoke_approval as approve(spender, 0) and tags the type', () => {
-  const plan = buildActionPlan(`revoke approval for ${SPENDER}`, { chainEnv: 'mainnet-readonly' });
+test('buildActionPlan encodes revoke_approval as approve(spender, 0) when an active approval exists', () => {
+  const plan = buildActionPlan(`revoke approval for ${SPENDER}`, {
+    chainEnv: 'mainnet-readonly',
+    approvals: [activeApproval()],
+  });
   assert.ok(planHasCalls(plan));
   assert.strictEqual(plan.actionType, 'revoke_approval');
   assert.strictEqual(plan.calls.length, 1);
@@ -40,10 +58,64 @@ test('buildActionPlan encodes revoke_approval as approve(spender, 0) and tags th
   assert.ok((plan.calls[0].data || '').toLowerCase().endsWith('0000000000000000000000000000000000000000000000000000000000000000'));
 });
 
-test('buildActionPlan prefers revoke_approval over transfer when both match', () => {
+test('buildActionPlan does NOT encode revoke_approval when the spender is not in the approvals list', () => {
+  // T19.2: a fake spender (no real allowance) must never produce a confirmable
+  // revoke. Fail closed to read-only.
+  const plan = buildActionPlan(`revoke approval for ${SPENDER}`, {
+    chainEnv: 'mainnet-readonly',
+    approvals: [activeApproval('0x3333333333333333333333333333333333333333')],
+  });
+  assert.ok(!planHasCalls(plan));
+  assert.strictEqual(plan.readOnly, true);
+  assert.strictEqual(plan.actionType, undefined);
+});
+
+test('buildActionPlan does NOT encode revoke_approval when approvals are undefined (fail closed)', () => {
+  const plan = buildActionPlan(`revoke approval for ${SPENDER}`, { chainEnv: 'mainnet-readonly' });
+  assert.ok(!planHasCalls(plan));
+  assert.strictEqual(plan.readOnly, true);
+  assert.strictEqual(plan.actionType, undefined);
+});
+
+test('buildActionPlan does NOT encode revoke_approval for a zero (already-revoked) allowance', () => {
+  const plan = buildActionPlan(`revoke approval for ${SPENDER}`, {
+    chainEnv: 'mainnet-readonly',
+    approvals: [activeApproval(SPENDER, '0')],
+  });
+  assert.ok(!planHasCalls(plan));
+  assert.strictEqual(plan.readOnly, true);
+  assert.strictEqual(plan.actionType, undefined);
+});
+
+test('buildActionPlan does NOT encode revoke_approval when the spender only has a non-USDC allowance', () => {
+  // T19.2: the user-confirmed flow only revokes canonical USDC. A spender with
+  // only a WETH allowance must not produce a confirmable (wrong-token) revoke.
+  const wethApproval: TokenApproval = {
+    tokenAddress: '0x4200000000000000000000000000000000000006',
+    tokenSymbol: 'WETH',
+    spenderAddress: SPENDER,
+    spenderLabel: 'Router',
+    allowanceRaw: '1000000000000000000',
+    allowanceFormatted: '1.0',
+    isUnlimited: false,
+    source: 'moralis',
+  };
+  const plan = buildActionPlan(`revoke approval for ${SPENDER}`, {
+    chainEnv: 'mainnet-readonly',
+    approvals: [wethApproval],
+  });
+  assert.ok(!planHasCalls(plan));
+  assert.strictEqual(plan.readOnly, true);
+  assert.strictEqual(plan.actionType, undefined);
+});
+
+test('buildActionPlan prefers revoke_approval over transfer when both match and an active approval exists', () => {
   // Compound instruction that could be read as a transfer; revoke is tried first
   // and is the safest first mainnet action (no funds move).
-  const plan = buildActionPlan(`revoke USDC approval for ${SPENDER} and transfer 1 USDC to ${RECIPI}`, { chainEnv: 'mainnet-readonly' });
+  const plan = buildActionPlan(`revoke USDC approval for ${SPENDER} and transfer 1 USDC to ${RECIPI}`, {
+    chainEnv: 'mainnet-readonly',
+    approvals: [activeApproval()],
+  });
   assert.ok(planHasCalls(plan));
   assert.strictEqual(plan.actionType, 'revoke_approval');
   assert.ok((plan.calls[0].data || '').toLowerCase().startsWith('0x095ea7b3'));
