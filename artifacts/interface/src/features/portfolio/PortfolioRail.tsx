@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAccount } from 'wagmi';
 import { usePortfolio, useProtocols, useStatus, useToggleProtocol } from '@mioagent/api-client-react';
 import { useUiStore } from '../../lib/state';
@@ -15,6 +15,10 @@ export function PortfolioRail() {
   // loads. `portfolioRequested` flips the query enabled; subsequent refreshes
   // call refetch().
   const [portfolioRequested, setPortfolioRequested] = useState(false);
+
+  useEffect(() => {
+    setPortfolioRequested(false);
+  }, [address]);
   const showToast = useUiStore((s) => s.showToast);
   const { data: portfolio, isError: isPortfolioError, error: portfolioError, refetch: refetchPortfolio, isFetching: isPortfolioFetching } = usePortfolio(address, { enabled: !!address && portfolioRequested, refetchInterval: false });
   const { data: protocolsData, isError: isProtocolsError } = useProtocols();

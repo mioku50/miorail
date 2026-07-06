@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAccount } from 'wagmi';
 import { Link } from 'wouter';
 import { useStatus, useAutonomy, useResetAutonomy, usePortfolio, useCreateRecommendation } from '@mioagent/api-client-react';
@@ -38,6 +38,10 @@ export function OpsRail({ onClose }: OpsRailProps) {
   const resetAutonomy = useResetAutonomy();
 
   const [portfolioRequested, setPortfolioRequested] = useState(false);
+
+  useEffect(() => {
+    setPortfolioRequested(false);
+  }, [address]);
   const showToast = useUiStore((s) => s.showToast);
   const { data: portfolio, isError: isPortfolioError, error: portfolioError, refetch: refetchPortfolio, isFetching: isPortfolioFetching } = usePortfolio(address, {
     enabled: !!address && portfolioRequested,
