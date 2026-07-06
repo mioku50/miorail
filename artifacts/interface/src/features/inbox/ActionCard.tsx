@@ -34,9 +34,13 @@ export function ActionCard({ action, onRefresh }: ActionCardProps) {
   // server never broadcasts; the wallet signs. WalletConfirmButton additionally
   // enforces the connected-wallet + screening + simulation + userConfirmedEnabled
   // gate internally.
-  const calls = action.executionPayload?.calls || [];
+  const rawPayload = action.executionPayload;
+  const payload = typeof rawPayload === 'string'
+    ? (() => { try { return JSON.parse(rawPayload); } catch { return null; } })()
+    : (rawPayload && typeof rawPayload === 'object' ? rawPayload : null);
+  const calls = Array.isArray(payload?.calls) ? payload.calls : [];
   const hasCalls = calls.length > 0;
-  const actionType = action.executionPayload?.actionType;
+  const actionType = payload?.actionType;
   const isConfirmable = hasCalls && isProductionActionType(actionType);
   const preferredFirst = action.metadata?.preferredFirstAction === true;
 

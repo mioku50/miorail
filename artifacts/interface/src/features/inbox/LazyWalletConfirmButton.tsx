@@ -7,7 +7,7 @@
 // `WagmiProvider` app-wide; this split removes `ox` + the confirm-flow code and
 // keeps non-inbox routes from loading it.
 
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, Component, type ReactNode } from 'react';
 import { Button } from '@mioagent/ui';
 import type { WalletConfirmButtonProps } from '@mioagent/wallet-actions';
 
@@ -15,16 +15,53 @@ const WalletConfirmButton = lazy(() =>
   import('@mioagent/wallet-actions').then((m) => ({ default: m.WalletConfirmButton })),
 );
 
+interface EBProps {
+  children: ReactNode;
+  className?: string;
+}
+
+interface EBState {
+  hasError: boolean;
+}
+
+class WalletConfirmErrorBoundary extends Component<EBProps, EBState> {
+  constructor(props: EBProps) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error('[Miorail] WalletConfirmButton render or chunk load failed:', error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <Button variant="secondary" className={this.props.className} disabled>
+          Wallet confirm unavailable — check console/config
+        </Button>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export function LazyWalletConfirmButton(props: WalletConfirmButtonProps) {
   return (
-    <Suspense
-      fallback={
-        <Button variant="primary" className={props.className} disabled>
-          ⚡ Preparing…
-        </Button>
-      }
-    >
-      <WalletConfirmButton {...props} />
-    </Suspense>
+    <WalletConfirmErrorBoundary className={props.className}>
+      <Suspense
+        fallback={
+          <Button variant="primary" className={props.className} disabled>
+            ⚡ Preparing…
+          </Button>
+        }
+      >
+        <WalletConfirmButton {...props} />
+      </Suspense>
+    </WalletConfirmErrorBoundary>
   );
 }

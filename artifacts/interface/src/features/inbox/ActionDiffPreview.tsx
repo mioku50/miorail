@@ -17,7 +17,11 @@ export function ActionDiffPreview({ action }: { action: any }) {
   const chainMode = meta.chainMode || (isMainnetReadonly ? 'mainnet-readonly' : 'sepolia');
   const safetyState = meta.safetyState || (action.status === 'failed' ? 'blocked' : 'safe');
   const executionStatus = meta.executionStatus || (isMainnetReadonly ? 'read-only' : 'executable');
-  const calls = action.executionPayload?.calls || [];
+  const rawPayload = action.executionPayload;
+  const payload = typeof rawPayload === 'string'
+    ? (() => { try { return JSON.parse(rawPayload); } catch { return null; } })()
+    : (rawPayload && typeof rawPayload === 'object' ? rawPayload : null);
+  const calls = Array.isArray(payload?.calls) ? payload.calls : [];
   const isReadOnlyMode = isMainnetReadonly || chainMode === 'mainnet-readonly' || chainMode === 'mainnet';
 
   const riskColor = risk === 'low' ? 'bg-ok-soft text-ok border-ok/20' : risk === 'high' ? 'bg-risk-soft text-risk border-risk/20' : 'bg-warn-soft text-warn border-warn/20';

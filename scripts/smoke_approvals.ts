@@ -75,7 +75,20 @@ async function runApprovalsSmokeTest() {
   assert.ok(chipsContent.includes('approvals connected'), 'PortfolioProviderChips must include approvals status badge');
   console.log('   ✔ UI formatting for approval findings, LeftRail status badge, Configure table, and presets verified');
 
-  console.log('✅ All T11.5 verification checks passed successfully!');
+  // 5. Verify T19.4 defensive protection against invalid builder code and robust ActionCard rendering
+  console.log('5️⃣ Testing T19.4 defensive builder code attribution and robust ActionCard rendering...');
+  const { builderCodeToDataSuffix } = await import('../lib/wallet-actions/src/attribution.js');
+  assert.strictEqual(builderCodeToDataSuffix('placeholder'), undefined, 'placeholder builder code must be ignored');
+  assert.strictEqual(builderCodeToDataSuffix('TODO'), undefined, 'TODO builder code must be ignored');
+  assert.strictEqual(builderCodeToDataSuffix('!!!bad_code_that_throws!!!', () => { throw new Error('simulated throw'); }), undefined, 'throwing converter must return undefined');
+
+  const actionCardContent = fs.readFileSync(path.resolve(__dirname, '../artifacts/interface/src/features/inbox/ActionCard.tsx'), 'utf8');
+  const lazyButtonContent = fs.readFileSync(path.resolve(__dirname, '../artifacts/interface/src/features/inbox/LazyWalletConfirmButton.tsx'), 'utf8');
+  assert.ok(actionCardContent.includes('typeof rawPayload === \'string\'') || actionCardContent.includes('JSON.parse(rawPayload)'), 'ActionCard must safely parse string executionPayload');
+  assert.ok(lazyButtonContent.includes('WalletConfirmErrorBoundary') && lazyButtonContent.includes('Wallet confirm unavailable'), 'LazyWalletConfirmButton must contain error boundary against crashes');
+  console.log('   ✔ T19.4 defensive builder code handling and ActionCard/LazyWalletConfirmButton robust rendering verified');
+
+  console.log('✅ All T11.5 & T19.4 verification checks passed successfully!');
 }
 
 runApprovalsSmokeTest().catch(err => {

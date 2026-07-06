@@ -56,9 +56,13 @@ export function WalletConfirmButton({
   const { data: statusData } = useStatus();
   const userConfirmedEnabled = statusData?.execution?.userConfirmedEnabled === true;
 
-  const calls = action.executionPayload?.calls ?? [];
+  const rawPayload = action.executionPayload;
+  const payload = typeof rawPayload === 'string'
+    ? (() => { try { return JSON.parse(rawPayload); } catch { return null; } })()
+    : (rawPayload && typeof rawPayload === 'object' ? rawPayload : null);
+  const calls = Array.isArray(payload?.calls) ? payload.calls : [];
   const hasCalls = calls.length > 0;
-  const actionTypeAllowed = isProductionActionType(action.executionPayload?.actionType);
+  const actionTypeAllowed = isProductionActionType(payload?.actionType);
   const screeningAllowed = action.metadata?.securityScreening?.allowed ?? false;
   const simSuccess = action.metadata?.simulationResult?.success ?? false;
   const isPending = action.status === 'pending';
