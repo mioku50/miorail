@@ -178,12 +178,6 @@ actionsRouter.post('/recommend', async (req, res, next) => {
           error: 'Could not verify spend permissions. Please try again.',
         });
       }
-      if (!findActiveApproval(approvalsForPlan, revokeIntent.spender, getBaseMainnetUsdcAddress())) {
-        return res.json({
-          success: false,
-          error: 'No active approval found for this spender — nothing to revoke.',
-        });
-      }
     }
 
     if (isMainnetLike) {
@@ -306,16 +300,43 @@ actionsRouter.post('/recommend', async (req, res, next) => {
 
     metadata.securityScreening = securityScreening;
     metadata.simulationResult = simRes;
-    // T19.1: surface the whitelisted action type + preferred-first-action hint
-    // so the UI can gate the confirm button and badge revoke_approval as the
-    // recommended first mainnet action (no funds move).
-    metadata.actionType = payload.actionType;
-    metadata.preferredFirstAction = payload.actionType === 'revoke_approval';
+
+    const activeRevoke = revokeIntent ? findActiveApproval(approvalsForPlan, revokeIntent.spender, revokeIntent.tokenSymbol) : null;
+    if (revokeIntent && !activeRevoke) {
+      metadata.title = "Revoke Approval";
+      metadata.reason = "No active approval found for this spender — nothing to revoke.";
+      metadata.message = "No active approval found for this spender — nothing to revoke.";
+      metadata.userConfirmable = false;
+      metadata.executable = false;
+      metadata.safetyState = "safe";
+      metadata.executionStatus = "read-only";
+      delete metadata.actionType;
+      delete metadata.preferredFirstAction;
+    } else if (activeRevoke && payload.actionType === 'revoke_approval') {
+      metadata.title = `Revoke ${activeRevoke.tokenSymbol || 'Token'} Spend Permission`;
+      metadata.reason = `Automated recommendation to revoke spend access for ${activeRevoke.spenderLabel || activeRevoke.spenderAddress}`;
+      metadata.actionType = "revoke_approval";
+      metadata.preferredFirstAction = true;
+      metadata.userConfirmable = isReadonly ? true : false;
+      metadata.executable = !isReadonly;
+      metadata.executionStatus = isReadonly ? "user-confirmable" : "executable";
+      metadata.allowanceBefore = activeRevoke.allowanceFormatted;
+      metadata.allowanceAfter = "0";
+      metadata.tokenSymbol = activeRevoke.tokenSymbol;
+      metadata.tokenAddress = activeRevoke.tokenAddress;
+      metadata.spender = activeRevoke.spenderAddress;
+      metadata.method = "approve(spender,0)";
+      metadata.validationMethod = "static-validation";
+      metadata.simulationLabel = "Static validation — not a real simulation";
+    } else {
+      metadata.actionType = payload.actionType;
+      metadata.preferredFirstAction = payload.actionType === 'revoke_approval';
+    }
 
     await db.insert(actions).values({
       id: actionId,
       userId,
-      kind: 'recommendation',
+      kind: payload.actionType === 'revoke_approval' ? 'transaction' : 'recommendation',
       status: 'pending',
       suggestedPrompt: 'Builder: ' + instruction,
       tokens: tokensList,

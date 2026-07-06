@@ -470,14 +470,15 @@ test('Actions API', async (t) => {
   const FAKE_SPENDER = '0x1111111111111111111111111111111111111111';
   const MOCK_USDC_SPENDER = '0x9999999999999999999999999999999999999999'; // MockApprovalProvider: unlimited USDC
 
-  await t.test('POST /api/actions/recommend revoke for a fake spender returns "no active approval" and inserts nothing', async () => {
+  await t.test('POST /api/actions/recommend revoke for a fake spender creates a read-only recommendation with calls.length=0 and message "No active approval found"', async () => {
     const origChain = process.env.CHAIN_ENV;
     const origApproval = process.env.APPROVAL_PROVIDER;
     process.env.CHAIN_ENV = 'mainnet-readonly';
     process.env.APPROVAL_PROVIDER = 'none';
 
-    // If the route reaches db.insert, throw — nothing should be inserted.
-    const insertMock = mock.fn(() => { throw new Error('INSERT_ATTEMPTED'); });
+    const onConflictMock = mock.fn(async () => []);
+    const valuesMock = mock.fn((_vals?: any) => ({ onConflictDoNothing: onConflictMock }));
+    const insertMock = mock.fn(() => ({ values: valuesMock }));
     mock.method(db, 'insert', insertMock);
 
     const response = await request(app).post('/api/actions/recommend').send({
@@ -486,9 +487,16 @@ test('Actions API', async (t) => {
       chainEnv: 'mainnet-readonly',
     });
     assert.strictEqual(response.status, 200);
-    assert.strictEqual(response.body.success, false);
-    assert.ok(String(response.body.error).includes('No active approval found'), `expected no-approval error, got: ${JSON.stringify(response.body)}`);
-    assert.strictEqual(insertMock.mock.calls.length, 0, 'must not insert an action for a missing approval');
+    assert.strictEqual(response.body.success, true);
+    assert.strictEqual(insertMock.mock.calls.length, 1, 'must insert a read-only recommendation for a missing approval');
+
+    const insertedRow = valuesMock.mock.calls[0].arguments[0] as any;
+    const payload = typeof insertedRow.executionPayload === 'string'
+      ? JSON.parse(insertedRow.executionPayload)
+      : insertedRow.executionPayload;
+    assert.strictEqual(payload.actionType, undefined);
+    assert.strictEqual(payload.calls.length, 0);
+    assert.ok(String(insertedRow.metadata.message).includes('No active approval found'));
 
     mock.restoreAll();
     if (origChain === undefined) delete process.env.CHAIN_ENV; else process.env.CHAIN_ENV = origChain;
@@ -509,7 +517,7 @@ test('Actions API', async (t) => {
 
     // Capture the inserted row via the db.insert().values() chain.
     const onConflictMock = mock.fn(async () => []);
-    const valuesMock = mock.fn(() => ({ onConflictDoNothing: onConflictMock }));
+    const valuesMock = mock.fn((_vals?: any) => ({ onConflictDoNothing: onConflictMock }));
     const insertMock = mock.fn(() => ({ values: valuesMock }));
     mock.method(db, 'insert', insertMock);
 

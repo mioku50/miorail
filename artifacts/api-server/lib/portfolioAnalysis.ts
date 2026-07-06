@@ -16,9 +16,12 @@ export type { TokenApproval } from '@mioagent/data-providers';
 export interface ApprovalFinding {
   tokenSymbol?: string;
   tokenAddress: string;
+  spender?: string;
   spenderAddress: string;
   spenderLabel?: string;
+  allowanceRaw?: string;
   allowanceFormatted?: string;
+  allowanceUsd?: number;
   isUnlimited: boolean;
   riskLevel: "critical" | "high" | "medium" | "low";
   reason: string;
@@ -695,9 +698,12 @@ export function analyzeApprovalsForRisk(
     findings.push({
       tokenSymbol: a.tokenSymbol,
       tokenAddress: a.tokenAddress,
+      spender: a.spenderAddress,
       spenderAddress: a.spenderAddress,
       spenderLabel: a.spenderLabel,
+      allowanceRaw: a.allowanceRaw,
       allowanceFormatted: a.allowanceFormatted,
+      allowanceUsd: a.allowanceUsd,
       isUnlimited: a.isUnlimited,
       riskLevel,
       reason,
@@ -710,7 +716,7 @@ export function analyzeApprovalsForRisk(
 
   let summary = `All ${totalApprovals} spend permission(s) appear well-scoped and low risk.`;
   if (totalApprovals === 0) {
-    summary = "No active spend permissions detected.";
+    summary = "No active approvals found — nothing to revoke.";
   } else if (riskySpenderApprovals > 0) {
     summary = `Found ${riskySpenderApprovals} risky spend permission(s) across ${totalApprovals} total approval(s).`;
   } else if (unlimitedApprovals > 0) {

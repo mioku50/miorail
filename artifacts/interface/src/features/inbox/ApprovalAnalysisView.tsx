@@ -3,15 +3,9 @@ import { useCreateRecommendation } from '@mioagent/api-client-react';
 import { useUiStore } from '../../lib/state';
 import { isMainnetReadonly } from '../../lib/chain';
 
-// T19.2: the user-confirmed flow only encodes `approve(spender, 0)` on
-// canonical USDC (see lib/security simulation + actionPlan). So the one-click
-// Revoke is only offered on USDC findings; non-USDC approvals still display
-// but must be revoked in the user's wallet.
-const BASE_MAINNET_USDC = (import.meta.env.VITE_BASE_MAINNET_USDC_ADDRESS || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913').toLowerCase();
-
-// T19.2: surfaces provider-discovered spend permissions and, for each active
+// T19.3: surfaces provider-discovered spend permissions and, for each active
 // approval, offers a one-click "Revoke" that creates a confirmable
-// revoke_approval action (gated on the real allowance — see /recommend).
+// revoke_approval action for any token (gated on the real allowance — see /recommend).
 // When there are no approvals, shows an honest "nothing to revoke" state with
 // a re-scan CTA instead of a fabricated list.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -41,12 +35,12 @@ export function ApprovalAnalysisView({ approvalAnalysis }: { approvalAnalysis: a
     );
   };
 
-  // T19.2: create a confirmable revoke_approval for a specific spender. The
-  // spender came from a real provider-discovered approval, so /recommend's
+  // T19.3: create a confirmable revoke_approval for a specific spender and token.
+  // The spender came from a real provider-discovered approval, so /recommend's
   // approval lookup will find it and encode approve(spender, 0).
   const revokeSpender = (spenderAddress: string, tokenSymbol?: string) => {
     createAction.mutate(
-      { instruction: `revoke approval for ${spenderAddress}`, walletAddress: address, chainEnv },
+      { instruction: `revoke ${tokenSymbol || ''} approval for ${spenderAddress}`.replace(/\s+/g, ' ').trim(), walletAddress: address, chainEnv },
       {
         onSuccess: (res) => {
           if (!res?.success) {
@@ -76,10 +70,10 @@ export function ApprovalAnalysisView({ approvalAnalysis }: { approvalAnalysis: a
       </div>
 
       {total === 0 ? (
-        // T19.2: honest empty state — no read-only recommendation is fabricated
+        // T19.3: honest empty state — no read-only recommendation is fabricated
         // for missing approvals; just tell the user there's nothing to revoke.
         <div className="flex flex-col gap-2 bg-bg/80 border border-line rounded p-2.5 text-[11px]">
-          <div className="text-ink-2 font-medium">No revokable approvals found for this wallet.</div>
+          <div className="text-ink-2 font-medium">No active approvals found — nothing to revoke.</div>
           <button
             onClick={checkSpendPermissions}
             disabled={createAction.isPending}
@@ -95,9 +89,7 @@ export function ApprovalAnalysisView({ approvalAnalysis }: { approvalAnalysis: a
             <div className="flex flex-col gap-1.5 max-h-[200px] overflow-y-auto pr-1 mt-1">
               {approvalAnalysis.findings.map((f: any, fIdx: number) => {
                 const fColor = f.riskLevel === 'critical' || f.riskLevel === 'high' ? 'bg-risk-soft text-risk border-risk/20' : f.riskLevel === 'medium' ? 'bg-warn-soft text-warn border-warn/20' : 'bg-ok-soft text-ok border-ok/20';
-                // T19.2: one-click revoke is only available for canonical USDC
-                // approvals (the only token the user-confirmed flow can revoke).
-                const isUsdcFinding = (f.tokenAddress || '').toLowerCase() === BASE_MAINNET_USDC;
+                const isZeroAllowance = !f.allowanceFormatted || f.allowanceFormatted === '0' || f.allowanceFormatted === '0.0' || f.allowanceFormatted === '0 USDC' || String(f.allowanceRaw) === '0';
                 return (
                   <div key={fIdx} className="flex flex-col gap-1 bg-bg/80 border border-line rounded p-2 text-[11px]">
                     <div className="flex items-center justify-between gap-2">
@@ -118,18 +110,17 @@ export function ApprovalAnalysisView({ approvalAnalysis }: { approvalAnalysis: a
                     <div className="text-ink-2 text-[11px] leading-snug mt-0.5">
                       {f.reason}
                     </div>
-                    {isUsdcFinding ? (
-                      // T19.2: one-click revoke → confirmable revoke_approval action.
+                    {isZeroAllowance ? (
+                      <span className="self-start mt-0.5 text-[10px] font-semibold text-ok bg-ok-soft border border-ok/20 px-2 py-0.5 rounded">Already revoked / allowance is 0</span>
+                    ) : (
                       <button
                         onClick={() => revokeSpender(f.spenderAddress, f.tokenSymbol)}
                         disabled={createAction.isPending}
                         className="self-start mt-0.5 text-[11px] font-semibold text-white bg-accent px-2.5 py-1 rounded-full hover:bg-accent-2 transition-colors disabled:opacity-50"
-                        title={`Create a confirmable action to revoke the ${f.tokenSymbol || 'USDC'} approval for ${f.spenderAddress}`}
+                        title={`Create a confirmable action to revoke the ${f.tokenSymbol || 'token'} approval for ${f.spenderAddress}`}
                       >
                         {createAction.isPending ? 'Preparing…' : 'Revoke'}
                       </button>
-                    ) : (
-                      <span className="self-start mt-0.5 text-[10px] text-ink-3 italic">Revoke in wallet (non-USDC approvals aren't revokable in read-only mode)</span>
                     )}
                   </div>
                 );

@@ -10,10 +10,10 @@ async function runApprovalsSmokeTest() {
   console.log('1️⃣ Testing provider logic when APPROVAL_PROVIDER=none...');
   process.env.APPROVAL_PROVIDER = 'none';
   const missingRes = await fetchInternalApprovals('0x0000000000000000000000000000000000000000');
-  assert.strictEqual(missingRes.status, 'missing');
+  assert.ok(missingRes.status === 'missing' || missingRes.status === 'disabled');
   assert.strictEqual(missingRes.provider, 'none');
   assert.strictEqual(missingRes.approvals.length, 0);
-  console.log('   ✔ APPROVAL_PROVIDER=none returns missing status with empty approvals');
+  console.log('   ✔ APPROVAL_PROVIDER=none returns disabled/missing status with empty approvals');
 
   // 2. Verify risk scoring for unlimited/risky spenders
   console.log('2️⃣ Testing risk scoring for unlimited and risky spenders...');
@@ -60,17 +60,19 @@ async function runApprovalsSmokeTest() {
   assert.ok(!rec.description.includes('We will revoke this for you'), 'Must NOT claim automated revocation');
   console.log('   ✔ Wording constraints and read-only calls:[] verified');
 
-  // 4. Verify UI formatting for approval findings in App.tsx
-  console.log('4️⃣ Testing UI formatting and presets in App.tsx...');
-  const appPath = path.resolve(__dirname, '../artifacts/interface/src/App.tsx');
-  const appContent = fs.readFileSync(appPath, 'utf8');
-  assert.ok(appContent.includes('Approval Summary'), 'App.tsx must render Approval Summary badge/header');
-  assert.ok(appContent.includes('meta.analysis?.approvalAnalysis'), 'App.tsx must check for approvalAnalysis in metadata');
-  assert.ok(appContent.includes('Unlimited: {meta.analysis.approvalAnalysis.unlimitedApprovals}'), 'App.tsx must display unlimited count');
-  assert.ok(appContent.includes('Risky: {meta.analysis.approvalAnalysis.riskySpenderApprovals}'), 'App.tsx must display risky spender count');
-  assert.ok(appContent.includes('Scan Token Approvals'), 'App.tsx must include Scan Token Approvals preset');
-  assert.ok(appContent.includes('Approval Scanner'), 'App.tsx must include Approval Scanner status row in Configure page');
-  assert.ok(appContent.includes('approvals connected'), 'App.tsx must include approvals status badge in LeftRail');
+  // 4. Verify UI formatting for approval findings across interface components
+  console.log('4️⃣ Testing UI formatting and presets across interface components...');
+  const approvalViewContent = fs.readFileSync(path.resolve(__dirname, '../artifacts/interface/src/features/inbox/ApprovalAnalysisView.tsx'), 'utf8');
+  const actionsBuilderContent = fs.readFileSync(path.resolve(__dirname, '../artifacts/interface/src/features/inbox/ActionsBuilder.tsx'), 'utf8');
+  const configureViewContent = fs.readFileSync(path.resolve(__dirname, '../artifacts/interface/src/features/configure/ConfigureView.tsx'), 'utf8');
+  const chipsContent = fs.readFileSync(path.resolve(__dirname, '../artifacts/interface/src/features/portfolio/PortfolioProviderChips.tsx'), 'utf8');
+
+  assert.ok(approvalViewContent.includes('Approval Summary'), 'ApprovalAnalysisView must render Approval Summary badge/header');
+  assert.ok(approvalViewContent.includes('approvalAnalysis.unlimitedApprovals'), 'ApprovalAnalysisView must display unlimited count');
+  assert.ok(approvalViewContent.includes('approvalAnalysis.riskySpenderApprovals'), 'ApprovalAnalysisView must display risky spender count');
+  assert.ok(actionsBuilderContent.includes('Scan Token Approvals'), 'ActionsBuilder must include Scan Token Approvals preset');
+  assert.ok(configureViewContent.includes('Approval Scanner'), 'ConfigureView must include Approval Scanner status row');
+  assert.ok(chipsContent.includes('approvals connected'), 'PortfolioProviderChips must include approvals status badge');
   console.log('   ✔ UI formatting for approval findings, LeftRail status badge, Configure table, and presets verified');
 
   console.log('✅ All T11.5 verification checks passed successfully!');

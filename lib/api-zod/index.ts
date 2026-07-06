@@ -345,6 +345,7 @@ export const TokenApprovalSchema = z.object({
   spenderLabel: z.string().optional(),
   allowanceRaw: z.string(),
   allowanceFormatted: z.string(),
+  allowanceUsd: z.number().optional(),
   isUnlimited: z.boolean(),
   lastUpdatedAt: z.string().optional(),
   source: z.enum(["moralis", "alchemy", "none", "mock", "unknown"]),

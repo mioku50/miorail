@@ -84,35 +84,40 @@ function parseUsdcTransfer(instruction: string): { amount: string; recipient: Ad
 // first mainnet action (no funds move). Returns null if it does not match.
 // T19.2: exported so /recommend can run the approval lookup before deciding
 // whether to surface a confirmable revoke or a "no active approval found" note.
-export function parseRevokeApproval(instruction: string): { spender: Address } | null {
-  const match = instruction.match(/\brevoke\s+(?:usdc\s+)?approval\s+(?:for|to)\s+(0x[a-fA-F0-9]{40})\b/i);
-  if (!match) return null;
-  const spender = match[1] as Address;
+export function parseRevokeApproval(instruction: string): { spender: Address; tokenSymbol?: string } | null {
+  if (!/\b(?:revoke|remove)\b/i.test(instruction)) return null;
+  if (!/\b(?:approval|approvals|allowance|allowances|permission|permissions|spend)\b/i.test(instruction)) return null;
+  const spenderMatch = instruction.match(/(0x[a-fA-F0-9]{40})/i);
+  if (!spenderMatch) return null;
+  const spender = spenderMatch[1] as Address;
   if (!isAddress(spender)) return null;
-  return { spender };
+
+  const prefix = instruction.slice(0, spenderMatch.index);
+  const cleaned = prefix.replace(/\b(?:revoke|remove|spend|permission|permissions|approval|approvals|allowance|allowances|for|to|from|of|my|the|a|an|token|tokens)\b/gi, '').trim();
+  const tokenSymbol = cleaned ? cleaned.split(/\s+/)[0] : undefined;
+
+  return { spender, tokenSymbol };
 }
 
-// T19.2: finds a real, NONZERO provider-discovered approval for `spender`.
-// Returns the matching approval (the canonical spender address from the
-// provider) or null. A zero allowance is treated as "already revoked" — not
+// T19.2/T19.3: finds a real, NONZERO provider-discovered approval for `spender`.
+// Returns the matching approval or null. A zero allowance is treated as "already revoked" — not
 // an active approval — so we never offer a confirmable revoke for nothing.
-//
-// `tokenAddress` scopes the match (case-insensitive). The user-confirmed flow
-// only encodes `approve(spender, 0)` on canonical USDC, so callers pass the
-// canonical USDC address here — a spender with only a non-USDC allowance is
-// NOT revokable via this flow and surfaces as "no active approval found".
 export function findActiveApproval(
   approvals: TokenApproval[] | undefined,
   spender: Address,
-  tokenAddress?: Address,
+  tokenFilter?: string,
 ): TokenApproval | null {
   if (!Array.isArray(approvals)) return null;
   const target = spender.toLowerCase();
-  const token = tokenAddress?.toLowerCase();
+  const filter = tokenFilter?.toLowerCase();
   for (const a of approvals) {
     if (a.spenderAddress.toLowerCase() !== target) continue;
-    if (a.allowanceRaw === '0') continue;
-    if (token && a.tokenAddress.toLowerCase() !== token) continue;
+    if (a.allowanceRaw === '0' || (!a.isUnlimited && Number(a.allowanceFormatted) === 0)) continue;
+    if (filter) {
+      const addrMatch = a.tokenAddress.toLowerCase() === filter;
+      const symbolMatch = (a.tokenSymbol || '').toLowerCase() === filter;
+      if (!addrMatch && !symbolMatch) continue;
+    }
     return a;
   }
   return null;
@@ -143,15 +148,15 @@ export function buildActionPlan(instruction: string, ctx: BuildActionPlanContext
   if (ctx.chainEnv === 'mainnet-readonly' || ctx.chainEnv === 'mainnet') {
     const usdc = getBaseMainnetUsdcAddress();
 
-    // T19.1: prefer revoke_approval (safest first mainnet action) over transfer.
+    // T19.1/T19.3: prefer revoke_approval (safest first mainnet action) over transfer.
     const revoke = parseRevokeApproval(instruction);
     if (revoke) {
-      // T19.2: approval-gated. Only encode a confirmable revoke when the wallet
+      // T19.2/T19.3: approval-gated. Only encode a confirmable revoke when the wallet
       // has a real nonzero allowance to this spender — never for a spender that
       // isn't in the provider's approval data. No approval data ⇒ fail closed
       // (read-only). /recommend surfaces the "no active approval found" note
       // before reaching here, but buildActionPlan stays safe on its own.
-      const active = findActiveApproval(ctx.approvals, revoke.spender, usdc);
+      const active = findActiveApproval(ctx.approvals, revoke.spender, revoke.tokenSymbol);
       if (!active) {
         return { chain: 'eip155:8453', readOnly: true, calls: [] };
       }
@@ -164,7 +169,7 @@ export function buildActionPlan(instruction: string, ctx: BuildActionPlanContext
         return {
           chain: 'eip155:8453',
           actionType: 'revoke_approval',
-          calls: [{ to: usdc, value: '0', data: data as Hex }],
+          calls: [{ to: active.tokenAddress as Address, value: '0', data: data as Hex }],
         };
       } catch {
         return { chain: 'eip155:8453', readOnly: true, calls: [] };

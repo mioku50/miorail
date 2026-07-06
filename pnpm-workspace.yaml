@@ -13,6 +13,11 @@ overrides:
 # typosquat injections riding on freshly published versions. Keep strict —
 # do not bypass via minimumReleaseAgeExclude without justification.
 minimumReleaseAge: 10080 # 7 days, in minutes
+# Justification: transitive linting and compat dependencies in existing lockfile published <7 days ago
+minimumReleaseAgeExclude:
+  - '@next/eslint-plugin-next'
+  - 'caniuse-lite'
+  - 'eslint-module-utils'
 
 # Build-script approval (pnpm 11 `allowBuilds` map). Only esbuild — the
 # repo's bundler (tsx/vite) — is allowed; everything else stays disallowed

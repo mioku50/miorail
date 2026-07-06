@@ -109,6 +109,7 @@ export interface TokenApproval {
   spenderLabel?: string;
   allowanceRaw: string;
   allowanceFormatted?: string;
+  allowanceUsd?: number;
   isUnlimited: boolean;
   lastUpdatedAt?: string;
   source: "moralis" | "alchemy" | "basescan" | "none";

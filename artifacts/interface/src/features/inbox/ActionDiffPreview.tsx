@@ -64,6 +64,32 @@ export function ActionDiffPreview({ action }: { action: any }) {
         <StateBadge state={execState} label={executionStatus} />
       </div>
 
+      {meta.actionType === 'revoke_approval' && (
+        <div className="bg-panel border border-line rounded p-2.5 my-1 flex flex-col gap-1.5">
+          <div className="font-semibold text-ink text-[12px]">
+            Revoking spend access for {meta.tokenSymbol || 'Token'} to {meta.spenderLabel ? `${meta.spenderLabel} (${meta.spender})` : meta.spender}
+          </div>
+          {meta.allowanceBefore !== undefined && (
+            <div className="text-ink-2 font-mono text-[11px]">
+              <span className="text-ink-3">Allowance: </span>
+              Current: {meta.allowanceBefore} {meta.tokenSymbol || ''} → After: {meta.allowanceAfter || '0'} {meta.tokenSymbol || ''}
+            </div>
+          )}
+          {meta.method && (
+            <div className="text-ink-2 font-mono text-[11px]">
+              <span className="text-ink-3">Method: </span>
+              {meta.method}
+            </div>
+          )}
+          {meta.simulationLabel && (
+            <div className="text-ink-2 text-[11px] italic">
+              <span className="text-ink-3 not-italic font-medium">Simulation status: </span>
+              {meta.simulationLabel}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Planned calls (from executionPayload) */}
       <div className="mt-1">
         <div className="text-ink-3 mb-1">Planned calls ({calls.length})</div>

@@ -63,6 +63,12 @@ export function ActionCard({ action, onRefresh }: ActionCardProps) {
         <div className="flex items-center gap-[7px] text-[12px] font-bold text-risk bg-risk-soft px-[10px] py-[6px] rounded-[9px] mt-1 w-fit">🛡️ blocked by security</div>
       )}
 
+      {!hasCalls && (action.metadata?.reason?.includes('nothing to revoke') || action.metadata?.message?.includes('nothing to revoke') || action.metadata?.reason?.includes('Already revoked')) && (
+        <div className="flex items-center gap-[7px] text-[12px] font-bold text-warn bg-warn-soft px-[10px] py-[6px] rounded-[9px] mt-1 w-fit">
+          ⚠️ {action.metadata?.message || action.metadata?.reason || "No active approval found — nothing to revoke."}
+        </div>
+      )}
+
       {action.tokens && action.tokens.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {action.tokens.map((t: string, i: number) => (

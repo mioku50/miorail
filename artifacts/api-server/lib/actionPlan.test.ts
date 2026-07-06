@@ -87,9 +87,8 @@ test('buildActionPlan does NOT encode revoke_approval for a zero (already-revoke
   assert.strictEqual(plan.actionType, undefined);
 });
 
-test('buildActionPlan does NOT encode revoke_approval when the spender only has a non-USDC allowance', () => {
-  // T19.2: the user-confirmed flow only revokes canonical USDC. A spender with
-  // only a WETH allowance must not produce a confirmable (wrong-token) revoke.
+test('buildActionPlan encodes revoke_approval for non-USDC tokens when an active allowance exists', () => {
+  // T19.3: the user-confirmed flow supports revoking active approvals for any token (e.g. WETH).
   const wethApproval: TokenApproval = {
     tokenAddress: '0x4200000000000000000000000000000000000006',
     tokenSymbol: 'WETH',
@@ -100,13 +99,13 @@ test('buildActionPlan does NOT encode revoke_approval when the spender only has 
     isUnlimited: false,
     source: 'moralis',
   };
-  const plan = buildActionPlan(`revoke approval for ${SPENDER}`, {
+  const plan = buildActionPlan(`revoke WETH approval for ${SPENDER}`, {
     chainEnv: 'mainnet-readonly',
     approvals: [wethApproval],
   });
-  assert.ok(!planHasCalls(plan));
-  assert.strictEqual(plan.readOnly, true);
-  assert.strictEqual(plan.actionType, undefined);
+  assert.ok(planHasCalls(plan));
+  assert.strictEqual(plan.actionType, 'revoke_approval');
+  assert.strictEqual(plan.calls[0].to, '0x4200000000000000000000000000000000000006');
 });
 
 test('buildActionPlan prefers revoke_approval over transfer when both match and an active approval exists', () => {
