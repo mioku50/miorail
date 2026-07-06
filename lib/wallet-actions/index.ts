@@ -4,7 +4,7 @@
 // attribution) for both the web interface and the miniapp.
 
 export { builderCodeToDataSuffix } from './src/attribution';
-export { useWalletConfirmAction } from './src/useWalletConfirmAction';
-export type { ConfirmFlowStatus, UseWalletConfirmActionResult, UseWalletConfirmActionArgs } from './src/useWalletConfirmAction';
+export { useWalletConfirmAction, CallsStatusPoller } from './src/useWalletConfirmAction';
+export type { ConfirmFlowStatus, UseWalletConfirmActionResult, UseWalletConfirmActionArgs, CallsStatusPollerProps } from './src/useWalletConfirmAction';
 export { WalletConfirmButton } from './src/WalletConfirmButton';
 export type { WalletConfirmButtonProps, WalletConfirmAction } from './src/WalletConfirmButton';

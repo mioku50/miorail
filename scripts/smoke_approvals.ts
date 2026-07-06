@@ -88,7 +88,15 @@ async function runApprovalsSmokeTest() {
   assert.ok(lazyButtonContent.includes('WalletConfirmErrorBoundary') && lazyButtonContent.includes('Wallet confirm unavailable'), 'LazyWalletConfirmButton must contain error boundary against crashes');
   console.log('   ✔ T19.4 defensive builder code handling and ActionCard/LazyWalletConfirmButton robust rendering verified');
 
-  console.log('✅ All T11.5 & T19.4 verification checks passed successfully!');
+  // 6. Verify T19.5 WalletConfirmButton poller refactoring and diagnostics
+  console.log('6️⃣ Testing T19.5 WalletConfirmButton poller refactoring and diagnostics...');
+  const useWalletConfirmActionContent = fs.readFileSync(path.resolve(__dirname, '../lib/wallet-actions/src/useWalletConfirmAction.ts'), 'utf8');
+  assert.ok(!useWalletConfirmActionContent.includes('id: batchId ?? \'\''), 'useWalletConfirmAction must not call useCallsStatus with empty string id');
+  assert.ok(useWalletConfirmActionContent.includes('CallsStatusPoller'), 'useWalletConfirmAction must encapsulate polling in CallsStatusPoller');
+  assert.ok(lazyButtonContent.includes('actionId={actionId}') && lazyButtonContent.includes('actionType={actionType}'), 'LazyWalletConfirmButton must pass actionId and actionType diagnostics to error boundary');
+  console.log('   ✔ T19.5 polling refactoring and error diagnostics verified');
+
+  console.log('✅ All T11.5, T19.4 & T19.5 verification checks passed successfully!');
 }
 
 runApprovalsSmokeTest().catch(err => {

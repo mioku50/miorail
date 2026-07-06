@@ -73,7 +73,7 @@ export function WalletConfirmButton({
   // import `ox` at module scope.
   const resolvedSuffix = dataSuffix ?? builderCodeToDataSuffix(builderCode);
 
-  const { confirm, status, error, isPreparing, isSending, isPolling, isConfirming, txHash } =
+  const { confirm, status, error, isPreparing, isSending, isPolling, isConfirming, txHash, poller } =
     useWalletConfirmAction({ actionId: action.id, dataSuffix: resolvedSuffix });
 
   // Fire onConfirmed once per terminal transition (success or failed).
@@ -102,21 +102,24 @@ export function WalletConfirmButton({
   const busy = isPreparing || isSending || isPolling || isConfirming;
 
   return (
-    <Button
-      variant="primary"
-      className={className}
-      disabled={disabled || !canConfirm || busy}
-      onClick={() => {
-        void confirm();
-      }}
-      title={
-        !canConfirm
-          ? 'Requires a connected wallet, a whitelisted action type (revoke_approval or limited_transfer), onchain calls, passing security screening, a successful static validation, and the user-confirmed flow to be enabled.'
-          : error ?? undefined
-      }
-      {...rest}
-    >
-      ⚡ {label}
-    </Button>
+    <>
+      {poller}
+      <Button
+        variant="primary"
+        className={className}
+        disabled={disabled || !canConfirm || busy}
+        onClick={() => {
+          void confirm();
+        }}
+        title={
+          !canConfirm
+            ? 'Requires a connected wallet, a whitelisted action type (revoke_approval or limited_transfer), onchain calls, passing security screening, a successful static validation, and the user-confirmed flow to be enabled.'
+            : error ?? undefined
+        }
+        {...rest}
+      >
+        ⚡ {label}
+      </Button>
+    </>
   );
 }

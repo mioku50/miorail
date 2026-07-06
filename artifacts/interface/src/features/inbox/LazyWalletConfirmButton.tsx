@@ -18,10 +18,13 @@ const WalletConfirmButton = lazy(() =>
 interface EBProps {
   children: ReactNode;
   className?: string;
+  actionId?: string;
+  actionType?: string;
 }
 
 interface EBState {
   hasError: boolean;
+  errorMsg?: string;
 }
 
 class WalletConfirmErrorBoundary extends Component<EBProps, EBState> {
@@ -30,19 +33,29 @@ class WalletConfirmErrorBoundary extends Component<EBProps, EBState> {
     this.state = { hasError: false };
   }
 
-  static getDerivedStateFromError() {
-    return { hasError: true };
+  static getDerivedStateFromError(error: unknown): EBState {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    return { hasError: true, errorMsg };
   }
 
   componentDidCatch(error: unknown) {
-    console.error('[Miorail] WalletConfirmButton render or chunk load failed:', error);
+    const aid = this.props.actionId || 'unknown';
+    const atype = this.props.actionType || 'unknown';
+    console.error(`[Miorail] WalletConfirmButton failed for action.id=${aid}, actionType=${atype}:`, error);
   }
 
   render() {
     if (this.state.hasError) {
+      const shortErr = this.state.errorMsg ? ` (${this.state.errorMsg.slice(0, 40)})` : '';
+      const aid = this.props.actionId ? ` [id: ${this.props.actionId.slice(0, 8)}…]` : '';
       return (
-        <Button variant="secondary" className={this.props.className} disabled>
-          Wallet confirm unavailable — check console/config
+        <Button
+          variant="secondary"
+          className={this.props.className}
+          disabled
+          title={`Action ID: ${this.props.actionId || 'unknown'}, Type: ${this.props.actionType || 'unknown'}, Error: ${this.state.errorMsg || 'unknown'}`}
+        >
+          Wallet confirm unavailable — check console/config{shortErr}{aid}
         </Button>
       );
     }
@@ -51,8 +64,24 @@ class WalletConfirmErrorBoundary extends Component<EBProps, EBState> {
 }
 
 export function LazyWalletConfirmButton(props: WalletConfirmButtonProps) {
+  const rawPayload = props.action?.executionPayload;
+  const payload =
+    typeof rawPayload === 'string'
+      ? (() => {
+          try {
+            return JSON.parse(rawPayload);
+          } catch {
+            return null;
+          }
+        })()
+      : rawPayload && typeof rawPayload === 'object'
+        ? rawPayload
+        : null;
+  const actionType = (payload as { actionType?: string } | null)?.actionType ?? (props.action?.metadata as { actionType?: string } | undefined)?.actionType ?? 'unknown';
+  const actionId = props.action?.id ?? 'unknown';
+
   return (
-    <WalletConfirmErrorBoundary className={props.className}>
+    <WalletConfirmErrorBoundary className={props.className} actionId={actionId} actionType={actionType}>
       <Suspense
         fallback={
           <Button variant="primary" className={props.className} disabled>
