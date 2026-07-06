@@ -23,8 +23,11 @@ export interface WalletConfirmAction {
     actionType?: string;
   } | null;
   metadata?: {
+    actionType?: string;
+    userConfirmable?: boolean;
+    executionStatus?: string;
     securityScreening?: { allowed?: boolean; verdict?: string; reason?: string };
-    simulationResult?: { success?: boolean; method?: string };
+    simulationResult?: { success?: boolean; method?: string; reason?: string; error?: string };
   } | null;
 }
 
@@ -50,7 +53,7 @@ export function WalletConfirmButton({
   disabled,
   ...rest
 }: WalletConfirmButtonProps) {
-  const { address } = useAccount();
+  const { address, chainId } = useAccount();
   // T19.1: the UI may show "Confirm in Base Account" ONLY when the server
   // reports userConfirmedEnabled === true. This is distinct from server-broadcast.
   const { data: statusData } = useStatus();
@@ -62,12 +65,19 @@ export function WalletConfirmButton({
     : (rawPayload && typeof rawPayload === 'object' ? rawPayload : null);
   const calls = Array.isArray(payload?.calls) ? payload.calls : [];
   const hasCalls = calls.length > 0;
-  const actionTypeAllowed = isProductionActionType(payload?.actionType);
+  const effectiveActionType = payload?.actionType || action.metadata?.actionType;
+  const isConfirmableMeta =
+    action.metadata?.userConfirmable === true ||
+    action.metadata?.executionStatus === 'user-confirmable' ||
+    effectiveActionType === 'revoke_approval' ||
+    effectiveActionType === 'limited_transfer';
+  const actionTypeAllowed = isProductionActionType(effectiveActionType) || isConfirmableMeta;
   const screeningAllowed = action.metadata?.securityScreening?.allowed ?? false;
   const simSuccess = action.metadata?.simulationResult?.success ?? false;
   const isPending = action.status === 'pending';
+  const isSupportedChain = !chainId || chainId === 8453 || chainId === 84532 || chainId === 0x2105 || chainId === 0x14a34;
   const canConfirm =
-    isPending && hasCalls && actionTypeAllowed && screeningAllowed && simSuccess && !!address && userConfirmedEnabled;
+    isPending && hasCalls && actionTypeAllowed && screeningAllowed && simSuccess && !!address && isSupportedChain && userConfirmedEnabled;
 
   // Resolve the attribution suffix inside this (lazy) chunk so callers never
   // import `ox` at module scope.
@@ -85,6 +95,25 @@ export function WalletConfirmButton({
     }
   }, [status, txHash, error, onConfirmed]);
 
+  let disabledReason: string | null = null;
+  if (!address) {
+    disabledReason = 'Connect Wallet to confirm';
+  } else if (!isSupportedChain) {
+    disabledReason = `Unsupported chain (${chainId}) — switch to Base`;
+  } else if (!userConfirmedEnabled) {
+    disabledReason = 'User confirmation disabled by server config';
+  } else if (!screeningAllowed) {
+    disabledReason = `Security screening blocked: ${action.metadata?.securityScreening?.reason || 'unapproved action'}`;
+  } else if (!simSuccess) {
+    disabledReason = `Validation failed: ${action.metadata?.simulationResult?.reason || action.metadata?.simulationResult?.error || 'static check failed'}`;
+  } else if (!actionTypeAllowed) {
+    disabledReason = `Unsupported action type: ${effectiveActionType || 'unknown'}`;
+  } else if (!hasCalls) {
+    disabledReason = 'No planned calls to execute';
+  } else if (!isPending) {
+    disabledReason = `Action status: ${action.status}`;
+  }
+
   const label = isPreparing
     ? 'Preparing…'
     : isSending
@@ -97,7 +126,7 @@ export function WalletConfirmButton({
             ? 'Confirmed ✓'
             : status === 'failed'
               ? 'Failed — retry'
-              : 'Confirm in Base Account';
+              : (disabledReason || 'Confirm in Base Account');
 
   const busy = isPreparing || isSending || isPolling || isConfirming;
 

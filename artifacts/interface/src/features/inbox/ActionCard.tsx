@@ -1,14 +1,8 @@
 import { useAccount } from 'wagmi';
 import { useDismissAction, useDeleteAction, useRegenerateAction, isProductionActionType } from '@mioagent/api-client-react';
-import { LazyWalletConfirmButton } from './LazyWalletConfirmButton';
 import { useUiStore } from '../../lib/state';
 import { isMainnetReadonly } from '../../lib/chain';
 import { ActionDiffPreview } from './ActionDiffPreview';
-
-// T19.1: Builder Code (ERC-8021) attribution. Passed as a RAW public env string
-// to the lazy button, which computes the suffix inside its own chunk — so `ox`
-// is never imported in the main bundle.
-const BUILDER_CODE = import.meta.env.VITE_BUILDER_CODE;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 interface ActionCardProps {
@@ -40,9 +34,15 @@ export function ActionCard({ action, onRefresh }: ActionCardProps) {
     : (rawPayload && typeof rawPayload === 'object' ? rawPayload : null);
   const calls = Array.isArray(payload?.calls) ? payload.calls : [];
   const hasCalls = calls.length > 0;
-  const actionType = payload?.actionType;
-  const isConfirmable = hasCalls && isProductionActionType(actionType);
-  const preferredFirst = action.metadata?.preferredFirstAction === true;
+  const meta = action.metadata || {};
+  const actionType = payload?.actionType || meta.actionType;
+  const isConfirmableAction =
+    meta.userConfirmable === true ||
+    meta.executionStatus === 'user-confirmable' ||
+    actionType === 'revoke_approval' ||
+    actionType === 'limited_transfer' ||
+    isProductionActionType(actionType);
+  const isConfirmable = hasCalls && isConfirmableAction;
 
   return (
     <div id={`action-${action.id}`} data-action-id={action.id} className={`bg-panel border rounded-xl shadow-sm p-[15px] flex flex-col gap-[10px] animate-in fade-in slide-in-from-bottom-2 ${action.status === 'failed' ? 'border-risk-soft' : 'border-line'}`}>
@@ -61,7 +61,7 @@ export function ActionCard({ action, onRefresh }: ActionCardProps) {
 
       <div className="text-[13px] text-ink-2 leading-relaxed">{action.suggestedPrompt}</div>
 
-      <ActionDiffPreview action={action} />
+      <ActionDiffPreview action={action} onRefresh={onRefresh} />
 
       {action.status === 'failed' && (
         <div className="flex items-center gap-[7px] text-[12px] font-bold text-risk bg-risk-soft px-[10px] py-[6px] rounded-[9px] mt-1 w-fit">🛡️ blocked by security</div>
@@ -85,31 +85,6 @@ export function ActionCard({ action, onRefresh }: ActionCardProps) {
         <div className="flex items-center gap-[7px] text-[12px] font-bold text-risk bg-risk-soft px-[10px] py-[6px] rounded-[9px] w-fit mt-1">🛡️ failed</div>
       ) : (
         <div className="flex gap-2 items-center flex-wrap mt-1">
-          {isConfirmable && (
-            <div className="flex flex-col gap-1">
-              {preferredFirst && (
-                <span className="text-[10px] font-semibold text-accent-2 bg-accent-soft px-2 py-0.5 rounded-full w-fit" title="Revoke approval is the safest first mainnet action — no funds move.">
-                  ★ Recommended first action
-                </span>
-              )}
-              <span className="text-[10px] font-medium text-ink-3 bg-bg px-2 py-0.5 rounded-full w-fit border border-line" title="No fork sim or before/after portfolio projection; only chain, call-structure, screening, and canonical-token checks.">
-                ⚠ Static validation — not a real simulation
-              </span>
-              <LazyWalletConfirmButton
-                action={action}
-                builderCode={BUILDER_CODE}
-                className="bg-accent hover:bg-accent-2 text-white px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] shadow-[0_6px_16px_rgba(0,0,255,.28)] hover:-translate-y-[1px] hover:shadow-[0_10px_22px_rgba(0,0,255,.34)] transition-all"
-                onConfirmed={({ status, txHash, error }) => {
-                  if (status === 'success') {
-                    showToast(txHash ? `Confirmed onchain · ${txHash.slice(0, 10)}…` : 'Confirmed onchain');
-                  } else if (status === 'failed') {
-                    showToast(error ?? 'Confirmation failed');
-                  }
-                  onRefresh();
-                }}
-              />
-            </div>
-          )}
           {!isConfirmable && isPending && isMainnetReadonly && (
             <span className="text-[11px] text-ink-3 italic">Read-only recommendation — nothing to confirm onchain.</span>
           )}

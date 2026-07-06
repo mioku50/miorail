@@ -1,6 +1,12 @@
 import { isMainnetReadonly } from '../../lib/chain';
 import { StateBadge, type StateKind } from '@mioagent/ui';
 import { PortfolioAnalysisView } from './PortfolioAnalysisView';
+import { useAccount } from 'wagmi';
+import { useUiStore } from '../../lib/state';
+import { LazyWalletConfirmButton } from './LazyWalletConfirmButton';
+import { isProductionActionType } from '@mioagent/api-client-react';
+
+const BUILDER_CODE = import.meta.env.VITE_BUILDER_CODE;
 
 // The Inbox card as a risk-control center. Shows what would change before any
 // confirmation: planned calls, security-screening verdicts, static-validation
@@ -9,7 +15,9 @@ import { PortfolioAnalysisView } from './PortfolioAnalysisView';
 // where the backend genuinely stored none, it renders honest empty states —
 // never fabricated results.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function ActionDiffPreview({ action }: { action: any }) {
+export function ActionDiffPreview({ action, onRefresh }: { action: any; onRefresh?: () => void }) {
+  const { address, isConnected } = useAccount();
+  const showToast = useUiStore((s) => s.showToast);
   const meta = action.metadata || {};
   const reason = meta.reason;
   const expectedEffect = meta.expectedEffect;
@@ -22,6 +30,15 @@ export function ActionDiffPreview({ action }: { action: any }) {
     ? (() => { try { return JSON.parse(rawPayload); } catch { return null; } })()
     : (rawPayload && typeof rawPayload === 'object' ? rawPayload : null);
   const calls = Array.isArray(payload?.calls) ? payload.calls : [];
+  const hasCalls = calls.length > 0;
+  const metaActionType = meta.actionType || payload?.actionType;
+  const isConfirmableAction =
+    meta.userConfirmable === true ||
+    meta.executionStatus === 'user-confirmable' ||
+    metaActionType === 'revoke_approval' ||
+    metaActionType === 'limited_transfer' ||
+    isProductionActionType(metaActionType);
+  const showConfirmCta = action.status === 'pending' && hasCalls && isConfirmableAction;
   const isReadOnlyMode = isMainnetReadonly || chainMode === 'mainnet-readonly' || chainMode === 'mainnet';
 
   const riskColor = risk === 'low' ? 'bg-ok-soft text-ok border-ok/20' : risk === 'high' ? 'bg-risk-soft text-risk border-risk/20' : 'bg-warn-soft text-warn border-warn/20';
@@ -111,6 +128,44 @@ export function ActionDiffPreview({ action }: { action: any }) {
           <div className="text-ink-3 italic">{isReadOnlyMode ? 'Read-only — no calls planned.' : 'No calls planned.'}</div>
         )}
       </div>
+
+      {showConfirmCta && (
+        <div className="mt-2 mb-1 flex flex-col gap-1.5 p-2.5 bg-panel border border-line rounded-lg shadow-sm">
+          <div className="flex items-center gap-2 flex-wrap">
+            {action.metadata?.preferredFirstAction === true && (
+              <span className="text-[10px] font-semibold text-accent-2 bg-accent-soft px-2 py-0.5 rounded-full w-fit" title="Revoke approval is the safest first mainnet action — no funds move.">
+                ★ Recommended first action
+              </span>
+            )}
+            <span className="text-[10px] font-medium text-ink-3 bg-bg px-2 py-0.5 rounded-full w-fit border border-line" title="No fork sim or before/after portfolio projection; only chain, call-structure, screening, and canonical-token checks.">
+              ⚠ Static validation — not a real simulation
+            </span>
+          </div>
+          {!address || !isConnected ? (
+            <button
+              type="button"
+              disabled
+              className="w-full bg-panel-2 border border-line/80 text-ink-2 px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] opacity-80 cursor-not-allowed text-center shadow-sm flex items-center justify-center gap-1.5"
+            >
+              ⚡ Connect Wallet to confirm
+            </button>
+          ) : (
+            <LazyWalletConfirmButton
+              action={action}
+              builderCode={BUILDER_CODE}
+              className="w-full bg-accent hover:bg-accent-2 text-white px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] shadow-[0_6px_16px_rgba(0,0,255,.28)] hover:-translate-y-[1px] hover:shadow-[0_10px_22px_rgba(0,0,255,.34)] transition-all flex items-center justify-center gap-1.5"
+              onConfirmed={({ status, txHash, error }) => {
+                if (status === 'success') {
+                  showToast(txHash ? `Confirmed onchain · ${txHash.slice(0, 10)}…` : 'Confirmed onchain');
+                } else if (status === 'failed') {
+                  showToast(error ?? 'Confirmation failed');
+                }
+                onRefresh?.();
+              }}
+            />
+          )}
+        </div>
+      )}
 
       {/* Security screening — drain / unlimited-approval / exfil / prompt-injection verdicts */}
       <div className="flex items-center gap-2 mt-1">
