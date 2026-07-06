@@ -7,7 +7,8 @@
 // precomputed `dataSuffix` so callers don't import `ox` at module scope — this
 // keeps the ERC-8021 attribution code inside this (lazy-loaded) chunk.
 
-import { useEffect, useRef, type ButtonHTMLAttributes } from 'react';
+import React, { useEffect, useRef, type ButtonHTMLAttributes } from 'react';
+void React;
 import { useAccount } from 'wagmi';
 import type { Hex } from 'viem';
 import { Button } from '@mioagent/ui';

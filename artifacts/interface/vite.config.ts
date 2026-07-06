@@ -9,6 +9,16 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react(), tailwindcss()],
+    resolve: {
+      dedupe: [
+        'react',
+        'react-dom',
+        'wagmi',
+        'viem',
+        '@wagmi/core',
+        '@tanstack/react-query'
+      ],
+    },
     server: {
       // Required for the Base Account popup (sign-in / connect / sendCalls).
       // `same-origin` would block the popup window; `same-origin-allow-popups`

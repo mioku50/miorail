@@ -4,6 +4,11 @@ import * as mod from './WalletConfirmButton';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { createConfig, http, WagmiProvider } from 'wagmi';
+import { base } from 'wagmi/chains';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -37,4 +42,73 @@ test('T19.6: ActionDiffPreview places primary confirmation CTA directly under pl
     assert.ok(content.includes('LazyWalletConfirmButton'), 'ActionDiffPreview must render LazyWalletConfirmButton');
     assert.ok(content.includes('Connect Wallet to confirm'), 'ActionDiffPreview must render connect wallet CTA fallback');
   }
+});
+
+test('T19.7: WalletConfirmButton renders Confirm in Base Account without hitting error boundary when wrapped in WagmiProvider + QueryClientProvider', () => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  queryClient.setQueryData(['status'], { execution: { userConfirmedEnabled: true } });
+
+  const config = createConfig({
+    chains: [base],
+    transports: {
+      [base.id]: http(),
+    },
+  });
+
+  const initialState = {
+    status: 'connected' as const,
+    connections: new Map([
+      [
+        'mock',
+        {
+          accounts: ['0x1234567890123456789012345678901234567890' as const],
+          chainId: base.id,
+          connector: { id: 'mock', name: 'Mock', type: 'mock', uid: 'mock' } as any,
+        },
+      ],
+    ]),
+    current: 'mock',
+    chainId: base.id,
+  };
+
+  const mockAction = {
+    id: 'test-action-1',
+    status: 'pending',
+    executionPayload: {
+      actionType: 'revoke_approval',
+      calls: [{ to: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', data: '0x095ea7b3' }],
+    },
+    metadata: {
+      userConfirmable: true,
+      executionStatus: 'user-confirmable',
+      securityScreening: { allowed: true, verdict: 'PASSED' },
+      simulationResult: { success: true, method: 'static-validation' },
+    },
+  };
+
+  const element = React.createElement(
+    WagmiProvider,
+    { config, initialState: initialState as any },
+    React.createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      React.createElement(mod.WalletConfirmButton, { action: mockAction })
+    )
+  );
+
+  const html = renderToStaticMarkup(element);
+  assert.ok(html.includes('Confirm in Base Account'), `Expected "Confirm in Base Account", got: ${html}`);
+});
+
+test('T19.7: WalletConfirmButton throws when rendered without WagmiProvider (verifying context boundary requirement)', () => {
+  const mockAction = {
+    id: 'test-action-2',
+    status: 'pending',
+    executionPayload: { calls: [{ to: '0x123' }] },
+  };
+
+  const element = React.createElement(mod.WalletConfirmButton, { action: mockAction });
+  assert.throws(() => {
+    renderToStaticMarkup(element);
+  }, /WagmiProvider/);
 });
