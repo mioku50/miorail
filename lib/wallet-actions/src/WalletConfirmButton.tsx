@@ -75,7 +75,7 @@ export function WalletConfirmButton({
   const actionTypeAllowed = isProductionActionType(effectiveActionType) || isConfirmableMeta;
   const screeningAllowed = action.metadata?.securityScreening?.allowed ?? false;
   const simSuccess = action.metadata?.simulationResult?.success ?? false;
-  const isPending = action.status === 'pending';
+  const isPending = action.status === 'pending' || action.status === 'pending_confirmation' || action.status === 'submitted_unknown';
   const isSupportedChain = !chainId || chainId === 8453 || chainId === 84532 || chainId === 0x2105 || chainId === 0x14a34;
   const canConfirm =
     isPending && hasCalls && actionTypeAllowed && screeningAllowed && simSuccess && !!address && isSupportedChain && userConfirmedEnabled;
@@ -85,12 +85,12 @@ export function WalletConfirmButton({
   const resolvedSuffix = dataSuffix ?? builderCodeToDataSuffix(builderCode);
 
   const { confirm, status, error, isPreparing, isSending, isPolling, isConfirming, txHash, poller } =
-    useWalletConfirmAction({ actionId: action.id, dataSuffix: resolvedSuffix });
+    useWalletConfirmAction({ actionId: action.id, dataSuffix: resolvedSuffix, initialBatchId: action.metadata?.confirmation?.batchId || null });
 
-  // Fire onConfirmed once per terminal transition (success or failed).
+  // Fire onConfirmed once per terminal transition (success or failed or cancelled).
   const lastReported = useRef<ConfirmFlowStatus | null>(null);
   useEffect(() => {
-    if ((status === 'success' || status === 'failed') && status !== lastReported.current && onConfirmed) {
+    if ((status === 'success' || status === 'failed' || status === 'cancelled') && status !== lastReported.current && onConfirmed) {
       lastReported.current = status;
       onConfirmed({ status, txHash, error });
     }

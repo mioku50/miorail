@@ -463,6 +463,118 @@ test('Actions API', async (t) => {
     mock.restoreAll();
   });
 
+  await t.test('T19.9: POST /api/actions/:actionId/confirm must not mark executed when txHash, batchId, and receipts are all null', async () => {
+    let updatedStatus: string | null = null;
+    const mockSelect = mock.fn(() => ({
+      from: mock.fn(() => ({
+        where: mock.fn(async () => [
+          {
+            id: 'act-confirm-null', userId: 'default-user', status: 'pending',
+            executionPayload: { chain: 'eip155:8453', calls: [{ to: BASE_MAINNET_USDC }] },
+            metadata: { instruction: 'Revoke allowance' },
+            createdAt: new Date(), updatedAt: new Date(),
+          },
+        ]),
+      })),
+    }));
+    const mockUpdate = mock.fn(() => ({
+      set: mock.fn((vals: any) => {
+        updatedStatus = vals.status;
+        return { where: mock.fn(async () => []) };
+      }),
+    }));
+    mock.method(db, 'select', mockSelect);
+    mock.method(db, 'update', mockUpdate);
+    const { ObservabilityService } = await import('@mioagent/observability');
+    mock.method(ObservabilityService, 'logAction', async () => {});
+
+    const response = await request(app).post('/api/actions/act-confirm-null/confirm').send({
+      batchId: null,
+      status: 200,
+      txHash: null,
+      receipts: null,
+    });
+    assert.strictEqual(response.status, 200);
+    assert.notStrictEqual(response.body.status, 'executed', 'Must not be executed when proof is null');
+    assert.strictEqual(response.body.status, 'failed', 'Must fail when no execution proof is provided');
+    assert.strictEqual(updatedStatus, 'failed');
+
+    mock.restoreAll();
+  });
+
+  await t.test('T19.9: POST /api/actions/:actionId/confirm sets pending_confirmation when status is 102 (submitted, waiting for receipt)', async () => {
+    let updatedStatus: string | null = null;
+    const mockSelect = mock.fn(() => ({
+      from: mock.fn(() => ({
+        where: mock.fn(async () => [
+          {
+            id: 'act-confirm-pending', userId: 'default-user', status: 'pending',
+            executionPayload: { chain: 'eip155:8453', calls: [{ to: BASE_MAINNET_USDC }] },
+            metadata: { instruction: 'Revoke allowance' },
+            createdAt: new Date(), updatedAt: new Date(),
+          },
+        ]),
+      })),
+    }));
+    const mockUpdate = mock.fn(() => ({
+      set: mock.fn((vals: any) => {
+        updatedStatus = vals.status;
+        return { where: mock.fn(async () => []) };
+      }),
+    }));
+    mock.method(db, 'select', mockSelect);
+    mock.method(db, 'update', mockUpdate);
+    const { ObservabilityService } = await import('@mioagent/observability');
+    mock.method(ObservabilityService, 'logAction', async () => {});
+
+    const response = await request(app).post('/api/actions/act-confirm-pending/confirm').send({
+      batchId: 'batch-xyz',
+      status: 102,
+    });
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.status, 'pending_confirmation');
+    assert.strictEqual(updatedStatus, 'pending_confirmation');
+
+    mock.restoreAll();
+  });
+
+  await t.test('T19.9: POST /api/actions/:actionId/confirm sets cancelled when status is 4001', async () => {
+    let updatedStatus: string | null = null;
+    const mockSelect = mock.fn(() => ({
+      from: mock.fn(() => ({
+        where: mock.fn(async () => [
+          {
+            id: 'act-confirm-cancel', userId: 'default-user', status: 'pending',
+            executionPayload: { chain: 'eip155:8453', calls: [{ to: BASE_MAINNET_USDC }] },
+            metadata: { instruction: 'Revoke allowance' },
+            createdAt: new Date(), updatedAt: new Date(),
+          },
+        ]),
+      })),
+    }));
+    const mockUpdate = mock.fn(() => ({
+      set: mock.fn((vals: any) => {
+        updatedStatus = vals.status;
+        return { where: mock.fn(async () => []) };
+      }),
+    }));
+    mock.method(db, 'select', mockSelect);
+    mock.method(db, 'update', mockUpdate);
+    const { ObservabilityService } = await import('@mioagent/observability');
+    mock.method(ObservabilityService, 'logAction', async () => {});
+
+    const response = await request(app).post('/api/actions/act-confirm-cancel/confirm').send({
+      batchId: '',
+      status: 4001,
+      error: 'User rejected the request',
+    });
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.status, 'cancelled');
+    assert.strictEqual(updatedStatus, 'cancelled');
+
+    mock.restoreAll();
+  });
+
   // T19.2: revoke-approval discovery. A revoke for a spender with no real
   // provider-discovered USDC allowance must NOT create a confirmable action —
   // and must NOT create a generic read-only recommendation either. It returns

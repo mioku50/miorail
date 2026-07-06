@@ -96,7 +96,7 @@ export const ExecutionPayloadSchema = z.object({
 export const ActionResponseSchema = z.object({
   id: z.string(),
   kind: z.string(),
-  status: z.enum(['pending', 'executed', 'dismissed', 'failed']),
+  status: z.enum(['pending', 'pending_confirmation', 'submitted_unknown', 'executed', 'dismissed', 'failed', 'cancelled']),
   suggestedPrompt: z.string().nullable(),
   tokens: z.array(z.string()).optional(),
   executionPayload: ExecutionPayloadSchema.optional().nullable(),
@@ -174,17 +174,18 @@ export const PrepareActionResponseSchema = z.object({
 
 export const ConfirmActionRequestSchema = z.object({
   actionId: z.string(),
-  // EIP-5792 batch id returned by wallet_sendCalls.
-  batchId: z.string(),
-  // EIP-5792 status code (200 = success, 400/500/600 = failure).
+  // EIP-5792 batch id returned by wallet_sendCalls. Can be empty string/null if failed/cancelled before batch id assignment.
+  batchId: z.string().nullable().optional().default(''),
+  // EIP-5792 status code (200 = success, 400/500/600 = failure, 4001 = cancelled, 102 = pending_confirmation).
   status: z.number(),
-  txHash: z.string().optional(),
-  receipts: z.array(z.record(z.any())).optional(),
+  txHash: z.string().nullable().optional(),
+  receipts: z.array(z.record(z.any())).nullable().optional(),
+  error: z.string().nullable().optional(),
 });
 
 export const ConfirmActionResponseSchema = z.object({
   success: z.boolean(),
-  status: z.enum(['executed', 'failed']),
+  status: z.enum(['executed', 'failed', 'pending_confirmation', 'submitted_unknown', 'cancelled']),
   txHash: z.string().nullable().optional(),
   error: z.string().optional(),
 });

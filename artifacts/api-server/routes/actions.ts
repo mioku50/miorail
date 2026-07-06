@@ -109,7 +109,7 @@ actionsRouter.get('/', async (req, res, next) => {
       .map(a => ({
         id: a.id,
         kind: a.kind,
-        status: a.status as 'pending' | 'executed' | 'dismissed' | 'failed',
+        status: a.status as any,
         suggestedPrompt: a.suggestedPrompt,
         tokens: Array.isArray(a.tokens) ? a.tokens.map(String) : undefined,
         executionPayload: a.executionPayload,
@@ -621,22 +621,41 @@ actionsRouter.post('/:actionId/confirm', async (req, res, next) => {
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: 'Invalid confirm payload' });
     }
-    const { batchId, status, txHash, receipts } = parsed.data;
+    const { batchId, status, txHash, receipts, error } = parsed.data;
 
     const [action] = await db.select().from(actions).where(and(eq(actions.id, actionId), eq(actions.userId, userId)));
     if (!action) {
       return res.status(404).json({ success: false, error: 'Action not found' });
     }
-    // Replay / double-record guard: only a pending action can be confirmed.
-    if (action.status !== 'pending') {
+    // Replay / double-record guard: only a pending or in-progress action can be confirmed.
+    const allowedStatuses = ['pending', 'pending_confirmation', 'submitted_unknown'];
+    if (!allowedStatuses.includes(action.status)) {
       return res.status(400).json({ success: false, error: `Action is already ${action.status}` });
     }
 
-    const isSuccess = status === 200;
-    let verifiedTxHash: string | undefined = txHash;
+    const hasValidTxHash = Boolean(txHash && txHash.trim().length > 0);
+    const hasValidReceipts = Boolean(receipts && Array.isArray(receipts) && receipts.length > 0);
+    const hasValidBatchId = Boolean(batchId && batchId.trim().length > 0);
+    const hasProof = hasValidTxHash || hasValidReceipts || (hasValidBatchId && status === 200);
+
+    let recordStatus: 'executed' | 'failed' | 'pending_confirmation' | 'submitted_unknown' | 'cancelled' = 'failed';
+    if (status === 4001 || (error && String(error).toLowerCase().includes('reject')) || (error && String(error).toLowerCase().includes('cancel'))) {
+      recordStatus = 'cancelled';
+    } else if (status === 102) {
+      recordStatus = 'pending_confirmation';
+    } else if (status === 200 && hasProof) {
+      recordStatus = 'executed';
+    } else if (status === 200 && !hasProof) {
+      recordStatus = 'failed';
+    } else if (!hasProof && (status === 0 || status === 1)) {
+      recordStatus = 'submitted_unknown';
+    } else {
+      recordStatus = 'failed';
+    }
+
+    let verifiedTxHash: string | undefined = txHash || undefined;
     let verifiedFrom: string | null = null;
     let verifiedTo: string | null = null;
-    let recordStatus: 'executed' | 'failed' = isSuccess ? 'executed' : 'failed';
 
     // Read-only integrity check: when a txHash is provided, confirm the tx is
     // actually included and successful on Base Mainnet via a read-only public
@@ -650,7 +669,7 @@ actionsRouter.post('/:actionId/confirm', async (req, res, next) => {
     // the batch (their Base Account session), the replay guard
     // (`WHERE status='pending'`), and the audit-ledger trail. We still record
     // `from`/`to` for forensic purposes.
-    if (isSuccess && txHash) {
+    if (recordStatus === 'executed' && txHash) {
       try {
         const rpcUrl = process.env.BASE_MAINNET_RPC_URL || 'https://mainnet.base.org';
         const publicClient = createPublicClient({ chain: base, transport: http(rpcUrl) });
@@ -674,7 +693,7 @@ actionsRouter.post('/:actionId/confirm', async (req, res, next) => {
 
     const meta = (action.metadata || {}) as any;
     const confirmation = {
-      batchId,
+      batchId: batchId || null,
       txHash: verifiedTxHash ?? null,
       confirmedAt: new Date().toISOString(),
       from: verifiedFrom ?? userAddress ?? null,
@@ -685,27 +704,42 @@ actionsRouter.post('/:actionId/confirm', async (req, res, next) => {
 
     await db.update(actions)
       .set({
-        status: recordStatus,
-        executedAt: new Date(),
+        status: recordStatus as any,
+        executedAt: recordStatus === 'executed' ? new Date() : null,
         updatedAt: new Date(),
         metadata: { ...meta, confirmation },
       })
-      .where(and(eq(actions.id, actionId), eq(actions.userId, userId), eq(actions.status, 'pending')));
+      .where(and(eq(actions.id, actionId), eq(actions.userId, userId), inArray(actions.status, allowedStatuses)));
+
+    const logActionType = recordStatus === 'executed'
+      ? 'wallet-confirm'
+      : recordStatus === 'cancelled'
+        ? 'wallet-confirm-cancelled'
+        : recordStatus === 'pending_confirmation' || recordStatus === 'submitted_unknown'
+          ? 'wallet-confirm-pending'
+          : 'wallet-confirm-failed';
 
     // Spend/audit ledger trail (reuse the existing audit_logs table + service).
     await ObservabilityService.logAction({
       userId,
       actionId,
-      actionType: recordStatus === 'executed' ? 'wallet-confirm' : 'wallet-confirm-failed',
+      actionType: logActionType,
       txHash: verifiedTxHash,
       details: { batchId, statusCode: status, from: verifiedFrom ?? userAddress, to: verifiedTo },
     });
+
+    let respError: string | undefined;
+    if (recordStatus === 'failed') {
+      respError = error || 'Confirmation could not be verified onchain or lacked execution proof';
+    } else if (recordStatus === 'cancelled') {
+      respError = error || 'Cancelled by user';
+    }
 
     return res.json(ConfirmActionResponseSchema.parse({
       success: recordStatus === 'executed',
       status: recordStatus,
       txHash: verifiedTxHash ?? null,
-      error: recordStatus === 'failed' ? 'Confirmation could not be verified onchain' : undefined,
+      error: respError,
     }));
   } catch (error) {
     next(error);

@@ -69,6 +69,7 @@ export interface UseWalletConfirmActionArgs {
   actionId: string;
   /** ERC-8021 builder code data suffix, or undefined to send unattributed. */
   dataSuffix?: Hex;
+  initialBatchId?: string | null;
 }
 
 /**
@@ -126,17 +127,25 @@ export function sanitizeBigInts<T>(value: T): T {
 export function useWalletConfirmAction({
   actionId,
   dataSuffix,
+  initialBatchId,
 }: UseWalletConfirmActionArgs): UseWalletConfirmActionResult {
   const prepareAction = usePrepareAction();
   const confirmAction = useConfirmAction();
   const sendCalls = useSendCalls();
   const { address } = useAccount();
 
-  const [batchId, setBatchId] = useState<string | null>(null);
-  const [status, setStatus] = useState<ConfirmFlowStatus>('idle');
+  const [batchId, setBatchId] = useState<string | null>(initialBatchId || null);
+  const [status, setStatus] = useState<ConfirmFlowStatus>(initialBatchId ? 'pending' : 'idle');
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const confirmedRef = useRef(false);
+
+  useEffect(() => {
+    if (initialBatchId && !batchId && !confirmedRef.current) {
+      setBatchId(initialBatchId);
+      setStatus('pending');
+    }
+  }, [initialBatchId, batchId]);
 
   const handleStatusChange = useCallback(
     (cs: { status?: string; statusCode?: number; receipts?: Array<{ transactionHash?: string }> }) => {
@@ -168,6 +177,10 @@ export function useWalletConfirmAction({
         .then((r) => {
           if (r.status === 'executed') {
             setStatus('success');
+          } else if (r.status === 'cancelled') {
+            setStatus('cancelled');
+          } else if (r.status === 'pending_confirmation' || r.status === 'submitted_unknown') {
+            setStatus('pending');
           } else {
             setStatus('failed');
             setError(r.error ?? 'Onchain verification failed');
@@ -219,9 +232,44 @@ export function useWalletConfirmAction({
 
       setBatchId(result.id);
       setStatus('pending');
+      try {
+        await confirmAction.mutateAsync(
+          sanitizeBigInts({
+            actionId,
+            batchId: result.id,
+            status: 102,
+          }) as unknown as { actionId: string; batchId: string; status: number }
+        );
+      } catch {
+        // Continue polling even if initial persistence call fails
+      }
     } catch (e: unknown) {
-      setStatus('failed');
-      setError(e instanceof Error ? e.message : 'Wallet flow failed');
+      const errStr = e instanceof Error ? e.message : String(e);
+      const isCancelled =
+        errStr.toLowerCase().includes('reject') ||
+        errStr.toLowerCase().includes('cancel') ||
+        errStr.toLowerCase().includes('close') ||
+        errStr.toLowerCase().includes('denied') ||
+        (e as { code?: number })?.code === 4001 ||
+        (e as { shortMessage?: string })?.shortMessage?.toLowerCase()?.includes('reject');
+
+      const finalStatus = isCancelled ? 'cancelled' : 'failed';
+      setStatus(finalStatus);
+      const errMsg = isCancelled ? 'Cancelled by user' : (e instanceof Error ? e.message : 'Wallet flow failed');
+      setError(errMsg);
+
+      try {
+        await confirmAction.mutateAsync(
+          sanitizeBigInts({
+            actionId,
+            batchId: '',
+            status: isCancelled ? 4001 : 500,
+            error: errMsg,
+          }) as unknown as { actionId: string; batchId: string; status: number }
+        );
+      } catch {
+        // Ignore network error on cancellation/failure reporting
+      }
     }
   };
 
