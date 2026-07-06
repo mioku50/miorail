@@ -71,6 +71,58 @@ export interface UseWalletConfirmActionArgs {
   dataSuffix?: Hex;
 }
 
+/**
+ * Safely normalizes call value for JSON-RPC / Base Account EIP-5792 `wallet_sendCalls`.
+ * Never returns a raw BigInt, which causes `JSON.stringify` to throw:
+ * "TypeError: Do not know how to serialize a BigInt".
+ *
+ * For zero values ("0", 0, "0x0", ""), returns undefined (omits property).
+ * For non-zero values, returns a JSON-safe hex quantity string ("0x...").
+ */
+export function normalizeCallValue(value?: string | number | bigint | null): Hex | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  try {
+    const valStr = typeof value === 'bigint' ? value.toString() : String(value).trim();
+    if (valStr === '0' || valStr === '0x0' || valStr === '0x') return undefined;
+    const bi = valStr.startsWith('0x') ? BigInt(valStr) : BigInt(valStr);
+    if (bi === BigInt(0)) return undefined;
+    return `0x${bi.toString(16)}` as Hex;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Normalizes a prepared call object into a JSON/RPC serializable EIP-5792 call.
+ */
+export function normalizeCall(c: { to: string; data?: string; value?: string | number | bigint | null }) {
+  const val = normalizeCallValue(c.value);
+  const call: { to: Address; data?: Hex; value?: Hex } = {
+    to: c.to as Address,
+  };
+  if (c.data) call.data = c.data as Hex;
+  if (val !== undefined) call.value = val;
+  return call;
+}
+
+/**
+ * Recursively converts any BigInt values in an object/array to strings
+ * so JSON.stringify never throws when sending confirm payloads or logs.
+ */
+export function sanitizeBigInts<T>(value: T): T {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'bigint') return value.toString() as unknown as T;
+  if (Array.isArray(value)) return value.map(sanitizeBigInts) as unknown as T;
+  if (typeof value === 'object') {
+    const res: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      res[k] = sanitizeBigInts(v);
+    }
+    return res as unknown as T;
+  }
+  return value;
+}
+
 export function useWalletConfirmAction({
   actionId,
   dataSuffix,
@@ -98,13 +150,21 @@ export function useWalletConfirmAction({
 
       setStatus('confirming');
       confirmAction
-        .mutateAsync({
-          actionId,
-          batchId,
-          status: cs.statusCode ?? 0,
-          txHash: finalTxHash ?? undefined,
-          receipts: cs.receipts as Record<string, unknown>[] | undefined,
-        })
+        .mutateAsync(
+          sanitizeBigInts({
+            actionId,
+            batchId,
+            status: cs.statusCode ?? 0,
+            txHash: finalTxHash ?? undefined,
+            receipts: cs.receipts as Record<string, unknown>[] | undefined,
+          }) as {
+            actionId: string;
+            batchId: string;
+            status: number;
+            txHash?: string;
+            receipts?: Record<string, unknown>[];
+          }
+        )
         .then((r) => {
           if (r.status === 'executed') {
             setStatus('success');
@@ -149,11 +209,7 @@ export function useWalletConfirmAction({
 
       setStatus('sending');
       const result = await sendCalls.mutateAsync({
-        calls: prepared.calls.map((c) => ({
-          to: c.to as Address,
-          data: c.data as Hex | undefined,
-          value: c.value ? BigInt(c.value) : undefined,
-        })),
+        calls: prepared.calls.map(normalizeCall) as unknown as Parameters<typeof sendCalls.mutateAsync>[0]['calls'],
         chainId: base.id,
         forceAtomic: true,
         capabilities: dataSuffix
