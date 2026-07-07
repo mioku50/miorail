@@ -1,19 +1,43 @@
 import { useStatus } from '@mioagent/api-client-react';
 import { StateBadge } from '@mioagent/ui';
-import { approvalProviderHint, approvalProviderState, baseMcpHint, baseMcpState, formatApprovalProviderStatus, formatBaseMcpStatus } from '../../lib/format';
+import { useAccount } from 'wagmi';
+import {
+  approvalProviderHint,
+  approvalProviderState,
+  baseMcpConnectHref,
+  baseMcpConnectLabel,
+  baseMcpHint,
+  baseMcpOAuthResultMessage,
+  baseMcpState,
+  formatApprovalProviderStatus,
+  formatBaseMcpStatus,
+} from '../../lib/format';
 import { PlugZap } from 'lucide-react';
 
 export function BaseMcpView() {
+  const { isConnected } = useAccount();
   const { data: sd } = useStatus();
   const mcp = sd?.baseMcp;
   const ap = sd?.approvals;
   const canConnect = !!mcp?.enabled && !!mcp?.configured;
-  const connectLabel = mcp?.auth?.connected ? 'Reconnect Base MCP' : 'Connect Base MCP';
+  const connectLabel = baseMcpConnectLabel(mcp);
+  const oauthResult = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('mcp');
+  const oauthMessage = baseMcpOAuthResultMessage(oauthResult);
+  const oauthClassName = oauthMessage?.kind === 'success'
+    ? 'bg-ok-soft border-ok/20 text-ok'
+    : oauthMessage?.kind === 'error'
+      ? 'bg-risk-soft border-risk/20 text-risk'
+      : 'bg-warn-soft border-warn/20 text-warn';
 
   return (
     <main className="flex-1 bg-bg p-5 flex flex-col gap-4 overflow-y-auto pb-16 md:pb-5">
       <h1 className="text-[20px] font-display font-bold text-ink tracking-[-0.02em]">Base MCP Status</h1>
       <div className="bg-panel border border-line rounded-xl p-4 flex flex-col gap-4">
+        {oauthMessage && (
+          <div className={`p-3 rounded border text-xs font-medium ${oauthClassName}`}>
+            {oauthMessage.text}
+          </div>
+        )}
         <div className="flex items-center justify-between">
           <span className="font-medium text-sm">Provider</span>
           {mcp ? (
@@ -58,9 +82,9 @@ export function BaseMcpView() {
               {mcp?.auth?.connected ? 'User-scoped MCP tokens are stored server-side.' : 'No user-scoped Base MCP token is active.'}
             </span>
           </div>
-          {canConnect ? (
+          {canConnect && isConnected ? (
             <a
-              href="/api/mcp/base/connect?returnTo=/base-mcp"
+              href={baseMcpConnectHref('/base-mcp')}
               className="inline-flex items-center gap-2 text-xs font-bold bg-accent text-white px-3.5 py-2 rounded-lg hover:bg-accent/90 transition-colors shadow-sm"
             >
               <PlugZap size={14} />
@@ -73,7 +97,7 @@ export function BaseMcpView() {
               className="inline-flex items-center gap-2 text-xs font-bold bg-panel-2 text-ink-3 border border-line px-3.5 py-2 rounded-lg opacity-70 cursor-not-allowed"
             >
               <PlugZap size={14} />
-              Configure env first
+              {canConnect ? 'Connect wallet first' : 'Configure env first'}
             </button>
           )}
         </div>

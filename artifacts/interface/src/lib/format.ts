@@ -13,7 +13,7 @@ export function formatRiskProvider(statusData: any, pendingLabel = 'Checking...'
 
 export function baseMcpState(status?: string): StateKind {
   if (status === 'connected') return 'live';
-  if (status === 'degraded' || status === 'needs_reauth') return 'stale';
+  if (status === 'degraded' || status === 'needs_reauth' || status === 'needs_auth') return 'stale';
   if (status === 'disabled') return 'disabled';
   if (status === 'unreachable' || status === 'unsupported') return 'failed';
   return 'missing';
@@ -22,7 +22,7 @@ export function baseMcpState(status?: string): StateKind {
 export function formatBaseMcpStatus(baseMcp?: any, pendingLabel = 'Checking...') {
   if (!baseMcp) return pendingLabel;
   if (baseMcp.status === 'connected') return baseMcp.endpointHost ? `connected (${baseMcp.endpointHost})` : 'connected';
-  if (baseMcp.status === 'needs_reauth') return 'needs auth';
+  if (baseMcp.status === 'needs_reauth' || baseMcp.status === 'needs_auth') return 'needs auth';
   if (baseMcp.status === 'degraded') return baseMcp.errorCode === 'rate_limited' ? 'degraded (rate limited)' : 'degraded';
   if (baseMcp.status === 'unreachable') return 'unreachable';
   if (baseMcp.status === 'unsupported') return 'unsupported';
@@ -32,10 +32,40 @@ export function formatBaseMcpStatus(baseMcp?: any, pendingLabel = 'Checking...')
 
 export function baseMcpHint(baseMcp?: any): string | null {
   if (!baseMcp) return null;
-  if (baseMcp.status === 'needs_reauth') return 'Base MCP is configured. Connect Base MCP to authorize user-scoped tools.';
+  if (baseMcp.status === 'needs_reauth' || baseMcp.status === 'needs_auth') return 'Base MCP is configured. Connect Base MCP to authorize user-scoped tools.';
   if (baseMcp.status !== 'missing') return null;
   if (baseMcp.configured && baseMcp.enabled) return 'Base MCP is optional. Connect Base Account to enable user-scoped tool status.';
   return 'Base MCP is optional. Configure BASE_MCP_SERVER_URL to enable tool status.';
+}
+
+export function baseMcpNeedsAuth(baseMcp?: any): boolean {
+  if (!baseMcp?.enabled || !baseMcp?.configured) return false;
+  if (baseMcp.auth?.connected) return false;
+  return baseMcp.status === 'needs_reauth' || baseMcp.status === 'needs_auth' || baseMcp.status === 'missing';
+}
+
+export function baseMcpConnectLabel(baseMcp?: any): string {
+  return baseMcp?.auth?.connected ? 'Reconnect Base MCP' : 'Connect Base MCP';
+}
+
+export function baseMcpConnectHref(returnTo = '/base-mcp'): string {
+  const safeReturnTo = returnTo.startsWith('/') && !returnTo.startsWith('//') && !returnTo.includes('://')
+    ? returnTo
+    : '/base-mcp';
+  return `/api/mcp/base/connect?returnTo=${encodeURIComponent(safeReturnTo)}`;
+}
+
+export function baseMcpOAuthResultMessage(result?: string | null): { kind: 'success' | 'warn' | 'error'; text: string } | null {
+  if (result === 'connected') {
+    return { kind: 'success', text: 'Base MCP connected. User-scoped tools are authorized.' };
+  }
+  if (result === 'cancelled') {
+    return { kind: 'warn', text: 'Base MCP connection was cancelled. Connect again when ready.' };
+  }
+  if (result === 'error') {
+    return { kind: 'error', text: 'Base MCP connection failed. Connect again to reauthorize.' };
+  }
+  return null;
 }
 
 export function approvalProviderState(status?: string): StateKind {

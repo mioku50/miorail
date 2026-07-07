@@ -4,8 +4,18 @@ import { Link } from 'wouter';
 import { useStatus, useAutonomy, useResetAutonomy, usePortfolio, useCreateRecommendation } from '@mioagent/api-client-react';
 import { useUiStore } from '../../lib/state';
 import { isMainnetReadonly } from '../../lib/chain';
-import { approvalProviderHint, approvalProviderState, formatApprovalProviderStatus, baseMcpHint, formatBaseMcpStatus, portfolioFreshnessLabel } from '../../lib/format';
-import { X } from 'lucide-react';
+import {
+  approvalProviderHint,
+  approvalProviderState,
+  baseMcpConnectHref,
+  baseMcpConnectLabel,
+  baseMcpHint,
+  baseMcpNeedsAuth,
+  formatApprovalProviderStatus,
+  formatBaseMcpStatus,
+  portfolioFreshnessLabel,
+} from '../../lib/format';
+import { PlugZap, X } from 'lucide-react';
 
 function Dot({ status }: { status?: string }) {
   let bg = 'bg-ink-3 shadow-none';
@@ -38,6 +48,7 @@ export function OpsRail({ onClose }: OpsRailProps) {
   const { data: sd } = useStatus();
   const { data: autonomyState } = useAutonomy();
   const resetAutonomy = useResetAutonomy();
+  const mcpReturnTo = typeof window === 'undefined' ? '/' : window.location.pathname || '/';
 
   const [portfolioRequested, setPortfolioRequested] = useState(false);
 
@@ -174,6 +185,24 @@ export function OpsRail({ onClose }: OpsRailProps) {
               {baseMcpHint(sd?.baseMcp) && (
                 <div className="text-[10px] font-sans text-ink-3 bg-panel-2 px-2 py-1.5 rounded border border-line leading-normal">
                   {baseMcpHint(sd?.baseMcp)}
+                </div>
+              )}
+              {baseMcpNeedsAuth(sd?.baseMcp) && (
+                <div className="text-[10px] font-sans bg-panel-2 px-2 py-1.5 rounded border border-line leading-normal">
+                  {isConnected ? (
+                    <a
+                      href={baseMcpConnectHref(mcpReturnTo)}
+                      className="inline-flex w-full items-center justify-center gap-1.5 text-accent font-bold"
+                    >
+                      <PlugZap size={12} />
+                      {baseMcpConnectLabel(sd?.baseMcp)}
+                    </a>
+                  ) : (
+                    <span className="inline-flex w-full items-center justify-center gap-1.5 text-ink-3 font-bold">
+                      <PlugZap size={12} />
+                      Connect wallet first
+                    </span>
+                  )}
                 </div>
               )}
               {approvalProviderHint(sd?.approvals, sd?.budgets) && (

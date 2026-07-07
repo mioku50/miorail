@@ -9,9 +9,22 @@ import {
   useResetAutonomy,
 } from '@mioagent/api-client-react';
 import { CHAIN_ENV, isMainnetReadonly } from '../../lib/chain';
-import { approvalProviderHint, approvalProviderState, baseMcpHint, baseMcpState, formatApprovalProviderStatus, formatBaseMcpStatus, formatRiskProvider } from '../../lib/format';
+import {
+  approvalProviderHint,
+  approvalProviderState,
+  baseMcpConnectHref,
+  baseMcpConnectLabel,
+  baseMcpHint,
+  baseMcpNeedsAuth,
+  baseMcpOAuthResultMessage,
+  baseMcpState,
+  formatApprovalProviderStatus,
+  formatBaseMcpStatus,
+  formatRiskProvider,
+} from '../../lib/format';
 import { StateBadge, type StateKind } from '@mioagent/ui';
 import { useUiStore } from '../../lib/state';
+import { PlugZap } from 'lucide-react';
 
 function tbState(s?: string): StateKind {
   if (s === 'connected') return 'live';
@@ -87,6 +100,13 @@ export function ConfigureView() {
   const isBaseSepolia = chainId === 84532;
   const isStale = autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory;
   const isExpired = autonomyState?.isExpiredMemory || autonomyState?.sessionKey?.isExpiredMemory || autonomyState?.status === 'expired' || autonomyState?.sessionKey?.status === 'expired';
+  const mcpOauthResult = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('mcp');
+  const mcpOauthMessage = baseMcpOAuthResultMessage(mcpOauthResult);
+  const mcpOauthClassName = mcpOauthMessage?.kind === 'success'
+    ? 'bg-ok-soft border-ok/20 text-ok'
+    : mcpOauthMessage?.kind === 'error'
+      ? 'bg-risk-soft border-risk/20 text-risk'
+      : 'bg-warn-soft border-warn/20 text-warn';
 
   const handleSetupPermission = () => {
     setActionStatus(null);
@@ -290,6 +310,30 @@ export function ConfigureView() {
         {baseMcpHint(sd?.baseMcp) && (
           <div className="text-[11px] text-ink-3 bg-panel-2 border border-line rounded-md px-3 py-2">
             {baseMcpHint(sd?.baseMcp)}
+          </div>
+        )}
+        {mcpOauthMessage && (
+          <div className={`text-[11px] border rounded-md px-3 py-2 font-medium ${mcpOauthClassName}`}>
+            {mcpOauthMessage.text}
+          </div>
+        )}
+        {baseMcpNeedsAuth(sd?.baseMcp) && (
+          <div className="flex items-center justify-between gap-3 text-[11px] bg-panel-2 border border-line rounded-md px-3 py-2">
+            <span className="text-ink-3">Authorize user-scoped Base MCP tools.</span>
+            {address ? (
+              <a
+                href={baseMcpConnectHref('/configure')}
+                className="inline-flex items-center gap-1.5 font-bold text-accent hover:text-accent/80 whitespace-nowrap"
+              >
+                <PlugZap size={13} />
+                {baseMcpConnectLabel(sd?.baseMcp)}
+              </a>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 font-bold text-ink-3 whitespace-nowrap">
+                <PlugZap size={13} />
+                Connect wallet first
+              </span>
+            )}
           </div>
         )}
         <Row label="x402 Micropayments">

@@ -3,7 +3,11 @@ import assert from 'node:assert';
 import {
   approvalProviderHint,
   approvalProviderState,
+  baseMcpConnectHref,
+  baseMcpConnectLabel,
   baseMcpHint,
+  baseMcpNeedsAuth,
+  baseMcpOAuthResultMessage,
   baseMcpState,
   formatApprovalProviderStatus,
   formatBaseMcpStatus,
@@ -38,6 +42,29 @@ test('Base MCP UI helpers classify needs_reauth as reconnectable stale state', (
     baseMcpHint({ status: 'needs_reauth' }),
     'Base MCP is configured. Connect Base MCP to authorize user-scoped tools.'
   );
+  assert.strictEqual(baseMcpNeedsAuth({ status: 'needs_reauth', configured: true, enabled: true }), true);
+  assert.strictEqual(baseMcpNeedsAuth({ status: 'needs_auth', configured: true, enabled: true }), true);
+  assert.strictEqual(baseMcpNeedsAuth({ status: 'connected', configured: true, enabled: true, auth: { connected: true } }), false);
+  assert.strictEqual(baseMcpConnectLabel({ auth: { connected: false } }), 'Connect Base MCP');
+  assert.strictEqual(baseMcpConnectLabel({ auth: { connected: true } }), 'Reconnect Base MCP');
+  assert.strictEqual(baseMcpConnectHref('/configure'), '/api/mcp/base/connect?returnTo=%2Fconfigure');
+  assert.strictEqual(baseMcpConnectHref('https://evil.test/callback'), '/api/mcp/base/connect?returnTo=%2Fbase-mcp');
+});
+
+test('Base MCP OAuth result messages are explicit and non-crashing', () => {
+  assert.deepStrictEqual(baseMcpOAuthResultMessage('connected'), {
+    kind: 'success',
+    text: 'Base MCP connected. User-scoped tools are authorized.',
+  });
+  assert.deepStrictEqual(baseMcpOAuthResultMessage('cancelled'), {
+    kind: 'warn',
+    text: 'Base MCP connection was cancelled. Connect again when ready.',
+  });
+  assert.deepStrictEqual(baseMcpOAuthResultMessage('error'), {
+    kind: 'error',
+    text: 'Base MCP connection failed. Connect again to reauthorize.',
+  });
+  assert.strictEqual(baseMcpOAuthResultMessage('unknown'), null);
 });
 
 test('Approval provider UI helpers render Moralis budget exhaustion truthfully', () => {

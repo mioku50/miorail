@@ -118,10 +118,10 @@ function mergeBaseMcpAuthStatus(base: BaseMcpStatus, auth: StoredBaseMcpAuthStat
       : auth;
   const withAuth = { ...base, auth: publicAuth };
   if (!base.enabled || !base.configured) return withAuth;
+  if (publicAuth.connected) return { ...withAuth, status: 'connected' };
   if (base.status === 'unreachable' || base.status === 'degraded' || base.status === 'unsupported') {
     return withAuth;
   }
-  if (publicAuth.connected) return { ...withAuth, status: 'connected' };
   if (publicAuth.needsReauth) return { ...withAuth, status: 'needs_reauth' };
   return { ...withAuth, status: 'missing' };
 }
