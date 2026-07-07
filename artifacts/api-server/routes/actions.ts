@@ -13,8 +13,6 @@ import {
   ConfirmActionRequestSchema,
   ConfirmActionResponseSchema,
 } from '@mioagent/api-zod';
-import { createPublicClient, http, type Hex } from 'viem';
-import { base } from 'viem/chains';
 import { ObservabilityService } from '@mioagent/observability';
 import { detectActionIntent } from '../lib/intent.js';
 import { fetchInternalPortfolio, analyzePortfolioForRisk, buildRecommendationMetadataFromAnalysis, fetchInternalApprovals, type TokenApproval } from '../lib/portfolioAnalysis.js';
@@ -22,6 +20,17 @@ import { buildActionPlan, planHasCalls, getBaseMainnetUsdcAddress, parseRevokeAp
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
 import { screenAction, simulateTrade } from '@mioagent/security';
 import { isProductionActionType } from '@mioagent/api-zod';
+import {
+  actionProofRuntime,
+  buildBaseReceiptProof,
+  buildPollutedRevokeApprovalRepair,
+  buildStateVerifiedAllowanceZeroProof,
+  buildWalletReceiptsProof,
+  extractRevokeApprovalProofContext,
+  getActionType,
+  receiptsAreSuccessful,
+  type ExecutionProof,
+} from '../lib/actionProofs.js';
 
 export const actionsRouter = Router();
 
@@ -89,14 +98,43 @@ actionsRouter.get('/', async (req, res, next) => {
   try {
     console.log("TRACE: actions GET start");
     const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user'; // Mock auth for now
+    const userAddress = (req as { session?: { user?: { address?: string } } }).session?.user?.address || null;
 
     console.log("TRACE: actions GET querying db");
-    const userActions = await db
+    let userActions = await db
       .select()
       .from(actions)
       .where(eq(actions.userId, userId))
       .orderBy(desc(actions.createdAt))
       .limit(50); // Basic limit
+
+    const repairedActions: typeof userActions = [];
+    for (const action of userActions) {
+      const repair = await buildPollutedRevokeApprovalRepair(action, userAddress);
+      if (!repair) {
+        repairedActions.push(action);
+        continue;
+      }
+
+      const updatedAt = new Date();
+      await db.update(actions)
+        .set({
+          status: repair.status as any,
+          metadata: repair.metadata,
+          executedAt: repair.executedAt === undefined ? action.executedAt : repair.executedAt,
+          updatedAt,
+        })
+        .where(and(eq(actions.id, action.id), eq(actions.userId, userId)));
+
+      repairedActions.push({
+        ...action,
+        status: repair.status,
+        metadata: repair.metadata,
+        executedAt: repair.executedAt === undefined ? action.executedAt : repair.executedAt,
+        updatedAt,
+      });
+    }
+    userActions = repairedActions;
     console.log(`TRACE: actions GET query done, found ${userActions.length}`);
 
     const formattedActions = userActions
@@ -458,8 +496,21 @@ actionsRouter.post('/:actionId/execute', async (req, res, next) => {
            return res.json({ success: false, error: 'Backend failed to produce approvalUrl/requestId' });
          }
 
+         const meta = (actionToExecute.metadata || {}) as any;
          await db.update(actions)
-          .set({ status: 'executed', updatedAt: new Date() })
+          .set({
+            status: 'pending_confirmation',
+            updatedAt: new Date(),
+            metadata: {
+              ...meta,
+              approvalRequest: {
+                requestId,
+                approvalUrl,
+                createdAt: new Date().toISOString(),
+                note: 'Approval URL created; execution is not recorded until durable proof is confirmed.',
+              },
+            },
+          })
           .where(and(eq(actions.id, actionId), eq(actions.userId, userId)));
 
          return res.json(ExecuteActionResponseSchema.parse({ success: true, approvalUrl, requestId }));
@@ -634,9 +685,35 @@ actionsRouter.post('/:actionId/confirm', async (req, res, next) => {
     }
 
     const hasValidTxHash = Boolean(txHash && txHash.trim().length > 0);
-    const hasValidReceipts = Boolean(receipts && Array.isArray(receipts) && receipts.length > 0);
     const hasValidBatchId = Boolean(batchId && batchId.trim().length > 0);
-    const hasProof = hasValidTxHash || hasValidReceipts || (hasValidBatchId && status === 200);
+    const hasSuccessfulReceiptProof = receiptsAreSuccessful(receipts);
+    const walletReceiptsProof = hasSuccessfulReceiptProof
+      ? buildWalletReceiptsProof({ batchId, receipts: receipts as Record<string, any>[] })
+      : null;
+
+    const meta = (action.metadata || {}) as any;
+    let executionProof: ExecutionProof | null = walletReceiptsProof;
+    let stateVerificationError: string | null = null;
+
+    if (status === 200 && !hasValidTxHash && !executionProof && getActionType(action) === 'revoke_approval') {
+      const { context, error: contextError } = extractRevokeApprovalProofContext(action, userAddress);
+      if (context) {
+        try {
+          const allowanceAfter = await actionProofRuntime.readErc20Allowance(context);
+          if (allowanceAfter === 0n) {
+            executionProof = buildStateVerifiedAllowanceZeroProof(context);
+          } else {
+            stateVerificationError = `Current allowance is ${allowanceAfter.toString()}, not 0`;
+          }
+        } catch (err) {
+          stateVerificationError = err instanceof Error ? err.message : 'Allowance read failed';
+        }
+      } else {
+        stateVerificationError = contextError || 'Missing revoke proof context';
+      }
+    }
+
+    const hasProof = hasValidTxHash || Boolean(executionProof);
 
     let recordStatus: 'executed' | 'failed' | 'pending_confirmation' | 'submitted_unknown' | 'cancelled' = 'failed';
     if (status === 4001 || (error && String(error).toLowerCase().includes('reject')) || (error && String(error).toLowerCase().includes('cancel'))) {
@@ -671,27 +748,21 @@ actionsRouter.post('/:actionId/confirm', async (req, res, next) => {
     // `from`/`to` for forensic purposes.
     if (recordStatus === 'executed' && txHash) {
       try {
-        const rpcUrl = process.env.BASE_MAINNET_RPC_URL || 'https://mainnet.base.org';
-        const publicClient = createPublicClient({ chain: base, transport: http(rpcUrl) });
-        const receipt = await publicClient.getTransactionReceipt({ hash: txHash as Hex });
-        if (receipt.status !== 'success') {
-          recordStatus = 'failed';
-        }
-        // Record the originating account/target for the audit trail (best-effort).
-        try {
-          const tx = await publicClient.getTransaction({ hash: txHash as Hex });
-          verifiedFrom = (tx.from as string) ?? null;
-          verifiedTo = (tx.to as string) ?? null;
-        } catch {
-          // getTransaction failure is non-fatal — the receipt already proved inclusion.
-        }
+        const verifiedTx = await actionProofRuntime.verifyBaseTransactionReceipt(txHash);
+        verifiedFrom = verifiedTx.from;
+        verifiedTo = verifiedTx.to;
+        executionProof = buildBaseReceiptProof(txHash);
       } catch {
-        // Tx not found / RPC error → fail closed.
-        recordStatus = 'failed';
+        // Tx not found / RPC error → fall back only if wallet receipt proof was
+        // also supplied. A txHash by itself is never accepted without Base
+        // receipt verification.
+        if (!walletReceiptsProof) {
+          recordStatus = 'failed';
+          executionProof = null;
+        }
       }
     }
 
-    const meta = (action.metadata || {}) as any;
     const confirmation = {
       batchId: batchId || null,
       txHash: verifiedTxHash ?? null,
@@ -702,12 +773,25 @@ actionsRouter.post('/:actionId/confirm', async (req, res, next) => {
       receipts: receipts ?? null,
     };
 
+    const nextMetadata: Record<string, any> = {
+      ...meta,
+      confirmation,
+    };
+    if (recordStatus === 'executed' && executionProof) {
+      nextMetadata.executionProof = executionProof;
+      if (verifiedTxHash) nextMetadata.txHash = verifiedTxHash;
+      if (hasValidBatchId) nextMetadata.batchId = batchId;
+      if (receipts) nextMetadata.receipts = receipts;
+    } else if (stateVerificationError) {
+      nextMetadata.confirmationError = stateVerificationError;
+    }
+
     await db.update(actions)
       .set({
         status: recordStatus as any,
         executedAt: recordStatus === 'executed' ? new Date() : null,
         updatedAt: new Date(),
-        metadata: { ...meta, confirmation },
+        metadata: nextMetadata,
       })
       .where(and(eq(actions.id, actionId), eq(actions.userId, userId), inArray(actions.status, allowedStatuses)));
 
@@ -730,7 +814,7 @@ actionsRouter.post('/:actionId/confirm', async (req, res, next) => {
 
     let respError: string | undefined;
     if (recordStatus === 'failed') {
-      respError = error || 'Confirmation could not be verified onchain or lacked execution proof';
+      respError = error || stateVerificationError || 'Confirmation could not be verified onchain or lacked execution proof';
     } else if (recordStatus === 'cancelled') {
       respError = error || 'Cancelled by user';
     }
@@ -853,4 +937,3 @@ actionsRouter.post('/:actionId/regenerate', async (req, res, next) => {
     next(error);
   }
 });
-

@@ -180,6 +180,7 @@ export const ConfirmActionRequestSchema = z.object({
   status: z.number(),
   txHash: z.string().nullable().optional(),
   receipts: z.array(z.record(z.any())).nullable().optional(),
+  proof: z.record(z.any()).nullable().optional(),
   error: z.string().nullable().optional(),
 });
 
@@ -581,4 +582,3 @@ export const SimulateActionResponseSchema = z.object({
   expectedOutput: z.string().optional(),
   checks: z.array(z.string()),
 });
-

@@ -4,7 +4,7 @@ import { PortfolioAnalysisView } from './PortfolioAnalysisView';
 import { useAccount } from 'wagmi';
 import { useUiStore } from '../../lib/state';
 import { LazyWalletConfirmButton } from './LazyWalletConfirmButton';
-import { isProductionActionType } from '@mioagent/api-client-react';
+import { getStateVerifiedAllowanceZeroNotice, parseExecutionPayload, shouldShowConfirmCta } from './actionDisplay';
 
 const BUILDER_CODE = import.meta.env.VITE_BUILDER_CODE;
 
@@ -26,19 +26,10 @@ export function ActionDiffPreview({ action, onRefresh }: { action: any; onRefres
   const safetyState = meta.safetyState || (action.status === 'failed' ? 'blocked' : 'safe');
   const executionStatus = meta.executionStatus || (isMainnetReadonly ? 'read-only' : 'executable');
   const rawPayload = action.executionPayload;
-  const payload = typeof rawPayload === 'string'
-    ? (() => { try { return JSON.parse(rawPayload); } catch { return null; } })()
-    : (rawPayload && typeof rawPayload === 'object' ? rawPayload : null);
+  const payload = parseExecutionPayload(rawPayload);
   const calls = Array.isArray(payload?.calls) ? payload.calls : [];
-  const hasCalls = calls.length > 0;
-  const metaActionType = meta.actionType || payload?.actionType;
-  const isConfirmableAction =
-    meta.userConfirmable === true ||
-    meta.executionStatus === 'user-confirmable' ||
-    metaActionType === 'revoke_approval' ||
-    metaActionType === 'limited_transfer' ||
-    isProductionActionType(metaActionType);
-  const showConfirmCta = action.status === 'pending' && hasCalls && isConfirmableAction;
+  const showConfirmCta = shouldShowConfirmCta(action);
+  const stateProofNotice = getStateVerifiedAllowanceZeroNotice(action);
   const isReadOnlyMode = isMainnetReadonly || chainMode === 'mainnet-readonly' || chainMode === 'mainnet';
 
   const riskColor = risk === 'low' ? 'bg-ok-soft text-ok border-ok/20' : risk === 'high' ? 'bg-risk-soft text-risk border-risk/20' : 'bg-warn-soft text-warn border-warn/20';
@@ -94,6 +85,12 @@ export function ActionDiffPreview({ action, onRefresh }: { action: any; onRefres
             <div className="text-ink-2 font-mono text-[11px]">
               <span className="text-ink-3">Allowance: </span>
               Current: {meta.allowanceBefore} {meta.tokenSymbol || ''} → After: {meta.allowanceAfter || '0'} {meta.tokenSymbol || ''}
+            </div>
+          )}
+          {stateProofNotice && (
+            <div className="bg-ok-soft border border-ok/20 rounded px-2 py-1.5 text-[11px] text-ok flex flex-col gap-0.5">
+              <span className="font-semibold">{stateProofNotice.title}</span>
+              <span>{stateProofNotice.label}</span>
             </div>
           )}
           {meta.method && (
@@ -156,7 +153,7 @@ export function ActionDiffPreview({ action, onRefresh }: { action: any; onRefres
               className="w-full bg-accent hover:bg-accent-2 text-white px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] shadow-[0_6px_16px_rgba(0,0,255,.28)] hover:-translate-y-[1px] hover:shadow-[0_10px_22px_rgba(0,0,255,.34)] transition-all flex items-center justify-center gap-1.5"
               onConfirmed={({ status, txHash, error }) => {
                 if (status === 'success') {
-                  showToast(txHash ? `Confirmed onchain · ${txHash.slice(0, 10)}…` : 'Confirmed onchain');
+                  showToast(txHash ? `Confirmed onchain · ${txHash.slice(0, 10)}…` : 'Action verified');
                 } else if (status === 'failed') {
                   showToast(error ?? 'Confirmation failed');
                 }

@@ -283,7 +283,7 @@ export function useConfirmAction(
       fetchApi<apiSpec.ConfirmActionResponse>(`/api/actions/${data.actionId}/confirm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ batchId: data.batchId, status: data.status, txHash: data.txHash, receipts: data.receipts }),
+        body: JSON.stringify({ batchId: data.batchId, status: data.status, txHash: data.txHash, receipts: data.receipts, proof: data.proof }),
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['actions', 'feed'] }),
     ...options,

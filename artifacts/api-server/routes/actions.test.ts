@@ -6,6 +6,7 @@ process.env.CHAIN_ENV = 'sepolia';
 import { mock } from 'node:test';
 import { db } from '@mioagent/db';
 import * as toolsModule from '@mioagent/tools';
+import { actionProofRuntime } from '../lib/actionProofs.js';
 
 test('Actions API', async (t) => {
   await t.test('GET /api/actions returns actions', async () => {
@@ -44,6 +45,7 @@ test('Actions API', async (t) => {
 
   await t.test('POST /api/actions/:actionId/execute executes action with executionPayload', async () => {
     process.env.SESSION_SECRET = '00000000000000000000000000000000';
+    let updatedStatus: string | null = null;
 
     const mockSelect = mock.fn(() => ({
       from: mock.fn(() => ({
@@ -64,9 +66,12 @@ test('Actions API', async (t) => {
     }));
 
     const mockUpdate = mock.fn(() => ({
-      set: mock.fn(() => ({
-        where: mock.fn(async () => []),
-      })),
+      set: mock.fn((vals: any) => {
+        updatedStatus = vals.status;
+        return {
+          where: mock.fn(async () => []),
+        };
+      }),
     }));
 
     mock.method(db, 'select', mockSelect);
@@ -85,6 +90,7 @@ test('Actions API', async (t) => {
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.success, true);
     assert.ok(response.body.approvalUrl);
+    assert.strictEqual(updatedStatus, 'pending_confirmation');
 
     mock.restoreAll();
   });
@@ -415,33 +421,60 @@ test('Actions API', async (t) => {
     process.env.CHAIN_ENV = 'sepolia';
   });
 
-  await t.test('POST /api/actions/:actionId/confirm records an executed result without a txHash (no RPC)', async () => {
+  await t.test('T19.10: POST /api/actions/:actionId/confirm can execute revoke_approval without txHash only when allowance is verified zero', async () => {
+    const wallet = '0x1234567890123456789012345678901234567890';
+    const spender = '0x9999999999999999999999999999999999999999';
+    let updatedStatus: string | null = null;
+    let updatedMetadata: any = null;
     const mockSelect = mock.fn(() => ({
       from: mock.fn(() => ({
         where: mock.fn(async () => [
           {
             id: 'act-confirm', userId: 'default-user', status: 'pending',
-            executionPayload: { chain: 'eip155:8453', calls: [{ to: BASE_MAINNET_USDC }] },
-            metadata: { instruction: 'Transfer 1 USDC to 0x1111111111111111111111111111111111111111' },
+            executionPayload: { chain: 'eip155:8453', actionType: 'revoke_approval', calls: [{ to: BASE_MAINNET_USDC }] },
+            metadata: {
+              actionType: 'revoke_approval',
+              instruction: 'Revoke allowance',
+              walletAddress: wallet,
+              tokenAddress: BASE_MAINNET_USDC,
+              spender,
+            },
             createdAt: new Date(), updatedAt: new Date(),
           },
         ]),
       })),
     }));
-    const mockUpdate = mock.fn(() => ({ set: mock.fn(() => ({ where: mock.fn(async () => []) })) }));
+    const mockUpdate = mock.fn(() => ({
+      set: mock.fn((vals: any) => {
+        updatedStatus = vals.status;
+        updatedMetadata = vals.metadata;
+        return { where: mock.fn(async () => []) };
+      }),
+    }));
     mock.method(db, 'select', mockSelect);
     mock.method(db, 'update', mockUpdate);
+    mock.method(actionProofRuntime, 'readErc20Allowance', async (ctx: any) => {
+      assert.strictEqual(ctx.wallet, wallet);
+      assert.strictEqual(ctx.token, BASE_MAINNET_USDC);
+      assert.strictEqual(ctx.spender, spender);
+      return 0n;
+    });
     const { ObservabilityService } = await import('@mioagent/observability');
     mock.method(ObservabilityService, 'logAction', async () => {});
 
     const response = await request(app).post('/api/actions/act-confirm/confirm').send({
-      batchId: 'batch-1',
       status: 200,
-      // no txHash → route skips the read-only RPC integrity check
+      txHash: null,
+      batchId: null,
+      receipts: null,
     });
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.success, true);
     assert.strictEqual(response.body.status, 'executed');
+    assert.strictEqual(updatedStatus, 'executed');
+    assert.strictEqual(updatedMetadata.executionProof.type, 'state_verified_allowance_zero');
+    assert.strictEqual(updatedMetadata.executionProof.allowanceAfter, '0');
+    assert.strictEqual(updatedMetadata.txHash, undefined);
 
     mock.restoreAll();
   });
@@ -498,6 +531,111 @@ test('Actions API', async (t) => {
     assert.notStrictEqual(response.body.status, 'executed', 'Must not be executed when proof is null');
     assert.strictEqual(response.body.status, 'failed', 'Must fail when no execution proof is provided');
     assert.strictEqual(updatedStatus, 'failed');
+
+    mock.restoreAll();
+  });
+
+  await t.test('T19.10: POST /api/actions/:actionId/confirm must not mark executed with batchId only and no wallet_getCallsStatus receipts', async () => {
+    let updatedStatus: string | null = null;
+    const mockSelect = mock.fn(() => ({
+      from: mock.fn(() => ({
+        where: mock.fn(async () => [
+          {
+            id: 'act-confirm-batch-only', userId: 'default-user', status: 'pending',
+            executionPayload: { chain: 'eip155:8453', actionType: 'limited_transfer', calls: [{ to: BASE_MAINNET_USDC }] },
+            metadata: { instruction: 'Transfer 1 USDC' },
+            createdAt: new Date(), updatedAt: new Date(),
+          },
+        ]),
+      })),
+    }));
+    const mockUpdate = mock.fn(() => ({
+      set: mock.fn((vals: any) => {
+        updatedStatus = vals.status;
+        return { where: mock.fn(async () => []) };
+      }),
+    }));
+    mock.method(db, 'select', mockSelect);
+    mock.method(db, 'update', mockUpdate);
+    const { ObservabilityService } = await import('@mioagent/observability');
+    mock.method(ObservabilityService, 'logAction', async () => {});
+
+    const response = await request(app).post('/api/actions/act-confirm-batch-only/confirm').send({
+      batchId: 'batch-without-proof',
+      status: 200,
+      txHash: null,
+      receipts: null,
+    });
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.status, 'failed');
+    assert.strictEqual(updatedStatus, 'failed');
+
+    mock.restoreAll();
+  });
+
+  await t.test('T19.10: GET /api/actions repairs polluted executed revoke_approval rows or downgrades them', async () => {
+    const wallet = '0x1234567890123456789012345678901234567890';
+    const zeroSpender = '0x9999999999999999999999999999999999999999';
+    const liveSpender = '0x8888888888888888888888888888888888888888';
+    const updates: Array<{ status: string; metadata: any }> = [];
+    const mockSelect = mock.fn(() => ({
+      from: mock.fn(() => ({
+        where: mock.fn(() => ({
+          orderBy: mock.fn(() => ({
+            limit: mock.fn(async () => [
+              {
+                id: 'act-stale-zero',
+                userId: 'default-user',
+                kind: 'transaction',
+                status: 'executed',
+                suggestedPrompt: 'Builder: revoke approval',
+                tokens: [],
+                executionPayload: { chain: 'eip155:8453', actionType: 'revoke_approval', calls: [{ to: BASE_MAINNET_USDC }] },
+                metadata: { actionType: 'revoke_approval', walletAddress: wallet, tokenAddress: BASE_MAINNET_USDC, spender: zeroSpender },
+                createdAt: new Date('2026-01-01T00:00:00Z'),
+                updatedAt: new Date('2026-01-01T00:00:00Z'),
+                executedAt: new Date('2026-01-01T00:00:00Z'),
+              },
+              {
+                id: 'act-stale-live',
+                userId: 'default-user',
+                kind: 'transaction',
+                status: 'executed',
+                suggestedPrompt: 'Builder: revoke approval',
+                tokens: [],
+                executionPayload: { chain: 'eip155:8453', actionType: 'revoke_approval', calls: [{ to: BASE_MAINNET_USDC }] },
+                metadata: { actionType: 'revoke_approval', walletAddress: wallet, tokenAddress: BASE_MAINNET_USDC, spender: liveSpender },
+                createdAt: new Date('2026-01-01T00:01:00Z'),
+                updatedAt: new Date('2026-01-01T00:01:00Z'),
+                executedAt: new Date('2026-01-01T00:01:00Z'),
+              },
+            ]),
+          })),
+        })),
+      })),
+    }));
+    const mockUpdate = mock.fn(() => ({
+      set: mock.fn((vals: any) => {
+        updates.push({ status: vals.status, metadata: vals.metadata });
+        return { where: mock.fn(async () => []) };
+      }),
+    }));
+    mock.method(db, 'select', mockSelect);
+    mock.method(db, 'update', mockUpdate);
+    mock.method(actionProofRuntime, 'readErc20Allowance', async (ctx: any) => {
+      return ctx.spender === zeroSpender ? 0n : 7n;
+    });
+
+    const response = await request(app).get('/api/actions');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.actions.length, 2);
+    const repaired = response.body.actions.find((a: any) => a.id === 'act-stale-zero');
+    const downgraded = response.body.actions.find((a: any) => a.id === 'act-stale-live');
+    assert.strictEqual(repaired.status, 'executed');
+    assert.strictEqual(repaired.metadata.executionProof.type, 'state_verified_allowance_zero');
+    assert.strictEqual(downgraded.status, 'failed');
+    assert.ok(downgraded.metadata.repairError.message.includes('current allowance is not zero'));
+    assert.strictEqual(updates.length, 2);
 
     mock.restoreAll();
   });
