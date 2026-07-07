@@ -143,6 +143,15 @@ export const SimulationResultSchema = z.object({
   expectedOutput: z.string().optional(),
   checks: z.array(z.string()),
   method: z.string().optional(),
+  projections: z.array(z.object({
+    kind: z.string(),
+    token: z.string(),
+    spender: z.string().optional(),
+    recipient: z.string().optional(),
+    amountRaw: z.string().optional(),
+    allowanceAfter: z.string().optional(),
+    balanceDelta: z.string().optional(),
+  })).optional(),
 });
 
 export const PrepareActionRequestSchema = z.object({

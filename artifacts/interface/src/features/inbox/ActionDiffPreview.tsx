@@ -9,7 +9,7 @@ import { getStateVerifiedAllowanceZeroNotice, parseExecutionPayload, shouldShowC
 const BUILDER_CODE = import.meta.env.VITE_BUILDER_CODE;
 
 // The Inbox card as a risk-control center. Shows what would change before any
-// confirmation: planned calls, security-screening verdicts, static-validation
+// confirmation: planned calls, security-screening verdicts, preflight-validation
 // simulation, execution status, plus the portfolio analysis. Screening and
 // simulation verdicts are read from metadata stored by /recommend + /chat;
 // where the backend genuinely stored none, it renders honest empty states —
@@ -101,7 +101,7 @@ export function ActionDiffPreview({ action, onRefresh }: { action: any; onRefres
           )}
           {meta.simulationLabel && (
             <div className="text-ink-2 text-[11px] italic">
-              <span className="text-ink-3 not-italic font-medium">Simulation status: </span>
+              <span className="text-ink-3 not-italic font-medium">Preflight status: </span>
               {meta.simulationLabel}
             </div>
           )}
@@ -135,7 +135,7 @@ export function ActionDiffPreview({ action, onRefresh }: { action: any; onRefres
               </span>
             )}
             <span className="text-[10px] font-medium text-ink-3 bg-bg px-2 py-0.5 rounded-full w-fit border border-line" title="No fork sim or before/after portfolio projection; only chain, call-structure, screening, and canonical-token checks.">
-              ⚠ Static validation — not a real simulation
+              ⚠ Preflight validation — no fork simulation
             </span>
           </div>
           {!address || !isConnected ? (
@@ -188,9 +188,9 @@ export function ActionDiffPreview({ action, onRefresh }: { action: any; onRefres
         {simulation ? (
           <StateBadge
             state={simulation.success ? 'mock' : 'failed'}
-            label={simulation.method === 'static-validation' ? 'static validation' : (simulation.success ? 'passed' : 'blocked')}
-            title={simulation.method === 'static-validation'
-              ? 'Static validation only: chain, call structure, instruction screening, and canonical-token checks. No fork simulation or before/after portfolio projection.'
+            label={simulation.method === 'preflight-validation' ? 'preflight validation' : (simulation.success ? 'passed' : 'blocked')}
+            title={simulation.method === 'preflight-validation'
+              ? 'Preflight validation only: chain, call structure, instruction screening, canonical-token checks, and deterministic calldata projections. No fork simulation.'
               : (simulation.reason || simulation.error || 'Simulation verdict')}
           />
         ) : (

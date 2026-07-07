@@ -1,9 +1,11 @@
 export interface ScreenableAction {
   instruction: string;
+  memoryMd?: string | null;
   providerContext?: {
     risk?: string;
     riskProvider?: string;
     securityProvider?: string;
+    requiresTokenSecurity?: boolean;
   };
 }
 
@@ -37,20 +39,65 @@ function deobfuscate(text: string): string {
 }
 
 function buildChecks(failedCheck?: string, goPlusRan?: boolean): SecurityCheck[] {
-  const goPlusStatus: 'PASSED' | 'SKIPPED' = goPlusRan ? 'PASSED' : 'SKIPPED';
+  const goPlusStatus: 'PASSED' | 'BLOCKED' | 'SKIPPED' =
+    failedCheck === 'goplus' ? 'BLOCKED' : goPlusRan ? 'PASSED' : 'SKIPPED';
   return [
     { name: 'Prompt Injection / Jailbreak', status: failedCheck === 'prompt' ? 'BLOCKED' : 'PASSED' },
     { name: 'Credential Exfiltration', status: failedCheck === 'exfil' ? 'BLOCKED' : 'PASSED' },
     { name: 'Wallet Drain / Sweep', status: failedCheck === 'drain' ? 'BLOCKED' : 'PASSED' },
     { name: 'Unlimited Token Approval', status: failedCheck === 'approval' ? 'BLOCKED' : 'PASSED' },
+    { name: 'User Memory Policy', status: failedCheck === 'memory' ? 'BLOCKED' : 'PASSED' },
     { name: 'GoPlus Contract Security', status: goPlusStatus }
   ];
+}
+
+function memoryPolicyBlocks(rawInstruction: string, cleanInstruction: string, memoryMd?: string | null): string | null {
+  if (!memoryMd) return null;
+  const lowerInstruction = rawInstruction.toLowerCase();
+  const policyLines = memoryMd
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => /\b(never|do not|don't|dont|no|block|forbid|forbidden|avoid|disallow)\b/i.test(line));
+
+  const actionTerms = [
+    'approve', 'approval', 'allowance', 'authorize', 'permission',
+    'send', 'transfer', 'withdraw', 'swap', 'bridge', 'leverage',
+    'borrow', 'lend', 'deposit',
+  ];
+  for (const line of policyLines) {
+    const cleanLine = deobfuscate(line);
+    const addresses = line.match(/0x[a-fA-F0-9]{40}/g) || [];
+    for (const address of addresses) {
+      if (lowerInstruction.includes(address.toLowerCase())) {
+        return `User memory policy blocks address ${address}`;
+      }
+    }
+
+    for (const term of actionTerms) {
+      if (cleanLine.includes(term) && cleanInstruction.includes(term)) {
+        return `User memory policy blocks ${term}`;
+      }
+    }
+  }
+  return null;
 }
 
 export function screenAction(a: ScreenableAction): ScreenResult {
   const raw = a.instruction;
   const clean = deobfuscate(raw);
-  const goPlusRan = a.providerContext?.risk === 'connected' || a.providerContext?.risk === 'ok' || a.providerContext?.riskProvider === 'goplus' || a.providerContext?.securityProvider === 'goplus';
+  const securityProvider = a.providerContext?.securityProvider || a.providerContext?.riskProvider;
+  const riskStatus = a.providerContext?.risk;
+  const goPlusRan = securityProvider === 'goplus' && (riskStatus === 'connected' || riskStatus === 'ok' || riskStatus === 'partial');
+
+  if (a.providerContext?.requiresTokenSecurity && securityProvider === 'goplus' && !goPlusRan) {
+    return { allowed: false, reason: 'GoPlus token security gate unavailable', checks: buildChecks('goplus', false) };
+  }
+
+  const memoryBlock = memoryPolicyBlocks(raw, clean, a.memoryMd);
+  if (memoryBlock) {
+    return { allowed: false, reason: memoryBlock, checks: buildChecks('memory', goPlusRan) };
+  }
 
   // 1. Prompt injection / jailbreaks
   const promptInjections = [
@@ -76,14 +123,29 @@ export function screenAction(a: ScreenableAction): ScreenResult {
   }
 
   // 3. Wallet drain
-  const drainActions = ['send', 'transfer', 'withdraw', 'sweep', 'drain'];
-  const drainTargets = ['all', 'everything', '100%'];
+  const drainActions = ['send', 'transfer', 'withdraw', 'sweep', 'drain', 'move', 'empty'];
+  const exactDrainTargets = ['all', 'everything', '100%'];
+  const semanticDrainTargets = [
+    'entirebalance',
+    'fullbalance',
+    'wholebalance',
+    'completebalance',
+    'allfunds',
+    'allassets',
+    'everytoken',
+    'entirewallet',
+    'allmyfunds',
+    'myentirebalance',
+  ];
 
   for (const action of drainActions) {
-    for (const target of drainTargets) {
+    for (const target of exactDrainTargets) {
       if (clean.includes(action + target)) {
         return { allowed: false, reason: 'Wallet drain detected', checks: buildChecks('drain', goPlusRan) };
       }
+    }
+    if (clean.includes(action) && semanticDrainTargets.some((target) => clean.includes(target))) {
+      return { allowed: false, reason: 'Wallet drain detected', checks: buildChecks('drain', goPlusRan) };
     }
   }
 
@@ -93,7 +155,22 @@ export function screenAction(a: ScreenableAction): ScreenResult {
   }
 
   // 4. Unlimited token approval
-  if (clean.includes('unlimitedapproval') || clean.includes('approveunlimited') || clean.includes('infiniteapproval') || clean.includes('approveinfinite') || clean.includes('maxapproval')) {
+  const approvalIntent = ['approve', 'approval', 'authorize', 'permission', 'spend', 'spending', 'allowance'].some((term) => clean.includes(term));
+  const unlimitedIntent = [
+    'unlimitedapproval',
+    'approveunlimited',
+    'infiniteapproval',
+    'approveinfinite',
+    'maxapproval',
+    'withoutlimit',
+    'nolimit',
+    'nolimits',
+    'anyamount',
+    'everytoken',
+    'alltokens',
+    'useeverytoken',
+  ].some((term) => clean.includes(term));
+  if (unlimitedIntent && (approvalIntent || clean.includes('maxapproval'))) {
     return { allowed: false, reason: 'Unlimited token approval detected', checks: buildChecks('approval', goPlusRan) };
   }
 

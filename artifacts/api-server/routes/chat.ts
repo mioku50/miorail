@@ -12,6 +12,7 @@ import { fetchInternalPortfolio, analyzePortfolioForRisk, buildRecommendationMet
 import { buildActionPlan, parseRevokeApproval, findActiveApproval } from '../lib/actionPlan.js';
 import { screenAction, simulateTrade } from '@mioagent/security';
 import { ObservabilityService } from '@mioagent/observability';
+import { MemoryService } from '@mioagent/memory';
 
 export const chatRouter = Router();
 
@@ -127,6 +128,8 @@ chatRouter.post('/', async (req, res, next) => {
       } catch (e) {
         // ignore fallback
       }
+      const memoryMd = (await MemoryService.getUserSettings(userId).catch(() => null))?.memoryMd || null;
+      const requiresTokenSecurity = ['portfolio', 'risk', 'security'].includes(intent.intentType || '');
 
       const toolCallTraces: any[] = [
         {
@@ -175,6 +178,8 @@ chatRouter.post('/', async (req, res, next) => {
           });
 
           const analysis = analyzePortfolioForRisk(portfolio, walletAddress, chainEnvVal);
+          riskStatus = portfolio.providers.risk || riskStatus;
+          securityProvider = portfolio.providers.riskProvider || securityProvider;
           toolCallTraces.push({
             toolName: 'analyze_portfolio_for_risk',
             args: { walletAddress, tokenCount: portfolio.tokens?.length || 0 },
@@ -210,13 +215,18 @@ chatRouter.post('/', async (req, res, next) => {
         }
       }
 
-      const secProvider = process.env.TOKEN_SECURITY_PROVIDER || 'none';
+      const configuredSecurityProvider = process.env.TOKEN_SECURITY_PROVIDER || 'none';
+      const secProvider = securityProvider && securityProvider !== 'none'
+        ? securityProvider
+        : configuredSecurityProvider;
       const screenRes = screenAction({
         instruction: message,
+        memoryMd,
         providerContext: {
           risk: riskStatus,
           riskProvider: secProvider,
-          securityProvider: secProvider
+          securityProvider: secProvider,
+          requiresTokenSecurity
         }
       });
       toolCallTraces.push({
@@ -266,13 +276,24 @@ chatRouter.post('/', async (req, res, next) => {
       };
 
       if (isMainnetLike && revokeIntent) {
-        payload = buildActionPlan(message, { chainEnv: chainEnvVal, walletAddress, approvals: approvalsForPlan });
+        payload = buildActionPlan(message, {
+          chainEnv: chainEnvVal,
+          walletAddress,
+          approvals: approvalsForPlan,
+          memoryMd,
+          securityProviderContext: {
+            risk: riskStatus,
+            riskProvider: secProvider,
+            securityProvider: secProvider,
+            requiresTokenSecurity,
+          },
+        });
       }
 
       let simRes;
       if (!isReadonly && payload.calls && payload.calls.length > 0) {
         try {
-          simRes = await simulateTrade(payload as any);
+          simRes = await simulateTrade({ ...(payload as any), instruction: message, memoryMd });
         } catch (e) {
           simRes = { success: false, allowed: false, riskLevel: 'blocked', checks: ['Simulation failed'] };
         }
@@ -324,8 +345,8 @@ chatRouter.post('/', async (req, res, next) => {
         metadata.tokenAddress = activeRevoke.tokenAddress;
         metadata.spender = activeRevoke.spenderAddress;
         metadata.method = "approve(spender,0)";
-        metadata.validationMethod = "static-validation";
-        metadata.simulationLabel = "Static validation — not a real simulation";
+        metadata.validationMethod = "preflight-validation";
+        metadata.simulationLabel = "Preflight validation — no fork simulation";
         assistantContent = `I prepared a transaction to revoke spend access for ${activeRevoke.tokenSymbol || 'token'}. You can confirm this action in your Action Inbox.`;
       } else {
         metadata.actionType = payload.actionType;

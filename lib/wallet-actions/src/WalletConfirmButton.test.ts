@@ -82,7 +82,7 @@ test('T19.7: WalletConfirmButton renders Confirm in Base Account without hitting
       userConfirmable: true,
       executionStatus: 'user-confirmable',
       securityScreening: { allowed: true, verdict: 'PASSED' },
-      simulationResult: { success: true, method: 'static-validation' },
+      simulationResult: { success: true, method: 'preflight-validation' },
     },
   };
 

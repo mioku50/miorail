@@ -152,6 +152,15 @@ test('buildActionPlan fails closed for screened instructions (wallet drain)', ()
   assert.strictEqual(plan.calls.length, 0);
 });
 
+test('buildActionPlan fails closed for user memory policy boundaries', () => {
+  const plan = buildActionPlan(`Transfer 1 USDC to ${RECIPI}`, {
+    chainEnv: 'mainnet-readonly',
+    memoryMd: 'Never transfer funds without manual review.',
+  });
+  assert.ok(!planHasCalls(plan));
+  assert.strictEqual(plan.calls.length, 0);
+});
+
 test('buildActionPlan does not encode transfers on Sepolia (testnet path is separate)', () => {
   const plan = buildActionPlan(`Transfer 1 USDC to ${RECIPI}`, { chainEnv: 'sepolia' });
   assert.ok(!planHasCalls(plan));
@@ -168,4 +177,3 @@ test('buildActionPlan does not encode revoke_approval on Sepolia', () => {
   assert.ok(!planHasCalls(plan));
   assert.strictEqual(plan.chain, 'eip155:84532');
 });
-

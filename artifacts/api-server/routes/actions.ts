@@ -20,6 +20,8 @@ import { buildActionPlan, planHasCalls, getBaseMainnetUsdcAddress, parseRevokeAp
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
 import { screenAction, simulateTrade } from '@mioagent/security';
 import { isProductionActionType } from '@mioagent/api-zod';
+import { MemoryService } from '@mioagent/memory';
+import { getSystemStatus } from './status.js';
 import {
   actionProofRuntime,
   buildBaseReceiptProof,
@@ -183,6 +185,18 @@ actionsRouter.post('/recommend', async (req, res, next) => {
     const isReadonly = chainEnv === 'mainnet-readonly';
     const isMainnetExecEnabled = process.env.MAINNET_EXECUTION_ENABLED === 'true';
     const canExecute = !isReadonly && (chainEnv !== 'mainnet' || isMainnetExecEnabled);
+    const intent = detectActionIntent(instruction);
+    const memoryMd = (await MemoryService.getUserSettings(userId).catch(() => null))?.memoryMd || null;
+    const statusRes = getSystemStatus(chainEnv);
+    let secProvider = statusRes.risk.provider || process.env.TOKEN_SECURITY_PROVIDER || 'none';
+    let riskStatus = statusRes.risk.status;
+    const requiresTokenSecurity = ['portfolio', 'risk', 'security'].includes(intent.intentType || '');
+    let securityProviderContext = {
+      risk: riskStatus,
+      riskProvider: secProvider,
+      securityProvider: secProvider,
+      requiresTokenSecurity,
+    };
     
     const actionId = crypto.randomUUID();
     // T19: build a real (unsigned, never server-broadcast) action plan for
@@ -219,7 +233,13 @@ actionsRouter.post('/recommend', async (req, res, next) => {
     }
 
     if (isMainnetLike) {
-      payload = buildActionPlan(instruction, { chainEnv, walletAddress, approvals: approvalsForPlan });
+      payload = buildActionPlan(instruction, {
+        chainEnv,
+        walletAddress,
+        approvals: approvalsForPlan,
+        memoryMd,
+        securityProviderContext,
+      });
     } else {
       payload = {
         chain: chainId,
@@ -234,7 +254,6 @@ actionsRouter.post('/recommend', async (req, res, next) => {
     }
     const hasPlanCalls = planHasCalls(payload);
 
-    const intent = detectActionIntent(instruction);
     let metadata: any = {
       type: "recommendation",
       title: intent.title || "Action Recommendation",
@@ -261,6 +280,14 @@ actionsRouter.post('/recommend', async (req, res, next) => {
     if (walletAddress && ['portfolio', 'risk', 'rebalance', 'security', 'yield', 'approvals'].includes(intent.intentType || '')) {
       try {
         const portfolio = await fetchInternalPortfolio(walletAddress, chainEnv);
+        riskStatus = portfolio.providers.risk || riskStatus;
+        secProvider = portfolio.providers.riskProvider || secProvider;
+        securityProviderContext = {
+          risk: riskStatus,
+          riskProvider: secProvider,
+          securityProvider: secProvider,
+          requiresTokenSecurity,
+        };
         const analysis = analyzePortfolioForRisk(portfolio, walletAddress, chainEnv);
         metadata = buildRecommendationMetadataFromAnalysis({
           intent: { ...intent, createdBy: 'actions-builder' },
@@ -281,14 +308,10 @@ actionsRouter.post('/recommend', async (req, res, next) => {
       }
     }
 
-    const secProvider = process.env.TOKEN_SECURITY_PROVIDER || 'none';
     const screenRes = screenAction({
       instruction,
-      providerContext: {
-        risk: secProvider === 'goplus' ? 'connected' : 'missing',
-        riskProvider: secProvider,
-        securityProvider: secProvider
-      }
+      memoryMd,
+      providerContext: securityProviderContext,
     });
     const securityScreening = {
       screenedAt: new Date().toISOString(),
@@ -305,13 +328,13 @@ actionsRouter.post('/recommend', async (req, res, next) => {
     };
 
     let simRes;
-    // T19: run the static validator on any payload with calls — including
+    // T19: run the preflight validator on any payload with calls — including
     // mainnet-readonly user-confirmable plans — so the gate
     // (screening.allowed && simulation.success && hasCalls) works for the
     // user-confirmed flow. Read-only plans with no calls get the safe mock.
     if (payload.calls && payload.calls.length > 0) {
       try {
-        simRes = await simulateTrade(payload as any);
+        simRes = await simulateTrade({ ...(payload as any), instruction, memoryMd });
       } catch (e) {
         simRes = { success: false, allowed: false, riskLevel: 'blocked', checks: ['Simulation failed'] };
       }
@@ -364,8 +387,8 @@ actionsRouter.post('/recommend', async (req, res, next) => {
       metadata.tokenAddress = activeRevoke.tokenAddress;
       metadata.spender = activeRevoke.spenderAddress;
       metadata.method = "approve(spender,0)";
-      metadata.validationMethod = "static-validation";
-      metadata.simulationLabel = "Static validation — not a real simulation";
+      metadata.validationMethod = "preflight-validation";
+      metadata.simulationLabel = "Preflight validation — no fork simulation";
     } else {
       metadata.actionType = payload.actionType;
       metadata.preferredFirstAction = payload.actionType === 'revoke_approval';
@@ -570,11 +593,14 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
     // Re-derive screening live. The instruction is stored on metadata.
     const meta = (action.metadata || {}) as any;
     const instruction = meta.instruction || action.suggestedPrompt || '';
-    const secProvider = process.env.TOKEN_SECURITY_PROVIDER || 'none';
+    const memoryMd = (await MemoryService.getUserSettings(userId).catch(() => null))?.memoryMd || null;
+    const statusRes = getSystemStatus(process.env.CHAIN_ENV || 'mainnet-readonly');
+    const secProvider = statusRes.risk.provider || process.env.TOKEN_SECURITY_PROVIDER || 'none';
     const screenRes = screenAction({
       instruction,
+      memoryMd,
       providerContext: {
-        risk: secProvider === 'goplus' ? 'connected' : 'missing',
+        risk: statusRes.risk.status,
         riskProvider: secProvider,
         securityProvider: secProvider,
       },
@@ -607,7 +633,7 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
     // Re-derive simulation live. Reject any non-canon-token calldata.
     let simRes;
     try {
-      simRes = await simulateTrade(payload as any);
+      simRes = await simulateTrade({ ...(payload as any), instruction, memoryMd });
     } catch (e) {
       simRes = { success: false, allowed: false, riskLevel: 'blocked', checks: ['Simulation failed'] };
     }

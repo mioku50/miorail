@@ -37,6 +37,13 @@ export interface ExecutionPayload {
 export interface BuildActionPlanContext {
   chainEnv: string;
   walletAddress?: string;
+  memoryMd?: string | null;
+  securityProviderContext?: {
+    risk?: string;
+    riskProvider?: string;
+    securityProvider?: string;
+    requiresTokenSecurity?: boolean;
+  };
   /**
    * T19.2: provider-discovered token approvals for the wallet. When present,
    * a `revoke_approval` intent is only encoded if a real NONZERO allowance
@@ -133,7 +140,8 @@ export function buildActionPlan(instruction: string, ctx: BuildActionPlanContext
   const secProvider = process.env.TOKEN_SECURITY_PROVIDER || 'none';
   const screen = screenAction({
     instruction,
-    providerContext: {
+    memoryMd: ctx.memoryMd,
+    providerContext: ctx.securityProviderContext || {
       risk: secProvider === 'goplus' ? 'connected' : 'missing',
       riskProvider: secProvider,
       securityProvider: secProvider,
