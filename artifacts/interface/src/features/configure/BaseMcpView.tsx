@@ -8,7 +8,7 @@ export function BaseMcpView() {
   const mcp = sd?.baseMcp;
   const ap = sd?.approvals;
   const canConnect = !!mcp?.enabled && !!mcp?.configured;
-  const connectLabel = mcp?.status === 'needs_reauth' ? 'Reconnect Base Account' : 'Подключить Base Account';
+  const connectLabel = mcp?.auth?.connected ? 'Reconnect Base MCP' : 'Connect Base MCP';
 
   return (
     <main className="flex-1 bg-bg p-5 flex flex-col gap-4 overflow-y-auto pb-16 md:pb-5">
@@ -89,7 +89,7 @@ export function BaseMcpView() {
         )}
         {mcp?.status === 'unsupported' && (
           <div className="p-3 bg-warn-soft rounded border border-warn/20 text-xs text-warn font-medium">
-            Base MCP responded, but this status path is not supported.
+            Base MCP responded, but this status path is not supported. OAuth connect remains available when the provider is enabled.
           </div>
         )}
         <div className="flex items-center justify-between">

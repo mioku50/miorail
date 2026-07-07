@@ -26,6 +26,9 @@ test('Base MCP UI helpers classify connected and degraded states', () => {
 
 test('Base MCP UI helpers classify needs_reauth as reconnectable stale state', () => {
   assert.strictEqual(baseMcpState('needs_reauth'), 'stale');
-  assert.strictEqual(formatBaseMcpStatus({ status: 'needs_reauth' }), 'needs reauth');
-  assert.strictEqual(baseMcpHint({ status: 'needs_reauth' }), 'Base MCP needs a fresh Base Account authorization.');
+  assert.strictEqual(formatBaseMcpStatus({ status: 'needs_reauth' }), 'needs auth');
+  assert.strictEqual(
+    baseMcpHint({ status: 'needs_reauth' }),
+    'Base MCP is configured. Connect Base MCP to authorize user-scoped tools.'
+  );
 });

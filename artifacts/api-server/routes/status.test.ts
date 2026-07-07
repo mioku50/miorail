@@ -131,9 +131,11 @@ describe('Status API', () => {
     const origEnabled = process.env.BASE_MCP_ENABLED;
     const origUrl = process.env.BASE_MCP_SERVER_URL;
     const origLegacyUrl = process.env.BASE_MCP_URL;
+    const origLegacyMcpUrl = process.env.MCP_SERVER_URL;
     delete process.env.BASE_MCP_ENABLED;
     delete process.env.BASE_MCP_SERVER_URL;
     delete process.env.BASE_MCP_URL;
+    delete process.env.MCP_SERVER_URL;
 
     const response = await request(app).get('/api/status');
     assert.strictEqual(response.status, 200);
@@ -148,6 +150,35 @@ describe('Status API', () => {
     restoreEnv('BASE_MCP_ENABLED', origEnabled);
     restoreEnv('BASE_MCP_SERVER_URL', origUrl);
     restoreEnv('BASE_MCP_URL', origLegacyUrl);
+    restoreEnv('MCP_SERVER_URL', origLegacyMcpUrl);
+  });
+
+  test('GET /api/status reports Base MCP disabled when env disables a configured endpoint', async () => {
+    const origEnabled = process.env.BASE_MCP_ENABLED;
+    const origUrl = process.env.BASE_MCP_SERVER_URL;
+    const origLegacyUrl = process.env.BASE_MCP_URL;
+    const origLegacyMcpUrl = process.env.MCP_SERVER_URL;
+    process.env.BASE_MCP_ENABLED = 'false';
+    process.env.BASE_MCP_SERVER_URL = 'https://mcp.base.org/private/path?probe=1';
+    delete process.env.BASE_MCP_URL;
+    delete process.env.MCP_SERVER_URL;
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    assert.deepStrictEqual(response.body.baseMcp, {
+      status: 'disabled',
+      provider: 'base-mcp',
+      configured: true,
+      enabled: false,
+      endpointHost: 'mcp.base.org',
+      auth: DEFAULT_BASE_MCP_AUTH,
+    });
+    assert.strictEqual(JSON.stringify(response.body.baseMcp).includes('private/path'), false);
+
+    restoreEnv('BASE_MCP_ENABLED', origEnabled);
+    restoreEnv('BASE_MCP_SERVER_URL', origUrl);
+    restoreEnv('BASE_MCP_URL', origLegacyUrl);
+    restoreEnv('MCP_SERVER_URL', origLegacyMcpUrl);
   });
 
   test('GET /api/status probes configured Base MCP and reports connected capabilities', async () => {
@@ -227,6 +258,57 @@ describe('Status API', () => {
     global.fetch = originalFetch;
     restoreEnv('BASE_MCP_ENABLED', origEnabled);
     restoreEnv('BASE_MCP_SERVER_URL', origUrl);
+  });
+
+  test('GET /api/status treats hosted Base MCP 404 probe as auth required, not unsupported', async () => {
+    const origEnabled = process.env.BASE_MCP_ENABLED;
+    const origUrl = process.env.BASE_MCP_SERVER_URL;
+    const origPath = process.env.BASE_MCP_STATUS_PATH;
+    const origLegacyUrl = process.env.BASE_MCP_URL;
+    const origLegacyMcpUrl = process.env.MCP_SERVER_URL;
+    const originalFetch = global.fetch;
+    process.env.BASE_MCP_ENABLED = 'true';
+    process.env.BASE_MCP_SERVER_URL = 'https://mcp.base.org/private/path?probe=1';
+    process.env.BASE_MCP_STATUS_PATH = '/health';
+    delete process.env.BASE_MCP_URL;
+    delete process.env.MCP_SERVER_URL;
+
+    const mockFetch = mock.fn(async (url: string | URL | Request) => {
+      assert.strictEqual(String(url), 'https://mcp.base.org/health');
+      return {
+        ok: false,
+        status: 404,
+        json: async () => ({ error: 'not found' }),
+      } as Response;
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+    statusRouteRuntime.getBaseMcpAuthStatus = async () => DEFAULT_BASE_MCP_AUTH;
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    const baseMcp = response.body.baseMcp;
+    assert.strictEqual(baseMcp.status, 'needs_reauth');
+    assert.notStrictEqual(baseMcp.status, 'unsupported');
+    assert.strictEqual(baseMcp.provider, 'base-mcp');
+    assert.strictEqual(baseMcp.configured, true);
+    assert.strictEqual(baseMcp.enabled, true);
+    assert.strictEqual(baseMcp.endpointHost, 'mcp.base.org');
+    assert.strictEqual(baseMcp.errorCode, 'http_404');
+    assert.deepStrictEqual(baseMcp.auth, {
+      connected: false,
+      needsReauth: true,
+      userScoped: true,
+    });
+    assert.strictEqual(JSON.stringify(baseMcp).includes('https://mcp.base.org'), false);
+    assert.strictEqual(JSON.stringify(baseMcp).includes('private/path'), false);
+    assert.strictEqual(mockFetch.mock.calls.length, 1);
+
+    global.fetch = originalFetch;
+    restoreEnv('BASE_MCP_ENABLED', origEnabled);
+    restoreEnv('BASE_MCP_SERVER_URL', origUrl);
+    restoreEnv('BASE_MCP_STATUS_PATH', origPath);
+    restoreEnv('BASE_MCP_URL', origLegacyUrl);
+    restoreEnv('MCP_SERVER_URL', origLegacyMcpUrl);
   });
 
   test('GET /api/status reports configured Base MCP timeout as unreachable', async () => {

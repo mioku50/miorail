@@ -103,13 +103,17 @@ export const statusRouteRuntime = {
 };
 
 function mergeBaseMcpAuthStatus(base: BaseMcpStatus, auth: StoredBaseMcpAuthStatus): BaseMcpStatus {
-  const withAuth = { ...base, auth };
+  const publicAuth: StoredBaseMcpAuthStatus =
+    base.enabled && base.configured && !auth.connected
+      ? { ...auth, needsReauth: true }
+      : auth;
+  const withAuth = { ...base, auth: publicAuth };
   if (!base.enabled || !base.configured) return withAuth;
   if (base.status === 'unreachable' || base.status === 'degraded' || base.status === 'unsupported') {
     return withAuth;
   }
-  if (auth.needsReauth) return { ...withAuth, status: 'needs_reauth' };
-  if (auth.connected) return { ...withAuth, status: 'connected' };
+  if (publicAuth.connected) return { ...withAuth, status: 'connected' };
+  if (publicAuth.needsReauth) return { ...withAuth, status: 'needs_reauth' };
   return { ...withAuth, status: 'missing' };
 }
 

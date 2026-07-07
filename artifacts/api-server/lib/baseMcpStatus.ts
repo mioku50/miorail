@@ -246,7 +246,7 @@ export async function probeBaseMcpStatus(): Promise<BaseMcpStatus> {
         const body = await readJsonSafe(res);
         status = { ...common, status: 'connected', capabilities: capabilitiesFromBody(body) };
       } else if (res.status === 404 || res.status === 405) {
-        status = { ...common, status: 'unsupported', errorCode: `http_${res.status}` };
+        status = { ...common, status: 'missing', errorCode: `http_${res.status}` };
       } else {
         status = { ...common, status: 'degraded', errorCode: `http_${res.status}` };
       }
