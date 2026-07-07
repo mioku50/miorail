@@ -85,7 +85,7 @@ export function WalletConfirmButton({
   const resolvedSuffix = dataSuffix ?? builderCodeToDataSuffix(builderCode);
 
   const { confirm, status, error, isPreparing, isSending, isPolling, isConfirming, txHash, poller } =
-    useWalletConfirmAction({ actionId: action.id, dataSuffix: resolvedSuffix, initialBatchId: action.metadata?.confirmation?.batchId || null });
+    useWalletConfirmAction({ actionId: action.id, dataSuffix: resolvedSuffix, initialBatchId: (action.metadata as Record<string, any>)?.confirmation?.batchId || null });
 
   // Fire onConfirmed once per terminal transition (success or failed or cancelled).
   const lastReported = useRef<ConfirmFlowStatus | null>(null);

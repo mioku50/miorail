@@ -17,7 +17,8 @@ export type ConfirmFlowStatus =
   | 'pending'
   | 'confirming'
   | 'success'
-  | 'failed';
+  | 'failed'
+  | 'cancelled';
 
 export interface CallsStatusPollerProps {
   batchId: string;
