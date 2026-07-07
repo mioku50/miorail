@@ -167,9 +167,11 @@ chatRouter.post('/', async (req, res, next) => {
         : 'I created a recommendation in Action Inbox. You can review and manage it in your Action Inbox tab.';
       let tokensList: string[] | undefined;
 
-      if (['portfolio', 'risk', 'rebalance', 'security', 'yield'].includes(intent.intentType || '') && walletAddress) {
+      if (['portfolio', 'risk', 'rebalance', 'security', 'yield', 'approvals'].includes(intent.intentType || '') && walletAddress) {
         try {
-          const portfolio = await fetchInternalPortfolio(walletAddress, chainEnvVal);
+          const portfolio = await fetchInternalPortfolio(walletAddress, chainEnvVal, {
+            includeApprovals: intent.intentType === 'approvals',
+          });
           toolCallTraces.push({
             toolName: 'fetch_internal_portfolio',
             args: { walletAddress, chainEnv: chainEnvVal },
@@ -197,7 +199,9 @@ chatRouter.post('/', async (req, res, next) => {
               tokenBalances: portfolio.providers.tokenBalancesProvider || tokenBalancesProvider,
               prices: portfolio.providers.priceProvider || pricesStatus,
               risk: portfolio.providers.risk || riskStatus,
-              securityProvider: portfolio.providers.riskProvider || 'none'
+              securityProvider: portfolio.providers.riskProvider || 'none',
+              approvals: portfolio.approvalScan?.status || 'not_requested',
+              approvalProvider: portfolio.providers.approvalProvider || 'none',
             }
           });
           const suspiciousCount = analysis.portfolioSnapshot.suspiciousTokenCount;

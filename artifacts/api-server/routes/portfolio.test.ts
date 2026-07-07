@@ -25,7 +25,9 @@ describe('Portfolio API', () => {
 
   test('GET /api/portfolio returns ETH balance and token status when address is provided', async () => {
     process.env.TOKEN_BALANCES_PROVIDER = 'none';
+    process.env.PRICE_PROVIDER = 'none';
     process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    process.env.APPROVAL_PROVIDER = 'none';
     const mockFetch = mock.fn(async () => ({
       ok: true,
       json: async () => ({
@@ -48,7 +50,9 @@ describe('Portfolio API', () => {
 
   test('GET /api/portfolio returns ERC-20 balances when provider is configured to mock', async () => {
     process.env.TOKEN_BALANCES_PROVIDER = 'mock';
+    process.env.PRICE_PROVIDER = 'none';
     process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    process.env.APPROVAL_PROVIDER = 'none';
     const mockFetch = mock.fn(async () => ({
       ok: true,
       json: async () => ({
@@ -70,7 +74,9 @@ describe('Portfolio API', () => {
 
   test('GET /api/portfolio returns ETH-only partial response when provider fails', async () => {
     process.env.TOKEN_BALANCES_PROVIDER = 'moralis';
+    process.env.PRICE_PROVIDER = 'none';
     process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    process.env.APPROVAL_PROVIDER = 'none';
     process.env.MORALIS_API_KEY = 'test-key';
     const mockFetch = mock.fn(async (url: string | URL | Request) => {
       if (url.toString().includes('moralis.io')) {
@@ -95,7 +101,9 @@ describe('Portfolio API', () => {
 
   test('GET /api/portfolio returns Moralis connected status and includes suspicious tokens', async () => {
     process.env.TOKEN_BALANCES_PROVIDER = 'moralis';
+    process.env.PRICE_PROVIDER = 'none';
     process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    process.env.APPROVAL_PROVIDER = 'none';
     process.env.MORALIS_API_KEY = 'test-key';
     const mockFetch = mock.fn(async (url: string | URL | Request) => {
       if (url.toString().includes('moralis.io')) {
@@ -284,5 +292,151 @@ describe('Portfolio API', () => {
     restoreEnv('APPROVAL_PROVIDER', origApproval);
     mock.restoreAll();
   });
-});
 
+  test('GET /api/portfolio normal refresh uses Alchemy/CoinGecko and does not call Moralis approvals', async () => {
+    const origBalances = process.env.TOKEN_BALANCES_PROVIDER;
+    const origPrice = process.env.PRICE_PROVIDER;
+    const origSecurity = process.env.TOKEN_SECURITY_PROVIDER;
+    const origApproval = process.env.APPROVAL_PROVIDER;
+    const origAlchemyKey = process.env.ALCHEMY_API_KEY;
+    const origMoralisKey = process.env.MORALIS_API_KEY;
+    process.env.TOKEN_BALANCES_PROVIDER = 'alchemy';
+    process.env.PRICE_PROVIDER = 'coingecko';
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    process.env.APPROVAL_PROVIDER = 'moralis';
+    process.env.ALCHEMY_API_KEY = 'alchemy-test-key';
+    process.env.MORALIS_API_KEY = 'moralis-test-key';
+
+    const wallet = '0xaaaa56789012345678901234567890123456aaaa';
+    const usdc = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+    const mockFetch = mock.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlString = String(url);
+      assert.ok(!urlString.includes('moralis.io'), `normal portfolio scan must not call Moralis: ${urlString}`);
+      if (urlString.includes('alchemy.com')) {
+        const body = JSON.parse(String(init?.body || '{}'));
+        if (body.method === 'alchemy_getTokenBalances') {
+          return {
+            ok: true,
+            json: async () => ({ result: { tokenBalances: [{ contractAddress: usdc, tokenBalance: '0xe4e1c0' }] } })
+          } as Response;
+        }
+        if (body.method === 'alchemy_getTokenMetadata') {
+          return {
+            ok: true,
+            json: async () => ({ result: { symbol: 'USDC', name: 'USD Coin', decimals: 6, logo: null } })
+          } as Response;
+        }
+      }
+      if (urlString.includes('api.coingecko.com/api/v3/simple/token_price/base')) {
+        return { ok: true, json: async () => ({ [usdc]: { usd: 1 } }) } as Response;
+      }
+      if (urlString.includes('api.coingecko.com/api/v3/simple/price')) {
+        return { ok: true, json: async () => ({ ethereum: { usd: 3000 } }) } as Response;
+      }
+      return { ok: true, json: async () => ({ result: '0xde0b6b3a7640000' }) } as Response;
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const response = await request(app).get(`/api/portfolio?walletAddress=${wallet}&chainEnv=mainnet-readonly&refresh=1`);
+    assert.strictEqual(response.status, 200);
+    assert.ok(response.body.analysis);
+    assert.strictEqual(response.body.analysis.totalTokens, 2);
+    assert.strictEqual(response.body.analysis.providerContext.tokenBalancesProvider, 'alchemy');
+    assert.strictEqual(response.body.analysis.providerContext.priceProvider, 'coingecko');
+    assert.strictEqual(response.body.analysis.approvalSummary.status, 'not_requested');
+    assert.strictEqual(response.body.approvalScan.status, 'not_requested');
+    assert.strictEqual(response.body.providerCallSummary.balances.provider, 'alchemy');
+    assert.strictEqual(response.body.providerCallSummary.balances.providerCalled, true);
+    assert.strictEqual(response.body.providerCallSummary.approvals.provider, 'moralis');
+    assert.strictEqual(response.body.providerCallSummary.approvals.providerCalled, false);
+    const moralisCalls = mockFetch.mock.calls.filter((c: any) => String(c.arguments[0]).includes('moralis.io')).length;
+    assert.strictEqual(moralisCalls, 0);
+
+    restoreEnv('TOKEN_BALANCES_PROVIDER', origBalances);
+    restoreEnv('PRICE_PROVIDER', origPrice);
+    restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurity);
+    restoreEnv('APPROVAL_PROVIDER', origApproval);
+    restoreEnv('ALCHEMY_API_KEY', origAlchemyKey);
+    restoreEnv('MORALIS_API_KEY', origMoralisKey);
+    mock.restoreAll();
+  });
+
+  test('GET /api/portfolio includeApprovals explicitly runs approvals and returns approval summary aliases', async () => {
+    const origBalances = process.env.TOKEN_BALANCES_PROVIDER;
+    const origPrice = process.env.PRICE_PROVIDER;
+    const origSecurity = process.env.TOKEN_SECURITY_PROVIDER;
+    const origApproval = process.env.APPROVAL_PROVIDER;
+    const origAlchemyKey = process.env.ALCHEMY_API_KEY;
+    const origMoralisKey = process.env.MORALIS_API_KEY;
+    process.env.TOKEN_BALANCES_PROVIDER = 'alchemy';
+    process.env.PRICE_PROVIDER = 'coingecko';
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    process.env.APPROVAL_PROVIDER = 'moralis';
+    process.env.ALCHEMY_API_KEY = 'alchemy-test-key';
+    process.env.MORALIS_API_KEY = 'moralis-test-key';
+
+    const wallet = '0xbbbb56789012345678901234567890123456bbbb';
+    const usdc = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+    const spender = '0x9999999999999999999999999999999999999999';
+    const mockFetch = mock.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlString = String(url);
+      if (urlString.includes('moralis.io') && urlString.includes('/approvals')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            result: [{
+              token: { address: usdc, symbol: 'USDC', name: 'USD Coin', decimals: '6' },
+              spender: { address: spender },
+              value: '115792089237316195423570985008687907853269984665640564039457584007913129639935',
+              value_formatted: 'Unlimited',
+            }]
+          })
+        } as Response;
+      }
+      if (urlString.includes('alchemy.com')) {
+        const body = JSON.parse(String(init?.body || '{}'));
+        if (body.method === 'alchemy_getTokenBalances') {
+          return {
+            ok: true,
+            json: async () => ({ result: { tokenBalances: [{ contractAddress: usdc, tokenBalance: '0xe4e1c0' }] } })
+          } as Response;
+        }
+        if (body.method === 'alchemy_getTokenMetadata') {
+          return {
+            ok: true,
+            json: async () => ({ result: { symbol: 'USDC', name: 'USD Coin', decimals: 6, logo: null } })
+          } as Response;
+        }
+      }
+      if (urlString.includes('api.coingecko.com/api/v3/simple/token_price/base')) {
+        return { ok: true, json: async () => ({ [usdc]: { usd: 1 } }) } as Response;
+      }
+      if (urlString.includes('api.coingecko.com/api/v3/simple/price')) {
+        return { ok: true, json: async () => ({ ethereum: { usd: 3000 } }) } as Response;
+      }
+      return { ok: true, json: async () => ({ result: '0xde0b6b3a7640000' }) } as Response;
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const response = await request(app).get(`/api/portfolio?walletAddress=${wallet}&chainEnv=mainnet-readonly&refresh=1&includeApprovals=1`);
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.providerCallSummary.approvals.provider, 'moralis');
+    assert.strictEqual(response.body.providerCallSummary.approvals.providerCalled, true);
+    assert.strictEqual(response.body.approvalSummary.totalApprovals, 1);
+    assert.strictEqual(response.body.analysis.approvalSummary.totalApprovals, 1);
+    assert.strictEqual(response.body.approvals.length, 1);
+    assert.strictEqual(response.body.analysis.approvals.length, 1);
+    assert.ok(response.body.analysis.approvalFindings.length >= 1);
+    const moralisCalls = mockFetch.mock.calls.filter((c: any) => String(c.arguments[0]).includes('moralis.io') && String(c.arguments[0]).includes('/approvals')).length;
+    assert.strictEqual(moralisCalls, 1);
+
+    restoreEnv('TOKEN_BALANCES_PROVIDER', origBalances);
+    restoreEnv('PRICE_PROVIDER', origPrice);
+    restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurity);
+    restoreEnv('APPROVAL_PROVIDER', origApproval);
+    restoreEnv('ALCHEMY_API_KEY', origAlchemyKey);
+    restoreEnv('MORALIS_API_KEY', origMoralisKey);
+    mock.restoreAll();
+  });
+});

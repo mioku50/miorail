@@ -110,9 +110,11 @@ describe('Portfolio Resilience and Stale Cache Tests', () => {
     setTokenBalancesCacheForTests(8453, testAddress, cachedTokens);
 
     const oldProvider = process.env.TOKEN_BALANCES_PROVIDER;
+    const oldPrice = process.env.PRICE_PROVIDER;
     const oldKey = process.env.MORALIS_API_KEY;
     try {
       process.env.TOKEN_BALANCES_PROVIDER = 'moralis';
+      process.env.PRICE_PROVIDER = 'none';
       process.env.MORALIS_API_KEY = 'invalid_key_for_test'; // Force live fetch failure
 
       const portfolio = await fetchInternalPortfolio(testAddress, 'mainnet');
@@ -134,6 +136,11 @@ describe('Portfolio Resilience and Stale Cache Tests', () => {
         delete process.env.MORALIS_API_KEY;
       } else {
         process.env.MORALIS_API_KEY = oldKey;
+      }
+      if (oldPrice === undefined) {
+        delete process.env.PRICE_PROVIDER;
+      } else {
+        process.env.PRICE_PROVIDER = oldPrice;
       }
       clearTokenBalancesCacheForTests();
     }

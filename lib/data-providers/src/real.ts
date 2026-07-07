@@ -489,20 +489,20 @@ export class MoralisTokenBalancesProvider implements TokenBalancesProvider {
 }
 
 export function getTokenBalancesProviderFromEnv(): { provider: TokenBalancesProvider; status: string; statusCode: "connected" | "missing" | "disabled"; providerName: "moralis" | "alchemy" | "mock" | "none" } {
-  const mode = (process.env.TOKEN_BALANCES_PROVIDER || 'none').toLowerCase();
+  const mode = (process.env.TOKEN_BALANCES_PROVIDER || 'alchemy').toLowerCase();
   if (mode === 'none') {
     // "disabled" = explicitly turned off via TOKEN_BALANCES_PROVIDER=none; "missing" = unset / key absent.
     const explicitNone = typeof process.env.TOKEN_BALANCES_PROVIDER === 'string'
       && process.env.TOKEN_BALANCES_PROVIDER.trim().toLowerCase() === 'none';
     return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', statusCode: explicitNone ? 'disabled' : 'missing', providerName: 'none' };
   }
-  if (mode === 'alchemy' || (!process.env.TOKEN_BALANCES_PROVIDER && (process.env.ALCHEMY_API_KEY || process.env.ALCHEMY_BASE_MAINNET_RPC_URL))) {
+  if (mode === 'alchemy') {
     if (!process.env.ALCHEMY_API_KEY && !process.env.ALCHEMY_BASE_MAINNET_RPC_URL) {
       return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', statusCode: 'missing', providerName: 'alchemy' };
     }
     return { provider: new AlchemyTokenBalancesProvider(process.env.ALCHEMY_API_KEY, process.env.ALCHEMY_BASE_MAINNET_RPC_URL), status: 'Alchemy connected', statusCode: 'connected', providerName: 'alchemy' };
   }
-  if (mode === 'moralis' || (!process.env.TOKEN_BALANCES_PROVIDER && process.env.MORALIS_API_KEY)) {
+  if (mode === 'moralis') {
     if (!process.env.MORALIS_API_KEY) {
       return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', statusCode: 'missing', providerName: 'moralis' };
     }
@@ -529,7 +529,7 @@ export class CoinGeckoPriceProvider implements PriceProvider {
     const addressToToken: Record<string, { symbol: string; address?: string }> = {};
 
     for (const token of params.tokens) {
-      if (token.address) {
+      if (token.address && /^0x[a-fA-F0-9]{40}$/.test(token.address)) {
         contractAddresses.push(token.address.toLowerCase());
         addressToToken[token.address.toLowerCase()] = token;
       }
@@ -648,17 +648,17 @@ export class MoralisPriceProvider implements PriceProvider {
 }
 
 export function getPriceProviderFromEnv(): { provider: PriceProvider; status: string; statusCode: "connected" | "missing" | "disabled"; providerName: "coingecko" | "moralis" | "none" | "mock" } {
-  const mode = (process.env.PRICE_PROVIDER || 'none').toLowerCase();
+  const mode = (process.env.PRICE_PROVIDER || 'coingecko').toLowerCase();
   if (mode === 'none') {
     // "disabled" = explicitly turned off via PRICE_PROVIDER=none; "missing" = unset / key absent.
     const explicitNone = typeof process.env.PRICE_PROVIDER === 'string'
       && process.env.PRICE_PROVIDER.trim().toLowerCase() === 'none';
     return { provider: new NonePriceProvider(), status: 'Price provider not configured', statusCode: explicitNone ? 'disabled' : 'missing', providerName: 'none' };
   }
-  if (mode === 'coingecko' || (!process.env.PRICE_PROVIDER && process.env.COINGECKO_API_KEY)) {
+  if (mode === 'coingecko') {
     return { provider: new CoinGeckoPriceProvider(process.env.COINGECKO_API_KEY), status: 'CoinGecko connected', statusCode: 'connected', providerName: 'coingecko' };
   }
-  if (mode === 'moralis' || (!process.env.PRICE_PROVIDER && process.env.MORALIS_API_KEY)) {
+  if (mode === 'moralis') {
     if (!process.env.MORALIS_API_KEY) {
       return { provider: new NonePriceProvider(), status: 'Price provider not configured', statusCode: 'missing', providerName: 'moralis' };
     }
@@ -775,6 +775,4 @@ export function getApprovalProviderFromEnv(): { provider: ApprovalProvider; stat
   }
   return { provider: new NoneApprovalProvider(), status: 'Approval provider not configured', statusCode: 'missing', providerName: 'none' };
 }
-
-
 

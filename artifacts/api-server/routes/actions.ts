@@ -291,7 +291,9 @@ actionsRouter.post('/recommend', async (req, res, next) => {
 
     if (walletAddress && ['portfolio', 'risk', 'rebalance', 'security', 'yield', 'approvals'].includes(intent.intentType || '')) {
       try {
-        const portfolio = await fetchInternalPortfolio(walletAddress, chainEnv);
+        const portfolio = await fetchInternalPortfolio(walletAddress, chainEnv, {
+          includeApprovals: intent.intentType === 'approvals',
+        });
         riskStatus = portfolio.providers.risk || riskStatus;
         secProvider = portfolio.providers.riskProvider || secProvider;
         securityProviderContext = {
@@ -311,7 +313,9 @@ actionsRouter.post('/recommend', async (req, res, next) => {
             tokenBalances: portfolio.providers.tokenBalancesProvider,
             prices: portfolio.providers.priceProvider || portfolio.providers.prices,
             risk: portfolio.providers.risk,
-            securityProvider: portfolio.providers.riskProvider || 'none'
+            securityProvider: portfolio.providers.riskProvider || 'none',
+            approvals: portfolio.approvalScan?.status || 'not_requested',
+            approvalProvider: portfolio.providers.approvalProvider || 'none',
           }
         });
         tokensList = analysis.tokenFindings.map(f => `${f.balanceFormatted || ''} ${f.symbol}`.trim()).slice(0, 5);

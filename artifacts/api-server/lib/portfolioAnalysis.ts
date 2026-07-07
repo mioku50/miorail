@@ -48,6 +48,35 @@ export interface ApprovalRiskAnalysis {
   recommendations: ApprovalRecommendation[];
 }
 
+export type ApprovalScanStatus = "not_requested" | "live" | "cached" | "stale" | "partial" | "failed" | "connected" | "missing" | "disabled";
+
+export interface ProviderCallSummaryItem {
+  provider: string;
+  status: string;
+  providerCalled: boolean;
+  budgetExhausted: boolean;
+  cacheAgeSeconds?: number;
+  requested?: boolean;
+}
+
+export interface ApprovalScanSummary extends ProviderCallSummaryItem {
+  requested: boolean;
+  totalApprovals: number;
+  tokenCount: number;
+  unlimitedCount: number;
+  riskySpenderCount: number;
+}
+
+export interface ApprovalSummary {
+  requested: boolean;
+  status: ApprovalScanStatus;
+  provider: string;
+  totalApprovals: number;
+  tokenCount: number;
+  unlimitedApprovals: number;
+  riskySpenderApprovals: number;
+}
+
 export interface TokenInfoSecurity {
   provider: TokenSecurityProviderName;
   status: TokenSecurityStatus;
@@ -82,6 +111,11 @@ export interface PortfolioData {
   cacheAgeSeconds?: number;
   providerBudgetStatus?: { exhausted: boolean; providers: string[] };
   providerCallsMade?: number;
+  providerCallSummary?: Record<string, ProviderCallSummaryItem>;
+  providerContext?: Record<string, unknown>;
+  approvalScan?: ApprovalScanSummary;
+  approvalSummary?: ApprovalSummary;
+  approvalFindings?: ApprovalFinding[];
   providers: {
     rpc: string;
     tokenBalances: string;
@@ -94,6 +128,10 @@ export interface PortfolioData {
     approvalProvider?: string;
   };
   approvals?: TokenApproval[];
+}
+
+export interface FetchInternalPortfolioOptions {
+  includeApprovals?: boolean;
 }
 
 export interface TokenFinding {
@@ -118,6 +156,11 @@ export interface TokenFinding {
 export interface PortfolioRiskAnalysis {
   overallRiskLevel?: 'low' | 'medium' | 'high' | 'critical' | 'unknown';
   summary: string;
+  providerContext?: Record<string, unknown>;
+  totalTokens?: number;
+  approvalSummary?: ApprovalSummary;
+  approvals?: TokenApproval[];
+  approvalFindings?: ApprovalFinding[];
   portfolioSnapshot: {
     walletAddress: string;
     chain: string;
@@ -190,6 +233,14 @@ function providerStatusToSecurityStatus(status: string): "connected" | "missing"
   return 'connected';
 }
 
+function providerDisplayName(provider?: string) {
+  if (provider === 'moralis') return 'Moralis';
+  if (provider === 'alchemy') return 'Alchemy';
+  if (provider === 'coingecko') return 'CoinGecko';
+  if (provider === 'goplus') return 'GoPlus';
+  return provider || 'token';
+}
+
 // Test helpers: force an in-memory orchestrator so portfolio/route tests stay
 // hermetic (no DB writes) and budget counters reset between tests.
 export function clearTokenBalancesCacheForTests() {
@@ -252,8 +303,9 @@ function computePortfolioFreshness(track: FreshnessTrack[]): {
   };
 }
 
-export async function fetchInternalPortfolio(address: string, chainEnv: string = 'sepolia'): Promise<PortfolioData> {
+export async function fetchInternalPortfolio(address: string, chainEnv: string = 'sepolia', options: FetchInternalPortfolioOptions = {}): Promise<PortfolioData> {
   const chainId = chainEnv === 'sepolia' ? 84532 : 8453;
+  const includeApprovals = options.includeApprovals === true;
   let balanceFormatted = '0.0000';
   let balance = '0';
 
@@ -298,6 +350,7 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
 
   const orch = getProviderCacheOrchestratorFromEnv();
   const freshnessTrack: FreshnessTrack[] = [];
+  const providerCallSummary: Record<string, ProviderCallSummaryItem> = {};
 
   // --- Token balances (cached + budget-guarded) ---
   const { provider, status, statusCode, providerName } = getTokenBalancesProviderFromEnv();
@@ -329,6 +382,14 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
       budgetExhausted: balRes.budgetExhausted,
       provider: providerName as ProviderName,
     });
+    providerCallSummary.balances = {
+      provider: providerName,
+      status: balRes.status,
+      providerCalled: balRes.providerCalled,
+      budgetExhausted: balRes.budgetExhausted,
+      cacheAgeSeconds: balRes.cacheAgeSeconds,
+      requested: true,
+    };
 
     const erc20Balances = balRes.data || [];
     if (balRes.status === 'live' || balRes.status === 'cached' || balRes.status === 'stale') {
@@ -364,6 +425,14 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
         ? 'Provider budget reached for token balances. Showing native ETH only.'
         : 'Token balances provider failed. Showing native ETH only.';
     }
+  } else {
+    providerCallSummary.balances = {
+      provider: providerName,
+      status: tokenBalancesStatus,
+      providerCalled: false,
+      budgetExhausted: false,
+      requested: true,
+    };
   }
 
   // --- Token prices (cached + budget-guarded) ---
@@ -395,6 +464,14 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
       budgetExhausted: priceRes.budgetExhausted,
       provider: priceProviderName as ProviderName,
     });
+    providerCallSummary.prices = {
+      provider: priceProviderName,
+      status: priceRes.status,
+      providerCalled: priceRes.providerCalled,
+      budgetExhausted: priceRes.budgetExhausted,
+      cacheAgeSeconds: priceRes.cacheAgeSeconds,
+      requested: true,
+    };
 
     const prices = priceRes.data || [];
     if (prices.length > 0) {
@@ -433,6 +510,13 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
       }
     }
   } else {
+    providerCallSummary.prices = {
+      provider: priceProviderName,
+      status: pricesStatus,
+      providerCalled: false,
+      budgetExhausted: false,
+      requested: true,
+    };
     for (const t of tokens) {
       if (t.usdValue === '0.00' && !t.usdPrice) {
         t.usdValue = undefined;
@@ -495,6 +579,14 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
         budgetExhausted: secRes.budgetExhausted,
         provider: riskProviderName,
       });
+      providerCallSummary.risk = {
+        provider: riskProviderName,
+        status: secRes.status,
+        providerCalled: secRes.providerCalled,
+        budgetExhausted: secRes.budgetExhausted,
+        cacheAgeSeconds: secRes.cacheAgeSeconds,
+        requested: true,
+      };
 
       if (secRes.data) {
         const securityResults = secRes.data;
@@ -541,30 +633,116 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
       }
     }
   }
-
-  // --- Approvals (cached + budget-guarded, via fetchInternalApprovals) ---
-  let approvalsData: TokenApproval[] = [];
-  let approvalsStatus: "connected" | "missing" | "failed" | "partial" | "disabled" = "missing";
-  let approvalProviderName = "none";
-  try {
-    const appRes = await fetchInternalApprovals(address, chainEnv);
-    approvalsData = appRes.approvals;
-    approvalsStatus = appRes.status;
-    approvalProviderName = appRes.provider;
-    if (appRes.cache && approvalProviderName !== 'none') {
-      freshnessTrack.push({
-        status: appRes.cache.status,
-        cacheAgeSeconds: appRes.cache.cacheAgeSeconds,
-        providerCalled: appRes.cache.providerCalled,
-        budgetExhausted: appRes.cache.budgetExhausted,
-        provider: approvalProviderName as ProviderName,
-      });
-    }
-  } catch {
-    approvalsStatus = "failed";
+  if (!providerCallSummary.risk) {
+    providerCallSummary.risk = {
+      provider: riskProviderName,
+      status: riskStatus,
+      providerCalled: false,
+      budgetExhausted: false,
+      requested: riskProviderName !== 'none',
+    };
   }
 
+  // --- Approvals (explicit only). Normal portfolio scans never call Moralis approvals. ---
+  const approvalEnv = getApprovalProviderFromEnv();
+  let approvalsData: TokenApproval[] | undefined;
+  let approvalFindings: ApprovalFinding[] | undefined;
+  let approvalsStatus: "connected" | "missing" | "failed" | "partial" | "disabled" = approvalEnv.statusCode;
+  let approvalProviderName = approvalEnv.providerName;
+  let approvalScan: ApprovalScanSummary = {
+    requested: includeApprovals,
+    provider: approvalProviderName,
+    status: includeApprovals ? approvalsStatus : 'not_requested',
+    providerCalled: false,
+    budgetExhausted: false,
+    totalApprovals: 0,
+    tokenCount: 0,
+    unlimitedCount: 0,
+    riskySpenderCount: 0,
+  };
+  let approvalSummary: ApprovalSummary = {
+    requested: includeApprovals,
+    status: includeApprovals ? approvalsStatus : 'not_requested',
+    provider: approvalProviderName,
+    totalApprovals: 0,
+    tokenCount: 0,
+    unlimitedApprovals: 0,
+    riskySpenderApprovals: 0,
+  };
+
+  if (includeApprovals) {
+    try {
+      const appRes = await fetchInternalApprovals(address, chainEnv);
+      approvalsData = appRes.approvals;
+      approvalsStatus = appRes.status;
+      approvalProviderName = appRes.provider;
+      const appAnalysis = analyzeApprovalsForRisk(approvalsData, { tokens } as PortfolioData);
+      approvalFindings = appAnalysis.findings;
+      const scanStatus = appRes.cache?.status || appRes.status;
+      approvalScan = {
+        requested: true,
+        provider: approvalProviderName,
+        status: scanStatus,
+        providerCalled: appRes.cache?.providerCalled ?? false,
+        budgetExhausted: appRes.cache?.budgetExhausted ?? false,
+        cacheAgeSeconds: appRes.cache?.cacheAgeSeconds,
+        totalApprovals: approvalsData.length,
+        tokenCount: appRes.tokenCount,
+        unlimitedCount: appRes.unlimitedCount,
+        riskySpenderCount: appRes.riskySpenderCount,
+      };
+      approvalSummary = {
+        requested: true,
+        status: scanStatus,
+        provider: approvalProviderName,
+        totalApprovals: approvalsData.length,
+        tokenCount: appRes.tokenCount,
+        unlimitedApprovals: appAnalysis.unlimitedApprovals,
+        riskySpenderApprovals: appAnalysis.riskySpenderApprovals,
+      };
+    } catch {
+      approvalsStatus = "failed";
+      approvalScan = {
+        requested: true,
+        provider: approvalProviderName,
+        status: 'failed',
+        providerCalled: false,
+        budgetExhausted: false,
+        totalApprovals: 0,
+        tokenCount: 0,
+        unlimitedCount: 0,
+        riskySpenderCount: 0,
+      };
+      approvalSummary = {
+        requested: true,
+        status: 'failed',
+        provider: approvalProviderName,
+        totalApprovals: 0,
+        tokenCount: 0,
+        unlimitedApprovals: 0,
+        riskySpenderApprovals: 0,
+      };
+    }
+  }
+  providerCallSummary.approvals = approvalScan;
+
   const freshness = computePortfolioFreshness(freshnessTrack);
+  const providerContext = {
+    balancesProvider: providerName,
+    tokenBalancesProvider: providerName,
+    tokenBalances: providerName,
+    priceProvider: priceProviderName,
+    prices: priceProviderName,
+    riskProvider: riskProviderName,
+    securityProvider: riskProviderName,
+    approvalsProvider: approvalProviderName,
+    approvalProvider: approvalProviderName,
+    portfolioScanStatus: freshness.dataFreshness,
+    approvalScanStatus: approvalScan.status,
+    approvalScanRequested: includeApprovals,
+    providerCallSummary,
+  };
+
   return {
     totalUsdValue,
     tokens,
@@ -574,6 +752,11 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
     cacheAgeSeconds: freshness.cacheAgeSeconds,
     providerBudgetStatus: freshness.providerBudgetStatus,
     providerCallsMade: freshness.providerCallsMade,
+    providerCallSummary,
+    providerContext,
+    approvalScan,
+    approvalSummary,
+    approvalFindings,
     providers: {
       rpc: rpcStatus,
       tokenBalances: tokenBalancesStatus,
@@ -585,7 +768,7 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
       approvals: approvalsStatus,
       approvalProvider: approvalProviderName,
     },
-    approvals: approvalsData
+    approvals: includeApprovals ? (approvalsData || []) : undefined,
   };
 }
 
@@ -750,7 +933,7 @@ export function analyzeApprovalsForRisk(
 export async function fetchInternalApprovals(address: string, chainEnv: string = 'sepolia'): Promise<{
   approvals: TokenApproval[];
   status: "connected" | "missing" | "failed" | "partial" | "disabled";
-  provider: string;
+  provider: "moralis" | "alchemy" | "none" | "mock";
   tokenCount: number;
   unlimitedCount: number;
   riskySpenderCount: number;
@@ -974,7 +1157,7 @@ export function analyzePortfolioForRisk(
 
   const suggestedNextSteps: string[] = [];
   if (portfolio.providers?.tokenBalances === 'stale') {
-    suggestedNextSteps.push("Analysis used cached Moralis token balances.");
+    suggestedNextSteps.push(`Analysis used cached ${providerDisplayName(portfolio.providers?.tokenBalancesProvider)} token balances.`);
   }
   suggestedNextSteps.push(priceStep, securityStep);
   suggestedNextSteps.push(
@@ -983,9 +1166,18 @@ export function analyzePortfolioForRisk(
     "Use a trusted wallet interface to revoke approvals if needed; MioAgent will not auto-revoke or create transactions in read-only mode."
   );
 
+  const approvalAnalysis = portfolio.approvalSummary?.requested
+    ? analyzeApprovalsForRisk(portfolio.approvals || [], portfolio)
+    : undefined;
+
   return {
     overallRiskLevel: findings.some(f => f.risk === 'high') || securityHighRiskCount > 0 ? 'high' : findings.some(f => f.risk === 'medium') || securityWarningCount > 0 ? 'medium' : 'low',
     summary,
+    providerContext: portfolio.providerContext,
+    totalTokens: tokenCount,
+    approvalSummary: portfolio.approvalSummary,
+    approvals: portfolio.approvalSummary?.requested ? (portfolio.approvals || []) : undefined,
+    approvalFindings: approvalAnalysis?.findings,
     portfolioSnapshot: {
       walletAddress,
       chain,
@@ -1014,7 +1206,7 @@ export function analyzePortfolioForRisk(
     },
     tokenFindings: findings.slice(0, 10),
     suggestedNextSteps,
-    approvalAnalysis: analyzeApprovalsForRisk(portfolio.approvals || [], portfolio)
+    approvalAnalysis
   };
 }
 
@@ -1053,11 +1245,10 @@ export function buildRecommendationMetadataFromAnalysis(input: {
       prices: analysis.portfolioSnapshot.priceProvider || "missing",
       risk: analysis.securityProvider.status,
       securityProvider: analysis.securityProvider.provider,
-      approvals: analysis.approvalAnalysis ? "connected" : "missing",
-      approvalProvider: "moralis"
+      approvals: analysis.providerContext?.approvalScanStatus || (analysis.approvalAnalysis ? "checked" : "not_requested"),
+      approvalProvider: analysis.providerContext?.approvalProvider || analysis.providerContext?.approvalsProvider || "none"
     },
     analysis: analysis,
     approvalAnalysis: analysis.approvalAnalysis
   };
 }
-

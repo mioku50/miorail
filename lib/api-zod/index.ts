@@ -336,6 +336,23 @@ export const PortfolioProvidersSchema = z.object({
 });
 
 
+export const ProviderCallSummaryItemSchema = z.object({
+  provider: z.string(),
+  status: z.string(),
+  providerCalled: z.boolean(),
+  budgetExhausted: z.boolean(),
+  cacheAgeSeconds: z.number().optional(),
+  requested: z.boolean().optional(),
+});
+
+export const ApprovalScanSummarySchema = ProviderCallSummaryItemSchema.extend({
+  requested: z.boolean(),
+  totalApprovals: z.number(),
+  tokenCount: z.number(),
+  unlimitedCount: z.number(),
+  riskySpenderCount: z.number(),
+});
+
 export const PortfolioResponseSchema = z.object({
   totalUsdValue: z.string().optional(),
   tokens: z.array(PortfolioTokenSchema),
@@ -349,6 +366,13 @@ export const PortfolioResponseSchema = z.object({
   }).optional(),
   providerCallsMade: z.number().optional(),
   providers: PortfolioProvidersSchema.optional(),
+  providerCallSummary: z.record(ProviderCallSummaryItemSchema).optional(),
+  providerContext: z.record(z.any()).optional(),
+  approvalScan: ApprovalScanSummarySchema.optional(),
+  approvalSummary: z.record(z.any()).optional(),
+  approvalFindings: z.array(z.record(z.any())).optional(),
+  approvals: z.array(z.record(z.any())).optional(),
+  analysis: z.record(z.any()).optional(),
 });
 
 export const TokenApprovalSchema = z.object({
@@ -362,7 +386,7 @@ export const TokenApprovalSchema = z.object({
   allowanceUsd: z.number().optional(),
   isUnlimited: z.boolean(),
   lastUpdatedAt: z.string().optional(),
-  source: z.enum(["moralis", "alchemy", "none", "mock", "unknown"]),
+  source: z.enum(["moralis", "alchemy", "basescan", "none", "mock", "unknown"]),
 });
 
 export const ApprovalsResponseSchema = z.object({

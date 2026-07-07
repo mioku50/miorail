@@ -12,31 +12,44 @@ interface PortfolioProviderChipsProps {
 }
 
 export function PortfolioProviderChips({ portfolio, statusData, address, isPortfolioFetching, onRefresh }: PortfolioProviderChipsProps) {
+  const freshness = portfolioFreshnessChip(portfolio);
+  const balancesProvider = portfolio?.providers?.tokenBalancesProvider || statusData?.tokenBalances?.provider || 'none';
+  const priceProvider = portfolio?.providers?.priceProvider || statusData?.prices?.provider || 'none';
+  const approvalProvider = portfolio?.providers?.approvalProvider || statusData?.approvals?.provider || 'none';
+  const approvalScan = portfolio?.approvalScan || portfolio?.analysis?.providerContext;
+  const approvalScanStatus = approvalScan?.status || approvalScan?.approvalScanStatus;
+
+  const approvalScanLabel = (() => {
+    if (!portfolio) return null;
+    if (!approvalScanStatus || approvalScanStatus === 'not_requested') return 'approval scan not run';
+    if (approvalScanStatus === 'live') return 'approval scan live';
+    if (approvalScanStatus === 'cached') return 'approval scan cached';
+    if (approvalScanStatus === 'stale') return 'approval scan stale';
+    if (approvalScanStatus === 'partial') return 'approval scan partial';
+    if (approvalScanStatus === 'failed') return 'approval scan failed';
+    return `approval scan ${approvalScanStatus}`;
+  })();
+  const approvalScanClass = approvalScanStatus === 'live'
+    ? 'text-ok bg-ok-soft border-ok/20'
+    : approvalScanStatus === 'failed'
+      ? 'text-risk bg-risk-soft border-risk/20'
+      : approvalScanStatus === 'cached' || approvalScanStatus === 'stale' || approvalScanStatus === 'partial'
+        ? 'text-warn bg-warn-soft border-warn/20'
+        : 'text-ink-3 bg-panel-2 border-line/60';
+
   return (
     <div className="flex items-center gap-1.5">
-      {portfolioFreshnessChip(portfolio) && (
-        <span className={`text-[10px] font-mono font-normal lowercase px-1.5 py-0.5 rounded border ${portfolioFreshnessChip(portfolio)!.className}`} title={`Provider calls: ${portfolio?.providerCallsMade ?? 0}`}>
-          {portfolioFreshnessChip(portfolio)!.label}
+      {freshness && (
+        <span className={`text-[10px] font-mono font-normal lowercase px-1.5 py-0.5 rounded border ${freshness.className}`} title={`Provider calls: ${portfolio?.providerCallsMade ?? 0}`}>
+          portfolio {freshness.label.toLowerCase()}
         </span>
       )}
-      {(statusData || portfolio?.providerStatus) && (
-        <span className="text-[10px] font-mono font-normal text-ink-3 lowercase bg-panel-2 px-1.5 py-0.5 rounded border border-line/60">
-          {statusData ? (
-            statusData.tokenBalances.status === 'stale' ? `${statusData.tokenBalances.provider || 'moralis'} cached` :
-            statusData.tokenBalances.status === 'failed' ? 'token provider failed' :
-            statusData.tokenBalances.status === 'disabled' ? 'balances off' :
-            statusData.tokenBalances.status === 'missing' ? 'eth only' :
-            statusData.tokenBalances.provider === 'moralis' ? 'moralis connected' :
-            statusData.tokenBalances.provider === 'alchemy' ? 'alchemy connected' :
-            portfolio?.providerStatus || 'connected'
-          ) : (
-            portfolio?.providers?.tokenBalances === 'stale' ? `${portfolio?.providers?.tokenBalancesProvider || 'moralis'} cached` :
-            portfolio?.providers?.tokenBalances === 'failed' ? 'token provider failed' :
-            portfolio?.providers?.tokenBalances === 'disabled' ? 'balances off' :
-            portfolio?.providerStatus === 'moralis connected' ? 'moralis connected' : portfolio?.providerStatus
-          )}
-        </span>
-      )}
+      <span className="text-[10px] font-mono font-normal text-ink-3 lowercase bg-panel-2 px-1.5 py-0.5 rounded border border-line/60">
+        balances {balancesProvider}
+      </span>
+      <span className="text-[10px] font-mono font-normal text-ink-3 lowercase bg-panel-2 px-1.5 py-0.5 rounded border border-line/60">
+        prices {priceProvider}
+      </span>
       {(statusData?.prices.status === 'stale' || portfolio?.providers?.prices === 'stale') ? (
         <span className="text-[10px] font-mono font-normal text-warn lowercase bg-warn-soft px-1.5 py-0.5 rounded border border-warn/20">prices cached</span>
       ) : (statusData?.prices.status === 'failed' || portfolio?.providers?.prices === 'failed') ? (
@@ -47,16 +60,13 @@ export function PortfolioProviderChips({ portfolio, statusData, address, isPortf
       ) : (statusData?.risk.status === 'failed' || portfolio?.providers?.risk === 'failed') ? (
         <span className="text-[10px] font-mono font-normal text-risk lowercase bg-risk-soft px-1.5 py-0.5 rounded border border-risk/20">goplus failed</span>
       ) : null}
-      {(statusData?.approvals?.status === 'connected' || portfolio?.providers?.approvals === 'connected') ? (
-        <span className="text-[10px] font-mono font-normal text-ok lowercase bg-ok-soft px-1.5 py-0.5 rounded border border-ok/20">approvals connected</span>
-      ) : (statusData?.approvals?.status === 'stale' || portfolio?.providers?.approvals === 'stale' || statusData?.approvals?.status === 'partial' || portfolio?.providers?.approvals === 'partial') ? (
-        <span className="text-[10px] font-mono font-normal text-warn lowercase bg-warn-soft px-1.5 py-0.5 rounded border border-warn/20">approvals cached</span>
-      ) : (statusData?.approvals?.status === 'failed' || portfolio?.providers?.approvals === 'failed') ? (
-        <span className="text-[10px] font-mono font-normal text-risk lowercase bg-risk-soft px-1.5 py-0.5 rounded border border-risk/20">approvals failed</span>
-      ) : (statusData?.approvals?.status === 'disabled' || portfolio?.providers?.approvals === 'disabled') ? (
-        <span className="text-[10px] font-mono font-normal text-ink-3 lowercase bg-panel-2 px-1.5 py-0.5 rounded border border-line/60">approvals off</span>
-      ) : (
-        <span className="text-[10px] font-mono font-normal text-warn lowercase bg-warn-soft px-1.5 py-0.5 rounded border border-warn/20">approvals missing</span>
+      <span className="text-[10px] font-mono font-normal text-ink-3 lowercase bg-panel-2 px-1.5 py-0.5 rounded border border-line/60">
+        approvals {approvalProvider}
+      </span>
+      {approvalScanLabel && (
+        <span className={`text-[10px] font-mono font-normal lowercase px-1.5 py-0.5 rounded border ${approvalScanClass}`}>
+          {approvalScanLabel}
+        </span>
       )}
       <button
         type="button"

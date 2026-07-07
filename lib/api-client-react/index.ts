@@ -89,13 +89,17 @@ export function useProtocols(options?: Omit<UseQueryOptions<apiSpec.ProtocolsLis
 
 export function usePortfolio(
   address?: string,
-  options?: Omit<UseQueryOptions<apiSpec.PortfolioResponse, Error, apiSpec.PortfolioResponse, (string | undefined)[]>, 'queryKey' | 'queryFn'>
+  options?: Omit<UseQueryOptions<apiSpec.PortfolioResponse, Error, apiSpec.PortfolioResponse, (string | undefined)[]>, 'queryKey' | 'queryFn'>,
+  params?: { includeApprovals?: boolean; refresh?: boolean; chainEnv?: string },
 ) {
   return useQuery({
-    queryKey: ['portfolio', address],
+    queryKey: ['portfolio', address, params?.includeApprovals ? 'approvals' : 'portfolio', params?.chainEnv],
     queryFn: () => {
       const url = new URL('/api/portfolio', 'http://localhost');
       if (address) url.searchParams.set('address', address);
+      if (params?.includeApprovals) url.searchParams.set('includeApprovals', '1');
+      if (params?.refresh) url.searchParams.set('refresh', '1');
+      if (params?.chainEnv) url.searchParams.set('chainEnv', params.chainEnv);
       return fetchApi<apiSpec.PortfolioResponse>(url.pathname + url.search);
     },
     // No automatic polling: provider calls are budgeted, so the frontend must not

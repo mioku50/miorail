@@ -28,7 +28,13 @@ describe('Chat API & Recommendation Guardrails', () => {
   test('POST /api/chat with action intent in mainnet-readonly generates blocked read-only recommendation', async () => {
     clearTokenSecurityCacheForTests();
     const origSecurityProvider = process.env.TOKEN_SECURITY_PROVIDER;
+    const origBalancesProvider = process.env.TOKEN_BALANCES_PROVIDER;
+    const origPriceProvider = process.env.PRICE_PROVIDER;
+    const origApprovalProvider = process.env.APPROVAL_PROVIDER;
     process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    process.env.TOKEN_BALANCES_PROVIDER = 'none';
+    process.env.PRICE_PROVIDER = 'none';
+    process.env.APPROVAL_PROVIDER = 'none';
     await request(app).delete('/api/chat/history');
 
     const response = await request(app)
@@ -63,12 +69,21 @@ describe('Chat API & Recommendation Guardrails', () => {
     assert.strictEqual(payload.readOnly, true);
     assert.deepStrictEqual(payload.calls, []);
     restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurityProvider);
+    restoreEnv('TOKEN_BALANCES_PROVIDER', origBalancesProvider);
+    restoreEnv('PRICE_PROVIDER', origPriceProvider);
+    restoreEnv('APPROVAL_PROVIDER', origApprovalProvider);
   });
 
   test('POST /api/actions/recommend with portfolio intent generates analysis metadata', async () => {
     clearTokenSecurityCacheForTests();
     const origSecurityProvider = process.env.TOKEN_SECURITY_PROVIDER;
+    const origBalancesProvider = process.env.TOKEN_BALANCES_PROVIDER;
+    const origPriceProvider = process.env.PRICE_PROVIDER;
+    const origApprovalProvider = process.env.APPROVAL_PROVIDER;
     process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    process.env.TOKEN_BALANCES_PROVIDER = 'none';
+    process.env.PRICE_PROVIDER = 'none';
+    process.env.APPROVAL_PROVIDER = 'none';
     const response = await request(app)
       .post('/api/actions/recommend')
       .send({
@@ -88,5 +103,8 @@ describe('Chat API & Recommendation Guardrails', () => {
     assert.ok((createdAction.metadata as any).analysis.securityProvider);
     assert.ok((createdAction.metadata as any).analysis.portfolioSnapshot.tokenCount >= 1);
     restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurityProvider);
+    restoreEnv('TOKEN_BALANCES_PROVIDER', origBalancesProvider);
+    restoreEnv('PRICE_PROVIDER', origPriceProvider);
+    restoreEnv('APPROVAL_PROVIDER', origApprovalProvider);
   });
 });

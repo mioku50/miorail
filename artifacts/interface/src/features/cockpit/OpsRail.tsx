@@ -155,6 +155,13 @@ export function OpsRail({ onClose }: OpsRailProps) {
               </div>
             </div>
             <div className="flex items-center justify-between">
+              <span className="text-xs text-ink-2 font-sans">Spend Permissions</span>
+              <div className="flex items-center gap-1.5">
+                <Dot status={sd?.approvals?.status} />
+                <span className="text-xs text-ink font-sans font-medium">{sd?.approvals?.provider || 'none'}</span>
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
               <span className="text-xs text-ink-2 font-sans">base-mcp</span>
               <div className="flex items-center gap-1.5">
                 <Dot status={sd?.baseMcp?.status} />
@@ -191,10 +198,19 @@ export function OpsRail({ onClose }: OpsRailProps) {
                     </span>
                   </div>
                   {portfolio.dataFreshness && (
-                    <div className="text-ink-3 lowercase">
-                      {portfolioFreshnessLabel(portfolio)}
+                    <div className="flex items-center justify-between gap-2">
+                      <span>Portfolio scan:</span>
+                      <span className="text-ink-3 lowercase">{portfolioFreshnessLabel(portfolio)}</span>
                     </div>
                   )}
+                  <div className="flex items-center justify-between gap-2">
+                    <span>Approval scan:</span>
+                    <span className="text-ink-3 lowercase">
+                      {portfolio.approvalScan?.status === 'not_requested'
+                        ? 'not run'
+                        : portfolio.approvalScan?.status || 'not run'}
+                    </span>
+                  </div>
                   {portfolio.providerBudgetStatus?.exhausted && (
                     <div className="text-warn bg-warn-soft px-1.5 py-1 rounded border border-warn/20 leading-tight">
                       Provider budget reached — showing cached/stale data.

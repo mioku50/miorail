@@ -2,6 +2,7 @@ import { test, describe, mock } from 'node:test';
 import assert from 'node:assert';
 import {
   RealCoinGeckoProvider,
+  CoinGeckoPriceProvider,
   RealDeFiLlamaProvider,
   RealGoPlusProvider,
   RealMoralisProvider,
@@ -110,14 +111,46 @@ describe('Real Providers', () => {
         mock.restoreAll();
     });
 
-    test('getTokenBalancesProviderFromEnv returns None by default', async () => {
+    test('getTokenBalancesProviderFromEnv defaults to Alchemy and reports missing without config', async () => {
         const { getTokenBalancesProviderFromEnv } = await import('../src/real.js');
         delete process.env.TOKEN_BALANCES_PROVIDER;
         delete process.env.ALCHEMY_API_KEY;
+        delete process.env.ALCHEMY_BASE_MAINNET_RPC_URL;
         delete process.env.MORALIS_API_KEY;
         const res = getTokenBalancesProviderFromEnv();
+        assert.strictEqual(res.providerName, 'alchemy');
         assert.strictEqual(res.status, 'Token balances provider not configured');
         assert.strictEqual(res.statusCode, 'missing');
+    });
+
+    test('getPriceProviderFromEnv defaults to CoinGecko', async () => {
+        const { getPriceProviderFromEnv } = await import('../src/real.js');
+        delete process.env.PRICE_PROVIDER;
+        delete process.env.MORALIS_API_KEY;
+        const res = getPriceProviderFromEnv();
+        assert.strictEqual(res.providerName, 'coingecko');
+        assert.strictEqual(res.status, 'CoinGecko connected');
+        assert.strictEqual(res.statusCode, 'connected');
+    });
+
+    test('CoinGeckoPriceProvider skips native pseudo-address for token_price calls', async () => {
+        const mockFetch = mock.fn(async (url: string | URL | Request) => {
+            assert.ok(!String(url).includes('contract_addresses=native'));
+            return {
+                ok: true,
+                json: async () => ({ ethereum: { usd: 3000 } })
+            } as Response;
+        });
+        global.fetch = mockFetch as unknown as typeof fetch;
+
+        const provider = new CoinGeckoPriceProvider();
+        const prices = await provider.getTokenPrices({ chainId: 8453, tokens: [{ symbol: 'ETH', address: 'native' }] });
+
+        assert.strictEqual(prices.length, 1);
+        assert.strictEqual(prices[0].usdPrice, '3000');
+        assert.strictEqual(mockFetch.mock.calls.length, 1);
+        assert.ok(String(mockFetch.mock.calls[0].arguments[0]).includes('/simple/price'));
+        mock.restoreAll();
     });
 
     test('getTokenBalancesProviderFromEnv reports disabled when TOKEN_BALANCES_PROVIDER=none (explicit)', async () => {
@@ -217,4 +250,3 @@ describe('Real Providers', () => {
         assert.strictEqual(security.flags.isProxy, true);
     });
 });
-
