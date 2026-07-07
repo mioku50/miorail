@@ -46,9 +46,25 @@ export interface ApprovalRiskAnalysis {
   riskySpenderApprovals: number;
   findings: ApprovalFinding[];
   recommendations: ApprovalRecommendation[];
+  status?: ApprovalScanStatus;
+  provider?: string;
+  scannerUnavailable?: boolean;
+  note?: string;
 }
 
-export type ApprovalScanStatus = "not_requested" | "live" | "cached" | "stale" | "partial" | "failed" | "rate_limited" | "connected" | "missing" | "disabled";
+export type ApprovalScanStatus =
+  | "not_requested"
+  | "live"
+  | "cached"
+  | "stale"
+  | "partial"
+  | "failed"
+  | "rate_limited"
+  | "budget_exhausted"
+  | "temporarily_unavailable"
+  | "connected"
+  | "missing"
+  | "disabled";
 
 export interface ProviderCallSummaryItem {
   provider: string;
@@ -57,6 +73,8 @@ export interface ProviderCallSummaryItem {
   budgetExhausted: boolean;
   cacheAgeSeconds?: number;
   requested?: boolean;
+  errorCode?: string;
+  note?: string;
 }
 
 export interface ApprovalScanSummary extends ProviderCallSummaryItem {
@@ -75,6 +93,9 @@ export interface ApprovalSummary {
   tokenCount: number;
   unlimitedApprovals: number;
   riskySpenderApprovals: number;
+  budgetExhausted?: boolean;
+  errorCode?: string;
+  note?: string;
 }
 
 export interface TokenInfoSecurity {
@@ -190,6 +211,17 @@ export interface PortfolioRiskAnalysis {
   tokenFindings: TokenFinding[];
   suggestedNextSteps: string[];
   approvalAnalysis?: ApprovalRiskAnalysis;
+}
+
+export const APPROVAL_SCANNER_UNAVAILABLE_NOTE = "Moralis approval scanner is temporarily unavailable due to provider budget/rate limits.";
+export const APPROVAL_SCANNER_UNAVAILABLE_UI_NOTE = "Approval scanner unavailable — Moralis CU limit reached. Try after reset or upgrade provider.";
+
+export function isApprovalScannerUnavailableStatus(status?: string): boolean {
+  return status === 'budget_exhausted' || status === 'rate_limited' || status === 'temporarily_unavailable';
+}
+
+function approvalUnavailableNote(status?: string): string | undefined {
+  return isApprovalScannerUnavailableStatus(status) ? APPROVAL_SCANNER_UNAVAILABLE_NOTE : undefined;
 }
 
 function toPortfolioSecurity(result: TokenSecurityResult): TokenInfoSecurity {
@@ -708,7 +740,7 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
   const approvalEnv = getApprovalProviderFromEnv();
   let approvalsData: TokenApproval[] | undefined;
   let approvalFindings: ApprovalFinding[] | undefined;
-  let approvalsStatus: "connected" | "missing" | "failed" | "partial" | "disabled" = approvalEnv.statusCode;
+  let approvalsStatus: "connected" | "missing" | "failed" | "partial" | "disabled" | "rate_limited" | "budget_exhausted" | "temporarily_unavailable" = approvalEnv.statusCode;
   let approvalProviderName = approvalEnv.providerName;
   let approvalScan: ApprovalScanSummary = {
     requested: includeApprovals,
@@ -739,7 +771,7 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
       approvalProviderName = appRes.provider;
       const appAnalysis = analyzeApprovalsForRisk(approvalsData, { tokens } as PortfolioData);
       approvalFindings = appAnalysis.findings;
-      const scanStatus = appRes.cache?.status || appRes.status;
+      const scanStatus = (appRes.cache?.status || appRes.status) as ApprovalScanStatus;
       approvalScan = {
         requested: true,
         provider: approvalProviderName,
@@ -747,6 +779,8 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
         providerCalled: appRes.cache?.providerCalled ?? false,
         budgetExhausted: appRes.cache?.budgetExhausted ?? false,
         cacheAgeSeconds: appRes.cache?.cacheAgeSeconds,
+        errorCode: appRes.cache?.errorCode,
+        note: approvalUnavailableNote(scanStatus),
         totalApprovals: approvalsData.length,
         tokenCount: appRes.tokenCount,
         unlimitedCount: appRes.unlimitedCount,
@@ -760,6 +794,9 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
         tokenCount: appRes.tokenCount,
         unlimitedApprovals: appAnalysis.unlimitedApprovals,
         riskySpenderApprovals: appAnalysis.riskySpenderApprovals,
+        budgetExhausted: appRes.cache?.budgetExhausted ?? false,
+        errorCode: appRes.cache?.errorCode,
+        note: approvalUnavailableNote(scanStatus),
       };
     } catch {
       approvalsStatus = "failed";
@@ -769,6 +806,7 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
         status: 'failed',
         providerCalled: false,
         budgetExhausted: false,
+        note: 'Approval scan failed before provider status was available.',
         totalApprovals: 0,
         tokenCount: 0,
         unlimitedCount: 0,
@@ -782,6 +820,7 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
         tokenCount: 0,
         unlimitedApprovals: 0,
         riskySpenderApprovals: 0,
+        note: 'Approval scan failed before provider status was available.',
       };
     }
   }
@@ -996,12 +1035,12 @@ export function analyzeApprovalsForRisk(
 
 export async function fetchInternalApprovals(address: string, chainEnv: string = 'sepolia'): Promise<{
   approvals: TokenApproval[];
-  status: "connected" | "missing" | "failed" | "partial" | "disabled";
+  status: "connected" | "missing" | "failed" | "partial" | "disabled" | "rate_limited" | "budget_exhausted" | "temporarily_unavailable";
   provider: "moralis" | "alchemy" | "none" | "mock";
   tokenCount: number;
   unlimitedCount: number;
   riskySpenderCount: number;
-  cache?: { status: CacheStatus; cacheAgeSeconds?: number; providerCalled: boolean; budgetExhausted: boolean };
+  cache?: { status: CacheStatus; cacheAgeSeconds?: number; providerCalled: boolean; budgetExhausted: boolean; errorCode?: string; error?: string };
 }> {
   const chainId = chainEnv === 'sepolia' ? 84532 : 8453;
   const { provider, statusCode, providerName } = getApprovalProviderFromEnv();
@@ -1040,13 +1079,16 @@ export async function fetchInternalApprovals(address: string, chainEnv: string =
     cacheAgeSeconds: appRes.cacheAgeSeconds,
     providerCalled: appRes.providerCalled,
     budgetExhausted: appRes.budgetExhausted,
+    errorCode: appRes.errorCode,
+    error: appRes.error,
   };
 
   const approvals = appRes.data || [];
   if (approvals.length > 0 || appRes.status === 'live' || appRes.status === 'cached') {
     const analysis = analyzeApprovalsForRisk(approvals);
-    let status: "connected" | "missing" | "failed" | "partial" | "disabled" = statusCode;
+    let status: "connected" | "missing" | "failed" | "partial" | "disabled" | "rate_limited" | "budget_exhausted" | "temporarily_unavailable" = statusCode;
     if (appRes.status === 'stale') status = 'partial';
+    if (appRes.status === 'rate_limited' || appRes.status === 'budget_exhausted') status = appRes.status;
     return {
       approvals,
       status,
@@ -1054,6 +1096,17 @@ export async function fetchInternalApprovals(address: string, chainEnv: string =
       tokenCount: new Set(approvals.map(a => a.tokenAddress)).size || approvals.length,
       unlimitedCount: analysis.unlimitedApprovals,
       riskySpenderCount: analysis.riskySpenderApprovals,
+      cache
+    };
+  }
+  if (appRes.status === 'rate_limited' || appRes.status === 'budget_exhausted') {
+    return {
+      approvals: [],
+      status: appRes.status,
+      provider: providerName,
+      tokenCount: 0,
+      unlimitedCount: 0,
+      riskySpenderCount: 0,
       cache
     };
   }
@@ -1223,6 +1276,9 @@ export function analyzePortfolioForRisk(
   if (portfolio.providerCallSummary?.balances?.status === 'rate_limited') {
     suggestedNextSteps.push("Alchemy rate-limited. Showing cached/native balance data.");
   }
+  if (isApprovalScannerUnavailableStatus(portfolio.approvalSummary?.status)) {
+    suggestedNextSteps.push(APPROVAL_SCANNER_UNAVAILABLE_NOTE);
+  }
   if (portfolio.providers?.tokenBalances === 'stale') {
     suggestedNextSteps.push(`Analysis used cached ${providerDisplayName(portfolio.providers?.tokenBalancesProvider)} token balances.`);
   }
@@ -1233,9 +1289,28 @@ export function analyzePortfolioForRisk(
     "Use a trusted wallet interface to revoke approvals if needed; MioAgent will not auto-revoke or create transactions in read-only mode."
   );
 
-  const approvalAnalysis = portfolio.approvalSummary?.requested
-    ? analyzeApprovalsForRisk(portfolio.approvals || [], portfolio)
-    : undefined;
+  let approvalAnalysis: ApprovalRiskAnalysis | undefined;
+  if (portfolio.approvalSummary?.requested) {
+    if (isApprovalScannerUnavailableStatus(portfolio.approvalSummary.status)) {
+      approvalAnalysis = {
+        summary: APPROVAL_SCANNER_UNAVAILABLE_UI_NOTE,
+        totalApprovals: 0,
+        unlimitedApprovals: 0,
+        riskySpenderApprovals: 0,
+        findings: [],
+        recommendations: [],
+        status: portfolio.approvalSummary.status,
+        provider: portfolio.approvalSummary.provider,
+        scannerUnavailable: true,
+        note: portfolio.approvalSummary.note || APPROVAL_SCANNER_UNAVAILABLE_NOTE,
+      };
+    } else {
+      approvalAnalysis = analyzeApprovalsForRisk(portfolio.approvals || [], portfolio);
+      approvalAnalysis.status = portfolio.approvalSummary.status;
+      approvalAnalysis.provider = portfolio.approvalSummary.provider;
+      approvalAnalysis.note = portfolio.approvalSummary.note;
+    }
+  }
 
   return {
     overallRiskLevel: findings.some(f => f.risk === 'high') || securityHighRiskCount > 0 ? 'high' : findings.some(f => f.risk === 'medium') || securityWarningCount > 0 ? 'medium' : 'low',

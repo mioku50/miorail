@@ -331,7 +331,7 @@ export const PortfolioProvidersSchema = z.object({
   priceProvider: z.enum(["coingecko", "moralis", "mock", "none"]).optional(),
   risk: z.enum(["connected", "missing", "failed", "partial", "disabled"]),
   riskProvider: z.enum(["goplus", "none"]).optional(),
-  approvals: z.enum(["connected", "missing", "failed", "partial", "disabled"]).optional(),
+  approvals: z.enum(["connected", "missing", "failed", "partial", "disabled", "rate_limited", "budget_exhausted", "temporarily_unavailable"]).optional(),
   approvalProvider: z.enum(["moralis", "alchemy", "mock", "none"]).optional(),
 });
 
@@ -343,6 +343,8 @@ export const ProviderCallSummaryItemSchema = z.object({
   budgetExhausted: z.boolean(),
   cacheAgeSeconds: z.number().optional(),
   requested: z.boolean().optional(),
+  errorCode: z.string().optional(),
+  note: z.string().optional(),
 });
 
 export const ApprovalScanSummarySchema = ProviderCallSummaryItemSchema.extend({
@@ -391,7 +393,7 @@ export const TokenApprovalSchema = z.object({
 
 export const ApprovalsResponseSchema = z.object({
   approvals: z.array(TokenApprovalSchema),
-  status: z.enum(["connected", "missing", "failed", "partial", "disabled"]),
+  status: z.enum(["connected", "missing", "failed", "partial", "disabled", "rate_limited", "budget_exhausted", "temporarily_unavailable"]),
   provider: z.string(),
   tokenCount: z.number(),
   unlimitedCount: z.number(),
@@ -418,7 +420,7 @@ export const StatusResponseSchema = z.object({
     provider: z.string(),
   }),
   approvals: z.object({
-    status: z.enum(["connected", "missing", "failed", "partial", "disabled"]),
+    status: z.enum(["connected", "missing", "failed", "partial", "disabled", "rate_limited", "budget_exhausted", "temporarily_unavailable", "auth_or_budget_issue"]),
     provider: z.string(),
   }),
   cache: z.object({
@@ -429,9 +431,14 @@ export const StatusResponseSchema = z.object({
     approvalsTtlSeconds: z.number(),
   }).optional(),
   budgets: z.record(z.string(), z.object({
-    status: z.enum(["ok", "rate-limited", "disabled"]),
+    provider: z.string().optional(),
+    status: z.enum(["ok", "rate-limited", "disabled", "rate_limited", "budget_exhausted", "auth_or_budget_issue"]),
     callsLastMinute: z.number(),
     callsLastHour: z.number(),
+    budgetExhausted: z.boolean().optional(),
+    lastErrorCode: z.string().optional(),
+    lastErrorAt: z.string().optional(),
+    cooldownUntil: z.string().optional(),
   })).optional(),
   baseMcp: z.object({
     status: z.enum(["missing", "disabled", "connected", "needs_reauth", "unreachable", "degraded", "unsupported"]),

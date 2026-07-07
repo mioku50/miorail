@@ -5,6 +5,12 @@ import { app } from '../app.js';
 import { clearTokenSecurityCacheForTests } from '@mioagent/data-providers';
 import { clearBaseMcpStatusForTests } from '../lib/baseMcpStatus.js';
 import { statusRouteRuntime } from './status.js';
+import {
+  clearProviderCacheForTests,
+  InMemoryProviderCacheStore,
+  ProviderBudget,
+  setProviderCacheForTests,
+} from '../lib/providerCache.js';
 
 function restoreEnv(name: string, value: string | undefined) {
   if (value === undefined) {
@@ -24,6 +30,8 @@ const DEFAULT_BASE_MCP_AUTH = {
 describe('Status API', () => {
   beforeEach(() => {
     clearBaseMcpStatusForTests();
+    clearProviderCacheForTests();
+    setProviderCacheForTests(new InMemoryProviderCacheStore(), new ProviderBudget(20, 300));
     mock.restoreAll();
     global.fetch = ORIGINAL_FETCH;
     statusRouteRuntime.getBaseMcpAuthStatus = async () => DEFAULT_BASE_MCP_AUTH;
@@ -85,6 +93,32 @@ describe('Status API', () => {
     restoreEnv('PRICE_PROVIDER', origPrice);
     restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurity);
     restoreEnv('APPROVAL_PROVIDER', origApproval);
+  });
+
+  test('GET /api/status reports Moralis approval budget exhaustion without leaking secrets', async () => {
+    const origApproval = process.env.APPROVAL_PROVIDER;
+    const origMoralisKey = process.env.MORALIS_API_KEY;
+    process.env.APPROVAL_PROVIDER = 'moralis';
+    process.env.MORALIS_API_KEY = 'moralis-secret-value';
+    const budget = new ProviderBudget(20, 300);
+    budget.markRemoteProviderIssue('moralis', {
+      status: 'budget_exhausted',
+      errorCode: 'moralis_auth_or_budget',
+    });
+    setProviderCacheForTests(new InMemoryProviderCacheStore(), budget);
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.approvals.provider, 'moralis');
+    assert.strictEqual(response.body.approvals.status, 'budget_exhausted');
+    assert.strictEqual(response.body.budgets.moralis.provider, 'moralis');
+    assert.strictEqual(response.body.budgets.moralis.status, 'budget_exhausted');
+    assert.strictEqual(response.body.budgets.moralis.budgetExhausted, true);
+    assert.strictEqual(response.body.budgets.moralis.lastErrorCode, 'moralis_auth_or_budget');
+    assert.strictEqual(JSON.stringify(response.body).includes('moralis-secret-value'), false);
+
+    restoreEnv('APPROVAL_PROVIDER', origApproval);
+    restoreEnv('MORALIS_API_KEY', origMoralisKey);
   });
 
   test('GET /api/status reports the T19.1 split execution flags with broadcast disabled', async () => {

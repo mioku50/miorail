@@ -38,6 +38,41 @@ export function baseMcpHint(baseMcp?: any): string | null {
   return 'Base MCP is optional. Configure BASE_MCP_SERVER_URL to enable tool status.';
 }
 
+export function approvalProviderState(status?: string): StateKind {
+  if (status === 'connected') return 'live';
+  if (status === 'partial' || status === 'rate_limited' || status === 'budget_exhausted' || status === 'temporarily_unavailable' || status === 'auth_or_budget_issue') return 'stale';
+  if (status === 'failed') return 'failed';
+  if (status === 'disabled') return 'disabled';
+  return 'missing';
+}
+
+export function formatApprovalProviderStatus(approvals?: any, budgets?: any): string {
+  const status = approvals?.status;
+  const provider = approvals?.provider || 'none';
+  const moralisBudget = budgets?.moralis;
+  const effectiveStatus = provider === 'moralis' && moralisBudget?.budgetExhausted
+    ? moralisBudget.status
+    : status;
+  if (effectiveStatus === 'connected') return `${provider} connected`;
+  if (effectiveStatus === 'budget_exhausted' || effectiveStatus === 'auth_or_budget_issue') return `${provider} budget exhausted`;
+  if (effectiveStatus === 'rate_limited') return `${provider} rate limited`;
+  if (effectiveStatus === 'temporarily_unavailable' || effectiveStatus === 'partial') return `${provider} unavailable`;
+  if (effectiveStatus === 'failed') return `${provider} failed`;
+  if (effectiveStatus === 'disabled') return 'Disabled by config';
+  return 'Missing';
+}
+
+export function approvalProviderHint(approvals?: any, budgets?: any): string | null {
+  const provider = approvals?.provider;
+  const status = provider === 'moralis' && budgets?.moralis?.budgetExhausted
+    ? budgets.moralis.status
+    : approvals?.status;
+  if (status === 'budget_exhausted' || status === 'auth_or_budget_issue' || status === 'rate_limited' || status === 'temporarily_unavailable') {
+    return 'Approval scanner unavailable — Moralis CU limit reached. Try after reset or upgrade provider.';
+  }
+  return null;
+}
+
 export function tokenSecurityIndicator(token: any, riskProviderStatus?: string) {
   const status = token.security?.status || (riskProviderStatus === 'missing' ? 'missing' : 'unknown');
   if (status === 'ok') return { className: 'bg-ok/70', title: 'GoPlus: no major warnings detected' };

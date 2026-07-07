@@ -107,7 +107,7 @@ describe('Portfolio Resilience and Stale Cache Tests', () => {
       }
     ];
 
-    setTokenBalancesCacheForTests(8453, testAddress, cachedTokens);
+    await setTokenBalancesCacheForTests(8453, testAddress, cachedTokens);
 
     const oldProvider = process.env.TOKEN_BALANCES_PROVIDER;
     const oldPrice = process.env.PRICE_PROVIDER;

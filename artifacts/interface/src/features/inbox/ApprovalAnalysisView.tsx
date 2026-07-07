@@ -16,6 +16,9 @@ export function ApprovalAnalysisView({ approvalAnalysis }: { approvalAnalysis: a
   const chainEnv = import.meta.env.VITE_CHAIN_ENV || (isMainnetReadonly ? 'mainnet-readonly' : 'sepolia');
 
   const total = Number(approvalAnalysis.totalApprovals ?? 0);
+  const scannerUnavailable =
+    approvalAnalysis.scannerUnavailable === true ||
+    ['budget_exhausted', 'rate_limited', 'temporarily_unavailable', 'auth_or_budget_issue'].includes(String(approvalAnalysis.status || ''));
 
   // T19.2: "Check spend permissions" — re-runs the approval scan so the user
   // can refresh this list. Works in read-only mode (no broadcast).
@@ -69,7 +72,23 @@ export function ApprovalAnalysisView({ approvalAnalysis }: { approvalAnalysis: a
         </div>
       </div>
 
-      {total === 0 ? (
+      {scannerUnavailable ? (
+        <div className="flex flex-col gap-2 bg-warn-soft border border-warn/20 rounded p-2.5 text-[11px]">
+          <div className="text-warn font-semibold">
+            Approval scanner unavailable — Moralis CU limit reached. Try after reset or upgrade provider.
+          </div>
+          {approvalAnalysis.note && (
+            <div className="text-warn/90 leading-snug">{approvalAnalysis.note}</div>
+          )}
+          <button
+            onClick={checkSpendPermissions}
+            disabled={createAction.isPending}
+            className="self-start text-[11px] font-semibold text-warn bg-bg border border-warn/30 px-2.5 py-1 rounded-full hover:bg-warn/10 transition-colors disabled:opacity-50"
+          >
+            {createAction.isPending ? 'Scanning...' : 'Check spend permissions'}
+          </button>
+        </div>
+      ) : total === 0 ? (
         // T19.3: honest empty state — no read-only recommendation is fabricated
         // for missing approvals; just tell the user there's nothing to revoke.
         <div className="flex flex-col gap-2 bg-bg/80 border border-line rounded p-2.5 text-[11px]">

@@ -9,12 +9,12 @@
 // chat, or recommendation generation.
 
 import { db, providerCache } from '@mioagent/db';
-import { isProviderRateLimitError } from '@mioagent/data-providers';
+import { getProviderBudgetErrorDetails } from '@mioagent/data-providers';
 import { eq } from 'drizzle-orm';
 
-export type CacheStatus = "live" | "cached" | "stale" | "failed" | "rate_limited";
+export type CacheStatus = "live" | "cached" | "stale" | "failed" | "rate_limited" | "budget_exhausted";
 export type ProviderName = "moralis" | "goplus" | "alchemy" | "coingecko" | "none" | "mock";
-export type BudgetStatus = "ok" | "rate-limited" | "disabled";
+export type BudgetStatus = "ok" | "rate-limited" | "disabled" | "rate_limited" | "budget_exhausted" | "auth_or_budget_issue";
 
 export interface CacheEntry<T = unknown> {
   key: string;
@@ -42,12 +42,18 @@ export interface CachedCallResult<T> {
   providerCalled: boolean;
   budgetExhausted: boolean;
   error?: string;
+  errorCode?: string;
 }
 
 export interface ProviderBudgetSnapshot {
+  provider?: ProviderName;
   status: BudgetStatus;
   callsLastMinute: number;
   callsLastHour: number;
+  budgetExhausted?: boolean;
+  lastErrorCode?: string;
+  lastErrorAt?: string;
+  cooldownUntil?: string;
 }
 
 const MINUTE_MS = 60 * 1000;
@@ -169,7 +175,12 @@ export class DbProviderCacheStore implements ProviderCacheStore {
 export class ProviderBudget {
   private minuteHits = new Map<ProviderName, number[]>();
   private hourHits = new Map<ProviderName, number[]>();
-  private remoteRateLimitUntil = new Map<ProviderName, number>();
+  private remoteIssues = new Map<ProviderName, {
+    status: Exclude<BudgetStatus, "ok" | "disabled" | "rate-limited">;
+    errorCode: string;
+    until: number;
+    at: number;
+  }>();
 
   constructor(
     private readonly maxPerMinute: number,
@@ -187,8 +198,8 @@ export class ProviderBudget {
     if (m) this.minuteHits.set(provider, m.filter((t) => now - t < MINUTE_MS));
     const h = this.hourHits.get(provider);
     if (h) this.hourHits.set(provider, h.filter((t) => now - t < HOUR_MS));
-    const until = this.remoteRateLimitUntil.get(provider);
-    if (until !== undefined && until <= now) this.remoteRateLimitUntil.delete(provider);
+    const issue = this.remoteIssues.get(provider);
+    if (issue !== undefined && issue.until <= now) this.remoteIssues.delete(provider);
   }
 
   canCall(provider: ProviderName): boolean {
@@ -196,7 +207,7 @@ export class ProviderBudget {
     if (maxPerMinute <= 0 || maxPerHour <= 0) return false;
     const now = this.now();
     this.prune(provider, now);
-    if (this.isInRemoteRateLimitCooldown(provider)) return false;
+    if (this.getRemoteProviderIssue(provider)) return false;
     const m = this.minuteHits.get(provider)?.length ?? 0;
     const h = this.hourHits.get(provider)?.length ?? 0;
     return m < maxPerMinute && h < maxPerHour;
@@ -220,25 +231,59 @@ export class ProviderBudget {
     this.prune(provider, now);
     const callsLastMinute = this.minuteHits.get(provider)?.length ?? 0;
     const callsLastHour = this.hourHits.get(provider)?.length ?? 0;
+    const remoteIssue = this.getRemoteProviderIssue(provider);
+    if (remoteIssue) {
+      return {
+        provider,
+        status: remoteIssue.status,
+        callsLastMinute,
+        callsLastHour,
+        budgetExhausted: true,
+        lastErrorCode: remoteIssue.errorCode,
+        lastErrorAt: new Date(remoteIssue.at).toISOString(),
+        cooldownUntil: new Date(remoteIssue.until).toISOString(),
+      };
+    }
     const status: BudgetStatus = this.canCall(provider) ? "ok" : "rate-limited";
-    return { status, callsLastMinute, callsLastHour };
+    return { provider, status, callsLastMinute, callsLastHour, budgetExhausted: status !== "ok" };
   }
 
   markRemoteRateLimited(provider: ProviderName, cooldownMs = 60_000): void {
-    this.remoteRateLimitUntil.set(provider, this.now() + cooldownMs);
+    this.markRemoteProviderIssue(provider, { status: "rate_limited", errorCode: "rate_limited", cooldownMs });
   }
 
   isInRemoteRateLimitCooldown(provider: ProviderName): boolean {
+    return this.getRemoteProviderIssue(provider)?.status === "rate_limited";
+  }
+
+  markRemoteProviderIssue(
+    provider: ProviderName,
+    params: { status: "rate_limited" | "budget_exhausted" | "auth_or_budget_issue"; errorCode: string; cooldownMs?: number },
+  ): void {
+    const now = this.now();
+    this.remoteIssues.set(provider, {
+      status: params.status,
+      errorCode: params.errorCode,
+      until: now + (params.cooldownMs ?? 60_000),
+      at: now,
+    });
+  }
+
+  getRemoteProviderIssue(provider: ProviderName): {
+    status: "rate_limited" | "budget_exhausted" | "auth_or_budget_issue";
+    errorCode: string;
+    until: number;
+    at: number;
+  } | null {
     const now = this.now();
     this.prune(provider, now);
-    const until = this.remoteRateLimitUntil.get(provider);
-    return until !== undefined && until > now;
+    return this.remoteIssues.get(provider) ?? null;
   }
 
   reset(): void {
     this.minuteHits.clear();
     this.hourHits.clear();
-    this.remoteRateLimitUntil.clear();
+    this.remoteIssues.clear();
   }
 }
 
@@ -295,24 +340,31 @@ export async function cachedProviderCall<T>(params: {
 
     // Budget guard: do not call the external provider when exhausted.
     if (!budget.canCall(provider)) {
-      const rateLimitCooldown = budget.isInRemoteRateLimitCooldown(provider);
+      const remoteIssue = budget.getRemoteProviderIssue(provider);
+      const blockedStatus: CacheStatus = remoteIssue?.status === "budget_exhausted" || remoteIssue?.status === "auth_or_budget_issue"
+        ? "budget_exhausted"
+        : remoteIssue?.status === "rate_limited"
+          ? "rate_limited"
+          : "failed";
       if (staleEntry) {
         return {
           data: staleEntry.payload,
-          status: rateLimitCooldown ? "rate_limited" : "stale",
+          status: remoteIssue ? blockedStatus : "stale",
           cacheAgeSeconds: Math.max(0, Math.round((now - staleEntry.updatedAt) / 1000)),
           fromCache: true,
           providerCalled: false,
           budgetExhausted: true,
+          errorCode: remoteIssue?.errorCode,
         };
       }
       return {
         data: undefined,
-        status: rateLimitCooldown ? "rate_limited" : "failed",
+        status: blockedStatus,
         fromCache: false,
         providerCalled: false,
         budgetExhausted: true,
-        error: rateLimitCooldown ? "Provider remote rate limit cooldown active" : "Provider budget exhausted",
+        error: remoteIssue ? "Provider remote budget/rate-limit cooldown active" : "Provider budget exhausted",
+        errorCode: remoteIssue?.errorCode,
       };
     }
 
@@ -344,10 +396,18 @@ export async function cachedProviderCall<T>(params: {
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const rateLimited = isProviderRateLimitError(err);
-      if (rateLimited) {
-        budget.markRemoteRateLimited(provider);
+      const budgetError = getProviderBudgetErrorDetails(err);
+      if (budgetError) {
+        budget.markRemoteProviderIssue(provider, {
+          status: budgetError.status,
+          errorCode: budgetError.errorCode,
+        });
       }
+      const errorStatus: CacheStatus = budgetError?.status === "budget_exhausted"
+        ? "budget_exhausted"
+        : budgetError?.status === "rate_limited"
+          ? "rate_limited"
+          : "failed";
       if (staleEntry) {
         // Keep the stale entry but record the recent failure on it (do not extend expiry).
         try {
@@ -357,21 +417,23 @@ export async function cachedProviderCall<T>(params: {
         }
         return {
           data: staleEntry.payload,
-          status: rateLimited ? "rate_limited" : "stale",
+          status: budgetError ? errorStatus : "stale",
           cacheAgeSeconds: Math.max(0, Math.round((now - staleEntry.updatedAt) / 1000)),
           fromCache: true,
           providerCalled: true,
-          budgetExhausted: rateLimited,
+          budgetExhausted: Boolean(budgetError),
           error: message,
+          errorCode: budgetError?.errorCode,
         };
       }
       return {
         data: undefined,
-        status: rateLimited ? "rate_limited" : "failed",
+        status: errorStatus,
         fromCache: false,
         providerCalled: true,
-        budgetExhausted: rateLimited,
+        budgetExhausted: Boolean(budgetError),
         error: message,
+        errorCode: budgetError?.errorCode,
       };
     }
   })();

@@ -4,7 +4,7 @@ import { Link } from 'wouter';
 import { useStatus, useAutonomy, useResetAutonomy, usePortfolio, useCreateRecommendation } from '@mioagent/api-client-react';
 import { useUiStore } from '../../lib/state';
 import { isMainnetReadonly } from '../../lib/chain';
-import { baseMcpHint, formatBaseMcpStatus, portfolioFreshnessLabel } from '../../lib/format';
+import { approvalProviderHint, approvalProviderState, formatApprovalProviderStatus, baseMcpHint, formatBaseMcpStatus, portfolioFreshnessLabel } from '../../lib/format';
 import { X } from 'lucide-react';
 
 function Dot({ status }: { status?: string }) {
@@ -159,8 +159,8 @@ export function OpsRail({ onClose }: OpsRailProps) {
             <div className="flex items-center justify-between">
               <span className="text-xs text-ink-2 font-sans">Spend Permissions</span>
               <div className="flex items-center gap-1.5">
-                <Dot status={sd?.approvals?.status} />
-                <span className="text-xs text-ink font-sans font-medium">{sd?.approvals?.provider || 'none'}</span>
+                <Dot status={approvalProviderState(sd?.approvals?.status)} />
+                <span className="text-xs text-ink font-sans font-medium">{sd ? formatApprovalProviderStatus(sd.approvals, sd.budgets) : 'none'}</span>
               </div>
             </div>
             <div className="flex items-center justify-between">
@@ -174,6 +174,11 @@ export function OpsRail({ onClose }: OpsRailProps) {
               {baseMcpHint(sd?.baseMcp) && (
                 <div className="text-[10px] font-sans text-ink-3 bg-panel-2 px-2 py-1.5 rounded border border-line leading-normal">
                   {baseMcpHint(sd?.baseMcp)}
+                </div>
+              )}
+              {approvalProviderHint(sd?.approvals, sd?.budgets) && (
+                <div className="text-[10px] font-sans text-warn bg-warn-soft px-2 py-1.5 rounded border border-warn/20 leading-normal">
+                  {approvalProviderHint(sd?.approvals, sd?.budgets)}
                 </div>
               )}
               {isProviderMissingOrDisabled && (

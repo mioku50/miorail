@@ -1,6 +1,6 @@
 import test, { describe, mock, beforeEach } from 'node:test';
 import assert from 'node:assert';
-import { ProviderRateLimitError } from '@mioagent/data-providers';
+import { ProviderBudgetExhaustedError, ProviderRateLimitError } from '@mioagent/data-providers';
 import {
   InMemoryProviderCacheStore,
   ProviderBudget,
@@ -204,6 +204,55 @@ describe('Provider Cache Orchestration', () => {
     assert.strictEqual(cooldown.budgetExhausted, true);
     assert.deepStrictEqual(cooldown.data, { tokens: ['USDC'] });
     assert.strictEqual(cooldownFetcher.mock.calls.length, 0);
+  });
+
+  test('remote Moralis budget exhaustion starts cooldown and prevents retry storm', async () => {
+    const store = new InMemoryProviderCacheStore();
+    const budget = new ProviderBudget(20, 300);
+
+    const limitedFetcher = mock.fn(async () => {
+      throw new ProviderBudgetExhaustedError(
+        'Moralis approval scanner unavailable: Unauthorized',
+        'moralis',
+        401,
+        'moralis_auth_or_budget',
+        'moralis_auth_or_budget',
+      );
+    });
+    const limited = await cachedProviderCall({
+      key: 'provider:moralis:approvals:8453:0xrate',
+      provider: 'moralis',
+      chainId: 8453,
+      ttlSeconds: 1800,
+      store,
+      budget,
+      fetcher: limitedFetcher,
+    });
+    assert.strictEqual(limited.status, 'budget_exhausted');
+    assert.strictEqual(limited.providerCalled, true);
+    assert.strictEqual(limited.budgetExhausted, true);
+    assert.strictEqual(limited.errorCode, 'moralis_auth_or_budget');
+
+    const retryFetcher = mock.fn(async () => ({ approvals: ['SHOULD_NOT_CALL'] }));
+    const retry = await cachedProviderCall({
+      key: 'provider:moralis:approvals:8453:0xrate',
+      provider: 'moralis',
+      chainId: 8453,
+      ttlSeconds: 1800,
+      store,
+      budget,
+      fetcher: retryFetcher,
+    });
+    assert.strictEqual(retry.status, 'budget_exhausted');
+    assert.strictEqual(retry.providerCalled, false);
+    assert.strictEqual(retry.budgetExhausted, true);
+    assert.strictEqual(retry.errorCode, 'moralis_auth_or_budget');
+    assert.strictEqual(retryFetcher.mock.calls.length, 0);
+
+    const snap = budget.snapshot('moralis');
+    assert.strictEqual(snap.status, 'budget_exhausted');
+    assert.strictEqual(snap.budgetExhausted, true);
+    assert.strictEqual(snap.lastErrorCode, 'moralis_auth_or_budget');
   });
 
   test('budget snapshot reports correct counts', async () => {

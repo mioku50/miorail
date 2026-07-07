@@ -9,7 +9,7 @@ import {
   useResetAutonomy,
 } from '@mioagent/api-client-react';
 import { CHAIN_ENV, isMainnetReadonly } from '../../lib/chain';
-import { baseMcpHint, baseMcpState, formatBaseMcpStatus, formatRiskProvider } from '../../lib/format';
+import { approvalProviderHint, approvalProviderState, baseMcpHint, baseMcpState, formatApprovalProviderStatus, formatBaseMcpStatus, formatRiskProvider } from '../../lib/format';
 import { StateBadge, type StateKind } from '@mioagent/ui';
 import { useUiStore } from '../../lib/state';
 
@@ -277,12 +277,13 @@ export function ConfigureView() {
           {sd ? <StateBadge state={sd.risk.status === 'connected' ? 'live' : sd.risk.status === 'partial' ? 'stale' : sd.risk.status === 'failed' ? 'failed' : sd.risk.status === 'disabled' ? 'disabled' : 'missing'} label={formatRiskProvider(sd)} /> : <Checking />}
         </Row>
         <Row label="Approval Scanner">
-          {sd ? <StateBadge state={sd.approvals?.status === 'connected' ? 'live' : sd.approvals?.status === 'failed' ? 'failed' : sd.approvals?.status === 'disabled' ? 'disabled' : 'missing'} label={
-            sd.approvals?.status === 'connected' ? `${sd.approvals?.provider || 'moralis'} connected` :
-            sd.approvals?.status === 'failed' ? 'Failed' :
-            sd.approvals?.status === 'disabled' ? 'Disabled by config' : 'Missing'
-          } /> : <Checking />}
+          {sd ? <StateBadge state={approvalProviderState(sd.approvals?.status)} label={formatApprovalProviderStatus(sd.approvals, sd.budgets)} /> : <Checking />}
         </Row>
+        {approvalProviderHint(sd?.approvals, sd?.budgets) && (
+          <div className="text-[11px] text-warn bg-warn-soft border border-warn/20 rounded-md px-3 py-2">
+            {approvalProviderHint(sd?.approvals, sd?.budgets)}
+          </div>
+        )}
         <Row label="Base MCP">
           {sd ? <StateBadge state={baseMcpState(sd.baseMcp.status)} label={formatBaseMcpStatus(sd.baseMcp)} /> : <Checking />}
         </Row>

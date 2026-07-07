@@ -440,6 +440,66 @@ describe('Portfolio API', () => {
     mock.restoreAll();
   });
 
+  test('GET /api/portfolio includeApprovals classifies Moralis CU exhaustion and cooldown prevents retry storm', async () => {
+    const origBalances = process.env.TOKEN_BALANCES_PROVIDER;
+    const origPrice = process.env.PRICE_PROVIDER;
+    const origSecurity = process.env.TOKEN_SECURITY_PROVIDER;
+    const origApproval = process.env.APPROVAL_PROVIDER;
+    const origMoralisKey = process.env.MORALIS_API_KEY;
+    process.env.TOKEN_BALANCES_PROVIDER = 'none';
+    process.env.PRICE_PROVIDER = 'none';
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    process.env.APPROVAL_PROVIDER = 'moralis';
+    process.env.MORALIS_API_KEY = 'moralis-valid-but-over-cu';
+
+    const wallet = '0xbeef56789012345678901234567890123456beef';
+    const mockFetch = mock.fn(async (url: string | URL | Request) => {
+      const urlString = String(url);
+      if (urlString.includes('moralis.io') && urlString.includes('/approvals')) {
+        return {
+          ok: false,
+          status: 401,
+          statusText: 'Unauthorized',
+          json: async () => ({ message: 'Unauthorized' }),
+        } as Response;
+      }
+      return { ok: true, json: async () => ({ result: '0xde0b6b3a7640000' }) } as Response;
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const first = await request(app).get(`/api/portfolio?walletAddress=${wallet}&chainEnv=mainnet-readonly&refresh=1&includeApprovals=1`);
+    assert.strictEqual(first.status, 200);
+    assert.strictEqual(first.body.providerCallSummary.approvals.provider, 'moralis');
+    assert.strictEqual(first.body.providerCallSummary.approvals.status, 'budget_exhausted');
+    assert.strictEqual(first.body.providerCallSummary.approvals.providerCalled, true);
+    assert.strictEqual(first.body.providerCallSummary.approvals.budgetExhausted, true);
+    assert.strictEqual(first.body.providerCallSummary.approvals.errorCode, 'moralis_auth_or_budget');
+    assert.strictEqual(first.body.approvalSummary.status, 'budget_exhausted');
+    assert.strictEqual(first.body.approvalSummary.provider, 'moralis');
+    assert.strictEqual(first.body.approvalSummary.totalApprovals, 0);
+    assert.strictEqual(first.body.approvalSummary.note, 'Moralis approval scanner is temporarily unavailable due to provider budget/rate limits.');
+    assert.strictEqual(first.body.analysis.approvalAnalysis.scannerUnavailable, true);
+    assert.strictEqual(first.body.analysis.approvalAnalysis.summary, 'Approval scanner unavailable — Moralis CU limit reached. Try after reset or upgrade provider.');
+
+    const second = await request(app).get(`/api/portfolio?walletAddress=${wallet}&chainEnv=mainnet-readonly&refresh=1&includeApprovals=1`);
+    assert.strictEqual(second.status, 200);
+    assert.strictEqual(second.body.providerCallSummary.approvals.status, 'budget_exhausted');
+    assert.strictEqual(second.body.providerCallSummary.approvals.providerCalled, false);
+    assert.strictEqual(second.body.providerCallSummary.approvals.budgetExhausted, true);
+    assert.strictEqual(second.body.approvalSummary.status, 'budget_exhausted');
+
+    const moralisApprovalCalls = mockFetch.mock.calls.filter((c: any) => String(c.arguments[0]).includes('moralis.io') && String(c.arguments[0]).includes('/approvals')).length;
+    assert.strictEqual(moralisApprovalCalls, 1);
+    assert.strictEqual(JSON.stringify(first.body).includes('moralis-valid-but-over-cu'), false);
+
+    restoreEnv('TOKEN_BALANCES_PROVIDER', origBalances);
+    restoreEnv('PRICE_PROVIDER', origPrice);
+    restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurity);
+    restoreEnv('APPROVAL_PROVIDER', origApproval);
+    restoreEnv('MORALIS_API_KEY', origMoralisKey);
+    mock.restoreAll();
+  });
+
   test('GET /api/portfolio reports Alchemy rate limit without automatic Moralis fallback', async () => {
     const origBalances = process.env.TOKEN_BALANCES_PROVIDER;
     const origFallback = process.env.TOKEN_BALANCES_FALLBACK_PROVIDER;

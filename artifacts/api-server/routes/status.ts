@@ -39,7 +39,7 @@ export function getSystemStatus(envOverride?: string) {
 
 
   const { providerName: riskProvider, statusCode: riskStatus } = getTokenSecurityProviderFromEnv();
-  const { providerName: approvalProvider, statusCode: approvalStatus } = getApprovalProviderFromEnv();
+  const { providerName: approvalProvider, statusCode: approvalStatusCode } = getApprovalProviderFromEnv();
 
   const x402Status: "simulated" | "configured" | "missing" = process.env.X402_FACILITATOR_URL ? "configured" : "simulated";
 
@@ -52,6 +52,15 @@ export function getSystemStatus(envOverride?: string) {
 
   const cache = getProviderCacheDiagnostics();
   const budgets = getProviderBudgetSnapshot();
+  const moralisBudgetStatus = budgets.moralis?.status;
+  const approvalStatus =
+    approvalProvider === 'moralis' && (
+      moralisBudgetStatus === 'budget_exhausted' ||
+      moralisBudgetStatus === 'rate_limited' ||
+      moralisBudgetStatus === 'auth_or_budget_issue'
+    )
+      ? moralisBudgetStatus
+      : approvalStatusCode;
 
   return {
     chainEnv,

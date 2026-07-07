@@ -8,7 +8,14 @@ import { eq, desc } from 'drizzle-orm';
 import crypto from 'node:crypto';
 import { detectActionIntent } from '../lib/intent.js';
 import { getSystemStatus } from './status.js';
-import { fetchInternalPortfolio, analyzePortfolioForRisk, buildRecommendationMetadataFromAnalysis, fetchInternalApprovals } from '../lib/portfolioAnalysis.js';
+import {
+  APPROVAL_SCANNER_UNAVAILABLE_UI_NOTE,
+  analyzePortfolioForRisk,
+  buildRecommendationMetadataFromAnalysis,
+  fetchInternalApprovals,
+  fetchInternalPortfolio,
+  isApprovalScannerUnavailableStatus,
+} from '../lib/portfolioAnalysis.js';
 import { buildActionPlan, parseRevokeApproval, findActiveApproval } from '../lib/actionPlan.js';
 import { screenAction, simulateTrade } from '@mioagent/security';
 import { ObservabilityService } from '@mioagent/observability';
@@ -257,10 +264,23 @@ chatRouter.post('/', async (req, res, next) => {
       const isMainnetLike = isReadonly || chainEnvVal === 'mainnet';
       const revokeIntent = isMainnetLike ? parseRevokeApproval(message) : null;
       let approvalsForPlan: any[] | undefined;
+      let approvalScannerUnavailable = false;
       if (revokeIntent && walletAddress) {
         try {
           const appRes = await fetchInternalApprovals(walletAddress, chainEnvVal);
-          approvalsForPlan = appRes.approvals;
+          if (isApprovalScannerUnavailableStatus(appRes.status)) {
+            approvalScannerUnavailable = true;
+            metadata.title = "Approval Scanner Unavailable";
+            metadata.reason = APPROVAL_SCANNER_UNAVAILABLE_UI_NOTE;
+            metadata.message = APPROVAL_SCANNER_UNAVAILABLE_UI_NOTE;
+            metadata.userConfirmable = false;
+            metadata.executable = false;
+            metadata.safetyState = "safe";
+            metadata.executionStatus = "read-only";
+            assistantContent = APPROVAL_SCANNER_UNAVAILABLE_UI_NOTE;
+          } else {
+            approvalsForPlan = appRes.approvals;
+          }
         } catch {}
       }
 
@@ -324,7 +344,18 @@ chatRouter.post('/', async (req, res, next) => {
       metadata.simulationResult = simRes;
 
       const activeRevoke = revokeIntent ? findActiveApproval(approvalsForPlan, revokeIntent.spender, revokeIntent.tokenSymbol) : null;
-      if (revokeIntent && !activeRevoke) {
+      if (revokeIntent && approvalScannerUnavailable) {
+        metadata.title = "Approval Scanner Unavailable";
+        metadata.reason = APPROVAL_SCANNER_UNAVAILABLE_UI_NOTE;
+        metadata.message = APPROVAL_SCANNER_UNAVAILABLE_UI_NOTE;
+        metadata.userConfirmable = false;
+        metadata.executable = false;
+        metadata.safetyState = "safe";
+        metadata.executionStatus = "read-only";
+        delete metadata.actionType;
+        delete metadata.preferredFirstAction;
+        assistantContent = APPROVAL_SCANNER_UNAVAILABLE_UI_NOTE;
+      } else if (revokeIntent && !activeRevoke) {
         metadata.title = "Revoke Approval";
         metadata.reason = "No active approval found for this spender — nothing to revoke.";
         metadata.message = "No active approval found for this spender — nothing to revoke.";

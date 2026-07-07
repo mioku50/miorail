@@ -1,6 +1,6 @@
 import { useStatus } from '@mioagent/api-client-react';
 import { StateBadge } from '@mioagent/ui';
-import { baseMcpHint, baseMcpState, formatBaseMcpStatus } from '../../lib/format';
+import { approvalProviderHint, approvalProviderState, baseMcpHint, baseMcpState, formatApprovalProviderStatus, formatBaseMcpStatus } from '../../lib/format';
 import { PlugZap } from 'lucide-react';
 
 export function BaseMcpView() {
@@ -96,17 +96,18 @@ export function BaseMcpView() {
           <span className="font-medium text-sm">Approval Provider</span>
           {sd ? (
             <StateBadge
-              state={ap?.status === 'connected' ? 'live' : ap?.status === 'failed' ? 'failed' : ap?.status === 'disabled' ? 'disabled' : 'missing'}
-              label={
-                ap?.status === 'connected' ? `${ap?.provider || 'moralis'} connected` :
-                ap?.status === 'failed' ? 'Failed' :
-                ap?.status === 'disabled' ? 'Disabled by config' : 'Missing'
-              }
+              state={approvalProviderState(ap?.status)}
+              label={formatApprovalProviderStatus(ap, sd.budgets)}
             />
           ) : (
             <span className="text-xs text-ink-3 font-mono">Checking...</span>
           )}
         </div>
+        {approvalProviderHint(ap, sd?.budgets) && (
+          <div className="p-3 bg-warn-soft rounded border border-warn/20 text-xs text-warn font-medium">
+            {approvalProviderHint(ap, sd?.budgets)}
+          </div>
+        )}
         <div className="flex items-center justify-between">
           <span className="font-medium text-sm">Supported Chains</span>
           <span className="text-xs text-ink-3 font-mono">8453, 84532</span>

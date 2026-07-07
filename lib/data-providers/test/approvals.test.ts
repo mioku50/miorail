@@ -71,6 +71,53 @@ suite('Approval Providers', () => {
     assert.strictEqual(mockFetch.mock.calls[0].arguments[0], 'https://deep-index.moralis.io/api/v2.2/wallets/0xabc/approvals?chain=base');
   });
 
+  test('MoralisApprovalProvider classifies 401 with API key as budget/auth exhaustion', async () => {
+    const mockFetch = mock.fn(async () => ({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      json: async () => ({ message: 'Unauthorized' }),
+    } as Response));
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const provider = new MoralisApprovalProvider('valid-key-with-over-quota-account');
+    await assert.rejects(
+      () => provider.getTokenApprovals({ walletAddress: '0xabc', chainId: 8453 }),
+      (err: any) => {
+        assert.strictEqual(err.name, 'ProviderBudgetExhaustedError');
+        assert.strictEqual(err.status, 'budget_exhausted');
+        assert.strictEqual(err.budgetExhausted, true);
+        assert.strictEqual(err.provider, 'moralis');
+        assert.strictEqual(err.errorCode, 'moralis_auth_or_budget');
+        assert.strictEqual(String(err.message).includes('valid-key-with-over-quota-account'), false);
+        return true;
+      },
+    );
+  });
+
+  test('MoralisApprovalProvider classifies 429 as rate_limited', async () => {
+    const mockFetch = mock.fn(async () => ({
+      ok: false,
+      status: 429,
+      statusText: 'Too Many Requests',
+      json: async () => ({ message: 'rate limit exceeded' }),
+    } as Response));
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const provider = new MoralisApprovalProvider('test-api-key');
+    await assert.rejects(
+      () => provider.getTokenApprovals({ walletAddress: '0xabc', chainId: 8453 }),
+      (err: any) => {
+        assert.strictEqual(err.name, 'ProviderRateLimitError');
+        assert.strictEqual(err.status, 'rate_limited');
+        assert.strictEqual(err.budgetExhausted, true);
+        assert.strictEqual(err.provider, 'moralis');
+        assert.strictEqual(err.errorCode, 'moralis_rate_limited');
+        return true;
+      },
+    );
+  });
+
   test('getApprovalProviderFromEnv returns none by default', () => {
     delete process.env.APPROVAL_PROVIDER;
     delete process.env.MORALIS_API_KEY;

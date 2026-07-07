@@ -15,6 +15,7 @@ import {
   ApprovalProvider,
   TokenApproval,
   ProviderRateLimitError,
+  ProviderBudgetExhaustedError,
   isProviderRateLimitError
 } from './interfaces.js';
 import { MockPriceProvider, MockApprovalProvider, MockTokenBalancesProvider } from './mocks.js';
@@ -477,6 +478,53 @@ function logMoralisDiagnostics(params: {
   console.log(`[Moralis Diagnostics] endpoint=${params.endpointType} chainId=${params.chainId}${shortAddr ? ` wallet=${shortAddr}` : ''}${params.statusCode !== undefined ? ` status=${params.statusCode}` : ''}${params.tokenCount !== undefined ? ` count=${params.tokenCount}` : ''} durationMs=${params.durationMs}${safeError ? ` error="${safeError}"` : ''}`);
 }
 
+async function readMoralisErrorBody(res: Response): Promise<unknown> {
+  try {
+    return await res.json();
+  } catch {
+    try {
+      return await res.text();
+    } catch {
+      return undefined;
+    }
+  }
+}
+
+function moralisErrorText(body: unknown, fallback: string): string {
+  if (!body) return fallback;
+  if (typeof body === 'string') return body || fallback;
+  if (typeof body !== 'object') return fallback;
+  const obj = body as Record<string, unknown>;
+  const candidates = [
+    obj.message,
+    obj.error,
+    obj.details,
+    obj.detail,
+    typeof obj.error === 'object' && obj.error ? (obj.error as Record<string, unknown>).message : undefined,
+  ];
+  const found = candidates.find((value) => typeof value === 'string' && value.trim() !== '');
+  return found ? String(found) : fallback;
+}
+
+function isMoralisBudgetText(text: string): boolean {
+  return /quota|compute[ -]?unit|cu\b|monthly limit|plan limit|usage limit|budget|credits? exhausted|insufficient credits|payment required|rate[- ]?limit|too many requests/i.test(text);
+}
+
+function throwClassifiedMoralisApprovalError(statusCode: number, statusText: string, body: unknown, hasApiKey: boolean): never {
+  const rawMessage = moralisErrorText(body, statusText || String(statusCode));
+  const message = `Moralis approval scanner unavailable: ${rawMessage}`;
+  if (statusCode === 429) {
+    throw new ProviderRateLimitError(message, 'moralis', statusCode, 'moralis_rate_limited', 'moralis_rate_limited');
+  }
+  if (hasApiKey && (statusCode === 401 || statusCode === 402 || statusCode === 403)) {
+    const errorCode = statusCode === 402 || isMoralisBudgetText(rawMessage)
+      ? 'moralis_budget_exhausted'
+      : 'moralis_auth_or_budget';
+    throw new ProviderBudgetExhaustedError(message, 'moralis', statusCode, errorCode, errorCode);
+  }
+  throw new Error(`Moralis API error: ${statusText || statusCode}`);
+}
+
 export class MoralisTokenBalancesProvider implements TokenBalancesProvider {
   constructor(private readonly apiKey?: string) {}
 
@@ -741,7 +789,8 @@ export class MoralisApprovalProvider implements ApprovalProvider {
       });
       lastStatus = res.status;
       if (!res.ok) {
-        throw new Error(`Moralis API error: ${res.statusText || res.status}`);
+        const errorBody = await readMoralisErrorBody(res);
+        throwClassifiedMoralisApprovalError(res.status, res.statusText || String(res.status), errorBody, Boolean(this.apiKey));
       }
       const data = await res.json() as any;
       const list = Array.isArray(data) ? data : (Array.isArray(data?.result) ? data.result : []);

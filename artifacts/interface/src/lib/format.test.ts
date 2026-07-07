@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { baseMcpHint, baseMcpState, formatBaseMcpStatus } from './format';
+import {
+  approvalProviderHint,
+  approvalProviderState,
+  baseMcpHint,
+  baseMcpState,
+  formatApprovalProviderStatus,
+  formatBaseMcpStatus,
+} from './format';
 
 test('Base MCP UI helpers render optional missing state clearly', () => {
   const status = {
@@ -30,5 +37,17 @@ test('Base MCP UI helpers classify needs_reauth as reconnectable stale state', (
   assert.strictEqual(
     baseMcpHint({ status: 'needs_reauth' }),
     'Base MCP is configured. Connect Base MCP to authorize user-scoped tools.'
+  );
+});
+
+test('Approval provider UI helpers render Moralis budget exhaustion truthfully', () => {
+  const approvals = { status: 'budget_exhausted', provider: 'moralis' };
+  const budgets = { moralis: { status: 'budget_exhausted', budgetExhausted: true, lastErrorCode: 'moralis_auth_or_budget' } };
+
+  assert.strictEqual(approvalProviderState(approvals.status), 'stale');
+  assert.strictEqual(formatApprovalProviderStatus(approvals, budgets), 'moralis budget exhausted');
+  assert.strictEqual(
+    approvalProviderHint(approvals, budgets),
+    'Approval scanner unavailable — Moralis CU limit reached. Try after reset or upgrade provider.'
   );
 });

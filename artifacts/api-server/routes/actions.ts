@@ -15,7 +15,15 @@ import {
 } from '@mioagent/api-zod';
 import { ObservabilityService } from '@mioagent/observability';
 import { detectActionIntent } from '../lib/intent.js';
-import { fetchInternalPortfolio, analyzePortfolioForRisk, buildRecommendationMetadataFromAnalysis, fetchInternalApprovals, type TokenApproval } from '../lib/portfolioAnalysis.js';
+import {
+  APPROVAL_SCANNER_UNAVAILABLE_UI_NOTE,
+  analyzePortfolioForRisk,
+  buildRecommendationMetadataFromAnalysis,
+  fetchInternalApprovals,
+  fetchInternalPortfolio,
+  isApprovalScannerUnavailableStatus,
+  type TokenApproval,
+} from '../lib/portfolioAnalysis.js';
 import { buildActionPlan, planHasCalls, parseRevokeApproval, findActiveApproval } from '../lib/actionPlan.js';
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
 import { screenAction, simulateTrade } from '@mioagent/security';
@@ -236,6 +244,12 @@ actionsRouter.post('/recommend', async (req, res, next) => {
       }
       try {
         const appRes = await fetchInternalApprovals(walletAddress, chainEnv);
+        if (isApprovalScannerUnavailableStatus(appRes.status)) {
+          return res.json({
+            success: false,
+            error: APPROVAL_SCANNER_UNAVAILABLE_UI_NOTE,
+          });
+        }
         approvalsForPlan = appRes.approvals;
       } catch {
         return res.json({
