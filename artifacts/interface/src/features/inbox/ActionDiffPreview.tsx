@@ -4,7 +4,7 @@ import { PortfolioAnalysisView } from './PortfolioAnalysisView';
 import { useAccount } from 'wagmi';
 import { useUiStore } from '../../lib/state';
 import { LazyWalletConfirmButton } from './LazyWalletConfirmButton';
-import { getStateVerifiedAllowanceZeroNotice, parseExecutionPayload, shouldShowConfirmCta } from './actionDisplay';
+import { getRevokeExecutionNotice, parseExecutionPayload, shouldShowConfirmCta } from './actionDisplay';
 
 const BUILDER_CODE = import.meta.env.VITE_BUILDER_CODE;
 
@@ -24,19 +24,31 @@ export function ActionDiffPreview({ action, onRefresh }: { action: any; onRefres
   const risk = meta.risk || 'medium';
   const chainMode = meta.chainMode || (isMainnetReadonly ? 'mainnet-readonly' : 'sepolia');
   const safetyState = meta.safetyState || (action.status === 'failed' ? 'blocked' : 'safe');
-  const executionStatus = meta.executionStatus || (isMainnetReadonly ? 'read-only' : 'executable');
+  const executionStatus = action.status === 'executed'
+    ? 'executed'
+    : action.status === 'cancelled'
+      ? 'cancelled'
+      : action.status === 'failed'
+        ? 'failed'
+        : meta.executionStatus || (isMainnetReadonly ? 'read-only' : 'executable');
   const rawPayload = action.executionPayload;
   const payload = parseExecutionPayload(rawPayload);
   const calls = Array.isArray(payload?.calls) ? payload.calls : [];
   const showConfirmCta = shouldShowConfirmCta(action);
-  const stateProofNotice = getStateVerifiedAllowanceZeroNotice(action);
+  const revokeExecutionNotice = getRevokeExecutionNotice(action);
   const isReadOnlyMode = isMainnetReadonly || chainMode === 'mainnet-readonly' || chainMode === 'mainnet';
 
   const riskColor = risk === 'low' ? 'bg-ok-soft text-ok border-ok/20' : risk === 'high' ? 'bg-risk-soft text-risk border-risk/20' : 'bg-warn-soft text-warn border-warn/20';
   const safetyColor = safetyState === 'blocked' || safetyState === 'failed' ? 'bg-risk-soft text-risk border-risk/20' : 'bg-ok-soft text-ok border-ok/20';
+  const executionBannerColor = executionStatus === 'executed'
+    ? 'bg-ok-soft text-ok border-ok/20'
+    : isReadOnlyMode
+      ? (executionStatus === 'user-confirmable' ? 'bg-ok-soft text-ok border-ok/20' : 'bg-warn-soft text-warn border-warn/20')
+      : 'bg-ok-soft text-ok border-ok/20';
   const execState: StateKind =
-    executionStatus === 'blocked' ? 'failed'
+    executionStatus === 'blocked' || executionStatus === 'failed' || executionStatus === 'cancelled' ? 'failed'
     : executionStatus === 'executable' || executionStatus === 'user-confirmable' ? 'live'
+    : executionStatus === 'executed' ? 'live'
     : 'disabled';
 
   // T19: screening + simulation verdicts are stored on the action by /recommend
@@ -64,8 +76,10 @@ export function ActionDiffPreview({ action, onRefresh }: { action: any; onRefres
         <span className="px-2 py-0.5 rounded text-[11px] font-medium border bg-panel text-ink-2 border-line">Chain: {chainMode}</span>
         <span className={`px-2 py-0.5 rounded text-[11px] font-medium border ${safetyColor}`}>Safety: {safetyState}</span>
       </div>
-      <div className={`mt-1 font-medium px-2 py-1 rounded border text-[11px] w-fit ${isReadOnlyMode ? (executionStatus === 'user-confirmable' ? 'bg-ok-soft text-ok border-ok/20' : 'bg-warn-soft text-warn border-warn/20') : 'bg-ok-soft text-ok border-ok/20'}`}>
-        {isReadOnlyMode
+      <div className={`mt-1 font-medium px-2 py-1 rounded border text-[11px] w-fit ${executionBannerColor}`}>
+        {executionStatus === 'executed'
+          ? 'Completed in Base Account'
+          : isReadOnlyMode
           ? (executionStatus === 'user-confirmable' ? 'Confirmable via Base Account' : 'Read-only recommendation')
           : 'Executable testnet recommendation'}
       </div>
@@ -87,10 +101,25 @@ export function ActionDiffPreview({ action, onRefresh }: { action: any; onRefres
               Current: {meta.allowanceBefore} {meta.tokenSymbol || ''} → After: {meta.allowanceAfter || '0'} {meta.tokenSymbol || ''}
             </div>
           )}
-          {stateProofNotice && (
+          {revokeExecutionNotice && (
             <div className="bg-ok-soft border border-ok/20 rounded px-2 py-1.5 text-[11px] text-ok flex flex-col gap-0.5">
-              <span className="font-semibold">{stateProofNotice.title}</span>
-              <span>{stateProofNotice.label}</span>
+              <span className="font-semibold">{revokeExecutionNotice.title}</span>
+              {revokeExecutionNotice.txHash && (
+                <a
+                  href={revokeExecutionNotice.txHashUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline underline-offset-2 font-mono break-all"
+                >
+                  Tx: {revokeExecutionNotice.txHash}
+                </a>
+              )}
+              {revokeExecutionNotice.batchId && (
+                <span className="font-mono text-ok/90" title={revokeExecutionNotice.batchId}>
+                  Batch: {revokeExecutionNotice.shortBatchId || revokeExecutionNotice.batchId}
+                </span>
+              )}
+              {revokeExecutionNotice.stateOnlyLabel && <span>{revokeExecutionNotice.stateOnlyLabel}</span>}
             </div>
           )}
           {meta.method && (

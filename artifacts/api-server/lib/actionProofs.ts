@@ -22,6 +22,7 @@ export type StateVerifiedAllowanceZeroProof = {
   allowanceAfter: '0';
   verifiedAt: string;
   note: string;
+  source?: 'state_repair';
 };
 
 export type WalletReceiptsProof = {
@@ -41,10 +42,31 @@ export type BaseReceiptProof = {
   verifiedAt: string;
 };
 
+export type WalletConfirmationReceiptProof = {
+  type: 'wallet_confirmation_receipt';
+  chainId: 8453;
+  txHash?: string;
+  batchId?: string;
+  receipts?: unknown[];
+  statusCode?: number;
+  confirmedAt?: string;
+  allowanceAfter?: string;
+  source: 'metadata.confirmation';
+};
+
+export type NormalizedExecutionProof =
+  | WalletConfirmationReceiptProof
+  | (StateVerifiedAllowanceZeroProof & {
+      source: 'state_repair';
+      confirmedAt?: string;
+      statusCode?: number;
+    });
+
 export type ExecutionProof =
   | StateVerifiedAllowanceZeroProof
   | WalletReceiptsProof
-  | BaseReceiptProof;
+  | BaseReceiptProof
+  | WalletConfirmationReceiptProof;
 
 type ActionLike = {
   id?: string;
@@ -160,6 +182,7 @@ export function buildStateVerifiedAllowanceZeroProof(
     allowanceAfter: '0',
     verifiedAt,
     note: 'No wallet tx proof was persisted; final onchain allowance state verified.',
+    source: 'state_repair',
   };
 }
 
@@ -218,6 +241,131 @@ export function buildBaseReceiptProof(txHash: string, verifiedAt = new Date().to
   };
 }
 
+function objectOf(value: unknown): Record<string, any> {
+  return value && typeof value === 'object' ? value as Record<string, any> : {};
+}
+
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) return Number(value);
+  return undefined;
+}
+
+function firstString(values: unknown[]): string | undefined {
+  for (const value of values) {
+    const s = stringOrUndefined(value);
+    if (s) return s;
+  }
+  return undefined;
+}
+
+export function normalizeStateVerifiedAllowanceZeroProof(proof: Record<string, any>): NormalizedExecutionProof | null {
+  if (proof.type !== 'state_verified_allowance_zero') return null;
+  if (String(proof.allowanceAfter ?? '') !== '0') return null;
+
+  return {
+    type: 'state_verified_allowance_zero',
+    chainId: BASE_MAINNET_CHAIN_ID,
+    wallet: proof.wallet,
+    token: proof.token,
+    spender: proof.spender,
+    allowanceAfter: '0',
+    verifiedAt: stringOrUndefined(proof.verifiedAt) || new Date().toISOString(),
+    confirmedAt: stringOrUndefined(proof.confirmedAt) || stringOrUndefined(proof.verifiedAt),
+    statusCode: numberOrUndefined(proof.statusCode),
+    note: stringOrUndefined(proof.note) || 'No wallet tx proof was persisted; final onchain allowance state verified.',
+    source: 'state_repair',
+  };
+}
+
+export function normalizeWalletConfirmationReceiptProof(action: ActionLike): WalletConfirmationReceiptProof | null {
+  const meta = metadataOf(action);
+  const confirmation = objectOf(meta.confirmation);
+  const legacyProof = objectOf(meta.executionProof);
+  const receipts = Array.isArray(confirmation.receipts)
+    ? confirmation.receipts
+    : Array.isArray(meta.receipts)
+      ? meta.receipts
+      : Array.isArray(legacyProof.receipts)
+        ? legacyProof.receipts
+        : undefined;
+  const receiptHashes = receiptTxHashes(receipts);
+  const legacyTxHashes = Array.isArray(legacyProof.txHashes) ? legacyProof.txHashes : [];
+  const txHash = firstString([
+    confirmation.txHash,
+    meta.txHash,
+    meta.transactionHash,
+    legacyProof.txHash,
+    legacyTxHashes[0],
+    receiptHashes[0],
+  ]);
+  const batchId = firstString([
+    confirmation.batchId,
+    meta.batchId,
+    meta.callBatchId,
+    legacyProof.batchId,
+  ]);
+  const statusCode = numberOrUndefined(confirmation.statusCode ?? legacyProof.statusCode);
+  const legacyType = stringOrUndefined(legacyProof.type);
+  const legacyReceiptProof =
+    (legacyType === 'wallet_getCallsStatus' || legacyType === 'wallet_receipts_success') &&
+    receiptsAreSuccessful(receipts) &&
+    (txHash || batchId);
+  const legacyBaseReceiptProof = legacyType === 'base_receipt_success' && Boolean(txHash);
+  const confirmationReceiptProof =
+    receiptsAreSuccessful(receipts) &&
+    (txHash || batchId) &&
+    (statusCode === undefined || statusCode === 200);
+
+  if (!confirmationReceiptProof && !legacyReceiptProof && !legacyBaseReceiptProof) {
+    return null;
+  }
+
+  return {
+    type: 'wallet_confirmation_receipt',
+    chainId: BASE_MAINNET_CHAIN_ID,
+    ...(txHash ? { txHash } : {}),
+    ...(batchId ? { batchId } : {}),
+    ...(receipts ? { receipts } : {}),
+    statusCode: statusCode ?? 200,
+    confirmedAt: stringOrUndefined(confirmation.confirmedAt) || stringOrUndefined(legacyProof.verifiedAt),
+    allowanceAfter: stringOrUndefined(confirmation.allowanceAfter) || stringOrUndefined(meta.allowanceAfter) || stringOrUndefined(legacyProof.allowanceAfter),
+    source: 'metadata.confirmation',
+  };
+}
+
+export function normalizeExecutedActionProof(action: ActionLike): NormalizedExecutionProof | null {
+  const meta = metadataOf(action);
+  const stateProof = normalizeStateVerifiedAllowanceZeroProof(objectOf(meta.executionProof));
+  if (stateProof) return stateProof;
+  return normalizeWalletConfirmationReceiptProof(action);
+}
+
+function proofAliases(proof: NormalizedExecutionProof | null): {
+  txHash?: string;
+  batchId?: string;
+  receipts?: unknown[];
+} {
+  if (!proof) return {};
+  return {
+    ...('txHash' in proof && proof.txHash ? { txHash: proof.txHash } : {}),
+    ...('batchId' in proof && proof.batchId ? { batchId: proof.batchId } : {}),
+    ...('receipts' in proof && Array.isArray(proof.receipts) ? { receipts: proof.receipts } : {}),
+  };
+}
+
+export function getNormalizedProofAliases(action: ActionLike): {
+  txHash?: string;
+  batchId?: string;
+  receipts?: unknown[];
+} {
+  return proofAliases(normalizeExecutedActionProof(action));
+}
+
 function hasAnyPersistedProofField(action: ActionLike): boolean {
   const meta = metadataOf(action);
   const confirmation = meta.confirmation && typeof meta.confirmation === 'object'
@@ -242,7 +390,7 @@ export function isPollutedExecutedRevokeApproval(action: ActionLike): boolean {
     !hasAnyPersistedProofField(action);
 }
 
-export async function buildPollutedRevokeApprovalRepair(
+export async function buildExecutedActionProofRepair(
   action: ActionLike,
   fallbackWallet?: string | null,
 ): Promise<{
@@ -250,10 +398,38 @@ export async function buildPollutedRevokeApprovalRepair(
   metadata: Record<string, any>;
   executedAt?: Date | null;
 } | null> {
-  if (!isPollutedExecutedRevokeApproval(action)) return null;
+  if (action.status !== 'executed') return null;
 
   const meta = metadataOf(action);
+  const normalizedProof = normalizeExecutedActionProof(action);
+  if (normalizedProof) {
+    const nextMetadata = {
+      ...meta,
+      executionProof: normalizedProof,
+    };
+    return JSON.stringify(meta.executionProof) === JSON.stringify(normalizedProof)
+      ? null
+      : {
+          status: 'executed',
+          metadata: nextMetadata,
+        };
+  }
+
   const verifiedAt = new Date().toISOString();
+  if (getActionType(action) !== 'revoke_approval') {
+    return {
+      status: 'submitted_unknown',
+      executedAt: null,
+      metadata: {
+        ...meta,
+        repairError: {
+          message: 'Executed action has no durable execution proof.',
+          verifiedAt,
+        },
+      },
+    };
+  }
+
   const { context, error } = extractRevokeApprovalProofContext(action, fallbackWallet);
   if (!context) {
     return {
@@ -306,4 +482,17 @@ export async function buildPollutedRevokeApprovalRepair(
       },
     };
   }
+}
+
+export async function buildPollutedRevokeApprovalRepair(
+  action: ActionLike,
+  fallbackWallet?: string | null,
+): Promise<{
+  status: 'executed' | 'submitted_unknown' | 'failed';
+  metadata: Record<string, any>;
+  executedAt?: Date | null;
+} | null> {
+  return isPollutedExecutedRevokeApproval(action)
+    ? buildExecutedActionProofRepair(action, fallbackWallet)
+    : null;
 }

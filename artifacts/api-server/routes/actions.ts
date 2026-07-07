@@ -25,11 +25,13 @@ import { getSystemStatus } from './status.js';
 import {
   actionProofRuntime,
   buildBaseReceiptProof,
-  buildPollutedRevokeApprovalRepair,
+  buildExecutedActionProofRepair,
   buildStateVerifiedAllowanceZeroProof,
   buildWalletReceiptsProof,
   extractRevokeApprovalProofContext,
+  getNormalizedProofAliases,
   getActionType,
+  normalizeExecutedActionProof,
   receiptsAreSuccessful,
   type ExecutionProof,
 } from '../lib/actionProofs.js';
@@ -112,7 +114,7 @@ actionsRouter.get('/', async (req, res, next) => {
 
     const repairedActions: typeof userActions = [];
     for (const action of userActions) {
-      const repair = await buildPollutedRevokeApprovalRepair(action, userAddress);
+      const repair = await buildExecutedActionProofRepair(action, userAddress);
       if (!repair) {
         repairedActions.push(action);
         continue;
@@ -147,15 +149,25 @@ actionsRouter.get('/', async (req, res, next) => {
         return true;
       })
       .map(a => ({
-        id: a.id,
-        kind: a.kind,
-        status: a.status as any,
-        suggestedPrompt: a.suggestedPrompt,
-        tokens: Array.isArray(a.tokens) ? a.tokens.map(String) : undefined,
-        executionPayload: a.executionPayload,
-        metadata: a.metadata,
-        createdAt: a.createdAt.toISOString(),
-        executedAt: a.executedAt ? a.executedAt.toISOString() : null,
+        ...(() => {
+          const normalizedProof = normalizeExecutedActionProof(a);
+          const metadata = normalizedProof
+            ? { ...((a.metadata || {}) as any), executionProof: normalizedProof }
+            : a.metadata;
+          const aliases = getNormalizedProofAliases({ ...a, metadata });
+          return {
+            id: a.id,
+            kind: a.kind,
+            status: a.status as any,
+            suggestedPrompt: a.suggestedPrompt,
+            tokens: Array.isArray(a.tokens) ? a.tokens.map(String) : undefined,
+            executionPayload: a.executionPayload,
+            metadata,
+            ...aliases,
+            createdAt: a.createdAt.toISOString(),
+            executedAt: a.executedAt ? a.executedAt.toISOString() : null,
+          };
+        })(),
       }));
 
     res.json(ActionsFeedResponseSchema.parse({ actions: formattedActions }));
@@ -799,15 +811,23 @@ actionsRouter.post('/:actionId/confirm', async (req, res, next) => {
       receipts: receipts ?? null,
     };
 
-    const nextMetadata: Record<string, any> = {
+    const proofMetadata: Record<string, any> = {
       ...meta,
       confirmation,
+      ...(executionProof ? { executionProof } : {}),
+      ...(verifiedTxHash ? { txHash: verifiedTxHash } : {}),
+      ...(hasValidBatchId ? { batchId } : {}),
+      ...(receipts ? { receipts } : {}),
     };
-    if (recordStatus === 'executed' && executionProof) {
-      nextMetadata.executionProof = executionProof;
-      if (verifiedTxHash) nextMetadata.txHash = verifiedTxHash;
-      if (hasValidBatchId) nextMetadata.batchId = batchId;
-      if (receipts) nextMetadata.receipts = receipts;
+    const normalizedProof = recordStatus === 'executed'
+      ? normalizeExecutedActionProof({ ...action, metadata: proofMetadata })
+      : null;
+
+    const nextMetadata: Record<string, any> = {
+      ...proofMetadata,
+    };
+    if (recordStatus === 'executed' && normalizedProof) {
+      nextMetadata.executionProof = normalizedProof;
     } else if (stateVerificationError) {
       nextMetadata.confirmationError = stateVerificationError;
     }

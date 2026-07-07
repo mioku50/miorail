@@ -640,6 +640,113 @@ test('Actions API', async (t) => {
     mock.restoreAll();
   });
 
+  await t.test('T19.12: GET /api/actions normalizes metadata.confirmation proof and exposes aliases', async () => {
+    const txHash = '0xabc1230000000000000000000000000000000000000000000000000000000000';
+    const batchId = '0xbatch1234567890abcdef';
+    const updates: any[] = [];
+    const mockSelect = mock.fn(() => ({
+      from: mock.fn(() => ({
+        where: mock.fn(() => ({
+          orderBy: mock.fn(() => ({
+            limit: mock.fn(async () => [
+              {
+                id: 'act-confirmed-proof',
+                userId: 'default-user',
+                kind: 'transaction',
+                status: 'executed',
+                suggestedPrompt: 'Builder: revoke approval',
+                tokens: [],
+                executionPayload: { chain: 'eip155:8453', actionType: 'revoke_approval', calls: [{ to: BASE_MAINNET_USDC }] },
+                metadata: {
+                  actionType: 'revoke_approval',
+                  allowanceAfter: '0',
+                  confirmation: {
+                    txHash,
+                    batchId,
+                    statusCode: 200,
+                    confirmedAt: '2026-01-02T00:00:00Z',
+                    receipts: [{ status: 'success', transactionHash: txHash }],
+                    allowanceAfter: '0',
+                  },
+                },
+                createdAt: new Date('2026-01-02T00:00:00Z'),
+                updatedAt: new Date('2026-01-02T00:00:00Z'),
+                executedAt: new Date('2026-01-02T00:00:00Z'),
+              },
+            ]),
+          })),
+        })),
+      })),
+    }));
+    const mockUpdate = mock.fn(() => ({
+      set: mock.fn((vals: any) => {
+        updates.push(vals);
+        return { where: mock.fn(async () => []) };
+      }),
+    }));
+    mock.method(db, 'select', mockSelect);
+    mock.method(db, 'update', mockUpdate);
+
+    const response = await request(app).get('/api/actions');
+    assert.strictEqual(response.status, 200);
+    const action = response.body.actions[0];
+    assert.strictEqual(action.status, 'executed');
+    assert.strictEqual(action.txHash, txHash);
+    assert.strictEqual(action.batchId, batchId);
+    assert.strictEqual(action.receipts[0].status, 'success');
+    assert.strictEqual(action.metadata.executionProof.type, 'wallet_confirmation_receipt');
+    assert.strictEqual(action.metadata.executionProof.source, 'metadata.confirmation');
+    assert.strictEqual(action.metadata.executionProof.txHash, txHash);
+    assert.strictEqual(updates.length, 1);
+    assert.strictEqual(updates[0].metadata.executionProof.type, 'wallet_confirmation_receipt');
+
+    mock.restoreAll();
+  });
+
+  await t.test('T19.12: GET /api/actions downgrades executed non-revoke rows with no durable proof', async () => {
+    let updateVals: any = null;
+    const mockSelect = mock.fn(() => ({
+      from: mock.fn(() => ({
+        where: mock.fn(() => ({
+          orderBy: mock.fn(() => ({
+            limit: mock.fn(async () => [
+              {
+                id: 'act-no-proof',
+                userId: 'default-user',
+                kind: 'transaction',
+                status: 'executed',
+                suggestedPrompt: 'Transfer',
+                tokens: [],
+                executionPayload: { chain: 'eip155:8453', actionType: 'limited_transfer', calls: [{ to: BASE_MAINNET_USDC }] },
+                metadata: { actionType: 'limited_transfer' },
+                createdAt: new Date('2026-01-03T00:00:00Z'),
+                updatedAt: new Date('2026-01-03T00:00:00Z'),
+                executedAt: new Date('2026-01-03T00:00:00Z'),
+              },
+            ]),
+          })),
+        })),
+      })),
+    }));
+    const mockUpdate = mock.fn(() => ({
+      set: mock.fn((vals: any) => {
+        updateVals = vals;
+        return { where: mock.fn(async () => []) };
+      }),
+    }));
+    mock.method(db, 'select', mockSelect);
+    mock.method(db, 'update', mockUpdate);
+
+    const response = await request(app).get('/api/actions');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.actions[0].status, 'submitted_unknown');
+    assert.ok(response.body.actions[0].metadata.repairError.message.includes('no durable execution proof'));
+    assert.strictEqual(updateVals.status, 'submitted_unknown');
+    assert.strictEqual(updateVals.executedAt, null);
+
+    mock.restoreAll();
+  });
+
   await t.test('T19.9: POST /api/actions/:actionId/confirm sets pending_confirmation when status is 102 (submitted, waiting for receipt)', async () => {
     let updatedStatus: string | null = null;
     const mockSelect = mock.fn(() => ({

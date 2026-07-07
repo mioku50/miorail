@@ -101,6 +101,9 @@ export const ActionResponseSchema = z.object({
   tokens: z.array(z.string()).optional(),
   executionPayload: ExecutionPayloadSchema.optional().nullable(),
   metadata: z.record(z.any()).optional().nullable(),
+  txHash: z.string().optional(),
+  batchId: z.string().optional(),
+  receipts: z.array(z.record(z.any())).optional(),
   createdAt: z.string(),
   executedAt: z.string().nullable(),
 });

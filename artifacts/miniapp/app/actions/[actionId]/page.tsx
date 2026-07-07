@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
 import { useActionsFeed } from "@mioagent/api-client-react";
 import { Card, StateBadge } from "@mioagent/ui";
-import { getPreflightBadge, getRiskVariant, getStatusState, shouldShowConfirmButton } from "../actionUi";
+import { getPreflightBadge, getRevokeExecutionNotice, getRiskVariant, getStatusState, shouldShowConfirmButton } from "../actionUi";
 
 // T19.1: code-split the wallet/crypto deps — load WalletConfirmButton
 // client-side only, so `ox`/wagmi confirm-flow code isn't in the initial
@@ -52,6 +52,7 @@ export default function ActionDeepLink() {
   const risk = (action?.metadata?.riskLevel as string | undefined) || "low";
   const riskVariant = getRiskVariant(risk);
   const preflightBadge = getPreflightBadge();
+  const revokeExecutionNotice = getRevokeExecutionNotice(action);
 
   return (
     <div className="min-h-screen bg-bg text-ink flex flex-col">
@@ -128,6 +129,28 @@ export default function ActionDeepLink() {
               <p className="text-[13px] text-ink-2 leading-relaxed">{action.suggestedPrompt}</p>
             </div>
 
+            {revokeExecutionNotice && (
+              <div className="bg-ok-soft rounded-[var(--radius-md)] p-3 mb-3 text-[12px] text-ok flex flex-col gap-1">
+                <span className="font-semibold">{revokeExecutionNotice.title}</span>
+                {revokeExecutionNotice.txHash && (
+                  <a
+                    href={revokeExecutionNotice.txHashUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-mono underline underline-offset-2 break-all"
+                  >
+                    Tx: {revokeExecutionNotice.txHash}
+                  </a>
+                )}
+                {revokeExecutionNotice.batchId && (
+                  <span className="font-mono" title={revokeExecutionNotice.batchId}>
+                    Batch: {revokeExecutionNotice.shortBatchId || revokeExecutionNotice.batchId}
+                  </span>
+                )}
+                {revokeExecutionNotice.stateOnlyLabel && <span>{revokeExecutionNotice.stateOnlyLabel}</span>}
+              </div>
+            )}
+
             {/* T19.1: user-confirmed flow. Show the confirm button only for a
                 pending, whitelisted action type that carries onchain calls. */}
             {shouldShowConfirmButton(action) && (
@@ -155,6 +178,8 @@ export default function ActionDeepLink() {
             >
               {action.metadata?.safetyState === "blocked"
                 ? "Blocked by security screening."
+                : revokeExecutionNotice
+                  ? "Completed — nothing to confirm in Base Account."
                 : shouldShowConfirmButton(action)
                   ? "Review the calls above, then confirm in your Base Account."
                   : "Read-only recommendation — nothing to confirm onchain."}

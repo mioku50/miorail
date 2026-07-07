@@ -3,8 +3,16 @@ import { useLocation } from 'wouter';
 import { useActionsFeed, useClearActions, useDismissAllRecommendations, useDeleteAllRecommendations } from '@mioagent/api-client-react';
 import { useUiStore } from '../../lib/state';
 import { ActionCard } from './ActionCard';
+import { filterInboxActions } from './actionDisplay';
 
-const FILTERS = ['all', 'signals', 'recommendations', 'blocked', 'history'];
+const FILTERS = [
+  { id: 'all', label: 'All' },
+  { id: 'pending', label: 'Pending' },
+  { id: 'confirmable', label: 'Confirmable' },
+  { id: 'executed', label: 'Executed' },
+  { id: 'recommendations', label: 'Recommendations' },
+  { id: 'history', label: 'History' },
+];
 
 export function ActionInbox() {
   const [, navigate] = useLocation();
@@ -20,14 +28,7 @@ export function ActionInbox() {
   const [showManageMenu, setShowManageMenu] = useState(false);
 
   const allActions = data?.actions || [];
-  const actions = allActions.filter((a: any) => {
-    if (filter === 'all') return a.status === 'pending';
-    if (filter === 'signals') return a.status === 'pending' && (a.kind === 'signal' || a.kind === 'alert' || a.kind === 'transfer' || a.kind === 'swap');
-    if (filter === 'recommendations') return a.status === 'pending' && a.kind === 'recommendation';
-    if (filter === 'blocked') return a.status === 'pending' && (a.status === 'failed' || a.metadata?.safetyState === 'blocked' || a.metadata?.safetyState === 'failed');
-    if (filter === 'history') return a.status === 'dismissed' || a.status === 'executed' || a.status === 'failed';
-    return a.status === 'pending';
-  });
+  const actions = filterInboxActions(allActions, filter);
 
   // Scroll to a focused action (deep-link / "View in Action Inbox") once loaded.
   useEffect(() => {
@@ -45,8 +46,8 @@ export function ActionInbox() {
         <h1 className="text-[20px] font-display font-bold text-ink tracking-[-0.02em]">Action Inbox</h1>
         <div className="flex gap-1.5 items-center flex-wrap">
           {FILTERS.map((f) => (
-            <div key={f} onClick={() => setFilter(f)} className={`px-[11px] py-[5px] rounded-[9px] text-[12px] font-medium border cursor-pointer capitalize ${filter === f ? 'bg-accent text-white border-accent' : 'bg-panel text-ink-2 border-line hover:bg-bg'}`}>
-              {f}
+            <div key={f.id} onClick={() => setFilter(f.id)} className={`px-[11px] py-[5px] rounded-[9px] text-[12px] font-medium border cursor-pointer ${filter === f.id ? 'bg-accent text-white border-accent' : 'bg-panel text-ink-2 border-line hover:bg-bg'}`}>
+              {f.label}
             </div>
           ))}
 
