@@ -325,7 +325,7 @@ export const PortfolioTokenSchema = z.object({
 
 export const PortfolioProvidersSchema = z.object({
   rpc: z.enum(["connected", "missing", "failed"]),
-  tokenBalances: z.enum(["connected", "missing", "failed", "stale", "disabled"]),
+  tokenBalances: z.enum(["connected", "missing", "failed", "stale", "disabled", "rate_limited"]),
   tokenBalancesProvider: z.enum(["moralis", "alchemy", "mock", "none"]).optional(),
   prices: z.enum(["connected", "missing", "failed", "partial", "disabled"]),
   priceProvider: z.enum(["coingecko", "moralis", "mock", "none"]).optional(),

@@ -1,5 +1,6 @@
 import test, { describe, mock, beforeEach } from 'node:test';
 import assert from 'node:assert';
+import { ProviderRateLimitError } from '@mioagent/data-providers';
 import {
   InMemoryProviderCacheStore,
   ProviderBudget,
@@ -154,6 +155,55 @@ describe('Provider Cache Orchestration', () => {
     assert.deepStrictEqual(second.data, { value: 'live-data' });
     // Fetcher NOT called again.
     assert.strictEqual(fetcher.mock.calls.length, 1);
+  });
+
+  test('remote provider rate limit returns stale cache and starts cooldown', async () => {
+    const store = new InMemoryProviderCacheStore();
+    const budget = new ProviderBudget(20, 300);
+
+    await cachedProviderCall({
+      key: 'provider:alchemy:balances:8453:0xrate',
+      provider: 'alchemy',
+      chainId: 8453,
+      ttlSeconds: 0,
+      store,
+      budget,
+      fetcher: async () => ({ tokens: ['USDC'] }),
+    });
+    await new Promise((r) => setTimeout(r, 5));
+
+    const limitedFetcher = mock.fn(async () => {
+      throw new ProviderRateLimitError('Alchemy HTTP 429', 'alchemy');
+    });
+    const limited = await cachedProviderCall({
+      key: 'provider:alchemy:balances:8453:0xrate',
+      provider: 'alchemy',
+      chainId: 8453,
+      ttlSeconds: 1800,
+      store,
+      budget,
+      fetcher: limitedFetcher,
+    });
+    assert.strictEqual(limited.status, 'rate_limited');
+    assert.strictEqual(limited.providerCalled, true);
+    assert.strictEqual(limited.budgetExhausted, true);
+    assert.deepStrictEqual(limited.data, { tokens: ['USDC'] });
+
+    const cooldownFetcher = mock.fn(async () => ({ tokens: ['SHOULD_NOT_CALL'] }));
+    const cooldown = await cachedProviderCall({
+      key: 'provider:alchemy:balances:8453:0xrate',
+      provider: 'alchemy',
+      chainId: 8453,
+      ttlSeconds: 1800,
+      store,
+      budget,
+      fetcher: cooldownFetcher,
+    });
+    assert.strictEqual(cooldown.status, 'rate_limited');
+    assert.strictEqual(cooldown.providerCalled, false);
+    assert.strictEqual(cooldown.budgetExhausted, true);
+    assert.deepStrictEqual(cooldown.data, { tokens: ['USDC'] });
+    assert.strictEqual(cooldownFetcher.mock.calls.length, 0);
   });
 
   test('budget snapshot reports correct counts', async () => {

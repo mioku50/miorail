@@ -36,6 +36,29 @@ export interface TokenBalancesProvider {
   }): Promise<TokenBalance[]>;
 }
 
+export class ProviderRateLimitError extends Error {
+  readonly status = "rate_limited";
+  readonly budgetExhausted = true;
+
+  constructor(
+    message: string,
+    readonly provider: "alchemy" | "moralis" | "coingecko" | "goplus" | "unknown",
+    readonly statusCode = 429,
+    readonly code: string | number = 429,
+  ) {
+    super(message);
+    this.name = "ProviderRateLimitError";
+  }
+}
+
+export function isProviderRateLimitError(error: unknown): error is ProviderRateLimitError {
+  const e = error as { name?: string; status?: string; statusCode?: number; code?: string | number; message?: string; budgetExhausted?: boolean } | null | undefined;
+  if (!e) return false;
+  if (e.name === "ProviderRateLimitError" || e.status === "rate_limited") return true;
+  if (e.statusCode === 429 || e.code === 429 || e.code === "429") return true;
+  return /rate[- ]?limit|too many requests|http 429/i.test(e.message || "");
+}
+
 export interface TokenPrice {
   symbol: string;
   address?: string;

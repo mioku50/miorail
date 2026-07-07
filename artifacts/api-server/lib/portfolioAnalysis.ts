@@ -1,4 +1,4 @@
-import { getTokenBalancesProviderFromEnv, getPriceProviderFromEnv, getTokenSecurityProviderFromEnv, getApprovalProviderFromEnv, type TokenSecurityResult, type TokenSecurityFlags, type TokenSecurityProviderName, type TokenSecurityStatus, type TokenApproval, type TokenBalance, type TokenPrice } from '@mioagent/data-providers';
+import { getTokenBalancesProviderFromEnv, getTokenBalancesFallbackProviderFromEnv, getPriceProviderFromEnv, getTokenSecurityProviderFromEnv, getApprovalProviderFromEnv, type TokenSecurityResult, type TokenSecurityFlags, type TokenSecurityProviderName, type TokenSecurityStatus, type TokenApproval, type TokenBalance, type TokenPrice } from '@mioagent/data-providers';
 import {
   cachedProviderCall,
   getProviderCacheOrchestratorFromEnv,
@@ -48,7 +48,7 @@ export interface ApprovalRiskAnalysis {
   recommendations: ApprovalRecommendation[];
 }
 
-export type ApprovalScanStatus = "not_requested" | "live" | "cached" | "stale" | "partial" | "failed" | "connected" | "missing" | "disabled";
+export type ApprovalScanStatus = "not_requested" | "live" | "cached" | "stale" | "partial" | "failed" | "rate_limited" | "connected" | "missing" | "disabled";
 
 export interface ProviderCallSummaryItem {
   provider: string;
@@ -118,7 +118,7 @@ export interface PortfolioData {
   approvalFindings?: ApprovalFinding[];
   providers: {
     rpc: string;
-    tokenBalances: string;
+    tokenBalances: "connected" | "missing" | "failed" | "stale" | "disabled" | "rate_limited";
     tokenBalancesProvider: string;
     prices: string;
     priceProvider?: string;
@@ -250,13 +250,13 @@ export function clearTokenBalancesCacheForTests() {
 
 // Seed an already-expired balances cache entry so a failing live provider returns
 // cached balances with stale status (mirrors the pre-T11.6 resilience behavior).
-export function setTokenBalancesCacheForTests(chainId: number, address: string, tokens: TokenInfo[]) {
+export function setTokenBalancesCacheForTests(chainId: number, address: string, tokens: TokenInfo[], provider: ProviderName = 'moralis'): Promise<void> {
   const orch = getProviderCacheOrchestratorFromEnv();
-  const key = `provider:moralis:balances:${chainId}:${address.toLowerCase()}`;
+  const key = `provider:${provider}:balances:${chainId}:${address.toLowerCase()}`;
   const now = Date.now();
-  void orch.store.set({
+  return orch.store.set({
     key,
-    provider: 'moralis',
+    provider,
     chainId,
     payload: tokens,
     status: 'stale',
@@ -284,11 +284,13 @@ function computePortfolioFreshness(track: FreshnessTrack[]): {
     return { dataFreshness: 'live', cacheAgeSeconds: 0, providerBudgetStatus: { exhausted: false, providers: [] }, providerCallsMade: 0 };
   }
   const hasStale = track.some(t => t.status === 'stale');
+  const hasRateLimited = track.some(t => t.status === 'rate_limited');
   const hasFailed = track.some(t => t.status === 'failed');
   const hasCached = track.some(t => t.status === 'cached');
   const hasLive = track.some(t => t.status === 'live');
   let dataFreshness: "live" | "cached" | "stale" | "partial" | "failed";
   if (hasStale) dataFreshness = 'stale';
+  else if (hasRateLimited) dataFreshness = 'partial';
   else if (hasFailed && (hasLive || hasCached)) dataFreshness = 'partial';
   else if (hasCached) dataFreshness = 'cached';
   else if (hasLive) dataFreshness = 'live';
@@ -355,7 +357,7 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
   // --- Token balances (cached + budget-guarded) ---
   const { provider, status, statusCode, providerName } = getTokenBalancesProviderFromEnv();
   let providerStatus = status;
-  let tokenBalancesStatus: "connected" | "missing" | "failed" | "stale" | "disabled" = statusCode;
+  let tokenBalancesStatus: "connected" | "missing" | "failed" | "stale" | "disabled" | "rate_limited" = statusCode;
 
   if (provider && providerName !== 'none') {
     const balKey = `provider:${providerName}:balances:${chainId}:${address.toLowerCase()}`;
@@ -375,8 +377,61 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
       budgetExhausted: false,
       error: err instanceof Error ? err.message : String(err),
     }));
+    let effectiveBalRes = balRes;
+    let effectiveBalanceProviderName = providerName as ProviderName;
+
+    if (providerName === 'alchemy' && balRes.status === 'rate_limited' && balRes.data === undefined) {
+      const fallback = getTokenBalancesFallbackProviderFromEnv();
+      if (fallback.providerName === 'moralis' && fallback.statusCode === 'connected') {
+        const fallbackKey = `provider:moralis:balances:${chainId}:${address.toLowerCase()}`;
+        const fallbackRes = await cachedProviderCall<TokenBalance[]>({
+          key: fallbackKey,
+          provider: 'moralis',
+          chainId,
+          ttlSeconds: orch.ttls.balances,
+          store: orch.store,
+          budget: orch.budget,
+          fetcher: () => fallback.provider.getTokenBalances({ address, chainId }),
+        }).catch((err: unknown): CachedCallResult<TokenBalance[]> => ({
+          data: undefined,
+          status: 'failed',
+          fromCache: false,
+          providerCalled: false,
+          budgetExhausted: false,
+          error: err instanceof Error ? err.message : String(err),
+        }));
+        providerCallSummary.balanceFallback = {
+          provider: fallback.providerName,
+          status: fallbackRes.status,
+          providerCalled: fallbackRes.providerCalled,
+          budgetExhausted: fallbackRes.budgetExhausted,
+          cacheAgeSeconds: fallbackRes.cacheAgeSeconds,
+          requested: true,
+        };
+        freshnessTrack.push({
+          status: fallbackRes.status,
+          cacheAgeSeconds: fallbackRes.cacheAgeSeconds,
+          providerCalled: fallbackRes.providerCalled,
+          budgetExhausted: fallbackRes.budgetExhausted,
+          provider: 'moralis',
+        });
+        if (fallbackRes.data !== undefined) {
+          effectiveBalRes = fallbackRes;
+          effectiveBalanceProviderName = 'moralis';
+        }
+      } else {
+        providerCallSummary.balanceFallback = {
+          provider: fallback.providerName,
+          status: fallback.statusCode,
+          providerCalled: false,
+          budgetExhausted: false,
+          requested: false,
+        };
+      }
+    }
+
     freshnessTrack.push({
-      status: balRes.status,
+      status: balRes.status === 'rate_limited' && balRes.data !== undefined ? 'stale' : balRes.status,
       cacheAgeSeconds: balRes.cacheAgeSeconds,
       providerCalled: balRes.providerCalled,
       budgetExhausted: balRes.budgetExhausted,
@@ -391,9 +446,10 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
       requested: true,
     };
 
-    const erc20Balances = balRes.data || [];
-    if (balRes.status === 'live' || balRes.status === 'cached' || balRes.status === 'stale') {
-      const df: "live" | "cached" = balRes.status === 'live' ? 'live' : 'cached';
+    const erc20Balances = effectiveBalRes.data || [];
+    const hasBalancePayload = effectiveBalRes.data !== undefined;
+    if (effectiveBalRes.status === 'live' || effectiveBalRes.status === 'cached' || effectiveBalRes.status === 'stale' || (effectiveBalRes.status === 'rate_limited' && hasBalancePayload)) {
+      const df: "live" | "cached" = effectiveBalRes.status === 'live' ? 'live' : 'cached';
       for (const tb of erc20Balances) {
         tokens.push({
           symbol: tb.symbol,
@@ -412,16 +468,21 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
         });
       }
       tokens[0].dataFreshness = df;
-      if (balRes.status === 'stale') {
+      if (balRes.status === 'rate_limited') {
+        tokenBalancesStatus = 'rate_limited';
+        providerStatus = 'Alchemy rate-limited. Showing cached/native balance data.';
+      } else if (effectiveBalRes.status === 'stale') {
         tokenBalancesStatus = 'stale';
         providerStatus = 'Using cached token balances because live provider failed.';
-      } else if (tokens.length === 1 && (providerName === 'moralis' || providerName === 'alchemy')) {
+      } else if (tokens.length === 1 && (effectiveBalanceProviderName === 'moralis' || effectiveBalanceProviderName === 'alchemy')) {
         providerStatus = 'No ERC-20 tokens found for this wallet';
       }
       // 'live' / 'cached' keep the factory status string (e.g. 'Moralis connected').
     } else {
-      tokenBalancesStatus = 'failed';
-      providerStatus = balRes.budgetExhausted
+      tokenBalancesStatus = balRes.status === 'rate_limited' ? 'rate_limited' : 'failed';
+      providerStatus = balRes.status === 'rate_limited'
+        ? 'Alchemy rate-limited. Showing cached/native balance data.'
+        : balRes.budgetExhausted
         ? 'Provider budget reached for token balances. Showing native ETH only.'
         : 'Token balances provider failed. Showing native ETH only.';
     }
@@ -740,6 +801,9 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
     portfolioScanStatus: freshness.dataFreshness,
     approvalScanStatus: approvalScan.status,
     approvalScanRequested: includeApprovals,
+    balancesStatus: providerCallSummary.balances?.status,
+    balancesFallbackProvider: providerCallSummary.balanceFallback?.provider,
+    balancesFallbackStatus: providerCallSummary.balanceFallback?.status,
     providerCallSummary,
   };
 
@@ -1107,7 +1171,7 @@ export function analyzePortfolioForRisk(
   const suspiciousTokenCount = suspiciousTokens.length;
   const tokenCount = tokens.length;
   const visibleTokenCount = tokens.length;
-  const provider = portfolio.providers?.tokenBalancesProvider || (portfolio.providers?.tokenBalances !== 'missing' && portfolio.providers?.tokenBalances !== 'none' ? 'moralis' : 'none');
+  const provider = portfolio.providers?.tokenBalancesProvider || (portfolio.providers?.tokenBalances !== 'missing' && portfolio.providers?.tokenBalances !== 'disabled' ? 'moralis' : 'none');
   const priceProvider = portfolio.providers?.prices === 'failed' ? 'failed' : (portfolio.providers?.priceProvider || portfolio.providers?.prices || "none");
   const chain = (chainEnv === 'mainnet-readonly' || chainEnv === 'mainnet') ? "base-mainnet" : "base-sepolia";
 
@@ -1156,6 +1220,9 @@ export function analyzePortfolioForRisk(
         : "Reviewed configured token security provider signals where available.";
 
   const suggestedNextSteps: string[] = [];
+  if (portfolio.providerCallSummary?.balances?.status === 'rate_limited') {
+    suggestedNextSteps.push("Alchemy rate-limited. Showing cached/native balance data.");
+  }
   if (portfolio.providers?.tokenBalances === 'stale') {
     suggestedNextSteps.push(`Analysis used cached ${providerDisplayName(portfolio.providers?.tokenBalancesProvider)} token balances.`);
   }

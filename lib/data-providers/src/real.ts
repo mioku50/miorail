@@ -13,7 +13,9 @@ import {
   TokenSecurityFlags,
   TokenSecurityStatus,
   ApprovalProvider,
-  TokenApproval
+  TokenApproval,
+  ProviderRateLimitError,
+  isProviderRateLimitError
 } from './interfaces.js';
 import { MockPriceProvider, MockApprovalProvider, MockTokenBalancesProvider } from './mocks.js';
 
@@ -361,6 +363,26 @@ export class NoneTokenBalancesProvider implements TokenBalancesProvider {
 export class AlchemyTokenBalancesProvider implements TokenBalancesProvider {
   constructor(private readonly apiKey?: string, private readonly customRpcUrl?: string) {}
 
+  private async parseAlchemyResponse<T>(res: Response, operation: string): Promise<T> {
+    let data: any = undefined;
+    try {
+      data = await res.json();
+    } catch {
+      data = undefined;
+    }
+    if (res.status === 429 || data?.error?.code === 429 || data?.error?.code === '429') {
+      const message = data?.error?.message || res.statusText || `Alchemy ${operation} rate limited`;
+      throw new ProviderRateLimitError(`Alchemy rate limited: ${message}`, 'alchemy', 429, data?.error?.code || 429);
+    }
+    if (!res.ok) {
+      throw new Error(`Alchemy API error: ${res.statusText || res.status}`);
+    }
+    if (data?.error) {
+      throw new Error(`Alchemy JSON-RPC error: ${data.error.message || data.error.code || 'unknown error'}`);
+    }
+    return data as T;
+  }
+
   async getTokenBalances(params: { address: string; chainId: number }): Promise<TokenBalance[]> {
     let rpcUrl = this.customRpcUrl;
     if (!rpcUrl) {
@@ -384,8 +406,7 @@ export class AlchemyTokenBalancesProvider implements TokenBalancesProvider {
         params: [params.address, 'erc20']
       })
     });
-    if (!res.ok) throw new Error(`Alchemy API error: ${res.statusText}`);
-    const data = await res.json() as { result?: { tokenBalances?: Array<{ contractAddress: string; tokenBalance: string }> } };
+    const data = await this.parseAlchemyResponse<{ result?: { tokenBalances?: Array<{ contractAddress: string; tokenBalance: string }> } }>(res, 'token balances');
     const rawBalances = data.result?.tokenBalances || [];
     const nonZero = rawBalances.filter(b => b.tokenBalance && b.tokenBalance !== '0x0000000000000000000000000000000000000000000000000000000000000000' && b.tokenBalance !== '0x0' && b.tokenBalance !== '0');
 
@@ -402,7 +423,7 @@ export class AlchemyTokenBalancesProvider implements TokenBalancesProvider {
             params: [item.contractAddress]
           })
         });
-        const metaData = await metaRes.json() as { result?: { symbol?: string; name?: string; decimals?: number; logo?: string } };
+        const metaData = await this.parseAlchemyResponse<{ result?: { symbol?: string; name?: string; decimals?: number; logo?: string } }>(metaRes, 'token metadata');
         const meta = metaData.result || {};
         const decimals = typeof meta.decimals === 'number' ? meta.decimals : 18;
         const balanceBigInt = BigInt(item.tokenBalance);
@@ -419,12 +440,27 @@ export class AlchemyTokenBalancesProvider implements TokenBalancesProvider {
           verified: false,
           possibleSpam: false
         });
-      } catch {
+      } catch (err) {
+        if (isProviderRateLimitError(err)) throw err;
         // ignore individual metadata fetch error
       }
     }
     return results;
   }
+}
+
+export function getTokenBalancesFallbackProviderFromEnv(): { provider: TokenBalancesProvider; status: string; statusCode: "connected" | "missing" | "disabled"; providerName: "moralis" | "none" } {
+  const mode = (process.env.TOKEN_BALANCES_FALLBACK_PROVIDER || 'none').toLowerCase();
+  if (mode === 'none') {
+    return { provider: new NoneTokenBalancesProvider(), status: 'Token balances fallback disabled', statusCode: 'disabled', providerName: 'none' };
+  }
+  if (mode === 'moralis') {
+    if (!process.env.MORALIS_API_KEY) {
+      return { provider: new NoneTokenBalancesProvider(), status: 'Moralis fallback provider not configured', statusCode: 'missing', providerName: 'moralis' };
+    }
+    return { provider: new MoralisTokenBalancesProvider(process.env.MORALIS_API_KEY), status: 'Moralis fallback connected', statusCode: 'connected', providerName: 'moralis' };
+  }
+  return { provider: new NoneTokenBalancesProvider(), status: 'Token balances fallback disabled', statusCode: 'disabled', providerName: 'none' };
 }
 
 function logMoralisDiagnostics(params: {
@@ -775,4 +811,3 @@ export function getApprovalProviderFromEnv(): { provider: ApprovalProvider; stat
   }
   return { provider: new NoneApprovalProvider(), status: 'Approval provider not configured', statusCode: 'missing', providerName: 'none' };
 }
-

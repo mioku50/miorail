@@ -9,9 +9,10 @@
 // chat, or recommendation generation.
 
 import { db, providerCache } from '@mioagent/db';
+import { isProviderRateLimitError } from '@mioagent/data-providers';
 import { eq } from 'drizzle-orm';
 
-export type CacheStatus = "live" | "cached" | "stale" | "failed";
+export type CacheStatus = "live" | "cached" | "stale" | "failed" | "rate_limited";
 export type ProviderName = "moralis" | "goplus" | "alchemy" | "coingecko" | "none" | "mock";
 export type BudgetStatus = "ok" | "rate-limited" | "disabled";
 
@@ -168,6 +169,7 @@ export class DbProviderCacheStore implements ProviderCacheStore {
 export class ProviderBudget {
   private minuteHits = new Map<ProviderName, number[]>();
   private hourHits = new Map<ProviderName, number[]>();
+  private remoteRateLimitUntil = new Map<ProviderName, number>();
 
   constructor(
     private readonly maxPerMinute: number,
@@ -185,6 +187,8 @@ export class ProviderBudget {
     if (m) this.minuteHits.set(provider, m.filter((t) => now - t < MINUTE_MS));
     const h = this.hourHits.get(provider);
     if (h) this.hourHits.set(provider, h.filter((t) => now - t < HOUR_MS));
+    const until = this.remoteRateLimitUntil.get(provider);
+    if (until !== undefined && until <= now) this.remoteRateLimitUntil.delete(provider);
   }
 
   canCall(provider: ProviderName): boolean {
@@ -192,6 +196,7 @@ export class ProviderBudget {
     if (maxPerMinute <= 0 || maxPerHour <= 0) return false;
     const now = this.now();
     this.prune(provider, now);
+    if (this.isInRemoteRateLimitCooldown(provider)) return false;
     const m = this.minuteHits.get(provider)?.length ?? 0;
     const h = this.hourHits.get(provider)?.length ?? 0;
     return m < maxPerMinute && h < maxPerHour;
@@ -219,9 +224,21 @@ export class ProviderBudget {
     return { status, callsLastMinute, callsLastHour };
   }
 
+  markRemoteRateLimited(provider: ProviderName, cooldownMs = 60_000): void {
+    this.remoteRateLimitUntil.set(provider, this.now() + cooldownMs);
+  }
+
+  isInRemoteRateLimitCooldown(provider: ProviderName): boolean {
+    const now = this.now();
+    this.prune(provider, now);
+    const until = this.remoteRateLimitUntil.get(provider);
+    return until !== undefined && until > now;
+  }
+
   reset(): void {
     this.minuteHits.clear();
     this.hourHits.clear();
+    this.remoteRateLimitUntil.clear();
   }
 }
 
@@ -278,10 +295,11 @@ export async function cachedProviderCall<T>(params: {
 
     // Budget guard: do not call the external provider when exhausted.
     if (!budget.canCall(provider)) {
+      const rateLimitCooldown = budget.isInRemoteRateLimitCooldown(provider);
       if (staleEntry) {
         return {
           data: staleEntry.payload,
-          status: "stale",
+          status: rateLimitCooldown ? "rate_limited" : "stale",
           cacheAgeSeconds: Math.max(0, Math.round((now - staleEntry.updatedAt) / 1000)),
           fromCache: true,
           providerCalled: false,
@@ -290,11 +308,11 @@ export async function cachedProviderCall<T>(params: {
       }
       return {
         data: undefined,
-        status: "failed",
+        status: rateLimitCooldown ? "rate_limited" : "failed",
         fromCache: false,
         providerCalled: false,
         budgetExhausted: true,
-        error: "Provider budget exhausted",
+        error: rateLimitCooldown ? "Provider remote rate limit cooldown active" : "Provider budget exhausted",
       };
     }
 
@@ -326,6 +344,10 @@ export async function cachedProviderCall<T>(params: {
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      const rateLimited = isProviderRateLimitError(err);
+      if (rateLimited) {
+        budget.markRemoteRateLimited(provider);
+      }
       if (staleEntry) {
         // Keep the stale entry but record the recent failure on it (do not extend expiry).
         try {
@@ -335,20 +357,20 @@ export async function cachedProviderCall<T>(params: {
         }
         return {
           data: staleEntry.payload,
-          status: "stale",
+          status: rateLimited ? "rate_limited" : "stale",
           cacheAgeSeconds: Math.max(0, Math.round((now - staleEntry.updatedAt) / 1000)),
           fromCache: true,
           providerCalled: true,
-          budgetExhausted: false,
+          budgetExhausted: rateLimited,
           error: message,
         };
       }
       return {
         data: undefined,
-        status: "failed",
+        status: rateLimited ? "rate_limited" : "failed",
         fromCache: false,
         providerCalled: true,
-        budgetExhausted: false,
+        budgetExhausted: rateLimited,
         error: message,
       };
     }

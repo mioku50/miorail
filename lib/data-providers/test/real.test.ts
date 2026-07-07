@@ -1,6 +1,7 @@
 import { test, describe, mock } from 'node:test';
 import assert from 'node:assert';
 import {
+  AlchemyTokenBalancesProvider,
   RealCoinGeckoProvider,
   CoinGeckoPriceProvider,
   RealDeFiLlamaProvider,
@@ -12,6 +13,7 @@ import {
   getTokenSecurityProviderFromEnv,
   mapGoPlusTokenSecurity
 } from '../src/real.js';
+import { ProviderRateLimitError } from '../src/interfaces.js';
 
 function restoreEnv(name: string, value: string | undefined) {
     if (value === undefined) {
@@ -111,6 +113,78 @@ describe('Real Providers', () => {
         mock.restoreAll();
     });
 
+    test('AlchemyTokenBalancesProvider maps token balances and metadata', async () => {
+        const token = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+        const mockFetch = mock.fn(async (_url: string | URL | Request, options?: RequestInit) => {
+            const body = JSON.parse(String(options?.body || '{}'));
+            if (body.method === 'alchemy_getTokenBalances') {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ result: { tokenBalances: [{ contractAddress: token, tokenBalance: '0xe4e1c0' }] } })
+                } as Response;
+            }
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({ result: { symbol: 'USDC', name: 'USD Coin', decimals: 6, logo: null } })
+            } as Response;
+        });
+        global.fetch = mockFetch as unknown as typeof fetch;
+
+        const provider = new AlchemyTokenBalancesProvider('alchemy-key');
+        const balances = await provider.getTokenBalances({ address: '0xabc', chainId: 8453 });
+
+        assert.strictEqual(balances.length, 1);
+        assert.strictEqual(balances[0].symbol, 'USDC');
+        assert.strictEqual(balances[0].balanceFormatted, '15.0000');
+        assert.strictEqual(mockFetch.mock.calls.length, 2);
+        mock.restoreAll();
+    });
+
+    test('AlchemyTokenBalancesProvider classifies HTTP 429 as rate_limited', async () => {
+        const mockFetch = mock.fn(async () => ({
+            ok: false,
+            status: 429,
+            statusText: 'Too Many Requests',
+            json: async () => ({ error: { message: 'Your app has been rate-limited due to unusually high global traffic.' } })
+        } as Response));
+        global.fetch = mockFetch as unknown as typeof fetch;
+
+        const provider = new AlchemyTokenBalancesProvider('alchemy-key');
+        await assert.rejects(
+            () => provider.getTokenBalances({ address: '0xabc', chainId: 8453 }),
+            (err: unknown) => {
+                assert.ok(err instanceof ProviderRateLimitError);
+                assert.strictEqual((err as ProviderRateLimitError).status, 'rate_limited');
+                assert.strictEqual((err as ProviderRateLimitError).budgetExhausted, true);
+                assert.strictEqual((err as ProviderRateLimitError).provider, 'alchemy');
+                return true;
+            }
+        );
+        mock.restoreAll();
+    });
+
+    test('AlchemyTokenBalancesProvider classifies JSON-RPC 429 as rate_limited', async () => {
+        const mockFetch = mock.fn(async () => ({
+            ok: true,
+            status: 200,
+            json: async () => ({ error: { code: 429, message: 'rate limited' } })
+        } as Response));
+        global.fetch = mockFetch as unknown as typeof fetch;
+
+        const provider = new AlchemyTokenBalancesProvider('alchemy-key');
+        await assert.rejects(
+            () => provider.getTokenBalances({ address: '0xabc', chainId: 8453 }),
+            (err: unknown) => {
+                assert.ok(err instanceof ProviderRateLimitError);
+                assert.strictEqual((err as ProviderRateLimitError).statusCode, 429);
+                return true;
+            }
+        );
+        mock.restoreAll();
+    });
+
     test('getTokenBalancesProviderFromEnv defaults to Alchemy and reports missing without config', async () => {
         const { getTokenBalancesProviderFromEnv } = await import('../src/real.js');
         delete process.env.TOKEN_BALANCES_PROVIDER;
@@ -160,6 +234,36 @@ describe('Real Providers', () => {
         assert.strictEqual(res.providerName, 'none');
         assert.strictEqual(res.statusCode, 'disabled');
         delete process.env.TOKEN_BALANCES_PROVIDER;
+    });
+
+    test('getTokenBalancesFallbackProviderFromEnv defaults to disabled none', async () => {
+        const { getTokenBalancesFallbackProviderFromEnv } = await import('../src/real.js');
+        const origFallback = process.env.TOKEN_BALANCES_FALLBACK_PROVIDER;
+        const origMoralisKey = process.env.MORALIS_API_KEY;
+        delete process.env.TOKEN_BALANCES_FALLBACK_PROVIDER;
+        process.env.MORALIS_API_KEY = 'moralis-test-key';
+
+        const res = getTokenBalancesFallbackProviderFromEnv();
+        assert.strictEqual(res.providerName, 'none');
+        assert.strictEqual(res.statusCode, 'disabled');
+
+        restoreEnv('TOKEN_BALANCES_FALLBACK_PROVIDER', origFallback);
+        restoreEnv('MORALIS_API_KEY', origMoralisKey);
+    });
+
+    test('getTokenBalancesFallbackProviderFromEnv enables Moralis only when explicitly requested', async () => {
+        const { getTokenBalancesFallbackProviderFromEnv } = await import('../src/real.js');
+        const origFallback = process.env.TOKEN_BALANCES_FALLBACK_PROVIDER;
+        const origMoralisKey = process.env.MORALIS_API_KEY;
+        process.env.TOKEN_BALANCES_FALLBACK_PROVIDER = 'moralis';
+        process.env.MORALIS_API_KEY = 'moralis-test-key';
+
+        const res = getTokenBalancesFallbackProviderFromEnv();
+        assert.strictEqual(res.providerName, 'moralis');
+        assert.strictEqual(res.statusCode, 'connected');
+
+        restoreEnv('TOKEN_BALANCES_FALLBACK_PROVIDER', origFallback);
+        restoreEnv('MORALIS_API_KEY', origMoralisKey);
     });
 
     test('NoneTokenSecurityProvider returns unknown without throwing', async () => {

@@ -16,6 +16,7 @@ export function PortfolioProviderChips({ portfolio, statusData, address, isPortf
   const balancesProvider = portfolio?.providers?.tokenBalancesProvider || statusData?.tokenBalances?.provider || 'none';
   const priceProvider = portfolio?.providers?.priceProvider || statusData?.prices?.provider || 'none';
   const approvalProvider = portfolio?.providers?.approvalProvider || statusData?.approvals?.provider || 'none';
+  const balanceStatus = portfolio?.providerCallSummary?.balances?.status || portfolio?.providers?.tokenBalances;
   const approvalScan = portfolio?.approvalScan || portfolio?.analysis?.providerContext;
   const approvalScanStatus = approvalScan?.status || approvalScan?.approvalScanStatus;
 
@@ -47,6 +48,11 @@ export function PortfolioProviderChips({ portfolio, statusData, address, isPortf
       <span className="text-[10px] font-mono font-normal text-ink-3 lowercase bg-panel-2 px-1.5 py-0.5 rounded border border-line/60">
         balances {balancesProvider}
       </span>
+      {balanceStatus === 'rate_limited' && (
+        <span className="text-[10px] font-mono font-normal text-warn lowercase bg-warn-soft px-1.5 py-0.5 rounded border border-warn/20">
+          alchemy rate-limited
+        </span>
+      )}
       <span className="text-[10px] font-mono font-normal text-ink-3 lowercase bg-panel-2 px-1.5 py-0.5 rounded border border-line/60">
         prices {priceProvider}
       </span>

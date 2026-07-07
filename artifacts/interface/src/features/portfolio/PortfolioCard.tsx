@@ -23,6 +23,8 @@ export function PortfolioCard({ portfolio, statusData, address, isPortfolioFetch
   const usdcToken = tokens.find((b: any) => b.symbol === 'USDC');
   const usdcBalance = usdcToken?.balanceFormatted;
   const displayAddress = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : '';
+  const isAlchemyRateLimited = portfolio?.providerCallSummary?.balances?.provider === 'alchemy'
+    && portfolio?.providerCallSummary?.balances?.status === 'rate_limited';
 
   const nonEthTokens = tokens.filter((b: any) => b.symbol !== 'ETH');
   const sortedTokens = [...nonEthTokens].sort((a: any, b: any) => {
@@ -55,7 +57,11 @@ export function PortfolioCard({ portfolio, statusData, address, isPortfolioFetch
               {portfolioFreshnessLabel(portfolio)}
             </span>
           )}
-          {portfolio.providerBudgetStatus?.exhausted && (
+          {isAlchemyRateLimited ? (
+            <span className="text-[10px] font-mono font-normal text-warn lowercase bg-warn-soft px-1.5 py-0.5 rounded border border-warn/20">
+              Alchemy rate-limited. Showing cached/native balance data.
+            </span>
+          ) : portfolio.providerBudgetStatus?.exhausted && (
             <span className="text-[10px] font-mono font-normal text-warn lowercase bg-warn-soft px-1.5 py-0.5 rounded border border-warn/20">
               Provider budget reached — showing cached/stale data.
             </span>

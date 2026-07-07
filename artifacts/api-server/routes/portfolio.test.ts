@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import request from 'supertest';
 import { app } from '../app';
 import { clearTokenSecurityCacheForTests } from '@mioagent/data-providers';
-import { clearTokenBalancesCacheForTests } from '../lib/portfolioAnalysis';
+import { clearTokenBalancesCacheForTests, setTokenBalancesCacheForTests } from '../lib/portfolioAnalysis';
 
 function restoreEnv(name: string, value: string | undefined) {
   if (value === undefined) {
@@ -432,6 +432,154 @@ describe('Portfolio API', () => {
     assert.strictEqual(moralisCalls, 1);
 
     restoreEnv('TOKEN_BALANCES_PROVIDER', origBalances);
+    restoreEnv('PRICE_PROVIDER', origPrice);
+    restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurity);
+    restoreEnv('APPROVAL_PROVIDER', origApproval);
+    restoreEnv('ALCHEMY_API_KEY', origAlchemyKey);
+    restoreEnv('MORALIS_API_KEY', origMoralisKey);
+    mock.restoreAll();
+  });
+
+  test('GET /api/portfolio reports Alchemy rate limit without automatic Moralis fallback', async () => {
+    const origBalances = process.env.TOKEN_BALANCES_PROVIDER;
+    const origFallback = process.env.TOKEN_BALANCES_FALLBACK_PROVIDER;
+    const origPrice = process.env.PRICE_PROVIDER;
+    const origSecurity = process.env.TOKEN_SECURITY_PROVIDER;
+    const origApproval = process.env.APPROVAL_PROVIDER;
+    const origAlchemyKey = process.env.ALCHEMY_API_KEY;
+    const origMoralisKey = process.env.MORALIS_API_KEY;
+    process.env.TOKEN_BALANCES_PROVIDER = 'alchemy';
+    process.env.TOKEN_BALANCES_FALLBACK_PROVIDER = 'none';
+    process.env.PRICE_PROVIDER = 'none';
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    process.env.APPROVAL_PROVIDER = 'moralis';
+    process.env.ALCHEMY_API_KEY = 'alchemy-test-key';
+    process.env.MORALIS_API_KEY = 'moralis-test-key';
+
+    const wallet = '0xcccc56789012345678901234567890123456cccc';
+    const mockFetch = mock.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const bodyText = String(init?.body || '');
+      if (bodyText.includes('alchemy_getTokenBalances')) {
+        return {
+          ok: false,
+          status: 429,
+          statusText: 'Too Many Requests',
+          json: async () => ({ error: { message: 'Your app has been rate-limited due to unusually high global traffic.' } }),
+        } as Response;
+      }
+      assert.ok(!String(_url).includes('moralis.io'), `normal portfolio scan must not call Moralis on Alchemy 429: ${String(_url)}`);
+      return { ok: true, json: async () => ({ result: '0xde0b6b3a7640000' }) } as Response;
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const response = await request(app).get(`/api/portfolio?walletAddress=${wallet}&chainEnv=mainnet-readonly&refresh=1`);
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.tokens.length, 1);
+    assert.strictEqual(response.body.tokens[0].symbol, 'ETH');
+    assert.strictEqual(response.body.providerStatus, 'Alchemy rate-limited. Showing cached/native balance data.');
+    assert.strictEqual(response.body.dataFreshness, 'partial');
+    assert.strictEqual(response.body.providers.tokenBalances, 'rate_limited');
+    assert.strictEqual(response.body.providerBudgetStatus.exhausted, true);
+    assert.ok(response.body.providerBudgetStatus.providers.includes('alchemy'));
+    assert.deepStrictEqual(
+      {
+        provider: response.body.providerCallSummary.balances.provider,
+        status: response.body.providerCallSummary.balances.status,
+        providerCalled: response.body.providerCallSummary.balances.providerCalled,
+        budgetExhausted: response.body.providerCallSummary.balances.budgetExhausted,
+        requested: response.body.providerCallSummary.balances.requested,
+      },
+      {
+        provider: 'alchemy',
+        status: 'rate_limited',
+        providerCalled: true,
+        budgetExhausted: true,
+        requested: true,
+      },
+    );
+    assert.strictEqual(response.body.providerCallSummary.balanceFallback.provider, 'none');
+    assert.strictEqual(response.body.providerCallSummary.balanceFallback.requested, false);
+    assert.strictEqual(response.body.providerContext.tokenBalancesProvider, 'alchemy');
+    assert.strictEqual(response.body.providerContext.priceProvider, 'none');
+    assert.strictEqual(response.body.providerContext.balancesStatus, 'rate_limited');
+    assert.strictEqual(response.body.analysis.providerContext.balancesStatus, 'rate_limited');
+    assert.strictEqual(response.body.analysis.totalTokens, 1);
+    const moralisCalls = mockFetch.mock.calls.filter((c: any) => String(c.arguments[0]).includes('moralis.io')).length;
+    assert.strictEqual(moralisCalls, 0);
+
+    restoreEnv('TOKEN_BALANCES_PROVIDER', origBalances);
+    restoreEnv('TOKEN_BALANCES_FALLBACK_PROVIDER', origFallback);
+    restoreEnv('PRICE_PROVIDER', origPrice);
+    restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurity);
+    restoreEnv('APPROVAL_PROVIDER', origApproval);
+    restoreEnv('ALCHEMY_API_KEY', origAlchemyKey);
+    restoreEnv('MORALIS_API_KEY', origMoralisKey);
+    mock.restoreAll();
+  });
+
+  test('GET /api/portfolio prefers stale Alchemy cache over native-only fallback on rate limit', async () => {
+    const origBalances = process.env.TOKEN_BALANCES_PROVIDER;
+    const origFallback = process.env.TOKEN_BALANCES_FALLBACK_PROVIDER;
+    const origPrice = process.env.PRICE_PROVIDER;
+    const origSecurity = process.env.TOKEN_SECURITY_PROVIDER;
+    const origApproval = process.env.APPROVAL_PROVIDER;
+    const origAlchemyKey = process.env.ALCHEMY_API_KEY;
+    const origMoralisKey = process.env.MORALIS_API_KEY;
+    process.env.TOKEN_BALANCES_PROVIDER = 'alchemy';
+    process.env.TOKEN_BALANCES_FALLBACK_PROVIDER = 'none';
+    process.env.PRICE_PROVIDER = 'none';
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    process.env.APPROVAL_PROVIDER = 'moralis';
+    process.env.ALCHEMY_API_KEY = 'alchemy-test-key';
+    process.env.MORALIS_API_KEY = 'moralis-test-key';
+
+    const wallet = '0xdddd56789012345678901234567890123456dddd';
+    const aero = '0x940181a94a35a4569e4529a3cdfb74e38fd98631';
+    await setTokenBalancesCacheForTests(8453, wallet, [{
+      symbol: 'AERO',
+      name: 'Aerodrome',
+      address: aero,
+      balance: '2500000000000000000',
+      balanceFormatted: '2.5000',
+      decimals: 18,
+      verified: true,
+      possibleSpam: false,
+    }], 'alchemy');
+
+    const mockFetch = mock.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const bodyText = String(init?.body || '');
+      if (bodyText.includes('alchemy_getTokenBalances')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ error: { code: 429, message: 'rate limited' } }),
+        } as Response;
+      }
+      assert.ok(!String(_url).includes('moralis.io'), `stale Alchemy cache must avoid Moralis fallback: ${String(_url)}`);
+      return { ok: true, json: async () => ({ result: '0xde0b6b3a7640000' }) } as Response;
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const response = await request(app).get(`/api/portfolio?walletAddress=${wallet}&chainEnv=mainnet-readonly&refresh=1`);
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.providerStatus, 'Alchemy rate-limited. Showing cached/native balance data.');
+    assert.strictEqual(response.body.dataFreshness, 'stale');
+    assert.strictEqual(response.body.providers.tokenBalances, 'rate_limited');
+    assert.strictEqual(response.body.providerCallSummary.balances.provider, 'alchemy');
+    assert.strictEqual(response.body.providerCallSummary.balances.status, 'rate_limited');
+    assert.strictEqual(response.body.providerCallSummary.balances.providerCalled, true);
+    assert.strictEqual(response.body.providerCallSummary.balances.budgetExhausted, true);
+    assert.strictEqual(response.body.providerContext.balancesStatus, 'rate_limited');
+    const cachedAero = response.body.tokens.find((t: { symbol: string }) => t.symbol === 'AERO');
+    assert.ok(cachedAero);
+    assert.strictEqual(cachedAero.balanceFormatted, '2.5000');
+    assert.strictEqual(cachedAero.dataFreshness, 'cached');
+    assert.strictEqual(response.body.analysis.totalTokens, 2);
+    const moralisCalls = mockFetch.mock.calls.filter((c: any) => String(c.arguments[0]).includes('moralis.io')).length;
+    assert.strictEqual(moralisCalls, 0);
+
+    restoreEnv('TOKEN_BALANCES_PROVIDER', origBalances);
+    restoreEnv('TOKEN_BALANCES_FALLBACK_PROVIDER', origFallback);
     restoreEnv('PRICE_PROVIDER', origPrice);
     restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurity);
     restoreEnv('APPROVAL_PROVIDER', origApproval);
