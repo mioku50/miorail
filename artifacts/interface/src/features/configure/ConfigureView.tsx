@@ -9,13 +9,14 @@ import {
   useResetAutonomy,
 } from '@mioagent/api-client-react';
 import { CHAIN_ENV, isMainnetReadonly } from '../../lib/chain';
-import { formatRiskProvider } from '../../lib/format';
+import { baseMcpHint, baseMcpState, formatBaseMcpStatus, formatRiskProvider } from '../../lib/format';
 import { StateBadge, type StateKind } from '@mioagent/ui';
 import { useUiStore } from '../../lib/state';
 
 function tbState(s?: string): StateKind {
   if (s === 'connected') return 'live';
   if (s === 'stale') return 'stale';
+  if (s === 'rate_limited') return 'stale';
   if (s === 'failed') return 'failed';
   if (s === 'disabled') return 'disabled';
   return 'missing';
@@ -283,8 +284,13 @@ export function ConfigureView() {
           } /> : <Checking />}
         </Row>
         <Row label="Base MCP">
-          {sd ? <StateBadge state={sd.baseMcp.status === 'configured' ? 'live' : 'missing'} label={sd.baseMcp.status === 'configured' ? 'Configured' : 'Missing'} /> : <Checking />}
+          {sd ? <StateBadge state={baseMcpState(sd.baseMcp.status)} label={formatBaseMcpStatus(sd.baseMcp)} /> : <Checking />}
         </Row>
+        {baseMcpHint(sd?.baseMcp) && (
+          <div className="text-[11px] text-ink-3 bg-panel-2 border border-line rounded-md px-3 py-2">
+            {baseMcpHint(sd?.baseMcp)}
+          </div>
+        )}
         <Row label="x402 Micropayments">
           {sd ? <StateBadge state={sd.x402.status === 'configured' ? 'live' : sd.x402.status === 'missing' ? 'missing' : 'mock'} label={sd.x402.status === 'configured' ? 'Configured' : sd.x402.status === 'missing' ? 'Not configured' : 'Simulated'} /> : <Checking />}
         </Row>

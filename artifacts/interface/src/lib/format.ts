@@ -1,5 +1,6 @@
 // Ported verbatim from App.tsx (F2 parity). F3 will rewire these to StateBadge.
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import type { StateKind } from '@mioagent/ui';
 
 export function formatRiskProvider(statusData: any, pendingLabel = 'Checking...') {
   if (!statusData) return pendingLabel;
@@ -8,6 +9,29 @@ export function formatRiskProvider(statusData: any, pendingLabel = 'Checking...'
   if (statusData.risk.status === 'failed') return statusData.risk.provider === 'goplus' ? 'GoPlus failed' : 'Failed';
   if (statusData.risk.status === 'disabled') return 'Disabled by config';
   return 'Missing';
+}
+
+export function baseMcpState(status?: string): StateKind {
+  if (status === 'connected') return 'live';
+  if (status === 'degraded') return 'stale';
+  if (status === 'disabled') return 'disabled';
+  if (status === 'unreachable' || status === 'unsupported') return 'failed';
+  return 'missing';
+}
+
+export function formatBaseMcpStatus(baseMcp?: any, pendingLabel = 'Checking...') {
+  if (!baseMcp) return pendingLabel;
+  if (baseMcp.status === 'connected') return baseMcp.endpointHost ? `connected (${baseMcp.endpointHost})` : 'connected';
+  if (baseMcp.status === 'degraded') return baseMcp.errorCode === 'rate_limited' ? 'degraded (rate limited)' : 'degraded';
+  if (baseMcp.status === 'unreachable') return 'unreachable';
+  if (baseMcp.status === 'unsupported') return 'unsupported';
+  if (baseMcp.status === 'disabled') return 'disabled';
+  return 'missing';
+}
+
+export function baseMcpHint(baseMcp?: any): string | null {
+  if (!baseMcp || baseMcp.status !== 'missing') return null;
+  return 'Base MCP is optional. Configure BASE_MCP_SERVER_URL to enable tool status.';
 }
 
 export function tokenSecurityIndicator(token: any, riskProviderStatus?: string) {

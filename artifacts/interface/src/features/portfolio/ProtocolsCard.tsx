@@ -1,5 +1,5 @@
 import { isMainnetReadonly } from '../../lib/chain';
-import { formatRiskProvider } from '../../lib/format';
+import { baseMcpHint, formatBaseMcpStatus, formatRiskProvider } from '../../lib/format';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 interface ProtocolsCardProps {
@@ -66,8 +66,8 @@ export function ProtocolsCard({ statusData, protocolsData, isProtocolsError, add
           <div className="flex items-center justify-between py-1 text-[12px]">
             <span className="text-ink-2">Base MCP</span>
             {statusData ? (
-              <span className={statusData.baseMcp.status === 'configured' ? 'text-ok font-medium' : 'text-warn font-medium'}>
-                {statusData.baseMcp.status === 'configured' ? 'Configured' : 'Missing'}
+              <span className={statusData.baseMcp.status === 'connected' ? 'text-ok font-medium' : statusData.baseMcp.status === 'disabled' ? 'text-ink-3 font-medium' : statusData.baseMcp.status === 'unreachable' || statusData.baseMcp.status === 'unsupported' ? 'text-risk font-medium' : 'text-warn font-medium'}>
+                {formatBaseMcpStatus(statusData.baseMcp)}
               </span>
             ) : import.meta.env.VITE_MCP_SERVER_URL ? (
               <span className="text-ok font-medium">Configured</span>
@@ -75,6 +75,11 @@ export function ProtocolsCard({ statusData, protocolsData, isProtocolsError, add
               <span className="text-risk font-medium">Missing</span>
             )}
           </div>
+          {baseMcpHint(statusData?.baseMcp) && (
+            <div className="text-[11px] text-ink-3 bg-panel-2 border border-line rounded-md px-2 py-1.5">
+              {baseMcpHint(statusData?.baseMcp)}
+            </div>
+          )}
         </div>
       ) : isProtocolsError || !protocolsData ? (
         <div className="text-[13px] text-risk bg-risk-soft p-3 rounded-md font-medium border border-risk/20 mt-2">Provider disconnected</div>

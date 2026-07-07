@@ -434,7 +434,17 @@ export const StatusResponseSchema = z.object({
     callsLastHour: z.number(),
   })).optional(),
   baseMcp: z.object({
-    status: z.enum(["configured", "missing"]),
+    status: z.enum(["missing", "disabled", "connected", "unreachable", "degraded", "unsupported"]),
+    provider: z.literal("base-mcp"),
+    configured: z.boolean(),
+    enabled: z.boolean(),
+    endpointHost: z.string().optional(),
+    lastCheckedAt: z.string().optional(),
+    errorCode: z.string().optional(),
+    capabilities: z.object({
+      toolsCount: z.number().optional(),
+      resourcesCount: z.number().optional(),
+    }).optional(),
   }),
   x402: z.object({
     status: z.enum(["simulated", "configured", "missing"]),

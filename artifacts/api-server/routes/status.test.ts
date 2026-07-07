@@ -1,8 +1,9 @@
-import test, { describe } from 'node:test';
+import test, { describe, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert';
 import request from 'supertest';
 import { app } from '../app.js';
 import { clearTokenSecurityCacheForTests } from '@mioagent/data-providers';
+import { clearBaseMcpStatusForTests } from '../lib/baseMcpStatus.js';
 
 function restoreEnv(name: string, value: string | undefined) {
   if (value === undefined) {
@@ -12,7 +13,19 @@ function restoreEnv(name: string, value: string | undefined) {
   }
 }
 
+const ORIGINAL_FETCH = global.fetch;
+
 describe('Status API', () => {
+  beforeEach(() => {
+    clearBaseMcpStatusForTests();
+    mock.restoreAll();
+    global.fetch = ORIGINAL_FETCH;
+  });
+
+  afterEach(() => {
+    global.fetch = ORIGINAL_FETCH;
+  });
+
   test('GET /api/status returns missing risk provider by default', async () => {
     const original = process.env.TOKEN_SECURITY_PROVIDER;
     const originalApiKey = process.env.GOPLUS_API_KEY;
@@ -105,5 +118,116 @@ describe('Status API', () => {
 
     restoreEnv('CHAIN_ENV', origChain);
     restoreEnv('MAINNET_EXECUTION_ENABLED', origMainnetExec);
+  });
+
+  test('GET /api/status reports Base MCP missing when no env is configured', async () => {
+    const origEnabled = process.env.BASE_MCP_ENABLED;
+    const origUrl = process.env.BASE_MCP_SERVER_URL;
+    const origLegacyUrl = process.env.BASE_MCP_URL;
+    delete process.env.BASE_MCP_ENABLED;
+    delete process.env.BASE_MCP_SERVER_URL;
+    delete process.env.BASE_MCP_URL;
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    assert.deepStrictEqual(response.body.baseMcp, {
+      status: 'missing',
+      provider: 'base-mcp',
+      configured: false,
+      enabled: false,
+    });
+
+    restoreEnv('BASE_MCP_ENABLED', origEnabled);
+    restoreEnv('BASE_MCP_SERVER_URL', origUrl);
+    restoreEnv('BASE_MCP_URL', origLegacyUrl);
+  });
+
+  test('GET /api/status probes configured Base MCP and reports connected capabilities', async () => {
+    const origEnabled = process.env.BASE_MCP_ENABLED;
+    const origUrl = process.env.BASE_MCP_SERVER_URL;
+    const origPath = process.env.BASE_MCP_STATUS_PATH;
+    const originalFetch = global.fetch;
+    process.env.BASE_MCP_ENABLED = 'true';
+    process.env.BASE_MCP_SERVER_URL = 'https://mcp.example.test/private/path?probe=1';
+    process.env.BASE_MCP_STATUS_PATH = '/health';
+
+    const mockFetch = mock.fn(async (url: string | URL | Request) => {
+      assert.strictEqual(String(url), 'https://mcp.example.test/health');
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ tools: [{ name: 'get_portfolio' }, { name: 'help' }], resources: [{ uri: 'base://status' }] }),
+      } as Response;
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.baseMcp.status, 'connected');
+    assert.strictEqual(response.body.baseMcp.provider, 'base-mcp');
+    assert.strictEqual(response.body.baseMcp.configured, true);
+    assert.strictEqual(response.body.baseMcp.enabled, true);
+    assert.strictEqual(response.body.baseMcp.endpointHost, 'mcp.example.test');
+    assert.deepStrictEqual(response.body.baseMcp.capabilities, { toolsCount: 2, resourcesCount: 1 });
+    assert.ok(response.body.baseMcp.lastCheckedAt);
+    assert.strictEqual(JSON.stringify(response.body.baseMcp).includes('private/path'), false);
+    assert.strictEqual(mockFetch.mock.calls.length, 1);
+
+    global.fetch = originalFetch;
+    restoreEnv('BASE_MCP_ENABLED', origEnabled);
+    restoreEnv('BASE_MCP_SERVER_URL', origUrl);
+    restoreEnv('BASE_MCP_STATUS_PATH', origPath);
+  });
+
+  test('GET /api/status reports configured Base MCP timeout as unreachable', async () => {
+    const origEnabled = process.env.BASE_MCP_ENABLED;
+    const origUrl = process.env.BASE_MCP_SERVER_URL;
+    const originalFetch = global.fetch;
+    process.env.BASE_MCP_ENABLED = 'true';
+    process.env.BASE_MCP_SERVER_URL = 'https://mcp.example.test';
+
+    const mockFetch = mock.fn(async () => {
+      throw Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.baseMcp.status, 'unreachable');
+    assert.strictEqual(response.body.baseMcp.errorCode, 'timeout');
+    assert.strictEqual(response.body.baseMcp.endpointHost, 'mcp.example.test');
+    assert.strictEqual(mockFetch.mock.calls.length, 1);
+
+    global.fetch = originalFetch;
+    restoreEnv('BASE_MCP_ENABLED', origEnabled);
+    restoreEnv('BASE_MCP_SERVER_URL', origUrl);
+  });
+
+  test('GET /api/status reports Base MCP 429 as degraded rate_limited and caches cooldown', async () => {
+    const origEnabled = process.env.BASE_MCP_ENABLED;
+    const origUrl = process.env.BASE_MCP_SERVER_URL;
+    const originalFetch = global.fetch;
+    process.env.BASE_MCP_ENABLED = 'true';
+    process.env.BASE_MCP_SERVER_URL = 'https://mcp.example.test';
+
+    const mockFetch = mock.fn(async () => ({
+      ok: false,
+      status: 429,
+      json: async () => ({ error: 'rate limited' }),
+    } as Response));
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const first = await request(app).get('/api/status');
+    const second = await request(app).get('/api/status');
+    assert.strictEqual(first.status, 200);
+    assert.strictEqual(second.status, 200);
+    assert.strictEqual(first.body.baseMcp.status, 'degraded');
+    assert.strictEqual(first.body.baseMcp.errorCode, 'rate_limited');
+    assert.strictEqual(second.body.baseMcp.status, 'degraded');
+    assert.strictEqual(mockFetch.mock.calls.length, 1);
+
+    global.fetch = originalFetch;
+    restoreEnv('BASE_MCP_ENABLED', origEnabled);
+    restoreEnv('BASE_MCP_SERVER_URL', origUrl);
   });
 });

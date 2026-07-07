@@ -3,6 +3,7 @@ import { StatusResponseSchema } from '@mioagent/api-zod';
 import { getTokenBalancesProviderFromEnv, getPriceProviderFromEnv, getTokenSecurityProviderFromEnv, getApprovalProviderFromEnv } from '@mioagent/data-providers';
 import { getProviderBudgetSnapshot, getProviderCacheDiagnostics } from '../lib/providerCache.js';
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
+import { getBaseMcpStatusSnapshot, probeBaseMcpStatus } from '../lib/baseMcpStatus.js';
 
 export function getSystemStatus(envOverride?: string) {
   const chainEnv = envOverride || process.env.CHAIN_ENV || 'sepolia';
@@ -39,8 +40,6 @@ export function getSystemStatus(envOverride?: string) {
   const { providerName: riskProvider, statusCode: riskStatus } = getTokenSecurityProviderFromEnv();
   const { providerName: approvalProvider, statusCode: approvalStatus } = getApprovalProviderFromEnv();
 
-  const baseMcpStatus: "configured" | "missing" = process.env.BASE_MCP_URL || process.env.BASE_MCP_ENABLED === 'true' ? "configured" : "missing";
-  
   const x402Status: "simulated" | "configured" | "missing" = process.env.X402_FACILITATOR_URL ? "configured" : "simulated";
 
   const isReadonly = chainEnv === 'mainnet-readonly';
@@ -78,9 +77,7 @@ export function getSystemStatus(envOverride?: string) {
     },
     cache,
     budgets,
-    baseMcp: {
-      status: baseMcpStatus,
-    },
+    baseMcp: getBaseMcpStatusSnapshot(),
     x402: {
       status: x402Status,
     },
@@ -90,9 +87,13 @@ export function getSystemStatus(envOverride?: string) {
 
 export const statusRouter = Router();
 
-statusRouter.get('/', (req, res, next) => {
+statusRouter.get('/', async (req, res, next) => {
   try {
-    const statusData = getSystemStatus();
+    const baseMcp = await probeBaseMcpStatus();
+    const statusData = {
+      ...getSystemStatus(),
+      baseMcp,
+    };
     res.json(StatusResponseSchema.parse(statusData));
   } catch (error) {
     next(error);

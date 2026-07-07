@@ -4,16 +4,16 @@ import { Link } from 'wouter';
 import { useStatus, useAutonomy, useResetAutonomy, usePortfolio, useCreateRecommendation } from '@mioagent/api-client-react';
 import { useUiStore } from '../../lib/state';
 import { isMainnetReadonly } from '../../lib/chain';
-import { portfolioFreshnessLabel } from '../../lib/format';
+import { baseMcpHint, formatBaseMcpStatus, portfolioFreshnessLabel } from '../../lib/format';
 import { X } from 'lucide-react';
 
 function Dot({ status }: { status?: string }) {
   let bg = 'bg-ink-3 shadow-none';
   if (status === 'connected' || status === 'configured' || status === 'ok' || status === 'live') {
     bg = 'bg-ok shadow-[0_0_6px_rgba(61,220,151,0.6)]';
-  } else if (status === 'stale' || status === 'partial' || status === 'simulated') {
+  } else if (status === 'stale' || status === 'partial' || status === 'simulated' || status === 'degraded') {
     bg = 'bg-warn shadow-[0_0_6px_rgba(255,180,84,0.6)]';
-  } else if (status === 'failed' || status === 'error' || status === 'blocked') {
+  } else if (status === 'failed' || status === 'error' || status === 'blocked' || status === 'unreachable' || status === 'unsupported') {
     bg = 'bg-risk shadow-[0_0_6px_rgba(255,92,92,0.6)]';
   }
   return <span className={`w-2 h-2 rounded-full shrink-0 ${bg}`} />;
@@ -165,10 +165,15 @@ export function OpsRail({ onClose }: OpsRailProps) {
               <span className="text-xs text-ink-2 font-sans">base-mcp</span>
               <div className="flex items-center gap-1.5">
                 <Dot status={sd?.baseMcp?.status} />
-                <span className="text-xs text-ink font-sans font-medium">{sd?.baseMcp?.status || 'none'}</span>
+                <span className="text-xs text-ink font-sans font-medium">{formatBaseMcpStatus(sd?.baseMcp, 'none')}</span>
               </div>
             </div>
             <div className="border-t border-line/50 pt-2.5 mt-0.5 flex flex-col gap-2">
+              {baseMcpHint(sd?.baseMcp) && (
+                <div className="text-[10px] font-sans text-ink-3 bg-panel-2 px-2 py-1.5 rounded border border-line leading-normal">
+                  {baseMcpHint(sd?.baseMcp)}
+                </div>
+              )}
               {isProviderMissingOrDisabled && (
                 <div className="text-[10px] font-sans text-warn bg-warn-soft px-2 py-1.5 rounded border border-warn/20 leading-normal">
                   Read providers missing or disabled. Configure MORALIS_API_KEY / TOKEN_BALANCES_PROVIDER.
