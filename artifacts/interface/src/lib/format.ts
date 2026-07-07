@@ -13,7 +13,7 @@ export function formatRiskProvider(statusData: any, pendingLabel = 'Checking...'
 
 export function baseMcpState(status?: string): StateKind {
   if (status === 'connected') return 'live';
-  if (status === 'degraded') return 'stale';
+  if (status === 'degraded' || status === 'needs_reauth') return 'stale';
   if (status === 'disabled') return 'disabled';
   if (status === 'unreachable' || status === 'unsupported') return 'failed';
   return 'missing';
@@ -22,6 +22,7 @@ export function baseMcpState(status?: string): StateKind {
 export function formatBaseMcpStatus(baseMcp?: any, pendingLabel = 'Checking...') {
   if (!baseMcp) return pendingLabel;
   if (baseMcp.status === 'connected') return baseMcp.endpointHost ? `connected (${baseMcp.endpointHost})` : 'connected';
+  if (baseMcp.status === 'needs_reauth') return 'needs reauth';
   if (baseMcp.status === 'degraded') return baseMcp.errorCode === 'rate_limited' ? 'degraded (rate limited)' : 'degraded';
   if (baseMcp.status === 'unreachable') return 'unreachable';
   if (baseMcp.status === 'unsupported') return 'unsupported';
@@ -30,7 +31,10 @@ export function formatBaseMcpStatus(baseMcp?: any, pendingLabel = 'Checking...')
 }
 
 export function baseMcpHint(baseMcp?: any): string | null {
-  if (!baseMcp || baseMcp.status !== 'missing') return null;
+  if (!baseMcp) return null;
+  if (baseMcp.status === 'needs_reauth') return 'Base MCP needs a fresh Base Account authorization.';
+  if (baseMcp.status !== 'missing') return null;
+  if (baseMcp.configured && baseMcp.enabled) return 'Base MCP is optional. Connect Base Account to enable user-scoped tool status.';
   return 'Base MCP is optional. Configure BASE_MCP_SERVER_URL to enable tool status.';
 }
 

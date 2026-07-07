@@ -16,9 +16,10 @@ import {
 import { ObservabilityService } from '@mioagent/observability';
 import { detectActionIntent } from '../lib/intent.js';
 import { fetchInternalPortfolio, analyzePortfolioForRisk, buildRecommendationMetadataFromAnalysis, fetchInternalApprovals, type TokenApproval } from '../lib/portfolioAnalysis.js';
-import { buildActionPlan, planHasCalls, getBaseMainnetUsdcAddress, parseRevokeApproval, findActiveApproval } from '../lib/actionPlan.js';
+import { buildActionPlan, planHasCalls, parseRevokeApproval, findActiveApproval } from '../lib/actionPlan.js';
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
 import { screenAction, simulateTrade } from '@mioagent/security';
+import { normalizeBaseChain } from '@mioagent/security/baseGuards';
 import { isProductionActionType } from '@mioagent/api-zod';
 import { MemoryService } from '@mioagent/memory';
 import { getSystemStatus } from './status.js';
@@ -176,7 +177,7 @@ actionsRouter.get('/', async (req, res, next) => {
   }
 });
 
-import { createToolAggregatorForUser } from '@mioagent/tools';
+import { createApiToolAggregatorForUser } from '../lib/baseMcpTools.js';
 
 
 actionsRouter.post('/recommend', async (req, res, next) => {
@@ -454,7 +455,7 @@ actionsRouter.post('/:actionId/execute', async (req, res, next) => {
       if (!sessionSecret) {
         return res.status(500).json({ success: false, error: 'Missing SESSION_SECRET configuration' });
       }
-      aggregator = await createToolAggregatorForUser(userId, sessionSecret);
+      aggregator = await createApiToolAggregatorForUser(req, userId, sessionSecret);
     } catch {
       return res.json({ success: false, error: 'Failed to initialize tool aggregator' });
     }
@@ -509,8 +510,13 @@ actionsRouter.post('/:actionId/execute', async (req, res, next) => {
     // If we have calls, execute them using the tool
     let toolResult;
     try {
-      const isSepolia = process.env.CHAIN_ENV === 'sepolia';
-      const toolName = isSepolia ? 'sepolia_send_calls' : 'send_calls';
+      let normalized;
+      try {
+        normalized = normalizeBaseChain(payload.chain);
+      } catch {
+        return res.json({ success: false, error: 'Unsupported Base chain for MCP execution' });
+      }
+      const toolName = normalized.sendCallsTool;
 
       const tool = aggregator.findTool(toolName);
       if (!tool) {
@@ -599,6 +605,13 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
       return res.json({ success: false, error: 'Action has no onchain calls to confirm' });
     }
 
+    let normalizedChain;
+    try {
+      normalizedChain = normalizeBaseChain(payload.chain);
+    } catch {
+      return res.status(400).json({ success: false, error: 'Unsupported Base chain for wallet confirmation' });
+    }
+
     // T19.1: defensive whitelist gate. actionPlan only ever produces
     // whitelisted action types, but prepare re-checks so a stale/hand-edited
     // payload can never reach the user's wallet.
@@ -625,7 +638,7 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
       return res.json(PrepareActionResponseSchema.parse({
         success: false,
         actionId,
-        chainId: '0x2105',
+        chainId: normalizedChain.hexChainId,
         from: userAddress,
         calls: payload.calls,
         atomicRequired: true,
@@ -657,7 +670,7 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
       return res.json(PrepareActionResponseSchema.parse({
         success: false,
         actionId,
-        chainId: '0x2105',
+        chainId: normalizedChain.hexChainId,
         from: userAddress,
         calls: payload.calls,
         atomicRequired: true,
@@ -681,7 +694,7 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
     return res.json(PrepareActionResponseSchema.parse({
       success: true,
       actionId,
-      chainId: '0x2105',
+      chainId: normalizedChain.hexChainId,
       from: userAddress,
       calls: payload.calls,
       atomicRequired: true,

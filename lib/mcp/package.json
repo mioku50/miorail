@@ -9,6 +9,7 @@
     "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
+    "@mioagent/security": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {

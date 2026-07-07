@@ -1,11 +1,14 @@
 import { useStatus } from '@mioagent/api-client-react';
 import { StateBadge } from '@mioagent/ui';
 import { baseMcpHint, baseMcpState, formatBaseMcpStatus } from '../../lib/format';
+import { PlugZap } from 'lucide-react';
 
 export function BaseMcpView() {
   const { data: sd } = useStatus();
   const mcp = sd?.baseMcp;
   const ap = sd?.approvals;
+  const canConnect = !!mcp?.enabled && !!mcp?.configured;
+  const connectLabel = mcp?.status === 'needs_reauth' ? 'Reconnect Base Account' : 'Подключить Base Account';
 
   return (
     <main className="flex-1 bg-bg p-5 flex flex-col gap-4 overflow-y-auto pb-16 md:pb-5">
@@ -48,6 +51,32 @@ export function BaseMcpView() {
             {baseMcpHint(mcp)}
           </div>
         )}
+        <div className="flex items-center justify-between gap-3 border-t border-line pt-3">
+          <div className="flex flex-col gap-0.5">
+            <span className="font-medium text-sm">Base Account OAuth</span>
+            <span className="text-xs text-ink-3">
+              {mcp?.auth?.connected ? 'User-scoped MCP tokens are stored server-side.' : 'No user-scoped Base MCP token is active.'}
+            </span>
+          </div>
+          {canConnect ? (
+            <a
+              href="/api/mcp/base/connect?returnTo=/base-mcp"
+              className="inline-flex items-center gap-2 text-xs font-bold bg-accent text-white px-3.5 py-2 rounded-lg hover:bg-accent/90 transition-colors shadow-sm"
+            >
+              <PlugZap size={14} />
+              {connectLabel}
+            </a>
+          ) : (
+            <button
+              type="button"
+              disabled
+              className="inline-flex items-center gap-2 text-xs font-bold bg-panel-2 text-ink-3 border border-line px-3.5 py-2 rounded-lg opacity-70 cursor-not-allowed"
+            >
+              <PlugZap size={14} />
+              Configure env first
+            </button>
+          )}
+        </div>
         {mcp?.status === 'unreachable' && (
           <div className="p-3 bg-risk-soft rounded border border-risk/20 text-xs text-risk font-medium">
             Base MCP status probe could not reach the configured host.

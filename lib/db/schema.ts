@@ -96,6 +96,46 @@ export const userSettings = pgTable('user_settings', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
+export const baseMcpOauthTokens = pgTable(
+  'base_mcp_oauth_tokens',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .references(() => users.id)
+      .notNull(),
+    provider: text('provider').notNull(),
+    encryptedTokens: text('encrypted_tokens'),
+    encryptedClientInfo: text('encrypted_client_info'),
+    encryptedDiscoveryState: text('encrypted_discovery_state'),
+    tokenExpiresAt: timestamp('token_expires_at'),
+    status: text('status').notNull(),
+    lastError: text('last_error'),
+    connectedAt: timestamp('connected_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('base_mcp_oauth_tokens_user_provider_idx').on(table.userId, table.provider),
+  ],
+);
+
+export const baseMcpOauthStates = pgTable(
+  'base_mcp_oauth_states',
+  {
+    stateHash: text('state_hash').primaryKey(),
+    userId: text('user_id')
+      .references(() => users.id)
+      .notNull(),
+    encryptedCodeVerifier: text('encrypted_code_verifier').notNull(),
+    returnTo: text('return_to').notNull(),
+    expiresAt: timestamp('expires_at').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('base_mcp_oauth_states_user_expires_idx').on(table.userId, table.expiresAt),
+  ],
+);
+
 export const x402Receipts = pgTable('x402_receipts', {
   id: text('id').primaryKey(),
   receipt: jsonb('receipt'),

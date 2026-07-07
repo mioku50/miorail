@@ -7,7 +7,7 @@ test('simulateTrade validates chain', async () => {
   assert.strictEqual(res.success, false);
   assert.strictEqual(res.allowed, false);
   assert.strictEqual(res.riskLevel, 'blocked');
-  assert.ok(res.error?.includes('Unsupported chain'));
+  assert.ok(res.error?.includes('Unsupported Base chain'));
 });
 
 test('simulateTrade handles string legacy parameters', async () => {
@@ -19,7 +19,7 @@ test('simulateTrade handles string legacy parameters', async () => {
 test('simulateTrade handles string legacy parameters with no legacyCalls', async () => {
   const res = await simulateTrade('84532');
   assert.strictEqual(res.success, false);
-  assert.ok(res.error?.includes('No calls provided'));
+  assert.ok(res.error?.includes('Missing or empty calls array'));
 });
 
 test('simulateTrade handles full input object with missing instruction', async () => {
@@ -38,19 +38,19 @@ test('simulateTrade handles full input object with missing calls', async () => {
       calls: undefined as never
   });
   assert.strictEqual(res.success, false);
-  assert.ok(res.error?.includes('No calls provided'));
+  assert.ok(res.error?.includes('Missing or empty calls array'));
 });
 
 test('simulateTrade rejects empty calls', async () => {
   const res = await simulateTrade('84532', []);
   assert.strictEqual(res.success, false);
-  assert.ok(res.error?.includes('No calls provided'));
+  assert.ok(res.error?.includes('Missing or empty calls array'));
 });
 
 test('simulateTrade rejects call missing to address', async () => {
   const res = await simulateTrade('84532', [{ to: '' }]);
   assert.strictEqual(res.success, false);
-  assert.ok(res.error?.includes('Missing target address'));
+  assert.ok(res.error?.includes('Missing to address'));
 });
 
 test('simulateTrade rejects uncanonical USDC token (0x095ea7b3 approve)', async () => {
@@ -108,13 +108,14 @@ test('simulateTrade allows calls without data', async () => {
     assert.strictEqual(res.allowed, true);
 });
 
-test('simulateTrade allows calls with unrecognized data', async () => {
+test('simulateTrade rejects calls with unrecognized calldata', async () => {
     const res = await simulateTrade({
         chain: '84532',
         calls: [{ to: '0x123', data: '0xabcdef' }]
     });
-    assert.strictEqual(res.success, true);
-    assert.strictEqual(res.allowed, true);
+    assert.strictEqual(res.success, false);
+    assert.strictEqual(res.allowed, false);
+    assert.ok(res.error?.includes('Unsupported calldata'));
 });
 
 // T19: Base Mainnet is now an allowed chain for the user-confirmed flow (the

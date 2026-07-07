@@ -76,22 +76,25 @@ describe("OAuth utilities", () => {
 });
 
 describe("BaseMcpOAuthProvider", () => {
-  it("should initialize and return correctly", () => {
+  it("should initialize and return correctly", async () => {
     const provider = new BaseMcpOAuthProvider({
       redirectUrl: "http://localhost/callback"
     });
 
     assert.strictEqual(provider.redirectUrl, "http://localhost/callback");
     assert.deepStrictEqual(provider.clientMetadata, {
-      client_name: "MioAgent",
-      redirect_uris: ["http://localhost/callback"]
+      client_name: "Miorail",
+      redirect_uris: ["http://localhost/callback"],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
     });
 
-    provider.saveTokens({ access_token: "token123", token_type: "Bearer" });
-    assert.deepStrictEqual(provider.tokens(), { access_token: "token123", token_type: "Bearer" });
+    await provider.saveTokens({ access_token: "token123", token_type: "Bearer" });
+    assert.deepStrictEqual(await provider.tokens(), { access_token: "token123", token_type: "Bearer" });
 
-    provider.saveCodeVerifier("verifier123");
-    assert.strictEqual(provider.codeVerifier(), "verifier123");
+    await provider.saveCodeVerifier("verifier123");
+    assert.strictEqual(await provider.codeVerifier(), "verifier123");
   });
 
   it("should throw on redirect if no callback provided", () => {

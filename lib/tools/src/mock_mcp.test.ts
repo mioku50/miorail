@@ -4,7 +4,7 @@ import { MockMcpToolProvider } from './mock_mcp.js';
 
 test('MockMcpToolProvider send_calls returns approvalUrl and requestId', async () => {
   const provider = new MockMcpToolProvider();
-  const result = await provider.callTool('send_calls', { chain: 'base', calls: [{ to: '0x123' }] });
+  const result = await provider.callTool('send_calls', { chain: '8453', calls: [{ to: '0x123' }] });
   assert.strictEqual(result.isError, false);
   const parsed = JSON.parse(result.content);
   assert.ok(parsed.approvalUrl.startsWith('https://mock.base.org/approve/'));

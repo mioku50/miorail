@@ -3,7 +3,8 @@ import { StatusResponseSchema } from '@mioagent/api-zod';
 import { getTokenBalancesProviderFromEnv, getPriceProviderFromEnv, getTokenSecurityProviderFromEnv, getApprovalProviderFromEnv } from '@mioagent/data-providers';
 import { getProviderBudgetSnapshot, getProviderCacheDiagnostics } from '../lib/providerCache.js';
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
-import { getBaseMcpStatusSnapshot, probeBaseMcpStatus } from '../lib/baseMcpStatus.js';
+import { getBaseMcpStatusSnapshot, probeBaseMcpStatus, type BaseMcpStatus } from '../lib/baseMcpStatus.js';
+import { getBaseMcpAuthStatus, type StoredBaseMcpAuthStatus } from '../lib/baseMcpOAuthStore.js';
 
 export function getSystemStatus(envOverride?: string) {
   const chainEnv = envOverride || process.env.CHAIN_ENV || 'sepolia';
@@ -87,12 +88,40 @@ export function getSystemStatus(envOverride?: string) {
 
 export const statusRouter = Router();
 
+function userIdFromRequest(req: { session?: { user?: { id?: string } } }): string {
+  return req.session?.user?.id || 'default-user';
+}
+
+const defaultBaseMcpAuthStatus: StoredBaseMcpAuthStatus = {
+  connected: false,
+  needsReauth: false,
+  userScoped: true,
+};
+
+export const statusRouteRuntime = {
+  getBaseMcpAuthStatus,
+};
+
+function mergeBaseMcpAuthStatus(base: BaseMcpStatus, auth: StoredBaseMcpAuthStatus): BaseMcpStatus {
+  const withAuth = { ...base, auth };
+  if (!base.enabled || !base.configured) return withAuth;
+  if (base.status === 'unreachable' || base.status === 'degraded' || base.status === 'unsupported') {
+    return withAuth;
+  }
+  if (auth.needsReauth) return { ...withAuth, status: 'needs_reauth' };
+  if (auth.connected) return { ...withAuth, status: 'connected' };
+  return { ...withAuth, status: 'missing' };
+}
+
 statusRouter.get('/', async (req, res, next) => {
   try {
     const baseMcp = await probeBaseMcpStatus();
+    const auth = await statusRouteRuntime
+      .getBaseMcpAuthStatus(userIdFromRequest(req as { session?: { user?: { id?: string } } }))
+      .catch(() => defaultBaseMcpAuthStatus);
     const statusData = {
       ...getSystemStatus(),
-      baseMcp,
+      baseMcp: mergeBaseMcpAuthStatus(baseMcp, auth),
     };
     res.json(StatusResponseSchema.parse(statusData));
   } catch (error) {

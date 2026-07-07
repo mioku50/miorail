@@ -179,3 +179,4 @@ export function screenAction(a: ScreenableAction): ScreenResult {
 export * from './payment-policy.js';
 export * from './budget.js';
 export * from './simulation.js';
+export * from './baseGuards.js';

@@ -10,6 +10,7 @@ import { approvalsRouter } from './approvals';
 import { protocolsRouter } from './protocols';
 import { statusRouter } from './status';
 import { autonomyRouter } from './autonomy';
+import { mcpBaseRouter } from './mcpBase';
 
 export const routes = Router();
 
@@ -24,5 +25,5 @@ routes.use('/approvals', approvalsRouter);
 routes.use('/protocols', protocolsRouter);
 routes.use('/status', statusRouter);
 routes.use('/autonomy', autonomyRouter);
-
+routes.use('/mcp/base', mcpBaseRouter);
 

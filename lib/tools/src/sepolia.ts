@@ -1,5 +1,6 @@
 import { ToolDef, ToolProvider } from './provider.js';
 import { McpSendCallsClient } from '@mioagent/mcp';
+import { validateBaseCalls } from '@mioagent/security/baseGuards';
 
 export class SepoliaToolProvider implements ToolProvider {
   id = 'sepolia-read-only';
@@ -134,24 +135,13 @@ export class SepoliaToolProvider implements ToolProvider {
         const chain = args.chain as string;
         const calls = args.calls as { to: string; value?: string; data?: string }[];
 
-        if (chain !== 'eip155:84532' && chain !== '84532') {
-          return { content: 'Unsupported chain. Only Base Sepolia (eip155:84532 or 84532) is supported.', isError: true };
-        }
-
-        if (!calls || !Array.isArray(calls) || calls.length === 0) {
-          return { content: 'Missing or empty calls array', isError: true };
-        }
-
-        const canonicalUSDC = '0x036cbd53842c5426634e7929541ec2318f3dcf7e';
-        for (const call of calls) {
-          if (!call.to) {
-            return { content: 'Missing to address in call', isError: true };
+        try {
+          const normalized = validateBaseCalls(chain, calls);
+          if (normalized.chainId !== 84532) {
+            return { content: 'Unsupported chain. sepolia_send_calls only supports Base Sepolia (84532).', isError: true };
           }
-          if (call.data && (call.data.toLowerCase().startsWith('0x095ea7b3') || call.data.toLowerCase().startsWith('0xa9059cbb'))) {
-            if (call.to.toLowerCase() !== canonicalUSDC) {
-              return { content: 'Invalid token address. Only canonical USDC on Base Sepolia is supported.', isError: true };
-            }
-          }
+        } catch (error) {
+          return { content: error instanceof Error ? error.message : String(error), isError: true };
         }
 
         // Hit real Base Sepolia endpoint to estimate gas for each call to validate it

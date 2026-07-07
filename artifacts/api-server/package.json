@@ -9,10 +9,12 @@
   "dependencies": {
     "@mioagent/agent": "workspace:*",
     "@mioagent/api-zod": "workspace:*",
+    "@mioagent/crypto": "workspace:*",
     "@mioagent/data-providers": "workspace:*",
     "@mioagent/db": "workspace:*",
     "@mioagent/llm": "workspace:*",
     "@mioagent/memory": "workspace:*",
+    "@mioagent/mcp": "workspace:*",
     "@mioagent/observability": "workspace:*",
     "@mioagent/security": "workspace:*",
     "@mioagent/tools": "workspace:*",
@@ -25,6 +27,7 @@
     "express-request-context": "^1.0.1",
     "express-session": "^1.19.0",
     "helmet": "^8.2.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "ulidx": "^2.4.1",
     "viem": "^2.53.1"
   },

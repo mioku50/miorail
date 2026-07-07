@@ -69,10 +69,8 @@ export function ProtocolsCard({ statusData, protocolsData, isProtocolsError, add
               <span className={statusData.baseMcp.status === 'connected' ? 'text-ok font-medium' : statusData.baseMcp.status === 'disabled' ? 'text-ink-3 font-medium' : statusData.baseMcp.status === 'unreachable' || statusData.baseMcp.status === 'unsupported' ? 'text-risk font-medium' : 'text-warn font-medium'}>
                 {formatBaseMcpStatus(statusData.baseMcp)}
               </span>
-            ) : import.meta.env.VITE_MCP_SERVER_URL ? (
-              <span className="text-ok font-medium">Configured</span>
             ) : (
-              <span className="text-risk font-medium">Missing</span>
+              <span className="text-warn font-medium">Status unavailable</span>
             )}
           </div>
           {baseMcpHint(statusData?.baseMcp) && (

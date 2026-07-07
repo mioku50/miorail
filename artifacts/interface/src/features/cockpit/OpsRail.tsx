@@ -13,6 +13,8 @@ function Dot({ status }: { status?: string }) {
     bg = 'bg-ok shadow-[0_0_6px_rgba(61,220,151,0.6)]';
   } else if (status === 'stale' || status === 'partial' || status === 'simulated' || status === 'degraded') {
     bg = 'bg-warn shadow-[0_0_6px_rgba(255,180,84,0.6)]';
+  } else if (status === 'needs_reauth') {
+    bg = 'bg-warn shadow-[0_0_6px_rgba(255,180,84,0.6)]';
   } else if (status === 'failed' || status === 'error' || status === 'blocked' || status === 'unreachable' || status === 'unsupported') {
     bg = 'bg-risk shadow-[0_0_6px_rgba(255,92,92,0.6)]';
   }

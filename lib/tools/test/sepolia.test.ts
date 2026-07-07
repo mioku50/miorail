@@ -101,7 +101,7 @@ test('SepoliaToolProvider sepolia_send_calls rejects unsupported chain', async (
     calls: [{ to: '0x123' }]
   });
   assert.strictEqual(res.isError, true);
-  assert.match(res.content, /Unsupported chain/);
+  assert.match(res.content, /Unsupported Base chain/);
 });
 
 test('SepoliaToolProvider sepolia_send_calls rejects empty calls array', async () => {

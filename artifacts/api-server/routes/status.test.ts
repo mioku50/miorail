@@ -4,6 +4,7 @@ import request from 'supertest';
 import { app } from '../app.js';
 import { clearTokenSecurityCacheForTests } from '@mioagent/data-providers';
 import { clearBaseMcpStatusForTests } from '../lib/baseMcpStatus.js';
+import { statusRouteRuntime } from './status.js';
 
 function restoreEnv(name: string, value: string | undefined) {
   if (value === undefined) {
@@ -14,12 +15,18 @@ function restoreEnv(name: string, value: string | undefined) {
 }
 
 const ORIGINAL_FETCH = global.fetch;
+const DEFAULT_BASE_MCP_AUTH = {
+  connected: false,
+  needsReauth: false,
+  userScoped: true as const,
+};
 
 describe('Status API', () => {
   beforeEach(() => {
     clearBaseMcpStatusForTests();
     mock.restoreAll();
     global.fetch = ORIGINAL_FETCH;
+    statusRouteRuntime.getBaseMcpAuthStatus = async () => DEFAULT_BASE_MCP_AUTH;
   });
 
   afterEach(() => {
@@ -135,6 +142,7 @@ describe('Status API', () => {
       provider: 'base-mcp',
       configured: false,
       enabled: false,
+      auth: DEFAULT_BASE_MCP_AUTH,
     });
 
     restoreEnv('BASE_MCP_ENABLED', origEnabled);
@@ -160,6 +168,13 @@ describe('Status API', () => {
       } as Response;
     });
     global.fetch = mockFetch as unknown as typeof fetch;
+    statusRouteRuntime.getBaseMcpAuthStatus = async () => ({
+      connected: true,
+      needsReauth: false,
+      userScoped: true,
+      expiresAt: '2026-07-07T18:00:00.000Z',
+      connectedAt: '2026-07-07T17:00:00.000Z',
+    });
 
     const response = await request(app).get('/api/status');
     assert.strictEqual(response.status, 200);
@@ -171,12 +186,47 @@ describe('Status API', () => {
     assert.deepStrictEqual(response.body.baseMcp.capabilities, { toolsCount: 2, resourcesCount: 1 });
     assert.ok(response.body.baseMcp.lastCheckedAt);
     assert.strictEqual(JSON.stringify(response.body.baseMcp).includes('private/path'), false);
+    assert.deepStrictEqual(response.body.baseMcp.auth, {
+      connected: true,
+      needsReauth: false,
+      userScoped: true,
+      expiresAt: '2026-07-07T18:00:00.000Z',
+      connectedAt: '2026-07-07T17:00:00.000Z',
+    });
     assert.strictEqual(mockFetch.mock.calls.length, 1);
 
     global.fetch = originalFetch;
     restoreEnv('BASE_MCP_ENABLED', origEnabled);
     restoreEnv('BASE_MCP_SERVER_URL', origUrl);
     restoreEnv('BASE_MCP_STATUS_PATH', origPath);
+  });
+
+  test('GET /api/status reports configured Base MCP needs_reauth when user auth expired', async () => {
+    const origEnabled = process.env.BASE_MCP_ENABLED;
+    const origUrl = process.env.BASE_MCP_SERVER_URL;
+    const originalFetch = global.fetch;
+    process.env.BASE_MCP_ENABLED = 'true';
+    process.env.BASE_MCP_SERVER_URL = 'https://mcp.example.test';
+
+    global.fetch = mock.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ tools: [] }),
+    } as Response)) as unknown as typeof fetch;
+    statusRouteRuntime.getBaseMcpAuthStatus = async () => ({
+      connected: false,
+      needsReauth: true,
+      userScoped: true,
+    });
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.baseMcp.status, 'needs_reauth');
+    assert.strictEqual(response.body.baseMcp.auth.needsReauth, true);
+
+    global.fetch = originalFetch;
+    restoreEnv('BASE_MCP_ENABLED', origEnabled);
+    restoreEnv('BASE_MCP_SERVER_URL', origUrl);
   });
 
   test('GET /api/status reports configured Base MCP timeout as unreachable', async () => {

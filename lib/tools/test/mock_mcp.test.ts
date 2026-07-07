@@ -9,12 +9,12 @@ test('MockMcpToolProvider send_calls rejects unsupported chain', async () => {
     calls: [{ to: '0x123' }]
   });
   assert.strictEqual(res.isError, true);
-  assert.ok(res.content.includes('Unsupported chain'));
+  assert.ok(res.content.includes('Unsupported Base chain'));
 });
 
-test('MockMcpToolProvider send_calls accepts Base Sepolia chain', async () => {
+test('MockMcpToolProvider sepolia_send_calls accepts Base Sepolia chain', async () => {
   const provider = new MockMcpToolProvider();
-  const res = await provider.callTool('send_calls', {
+  const res = await provider.callTool('sepolia_send_calls', {
     chain: '84532',
     calls: [{ to: '0x123' }]
   });
@@ -23,7 +23,7 @@ test('MockMcpToolProvider send_calls accepts Base Sepolia chain', async () => {
 
 test('MockMcpToolProvider send_calls validates USDC for transfer', async () => {
   const provider = new MockMcpToolProvider();
-  const res = await provider.callTool('send_calls', {
+  const res = await provider.callTool('sepolia_send_calls', {
     chain: 'eip155:84532',
     calls: [{ to: '0xBAD', data: '0xa9059cbb000' }]
   });
@@ -33,16 +33,26 @@ test('MockMcpToolProvider send_calls validates USDC for transfer', async () => {
 
 test('MockMcpToolProvider send_calls accepts USDC transfer', async () => {
   const provider = new MockMcpToolProvider();
-  const res = await provider.callTool('send_calls', {
+  const res = await provider.callTool('sepolia_send_calls', {
     chain: 'eip155:84532',
     calls: [{ to: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', data: '0xa9059cbb000' }]
   });
   assert.strictEqual(res.isError, false);
 });
 
-test('MockMcpToolProvider send_calls rejects empty calls array', async () => {
+test('MockMcpToolProvider send_calls rejects unknown calldata', async () => {
   const provider = new MockMcpToolProvider();
   const res = await provider.callTool('send_calls', {
+    chain: '8453',
+    calls: [{ to: '0x123', data: '0xabcdef' }]
+  });
+  assert.strictEqual(res.isError, true);
+  assert.ok(res.content.includes('Unsupported calldata'));
+});
+
+test('MockMcpToolProvider send_calls rejects empty calls array', async () => {
+  const provider = new MockMcpToolProvider();
+  const res = await provider.callTool('sepolia_send_calls', {
     chain: '84532',
     calls: []
   });
@@ -52,7 +62,7 @@ test('MockMcpToolProvider send_calls rejects empty calls array', async () => {
 
 test('MockMcpToolProvider send_calls rejects malformed call object (missing to)', async () => {
   const provider = new MockMcpToolProvider();
-  const res = await provider.callTool('send_calls', {
+  const res = await provider.callTool('sepolia_send_calls', {
     chain: '84532',
     calls: [{ data: '0xabc' }]
   });

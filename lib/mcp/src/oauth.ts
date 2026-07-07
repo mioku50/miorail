@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
+import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import { OAuthClientMetadata, OAuthClientInformationMixed, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 
 export interface OAuthConfig {
@@ -61,6 +62,16 @@ export interface BaseMcpOAuthProviderOptions {
   clientInformation?: OAuthClientInformationMixed;
   onRedirectToAuthorization?: (authorizationUrl: URL) => void | Promise<void>;
   tokens?: OAuthTokens;
+  state?: string | (() => string | Promise<string>);
+  loadClientInformation?: () => OAuthClientInformationMixed | undefined | Promise<OAuthClientInformationMixed | undefined>;
+  saveClientInformation?: (info: OAuthClientInformationMixed) => void | Promise<void>;
+  loadTokens?: () => OAuthTokens | undefined | Promise<OAuthTokens | undefined>;
+  saveTokens?: (tokens: OAuthTokens) => void | Promise<void>;
+  loadCodeVerifier?: () => string | undefined | Promise<string | undefined>;
+  saveCodeVerifier?: (codeVerifier: string) => void | Promise<void>;
+  loadDiscoveryState?: () => OAuthDiscoveryState | undefined | Promise<OAuthDiscoveryState | undefined>;
+  saveDiscoveryState?: (state: OAuthDiscoveryState) => void | Promise<void>;
+  invalidateCredentials?: (scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery') => void | Promise<void>;
 }
 
 export class BaseMcpOAuthProvider implements OAuthClientProvider {
@@ -81,24 +92,46 @@ export class BaseMcpOAuthProvider implements OAuthClientProvider {
 
   get clientMetadata(): OAuthClientMetadata {
     return {
-      client_name: this._options.clientName || "MioAgent", redirect_uris: this._options.redirectUrl ? [this._options.redirectUrl.toString()] : []
+      client_name: this._options.clientName || "Miorail",
+      redirect_uris: this._options.redirectUrl ? [this._options.redirectUrl.toString()] : [],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
     };
   }
 
-  clientInformation(): OAuthClientInformationMixed | undefined {
+  async state(): Promise<string> {
+    if (typeof this._options.state === 'function') {
+      const value = await this._options.state();
+      if (!value) throw new Error('OAuth state is not configured');
+      return value;
+    }
+    if (!this._options.state) throw new Error('OAuth state is not configured');
+    return this._options.state;
+  }
+
+  clientInformation(): OAuthClientInformationMixed | undefined | Promise<OAuthClientInformationMixed | undefined> {
+    if (this._options.loadClientInformation) {
+      return this._options.loadClientInformation();
+    }
     return this._clientInformation;
   }
 
-  saveClientInformation(info: OAuthClientInformationMixed): void {
+  async saveClientInformation(info: OAuthClientInformationMixed): Promise<void> {
     this._clientInformation = info;
+    await this._options.saveClientInformation?.(info);
   }
 
-  tokens(): OAuthTokens | undefined {
+  tokens(): OAuthTokens | undefined | Promise<OAuthTokens | undefined> {
+    if (this._options.loadTokens) {
+      return this._options.loadTokens();
+    }
     return this._tokens;
   }
 
-  saveTokens(tokens: OAuthTokens): void {
+  async saveTokens(tokens: OAuthTokens): Promise<void> {
     this._tokens = tokens;
+    await this._options.saveTokens?.(tokens);
   }
 
   redirectToAuthorization(authorizationUrl: URL): void | Promise<void> {
@@ -109,14 +142,38 @@ export class BaseMcpOAuthProvider implements OAuthClientProvider {
     throw new Error(`Authorization required. Please visit: ${authorizationUrl.toString()}`);
   }
 
-  saveCodeVerifier(codeVerifier: string): void {
+  async saveCodeVerifier(codeVerifier: string): Promise<void> {
     this._codeVerifier = codeVerifier;
+    await this._options.saveCodeVerifier?.(codeVerifier);
   }
 
-  codeVerifier(): string {
-    if (!this._codeVerifier) {
+  async codeVerifier(): Promise<string> {
+    const loaded = this._options.loadCodeVerifier ? await this._options.loadCodeVerifier() : undefined;
+    const verifier = loaded || this._codeVerifier;
+    if (!verifier) {
       throw new Error("No code verifier found");
     }
-    return this._codeVerifier;
+    return verifier;
+  }
+
+  discoveryState(): OAuthDiscoveryState | undefined | Promise<OAuthDiscoveryState | undefined> {
+    return this._options.loadDiscoveryState?.();
+  }
+
+  async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
+    await this._options.saveDiscoveryState?.(state);
+  }
+
+  async invalidateCredentials(scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery'): Promise<void> {
+    if (scope === 'all' || scope === 'tokens') {
+      this._tokens = undefined;
+    }
+    if (scope === 'all' || scope === 'client') {
+      this._clientInformation = undefined;
+    }
+    if (scope === 'all' || scope === 'verifier') {
+      this._codeVerifier = undefined;
+    }
+    await this._options.invalidateCredentials?.(scope);
   }
 }

@@ -1,5 +1,7 @@
 import { ToolAggregator } from './aggregator.js';
 import { NativeToolProvider } from './native.js';
+import { BaseMcpToolProvider } from './base_mcp.js';
+import type { BaseMcpOAuthProvider } from '@mioagent/mcp';
 import * as settingsModule from '@mioagent/settings';
 import {
   MockCoinGeckoProvider, MockMoralisProvider,
@@ -13,7 +15,29 @@ export const settingsAPI = {
     getDecryptedKey: settingsModule.getDecryptedKey
 };
 
-export async function createToolAggregatorForUser(userId: string, sessionSecret: string): Promise<ToolAggregator> {
+export interface CreateToolAggregatorOptions {
+  baseMcpEnabled?: boolean;
+  baseMcpServerUrl?: string;
+  baseMcpOAuthProvider?: BaseMcpOAuthProvider;
+}
+
+function parseBool(value?: string): boolean {
+  return ['1', 'true', 'yes', 'y', 'on'].includes((value || '').trim().toLowerCase());
+}
+
+let warnedLegacyBaseMcpUrl = false;
+
+function baseMcpServerUrlFromEnv(): string | undefined {
+  const canonical = process.env.BASE_MCP_SERVER_URL;
+  const legacy = process.env.MCP_SERVER_URL || process.env.BASE_MCP_URL;
+  if (!canonical && legacy && !warnedLegacyBaseMcpUrl) {
+    warnedLegacyBaseMcpUrl = true;
+    console.warn('BASE_MCP_SERVER_URL is the canonical Base MCP env; MCP_SERVER_URL and BASE_MCP_URL are deprecated aliases.');
+  }
+  return canonical || legacy || undefined;
+}
+
+export async function createToolAggregatorForUser(userId: string, sessionSecret: string, options: CreateToolAggregatorOptions = {}): Promise<ToolAggregator> {
   const aggregator = new ToolAggregator();
   console.log("TRACE: createToolAggregatorForUser before getUserSettings");
   const settings = await settingsAPI.getUserSettings(userId);
@@ -41,21 +65,26 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
   // Register NativeToolProvider
   aggregator.registerProvider(new NativeToolProvider(coinGeckoProvider, moralisProvider));
 
+  const baseMcpEnabled = options.baseMcpEnabled ?? parseBool(process.env.BASE_MCP_ENABLED);
+  const baseMcpServerUrl = options.baseMcpServerUrl || baseMcpServerUrlFromEnv();
+  let mcpClient: any;
+
+  if (baseMcpEnabled && baseMcpServerUrl && options.baseMcpOAuthProvider) {
+    const { BaseMcpClient, createBaseMcpHttpTransport, McpSendCallsClient } = await import('@mioagent/mcp');
+
+    try {
+      const baseClient = new BaseMcpClient();
+      const transport = createBaseMcpHttpTransport(new URL(baseMcpServerUrl), options.baseMcpOAuthProvider);
+      await baseClient.connect(transport);
+      mcpClient = new McpSendCallsClient(baseClient);
+      aggregator.registerProvider(new BaseMcpToolProvider(mcpClient));
+    } catch (e) {
+      console.error('Failed to initialize Base MCP client:', e);
+    }
+  }
+
   if (process.env.CHAIN_ENV === 'sepolia') {
     const { SepoliaToolProvider } = await import('./sepolia.js');
-    const { BaseMcpClient, createBaseMcpSseTransport, McpSendCallsClient } = await import('@mioagent/mcp');
-
-    let mcpClient: any;
-    if (process.env.MCP_SERVER_URL) {
-      try {
-        const baseClient = new BaseMcpClient();
-        const transport = createBaseMcpSseTransport(new URL(process.env.MCP_SERVER_URL));
-        await baseClient.connect(transport);
-        mcpClient = new McpSendCallsClient(baseClient);
-      } catch (e) {
-        console.error('Failed to initialize MCP client:', e);
-      }
-    }
     aggregator.registerProvider(new SepoliaToolProvider(mcpClient));
   } else if (process.env.NODE_ENV === 'test') {
     const { MockMcpToolProvider } = await import('./mock_mcp.js');

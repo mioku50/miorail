@@ -1,0 +1,213 @@
+import test, { afterEach } from 'node:test';
+import assert from 'node:assert';
+import request from 'supertest';
+import { app } from '../app.js';
+import { baseMcpOauthStates, baseMcpOauthTokens } from '@mioagent/db';
+import { mcpBaseRouteRuntime } from './mcpBase.js';
+import {
+  baseMcpOAuthStoreRuntime,
+  getBaseMcpAuthStatus,
+  saveBaseMcpOAuthState,
+} from '../lib/baseMcpOAuthStore.js';
+
+const originalAuth = mcpBaseRouteRuntime.auth;
+const originalDb = baseMcpOAuthStoreRuntime.db;
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}
+
+function createFakeDb() {
+  const states = new Map<string, Record<string, unknown>>();
+  const tokens = new Map<string, Record<string, unknown>>();
+
+  function apply(table: unknown, values: Record<string, unknown>, set?: Record<string, unknown>) {
+    if (table === baseMcpOauthStates) {
+      states.set(String(values.stateHash), { ...values, ...(set || {}) });
+    } else if (table === baseMcpOauthTokens) {
+      const key = String(values.id);
+      tokens.set(key, { ...(tokens.get(key) || {}), ...values, ...(set || {}) });
+    }
+  }
+
+  const db = {
+    insert: (table: unknown) => ({
+      values: (values: Record<string, unknown>) => ({
+        onConflictDoNothing: async () => undefined,
+        onConflictDoUpdate: async ({ set }: { set?: Record<string, unknown> }) => apply(table, values, set),
+      }),
+    }),
+    select: () => ({
+      from: (table: unknown) => ({
+        where: async () => {
+          if (table === baseMcpOauthStates) return Array.from(states.values());
+          if (table === baseMcpOauthTokens) return Array.from(tokens.values());
+          return [];
+        },
+      }),
+    }),
+    delete: (table: unknown) => ({
+      where: async () => {
+        if (table === baseMcpOauthStates) states.clear();
+      },
+    }),
+    update: (table: unknown) => ({
+      set: (set: Record<string, unknown>) => ({
+        where: async () => {
+          const target = table === baseMcpOauthStates ? states : tokens;
+          for (const [key, row] of target.entries()) target.set(key, { ...row, ...set });
+        },
+      }),
+    }),
+  };
+
+  return { db: db as unknown as typeof originalDb, states, tokens };
+}
+
+afterEach(() => {
+  mcpBaseRouteRuntime.auth = originalAuth;
+  baseMcpOAuthStoreRuntime.db = originalDb;
+});
+
+test('GET /api/mcp/base/connect blocks when Base MCP is disabled or missing', async () => {
+  const originalEnabled = process.env.BASE_MCP_ENABLED;
+  const originalUrl = process.env.BASE_MCP_SERVER_URL;
+  delete process.env.BASE_MCP_ENABLED;
+  delete process.env.BASE_MCP_SERVER_URL;
+
+  const response = await request(app).get('/api/mcp/base/connect');
+  assert.strictEqual(response.status, 400);
+  assert.match(response.body.error, /disabled or missing/);
+
+  restoreEnv('BASE_MCP_ENABLED', originalEnabled);
+  restoreEnv('BASE_MCP_SERVER_URL', originalUrl);
+});
+
+test('GET /api/mcp/base/connect redirects to Base auth without leaking verifier', async () => {
+  const fake = createFakeDb();
+  baseMcpOAuthStoreRuntime.db = fake.db;
+  const originalEnabled = process.env.BASE_MCP_ENABLED;
+  const originalUrl = process.env.BASE_MCP_SERVER_URL;
+  const originalSecret = process.env.SESSION_SECRET;
+  process.env.BASE_MCP_ENABLED = 'true';
+  process.env.BASE_MCP_SERVER_URL = 'https://mcp.base.org';
+  process.env.SESSION_SECRET = 'test-session-secret';
+
+  mcpBaseRouteRuntime.auth = async (provider: any) => {
+    const state = await provider.state();
+    await provider.saveCodeVerifier('plain-code-verifier');
+    await provider.redirectToAuthorization(new URL(`https://mcp.base.org/authorize?state=${state}&code_challenge=challenge`));
+    return 'REDIRECT';
+  };
+
+  const response = await request(app).get('/api/mcp/base/connect?returnTo=/base-mcp');
+  assert.strictEqual(response.status, 302);
+  assert.ok(response.headers.location.startsWith('https://mcp.base.org/authorize?'));
+  assert.strictEqual(response.headers.location.includes('plain-code-verifier'), false);
+  assert.strictEqual(fake.states.size, 1);
+  assert.strictEqual(JSON.stringify(Array.from(fake.states.values())).includes('plain-code-verifier'), false);
+
+  restoreEnv('BASE_MCP_ENABLED', originalEnabled);
+  restoreEnv('BASE_MCP_SERVER_URL', originalUrl);
+  restoreEnv('SESSION_SECRET', originalSecret);
+});
+
+test('GET /api/mcp/base/callback rejects missing or invalid state', async () => {
+  const fake = createFakeDb();
+  baseMcpOAuthStoreRuntime.db = fake.db;
+  const originalEnabled = process.env.BASE_MCP_ENABLED;
+  const originalUrl = process.env.BASE_MCP_SERVER_URL;
+  const originalSecret = process.env.SESSION_SECRET;
+  process.env.BASE_MCP_ENABLED = 'true';
+  process.env.BASE_MCP_SERVER_URL = 'https://mcp.base.org';
+  process.env.SESSION_SECRET = 'test-session-secret';
+
+  const missing = await request(app).get('/api/mcp/base/callback?code=abc');
+  assert.strictEqual(missing.status, 400);
+  assert.match(missing.body.error, /Missing OAuth code or state/);
+
+  const invalid = await request(app).get('/api/mcp/base/callback?code=abc&state=wrong');
+  assert.strictEqual(invalid.status, 400);
+  assert.match(invalid.body.error, /Invalid or expired OAuth state/);
+
+  restoreEnv('BASE_MCP_ENABLED', originalEnabled);
+  restoreEnv('BASE_MCP_SERVER_URL', originalUrl);
+  restoreEnv('SESSION_SECRET', originalSecret);
+});
+
+test('GET /api/mcp/base/callback stores encrypted tokens and redirects locally', async () => {
+  const fake = createFakeDb();
+  baseMcpOAuthStoreRuntime.db = fake.db;
+  const originalEnabled = process.env.BASE_MCP_ENABLED;
+  const originalUrl = process.env.BASE_MCP_SERVER_URL;
+  const originalSecret = process.env.SESSION_SECRET;
+  process.env.BASE_MCP_ENABLED = 'true';
+  process.env.BASE_MCP_SERVER_URL = 'https://mcp.base.org';
+  process.env.SESSION_SECRET = 'test-session-secret';
+
+  await saveBaseMcpOAuthState({
+    userId: 'default-user',
+    sessionSecret: 'test-session-secret',
+    state: 'valid-state',
+    codeVerifier: 'plain-code-verifier',
+    returnTo: '/base-mcp',
+  });
+
+  mcpBaseRouteRuntime.auth = async (provider: any, options: { authorizationCode?: string }) => {
+    assert.strictEqual(options.authorizationCode, 'auth-code');
+    assert.strictEqual(await provider.codeVerifier(), 'plain-code-verifier');
+    await provider.saveTokens({
+      access_token: 'plain-access-token',
+      refresh_token: 'plain-refresh-token',
+      token_type: 'Bearer',
+      expires_in: 3600,
+    });
+    return 'AUTHORIZED';
+  };
+
+  const response = await request(app).get('/api/mcp/base/callback?code=auth-code&state=valid-state');
+  assert.strictEqual(response.status, 302);
+  assert.strictEqual(response.headers.location, '/base-mcp?mcp=connected');
+  assert.strictEqual(fake.states.size, 0);
+  assert.strictEqual(JSON.stringify(Array.from(fake.tokens.values())).includes('plain-access-token'), false);
+
+  const status = await getBaseMcpAuthStatus('default-user');
+  assert.strictEqual(status.connected, true);
+
+  restoreEnv('BASE_MCP_ENABLED', originalEnabled);
+  restoreEnv('BASE_MCP_SERVER_URL', originalUrl);
+  restoreEnv('SESSION_SECRET', originalSecret);
+});
+
+test('GET /api/mcp/base/callback marks needs_reauth when token exchange fails', async () => {
+  const fake = createFakeDb();
+  baseMcpOAuthStoreRuntime.db = fake.db;
+  const originalEnabled = process.env.BASE_MCP_ENABLED;
+  const originalUrl = process.env.BASE_MCP_SERVER_URL;
+  const originalSecret = process.env.SESSION_SECRET;
+  process.env.BASE_MCP_ENABLED = 'true';
+  process.env.BASE_MCP_SERVER_URL = 'https://mcp.base.org';
+  process.env.SESSION_SECRET = 'test-session-secret';
+
+  await saveBaseMcpOAuthState({
+    userId: 'default-user',
+    sessionSecret: 'test-session-secret',
+    state: 'valid-state',
+    codeVerifier: 'plain-code-verifier',
+  });
+
+  mcpBaseRouteRuntime.auth = async () => {
+    throw new Error('refresh_failed');
+  };
+
+  const response = await request(app).get('/api/mcp/base/callback?code=auth-code&state=valid-state');
+  assert.strictEqual(response.status, 500);
+  const status = await getBaseMcpAuthStatus('default-user');
+  assert.strictEqual(status.connected, false);
+  assert.strictEqual(status.needsReauth, true);
+
+  restoreEnv('BASE_MCP_ENABLED', originalEnabled);
+  restoreEnv('BASE_MCP_SERVER_URL', originalUrl);
+  restoreEnv('SESSION_SECRET', originalSecret);
+});

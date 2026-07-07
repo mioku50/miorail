@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { ChatMessageRequestSchema, ChatHistoryResponseSchema } from '@mioagent/api-zod';
 import { Agent } from '@mioagent/agent';
 import { createLlmProvider } from '@mioagent/llm';
-import { createToolAggregatorForUser } from '@mioagent/tools';
+import { createApiToolAggregatorForUser } from '../lib/baseMcpTools.js';
 import { db, chats, actions } from '@mioagent/db';
 import { eq, desc } from 'drizzle-orm';
 import crypto from 'node:crypto';
@@ -52,7 +52,7 @@ chatRouter.post('/', async (req, res, next) => {
   try {
     const { message, walletAddress, chainEnv } = ChatMessageRequestSchema.parse(req.body);
     const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
-    const tools = await createToolAggregatorForUser(userId, process.env.SESSION_SECRET || 'test-secret');
+    const tools = await createApiToolAggregatorForUser(req, userId, process.env.SESSION_SECRET || 'test-secret');
     console.log("TRACE: tools created");
 
     const llm = createLlmProvider();

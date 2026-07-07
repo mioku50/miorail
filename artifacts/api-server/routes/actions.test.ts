@@ -57,7 +57,7 @@ test('Actions API', async (t) => {
             status: 'pending',
             suggestedPrompt: 'Do it',
             tokens: ['tag1'],
-            executionPayload: { chain: 'base', calls: [{ to: '0x123' }] },
+            executionPayload: { chain: '84532', calls: [{ to: '0x123' }] },
             createdAt: new Date('2024-01-01T00:00:00Z'),
             updatedAt: new Date('2024-01-01T00:00:00Z'),
           }
@@ -80,9 +80,13 @@ test('Actions API', async (t) => {
     const { MemoryService } = await import('@mioagent/memory');
     mock.method(MemoryService, 'getUserSettings', async () => null);
 
-    mock.method(toolsModule.ToolAggregator.prototype, 'findTool', () => { return { name: 'send_calls' }; });
+    mock.method(toolsModule.ToolAggregator.prototype, 'findTool', (name: string) => {
+      assert.strictEqual(name, 'sepolia_send_calls');
+      return { name: 'sepolia_send_calls' };
+    });
     mock.method(toolsModule.ToolAggregator.prototype, 'callTool', async (name: any, payload: any) => {
-       assert.deepStrictEqual(payload, { chain: 'base', calls: [{ to: '0x123' }] });
+       assert.strictEqual(name, 'sepolia_send_calls');
+       assert.deepStrictEqual(payload, { chain: '84532', calls: [{ to: '0x123' }] });
        return { content: JSON.stringify({ approvalUrl: "https://mock.base.org/approve/123", requestId: "123" }), isError: false };
     });
 
@@ -107,7 +111,7 @@ test('Actions API', async (t) => {
             kind: 'test-action',
             status: 'pending',
             suggestedPrompt: 'Do it',
-            tokens: ['{"chain":"base","calls":[{"to":"0x456"}]}'],
+            tokens: ['{"chain":"84532","calls":[{"to":"0x456"}]}'],
             executionPayload: null,
             createdAt: new Date('2024-01-01T00:00:00Z'),
             updatedAt: new Date('2024-01-01T00:00:00Z'),
@@ -121,9 +125,13 @@ test('Actions API', async (t) => {
     mock.method(db, 'update', mockUpdate);
     const { MemoryService } = await import('@mioagent/memory');
     mock.method(MemoryService, 'getUserSettings', async () => null);
-    mock.method(toolsModule.ToolAggregator.prototype, 'findTool', () => ({ name: 'send_calls' }));
+    mock.method(toolsModule.ToolAggregator.prototype, 'findTool', (name: string) => {
+      assert.strictEqual(name, 'sepolia_send_calls');
+      return { name: 'sepolia_send_calls' };
+    });
     mock.method(toolsModule.ToolAggregator.prototype, 'callTool', async (name: any, payload: any) => {
-       assert.deepStrictEqual(payload, { chain: 'base', calls: [{ to: '0x456' }] });
+       assert.strictEqual(name, 'sepolia_send_calls');
+       assert.deepStrictEqual(payload, { chain: '84532', calls: [{ to: '0x456' }] });
        return { content: JSON.stringify({ approvalUrl: "url", requestId: "123" }), isError: false };
     });
 

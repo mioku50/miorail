@@ -15,6 +15,7 @@
 
 import { encodeFunctionData, parseUnits, isAddress, type Address, type Hex, erc20Abi } from 'viem';
 import { screenAction } from '@mioagent/security';
+import { getBaseMainnetUsdcAddress as getCanonicalBaseMainnetUsdcAddress } from '@mioagent/security/baseGuards';
 import type { TokenApproval } from '@mioagent/data-providers';
 
 /** The only onchain action types the user-confirmed flow may surface. */
@@ -53,14 +54,6 @@ export interface BuildActionPlanContext {
    * "no active approval found" response before reaching this path).
    */
   approvals?: TokenApproval[];
-}
-
-// Canonical Base Mainnet native USDC (Circle, 6 decimals). NOT the bridged
-// USDbC. Env-overridable for deployments that pin a different token.
-export function getBaseMainnetUsdcAddress(): Address {
-  const fromEnv = process.env.BASE_MAINNET_USDC_ADDRESS;
-  if (fromEnv && isAddress(fromEnv)) return fromEnv as Address;
-  return '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 }
 
 // T19.1: maximum USDC a `limited_transfer` may move. Over-cap → read-only.
@@ -154,7 +147,7 @@ export function buildActionPlan(instruction: string, ctx: BuildActionPlanContext
   // 2. Only encode recognized safe actions on Base Mainnet. Sepolia keeps its
   //    existing placeholder/readonly path (testnet exercise handled elsewhere).
   if (ctx.chainEnv === 'mainnet-readonly' || ctx.chainEnv === 'mainnet') {
-    const usdc = getBaseMainnetUsdcAddress();
+    const usdc = getCanonicalBaseMainnetUsdcAddress() as Address;
 
     // T19.1/T19.3: prefer revoke_approval (safest first mainnet action) over transfer.
     const revoke = parseRevokeApproval(instruction);

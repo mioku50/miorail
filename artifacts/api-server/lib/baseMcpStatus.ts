@@ -2,6 +2,7 @@ export type BaseMcpProviderStatus =
   | 'missing'
   | 'disabled'
   | 'connected'
+  | 'needs_reauth'
   | 'unreachable'
   | 'degraded'
   | 'unsupported';
@@ -18,6 +19,13 @@ export interface BaseMcpStatus {
     toolsCount?: number;
     resourcesCount?: number;
   };
+  auth?: {
+    connected: boolean;
+    needsReauth: boolean;
+    userScoped: true;
+    expiresAt?: string;
+    connectedAt?: string;
+  };
 }
 
 const DEFAULT_STATUS_PATH = '/health';
@@ -27,6 +35,7 @@ const FAILURE_COOLDOWN_MS = 30_000;
 
 let cached: { configKey: string; status: BaseMcpStatus; expiresAt: number } | null = null;
 let inflight: Promise<BaseMcpStatus> | null = null;
+let warnedLegacyBaseMcpUrl = false;
 
 function parseBool(value?: string): boolean {
   return ['1', 'true', 'yes', 'y', 'on'].includes((value || '').trim().toLowerCase());
@@ -44,8 +53,18 @@ function timeoutFromEnv(): number {
   return Math.min(parsed, 30_000);
 }
 
-function endpointFromEnv(): URL | null {
-  const raw = (process.env.BASE_MCP_SERVER_URL || process.env.BASE_MCP_URL || '').trim();
+export function baseMcpEnabledFromEnv(): boolean {
+  return parseBool(process.env.BASE_MCP_ENABLED);
+}
+
+export function baseMcpServerUrlFromEnv(): URL | null {
+  const canonical = (process.env.BASE_MCP_SERVER_URL || '').trim();
+  const legacy = (process.env.MCP_SERVER_URL || process.env.BASE_MCP_URL || '').trim();
+  const raw = canonical || legacy;
+  if (!canonical && legacy && !warnedLegacyBaseMcpUrl) {
+    warnedLegacyBaseMcpUrl = true;
+    console.warn('BASE_MCP_SERVER_URL is the canonical Base MCP env; MCP_SERVER_URL and BASE_MCP_URL are deprecated aliases.');
+  }
   if (!raw) return null;
   try {
     return new URL(raw);
@@ -54,17 +73,21 @@ function endpointFromEnv(): URL | null {
   }
 }
 
+function endpointFromEnv(): URL | null {
+  return baseMcpServerUrlFromEnv();
+}
+
 function configKey(): string {
   return [
     process.env.BASE_MCP_ENABLED || '',
-    process.env.BASE_MCP_SERVER_URL || process.env.BASE_MCP_URL || '',
+    process.env.BASE_MCP_SERVER_URL || process.env.MCP_SERVER_URL || process.env.BASE_MCP_URL || '',
     process.env.BASE_MCP_STATUS_PATH || '',
     process.env.BASE_MCP_TIMEOUT_MS || '',
   ].join('|');
 }
 
 function staticStatus(): BaseMcpStatus | null {
-  const enabled = parseBool(process.env.BASE_MCP_ENABLED);
+  const enabled = baseMcpEnabledFromEnv();
   const endpoint = endpointFromEnv();
   const configured = endpoint !== null;
   const endpointHost = endpoint?.host;
@@ -92,7 +115,7 @@ function staticStatus(): BaseMcpStatus | null {
 }
 
 function baseStatus(): { endpoint: URL; status: BaseMcpStatus } | BaseMcpStatus {
-  const enabled = parseBool(process.env.BASE_MCP_ENABLED);
+  const enabled = baseMcpEnabledFromEnv();
   const endpoint = endpointFromEnv();
   const configured = endpoint !== null;
   const endpointHost = endpoint?.host;

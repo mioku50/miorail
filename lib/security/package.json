@@ -4,7 +4,8 @@
   "private": true,
   "main": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./baseGuards": "./src/baseGuards.ts"
   },
   "scripts": {
     "test": "tsx --test src/**/*.test.ts"

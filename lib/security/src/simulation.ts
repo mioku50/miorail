@@ -1,4 +1,5 @@
 import { screenAction } from './index.js'; // Since screenAction is in index.js for now, avoiding circular deps by importing from a separate file later if needed. For now, leaving as index.js as it contains the definition.
+import { validateBaseCalls } from './baseGuards.js';
 
 export interface SimulationCall {
   to: string;
@@ -112,12 +113,19 @@ export async function preflightValidateAction(input: SimulationInput | string, l
   // 1. Validate chain — Base Sepolia testnet OR Base Mainnet. The user-confirmed
   // flow (T19) permits mainnet because the server never broadcasts; the wallet
   // signs. This validator only checks structure, it does not execute.
-  const isBaseSepolia = chain === 'eip155:84532' || chain === '84532';
-  const isBaseMainnet = chain === 'eip155:8453' || chain === '8453';
-  if (!isBaseSepolia && !isBaseMainnet && chain !== 'base') {
-    result.reason = 'Simulation failed: Unsupported chain';
+  try {
+    validateBaseCalls(chain, calls);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    result.reason = `Simulation failed: ${message}`;
     result.error = result.reason;
-    result.checks.push('Chain validation: Failed');
+    if (/missing|empty|to address/i.test(message)) {
+      result.checks.push('Calls structure validation: Failed');
+    } else if (/token address/i.test(message)) {
+      result.checks.push('Token validation: Failed');
+    } else {
+      result.checks.push('Chain validation: Failed');
+    }
     return result;
   }
   result.checks.push('Chain validation: Passed');
@@ -158,19 +166,7 @@ export async function preflightValidateAction(input: SimulationInput | string, l
   // Mainnet native USDC). The mainnet address is env-overridable so a deployment
   // can pin a different token; default is Circle's native USDC on Base (6 decimals),
   // NOT the bridged USDbC.
-  const sepoliaUSDC = '0x036cbd53842c5426634e7929541ec2318f3dcf7e';
-  const mainnetUSDC = (process.env.BASE_MAINNET_USDC_ADDRESS || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913').toLowerCase();
-  const allowedUSDC = new Set([sepoliaUSDC.toLowerCase(), mainnetUSDC]);
-  for (const call of calls) {
-    if (call.data && (call.data.toLowerCase().startsWith('0x095ea7b3') || call.data.toLowerCase().startsWith('0xa9059cbb'))) {
-        if (!allowedUSDC.has(call.to.toLowerCase())) {
-            result.reason = 'Simulation failed: Invalid token address. Only canonical USDC (Base Sepolia or Base Mainnet native) is supported.';
-            result.error = result.reason;
-            result.checks.push('Token validation: Failed');
-            return result;
-        }
-    }
-  }
+  // Token validation was enforced by validateBaseCalls above.
   result.checks.push('Token validation: Passed');
 
   const projections = buildCallProjections(calls);
