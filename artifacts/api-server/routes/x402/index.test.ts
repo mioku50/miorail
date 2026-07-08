@@ -129,6 +129,10 @@ describe('x402 official smoke endpoint', () => {
     assert.notStrictEqual(res.status, 500);
     assert.notStrictEqual(res.status, 503);
     assert.strictEqual(res.body.error, 'Payment Required');
+    assert.strictEqual(res.body.x402Version, 2);
+    assert.strictEqual(Array.isArray(res.body.accepts), true);
+    assert.ok(res.body.accepts.length > 0);
+    assert.strictEqual(res.body.paymentRequired, undefined);
     const paymentRequired = extractPaymentRequired(res);
     assert.ok(paymentRequired);
     assert.strictEqual(paymentRequired.accepts[0].network, 'eip155:8453');

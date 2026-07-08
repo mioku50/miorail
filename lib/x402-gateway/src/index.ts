@@ -614,13 +614,17 @@ export function createX402RoutesConfig(
     mimeType: 'application/json',
     serviceName,
     tags: ['miorail', 'x402'],
-    unpaidResponseBody: () => ({
-      contentType: 'application/json',
-      body: {
-        error: 'Payment Required',
-        paymentRequired: paymentRequiredFromRuntimeConfig(config),
-      },
-    }),
+    unpaidResponseBody: () => {
+      const paymentRequired = paymentRequiredFromRuntimeConfig(config);
+      return {
+        contentType: 'application/json',
+        body: {
+          x402Version: 2,
+          accepts: paymentRequired.accepts,
+          error: 'Payment Required',
+        },
+      };
+    },
     settlementFailedResponseBody: (_context: unknown, settleResult: { errorReason?: string; errorMessage?: string }) => ({
       contentType: 'application/json',
       body: {
@@ -1098,7 +1102,11 @@ export function x402Gateway(config: X402GatewayConfig) {
 
     if (!paymentHeader) {
       res.setHeader('Payment-Required', JSON.stringify(config.paymentRequired));
-      res.status(402).json({ error: 'Payment Required', paymentRequired: config.paymentRequired });
+      res.status(402).json({
+        x402Version: 2,
+        accepts: config.paymentRequired.accepts,
+        error: 'Payment Required',
+      });
       return;
     }
 
@@ -1115,7 +1123,11 @@ export function x402Gateway(config: X402GatewayConfig) {
       const isValid = await config.facilitator.verifyReceipt(payment.receipt, requiredAmount);
 
       if (!isValid) {
-        res.status(402).json({ error: 'Payment Required: Invalid or used receipt', paymentRequired: config.paymentRequired });
+        res.status(402).json({
+          x402Version: 2,
+          accepts: config.paymentRequired.accepts,
+          error: 'Payment Required: Invalid or used receipt',
+        });
         return;
       }
 
