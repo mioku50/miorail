@@ -519,6 +519,13 @@ export const StatusResponseSchema = z.object({
     missingConfig: z.array(z.string()).optional(),
     warnings: z.array(z.string()).optional(),
   }),
+  autonomy: z.object({
+    spendPermissionsPersistence: z.enum(['database']),
+    databaseConfigured: z.boolean(),
+    chainMode: z.string(),
+    mainnetExecutionEnabled: z.boolean(),
+    mainnetRequiresUserOptIn: z.boolean(),
+  }).optional(),
   // T19.1: split into explicit flags. The UI may show "Confirm in Base Account"
   // ONLY when userConfirmedEnabled is true, and must never infer "Execute" from
   // a single generic flag. Legacy server-broadcast routes gate on

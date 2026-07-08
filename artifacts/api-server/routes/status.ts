@@ -117,6 +117,13 @@ export function getSystemStatus(envOverride?: string) {
       missingConfig: x402Config.missingConfig,
       warnings: x402Config.warnings,
     },
+    autonomy: {
+      spendPermissionsPersistence: 'database' as const,
+      databaseConfigured: !!process.env.DATABASE_URL,
+      chainMode: chainEnv,
+      mainnetExecutionEnabled: process.env.MAINNET_EXECUTION_ENABLED === 'true',
+      mainnetRequiresUserOptIn: true,
+    },
     execution,
   };
 }

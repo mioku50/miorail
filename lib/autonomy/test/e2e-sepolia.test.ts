@@ -1,11 +1,12 @@
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert';
+import { base } from '@base-org/account';
 import { AutonomyEngine } from '../src/engine.js';
 
 test('T7.7 E2E on Sepolia: autonomous action within session-key limits', async () => {
-    const engine = new AutonomyEngine();
+    const engine = new AutonomyEngine({ chainEnv: 'sepolia' });
     const permId = 'test-perm-1';
-    engine.createPermission({
+    await engine.createPermission({
         id: permId,
         userId: 'sepolia-auto-user',
         signerAddress: '0x1',
@@ -17,19 +18,17 @@ test('T7.7 E2E on Sepolia: autonomous action within session-key limits', async (
     });
 
     // Test base.subscription.prepareCharge mock
-    const { base } = await import('@base-org/account');
-    const origPrepareCharge = base.subscription.prepareCharge;
-    base.subscription.prepareCharge = async () => ([{
+    const mockPrepareCharge = mock.method(base.subscription, 'prepareCharge', async () => ([{
         to: '0xsub',
-        data: '0xdata',
+        data: '0x',
         value: 0n // BigInt as expected by the latest version of base-org/account
-    }]) as unknown as ReturnType<typeof base.subscription.prepareCharge>;
+    }]));
 
     try {
         const calls = [{ to: '0x036cbd53842c5426634e7929541ec2318f3dcf7e', data: '0x', value: '0' }];
         const res = await engine.validateAndPrepareExecution(permId, calls, 10);
 
-        assert.strictEqual(res.success, true);
+        assert.strictEqual(res.success, true, res.error);
         assert.ok(res.sendCallsRequest);
 
         const prepared = res.sendCallsRequest as { calls: { to: string }[] };
@@ -37,8 +36,13 @@ test('T7.7 E2E on Sepolia: autonomous action within session-key limits', async (
         assert.strictEqual(prepared.calls[0].to, '0xsub');
         assert.strictEqual(prepared.calls[1].to, '0x036cbd53842c5426634e7929541ec2318f3dcf7e');
 
-        const perm = engine.getPermission(permId);
-        assert.strictEqual(perm?.spent, 10);
+        const perm = await engine.getPermission(permId);
+        assert.strictEqual(perm?.spent, 0);
+
+        const settlement = await engine.recordConfirmedSettlement(permId, 10, { txHash: '0xsettled' });
+        assert.strictEqual(settlement.success, true);
+        const settledPerm = await engine.getPermission(permId);
+        assert.strictEqual(settledPerm?.spent, 10);
 
         const res2 = await engine.validateAndPrepareExecution(permId, calls, 100);
         assert.strictEqual(res2.success, false);
@@ -49,6 +53,6 @@ test('T7.7 E2E on Sepolia: autonomous action within session-key limits', async (
         assert.strictEqual(res3.error, 'Contract 0xbad is not whitelisted');
 
     } finally {
-        base.subscription.prepareCharge = origPrepareCharge;
+        mockPrepareCharge.mock.restore();
     }
 });

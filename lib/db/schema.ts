@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, jsonb, index, integer } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, jsonb, index, integer, boolean } from 'drizzle-orm/pg-core';
 
 export const users = pgTable('users', {
   id: text('id').primaryKey(),
@@ -133,6 +133,29 @@ export const baseMcpOauthStates = pgTable(
   },
   (table) => [
     index('base_mcp_oauth_states_user_expires_idx').on(table.userId, table.expiresAt),
+  ],
+);
+
+export const spendPermissions = pgTable(
+  'spend_permissions',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .references(() => users.id)
+      .notNull(),
+    chainId: integer('chain_id').notNull(),
+    asset: text('asset'),
+    limit: integer('limit').notNull(),
+    spent: integer('spent').default(0).notNull(),
+    whitelist: jsonb('whitelist').notNull(),
+    expiresAt: timestamp('expires_at').notNull(),
+    isActive: boolean('is_active').default(true).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('spend_permissions_user_chain_active_idx').on(table.userId, table.chainId, table.isActive),
+    index('spend_permissions_expires_idx').on(table.expiresAt),
   ],
 );
 

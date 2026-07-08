@@ -193,6 +193,27 @@ Approval provider is not configured. Action was not executed.
 
 That behavior is intentional. The agent should never pretend an action executed if it cannot produce a valid approval flow.
 
+## Spend Permissions Mainnet Rollout
+
+Miorail keeps autonomous spend permissions fail-closed by default:
+
+- spend permissions are persisted in Postgres (`spend_permissions`), not process memory;
+- `CHAIN_ENV=sepolia` derives Base Sepolia (`84532`, `0x14a34`, `testnet: true`);
+- `CHAIN_ENV=mainnet-readonly` derives Base Mainnet metadata but blocks autonomous execution;
+- `CHAIN_ENV=mainnet` can prepare mainnet EIP-5792 requests only when `MAINNET_EXECUTION_ENABLED=true` and the user has an explicit server-side mainnet autonomy opt-in;
+- only canonical USDC for the selected Base chain is accepted;
+- `spent` increases only after a durable confirmed settlement proof, never when a batch is merely prepared;
+- the kill switch marks the permission inactive and blocks execution on any chain.
+
+Sepolia to mainnet checklist:
+
+1. Run DB migrations so `spend_permissions` exists.
+2. Keep `MAINNET_EXECUTION_ENABLED=false` while switching reads to `CHAIN_ENV=mainnet-readonly`.
+3. Verify `/api/status.autonomy` reports database persistence and the expected chain mode.
+4. Pin `BASE_MAINNET_USDC_ADDRESS` only if you intentionally override the built-in canonical Base USDC address.
+5. Enable `CHAIN_ENV=mainnet` only after per-user opt-in storage and operational monitoring are ready.
+6. Set `MAINNET_EXECUTION_ENABLED=true` only for the intended rollout window; user-confirmed wallet approval remains required.
+
 ---
 
 ## Differentiator 1: x402 pay-per-action

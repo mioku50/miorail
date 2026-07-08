@@ -1,15 +1,18 @@
 export interface SpendPermission {
   id: string;
   userId: string;
-  limit: number; // For simplicity, a numeric limit
+  chainId?: number;
+  asset?: string;
+  signerAddress?: string;
+  limit: number;
   spent: number;
-  whitelist: string[]; // List of allowed contract addresses
-  expiresAt: number; // Timestamp
-  isActive: boolean; // For kill-switch
+  whitelist: string[];
+  expiresAt: number;
+  isActive: boolean;
 }
 
 export interface Call {
   to: string;
-  data: string;
-  value: string;
+  data?: string;
+  value?: string;
 }

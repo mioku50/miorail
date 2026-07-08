@@ -164,6 +164,24 @@ describe('Status API', () => {
     restoreEnv('MORALIS_API_KEY', origMoralisKey);
   });
 
+  test('GET /api/status reports autonomy persistence and mainnet gates without leaking database URL', async () => {
+    const origMainnetExecution = process.env.MAINNET_EXECUTION_ENABLED;
+    process.env.MAINNET_EXECUTION_ENABLED = 'false';
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    assert.deepStrictEqual(response.body.autonomy, {
+      spendPermissionsPersistence: 'database',
+      databaseConfigured: true,
+      chainMode: response.body.chainEnv,
+      mainnetExecutionEnabled: false,
+      mainnetRequiresUserOptIn: true,
+    });
+    assert.strictEqual(JSON.stringify(response.body.autonomy).includes(process.env.DATABASE_URL || 'never-match'), false);
+
+    restoreEnv('MAINNET_EXECUTION_ENABLED', origMainnetExecution);
+  });
+
   test('GET /api/status reports x402 simulated when real settlement env is absent', async () => {
     const origFacilitator = process.env.X402_FACILITATOR_URL;
     const origPayTo = process.env.X402_PAYTO_ADDRESS;

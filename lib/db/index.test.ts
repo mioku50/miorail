@@ -11,6 +11,7 @@ import {
   apiCache,
   appMeta,
   recommendationExecutions,
+  spendPermissions,
   x402Receipts,
 } from './index';
 
@@ -52,6 +53,10 @@ describe('db connection', () => {
 
   it('should export the recommendationExecutions schema', () => {
     assert.ok(recommendationExecutions, 'recommendationExecutions schema should be defined');
+  });
+
+  it('should export the spendPermissions schema', () => {
+    assert.ok(spendPermissions, 'spendPermissions schema should be defined');
   });
 
   it('should export the x402Receipts schema', () => {
