@@ -2,7 +2,8 @@ import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert';
 import request from 'supertest';
 import express from 'express';
-import { clearX402FacilitatorStatusForTests } from '@mioagent/x402-gateway';
+import { clearX402FacilitatorStatusForTests, ExactEvmScheme } from '@mioagent/x402-gateway';
+import { privateKeyToAccount } from 'viem/accounts';
 import { createX402Router, x402Router } from './index.js';
 
 const app = express();
@@ -139,7 +140,28 @@ describe('x402 official smoke endpoint', () => {
     assert.strictEqual(paymentRequired.accepts[0].asset, MAINNET_USDC);
     assert.strictEqual(paymentRequired.accepts[0].payTo, PAY_TO);
     assert.strictEqual(paymentRequired.accepts[0].amount, '1000');
+    assert.strictEqual(paymentRequired.accepts[0].extra?.name, 'USD Coin');
+    assert.strictEqual(paymentRequired.accepts[0].extra?.version, '2');
     assert.strictEqual(JSON.stringify(res.body).includes('redacted-token'), false);
+  });
+
+  it('allows ExactEvmScheme payer client to construct signed EIP-712 payment payload from /smoke-paid 402 response', async () => {
+    clearX402FacilitatorStatusForTests();
+    globalThis.fetch = async () => supportedResponse();
+    const smokeApp = express();
+    smokeApp.use('/x402', createX402Router({
+      env: configuredEnv(),
+      runtimeMode: 'official',
+    }));
+    const res = await request(smokeApp).get('/x402/smoke-paid');
+    assert.strictEqual(res.status, 402);
+    const signer = privateKeyToAccount('0x4c9bfe115a2917b14b03301ea3f86d306125a581126cafe842d4bb719b0f7b06');
+    const scheme = new ExactEvmScheme(signer);
+    const payload = await scheme.createPaymentPayload(2, res.body.accepts[0]);
+    assert.strictEqual(payload.x402Version, 2);
+    assert.ok(payload.payload.authorization);
+    assert.ok(payload.payload.signature);
+    assert.strictEqual(payload.payload.authorization.value, '1000');
   });
 
   it('returns safe 503 when facilitator auth is missing or rejected', async () => {

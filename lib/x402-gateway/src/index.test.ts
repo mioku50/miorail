@@ -3,6 +3,8 @@ import assert from 'node:assert';
 import { generateKeyPairSync } from 'node:crypto';
 import express, { Request, Response as ExpressResponse } from 'express';
 import request from 'supertest';
+import { privateKeyToAccount } from 'viem/accounts';
+import { ExactEvmScheme } from '@x402/evm';
 import { encodeBuilderCodeSuffix } from '@x402/extensions/builder-code';
 import {
   x402Gateway,
@@ -378,6 +380,27 @@ describe('x402-gateway', () => {
     assert.strictEqual(paymentRequired.accepts[0].network, 'eip155:8453');
     assert.strictEqual(paymentRequired.accepts[0].asset, config.asset);
     assert.strictEqual(paymentRequired.accepts[0].amount, '2500');
+    assert.strictEqual(paymentRequired.accepts[0].extra?.name, 'USD Coin');
+    assert.strictEqual(paymentRequired.accepts[0].extra?.version, '2');
+  });
+
+  it('creates EIP-712 ExactEvmScheme payment payload from paymentRequired without domain parameter error', async () => {
+    const config = x402ConfigFromEnv({
+      X402_FACILITATOR_URL: 'https://facilitator.example.test',
+      X402_PAYTO_ADDRESS: '0x1111111111111111111111111111111111111111',
+      X402_NETWORK: 'eip155:8453',
+      X402_AMOUNT_ATOMIC_USDC: '1000',
+      BUILDER_CODE: 'miorail',
+    });
+    const paymentRequired = paymentRequiredFromRuntimeConfig(config);
+    const account = privateKeyToAccount('0x4c9bfe115a2917b14b03301ea3f86d306125a581126cafe842d4bb719b0f7b06');
+    const scheme = new ExactEvmScheme(account);
+    const payload = await scheme.createPaymentPayload(2, paymentRequired.accepts[0] as any);
+    assert.ok(payload);
+    assert.strictEqual(payload.x402Version, 2);
+    assert.ok(payload.payload.authorization);
+    assert.ok(payload.payload.signature);
+    assert.strictEqual(payload.payload.authorization.value, '1000');
   });
 
   it('declares Builder Code seller extension in official route config', () => {

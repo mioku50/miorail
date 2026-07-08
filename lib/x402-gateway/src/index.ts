@@ -29,6 +29,9 @@ import { wrapFetchWithPayment } from '@x402/fetch';
 import { createPublicClient, http, type Hex, type PublicClient } from 'viem';
 import { base, baseSepolia } from 'viem/chains';
 
+export { ExactEvmScheme } from '@x402/evm';
+export { wrapFetchWithPayment } from '@x402/fetch';
+
 export interface X402GatewayConfig {
   paymentRequired: X402PaymentRequired;
   facilitator: X402Facilitator;
@@ -584,6 +587,11 @@ export function paymentRequiredFromRuntimeConfig(config: X402RuntimeConfig): X40
         asset: config.asset,
         network: config.network,
         version: '2',
+        maxTimeoutSeconds: 300,
+        extra: {
+          name: 'USD Coin',
+          version: '2',
+        },
       },
     ],
   };
@@ -605,9 +613,17 @@ export function createX402RoutesConfig(
       price: {
         asset: config.asset,
         amount: config.amountAtomic,
+        extra: {
+          name: 'USD Coin',
+          version: '2',
+        },
       },
       network: config.network,
       maxTimeoutSeconds: 300,
+      extra: {
+        name: 'USD Coin',
+        version: '2',
+      },
     },
     resource: routePath,
     description: 'Miorail x402 paid resource',

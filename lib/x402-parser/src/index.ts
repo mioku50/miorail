@@ -6,6 +6,8 @@ export const x402PaymentOptionSchema = z.object({
   asset: z.string(),
   network: z.string(),
   version: z.string().optional(),
+  maxTimeoutSeconds: z.number().optional(),
+  extra: z.record(z.unknown()).optional(),
 });
 
 export type X402PaymentOption = z.infer<typeof x402PaymentOptionSchema>;
