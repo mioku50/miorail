@@ -7,6 +7,7 @@ import {
   useTestnetRevokeAutonomy,
   useTestnetExecuteAction,
   useResetAutonomy,
+  useBaseMcpToolsProbe,
 } from '@mioagent/api-client-react';
 import { CHAIN_ENV, isMainnetReadonly } from '../../lib/chain';
 import {
@@ -52,6 +53,7 @@ export function ConfigureView() {
   const { switchChain } = useSwitchChain();
   const { data: sd } = useStatus();
   const { data: autonomyState } = useAutonomy();
+  const toolsProbe = useBaseMcpToolsProbe();
   const showToast = useUiStore((s) => s.showToast);
 
   const [dailyLimit, setDailyLimit] = useState('100');
@@ -305,11 +307,44 @@ export function ConfigureView() {
           </div>
         )}
         <Row label="Base MCP">
-          {sd ? <StateBadge state={baseMcpState(sd.baseMcp.status)} label={formatBaseMcpStatus(sd.baseMcp)} /> : <Checking />}
+          <div className="flex items-center gap-2">
+            {sd ? <StateBadge state={baseMcpState(sd.baseMcp.status)} label={formatBaseMcpStatus(sd.baseMcp)} /> : <Checking />}
+            {sd?.baseMcp?.auth?.connected && (
+              <button
+                type="button"
+                onClick={() => toolsProbe.mutate()}
+                disabled={toolsProbe.isPending}
+                className="inline-flex items-center gap-1.5 text-[11px] font-bold text-accent border border-accent/20 bg-accent/5 px-2 py-1 rounded-md hover:bg-accent/10 disabled:opacity-60 disabled:cursor-wait"
+              >
+                <PlugZap size={12} />
+                {toolsProbe.isPending ? 'Verifying...' : 'Probe tools'}
+              </button>
+            )}
+          </div>
         </Row>
         {baseMcpHint(sd?.baseMcp) && (
           <div className="text-[11px] text-ink-3 bg-panel-2 border border-line rounded-md px-3 py-2">
             {baseMcpHint(sd?.baseMcp)}
+          </div>
+        )}
+        {toolsProbe.data?.status !== 'connected' && sd?.baseMcp?.auth?.connected && typeof sd.baseMcp.toolsCount === 'number' && (
+          <div className="text-[11px] text-ok bg-ok-soft border border-ok/20 rounded-md px-3 py-2">
+            Base MCP connected. {sd.baseMcp.toolsCount} user-scoped tools available.
+          </div>
+        )}
+        {toolsProbe.data?.status === 'connected' && (
+          <div className="text-[11px] text-ok bg-ok-soft border border-ok/20 rounded-md px-3 py-2">
+            Base MCP connected. {toolsProbe.data.toolsCount} user-scoped tools available.
+          </div>
+        )}
+        {toolsProbe.data?.status === 'needs_reauth' && (
+          <div className="text-[11px] text-warn bg-warn-soft border border-warn/20 rounded-md px-3 py-2">
+            Reconnect Base MCP to refresh user-scoped tool access.
+          </div>
+        )}
+        {(toolsProbe.data?.status === 'unreachable' || toolsProbe.data?.status === 'degraded') && (
+          <div className="text-[11px] text-warn bg-warn-soft border border-warn/20 rounded-md px-3 py-2">
+            Base MCP tool probe unavailable{toolsProbe.data.errorCode ? `: ${toolsProbe.data.errorCode}` : ''}. Read-only portfolio scans and revoke flow are unaffected.
           </div>
         )}
         {mcpOauthMessage && (

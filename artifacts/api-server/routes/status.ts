@@ -3,7 +3,7 @@ import { StatusResponseSchema } from '@mioagent/api-zod';
 import { getTokenBalancesProviderFromEnv, getPriceProviderFromEnv, getTokenSecurityProviderFromEnv, getApprovalProviderFromEnv } from '@mioagent/data-providers';
 import { getProviderBudgetSnapshot, getProviderCacheDiagnostics } from '../lib/providerCache.js';
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
-import { getBaseMcpStatusSnapshot, probeBaseMcpStatus, type BaseMcpStatus } from '../lib/baseMcpStatus.js';
+import { attachBaseMcpToolProbeStatus, getBaseMcpStatusSnapshot, probeBaseMcpStatus, type BaseMcpStatus } from '../lib/baseMcpStatus.js';
 import { getBaseMcpAuthStatus, type StoredBaseMcpAuthStatus } from '../lib/baseMcpOAuthStore.js';
 
 export function getSystemStatus(envOverride?: string) {
@@ -134,7 +134,7 @@ statusRouter.get('/', async (req, res, next) => {
       .catch(() => defaultBaseMcpAuthStatus);
     const statusData = {
       ...getSystemStatus(),
-      baseMcp: mergeBaseMcpAuthStatus(baseMcp, auth),
+      baseMcp: attachBaseMcpToolProbeStatus(mergeBaseMcpAuthStatus(baseMcp, auth)),
     };
     res.json(StatusResponseSchema.parse(statusData));
   } catch (error) {

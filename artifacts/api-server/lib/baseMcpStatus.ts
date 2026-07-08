@@ -19,6 +19,8 @@ export interface BaseMcpStatus {
     toolsCount?: number;
     resourcesCount?: number;
   };
+  toolsCount?: number;
+  lastToolProbeAt?: string;
   auth?: {
     connected: boolean;
     needsReauth: boolean;
@@ -36,6 +38,14 @@ const FAILURE_COOLDOWN_MS = 30_000;
 let cached: { configKey: string; status: BaseMcpStatus; expiresAt: number } | null = null;
 let inflight: Promise<BaseMcpStatus> | null = null;
 let warnedLegacyBaseMcpUrl = false;
+let toolProbe:
+  | {
+      configKey: string;
+      endpointHost: string;
+      toolsCount: number;
+      checkedAt: string;
+    }
+  | null = null;
 
 function parseBool(value?: string): boolean {
   return ['1', 'true', 'yes', 'y', 'on'].includes((value || '').trim().toLowerCase());
@@ -272,7 +282,32 @@ export async function probeBaseMcpStatus(): Promise<BaseMcpStatus> {
   return inflight;
 }
 
+export function recordBaseMcpToolProbe(input: {
+  endpointHost: string;
+  toolsCount: number;
+  checkedAt: string;
+}): void {
+  toolProbe = {
+    configKey: configKey(),
+    endpointHost: input.endpointHost,
+    toolsCount: input.toolsCount,
+    checkedAt: input.checkedAt,
+  };
+}
+
+export function attachBaseMcpToolProbeStatus(base: BaseMcpStatus): BaseMcpStatus {
+  if (!toolProbe || toolProbe.configKey !== configKey()) return base;
+  if (!base.endpointHost || base.endpointHost !== toolProbe.endpointHost) return base;
+  if (!base.enabled || !base.configured) return base;
+  return {
+    ...base,
+    toolsCount: toolProbe.toolsCount,
+    lastToolProbeAt: toolProbe.checkedAt,
+  };
+}
+
 export function clearBaseMcpStatusForTests(): void {
   cached = null;
   inflight = null;
+  toolProbe = null;
 }

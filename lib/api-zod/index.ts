@@ -203,6 +203,18 @@ export const ConfirmActionResponseSchema = z.object({
   error: z.string().optional(),
 });
 
+export const BaseMcpToolProbeResponseSchema = z.object({
+  status: z.enum(['connected', 'needs_reauth', 'unreachable', 'degraded']),
+  endpointHost: z.string().optional(),
+  toolsCount: z.number(),
+  tools: z.array(z.object({
+    name: z.string(),
+    description: z.string().optional(),
+  })),
+  checkedAt: z.string(),
+  errorCode: z.string().optional(),
+});
+
 export const DismissActionRequestSchema = z.object({
   actionId: z.string(),
 });
@@ -452,6 +464,8 @@ export const StatusResponseSchema = z.object({
       toolsCount: z.number().optional(),
       resourcesCount: z.number().optional(),
     }).optional(),
+    toolsCount: z.number().optional(),
+    lastToolProbeAt: z.string().optional(),
     auth: z.object({
       connected: z.boolean(),
       needsReauth: z.boolean(),

@@ -1,4 +1,4 @@
-import { useStatus } from '@mioagent/api-client-react';
+import { useBaseMcpToolsProbe, useStatus } from '@mioagent/api-client-react';
 import { StateBadge } from '@mioagent/ui';
 import { useAccount } from 'wagmi';
 import {
@@ -17,6 +17,7 @@ import { PlugZap } from 'lucide-react';
 export function BaseMcpView() {
   const { isConnected } = useAccount();
   const { data: sd } = useStatus();
+  const toolsProbe = useBaseMcpToolsProbe();
   const mcp = sd?.baseMcp;
   const ap = sd?.approvals;
   const canConnect = !!mcp?.enabled && !!mcp?.configured;
@@ -81,8 +82,24 @@ export function BaseMcpView() {
             <span className="text-xs text-ink-3">
               {mcp?.auth?.connected ? 'User-scoped MCP tokens are stored server-side.' : 'No user-scoped Base MCP token is active.'}
             </span>
+            {mcp?.lastToolProbeAt && (
+              <span className="text-[11px] text-ink-3 font-mono">
+                Tools verified {new Date(mcp.lastToolProbeAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                {typeof mcp.toolsCount === 'number' ? ` / ${mcp.toolsCount} tools` : ''}
+              </span>
+            )}
           </div>
-          {canConnect && isConnected ? (
+          {mcp?.auth?.connected ? (
+            <button
+              type="button"
+              onClick={() => toolsProbe.mutate()}
+              disabled={toolsProbe.isPending}
+              className="inline-flex items-center gap-2 text-xs font-bold bg-panel-2 text-ink border border-line px-3.5 py-2 rounded-lg hover:bg-bg transition-colors disabled:opacity-60 disabled:cursor-wait"
+            >
+              <PlugZap size={14} />
+              {toolsProbe.isPending ? 'Verifying...' : 'Verify tools'}
+            </button>
+          ) : canConnect && isConnected ? (
             <a
               href={baseMcpConnectHref('/base-mcp')}
               className="inline-flex items-center gap-2 text-xs font-bold bg-accent text-white px-3.5 py-2 rounded-lg hover:bg-accent/90 transition-colors shadow-sm"
@@ -101,6 +118,26 @@ export function BaseMcpView() {
             </button>
           )}
         </div>
+        {toolsProbe.data?.status === 'connected' && (
+          <div className="p-3 bg-ok-soft rounded border border-ok/20 text-xs text-ok font-medium">
+            Base MCP connected. {toolsProbe.data.toolsCount} user-scoped tools available.
+          </div>
+        )}
+        {toolsProbe.data?.status === 'needs_reauth' && (
+          <div className="p-3 bg-warn-soft rounded border border-warn/20 text-xs text-warn font-medium">
+            Base MCP token needs reauthorization. Reconnect Base MCP.
+          </div>
+        )}
+        {(toolsProbe.data?.status === 'unreachable' || toolsProbe.data?.status === 'degraded') && (
+          <div className="p-3 bg-warn-soft rounded border border-warn/20 text-xs text-warn font-medium">
+            Base MCP tool probe is unavailable{toolsProbe.data.errorCode ? `: ${toolsProbe.data.errorCode}` : ''}. Existing portfolio and revoke flows are unaffected.
+          </div>
+        )}
+        {toolsProbe.error && (
+          <div className="p-3 bg-risk-soft rounded border border-risk/20 text-xs text-risk font-medium">
+            Base MCP tool probe failed without changing any state.
+          </div>
+        )}
         {mcp?.status === 'unreachable' && (
           <div className="p-3 bg-risk-soft rounded border border-risk/20 text-xs text-risk font-medium">
             Base MCP status probe could not reach the configured host.

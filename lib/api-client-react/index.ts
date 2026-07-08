@@ -123,6 +123,19 @@ export function useStatus(options?: Omit<UseQueryOptions<apiSpec.StatusResponse,
   });
 }
 
+export function useBaseMcpToolsProbe(
+  options?: Omit<UseMutationOptions<apiSpec.BaseMcpToolProbeResponse, Error, void>, 'mutationFn'>
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => fetchApi<apiSpec.BaseMcpToolProbeResponse>('/api/mcp/base/tools'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['status'] });
+    },
+    ...options,
+  });
+}
+
 // Mutations
 
 // T19.2: /recommend now returns success:false (HTTP 200) for honest

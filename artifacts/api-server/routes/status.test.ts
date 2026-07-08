@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import request from 'supertest';
 import { app } from '../app.js';
 import { clearTokenSecurityCacheForTests } from '@mioagent/data-providers';
-import { clearBaseMcpStatusForTests } from '../lib/baseMcpStatus.js';
+import { clearBaseMcpStatusForTests, recordBaseMcpToolProbe } from '../lib/baseMcpStatus.js';
 import { statusRouteRuntime } from './status.js';
 import {
   clearProviderCacheForTests,
@@ -264,6 +264,43 @@ describe('Status API', () => {
     restoreEnv('BASE_MCP_ENABLED', origEnabled);
     restoreEnv('BASE_MCP_SERVER_URL', origUrl);
     restoreEnv('BASE_MCP_STATUS_PATH', origPath);
+  });
+
+  test('GET /api/status includes last successful Base MCP tool probe summary', async () => {
+    const origEnabled = process.env.BASE_MCP_ENABLED;
+    const origUrl = process.env.BASE_MCP_SERVER_URL;
+    const originalFetch = global.fetch;
+    process.env.BASE_MCP_ENABLED = 'true';
+    process.env.BASE_MCP_SERVER_URL = 'https://mcp.example.test/private/path?probe=1';
+
+    recordBaseMcpToolProbe({
+      endpointHost: 'mcp.example.test',
+      toolsCount: 7,
+      checkedAt: '2026-07-08T00:00:00.000Z',
+    });
+    global.fetch = mock.fn(async () => ({
+      ok: false,
+      status: 404,
+      json: async () => ({}),
+    } as Response)) as unknown as typeof fetch;
+    statusRouteRuntime.getBaseMcpAuthStatus = async () => ({
+      connected: true,
+      needsReauth: false,
+      userScoped: true,
+      expiresAt: '2026-07-08T01:00:00.000Z',
+      connectedAt: '2026-07-08T00:00:00.000Z',
+    });
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.baseMcp.status, 'connected');
+    assert.strictEqual(response.body.baseMcp.toolsCount, 7);
+    assert.strictEqual(response.body.baseMcp.lastToolProbeAt, '2026-07-08T00:00:00.000Z');
+    assert.strictEqual(JSON.stringify(response.body.baseMcp).includes('private/path'), false);
+
+    global.fetch = originalFetch;
+    restoreEnv('BASE_MCP_ENABLED', origEnabled);
+    restoreEnv('BASE_MCP_SERVER_URL', origUrl);
   });
 
   test('GET /api/status reports configured Base MCP needs_reauth when user auth expired', async () => {

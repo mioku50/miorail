@@ -13,6 +13,7 @@ import {
 
 const originalAuth = mcpBaseRouteRuntime.auth;
 const originalLogger = mcpBaseRouteRuntime.logger;
+const originalProbeBaseMcpTools = mcpBaseRouteRuntime.probeBaseMcpTools;
 const originalDb = baseMcpOAuthStoreRuntime.db;
 const originalFetch = globalThis.fetch;
 
@@ -71,6 +72,7 @@ function createFakeDb() {
 afterEach(() => {
   mcpBaseRouteRuntime.auth = originalAuth;
   mcpBaseRouteRuntime.logger = originalLogger;
+  mcpBaseRouteRuntime.probeBaseMcpTools = originalProbeBaseMcpTools;
   baseMcpOAuthStoreRuntime.db = originalDb;
   globalThis.fetch = originalFetch;
   clearBaseMcpStatusForTests();
@@ -318,5 +320,63 @@ test('GET /api/mcp/base/callback marks needs_reauth and redirects safely when to
 
   restoreEnv('BASE_MCP_ENABLED', originalEnabled);
   restoreEnv('BASE_MCP_SERVER_URL', originalUrl);
+  restoreEnv('SESSION_SECRET', originalSecret);
+});
+
+test('GET /api/mcp/base/tools returns sanitized user-scoped tool inventory', async () => {
+  const originalSecret = process.env.SESSION_SECRET;
+  process.env.SESSION_SECRET = 'test-session-secret';
+  let receivedRedirectUrl = '';
+  mcpBaseRouteRuntime.probeBaseMcpTools = async (input) => {
+    receivedRedirectUrl = input.redirectUrl;
+    return {
+      status: 'connected',
+      endpointHost: 'mcp.base.org',
+      toolsCount: 2,
+      tools: [
+        { name: 'get_wallets', description: 'Wallet inventory' },
+        { name: 'send_calls', description: 'Listed only, never invoked by probe' },
+      ],
+      checkedAt: '2026-07-08T00:00:00.000Z',
+    };
+  };
+
+  const response = await request(app).get('/api/mcp/base/tools');
+  assert.strictEqual(response.status, 200);
+  assert.deepStrictEqual(response.body, {
+    status: 'connected',
+    endpointHost: 'mcp.base.org',
+    toolsCount: 2,
+    tools: [
+      { name: 'get_wallets', description: 'Wallet inventory' },
+      { name: 'send_calls', description: 'Listed only, never invoked by probe' },
+    ],
+    checkedAt: '2026-07-08T00:00:00.000Z',
+  });
+  assert.match(receivedRedirectUrl, /\/api\/mcp\/base\/callback$/);
+  assert.strictEqual(JSON.stringify(response.body).includes('test-session-secret'), false);
+
+  restoreEnv('SESSION_SECRET', originalSecret);
+});
+
+test('GET /api/mcp/base/probe returns needs_reauth when stored token is absent', async () => {
+  const originalSecret = process.env.SESSION_SECRET;
+  process.env.SESSION_SECRET = 'test-session-secret';
+  mcpBaseRouteRuntime.probeBaseMcpTools = async () => ({
+    status: 'needs_reauth',
+    endpointHost: 'mcp.base.org',
+    toolsCount: 0,
+    tools: [],
+    checkedAt: '2026-07-08T00:01:00.000Z',
+    errorCode: 'needs_reauth',
+  });
+
+  const response = await request(app).get('/api/mcp/base/probe');
+  assert.strictEqual(response.status, 200);
+  assert.strictEqual(response.body.status, 'needs_reauth');
+  assert.strictEqual(response.body.toolsCount, 0);
+  assert.deepStrictEqual(response.body.tools, []);
+  assert.strictEqual(JSON.stringify(response.body).includes('test-session-secret'), false);
+
   restoreEnv('SESSION_SECRET', originalSecret);
 });

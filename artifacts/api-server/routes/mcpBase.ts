@@ -1,6 +1,7 @@
-import { Router, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import crypto from 'node:crypto';
 import { logger } from '@mioagent/utils';
+import { BaseMcpToolProbeResponseSchema } from '@mioagent/api-zod';
 import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
 import {
   baseMcpEnabledFromEnv,
@@ -13,12 +14,14 @@ import {
   markBaseMcpNeedsReauth,
   sanitizeReturnTo,
 } from '../lib/baseMcpOAuthStore.js';
+import { probeBaseMcpTools } from '../lib/baseMcpToolProbe.js';
 
 export const mcpBaseRouter = Router();
 
 export const mcpBaseRouteRuntime = {
   auth,
   logger,
+  probeBaseMcpTools,
 };
 
 function userIdFromRequest(req: Request): string {
@@ -222,3 +225,32 @@ mcpBaseRouter.get('/callback', async (req, res, next) => {
     next(error);
   }
 });
+
+async function handleToolsProbe(req: Request, res: Response, next: NextFunction) {
+  try {
+    const userId = userIdFromRequest(req);
+    const secret = process.env.SESSION_SECRET;
+    if (!secret) {
+      return res.json(BaseMcpToolProbeResponseSchema.parse({
+        status: 'degraded',
+        endpointHost: baseMcpServerUrlFromEnv()?.host,
+        toolsCount: 0,
+        tools: [],
+        checkedAt: new Date().toISOString(),
+        errorCode: 'missing_config',
+      }));
+    }
+
+    const result = await mcpBaseRouteRuntime.probeBaseMcpTools({
+      userId,
+      sessionSecret: secret,
+      redirectUrl: callbackUrl(req),
+    });
+    return res.json(BaseMcpToolProbeResponseSchema.parse(result));
+  } catch (error) {
+    next(error);
+  }
+}
+
+mcpBaseRouter.get('/tools', handleToolsProbe);
+mcpBaseRouter.get('/probe', handleToolsProbe);
