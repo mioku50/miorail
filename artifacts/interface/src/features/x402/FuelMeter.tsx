@@ -21,17 +21,33 @@ export function FuelMeter() {
   const { data: pricing } = useX402Pricing();
 
   const status = statusData?.x402?.status;
-  const badgeState = status === 'configured' ? 'live' : status === 'missing' ? 'missing' : 'mock';
-  const badgeLabel = status === 'configured' ? 'configured' : status === 'missing' ? 'not configured' : 'simulated';
-  const providerLabel = status === 'configured' ? 'Live Facilitator' : status === 'missing' ? 'Missing Config' : 'Simulated Gateway';
-  const providerDot = status === 'configured' ? 'text-ok' : status === 'missing' ? 'text-risk' : 'text-warn';
+  const isLive = status === 'connected' || status === 'configured';
+  const isMissing = status === 'missing';
+  const isUnavailable = status === 'facilitator_auth_required' || status === 'facilitator_rate_limited' || status === 'facilitator_unreachable' || status === 'degraded';
+  const badgeState = isLive ? 'live' : isMissing ? 'missing' : 'mock';
+  const badgeLabel =
+    isLive ? 'connected' :
+    status === 'facilitator_auth_required' ? 'auth required' :
+    status === 'facilitator_rate_limited' ? 'rate limited' :
+    status === 'facilitator_unreachable' ? 'unreachable' :
+    status === 'degraded' ? 'degraded' :
+    isMissing ? 'not configured' :
+    'simulated';
+  const providerLabel = isLive ? 'Live Facilitator' : isMissing ? 'Missing Config' : isUnavailable ? 'Facilitator Unavailable' : 'Simulated Gateway';
+  const providerDot = isLive ? 'text-ok' : isMissing ? 'text-risk' : 'text-warn';
   const statusCopy =
-    status === 'configured'
+    isLive
       ? 'Real x402 settlement records are read from x402_receipts.'
+      : status === 'facilitator_auth_required'
+        ? 'x402 facilitator rejected /supported. Configure facilitator auth; paid routes fail closed without crashing the API.'
+      : status === 'facilitator_rate_limited'
+        ? 'x402 facilitator is rate-limited. Paid routes fail closed until the facilitator recovers.'
+      : status === 'facilitator_unreachable' || status === 'degraded'
+        ? 'x402 facilitator is unavailable or degraded. Paid routes return a controlled unavailable response.'
       : status === 'missing'
         ? 'x402 env is partial or invalid. Paid routes fail closed until facilitator, payTo, and CAIP-2 network are configured.'
         : 'No real facilitator is configured. Paid routes do not claim settlement.';
-  const modeLabel = status === 'configured' ? 'Mode: real settlement' : status === 'missing' ? 'Mode: missing config' : 'Mode: simulated';
+  const modeLabel = isLive ? 'Mode: real settlement' : isMissing ? 'Mode: missing config' : isUnavailable ? `Mode: ${badgeLabel}` : 'Mode: simulated';
 
   return (
     <main className="flex-1 bg-bg p-5 flex flex-col gap-4 overflow-y-auto select-none pb-16 md:pb-5">

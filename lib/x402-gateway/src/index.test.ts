@@ -1,16 +1,20 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import express, { Request, Response } from 'express';
+import express, { Request, Response as ExpressResponse } from 'express';
 import request from 'supertest';
 import { encodeBuilderCodeSuffix } from '@x402/extensions/builder-code';
 import {
   x402Gateway,
   MockFacilitator,
   createX402RoutesConfig,
+  createSafeOfficialX402Middleware,
+  clearX402FacilitatorStatusForTests,
+  classifyX402FacilitatorError,
   paymentRequiredFromRuntimeConfig,
   settlementRecordFromSettleResult,
   verifyBuilderCodeAttributionFromCalldata,
   x402ConfigFromEnv,
+  x402StatusFromEnv,
 } from './index.js';
 
 describe('x402-gateway', () => {
@@ -29,7 +33,7 @@ describe('x402-gateway', () => {
   const facilitator = new MockFacilitator();
   const gateway = x402Gateway({ paymentRequired, facilitator });
 
-  app.get('/protected', gateway, (req: Request, res: Response) => {
+  app.get('/protected', gateway, (req: Request, res: ExpressResponse) => {
     res.status(200).json({ data: 'success' });
   });
 
@@ -103,6 +107,136 @@ describe('x402-gateway', () => {
     assert.strictEqual(invalid.configured, false);
     assert.ok(invalid.missingConfig.includes('X402_PAYTO_ADDRESS'));
     assert.ok(invalid.missingConfig.includes('X402_NETWORK'));
+  });
+
+  it('classifies facilitator auth, rate limit, and network errors without raw secrets', () => {
+    assert.deepStrictEqual(
+      classifyX402FacilitatorError(new Error('Facilitator getSupported failed (401): Unauthorized token-secret')),
+      { status: 'facilitator_auth_required', errorCode: 'facilitator_401' },
+    );
+    assert.deepStrictEqual(
+      classifyX402FacilitatorError(new Error('Facilitator getSupported failed (429): Too Many Requests')),
+      { status: 'facilitator_rate_limited', errorCode: 'facilitator_429' },
+    );
+    assert.deepStrictEqual(
+      classifyX402FacilitatorError(new Error('fetch failed ECONNRESET')),
+      { status: 'facilitator_unreachable', errorCode: 'facilitator_network' },
+    );
+  });
+
+  it('reports facilitator auth required when configured facilitator returns 401', async () => {
+    clearX402FacilitatorStatusForTests();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new globalThis.Response('Unauthorized secret-token', { status: 401 });
+    const env = {
+      X402_FACILITATOR_URL: 'https://facilitator.example.test/private?token=secret',
+      X402_PAYTO_ADDRESS: '0x1111111111111111111111111111111111111111',
+      X402_NETWORK: 'eip155:8453',
+      BUILDER_CODE: 'miorail',
+      X402_FACILITATOR_AUTH_TOKEN: 'secret-token',
+      X402_FACILITATOR_TIMEOUT_MS: '100',
+    };
+    try {
+      const status = await x402StatusFromEnv(env);
+      assert.strictEqual(status.configured, true);
+      assert.strictEqual(status.status, 'facilitator_auth_required');
+      assert.strictEqual(status.errorCode, 'facilitator_401');
+      assert.strictEqual(status.facilitatorAuthConfigured, true);
+      assert.strictEqual(JSON.stringify(status).includes('secret-token'), false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      clearX402FacilitatorStatusForTests();
+    }
+  });
+
+  it('does not call facilitator when payTo/network config is missing', async () => {
+    clearX402FacilitatorStatusForTests();
+    const originalFetch = globalThis.fetch;
+    let called = false;
+    globalThis.fetch = async () => {
+      called = true;
+      return new globalThis.Response('{}', { status: 500 });
+    };
+    try {
+      const status = await x402StatusFromEnv({
+        X402_FACILITATOR_URL: 'https://facilitator.example.test',
+      });
+      assert.strictEqual(status.status, 'missing');
+      assert.strictEqual(status.configured, false);
+      assert.strictEqual(called, false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      clearX402FacilitatorStatusForTests();
+    }
+  });
+
+  it('reports connected when facilitator supported probe succeeds', async () => {
+    clearX402FacilitatorStatusForTests();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input, init) => {
+      assert.ok(String(input).endsWith('/supported'));
+      assert.strictEqual((init?.headers as Record<string, string>).Authorization, 'Bearer secret-token');
+      return new globalThis.Response(JSON.stringify({
+        kinds: [{ x402Version: 2, scheme: 'exact', network: 'eip155:8453' }],
+        extensions: [],
+        signers: {},
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    try {
+      const status = await x402StatusFromEnv({
+        X402_FACILITATOR_URL: 'https://facilitator.example.test',
+        X402_PAYTO_ADDRESS: '0x1111111111111111111111111111111111111111',
+        X402_NETWORK: 'eip155:8453',
+        BUILDER_CODE: 'miorail',
+        X402_FACILITATOR_AUTH_TOKEN: 'secret-token',
+      });
+      assert.strictEqual(status.status, 'connected');
+      assert.strictEqual(status.supportedKindsCount, 1);
+      assert.strictEqual(status.errorCode, undefined);
+    } finally {
+      globalThis.fetch = originalFetch;
+      clearX402FacilitatorStatusForTests();
+    }
+  });
+
+  it('returns controlled unavailable response when official route cannot initialize facilitator', async () => {
+    clearX402FacilitatorStatusForTests();
+    const originalFetch = globalThis.fetch;
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(JSON.stringify(args));
+    };
+    globalThis.fetch = async () => new globalThis.Response('Unauthorized secret-token', { status: 401 });
+    const env = {
+      X402_FACILITATOR_URL: 'https://facilitator.example.test',
+      X402_PAYTO_ADDRESS: '0x1111111111111111111111111111111111111111',
+      X402_NETWORK: 'eip155:8453',
+      BUILDER_CODE: 'miorail',
+      X402_FACILITATOR_AUTH_TOKEN: 'secret-token',
+      X402_FACILITATOR_TIMEOUT_MS: '100',
+    };
+    const config = x402ConfigFromEnv(env);
+    const paidApp = express();
+    paidApp.get('/paid', createSafeOfficialX402Middleware(config, { routePath: '/paid' }, env), (_req, res) => {
+      res.json({ data: 'paid' });
+    });
+    try {
+      const res = await request(paidApp).get('/paid');
+      assert.strictEqual(res.status, 503);
+      assert.strictEqual(res.body.error, 'x402_facilitator_unavailable');
+      assert.strictEqual(res.body.status, 'facilitator_auth_required');
+      assert.strictEqual(res.body.errorCode, 'facilitator_401');
+      assert.strictEqual(JSON.stringify(res.body).includes('secret-token'), false);
+      assert.strictEqual(warnings.join('\n').includes('secret-token'), false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      console.warn = originalWarn;
+      clearX402FacilitatorStatusForTests();
+    }
   });
 
   it('builds payment requirements from supported Base network and canonical USDC', () => {

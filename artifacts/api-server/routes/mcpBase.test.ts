@@ -81,9 +81,13 @@ afterEach(() => {
 test('GET /api/mcp/base/connect returns safe missing_config when Base MCP config is absent', async () => {
   const originalEnabled = process.env.BASE_MCP_ENABLED;
   const originalUrl = process.env.BASE_MCP_SERVER_URL;
+  const originalMcpUrl = process.env.MCP_SERVER_URL;
+  const originalBaseMcpUrl = process.env.BASE_MCP_URL;
   const originalSecret = process.env.SESSION_SECRET;
   delete process.env.BASE_MCP_ENABLED;
   delete process.env.BASE_MCP_SERVER_URL;
+  delete process.env.MCP_SERVER_URL;
+  delete process.env.BASE_MCP_URL;
   delete process.env.SESSION_SECRET;
 
   const response = await request(app).get('/api/mcp/base/connect');
@@ -94,6 +98,8 @@ test('GET /api/mcp/base/connect returns safe missing_config when Base MCP config
 
   restoreEnv('BASE_MCP_ENABLED', originalEnabled);
   restoreEnv('BASE_MCP_SERVER_URL', originalUrl);
+  restoreEnv('MCP_SERVER_URL', originalMcpUrl);
+  restoreEnv('BASE_MCP_URL', originalBaseMcpUrl);
   restoreEnv('SESSION_SECRET', originalSecret);
 });
 

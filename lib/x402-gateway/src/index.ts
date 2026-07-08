@@ -9,10 +9,11 @@ import {
   HTTPFacilitatorClient,
   x402HTTPResourceServer,
   x402ResourceServer,
+  type FacilitatorConfig,
   type RoutesConfig,
   type SettleResultContext,
 } from '@x402/core/server';
-import type { PaymentRequirements, SettleResponse } from '@x402/core/types';
+import type { PaymentRequirements, SettleResponse, SupportedResponse } from '@x402/core/types';
 import { paymentMiddlewareFromHTTPServer } from '@x402/express';
 import { ExactEvmScheme } from '@x402/evm/exact/server';
 import {
@@ -57,7 +58,15 @@ export class MockFacilitator implements X402Facilitator {
   }
 }
 
-export type X402RuntimeStatus = 'configured' | 'simulated' | 'missing';
+export type X402RuntimeStatus =
+  | 'connected'
+  | 'configured'
+  | 'simulated'
+  | 'missing'
+  | 'facilitator_auth_required'
+  | 'facilitator_rate_limited'
+  | 'facilitator_unreachable'
+  | 'degraded';
 export type X402SettlementStatus = 'settled' | 'pending' | 'failed';
 export type SupportedX402Network = `eip155:${SupportedBaseChainId}`;
 export type BuilderCodeAttributionRole = 'seller' | 'buyer';
@@ -74,6 +83,10 @@ export interface X402RuntimeConfig {
   asset?: string;
   amountAtomic: string;
   builderCode?: string;
+  facilitatorAuthConfigured?: boolean;
+  errorCode?: string;
+  lastCheckedAt?: string;
+  supportedKindsCount?: number;
 }
 
 export interface X402SettlementAttribution {
@@ -124,6 +137,16 @@ export interface CreateX402MiddlewareOptions {
   syncFacilitatorOnStart?: boolean;
 }
 
+export interface X402FacilitatorHealth {
+  status: Extract<
+    X402RuntimeStatus,
+    'connected' | 'facilitator_auth_required' | 'facilitator_rate_limited' | 'facilitator_unreachable' | 'degraded'
+  >;
+  errorCode?: string;
+  checkedAt: string;
+  supportedKindsCount?: number;
+}
+
 export const DEFAULT_X402_AMOUNT_ATOMIC_USDC = '1000';
 const MOCK_PAYMENT_REQUIRED: X402PaymentRequired = {
   accepts: [
@@ -166,6 +189,80 @@ function isValidAddress(value: string | undefined): boolean {
 
 function isPositiveIntegerString(value: string): boolean {
   return /^[0-9]+$/.test(value) && BigInt(value) > 0n;
+}
+
+function firstConfigured(value: string | undefined, ...rest: Array<string | undefined>): string | undefined {
+  return [value, ...rest].map(normalizeOptional).find(Boolean);
+}
+
+function bearer(value: string): string {
+  return /^[A-Za-z]+ +/.test(value) ? value : `Bearer ${value}`;
+}
+
+function sanitizedStatusCode(error: unknown): number | undefined {
+  let current: unknown = error;
+  while (current) {
+    const statusCode = typeof current === 'object' && current !== null && 'statusCode' in current
+      ? Number((current as { statusCode?: unknown }).statusCode)
+      : undefined;
+    if (Number.isInteger(statusCode) && statusCode && statusCode > 0) return statusCode;
+    const message = current instanceof Error ? current.message : String(current);
+    const match = message.match(/\((\d{3})\)/) || message.match(/\b(status|HTTP)\s*[:=]?\s*(\d{3})\b/i);
+    const parsed = match ? Number(match[2] || match[1]) : undefined;
+    if (Number.isInteger(parsed)) return parsed;
+    current = current instanceof Error ? (current as Error & { cause?: unknown }).cause : undefined;
+  }
+  return undefined;
+}
+
+export function classifyX402FacilitatorError(error: unknown): Pick<X402FacilitatorHealth, 'status' | 'errorCode'> {
+  const statusCode = sanitizedStatusCode(error);
+  if (statusCode === 401 || statusCode === 403) {
+    return { status: 'facilitator_auth_required', errorCode: `facilitator_${statusCode}` };
+  }
+  if (statusCode === 429) {
+    return { status: 'facilitator_rate_limited', errorCode: 'facilitator_429' };
+  }
+  if (statusCode && statusCode >= 500) {
+    return { status: 'facilitator_unreachable', errorCode: `facilitator_${statusCode}` };
+  }
+  const messages: string[] = [];
+  let current: unknown = error;
+  while (current) {
+    messages.push(current instanceof Error ? current.message : String(current));
+    current = current instanceof Error ? (current as Error & { cause?: unknown }).cause : undefined;
+  }
+  const message = messages.join(' ');
+  if (/fetch failed|network|timeout|timed out|ENOTFOUND|ECONN|EAI_AGAIN|ETIMEDOUT/i.test(message)) {
+    return { status: 'facilitator_unreachable', errorCode: 'facilitator_network' };
+  }
+  return { status: 'degraded', errorCode: statusCode ? `facilitator_${statusCode}` : 'facilitator_error' };
+}
+
+export function x402FacilitatorAuthConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !!firstConfigured(
+    env.X402_FACILITATOR_AUTH_TOKEN,
+    env.X402_FACILITATOR_API_KEY,
+    env.CDP_API_KEY,
+  );
+}
+
+export function createX402FacilitatorAuthHeaders(
+  env: NodeJS.ProcessEnv = process.env,
+): FacilitatorConfig['createAuthHeaders'] | undefined {
+  const token = firstConfigured(env.X402_FACILITATOR_AUTH_TOKEN);
+  const apiKey = firstConfigured(env.X402_FACILITATOR_API_KEY, env.CDP_API_KEY);
+  const authValue = token ? bearer(token) : apiKey ? bearer(apiKey) : undefined;
+  if (!authValue) return undefined;
+  return async () => {
+    const headers = { Authorization: authValue };
+    return {
+      verify: headers,
+      settle: headers,
+      supported: headers,
+      bazaar: headers,
+    };
+  };
 }
 
 export function getBuilderCodeFromEnv(
@@ -255,6 +352,7 @@ export function x402ConfigFromEnv(env: NodeJS.ProcessEnv = process.env): X402Run
     asset,
     amountAtomic,
     builderCode,
+    facilitatorAuthConfigured: x402FacilitatorAuthConfigured(env),
   };
 }
 
@@ -379,16 +477,155 @@ export function settlementRecordFromSettleResult(
   };
 }
 
-export function createOfficialX402Middleware(
+const X402_HEALTH_SUCCESS_TTL_MS = 60_000;
+const X402_HEALTH_FAILURE_TTL_MS = 120_000;
+const DEFAULT_X402_FACILITATOR_TIMEOUT_MS = 2500;
+
+let x402HealthCache:
+  | {
+      key: string;
+      value: X402FacilitatorHealth;
+      expiresAt: number;
+    }
+  | undefined;
+let x402HealthInflight:
+  | {
+      key: string;
+      promise: Promise<X402FacilitatorHealth>;
+    }
+  | undefined;
+
+function facilitatorCacheKey(config: X402RuntimeConfig, env: NodeJS.ProcessEnv): string {
+  return [
+    config.facilitatorUrl || '',
+    config.network || '',
+    config.payTo || '',
+    x402FacilitatorAuthConfigured(env) ? 'auth' : 'anon',
+  ].join('|');
+}
+
+function cacheHealth(key: string, value: X402FacilitatorHealth): X402FacilitatorHealth {
+  x402HealthCache = {
+    key,
+    value,
+    expiresAt: Date.now() + (value.status === 'connected' ? X402_HEALTH_SUCCESS_TTL_MS : X402_HEALTH_FAILURE_TTL_MS),
+  };
+  return value;
+}
+
+function createHTTPFacilitatorClient(config: X402RuntimeConfig, env: NodeJS.ProcessEnv): HTTPFacilitatorClient {
+  return new HTTPFacilitatorClient({
+    url: config.facilitatorUrl,
+    createAuthHeaders: createX402FacilitatorAuthHeaders(env),
+  });
+}
+
+function facilitatorTimeoutMs(env: NodeJS.ProcessEnv): number {
+  const raw = Number(env.X402_FACILITATOR_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? Math.min(raw, 30_000) : DEFAULT_X402_FACILITATOR_TIMEOUT_MS;
+}
+
+function withFacilitatorTimeout<T>(promise: Promise<T>, env: NodeJS.ProcessEnv): Promise<T> {
+  const timeoutMs = facilitatorTimeoutMs(env);
+  return new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`Facilitator request timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
+
+async function loadSupportedKinds(config: X402RuntimeConfig, env: NodeJS.ProcessEnv): Promise<SupportedResponse> {
+  return withFacilitatorTimeout(createHTTPFacilitatorClient(config, env).getSupported(), env);
+}
+
+export async function probeX402FacilitatorStatus(
+  config: X402RuntimeConfig = x402ConfigFromEnv(),
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<X402FacilitatorHealth> {
+  if (!config.configured) {
+    return {
+      status: 'degraded',
+      errorCode: 'x402_not_configured',
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
+  const key = facilitatorCacheKey(config, env);
+  if (x402HealthCache?.key === key && x402HealthCache.expiresAt > Date.now()) {
+    return x402HealthCache.value;
+  }
+  if (x402HealthInflight?.key === key) return x402HealthInflight.promise;
+
+  const promise = (async () => {
+    try {
+      const supported = await loadSupportedKinds(config, env);
+      const supportedKindsCount = Array.isArray(supported.kinds) ? supported.kinds.length : 0;
+      const health: X402FacilitatorHealth = {
+        status: supportedKindsCount > 0 ? 'connected' : 'degraded',
+        errorCode: supportedKindsCount > 0 ? undefined : 'facilitator_no_supported_kinds',
+        checkedAt: new Date().toISOString(),
+        supportedKindsCount,
+      };
+      return cacheHealth(key, health);
+    } catch (error) {
+      const classified = classifyX402FacilitatorError(error);
+      const health: X402FacilitatorHealth = {
+        ...classified,
+        checkedAt: new Date().toISOString(),
+      };
+      console.warn('[x402] facilitator probe failed', {
+        status: health.status,
+        errorCode: health.errorCode,
+      });
+      return cacheHealth(key, health);
+    } finally {
+      x402HealthInflight = undefined;
+    }
+  })();
+  x402HealthInflight = { key, promise };
+
+  return promise;
+}
+
+export async function x402StatusFromEnv(env: NodeJS.ProcessEnv = process.env): Promise<X402RuntimeConfig> {
+  const config = x402ConfigFromEnv(env);
+  if (!config.configured) return config;
+  const health = await probeX402FacilitatorStatus(config, env);
+  return {
+    ...config,
+    status: health.status,
+    errorCode: health.errorCode,
+    lastCheckedAt: health.checkedAt,
+    supportedKindsCount: health.supportedKindsCount,
+  };
+}
+
+export function clearX402FacilitatorStatusForTests(): void {
+  x402HealthCache = undefined;
+  x402HealthInflight = undefined;
+}
+
+function createOfficialX402HttpServer(
   config: X402RuntimeConfig,
   options: CreateX402MiddlewareOptions = {},
-): RequestHandler {
+  env: NodeJS.ProcessEnv = process.env,
+) {
   if (!config.configured || !config.facilitatorUrl || !config.network) {
     throw new Error(`x402 is not configured: ${config.missingConfig.join(', ')}`);
   }
 
   const resourceServer = new x402ResourceServer(
-    new HTTPFacilitatorClient({ url: config.facilitatorUrl }),
+    createHTTPFacilitatorClient(config, env),
   ).register(config.network, new ExactEvmScheme());
 
   if (config.builderCode) {
@@ -408,6 +645,20 @@ export function createOfficialX402Middleware(
     resourceServer,
     createX402RoutesConfig(config, options.routePath, options.serviceName),
   );
+  return httpServer;
+}
+
+async function createInitializedOfficialX402Middleware(
+  config: X402RuntimeConfig,
+  options: CreateX402MiddlewareOptions = {},
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<RequestHandler> {
+  const httpServer = createOfficialX402HttpServer(config, options, env);
+  await withFacilitatorTimeout(httpServer.initialize(), env);
+  cacheHealth(facilitatorCacheKey(config, env), {
+    status: 'connected',
+    checkedAt: new Date().toISOString(),
+  });
   return paymentMiddlewareFromHTTPServer(
     httpServer,
     {
@@ -415,22 +666,97 @@ export function createOfficialX402Middleware(
       testnet: config.chainId === 84532,
     },
     undefined,
-    options.syncFacilitatorOnStart ?? true,
+    false,
   );
+}
+
+export function createOfficialX402Middleware(
+  config: X402RuntimeConfig,
+  options: CreateX402MiddlewareOptions = {},
+  env: NodeJS.ProcessEnv = process.env,
+): RequestHandler {
+  if (!config.configured || !config.facilitatorUrl || !config.network) {
+    throw new Error(`x402 is not configured: ${config.missingConfig.join(', ')}`);
+  }
+  const httpServer = createOfficialX402HttpServer(config, options, env);
+  return paymentMiddlewareFromHTTPServer(
+    httpServer,
+    {
+      appName: options.serviceName || 'Miorail',
+      testnet: config.chainId === 84532,
+    },
+    undefined,
+    false,
+  );
+}
+
+function unavailablePayload(
+  config: X402RuntimeConfig,
+  status = config.status,
+  errorCode = config.errorCode,
+) {
+  return {
+    error: status === 'missing' || status === 'simulated' ? 'x402_not_configured' : 'x402_facilitator_unavailable',
+    status,
+    errorCode,
+    configured: config.configured,
+    facilitatorConfigured: !!config.facilitatorUrl,
+    payToConfigured: !!config.payTo,
+    builderCodeConfigured: !!config.builderCode,
+    missingConfig: config.missingConfig,
+  };
 }
 
 export function createUnavailableX402Middleware(config: X402RuntimeConfig): RequestHandler {
   return (_req, res) => {
-    res.status(503).json({
-      error: 'x402_not_configured',
-      status: config.status,
-      missingConfig: config.missingConfig,
-    });
+    res.status(503).json(unavailablePayload(config));
+  };
+}
+
+export function createSafeOfficialX402Middleware(
+  config: X402RuntimeConfig,
+  options: CreateX402MiddlewareOptions = {},
+  env: NodeJS.ProcessEnv = process.env,
+): RequestHandler {
+  let handler: RequestHandler | undefined;
+  let initPromise: Promise<RequestHandler> | undefined;
+
+  return async (req, res, next) => {
+    try {
+      if (!handler) {
+        const health = await probeX402FacilitatorStatus(config, env);
+        if (health.status !== 'connected') {
+          res.status(503).json(unavailablePayload(config, health.status, health.errorCode));
+          return;
+        }
+        initPromise ||= createInitializedOfficialX402Middleware(config, options, env);
+        handler = await initPromise;
+      }
+      return handler(req, res, next);
+    } catch (error) {
+      initPromise = undefined;
+      const classified = classifyX402FacilitatorError(error);
+      const health = cacheHealth(facilitatorCacheKey(config, env), {
+        ...classified,
+        checkedAt: new Date().toISOString(),
+      });
+      console.warn('[x402] facilitator initialization failed', {
+        status: health.status,
+        errorCode: health.errorCode,
+      });
+      res.status(503).json(unavailablePayload(config, health.status, health.errorCode));
+    }
   };
 }
 
 function isTestRuntime(env: NodeJS.ProcessEnv): boolean {
-  return env.NODE_ENV === 'test' || env.npm_lifecycle_event === 'test' || process.argv.some((arg) => arg === '--test');
+  return (
+    env.NODE_ENV === 'test' ||
+    env.npm_lifecycle_event === 'test' ||
+    process.argv.some((arg) => arg === '--test') ||
+    process.execArgv.some((arg) => arg === '--test') ||
+    process.argv.some((arg) => /\.test\.[cm]?[tj]sx?$/.test(arg))
+  );
 }
 
 export function createX402MiddlewareFromEnv(
@@ -438,11 +764,11 @@ export function createX402MiddlewareFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): RequestHandler {
   const config = x402ConfigFromEnv(env);
-  if (config.configured && env.NODE_ENV !== 'test') {
-    return createOfficialX402Middleware(config, options);
-  }
   if (isTestRuntime(env)) {
     return x402Gateway({ paymentRequired: legacyMockPaymentRequired(), facilitator: new MockFacilitator() });
+  }
+  if (config.configured) {
+    return createSafeOfficialX402Middleware(config, options, env);
   }
   return createUnavailableX402Middleware(config);
 }

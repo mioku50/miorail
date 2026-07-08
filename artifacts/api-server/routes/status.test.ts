@@ -3,6 +3,7 @@ import assert from 'node:assert';
 import request from 'supertest';
 import { app } from '../app.js';
 import { clearTokenSecurityCacheForTests } from '@mioagent/data-providers';
+import { clearX402FacilitatorStatusForTests } from '@mioagent/x402-gateway';
 import { clearBaseMcpStatusForTests, recordBaseMcpToolProbe } from '../lib/baseMcpStatus.js';
 import { statusRouteRuntime } from './status.js';
 import {
@@ -30,6 +31,7 @@ const DEFAULT_BASE_MCP_AUTH = {
 describe('Status API', () => {
   beforeEach(() => {
     clearBaseMcpStatusForTests();
+    clearX402FacilitatorStatusForTests();
     clearProviderCacheForTests();
     setProviderCacheForTests(new InMemoryProviderCacheStore(), new ProviderBudget(20, 300));
     mock.restoreAll();
@@ -39,6 +41,7 @@ describe('Status API', () => {
 
   afterEach(() => {
     global.fetch = ORIGINAL_FETCH;
+    clearX402FacilitatorStatusForTests();
   });
 
   test('GET /api/status returns missing risk provider by default', async () => {
@@ -166,31 +169,82 @@ describe('Status API', () => {
     restoreEnv('X402_NETWORK', origNetwork);
   });
 
-  test('GET /api/status reports x402 configured only with supported Base network and payTo', async () => {
+  test('GET /api/status reports x402 connected after successful facilitator probe', async () => {
     const origFacilitator = process.env.X402_FACILITATOR_URL;
     const origPayTo = process.env.X402_PAYTO_ADDRESS;
     const origNetwork = process.env.X402_NETWORK;
     const origBuilderCode = process.env.BUILDER_CODE;
+    const origAuthToken = process.env.X402_FACILITATOR_AUTH_TOKEN;
     process.env.X402_FACILITATOR_URL = 'https://facilitator.example.test';
     process.env.X402_PAYTO_ADDRESS = '0x1111111111111111111111111111111111111111';
     process.env.X402_NETWORK = 'eip155:8453';
     process.env.BUILDER_CODE = 'miorail';
+    process.env.X402_FACILITATOR_AUTH_TOKEN = 'secret-token';
+    global.fetch = async (input, init) => {
+      assert.ok(String(input).endsWith('/supported'));
+      assert.strictEqual((init?.headers as Record<string, string>).Authorization, 'Bearer secret-token');
+      return new Response(JSON.stringify({
+        kinds: [{ x402Version: 2, scheme: 'exact', network: 'eip155:8453' }],
+        extensions: [],
+        signers: {},
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
 
     const response = await request(app).get('/api/status');
     assert.strictEqual(response.status, 200);
-    assert.strictEqual(response.body.x402.status, 'configured');
+    assert.strictEqual(response.body.x402.status, 'connected');
     assert.strictEqual(response.body.x402.configured, true);
     assert.strictEqual(response.body.x402.network, 'eip155:8453');
     assert.strictEqual(response.body.x402.asset, '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913');
     assert.strictEqual(response.body.x402.facilitatorConfigured, true);
     assert.strictEqual(response.body.x402.payToConfigured, true);
     assert.strictEqual(response.body.x402.builderCodeConfigured, true);
+    assert.strictEqual(response.body.x402.facilitatorAuthConfigured, true);
+    assert.strictEqual(response.body.x402.supportedKindsCount, 1);
     assert.strictEqual(JSON.stringify(response.body.x402).includes('facilitator.example.test'), false);
+    assert.strictEqual(JSON.stringify(response.body.x402).includes('secret-token'), false);
 
     restoreEnv('X402_FACILITATOR_URL', origFacilitator);
     restoreEnv('X402_PAYTO_ADDRESS', origPayTo);
     restoreEnv('X402_NETWORK', origNetwork);
     restoreEnv('BUILDER_CODE', origBuilderCode);
+    restoreEnv('X402_FACILITATOR_AUTH_TOKEN', origAuthToken);
+    global.fetch = ORIGINAL_FETCH;
+  });
+
+  test('GET /api/status reports x402 facilitator auth required without leaking secrets', async () => {
+    const origFacilitator = process.env.X402_FACILITATOR_URL;
+    const origPayTo = process.env.X402_PAYTO_ADDRESS;
+    const origNetwork = process.env.X402_NETWORK;
+    const origBuilderCode = process.env.BUILDER_CODE;
+    const origAuthToken = process.env.X402_FACILITATOR_AUTH_TOKEN;
+    process.env.X402_FACILITATOR_URL = 'https://facilitator.example.test/private?token=url-secret';
+    process.env.X402_PAYTO_ADDRESS = '0x1111111111111111111111111111111111111111';
+    process.env.X402_NETWORK = 'eip155:8453';
+    process.env.BUILDER_CODE = 'miorail';
+    process.env.X402_FACILITATOR_AUTH_TOKEN = 'secret-token';
+    global.fetch = async () => new Response('Unauthorized secret-token', { status: 401 });
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.x402.status, 'facilitator_auth_required');
+    assert.strictEqual(response.body.x402.configured, true);
+    assert.strictEqual(response.body.x402.facilitatorConfigured, true);
+    assert.strictEqual(response.body.x402.payToConfigured, true);
+    assert.strictEqual(response.body.x402.builderCodeConfigured, true);
+    assert.strictEqual(response.body.x402.errorCode, 'facilitator_401');
+    assert.strictEqual(JSON.stringify(response.body.x402).includes('url-secret'), false);
+    assert.strictEqual(JSON.stringify(response.body.x402).includes('secret-token'), false);
+
+    restoreEnv('X402_FACILITATOR_URL', origFacilitator);
+    restoreEnv('X402_PAYTO_ADDRESS', origPayTo);
+    restoreEnv('X402_NETWORK', origNetwork);
+    restoreEnv('BUILDER_CODE', origBuilderCode);
+    restoreEnv('X402_FACILITATOR_AUTH_TOKEN', origAuthToken);
+    global.fetch = ORIGINAL_FETCH;
   });
 
   test('GET /api/status reports the T19.1 split execution flags with broadcast disabled', async () => {

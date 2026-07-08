@@ -5,7 +5,7 @@ import { getProviderBudgetSnapshot, getProviderCacheDiagnostics } from '../lib/p
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
 import { attachBaseMcpToolProbeStatus, getBaseMcpStatusSnapshot, probeBaseMcpStatus, type BaseMcpStatus } from '../lib/baseMcpStatus.js';
 import { getBaseMcpAuthStatus, type StoredBaseMcpAuthStatus } from '../lib/baseMcpOAuthStore.js';
-import { x402ConfigFromEnv } from '@mioagent/x402-gateway';
+import { x402ConfigFromEnv, x402StatusFromEnv, type X402RuntimeConfig } from '@mioagent/x402-gateway';
 
 export function getSystemStatus(envOverride?: string) {
   const chainEnv = envOverride || process.env.CHAIN_ENV || 'sepolia';
@@ -97,10 +97,32 @@ export function getSystemStatus(envOverride?: string) {
       facilitatorConfigured: !!x402Config.facilitatorUrl,
       payToConfigured: !!x402Config.payTo,
       builderCodeConfigured: !!x402Config.builderCode,
+      facilitatorAuthConfigured: !!x402Config.facilitatorAuthConfigured,
+      errorCode: x402Config.errorCode,
+      lastCheckedAt: x402Config.lastCheckedAt,
+      supportedKindsCount: x402Config.supportedKindsCount,
       missingConfig: x402Config.missingConfig,
       warnings: x402Config.warnings,
     },
     execution,
+  };
+}
+
+function publicX402Status(x402Config: X402RuntimeConfig) {
+  return {
+    status: x402Config.status,
+    configured: x402Config.configured,
+    network: x402Config.network,
+    asset: x402Config.asset,
+    facilitatorConfigured: !!x402Config.facilitatorUrl,
+    payToConfigured: !!x402Config.payTo,
+    builderCodeConfigured: !!x402Config.builderCode,
+    facilitatorAuthConfigured: !!x402Config.facilitatorAuthConfigured,
+    errorCode: x402Config.errorCode,
+    lastCheckedAt: x402Config.lastCheckedAt,
+    supportedKindsCount: x402Config.supportedKindsCount,
+    missingConfig: x402Config.missingConfig,
+    warnings: x402Config.warnings,
   };
 }
 
@@ -144,6 +166,7 @@ statusRouter.get('/', async (req, res, next) => {
     const statusData = {
       ...getSystemStatus(),
       baseMcp: attachBaseMcpToolProbeStatus(mergeBaseMcpAuthStatus(baseMcp, auth)),
+      x402: publicX402Status(await x402StatusFromEnv()),
     };
     res.json(StatusResponseSchema.parse(statusData));
   } catch (error) {

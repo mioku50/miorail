@@ -50,9 +50,18 @@ export function OpsRail({ onClose }: OpsRailProps) {
   const resetAutonomy = useResetAutonomy();
   const mcpReturnTo = typeof window === 'undefined' ? '/' : window.location.pathname || '/';
   const x402Status = sd?.x402?.status;
-  const x402RailLabel = x402Status === 'configured' ? 'live' : x402Status === 'missing' ? 'missing' : 'simulated';
+  const x402Live = x402Status === 'connected' || x402Status === 'configured';
+  const x402Unavailable = x402Status === 'facilitator_auth_required' || x402Status === 'facilitator_rate_limited' || x402Status === 'facilitator_unreachable' || x402Status === 'degraded';
+  const x402RailLabel =
+    x402Live ? 'live' :
+    x402Status === 'facilitator_auth_required' ? 'auth' :
+    x402Status === 'facilitator_rate_limited' ? 'limited' :
+    x402Status === 'facilitator_unreachable' ? 'unreachable' :
+    x402Status === 'degraded' ? 'degraded' :
+    x402Status === 'missing' ? 'missing' :
+    'simulated';
   const x402RailClass =
-    x402Status === 'configured'
+    x402Live
       ? 'bg-ok-soft text-ok'
       : x402Status === 'missing'
         ? 'bg-risk-soft text-risk'
@@ -282,10 +291,10 @@ export function OpsRail({ onClose }: OpsRailProps) {
               </span>
             </div>
             <div className="text-xs font-sans font-medium text-ink-2 bg-panel-2 px-2 py-1.5 rounded-[var(--radius-sm)] border border-line my-1 text-center">
-              {x402Status === 'configured' ? 'Settlement ledger wired' : 'No spend source wired'}
+              {x402Live ? 'Settlement ledger wired' : x402Unavailable ? 'Facilitator unavailable' : 'No spend source wired'}
             </div>
             <div className="text-[10px] text-ink-3 mt-1 font-sans leading-tight">
-              {x402Status === 'configured' ? 'Real receipts recorded after paid calls.' : 'Click to configure x402.'}
+              {x402Live ? 'Real receipts recorded after paid calls.' : x402Unavailable ? 'Paid routes fail closed.' : 'Click to configure x402.'}
             </div>
           </Link>
         </div>

@@ -7,13 +7,23 @@ import { useStatus } from '@mioagent/api-client-react';
 export function FuelCard() {
   const { data: statusData } = useStatus();
   const status = statusData?.x402?.status;
-  const label = status === 'configured' ? 'Configured' : status === 'missing' ? 'Not configured' : 'Simulated';
+  const isLive = status === 'connected' || status === 'configured';
+  const isMissing = status === 'missing';
+  const isUnavailable = status === 'facilitator_auth_required' || status === 'facilitator_rate_limited' || status === 'facilitator_unreachable' || status === 'degraded';
+  const label =
+    isLive ? 'Connected' :
+    status === 'facilitator_auth_required' ? 'Auth required' :
+    status === 'facilitator_rate_limited' ? 'Rate limited' :
+    status === 'facilitator_unreachable' ? 'Unavailable' :
+    status === 'degraded' ? 'Degraded' :
+    isMissing ? 'Not configured' :
+    'Simulated';
 
   return (
     <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
       <div className="flex items-center justify-between mb-3">
         <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3">x402 fuel</div>
-        <span className={`text-[10px] font-bold px-[7px] py-[2px] rounded-[6px] tracking-[.05em] border ${status === 'configured' ? 'text-ok bg-ok-soft border-ok/30' : 'text-ink-3 bg-panel-2 border-line'}`}>
+        <span className={`text-[10px] font-bold px-[7px] py-[2px] rounded-[6px] tracking-[.05em] border ${isLive ? 'text-ok bg-ok-soft border-ok/30' : isUnavailable ? 'text-warn bg-warn-soft border-warn/30' : 'text-ink-3 bg-panel-2 border-line'}`}>
           {label}
         </span>
       </div>

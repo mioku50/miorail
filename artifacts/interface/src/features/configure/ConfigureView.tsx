@@ -388,7 +388,21 @@ export function ConfigureView() {
           </div>
         )}
         <Row label="x402 Micropayments">
-          {sd ? <StateBadge state={sd.x402.status === 'configured' ? 'live' : sd.x402.status === 'missing' ? 'missing' : 'mock'} label={sd.x402.status === 'configured' ? 'Configured' : sd.x402.status === 'missing' ? 'Not configured' : 'Simulated'} /> : <Checking />}
+          {sd ? (
+            <StateBadge
+              state={sd.x402.status === 'connected' || sd.x402.status === 'configured' ? 'live' : sd.x402.status === 'missing' ? 'missing' : 'mock'}
+              label={
+                sd.x402.status === 'connected' || sd.x402.status === 'configured' ? 'Connected' :
+                sd.x402.status === 'facilitator_auth_required' ? 'Auth required' :
+                sd.x402.status === 'facilitator_rate_limited' ? 'Rate limited' :
+                sd.x402.status === 'facilitator_unreachable' ? 'Unreachable' :
+                sd.x402.status === 'degraded' ? 'Degraded' :
+                sd.x402.status === 'missing' ? 'Not configured' :
+                'Simulated'
+              }
+              title={sd.x402.errorCode ? `x402: ${sd.x402.errorCode}` : 'Source: /api/status x402.status'}
+            />
+          ) : <Checking />}
         </Row>
         <Row label="LLM Provider" last>
           <span className="text-xs font-medium px-2.5 py-0.5 rounded border bg-panel-2 text-ink-3 border-line" title="LLM provider status is not reported by /api/status">Not reported</span>
