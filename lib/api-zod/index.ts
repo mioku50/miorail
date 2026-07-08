@@ -489,6 +489,14 @@ export const StatusResponseSchema = z.object({
   }),
   x402: z.object({
     status: z.enum(["simulated", "configured", "missing"]),
+    configured: z.boolean().optional(),
+    network: z.string().optional(),
+    asset: z.string().optional(),
+    facilitatorConfigured: z.boolean().optional(),
+    payToConfigured: z.boolean().optional(),
+    builderCodeConfigured: z.boolean().optional(),
+    missingConfig: z.array(z.string()).optional(),
+    warnings: z.array(z.string()).optional(),
   }),
   // T19.1: split into explicit flags. The UI may show "Confirm in Base Account"
   // ONLY when userConfirmedEnabled is true, and must never infer "Execute" from
@@ -630,6 +638,12 @@ export const X402LedgerEntrySchema = z.object({
   actionType: z.string(),
   cost: z.string().nullable(),
   txHash: z.string().nullable(),
+  network: z.string().optional(),
+  asset: z.string().optional(),
+  amount: z.string().optional(),
+  payTo: z.string().optional(),
+  status: z.enum(['settled', 'pending', 'failed']).optional(),
+  attribution: z.record(z.any()).optional().nullable(),
   createdAt: z.string(),
   settlement: z.string().optional(),
   details: z.record(z.any()).optional().nullable(),
@@ -644,6 +658,7 @@ export const X402LedgerResponseSchema = z.object({
     inferenceCallsCount: z.number(),
     toolsCallsCount: z.number(),
     settlement: z.string().optional(),
+    x402: z.string().optional(),
   }),
 });
 

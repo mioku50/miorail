@@ -23,6 +23,15 @@ export function FuelMeter() {
   const status = statusData?.x402?.status;
   const badgeState = status === 'configured' ? 'live' : status === 'missing' ? 'missing' : 'mock';
   const badgeLabel = status === 'configured' ? 'configured' : status === 'missing' ? 'not configured' : 'simulated';
+  const providerLabel = status === 'configured' ? 'Live Facilitator' : status === 'missing' ? 'Missing Config' : 'Simulated Gateway';
+  const providerDot = status === 'configured' ? 'text-ok' : status === 'missing' ? 'text-risk' : 'text-warn';
+  const statusCopy =
+    status === 'configured'
+      ? 'Real x402 settlement records are read from x402_receipts.'
+      : status === 'missing'
+        ? 'x402 env is partial or invalid. Paid routes fail closed until facilitator, payTo, and CAIP-2 network are configured.'
+        : 'No real facilitator is configured. Paid routes do not claim settlement.';
+  const modeLabel = status === 'configured' ? 'Mode: real settlement' : status === 'missing' ? 'Mode: missing config' : 'Mode: simulated';
 
   return (
     <main className="flex-1 bg-bg p-5 flex flex-col gap-4 overflow-y-auto select-none pb-16 md:pb-5">
@@ -42,36 +51,36 @@ export function FuelMeter() {
           <div>
             <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Provider Status</div>
             <div className="text-sm font-sans font-bold text-ink flex items-center gap-1.5">
-              <span className={status === 'configured' ? 'text-ok' : 'text-warn'}>●</span>
-              <span>{status === 'configured' ? 'Live Facilitator' : 'Simulated Gateway'}</span>
+              <span className={providerDot}>●</span>
+              <span>{providerLabel}</span>
             </div>
           </div>
           <div className="text-[11px] text-ink-3 leading-relaxed border-t border-line/50 pt-2 font-sans">
-            HTTP 402 + Payment Requirements gateway active.
+            HTTP 402 + Payment Requirements gateway status comes from /api/status.
           </div>
         </div>
 
         <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-3.5 flex flex-col justify-between gap-2 shadow-[var(--shadow-card)]">
           <div>
-            <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Why Spend is Simulated</div>
+            <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Settlement Status</div>
             <div className="text-[11px] text-ink-2 leading-relaxed font-sans">
-              The HTTP 402 gateway and anti-replay guards are implemented, but live USDC micropayments require a connected session key and facilitator contract.
+              {statusCopy}
             </div>
           </div>
           <div className="text-[10px] font-mono text-warn bg-warn-soft px-2 py-0.5 rounded-full w-fit">
-            Mode: read-only simulation
+            {modeLabel}
           </div>
         </div>
 
         <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-3.5 flex flex-col justify-between gap-2 shadow-[var(--shadow-card)]">
           <div>
-            <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Next Backend Wiring Task</div>
+            <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Attribution</div>
             <div className="text-[11px] text-ink-2 leading-relaxed font-sans">
-              1) Wire the Drizzle budget ledger in lib/db, 2) Connect the testnet-USDC facilitator contract, and 3) Enable live settlement.
+              Builder Code attribution is attached to paid x402 requirements when BUILDER_CODE is configured.
             </div>
           </div>
           <div className="text-[10px] font-mono text-accent-2 bg-accent-soft px-2 py-0.5 rounded-full w-fit">
-            Roadmap: Phase 7.4
+            Public, non-secret
           </div>
         </div>
       </div>
@@ -107,7 +116,7 @@ export function FuelMeter() {
           </div>
           <div className="text-[11px] text-warn font-mono mt-3 border-t border-line/50 pt-2 flex items-center justify-between">
             <span className="font-sans text-ink-3">Settlement mode:</span>
-            <span className="font-bold bg-warn-soft px-2 py-0.5 rounded-full border border-warn/20 text-warn">{ledger?.summary?.settlement || 'estimated/audit-log'}</span>
+            <span className="font-bold bg-warn-soft px-2 py-0.5 rounded-full border border-warn/20 text-warn">{ledger?.summary?.settlement || 'none'}</span>
           </div>
         </section>
       </div>
@@ -131,7 +140,7 @@ export function FuelMeter() {
             </div>
           </div>
           <div className="text-[11px] text-ink-3 mt-2 border-t border-line/50 pt-2 font-sans">
-            Costs are estimated/audit-log until facilitator settlement is wired.
+            Pricing is configured separately from the settlement ledger.
           </div>
         </section>
 
@@ -149,7 +158,7 @@ export function FuelMeter() {
                     </div>
                     <div className="text-right">
                       <span className="text-ink font-mono font-bold">{e.cost || '0'} USDC</span>
-                      <div className="text-[9px] text-warn font-mono">{e.settlement || 'estimated/audit-log'}</div>
+                      <div className="text-[9px] text-warn font-mono">{e.settlement || 'none'}</div>
                     </div>
                   </div>
                 ))}
@@ -161,7 +170,7 @@ export function FuelMeter() {
             )}
           </div>
           <div className="text-[11px] text-ink-3 mt-2 border-t border-line/50 pt-2 font-sans">
-            All ledger entries recorded as estimated/audit-log until facilitator settlement is wired.
+            Ledger entries come from x402_receipts. Empty history means no paid settlements have been recorded.
           </div>
         </section>
       </div>

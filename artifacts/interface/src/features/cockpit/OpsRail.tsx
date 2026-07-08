@@ -49,6 +49,14 @@ export function OpsRail({ onClose }: OpsRailProps) {
   const { data: autonomyState } = useAutonomy();
   const resetAutonomy = useResetAutonomy();
   const mcpReturnTo = typeof window === 'undefined' ? '/' : window.location.pathname || '/';
+  const x402Status = sd?.x402?.status;
+  const x402RailLabel = x402Status === 'configured' ? 'live' : x402Status === 'missing' ? 'missing' : 'simulated';
+  const x402RailClass =
+    x402Status === 'configured'
+      ? 'bg-ok-soft text-ok'
+      : x402Status === 'missing'
+        ? 'bg-risk-soft text-risk'
+        : 'bg-warn-soft text-warn';
 
   const [portfolioRequested, setPortfolioRequested] = useState(false);
 
@@ -269,15 +277,15 @@ export function OpsRail({ onClose }: OpsRailProps) {
           <Link href="/fuel" className="block bg-panel border border-line rounded-[var(--radius-md)] p-3 hover:border-accent/40 hover:-translate-y-px transition-all duration-150 shadow-[var(--shadow-card)]">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-ink-2 font-sans">USDC Budget</span>
-              <span className={`text-[10px] font-sans font-medium px-2 py-0.5 rounded-full ${sd?.x402?.status === 'configured' ? 'bg-ok-soft text-ok' : 'bg-warn-soft text-warn'}`}>
-                {sd?.x402?.status === 'configured' ? 'live' : 'simulated'}
+              <span className={`text-[10px] font-sans font-medium px-2 py-0.5 rounded-full ${x402RailClass}`}>
+                {x402RailLabel}
               </span>
             </div>
             <div className="text-xs font-sans font-medium text-ink-2 bg-panel-2 px-2 py-1.5 rounded-[var(--radius-sm)] border border-line my-1 text-center">
-              No spend source wired
+              {x402Status === 'configured' ? 'Settlement ledger wired' : 'No spend source wired'}
             </div>
             <div className="text-[10px] text-ink-3 mt-1 font-sans leading-tight">
-              Micropayments simulated. Click to configure.
+              {x402Status === 'configured' ? 'Real receipts recorded after paid calls.' : 'Click to configure x402.'}
             </div>
           </Link>
         </div>

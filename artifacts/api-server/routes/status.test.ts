@@ -121,6 +121,78 @@ describe('Status API', () => {
     restoreEnv('MORALIS_API_KEY', origMoralisKey);
   });
 
+  test('GET /api/status reports x402 simulated when real settlement env is absent', async () => {
+    const origFacilitator = process.env.X402_FACILITATOR_URL;
+    const origPayTo = process.env.X402_PAYTO_ADDRESS;
+    const origNetwork = process.env.X402_NETWORK;
+    const origBuilderCode = process.env.BUILDER_CODE;
+    delete process.env.X402_FACILITATOR_URL;
+    delete process.env.X402_PAYTO_ADDRESS;
+    delete process.env.X402_NETWORK;
+    delete process.env.BUILDER_CODE;
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.x402.status, 'simulated');
+    assert.strictEqual(response.body.x402.configured, false);
+    assert.deepStrictEqual(response.body.x402.missingConfig, []);
+    assert.strictEqual(JSON.stringify(response.body.x402).includes('facilitator'), true);
+    assert.strictEqual(JSON.stringify(response.body.x402).includes('https://'), false);
+
+    restoreEnv('X402_FACILITATOR_URL', origFacilitator);
+    restoreEnv('X402_PAYTO_ADDRESS', origPayTo);
+    restoreEnv('X402_NETWORK', origNetwork);
+    restoreEnv('BUILDER_CODE', origBuilderCode);
+  });
+
+  test('GET /api/status reports x402 missing for partial real settlement env', async () => {
+    const origFacilitator = process.env.X402_FACILITATOR_URL;
+    const origPayTo = process.env.X402_PAYTO_ADDRESS;
+    const origNetwork = process.env.X402_NETWORK;
+    process.env.X402_FACILITATOR_URL = 'https://facilitator.example.test/private?token=secret';
+    delete process.env.X402_PAYTO_ADDRESS;
+    delete process.env.X402_NETWORK;
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.x402.status, 'missing');
+    assert.strictEqual(response.body.x402.configured, false);
+    assert.ok(response.body.x402.missingConfig.includes('X402_PAYTO_ADDRESS'));
+    assert.ok(response.body.x402.missingConfig.includes('X402_NETWORK'));
+    assert.strictEqual(JSON.stringify(response.body.x402).includes('private?token=secret'), false);
+
+    restoreEnv('X402_FACILITATOR_URL', origFacilitator);
+    restoreEnv('X402_PAYTO_ADDRESS', origPayTo);
+    restoreEnv('X402_NETWORK', origNetwork);
+  });
+
+  test('GET /api/status reports x402 configured only with supported Base network and payTo', async () => {
+    const origFacilitator = process.env.X402_FACILITATOR_URL;
+    const origPayTo = process.env.X402_PAYTO_ADDRESS;
+    const origNetwork = process.env.X402_NETWORK;
+    const origBuilderCode = process.env.BUILDER_CODE;
+    process.env.X402_FACILITATOR_URL = 'https://facilitator.example.test';
+    process.env.X402_PAYTO_ADDRESS = '0x1111111111111111111111111111111111111111';
+    process.env.X402_NETWORK = 'eip155:8453';
+    process.env.BUILDER_CODE = 'miorail';
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.x402.status, 'configured');
+    assert.strictEqual(response.body.x402.configured, true);
+    assert.strictEqual(response.body.x402.network, 'eip155:8453');
+    assert.strictEqual(response.body.x402.asset, '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913');
+    assert.strictEqual(response.body.x402.facilitatorConfigured, true);
+    assert.strictEqual(response.body.x402.payToConfigured, true);
+    assert.strictEqual(response.body.x402.builderCodeConfigured, true);
+    assert.strictEqual(JSON.stringify(response.body.x402).includes('facilitator.example.test'), false);
+
+    restoreEnv('X402_FACILITATOR_URL', origFacilitator);
+    restoreEnv('X402_PAYTO_ADDRESS', origPayTo);
+    restoreEnv('X402_NETWORK', origNetwork);
+    restoreEnv('BUILDER_CODE', origBuilderCode);
+  });
+
   test('GET /api/status reports the T19.1 split execution flags with broadcast disabled', async () => {
     const origChain = process.env.CHAIN_ENV;
     const origMainnetExec = process.env.MAINNET_EXECUTION_ENABLED;

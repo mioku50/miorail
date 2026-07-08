@@ -5,6 +5,7 @@ import { getProviderBudgetSnapshot, getProviderCacheDiagnostics } from '../lib/p
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
 import { attachBaseMcpToolProbeStatus, getBaseMcpStatusSnapshot, probeBaseMcpStatus, type BaseMcpStatus } from '../lib/baseMcpStatus.js';
 import { getBaseMcpAuthStatus, type StoredBaseMcpAuthStatus } from '../lib/baseMcpOAuthStore.js';
+import { x402ConfigFromEnv } from '@mioagent/x402-gateway';
 
 export function getSystemStatus(envOverride?: string) {
   const chainEnv = envOverride || process.env.CHAIN_ENV || 'sepolia';
@@ -41,7 +42,7 @@ export function getSystemStatus(envOverride?: string) {
   const { providerName: riskProvider, statusCode: riskStatus } = getTokenSecurityProviderFromEnv();
   const { providerName: approvalProvider, statusCode: approvalStatusCode } = getApprovalProviderFromEnv();
 
-  const x402Status: "simulated" | "configured" | "missing" = process.env.X402_FACILITATOR_URL ? "configured" : "simulated";
+  const x402Config = x402ConfigFromEnv();
 
   const isReadonly = chainEnv === 'mainnet-readonly';
   // T19.1: split execution into explicit flags via a shared helper. The UI may
@@ -89,7 +90,15 @@ export function getSystemStatus(envOverride?: string) {
     budgets,
     baseMcp: getBaseMcpStatusSnapshot(),
     x402: {
-      status: x402Status,
+      status: x402Config.status,
+      configured: x402Config.configured,
+      network: x402Config.network,
+      asset: x402Config.asset,
+      facilitatorConfigured: !!x402Config.facilitatorUrl,
+      payToConfigured: !!x402Config.payTo,
+      builderCodeConfigured: !!x402Config.builderCode,
+      missingConfig: x402Config.missingConfig,
+      warnings: x402Config.warnings,
     },
     execution,
   };
