@@ -662,6 +662,7 @@ export const TestnetExecuteActionRequestSchema = z.object({
 // x402 Ledger & Pricing
 export const X402LedgerEntrySchema = z.object({
   id: z.string(),
+  runId: z.string().optional(),
   actionId: z.string(),
   actionType: z.string(),
   cost: z.string().nullable(),

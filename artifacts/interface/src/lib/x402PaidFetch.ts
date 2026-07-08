@@ -29,6 +29,7 @@ export interface PaidActionResult<TBody = unknown> {
   paymentResponseHeader: string | null;
   paid: boolean;
   completedAt: string;
+  runId?: string;
 }
 
 export interface X402PaymentReceipt {
@@ -64,12 +65,14 @@ interface X402TypedDataMessage {
 export class PaidActionError extends Error {
   readonly state: PaidActionState;
   readonly status?: number;
+  readonly reason?: string;
 
-  constructor(state: PaidActionState, message: string, status?: number) {
+  constructor(state: PaidActionState, message: string, status?: number, reason?: string) {
     super(message);
     this.name = 'PaidActionError';
     this.state = state;
     this.status = status;
+    this.reason = reason;
   }
 }
 
@@ -108,9 +111,9 @@ export function paidActionCopy(state: PaidActionState): string {
     case 'submitted':
     case 'settling_payment':
     case 'settling':
-      return 'Waiting for facilitator settlement.';
+      return 'Sending EIP-712 authorization to the Base x402 facilitator.';
     case 'running_action':
-      return 'Payment settled; protected route is running.';
+      return 'Payment verified. Executing protected action.';
     case 'succeeded':
     case 'settled':
       return 'Receipt saved to Fuel history.';
@@ -118,17 +121,17 @@ export function paidActionCopy(state: PaidActionState): string {
       return 'Payment settled; tx proof unavailable.';
     case 'rejected':
     case 'cancelled':
-      return 'Payment cancelled.';
+      return 'Signature cancelled. No funds were moved.';
     case 'insufficient_funds':
-      return 'Insufficient USDC on Base.';
+      return 'Your Base account needs USDC on Base to run this action.';
     case 'unsupported_wallet':
-      return 'Connect wallet first.';
+      return 'Connect a Base-compatible wallet before paying.';
     case 'settlement_failed':
-      return 'Payment settled, but action result failed.';
+      return 'Payment settlement failed on gateway.';
     case 'failed':
-      return 'Payment failed.';
+      return 'Action failed after payment step.';
     default:
-      return 'User-confirmed x402 payment.';
+      return 'Click to authorize payment on Base.';
   }
 }
 
@@ -137,18 +140,18 @@ export function mapPaidActionError(error: unknown): PaidActionError {
   const message = error instanceof Error ? error.message : String(error);
   const clean = message.toLowerCase();
   if (/user rejected|user denied|request rejected|4001|rejected/i.test(message)) {
-    return new PaidActionError('rejected', 'Payment rejected');
+    return new PaidActionError('rejected', 'Payment rejected', undefined, 'wallet_cancelled');
   }
   if (/insufficient|exceeds balance|not enough|balance/i.test(clean)) {
-    return new PaidActionError('insufficient_funds', 'Insufficient USDC on Base');
+    return new PaidActionError('insufficient_funds', 'Insufficient USDC on Base', undefined, 'insufficient_funds');
   }
   if (/unsupported|signtypeddata|wallet client|connector/i.test(clean)) {
-    return new PaidActionError('unsupported_wallet', 'Unsupported wallet for x402 payment signing');
+    return new PaidActionError('unsupported_wallet', 'Unsupported wallet for x402 payment signing', undefined, 'unsupported_wallet');
   }
   if (/settlement|facilitator|payment required|402/i.test(clean)) {
-    return new PaidActionError('settlement_failed', 'Payment settlement failed');
+    return new PaidActionError('settlement_failed', 'Payment settlement failed', 402, 'facilitator_settlement_failed');
   }
-  return new PaidActionError('failed', 'Payment failed');
+  return new PaidActionError('failed', 'Payment failed', undefined, 'unknown');
 }
 
 export function decodeX402PaymentResponseHeader(header: string | null): X402PaymentReceipt | null {
@@ -315,7 +318,7 @@ export async function runX402PaidFetch<TBody = unknown>({
     response = await paidFetch(resolvePaidRoute(targetRoute), {
       headers: {
         'Accept': 'application/json',
-        ...(runId ? { 'X-Idempotency-Key': runId } : {}),
+        ...(runId ? { 'X-Idempotency-Key': runId, 'X-Miorail-Smoke-Run-Id': runId } : {}),
       },
     });
   } catch (error) {
@@ -329,13 +332,13 @@ export async function runX402PaidFetch<TBody = unknown>({
   const receipt = decodeX402PaymentResponseHeader(paymentResponseHeader);
 
   if (response.status === 503) {
-    throw new PaidActionError('settlement_failed', 'x402 facilitator unavailable', 503);
+    throw new PaidActionError('settlement_failed', 'x402 facilitator unavailable', 503, 'facilitator_settlement_failed');
   }
   if (response.status === 402) {
-    throw new PaidActionError('settlement_failed', 'Payment settlement failed', 402);
+    throw new PaidActionError('settlement_failed', 'Payment settlement failed', 402, 'facilitator_settlement_failed');
   }
   if (!response.ok) {
-    throw new PaidActionError('failed', `Paid endpoint failed: ${response.status}`, response.status);
+    throw new PaidActionError('failed', `Paid endpoint failed: ${response.status}`, response.status, 'route_non_200');
   }
 
   setState('running_action');
@@ -378,5 +381,6 @@ export async function runX402PaidFetch<TBody = unknown>({
     paymentResponseHeader,
     paid: Boolean(effectiveReceipt?.success || paymentResponseHeader || bodyIndicatesPaid),
     completedAt: new Date().toISOString(),
+    runId,
   };
 }

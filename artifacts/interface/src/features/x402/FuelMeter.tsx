@@ -77,16 +77,27 @@ export function FuelMeter() {
   const payToLabel = x402?.payToConfigured ? 'configured' : 'missing';
   const builderLabel = x402?.builderCodeConfigured ? 'configured' : 'missing';
   const attributionLabel = x402?.builderCodeAttribution === 'attached' ? 'attached' : 'unavailable';
+  const [smokeAttemptId, setSmokeAttemptId] = useState<string>(() => `smoke-${Math.random().toString(36).slice(2, 10)}`);
+  const [smokeErrorReason, setSmokeErrorReason] = useState<string | null>(null);
   const smokeLabel = x402?.smokeRouteAvailable ? 'available' : 'unavailable';
   const bodyData = (smokeResult?.body && typeof smokeResult.body === 'object' ? smokeResult.body : {}) as Record<string, unknown>;
-  const smokeReceiptTx =
-    smokeResult?.receipt?.transaction ||
-    smokeResult?.receipt?.txHash ||
-    (typeof bodyData.txHash === 'string' ? bodyData.txHash : null);
-  const smokeLedgerEntry = smokeResult && smokeReceiptTx
-    ? ledger?.entries?.find((entry) => entry.txHash === smokeReceiptTx)
+  const isCurrentAttemptSettled = Boolean(smokeResult?.paid && !smokeError);
+
+  const smokeReceiptTx = isCurrentAttemptSettled
+    ? smokeResult?.receipt?.transaction ||
+      smokeResult?.receipt?.txHash ||
+      (typeof bodyData.txHash === 'string' ? bodyData.txHash : null)
+    : null;
+
+  const smokeLedgerEntry = isCurrentAttemptSettled
+    ? ledger?.entries?.find(
+        (entry) =>
+          (entry.runId && entry.runId === smokeAttemptId) ||
+          (smokeResult?.runId && entry.runId === smokeResult.runId)
+      )
     : undefined;
-  const smokeTxHash = smokeLedgerEntry?.txHash || smokeReceiptTx;
+
+  const smokeTxHash = smokeLedgerEntry?.txHash || smokeReceiptTx || null;
   const smokeNetwork =
     smokeLedgerEntry?.network ||
     smokeResult?.receipt?.network ||
@@ -97,12 +108,17 @@ export function FuelMeter() {
     smokeResult?.receipt?.payer ||
     (typeof bodyData.payer === 'string' ? bodyData.payer : null);
   const smokeBaseScanUrl = baseScanTxUrl(smokeNetwork, smokeTxHash);
-  const smokeCost = smokeLedgerEntry?.cost ? `${smokeLedgerEntry.cost} USDC` : '0.001 USDC';
+  const smokeCost = isCurrentAttemptSettled
+    ? smokeLedgerEntry?.cost
+      ? `${smokeLedgerEntry.cost} USDC`
+      : '0.001 USDC'
+    : '0 USDC';
   const smokeSettledAt = smokeLedgerEntry?.createdAt || smokeResult?.completedAt || null;
 
   async function handleSmokeSuccess(result: PaidActionResult) {
     setSmokeResult(result);
     setSmokeError(null);
+    setSmokeErrorReason(null);
     setLedgerRefreshWarning(null);
     const refreshed = await refetchLedger();
     if (refreshed.isError) {
@@ -111,7 +127,17 @@ export function FuelMeter() {
   }
 
   function handleSmokeFailure(error: PaidActionError) {
+    setSmokeResult(null);
     setSmokeError(error.message);
+    setSmokeErrorReason(error.reason || 'unknown');
+    setSmokeAttemptId(`smoke-${Math.random().toString(36).slice(2, 10)}`);
+  }
+
+  function handleNewAttempt() {
+    setSmokeAttemptId(`smoke-${Math.random().toString(36).slice(2, 10)}`);
+    setSmokeResult(null);
+    setSmokeError(null);
+    setSmokeErrorReason(null);
   }
 
   return (
@@ -130,43 +156,48 @@ export function FuelMeter() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
         <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-3.5 flex flex-col justify-between gap-2 shadow-[var(--shadow-card)]">
           <div>
-            <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Provider Status</div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3">Provider Status</span>
+              <span className="text-[10px] font-mono text-ink-3">{modeLabel}</span>
+            </div>
             <div className="text-sm font-sans font-bold text-ink flex items-center gap-1.5">
               <span className={providerDot}>●</span>
               <span>{providerLabel}</span>
             </div>
           </div>
           <div className="text-[11px] text-ink-3 leading-relaxed border-t border-line/50 pt-2 font-sans">
-            HTTP 402 + Payment Requirements gateway status comes from /api/status.
+            {statusCopy}
           </div>
         </div>
 
         <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-3.5 flex flex-col justify-between gap-2 shadow-[var(--shadow-card)]">
           <div>
-            <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Settlement Status</div>
-            <div className="text-[11px] text-ink-2 leading-relaxed font-sans">
-              {statusCopy}
+            <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Live Payments Flow</div>
+            <div className="text-sm font-sans font-bold text-ink flex items-center gap-1.5">
+              <span className={isLive ? 'text-ok' : 'text-warn'}>●</span>
+              <span>{isLive ? 'Active (Official SDK)' : 'Simulated (Mock Provider)'}</span>
             </div>
           </div>
-          <div className="text-[10px] font-mono text-warn bg-warn-soft px-2 py-0.5 rounded-full w-fit">
-            {modeLabel}
+          <div className="text-[11px] text-ink-3 leading-relaxed border-t border-line/50 pt-2 font-sans">
+            Requires configured=true, officialMiddleware=true, mock=false.
           </div>
         </div>
 
         <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-3.5 flex flex-col justify-between gap-2 shadow-[var(--shadow-card)]">
           <div>
-            <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Attribution</div>
-            <div className="text-[11px] text-ink-2 leading-relaxed font-sans">
-              Builder Code attribution is attached to paid x402 requirements when BUILDER_CODE is configured.
+            <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">x402 Scheme & Asset</div>
+            <div className="text-sm font-sans font-bold text-ink font-mono">
+              exact / Base USDC
             </div>
           </div>
-          <div className="text-[10px] font-mono text-accent-2 bg-accent-soft px-2 py-0.5 rounded-full w-fit">
-            Public, non-secret
+          <div className="text-[11px] text-ink-3 leading-relaxed border-t border-line/50 pt-2 font-sans">
+            Asset: <span className="font-mono text-ink-2">{shortHash(x402?.asset || '0x8335...02913')}</span>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+      {/* Gateway Configuration Audit */}
+      <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs shadow-[var(--shadow-card)]">
         <Metric label="PayTo" amount={payToLabel} sub="recipient" />
         <Metric label="Network" amount={networkLabel} sub={x402?.network || 'none'} />
         <Metric label="Builder Code" amount={builderLabel} sub={attributionLabel} />
@@ -178,7 +209,7 @@ export function FuelMeter() {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 mb-1">
               <div className="text-[11px] font-sans font-semibold tracking-[0.08em] uppercase text-ink-3">x402 Smoke Paid Test</div>
-              <span className="text-[10px] font-mono bg-panel-2 border border-line px-2 py-0.5 rounded-full text-ink-3">diagnostic</span>
+              <span className="text-[10px] font-mono bg-panel-2 border border-line px-2 py-0.5 rounded-full text-ink-3">run: {smokeAttemptId}</span>
             </div>
             <div className="text-[12px] text-ink-2 leading-relaxed font-sans">
               Runs the production browser x402 flow against <span className="font-mono text-ink">/api/x402/smoke-paid</span>. The wallet signs the USDC authorization; the server never asks for a key and never broadcasts from Miorail.
@@ -190,30 +221,46 @@ export function FuelMeter() {
               <Metric label="Browser flow" amount={isLive ? 'available' : 'blocked'} sub={x402?.smokeRouteAvailable ? 'smoke ready' : 'no route'} />
             </div>
           </div>
-          <div className="w-full lg:w-[260px] shrink-0">
+          <div className="w-full lg:w-[260px] shrink-0 flex flex-col gap-2">
             <PaidActionButton
               label="x402 Smoke Paid Test"
               route="/api/x402/smoke-paid"
               actionType="x402_smoke_paid"
               category="tools"
               costLabel="0.001 USDC"
-              disabled={!isLive || !x402?.smokeRouteAvailable}
+              runId={smokeAttemptId}
+              disabled={!isLive || !x402?.smokeRouteAvailable || isCurrentAttemptSettled}
               onSuccess={handleSmokeSuccess}
               onFailure={handleSmokeFailure}
             />
+            {isCurrentAttemptSettled && (
+              <button
+                type="button"
+                onClick={handleNewAttempt}
+                className="w-full text-center py-1.5 px-3 rounded-[var(--radius-md)] border border-line bg-panel-2 text-ink-2 text-xs font-semibold hover:bg-panel hover:text-ink transition-colors"
+              >
+                Start New Paid Attempt
+              </button>
+            )}
           </div>
         </div>
 
         {(smokeResult || smokeError || ledgerRefreshWarning) && (
           <div className="mt-4 border-t border-line/50 pt-3">
             <div className="grid grid-cols-1 md:grid-cols-5 gap-2 text-xs">
-              <Metric label="Status" amount={smokeError ? 'failed' : smokeLedgerEntry?.settlement || 'settled'} sub={smokeError || 'Receipt saved'} />
-              <Metric label="Payer" amount={smokePayer ? shortHash(smokePayer) : 'unknown'} sub="wallet" />
-              <Metric label="Amount" amount={smokeCost} sub="settled" />
-              <Metric label="Network" amount={smokeNetwork === 'eip155:8453' ? 'Base Mainnet' : smokeNetwork === 'eip155:84532' ? 'Base Sepolia' : 'unknown'} sub={smokeNetwork || 'none'} />
+              <Metric
+                label="Status"
+                amount={smokeError ? 'failed' : smokeLedgerEntry?.settlement || 'settled'}
+                sub={smokeError ? `${smokeErrorReason || 'payment_failed'}` : `runId: ${smokeAttemptId}`}
+              />
+              <Metric label="Payer" amount={smokePayer ? shortHash(smokePayer) : 'wallet'} sub="wallet" />
+              <Metric label="Amount" amount={smokeCost} sub={isCurrentAttemptSettled ? 'settled' : 'unpaid'} />
+              <Metric label="Network" amount={smokeNetwork === 'eip155:8453' ? 'Base Mainnet' : smokeNetwork === 'eip155:84532' ? 'Base Sepolia' : 'Base'} sub={smokeNetwork || 'none'} />
               <div className="bg-panel-2 border border-line rounded-[var(--radius-md)] p-2.5">
                 <div className="text-[10px] font-sans uppercase tracking-[0.06em] text-ink-3">Tx proof</div>
-                {smokeTxHash && smokeBaseScanUrl ? (
+                {smokeError ? (
+                  <div className="mt-0.5 text-[11px] text-risk font-sans font-medium">Payment failed — no settlement recorded</div>
+                ) : smokeTxHash && smokeBaseScanUrl ? (
                   <a className="block mt-0.5 text-[12px] font-mono font-bold text-accent-2 hover:text-accent truncate" href={smokeBaseScanUrl} target="_blank" rel="noreferrer">
                     {shortHash(smokeTxHash)}
                   </a>

@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   createX402MiddlewareFromEnv,
   x402MiddlewareDiagnosticsFromEnv,
@@ -13,6 +14,16 @@ import {
   X402LedgerResponseSchema,
   X402PricingResponseSchema,
 } from '@mioagent/api-zod';
+
+const smokeRunIdStorage = new AsyncLocalStorage<string | undefined>();
+
+function extractRunId(req: Request): string | undefined {
+  const q = req.query.runId || req.query.attemptId;
+  if (typeof q === 'string' && q) return q;
+  const h = req.headers['x-miorail-smoke-run-id'] || req.headers['x-idempotency-key'];
+  if (typeof h === 'string' && h) return h;
+  return undefined;
+}
 
 interface CreateX402RouterOptions {
   env?: NodeJS.ProcessEnv;
@@ -35,8 +46,17 @@ let lastSmokeSettlement: {
   settledAt?: string;
 } | null = null;
 
+let lastBrowserRun: {
+  runId: string;
+  status: string;
+  txHash?: string;
+  payer?: string;
+  settledAt?: string;
+} | null = null;
+
 async function persistSettlement(record: X402SettlementRecord): Promise<void> {
   const id = receiptId(record);
+  const runId = smokeRunIdStorage.getStore() || (record as any).runId || undefined;
   lastSmokeSettlement = {
     status: record.status || 'settled',
     payer: record.payer || undefined,
@@ -47,22 +67,39 @@ async function persistSettlement(record: X402SettlementRecord): Promise<void> {
     payTo: record.payTo,
     settledAt: new Date().toISOString(),
   };
+  if (runId) {
+    lastBrowserRun = {
+      runId,
+      status: record.status || 'settled',
+      txHash: record.txHash || undefined,
+      payer: record.payer || undefined,
+      settledAt: new Date().toISOString(),
+    };
+  }
   if (record.txHash) {
     console.info('[x402] x402-browser-payment-settled', {
       status: 'settled',
       payer: record.payer || 'unknown',
       txHash: record.txHash,
+      runId,
     });
   } else {
     console.info('[x402] x402-browser-payment-settled-degraded', {
       status: 'settled',
       payer: record.payer || 'unknown',
       proofStatus: 'state_only_tx_unavailable',
+      runId,
     });
   }
+  const detailsRecord = record.details && typeof record.details === 'object' ? record.details : {};
   const receipt = {
     ...record,
     id,
+    runId,
+    details: {
+      ...detailsRecord,
+      ...(runId ? { runId } : {}),
+    },
     userId: record.userId || 'default-user',
   };
   try {
@@ -84,11 +121,20 @@ function receiptRecord(row: { id: string; receipt: unknown; createdAt: Date }): 
   id: string;
   createdAt: Date;
   userId?: string;
+  runId?: string;
 } {
   const receipt = row.receipt && typeof row.receipt === 'object' ? row.receipt as Record<string, unknown> : {};
+  const details = receipt.details && typeof receipt.details === 'object' ? receipt.details as Record<string, unknown> : {};
+  const runId =
+    typeof receipt.runId === 'string'
+      ? receipt.runId
+      : typeof details.runId === 'string'
+        ? details.runId
+        : undefined;
   return {
     id: String(receipt.id || row.id),
     userId: typeof receipt.userId === 'string' ? receipt.userId : undefined,
+    runId,
     actionId: typeof receipt.actionId === 'string' ? receipt.actionId : undefined,
     actionType: typeof receipt.actionType === 'string' ? receipt.actionType : undefined,
     cost: typeof receipt.cost === 'string' ? receipt.cost : null,
@@ -162,40 +208,60 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
     res.status(200).json({ data: 'This is premium mock data protected by x402 payment.' });
   });
 
-  router.get('/smoke-paid', smokeGateway, (req: Request, res: Response) => {
-    res.setHeader('Access-Control-Expose-Headers', 'payment-response, x-payment-response, PAYMENT-REQUIRED');
-    const headerProof = decodePaymentHeaderProof(
-      res.getHeader('payment-response') ||
-      res.getHeader('x-payment-response') ||
-      req.headers['payment-response'] ||
-      req.headers['x-payment-response']
-    );
-    const config = x402ConfigFromEnv(env);
-    const payer = headerProof.payer || lastSmokeSettlement?.payer || null;
-    const txHash = headerProof.txHash || lastSmokeSettlement?.txHash || null;
-    const network = headerProof.network || lastSmokeSettlement?.network || config.network || 'eip155:8453';
+  router.get(
+    '/smoke-paid',
+    (req: Request, _res: Response, next) => {
+      const runId = extractRunId(req);
+      smokeRunIdStorage.run(runId, () => next());
+    },
+    smokeGateway,
+    (req: Request, res: Response) => {
+      res.setHeader('Access-Control-Expose-Headers', 'payment-response, x-payment-response, PAYMENT-REQUIRED');
+      const headerProof = decodePaymentHeaderProof(
+        res.getHeader('payment-response') ||
+        res.getHeader('x-payment-response') ||
+        req.headers['payment-response'] ||
+        req.headers['x-payment-response']
+      );
+      const config = x402ConfigFromEnv(env);
+      const payer = headerProof.payer || lastSmokeSettlement?.payer || null;
+      const txHash = headerProof.txHash || lastSmokeSettlement?.txHash || null;
+      const network = headerProof.network || lastSmokeSettlement?.network || config.network || 'eip155:8453';
+      const reqRunId = extractRunId(req) || smokeRunIdStorage.getStore();
 
-    console.info('[x402] x402-browser-payment-started', {
-      route: '/api/x402/smoke-paid',
-      runId: typeof req.query.runId === 'string' ? req.query.runId : undefined,
-    });
+      if (reqRunId) {
+        lastBrowserRun = {
+          runId: reqRunId,
+          status: 'settled',
+          txHash: txHash || undefined,
+          payer: payer || undefined,
+          settledAt: new Date().toISOString(),
+        };
+      }
 
-    res.status(200).json({
-      ok: true,
-      data: 'x402 smoke payment accepted.',
-      route: '/api/x402/smoke-paid',
-      smokeRoute: '/api/x402/smoke-paid',
-      settlement: 'settled',
-      payer,
-      txHash,
-      network,
-      amount: config.amountAtomic || '1000',
-      asset: config.asset || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-      payTo: config.payTo || '',
-    });
-  });
+      console.info('[x402] x402-browser-payment-started', {
+        route: '/api/x402/smoke-paid',
+        runId: reqRunId,
+      });
 
-  router.get('/diagnostics', (_req: Request, res: Response) => {
+      res.status(200).json({
+        ok: true,
+        data: 'x402 smoke payment accepted.',
+        route: '/api/x402/smoke-paid',
+        smokeRoute: '/api/x402/smoke-paid',
+        runId: reqRunId,
+        settlement: 'settled',
+        payer,
+        txHash,
+        network,
+        amount: config.amountAtomic || '1000',
+        asset: config.asset || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        payTo: config.payTo || '',
+      });
+    }
+  );
+
+  router.get('/diagnostics', async (_req: Request, res: Response) => {
     const diagnostics = x402MiddlewareDiagnosticsFromEnv(env, {
       runtimeMode,
       smokeRoute: '/api/x402/smoke-paid',
@@ -206,6 +272,23 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
       diagnostics.smokeRouteAvailable &&
       !diagnostics.mockFacilitatorEnabled,
     );
+
+    let latestGlobalRecord: { txHash?: string | null; createdAt?: Date } | null = null;
+    let browserRunMatched = false;
+    try {
+      const rows = await db.select()
+        .from(x402Receipts)
+        .orderBy(desc(x402Receipts.createdAt))
+        .limit(50);
+      const parsed = rows.map(receiptRecord);
+      latestGlobalRecord = parsed[0] || null;
+      if (lastBrowserRun?.runId) {
+        browserRunMatched = parsed.some((r) => r.runId === lastBrowserRun?.runId);
+      }
+    } catch {
+      latestGlobalRecord = null;
+    }
+
     res.json({
       status: diagnostics.status,
       middlewareMode: diagnostics.middlewareMode,
@@ -217,6 +300,13 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
       lastSmokeSettlementStatus: lastSmokeSettlement?.status || null,
       lastSmokeTxHashPresent: Boolean(lastSmokeSettlement?.txHash),
       lastSmokePayerPresent: Boolean(lastSmokeSettlement?.payer),
+      lastBrowserRunId: lastBrowserRun?.runId || null,
+      lastBrowserRunStatus: lastBrowserRun?.status || null,
+      lastBrowserRunLedgerMatched: browserRunMatched,
+      lastBrowserRunTxHashPresent: Boolean(lastBrowserRun?.txHash),
+      lastBrowserRunPayerPresent: Boolean(lastBrowserRun?.payer),
+      lastGlobalLedgerTxHashPresent: Boolean(latestGlobalRecord?.txHash),
+      lastGlobalLedgerCreatedAt: latestGlobalRecord?.createdAt ? latestGlobalRecord.createdAt.toISOString() : null,
       configured: diagnostics.configured,
       network: diagnostics.network,
       chainId: diagnostics.chainId,
@@ -256,9 +346,11 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
         rows = [];
         auditContext = [];
       }
+      const filterRunId = typeof req.query.runId === 'string' ? req.query.runId : undefined;
       const records = rows
         .map(receiptRecord)
-        .filter((record) => !record.userId || record.userId === userId);
+        .filter((record) => !record.userId || record.userId === userId)
+        .filter((record) => !filterRunId || record.runId === filterRunId);
       const auditByActionId = new Map(auditContext.map((log) => [log.actionId, log]));
 
       let totalSpent = 0;
@@ -285,6 +377,7 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
         }
         return {
           id: record.id,
+          runId: record.runId,
           actionId: record.actionId || audit?.actionId || record.id,
           actionType,
           cost,
@@ -301,6 +394,7 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
           details: {
             source: record.source,
             payer: record.payer,
+            runId: record.runId,
             checkedAt: record.checkedAt,
             proofStatus: record.txHash ? 'verified_tx' : 'state_only_tx_unavailable',
             errorReason: record.errorReason,

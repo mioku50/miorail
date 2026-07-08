@@ -234,5 +234,29 @@ describe('x402 official smoke endpoint', () => {
     assert.strictEqual(diag.body.browserPaidFlowAvailable, true);
     assert.strictEqual(diag.body.browserPaidActionAvailable, true);
     assert.strictEqual(diag.body.paymentResponseHeaderReadable, true);
+    assert.strictEqual('lastBrowserRunId' in diag.body, true);
+    assert.strictEqual('lastBrowserRunLedgerMatched' in diag.body, true);
+  });
+
+  it('smoke-paid simulated mode records runId and filters ledger by runId', async () => {
+    const app = express();
+    app.use('/x402', createX402Router({
+      env: configuredEnv(),
+      runtimeMode: 'simulated',
+    }));
+    const runId = 'test-browser-run-123';
+    const smokeRes = await request(app).get(`/x402/smoke-paid?runId=${runId}`);
+    assert.strictEqual(smokeRes.status, 200);
+    assert.strictEqual(smokeRes.body.runId, runId);
+
+    const diag = await request(app).get('/x402/diagnostics');
+    assert.strictEqual(diag.body.lastBrowserRunId, runId);
+
+    const ledgerAll = await request(app).get('/x402/ledger');
+    assert.strictEqual(Array.isArray(ledgerAll.body.entries), true);
+
+    const ledgerFiltered = await request(app).get(`/x402/ledger?runId=other-run-id`);
+    assert.strictEqual(ledgerFiltered.status, 200);
+    assert.strictEqual(ledgerFiltered.body.entries.length, 0);
   });
 });
