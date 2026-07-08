@@ -5,7 +5,12 @@ import { getProviderBudgetSnapshot, getProviderCacheDiagnostics } from '../lib/p
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
 import { attachBaseMcpToolProbeStatus, getBaseMcpStatusSnapshot, probeBaseMcpStatus, type BaseMcpStatus } from '../lib/baseMcpStatus.js';
 import { getBaseMcpAuthStatus, type StoredBaseMcpAuthStatus } from '../lib/baseMcpOAuthStore.js';
-import { x402ConfigFromEnv, x402StatusFromEnv, type X402RuntimeConfig } from '@mioagent/x402-gateway';
+import {
+  x402ConfigFromEnv,
+  x402MiddlewareDiagnosticsFromEnv,
+  x402StatusFromEnv,
+  type X402RuntimeConfig,
+} from '@mioagent/x402-gateway';
 
 export function getSystemStatus(envOverride?: string) {
   const chainEnv = envOverride || process.env.CHAIN_ENV || 'sepolia';
@@ -43,6 +48,7 @@ export function getSystemStatus(envOverride?: string) {
   const { providerName: approvalProvider, statusCode: approvalStatusCode } = getApprovalProviderFromEnv();
 
   const x402Config = x402ConfigFromEnv();
+  const x402Diagnostics = x402MiddlewareDiagnosticsFromEnv();
 
   const isReadonly = chainEnv === 'mainnet-readonly';
   // T19.1: split execution into explicit flags via a shared helper. The UI may
@@ -99,6 +105,12 @@ export function getSystemStatus(envOverride?: string) {
       builderCodeConfigured: !!x402Config.builderCode,
       facilitatorAuthConfigured: !!x402Config.facilitatorAuthConfigured,
       authSource: x402Config.authSource,
+      middlewareMode: x402Diagnostics.middlewareMode,
+      officialMiddlewareEnabled: x402Diagnostics.officialMiddlewareEnabled,
+      mockFacilitatorEnabled: x402Diagnostics.mockFacilitatorEnabled,
+      smokeRoute: x402Diagnostics.smokeRoute,
+      smokeRouteAvailable: x402Diagnostics.smokeRouteAvailable,
+      builderCodeAttribution: x402Diagnostics.builderCodeAttribution,
       errorCode: x402Config.errorCode,
       lastCheckedAt: x402Config.lastCheckedAt,
       supportedKindsCount: x402Config.supportedKindsCount,
@@ -110,6 +122,7 @@ export function getSystemStatus(envOverride?: string) {
 }
 
 function publicX402Status(x402Config: X402RuntimeConfig) {
+  const x402Diagnostics = x402MiddlewareDiagnosticsFromEnv();
   return {
     status: x402Config.status,
     configured: x402Config.configured,
@@ -120,6 +133,12 @@ function publicX402Status(x402Config: X402RuntimeConfig) {
     builderCodeConfigured: !!x402Config.builderCode,
     facilitatorAuthConfigured: !!x402Config.facilitatorAuthConfigured,
     authSource: x402Config.authSource,
+    middlewareMode: x402Diagnostics.middlewareMode,
+    officialMiddlewareEnabled: x402Diagnostics.officialMiddlewareEnabled,
+    mockFacilitatorEnabled: x402Diagnostics.mockFacilitatorEnabled,
+    smokeRoute: x402Diagnostics.smokeRoute,
+    smokeRouteAvailable: x402Diagnostics.smokeRouteAvailable,
+    builderCodeAttribution: x402Diagnostics.builderCodeAttribution,
     errorCode: x402Config.errorCode,
     lastCheckedAt: x402Config.lastCheckedAt,
     supportedKindsCount: x402Config.supportedKindsCount,

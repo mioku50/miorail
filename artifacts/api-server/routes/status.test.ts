@@ -23,6 +23,22 @@ function restoreEnv(name: string, value: string | undefined) {
 }
 
 const ORIGINAL_FETCH = global.fetch;
+const X402_ENV_KEYS = [
+  'X402_FACILITATOR_URL',
+  'X402_FACILITATOR_AUTH_TOKEN',
+  'X402_FACILITATOR_API_KEY',
+  'X402_PAYTO_ADDRESS',
+  'X402_NETWORK',
+  'X402_AMOUNT_ATOMIC_USDC',
+  'X402_FACILITATOR_TIMEOUT_MS',
+  'CDP_API_KEY',
+  'CDP_API_KEY_ID',
+  'CDP_API_KEY_SECRET',
+  'BUILDER_CODE',
+] as const;
+const ORIGINAL_X402_ENV = Object.fromEntries(
+  X402_ENV_KEYS.map((key) => [key, process.env[key]]),
+) as Record<(typeof X402_ENV_KEYS)[number], string | undefined>;
 const DEFAULT_BASE_MCP_AUTH = {
   connected: false,
   needsReauth: false,
@@ -38,10 +54,23 @@ function decodeJwtPayload(token: string): Record<string, unknown> {
   return JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
 }
 
+function clearX402EnvForStatusTests() {
+  for (const key of X402_ENV_KEYS) {
+    delete process.env[key];
+  }
+}
+
+function restoreOriginalX402Env() {
+  for (const key of X402_ENV_KEYS) {
+    restoreEnv(key, ORIGINAL_X402_ENV[key]);
+  }
+}
+
 describe('Status API', () => {
   beforeEach(() => {
     clearBaseMcpStatusForTests();
     clearX402FacilitatorStatusForTests();
+    clearX402EnvForStatusTests();
     clearProviderCacheForTests();
     setProviderCacheForTests(new InMemoryProviderCacheStore(), new ProviderBudget(20, 300));
     mock.restoreAll();
@@ -51,6 +80,7 @@ describe('Status API', () => {
 
   afterEach(() => {
     global.fetch = ORIGINAL_FETCH;
+    restoreOriginalX402Env();
     clearX402FacilitatorStatusForTests();
   });
 

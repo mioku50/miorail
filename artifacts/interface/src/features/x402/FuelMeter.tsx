@@ -20,7 +20,8 @@ export function FuelMeter() {
   const { data: ledger } = useX402Ledger();
   const { data: pricing } = useX402Pricing();
 
-  const status = statusData?.x402?.status;
+  const x402 = statusData?.x402;
+  const status = x402?.status;
   const isLive = status === 'connected' || status === 'configured';
   const isMissing = status === 'missing';
   const isUnavailable = status === 'facilitator_auth_required' || status === 'facilitator_auth_invalid' || status === 'facilitator_rate_limited' || status === 'facilitator_unreachable' || status === 'degraded';
@@ -49,8 +50,16 @@ export function FuelMeter() {
         ? 'x402 facilitator is unavailable or degraded. Paid routes return a controlled unavailable response.'
       : status === 'missing'
         ? 'x402 env is partial or invalid. Paid routes fail closed until facilitator, payTo, and CAIP-2 network are configured.'
-        : 'No real facilitator is configured. Paid routes do not claim settlement.';
+      : 'No real facilitator is configured. Paid routes do not claim settlement.';
   const modeLabel = isLive ? 'Mode: real settlement' : isMissing ? 'Mode: missing config' : isUnavailable ? `Mode: ${badgeLabel}` : 'Mode: simulated';
+  const networkLabel =
+    x402?.network === 'eip155:8453' ? 'Base Mainnet' :
+    x402?.network === 'eip155:84532' ? 'Base Sepolia' :
+    'Not configured';
+  const payToLabel = x402?.payToConfigured ? 'configured' : 'missing';
+  const builderLabel = x402?.builderCodeConfigured ? 'configured' : 'missing';
+  const attributionLabel = x402?.builderCodeAttribution === 'attached' ? 'attached' : 'unavailable';
+  const smokeLabel = x402?.smokeRouteAvailable ? 'available' : 'unavailable';
 
   return (
     <main className="flex-1 bg-bg p-5 flex flex-col gap-4 overflow-y-auto select-none pb-16 md:pb-5">
@@ -102,6 +111,13 @@ export function FuelMeter() {
             Public, non-secret
           </div>
         </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+        <Metric label="PayTo" amount={payToLabel} sub="recipient" />
+        <Metric label="Network" amount={networkLabel} sub={x402?.network || 'none'} />
+        <Metric label="Builder Code" amount={builderLabel} sub={attributionLabel} />
+        <Metric label="Smoke route" amount={smokeLabel} sub={x402?.smokeRoute || '/api/x402/smoke-paid'} />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

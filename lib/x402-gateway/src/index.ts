@@ -73,6 +73,8 @@ export type X402SettlementStatus = 'settled' | 'pending' | 'failed';
 export type SupportedX402Network = `eip155:${SupportedBaseChainId}`;
 export type BuilderCodeAttributionRole = 'seller' | 'buyer';
 export type X402FacilitatorAuthSource = 'bearer_token' | 'cdp_api_key_pair';
+export type X402MiddlewareRuntimeMode = 'auto' | 'official' | 'mock' | 'unavailable';
+export type X402ResolvedMiddlewareMode = 'official' | 'mock' | 'unavailable';
 
 export interface X402RuntimeConfig {
   status: X402RuntimeStatus;
@@ -91,6 +93,12 @@ export interface X402RuntimeConfig {
   errorCode?: string;
   lastCheckedAt?: string;
   supportedKindsCount?: number;
+  middlewareMode?: X402ResolvedMiddlewareMode;
+  officialMiddlewareEnabled?: boolean;
+  mockFacilitatorEnabled?: boolean;
+  smokeRoute?: string;
+  smokeRouteAvailable?: boolean;
+  builderCodeAttribution?: 'attached' | 'unavailable';
 }
 
 export interface X402SettlementAttribution {
@@ -139,6 +147,28 @@ export interface CreateX402MiddlewareOptions {
   serviceName?: string;
   onSettlement?: (record: X402SettlementRecord, context: SettleResultContext) => Promise<void> | void;
   syncFacilitatorOnStart?: boolean;
+  runtimeMode?: X402MiddlewareRuntimeMode;
+}
+
+export interface X402MiddlewareDiagnostics {
+  middlewareMode: X402ResolvedMiddlewareMode;
+  officialMiddlewareEnabled: boolean;
+  mockFacilitatorEnabled: boolean;
+  configured: boolean;
+  status: X402RuntimeStatus;
+  network?: SupportedX402Network;
+  chainId?: SupportedBaseChainId;
+  asset?: string;
+  payToConfigured: boolean;
+  builderCodeConfigured: boolean;
+  builderCodeAttribution: 'attached' | 'unavailable';
+  facilitatorAuthConfigured: boolean;
+  authSource?: X402FacilitatorAuthSource;
+  smokeRoute: string;
+  smokeRouteAvailable: boolean;
+  errorCode?: string;
+  missingConfig: string[];
+  warnings: string[];
 }
 
 export interface X402FacilitatorHealth {
@@ -954,15 +984,57 @@ function isTestRuntime(env: NodeJS.ProcessEnv): boolean {
   );
 }
 
+export function resolveX402MiddlewareMode(
+  config: X402RuntimeConfig = x402ConfigFromEnv(),
+  env: NodeJS.ProcessEnv = process.env,
+  runtimeMode: X402MiddlewareRuntimeMode = 'auto',
+): X402ResolvedMiddlewareMode {
+  if (runtimeMode === 'mock') return 'mock';
+  if (runtimeMode === 'official') return config.configured ? 'official' : 'unavailable';
+  if (runtimeMode === 'unavailable') return 'unavailable';
+  if (isTestRuntime(env)) return 'mock';
+  return config.configured ? 'official' : 'unavailable';
+}
+
+export function x402MiddlewareDiagnosticsFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { runtimeMode?: X402MiddlewareRuntimeMode; smokeRoute?: string } = {},
+): X402MiddlewareDiagnostics {
+  const config = x402ConfigFromEnv(env);
+  const middlewareMode = resolveX402MiddlewareMode(config, env, options.runtimeMode);
+  const smokeRoute = options.smokeRoute || '/api/x402/smoke-paid';
+  return {
+    middlewareMode,
+    officialMiddlewareEnabled: middlewareMode === 'official',
+    mockFacilitatorEnabled: middlewareMode === 'mock',
+    configured: config.configured,
+    status: config.status,
+    network: config.network,
+    chainId: config.chainId,
+    asset: config.asset,
+    payToConfigured: !!config.payTo,
+    builderCodeConfigured: !!config.builderCode,
+    builderCodeAttribution: config.builderCode ? 'attached' : 'unavailable',
+    facilitatorAuthConfigured: !!config.facilitatorAuthConfigured,
+    authSource: config.authSource,
+    smokeRoute,
+    smokeRouteAvailable: middlewareMode === 'official' && config.configured,
+    errorCode: config.errorCode,
+    missingConfig: config.missingConfig,
+    warnings: config.warnings,
+  };
+}
+
 export function createX402MiddlewareFromEnv(
   options: CreateX402MiddlewareOptions = {},
   env: NodeJS.ProcessEnv = process.env,
 ): RequestHandler {
   const config = x402ConfigFromEnv(env);
-  if (isTestRuntime(env)) {
+  const middlewareMode = resolveX402MiddlewareMode(config, env, options.runtimeMode);
+  if (middlewareMode === 'mock') {
     return x402Gateway({ paymentRequired: legacyMockPaymentRequired(), facilitator: new MockFacilitator() });
   }
-  if (config.configured) {
+  if (middlewareMode === 'official') {
     return createSafeOfficialX402Middleware(config, options, env);
   }
   return createUnavailableX402Middleware(config);

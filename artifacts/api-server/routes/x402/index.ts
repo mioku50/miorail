@@ -1,7 +1,9 @@
 import { Router, Request, Response } from 'express';
 import {
   createX402MiddlewareFromEnv,
+  x402MiddlewareDiagnosticsFromEnv,
   x402ConfigFromEnv,
+  type X402MiddlewareRuntimeMode,
   type X402SettlementRecord,
 } from '@mioagent/x402-gateway';
 import { db, auditLogs, x402Receipts } from '@mioagent/db';
@@ -12,7 +14,10 @@ import {
   X402PricingResponseSchema,
 } from '@mioagent/api-zod';
 
-export const x402Router = Router();
+interface CreateX402RouterOptions {
+  env?: NodeJS.ProcessEnv;
+  runtimeMode?: X402MiddlewareRuntimeMode;
+}
 
 function receiptId(record: X402SettlementRecord): string {
   if (record.txHash) return `x402:${record.network}:${record.txHash}`;
@@ -40,16 +45,6 @@ async function persistSettlement(record: X402SettlementRecord): Promise<void> {
     });
   }
 }
-
-const gateway = createX402MiddlewareFromEnv({
-  routePath: '/mock-paid-endpoint',
-  serviceName: 'Miorail',
-  onSettlement: persistSettlement,
-});
-
-x402Router.get('/mock-paid-endpoint', gateway, (req: Request, res: Response) => {
-  res.status(200).json({ data: 'This is premium mock data protected by x402 payment.' });
-});
 
 function receiptRecord(row: { id: string; receipt: unknown; createdAt: Date }): X402SettlementRecord & {
   id: string;
@@ -90,94 +85,156 @@ function atomicUsdcToDecimal(amount: string): string {
   }
 }
 
-x402Router.get('/ledger', async (req: Request, res: Response, next) => {
-  try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
-    const rows = await db.select()
-      .from(x402Receipts)
-      .orderBy(desc(x402Receipts.createdAt))
-      .limit(100);
-    const records = rows
-      .map(receiptRecord)
-      .filter((record) => !record.userId || record.userId === userId);
-    const auditContext = await db.select()
-      .from(auditLogs)
-      .where(eq(auditLogs.userId, userId))
-      .orderBy(desc(auditLogs.createdAt))
-      .limit(100);
-    const auditByActionId = new Map(auditContext.map((log) => [log.actionId, log]));
+export function createX402Router(options: CreateX402RouterOptions = {}) {
+  const router = Router();
+  const env = options.env || process.env;
+  const runtimeMode = options.runtimeMode || 'auto';
+  const commonMiddlewareOptions = {
+    serviceName: 'Miorail',
+    onSettlement: persistSettlement,
+    runtimeMode,
+  };
+  const legacyGateway = createX402MiddlewareFromEnv({
+    ...commonMiddlewareOptions,
+    routePath: '/mock-paid-endpoint',
+  }, env);
+  const smokeGateway = createX402MiddlewareFromEnv({
+    ...commonMiddlewareOptions,
+    routePath: '/smoke-paid',
+  }, env);
 
-    let totalSpent = 0;
-    let inferenceSpent = 0;
-    let toolsSpent = 0;
-    let inferenceCount = 0;
-    let toolsCount = 0;
+  router.get('/mock-paid-endpoint', legacyGateway, (_req: Request, res: Response) => {
+    res.status(200).json({ data: 'This is premium mock data protected by x402 payment.' });
+  });
 
-    const entries = records.map(record => {
-      const audit = record.actionId ? auditByActionId.get(record.actionId) : undefined;
-      const actionType = record.actionType || audit?.actionType || 'x402_resource';
-      const cost = record.cost || atomicUsdcToDecimal(record.amount);
-      const costVal = parseFloat(cost || '0');
-      const isInference = actionType === 'inference_call' || actionType === 'portfolio_scan' || actionType === 'security_screening';
-      if (!isNaN(costVal)) {
-        totalSpent += costVal;
-        if (isInference) {
-          inferenceSpent += costVal;
-          inferenceCount++;
-        } else {
-          toolsSpent += costVal;
-          toolsCount++;
+  router.get('/smoke-paid', smokeGateway, (_req: Request, res: Response) => {
+    res.status(200).json({
+      ok: true,
+      data: 'x402 smoke payment accepted.',
+      route: '/api/x402/smoke-paid',
+    });
+  });
+
+  router.get('/diagnostics', (_req: Request, res: Response) => {
+    const diagnostics = x402MiddlewareDiagnosticsFromEnv(env, {
+      runtimeMode,
+      smokeRoute: '/api/x402/smoke-paid',
+    });
+    res.json({
+      status: diagnostics.status,
+      middlewareMode: diagnostics.middlewareMode,
+      officialMiddlewareEnabled: diagnostics.officialMiddlewareEnabled,
+      mockFacilitatorEnabled: diagnostics.mockFacilitatorEnabled,
+      configured: diagnostics.configured,
+      network: diagnostics.network,
+      chainId: diagnostics.chainId,
+      asset: diagnostics.asset,
+      payToConfigured: diagnostics.payToConfigured,
+      builderCodeConfigured: diagnostics.builderCodeConfigured,
+      builderCodeAttribution: diagnostics.builderCodeAttribution,
+      facilitatorAuthConfigured: diagnostics.facilitatorAuthConfigured,
+      authSource: diagnostics.authSource,
+      smokeRoute: diagnostics.smokeRoute,
+      smokeRouteAvailable: diagnostics.smokeRouteAvailable,
+      errorCode: diagnostics.errorCode,
+      missingConfig: diagnostics.missingConfig,
+      warnings: diagnostics.warnings,
+    });
+  });
+
+  router.get('/ledger', async (req: Request, res: Response, next) => {
+    try {
+      const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+      const rows = await db.select()
+        .from(x402Receipts)
+        .orderBy(desc(x402Receipts.createdAt))
+        .limit(100);
+      const records = rows
+        .map(receiptRecord)
+        .filter((record) => !record.userId || record.userId === userId);
+      const auditContext = await db.select()
+        .from(auditLogs)
+        .where(eq(auditLogs.userId, userId))
+        .orderBy(desc(auditLogs.createdAt))
+        .limit(100);
+      const auditByActionId = new Map(auditContext.map((log) => [log.actionId, log]));
+
+      let totalSpent = 0;
+      let inferenceSpent = 0;
+      let toolsSpent = 0;
+      let inferenceCount = 0;
+      let toolsCount = 0;
+
+      const entries = records.map(record => {
+        const audit = record.actionId ? auditByActionId.get(record.actionId) : undefined;
+        const actionType = record.actionType || audit?.actionType || 'x402_resource';
+        const cost = record.cost || atomicUsdcToDecimal(record.amount);
+        const costVal = parseFloat(cost || '0');
+        const isInference = actionType === 'inference_call' || actionType === 'portfolio_scan' || actionType === 'security_screening';
+        if (!isNaN(costVal)) {
+          totalSpent += costVal;
+          if (isInference) {
+            inferenceSpent += costVal;
+            inferenceCount++;
+          } else {
+            toolsSpent += costVal;
+            toolsCount++;
+          }
         }
-      }
-      return {
-        id: record.id,
-        actionId: record.actionId || audit?.actionId || record.id,
-        actionType,
-        cost,
-        txHash: record.txHash,
-        network: record.network,
-        asset: record.asset,
-        amount: record.amount,
-        payTo: record.payTo,
-        status: record.status,
-        attribution: record.attribution,
-        createdAt: record.createdAt.toISOString(),
-        settlement: record.status,
-        details: {
-          source: record.source,
-          payer: record.payer,
-          checkedAt: record.checkedAt,
-          errorReason: record.errorReason,
-          audit: audit?.details || null,
+        return {
+          id: record.id,
+          actionId: record.actionId || audit?.actionId || record.id,
+          actionType,
+          cost,
+          txHash: record.txHash,
+          network: record.network,
+          asset: record.asset,
+          amount: record.amount,
+          payTo: record.payTo,
+          status: record.status,
+          attribution: record.attribution,
+          createdAt: record.createdAt.toISOString(),
+          settlement: record.status,
+          details: {
+            source: record.source,
+            payer: record.payer,
+            checkedAt: record.checkedAt,
+            errorReason: record.errorReason,
+            audit: audit?.details || null,
+          },
+        };
+      });
+
+      const response = {
+        entries,
+        summary: {
+          totalSpentUsdc: totalSpent.toFixed(4),
+          inferenceSpentUsdc: inferenceSpent.toFixed(4),
+          toolsSpentUsdc: toolsSpent.toFixed(4),
+          inferenceCallsCount: inferenceCount,
+          toolsCallsCount: toolsCount,
+          settlement: entries.length > 0 ? 'real' : 'none',
+          x402: x402ConfigFromEnv(env).status,
         },
       };
-    });
 
-    const response = {
-      entries,
-      summary: {
-        totalSpentUsdc: totalSpent.toFixed(4),
-        inferenceSpentUsdc: inferenceSpent.toFixed(4),
-        toolsSpentUsdc: toolsSpent.toFixed(4),
-        inferenceCallsCount: inferenceCount,
-        toolsCallsCount: toolsCount,
-        settlement: entries.length > 0 ? 'real' : 'none',
-        x402: x402ConfigFromEnv().status,
-      },
-    };
+      res.json(X402LedgerResponseSchema.parse(response));
+    } catch (error) {
+      next(error);
+    }
+  });
 
-    res.json(X402LedgerResponseSchema.parse(response));
-  } catch (error) {
-    next(error);
-  }
-});
+  router.get('/pricing', async (_req: Request, res: Response) => {
+    const pricing = [
+      { actionType: 'portfolio_scan', label: 'Portfolio Risk Scan', priceUsdc: '0.0010', description: 'Moralis token balance indexing and price feed valuation' },
+      { actionType: 'security_screening', label: 'Token Security Screening', priceUsdc: '0.0020', description: 'GoPlus contract security checks and honeypot analysis' },
+      { actionType: 'swap_execution', label: 'Swap Simulation & Routing', priceUsdc: '0.0050', description: 'EIP-5792 batch execution preparation and route optimization' },
+      { actionType: 'inference_call', label: 'Autonomous AI Inference', priceUsdc: '0.0010', description: 'Agent LLM reasoning and intent classification' },
+    ];
+    res.json(X402PricingResponseSchema.parse({ pricing }));
+  });
 
-x402Router.get('/pricing', async (_req: Request, res: Response) => {
-  const pricing = [
-    { actionType: 'portfolio_scan', label: 'Portfolio Risk Scan', priceUsdc: '0.0010', description: 'Moralis token balance indexing and price feed valuation' },
-    { actionType: 'security_screening', label: 'Token Security Screening', priceUsdc: '0.0020', description: 'GoPlus contract security checks and honeypot analysis' },
-    { actionType: 'swap_execution', label: 'Swap Simulation & Routing', priceUsdc: '0.0050', description: 'EIP-5792 batch execution preparation and route optimization' },
-    { actionType: 'inference_call', label: 'Autonomous AI Inference', priceUsdc: '0.0010', description: 'Agent LLM reasoning and intent classification' },
-  ];
-  res.json(X402PricingResponseSchema.parse({ pricing }));
-});
+  return router;
+}
+
+export const x402Router = createX402Router();
