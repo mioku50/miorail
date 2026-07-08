@@ -18,6 +18,7 @@ export interface PaidActionButtonProps {
   costLabel: string;
   category: 'tools' | 'inference';
   disabled?: boolean;
+  runId?: string;
   onSuccess?: (result: PaidActionResult) => void | Promise<void>;
   onFailure?: (error: PaidActionError) => void;
 }
@@ -25,7 +26,10 @@ export interface PaidActionButtonProps {
 const busyStates: PaidActionState[] = [
   'preparing_payment',
   'awaiting_wallet_confirmation',
+  'awaiting_wallet',
+  'submitted',
   'settling_payment',
+  'settling',
   'running_action',
 ];
 
@@ -36,6 +40,7 @@ export function PaidActionButton({
   costLabel,
   category,
   disabled,
+  runId,
   onSuccess,
   onFailure,
 }: PaidActionButtonProps) {
@@ -54,8 +59,8 @@ export function PaidActionButton({
   }, [costLabel, isConnected, isWrongChain, state]);
 
   const Icon =
-    state === 'succeeded' ? CheckCircle2 :
-    state === 'rejected' || state === 'failed' || state === 'settlement_failed' || state === 'insufficient_funds' || state === 'unsupported_wallet' ? RotateCcw :
+    state === 'succeeded' || state === 'settled' || state === 'settled_degraded' ? CheckCircle2 :
+    state === 'rejected' || state === 'cancelled' || state === 'failed' || state === 'settlement_failed' || state === 'insufficient_funds' || state === 'unsupported_wallet' ? RotateCcw :
     isBusy ? Loader2 :
     isWrongChain ? AlertTriangle :
     CreditCard;
@@ -77,6 +82,7 @@ export function PaidActionButton({
         walletClient,
         expectedChainId,
         onState: setState,
+        runId,
       });
       await onSuccess?.(result);
     } catch (rawError) {

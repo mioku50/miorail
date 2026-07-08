@@ -7,10 +7,16 @@ export type PaidActionState =
   | 'idle'
   | 'preparing_payment'
   | 'awaiting_wallet_confirmation'
+  | 'awaiting_wallet'
+  | 'submitted'
   | 'settling_payment'
+  | 'settling'
   | 'running_action'
   | 'succeeded'
+  | 'settled'
+  | 'settled_degraded'
   | 'rejected'
+  | 'cancelled'
   | 'failed'
   | 'insufficient_funds'
   | 'unsupported_wallet'
@@ -29,6 +35,7 @@ export interface X402PaymentReceipt {
   success?: boolean;
   payer?: string;
   transaction?: string;
+  txHash?: string;
   network?: string;
   errorReason?: string;
   [key: string]: unknown;
@@ -40,6 +47,7 @@ export interface PaidFetchOptions {
   expectedChainId?: number;
   onState?: (state: PaidActionState) => void;
   fetchImpl?: typeof fetch;
+  runId?: string;
 }
 
 type WalletClientWithAccount = WalletClient & {
@@ -69,10 +77,16 @@ export const PAID_ACTION_LABELS: Record<PaidActionState, string> = {
   idle: 'Pay 0.001 USDC & Run',
   preparing_payment: 'Preparing payment',
   awaiting_wallet_confirmation: 'Confirm in Base Account',
+  awaiting_wallet: 'Confirm in Base Account',
+  submitted: 'Submitted payment',
   settling_payment: 'Settling payment...',
+  settling: 'Settling payment...',
   running_action: 'Running action',
   succeeded: 'Paid & completed',
+  settled: 'Paid & completed',
+  settled_degraded: 'Paid (tx proof pending)',
   rejected: 'Payment rejected - retry',
+  cancelled: 'Payment cancelled - retry',
   failed: 'Payment failed - retry',
   insufficient_funds: 'Insufficient USDC on Base',
   unsupported_wallet: 'Connect wallet first',
@@ -89,15 +103,22 @@ export function paidActionCopy(state: PaidActionState): string {
     case 'preparing_payment':
       return 'Reading x402 payment requirements.';
     case 'awaiting_wallet_confirmation':
+    case 'awaiting_wallet':
       return 'Approve the USDC payment in your wallet.';
+    case 'submitted':
     case 'settling_payment':
+    case 'settling':
       return 'Waiting for facilitator settlement.';
     case 'running_action':
       return 'Payment settled; protected route is running.';
     case 'succeeded':
+    case 'settled':
       return 'Receipt saved to Fuel history.';
+    case 'settled_degraded':
+      return 'Payment settled; tx proof unavailable.';
     case 'rejected':
-      return 'Payment rejected.';
+    case 'cancelled':
+      return 'Payment cancelled.';
     case 'insufficient_funds':
       return 'Insufficient USDC on Base.';
     case 'unsupported_wallet':
@@ -132,15 +153,40 @@ export function mapPaidActionError(error: unknown): PaidActionError {
 
 export function decodeX402PaymentResponseHeader(header: string | null): X402PaymentReceipt | null {
   if (!header) return null;
+  let parsed: unknown = null;
   try {
-    return decodePaymentResponseHeader(header) as X402PaymentReceipt;
+    parsed = decodePaymentResponseHeader(header);
   } catch {
     try {
-      return JSON.parse(atob(header)) as X402PaymentReceipt;
+      parsed = JSON.parse(atob(header));
     } catch {
-      return null;
+      try {
+        parsed = JSON.parse(decodeURIComponent(header));
+      } catch {
+        try {
+          parsed = JSON.parse(header);
+        } catch {
+          parsed = null;
+        }
+      }
     }
   }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const raw = parsed as Record<string, unknown>;
+  const txHash =
+    typeof raw.txHash === 'string'
+      ? raw.txHash
+      : typeof raw.transaction === 'string'
+        ? raw.transaction
+        : undefined;
+  return {
+    ...raw,
+    success: raw.success !== false,
+    payer: typeof raw.payer === 'string' ? raw.payer : undefined,
+    txHash,
+    transaction: txHash,
+    network: typeof raw.network === 'string' ? raw.network : undefined,
+  };
 }
 
 export function hasSupportedWalletClient(walletClient?: WalletClient | null): walletClient is WalletClientWithAccount {
@@ -224,6 +270,7 @@ export async function runX402PaidFetch<TBody = unknown>({
   expectedChainId = 8453,
   onState,
   fetchImpl = fetch,
+  runId,
 }: PaidFetchOptions): Promise<PaidActionResult<TBody>> {
   if (!hasSupportedWalletClient(walletClient)) {
     throw new PaidActionError('unsupported_wallet', 'Connect wallet first');
@@ -247,7 +294,7 @@ export async function runX402PaidFetch<TBody = unknown>({
         primaryType: message.primaryType,
         message: message.message,
       } as never);
-      setState('settling_payment');
+      setState('submitted');
       return signature;
     },
   };
@@ -259,12 +306,16 @@ export async function runX402PaidFetch<TBody = unknown>({
   });
 
   setState('settling_payment');
+  const targetRoute = runId
+    ? `${route}${route.includes('?') ? '&' : '?'}runId=${encodeURIComponent(runId)}`
+    : route;
   const paidFetch = wrapFetchWithPayment(createX402CompatibilityFetch(fetchImpl), client);
   let response: Response;
   try {
-    response = await paidFetch(resolvePaidRoute(route), {
+    response = await paidFetch(resolvePaidRoute(targetRoute), {
       headers: {
         'Accept': 'application/json',
+        ...(runId ? { 'X-Idempotency-Key': runId } : {}),
       },
     });
   } catch (error) {
@@ -295,13 +346,37 @@ export async function runX402PaidFetch<TBody = unknown>({
     body = {} as TBody;
   }
 
+  const rawBody = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+  const bodyIndicatesPaid = Boolean(rawBody.ok || rawBody.settlement === 'settled' || rawBody.success);
+  const effectiveReceipt: X402PaymentReceipt | null =
+    receipt ||
+    (bodyIndicatesPaid
+      ? {
+          success: true,
+          payer: typeof rawBody.payer === 'string' ? rawBody.payer : undefined,
+          txHash:
+            typeof rawBody.txHash === 'string'
+              ? rawBody.txHash
+              : typeof rawBody.transaction === 'string'
+                ? rawBody.transaction
+                : undefined,
+          transaction:
+            typeof rawBody.txHash === 'string'
+              ? rawBody.txHash
+              : typeof rawBody.transaction === 'string'
+                ? rawBody.transaction
+                : undefined,
+          network: typeof rawBody.network === 'string' ? rawBody.network : undefined,
+        }
+      : null);
+
   setState('succeeded');
   return {
     body,
     response,
-    receipt,
+    receipt: effectiveReceipt,
     paymentResponseHeader,
-    paid: Boolean(receipt?.success || paymentResponseHeader),
+    paid: Boolean(effectiveReceipt?.success || paymentResponseHeader || bodyIndicatesPaid),
     completedAt: new Date().toISOString(),
   };
 }

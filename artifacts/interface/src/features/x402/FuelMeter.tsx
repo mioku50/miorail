@@ -78,13 +78,24 @@ export function FuelMeter() {
   const builderLabel = x402?.builderCodeConfigured ? 'configured' : 'missing';
   const attributionLabel = x402?.builderCodeAttribution === 'attached' ? 'attached' : 'unavailable';
   const smokeLabel = x402?.smokeRouteAvailable ? 'available' : 'unavailable';
-  const smokeReceiptTx = smokeResult?.receipt?.transaction || null;
+  const bodyData = (smokeResult?.body && typeof smokeResult.body === 'object' ? smokeResult.body : {}) as Record<string, unknown>;
+  const smokeReceiptTx =
+    smokeResult?.receipt?.transaction ||
+    smokeResult?.receipt?.txHash ||
+    (typeof bodyData.txHash === 'string' ? bodyData.txHash : null);
   const smokeLedgerEntry = smokeResult && smokeReceiptTx
     ? ledger?.entries?.find((entry) => entry.txHash === smokeReceiptTx)
     : undefined;
   const smokeTxHash = smokeLedgerEntry?.txHash || smokeReceiptTx;
-  const smokeNetwork = smokeLedgerEntry?.network || smokeResult?.receipt?.network || x402?.network;
-  const smokePayer = smokeLedgerEntry?.details?.payer || smokeResult?.receipt?.payer || null;
+  const smokeNetwork =
+    smokeLedgerEntry?.network ||
+    smokeResult?.receipt?.network ||
+    (typeof bodyData.network === 'string' ? bodyData.network : undefined) ||
+    x402?.network;
+  const smokePayer =
+    smokeLedgerEntry?.details?.payer ||
+    smokeResult?.receipt?.payer ||
+    (typeof bodyData.payer === 'string' ? bodyData.payer : null);
   const smokeBaseScanUrl = baseScanTxUrl(smokeNetwork, smokeTxHash);
   const smokeCost = smokeLedgerEntry?.cost ? `${smokeLedgerEntry.cost} USDC` : '0.001 USDC';
   const smokeSettledAt = smokeLedgerEntry?.createdAt || smokeResult?.completedAt || null;

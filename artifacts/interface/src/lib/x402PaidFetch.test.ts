@@ -156,3 +156,32 @@ test('mapPaidActionError keeps unknown client errors fail-closed', () => {
   const mapped = mapPaidActionError(new Error('connector cannot signTypedData'));
   assert.strictEqual(mapped.state, 'unsupported_wallet');
 });
+
+test('runX402PaidFetch treats HTTP 200 with settled body as paid even if header missing', async () => {
+  let step = 0;
+  const mockFetch = async () => {
+    step++;
+    if (step === 1) {
+      return new Response(JSON.stringify(paymentRequired), { status: 402 });
+    }
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        settlement: 'settled',
+        payer: '0x2Ec6de17c7D14c76485e3bfc4BB5E653b657ADcc',
+        txHash: '0xc1e1eb6f8a984c3f5606fa8c71738a791a9816a117ec1852cf3834245b5c6c66',
+        network: 'eip155:8453',
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+  };
+
+  const result = await runX402PaidFetch({
+    route: '/api/x402/smoke-paid',
+    walletClient: wallet() as never,
+    fetchImpl: mockFetch as never,
+  });
+
+  assert.strictEqual(result.paid, true);
+  assert.strictEqual(result.receipt?.txHash, '0xc1e1eb6f8a984c3f5606fa8c71738a791a9816a117ec1852cf3834245b5c6c66');
+});

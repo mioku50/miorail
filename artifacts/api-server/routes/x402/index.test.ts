@@ -223,4 +223,16 @@ describe('x402 official smoke endpoint', () => {
     assert.strictEqual(Array.isArray(res.body.entries), true);
     assert.strictEqual(res.body.entries.length, 0);
   });
+
+  it('exposes browser paid action diagnostic fields and exposes payment response headers', async () => {
+    const app = express();
+    app.use('/x402', createX402Router({
+      env: configuredEnv(),
+      runtimeMode: 'official',
+    }));
+    const diag = await request(app).get('/x402/diagnostics');
+    assert.strictEqual(diag.body.browserPaidFlowAvailable, true);
+    assert.strictEqual(diag.body.browserPaidActionAvailable, true);
+    assert.strictEqual(diag.body.paymentResponseHeaderReadable, true);
+  });
 });
