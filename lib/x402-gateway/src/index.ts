@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction, type RequestHandler } from 'express';
+import { generateJwt } from '@coinbase/cdp-sdk/auth';
 import { X402PaymentRequired } from '@mioagent/x402-parser';
 import {
   canonicalUsdcForBaseChain,
@@ -64,12 +65,14 @@ export type X402RuntimeStatus =
   | 'simulated'
   | 'missing'
   | 'facilitator_auth_required'
+  | 'facilitator_auth_invalid'
   | 'facilitator_rate_limited'
   | 'facilitator_unreachable'
   | 'degraded';
 export type X402SettlementStatus = 'settled' | 'pending' | 'failed';
 export type SupportedX402Network = `eip155:${SupportedBaseChainId}`;
 export type BuilderCodeAttributionRole = 'seller' | 'buyer';
+export type X402FacilitatorAuthSource = 'bearer_token' | 'cdp_api_key_pair';
 
 export interface X402RuntimeConfig {
   status: X402RuntimeStatus;
@@ -84,6 +87,7 @@ export interface X402RuntimeConfig {
   amountAtomic: string;
   builderCode?: string;
   facilitatorAuthConfigured?: boolean;
+  authSource?: X402FacilitatorAuthSource;
   errorCode?: string;
   lastCheckedAt?: string;
   supportedKindsCount?: number;
@@ -140,11 +144,27 @@ export interface CreateX402MiddlewareOptions {
 export interface X402FacilitatorHealth {
   status: Extract<
     X402RuntimeStatus,
-    'connected' | 'facilitator_auth_required' | 'facilitator_rate_limited' | 'facilitator_unreachable' | 'degraded'
+    | 'connected'
+    | 'facilitator_auth_required'
+    | 'facilitator_auth_invalid'
+    | 'facilitator_rate_limited'
+    | 'facilitator_unreachable'
+    | 'degraded'
   >;
   errorCode?: string;
   checkedAt: string;
   supportedKindsCount?: number;
+}
+
+type FacilitatorOperation = 'verify' | 'settle' | 'supported' | 'bazaar';
+
+interface X402FacilitatorAuthResolution {
+  configured: boolean;
+  source?: X402FacilitatorAuthSource;
+  token?: string;
+  apiKeyId?: string;
+  apiKeySecret?: string;
+  errorCode?: string;
 }
 
 export const DEFAULT_X402_AMOUNT_ATOMIC_USDC = '1000';
@@ -199,6 +219,16 @@ function bearer(value: string): string {
   return /^[A-Za-z]+ +/.test(value) ? value : `Bearer ${value}`;
 }
 
+function normalizeCdpApiKeySecret(value: string): string {
+  return value.includes('\\n') ? value.replace(/\\n/g, '\n') : value;
+}
+
+function cdpJwtTtlSeconds(env: NodeJS.ProcessEnv): number {
+  const raw = Number(env.X402_FACILITATOR_JWT_TTL_SECONDS);
+  if (!Number.isFinite(raw) || raw <= 0) return 120;
+  return Math.min(Math.max(Math.floor(raw), 30), 120);
+}
+
 function sanitizedStatusCode(error: unknown): number | undefined {
   let current: unknown = error;
   while (current) {
@@ -216,6 +246,9 @@ function sanitizedStatusCode(error: unknown): number | undefined {
 }
 
 export function classifyX402FacilitatorError(error: unknown): Pick<X402FacilitatorHealth, 'status' | 'errorCode'> {
+  if (error instanceof X402FacilitatorAuthError) {
+    return { status: error.status, errorCode: error.errorCode };
+  }
   const statusCode = sanitizedStatusCode(error);
   if (statusCode === 401 || statusCode === 403) {
     return { status: 'facilitator_auth_required', errorCode: `facilitator_${statusCode}` };
@@ -239,28 +272,178 @@ export function classifyX402FacilitatorError(error: unknown): Pick<X402Facilitat
   return { status: 'degraded', errorCode: statusCode ? `facilitator_${statusCode}` : 'facilitator_error' };
 }
 
+class X402FacilitatorAuthError extends Error {
+  readonly status: Extract<X402RuntimeStatus, 'facilitator_auth_required' | 'facilitator_auth_invalid'>;
+  readonly errorCode: string;
+
+  constructor(
+    status: Extract<X402RuntimeStatus, 'facilitator_auth_required' | 'facilitator_auth_invalid'>,
+    errorCode: string,
+  ) {
+    super(`x402 facilitator auth unavailable: ${errorCode}`);
+    this.name = 'X402FacilitatorAuthError';
+    this.status = status;
+    this.errorCode = errorCode;
+  }
+}
+
+export function resolveX402FacilitatorAuth(
+  env: NodeJS.ProcessEnv = process.env,
+): X402FacilitatorAuthResolution {
+  const token = firstConfigured(env.X402_FACILITATOR_AUTH_TOKEN);
+  if (token) {
+    return {
+      configured: true,
+      source: 'bearer_token',
+      token,
+    };
+  }
+
+  const legacyBearer = firstConfigured(env.X402_FACILITATOR_API_KEY, env.CDP_API_KEY);
+  if (legacyBearer) {
+    return {
+      configured: true,
+      source: 'bearer_token',
+      token: legacyBearer,
+    };
+  }
+
+  const apiKeyId = firstConfigured(env.CDP_API_KEY_ID);
+  const apiKeySecret = firstConfigured(env.CDP_API_KEY_SECRET);
+  if (apiKeyId && apiKeySecret) {
+    return {
+      configured: true,
+      source: 'cdp_api_key_pair',
+      apiKeyId,
+      apiKeySecret: normalizeCdpApiKeySecret(apiKeySecret),
+    };
+  }
+  if (apiKeyId || apiKeySecret) {
+    return {
+      configured: false,
+      source: 'cdp_api_key_pair',
+      errorCode: 'cdp_api_key_pair_incomplete',
+    };
+  }
+  return { configured: false };
+}
+
 export function x402FacilitatorAuthConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
-  return !!firstConfigured(
-    env.X402_FACILITATOR_AUTH_TOKEN,
-    env.X402_FACILITATOR_API_KEY,
-    env.CDP_API_KEY,
-  );
+  return resolveX402FacilitatorAuth(env).configured;
+}
+
+export function x402FacilitatorAuthSource(
+  env: NodeJS.ProcessEnv = process.env,
+): X402FacilitatorAuthSource | undefined {
+  const auth = resolveX402FacilitatorAuth(env);
+  return auth.configured ? auth.source : undefined;
+}
+
+const X402_CDP_JWT_REFRESH_SKEW_MS = 15_000;
+
+let x402CdpJwtCache = new Map<
+  string,
+  {
+    value: string;
+    expiresAt: number;
+  }
+>();
+
+function facilitatorEndpoint(config: X402RuntimeConfig, operation: FacilitatorOperation): {
+  method: string;
+  host: string;
+  path: string;
+} {
+  if (!config.facilitatorUrl) {
+    throw new X402FacilitatorAuthError('facilitator_auth_required', 'facilitator_url_missing');
+  }
+  const parsed = new URL(config.facilitatorUrl);
+  const basePath = parsed.pathname.replace(/\/+$/, '');
+  const endpointPath = `${basePath}/${operation}`.replace(/\/{2,}/g, '/');
+  return {
+    method: operation === 'supported' || operation === 'bazaar' ? 'GET' : 'POST',
+    host: parsed.host,
+    path: endpointPath.startsWith('/') ? endpointPath : `/${endpointPath}`,
+  };
+}
+
+async function cdpJwtAuthorizationHeader(
+  config: X402RuntimeConfig,
+  env: NodeJS.ProcessEnv,
+  operation: FacilitatorOperation,
+  auth: X402FacilitatorAuthResolution,
+): Promise<string> {
+  if (!auth.apiKeyId || !auth.apiKeySecret) {
+    throw new X402FacilitatorAuthError('facilitator_auth_required', 'cdp_api_key_pair_incomplete');
+  }
+
+  const endpoint = facilitatorEndpoint(config, operation);
+  const expiresIn = cdpJwtTtlSeconds(env);
+  const key = [
+    auth.source,
+    auth.apiKeyId,
+    endpoint.method,
+    endpoint.host,
+    endpoint.path,
+    expiresIn,
+  ].join('|');
+  const cached = x402CdpJwtCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+
+  try {
+    const jwt = await generateJwt({
+      apiKeyId: auth.apiKeyId,
+      apiKeySecret: auth.apiKeySecret,
+      requestMethod: endpoint.method,
+      requestHost: endpoint.host,
+      requestPath: endpoint.path,
+      expiresIn,
+    });
+    const header = bearer(jwt);
+    x402CdpJwtCache.set(key, {
+      value: header,
+      expiresAt: Date.now() + expiresIn * 1000 - X402_CDP_JWT_REFRESH_SKEW_MS,
+    });
+    return header;
+  } catch {
+    throw new X402FacilitatorAuthError('facilitator_auth_invalid', 'cdp_jwt_generation_failed');
+  }
 }
 
 export function createX402FacilitatorAuthHeaders(
   env: NodeJS.ProcessEnv = process.env,
+  config?: X402RuntimeConfig,
 ): FacilitatorConfig['createAuthHeaders'] | undefined {
-  const token = firstConfigured(env.X402_FACILITATOR_AUTH_TOKEN);
-  const apiKey = firstConfigured(env.X402_FACILITATOR_API_KEY, env.CDP_API_KEY);
-  const authValue = token ? bearer(token) : apiKey ? bearer(apiKey) : undefined;
-  if (!authValue) return undefined;
   return async () => {
-    const headers = { Authorization: authValue };
+    const auth = resolveX402FacilitatorAuth(env);
+    if (!auth.configured) {
+      if (auth.errorCode) {
+        throw new X402FacilitatorAuthError('facilitator_auth_required', auth.errorCode);
+      }
+      return {
+        verify: {},
+        settle: {},
+        supported: {},
+        bazaar: {},
+      };
+    }
+    const authorizationFor = async (operation: FacilitatorOperation) => {
+      if (auth.source === 'bearer_token' && auth.token) return bearer(auth.token);
+      if (!config) {
+        throw new X402FacilitatorAuthError('facilitator_auth_required', 'facilitator_url_missing');
+      }
+      return cdpJwtAuthorizationHeader(config, env, operation, auth);
+    };
+    const headersFor = async (operation: FacilitatorOperation) => ({
+      Authorization: await authorizationFor(operation),
+    });
     return {
-      verify: headers,
-      settle: headers,
-      supported: headers,
-      bazaar: headers,
+      verify: await headersFor('verify'),
+      settle: await headersFor('settle'),
+      supported: await headersFor('supported'),
+      bazaar: await headersFor('bazaar'),
     };
   };
 }
@@ -353,6 +536,7 @@ export function x402ConfigFromEnv(env: NodeJS.ProcessEnv = process.env): X402Run
     amountAtomic,
     builderCode,
     facilitatorAuthConfigured: x402FacilitatorAuthConfigured(env),
+    authSource: x402FacilitatorAuthSource(env),
   };
 }
 
@@ -496,11 +680,12 @@ let x402HealthInflight:
   | undefined;
 
 function facilitatorCacheKey(config: X402RuntimeConfig, env: NodeJS.ProcessEnv): string {
+  const auth = resolveX402FacilitatorAuth(env);
   return [
     config.facilitatorUrl || '',
     config.network || '',
     config.payTo || '',
-    x402FacilitatorAuthConfigured(env) ? 'auth' : 'anon',
+    auth.configured ? auth.source || 'auth' : auth.errorCode || 'anon',
   ].join('|');
 }
 
@@ -516,7 +701,7 @@ function cacheHealth(key: string, value: X402FacilitatorHealth): X402Facilitator
 function createHTTPFacilitatorClient(config: X402RuntimeConfig, env: NodeJS.ProcessEnv): HTTPFacilitatorClient {
   return new HTTPFacilitatorClient({
     url: config.facilitatorUrl,
-    createAuthHeaders: createX402FacilitatorAuthHeaders(env),
+    createAuthHeaders: createX402FacilitatorAuthHeaders(env, config),
   });
 }
 
@@ -600,6 +785,15 @@ export async function probeX402FacilitatorStatus(
 export async function x402StatusFromEnv(env: NodeJS.ProcessEnv = process.env): Promise<X402RuntimeConfig> {
   const config = x402ConfigFromEnv(env);
   if (!config.configured) return config;
+  const auth = resolveX402FacilitatorAuth(env);
+  if (auth.errorCode === 'cdp_api_key_pair_incomplete') {
+    return {
+      ...config,
+      status: 'facilitator_auth_required',
+      errorCode: auth.errorCode,
+      lastCheckedAt: new Date().toISOString(),
+    };
+  }
   const health = await probeX402FacilitatorStatus(config, env);
   return {
     ...config,
@@ -613,6 +807,7 @@ export async function x402StatusFromEnv(env: NodeJS.ProcessEnv = process.env): P
 export function clearX402FacilitatorStatusForTests(): void {
   x402HealthCache = undefined;
   x402HealthInflight = undefined;
+  x402CdpJwtCache = new Map();
 }
 
 function createOfficialX402HttpServer(

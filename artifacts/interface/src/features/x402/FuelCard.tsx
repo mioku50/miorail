@@ -9,10 +9,11 @@ export function FuelCard() {
   const status = statusData?.x402?.status;
   const isLive = status === 'connected' || status === 'configured';
   const isMissing = status === 'missing';
-  const isUnavailable = status === 'facilitator_auth_required' || status === 'facilitator_rate_limited' || status === 'facilitator_unreachable' || status === 'degraded';
+  const isUnavailable = status === 'facilitator_auth_required' || status === 'facilitator_auth_invalid' || status === 'facilitator_rate_limited' || status === 'facilitator_unreachable' || status === 'degraded';
   const label =
     isLive ? 'Connected' :
     status === 'facilitator_auth_required' ? 'Auth required' :
+    status === 'facilitator_auth_invalid' ? 'Auth invalid' :
     status === 'facilitator_rate_limited' ? 'Rate limited' :
     status === 'facilitator_unreachable' ? 'Unavailable' :
     status === 'degraded' ? 'Degraded' :

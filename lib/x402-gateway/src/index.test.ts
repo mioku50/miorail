@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
+import { generateKeyPairSync } from 'node:crypto';
 import express, { Request, Response as ExpressResponse } from 'express';
 import request from 'supertest';
 import { encodeBuilderCodeSuffix } from '@x402/extensions/builder-code';
@@ -7,15 +8,26 @@ import {
   x402Gateway,
   MockFacilitator,
   createX402RoutesConfig,
+  createX402FacilitatorAuthHeaders,
   createSafeOfficialX402Middleware,
   clearX402FacilitatorStatusForTests,
   classifyX402FacilitatorError,
   paymentRequiredFromRuntimeConfig,
+  resolveX402FacilitatorAuth,
   settlementRecordFromSettleResult,
   verifyBuilderCodeAttributionFromCalldata,
   x402ConfigFromEnv,
   x402StatusFromEnv,
 } from './index.js';
+
+function testEcPrivateKey(): string {
+  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  return privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
+}
+
+function decodeJwtPayload(token: string): Record<string, unknown> {
+  return JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+}
 
 describe('x402-gateway', () => {
   const paymentRequired = {
@@ -122,6 +134,116 @@ describe('x402-gateway', () => {
       classifyX402FacilitatorError(new Error('fetch failed ECONNRESET')),
       { status: 'facilitator_unreachable', errorCode: 'facilitator_network' },
     );
+  });
+
+  it('keeps explicit bearer token override ahead of CDP API key pair auth', async () => {
+    clearX402FacilitatorStatusForTests();
+    const config = x402ConfigFromEnv({
+      X402_FACILITATOR_URL: 'https://api.cdp.coinbase.com/platform/v2/x402',
+      X402_PAYTO_ADDRESS: '0x1111111111111111111111111111111111111111',
+      X402_NETWORK: 'eip155:8453',
+      X402_FACILITATOR_AUTH_TOKEN: 'override-token',
+      CDP_API_KEY_ID: 'organizations/example/apiKeys/key',
+      CDP_API_KEY_SECRET: testEcPrivateKey(),
+    });
+    const auth = resolveX402FacilitatorAuth({
+      X402_FACILITATOR_AUTH_TOKEN: 'override-token',
+      CDP_API_KEY_ID: 'organizations/example/apiKeys/key',
+      CDP_API_KEY_SECRET: testEcPrivateKey(),
+    });
+    const headers = await createX402FacilitatorAuthHeaders({
+      X402_FACILITATOR_AUTH_TOKEN: 'override-token',
+      CDP_API_KEY_ID: 'organizations/example/apiKeys/key',
+      CDP_API_KEY_SECRET: testEcPrivateKey(),
+    }, config)?.();
+
+    assert.strictEqual(auth.configured, true);
+    assert.strictEqual(auth.source, 'bearer_token');
+    assert.strictEqual(config.authSource, 'bearer_token');
+    assert.strictEqual(headers?.supported.Authorization, 'Bearer override-token');
+    assert.strictEqual(headers?.verify.Authorization, 'Bearer override-token');
+  });
+
+  it('generates CDP Bearer JWT auth headers for facilitator endpoints', async () => {
+    clearX402FacilitatorStatusForTests();
+    const secret = testEcPrivateKey();
+    const env = {
+      X402_FACILITATOR_URL: 'https://api.cdp.coinbase.com/platform/v2/x402?ignored=secret',
+      X402_PAYTO_ADDRESS: '0x1111111111111111111111111111111111111111',
+      X402_NETWORK: 'eip155:8453',
+      CDP_API_KEY_ID: 'organizations/example/apiKeys/key',
+      CDP_API_KEY_SECRET: secret.replace(/\n/g, '\\n'),
+    };
+    const config = x402ConfigFromEnv(env);
+    const headers = await createX402FacilitatorAuthHeaders(env, config)?.();
+    const supportedJwt = headers?.supported.Authorization?.replace(/^Bearer +/, '');
+    const settleJwt = headers?.settle.Authorization?.replace(/^Bearer +/, '');
+    assert.ok(supportedJwt);
+    assert.ok(settleJwt);
+    assert.notStrictEqual(supportedJwt, settleJwt);
+    assert.strictEqual(config.facilitatorAuthConfigured, true);
+    assert.strictEqual(config.authSource, 'cdp_api_key_pair');
+
+    const supportedPayload = decodeJwtPayload(supportedJwt);
+    assert.strictEqual(supportedPayload.sub, 'organizations/example/apiKeys/key');
+    assert.deepStrictEqual(supportedPayload.uris, ['GET api.cdp.coinbase.com/platform/v2/x402/supported']);
+
+    const settlePayload = decodeJwtPayload(settleJwt);
+    assert.deepStrictEqual(settlePayload.uris, ['POST api.cdp.coinbase.com/platform/v2/x402/settle']);
+    assert.strictEqual(JSON.stringify(headers).includes(secret), false);
+  });
+
+  it('classifies incomplete CDP API key pair safely without probing facilitator', async () => {
+    clearX402FacilitatorStatusForTests();
+    const originalFetch = globalThis.fetch;
+    let called = false;
+    globalThis.fetch = async () => {
+      called = true;
+      return new globalThis.Response('{}', { status: 200 });
+    };
+    try {
+      const status = await x402StatusFromEnv({
+        X402_FACILITATOR_URL: 'https://api.cdp.coinbase.com/platform/v2/x402',
+        X402_PAYTO_ADDRESS: '0x1111111111111111111111111111111111111111',
+        X402_NETWORK: 'eip155:8453',
+        CDP_API_KEY_ID: 'organizations/example/apiKeys/key',
+      });
+      assert.strictEqual(status.status, 'facilitator_auth_required');
+      assert.strictEqual(status.errorCode, 'cdp_api_key_pair_incomplete');
+      assert.strictEqual(status.facilitatorAuthConfigured, false);
+      assert.strictEqual(status.authSource, undefined);
+      assert.strictEqual(called, false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      clearX402FacilitatorStatusForTests();
+    }
+  });
+
+  it('classifies invalid CDP API key secret without crashing startup', async () => {
+    clearX402FacilitatorStatusForTests();
+    const originalFetch = globalThis.fetch;
+    let called = false;
+    globalThis.fetch = async () => {
+      called = true;
+      return new globalThis.Response('{}', { status: 200 });
+    };
+    try {
+      const status = await x402StatusFromEnv({
+        X402_FACILITATOR_URL: 'https://api.cdp.coinbase.com/platform/v2/x402',
+        X402_PAYTO_ADDRESS: '0x1111111111111111111111111111111111111111',
+        X402_NETWORK: 'eip155:8453',
+        CDP_API_KEY_ID: 'organizations/example/apiKeys/key',
+        CDP_API_KEY_SECRET: 'not-a-valid-cdp-secret',
+      });
+      assert.strictEqual(status.status, 'facilitator_auth_invalid');
+      assert.strictEqual(status.errorCode, 'cdp_jwt_generation_failed');
+      assert.strictEqual(status.facilitatorAuthConfigured, true);
+      assert.strictEqual(status.authSource, 'cdp_api_key_pair');
+      assert.strictEqual(called, false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      clearX402FacilitatorStatusForTests();
+    }
   });
 
   it('reports facilitator auth required when configured facilitator returns 401', async () => {

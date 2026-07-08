@@ -1,5 +1,6 @@
 import test, { describe, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert';
+import { generateKeyPairSync } from 'node:crypto';
 import request from 'supertest';
 import { app } from '../app.js';
 import { clearTokenSecurityCacheForTests } from '@mioagent/data-providers';
@@ -27,6 +28,15 @@ const DEFAULT_BASE_MCP_AUTH = {
   needsReauth: false,
   userScoped: true as const,
 };
+
+function testEcPrivateKey(): string {
+  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  return privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
+}
+
+function decodeJwtPayload(token: string): Record<string, unknown> {
+  return JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+}
 
 describe('Status API', () => {
   beforeEach(() => {
@@ -203,6 +213,7 @@ describe('Status API', () => {
     assert.strictEqual(response.body.x402.payToConfigured, true);
     assert.strictEqual(response.body.x402.builderCodeConfigured, true);
     assert.strictEqual(response.body.x402.facilitatorAuthConfigured, true);
+    assert.strictEqual(response.body.x402.authSource, 'bearer_token');
     assert.strictEqual(response.body.x402.supportedKindsCount, 1);
     assert.strictEqual(JSON.stringify(response.body.x402).includes('facilitator.example.test'), false);
     assert.strictEqual(JSON.stringify(response.body.x402).includes('secret-token'), false);
@@ -236,6 +247,7 @@ describe('Status API', () => {
     assert.strictEqual(response.body.x402.payToConfigured, true);
     assert.strictEqual(response.body.x402.builderCodeConfigured, true);
     assert.strictEqual(response.body.x402.errorCode, 'facilitator_401');
+    assert.strictEqual(response.body.x402.authSource, 'bearer_token');
     assert.strictEqual(JSON.stringify(response.body.x402).includes('url-secret'), false);
     assert.strictEqual(JSON.stringify(response.body.x402).includes('secret-token'), false);
 
@@ -244,6 +256,65 @@ describe('Status API', () => {
     restoreEnv('X402_NETWORK', origNetwork);
     restoreEnv('BUILDER_CODE', origBuilderCode);
     restoreEnv('X402_FACILITATOR_AUTH_TOKEN', origAuthToken);
+    global.fetch = ORIGINAL_FETCH;
+  });
+
+  test('GET /api/status reports CDP key-pair x402 auth source without leaking JWT or secret', async () => {
+    const origFacilitator = process.env.X402_FACILITATOR_URL;
+    const origPayTo = process.env.X402_PAYTO_ADDRESS;
+    const origNetwork = process.env.X402_NETWORK;
+    const origBuilderCode = process.env.BUILDER_CODE;
+    const origAuthToken = process.env.X402_FACILITATOR_AUTH_TOKEN;
+    const origApiKey = process.env.X402_FACILITATOR_API_KEY;
+    const origCdpApiKey = process.env.CDP_API_KEY;
+    const origCdpId = process.env.CDP_API_KEY_ID;
+    const origCdpSecret = process.env.CDP_API_KEY_SECRET;
+    const secret = testEcPrivateKey();
+    process.env.X402_FACILITATOR_URL = 'https://api.cdp.coinbase.com/platform/v2/x402?token=url-secret';
+    process.env.X402_PAYTO_ADDRESS = '0x1111111111111111111111111111111111111111';
+    process.env.X402_NETWORK = 'eip155:8453';
+    process.env.BUILDER_CODE = 'miorail';
+    delete process.env.X402_FACILITATOR_AUTH_TOKEN;
+    delete process.env.X402_FACILITATOR_API_KEY;
+    delete process.env.CDP_API_KEY;
+    process.env.CDP_API_KEY_ID = 'organizations/example/apiKeys/key';
+    process.env.CDP_API_KEY_SECRET = secret.replace(/\n/g, '\\n');
+    global.fetch = async (input, init) => {
+      assert.ok(String(input).endsWith('/supported'));
+      const authorization = (init?.headers as Record<string, string>).Authorization;
+      assert.ok(authorization.startsWith('Bearer '));
+      const jwt = authorization.replace(/^Bearer +/, '');
+      const payload = decodeJwtPayload(jwt);
+      assert.deepStrictEqual(payload.uris, ['GET api.cdp.coinbase.com/platform/v2/x402/supported']);
+      return new Response(JSON.stringify({
+        kinds: [{ x402Version: 2, scheme: 'exact', network: 'eip155:8453' }],
+        extensions: [],
+        signers: {},
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.x402.status, 'connected');
+    assert.strictEqual(response.body.x402.facilitatorAuthConfigured, true);
+    assert.strictEqual(response.body.x402.authSource, 'cdp_api_key_pair');
+    assert.strictEqual(JSON.stringify(response.body.x402).includes('url-secret'), false);
+    assert.strictEqual(JSON.stringify(response.body.x402).includes('organizations/example/apiKeys/key'), false);
+    assert.strictEqual(JSON.stringify(response.body.x402).includes(secret), false);
+    assert.strictEqual(JSON.stringify(response.body.x402).includes('Bearer '), false);
+
+    restoreEnv('X402_FACILITATOR_URL', origFacilitator);
+    restoreEnv('X402_PAYTO_ADDRESS', origPayTo);
+    restoreEnv('X402_NETWORK', origNetwork);
+    restoreEnv('BUILDER_CODE', origBuilderCode);
+    restoreEnv('X402_FACILITATOR_AUTH_TOKEN', origAuthToken);
+    restoreEnv('X402_FACILITATOR_API_KEY', origApiKey);
+    restoreEnv('CDP_API_KEY', origCdpApiKey);
+    restoreEnv('CDP_API_KEY_ID', origCdpId);
+    restoreEnv('CDP_API_KEY_SECRET', origCdpSecret);
     global.fetch = ORIGINAL_FETCH;
   });
 

@@ -23,11 +23,12 @@ export function FuelMeter() {
   const status = statusData?.x402?.status;
   const isLive = status === 'connected' || status === 'configured';
   const isMissing = status === 'missing';
-  const isUnavailable = status === 'facilitator_auth_required' || status === 'facilitator_rate_limited' || status === 'facilitator_unreachable' || status === 'degraded';
+  const isUnavailable = status === 'facilitator_auth_required' || status === 'facilitator_auth_invalid' || status === 'facilitator_rate_limited' || status === 'facilitator_unreachable' || status === 'degraded';
   const badgeState = isLive ? 'live' : isMissing ? 'missing' : 'mock';
   const badgeLabel =
     isLive ? 'connected' :
     status === 'facilitator_auth_required' ? 'auth required' :
+    status === 'facilitator_auth_invalid' ? 'auth invalid' :
     status === 'facilitator_rate_limited' ? 'rate limited' :
     status === 'facilitator_unreachable' ? 'unreachable' :
     status === 'degraded' ? 'degraded' :
@@ -40,6 +41,8 @@ export function FuelMeter() {
       ? 'Real x402 settlement records are read from x402_receipts.'
       : status === 'facilitator_auth_required'
         ? 'x402 facilitator rejected /supported. Configure facilitator auth; paid routes fail closed without crashing the API.'
+      : status === 'facilitator_auth_invalid'
+        ? 'x402 facilitator auth could not be generated. Check CDP API key ID/secret formatting; paid routes fail closed.'
       : status === 'facilitator_rate_limited'
         ? 'x402 facilitator is rate-limited. Paid routes fail closed until the facilitator recovers.'
       : status === 'facilitator_unreachable' || status === 'degraded'

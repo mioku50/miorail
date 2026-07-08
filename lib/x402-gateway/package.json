@@ -11,6 +11,7 @@
     "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
+    "@coinbase/cdp-sdk": "1.51.2",
     "@mioagent/security": "workspace:*",
     "@mioagent/x402-parser": "workspace:*",
     "@x402/core": "2.17.0",

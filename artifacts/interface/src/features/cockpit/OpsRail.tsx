@@ -51,10 +51,11 @@ export function OpsRail({ onClose }: OpsRailProps) {
   const mcpReturnTo = typeof window === 'undefined' ? '/' : window.location.pathname || '/';
   const x402Status = sd?.x402?.status;
   const x402Live = x402Status === 'connected' || x402Status === 'configured';
-  const x402Unavailable = x402Status === 'facilitator_auth_required' || x402Status === 'facilitator_rate_limited' || x402Status === 'facilitator_unreachable' || x402Status === 'degraded';
+  const x402Unavailable = x402Status === 'facilitator_auth_required' || x402Status === 'facilitator_auth_invalid' || x402Status === 'facilitator_rate_limited' || x402Status === 'facilitator_unreachable' || x402Status === 'degraded';
   const x402RailLabel =
     x402Live ? 'live' :
     x402Status === 'facilitator_auth_required' ? 'auth' :
+    x402Status === 'facilitator_auth_invalid' ? 'invalid' :
     x402Status === 'facilitator_rate_limited' ? 'limited' :
     x402Status === 'facilitator_unreachable' ? 'unreachable' :
     x402Status === 'degraded' ? 'degraded' :

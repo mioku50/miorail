@@ -394,6 +394,7 @@ export function ConfigureView() {
               label={
                 sd.x402.status === 'connected' || sd.x402.status === 'configured' ? 'Connected' :
                 sd.x402.status === 'facilitator_auth_required' ? 'Auth required' :
+                sd.x402.status === 'facilitator_auth_invalid' ? 'Auth invalid' :
                 sd.x402.status === 'facilitator_rate_limited' ? 'Rate limited' :
                 sd.x402.status === 'facilitator_unreachable' ? 'Unreachable' :
                 sd.x402.status === 'degraded' ? 'Degraded' :
