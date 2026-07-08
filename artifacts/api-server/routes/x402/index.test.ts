@@ -97,6 +97,7 @@ describe('x402 official smoke endpoint', () => {
     assert.strictEqual(res.body.middlewareMode, 'official');
     assert.strictEqual(res.body.officialMiddlewareEnabled, true);
     assert.strictEqual(res.body.mockFacilitatorEnabled, false);
+    assert.strictEqual(res.body.browserPaidFlowAvailable, true);
     assert.strictEqual(res.body.configured, true);
     assert.strictEqual(res.body.network, 'eip155:8453');
     assert.strictEqual(res.body.chainId, 8453);

@@ -1,5 +1,8 @@
 import { useStatus, useX402Ledger, useX402Pricing } from '@mioagent/api-client-react';
 import { StateBadge } from '@mioagent/ui';
+import { useState } from 'react';
+import { PaidActionButton } from './PaidActionButton';
+import type { PaidActionError, PaidActionResult } from '../../lib/x402PaidFetch';
 
 function Metric({ label, amount, sub }: { label: string; amount: string; sub: string }) {
   return (
@@ -13,12 +16,27 @@ function Metric({ label, amount, sub }: { label: string; amount: string; sub: st
   );
 }
 
+function shortHash(value?: string | null): string {
+  if (!value) return '';
+  return `${value.slice(0, 8)}...${value.slice(-6)}`;
+}
+
+function baseScanTxUrl(network?: string, txHash?: string | null): string | null {
+  if (!txHash) return null;
+  if (network === 'eip155:84532') return `https://sepolia.basescan.org/tx/${txHash}`;
+  if (network === 'eip155:8453') return `https://basescan.org/tx/${txHash}`;
+  return null;
+}
+
 // x402 Fuel Meter — the pay-per-action differentiator.
 // Shows honest empty states and operator guidance without fabricated numbers.
 export function FuelMeter() {
   const { data: statusData } = useStatus();
-  const { data: ledger } = useX402Ledger();
+  const { data: ledger, refetch: refetchLedger } = useX402Ledger();
   const { data: pricing } = useX402Pricing();
+  const [smokeResult, setSmokeResult] = useState<PaidActionResult | null>(null);
+  const [smokeError, setSmokeError] = useState<string | null>(null);
+  const [ledgerRefreshWarning, setLedgerRefreshWarning] = useState<string | null>(null);
 
   const x402 = statusData?.x402;
   const status = x402?.status;
@@ -60,6 +78,30 @@ export function FuelMeter() {
   const builderLabel = x402?.builderCodeConfigured ? 'configured' : 'missing';
   const attributionLabel = x402?.builderCodeAttribution === 'attached' ? 'attached' : 'unavailable';
   const smokeLabel = x402?.smokeRouteAvailable ? 'available' : 'unavailable';
+  const smokeReceiptTx = smokeResult?.receipt?.transaction || null;
+  const smokeLedgerEntry = smokeResult && smokeReceiptTx
+    ? ledger?.entries?.find((entry) => entry.txHash === smokeReceiptTx)
+    : undefined;
+  const smokeTxHash = smokeLedgerEntry?.txHash || smokeReceiptTx;
+  const smokeNetwork = smokeLedgerEntry?.network || smokeResult?.receipt?.network || x402?.network;
+  const smokePayer = smokeLedgerEntry?.details?.payer || smokeResult?.receipt?.payer || null;
+  const smokeBaseScanUrl = baseScanTxUrl(smokeNetwork, smokeTxHash);
+  const smokeCost = smokeLedgerEntry?.cost ? `${smokeLedgerEntry.cost} USDC` : '0.001 USDC';
+  const smokeSettledAt = smokeLedgerEntry?.createdAt || smokeResult?.completedAt || null;
+
+  async function handleSmokeSuccess(result: PaidActionResult) {
+    setSmokeResult(result);
+    setSmokeError(null);
+    setLedgerRefreshWarning(null);
+    const refreshed = await refetchLedger();
+    if (refreshed.isError) {
+      setLedgerRefreshWarning('Payment settled, but Fuel history refresh failed.');
+    }
+  }
+
+  function handleSmokeFailure(error: PaidActionError) {
+    setSmokeError(error.message);
+  }
 
   return (
     <main className="flex-1 bg-bg p-5 flex flex-col gap-4 overflow-y-auto select-none pb-16 md:pb-5">
@@ -119,6 +161,63 @@ export function FuelMeter() {
         <Metric label="Builder Code" amount={builderLabel} sub={attributionLabel} />
         <Metric label="Smoke route" amount={smokeLabel} sub={x402?.smokeRoute || '/api/x402/smoke-paid'} />
       </div>
+
+      <section className="bg-panel border border-line rounded-[var(--radius-lg)] p-4 shadow-[var(--shadow-card)]">
+        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 mb-1">
+              <div className="text-[11px] font-sans font-semibold tracking-[0.08em] uppercase text-ink-3">x402 Smoke Paid Test</div>
+              <span className="text-[10px] font-mono bg-panel-2 border border-line px-2 py-0.5 rounded-full text-ink-3">diagnostic</span>
+            </div>
+            <div className="text-[12px] text-ink-2 leading-relaxed font-sans">
+              Runs the production browser x402 flow against <span className="font-mono text-ink">/api/x402/smoke-paid</span>. The wallet signs the USDC authorization; the server never asks for a key and never broadcasts from Miorail.
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
+              <Metric label="Route" amount="/api/x402/smoke-paid" sub="protected" />
+              <Metric label="Cost" amount="0.001 USDC" sub="Base USDC" />
+              <Metric label="Middleware" amount={x402?.middlewareMode || 'unknown'} sub={x402?.mockFacilitatorEnabled ? 'mock' : 'official'} />
+              <Metric label="Browser flow" amount={isLive ? 'available' : 'blocked'} sub={x402?.smokeRouteAvailable ? 'smoke ready' : 'no route'} />
+            </div>
+          </div>
+          <div className="w-full lg:w-[260px] shrink-0">
+            <PaidActionButton
+              label="x402 Smoke Paid Test"
+              route="/api/x402/smoke-paid"
+              actionType="x402_smoke_paid"
+              category="tools"
+              costLabel="0.001 USDC"
+              disabled={!isLive || !x402?.smokeRouteAvailable}
+              onSuccess={handleSmokeSuccess}
+              onFailure={handleSmokeFailure}
+            />
+          </div>
+        </div>
+
+        {(smokeResult || smokeError || ledgerRefreshWarning) && (
+          <div className="mt-4 border-t border-line/50 pt-3">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-2 text-xs">
+              <Metric label="Status" amount={smokeError ? 'failed' : smokeLedgerEntry?.settlement || 'settled'} sub={smokeError || 'Receipt saved'} />
+              <Metric label="Payer" amount={smokePayer ? shortHash(smokePayer) : 'unknown'} sub="wallet" />
+              <Metric label="Amount" amount={smokeCost} sub="settled" />
+              <Metric label="Network" amount={smokeNetwork === 'eip155:8453' ? 'Base Mainnet' : smokeNetwork === 'eip155:84532' ? 'Base Sepolia' : 'unknown'} sub={smokeNetwork || 'none'} />
+              <div className="bg-panel-2 border border-line rounded-[var(--radius-md)] p-2.5">
+                <div className="text-[10px] font-sans uppercase tracking-[0.06em] text-ink-3">Tx proof</div>
+                {smokeTxHash && smokeBaseScanUrl ? (
+                  <a className="block mt-0.5 text-[12px] font-mono font-bold text-accent-2 hover:text-accent truncate" href={smokeBaseScanUrl} target="_blank" rel="noreferrer">
+                    {shortHash(smokeTxHash)}
+                  </a>
+                ) : (
+                  <div className="mt-0.5 text-[12px] text-warn font-sans">settled, tx proof unavailable</div>
+                )}
+              </div>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-ink-3">
+              {smokeSettledAt && <span className="font-mono">{new Date(smokeSettledAt).toLocaleString()}</span>}
+              {ledgerRefreshWarning && <span className="text-warn">{ledgerRefreshWarning}</span>}
+            </div>
+          </div>
+        )}
+      </section>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* USDC budget (onchain agent balance) */}

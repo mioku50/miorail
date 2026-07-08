@@ -125,6 +125,12 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
       middlewareMode: diagnostics.middlewareMode,
       officialMiddlewareEnabled: diagnostics.officialMiddlewareEnabled,
       mockFacilitatorEnabled: diagnostics.mockFacilitatorEnabled,
+      browserPaidFlowAvailable: Boolean(
+        diagnostics.configured &&
+        diagnostics.officialMiddlewareEnabled &&
+        diagnostics.smokeRouteAvailable &&
+        !diagnostics.mockFacilitatorEnabled,
+      ),
       configured: diagnostics.configured,
       network: diagnostics.network,
       chainId: diagnostics.chainId,
