@@ -161,7 +161,7 @@ describe('x402 official smoke endpoint', () => {
     assert.strictEqual(payload.x402Version, 2);
     assert.ok(payload.payload.authorization);
     assert.ok(payload.payload.signature);
-    assert.strictEqual(payload.payload.authorization.value, '1000');
+    assert.strictEqual((payload.payload.authorization as Record<string, unknown>).value, '1000');
   });
 
   it('returns safe 503 when facilitator auth is missing or rejected', async () => {
@@ -197,6 +197,9 @@ describe('x402 official smoke endpoint', () => {
     const attached = await request(attachedApp).get('/x402/diagnostics');
     assert.strictEqual(attached.body.builderCodeConfigured, true);
     assert.strictEqual(attached.body.builderCodeAttribution, 'attached');
+    assert.strictEqual(attached.body.eip712DomainAttached, true);
+    assert.strictEqual(attached.body.eip712DomainName, 'USD Coin');
+    assert.strictEqual(attached.body.eip712DomainVersion, '2');
 
     const unavailableApp = express();
     unavailableApp.use('/x402', createX402Router({
@@ -206,5 +209,17 @@ describe('x402 official smoke endpoint', () => {
     const unavailable = await request(unavailableApp).get('/x402/diagnostics');
     assert.strictEqual(unavailable.body.builderCodeConfigured, false);
     assert.strictEqual(unavailable.body.builderCodeAttribution, 'unavailable');
+  });
+
+  it('keeps ledger empty before paid settlement', async () => {
+    const app = express();
+    app.use('/x402', createX402Router({
+      env: configuredEnv(),
+      runtimeMode: 'official',
+    }));
+    const res = await request(app).get('/x402/ledger');
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(Array.isArray(res.body.entries), true);
+    assert.strictEqual(res.body.entries.length, 0);
   });
 });

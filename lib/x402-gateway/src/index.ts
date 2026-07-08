@@ -29,8 +29,27 @@ import { wrapFetchWithPayment } from '@x402/fetch';
 import { createPublicClient, http, type Hex, type PublicClient } from 'viem';
 import { base, baseSepolia } from 'viem/chains';
 
+import { DEFAULT_STABLECOINS } from '@x402/evm';
+
 export { ExactEvmScheme } from '@x402/evm';
 export { wrapFetchWithPayment } from '@x402/fetch';
+
+export function resolveEip712DomainExtra(network?: string, asset?: string): { name: string; version: string } {
+  if (network && asset) {
+    try {
+      const defaultAsset = (DEFAULT_STABLECOINS as Record<string, { address: string; name: string; version: string }>)[network];
+      if (defaultAsset && defaultAsset.address.toLowerCase() === asset.toLowerCase()) {
+        return {
+          name: defaultAsset.name,
+          version: defaultAsset.version,
+        };
+      }
+    } catch {
+      // fallback below
+    }
+  }
+  return { name: 'USD Coin', version: '2' };
+}
 
 export interface X402GatewayConfig {
   paymentRequired: X402PaymentRequired;
@@ -169,6 +188,9 @@ export interface X402MiddlewareDiagnostics {
   authSource?: X402FacilitatorAuthSource;
   smokeRoute: string;
   smokeRouteAvailable: boolean;
+  eip712DomainAttached: boolean;
+  eip712DomainName?: string;
+  eip712DomainVersion?: string;
   errorCode?: string;
   missingConfig: string[];
   warnings: string[];
@@ -579,6 +601,7 @@ export function legacyMockPaymentRequired(): X402PaymentRequired {
 
 export function paymentRequiredFromRuntimeConfig(config: X402RuntimeConfig): X402PaymentRequired {
   if (!config.payTo || !config.asset || !config.network) return legacyMockPaymentRequired();
+  const extraDomain = resolveEip712DomainExtra(config.network, config.asset);
   return {
     accepts: [
       {
@@ -588,10 +611,7 @@ export function paymentRequiredFromRuntimeConfig(config: X402RuntimeConfig): X40
         network: config.network,
         version: '2',
         maxTimeoutSeconds: 300,
-        extra: {
-          name: 'USD Coin',
-          version: '2',
-        },
+        extra: extraDomain,
       },
     ],
   };
@@ -606,6 +626,7 @@ export function createX402RoutesConfig(
     throw new Error(`x402 is not configured: ${config.missingConfig.join(', ')}`);
   }
 
+  const extraDomain = resolveEip712DomainExtra(config.network, config.asset);
   const routeConfig = {
     accepts: {
       scheme: 'exact',
@@ -613,17 +634,11 @@ export function createX402RoutesConfig(
       price: {
         asset: config.asset,
         amount: config.amountAtomic,
-        extra: {
-          name: 'USD Coin',
-          version: '2',
-        },
+        extra: extraDomain,
       },
       network: config.network,
       maxTimeoutSeconds: 300,
-      extra: {
-        name: 'USD Coin',
-        version: '2',
-      },
+      extra: extraDomain,
     },
     resource: routePath,
     description: 'Miorail x402 paid resource',
@@ -1023,6 +1038,7 @@ export function x402MiddlewareDiagnosticsFromEnv(
   const config = x402ConfigFromEnv(env);
   const middlewareMode = resolveX402MiddlewareMode(config, env, options.runtimeMode);
   const smokeRoute = options.smokeRoute || '/api/x402/smoke-paid';
+  const eip712Domain = resolveEip712DomainExtra(config.network, config.asset);
   return {
     middlewareMode,
     officialMiddlewareEnabled: middlewareMode === 'official',
@@ -1039,6 +1055,9 @@ export function x402MiddlewareDiagnosticsFromEnv(
     authSource: config.authSource,
     smokeRoute,
     smokeRouteAvailable: middlewareMode === 'official' && config.configured,
+    eip712DomainAttached: !!(eip712Domain.name && eip712Domain.version),
+    eip712DomainName: eip712Domain.name,
+    eip712DomainVersion: eip712Domain.version,
     errorCode: config.errorCode,
     missingConfig: config.missingConfig,
     warnings: config.warnings,

@@ -15,6 +15,7 @@ import {
   clearX402FacilitatorStatusForTests,
   classifyX402FacilitatorError,
   paymentRequiredFromRuntimeConfig,
+  resolveEip712DomainExtra,
   resolveX402FacilitatorAuth,
   settlementRecordFromSettleResult,
   verifyBuilderCodeAttributionFromCalldata,
@@ -400,7 +401,7 @@ describe('x402-gateway', () => {
     assert.strictEqual(payload.x402Version, 2);
     assert.ok(payload.payload.authorization);
     assert.ok(payload.payload.signature);
-    assert.strictEqual(payload.payload.authorization.value, '1000');
+    assert.strictEqual((payload.payload.authorization as Record<string, unknown>).value, '1000');
   });
 
   it('declares Builder Code seller extension in official route config', () => {
@@ -454,5 +455,11 @@ describe('x402-gateway', () => {
     assert.strictEqual(record.asset, config.asset);
     assert.strictEqual(record.attribution.sellerVerified, true);
     assert.strictEqual(record.checkedAt, '2026-07-08T00:00:00.000Z');
+  });
+
+  it('derives correct EIP-712 domain name and version for Base USDC', () => {
+    const domain = resolveEip712DomainExtra('eip155:8453', '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913');
+    assert.strictEqual(domain.name, 'USD Coin');
+    assert.strictEqual(domain.version, '2');
   });
 });

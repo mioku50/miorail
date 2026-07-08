@@ -136,6 +136,9 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
       authSource: diagnostics.authSource,
       smokeRoute: diagnostics.smokeRoute,
       smokeRouteAvailable: diagnostics.smokeRouteAvailable,
+      eip712DomainAttached: diagnostics.eip712DomainAttached,
+      eip712DomainName: diagnostics.eip712DomainName,
+      eip712DomainVersion: diagnostics.eip712DomainVersion,
       errorCode: diagnostics.errorCode,
       missingConfig: diagnostics.missingConfig,
       warnings: diagnostics.warnings,
@@ -145,18 +148,25 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
   router.get('/ledger', async (req: Request, res: Response, next) => {
     try {
       const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
-      const rows = await db.select()
-        .from(x402Receipts)
-        .orderBy(desc(x402Receipts.createdAt))
-        .limit(100);
+      let rows: any[] = [];
+      let auditContext: any[] = [];
+      try {
+        rows = await db.select()
+          .from(x402Receipts)
+          .orderBy(desc(x402Receipts.createdAt))
+          .limit(100);
+        auditContext = await db.select()
+          .from(auditLogs)
+          .where(eq(auditLogs.userId, userId))
+          .orderBy(desc(auditLogs.createdAt))
+          .limit(100);
+      } catch {
+        rows = [];
+        auditContext = [];
+      }
       const records = rows
         .map(receiptRecord)
         .filter((record) => !record.userId || record.userId === userId);
-      const auditContext = await db.select()
-        .from(auditLogs)
-        .where(eq(auditLogs.userId, userId))
-        .orderBy(desc(auditLogs.createdAt))
-        .limit(100);
       const auditByActionId = new Map(auditContext.map((log) => [log.actionId, log]));
 
       let totalSpent = 0;
