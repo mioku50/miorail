@@ -1,6 +1,7 @@
 import { ToolAggregator } from './aggregator.js';
 import { NativeToolProvider } from './native.js';
 import { BaseMcpToolProvider } from './base_mcp.js';
+import { DynamicBaseMcpToolProvider, listDynamicBaseMcpToolsFromClient } from './dynamic_base_mcp.js';
 import type { BaseMcpOAuthProvider } from '@mioagent/mcp';
 import * as settingsModule from '@mioagent/settings';
 import {
@@ -37,6 +38,10 @@ function baseMcpServerUrlFromEnv(): string | undefined {
   return canonical || legacy || undefined;
 }
 
+function baseMcpCatalogEnabled(toggles?: Record<string, boolean>): boolean {
+  return toggles?.base_mcp !== false && toggles?.['base-mcp'] !== false;
+}
+
 export async function createToolAggregatorForUser(userId: string, sessionSecret: string, options: CreateToolAggregatorOptions = {}): Promise<ToolAggregator> {
   const aggregator = new ToolAggregator();
   console.log("TRACE: createToolAggregatorForUser before getUserSettings");
@@ -69,7 +74,7 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
   const baseMcpServerUrl = options.baseMcpServerUrl || baseMcpServerUrlFromEnv();
   let mcpClient: any;
 
-  if (baseMcpEnabled && baseMcpServerUrl && options.baseMcpOAuthProvider) {
+  if (baseMcpEnabled && baseMcpServerUrl && options.baseMcpOAuthProvider && baseMcpCatalogEnabled(toggles)) {
     const { BaseMcpClient, createBaseMcpHttpTransport, McpSendCallsClient } = await import('@mioagent/mcp');
 
     try {
@@ -78,8 +83,20 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
       await baseClient.connect(transport);
       mcpClient = new McpSendCallsClient(baseClient);
       aggregator.registerProvider(new BaseMcpToolProvider(mcpClient));
+      try {
+        const dynamicTools = await listDynamicBaseMcpToolsFromClient(baseClient, toggles);
+        if (dynamicTools.length > 0) {
+          aggregator.registerProvider(new DynamicBaseMcpToolProvider(baseClient, dynamicTools));
+        }
+      } catch (error) {
+        console.warn('Failed to list dynamic Base MCP tools', {
+          code: error instanceof Error ? error.name : 'unknown_error',
+        });
+      }
     } catch (e) {
-      console.error('Failed to initialize Base MCP client:', e);
+      console.error('Failed to initialize Base MCP client', {
+        code: e instanceof Error ? e.name : 'unknown_error',
+      });
     }
   }
 
