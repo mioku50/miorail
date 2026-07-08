@@ -73,9 +73,27 @@ test('probeBaseMcpTools lists sanitized tools without invoking send_calls or cal
   assert.strictEqual(result.status, 'connected');
   assert.strictEqual(result.endpointHost, 'mcp.base.org');
   assert.strictEqual(result.toolsCount, 2);
+  assert.deepStrictEqual(result.capabilities, {
+    readOnly: 1,
+    userConfirmedTransaction: 1,
+    forbidden: 0,
+    unknown: 0,
+  });
   assert.deepStrictEqual(result.tools, [
-    { name: 'get_wallets', description: 'Wallet inventory read only' },
-    { name: 'send_calls', description: 'Write tool is listed but not invoked.' },
+    {
+      name: 'get_wallets',
+      description: 'Wallet inventory read only',
+      capability: 'read_only',
+      enabled: true,
+      reason: 'read_only_allowlist',
+    },
+    {
+      name: 'send_calls',
+      description: 'Write tool is listed but not invoked.',
+      capability: 'user_confirmed_transaction',
+      enabled: false,
+      reason: 'transaction_tool_user_confirmation_required',
+    },
   ]);
   assert.strictEqual(JSON.stringify(result).includes('private/path'), false);
   assert.strictEqual(JSON.stringify(result).includes('token=secret'), false);
@@ -91,6 +109,10 @@ test('probeBaseMcpTools lists sanitized tools without invoking send_calls or cal
     endpointHost: 'mcp.base.org',
   });
   assert.strictEqual(status.toolsCount, 2);
+  assert.strictEqual(status.readOnlyToolsCount, 1);
+  assert.strictEqual(status.transactionToolsCount, 1);
+  assert.strictEqual(status.forbiddenToolsCount, 0);
+  assert.strictEqual(status.unknownToolsCount, 0);
   assert.strictEqual(status.lastToolProbeAt, result.checkedAt);
 
   restoreEnv('BASE_MCP_ENABLED', origEnabled);
@@ -122,6 +144,12 @@ test('probeBaseMcpTools returns needs_reauth without connecting when token is mi
 
   assert.strictEqual(result.status, 'needs_reauth');
   assert.strictEqual(result.toolsCount, 0);
+  assert.deepStrictEqual(result.capabilities, {
+    readOnly: 0,
+    userConfirmedTransaction: 0,
+    forbidden: 0,
+    unknown: 0,
+  });
   assert.deepStrictEqual(result.tools, []);
   assert.strictEqual(createdClient, false);
 

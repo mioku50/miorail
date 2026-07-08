@@ -3,6 +3,7 @@ import assert from 'node:assert';
 import {
   approvalProviderHint,
   approvalProviderState,
+  baseMcpCapabilityBreakdown,
   baseMcpConnectHref,
   baseMcpConnectLabel,
   baseMcpHint,
@@ -65,6 +66,44 @@ test('Base MCP OAuth result messages are explicit and non-crashing', () => {
     text: 'Base MCP connection failed. Connect again to reauthorize.',
   });
   assert.strictEqual(baseMcpOAuthResultMessage('unknown'), null);
+});
+
+test('Base MCP capability breakdown renders disabled unknown tools safely', () => {
+  assert.deepStrictEqual(
+    baseMcpCapabilityBreakdown({
+      toolsCount: 4,
+      capabilities: {
+        readOnly: 1,
+        userConfirmedTransaction: 1,
+        forbidden: 1,
+        unknown: 1,
+      },
+    }),
+    {
+      toolsCount: 4,
+      readOnly: 1,
+      userConfirmedTransaction: 1,
+      disabledOrUnknown: 2,
+      unknown: 1,
+    },
+  );
+
+  assert.deepStrictEqual(
+    baseMcpCapabilityBreakdown({
+      toolsCount: 3,
+      readOnlyToolsCount: 2,
+      transactionToolsCount: 1,
+      forbiddenToolsCount: 0,
+      unknownToolsCount: 0,
+    }),
+    {
+      toolsCount: 3,
+      readOnly: 2,
+      userConfirmedTransaction: 1,
+      disabledOrUnknown: 0,
+      unknown: 0,
+    },
+  );
 });
 
 test('Approval provider UI helpers render Moralis budget exhaustion truthfully', () => {

@@ -14,6 +14,12 @@ import {
   getBaseMcpAuthStatus,
   markBaseMcpNeedsReauth,
 } from './baseMcpOAuthStore.js';
+import {
+  classifyBaseMcpTools,
+  emptyBaseMcpToolCapabilityCounts,
+  type BaseMcpToolCapabilityCounts,
+  type ClassifiedBaseMcpTool,
+} from './baseMcpToolClassifier.js';
 
 export type BaseMcpToolProbeStatus = 'connected' | 'needs_reauth' | 'unreachable' | 'degraded';
 
@@ -26,7 +32,8 @@ export interface BaseMcpToolProbeResult {
   status: BaseMcpToolProbeStatus;
   endpointHost?: string;
   toolsCount: number;
-  tools: BaseMcpToolInventoryItem[];
+  capabilities: BaseMcpToolCapabilityCounts;
+  tools: ClassifiedBaseMcpTool[];
   checkedAt: string;
   errorCode?: string;
 }
@@ -147,6 +154,7 @@ export async function probeBaseMcpTools(input: {
       status: 'degraded',
       endpointHost,
       toolsCount: 0,
+      capabilities: emptyBaseMcpToolCapabilityCounts(),
       tools: [],
       checkedAt,
       errorCode: 'missing_config',
@@ -161,6 +169,7 @@ export async function probeBaseMcpTools(input: {
       status: 'needs_reauth',
       endpointHost,
       toolsCount: 0,
+      capabilities: emptyBaseMcpToolCapabilityCounts(),
       tools: [],
       checkedAt,
       errorCode: 'needs_reauth',
@@ -180,17 +189,20 @@ export async function probeBaseMcpTools(input: {
       timeoutMsFromEnv(),
     );
     const tools = await withTimeout(listAllTools(client), timeoutMsFromEnv());
+    const classified = classifyBaseMcpTools(tools);
     const result: BaseMcpToolProbeResult = {
       status: 'connected',
       endpointHost,
-      toolsCount: tools.length,
-      tools,
+      toolsCount: classified.tools.length,
+      capabilities: classified.capabilities,
+      tools: classified.tools,
       checkedAt,
     };
     if (endpointHost) {
       recordBaseMcpToolProbe({
         endpointHost,
-        toolsCount: tools.length,
+        toolsCount: classified.tools.length,
+        capabilities: classified.capabilities,
         checkedAt,
       });
     }
@@ -206,6 +218,7 @@ export async function probeBaseMcpTools(input: {
       status: classified.status,
       endpointHost,
       toolsCount: 0,
+      capabilities: emptyBaseMcpToolCapabilityCounts(),
       tools: [],
       checkedAt,
       errorCode: classified.errorCode,

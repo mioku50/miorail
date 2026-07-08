@@ -4,6 +4,7 @@ import { useAccount } from 'wagmi';
 import {
   approvalProviderHint,
   approvalProviderState,
+  baseMcpCapabilityBreakdown,
   baseMcpConnectHref,
   baseMcpConnectLabel,
   baseMcpHint,
@@ -21,6 +22,7 @@ export function BaseMcpView() {
   const mcp = sd?.baseMcp;
   const ap = sd?.approvals;
   const canConnect = !!mcp?.enabled && !!mcp?.configured;
+  const capabilityBreakdown = baseMcpCapabilityBreakdown(toolsProbe.data || mcp);
   const connectLabel = baseMcpConnectLabel(mcp);
   const oauthResult = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('mcp');
   const oauthMessage = baseMcpOAuthResultMessage(oauthResult);
@@ -121,6 +123,20 @@ export function BaseMcpView() {
         {toolsProbe.data?.status === 'connected' && (
           <div className="p-3 bg-ok-soft rounded border border-ok/20 text-xs text-ok font-medium">
             Base MCP connected. {toolsProbe.data.toolsCount} user-scoped tools available.
+          </div>
+        )}
+        {capabilityBreakdown && mcp?.auth?.connected && (
+          <div className="p-3 bg-panel-2 rounded border border-line text-xs text-ink-3 font-medium flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span className="text-ink font-bold">{capabilityBreakdown.toolsCount} tools available</span>
+              <span>Read-only: {capabilityBreakdown.readOnly}</span>
+              <span>User-confirmed tx: {capabilityBreakdown.userConfirmedTransaction}</span>
+              <span>Disabled/unknown: {capabilityBreakdown.disabledOrUnknown}</span>
+            </div>
+            <span className="text-warn">Transaction tools are never auto-run. User confirmation is required.</span>
+            {capabilityBreakdown.unknown > 0 && (
+              <span className="text-warn">Unknown tools disabled by default.</span>
+            )}
           </div>
         )}
         {toolsProbe.data?.status === 'needs_reauth' && (

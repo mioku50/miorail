@@ -20,6 +20,10 @@ export interface BaseMcpStatus {
     resourcesCount?: number;
   };
   toolsCount?: number;
+  readOnlyToolsCount?: number;
+  transactionToolsCount?: number;
+  forbiddenToolsCount?: number;
+  unknownToolsCount?: number;
   lastToolProbeAt?: string;
   auth?: {
     connected: boolean;
@@ -43,6 +47,10 @@ let toolProbe:
       configKey: string;
       endpointHost: string;
       toolsCount: number;
+      readOnlyToolsCount: number;
+      transactionToolsCount: number;
+      forbiddenToolsCount: number;
+      unknownToolsCount: number;
       checkedAt: string;
     }
   | null = null;
@@ -285,12 +293,22 @@ export async function probeBaseMcpStatus(): Promise<BaseMcpStatus> {
 export function recordBaseMcpToolProbe(input: {
   endpointHost: string;
   toolsCount: number;
+  capabilities?: {
+    readOnly: number;
+    userConfirmedTransaction: number;
+    forbidden: number;
+    unknown: number;
+  };
   checkedAt: string;
 }): void {
   toolProbe = {
     configKey: configKey(),
     endpointHost: input.endpointHost,
     toolsCount: input.toolsCount,
+    readOnlyToolsCount: input.capabilities?.readOnly ?? 0,
+    transactionToolsCount: input.capabilities?.userConfirmedTransaction ?? 0,
+    forbiddenToolsCount: input.capabilities?.forbidden ?? 0,
+    unknownToolsCount: input.capabilities?.unknown ?? 0,
     checkedAt: input.checkedAt,
   };
 }
@@ -302,6 +320,10 @@ export function attachBaseMcpToolProbeStatus(base: BaseMcpStatus): BaseMcpStatus
   return {
     ...base,
     toolsCount: toolProbe.toolsCount,
+    readOnlyToolsCount: toolProbe.readOnlyToolsCount,
+    transactionToolsCount: toolProbe.transactionToolsCount,
+    forbiddenToolsCount: toolProbe.forbiddenToolsCount,
+    unknownToolsCount: toolProbe.unknownToolsCount,
     lastToolProbeAt: toolProbe.checkedAt,
   };
 }

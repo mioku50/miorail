@@ -13,6 +13,7 @@ import { CHAIN_ENV, isMainnetReadonly } from '../../lib/chain';
 import {
   approvalProviderHint,
   approvalProviderState,
+  baseMcpCapabilityBreakdown,
   baseMcpConnectHref,
   baseMcpConnectLabel,
   baseMcpHint,
@@ -104,6 +105,7 @@ export function ConfigureView() {
   const isExpired = autonomyState?.isExpiredMemory || autonomyState?.sessionKey?.isExpiredMemory || autonomyState?.status === 'expired' || autonomyState?.sessionKey?.status === 'expired';
   const mcpOauthResult = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('mcp');
   const mcpOauthMessage = baseMcpOAuthResultMessage(mcpOauthResult);
+  const baseMcpBreakdown = baseMcpCapabilityBreakdown(toolsProbe.data || sd?.baseMcp);
   const mcpOauthClassName = mcpOauthMessage?.kind === 'success'
     ? 'bg-ok-soft border-ok/20 text-ok'
     : mcpOauthMessage?.kind === 'error'
@@ -335,6 +337,20 @@ export function ConfigureView() {
         {toolsProbe.data?.status === 'connected' && (
           <div className="text-[11px] text-ok bg-ok-soft border border-ok/20 rounded-md px-3 py-2">
             Base MCP connected. {toolsProbe.data.toolsCount} user-scoped tools available.
+          </div>
+        )}
+        {baseMcpBreakdown && sd?.baseMcp?.auth?.connected && (
+          <div className="text-[11px] text-ink-3 bg-panel-2 border border-line rounded-md px-3 py-2 flex flex-col gap-1.5">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span className="font-bold text-ink">{baseMcpBreakdown.toolsCount} tools available</span>
+              <span>Read-only: {baseMcpBreakdown.readOnly}</span>
+              <span>User-confirmed tx: {baseMcpBreakdown.userConfirmedTransaction}</span>
+              <span>Disabled/unknown: {baseMcpBreakdown.disabledOrUnknown}</span>
+            </div>
+            <span className="text-warn">Transaction tools are never auto-run. User confirmation is required.</span>
+            {baseMcpBreakdown.unknown > 0 && (
+              <span className="text-warn">Unknown tools disabled by default.</span>
+            )}
           </div>
         )}
         {toolsProbe.data?.status === 'needs_reauth' && (

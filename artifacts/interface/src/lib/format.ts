@@ -68,6 +68,34 @@ export function baseMcpOAuthResultMessage(result?: string | null): { kind: 'succ
   return null;
 }
 
+export function baseMcpCapabilityBreakdown(source?: any): {
+  toolsCount: number;
+  readOnly: number;
+  userConfirmedTransaction: number;
+  disabledOrUnknown: number;
+  unknown: number;
+} | null {
+  if (!source) return null;
+  const capabilities = source.capabilities;
+  const readOnly = Number(capabilities?.readOnly ?? source.readOnlyToolsCount ?? 0);
+  const userConfirmedTransaction = Number(
+    capabilities?.userConfirmedTransaction ?? source.transactionToolsCount ?? 0,
+  );
+  const forbidden = Number(capabilities?.forbidden ?? source.forbiddenToolsCount ?? 0);
+  const unknown = Number(capabilities?.unknown ?? source.unknownToolsCount ?? 0);
+  const explicitToolsCount = Number(source.toolsCount ?? 0);
+  const summedToolsCount = readOnly + userConfirmedTransaction + forbidden + unknown;
+  const toolsCount = explicitToolsCount || summedToolsCount;
+  if (!toolsCount && !summedToolsCount) return null;
+  return {
+    toolsCount,
+    readOnly,
+    userConfirmedTransaction,
+    disabledOrUnknown: forbidden + unknown,
+    unknown,
+  };
+}
+
 export function approvalProviderState(status?: string): StateKind {
   if (status === 'connected') return 'live';
   if (status === 'partial' || status === 'rate_limited' || status === 'budget_exhausted' || status === 'temporarily_unavailable' || status === 'auth_or_budget_issue') return 'stale';

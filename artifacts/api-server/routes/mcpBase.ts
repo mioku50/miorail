@@ -235,6 +235,12 @@ async function handleToolsProbe(req: Request, res: Response, next: NextFunction)
         status: 'degraded',
         endpointHost: baseMcpServerUrlFromEnv()?.host,
         toolsCount: 0,
+        capabilities: {
+          readOnly: 0,
+          userConfirmedTransaction: 0,
+          forbidden: 0,
+          unknown: 0,
+        },
         tools: [],
         checkedAt: new Date().toISOString(),
         errorCode: 'missing_config',

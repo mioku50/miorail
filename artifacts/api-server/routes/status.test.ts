@@ -276,6 +276,12 @@ describe('Status API', () => {
     recordBaseMcpToolProbe({
       endpointHost: 'mcp.example.test',
       toolsCount: 7,
+      capabilities: {
+        readOnly: 3,
+        userConfirmedTransaction: 2,
+        forbidden: 1,
+        unknown: 1,
+      },
       checkedAt: '2026-07-08T00:00:00.000Z',
     });
     global.fetch = mock.fn(async () => ({
@@ -295,6 +301,10 @@ describe('Status API', () => {
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.baseMcp.status, 'connected');
     assert.strictEqual(response.body.baseMcp.toolsCount, 7);
+    assert.strictEqual(response.body.baseMcp.readOnlyToolsCount, 3);
+    assert.strictEqual(response.body.baseMcp.transactionToolsCount, 2);
+    assert.strictEqual(response.body.baseMcp.forbiddenToolsCount, 1);
+    assert.strictEqual(response.body.baseMcp.unknownToolsCount, 1);
     assert.strictEqual(response.body.baseMcp.lastToolProbeAt, '2026-07-08T00:00:00.000Z');
     assert.strictEqual(JSON.stringify(response.body.baseMcp).includes('private/path'), false);
 
