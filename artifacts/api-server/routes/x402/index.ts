@@ -4,6 +4,8 @@ import {
   createX402MiddlewareFromEnv,
   x402MiddlewareDiagnosticsFromEnv,
   x402ConfigFromEnv,
+  x402StatusFromEnv,
+  classifyX402SettleFailureReason,
   type X402MiddlewareRuntimeMode,
   type X402SettlementRecord,
 } from '@mioagent/x402-gateway';
@@ -44,6 +46,8 @@ let lastSmokeSettlement: {
   asset?: string;
   payTo?: string;
   settledAt?: string;
+  errorReason?: string;
+  errorMessage?: string;
 } | null = null;
 
 let lastBrowserRun: {
@@ -52,6 +56,7 @@ let lastBrowserRun: {
   txHash?: string;
   payer?: string;
   settledAt?: string;
+  errorReason?: string;
 } | null = null;
 
 async function persistSettlement(record: X402SettlementRecord): Promise<void> {
@@ -115,6 +120,30 @@ async function persistSettlement(record: X402SettlementRecord): Promise<void> {
       code: error instanceof Error ? error.name : 'unknown_error',
     });
   }
+}
+
+function recordSettlementFailure(failure: { errorReason?: string; errorMessage?: string; checkedAt: string }): void {
+  const reason = classifyX402SettleFailureReason(failure.errorReason, failure.errorMessage);
+  const runId = smokeRunIdStorage.getStore();
+  lastSmokeSettlement = {
+    status: 'failed',
+    settledAt: failure.checkedAt,
+    errorReason: reason,
+    errorMessage: failure.errorMessage,
+  };
+  if (runId) {
+    lastBrowserRun = {
+      runId,
+      status: 'failed',
+      settledAt: failure.checkedAt,
+      errorReason: reason,
+    };
+  }
+  console.info('[x402] x402-browser-payment-settlement-failed', {
+    status: 'failed',
+    reason,
+    runId,
+  });
 }
 
 function receiptRecord(row: { id: string; receipt: unknown; createdAt: Date }): X402SettlementRecord & {
@@ -193,6 +222,7 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
   const commonMiddlewareOptions = {
     serviceName: 'Miorail',
     onSettlement: persistSettlement,
+    onSettlementFailure: recordSettlementFailure,
     runtimeMode,
   };
   const legacyGateway = createX402MiddlewareFromEnv({
@@ -262,14 +292,17 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
   );
 
   router.get('/diagnostics', async (_req: Request, res: Response) => {
+    const statusConfig = await x402StatusFromEnv(env);
     const diagnostics = x402MiddlewareDiagnosticsFromEnv(env, {
       runtimeMode,
       smokeRoute: '/api/x402/smoke-paid',
+      config: statusConfig,
     });
     const browserPaidAvailable = Boolean(
       diagnostics.configured &&
       diagnostics.officialMiddlewareEnabled &&
       diagnostics.smokeRouteAvailable &&
+      diagnostics.settleReady &&
       !diagnostics.mockFacilitatorEnabled,
     );
 
@@ -294,14 +327,22 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
       middlewareMode: diagnostics.middlewareMode,
       officialMiddlewareEnabled: diagnostics.officialMiddlewareEnabled,
       mockFacilitatorEnabled: diagnostics.mockFacilitatorEnabled,
+      facilitatorHost: diagnostics.facilitatorHost,
       browserPaidFlowAvailable: browserPaidAvailable,
       browserPaidActionAvailable: browserPaidAvailable,
       paymentResponseHeaderReadable: true,
+      settleReady: diagnostics.settleReady,
+      settleBlockedReason: diagnostics.settleBlockedReason || null,
+      probeStatus: diagnostics.probeStatus || null,
+      supportedNetworks: diagnostics.supportedNetworks || [],
+      latestSettleFailureReason: lastSmokeSettlement?.errorReason || lastBrowserRun?.errorReason || null,
       lastSmokeSettlementStatus: lastSmokeSettlement?.status || null,
+      lastSmokeSettlementReason: lastSmokeSettlement?.errorReason || null,
       lastSmokeTxHashPresent: Boolean(lastSmokeSettlement?.txHash),
       lastSmokePayerPresent: Boolean(lastSmokeSettlement?.payer),
       lastBrowserRunId: lastBrowserRun?.runId || null,
       lastBrowserRunStatus: lastBrowserRun?.status || null,
+      lastBrowserRunReason: lastBrowserRun?.errorReason || null,
       lastBrowserRunLedgerMatched: browserRunMatched,
       lastBrowserRunTxHashPresent: Boolean(lastBrowserRun?.txHash),
       lastBrowserRunPayerPresent: Boolean(lastBrowserRun?.payer),

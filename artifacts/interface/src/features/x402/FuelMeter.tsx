@@ -28,6 +28,29 @@ function baseScanTxUrl(network?: string, txHash?: string | null): string | null 
   return null;
 }
 
+function x402BlockedCopy(x402?: any): string {
+  const reason = x402?.settleBlockedReason || x402?.errorCode || x402?.status;
+  if (reason === 'facilitator_auth_missing' || reason === 'facilitator_auth_required') {
+    return 'Facilitator auth is required before Base Mainnet settlement can run.';
+  }
+  if (reason === 'cdp_api_key_pair_incomplete') {
+    return 'CDP API key pair is incomplete. Paid routes fail closed until facilitator auth is configured.';
+  }
+  if (reason === 'network_not_supported' || reason === 'unsupported_network_for_settlement') {
+    return 'The facilitator probe is live, but this x402 network is not supported for settlement.';
+  }
+  if (reason === 'facilitator_rate_limited') {
+    return 'x402 facilitator is rate-limited. Showing the route as blocked until it recovers.';
+  }
+  if (reason === 'facilitator_unreachable' || reason === 'facilitator_degraded') {
+    return 'x402 facilitator is unavailable or degraded. Paid routes return a controlled unavailable response.';
+  }
+  if (reason === 'x402_not_configured') {
+    return 'x402 env is partial or invalid. Paid routes fail closed until facilitator, payTo, and CAIP-2 network are configured.';
+  }
+  return 'x402 settlement is not ready. Paid routes fail closed instead of requesting a wallet signature.';
+}
+
 // x402 Fuel Meter — the pay-per-action differentiator.
 // Shows honest empty states and operator guidance without fabricated numbers.
 export function FuelMeter() {
@@ -40,16 +63,25 @@ export function FuelMeter() {
 
   const x402 = statusData?.x402;
   const status = x402?.status;
-  const isLive = status === 'connected' || status === 'configured';
+  const settleReady = x402?.settleReady === true;
+  const isLive = settleReady && (status === 'connected' || status === 'configured');
   const isMissing = status === 'missing';
-  const isUnavailable = status === 'facilitator_auth_required' || status === 'facilitator_auth_invalid' || status === 'facilitator_rate_limited' || status === 'facilitator_unreachable' || status === 'degraded';
+  const isUnavailable = !settleReady && (
+    status === 'facilitator_auth_required' ||
+    status === 'facilitator_auth_invalid' ||
+    status === 'facilitator_rate_limited' ||
+    status === 'facilitator_unreachable' ||
+    status === 'unsupported_network_for_settlement' ||
+    status === 'degraded'
+  );
   const badgeState = isLive ? 'live' : isMissing ? 'missing' : 'mock';
   const badgeLabel =
-    isLive ? 'connected' :
+    isLive ? 'settle ready' :
     status === 'facilitator_auth_required' ? 'auth required' :
     status === 'facilitator_auth_invalid' ? 'auth invalid' :
     status === 'facilitator_rate_limited' ? 'rate limited' :
     status === 'facilitator_unreachable' ? 'unreachable' :
+    status === 'unsupported_network_for_settlement' ? 'network blocked' :
     status === 'degraded' ? 'degraded' :
     isMissing ? 'not configured' :
     'simulated';
@@ -59,7 +91,7 @@ export function FuelMeter() {
     isLive
       ? 'Real x402 settlement records are read from x402_receipts.'
       : status === 'facilitator_auth_required'
-        ? 'x402 facilitator rejected /supported. Configure facilitator auth; paid routes fail closed without crashing the API.'
+        ? x402BlockedCopy(x402)
       : status === 'facilitator_auth_invalid'
         ? 'x402 facilitator auth could not be generated. Check CDP API key ID/secret formatting; paid routes fail closed.'
       : status === 'facilitator_rate_limited'
@@ -68,6 +100,8 @@ export function FuelMeter() {
         ? 'x402 facilitator is unavailable or degraded. Paid routes return a controlled unavailable response.'
       : status === 'missing'
         ? 'x402 env is partial or invalid. Paid routes fail closed until facilitator, payTo, and CAIP-2 network are configured.'
+      : !settleReady
+        ? x402BlockedCopy(x402)
       : 'No real facilitator is configured. Paid routes do not claim settlement.';
   const modeLabel = isLive ? 'Mode: real settlement' : isMissing ? 'Mode: missing config' : isUnavailable ? `Mode: ${badgeLabel}` : 'Mode: simulated';
   const networkLabel =
@@ -79,9 +113,16 @@ export function FuelMeter() {
   const attributionLabel = x402?.builderCodeAttribution === 'attached' ? 'attached' : 'unavailable';
   const [smokeAttemptId, setSmokeAttemptId] = useState<string>(() => `smoke-${Math.random().toString(36).slice(2, 10)}`);
   const [smokeErrorReason, setSmokeErrorReason] = useState<string | null>(null);
-  const smokeLabel = x402?.smokeRouteAvailable ? 'available' : 'unavailable';
+  const smokeLabel = x402?.smokeRouteAvailable && settleReady ? 'available' : 'blocked';
   const bodyData = (smokeResult?.body && typeof smokeResult.body === 'object' ? smokeResult.body : {}) as Record<string, unknown>;
   const isCurrentAttemptSettled = Boolean(smokeResult?.paid && !smokeError);
+  const smokeDisabledReason = !settleReady
+    ? 'Settlement not ready'
+    : !x402?.smokeRouteAvailable
+      ? 'Smoke route unavailable'
+      : isCurrentAttemptSettled
+        ? 'Attempt settled'
+        : undefined;
 
   const smokeReceiptTx = isCurrentAttemptSettled
     ? smokeResult?.receipt?.transaction ||
@@ -174,12 +215,12 @@ export function FuelMeter() {
           <div>
             <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Live Payments Flow</div>
             <div className="text-sm font-sans font-bold text-ink flex items-center gap-1.5">
-              <span className={isLive ? 'text-ok' : 'text-warn'}>●</span>
-              <span>{isLive ? 'Active (Official SDK)' : 'Simulated (Mock Provider)'}</span>
+              <span className={settleReady ? 'text-ok' : 'text-warn'}>●</span>
+              <span>{settleReady ? 'Settle Ready (Official SDK)' : 'Settlement Blocked'}</span>
             </div>
           </div>
           <div className="text-[11px] text-ink-3 leading-relaxed border-t border-line/50 pt-2 font-sans">
-            Requires configured=true, officialMiddleware=true, mock=false.
+            Requires configured=true, officialMiddleware=true, mock=false, settleReady=true.
           </div>
         </div>
 
@@ -218,8 +259,13 @@ export function FuelMeter() {
               <Metric label="Route" amount="/api/x402/smoke-paid" sub="protected" />
               <Metric label="Cost" amount="0.001 USDC" sub="Base USDC" />
               <Metric label="Middleware" amount={x402?.middlewareMode || 'unknown'} sub={x402?.mockFacilitatorEnabled ? 'mock' : 'official'} />
-              <Metric label="Browser flow" amount={isLive ? 'available' : 'blocked'} sub={x402?.smokeRouteAvailable ? 'smoke ready' : 'no route'} />
+              <Metric label="Browser flow" amount={settleReady ? 'available' : 'blocked'} sub={x402?.smokeRouteAvailable ? 'smoke route' : 'no route'} />
             </div>
+            {!settleReady && (
+              <div className="mt-3 text-[11px] text-warn bg-warn-soft border border-warn/20 rounded-[var(--radius-md)] px-3 py-2 font-sans">
+                {x402BlockedCopy(x402)}
+              </div>
+            )}
           </div>
           <div className="w-full lg:w-[260px] shrink-0 flex flex-col gap-2">
             <PaidActionButton
@@ -229,7 +275,8 @@ export function FuelMeter() {
               category="tools"
               costLabel="0.001 USDC"
               runId={smokeAttemptId}
-              disabled={!isLive || !x402?.smokeRouteAvailable || isCurrentAttemptSettled}
+              disabled={!settleReady || !x402?.smokeRouteAvailable || isCurrentAttemptSettled}
+              disabledReason={smokeDisabledReason}
               onSuccess={handleSmokeSuccess}
               onFailure={handleSmokeFailure}
             />

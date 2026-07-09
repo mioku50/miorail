@@ -222,6 +222,33 @@ describe('x402-gateway', () => {
     }
   });
 
+  it('requires facilitator auth for Base Mainnet settlement before probing /supported', async () => {
+    clearX402FacilitatorStatusForTests();
+    const originalFetch = globalThis.fetch;
+    let called = false;
+    globalThis.fetch = async () => {
+      called = true;
+      return new globalThis.Response('{}', { status: 200 });
+    };
+    try {
+      const status = await x402StatusFromEnv({
+        X402_FACILITATOR_URL: 'https://facilitator.example.test',
+        X402_PAYTO_ADDRESS: '0x1111111111111111111111111111111111111111',
+        X402_NETWORK: 'eip155:8453',
+        BUILDER_CODE: 'miorail',
+      });
+      assert.strictEqual(status.configured, true);
+      assert.strictEqual(status.status, 'facilitator_auth_required');
+      assert.strictEqual(status.settleReady, false);
+      assert.strictEqual(status.settleBlockedReason, 'facilitator_auth_missing');
+      assert.strictEqual(status.errorCode, 'facilitator_auth_missing');
+      assert.strictEqual(called, false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      clearX402FacilitatorStatusForTests();
+    }
+  });
+
   it('classifies invalid CDP API key secret without crashing startup', async () => {
     clearX402FacilitatorStatusForTests();
     const originalFetch = globalThis.fetch;
@@ -319,8 +346,40 @@ describe('x402-gateway', () => {
         X402_FACILITATOR_AUTH_TOKEN: 'secret-token',
       });
       assert.strictEqual(status.status, 'connected');
+      assert.strictEqual(status.settleReady, true);
       assert.strictEqual(status.supportedKindsCount, 1);
+      assert.deepStrictEqual(status.supportedNetworks, ['eip155:8453']);
       assert.strictEqual(status.errorCode, undefined);
+    } finally {
+      globalThis.fetch = originalFetch;
+      clearX402FacilitatorStatusForTests();
+    }
+  });
+
+  it('blocks settlement when facilitator /supported omits the configured network', async () => {
+    clearX402FacilitatorStatusForTests();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new globalThis.Response(JSON.stringify({
+      kinds: [{ x402Version: 2, scheme: 'exact', network: 'eip155:84532' }],
+      extensions: [],
+      signers: {},
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+    try {
+      const status = await x402StatusFromEnv({
+        X402_FACILITATOR_URL: 'https://facilitator.example.test',
+        X402_PAYTO_ADDRESS: '0x1111111111111111111111111111111111111111',
+        X402_NETWORK: 'eip155:8453',
+        BUILDER_CODE: 'miorail',
+        X402_FACILITATOR_AUTH_TOKEN: 'secret-token',
+      });
+      assert.strictEqual(status.status, 'unsupported_network_for_settlement');
+      assert.strictEqual(status.probeStatus, 'connected');
+      assert.strictEqual(status.settleReady, false);
+      assert.strictEqual(status.settleBlockedReason, 'network_not_supported');
+      assert.deepStrictEqual(status.supportedNetworks, ['eip155:84532']);
     } finally {
       globalThis.fetch = originalFetch;
       clearX402FacilitatorStatusForTests();
@@ -371,6 +430,7 @@ describe('x402-gateway', () => {
       X402_NETWORK: 'eip155:8453',
       X402_AMOUNT_ATOMIC_USDC: '2500',
       BUILDER_CODE: 'miorail',
+      X402_FACILITATOR_AUTH_TOKEN: 'secret-token',
     });
     assert.strictEqual(config.status, 'configured');
     assert.strictEqual(config.network, 'eip155:8453');
@@ -392,6 +452,7 @@ describe('x402-gateway', () => {
       X402_NETWORK: 'eip155:8453',
       X402_AMOUNT_ATOMIC_USDC: '1000',
       BUILDER_CODE: 'miorail',
+      X402_FACILITATOR_AUTH_TOKEN: 'secret-token',
     });
     const paymentRequired = paymentRequiredFromRuntimeConfig(config);
     const account = privateKeyToAccount('0x4c9bfe115a2917b14b03301ea3f86d306125a581126cafe842d4bb719b0f7b06');
@@ -433,6 +494,7 @@ describe('x402-gateway', () => {
       X402_NETWORK: 'eip155:8453',
       X402_AMOUNT_ATOMIC_USDC: '1000',
       BUILDER_CODE: 'miorail',
+      X402_FACILITATOR_AUTH_TOKEN: 'secret-token',
     });
     const record = settlementRecordFromSettleResult(
       {

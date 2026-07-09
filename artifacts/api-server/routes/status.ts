@@ -48,7 +48,7 @@ export function getSystemStatus(envOverride?: string) {
   const { providerName: approvalProvider, statusCode: approvalStatusCode } = getApprovalProviderFromEnv();
 
   const x402Config = x402ConfigFromEnv();
-  const x402Diagnostics = x402MiddlewareDiagnosticsFromEnv();
+  const x402Diagnostics = x402MiddlewareDiagnosticsFromEnv(undefined, { config: x402Config });
 
   const isReadonly = chainEnv === 'mainnet-readonly';
   // T19.1: split execution into explicit flags via a shared helper. The UI may
@@ -105,6 +105,9 @@ export function getSystemStatus(envOverride?: string) {
       builderCodeConfigured: !!x402Config.builderCode,
       facilitatorAuthConfigured: !!x402Config.facilitatorAuthConfigured,
       authSource: x402Config.authSource,
+      settleReady: !!x402Config.settleReady,
+      settleBlockedReason: x402Config.settleBlockedReason,
+      probeStatus: x402Config.probeStatus,
       middlewareMode: x402Diagnostics.middlewareMode,
       officialMiddlewareEnabled: x402Diagnostics.officialMiddlewareEnabled,
       mockFacilitatorEnabled: x402Diagnostics.mockFacilitatorEnabled,
@@ -114,6 +117,7 @@ export function getSystemStatus(envOverride?: string) {
       errorCode: x402Config.errorCode,
       lastCheckedAt: x402Config.lastCheckedAt,
       supportedKindsCount: x402Config.supportedKindsCount,
+      supportedNetworks: x402Config.supportedNetworks,
       missingConfig: x402Config.missingConfig,
       warnings: x402Config.warnings,
     },
@@ -129,7 +133,7 @@ export function getSystemStatus(envOverride?: string) {
 }
 
 function publicX402Status(x402Config: X402RuntimeConfig) {
-  const x402Diagnostics = x402MiddlewareDiagnosticsFromEnv();
+  const x402Diagnostics = x402MiddlewareDiagnosticsFromEnv(undefined, { config: x402Config });
   return {
     status: x402Config.status,
     configured: x402Config.configured,
@@ -140,6 +144,9 @@ function publicX402Status(x402Config: X402RuntimeConfig) {
     builderCodeConfigured: !!x402Config.builderCode,
     facilitatorAuthConfigured: !!x402Config.facilitatorAuthConfigured,
     authSource: x402Config.authSource,
+    settleReady: !!x402Config.settleReady,
+    settleBlockedReason: x402Config.settleBlockedReason,
+    probeStatus: x402Config.probeStatus,
     middlewareMode: x402Diagnostics.middlewareMode,
     officialMiddlewareEnabled: x402Diagnostics.officialMiddlewareEnabled,
     mockFacilitatorEnabled: x402Diagnostics.mockFacilitatorEnabled,
@@ -149,6 +156,7 @@ function publicX402Status(x402Config: X402RuntimeConfig) {
     errorCode: x402Config.errorCode,
     lastCheckedAt: x402Config.lastCheckedAt,
     supportedKindsCount: x402Config.supportedKindsCount,
+    supportedNetworks: x402Config.supportedNetworks,
     missingConfig: x402Config.missingConfig,
     warnings: x402Config.warnings,
   };

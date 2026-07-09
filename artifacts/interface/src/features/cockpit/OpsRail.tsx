@@ -50,14 +50,22 @@ export function OpsRail({ onClose }: OpsRailProps) {
   const resetAutonomy = useResetAutonomy();
   const mcpReturnTo = typeof window === 'undefined' ? '/' : window.location.pathname || '/';
   const x402Status = sd?.x402?.status;
-  const x402Live = x402Status === 'connected' || x402Status === 'configured';
-  const x402Unavailable = x402Status === 'facilitator_auth_required' || x402Status === 'facilitator_auth_invalid' || x402Status === 'facilitator_rate_limited' || x402Status === 'facilitator_unreachable' || x402Status === 'degraded';
+  const x402Live = sd?.x402?.settleReady === true;
+  const x402Unavailable = !x402Live && (
+    x402Status === 'facilitator_auth_required' ||
+    x402Status === 'facilitator_auth_invalid' ||
+    x402Status === 'facilitator_rate_limited' ||
+    x402Status === 'facilitator_unreachable' ||
+    x402Status === 'unsupported_network_for_settlement' ||
+    x402Status === 'degraded'
+  );
   const x402RailLabel =
     x402Live ? 'live' :
     x402Status === 'facilitator_auth_required' ? 'auth' :
     x402Status === 'facilitator_auth_invalid' ? 'invalid' :
     x402Status === 'facilitator_rate_limited' ? 'limited' :
     x402Status === 'facilitator_unreachable' ? 'unreachable' :
+    x402Status === 'unsupported_network_for_settlement' ? 'blocked' :
     x402Status === 'degraded' ? 'degraded' :
     x402Status === 'missing' ? 'missing' :
     'simulated';
@@ -116,8 +124,47 @@ export function OpsRail({ onClose }: OpsRailProps) {
     sd.prices?.provider === 'none';
 
   const shortAddr = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : 'Disconnected';
-  const isStale = autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory;
-  const isExpired = autonomyState?.isExpiredMemory || autonomyState?.sessionKey?.isExpiredMemory || autonomyState?.status === 'expired' || autonomyState?.sessionKey?.status === 'expired';
+  const runtimeChainEnv = sd?.chainEnv || import.meta.env.VITE_CHAIN_ENV || 'sepolia';
+  const runtimeIsSepolia = runtimeChainEnv === 'sepolia';
+  const runtimeIsMainnetReadonly = runtimeChainEnv === 'mainnet-readonly';
+  const isStale = runtimeIsSepolia && (autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory);
+  const isExpired = runtimeIsSepolia && (autonomyState?.isExpiredMemory || autonomyState?.sessionKey?.isExpiredMemory || autonomyState?.status === 'expired' || autonomyState?.sessionKey?.status === 'expired');
+  const autonomyBadgeClass = !runtimeIsSepolia
+    ? sd?.autonomy?.databaseConfigured
+      ? 'bg-ok-soft text-ok'
+      : 'bg-warn-soft text-warn'
+    : isStale || isExpired
+      ? 'bg-warn-soft text-warn'
+      : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract'
+        ? 'bg-ok-soft text-ok'
+        : autonomyState?.sessionKey?.status === 'configured'
+          ? 'bg-ok-soft text-ok'
+          : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch
+            ? 'bg-risk-soft text-risk'
+            : 'bg-panel-2 text-ink-3';
+  const autonomyBadgeLabel = !runtimeIsSepolia
+    ? sd?.autonomy?.databaseConfigured ? 'database-backed' : 'database missing'
+    : isStale
+      ? 'stale test memory'
+      : isExpired
+        ? 'expired memory config'
+        : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract'
+          ? 'testnet verified'
+          : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch
+            ? 'revoked'
+            : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory'
+              ? 'configured in app'
+              : 'missing';
+  const autonomySummary = !runtimeIsSepolia
+    ? sd?.autonomy?.databaseConfigured ? 'DB-backed permissions' : 'Database not configured'
+    : autonomyState?.sessionKey?.status === 'configured'
+      ? `Active limit: ${autonomyState.sessionKey.dailyLimitUsdc} USDC/day`
+      : 'Session key not configured';
+  const autonomyHint = !runtimeIsSepolia
+    ? 'Mainnet server execution is disabled; wallet confirmation remains required.'
+    : autonomyState?.sessionKey?.status === 'configured'
+      ? 'Autonomy running in app memory.'
+      : 'Kill switch active by default. Manual sign required.';
 
   return (
     <aside className="w-[240px] min-w-[240px] shrink-0 border-r border-line bg-panel-2 flex flex-col gap-4 overflow-y-auto select-none h-full">
@@ -186,7 +233,7 @@ export function OpsRail({ onClose }: OpsRailProps) {
               </div>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-xs text-ink-2 font-sans">Spend Permissions</span>
+              <span className="text-xs text-ink-2 font-sans">Approval Scanner</span>
               <div className="flex items-center gap-1.5">
                 <Dot status={approvalProviderState(sd?.approvals?.status)} />
                 <span className="text-xs text-ink font-sans font-medium">{sd ? formatApprovalProviderStatus(sd.approvals, sd.budgets) : 'none'}</span>
@@ -292,7 +339,7 @@ export function OpsRail({ onClose }: OpsRailProps) {
               </span>
             </div>
             <div className="text-xs font-sans font-medium text-ink-2 bg-panel-2 px-2 py-1.5 rounded-[var(--radius-sm)] border border-line my-1 text-center">
-              {x402Live ? 'Settlement ledger wired' : x402Unavailable ? 'Facilitator unavailable' : 'No spend source wired'}
+              {x402Live ? 'Settlement ledger wired' : x402Unavailable ? 'Settlement blocked' : 'No spend source wired'}
             </div>
             <div className="text-[10px] text-ink-3 mt-1 font-sans leading-tight">
               {x402Live ? 'Real receipts recorded after paid calls.' : x402Unavailable ? 'Paid routes fail closed.' : 'Click to configure x402.'}
@@ -306,31 +353,11 @@ export function OpsRail({ onClose }: OpsRailProps) {
           <div className="bg-panel border border-line rounded-[var(--radius-md)] p-3 flex flex-col gap-2 shadow-[var(--shadow-card)]">
             <div className="flex items-center justify-between">
               <span className="text-xs text-ink-2 font-sans">Session Key</span>
-              <span className={`text-[10px] font-sans font-medium px-2 py-0.5 rounded-full ${
-                isStale || isExpired
-                  ? 'bg-warn-soft text-warn'
-                  : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract'
-                    ? 'bg-ok-soft text-ok'
-                    : autonomyState?.sessionKey?.status === 'configured'
-                      ? 'bg-ok-soft text-ok'
-                      : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch
-                        ? 'bg-risk-soft text-risk'
-                        : 'bg-panel-2 text-ink-3'
-              }`}>
-                {isStale
-                  ? 'stale test memory'
-                  : isExpired
-                    ? 'expired memory config'
-                    : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract'
-                      ? 'testnet verified'
-                      : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch
-                        ? 'revoked'
-                        : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory'
-                          ? 'configured in app'
-                          : 'missing'}
+              <span className={`text-[10px] font-sans font-medium px-2 py-0.5 rounded-full ${autonomyBadgeClass}`}>
+                {autonomyBadgeLabel}
               </span>
             </div>
-            {(isStale || isExpired) && (
+            {runtimeIsSepolia && (isStale || isExpired) && (
               <button
                 onClick={() => resetAutonomy.mutate()}
                 disabled={resetAutonomy.isPending}
@@ -340,20 +367,16 @@ export function OpsRail({ onClose }: OpsRailProps) {
               </button>
             )}
             <div className="text-xs font-sans font-medium text-ink-2 bg-panel-2 px-2 py-1.5 rounded-[var(--radius-sm)] border border-line my-0.5 text-center">
-              {autonomyState?.sessionKey?.status === 'configured'
-                ? `Active limit: ${autonomyState.sessionKey.dailyLimitUsdc} USDC/day`
-                : 'Session key not configured'}
+              {autonomySummary}
             </div>
             <div className="flex items-center justify-between mt-0.5">
               <span className="text-xs text-ink-2 font-sans">Mode</span>
-              <span className={`text-[10px] font-sans font-medium px-2 py-0.5 rounded-full ${isMainnetReadonly ? 'bg-warn-soft text-warn' : 'bg-accent-soft text-accent-2'}`}>
-                {isMainnetReadonly ? 'read-only' : 'execution'}
+              <span className={`text-[10px] font-sans font-medium px-2 py-0.5 rounded-full ${runtimeIsMainnetReadonly ? 'bg-warn-soft text-warn' : 'bg-accent-soft text-accent-2'}`}>
+                {runtimeIsMainnetReadonly ? 'read-only' : 'execution'}
               </span>
             </div>
             <div className="text-[10px] text-ink-3 mt-0.5 font-sans leading-tight">
-              {autonomyState?.sessionKey?.status === 'configured'
-                ? 'Autonomy running in app memory.'
-                : 'Kill switch active by default. Manual sign required.'}
+              {autonomyHint}
             </div>
           </div>
         </div>

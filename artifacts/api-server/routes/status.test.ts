@@ -196,6 +196,8 @@ describe('Status API', () => {
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.x402.status, 'simulated');
     assert.strictEqual(response.body.x402.configured, false);
+    assert.strictEqual(response.body.x402.settleReady, false);
+    assert.strictEqual(response.body.x402.settleBlockedReason, 'x402_not_configured');
     assert.deepStrictEqual(response.body.x402.missingConfig, []);
     assert.strictEqual(JSON.stringify(response.body.x402).includes('facilitator'), true);
     assert.strictEqual(JSON.stringify(response.body.x402).includes('https://'), false);
@@ -218,6 +220,7 @@ describe('Status API', () => {
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.x402.status, 'missing');
     assert.strictEqual(response.body.x402.configured, false);
+    assert.strictEqual(response.body.x402.settleReady, false);
     assert.ok(response.body.x402.missingConfig.includes('X402_PAYTO_ADDRESS'));
     assert.ok(response.body.x402.missingConfig.includes('X402_NETWORK'));
     assert.strictEqual(JSON.stringify(response.body.x402).includes('private?token=secret'), false);
@@ -225,6 +228,36 @@ describe('Status API', () => {
     restoreEnv('X402_FACILITATOR_URL', origFacilitator);
     restoreEnv('X402_PAYTO_ADDRESS', origPayTo);
     restoreEnv('X402_NETWORK', origNetwork);
+  });
+
+  test('GET /api/status reports mainnet x402 auth required before facilitator probing', async () => {
+    const origFacilitator = process.env.X402_FACILITATOR_URL;
+    const origPayTo = process.env.X402_PAYTO_ADDRESS;
+    const origNetwork = process.env.X402_NETWORK;
+    const origBuilderCode = process.env.BUILDER_CODE;
+    process.env.X402_FACILITATOR_URL = 'https://facilitator.example.test/private?token=url-secret';
+    process.env.X402_PAYTO_ADDRESS = '0x1111111111111111111111111111111111111111';
+    process.env.X402_NETWORK = 'eip155:8453';
+    process.env.BUILDER_CODE = 'miorail';
+    global.fetch = async () => {
+      return new Response('{}', { status: 200 });
+    };
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.x402.status, 'facilitator_auth_required');
+    assert.strictEqual(response.body.x402.configured, true);
+    assert.strictEqual(response.body.x402.facilitatorAuthConfigured, false);
+    assert.strictEqual(response.body.x402.settleReady, false);
+    assert.strictEqual(response.body.x402.settleBlockedReason, 'facilitator_auth_missing');
+    assert.strictEqual(response.body.x402.errorCode, 'facilitator_auth_missing');
+    assert.strictEqual(JSON.stringify(response.body.x402).includes('url-secret'), false);
+
+    restoreEnv('X402_FACILITATOR_URL', origFacilitator);
+    restoreEnv('X402_PAYTO_ADDRESS', origPayTo);
+    restoreEnv('X402_NETWORK', origNetwork);
+    restoreEnv('BUILDER_CODE', origBuilderCode);
+    global.fetch = ORIGINAL_FETCH;
   });
 
   test('GET /api/status reports x402 connected after successful facilitator probe', async () => {
@@ -262,7 +295,10 @@ describe('Status API', () => {
     assert.strictEqual(response.body.x402.builderCodeConfigured, true);
     assert.strictEqual(response.body.x402.facilitatorAuthConfigured, true);
     assert.strictEqual(response.body.x402.authSource, 'bearer_token');
+    assert.strictEqual(response.body.x402.settleReady, true);
+    assert.strictEqual(response.body.x402.probeStatus, 'connected');
     assert.strictEqual(response.body.x402.supportedKindsCount, 1);
+    assert.deepStrictEqual(response.body.x402.supportedNetworks, ['eip155:8453']);
     assert.strictEqual(JSON.stringify(response.body.x402).includes('facilitator.example.test'), false);
     assert.strictEqual(JSON.stringify(response.body.x402).includes('secret-token'), false);
 
@@ -295,6 +331,9 @@ describe('Status API', () => {
     assert.strictEqual(response.body.x402.payToConfigured, true);
     assert.strictEqual(response.body.x402.builderCodeConfigured, true);
     assert.strictEqual(response.body.x402.errorCode, 'facilitator_401');
+    assert.strictEqual(response.body.x402.settleReady, false);
+    assert.strictEqual(response.body.x402.settleBlockedReason, 'facilitator_401');
+    assert.strictEqual(response.body.x402.probeStatus, 'facilitator_auth_required');
     assert.strictEqual(response.body.x402.authSource, 'bearer_token');
     assert.strictEqual(JSON.stringify(response.body.x402).includes('url-secret'), false);
     assert.strictEqual(JSON.stringify(response.body.x402).includes('secret-token'), false);
@@ -349,6 +388,7 @@ describe('Status API', () => {
     assert.strictEqual(response.body.x402.status, 'connected');
     assert.strictEqual(response.body.x402.facilitatorAuthConfigured, true);
     assert.strictEqual(response.body.x402.authSource, 'cdp_api_key_pair');
+    assert.strictEqual(response.body.x402.settleReady, true);
     assert.strictEqual(JSON.stringify(response.body.x402).includes('url-secret'), false);
     assert.strictEqual(JSON.stringify(response.body.x402).includes('organizations/example/apiKeys/key'), false);
     assert.strictEqual(JSON.stringify(response.body.x402).includes(secret), false);

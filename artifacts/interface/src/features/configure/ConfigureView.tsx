@@ -9,7 +9,7 @@ import {
   useResetAutonomy,
   useBaseMcpToolsProbe,
 } from '@mioagent/api-client-react';
-import { CHAIN_ENV, isMainnetReadonly } from '../../lib/chain';
+import { CHAIN_ENV } from '../../lib/chain';
 import {
   approvalProviderHint,
   approvalProviderState,
@@ -100,9 +100,12 @@ export function ConfigureView() {
     },
   });
 
+  const runtimeChainEnv = sd?.chainEnv || CHAIN_ENV;
+  const runtimeIsSepolia = runtimeChainEnv === 'sepolia';
+  const runtimeIsMainnetReadonly = runtimeChainEnv === 'mainnet-readonly';
   const isBaseSepolia = chainId === 84532;
-  const isStale = autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory;
-  const isExpired = autonomyState?.isExpiredMemory || autonomyState?.sessionKey?.isExpiredMemory || autonomyState?.status === 'expired' || autonomyState?.sessionKey?.status === 'expired';
+  const isStale = runtimeIsSepolia && (autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory);
+  const isExpired = runtimeIsSepolia && (autonomyState?.isExpiredMemory || autonomyState?.sessionKey?.isExpiredMemory || autonomyState?.status === 'expired' || autonomyState?.sessionKey?.status === 'expired');
   const mcpOauthResult = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('mcp');
   const mcpOauthMessage = baseMcpOAuthResultMessage(mcpOauthResult);
   const baseMcpBreakdown = baseMcpCapabilityBreakdown(toolsProbe.data || sd?.baseMcp);
@@ -138,12 +141,13 @@ export function ConfigureView() {
         <div>
           <h1 className="text-[20px] font-display font-bold text-ink tracking-[-0.02em]">System & Autonomy Configuration</h1>
           <p className="text-[12px] text-ink-3 mt-0.5">
-            Manage provider connections, testnet spend permissions, and autonomy kill-switch boundaries.
+            Manage provider connections, DB-backed spend permissions, and autonomy kill-switch boundaries.
           </p>
         </div>
       </div>
 
       {/* Autonomy & Session Key Configuration (Base Sepolia Testnet) */}
+      {runtimeIsSepolia ? (
       <section className="bg-panel border border-line rounded-xl p-4 flex flex-col gap-4">
         <div className="flex items-center justify-between border-b border-line pb-3">
           <div>
@@ -266,14 +270,52 @@ export function ConfigureView() {
           </button>
         </div>
       </section>
+      ) : (
+      <section className="bg-panel border border-line rounded-xl p-4 flex flex-col gap-4">
+        <div className="flex items-center justify-between border-b border-line pb-3">
+          <div>
+            <h3 className="text-sm font-bold text-ink">Autonomy & Spend Permissions (DB-backed)</h3>
+            <p className="text-xs text-ink-3 mt-0.5">
+              Current mode is Base Mainnet Read-only. Server execution is disabled; spend permission state is persisted in the database.
+            </p>
+          </div>
+          <StateBadge
+            state={sd?.autonomy?.databaseConfigured ? 'live' : 'missing'}
+            label={sd?.autonomy?.databaseConfigured ? 'database-backed' : 'database missing'}
+            title="Source: /api/status autonomy"
+          />
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+          <div className="bg-panel-2 border border-line rounded-lg p-3">
+            <div className="text-[10px] uppercase tracking-[0.06em] text-ink-3">Runtime Chain</div>
+            <div className="mt-1 font-mono font-bold text-ink">{runtimeChainEnv}</div>
+          </div>
+          <div className="bg-panel-2 border border-line rounded-lg p-3">
+            <div className="text-[10px] uppercase tracking-[0.06em] text-ink-3">Persistence</div>
+            <div className="mt-1 font-mono font-bold text-ink">{sd?.autonomy?.spendPermissionsPersistence || 'database'}</div>
+          </div>
+          <div className="bg-panel-2 border border-line rounded-lg p-3">
+            <div className="text-[10px] uppercase tracking-[0.06em] text-ink-3">Server Broadcast</div>
+            <div className="mt-1 font-mono font-bold text-warn">disabled</div>
+          </div>
+          <div className="bg-panel-2 border border-line rounded-lg p-3">
+            <div className="text-[10px] uppercase tracking-[0.06em] text-ink-3">User Confirmation</div>
+            <div className="mt-1 font-mono font-bold text-ok">{sd?.execution?.userConfirmedEnabled ? 'enabled' : 'not reported'}</div>
+          </div>
+        </div>
+        <div className="text-[11px] text-ink-3 bg-panel-2 border border-line rounded-lg px-3 py-2">
+          Mainnet automation remains read-only unless explicit user-confirmed wallet flow is used. Testnet setup controls are hidden for this runtime.
+        </div>
+      </section>
+      )}
 
       {/* System Provider Status */}
       <section className="bg-panel border border-line rounded-xl p-4 flex flex-col gap-3">
         <h3 className="text-sm font-bold text-ink mb-1">System Provider Status</h3>
         <Row label="Execution Mode">
           <div className="flex items-center gap-2">
-            <span className="text-xs bg-panel-2 px-2.5 py-1 rounded border border-line font-mono text-ink">{sd?.execution?.mode || CHAIN_ENV}</span>
-            {isMainnetReadonly && <span className="text-xs text-warn bg-warn-soft px-2 py-0.5 rounded border border-warn/20 font-medium">Mainnet execution is disabled in read-only mode</span>}
+            <span className="text-xs bg-panel-2 px-2.5 py-1 rounded border border-line font-mono text-ink">{sd?.execution?.mode || runtimeChainEnv}</span>
+            {runtimeIsMainnetReadonly && <span className="text-xs text-warn bg-warn-soft px-2 py-0.5 rounded border border-warn/20 font-medium">Mainnet execution is disabled in read-only mode</span>}
           </div>
         </Row>
         <Row label="Connected Wallet">
@@ -390,18 +432,19 @@ export function ConfigureView() {
         <Row label="x402 Micropayments">
           {sd ? (
             <StateBadge
-              state={sd.x402.status === 'connected' || sd.x402.status === 'configured' ? 'live' : sd.x402.status === 'missing' ? 'missing' : 'mock'}
+              state={sd.x402.settleReady ? 'live' : sd.x402.status === 'missing' ? 'missing' : 'mock'}
               label={
-                sd.x402.status === 'connected' || sd.x402.status === 'configured' ? 'Connected' :
+                sd.x402.settleReady ? 'Settlement ready' :
                 sd.x402.status === 'facilitator_auth_required' ? 'Auth required' :
                 sd.x402.status === 'facilitator_auth_invalid' ? 'Auth invalid' :
                 sd.x402.status === 'facilitator_rate_limited' ? 'Rate limited' :
                 sd.x402.status === 'facilitator_unreachable' ? 'Unreachable' :
+                sd.x402.status === 'unsupported_network_for_settlement' ? 'Network blocked' :
                 sd.x402.status === 'degraded' ? 'Degraded' :
                 sd.x402.status === 'missing' ? 'Not configured' :
                 'Simulated'
               }
-              title={sd.x402.errorCode ? `x402: ${sd.x402.errorCode}` : 'Source: /api/status x402.status'}
+              title={sd.x402.settleBlockedReason ? `x402: ${sd.x402.settleBlockedReason}` : sd.x402.errorCode ? `x402: ${sd.x402.errorCode}` : 'Source: /api/status x402.status'}
             />
           ) : <Checking />}
         </Row>

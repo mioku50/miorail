@@ -18,6 +18,7 @@ export interface PaidActionButtonProps {
   costLabel: string;
   category: 'tools' | 'inference';
   disabled?: boolean;
+  disabledReason?: string;
   runId?: string;
   onSuccess?: (result: PaidActionResult) => void | Promise<void>;
   onFailure?: (error: PaidActionError) => void;
@@ -40,6 +41,7 @@ export function PaidActionButton({
   costLabel,
   category,
   disabled,
+  disabledReason,
   runId,
   onSuccess,
   onFailure,
@@ -55,8 +57,9 @@ export function PaidActionButton({
   const buttonLabel = useMemo(() => {
     if (!isConnected) return 'Connect wallet first';
     if (isWrongChain) return 'Switch to Base';
+    if (disabled && disabledReason) return disabledReason;
     return paidActionButtonLabel(state, costLabel);
-  }, [costLabel, isConnected, isWrongChain, state]);
+  }, [costLabel, disabled, disabledReason, isConnected, isWrongChain, state]);
 
   const Icon =
     state === 'succeeded' || state === 'settled' || state === 'settled_degraded' ? CheckCircle2 :
@@ -114,7 +117,7 @@ export function PaidActionButton({
         <span className="truncate">{buttonLabel}</span>
       </button>
       <div className="flex items-start justify-between gap-3 text-[11px]">
-        <span className="text-ink-3">{error || paidActionCopy(state)}</span>
+        <span className="text-ink-3">{error || (disabled && disabledReason ? disabledReason : paidActionCopy(state))}</span>
         <span className="shrink-0 font-mono text-ink-3">{category}</span>
       </div>
     </div>

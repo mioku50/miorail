@@ -9,7 +9,7 @@ export function StatusBar() {
   const priceProv = sd?.prices?.provider || 'none';
   const riskProv = sd?.risk?.provider || 'none';
   const appProv = sd?.approvals?.provider || 'none';
-  const x402Status = sd?.x402?.status || 'simulated';
+  const x402Status = sd?.x402?.settleReady ? 'settle-ready' : sd?.x402?.status || 'simulated';
 
   return (
     <footer className="hidden md:flex h-[28px] border-t border-line bg-panel px-4 items-center justify-between text-[11px] shrink-0 select-none overflow-hidden">
@@ -26,7 +26,7 @@ export function StatusBar() {
         <span className="text-line">·</span>
         <span><span className="text-ink-3 font-sans">Security:</span> <span className="font-mono text-ink-2">{riskProv}</span></span>
         <span className="text-line">·</span>
-        <span><span className="text-ink-3 font-sans">Approvals:</span> <span className="font-mono text-ink-2">{appProv}</span></span>
+        <span><span className="text-ink-3 font-sans">Approval scanner:</span> <span className="font-mono text-ink-2">{appProv}</span></span>
       </div>
 
       <div className="flex items-center gap-3 shrink-0">

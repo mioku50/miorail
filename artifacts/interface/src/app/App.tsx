@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Route, Switch, Redirect } from 'wouter';
+import { useStatus } from '@mioagent/api-client-react';
 import { useUiStore } from '../lib/state';
+import { CHAIN_ENV } from '../lib/chain';
 import { TopBar } from '../shell/TopBar';
 import { BottomNav } from '../shell/TabBar';
 import { CommandPalette } from '../shell/CommandPalette';
@@ -15,6 +17,18 @@ import { HistoryPage } from '../features/history/HistoryPage';
 import { ConfigureView } from '../features/configure/ConfigureView';
 import { BaseMcpView } from '../features/configure/BaseMcpView';
 import { FuelMeter } from '../features/x402/FuelMeter';
+
+function ChainEnvMismatchBanner() {
+  const { data: sd } = useStatus();
+  const backendChainEnv = sd?.chainEnv;
+  if (!backendChainEnv || backendChainEnv === CHAIN_ENV) return null;
+  return (
+    <div className="border-b border-warn/25 bg-warn-soft px-4 py-2 text-[12px] text-warn font-sans">
+      Frontend/backend chain env mismatch: frontend <span className="font-mono font-bold">{CHAIN_ENV}</span>, API{' '}
+      <span className="font-mono font-bold">{backendChainEnv}</span>. Rebuild the frontend or update VITE_CHAIN_ENV before signing x402 payments.
+    </div>
+  );
+}
 
 export function App() {
   const togglePalette = useUiStore((s) => s.togglePalette);
@@ -50,6 +64,7 @@ export function App() {
     /* Desktop: h-screen overflow-hidden; mobile: natural scroll */
     <div className="w-full flex flex-col font-sans lg:h-screen lg:overflow-hidden">
       <TopBar onHamburgerClick={() => setDrawerOpen((v) => !v)} drawerOpen={drawerOpen} />
+      <ChainEnvMismatchBanner />
 
       {/* Mobile drawer overlay */}
       {drawerOpen && (

@@ -86,6 +86,7 @@ export type X402RuntimeStatus =
   | 'configured'
   | 'simulated'
   | 'missing'
+  | 'unsupported_network_for_settlement'
   | 'facilitator_auth_required'
   | 'facilitator_auth_invalid'
   | 'facilitator_rate_limited'
@@ -112,9 +113,13 @@ export interface X402RuntimeConfig {
   builderCode?: string;
   facilitatorAuthConfigured?: boolean;
   authSource?: X402FacilitatorAuthSource;
+  settleReady?: boolean;
+  settleBlockedReason?: string;
+  probeStatus?: X402RuntimeStatus;
   errorCode?: string;
   lastCheckedAt?: string;
   supportedKindsCount?: number;
+  supportedNetworks?: string[];
   middlewareMode?: X402ResolvedMiddlewareMode;
   officialMiddlewareEnabled?: boolean;
   mockFacilitatorEnabled?: boolean;
@@ -151,6 +156,7 @@ export interface X402SettlementRecord {
   source: 'x402-facilitator' | 'mock';
   errorReason?: string;
   errorMessage?: string;
+  details?: Record<string, unknown>;
 }
 
 type MinimalSettleResponse = {
@@ -168,6 +174,11 @@ export interface CreateX402MiddlewareOptions {
   routePath?: string;
   serviceName?: string;
   onSettlement?: (record: X402SettlementRecord, context: SettleResultContext) => Promise<void> | void;
+  onSettlementFailure?: (failure: {
+    errorReason?: string;
+    errorMessage?: string;
+    checkedAt: string;
+  }) => Promise<void> | void;
   syncFacilitatorOnStart?: boolean;
   runtimeMode?: X402MiddlewareRuntimeMode;
 }
@@ -186,6 +197,10 @@ export interface X402MiddlewareDiagnostics {
   builderCodeAttribution: 'attached' | 'unavailable';
   facilitatorAuthConfigured: boolean;
   authSource?: X402FacilitatorAuthSource;
+  facilitatorHost?: string;
+  settleReady: boolean;
+  settleBlockedReason?: string;
+  probeStatus?: X402RuntimeStatus;
   smokeRoute: string;
   smokeRouteAvailable: boolean;
   eip712DomainAttached: boolean;
@@ -194,6 +209,7 @@ export interface X402MiddlewareDiagnostics {
   errorCode?: string;
   missingConfig: string[];
   warnings: string[];
+  supportedNetworks?: string[];
 }
 
 export interface X402FacilitatorHealth {
@@ -209,6 +225,7 @@ export interface X402FacilitatorHealth {
   errorCode?: string;
   checkedAt: string;
   supportedKindsCount?: number;
+  supportedNetworks?: string[];
 }
 
 type FacilitatorOperation = 'verify' | 'settle' | 'supported' | 'bazaar';
@@ -256,6 +273,39 @@ function warnOnce(key: string, message: string): void {
 function normalizeOptional(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized || undefined;
+}
+
+function sanitizedHost(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    return new URL(value).host;
+  } catch {
+    return undefined;
+  }
+}
+
+function mainnetSettlementRequiresAuth(chainId?: SupportedBaseChainId): boolean {
+  return chainId === 8453;
+}
+
+function settleBlockedReasonForHealth(status: X402RuntimeStatus, errorCode?: string): string {
+  if (status === 'facilitator_auth_required') return errorCode || 'facilitator_auth_required';
+  if (status === 'facilitator_auth_invalid') return errorCode || 'facilitator_auth_invalid';
+  if (status === 'facilitator_rate_limited') return 'facilitator_rate_limited';
+  if (status === 'facilitator_unreachable') return 'facilitator_unreachable';
+  if (status === 'unsupported_network_for_settlement') return 'network_not_supported';
+  if (status === 'degraded') return 'facilitator_degraded';
+  if (status === 'missing') return 'x402_not_configured';
+  return 'settlement_not_ready';
+}
+
+export function classifyX402SettleFailureReason(reason?: string, message?: string): string {
+  const text = [reason, message].filter(Boolean).join(' ').toLowerCase();
+  if (/insufficient|balance|funds?|allowance|usdc/.test(text)) return 'insufficient_usdc';
+  if (/unauthori[sz]ed|forbidden|auth|jwt|401|403/.test(text)) return 'facilitator_auth_missing';
+  if (/network|chain|unsupported|8453|84532/.test(text)) return 'network_not_supported';
+  if (/rate|429|quota|limit/.test(text)) return 'facilitator_rate_limited';
+  return reason || 'settlement_failed';
 }
 
 function isValidAddress(value: string | undefined): boolean {
@@ -577,9 +627,30 @@ export function x402ConfigFromEnv(env: NodeJS.ProcessEnv = process.env): X402Run
   const anyConfigured = !!facilitatorUrl || !!payTo || !!networkRaw;
   const builderCode = getBuilderCodeFromEnv(env, { warn: anyConfigured });
   const configured = missingConfig.length === 0 && !!facilitatorUrl && !!payTo && !!network && !!asset;
+  const auth = resolveX402FacilitatorAuth(env);
+  const authRequired = mainnetSettlementRequiresAuth(chainId);
+  const settleBlockedReason =
+    !configured
+      ? warnings.includes('unsupported_network') ? 'unsupported_network_for_settlement' : 'x402_not_configured'
+      : auth.errorCode
+        ? auth.errorCode
+        : authRequired && !auth.configured
+          ? 'facilitator_auth_missing'
+          : undefined;
+  const settleReady = configured && !settleBlockedReason;
+  const status: X402RuntimeStatus =
+    configured && settleBlockedReason === 'facilitator_auth_missing'
+      ? 'facilitator_auth_required'
+      : configured && settleBlockedReason === 'cdp_api_key_pair_incomplete'
+        ? 'facilitator_auth_required'
+        : configured
+          ? 'configured'
+          : anyConfigured
+            ? 'missing'
+            : 'simulated';
 
   return {
-    status: configured ? 'configured' : anyConfigured ? 'missing' : 'simulated',
+    status,
     configured,
     missingConfig: anyConfigured ? [...new Set(missingConfig)] : [],
     warnings,
@@ -590,8 +661,10 @@ export function x402ConfigFromEnv(env: NodeJS.ProcessEnv = process.env): X402Run
     asset,
     amountAtomic,
     builderCode,
-    facilitatorAuthConfigured: x402FacilitatorAuthConfigured(env),
-    authSource: x402FacilitatorAuthSource(env),
+    facilitatorAuthConfigured: auth.configured,
+    authSource: auth.configured ? auth.source : undefined,
+    settleReady,
+    settleBlockedReason,
   };
 }
 
@@ -621,6 +694,7 @@ export function createX402RoutesConfig(
   config: X402RuntimeConfig,
   routePath = '/mock-paid-endpoint',
   serviceName = 'Miorail',
+  options: Pick<CreateX402MiddlewareOptions, 'onSettlementFailure'> = {},
 ): RoutesConfig {
   if (!config.configured || !config.payTo || !config.network || !config.asset) {
     throw new Error(`x402 is not configured: ${config.missingConfig.join(', ')}`);
@@ -656,13 +730,21 @@ export function createX402RoutesConfig(
         },
       };
     },
-    settlementFailedResponseBody: (_context: unknown, settleResult: { errorReason?: string; errorMessage?: string }) => ({
-      contentType: 'application/json',
-      body: {
-        error: 'Payment Required: settlement failed',
-        reason: settleResult.errorReason || 'settlement_failed',
-      },
-    }),
+    settlementFailedResponseBody: (_context: unknown, settleResult: { errorReason?: string; errorMessage?: string }) => {
+      const reason = classifyX402SettleFailureReason(settleResult.errorReason, settleResult.errorMessage);
+      void options.onSettlementFailure?.({
+        errorReason: reason,
+        errorMessage: settleResult.errorMessage,
+        checkedAt: new Date().toISOString(),
+      });
+      return {
+        contentType: 'application/json',
+        body: {
+          error: 'Payment Required: settlement failed',
+          reason,
+        },
+      };
+    },
     extensions: config.builderCode
       ? {
           [BUILDER_CODE]: declareBuilderCodeExtension(config.builderCode),
@@ -798,6 +880,56 @@ async function loadSupportedKinds(config: X402RuntimeConfig, env: NodeJS.Process
   return withFacilitatorTimeout(createHTTPFacilitatorClient(config, env).getSupported(), env);
 }
 
+function supportedNetworksFromResponse(supported: SupportedResponse): string[] {
+  const kinds = Array.isArray((supported as { kinds?: unknown }).kinds)
+    ? ((supported as { kinds: Array<Record<string, unknown>> }).kinds)
+    : [];
+  const networks = kinds
+    .map((kind) => (typeof kind.network === 'string' ? kind.network : undefined))
+    .filter((network): network is string => !!network);
+  return [...new Set(networks)];
+}
+
+function applyFacilitatorHealthToConfig(
+  config: X402RuntimeConfig,
+  health: X402FacilitatorHealth,
+): X402RuntimeConfig {
+  const hasParsedNetworks = Array.isArray(health.supportedNetworks) && health.supportedNetworks.length > 0;
+  const networkSupported =
+    health.status === 'connected' &&
+    (!hasParsedNetworks || !config.network || health.supportedNetworks?.includes(config.network));
+
+  if (health.status === 'connected' && networkSupported) {
+    return {
+      ...config,
+      status: 'connected',
+      settleReady: true,
+      settleBlockedReason: undefined,
+      probeStatus: health.status,
+      errorCode: undefined,
+      lastCheckedAt: health.checkedAt,
+      supportedKindsCount: health.supportedKindsCount,
+      supportedNetworks: health.supportedNetworks,
+    };
+  }
+
+  const status: X402RuntimeStatus =
+    health.status === 'connected' ? 'unsupported_network_for_settlement' : health.status;
+  const errorCode =
+    health.status === 'connected' ? 'facilitator_network_not_supported' : health.errorCode;
+  return {
+    ...config,
+    status,
+    settleReady: false,
+    settleBlockedReason: settleBlockedReasonForHealth(status, errorCode),
+    probeStatus: health.status,
+    errorCode,
+    lastCheckedAt: health.checkedAt,
+    supportedKindsCount: health.supportedKindsCount,
+    supportedNetworks: health.supportedNetworks,
+  };
+}
+
 export async function probeX402FacilitatorStatus(
   config: X402RuntimeConfig = x402ConfigFromEnv(),
   env: NodeJS.ProcessEnv = process.env,
@@ -820,11 +952,13 @@ export async function probeX402FacilitatorStatus(
     try {
       const supported = await loadSupportedKinds(config, env);
       const supportedKindsCount = Array.isArray(supported.kinds) ? supported.kinds.length : 0;
+      const supportedNetworks = supportedNetworksFromResponse(supported);
       const health: X402FacilitatorHealth = {
         status: supportedKindsCount > 0 ? 'connected' : 'degraded',
         errorCode: supportedKindsCount > 0 ? undefined : 'facilitator_no_supported_kinds',
         checkedAt: new Date().toISOString(),
         supportedKindsCount,
+        supportedNetworks,
       };
       return cacheHealth(key, health);
     } catch (error) {
@@ -856,17 +990,21 @@ export async function x402StatusFromEnv(env: NodeJS.ProcessEnv = process.env): P
       ...config,
       status: 'facilitator_auth_required',
       errorCode: auth.errorCode,
+      settleReady: false,
+      settleBlockedReason: auth.errorCode,
+      lastCheckedAt: new Date().toISOString(),
+    };
+  }
+  if (!config.settleReady) {
+    return {
+      ...config,
+      status: config.status === 'configured' ? 'facilitator_auth_required' : config.status,
+      errorCode: config.settleBlockedReason,
       lastCheckedAt: new Date().toISOString(),
     };
   }
   const health = await probeX402FacilitatorStatus(config, env);
-  return {
-    ...config,
-    status: health.status,
-    errorCode: health.errorCode,
-    lastCheckedAt: health.checkedAt,
-    supportedKindsCount: health.supportedKindsCount,
-  };
+  return applyFacilitatorHealthToConfig(config, health);
 }
 
 export function clearX402FacilitatorStatusForTests(): void {
@@ -903,7 +1041,7 @@ function createOfficialX402HttpServer(
 
   const httpServer = new x402HTTPResourceServer(
     resourceServer,
-    createX402RoutesConfig(config, options.routePath, options.serviceName),
+    createX402RoutesConfig(config, options.routePath, options.serviceName, options),
   );
   return httpServer;
 }
@@ -963,6 +1101,10 @@ function unavailablePayload(
     facilitatorConfigured: !!config.facilitatorUrl,
     payToConfigured: !!config.payTo,
     builderCodeConfigured: !!config.builderCode,
+    settleReady: !!config.settleReady,
+    settleBlockedReason: config.settleBlockedReason,
+    network: config.network,
+    chainId: config.chainId,
     missingConfig: config.missingConfig,
   };
 }
@@ -984,9 +1126,18 @@ export function createSafeOfficialX402Middleware(
   return async (req, res, next) => {
     try {
       if (!handler) {
+        if (!config.settleReady) {
+          res.status(503).json(unavailablePayload(
+            config,
+            config.status === 'configured' ? 'facilitator_auth_required' : config.status,
+            config.errorCode || config.settleBlockedReason,
+          ));
+          return;
+        }
         const health = await probeX402FacilitatorStatus(config, env);
-        if (health.status !== 'connected') {
-          res.status(503).json(unavailablePayload(config, health.status, health.errorCode));
+        const runtime = applyFacilitatorHealthToConfig(config, health);
+        if (!runtime.settleReady) {
+          res.status(503).json(unavailablePayload(runtime, runtime.status, runtime.errorCode));
           return;
         }
         initPromise ||= createInitializedOfficialX402Middleware(config, options, env);
@@ -1033,9 +1184,9 @@ export function resolveX402MiddlewareMode(
 
 export function x402MiddlewareDiagnosticsFromEnv(
   env: NodeJS.ProcessEnv = process.env,
-  options: { runtimeMode?: X402MiddlewareRuntimeMode; smokeRoute?: string } = {},
+  options: { runtimeMode?: X402MiddlewareRuntimeMode; smokeRoute?: string; config?: X402RuntimeConfig } = {},
 ): X402MiddlewareDiagnostics {
-  const config = x402ConfigFromEnv(env);
+  const config = options.config || x402ConfigFromEnv(env);
   const middlewareMode = resolveX402MiddlewareMode(config, env, options.runtimeMode);
   const smokeRoute = options.smokeRoute || '/api/x402/smoke-paid';
   const eip712Domain = resolveEip712DomainExtra(config.network, config.asset);
@@ -1053,14 +1204,19 @@ export function x402MiddlewareDiagnosticsFromEnv(
     builderCodeAttribution: config.builderCode ? 'attached' : 'unavailable',
     facilitatorAuthConfigured: !!config.facilitatorAuthConfigured,
     authSource: config.authSource,
+    facilitatorHost: sanitizedHost(config.facilitatorUrl),
+    settleReady: !!config.settleReady,
+    settleBlockedReason: config.settleBlockedReason,
+    probeStatus: config.probeStatus,
     smokeRoute,
-    smokeRouteAvailable: middlewareMode === 'official' && config.configured,
+    smokeRouteAvailable: middlewareMode === 'official' && config.configured && !!config.settleReady,
     eip712DomainAttached: !!(eip712Domain.name && eip712Domain.version),
     eip712DomainName: eip712Domain.name,
     eip712DomainVersion: eip712Domain.version,
     errorCode: config.errorCode,
     missingConfig: config.missingConfig,
     warnings: config.warnings,
+    supportedNetworks: config.supportedNetworks,
   };
 }
 

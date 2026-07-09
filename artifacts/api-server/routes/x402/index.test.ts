@@ -86,6 +86,7 @@ describe('x402 official smoke endpoint', () => {
   });
 
   it('reports connected facilitator config and no production MockFacilitator path', async () => {
+    globalThis.fetch = async () => supportedResponse();
     const smokeApp = express();
     smokeApp.use('/x402', createX402Router({
       env: configuredEnv(),
@@ -98,6 +99,9 @@ describe('x402 official smoke endpoint', () => {
     assert.strictEqual(res.body.officialMiddlewareEnabled, true);
     assert.strictEqual(res.body.mockFacilitatorEnabled, false);
     assert.strictEqual(res.body.browserPaidFlowAvailable, true);
+    assert.strictEqual(res.body.settleReady, true);
+    assert.strictEqual(res.body.probeStatus, 'connected');
+    assert.deepStrictEqual(res.body.supportedNetworks, ['eip155:8453']);
     assert.strictEqual(res.body.configured, true);
     assert.strictEqual(res.body.network, 'eip155:8453');
     assert.strictEqual(res.body.chainId, 8453);
@@ -107,10 +111,38 @@ describe('x402 official smoke endpoint', () => {
     assert.strictEqual(res.body.builderCodeAttribution, 'attached');
     assert.strictEqual(res.body.facilitatorAuthConfigured, true);
     assert.strictEqual(res.body.authSource, 'bearer_token');
+    assert.strictEqual(res.body.facilitatorHost, 'facilitator.example.test');
     assert.strictEqual(res.body.smokeRoute, '/api/x402/smoke-paid');
     assert.strictEqual(res.body.smokeRouteAvailable, true);
     assert.strictEqual(JSON.stringify(res.body).includes('redacted-token'), false);
-    assert.strictEqual(JSON.stringify(res.body).includes('facilitator.example.test'), false);
+    assert.strictEqual(JSON.stringify(res.body).includes('https://facilitator.example.test'), false);
+  });
+
+  it('reports configured-but-not-settle-ready diagnostics when mainnet auth is missing', async () => {
+    globalThis.fetch = async () => {
+      return supportedResponse();
+    };
+    const smokeApp = express();
+    smokeApp.use('/x402', createX402Router({
+      env: configuredEnv({
+        X402_FACILITATOR_AUTH_TOKEN: undefined,
+        X402_FACILITATOR_API_KEY: undefined,
+        CDP_API_KEY: undefined,
+        CDP_API_KEY_ID: undefined,
+        CDP_API_KEY_SECRET: undefined,
+      }),
+      runtimeMode: 'official',
+    }));
+
+    const res = await request(smokeApp).get('/x402/diagnostics');
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.status, 'facilitator_auth_required');
+    assert.strictEqual(res.body.configured, true);
+    assert.strictEqual(res.body.settleReady, false);
+    assert.strictEqual(res.body.settleBlockedReason, 'facilitator_auth_missing');
+    assert.strictEqual(res.body.browserPaidFlowAvailable, false);
+    assert.strictEqual(res.body.smokeRouteAvailable, false);
+    assert.strictEqual(JSON.stringify(res.body).includes('redacted-token'), false);
   });
 
   it('returns controlled official 402 Payment Required for unpaid smoke request', async () => {
@@ -165,9 +197,13 @@ describe('x402 official smoke endpoint', () => {
     assert.strictEqual((payload.payload.authorization as Record<string, unknown>).value, '1000');
   });
 
-  it('returns safe 503 when facilitator auth is missing or rejected', async () => {
+  it('returns safe 503 when facilitator auth is missing before probing', async () => {
     clearX402FacilitatorStatusForTests();
-    globalThis.fetch = async () => new Response('Unauthorized redacted-token', { status: 401 });
+    let fetchCalled = false;
+    globalThis.fetch = async () => {
+      fetchCalled = true;
+      return new Response('Unauthorized redacted-token', { status: 401 });
+    };
     const smokeApp = express();
     smokeApp.use('/x402', createX402Router({
       env: configuredEnv({
@@ -184,12 +220,16 @@ describe('x402 official smoke endpoint', () => {
     assert.strictEqual(res.status, 503);
     assert.strictEqual(res.body.error, 'x402_facilitator_unavailable');
     assert.strictEqual(res.body.status, 'facilitator_auth_required');
-    assert.strictEqual(res.body.errorCode, 'facilitator_401');
+    assert.strictEqual(res.body.errorCode, 'facilitator_auth_missing');
+    assert.strictEqual(res.body.settleReady, false);
+    assert.strictEqual(res.body.settleBlockedReason, 'facilitator_auth_missing');
+    assert.strictEqual(fetchCalled, false);
     assert.strictEqual(JSON.stringify(res.body).includes('redacted-token'), false);
     assert.strictEqual(JSON.stringify(res.body).includes('Authorization'), false);
   });
 
   it('reports Builder Code attached or explicitly unavailable', async () => {
+    globalThis.fetch = async () => supportedResponse();
     const attachedApp = express();
     attachedApp.use('/x402', createX402Router({
       env: configuredEnv({ BUILDER_CODE: 'miorail' }),
@@ -225,6 +265,7 @@ describe('x402 official smoke endpoint', () => {
   });
 
   it('exposes browser paid action diagnostic fields and exposes payment response headers', async () => {
+    globalThis.fetch = async () => supportedResponse();
     const app = express();
     app.use('/x402', createX402Router({
       env: configuredEnv(),
@@ -233,19 +274,22 @@ describe('x402 official smoke endpoint', () => {
     const diag = await request(app).get('/x402/diagnostics');
     assert.strictEqual(diag.body.browserPaidFlowAvailable, true);
     assert.strictEqual(diag.body.browserPaidActionAvailable, true);
+    assert.strictEqual(diag.body.settleReady, true);
     assert.strictEqual(diag.body.paymentResponseHeaderReadable, true);
     assert.strictEqual('lastBrowserRunId' in diag.body, true);
     assert.strictEqual('lastBrowserRunLedgerMatched' in diag.body, true);
   });
 
-  it('smoke-paid simulated mode records runId and filters ledger by runId', async () => {
+  it('smoke-paid mock mode records runId and filters ledger by runId', async () => {
     const app = express();
     app.use('/x402', createX402Router({
       env: configuredEnv(),
-      runtimeMode: 'simulated',
+      runtimeMode: 'mock',
     }));
     const runId = 'test-browser-run-123';
-    const smokeRes = await request(app).get(`/x402/smoke-paid?runId=${runId}`);
+    const smokeRes = await request(app)
+      .get(`/x402/smoke-paid?runId=${runId}`)
+      .set('x-402-payment', Buffer.from(JSON.stringify({ receipt: 'valid-receipt-amount:1000000-runid' })).toString('base64'));
     assert.strictEqual(smokeRes.status, 200);
     assert.strictEqual(smokeRes.body.runId, runId);
 

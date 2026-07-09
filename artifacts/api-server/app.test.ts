@@ -20,4 +20,15 @@ test('Express App', async (t) => {
     const response = await request(app).get('/health');
     assert.ok(response.headers['x-trace-id']);
   });
+
+  await t.test('Exposes x402 payment response headers for browser settlement proof', async () => {
+    const response = await request(app)
+      .options('/api/x402/smoke-paid')
+      .set('Origin', 'https://miorail.xyz')
+      .set('Access-Control-Request-Method', 'GET');
+    assert.strictEqual(response.status, 204);
+    assert.ok(response.headers['access-control-expose-headers']?.includes('payment-response'));
+    assert.ok(response.headers['access-control-expose-headers']?.includes('x-payment-response'));
+    assert.ok(response.headers['access-control-expose-headers']?.includes('PAYMENT-REQUIRED'));
+  });
 });
