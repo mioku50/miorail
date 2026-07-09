@@ -1,4 +1,6 @@
 import { Request, Response, NextFunction, type RequestHandler } from 'express';
+import { CdpClient } from '@coinbase/cdp-sdk';
+import type { EvmServerAccount } from '@coinbase/cdp-sdk';
 import { generateJwt } from '@coinbase/cdp-sdk/auth';
 import { X402PaymentRequired } from '@mioagent/x402-parser';
 import {
@@ -100,6 +102,7 @@ export type X402FacilitatorAuthSource = 'bearer_token' | 'cdp_api_key_pair';
 export type X402MiddlewareRuntimeMode = 'auto' | 'official' | 'mock' | 'unavailable';
 export type X402ResolvedMiddlewareMode = 'official' | 'mock' | 'unavailable';
 export type X402BuyerPaymentMode = 'free' | 'x402';
+export type X402BuyerPayerStatus = 'ready' | 'missing_config' | 'unavailable' | 'insufficient_usdc';
 
 export interface X402RuntimeConfig {
   status: X402RuntimeStatus;
@@ -174,6 +177,34 @@ export interface CreateX402BuyerClientOptions {
 
 export interface CreateX402BuyerPaidFetchOptions extends CreateX402BuyerClientOptions {
   fetchImpl?: typeof globalThis.fetch;
+}
+
+export interface X402BuyerPayerStatusSnapshot {
+  status: X402BuyerPayerStatus;
+  configured: boolean;
+  accountAddressPresent: boolean;
+  accountType: 'cdp_evm_server_account';
+  walletName: string;
+  missingConfig: string[];
+  errorCode?: string;
+  lastCheckedAt?: string;
+}
+
+export interface X402BuyerPayerRuntime {
+  getPaidFetch(): Promise<typeof globalThis.fetch>;
+  status(): X402BuyerPayerStatusSnapshot;
+}
+
+export interface CreateX402BuyerPayerRuntimeOptions {
+  fetchImpl?: typeof globalThis.fetch;
+  networks?: SupportedX402Network[];
+  builderCode?: string;
+  resolveAccount?: (input: {
+    apiKeyId: string;
+    apiKeySecret: string;
+    walletSecret: string;
+    walletName: string;
+  }) => Promise<X402BuyerSigner>;
 }
 
 type MinimalSettleResponse = {
@@ -1296,6 +1327,196 @@ export class X402BuyerUnavailableError extends Error {
   }
 }
 
+function buyerPayerWalletNameFromEnv(env: NodeJS.ProcessEnv = process.env): string {
+  return normalizeOptional(env.X402_BUYER_PAYER_ACCOUNT_NAME) ||
+    normalizeOptional(env.BASE_SUBSCRIPTION_WALLET_NAME) ||
+    normalizeOptional(env.CDP_SUBSCRIPTION_WALLET_NAME) ||
+    'miorail-x402-buyer-payer';
+}
+
+function buyerPayerConfigFromEnv(env: NodeJS.ProcessEnv = process.env): {
+  configured: boolean;
+  missingConfig: string[];
+  apiKeyId?: string;
+  apiKeySecret?: string;
+  walletSecret?: string;
+  walletName: string;
+} {
+  const apiKeyId = normalizeOptional(env.CDP_API_KEY_ID);
+  const apiKeySecret = normalizeOptional(env.CDP_API_KEY_SECRET);
+  const walletSecret = normalizeOptional(env.CDP_WALLET_SECRET);
+  const missingConfig: string[] = [];
+  if (!apiKeyId) missingConfig.push('CDP_API_KEY_ID');
+  if (!apiKeySecret) missingConfig.push('CDP_API_KEY_SECRET');
+  if (!walletSecret) missingConfig.push('CDP_WALLET_SECRET');
+  return {
+    configured: missingConfig.length === 0,
+    missingConfig,
+    apiKeyId,
+    apiKeySecret: apiKeySecret ? normalizeCdpApiKeySecret(apiKeySecret) : undefined,
+    walletSecret,
+    walletName: buyerPayerWalletNameFromEnv(env),
+  };
+}
+
+function classifyBuyerPayerError(error: unknown): Pick<X402BuyerPayerStatusSnapshot, 'status' | 'errorCode'> {
+  if (error instanceof X402BuyerUnavailableError) {
+    if (error.errorCode === 'x402_buyer_insufficient_usdc') {
+      return { status: 'insufficient_usdc', errorCode: error.errorCode };
+    }
+    if (error.errorCode === 'x402_buyer_payer_missing_config') {
+      return { status: 'missing_config', errorCode: error.errorCode };
+    }
+    return { status: 'unavailable', errorCode: error.errorCode };
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (/insufficient|balance|funds?|allowance|usdc/i.test(message)) {
+    return { status: 'insufficient_usdc', errorCode: 'x402_buyer_insufficient_usdc' };
+  }
+  if (/wallet secret|api key|unauthori[sz]ed|forbidden|auth|401|403/i.test(message)) {
+    return { status: 'unavailable', errorCode: 'x402_buyer_cdp_auth_unavailable' };
+  }
+  return { status: 'unavailable', errorCode: 'x402_buyer_payer_unavailable' };
+}
+
+export function x402BuyerPayerStatusFromEnv(env: NodeJS.ProcessEnv = process.env): X402BuyerPayerStatusSnapshot {
+  return getDefaultX402BuyerPayerRuntime(env).status();
+}
+
+export function createX402BuyerPayerRuntime(
+  env: NodeJS.ProcessEnv = process.env,
+  options: CreateX402BuyerPayerRuntimeOptions = {},
+): X402BuyerPayerRuntime {
+  const config = buyerPayerConfigFromEnv(env);
+  let paidFetch: typeof globalThis.fetch | undefined;
+  let inflight: Promise<typeof globalThis.fetch> | undefined;
+  let snapshot: X402BuyerPayerStatusSnapshot = {
+    status: config.configured ? 'ready' : 'missing_config',
+    configured: config.configured,
+    accountAddressPresent: false,
+    accountType: 'cdp_evm_server_account',
+    walletName: config.walletName,
+    missingConfig: config.missingConfig,
+    ...(config.configured ? {} : { errorCode: 'x402_buyer_payer_missing_config' }),
+  };
+
+  const updateSnapshot = (patch: Partial<X402BuyerPayerStatusSnapshot>) => {
+    snapshot = {
+      ...snapshot,
+      ...patch,
+      lastCheckedAt: new Date().toISOString(),
+    };
+  };
+
+  const resolveAccount = async (): Promise<X402BuyerSigner> => {
+    if (!config.configured || !config.apiKeyId || !config.apiKeySecret || !config.walletSecret) {
+      throw new X402BuyerUnavailableError(
+        'x402_buyer_payer_missing_config',
+        'x402 buyer payer requires CDP_API_KEY_ID, CDP_API_KEY_SECRET, and CDP_WALLET_SECRET.',
+      );
+    }
+    if (options.resolveAccount) {
+      return options.resolveAccount({
+        apiKeyId: config.apiKeyId,
+        apiKeySecret: config.apiKeySecret,
+        walletSecret: config.walletSecret,
+        walletName: config.walletName,
+      });
+    }
+    const cdp = new CdpClient({
+      apiKeyId: config.apiKeyId,
+      apiKeySecret: config.apiKeySecret,
+      walletSecret: config.walletSecret,
+    });
+    const account = await cdp.evm.getOrCreateAccount({ name: config.walletName }) as EvmServerAccount;
+    return account as unknown as X402BuyerSigner;
+  };
+
+  return {
+    async getPaidFetch() {
+      if (paidFetch) return paidFetch;
+      if (!config.configured) {
+        updateSnapshot({
+          status: 'missing_config',
+          configured: false,
+          accountAddressPresent: false,
+          errorCode: 'x402_buyer_payer_missing_config',
+          missingConfig: config.missingConfig,
+        });
+        throw new X402BuyerUnavailableError('x402_buyer_payer_missing_config');
+      }
+      inflight ||= (async () => {
+        try {
+          const account = await resolveAccount();
+          paidFetch = createX402BuyerPaidFetch({
+            signer: account,
+            networks: options.networks,
+            builderCode: options.builderCode ?? getBuilderCodeFromEnv(env),
+            fetchImpl: options.fetchImpl,
+          });
+          updateSnapshot({
+            status: 'ready',
+            configured: true,
+            accountAddressPresent: Boolean(account.address),
+            errorCode: undefined,
+            missingConfig: [],
+          });
+          return paidFetch;
+        } catch (error) {
+          paidFetch = undefined;
+          inflight = undefined;
+          const classified = classifyBuyerPayerError(error);
+          updateSnapshot({
+            ...classified,
+            configured: config.configured,
+            accountAddressPresent: false,
+            missingConfig: config.missingConfig,
+          });
+          throw error instanceof X402BuyerUnavailableError
+            ? error
+            : new X402BuyerUnavailableError(classified.errorCode || 'x402_buyer_payer_unavailable');
+        }
+      })();
+      return inflight;
+    },
+    status() {
+      return { ...snapshot, missingConfig: [...snapshot.missingConfig] };
+    },
+  };
+}
+
+let defaultBuyerPayerRuntime:
+  | {
+      key: string;
+      runtime: X402BuyerPayerRuntime;
+    }
+  | undefined;
+
+function defaultBuyerPayerRuntimeKey(env: NodeJS.ProcessEnv): string {
+  const config = buyerPayerConfigFromEnv(env);
+  return [
+    config.configured ? 'configured' : 'missing',
+    config.walletName,
+    config.missingConfig.join(','),
+    normalizeOptional(env.BUILDER_CODE) || '',
+    normalizeOptional(env.X402_NETWORK) || '',
+  ].join('|');
+}
+
+export function getDefaultX402BuyerPayerRuntime(
+  env: NodeJS.ProcessEnv = process.env,
+): X402BuyerPayerRuntime {
+  const key = defaultBuyerPayerRuntimeKey(env);
+  if (env === process.env && defaultBuyerPayerRuntime?.key === key) {
+    return defaultBuyerPayerRuntime.runtime;
+  }
+  const runtime = createX402BuyerPayerRuntime(env);
+  if (env === process.env) {
+    defaultBuyerPayerRuntime = { key, runtime };
+  }
+  return runtime;
+}
+
 export function createX402BuyerClient(options: CreateX402BuyerClientOptions = {}): x402Client {
   if (!options.signer) {
     throw new X402BuyerUnavailableError(
@@ -1315,6 +1536,17 @@ export function createX402BuyerClient(options: CreateX402BuyerClientOptions = {}
 export function createX402BuyerPaidFetch(options: CreateX402BuyerPaidFetchOptions = {}): typeof globalThis.fetch {
   const client = createX402BuyerClient(options);
   return wrapFetchWithPayment(options.fetchImpl || globalThis.fetch, client);
+}
+
+export function createLazyX402BuyerPaidFetch(
+  env: NodeJS.ProcessEnv = process.env,
+  options: CreateX402BuyerPayerRuntimeOptions = {},
+): typeof globalThis.fetch {
+  const runtime = getDefaultX402BuyerPayerRuntime(env);
+  return async (input, init) => {
+    const paidFetch = await runtime.getPaidFetch();
+    return paidFetch(input, init);
+  };
 }
 
 export function x402BuyerPaymentModeFromEnv(env: NodeJS.ProcessEnv = process.env): X402BuyerPaymentMode {

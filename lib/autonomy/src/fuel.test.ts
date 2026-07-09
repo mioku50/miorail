@@ -113,3 +113,46 @@ test('FuelChargeService pending reservations prevent concurrent limit overrun', 
   if (reserved.reservation) service.release(reserved.reservation.id);
   clearFuelReservationsForTests();
 });
+
+test('FuelChargeService charges an existing reservation without double-counting it as pending', async (t) => {
+  clearFuelReservationsForTests();
+  const repository = await repositoryWithPermission(2);
+  const service = new FuelChargeService(repository);
+
+  const getStatus = mock.method(base.subscription, 'getStatus', async () => ({
+    isSubscribed: true,
+    remainingChargeInPeriod: '2',
+  }));
+  const charge = mock.method(base.subscription, 'charge', async () => ({
+    success: true,
+    id: 'charge-existing-reservation',
+    transactionHash: '0xdef',
+  }));
+  t.after(() => {
+    getStatus.mock.restore();
+    charge.mock.restore();
+    clearFuelReservationsForTests();
+  });
+
+  const reserved = await service.reserve({
+    permissionId: 'fuel-permission',
+    amount: 2,
+    category: 'dev_smoke',
+    chainEnv: 'mainnet',
+  });
+  assert.strictEqual(reserved.success, true);
+  assert.ok(reserved.reservation);
+
+  const result = await service.chargeReserved({
+    permissionId: 'fuel-permission',
+    amount: 2,
+    category: 'dev_smoke',
+    chainEnv: 'mainnet',
+  }, reserved.reservation!);
+
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.proof?.txHash, '0xdef');
+  assert.strictEqual(listFuelReservations('fuel-permission').length, 0);
+  const stored = await repository.getById('fuel-permission');
+  assert.strictEqual(stored?.spent, 2);
+});

@@ -6,9 +6,12 @@ import {
   x402ConfigFromEnv,
   x402StatusFromEnv,
   classifyX402SettleFailureReason,
+  getDefaultX402BuyerPayerRuntime,
+  type X402BuyerPayerRuntime,
   type SupportedX402Network,
   type X402MiddlewareRuntimeMode,
   type X402SettlementRecord,
+  X402BuyerUnavailableError,
 } from '@mioagent/x402-gateway';
 import {
   db,
@@ -21,6 +24,7 @@ import {
   FuelChargeService,
   createDatabaseSpendPermissionRepository,
   listFuelReservations,
+  type SpendPermissionRepository,
   type FuelCategory,
 } from '@mioagent/autonomy';
 import { eq, desc, and } from 'drizzle-orm';
@@ -45,6 +49,10 @@ interface CreateX402RouterOptions {
   env?: NodeJS.ProcessEnv;
   runtimeMode?: X402MiddlewareRuntimeMode;
   buyerPaidFetch?: typeof fetch;
+  buyerPayerRuntime?: X402BuyerPayerRuntime;
+  findActiveFuelPermission?: (userId: string, dbEnabled: boolean) => Promise<any>;
+  spendPermissionRepository?: SpendPermissionRepository;
+  fuelChargeServiceFactory?: (repository: SpendPermissionRepository) => Pick<FuelChargeService, 'reserve' | 'release' | 'chargeReserved'>;
   dbEnabled?: boolean;
 }
 
@@ -248,6 +256,7 @@ function receiptRecord(row: { id: string; receipt: unknown; createdAt: Date }): 
   category?: FuelCategory;
   fuelPermissionId?: string;
   fuelChargeId?: string;
+  fuelChargeTxHash?: string;
 } {
   const receipt = row.receipt && typeof row.receipt === 'object' ? row.receipt as Record<string, unknown> : {};
   const details = receipt.details && typeof receipt.details === 'object' ? receipt.details as Record<string, unknown> : {};
@@ -267,6 +276,7 @@ function receiptRecord(row: { id: string; receipt: unknown; createdAt: Date }): 
     category: typeof receipt.category === 'string' ? receipt.category as FuelCategory : undefined,
     fuelPermissionId: typeof receipt.fuelPermissionId === 'string' ? receipt.fuelPermissionId : undefined,
     fuelChargeId: typeof receipt.fuelChargeId === 'string' ? receipt.fuelChargeId : undefined,
+    fuelChargeTxHash: typeof receipt.fuelChargeTxHash === 'string' ? receipt.fuelChargeTxHash : undefined,
     cost: typeof receipt.cost === 'string' ? receipt.cost : null,
     txHash: typeof receipt.txHash === 'string' ? receipt.txHash : null,
     network: typeof receipt.network === 'string' ? receipt.network : '',
@@ -356,6 +366,8 @@ async function persistBuyerReceipt(input: {
   userId: string;
   permissionId: string;
   fuelChargeId?: string;
+  fuelChargeTxHash?: string;
+  payer?: string;
   amountUsdc: string;
   category: FuelCategory;
   proofTxHash?: string;
@@ -364,7 +376,7 @@ async function persistBuyerReceipt(input: {
   payTo?: string;
   status: 'settled' | 'pending' | 'failed';
   details?: Record<string, unknown>;
-}) {
+}, persistDb = true) {
   const id = input.proofTxHash
     ? `x402-buyer:${input.network || 'unknown'}:${input.proofTxHash}`
     : `x402-buyer:${randomUUID()}`;
@@ -377,18 +389,21 @@ async function persistBuyerReceipt(input: {
     category: input.category,
     fuelPermissionId: input.permissionId,
     fuelChargeId: input.fuelChargeId,
+    fuelChargeTxHash: input.fuelChargeTxHash,
     cost: input.amountUsdc,
     txHash: input.proofTxHash || null,
     network: input.network || '',
     asset: input.asset || '',
     amount: input.amountUsdc,
     payTo: input.payTo || '',
+    payer: input.payer,
     status: input.status,
     attribution: { source: 'buyer_fuel', expectedBuilderCode: process.env.BUILDER_CODE },
     checkedAt: new Date().toISOString(),
     source: 'x402-facilitator',
     details: input.details || {},
   };
+  if (!persistDb) return receipt;
   await db.insert(x402Receipts).values({
     id,
     receipt,
@@ -402,7 +417,7 @@ function decodePaymentHeaderProof(headerVal: unknown): { payer?: string; txHash?
   try {
     let parsed: any;
     try {
-      parsed = JSON.parse(atob(headerVal));
+      parsed = JSON.parse(Buffer.from(headerVal, 'base64').toString('utf8'));
     } catch {
       parsed = JSON.parse(headerVal);
     }
@@ -418,11 +433,23 @@ function decodePaymentHeaderProof(headerVal: unknown): { payer?: string; txHash?
   return {};
 }
 
+function paymentProofFromResponse(response: globalThis.Response): { payer?: string; txHash?: string; network?: string } {
+  return decodePaymentHeaderProof(
+    response.headers.get('payment-response') ||
+      response.headers.get('x-payment-response') ||
+      response.headers.get('Payment-Response') ||
+      response.headers.get('X-Payment-Response'),
+  );
+}
+
 export function createX402Router(options: CreateX402RouterOptions = {}) {
   const router = Router();
   const env = options.env || process.env;
   const runtimeMode = options.runtimeMode || 'auto';
   const dbEnabled = options.dbEnabled !== false;
+  const buyerPayerRuntime = options.buyerPayerRuntime || getDefaultX402BuyerPayerRuntime(env);
+  const resolveActiveFuelPermission = options.findActiveFuelPermission || findActiveFuelPermission;
+  const repository = options.spendPermissionRepository || createDatabaseSpendPermissionRepository(sql);
   const commonMiddlewareOptions = {
     serviceName: 'Miorail',
     onSettlement: (record: X402SettlementRecord) => persistSettlement(record, dbEnabled),
@@ -554,6 +581,7 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
       settleBlockedReason: diagnostics.settleBlockedReason || null,
       probeStatus: diagnostics.probeStatus || null,
       supportedNetworks: diagnostics.supportedNetworks || [],
+      buyerPayer: buyerPayerRuntime.status(),
       latestSettleFailure,
       lastPayer,
       latestSettleFailureReason: lastSmokeSettlement?.errorReason || lastBrowserRun?.errorReason || null,
@@ -593,7 +621,7 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
     try {
       const userId = userIdFromRequest(req);
       const statusConfig = await x402StatusFromEnv(env);
-      const active = await findActiveFuelPermission(userId, dbEnabled);
+      const active = await resolveActiveFuelPermission(userId, dbEnabled);
       const activePermission = permissionResponse(active);
       const pending = activePermission ? listFuelReservations(activePermission.id) : [];
 
@@ -642,6 +670,7 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
           category,
           fuelPermissionId: record.fuelPermissionId,
           fuelChargeId: record.fuelChargeId,
+          fuelChargeTxHash: record.fuelChargeTxHash,
           cost,
           txHash: record.txHash,
           network: record.network,
@@ -691,6 +720,7 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
           configured: Boolean(env.X402_BUYER_SMOKE_URL),
           urlHost: sanitizedUrlHost(env.X402_BUYER_SMOKE_URL),
         },
+        buyerPayer: buyerPayerRuntime.status(),
         x402: {
           settleReady: statusConfig.settleReady,
           status: statusConfig.status,
@@ -714,25 +744,18 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
           missingConfig: ['X402_BUYER_SMOKE_URL'],
         });
       }
-      if (!options.buyerPaidFetch) {
-        return res.status(503).json({
-          error: 'x402_buyer_unavailable',
-          errorCode: 'x402_buyer_signer_missing',
-          note: 'Buyer x402 requires a configured CDP-managed payer signer; no user key is stored or requested.',
-        });
-      }
-
-      const active = await findActiveFuelPermission(userId, dbEnabled);
+      const active = await resolveActiveFuelPermission(userId, dbEnabled);
       if (!active) {
         return res.status(402).json({ error: 'fuel_permission_required', status: 'missing_permission' });
       }
-      const amount = Number(env.X402_BUYER_SMOKE_AMOUNT_USDC || req.body?.amountUsdc || 1);
+      const amount = Number(env.X402_BUYER_SMOKE_AMOUNT_USDC || req.body?.amountUsdc || 0.001);
       const category: FuelCategory = 'dev_smoke';
-      const repository = createDatabaseSpendPermissionRepository(sql);
-      const fuel = new FuelChargeService(repository, {
-        walletName: env.BASE_SUBSCRIPTION_WALLET_NAME || env.CDP_SUBSCRIPTION_WALLET_NAME,
-        paymasterUrl: env.PAYMASTER_URL,
-      });
+      const fuel = options.fuelChargeServiceFactory
+        ? options.fuelChargeServiceFactory(repository)
+        : new FuelChargeService(repository, {
+            walletName: env.BASE_SUBSCRIPTION_WALLET_NAME || env.CDP_SUBSCRIPTION_WALLET_NAME,
+            paymasterUrl: env.PAYMASTER_URL,
+          });
       const reserved = await fuel.reserve({
         permissionId: active.id,
         amount,
@@ -747,9 +770,27 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
         });
       }
 
+      let paidFetch = options.buyerPaidFetch;
+      if (!paidFetch) {
+        try {
+          paidFetch = await buyerPayerRuntime.getPaidFetch();
+        } catch (error) {
+          fuel.release(reserved.reservation.id);
+          const errorCode = error instanceof X402BuyerUnavailableError
+            ? error.errorCode
+            : 'x402_buyer_payer_unavailable';
+          return res.status(503).json({
+            error: 'x402_buyer_unavailable',
+            errorCode,
+            buyerPayer: buyerPayerRuntime.status(),
+            note: 'Buyer x402 uses a CDP-managed payer account; no user key is stored or requested.',
+          });
+        }
+      }
+
       let paidResponse: globalThis.Response;
       try {
-        paidResponse = await options.buyerPaidFetch(smokeUrl, {
+        paidResponse = await paidFetch(smokeUrl, {
           headers: { Accept: 'application/json' },
         });
       } catch (error) {
@@ -759,21 +800,65 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
           message: error instanceof Error ? error.message : String(error),
         });
       }
-      fuel.release(reserved.reservation.id);
       if (!paidResponse.ok) {
+        fuel.release(reserved.reservation.id);
         return res.status(502).json({
           error: 'x402_buyer_resource_failed',
           status: paidResponse.status,
         });
       }
 
-      const charge = await fuel.charge({
+      const paymentProof = paymentProofFromResponse(paidResponse);
+      if (!paymentProof.txHash) {
+        fuel.release(reserved.reservation.id);
+        await persistBuyerReceipt({
+          userId,
+          permissionId: active.id,
+          amountUsdc: decimalString(amount),
+          category,
+          network: paymentProof.network as SupportedX402Network | undefined,
+          status: 'failed',
+          payer: paymentProof.payer,
+          details: {
+            source: 'buyer-smoke',
+            smokeUrlHost: sanitizedUrlHost(smokeUrl),
+            failure: 'missing_x402_payment_proof',
+          },
+        }, dbEnabled);
+        return res.status(502).json({
+          error: 'x402_buyer_missing_payment_proof',
+          status: 'missing_payment_proof',
+          message: 'Paid resource returned success without a durable x402 payment proof.',
+        });
+      }
+
+      const charge = await fuel.chargeReserved({
         permissionId: active.id,
         amount,
         category,
         chainEnv: env.CHAIN_ENV || active.chainId,
-      });
+      }, reserved.reservation);
       if (!charge.success) {
+        const statusConfig = x402ConfigFromEnv(env);
+        await persistBuyerReceipt({
+          userId,
+          permissionId: active.id,
+          amountUsdc: decimalString(amount),
+          category,
+          proofTxHash: paymentProof.txHash,
+          payer: paymentProof.payer,
+          network: (paymentProof.network as SupportedX402Network | undefined) || statusConfig.network,
+          asset: statusConfig.asset,
+          payTo: statusConfig.payTo,
+          status: 'failed',
+          details: {
+            source: 'buyer-smoke',
+            smokeUrlHost: sanitizedUrlHost(smokeUrl),
+            paymentProof,
+            chargeStatus: charge.status,
+            chargeError: charge.error,
+          },
+        }, dbEnabled);
         return res.status(402).json({
           error: 'fuel_charge_failed',
           status: charge.status,
@@ -786,19 +871,22 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
         userId,
         permissionId: active.id,
         fuelChargeId: charge.chargeId,
+        fuelChargeTxHash: charge.proof?.txHash,
         amountUsdc: decimalString(amount),
         category,
-        proofTxHash: charge.proof?.txHash,
-        network: statusConfig.network,
+        proofTxHash: paymentProof.txHash,
+        payer: paymentProof.payer,
+        network: (paymentProof.network as SupportedX402Network | undefined) || statusConfig.network,
         asset: statusConfig.asset,
         payTo: statusConfig.payTo,
         status: 'settled',
         details: {
           source: 'buyer-smoke',
           smokeUrlHost: sanitizedUrlHost(smokeUrl),
+          paymentProof,
           chargeProof: charge.proof,
         },
-      });
+      }, dbEnabled);
 
       res.status(200).json({
         ok: true,
@@ -806,6 +894,8 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
         receipt,
         fuelPermissionId: active.id,
         fuelChargeId: charge.chargeId,
+        txHash: paymentProof.txHash,
+        fuelChargeTxHash: charge.proof?.txHash,
       });
     } catch (error) {
       next(error);
@@ -874,6 +964,7 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
           category,
           fuelPermissionId: record.fuelPermissionId,
           fuelChargeId: record.fuelChargeId,
+          fuelChargeTxHash: record.fuelChargeTxHash,
           cost,
           txHash: record.txHash,
           network: record.network,
@@ -893,6 +984,7 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
             checkedAt: record.checkedAt,
             proofStatus: record.txHash ? 'verified_tx' : 'state_only_tx_unavailable',
             errorReason: record.errorReason,
+            fuelChargeTxHash: record.fuelChargeTxHash,
             audit: audit?.details || null,
           },
         };

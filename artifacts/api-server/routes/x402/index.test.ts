@@ -1,9 +1,10 @@
-import { describe, it, afterEach } from 'node:test';
+import { describe, it, afterEach, mock } from 'node:test';
 import assert from 'node:assert';
 import request from 'supertest';
 import express from 'express';
 import { clearX402FacilitatorStatusForTests, ExactEvmScheme } from '@mioagent/x402-gateway';
 import { privateKeyToAccount } from 'viem/accounts';
+import { InMemorySpendPermissionRepository, clearFuelReservationsForTests } from '@mioagent/autonomy';
 import { createX402Router, x402Router } from './index.js';
 
 const app = express();
@@ -52,6 +53,46 @@ function extractPaymentRequired(res: request.Response): any {
   return undefined;
 }
 
+async function fuelRepository(limit = 10) {
+  const repository = new InMemorySpendPermissionRepository();
+  await repository.create({
+    id: 'fuel-permission',
+    userId: 'default-user',
+    chainId: 8453,
+    asset: MAINNET_USDC,
+    limit,
+    spent: 0,
+    whitelist: [MAINNET_USDC],
+    expiresAt: Date.now() + 60_000,
+    isActive: true,
+  });
+  return repository;
+}
+
+function activeFuelPermissionRow() {
+  return {
+    id: 'fuel-permission',
+    userId: 'default-user',
+    chainId: 8453,
+    asset: MAINNET_USDC,
+    limit: 10,
+    spent: 0,
+    whitelist: [MAINNET_USDC],
+    expiresAt: new Date(Date.now() + 60_000),
+    isActive: true,
+    updatedAt: new Date(),
+  };
+}
+
+function paymentResponseHeader(txHash = '0xpaid') {
+  return Buffer.from(JSON.stringify({
+    success: true,
+    payer: '0x2222222222222222222222222222222222222222',
+    transaction: txHash,
+    network: 'eip155:8453',
+  })).toString('base64');
+}
+
 describe('x402 mock endpoint', () => {
   it('returns 402 with Payment-Required header when missing X-402-Payment', async () => {
     const res = await request(app).get('/x402/mock-paid-endpoint');
@@ -72,7 +113,7 @@ describe('x402 mock endpoint', () => {
     const res = await request(app)
       .get('/x402/mock-paid-endpoint')
       .set('x-402-payment', Buffer.from(JSON.stringify({ receipt: 'valid-receipt-amount:1000000' })).toString('base64'));
-    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
     assert.strictEqual(res.body.data, 'This is premium mock data protected by x402 payment.');
   });
 });
@@ -83,6 +124,8 @@ describe('x402 official smoke endpoint', () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
     clearX402FacilitatorStatusForTests();
+    clearFuelReservationsForTests();
+    mock.restoreAll();
   });
 
   it('reports connected facilitator config and no production MockFacilitator path', async () => {
@@ -323,18 +366,22 @@ describe('x402 official smoke endpoint', () => {
   });
 
   it('buyer smoke returns controlled unavailable when payer signer is not configured', async () => {
+    const repository = await fuelRepository();
     const app = express();
     app.use(express.json());
     app.use('/x402', createX402Router({
       dbEnabled: false,
       env: configuredEnv({ X402_BUYER_SMOKE_URL: 'https://paid-resource.example.test/smoke' }),
       runtimeMode: 'official',
+      findActiveFuelPermission: async () => activeFuelPermissionRow(),
+      spendPermissionRepository: repository,
     }));
 
     const res = await request(app).post('/x402/buyer-smoke').send({});
     assert.strictEqual(res.status, 503);
     assert.strictEqual(res.body.error, 'x402_buyer_unavailable');
-    assert.strictEqual(res.body.errorCode, 'x402_buyer_signer_missing');
+    assert.strictEqual(res.body.errorCode, 'x402_buyer_payer_missing_config');
+    assert.strictEqual(res.body.buyerPayer.status, 'missing_config');
     assert.strictEqual(JSON.stringify(res.body).includes('redacted-token'), false);
   });
 
@@ -357,6 +404,74 @@ describe('x402 official smoke endpoint', () => {
     assert.strictEqual(res.body.error, 'fuel_permission_required');
     assert.strictEqual(res.body.status, 'missing_permission');
     assert.strictEqual(paidFetchCalled, false);
+  });
+
+  it('buyer smoke records outgoing x402 tx and charges reserved fuel after durable proof', async () => {
+    const repository = await fuelRepository();
+    let chargeCalls = 0;
+
+    let paidFetchCalled = false;
+    const app = express();
+    app.use(express.json());
+    app.use('/x402', createX402Router({
+      dbEnabled: false,
+      env: configuredEnv({
+        X402_BUYER_SMOKE_URL: 'https://paid-resource.example.test/smoke',
+        X402_BUYER_SMOKE_AMOUNT_USDC: '0.001',
+      }),
+      runtimeMode: 'official',
+      findActiveFuelPermission: async () => activeFuelPermissionRow(),
+      spendPermissionRepository: repository,
+      fuelChargeServiceFactory: () => ({
+        reserve: async (input) => ({
+          success: true,
+          status: 'reserved',
+          reservation: {
+            id: 'reservation-1',
+            permissionId: input.permissionId,
+            amount: input.amount,
+            category: input.category,
+            createdAt: new Date().toISOString(),
+          },
+        }),
+        release: () => {},
+        chargeReserved: async (input, reservation) => {
+          chargeCalls++;
+          const updated = await repository.incrementSpent(input.permissionId, input.amount, {
+            txHash: '0xfuelcharge',
+            confirmedAt: new Date().toISOString(),
+          });
+          return {
+            success: Boolean(updated),
+            permission: updated,
+            reservation,
+            chargeId: 'fuel-charge-1',
+            proof: { txHash: '0xfuelcharge', confirmedAt: new Date().toISOString() },
+            status: updated ? 'settled' : 'limit_exhausted',
+          };
+        },
+      }),
+      buyerPaidFetch: async () => {
+        paidFetchCalled = true;
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'payment-response': paymentResponseHeader('0xoutgoing') },
+        });
+      },
+    }));
+
+    const res = await request(app).post('/x402/buyer-smoke').send({});
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(res.body.status, 'settled');
+    assert.strictEqual(res.body.txHash, '0xoutgoing');
+    assert.strictEqual(res.body.fuelChargeTxHash, '0xfuelcharge');
+    assert.strictEqual(res.body.receipt.txHash, '0xoutgoing');
+    assert.strictEqual(res.body.receipt.fuelChargeTxHash, '0xfuelcharge');
+    assert.strictEqual(paidFetchCalled, true);
+    assert.strictEqual(chargeCalls, 1);
+
+    const stored = await repository.getById('fuel-permission');
+    assert.strictEqual(stored?.spent, 0.001);
   });
 
   it('smoke-paid mock mode records runId and filters ledger by runId', async () => {

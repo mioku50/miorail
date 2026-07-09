@@ -1,18 +1,11 @@
 import { LlmProvider } from './types';
 import { MockLlmProvider } from './mock';
 import { OpenAiCompatibleClient } from './openai';
-import { createX402BuyerPaidFetch, x402BuyerPaymentModeFromEnv, X402BuyerUnavailableError } from '@mioagent/x402-gateway';
+import { createLazyX402BuyerPaidFetch, x402BuyerPaymentModeFromEnv } from '@mioagent/x402-gateway';
 
 function fetchForPaymentMode(): typeof fetch | undefined {
   if (x402BuyerPaymentModeFromEnv() !== 'x402') return undefined;
-  try {
-    return createX402BuyerPaidFetch();
-  } catch (error) {
-    if (error instanceof X402BuyerUnavailableError) {
-      throw new Error(`LLM_PAYMENT_MODE=x402 requires a configured x402 buyer payer signer: ${error.errorCode}`);
-    }
-    throw error;
-  }
+  return createLazyX402BuyerPaidFetch();
 }
 
 export function createLlmProvider(): LlmProvider {

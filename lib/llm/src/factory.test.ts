@@ -45,13 +45,18 @@ test('createLlmProvider', async (t) => {
     assert.ok(provider instanceof OpenAiCompatibleClient);
   });
 
-  await t.test('LLM_PAYMENT_MODE=x402 fails closed without buyer payer signer', () => {
+  await t.test('LLM_PAYMENT_MODE=x402 creates provider and fails closed lazily without buyer payer config', async () => {
     process.env.LLM_PROVIDER = 'openai-compatible';
     process.env.LLM_PAYMENT_MODE = 'x402';
     process.env.LLM_BASE_URL = 'http://localhost/v1';
     process.env.LLM_API_KEY = 'test';
     process.env.LLM_MODEL = 'test-model';
-    assert.throws(() => createLlmProvider(), /x402 buyer payer signer/);
+    const provider = createLlmProvider();
+    assert.ok(provider instanceof OpenAiCompatibleClient);
+    await assert.rejects(
+      () => provider.generate({ messages: [{ role: 'user', content: 'hello' }] }),
+      /x402 buyer payment signer is unavailable|x402_buyer_payer_missing_config/,
+    );
   });
 
   await t.test('missing config does not leak secrets in error message', () => {

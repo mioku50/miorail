@@ -20,6 +20,8 @@ import {
   settlementRecordFromSettleResult,
   createX402BuyerClient,
   createX402BuyerPaidFetch,
+  createX402BuyerPayerRuntime,
+  createLazyX402BuyerPaidFetch,
   verifyBuilderCodeAttributionFromCalldata,
   X402BuyerUnavailableError,
   x402ConfigFromEnv,
@@ -512,6 +514,68 @@ describe('x402-gateway', () => {
     const response = await paidFetch('https://resource.example.test/free');
     assert.strictEqual(response.status, 200);
     assert.strictEqual(called, true);
+  });
+
+  it('creates lazy CDP buyer payer runtime without resolving account at startup', async () => {
+    const account = privateKeyToAccount('0x4c9bfe115a2917b14b03301ea3f86d306125a581126cafe842d4bb719b0f7b06');
+    let resolved = false;
+    let fetched = false;
+    const runtime = createX402BuyerPayerRuntime({
+      CDP_API_KEY_ID: 'organizations/example/apiKeys/key',
+      CDP_API_KEY_SECRET: 'secret',
+      CDP_WALLET_SECRET: 'wallet-secret',
+      X402_BUYER_PAYER_ACCOUNT_NAME: 'miorail-test-payer',
+      BUILDER_CODE: 'miorail',
+    }, {
+      resolveAccount: async ({ walletName }) => {
+        resolved = true;
+        assert.strictEqual(walletName, 'miorail-test-payer');
+        return account;
+      },
+      fetchImpl: async () => {
+        fetched = true;
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      },
+    });
+
+    assert.strictEqual(runtime.status().status, 'ready');
+    assert.strictEqual(runtime.status().accountAddressPresent, false);
+    assert.strictEqual(resolved, false);
+
+    const paidFetch = await runtime.getPaidFetch();
+    const response = await paidFetch('https://resource.example.test/free');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(resolved, true);
+    assert.strictEqual(fetched, true);
+    assert.strictEqual(runtime.status().accountAddressPresent, true);
+    assert.strictEqual(runtime.status().walletName, 'miorail-test-payer');
+  });
+
+  it('classifies missing CDP buyer payer config without leaking secrets', async () => {
+    const runtime = createX402BuyerPayerRuntime({
+      CDP_API_KEY_ID: 'organizations/example/apiKeys/key',
+    });
+    const status = runtime.status();
+    assert.strictEqual(status.status, 'missing_config');
+    assert.strictEqual(status.configured, false);
+    assert.deepStrictEqual(status.missingConfig, ['CDP_API_KEY_SECRET', 'CDP_WALLET_SECRET']);
+    assert.strictEqual(JSON.stringify(status).includes('organizations/example/apiKeys/key'), false);
+    await assert.rejects(
+      () => runtime.getPaidFetch(),
+      (error: unknown) => error instanceof X402BuyerUnavailableError &&
+        error.errorCode === 'x402_buyer_payer_missing_config',
+    );
+  });
+
+  it('lazy buyer paid fetch fails closed on request, not factory creation', async () => {
+    const paidFetch = createLazyX402BuyerPaidFetch({
+      CDP_API_KEY_ID: 'organizations/example/apiKeys/key',
+    });
+    await assert.rejects(
+      () => paidFetch('https://resource.example.test/paid'),
+      (error: unknown) => error instanceof X402BuyerUnavailableError &&
+        error.errorCode === 'x402_buyer_payer_missing_config',
+    );
   });
 
   it('fails closed when buyer x402 signer is missing', () => {

@@ -8,6 +8,7 @@ import { getBaseMcpAuthStatus, type StoredBaseMcpAuthStatus } from '../lib/baseM
 import {
   x402ConfigFromEnv,
   x402MiddlewareDiagnosticsFromEnv,
+  getDefaultX402BuyerPayerRuntime,
   x402StatusFromEnv,
   type X402RuntimeConfig,
 } from '@mioagent/x402-gateway';
@@ -49,6 +50,7 @@ export function getSystemStatus(envOverride?: string) {
 
   const x402Config = x402ConfigFromEnv();
   const x402Diagnostics = x402MiddlewareDiagnosticsFromEnv(undefined, { config: x402Config });
+  const buyerPayer = getDefaultX402BuyerPayerRuntime().status();
 
   const isReadonly = chainEnv === 'mainnet-readonly';
   // T19.1: split execution into explicit flags via a shared helper. The UI may
@@ -123,6 +125,7 @@ export function getSystemStatus(envOverride?: string) {
         buyerEnabled: true,
         smokeResourceConfigured: !!process.env.X402_BUYER_SMOKE_URL,
       },
+      buyerPayer,
       missingConfig: x402Config.missingConfig,
       warnings: x402Config.warnings,
     },
@@ -139,6 +142,7 @@ export function getSystemStatus(envOverride?: string) {
 
 function publicX402Status(x402Config: X402RuntimeConfig) {
   const x402Diagnostics = x402MiddlewareDiagnosticsFromEnv(undefined, { config: x402Config });
+  const buyerPayer = getDefaultX402BuyerPayerRuntime().status();
   return {
     status: x402Config.status,
     configured: x402Config.configured,
@@ -167,6 +171,7 @@ function publicX402Status(x402Config: X402RuntimeConfig) {
       buyerEnabled: true,
       smokeResourceConfigured: !!process.env.X402_BUYER_SMOKE_URL,
     },
+    buyerPayer,
     missingConfig: x402Config.missingConfig,
     warnings: x402Config.warnings,
   };

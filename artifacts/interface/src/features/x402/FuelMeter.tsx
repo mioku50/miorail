@@ -48,6 +48,28 @@ function networkLabel(network?: string): string {
   return 'Not configured';
 }
 
+function buyerPayerCopy(payer?: any): { label: string; detail: string; ready: boolean } {
+  if (!payer) return { label: 'unknown', detail: 'status not reported', ready: false };
+  if (payer.status === 'ready') {
+    return {
+      label: payer.accountAddressPresent ? 'ready' : 'configured',
+      detail: payer.accountAddressPresent ? 'CDP EVM payer available' : 'CDP config present, account resolves on first payment',
+      ready: true,
+    };
+  }
+  if (payer.status === 'missing_config') {
+    return {
+      label: 'missing config',
+      detail: payer.missingConfig?.length ? `Missing ${payer.missingConfig.join(', ')}` : 'CDP payer env is incomplete',
+      ready: false,
+    };
+  }
+  if (payer.status === 'insufficient_usdc') {
+    return { label: 'needs USDC', detail: 'CDP payer needs USDC float for outgoing x402 payments', ready: false };
+  }
+  return { label: 'unavailable', detail: payer.errorCode || 'CDP payer unavailable', ready: false };
+}
+
 export function FuelMeter() {
   const { data: statusData } = useStatus();
   const { data: fuel } = useX402Fuel();
@@ -55,10 +77,15 @@ export function FuelMeter() {
   const { data: pricing } = useX402Pricing();
 
   const x402 = statusData?.x402;
+  const buyerPayer = fuel?.buyerPayer || x402?.buyerPayer;
+  const payerCopy = buyerPayerCopy(buyerPayer);
   const settleReady = x402?.settleReady === true;
-  const badgeState = settleReady ? 'live' : x402?.status === 'missing' ? 'missing' : 'mock';
+  const buyerFuelReady = settleReady && payerCopy.ready && fuel?.status === 'ready';
+  const badgeState = buyerFuelReady ? 'live' : x402?.status === 'missing' ? 'missing' : 'mock';
   const badgeLabel =
-    settleReady ? 'buyer fuel ready' :
+    buyerFuelReady ? 'buyer fuel ready' :
+    settleReady && !payerCopy.ready ? 'payer blocked' :
+    settleReady && fuel?.status !== 'ready' ? 'permission required' :
     x402?.status === 'facilitator_auth_required' ? 'auth required' :
     x402?.status === 'facilitator_auth_invalid' ? 'auth invalid' :
     x402?.status === 'facilitator_rate_limited' ? 'rate limited' :
@@ -116,9 +143,14 @@ export function FuelMeter() {
             {x402BlockedCopy(x402)}
           </div>
         )}
+        {settleReady && !payerCopy.ready && (
+          <div className="mt-3 text-[11px] text-warn bg-warn-soft border border-warn/20 rounded-[var(--radius-md)] px-3 py-2 font-sans">
+            Buyer payer {payerCopy.label}: {payerCopy.detail}
+          </div>
+        )}
       </section>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
         <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-3.5 shadow-[var(--shadow-card)]">
           <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Settlement rail</div>
           <div className="text-sm font-sans font-bold text-ink">{settleReady ? 'Ready' : 'Blocked'}</div>
@@ -128,6 +160,11 @@ export function FuelMeter() {
           <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Network and asset</div>
           <div className="text-sm font-sans font-bold text-ink">{networkLabel(x402?.network)}</div>
           <div className="text-[11px] text-ink-3 mt-2 border-t border-line/50 pt-2 font-mono">{shortHash(x402?.asset || '') || 'asset missing'}</div>
+        </div>
+        <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-3.5 shadow-[var(--shadow-card)]">
+          <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Buyer payer</div>
+          <div className={`text-sm font-sans font-bold ${payerCopy.ready ? 'text-ok' : 'text-warn'}`}>{payerCopy.label}</div>
+          <div className="text-[11px] text-ink-3 mt-2 border-t border-line/50 pt-2 truncate" title={payerCopy.detail}>{payerCopy.detail}</div>
         </div>
         <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-3.5 shadow-[var(--shadow-card)]">
           <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Builder Code</div>

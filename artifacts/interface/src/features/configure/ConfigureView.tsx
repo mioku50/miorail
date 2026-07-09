@@ -448,6 +448,17 @@ export function ConfigureView() {
             />
           ) : <Checking />}
         </Row>
+        {sd?.x402?.buyerPayer && (
+          <div className="text-[11px] text-ink-3 bg-panel-2 border border-line rounded-md px-3 py-2">
+            Buyer payer: <span className={sd.x402.buyerPayer.status === 'ready' ? 'text-ok font-bold' : 'text-warn font-bold'}>{sd.x402.buyerPayer.status}</span>
+            {sd.x402.buyerPayer.status === 'missing_config' && sd.x402.buyerPayer.missingConfig.length > 0 && (
+              <span> — missing {sd.x402.buyerPayer.missingConfig.join(', ')}</span>
+            )}
+            {sd.x402.buyerPayer.status === 'ready' && (
+              <span> — CDP EVM payer {sd.x402.buyerPayer.accountAddressPresent ? 'resolved' : 'configured, resolves on first payment'}</span>
+            )}
+          </div>
+        )}
         <Row label="LLM Provider" last>
           <span className="text-xs font-medium px-2.5 py-0.5 rounded border bg-panel-2 text-ink-3 border-line" title="LLM provider status is not reported by /api/status">Not reported</span>
         </Row>

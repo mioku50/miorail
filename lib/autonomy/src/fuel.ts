@@ -72,9 +72,10 @@ function numberFrom(value: unknown): number {
   return 0;
 }
 
-function pendingForPermission(permissionId: string): number {
+function pendingForPermission(permissionId: string, excludeReservationId?: string): number {
   let total = 0;
   for (const reservation of reservations.values()) {
+    if (reservation.id === excludeReservationId) continue;
     if (reservation.permissionId === permissionId) total += reservation.amount;
   }
   return total;
@@ -143,7 +144,22 @@ export class FuelChargeService {
     const reserved = await this.reserve(input);
     if (!reserved.success || !reserved.permission || !reserved.reservation) return reserved;
 
-    const chain = deriveChain(input.chainEnv, reserved.permission);
+    return this.chargeReserved(input, reserved.reservation);
+  }
+
+  async chargeReserved(input: FuelChargeInput, reservation: FuelReservation): Promise<FuelChargeResult> {
+    if (reservation.permissionId !== input.permissionId || reservation.amount !== input.amount || reservation.category !== input.category) {
+      this.release(reservation.id);
+      return { success: false, error: 'Fuel reservation does not match charge request', status: 'reservation_mismatch' };
+    }
+
+    const validation = await this.validate(input, { excludeReservationId: reservation.id });
+    if (!validation.success || !validation.permission) {
+      this.release(reservation.id);
+      return validation;
+    }
+
+    const chain = deriveChain(input.chainEnv, validation.permission);
     try {
       const status = await base.subscription.getStatus({
         id: input.permissionId,
@@ -183,7 +199,7 @@ export class FuelChargeService {
       return {
         success: true,
         permission: updated,
-        reservation: reserved.reservation,
+        reservation,
         chargeId: charge.id || charge.chargeId,
         proof,
         status: 'settled',
@@ -195,11 +211,11 @@ export class FuelChargeService {
         status: 'charge_failed',
       };
     } finally {
-      this.release(reserved.reservation.id);
+      this.release(reservation.id);
     }
   }
 
-  private async validate(input: FuelChargeInput): Promise<FuelChargeResult> {
+  private async validate(input: FuelChargeInput, options: { excludeReservationId?: string } = {}): Promise<FuelChargeResult> {
     if (!Number.isFinite(input.amount) || input.amount <= 0) {
       return { success: false, error: 'Invalid fuel amount', status: 'invalid_amount' };
     }
@@ -221,7 +237,7 @@ export class FuelChargeService {
       return { success: false, permission, error: `Only canonical USDC is supported on Base ${chain.chainId}`, status: 'asset_mismatch' };
     }
 
-    const pending = pendingForPermission(input.permissionId);
+    const pending = pendingForPermission(input.permissionId, options.excludeReservationId);
     if (permission.spent + pending + input.amount > permission.limit) {
       return { success: false, permission, error: 'Fuel spend limit exceeded', status: 'limit_exhausted' };
     }

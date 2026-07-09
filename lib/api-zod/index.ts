@@ -421,6 +421,17 @@ export const ApprovalsResponseSchema = z.object({
   riskySpenderCount: z.number(),
 });
 
+export const X402BuyerPayerSchema = z.object({
+  status: z.enum(['ready', 'missing_config', 'unavailable', 'insufficient_usdc']),
+  configured: z.boolean(),
+  accountAddressPresent: z.boolean(),
+  accountType: z.literal('cdp_evm_server_account'),
+  walletName: z.string(),
+  missingConfig: z.array(z.string()),
+  errorCode: z.string().optional(),
+  lastCheckedAt: z.string().optional(),
+});
+
 export const StatusResponseSchema = z.object({
   chainEnv: z.string(),
   chainId: z.number(),
@@ -528,6 +539,7 @@ export const StatusResponseSchema = z.object({
       remainingUsdc: z.string().optional(),
       smokeResourceConfigured: z.boolean().optional(),
     }).optional(),
+    buyerPayer: X402BuyerPayerSchema.optional(),
     missingConfig: z.array(z.string()).optional(),
     warnings: z.array(z.string()).optional(),
   }),
@@ -681,6 +693,7 @@ export const X402LedgerEntrySchema = z.object({
   category: z.enum(['inference', 'premium_data', 'mcp_tool', 'execution', 'dev_smoke']).optional(),
   fuelPermissionId: z.string().optional(),
   fuelChargeId: z.string().optional(),
+  fuelChargeTxHash: z.string().optional(),
   cost: z.string().nullable(),
   txHash: z.string().nullable(),
   network: z.string().optional(),
@@ -759,6 +772,7 @@ export const X402FuelResponseSchema = z.object({
     configured: z.boolean(),
     urlHost: z.string().optional(),
   }),
+  buyerPayer: X402BuyerPayerSchema,
   x402: z.object({
     settleReady: z.boolean().optional(),
     status: z.string().optional(),
