@@ -739,21 +739,56 @@ export const X402PricingResponseSchema = z.object({
   ),
 });
 
+const EthereumAddressSchema = z.string().regex(/^0x[a-fA-F0-9]{40}$/);
+const UsdcAmountSchema = z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/);
+
+export const X402FuelOwnerResponseSchema = z.object({
+  status: z.enum(['ready', 'missing_config', 'unavailable']),
+  configured: z.boolean(),
+  accountAddressPresent: z.boolean(),
+  subscriptionOwner: EthereumAddressSchema.optional(),
+  walletName: z.string().optional(),
+  chainId: z.literal(8453),
+  asset: EthereumAddressSchema,
+  testnet: z.literal(false),
+  missingConfig: z.array(z.string()),
+  errorCode: z.string().optional(),
+});
+
+export const X402FuelPermissionRequestSchema = z.object({
+  id: z.string().min(1).max(256),
+  subscriptionOwner: EthereumAddressSchema,
+  subscriptionPayer: EthereumAddressSchema.optional(),
+  recurringCharge: UsdcAmountSchema.optional(),
+  periodInDays: z.number().int().min(1).max(366).optional(),
+  limitUsdc: UsdcAmountSchema,
+  ttlHours: z.number().int().min(1).max(24 * 366).optional(),
+});
+
+const X402FuelActivePermissionSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  chainId: z.number(),
+  asset: z.string().nullable().optional(),
+  limitUsdc: z.string(),
+  spentUsdc: z.string(),
+  remainingUsdc: z.string(),
+  expiresAt: z.string(),
+  isActive: z.boolean(),
+  whitelist: z.array(z.string()),
+});
+
+export const X402FuelPermissionResponseSchema = z.object({
+  success: z.boolean(),
+  status: z.literal('ready'),
+  subscriptionId: z.string(),
+  activePermission: X402FuelActivePermissionSchema,
+});
+
 export const X402FuelResponseSchema = z.object({
   status: z.enum(['ready', 'missing_permission', 'permission_inactive', 'permission_expired', 'limit_exhausted', 'not_configured', 'unavailable']),
   mode: z.literal('buyer'),
-  activePermission: z.object({
-    id: z.string(),
-    userId: z.string(),
-    chainId: z.number(),
-    asset: z.string().nullable().optional(),
-    limitUsdc: z.string(),
-    spentUsdc: z.string(),
-    remainingUsdc: z.string(),
-    expiresAt: z.string(),
-    isActive: z.boolean(),
-    whitelist: z.array(z.string()),
-  }).nullable(),
+  activePermission: X402FuelActivePermissionSchema.nullable(),
   pendingReservations: z.array(z.object({
     id: z.string(),
     amountUsdc: z.string(),

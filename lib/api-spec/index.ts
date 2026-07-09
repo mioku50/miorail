@@ -77,3 +77,6 @@ export type X402LedgerEntry = z.infer<typeof schemas.X402LedgerEntrySchema>;
 export type X402LedgerResponse = z.infer<typeof schemas.X402LedgerResponseSchema>;
 export type X402PricingResponse = z.infer<typeof schemas.X402PricingResponseSchema>;
 export type X402FuelResponse = z.infer<typeof schemas.X402FuelResponseSchema>;
+export type X402FuelOwnerResponse = z.infer<typeof schemas.X402FuelOwnerResponseSchema>;
+export type X402FuelPermissionRequest = z.infer<typeof schemas.X402FuelPermissionRequestSchema>;
+export type X402FuelPermissionResponse = z.infer<typeof schemas.X402FuelPermissionResponseSchema>;

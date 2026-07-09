@@ -365,6 +365,166 @@ describe('x402 official smoke endpoint', () => {
     assert.strictEqual(res.body.buyerSmoke.urlHost, 'paid-resource.example.test');
   });
 
+  it('returns a sanitized subscription owner wallet for Base Account fuel permission creation', async () => {
+    const app = express();
+    app.use('/x402', createX402Router({
+      dbEnabled: false,
+      env: configuredEnv(),
+      runtimeMode: 'official',
+      subscriptionOwnerWalletResolver: async () => ({
+        address: '0x3333333333333333333333333333333333333333',
+        walletName: 'miorail-fuel-owner',
+        eoaAddress: '0x4444444444444444444444444444444444444444',
+      }),
+    }));
+
+    const res = await request(app).get('/x402/fuel/subscription-owner');
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.status, 'ready');
+    assert.strictEqual(res.body.subscriptionOwner, '0x3333333333333333333333333333333333333333');
+    assert.strictEqual(res.body.walletName, 'miorail-fuel-owner');
+    assert.strictEqual(res.body.chainId, 8453);
+    assert.strictEqual(res.body.asset, MAINNET_USDC);
+    assert.strictEqual(JSON.stringify(res.body).includes('0x4444444444444444444444444444444444444444'), false);
+  });
+
+  it('subscription owner lookup fails closed when CDP wallet env is missing', async () => {
+    const app = express();
+    app.use('/x402', createX402Router({
+      dbEnabled: false,
+      env: configuredEnv(),
+      runtimeMode: 'official',
+    }));
+
+    const res = await request(app).get('/x402/fuel/subscription-owner');
+    assert.strictEqual(res.status, 503);
+    assert.strictEqual(res.body.status, 'missing_config');
+    assert.deepStrictEqual(res.body.missingConfig.sort(), ['CDP_API_KEY_ID', 'CDP_API_KEY_SECRET', 'CDP_WALLET_SECRET'].sort());
+    assert.strictEqual(JSON.stringify(res.body).includes('redacted-token'), false);
+  });
+
+  it('persists browser-confirmed Base subscription id as active x402 fuel permission', async () => {
+    globalThis.fetch = async () => supportedResponse();
+    const repository = new InMemorySpendPermissionRepository();
+    const app = express();
+    app.use(express.json());
+    app.use('/x402', createX402Router({
+      dbEnabled: false,
+      env: configuredEnv({ X402_BUYER_SMOKE_URL: 'https://paid-resource.example.test/smoke' }),
+      runtimeMode: 'official',
+      subscriptionOwnerWalletResolver: async () => ({
+        address: '0x3333333333333333333333333333333333333333',
+        walletName: 'miorail-fuel-owner',
+      }),
+      spendPermissionRepository: repository,
+      findActiveFuelPermission: async () => repository.getById('real-subscription-1') || null,
+    }));
+
+    const createRes = await request(app).post('/x402/fuel/permission').send({
+      id: 'real-subscription-1',
+      subscriptionOwner: '0x3333333333333333333333333333333333333333',
+      subscriptionPayer: '0x5555555555555555555555555555555555555555',
+      recurringCharge: '10',
+      periodInDays: 30,
+      limitUsdc: '10',
+      ttlHours: 720,
+    });
+    assert.strictEqual(createRes.status, 201, JSON.stringify(createRes.body));
+    assert.strictEqual(createRes.body.activePermission.id, 'real-subscription-1');
+    assert.strictEqual(createRes.body.activePermission.chainId, 8453);
+    assert.strictEqual(createRes.body.activePermission.asset, MAINNET_USDC);
+    assert.strictEqual(createRes.body.activePermission.limitUsdc, '10');
+    assert.strictEqual(createRes.body.activePermission.spentUsdc, '0');
+
+    const stored = await repository.getById('real-subscription-1');
+    assert.strictEqual(stored?.id, 'real-subscription-1');
+    assert.strictEqual(stored?.userId, 'default-user');
+    assert.strictEqual(stored?.spent, 0);
+    assert.strictEqual(stored?.isActive, true);
+
+    const fuelRes = await request(app).get('/x402/fuel');
+    assert.strictEqual(fuelRes.status, 200);
+    assert.strictEqual(fuelRes.body.status, 'ready');
+    assert.strictEqual(fuelRes.body.activePermission.id, 'real-subscription-1');
+  });
+
+  it('buyer smoke reaches paid fetch and fuel charge after browser permission is persisted', async () => {
+    const repository = new InMemorySpendPermissionRepository();
+    let paidFetchCalled = false;
+    let chargeCalls = 0;
+    const app = express();
+    app.use(express.json());
+    app.use('/x402', createX402Router({
+      dbEnabled: false,
+      env: configuredEnv({
+        X402_BUYER_SMOKE_URL: 'https://paid-resource.example.test/smoke',
+        X402_BUYER_SMOKE_AMOUNT_USDC: '0.001',
+      }),
+      runtimeMode: 'official',
+      subscriptionOwnerWalletResolver: async () => ({
+        address: '0x3333333333333333333333333333333333333333',
+        walletName: 'miorail-fuel-owner',
+      }),
+      spendPermissionRepository: repository,
+      findActiveFuelPermission: async () => repository.getById('real-subscription-2') || null,
+      fuelChargeServiceFactory: () => ({
+        reserve: async (input) => ({
+          success: true,
+          status: 'reserved',
+          reservation: {
+            id: 'reservation-real-sub',
+            permissionId: input.permissionId,
+            amount: input.amount,
+            category: input.category,
+            createdAt: new Date().toISOString(),
+          },
+        }),
+        release: () => {},
+        chargeReserved: async (input, reservation) => {
+          chargeCalls++;
+          const updated = await repository.incrementSpent(input.permissionId, input.amount, {
+            txHash: '0xfuelcharge',
+            confirmedAt: new Date().toISOString(),
+          });
+          return {
+            success: Boolean(updated),
+            permission: updated,
+            reservation,
+            chargeId: 'fuel-charge-real-sub',
+            proof: { txHash: '0xfuelcharge', confirmedAt: new Date().toISOString() },
+            status: updated ? 'settled' : 'limit_exhausted',
+          };
+        },
+      }),
+      buyerPaidFetch: async () => {
+        paidFetchCalled = true;
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'payment-response': paymentResponseHeader('0xoutgoing-real-sub') },
+        });
+      },
+    }));
+
+    const createRes = await request(app).post('/x402/fuel/permission').send({
+      id: 'real-subscription-2',
+      subscriptionOwner: '0x3333333333333333333333333333333333333333',
+      subscriptionPayer: '0x5555555555555555555555555555555555555555',
+      recurringCharge: '10',
+      periodInDays: 30,
+      limitUsdc: '10',
+      ttlHours: 720,
+    });
+    assert.strictEqual(createRes.status, 201, JSON.stringify(createRes.body));
+
+    const smokeRes = await request(app).post('/x402/buyer-smoke').send({});
+    assert.strictEqual(smokeRes.status, 200, JSON.stringify(smokeRes.body));
+    assert.strictEqual(smokeRes.body.status, 'settled');
+    assert.strictEqual(smokeRes.body.fuelPermissionId, 'real-subscription-2');
+    assert.strictEqual(smokeRes.body.txHash, '0xoutgoing-real-sub');
+    assert.strictEqual(paidFetchCalled, true);
+    assert.strictEqual(chargeCalls, 1);
+  });
+
   it('buyer smoke returns controlled unavailable when payer signer is not configured', async () => {
     const repository = await fuelRepository();
     const app = express();

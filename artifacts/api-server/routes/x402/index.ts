@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { base } from '@base-org/account/node';
 import {
   createX402MiddlewareFromEnv,
   x402MiddlewareDiagnosticsFromEnv,
@@ -27,10 +28,14 @@ import {
   type SpendPermissionRepository,
   type FuelCategory,
 } from '@mioagent/autonomy';
+import { canonicalUsdcForBaseChain } from '@mioagent/security/baseGuards';
 import { eq, desc, and } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import {
   X402FuelResponseSchema,
+  X402FuelOwnerResponseSchema,
+  X402FuelPermissionRequestSchema,
+  X402FuelPermissionResponseSchema,
   X402LedgerResponseSchema,
   X402PricingResponseSchema,
 } from '@mioagent/api-zod';
@@ -50,11 +55,30 @@ interface CreateX402RouterOptions {
   runtimeMode?: X402MiddlewareRuntimeMode;
   buyerPaidFetch?: typeof fetch;
   buyerPayerRuntime?: X402BuyerPayerRuntime;
+  subscriptionOwnerWalletResolver?: () => Promise<SubscriptionOwnerWallet>;
   findActiveFuelPermission?: (userId: string, dbEnabled: boolean) => Promise<any>;
   spendPermissionRepository?: SpendPermissionRepository;
   fuelChargeServiceFactory?: (repository: SpendPermissionRepository) => Pick<FuelChargeService, 'reserve' | 'release' | 'chargeReserved'>;
   dbEnabled?: boolean;
 }
+
+interface SubscriptionOwnerWallet {
+  address: string;
+  walletName: string;
+  eoaAddress?: string;
+}
+
+class SubscriptionOwnerUnavailableError extends Error {
+  constructor(
+    message: string,
+    readonly errorCode: string,
+    readonly missingConfig: string[] = [],
+  ) {
+    super(message);
+  }
+}
+
+const subscriptionOwnerWalletCache = new Map<string, { wallet: SubscriptionOwnerWallet; expiresAt: number }>();
 
 function receiptId(record: X402SettlementRecord): string {
   if (record.txHash) return `x402:${record.network}:${record.txHash}`;
@@ -93,6 +117,65 @@ function sanitizedUrlHost(value?: string): string | undefined {
     return new URL(value).host;
   } catch {
     return undefined;
+  }
+}
+
+function subscriptionWalletName(env: NodeJS.ProcessEnv = process.env): string {
+  return env.BASE_SUBSCRIPTION_WALLET_NAME ||
+    env.CDP_SUBSCRIPTION_WALLET_NAME ||
+    'miorail-fuel-subscription-owner';
+}
+
+function missingSubscriptionOwnerConfig(env: NodeJS.ProcessEnv = process.env): string[] {
+  return [
+    ['CDP_API_KEY_ID', env.CDP_API_KEY_ID],
+    ['CDP_API_KEY_SECRET', env.CDP_API_KEY_SECRET],
+    ['CDP_WALLET_SECRET', env.CDP_WALLET_SECRET],
+  ].filter(([, value]) => !value).map(([name]) => String(name));
+}
+
+function isAddress(value?: string | null): boolean {
+  return typeof value === 'string' && /^0x[a-fA-F0-9]{40}$/.test(value);
+}
+
+async function getSubscriptionOwnerWallet(env: NodeJS.ProcessEnv = process.env): Promise<SubscriptionOwnerWallet> {
+  const missingConfig = missingSubscriptionOwnerConfig(env);
+  if (missingConfig.length > 0) {
+    throw new SubscriptionOwnerUnavailableError(
+      'CDP subscription owner wallet config is incomplete.',
+      'subscription_owner_missing_config',
+      missingConfig,
+    );
+  }
+
+  const walletName = subscriptionWalletName(env);
+  const cached = subscriptionOwnerWalletCache.get(walletName);
+  if (cached && cached.expiresAt > Date.now()) return cached.wallet;
+
+  try {
+    const wallet = await base.subscription.getOrCreateSubscriptionOwnerWallet({ walletName });
+    if (!isAddress(wallet.address)) {
+      throw new SubscriptionOwnerUnavailableError(
+        'CDP subscription owner wallet returned an invalid address.',
+        'subscription_owner_invalid_address',
+      );
+    }
+    const publicWallet = {
+      address: wallet.address,
+      walletName: wallet.walletName || walletName,
+      eoaAddress: wallet.eoaAddress,
+    };
+    subscriptionOwnerWalletCache.set(walletName, {
+      wallet: publicWallet,
+      expiresAt: Date.now() + 5 * 60_000,
+    });
+    return publicWallet;
+  } catch (error) {
+    if (error instanceof SubscriptionOwnerUnavailableError) throw error;
+    throw new SubscriptionOwnerUnavailableError(
+      'CDP subscription owner wallet is unavailable.',
+      'subscription_owner_unavailable',
+    );
   }
 }
 
@@ -343,11 +426,16 @@ async function findActiveFuelPermission(userId: string, dbEnabled = true) {
   }
 }
 
-function permissionResponse(row: Awaited<ReturnType<typeof findActiveFuelPermission>>) {
+function permissionResponse(row: Awaited<ReturnType<typeof findActiveFuelPermission>> | any) {
   if (!row) return null;
   const limit = Number(row.limit || 0);
   const spent = Number(row.spent || 0);
   const remaining = Math.max(0, limit - spent);
+  const expiresAtMs = row.expiresAt instanceof Date
+    ? row.expiresAt.getTime()
+    : typeof row.expiresAt === 'number'
+      ? row.expiresAt
+      : new Date(String(row.expiresAt)).getTime();
   return {
     id: row.id,
     userId: row.userId,
@@ -356,7 +444,7 @@ function permissionResponse(row: Awaited<ReturnType<typeof findActiveFuelPermiss
     limitUsdc: decimalString(limit),
     spentUsdc: decimalString(spent),
     remainingUsdc: decimalString(remaining),
-    expiresAt: row.expiresAt.toISOString(),
+    expiresAt: new Date(expiresAtMs).toISOString(),
     isActive: row.isActive,
     whitelist: Array.isArray(row.whitelist) ? row.whitelist.map(String) : [],
   };
@@ -617,6 +705,116 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
     });
   });
 
+  const resolveSubscriptionOwnerWallet = options.subscriptionOwnerWalletResolver || (() => getSubscriptionOwnerWallet(env));
+
+  router.get('/fuel/subscription-owner', async (_req: Request, res: Response) => {
+    const chainId = 8453;
+    const asset = canonicalUsdcForBaseChain(chainId);
+    try {
+      const wallet = await resolveSubscriptionOwnerWallet();
+      res.json(X402FuelOwnerResponseSchema.parse({
+        status: 'ready',
+        configured: true,
+        accountAddressPresent: true,
+        subscriptionOwner: wallet.address,
+        walletName: wallet.walletName,
+        chainId,
+        asset,
+        testnet: false,
+        missingConfig: [],
+      }));
+    } catch (error) {
+      const unavailable = error instanceof SubscriptionOwnerUnavailableError
+        ? error
+        : new SubscriptionOwnerUnavailableError('Subscription owner wallet unavailable.', 'subscription_owner_unavailable');
+      res.status(503).json(X402FuelOwnerResponseSchema.parse({
+        status: unavailable.missingConfig.length ? 'missing_config' : 'unavailable',
+        configured: unavailable.missingConfig.length === 0,
+        accountAddressPresent: false,
+        walletName: subscriptionWalletName(env),
+        chainId,
+        asset,
+        testnet: false,
+        missingConfig: unavailable.missingConfig,
+        errorCode: unavailable.errorCode,
+      }));
+    }
+  });
+
+  router.post('/fuel/permission', async (req: Request, res: Response, next) => {
+    try {
+      const parsed = X402FuelPermissionRequestSchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: 'invalid_fuel_permission_request',
+          issues: parsed.error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message })),
+        });
+      }
+
+      const input = parsed.data;
+      const userId = userIdFromRequest(req);
+      const wallet = await resolveSubscriptionOwnerWallet();
+      if (wallet.address.toLowerCase() !== input.subscriptionOwner.toLowerCase()) {
+        return res.status(400).json({
+          error: 'subscription_owner_mismatch',
+          expectedOwnerPresent: true,
+        });
+      }
+
+      const limit = Number(input.limitUsdc);
+      const recurringCharge = Number(input.recurringCharge || input.limitUsdc);
+      if (!Number.isFinite(limit) || limit <= 0) {
+        return res.status(400).json({ error: 'invalid_fuel_limit' });
+      }
+      if (Number.isFinite(recurringCharge) && limit > recurringCharge + 0.000001) {
+        return res.status(400).json({ error: 'limit_exceeds_subscription_charge' });
+      }
+
+      const ttlHours = input.ttlHours ?? Math.max(24, (input.periodInDays || 30) * 24);
+      const expiresAt = Date.now() + ttlHours * 60 * 60 * 1000;
+      const asset = canonicalUsdcForBaseChain(8453);
+
+      if (dbEnabled) {
+        try {
+          await db.update(spendPermissions)
+            .set({ isActive: false, updatedAt: new Date() })
+            .where(and(eq(spendPermissions.userId, userId), eq(spendPermissions.chainId, 8453), eq(spendPermissions.isActive, true)));
+        } catch {
+          // Best-effort cleanup only. The upsert below remains the source of truth for the new active permission.
+        }
+      }
+
+      const permission = {
+        id: input.id,
+        userId,
+        chainId: 8453,
+        asset,
+        limit,
+        spent: 0,
+        whitelist: [asset, wallet.address, input.subscriptionPayer].filter(Boolean) as string[],
+        expiresAt,
+        isActive: true,
+      };
+      await repository.create(permission);
+      const stored = await repository.getById(input.id) || permission;
+      res.status(201).json(X402FuelPermissionResponseSchema.parse({
+        success: true,
+        status: 'ready',
+        subscriptionId: input.id,
+        activePermission: permissionResponse(stored),
+      }));
+    } catch (error) {
+      if (error instanceof SubscriptionOwnerUnavailableError) {
+        return res.status(503).json({
+          error: 'subscription_owner_unavailable',
+          errorCode: error.errorCode,
+          missingConfig: error.missingConfig,
+        });
+      }
+      next(error);
+    }
+  });
+
   router.get('/fuel', async (req: Request, res: Response, next) => {
     try {
       const userId = userIdFromRequest(req);
@@ -753,7 +951,7 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
       const fuel = options.fuelChargeServiceFactory
         ? options.fuelChargeServiceFactory(repository)
         : new FuelChargeService(repository, {
-            walletName: env.BASE_SUBSCRIPTION_WALLET_NAME || env.CDP_SUBSCRIPTION_WALLET_NAME,
+            walletName: subscriptionWalletName(env),
             paymasterUrl: env.PAYMASTER_URL,
           });
       const reserved = await fuel.reserve({

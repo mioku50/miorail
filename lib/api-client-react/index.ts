@@ -545,3 +545,35 @@ export function useX402Fuel(options?: Omit<UseQueryOptions<apiSpec.X402FuelRespo
     ...options,
   });
 }
+
+export function useX402FuelOwner(options?: Omit<UseQueryOptions<apiSpec.X402FuelOwnerResponse, Error, apiSpec.X402FuelOwnerResponse, string[]>, 'queryKey' | 'queryFn'>) {
+  return useQuery({
+    queryKey: ['x402', 'fuel', 'subscription-owner'],
+    queryFn: () => fetchApi<apiSpec.X402FuelOwnerResponse>('/api/x402/fuel/subscription-owner'),
+    retry: false,
+    ...options,
+  });
+}
+
+export function useCreateX402FuelPermission(
+  options?: Omit<UseMutationOptions<apiSpec.X402FuelPermissionResponse, Error, apiSpec.X402FuelPermissionRequest>, 'mutationFn'>,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...options,
+    mutationFn: (data: apiSpec.X402FuelPermissionRequest) =>
+      fetchApi<apiSpec.X402FuelPermissionResponse>('/api/x402/fuel/permission', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }),
+    onSuccess: (data, variables, context, mutCtx) => {
+      queryClient.invalidateQueries({ queryKey: ['x402', 'fuel'] });
+      queryClient.invalidateQueries({ queryKey: ['x402', 'ledger'] });
+      queryClient.invalidateQueries({ queryKey: ['status'] });
+      if (options?.onSuccess) {
+        (options.onSuccess as any)(data, variables, context, mutCtx);
+      }
+    },
+  });
+}

@@ -1,4 +1,7 @@
-import { useStatus, useX402Fuel, useX402Ledger, useX402Pricing } from '@mioagent/api-client-react';
+import { useState } from 'react';
+import { base } from '@base-org/account';
+import { useAccount } from 'wagmi';
+import { useCreateX402FuelPermission, useStatus, useX402Fuel, useX402FuelOwner, useX402Ledger, useX402Pricing } from '@mioagent/api-client-react';
 import { StateBadge } from '@mioagent/ui';
 
 function Metric({ label, amount, sub }: { label: string; amount: string; sub: string }) {
@@ -71,10 +74,16 @@ function buyerPayerCopy(payer?: any): { label: string; detail: string; ready: bo
 }
 
 export function FuelMeter() {
+  const { address, isConnected } = useAccount();
   const { data: statusData } = useStatus();
   const { data: fuel } = useX402Fuel();
+  const { data: fuelOwner, error: fuelOwnerError, isLoading: fuelOwnerLoading } = useX402FuelOwner({ enabled: isConnected });
   const { data: ledger } = useX402Ledger();
   const { data: pricing } = useX402Pricing();
+  const createFuelPermission = useCreateX402FuelPermission();
+  const [fuelBudget, setFuelBudget] = useState('10');
+  const [fuelTtlHours, setFuelTtlHours] = useState('720');
+  const [fuelActionMessage, setFuelActionMessage] = useState<string | null>(null);
 
   const x402 = statusData?.x402;
   const buyerPayer = fuel?.buyerPayer || x402?.buyerPayer;
@@ -106,6 +115,59 @@ export function FuelMeter() {
 
   const buyerReceipts = ledger?.entries?.filter((entry) => entry.direction === 'outgoing_buyer_payment') || [];
   const sellerSmokeReceipts = ledger?.entries?.filter((entry) => entry.direction !== 'outgoing_buyer_payment') || [];
+  const ownerUnavailable = fuelOwner?.status && fuelOwner.status !== 'ready';
+  const createDisabled = !isConnected || fuelOwnerLoading || fuelOwner?.status !== 'ready' || createFuelPermission.isPending;
+
+  async function handleCreateFuelPermission() {
+    if (!isConnected) {
+      setFuelActionMessage('Connect wallet first.');
+      return;
+    }
+    if (!fuelOwner?.subscriptionOwner) {
+      setFuelActionMessage(fuelOwnerError?.message || 'Subscription owner is not available.');
+      return;
+    }
+
+    const budget = Number(fuelBudget);
+    const ttl = Number(fuelTtlHours);
+    if (!Number.isFinite(budget) || budget <= 0) {
+      setFuelActionMessage('Enter a positive USDC budget.');
+      return;
+    }
+    if (!Number.isFinite(ttl) || ttl < 1) {
+      setFuelActionMessage('Enter a valid TTL in hours.');
+      return;
+    }
+
+    const normalizedBudget = budget.toFixed(6).replace(/0+$/, '').replace(/\.$/, '');
+    const ttlHours = Math.max(1, Math.min(24 * 366, Math.floor(ttl)));
+    const periodInDays = Math.max(1, Math.min(366, Math.ceil(ttlHours / 24)));
+
+    try {
+      setFuelActionMessage('Opening Base Account confirmation...');
+      const subscription = await base.subscription.subscribe({
+        recurringCharge: normalizedBudget,
+        subscriptionOwner: fuelOwner.subscriptionOwner,
+        periodInDays,
+        testnet: false,
+      });
+
+      setFuelActionMessage('Saving confirmed spend permission...');
+      await createFuelPermission.mutateAsync({
+        id: subscription.id,
+        subscriptionOwner: subscription.subscriptionOwner,
+        subscriptionPayer: subscription.subscriptionPayer,
+        recurringCharge: subscription.recurringCharge,
+        periodInDays: subscription.periodInDays,
+        limitUsdc: normalizedBudget,
+        ttlHours,
+      });
+      setFuelActionMessage('USDC fuel permission is active.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setFuelActionMessage(message || 'Fuel permission was not created.');
+    }
+  }
 
   return (
     <main className="flex-1 bg-bg p-5 flex flex-col gap-4 overflow-y-auto select-none pb-16 md:pb-5">
@@ -148,6 +210,56 @@ export function FuelMeter() {
             Buyer payer {payerCopy.label}: {payerCopy.detail}
           </div>
         )}
+        <div className="mt-4 border-t border-line/60 pt-4">
+          <div className="flex flex-col lg:flex-row lg:items-end gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 flex-1">
+              <label className="block">
+                <span className="text-[10px] font-sans uppercase tracking-[0.08em] text-ink-3">USDC budget</span>
+                <input
+                  value={fuelBudget}
+                  onChange={(event) => setFuelBudget(event.target.value)}
+                  inputMode="decimal"
+                  className="mt-1 w-full bg-panel-2 border border-line rounded-[var(--radius-md)] px-3 py-2 text-sm font-mono font-bold text-ink outline-none focus:border-accent"
+                  placeholder="10"
+                />
+              </label>
+              <label className="block">
+                <span className="text-[10px] font-sans uppercase tracking-[0.08em] text-ink-3">TTL hours</span>
+                <input
+                  value={fuelTtlHours}
+                  onChange={(event) => setFuelTtlHours(event.target.value)}
+                  inputMode="numeric"
+                  className="mt-1 w-full bg-panel-2 border border-line rounded-[var(--radius-md)] px-3 py-2 text-sm font-mono font-bold text-ink outline-none focus:border-accent"
+                  placeholder="720"
+                />
+              </label>
+            </div>
+            <button
+              type="button"
+              onClick={handleCreateFuelPermission}
+              disabled={createDisabled}
+              className="h-[42px] px-4 rounded-[var(--radius-md)] border border-accent/50 bg-accent text-white text-xs font-sans font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+              title={isConnected ? 'Create a Base Account spend permission for x402 buyer fuel' : 'Connect wallet first'}
+            >
+              Create USDC Fuel Permission
+            </button>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-ink-3">
+            <span className="font-mono bg-panel-2 border border-line rounded-full px-2 py-0.5">
+              {isConnected ? `wallet ${shortHash(address)}` : 'wallet disconnected'}
+            </span>
+            <span className="font-mono bg-panel-2 border border-line rounded-full px-2 py-0.5">
+              owner {fuelOwner?.subscriptionOwner ? shortHash(fuelOwner.subscriptionOwner) : fuelOwnerLoading ? 'loading' : 'unavailable'}
+            </span>
+            <span>Base Account confirmation creates the permission; Miorail stores only the subscription id.</span>
+          </div>
+          {(fuelActionMessage || ownerUnavailable || fuelOwnerError) && (
+            <div className={`mt-2 text-[11px] rounded-[var(--radius-md)] px-3 py-2 border font-sans ${fuelActionMessage === 'USDC fuel permission is active.' ? 'text-ok bg-ok-soft border-ok/25' : 'text-warn bg-warn-soft border-warn/20'}`}>
+              {fuelActionMessage ||
+                (ownerUnavailable ? `Subscription owner ${fuelOwner?.status}: ${fuelOwner?.errorCode || fuelOwner?.missingConfig?.join(', ') || 'unavailable'}` : fuelOwnerError?.message)}
+            </div>
+          )}
+        </div>
       </section>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
