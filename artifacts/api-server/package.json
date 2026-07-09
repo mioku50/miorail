@@ -9,6 +9,7 @@
   "dependencies": {
     "@mioagent/agent": "workspace:*",
     "@mioagent/api-zod": "workspace:*",
+    "@mioagent/autonomy": "workspace:*",
     "@mioagent/crypto": "workspace:*",
     "@mioagent/data-providers": "workspace:*",
     "@mioagent/db": "workspace:*",

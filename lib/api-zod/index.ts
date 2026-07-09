@@ -521,6 +521,13 @@ export const StatusResponseSchema = z.object({
     lastCheckedAt: z.string().optional(),
     supportedKindsCount: z.number().optional(),
     supportedNetworks: z.array(z.string()).optional(),
+    fuel: z.object({
+      mode: z.enum(['buyer', 'seller_smoke', 'disabled']).optional(),
+      buyerEnabled: z.boolean().optional(),
+      activePermission: z.boolean().optional(),
+      remainingUsdc: z.string().optional(),
+      smokeResourceConfigured: z.boolean().optional(),
+    }).optional(),
     missingConfig: z.array(z.string()).optional(),
     warnings: z.array(z.string()).optional(),
   }),
@@ -670,6 +677,10 @@ export const X402LedgerEntrySchema = z.object({
   runId: z.string().optional(),
   actionId: z.string(),
   actionType: z.string(),
+  direction: z.enum(['incoming_seller_smoke', 'outgoing_buyer_payment']).optional(),
+  category: z.enum(['inference', 'premium_data', 'mcp_tool', 'execution', 'dev_smoke']).optional(),
+  fuelPermissionId: z.string().optional(),
+  fuelChargeId: z.string().optional(),
   cost: z.string().nullable(),
   txHash: z.string().nullable(),
   network: z.string().optional(),
@@ -677,6 +688,7 @@ export const X402LedgerEntrySchema = z.object({
   amount: z.string().optional(),
   payTo: z.string().optional(),
   status: z.enum(['settled', 'pending', 'failed']).optional(),
+  settlementStatus: z.enum(['settled', 'pending', 'failed']).optional(),
   attribution: z.record(z.any()).optional().nullable(),
   createdAt: z.string(),
   settlement: z.string().optional(),
@@ -689,9 +701,16 @@ export const X402LedgerResponseSchema = z.object({
     totalSpentUsdc: z.string(),
     inferenceSpentUsdc: z.string(),
     toolsSpentUsdc: z.string(),
+    premiumDataSpentUsdc: z.string().optional(),
+    executionSpentUsdc: z.string().optional(),
+    sellerSmokeSpentUsdc: z.string().optional(),
     inferenceCallsCount: z.number(),
     toolsCallsCount: z.number(),
+    premiumDataCallsCount: z.number().optional(),
+    executionCallsCount: z.number().optional(),
+    sellerSmokeCallsCount: z.number().optional(),
     settlement: z.string().optional(),
+    buyerFuelMode: z.string().optional(),
     x402: z.string().optional(),
   }),
 });
@@ -705,6 +724,46 @@ export const X402PricingResponseSchema = z.object({
       description: z.string(),
     })
   ),
+});
+
+export const X402FuelResponseSchema = z.object({
+  status: z.enum(['ready', 'missing_permission', 'permission_inactive', 'permission_expired', 'limit_exhausted', 'not_configured', 'unavailable']),
+  mode: z.literal('buyer'),
+  activePermission: z.object({
+    id: z.string(),
+    userId: z.string(),
+    chainId: z.number(),
+    asset: z.string().nullable().optional(),
+    limitUsdc: z.string(),
+    spentUsdc: z.string(),
+    remainingUsdc: z.string(),
+    expiresAt: z.string(),
+    isActive: z.boolean(),
+    whitelist: z.array(z.string()),
+  }).nullable(),
+  pendingReservations: z.array(z.object({
+    id: z.string(),
+    amountUsdc: z.string(),
+    category: z.enum(['inference', 'premium_data', 'mcp_tool', 'execution', 'dev_smoke']),
+    createdAt: z.string(),
+  })),
+  spendByCategory: z.object({
+    inference: z.string(),
+    premiumData: z.string(),
+    mcpTool: z.string(),
+    execution: z.string(),
+    devSmoke: z.string(),
+  }),
+  recentReceipts: z.array(X402LedgerEntrySchema),
+  buyerSmoke: z.object({
+    configured: z.boolean(),
+    urlHost: z.string().optional(),
+  }),
+  x402: z.object({
+    settleReady: z.boolean().optional(),
+    status: z.string().optional(),
+    network: z.string().optional(),
+  }).optional(),
 });
 
 // Simulate Action

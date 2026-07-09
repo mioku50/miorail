@@ -537,3 +537,11 @@ export function useX402Pricing(options?: Omit<UseQueryOptions<apiSpec.X402Pricin
     ...options,
   });
 }
+
+export function useX402Fuel(options?: Omit<UseQueryOptions<apiSpec.X402FuelResponse, Error, apiSpec.X402FuelResponse, string[]>, 'queryKey' | 'queryFn'>) {
+  return useQuery({
+    queryKey: ['x402', 'fuel'],
+    queryFn: () => fetchApi<apiSpec.X402FuelResponse>('/api/x402/fuel'),
+    ...options,
+  });
+}

@@ -118,6 +118,11 @@ export function getSystemStatus(envOverride?: string) {
       lastCheckedAt: x402Config.lastCheckedAt,
       supportedKindsCount: x402Config.supportedKindsCount,
       supportedNetworks: x402Config.supportedNetworks,
+      fuel: {
+        mode: 'buyer' as const,
+        buyerEnabled: true,
+        smokeResourceConfigured: !!process.env.X402_BUYER_SMOKE_URL,
+      },
       missingConfig: x402Config.missingConfig,
       warnings: x402Config.warnings,
     },
@@ -157,6 +162,11 @@ function publicX402Status(x402Config: X402RuntimeConfig) {
     lastCheckedAt: x402Config.lastCheckedAt,
     supportedKindsCount: x402Config.supportedKindsCount,
     supportedNetworks: x402Config.supportedNetworks,
+    fuel: {
+      mode: 'buyer' as const,
+      buyerEnabled: true,
+      smokeResourceConfigured: !!process.env.X402_BUYER_SMOKE_URL,
+    },
     missingConfig: x402Config.missingConfig,
     warnings: x402Config.warnings,
   };

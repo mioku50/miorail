@@ -6,13 +6,27 @@ import {
   x402ConfigFromEnv,
   x402StatusFromEnv,
   classifyX402SettleFailureReason,
+  type SupportedX402Network,
   type X402MiddlewareRuntimeMode,
   type X402SettlementRecord,
 } from '@mioagent/x402-gateway';
-import { db, auditLogs, x402Receipts } from '@mioagent/db';
-import { eq, desc } from 'drizzle-orm';
+import {
+  db,
+  client as sql,
+  auditLogs,
+  spendPermissions,
+  x402Receipts,
+} from '@mioagent/db';
+import {
+  FuelChargeService,
+  createDatabaseSpendPermissionRepository,
+  listFuelReservations,
+  type FuelCategory,
+} from '@mioagent/autonomy';
+import { eq, desc, and } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import {
+  X402FuelResponseSchema,
   X402LedgerResponseSchema,
   X402PricingResponseSchema,
 } from '@mioagent/api-zod';
@@ -30,6 +44,8 @@ function extractRunId(req: Request): string | undefined {
 interface CreateX402RouterOptions {
   env?: NodeJS.ProcessEnv;
   runtimeMode?: X402MiddlewareRuntimeMode;
+  buyerPaidFetch?: typeof fetch;
+  dbEnabled?: boolean;
 }
 
 function receiptId(record: X402SettlementRecord): string {
@@ -59,7 +75,81 @@ let lastBrowserRun: {
   errorReason?: string;
 } | null = null;
 
-async function persistSettlement(record: X402SettlementRecord): Promise<void> {
+function userIdFromRequest(req: Request): string {
+  return (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+}
+
+function sanitizedUrlHost(value?: string): string | undefined {
+  if (!value) return undefined;
+  try {
+    return new URL(value).host;
+  } catch {
+    return undefined;
+  }
+}
+
+function rpcUrlForNetwork(network?: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (network === 'eip155:84532') {
+    return env.BASE_SEPOLIA_RPC_URL || env.BASE_RPC_URL || 'https://sepolia.base.org';
+  }
+  if (network === 'eip155:8453' || !network) {
+    return env.BASE_MAINNET_RPC_URL || env.BASE_RPC_URL || 'https://mainnet.base.org';
+  }
+  return undefined;
+}
+
+async function detectPayerWalletType(
+  payer?: string | null,
+  network?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ addressPresent: boolean; walletType: 'eoa' | 'smart_wallet' | 'unknown'; eip1271Likely: boolean }> {
+  if (!payer || !/^0x[a-fA-F0-9]{40}$/.test(payer)) {
+    return { addressPresent: Boolean(payer), walletType: 'unknown', eip1271Likely: false };
+  }
+  const rpcUrl = rpcUrlForNetwork(network, env);
+  if (!rpcUrl) return { addressPresent: true, walletType: 'unknown', eip1271Likely: false };
+  try {
+    const response = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'eth_getCode',
+        params: [payer, 'latest'],
+      }),
+      signal: AbortSignal.timeout(1500),
+    });
+    const body = await response.json() as { result?: unknown };
+    const code = typeof body.result === 'string' ? body.result : '0x';
+    const smart = code !== '0x' && code !== '0x0';
+    return {
+      addressPresent: true,
+      walletType: smart ? 'smart_wallet' : 'eoa',
+      eip1271Likely: smart,
+    };
+  } catch {
+    return { addressPresent: true, walletType: 'unknown', eip1271Likely: false };
+  }
+}
+
+function mapDiagnosticFailureReason(
+  reason?: string | null,
+  message?: string | null,
+  payer?: { walletType?: string; eip1271Likely?: boolean },
+): string | null {
+  const text = [reason, message].filter(Boolean).join(' ').toLowerCase();
+  if (!text && !payer?.eip1271Likely) return null;
+  if (payer?.eip1271Likely && /(settlement|revert|authorization|signature|eip-?3009|exact|smart|1271)/i.test(text || 'settlement')) {
+    return 'smart_wallet_unsupported_by_exact';
+  }
+  if (/unauthori[sz]ed|forbidden|auth|jwt|401|403/.test(text)) return 'facilitator_auth';
+  if (/insufficient|balance|funds?|allowance|usdc/.test(text)) return 'insufficient_usdc';
+  if (/network|chain|unsupported|8453|84532/.test(text)) return 'network_mismatch';
+  return reason || 'settlement_failed';
+}
+
+async function persistSettlement(record: X402SettlementRecord, persistDb = true): Promise<void> {
   const id = receiptId(record);
   const runId = smokeRunIdStorage.getStore() || (record as any).runId || undefined;
   lastSmokeSettlement = {
@@ -101,12 +191,15 @@ async function persistSettlement(record: X402SettlementRecord): Promise<void> {
     ...record,
     id,
     runId,
+    direction: (record as any).direction || 'incoming_seller_smoke',
+    category: (record as any).category || 'dev_smoke',
     details: {
       ...detailsRecord,
       ...(runId ? { runId } : {}),
     },
     userId: record.userId || 'default-user',
   };
+  if (!persistDb) return;
   try {
     await db.insert(x402Receipts).values({
       id,
@@ -151,6 +244,10 @@ function receiptRecord(row: { id: string; receipt: unknown; createdAt: Date }): 
   createdAt: Date;
   userId?: string;
   runId?: string;
+  direction?: 'incoming_seller_smoke' | 'outgoing_buyer_payment';
+  category?: FuelCategory;
+  fuelPermissionId?: string;
+  fuelChargeId?: string;
 } {
   const receipt = row.receipt && typeof row.receipt === 'object' ? row.receipt as Record<string, unknown> : {};
   const details = receipt.details && typeof receipt.details === 'object' ? receipt.details as Record<string, unknown> : {};
@@ -166,6 +263,10 @@ function receiptRecord(row: { id: string; receipt: unknown; createdAt: Date }): 
     runId,
     actionId: typeof receipt.actionId === 'string' ? receipt.actionId : undefined,
     actionType: typeof receipt.actionType === 'string' ? receipt.actionType : undefined,
+    direction: receipt.direction === 'outgoing_buyer_payment' ? 'outgoing_buyer_payment' : 'incoming_seller_smoke',
+    category: typeof receipt.category === 'string' ? receipt.category as FuelCategory : undefined,
+    fuelPermissionId: typeof receipt.fuelPermissionId === 'string' ? receipt.fuelPermissionId : undefined,
+    fuelChargeId: typeof receipt.fuelChargeId === 'string' ? receipt.fuelChargeId : undefined,
     cost: typeof receipt.cost === 'string' ? receipt.cost : null,
     txHash: typeof receipt.txHash === 'string' ? receipt.txHash : null,
     network: typeof receipt.network === 'string' ? receipt.network : '',
@@ -194,6 +295,108 @@ function atomicUsdcToDecimal(amount: string): string {
   }
 }
 
+function decimalString(value: unknown): string {
+  const num = typeof value === 'number' ? value : Number(value || 0);
+  if (!Number.isFinite(num)) return '0';
+  return Number.isInteger(num) ? String(num) : num.toFixed(6).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+function ledgerCategory(actionType: string, explicit?: string): FuelCategory {
+  if (explicit === 'inference' || explicit === 'premium_data' || explicit === 'mcp_tool' || explicit === 'execution' || explicit === 'dev_smoke') {
+    return explicit;
+  }
+  if (actionType === 'inference_call') return 'inference';
+  if (actionType === 'premium_security_scan' || actionType === 'security_screening') return 'premium_data';
+  if (actionType === 'swap_execution' || actionType === 'execution') return 'execution';
+  if (actionType === 'x402_smoke_paid' || actionType === 'x402_buyer_smoke') return 'dev_smoke';
+  return 'mcp_tool';
+}
+
+function isReadOnlyActionType(actionType: string): boolean {
+  return actionType === 'portfolio_scan' ||
+    actionType === 'portfolio_review' ||
+    actionType === 'risk_recommendation' ||
+    actionType === 'read_only_recommendation';
+}
+
+async function findActiveFuelPermission(userId: string, dbEnabled = true) {
+  if (!dbEnabled) return null;
+  try {
+    const rows = await db.select()
+      .from(spendPermissions)
+      .where(and(eq(spendPermissions.userId, userId), eq(spendPermissions.isActive, true)))
+      .orderBy(desc(spendPermissions.updatedAt))
+      .limit(1);
+    return rows[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+function permissionResponse(row: Awaited<ReturnType<typeof findActiveFuelPermission>>) {
+  if (!row) return null;
+  const limit = Number(row.limit || 0);
+  const spent = Number(row.spent || 0);
+  const remaining = Math.max(0, limit - spent);
+  return {
+    id: row.id,
+    userId: row.userId,
+    chainId: row.chainId,
+    asset: row.asset,
+    limitUsdc: decimalString(limit),
+    spentUsdc: decimalString(spent),
+    remainingUsdc: decimalString(remaining),
+    expiresAt: row.expiresAt.toISOString(),
+    isActive: row.isActive,
+    whitelist: Array.isArray(row.whitelist) ? row.whitelist.map(String) : [],
+  };
+}
+
+async function persistBuyerReceipt(input: {
+  userId: string;
+  permissionId: string;
+  fuelChargeId?: string;
+  amountUsdc: string;
+  category: FuelCategory;
+  proofTxHash?: string;
+  network?: SupportedX402Network;
+  asset?: string;
+  payTo?: string;
+  status: 'settled' | 'pending' | 'failed';
+  details?: Record<string, unknown>;
+}) {
+  const id = input.proofTxHash
+    ? `x402-buyer:${input.network || 'unknown'}:${input.proofTxHash}`
+    : `x402-buyer:${randomUUID()}`;
+  const receipt = {
+    id,
+    userId: input.userId,
+    actionId: id,
+    actionType: 'x402_buyer_smoke',
+    direction: 'outgoing_buyer_payment',
+    category: input.category,
+    fuelPermissionId: input.permissionId,
+    fuelChargeId: input.fuelChargeId,
+    cost: input.amountUsdc,
+    txHash: input.proofTxHash || null,
+    network: input.network || '',
+    asset: input.asset || '',
+    amount: input.amountUsdc,
+    payTo: input.payTo || '',
+    status: input.status,
+    attribution: { source: 'buyer_fuel', expectedBuilderCode: process.env.BUILDER_CODE },
+    checkedAt: new Date().toISOString(),
+    source: 'x402-facilitator',
+    details: input.details || {},
+  };
+  await db.insert(x402Receipts).values({
+    id,
+    receipt,
+    updatedAt: new Date(),
+  });
+  return receipt;
+}
+
 function decodePaymentHeaderProof(headerVal: unknown): { payer?: string; txHash?: string; network?: string } {
   if (typeof headerVal !== 'string' || !headerVal) return {};
   try {
@@ -219,9 +422,10 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
   const router = Router();
   const env = options.env || process.env;
   const runtimeMode = options.runtimeMode || 'auto';
+  const dbEnabled = options.dbEnabled !== false;
   const commonMiddlewareOptions = {
     serviceName: 'Miorail',
-    onSettlement: persistSettlement,
+    onSettlement: (record: X402SettlementRecord) => persistSettlement(record, dbEnabled),
     onSettlementFailure: recordSettlementFailure,
     runtimeMode,
   };
@@ -309,18 +513,33 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
     let latestGlobalRecord: { txHash?: string | null; createdAt?: Date } | null = null;
     let browserRunMatched = false;
     try {
-      const rows = await db.select()
-        .from(x402Receipts)
-        .orderBy(desc(x402Receipts.createdAt))
-        .limit(50);
-      const parsed = rows.map(receiptRecord);
-      latestGlobalRecord = parsed[0] || null;
-      if (lastBrowserRun?.runId) {
-        browserRunMatched = parsed.some((r) => r.runId === lastBrowserRun?.runId);
+      if (dbEnabled) {
+        const rows = await db.select()
+          .from(x402Receipts)
+          .orderBy(desc(x402Receipts.createdAt))
+          .limit(50);
+        const parsed = rows.map(receiptRecord);
+        latestGlobalRecord = parsed[0] || null;
+        if (lastBrowserRun?.runId) {
+          browserRunMatched = parsed.some((r) => r.runId === lastBrowserRun?.runId);
+        }
       }
     } catch {
       latestGlobalRecord = null;
     }
+
+    const payerAddress = lastBrowserRun?.payer || lastSmokeSettlement?.payer || null;
+    const lastPayer = await detectPayerWalletType(payerAddress, lastSmokeSettlement?.network || diagnostics.network, env);
+    const latestErrorReason = lastSmokeSettlement?.errorReason || lastBrowserRun?.errorReason || null;
+    const latestErrorMessage = lastSmokeSettlement?.errorMessage || null;
+    const latestSettleFailure = latestErrorReason || latestErrorMessage
+      ? {
+          errorReason: latestErrorReason,
+          errorCode: latestErrorReason,
+          mappedReason: mapDiagnosticFailureReason(latestErrorReason, latestErrorMessage, lastPayer),
+          checkedAt: lastSmokeSettlement?.settledAt || lastBrowserRun?.settledAt || null,
+        }
+      : null;
 
     res.json({
       status: diagnostics.status,
@@ -335,6 +554,8 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
       settleBlockedReason: diagnostics.settleBlockedReason || null,
       probeStatus: diagnostics.probeStatus || null,
       supportedNetworks: diagnostics.supportedNetworks || [],
+      latestSettleFailure,
+      lastPayer,
       latestSettleFailureReason: lastSmokeSettlement?.errorReason || lastBrowserRun?.errorReason || null,
       lastSmokeSettlementStatus: lastSmokeSettlement?.status || null,
       lastSmokeSettlementReason: lastSmokeSettlement?.errorReason || null,
@@ -368,21 +589,246 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
     });
   });
 
+  router.get('/fuel', async (req: Request, res: Response, next) => {
+    try {
+      const userId = userIdFromRequest(req);
+      const statusConfig = await x402StatusFromEnv(env);
+      const active = await findActiveFuelPermission(userId, dbEnabled);
+      const activePermission = permissionResponse(active);
+      const pending = activePermission ? listFuelReservations(activePermission.id) : [];
+
+      let records: ReturnType<typeof receiptRecord>[] = [];
+      try {
+        if (dbEnabled) {
+          const rows = await db.select()
+            .from(x402Receipts)
+            .orderBy(desc(x402Receipts.createdAt))
+            .limit(100);
+          records = rows.map(receiptRecord)
+            .filter((record) => !record.userId || record.userId === userId);
+        }
+      } catch {
+        records = [];
+      }
+
+      const spend = {
+        inference: 0,
+        premiumData: 0,
+        mcpTool: 0,
+        execution: 0,
+        devSmoke: 0,
+      };
+
+      const recentReceipts = records.slice(0, 20).map((record) => {
+        const actionType = record.actionType || 'x402_resource';
+        const category = ledgerCategory(actionType, record.category);
+        const cost = isReadOnlyActionType(actionType) ? '0' : (record.cost || atomicUsdcToDecimal(record.amount));
+        if (record.direction === 'outgoing_buyer_payment') {
+          const costVal = Number(cost || 0);
+          if (Number.isFinite(costVal)) {
+            if (category === 'inference') spend.inference += costVal;
+            if (category === 'premium_data') spend.premiumData += costVal;
+            if (category === 'mcp_tool') spend.mcpTool += costVal;
+            if (category === 'execution') spend.execution += costVal;
+            if (category === 'dev_smoke') spend.devSmoke += costVal;
+          }
+        }
+        return {
+          id: record.id,
+          runId: record.runId,
+          actionId: record.actionId || record.id,
+          actionType,
+          direction: record.direction || 'incoming_seller_smoke',
+          category,
+          fuelPermissionId: record.fuelPermissionId,
+          fuelChargeId: record.fuelChargeId,
+          cost,
+          txHash: record.txHash,
+          network: record.network,
+          asset: record.asset,
+          amount: record.amount,
+          payTo: record.payTo,
+          status: record.status,
+          settlementStatus: record.status,
+          attribution: record.attribution,
+          createdAt: record.createdAt.toISOString(),
+          settlement: record.status,
+          details: {
+            source: record.source,
+            checkedAt: record.checkedAt,
+            direction: record.direction || 'incoming_seller_smoke',
+          },
+        };
+      });
+
+      const response = {
+        status: !activePermission
+          ? 'missing_permission'
+          : !activePermission.isActive
+            ? 'permission_inactive'
+            : Date.now() > new Date(activePermission.expiresAt).getTime()
+              ? 'permission_expired'
+              : Number(activePermission.remainingUsdc) <= 0
+                ? 'limit_exhausted'
+                : 'ready',
+        mode: 'buyer' as const,
+        activePermission,
+        pendingReservations: pending.map((reservation) => ({
+          id: reservation.id,
+          amountUsdc: decimalString(reservation.amount),
+          category: reservation.category,
+          createdAt: reservation.createdAt,
+        })),
+        spendByCategory: {
+          inference: spend.inference.toFixed(4),
+          premiumData: spend.premiumData.toFixed(4),
+          mcpTool: spend.mcpTool.toFixed(4),
+          execution: spend.execution.toFixed(4),
+          devSmoke: spend.devSmoke.toFixed(4),
+        },
+        recentReceipts,
+        buyerSmoke: {
+          configured: Boolean(env.X402_BUYER_SMOKE_URL),
+          urlHost: sanitizedUrlHost(env.X402_BUYER_SMOKE_URL),
+        },
+        x402: {
+          settleReady: statusConfig.settleReady,
+          status: statusConfig.status,
+          network: statusConfig.network,
+        },
+      };
+
+      res.json(X402FuelResponseSchema.parse(response));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post('/buyer-smoke', async (req: Request, res: Response, next) => {
+    try {
+      const userId = userIdFromRequest(req);
+      const smokeUrl = env.X402_BUYER_SMOKE_URL;
+      if (!smokeUrl) {
+        return res.status(503).json({
+          error: 'x402_buyer_smoke_not_configured',
+          missingConfig: ['X402_BUYER_SMOKE_URL'],
+        });
+      }
+      if (!options.buyerPaidFetch) {
+        return res.status(503).json({
+          error: 'x402_buyer_unavailable',
+          errorCode: 'x402_buyer_signer_missing',
+          note: 'Buyer x402 requires a configured CDP-managed payer signer; no user key is stored or requested.',
+        });
+      }
+
+      const active = await findActiveFuelPermission(userId, dbEnabled);
+      if (!active) {
+        return res.status(402).json({ error: 'fuel_permission_required', status: 'missing_permission' });
+      }
+      const amount = Number(env.X402_BUYER_SMOKE_AMOUNT_USDC || req.body?.amountUsdc || 1);
+      const category: FuelCategory = 'dev_smoke';
+      const repository = createDatabaseSpendPermissionRepository(sql);
+      const fuel = new FuelChargeService(repository, {
+        walletName: env.BASE_SUBSCRIPTION_WALLET_NAME || env.CDP_SUBSCRIPTION_WALLET_NAME,
+        paymasterUrl: env.PAYMASTER_URL,
+      });
+      const reserved = await fuel.reserve({
+        permissionId: active.id,
+        amount,
+        category,
+        chainEnv: env.CHAIN_ENV || active.chainId,
+      });
+      if (!reserved.success || !reserved.reservation) {
+        return res.status(402).json({
+          error: 'fuel_reservation_failed',
+          status: reserved.status,
+          message: reserved.error,
+        });
+      }
+
+      let paidResponse: globalThis.Response;
+      try {
+        paidResponse = await options.buyerPaidFetch(smokeUrl, {
+          headers: { Accept: 'application/json' },
+        });
+      } catch (error) {
+        fuel.release(reserved.reservation.id);
+        return res.status(502).json({
+          error: 'x402_buyer_fetch_failed',
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      fuel.release(reserved.reservation.id);
+      if (!paidResponse.ok) {
+        return res.status(502).json({
+          error: 'x402_buyer_resource_failed',
+          status: paidResponse.status,
+        });
+      }
+
+      const charge = await fuel.charge({
+        permissionId: active.id,
+        amount,
+        category,
+        chainEnv: env.CHAIN_ENV || active.chainId,
+      });
+      if (!charge.success) {
+        return res.status(402).json({
+          error: 'fuel_charge_failed',
+          status: charge.status,
+          message: charge.error,
+        });
+      }
+
+      const statusConfig = x402ConfigFromEnv(env);
+      const receipt = await persistBuyerReceipt({
+        userId,
+        permissionId: active.id,
+        fuelChargeId: charge.chargeId,
+        amountUsdc: decimalString(amount),
+        category,
+        proofTxHash: charge.proof?.txHash,
+        network: statusConfig.network,
+        asset: statusConfig.asset,
+        payTo: statusConfig.payTo,
+        status: 'settled',
+        details: {
+          source: 'buyer-smoke',
+          smokeUrlHost: sanitizedUrlHost(smokeUrl),
+          chargeProof: charge.proof,
+        },
+      });
+
+      res.status(200).json({
+        ok: true,
+        status: 'settled',
+        receipt,
+        fuelPermissionId: active.id,
+        fuelChargeId: charge.chargeId,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get('/ledger', async (req: Request, res: Response, next) => {
     try {
       const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
       let rows: any[] = [];
       let auditContext: any[] = [];
       try {
-        rows = await db.select()
-          .from(x402Receipts)
-          .orderBy(desc(x402Receipts.createdAt))
-          .limit(100);
-        auditContext = await db.select()
-          .from(auditLogs)
-          .where(eq(auditLogs.userId, userId))
-          .orderBy(desc(auditLogs.createdAt))
-          .limit(100);
+        if (dbEnabled) {
+          rows = await db.select()
+            .from(x402Receipts)
+            .orderBy(desc(x402Receipts.createdAt))
+            .limit(100);
+          auditContext = await db.select()
+            .from(auditLogs)
+            .where(eq(auditLogs.userId, userId))
+            .orderBy(desc(auditLogs.createdAt))
+            .limit(100);
+        }
       } catch {
         rows = [];
         auditContext = [];
@@ -403,10 +849,13 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
       const entries = records.map(record => {
         const audit = record.actionId ? auditByActionId.get(record.actionId) : undefined;
         const actionType = record.actionType || audit?.actionType || 'x402_resource';
-        const cost = record.cost || atomicUsdcToDecimal(record.amount);
+        const direction = record.direction || 'incoming_seller_smoke';
+        const category = ledgerCategory(actionType, record.category);
+        const cost = isReadOnlyActionType(actionType) ? '0' : (record.cost || atomicUsdcToDecimal(record.amount));
         const costVal = parseFloat(cost || '0');
-        const isInference = actionType === 'inference_call' || actionType === 'portfolio_scan' || actionType === 'security_screening';
-        if (!isNaN(costVal)) {
+        const isInference = category === 'inference';
+        const isBuyer = direction === 'outgoing_buyer_payment';
+        if (!isNaN(costVal) && isBuyer) {
           totalSpent += costVal;
           if (isInference) {
             inferenceSpent += costVal;
@@ -421,6 +870,10 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
           runId: record.runId,
           actionId: record.actionId || audit?.actionId || record.id,
           actionType,
+          direction,
+          category,
+          fuelPermissionId: record.fuelPermissionId,
+          fuelChargeId: record.fuelChargeId,
           cost,
           txHash: record.txHash,
           network: record.network,
@@ -428,6 +881,7 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
           amount: record.amount,
           payTo: record.payTo,
           status: record.status,
+          settlementStatus: record.status,
           attribution: record.attribution,
           createdAt: record.createdAt.toISOString(),
           settlement: record.status,
@@ -465,10 +919,11 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
 
   router.get('/pricing', async (_req: Request, res: Response) => {
     const pricing = [
-      { actionType: 'portfolio_scan', label: 'Portfolio Risk Scan', priceUsdc: '0.0010', description: 'Moralis token balance indexing and price feed valuation' },
-      { actionType: 'security_screening', label: 'Token Security Screening', priceUsdc: '0.0020', description: 'GoPlus contract security checks and honeypot analysis' },
+      { actionType: 'portfolio_scan', label: 'Read-only Portfolio Scan', priceUsdc: '0', description: 'Base portfolio read, provider status, and recommendation metadata stay free.' },
+      { actionType: 'premium_security_scan', label: 'Premium Security Scan', priceUsdc: '0.0020', description: 'Paid deep token/security data. Basic read-only recommendations remain free.' },
       { actionType: 'swap_execution', label: 'Swap Simulation & Routing', priceUsdc: '0.0050', description: 'EIP-5792 batch execution preparation and route optimization' },
       { actionType: 'inference_call', label: 'Autonomous AI Inference', priceUsdc: '0.0010', description: 'Agent LLM reasoning and intent classification' },
+      { actionType: 'paid_mcp_tool', label: 'Paid MCP Tool Call', priceUsdc: '0.0010', description: 'Outgoing paid tool resource accessed through buyer x402 fuel.' },
     ];
     res.json(X402PricingResponseSchema.parse({ pricing }));
   });

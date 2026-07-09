@@ -4,6 +4,7 @@ export interface OpenAiConfig {
   baseUrl: string;
   apiKey: string;
   defaultModel: string;
+  fetchImpl?: typeof fetch;
 }
 
 export class OpenAiCompatibleClient implements LlmProvider {
@@ -13,7 +14,8 @@ export class OpenAiCompatibleClient implements LlmProvider {
     const model = request.model || this.config.defaultModel;
     const url = `${this.config.baseUrl.replace(/(?:\/v1)?\/?$/, '')}/v1/chat/completions`;
 
-    const response = await fetch(url, {
+    const fetchImpl = this.config.fetchImpl || fetch;
+    const response = await fetchImpl(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

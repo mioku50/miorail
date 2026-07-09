@@ -25,7 +25,8 @@ import {
   declareBuilderCodeExtension,
   parseBuilderCodeSuffixFromCalldata,
 } from '@x402/extensions/builder-code';
-import { wrapFetchWithPayment } from '@x402/fetch';
+import { wrapFetchWithPayment, x402Client } from '@x402/fetch';
+import { registerExactEvmScheme } from '@x402/evm/exact/client';
 import { createPublicClient, http, type Hex, type PublicClient } from 'viem';
 import { base, baseSepolia } from 'viem/chains';
 
@@ -98,6 +99,7 @@ export type BuilderCodeAttributionRole = 'seller' | 'buyer';
 export type X402FacilitatorAuthSource = 'bearer_token' | 'cdp_api_key_pair';
 export type X402MiddlewareRuntimeMode = 'auto' | 'official' | 'mock' | 'unavailable';
 export type X402ResolvedMiddlewareMode = 'official' | 'mock' | 'unavailable';
+export type X402BuyerPaymentMode = 'free' | 'x402';
 
 export interface X402RuntimeConfig {
   status: X402RuntimeStatus;
@@ -157,6 +159,21 @@ export interface X402SettlementRecord {
   errorReason?: string;
   errorMessage?: string;
   details?: Record<string, unknown>;
+}
+
+export interface X402BuyerSigner {
+  address: `0x${string}` | string;
+  signTypedData(message: unknown): Promise<`0x${string}` | string>;
+}
+
+export interface CreateX402BuyerClientOptions {
+  signer?: X402BuyerSigner;
+  networks?: SupportedX402Network[];
+  builderCode?: string;
+}
+
+export interface CreateX402BuyerPaidFetchOptions extends CreateX402BuyerClientOptions {
+  fetchImpl?: typeof globalThis.fetch;
 }
 
 type MinimalSettleResponse = {
@@ -1267,6 +1284,41 @@ export async function verifyBuilderCodeAttributionFromTxInput(input: {
   if (!client) return false;
   const tx = await client.getTransaction({ hash: input.txHash });
   return verifyBuilderCodeAttributionFromCalldata(tx.input, input.expectedBuilderCode, input.role);
+}
+
+export class X402BuyerUnavailableError extends Error {
+  readonly errorCode: string;
+
+  constructor(errorCode: string, message = 'x402 buyer payment signer is unavailable') {
+    super(message);
+    this.name = 'X402BuyerUnavailableError';
+    this.errorCode = errorCode;
+  }
+}
+
+export function createX402BuyerClient(options: CreateX402BuyerClientOptions = {}): x402Client {
+  if (!options.signer) {
+    throw new X402BuyerUnavailableError(
+      'x402_buyer_signer_missing',
+      'x402 buyer payment requires a CDP-managed signer; no signer was configured.',
+    );
+  }
+  const client = new x402Client();
+  registerExactEvmScheme(client, {
+    signer: options.signer as never,
+    networks: options.networks || ['eip155:8453', 'eip155:84532'],
+  });
+  registerBuilderCodeClientExtension(client, options.builderCode);
+  return client;
+}
+
+export function createX402BuyerPaidFetch(options: CreateX402BuyerPaidFetchOptions = {}): typeof globalThis.fetch {
+  const client = createX402BuyerClient(options);
+  return wrapFetchWithPayment(options.fetchImpl || globalThis.fetch, client);
+}
+
+export function x402BuyerPaymentModeFromEnv(env: NodeJS.ProcessEnv = process.env): X402BuyerPaymentMode {
+  return env.LLM_PAYMENT_MODE === 'x402' ? 'x402' : 'free';
 }
 
 export function registerBuilderCodeClientExtension<T extends { registerExtension(extension: unknown): unknown }>(

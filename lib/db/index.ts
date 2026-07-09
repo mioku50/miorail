@@ -13,12 +13,16 @@ if (!url) {
   throw new Error('DATABASE_URL is not set in environment variables');
 }
 
+const isTestLikeRuntime = process.env.NODE_ENV === 'test';
+const dbFetchAttempts = Number(process.env.DATABASE_FETCH_ATTEMPTS || (isTestLikeRuntime ? 1 : 5));
+const dbFetchTimeoutMs = Number(process.env.DATABASE_FETCH_TIMEOUT_MS || (isTestLikeRuntime ? 1000 : 30000));
+
 const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   let attempt = 0;
-  while (attempt < 5) {
+  while (attempt < dbFetchAttempts) {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
+      const timeout = setTimeout(() => controller.abort(), dbFetchTimeoutMs);
       const options = { ...init, signal: controller.signal };
       const res = await fetch(input, options);
       clearTimeout(timeout);
@@ -26,7 +30,7 @@ const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promis
     } catch (e: any) {
       attempt++;
       console.warn(`[Neon DB] fetch attempt ${attempt} failed: ${e.message}`);
-      if (attempt >= 5) throw e;
+      if (attempt >= dbFetchAttempts) throw e;
       await new Promise(r => setTimeout(r, 2000 * attempt));
     }
   }

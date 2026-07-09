@@ -76,3 +76,4 @@ export type KillAutonomyResponse = z.infer<typeof schemas.KillAutonomyResponseSc
 export type X402LedgerEntry = z.infer<typeof schemas.X402LedgerEntrySchema>;
 export type X402LedgerResponse = z.infer<typeof schemas.X402LedgerResponseSchema>;
 export type X402PricingResponse = z.infer<typeof schemas.X402PricingResponseSchema>;
+export type X402FuelResponse = z.infer<typeof schemas.X402FuelResponseSchema>;

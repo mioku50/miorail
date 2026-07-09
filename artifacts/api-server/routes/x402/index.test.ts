@@ -89,6 +89,7 @@ describe('x402 official smoke endpoint', () => {
     globalThis.fetch = async () => supportedResponse();
     const smokeApp = express();
     smokeApp.use('/x402', createX402Router({
+      dbEnabled: false,
       env: configuredEnv(),
       runtimeMode: 'official',
     }));
@@ -124,6 +125,7 @@ describe('x402 official smoke endpoint', () => {
     };
     const smokeApp = express();
     smokeApp.use('/x402', createX402Router({
+      dbEnabled: false,
       env: configuredEnv({
         X402_FACILITATOR_AUTH_TOKEN: undefined,
         X402_FACILITATOR_API_KEY: undefined,
@@ -154,6 +156,7 @@ describe('x402 official smoke endpoint', () => {
     };
     const smokeApp = express();
     smokeApp.use('/x402', createX402Router({
+      dbEnabled: false,
       env: configuredEnv(),
       runtimeMode: 'official',
     }));
@@ -183,6 +186,7 @@ describe('x402 official smoke endpoint', () => {
     globalThis.fetch = async () => supportedResponse();
     const smokeApp = express();
     smokeApp.use('/x402', createX402Router({
+      dbEnabled: false,
       env: configuredEnv(),
       runtimeMode: 'official',
     }));
@@ -206,6 +210,7 @@ describe('x402 official smoke endpoint', () => {
     };
     const smokeApp = express();
     smokeApp.use('/x402', createX402Router({
+      dbEnabled: false,
       env: configuredEnv({
         X402_FACILITATOR_AUTH_TOKEN: undefined,
         X402_FACILITATOR_API_KEY: undefined,
@@ -232,6 +237,7 @@ describe('x402 official smoke endpoint', () => {
     globalThis.fetch = async () => supportedResponse();
     const attachedApp = express();
     attachedApp.use('/x402', createX402Router({
+      dbEnabled: false,
       env: configuredEnv({ BUILDER_CODE: 'miorail' }),
       runtimeMode: 'official',
     }));
@@ -244,6 +250,7 @@ describe('x402 official smoke endpoint', () => {
 
     const unavailableApp = express();
     unavailableApp.use('/x402', createX402Router({
+      dbEnabled: false,
       env: configuredEnv({ BUILDER_CODE: undefined }),
       runtimeMode: 'official',
     }));
@@ -255,6 +262,7 @@ describe('x402 official smoke endpoint', () => {
   it('keeps ledger empty before paid settlement', async () => {
     const app = express();
     app.use('/x402', createX402Router({
+      dbEnabled: false,
       env: configuredEnv(),
       runtimeMode: 'official',
     }));
@@ -268,6 +276,7 @@ describe('x402 official smoke endpoint', () => {
     globalThis.fetch = async () => supportedResponse();
     const app = express();
     app.use('/x402', createX402Router({
+      dbEnabled: false,
       env: configuredEnv(),
       runtimeMode: 'official',
     }));
@@ -280,9 +289,80 @@ describe('x402 official smoke endpoint', () => {
     assert.strictEqual('lastBrowserRunLedgerMatched' in diag.body, true);
   });
 
+  it('keeps read-only scans free in x402 pricing', async () => {
+    const app = express();
+    app.use('/x402', createX402Router({
+      dbEnabled: false,
+      env: configuredEnv(),
+      runtimeMode: 'official',
+    }));
+
+    const res = await request(app).get('/x402/pricing');
+    assert.strictEqual(res.status, 200);
+    const portfolioScan = res.body.pricing.find((row: any) => row.actionType === 'portfolio_scan');
+    const inference = res.body.pricing.find((row: any) => row.actionType === 'inference_call');
+    assert.strictEqual(portfolioScan.priceUsdc, '0');
+    assert.notStrictEqual(inference.priceUsdc, '0');
+  });
+
+  it('exposes buyer fuel dashboard without requiring seller smoke payment', async () => {
+    const app = express();
+    app.use('/x402', createX402Router({
+      dbEnabled: false,
+      env: configuredEnv({ X402_BUYER_SMOKE_URL: 'https://paid-resource.example.test/smoke' }),
+      runtimeMode: 'official',
+    }));
+
+    const res = await request(app).get('/x402/fuel');
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.mode, 'buyer');
+    assert.strictEqual(res.body.activePermission, null);
+    assert.strictEqual(res.body.status, 'missing_permission');
+    assert.strictEqual(res.body.buyerSmoke.configured, true);
+    assert.strictEqual(res.body.buyerSmoke.urlHost, 'paid-resource.example.test');
+  });
+
+  it('buyer smoke returns controlled unavailable when payer signer is not configured', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use('/x402', createX402Router({
+      dbEnabled: false,
+      env: configuredEnv({ X402_BUYER_SMOKE_URL: 'https://paid-resource.example.test/smoke' }),
+      runtimeMode: 'official',
+    }));
+
+    const res = await request(app).post('/x402/buyer-smoke').send({});
+    assert.strictEqual(res.status, 503);
+    assert.strictEqual(res.body.error, 'x402_buyer_unavailable');
+    assert.strictEqual(res.body.errorCode, 'x402_buyer_signer_missing');
+    assert.strictEqual(JSON.stringify(res.body).includes('redacted-token'), false);
+  });
+
+  it('buyer smoke requires an active fuel permission before calling the paid resource', async () => {
+    let paidFetchCalled = false;
+    const app = express();
+    app.use(express.json());
+    app.use('/x402', createX402Router({
+      dbEnabled: false,
+      env: configuredEnv({ X402_BUYER_SMOKE_URL: 'https://paid-resource.example.test/smoke' }),
+      runtimeMode: 'official',
+      buyerPaidFetch: async () => {
+        paidFetchCalled = true;
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      },
+    }));
+
+    const res = await request(app).post('/x402/buyer-smoke').send({});
+    assert.strictEqual(res.status, 402);
+    assert.strictEqual(res.body.error, 'fuel_permission_required');
+    assert.strictEqual(res.body.status, 'missing_permission');
+    assert.strictEqual(paidFetchCalled, false);
+  });
+
   it('smoke-paid mock mode records runId and filters ledger by runId', async () => {
     const app = express();
     app.use('/x402', createX402Router({
+      dbEnabled: false,
       env: configuredEnv(),
       runtimeMode: 'mock',
     }));
@@ -302,5 +382,9 @@ describe('x402 official smoke endpoint', () => {
     const ledgerFiltered = await request(app).get(`/x402/ledger?runId=other-run-id`);
     assert.strictEqual(ledgerFiltered.status, 200);
     assert.strictEqual(ledgerFiltered.body.entries.length, 0);
+
+    const ledgerCurrent = await request(app).get(`/x402/ledger?runId=${runId}`);
+    assert.strictEqual(ledgerCurrent.status, 200);
+    assert.strictEqual(ledgerCurrent.body.summary.totalSpentUsdc, '0.0000');
   });
 });

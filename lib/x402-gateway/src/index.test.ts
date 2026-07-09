@@ -18,7 +18,10 @@ import {
   resolveEip712DomainExtra,
   resolveX402FacilitatorAuth,
   settlementRecordFromSettleResult,
+  createX402BuyerClient,
+  createX402BuyerPaidFetch,
   verifyBuilderCodeAttributionFromCalldata,
+  X402BuyerUnavailableError,
   x402ConfigFromEnv,
   x402StatusFromEnv,
 } from './index.js';
@@ -485,6 +488,38 @@ describe('x402-gateway', () => {
     assert.strictEqual(verifyBuilderCodeAttributionFromCalldata(calldata, 'miorail', 'seller'), true);
     assert.strictEqual(verifyBuilderCodeAttributionFromCalldata(calldata, 'buyer_app', 'buyer'), true);
     assert.strictEqual(verifyBuilderCodeAttributionFromCalldata(calldata, 'other', 'buyer'), false);
+  });
+
+  it('builds buyer x402 client with exact EVM signer and Builder Code extension', async () => {
+    const account = privateKeyToAccount('0x4c9bfe115a2917b14b03301ea3f86d306125a581126cafe842d4bb719b0f7b06');
+    const client = createX402BuyerClient({
+      signer: account,
+      networks: ['eip155:8453'],
+      builderCode: 'miorail',
+    });
+    assert.ok(client);
+
+    let called = false;
+    const paidFetch = createX402BuyerPaidFetch({
+      signer: account,
+      networks: ['eip155:8453'],
+      builderCode: 'miorail',
+      fetchImpl: async () => {
+        called = true;
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      },
+    });
+    const response = await paidFetch('https://resource.example.test/free');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(called, true);
+  });
+
+  it('fails closed when buyer x402 signer is missing', () => {
+    assert.throws(
+      () => createX402BuyerClient({ builderCode: 'miorail' }),
+      (error: unknown) => error instanceof X402BuyerUnavailableError &&
+        error.errorCode === 'x402_buyer_signer_missing',
+    );
   });
 
   it('normalizes settled facilitator records for ledger storage', () => {

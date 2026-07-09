@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, jsonb, index, integer, boolean } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, jsonb, index, integer, boolean, numeric } from 'drizzle-orm/pg-core';
 
 export const users = pgTable('users', {
   id: text('id').primaryKey(),
@@ -145,8 +145,8 @@ export const spendPermissions = pgTable(
       .notNull(),
     chainId: integer('chain_id').notNull(),
     asset: text('asset'),
-    limit: integer('limit').notNull(),
-    spent: integer('spent').default(0).notNull(),
+    limit: numeric('limit', { precision: 18, scale: 6 }).notNull(),
+    spent: numeric('spent', { precision: 18, scale: 6 }).default('0').notNull(),
     whitelist: jsonb('whitelist').notNull(),
     expiresAt: timestamp('expires_at').notNull(),
     isActive: boolean('is_active').default(true).notNull(),

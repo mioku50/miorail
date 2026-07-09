@@ -1,6 +1,19 @@
 import { LlmProvider } from './types';
 import { MockLlmProvider } from './mock';
 import { OpenAiCompatibleClient } from './openai';
+import { createX402BuyerPaidFetch, x402BuyerPaymentModeFromEnv, X402BuyerUnavailableError } from '@mioagent/x402-gateway';
+
+function fetchForPaymentMode(): typeof fetch | undefined {
+  if (x402BuyerPaymentModeFromEnv() !== 'x402') return undefined;
+  try {
+    return createX402BuyerPaidFetch();
+  } catch (error) {
+    if (error instanceof X402BuyerUnavailableError) {
+      throw new Error(`LLM_PAYMENT_MODE=x402 requires a configured x402 buyer payer signer: ${error.errorCode}`);
+    }
+    throw error;
+  }
+}
 
 export function createLlmProvider(): LlmProvider {
   const explicitProvider = process.env.LLM_PROVIDER;
@@ -13,7 +26,8 @@ export function createLlmProvider(): LlmProvider {
     return new OpenAiCompatibleClient({
       apiKey: process.env.OPENAI_API_KEY,
       baseUrl: 'https://api.openai.com',
-      defaultModel: process.env.OPENAI_MODEL || 'gpt-4o-mini'
+      defaultModel: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      fetchImpl: fetchForPaymentMode()
     });
   }
 
@@ -24,7 +38,8 @@ export function createLlmProvider(): LlmProvider {
     return new OpenAiCompatibleClient({
       apiKey: process.env.LLM_API_KEY,
       baseUrl: process.env.LLM_BASE_URL,
-      defaultModel: process.env.LLM_MODEL
+      defaultModel: process.env.LLM_MODEL,
+      fetchImpl: fetchForPaymentMode()
     });
   }
 

@@ -1,8 +1,5 @@
-import { useStatus, useX402Ledger, useX402Pricing } from '@mioagent/api-client-react';
+import { useStatus, useX402Fuel, useX402Ledger, useX402Pricing } from '@mioagent/api-client-react';
 import { StateBadge } from '@mioagent/ui';
-import { useState } from 'react';
-import { PaidActionButton } from './PaidActionButton';
-import type { PaidActionError, PaidActionResult } from '../../lib/x402PaidFetch';
 
 function Metric({ label, amount, sub }: { label: string; amount: string; sub: string }) {
   return (
@@ -10,7 +7,7 @@ function Metric({ label, amount, sub }: { label: string; amount: string; sub: st
       <div className="text-[10px] font-sans uppercase tracking-[0.06em] text-ink-3">{label}</div>
       <div className="flex items-baseline gap-2 mt-0.5">
         <span className="text-[14px] font-mono font-bold text-ink truncate">{amount}</span>
-        <span className="text-[11px] text-ink-3 font-mono">{sub}</span>
+        <span className="text-[11px] text-ink-3 font-mono truncate">{sub}</span>
       </div>
     </div>
   );
@@ -31,388 +28,192 @@ function baseScanTxUrl(network?: string, txHash?: string | null): string | null 
 function x402BlockedCopy(x402?: any): string {
   const reason = x402?.settleBlockedReason || x402?.errorCode || x402?.status;
   if (reason === 'facilitator_auth_missing' || reason === 'facilitator_auth_required') {
-    return 'Facilitator auth is required before Base Mainnet settlement can run.';
+    return 'Facilitator auth is required before x402 settlement can run.';
   }
   if (reason === 'cdp_api_key_pair_incomplete') {
-    return 'CDP API key pair is incomplete. Paid routes fail closed until facilitator auth is configured.';
+    return 'CDP API key pair is incomplete. Buyer fuel remains blocked until facilitator auth is configured.';
   }
   if (reason === 'network_not_supported' || reason === 'unsupported_network_for_settlement') {
-    return 'The facilitator probe is live, but this x402 network is not supported for settlement.';
+    return 'The facilitator is reachable, but this x402 network is not supported for settlement.';
   }
-  if (reason === 'facilitator_rate_limited') {
-    return 'x402 facilitator is rate-limited. Showing the route as blocked until it recovers.';
-  }
-  if (reason === 'facilitator_unreachable' || reason === 'facilitator_degraded') {
-    return 'x402 facilitator is unavailable or degraded. Paid routes return a controlled unavailable response.';
-  }
-  if (reason === 'x402_not_configured') {
-    return 'x402 env is partial or invalid. Paid routes fail closed until facilitator, payTo, and CAIP-2 network are configured.';
-  }
-  return 'x402 settlement is not ready. Paid routes fail closed instead of requesting a wallet signature.';
+  if (reason === 'facilitator_rate_limited') return 'x402 facilitator is rate-limited. Buyer payments fail closed until it recovers.';
+  if (reason === 'facilitator_unreachable' || reason === 'facilitator_degraded') return 'x402 facilitator is unavailable or degraded.';
+  if (reason === 'x402_not_configured') return 'x402 env is incomplete. Configure facilitator, payTo, and CAIP-2 network.';
+  return 'x402 settlement is not ready.';
 }
 
-// x402 Fuel Meter — the pay-per-action differentiator.
-// Shows honest empty states and operator guidance without fabricated numbers.
+function networkLabel(network?: string): string {
+  if (network === 'eip155:8453') return 'Base Mainnet';
+  if (network === 'eip155:84532') return 'Base Sepolia';
+  return 'Not configured';
+}
+
 export function FuelMeter() {
   const { data: statusData } = useStatus();
-  const { data: ledger, refetch: refetchLedger } = useX402Ledger();
+  const { data: fuel } = useX402Fuel();
+  const { data: ledger } = useX402Ledger();
   const { data: pricing } = useX402Pricing();
-  const [smokeResult, setSmokeResult] = useState<PaidActionResult | null>(null);
-  const [smokeError, setSmokeError] = useState<string | null>(null);
-  const [ledgerRefreshWarning, setLedgerRefreshWarning] = useState<string | null>(null);
 
   const x402 = statusData?.x402;
-  const status = x402?.status;
   const settleReady = x402?.settleReady === true;
-  const isLive = settleReady && (status === 'connected' || status === 'configured');
-  const isMissing = status === 'missing';
-  const isUnavailable = !settleReady && (
-    status === 'facilitator_auth_required' ||
-    status === 'facilitator_auth_invalid' ||
-    status === 'facilitator_rate_limited' ||
-    status === 'facilitator_unreachable' ||
-    status === 'unsupported_network_for_settlement' ||
-    status === 'degraded'
-  );
-  const badgeState = isLive ? 'live' : isMissing ? 'missing' : 'mock';
+  const badgeState = settleReady ? 'live' : x402?.status === 'missing' ? 'missing' : 'mock';
   const badgeLabel =
-    isLive ? 'settle ready' :
-    status === 'facilitator_auth_required' ? 'auth required' :
-    status === 'facilitator_auth_invalid' ? 'auth invalid' :
-    status === 'facilitator_rate_limited' ? 'rate limited' :
-    status === 'facilitator_unreachable' ? 'unreachable' :
-    status === 'unsupported_network_for_settlement' ? 'network blocked' :
-    status === 'degraded' ? 'degraded' :
-    isMissing ? 'not configured' :
+    settleReady ? 'buyer fuel ready' :
+    x402?.status === 'facilitator_auth_required' ? 'auth required' :
+    x402?.status === 'facilitator_auth_invalid' ? 'auth invalid' :
+    x402?.status === 'facilitator_rate_limited' ? 'rate limited' :
+    x402?.status === 'facilitator_unreachable' ? 'unreachable' :
+    x402?.status === 'unsupported_network_for_settlement' ? 'network blocked' :
+    x402?.status === 'degraded' ? 'degraded' :
+    x402?.status === 'missing' ? 'not configured' :
     'simulated';
-  const providerLabel = isLive ? 'Live Facilitator' : isMissing ? 'Missing Config' : isUnavailable ? 'Facilitator Unavailable' : 'Simulated Gateway';
-  const providerDot = isLive ? 'text-ok' : isMissing ? 'text-risk' : 'text-warn';
-  const statusCopy =
-    isLive
-      ? 'Real x402 settlement records are read from x402_receipts.'
-      : status === 'facilitator_auth_required'
-        ? x402BlockedCopy(x402)
-      : status === 'facilitator_auth_invalid'
-        ? 'x402 facilitator auth could not be generated. Check CDP API key ID/secret formatting; paid routes fail closed.'
-      : status === 'facilitator_rate_limited'
-        ? 'x402 facilitator is rate-limited. Paid routes fail closed until the facilitator recovers.'
-      : status === 'facilitator_unreachable' || status === 'degraded'
-        ? 'x402 facilitator is unavailable or degraded. Paid routes return a controlled unavailable response.'
-      : status === 'missing'
-        ? 'x402 env is partial or invalid. Paid routes fail closed until facilitator, payTo, and CAIP-2 network are configured.'
-      : !settleReady
-        ? x402BlockedCopy(x402)
-      : 'No real facilitator is configured. Paid routes do not claim settlement.';
-  const modeLabel = isLive ? 'Mode: real settlement' : isMissing ? 'Mode: missing config' : isUnavailable ? `Mode: ${badgeLabel}` : 'Mode: simulated';
-  const networkLabel =
-    x402?.network === 'eip155:8453' ? 'Base Mainnet' :
-    x402?.network === 'eip155:84532' ? 'Base Sepolia' :
-    'Not configured';
-  const payToLabel = x402?.payToConfigured ? 'configured' : 'missing';
-  const builderLabel = x402?.builderCodeConfigured ? 'configured' : 'missing';
-  const attributionLabel = x402?.builderCodeAttribution === 'attached' ? 'attached' : 'unavailable';
-  const [smokeAttemptId, setSmokeAttemptId] = useState<string>(() => `smoke-${Math.random().toString(36).slice(2, 10)}`);
-  const [smokeErrorReason, setSmokeErrorReason] = useState<string | null>(null);
-  const smokeLabel = x402?.smokeRouteAvailable && settleReady ? 'available' : 'blocked';
-  const bodyData = (smokeResult?.body && typeof smokeResult.body === 'object' ? smokeResult.body : {}) as Record<string, unknown>;
-  const isCurrentAttemptSettled = Boolean(smokeResult?.paid && !smokeError);
-  const smokeDisabledReason = !settleReady
-    ? 'Settlement not ready'
-    : !x402?.smokeRouteAvailable
-      ? 'Smoke route unavailable'
-      : isCurrentAttemptSettled
-        ? 'Attempt settled'
-        : undefined;
 
-  const smokeReceiptTx = isCurrentAttemptSettled
-    ? smokeResult?.receipt?.transaction ||
-      smokeResult?.receipt?.txHash ||
-      (typeof bodyData.txHash === 'string' ? bodyData.txHash : null)
-    : null;
+  const permission = fuel?.activePermission;
+  const fuelStatus =
+    fuel?.status === 'ready' ? 'ready' :
+    fuel?.status === 'missing_permission' ? 'permission required' :
+    fuel?.status === 'permission_expired' ? 'expired' :
+    fuel?.status === 'limit_exhausted' ? 'limit exhausted' :
+    fuel?.status === 'permission_inactive' ? 'inactive' :
+    'unavailable';
 
-  const smokeLedgerEntry = isCurrentAttemptSettled
-    ? ledger?.entries?.find(
-        (entry) =>
-          (entry.runId && entry.runId === smokeAttemptId) ||
-          (smokeResult?.runId && entry.runId === smokeResult.runId)
-      )
-    : undefined;
-
-  const smokeTxHash = smokeLedgerEntry?.txHash || smokeReceiptTx || null;
-  const smokeNetwork =
-    smokeLedgerEntry?.network ||
-    smokeResult?.receipt?.network ||
-    (typeof bodyData.network === 'string' ? bodyData.network : undefined) ||
-    x402?.network;
-  const smokePayer =
-    smokeLedgerEntry?.details?.payer ||
-    smokeResult?.receipt?.payer ||
-    (typeof bodyData.payer === 'string' ? bodyData.payer : null);
-  const smokeBaseScanUrl = baseScanTxUrl(smokeNetwork, smokeTxHash);
-  const smokeCost = isCurrentAttemptSettled
-    ? smokeLedgerEntry?.cost
-      ? `${smokeLedgerEntry.cost} USDC`
-      : '0.001 USDC'
-    : '0 USDC';
-  const smokeSettledAt = smokeLedgerEntry?.createdAt || smokeResult?.completedAt || null;
-
-  async function handleSmokeSuccess(result: PaidActionResult) {
-    setSmokeResult(result);
-    setSmokeError(null);
-    setSmokeErrorReason(null);
-    setLedgerRefreshWarning(null);
-    const refreshed = await refetchLedger();
-    if (refreshed.isError) {
-      setLedgerRefreshWarning('Payment settled, but Fuel history refresh failed.');
-    }
-  }
-
-  function handleSmokeFailure(error: PaidActionError) {
-    setSmokeResult(null);
-    setSmokeError(error.message);
-    setSmokeErrorReason(error.reason || 'unknown');
-    setSmokeAttemptId(`smoke-${Math.random().toString(36).slice(2, 10)}`);
-  }
-
-  function handleNewAttempt() {
-    setSmokeAttemptId(`smoke-${Math.random().toString(36).slice(2, 10)}`);
-    setSmokeResult(null);
-    setSmokeError(null);
-    setSmokeErrorReason(null);
-  }
+  const buyerReceipts = ledger?.entries?.filter((entry) => entry.direction === 'outgoing_buyer_payment') || [];
+  const sellerSmokeReceipts = ledger?.entries?.filter((entry) => entry.direction !== 'outgoing_buyer_payment') || [];
 
   return (
     <main className="flex-1 bg-bg p-5 flex flex-col gap-4 overflow-y-auto select-none pb-16 md:pb-5">
       <div className="flex items-center justify-between border-b border-line pb-4">
         <div>
-          <h1 className="text-[20px] font-display font-bold text-ink tracking-[-0.02em]">x402 Fuel Meter</h1>
+          <h1 className="text-[20px] font-display font-bold text-ink tracking-[-0.02em]">x402 Buyer Fuel</h1>
           <p className="text-xs text-ink-3 mt-0.5 font-sans">
-            Micropayment metering gateway, onchain USDC budget ledger, and per-action pricing.
+            Agent-paid outgoing resources backed by Base Account spend permissions.
           </p>
         </div>
-        <StateBadge state={badgeState} label={badgeLabel} title="Source: /api/status x402.status" />
-      </div>
-
-      {/* Architecture & Wiring Status */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-        <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-3.5 flex flex-col justify-between gap-2 shadow-[var(--shadow-card)]">
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3">Provider Status</span>
-              <span className="text-[10px] font-mono text-ink-3">{modeLabel}</span>
-            </div>
-            <div className="text-sm font-sans font-bold text-ink flex items-center gap-1.5">
-              <span className={providerDot}>●</span>
-              <span>{providerLabel}</span>
-            </div>
-          </div>
-          <div className="text-[11px] text-ink-3 leading-relaxed border-t border-line/50 pt-2 font-sans">
-            {statusCopy}
-          </div>
-        </div>
-
-        <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-3.5 flex flex-col justify-between gap-2 shadow-[var(--shadow-card)]">
-          <div>
-            <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Live Payments Flow</div>
-            <div className="text-sm font-sans font-bold text-ink flex items-center gap-1.5">
-              <span className={settleReady ? 'text-ok' : 'text-warn'}>●</span>
-              <span>{settleReady ? 'Settle Ready (Official SDK)' : 'Settlement Blocked'}</span>
-            </div>
-          </div>
-          <div className="text-[11px] text-ink-3 leading-relaxed border-t border-line/50 pt-2 font-sans">
-            Requires configured=true, officialMiddleware=true, mock=false, settleReady=true.
-          </div>
-        </div>
-
-        <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-3.5 flex flex-col justify-between gap-2 shadow-[var(--shadow-card)]">
-          <div>
-            <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">x402 Scheme & Asset</div>
-            <div className="text-sm font-sans font-bold text-ink font-mono">
-              exact / Base USDC
-            </div>
-          </div>
-          <div className="text-[11px] text-ink-3 leading-relaxed border-t border-line/50 pt-2 font-sans">
-            Asset: <span className="font-mono text-ink-2">{shortHash(x402?.asset || '0x8335...02913')}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Gateway Configuration Audit */}
-      <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs shadow-[var(--shadow-card)]">
-        <Metric label="PayTo" amount={payToLabel} sub="recipient" />
-        <Metric label="Network" amount={networkLabel} sub={x402?.network || 'none'} />
-        <Metric label="Builder Code" amount={builderLabel} sub={attributionLabel} />
-        <Metric label="Smoke route" amount={smokeLabel} sub={x402?.smokeRoute || '/api/x402/smoke-paid'} />
+        <StateBadge state={badgeState} label={badgeLabel} title="Source: /api/status x402.settleReady" />
       </div>
 
       <section className="bg-panel border border-line rounded-[var(--radius-lg)] p-4 shadow-[var(--shadow-card)]">
-        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 mb-1">
-              <div className="text-[11px] font-sans font-semibold tracking-[0.08em] uppercase text-ink-3">x402 Smoke Paid Test</div>
-              <span className="text-[10px] font-mono bg-panel-2 border border-line px-2 py-0.5 rounded-full text-ink-3">run: {smokeAttemptId}</span>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-[11px] font-sans font-semibold tracking-[0.08em] uppercase text-ink-3">Fuel account</div>
+            <div className="text-sm font-sans font-bold text-ink mt-1">Spend Permission {fuelStatus}</div>
+            <div className="text-[12px] text-ink-3 mt-1 max-w-[720px]">
+              Read-only scans stay free. Fuel is used only for outgoing paid inference, premium data, MCP tools, and future execution.
             </div>
-            <div className="text-[12px] text-ink-2 leading-relaxed font-sans">
-              Runs the production browser x402 flow against <span className="font-mono text-ink">/api/x402/smoke-paid</span>. The wallet signs the USDC authorization; the server never asks for a key and never broadcasts from Miorail.
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
-              <Metric label="Route" amount="/api/x402/smoke-paid" sub="protected" />
-              <Metric label="Cost" amount="0.001 USDC" sub="Base USDC" />
-              <Metric label="Middleware" amount={x402?.middlewareMode || 'unknown'} sub={x402?.mockFacilitatorEnabled ? 'mock' : 'official'} />
-              <Metric label="Browser flow" amount={settleReady ? 'available' : 'blocked'} sub={x402?.smokeRouteAvailable ? 'smoke route' : 'no route'} />
-            </div>
-            {!settleReady && (
-              <div className="mt-3 text-[11px] text-warn bg-warn-soft border border-warn/20 rounded-[var(--radius-md)] px-3 py-2 font-sans">
-                {x402BlockedCopy(x402)}
-              </div>
-            )}
           </div>
-          <div className="w-full lg:w-[260px] shrink-0 flex flex-col gap-2">
-            <PaidActionButton
-              label="x402 Smoke Paid Test"
-              route="/api/x402/smoke-paid"
-              actionType="x402_smoke_paid"
-              category="tools"
-              costLabel="0.001 USDC"
-              runId={smokeAttemptId}
-              disabled={!settleReady || !x402?.smokeRouteAvailable || isCurrentAttemptSettled}
-              disabledReason={smokeDisabledReason}
-              onSuccess={handleSmokeSuccess}
-              onFailure={handleSmokeFailure}
-            />
-            {isCurrentAttemptSettled && (
-              <button
-                type="button"
-                onClick={handleNewAttempt}
-                className="w-full text-center py-1.5 px-3 rounded-[var(--radius-md)] border border-line bg-panel-2 text-ink-2 text-xs font-semibold hover:bg-panel hover:text-ink transition-colors"
-              >
-                Start New Paid Attempt
-              </button>
-            )}
-          </div>
+          <span className={`text-[10px] font-bold px-2 py-1 rounded-full border ${fuel?.status === 'ready' ? 'text-ok bg-ok-soft border-ok/30' : 'text-warn bg-warn-soft border-warn/30'}`}>
+            buyer mode
+          </span>
         </div>
-
-        {(smokeResult || smokeError || ledgerRefreshWarning) && (
-          <div className="mt-4 border-t border-line/50 pt-3">
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-2 text-xs">
-              <Metric
-                label="Status"
-                amount={smokeError ? 'failed' : smokeLedgerEntry?.settlement || 'settled'}
-                sub={smokeError ? `${smokeErrorReason || 'payment_failed'}` : `runId: ${smokeAttemptId}`}
-              />
-              <Metric label="Payer" amount={smokePayer ? shortHash(smokePayer) : 'wallet'} sub="wallet" />
-              <Metric label="Amount" amount={smokeCost} sub={isCurrentAttemptSettled ? 'settled' : 'unpaid'} />
-              <Metric label="Network" amount={smokeNetwork === 'eip155:8453' ? 'Base Mainnet' : smokeNetwork === 'eip155:84532' ? 'Base Sepolia' : 'Base'} sub={smokeNetwork || 'none'} />
-              <div className="bg-panel-2 border border-line rounded-[var(--radius-md)] p-2.5">
-                <div className="text-[10px] font-sans uppercase tracking-[0.06em] text-ink-3">Tx proof</div>
-                {smokeError ? (
-                  <div className="mt-0.5 text-[11px] text-risk font-sans font-medium">Payment failed — no settlement recorded</div>
-                ) : smokeTxHash && smokeBaseScanUrl ? (
-                  <a className="block mt-0.5 text-[12px] font-mono font-bold text-accent-2 hover:text-accent truncate" href={smokeBaseScanUrl} target="_blank" rel="noreferrer">
-                    {shortHash(smokeTxHash)}
-                  </a>
-                ) : (
-                  <div className="mt-0.5 text-[12px] text-warn font-sans">settled, tx proof unavailable</div>
-                )}
-              </div>
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-ink-3">
-              {smokeSettledAt && <span className="font-mono">{new Date(smokeSettledAt).toLocaleString()}</span>}
-              {ledgerRefreshWarning && <span className="text-warn">{ledgerRefreshWarning}</span>}
-            </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs mt-4">
+          <Metric label="Remaining fuel" amount={permission ? `${permission.remainingUsdc} USDC` : '-'} sub={permission ? 'permission balance' : 'no permission'} />
+          <Metric label="Spent" amount={permission ? `${permission.spentUsdc} USDC` : '0 USDC'} sub={permission ? `limit ${permission.limitUsdc}` : 'no active spend'} />
+          <Metric label="Permission" amount={permission ? shortHash(permission.id) : 'missing'} sub={permission ? networkLabel(`eip155:${permission.chainId}`) : 'connect in autonomy'} />
+          <Metric label="Reservations" amount={String(fuel?.pendingReservations?.length || 0)} sub="in flight" />
+        </div>
+        {!settleReady && (
+          <div className="mt-3 text-[11px] text-warn bg-warn-soft border border-warn/20 rounded-[var(--radius-md)] px-3 py-2 font-sans">
+            {x402BlockedCopy(x402)}
           </div>
         )}
       </section>
 
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+        <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-3.5 shadow-[var(--shadow-card)]">
+          <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Settlement rail</div>
+          <div className="text-sm font-sans font-bold text-ink">{settleReady ? 'Ready' : 'Blocked'}</div>
+          <div className="text-[11px] text-ink-3 mt-2 border-t border-line/50 pt-2">{x402?.middlewareMode || 'unknown'} middleware, mock={String(Boolean(x402?.mockFacilitatorEnabled))}</div>
+        </div>
+        <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-3.5 shadow-[var(--shadow-card)]">
+          <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Network and asset</div>
+          <div className="text-sm font-sans font-bold text-ink">{networkLabel(x402?.network)}</div>
+          <div className="text-[11px] text-ink-3 mt-2 border-t border-line/50 pt-2 font-mono">{shortHash(x402?.asset || '') || 'asset missing'}</div>
+        </div>
+        <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-3.5 shadow-[var(--shadow-card)]">
+          <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Builder Code</div>
+          <div className="text-sm font-sans font-bold text-ink">{x402?.builderCodeConfigured ? 'Configured' : 'Missing'}</div>
+          <div className="text-[11px] text-ink-3 mt-2 border-t border-line/50 pt-2">{x402?.builderCodeAttribution || 'unavailable'}</div>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* USDC budget (onchain agent balance) */}
-        <section className="bg-panel border border-line rounded-[var(--radius-lg)] p-4 flex flex-col justify-between shadow-[var(--shadow-card)]">
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-[11px] font-sans font-semibold tracking-[0.08em] uppercase text-ink-3">USDC budget</div>
-              <span className="text-[10px] font-sans bg-panel-2 px-2 py-0.5 rounded-full text-ink-3">unconfigured</span>
-            </div>
-            <div className="text-[26px] font-mono font-bold text-ink">
-              — <span className="text-[14px] font-normal text-ink-3">USDC</span>
-            </div>
+        <section className="bg-panel border border-line rounded-[var(--radius-lg)] p-4 shadow-[var(--shadow-card)]">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-[11px] font-sans font-semibold tracking-[0.08em] uppercase text-ink-3">Spend by category</div>
+            <span className="text-[10px] font-mono bg-panel-2 px-2 py-0.5 rounded-full text-ink-3">{buyerReceipts.length} buyer receipts</span>
           </div>
-          <div className="text-[11px] text-ink-3 mt-3 border-t border-line/50 pt-2 font-sans">
-            Onchain agent USDC balance — no balance source is wired.
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <Metric label="Inference" amount={`${fuel?.spendByCategory?.inference || ledger?.summary?.inferenceSpentUsdc || '0.0000'} USDC`} sub="paid LLM" />
+            <Metric label="Premium data" amount={`${fuel?.spendByCategory?.premiumData || '0.0000'} USDC`} sub="deep scans" />
+            <Metric label="MCP tools" amount={`${fuel?.spendByCategory?.mcpTool || ledger?.summary?.toolsSpentUsdc || '0.0000'} USDC`} sub="paid tools" />
+            <Metric label="Execution" amount={`${fuel?.spendByCategory?.execution || '0.0000'} USDC`} sub="future gated" />
           </div>
         </section>
 
-        {/* Spend breakdown today */}
-        <section className="bg-panel border border-line rounded-[var(--radius-lg)] p-4 flex flex-col justify-between shadow-[var(--shadow-card)]">
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-[11px] font-sans font-semibold tracking-[0.08em] uppercase text-ink-3">Spend today</div>
-              <span className="text-[10px] font-mono bg-panel-2 px-2 py-0.5 rounded-full text-ink-3">{ledger?.entries?.length || 0} calls recorded</span>
-            </div>
-            <div className="grid grid-cols-2 gap-3 text-xs">
-              <Metric label="Inference" amount={ledger?.summary?.inferenceSpentUsdc ? `${ledger.summary.inferenceSpentUsdc} USDC` : "0.0000 USDC"} sub={`${ledger?.summary?.inferenceCallsCount || 0} calls`} />
-              <Metric label="Tools" amount={ledger?.summary?.toolsSpentUsdc ? `${ledger.summary.toolsSpentUsdc} USDC` : "0.0000 USDC"} sub={`${ledger?.summary?.toolsCallsCount || 0} calls`} />
-            </div>
+        <section className="bg-panel border border-line rounded-[var(--radius-lg)] p-4 shadow-[var(--shadow-card)]">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-[11px] font-sans font-semibold tracking-[0.08em] uppercase text-ink-3">Pricing schedule</div>
+            <span className="text-[10px] font-mono bg-panel-2 px-2 py-0.5 rounded-full text-ink-3">read-only free</span>
           </div>
-          <div className="text-[11px] text-warn font-mono mt-3 border-t border-line/50 pt-2 flex items-center justify-between">
-            <span className="font-sans text-ink-3">Settlement mode:</span>
-            <span className="font-bold bg-warn-soft px-2 py-0.5 rounded-full border border-warn/20 text-warn">{ledger?.summary?.settlement || 'none'}</span>
+          <div className="space-y-2 max-h-[170px] overflow-y-auto">
+            {pricing?.pricing?.map((p) => (
+              <div key={p.actionType} className="flex items-center justify-between gap-3 bg-panel-2 p-2 rounded-[var(--radius-md)] border border-line text-xs">
+                <div className="min-w-0">
+                  <div className="text-ink font-sans font-semibold truncate">{p.label}</div>
+                  <div className="text-[10px] text-ink-3 truncate">{p.description}</div>
+                </div>
+                <span className="shrink-0 text-accent-2 font-mono font-bold">{p.priceUsdc} USDC</span>
+              </div>
+            ))}
           </div>
         </section>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Per-action price (next action) */}
-        <section className="bg-panel border border-line rounded-[var(--radius-lg)] p-4 flex flex-col justify-between shadow-[var(--shadow-card)]">
-          <div>
-            <div className="text-[11px] font-sans font-semibold tracking-[0.08em] uppercase text-ink-3 mb-2">Per-Action Pricing Schedule</div>
-            <div className="space-y-2">
-              {pricing?.pricing && pricing.pricing.length > 0 ? (
-                pricing.pricing.map(p => (
-                  <div key={p.actionType} className="flex items-center justify-between bg-panel-2 p-2 rounded-[var(--radius-md)] border border-line text-xs">
-                    <span className="text-ink font-sans font-medium">{p.label}</span>
-                    <span className="text-accent-2 font-mono font-bold">{p.priceUsdc} USDC <span className="text-[10px] text-ink-3 font-normal">(est.)</span></span>
+      <section className="bg-panel border border-line rounded-[var(--radius-lg)] p-4 shadow-[var(--shadow-card)]">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-[11px] font-sans font-semibold tracking-[0.08em] uppercase text-ink-3">Buyer receipts</div>
+          <span className="text-[10px] font-mono text-ink-3">source: x402_receipts</span>
+        </div>
+        {buyerReceipts.length > 0 ? (
+          <div className="space-y-1.5 max-h-[210px] overflow-y-auto">
+            {buyerReceipts.map((entry) => {
+              const txUrl = baseScanTxUrl(entry.network, entry.txHash);
+              return (
+                <div key={entry.id} className="grid grid-cols-1 md:grid-cols-[1fr_120px_140px] gap-2 items-center bg-panel-2 p-2 rounded-[var(--radius-md)] border border-line text-xs">
+                  <div className="min-w-0">
+                    <div className="text-ink font-sans font-semibold truncate">{entry.actionType}</div>
+                    <div className="text-[10px] text-ink-3 font-mono truncate">{entry.category || 'mcp_tool'} / {new Date(entry.createdAt).toLocaleString()}</div>
                   </div>
-                ))
-              ) : (
-                <div className="text-[15px] font-mono text-ink font-semibold">Not priced</div>
-              )}
+                  <div className="font-mono text-ink font-bold">{entry.cost || '0'} USDC</div>
+                  {txUrl ? (
+                    <a href={txUrl} target="_blank" rel="noreferrer" className="font-mono text-accent-2 hover:text-accent truncate">{shortHash(entry.txHash)}</a>
+                  ) : (
+                    <span className="text-warn font-sans">proof pending</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-xs text-ink-3 italic bg-panel-2 p-3 rounded-[var(--radius-md)] border border-line font-sans">
+            No buyer fuel receipts yet. Free read-only scans do not create fuel spend.
+          </div>
+        )}
+      </section>
+
+      <section className="bg-panel border border-line rounded-[var(--radius-lg)] p-4 shadow-[var(--shadow-card)]">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-[11px] font-sans font-semibold tracking-[0.08em] uppercase text-ink-3">Dev seller smoke</div>
+            <div className="text-[12px] text-ink-3 mt-1 max-w-[760px]">
+              `/api/x402/smoke-paid` remains a settlement rail diagnostic. It is not the product fuel path and is not counted as buyer spend.
             </div>
           </div>
-          <div className="text-[11px] text-ink-3 mt-2 border-t border-line/50 pt-2 font-sans">
-            Pricing is configured separately from the settlement ledger.
-          </div>
-        </section>
-
-        {/* Spend history */}
-        <section className="bg-panel border border-line rounded-[var(--radius-lg)] p-4 flex flex-col justify-between shadow-[var(--shadow-card)]">
-          <div>
-            <div className="text-[11px] font-sans font-semibold tracking-[0.08em] uppercase text-ink-3 mb-3">Spend history</div>
-            {ledger?.entries && ledger.entries.length > 0 ? (
-              <div className="space-y-1.5 max-h-[140px] overflow-y-auto">
-                {ledger.entries.map(e => (
-                  <div key={e.id} className="flex items-center justify-between bg-panel-2 p-2 rounded-[var(--radius-md)] border border-line text-xs">
-                    <div>
-                      <span className="text-ink font-sans font-semibold">{e.actionType}</span>
-                      <div className="text-[10px] text-ink-3 font-mono">{new Date(e.createdAt).toLocaleTimeString()}</div>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-ink font-mono font-bold">{e.cost || '0'} USDC</span>
-                      <div className="text-[9px] text-warn font-mono">{e.settlement || 'none'}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-xs text-ink-3 italic bg-panel-2 p-3 rounded-[var(--radius-md)] border border-line font-sans">
-                No spend history — no x402 micropayments have been recorded yet.
-              </div>
-            )}
-          </div>
-          <div className="text-[11px] text-ink-3 mt-2 border-t border-line/50 pt-2 font-sans">
-            Ledger entries come from x402_receipts. Empty history means no paid settlements have been recorded.
-          </div>
-        </section>
-      </div>
+          <span className="text-[10px] font-mono bg-panel-2 border border-line rounded-full px-2 py-1 text-ink-3">
+            {sellerSmokeReceipts.length} historical
+          </span>
+        </div>
+      </section>
     </main>
   );
 }
