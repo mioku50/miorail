@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db, actions } from '@mioagent/db';
-import { desc, eq, and, ne, inArray } from 'drizzle-orm';
+import { desc, eq, and, inArray } from 'drizzle-orm';
 import {
   ActionsFeedResponseSchema,
   ExecuteActionResponseSchema,
@@ -9,6 +9,7 @@ import {
   DeleteRecommendationsResponseSchema,
   DeleteSingleActionResponseSchema,
   RegenerateRecommendationResponseSchema,
+  PrepareActionRequestSchema,
   PrepareActionResponseSchema,
   ConfirmActionRequestSchema,
   ConfirmActionResponseSchema,
@@ -31,6 +32,7 @@ import { normalizeBaseChain } from '@mioagent/security/baseGuards';
 import { isProductionActionType } from '@mioagent/api-zod';
 import { MemoryService } from '@mioagent/memory';
 import { getSystemStatus } from './status.js';
+import { getAutonomousExecutionGateway, getAutonomyPolicyRepository } from '../lib/autonomyGateway.js';
 import {
   actionProofRuntime,
   buildBaseReceiptProof,
@@ -46,6 +48,18 @@ import {
 } from '../lib/actionProofs.js';
 
 export const actionsRouter = Router();
+
+async function releaseActionAutonomyReservation(userId: string, actionId: string, reason: string): Promise<void> {
+  const [action] = await db.select().from(actions).where(and(eq(actions.id, actionId), eq(actions.userId, userId)));
+  const metadata = (action?.metadata || {}) as Record<string, any>;
+  if (!metadata.autonomyReservation?.id) return;
+  try {
+    await getAutonomyPolicyRepository().release(actionId, reason);
+  } catch {
+    // Reservation TTL is the final fail-safe if the accounting store is
+    // temporarily unavailable; dismissal itself should remain available.
+  }
+}
 
 actionsRouter.delete('/demo', async (req, res, next) => {
   try {
@@ -366,7 +380,7 @@ actionsRouter.post('/recommend', async (req, res, next) => {
     if (payload.calls && payload.calls.length > 0) {
       try {
         simRes = await simulateTrade({ ...(payload as any), instruction, memoryMd });
-      } catch (e) {
+      } catch {
         simRes = { success: false, allowed: false, riskLevel: 'blocked', checks: ['Simulation failed'] };
       }
     } else {
@@ -593,6 +607,10 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
     const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
     const userAddress = (req as { session?: { user?: { address?: string } } }).session?.user?.address || null;
     const actionId = req.params.actionId;
+    const prepareRequest = PrepareActionRequestSchema.safeParse({ actionId, ...req.body });
+    if (!prepareRequest.success) {
+      return res.status(400).json({ success: false, error: 'Invalid prepare payload' });
+    }
 
     const [action] = await db.select().from(actions).where(and(eq(actions.id, actionId), eq(actions.userId, userId)));
     if (!action) {
@@ -677,7 +695,7 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
     let simRes;
     try {
       simRes = await simulateTrade({ ...(payload as any), instruction, memoryMd });
-    } catch (e) {
+    } catch {
       simRes = { success: false, allowed: false, riskLevel: 'blocked', checks: ['Simulation failed'] };
     }
     if (!simRes.success) {
@@ -705,6 +723,116 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
     // only reports whether a code is configured so the UI can show it.
     const builderCodeAttached = !!(process.env.BUILDER_CODE || process.env.VITE_BUILDER_CODE || process.env.NEXT_PUBLIC_BUILDER_CODE);
 
+    const runtimeChainEnv = process.env.CHAIN_ENV || 'mainnet-readonly';
+    if (runtimeChainEnv === 'mainnet' && normalizedChain.chainId === 8453) {
+      if (
+        userAddress
+        && prepareRequest.data.walletAddress
+        && userAddress.toLowerCase() !== prepareRequest.data.walletAddress.toLowerCase()
+      ) {
+        return res.status(403).json({ success: false, error: 'Connected wallet does not match the authenticated session' });
+      }
+      const walletAddress = userAddress || prepareRequest.data.walletAddress || meta.walletAddress || null;
+      if (!walletAddress) {
+        return res.json(PrepareActionResponseSchema.parse({
+          success: false,
+          actionId,
+          chainId: normalizedChain.hexChainId,
+          from: null,
+          calls: payload.calls,
+          atomicRequired: true,
+          actionType: payload.actionType,
+          screening: {
+            screenedAt: new Date().toISOString(),
+            allowed: true,
+            verdict: 'PASSED',
+            reason: screenRes.reason || 'Passed',
+            checks: screenRes.checks || [],
+          },
+          simulation: simRes,
+          builderCodeAttached,
+          executionMode: 'bounded-approval',
+          requiresUserApproval: true,
+          error: 'Connected wallet address is required for bounded autonomy',
+        }));
+      }
+
+      const gatewayResult = await getAutonomousExecutionGateway().prepare({
+        userId,
+        actionId,
+        chainEnv: runtimeChainEnv,
+        walletAddress,
+        actionType: payload.actionType,
+        calls: payload.calls,
+        instruction,
+        memoryMd,
+      });
+      if (!gatewayResult.success || !gatewayResult.reservation || !gatewayResult.policy || !gatewayResult.sendCallsRequest) {
+        return res.json(PrepareActionResponseSchema.parse({
+          success: false,
+          actionId,
+          chainId: normalizedChain.hexChainId,
+          from: walletAddress,
+          calls: payload.calls,
+          atomicRequired: true,
+          actionType: payload.actionType,
+          screening: {
+            screenedAt: new Date().toISOString(),
+            allowed: true,
+            verdict: 'PASSED',
+            reason: screenRes.reason || 'Passed',
+            checks: screenRes.checks || [],
+          },
+          simulation: simRes,
+          builderCodeAttached,
+          executionMode: 'bounded-approval',
+          requiresUserApproval: true,
+          error: gatewayResult.error || 'Autonomous execution gateway blocked the action',
+        }));
+      }
+
+      const autonomyReservation = {
+        id: gatewayResult.reservation.id,
+        policyId: gatewayResult.policy.id,
+        amountUsdc: gatewayResult.spendAmountUsdc || 0,
+        status: gatewayResult.reservation.status,
+        expiresAt: new Date(gatewayResult.reservation.expiresAt).toISOString(),
+        preparedAt: new Date().toISOString(),
+        requiresUserApproval: true,
+      };
+      await db.update(actions)
+        .set({ metadata: { ...meta, autonomyReservation }, updatedAt: new Date() })
+        .where(and(eq(actions.id, actionId), eq(actions.userId, userId), eq(actions.status, 'pending')));
+
+      return res.json(PrepareActionResponseSchema.parse({
+        success: true,
+        actionId,
+        chainId: gatewayResult.sendCallsRequest.chainId,
+        from: gatewayResult.sendCallsRequest.from,
+        calls: gatewayResult.sendCallsRequest.calls,
+        atomicRequired: true,
+        actionType: payload.actionType,
+        screening: {
+          screenedAt: new Date().toISOString(),
+          allowed: true,
+          verdict: 'PASSED',
+          reason: screenRes.reason || 'Passed',
+          checks: screenRes.checks || [],
+        },
+        simulation: simRes,
+        builderCodeAttached,
+        executionMode: 'bounded-approval',
+        requiresUserApproval: true,
+        autonomy: {
+          reservationId: gatewayResult.reservation.id,
+          amountUsdc: gatewayResult.spendAmountUsdc || 0,
+          reservedTodayUsdc: gatewayResult.policy.reservedToday,
+          dailyLimitUsdc: gatewayResult.policy.dailyLimit,
+          expiresAt: new Date(gatewayResult.reservation.expiresAt).toISOString(),
+        },
+      }));
+    }
+
     return res.json(PrepareActionResponseSchema.parse({
       success: true,
       actionId,
@@ -722,6 +850,8 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
       },
       simulation: simRes,
       builderCodeAttached,
+      executionMode: 'manual-approval',
+      requiresUserApproval: true,
     }));
   } catch (error) {
     next(error);
@@ -799,7 +929,7 @@ actionsRouter.post('/:actionId/confirm', async (req, res, next) => {
       recordStatus = 'failed';
     }
 
-    let verifiedTxHash: string | undefined = txHash || undefined;
+    const verifiedTxHash: string | undefined = txHash || undefined;
     let verifiedFrom: string | null = null;
     let verifiedTo: string | null = null;
 
@@ -842,9 +972,57 @@ actionsRouter.post('/:actionId/confirm', async (req, res, next) => {
       receipts: receipts ?? null,
     };
 
+    let autonomyAccounting: Record<string, any> | null = null;
+    if (meta.autonomyReservation?.id) {
+      try {
+        if (recordStatus === 'executed') {
+          const accountingResult = await getAutonomyPolicyRepository().settle(actionId, {
+            ...(verifiedTxHash ? { txHash: verifiedTxHash } : {}),
+            ...(hasValidBatchId ? { batchId: batchId || undefined } : {}),
+            ...(!verifiedTxHash && !hasValidBatchId && executionProof
+              ? { receiptId: `${executionProof.type}:${'verifiedAt' in executionProof ? executionProof.verifiedAt : confirmation.confirmedAt}` }
+              : {}),
+            confirmedAt: confirmation.confirmedAt,
+          });
+          autonomyAccounting = {
+            success: accountingResult.success,
+            status: accountingResult.status,
+            settledAt: confirmation.confirmedAt,
+            error: accountingResult.error,
+          };
+        } else if (recordStatus === 'failed' || recordStatus === 'cancelled') {
+          const accountingResult = await getAutonomyPolicyRepository().release(actionId, recordStatus);
+          autonomyAccounting = {
+            success: accountingResult.success,
+            status: accountingResult.status,
+            releasedAt: confirmation.confirmedAt,
+            reason: recordStatus,
+            error: accountingResult.error,
+          };
+        } else {
+          autonomyAccounting = { success: true, status: 'reserved', pendingStatus: recordStatus };
+        }
+      } catch (accountingError) {
+        autonomyAccounting = {
+          success: false,
+          status: 'reconciliation_required',
+          error: accountingError instanceof Error ? accountingError.message : String(accountingError),
+        };
+      }
+    }
+
     const proofMetadata: Record<string, any> = {
       ...meta,
       confirmation,
+      ...(autonomyAccounting
+        ? {
+            autonomyAccounting,
+            autonomyReservation: {
+              ...meta.autonomyReservation,
+              status: autonomyAccounting.status,
+            },
+          }
+        : {}),
       ...(executionProof ? { executionProof } : {}),
       ...(verifiedTxHash ? { txHash: verifiedTxHash } : {}),
       ...(hasValidBatchId ? { batchId } : {}),
@@ -886,7 +1064,13 @@ actionsRouter.post('/:actionId/confirm', async (req, res, next) => {
       actionId,
       actionType: logActionType,
       txHash: verifiedTxHash,
-      details: { batchId, statusCode: status, from: verifiedFrom ?? userAddress, to: verifiedTo },
+      details: {
+        batchId,
+        statusCode: status,
+        from: verifiedFrom ?? userAddress,
+        to: verifiedTo,
+        autonomyAccounting,
+      },
     });
 
     let respError: string | undefined;
@@ -912,6 +1096,8 @@ actionsRouter.post('/:actionId/dismiss', async (req, res, next) => {
     const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user'; // Mock auth for now
     const actionId = req.params.actionId;
 
+    await releaseActionAutonomyReservation(userId, actionId, 'dismissed');
+
     await db.update(actions)
       .set({ status: 'dismissed', updatedAt: new Date() })
       .where(and(eq(actions.id, actionId), eq(actions.userId, userId)));
@@ -926,6 +1112,8 @@ actionsRouter.delete('/:actionId', async (req, res, next) => {
   try {
     const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
     const actionId = req.params.actionId;
+
+    await releaseActionAutonomyReservation(userId, actionId, 'deleted');
 
     await db.delete(actions).where(and(eq(actions.id, actionId), eq(actions.userId, userId)));
     res.json(DeleteSingleActionResponseSchema.parse({ success: true }));

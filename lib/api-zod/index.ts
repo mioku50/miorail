@@ -75,7 +75,7 @@ export const PRODUCTION_ACTION_TYPES = ProductionActionTypeSchema.options as rea
   'revoke_approval',
   'limited_transfer',
 ];
-export function isProductionActionType(t?: string | null): boolean {
+export function isProductionActionType(t?: string | null): t is 'revoke_approval' | 'limited_transfer' {
   return t === 'revoke_approval' || t === 'limited_transfer';
 }
 
@@ -159,6 +159,7 @@ export const SimulationResultSchema = z.object({
 
 export const PrepareActionRequestSchema = z.object({
   actionId: z.string(),
+  walletAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
 });
 
 export const PrepareActionResponseSchema = z.object({
@@ -181,6 +182,15 @@ export const PrepareActionResponseSchema = z.object({
   simulation: SimulationResultSchema,
   // True when a Builder Code dataSuffix will be attached client-side.
   builderCodeAttached: z.boolean(),
+  executionMode: z.enum(['manual-approval', 'bounded-approval']).optional(),
+  requiresUserApproval: z.boolean().optional(),
+  autonomy: z.object({
+    reservationId: z.string(),
+    amountUsdc: z.number(),
+    reservedTodayUsdc: z.number(),
+    dailyLimitUsdc: z.number(),
+    expiresAt: z.string(),
+  }).optional(),
   error: z.string().optional(),
 });
 
@@ -604,24 +614,31 @@ export const DeleteWorkflowResponseSchema = z.object({
 // Autonomy
 export const AutonomyStateResponseSchema = z.object({
   status: z.enum(['active', 'inactive', 'unconfigured', 'configured', 'revoked', 'expired']),
-  source: z.enum(['memory', 'onchain', 'base-sepolia-contract', 'missing']),
+  source: z.enum(['database', 'memory', 'onchain', 'base-sepolia-contract', 'missing']),
   isStaleTestMemory: z.boolean().optional(),
   isExpiredMemory: z.boolean().optional(),
   chainId: z.number().optional(),
   contractAddress: z.string().nullable().optional(),
   sessionKey: z.object({
     status: z.enum(['configured', 'unconfigured', 'inactive', 'revoked', 'expired', 'active']),
-    source: z.enum(['memory', 'onchain', 'base-sepolia-contract', 'missing']).optional(),
+    source: z.enum(['database', 'memory', 'onchain', 'base-sepolia-contract', 'missing']).optional(),
     isStaleTestMemory: z.boolean().optional(),
     isExpiredMemory: z.boolean().optional(),
     dailyLimitUsdc: z.string().nullable(),
     spentTodayUsdc: z.string(),
+    reservedTodayUsdc: z.string().optional(),
     maxPerActionUsdc: z.string().nullable(),
     ttlSeconds: z.number().nullable(),
     expiresAt: z.string().nullable(),
     whitelist: z.array(z.string()),
     scope: z.string(),
     killSwitch: z.boolean(),
+    walletAddress: z.string().nullable().optional(),
+    mainnetOptIn: z.boolean().optional(),
+    executionReady: z.boolean().optional(),
+    blockedReasons: z.array(z.string()).optional(),
+    gatewayMode: z.enum(['unsigned-eip5792']).optional(),
+    requiresUserApproval: z.boolean().optional(),
     owner: z.string().nullable().optional(),
     executor: z.string().nullable().optional(),
     token: z.string().nullable().optional(),
@@ -634,18 +651,36 @@ export const AutonomyStateResponseSchema = z.object({
     maxActionSpend: z.string().nullable(),
     whitelistedProtocolsCount: z.number(),
     mode: z.string(),
-    source: z.enum(['memory', 'onchain', 'base-sepolia-contract', 'missing']),
+    source: z.enum(['database', 'memory', 'onchain', 'base-sepolia-contract', 'missing']),
     isStaleTestMemory: z.boolean().optional(),
     isExpiredMemory: z.boolean().optional(),
+    executionReady: z.boolean().optional(),
+    blockedReasons: z.array(z.string()).optional(),
+    reservedTodayUsdc: z.string().optional(),
   }),
 });
 
+const UsdcPolicyAmountSchema = z.string().regex(/^\d+(?:\.\d{1,6})?$/, 'Expected a positive USDC amount with at most 6 decimals');
+const AutonomyAddressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/, 'Expected an Ethereum address');
+
 export const ConfigureAutonomyRequestSchema = z.object({
-  dailyLimitUsdc: z.string(),
-  maxPerActionUsdc: z.string(),
-  whitelist: z.array(z.string()),
+  dailyLimitUsdc: UsdcPolicyAmountSchema,
+  maxPerActionUsdc: UsdcPolicyAmountSchema,
+  whitelist: z.array(AutonomyAddressSchema).min(1).max(100),
   scope: z.string().optional(),
-  ttlSeconds: z.number(),
+  ttlSeconds: z.number().int().min(300).max(30 * 24 * 60 * 60),
+  walletAddress: AutonomyAddressSchema,
+  mainnetOptIn: z.boolean().default(false),
+  acknowledgeMainnetRisk: z.boolean().default(false),
+}).superRefine((value, context) => {
+  const daily = Number(value.dailyLimitUsdc);
+  const perAction = Number(value.maxPerActionUsdc);
+  if (!Number.isFinite(daily) || daily <= 0) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['dailyLimitUsdc'], message: 'Daily limit must be greater than zero' });
+  }
+  if (!Number.isFinite(perAction) || perAction <= 0 || perAction > daily) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['maxPerActionUsdc'], message: 'Per-action limit must be greater than zero and no higher than the daily limit' });
+  }
 });
 
 export const ConfigureAutonomyResponseSchema = z.object({

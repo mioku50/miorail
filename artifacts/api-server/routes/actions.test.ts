@@ -7,6 +7,8 @@ import { mock } from 'node:test';
 import { db } from '@mioagent/db';
 import * as toolsModule from '@mioagent/tools';
 import { actionProofRuntime } from '../lib/actionProofs.js';
+import { InMemoryAutonomyPolicyRepository } from '@mioagent/autonomy';
+import { setAutonomyPolicyRepositoryForTests } from '../lib/autonomyGateway.js';
 
 test('Actions API', async (t) => {
   await t.test('GET /api/actions returns actions', async () => {
@@ -377,6 +379,75 @@ test('Actions API', async (t) => {
 
     mock.restoreAll();
     process.env.CHAIN_ENV = 'sepolia';
+  });
+
+  await t.test('bounded mainnet prepare reserves budget and still returns only a wallet approval payload', async () => {
+    process.env.CHAIN_ENV = 'mainnet';
+    process.env.MAINNET_EXECUTION_ENABLED = 'true';
+    const wallet = '0x9999999999999999999999999999999999999999';
+    const recipient = '0x1111111111111111111111111111111111111111';
+    const repository = new InMemoryAutonomyPolicyRepository();
+    await repository.configure({
+      userId: 'default-user',
+      chainId: 8453,
+      walletAddress: wallet,
+      dailyLimit: 10,
+      maxPerAction: 5,
+      whitelist: [recipient],
+      scope: 'bounded-approval',
+      expiresAt: Date.now() + 60_000,
+      mainnetOptIn: true,
+    });
+    setAutonomyPolicyRepositoryForTests(repository);
+
+    let updatedMetadata: any = null;
+    const mockSelect = mock.fn(() => ({
+      from: mock.fn(() => ({
+        where: mock.fn(async () => [{
+          id: 'act-bounded',
+          userId: 'default-user',
+          kind: 'recommendation',
+          status: 'pending',
+          suggestedPrompt: 'Transfer 1 USDC to an approved recipient',
+          executionPayload: {
+            chain: 'eip155:8453',
+            actionType: 'limited_transfer',
+            calls: [{
+              to: BASE_MAINNET_USDC,
+              value: '0',
+              data: `0xa9059cbb${recipient.slice(2).padStart(64, '0')}${(1_000_000).toString(16).padStart(64, '0')}`,
+            }],
+          },
+          metadata: { instruction: 'Transfer 1 USDC to an approved recipient', walletAddress: wallet },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }]),
+      })),
+    }));
+    const mockUpdate = mock.fn(() => ({
+      set: mock.fn((values: any) => {
+        updatedMetadata = values.metadata;
+        return { where: mock.fn(async () => []) };
+      }),
+    }));
+    mock.method(db, 'select', mockSelect);
+    mock.method(db, 'update', mockUpdate);
+    const { MemoryService } = await import('@mioagent/memory');
+    mock.method(MemoryService, 'getUserSettings', async () => null);
+
+    const response = await request(app).post('/api/actions/act-bounded/prepare').send({ walletAddress: wallet });
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, true);
+    assert.strictEqual(response.body.executionMode, 'bounded-approval');
+    assert.strictEqual(response.body.requiresUserApproval, true);
+    assert.strictEqual(response.body.from, wallet);
+    assert.strictEqual(response.body.autonomy.amountUsdc, 1);
+    assert.strictEqual((await repository.getByUser('default-user', 8453))?.reservedToday, 1);
+    assert.strictEqual(updatedMetadata.autonomyReservation.status, 'reserved');
+
+    mock.restoreAll();
+    process.env.CHAIN_ENV = 'sepolia';
+    process.env.MAINNET_EXECUTION_ENABLED = 'false';
   });
 
   await t.test('POST /api/actions/:actionId/prepare rejects a payload whose actionType is not whitelisted', async () => {

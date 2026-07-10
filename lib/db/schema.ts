@@ -1,4 +1,5 @@
-import { pgTable, text, timestamp, jsonb, index, integer, boolean, numeric } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { pgTable, text, timestamp, jsonb, index, uniqueIndex, check, integer, boolean, numeric } from 'drizzle-orm/pg-core';
 
 export const users = pgTable('users', {
   id: text('id').primaryKey(),
@@ -156,6 +157,66 @@ export const spendPermissions = pgTable(
   (table) => [
     index('spend_permissions_user_chain_active_idx').on(table.userId, table.chainId, table.isActive),
     index('spend_permissions_expires_idx').on(table.expiresAt),
+  ],
+);
+
+export const autonomyPolicies = pgTable(
+  'autonomy_policies',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .references(() => users.id)
+      .notNull(),
+    chainId: integer('chain_id').notNull(),
+    walletAddress: text('wallet_address').notNull(),
+    dailyLimit: numeric('daily_limit', { precision: 18, scale: 6 }).notNull(),
+    maxPerAction: numeric('max_per_action', { precision: 18, scale: 6 }).notNull(),
+    spentToday: numeric('spent_today', { precision: 18, scale: 6 }).default('0').notNull(),
+    reservedToday: numeric('reserved_today', { precision: 18, scale: 6 }).default('0').notNull(),
+    periodStartedAt: timestamp('period_started_at').defaultNow().notNull(),
+    whitelist: jsonb('whitelist').notNull(),
+    scope: text('scope').default('bounded-approval').notNull(),
+    expiresAt: timestamp('expires_at').notNull(),
+    isActive: boolean('is_active').default(true).notNull(),
+    killSwitch: boolean('kill_switch').default(false).notNull(),
+    mainnetOptIn: boolean('mainnet_opt_in').default(false).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('autonomy_policies_user_chain_unique').on(table.userId, table.chainId),
+    index('autonomy_policies_active_idx').on(table.userId, table.chainId, table.isActive),
+    index('autonomy_policies_expires_idx').on(table.expiresAt),
+    check('autonomy_policies_limits_check', sql`${table.dailyLimit} > 0 AND ${table.maxPerAction} > 0 AND ${table.maxPerAction} <= ${table.dailyLimit}`),
+    check('autonomy_policies_accounting_check', sql`${table.spentToday} >= 0 AND ${table.reservedToday} >= 0`),
+  ],
+);
+
+export const autonomyExecutionReservations = pgTable(
+  'autonomy_execution_reservations',
+  {
+    id: text('id').primaryKey(),
+    policyId: text('policy_id')
+      .references(() => autonomyPolicies.id)
+      .notNull(),
+    userId: text('user_id')
+      .references(() => users.id)
+      .notNull(),
+    actionId: text('action_id').notNull(),
+    amount: numeric('amount', { precision: 18, scale: 6 }).notNull(),
+    status: text('status').default('reserved').notNull(),
+    proof: jsonb('proof'),
+    expiresAt: timestamp('expires_at').notNull(),
+    settledAt: timestamp('settled_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('autonomy_execution_reservations_action_unique').on(table.actionId),
+    index('autonomy_execution_reservations_policy_status_idx').on(table.policyId, table.status),
+    index('autonomy_execution_reservations_expires_idx').on(table.expiresAt),
+    check('autonomy_execution_reservations_amount_check', sql`${table.amount} >= 0`),
+    check('autonomy_execution_reservations_status_check', sql`${table.status} IN ('reserved', 'settled', 'released', 'expired')`),
   ],
 );
 

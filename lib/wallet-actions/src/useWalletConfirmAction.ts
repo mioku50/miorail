@@ -214,7 +214,7 @@ export function useWalletConfirmAction({
     setStatus('preparing');
 
     try {
-      const prepared = await prepareAction.mutateAsync({ actionId });
+      const prepared = await prepareAction.mutateAsync({ actionId, walletAddress: address });
       if (!prepared.success || !prepared.calls?.length) {
         setStatus('failed');
         setError(prepared.error ?? 'Action is not confirmable');

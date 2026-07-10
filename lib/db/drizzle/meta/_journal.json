@@ -50,6 +50,20 @@
       "when": 1783622400000,
       "tag": "0006_spend_permissions",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1783680218000,
+      "tag": "0007_spend_permissions_decimal",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1783680219000,
+      "tag": "0008_autonomy_execution_gateway",
+      "breakpoints": true
     }
   ]
 }

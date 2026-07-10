@@ -14,24 +14,22 @@ import {
   getBaseSepoliaControllerAddress,
   getBaseSepoliaUsdcAddress,
   readOnchainPermission,
-  executeTestnetConfigureOnchain,
-  executeTestnetRevokeOnchain,
-  executeTestnetSpendOnchain,
 } from '../lib/testnetAutonomy.js';
+import { getAutonomyPolicyRepository } from '../lib/autonomyGateway.js';
 import { formatUnits, type Hex } from 'viem';
 
 export const autonomyRouter = Router();
 
 async function getAutonomyState(userId: string, query?: { owner?: string; executor?: string; token?: string }) {
-  const settings = await MemoryService.getUserSettings(userId);
+  const settings = await MemoryService.getUserSettings(userId).catch(() => null);
   const autonomy = (settings?.protocolToggles as any)?.autonomy || {};
 
   const isConfigured = autonomy.status === 'configured' || !!autonomy.dailyLimitUsdc;
-  const isKillSwitch = autonomy.killSwitch === true;
+  let isKillSwitch = autonomy.killSwitch === true;
 
   let status: 'active' | 'inactive' | 'unconfigured' | 'configured' | 'revoked' | 'expired' = (isKillSwitch || autonomy.status === 'revoked') ? 'revoked' : (isConfigured ? 'active' : 'unconfigured');
   let sessionKeyStatus: 'configured' | 'unconfigured' | 'inactive' | 'revoked' | 'expired' | 'active' = (isKillSwitch || autonomy.status === 'revoked') ? 'revoked' : (isConfigured ? 'configured' : 'unconfigured');
-  let source: 'memory' | 'onchain' | 'base-sepolia-contract' | 'missing' = isConfigured ? 'memory' : 'missing';
+  let source: 'database' | 'memory' | 'onchain' | 'base-sepolia-contract' | 'missing' = isConfigured ? 'memory' : 'missing';
 
   let chainId: number | undefined;
   let contractAddress: string | null | undefined;
@@ -39,16 +37,90 @@ async function getAutonomyState(userId: string, query?: { owner?: string; execut
   let executor: string | null = autonomy.executor || query?.executor || null;
   let token: string | null = autonomy.token || query?.token || null;
   let validUntil: number | string | null = autonomy.expiresAt || null;
+  let expiresAt: string | null = autonomy.expiresAt || null;
   let dailyLimitUsdc = autonomy.dailyLimitUsdc || null;
   let spentTodayUsdc = autonomy.spentTodayUsdc || '0';
+  let reservedTodayUsdc = autonomy.reservedTodayUsdc || '0';
   let maxPerActionUsdc = autonomy.maxPerActionUsdc || null;
   let ttlSeconds = autonomy.ttlSeconds || null;
   let whitelist: string[] = autonomy.whitelist || [];
   let scope = autonomy.scope || 'none';
-  let txHashLastConfigured = autonomy.txHashLastConfigured || null;
-  let txHashLastRevoked = autonomy.txHashLastRevoked || null;
+  const txHashLastConfigured = autonomy.txHashLastConfigured || null;
+  const txHashLastRevoked = autonomy.txHashLastRevoked || null;
+  let walletAddress: string | null = autonomy.walletAddress || null;
+  let mainnetOptIn = autonomy.mainnetOptIn === true;
+  let executionReady = false;
+  let blockedReasons: string[] = [];
 
-  if (isTestnetAutonomyEnabled()) {
+  const runtimeChainEnv = process.env.CHAIN_ENV || 'mainnet-readonly';
+  if (runtimeChainEnv === 'mainnet' || runtimeChainEnv === 'mainnet-readonly') {
+    chainId = 8453;
+    owner = null;
+    executor = null;
+    token = null;
+    validUntil = null;
+    try {
+      const policy = await getAutonomyPolicyRepository().getByUser(userId, chainId);
+      if (policy) {
+        source = 'database';
+        isKillSwitch = policy.killSwitch || !policy.isActive;
+        walletAddress = policy.walletAddress;
+        owner = policy.walletAddress;
+        mainnetOptIn = policy.mainnetOptIn;
+        dailyLimitUsdc = String(policy.dailyLimit);
+        spentTodayUsdc = String(policy.spentToday);
+        reservedTodayUsdc = String(policy.reservedToday);
+        maxPerActionUsdc = String(policy.maxPerAction);
+        validUntil = Math.floor(policy.expiresAt / 1000);
+        expiresAt = new Date(policy.expiresAt).toISOString();
+        ttlSeconds = Math.max(0, Math.floor((policy.expiresAt - Date.now()) / 1000));
+        whitelist = policy.whitelist;
+        scope = policy.scope;
+
+        const expired = policy.expiresAt <= Date.now();
+        status = expired ? 'expired' : policy.killSwitch || !policy.isActive ? 'inactive' : 'configured';
+        sessionKeyStatus = expired ? 'expired' : policy.killSwitch || !policy.isActive ? 'inactive' : 'configured';
+        if (runtimeChainEnv === 'mainnet-readonly') blockedReasons.push('mainnet_readonly');
+        if (process.env.MAINNET_EXECUTION_ENABLED !== 'true') blockedReasons.push('mainnet_execution_disabled');
+        if (!policy.mainnetOptIn) blockedReasons.push('mainnet_opt_in_required');
+        if (policy.killSwitch || !policy.isActive) blockedReasons.push('kill_switch');
+        if (expired) blockedReasons.push('permission_expired');
+        executionReady = blockedReasons.length === 0;
+      } else {
+        source = 'missing';
+        status = 'unconfigured';
+        sessionKeyStatus = 'unconfigured';
+        dailyLimitUsdc = null;
+        spentTodayUsdc = '0';
+        reservedTodayUsdc = '0';
+        maxPerActionUsdc = null;
+        ttlSeconds = null;
+        expiresAt = null;
+        whitelist = [];
+        scope = 'none';
+        walletAddress = null;
+        mainnetOptIn = false;
+        blockedReasons = ['autonomy_policy_missing'];
+      }
+    } catch {
+      source = 'missing';
+      status = 'unconfigured';
+      sessionKeyStatus = 'unconfigured';
+      dailyLimitUsdc = null;
+      spentTodayUsdc = '0';
+      reservedTodayUsdc = '0';
+      maxPerActionUsdc = null;
+      ttlSeconds = null;
+      expiresAt = null;
+      whitelist = [];
+      scope = 'none';
+      walletAddress = null;
+      mainnetOptIn = false;
+      blockedReasons = ['autonomy_database_unavailable'];
+    }
+  }
+
+  if (isTestnetAutonomyEnabled() && runtimeChainEnv === 'sepolia') {
     contractAddress = getBaseSepoliaControllerAddress();
     if (!contractAddress) {
       if (!isKillSwitch && autonomy.status !== 'revoked') {
@@ -163,27 +235,37 @@ async function getAutonomyState(userId: string, query?: { owner?: string; execut
       isExpiredMemory,
       dailyLimitUsdc,
       spentTodayUsdc,
+      reservedTodayUsdc,
       maxPerActionUsdc,
       ttlSeconds,
-      expiresAt: autonomy.expiresAt || null,
+      expiresAt,
       whitelist,
       scope,
       killSwitch: isKillSwitch || status === 'revoked',
+      walletAddress,
+      mainnetOptIn,
+      executionReady,
+      blockedReasons,
+      gatewayMode: 'unsigned-eip5792' as const,
+      requiresUserApproval: true,
       owner,
       executor,
       token,
       validUntil,
-      txHashLastConfigured,
-      txHashLastRevoked,
+      txHashLastConfigured: source === 'memory' || source === 'base-sepolia-contract' ? txHashLastConfigured : null,
+      txHashLastRevoked: source === 'memory' || source === 'base-sepolia-contract' ? txHashLastRevoked : null,
     },
     autonomy: {
       dailySpendLimit: dailyLimitUsdc,
       maxActionSpend: maxPerActionUsdc,
       whitelistedProtocolsCount: whitelist.length,
-      mode: isTestnetAutonomyEnabled() ? 'base-sepolia' : (process.env.CHAIN_ENV || 'mainnet-readonly'),
+      mode: isTestnetAutonomyEnabled() && runtimeChainEnv === 'sepolia' ? 'base-sepolia' : runtimeChainEnv,
       source,
       isStaleTestMemory,
       isExpiredMemory,
+      executionReady,
+      blockedReasons,
+      reservedTodayUsdc,
     },
   };
 }
@@ -211,8 +293,28 @@ autonomyRouter.post('/config', async (req, res, next) => {
       return res.status(400).json({ error: 'Invalid autonomy configuration payload', details: parsed.error });
     }
     const data = parsed.data;
+    if (data.mainnetOptIn && !data.acknowledgeMainnetRisk) {
+      return res.status(400).json({ error: 'Explicit mainnet risk acknowledgement is required' });
+    }
 
-    const settings = await MemoryService.getUserSettings(userId);
+    const runtimeChainEnv = process.env.CHAIN_ENV || 'mainnet-readonly';
+    const chainId = runtimeChainEnv === 'sepolia' ? 84532 : 8453;
+    const whitelist = [...new Set(data.whitelist.map((address) => address.toLowerCase()))];
+    if (runtimeChainEnv === 'mainnet' || runtimeChainEnv === 'mainnet-readonly') {
+      await getAutonomyPolicyRepository().configure({
+        userId,
+        chainId,
+        walletAddress: data.walletAddress,
+        dailyLimit: Number(data.dailyLimitUsdc),
+        maxPerAction: Number(data.maxPerActionUsdc),
+        whitelist,
+        scope: data.scope || 'bounded-approval',
+        expiresAt: Date.now() + data.ttlSeconds * 1000,
+        mainnetOptIn: data.mainnetOptIn,
+      });
+    }
+
+    const settings = await MemoryService.getUserSettings(userId).catch(() => null);
     const existingToggles = (settings?.protocolToggles as any) || {};
     const existingAutonomy = existingToggles.autonomy || {};
 
@@ -222,10 +324,12 @@ autonomyRouter.post('/config', async (req, res, next) => {
       killSwitch: false,
       dailyLimitUsdc: data.dailyLimitUsdc,
       maxPerActionUsdc: data.maxPerActionUsdc,
-      whitelist: data.whitelist,
-      scope: data.scope || existingAutonomy.scope || 'Yield + Rebalance',
+      whitelist,
+      scope: data.scope || existingAutonomy.scope || 'bounded-approval',
       ttlSeconds: data.ttlSeconds,
       expiresAt: new Date(Date.now() + data.ttlSeconds * 1000).toISOString(),
+      walletAddress: data.walletAddress.toLowerCase(),
+      mainnetOptIn: data.mainnetOptIn,
     };
 
     const newToggles = {
@@ -233,7 +337,11 @@ autonomyRouter.post('/config', async (req, res, next) => {
       autonomy: newAutonomy,
     };
 
-    await MemoryService.updateUserSettings(userId, { protocolToggles: newToggles });
+    if (runtimeChainEnv === 'mainnet' || runtimeChainEnv === 'mainnet-readonly') {
+      await MemoryService.updateUserSettings(userId, { protocolToggles: newToggles }).catch(() => undefined);
+    } else {
+      await MemoryService.updateUserSettings(userId, { protocolToggles: newToggles });
+    }
     const state = await getAutonomyState(userId);
     res.json(ConfigureAutonomyResponseSchema.parse({ success: true, state }));
   } catch (error) {
@@ -253,21 +361,16 @@ autonomyRouter.post('/testnet/configure', async (req, res, next) => {
     }
     const data = parsed.data;
 
-    let txHash: string | undefined = (req.body as any).txHash;
+    const txHash: string | undefined = (req.body as any).txHash;
     const token = (data.token || getBaseSepoliaUsdcAddress()) as Hex;
     const executor = (data.executor || null) as Hex | null;
     const owner = (data.owner || null) as Hex | null;
 
     if (!txHash) {
-      const hash = await executeTestnetConfigureOnchain(
-        executor,
-        token,
-        data.dailyLimitUsdc,
-        data.maxPerActionUsdc,
-        data.ttlSeconds,
-        (data.whitelist || []).map(a => a as Hex)
-      );
-      if (hash) txHash = hash;
+      return res.status(409).json({
+        error: 'wallet_confirmation_required',
+        details: 'The server never signs or broadcasts. Submit a wallet-confirmed transaction hash.',
+      });
     }
 
     const settings = await MemoryService.getUserSettings(userId);
@@ -319,10 +422,12 @@ autonomyRouter.post('/testnet/revoke', async (req, res, next) => {
     const executor = (data.executor || existingAutonomy.executor || null) as Hex | null;
     const owner = (data.owner || existingAutonomy.owner || null) as Hex | null;
 
-    let txHash: string | undefined = (req.body as any).txHash;
+    const txHash: string | undefined = (req.body as any).txHash;
     if (!txHash) {
-      const hash = await executeTestnetRevokeOnchain(executor, token);
-      if (hash) txHash = hash;
+      return res.status(409).json({
+        error: 'wallet_confirmation_required',
+        details: 'The server never signs or broadcasts. Submit a wallet-confirmed transaction hash.',
+      });
     }
 
     const newAutonomy = {
@@ -356,22 +461,14 @@ autonomyRouter.post('/testnet/execute-test-action', async (req, res, next) => {
     }
     const data = parsed.data;
 
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
-    const settings = await MemoryService.getUserSettings(userId);
-    const existingAutonomy = (settings?.protocolToggles as any)?.autonomy || {};
-
-    const token = (data.token || existingAutonomy.token || getBaseSepoliaUsdcAddress()) as Hex;
-    const owner = (data.owner || existingAutonomy.owner || null) as Hex | null;
     const target = data.target as Hex;
 
-    let txHash: string | undefined = (req.body as any).txHash;
+    const txHash: string | undefined = (req.body as any).txHash;
     if (!txHash) {
-      try {
-        const hash = await executeTestnetSpendOnchain(owner, token, target, data.amountUsdc);
-        if (hash) txHash = hash;
-      } catch (err: any) {
-        return res.status(400).json({ error: 'Onchain execution failed', details: err?.message || String(err) });
-      }
+      return res.status(409).json({
+        error: 'wallet_confirmation_required',
+        details: 'The server never signs or broadcasts. Submit a wallet-confirmed transaction hash.',
+      });
     }
 
     res.json({ success: true, txHash, amountUsdc: data.amountUsdc, target });
@@ -383,7 +480,13 @@ autonomyRouter.post('/testnet/execute-test-action', async (req, res, next) => {
 autonomyRouter.post('/kill', async (req, res, next) => {
   try {
     const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
-    const settings = await MemoryService.getUserSettings(userId);
+    const runtimeChainEnv = process.env.CHAIN_ENV || 'mainnet-readonly';
+    const chainId = runtimeChainEnv === 'sepolia' ? 84532 : 8453;
+    if (runtimeChainEnv === 'mainnet' || runtimeChainEnv === 'mainnet-readonly') {
+      const policy = await getAutonomyPolicyRepository().getByUser(userId, chainId);
+      if (policy) await getAutonomyPolicyRepository().setKillSwitch(policy.id, true);
+    }
+    const settings = await MemoryService.getUserSettings(userId).catch(() => null);
     const existingToggles = (settings?.protocolToggles as any) || {};
     const existingAutonomy = existingToggles.autonomy || {};
 
@@ -398,7 +501,7 @@ autonomyRouter.post('/kill', async (req, res, next) => {
       autonomy: newAutonomy,
     };
 
-    await MemoryService.updateUserSettings(userId, { protocolToggles: newToggles });
+    await MemoryService.updateUserSettings(userId, { protocolToggles: newToggles }).catch(() => undefined);
     const state = await getAutonomyState(userId);
     res.json(KillAutonomyResponseSchema.parse({ success: true, state }));
   } catch (error) {
@@ -409,7 +512,13 @@ autonomyRouter.post('/kill', async (req, res, next) => {
 autonomyRouter.post('/reset', async (req, res, next) => {
   try {
     const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
-    const settings = await MemoryService.getUserSettings(userId);
+    const runtimeChainEnv = process.env.CHAIN_ENV || 'mainnet-readonly';
+    const chainId = runtimeChainEnv === 'sepolia' ? 84532 : 8453;
+    if (runtimeChainEnv === 'mainnet' || runtimeChainEnv === 'mainnet-readonly') {
+      const policy = await getAutonomyPolicyRepository().getByUser(userId, chainId);
+      if (policy) await getAutonomyPolicyRepository().setKillSwitch(policy.id, true);
+    }
+    const settings = await MemoryService.getUserSettings(userId).catch(() => null);
     const existingToggles = (settings?.protocolToggles as any) || {};
 
     const newToggles = {
@@ -420,7 +529,7 @@ autonomyRouter.post('/reset', async (req, res, next) => {
       },
     };
 
-    await MemoryService.updateUserSettings(userId, { protocolToggles: newToggles });
+    await MemoryService.updateUserSettings(userId, { protocolToggles: newToggles }).catch(() => undefined);
     const state = await getAutonomyState(userId);
     res.json(KillAutonomyResponseSchema.parse({ success: true, state }));
   } catch (error) {

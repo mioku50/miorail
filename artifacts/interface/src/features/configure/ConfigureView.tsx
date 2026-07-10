@@ -3,9 +3,8 @@ import { useAccount, useChainId, useSwitchChain } from 'wagmi';
 import {
   useStatus,
   useAutonomy,
-  useTestnetConfigureAutonomy,
-  useTestnetRevokeAutonomy,
-  useTestnetExecuteAction,
+  useConfigureAutonomy,
+  useKillAutonomy,
   useResetAutonomy,
   useBaseMcpToolsProbe,
 } from '@mioagent/api-client-react';
@@ -61,35 +60,33 @@ export function ConfigureView() {
   const [maxPerAction, setMaxPerAction] = useState('20');
   const [ttlHours, setTtlHours] = useState('24');
   const [whitelistAddr, setWhitelistAddr] = useState('');
+  const [mainnetOptIn, setMainnetOptIn] = useState(false);
+  const [acknowledgeMainnetRisk, setAcknowledgeMainnetRisk] = useState(false);
   const [actionStatus, setActionStatus] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
 
-  const configMut = useTestnetConfigureAutonomy({
-    onSuccess: (res: any) => {
-      showToast('Testnet spend permission configured successfully!');
-      setActionStatus({ type: 'success', msg: `Spend permission active! Tx: ${res.txHash || 'Verified onchain/memory'}` });
+  const configMut = useConfigureAutonomy({
+    onSuccess: (res) => {
+      showToast('Bounded autonomy policy saved');
+      const ready = res.state.sessionKey.executionReady;
+      setActionStatus({
+        type: 'success',
+        msg: ready
+          ? 'Policy is ready. Every action still requires approval in Base Account.'
+          : 'Policy saved in staged mode. Resolve the execution gates shown below before it can prepare approvals.',
+      });
     },
-    onError: (err: any) => {
-      setActionStatus({ type: 'error', msg: err?.message || 'Failed to configure testnet autonomy' });
-    },
-  });
-
-  const revokeMut = useTestnetRevokeAutonomy({
-    onSuccess: (res: any) => {
-      showToast('Testnet spend permission revoked!');
-      setActionStatus({ type: 'success', msg: `Kill switch activated! Tx: ${res.txHash || 'Revoked'}` });
-    },
-    onError: (err: any) => {
-      setActionStatus({ type: 'error', msg: err?.message || 'Failed to revoke permission' });
+    onError: (err) => {
+      setActionStatus({ type: 'error', msg: err?.message || 'Failed to save bounded autonomy policy' });
     },
   });
 
-  const executeMut = useTestnetExecuteAction({
-    onSuccess: (res: any) => {
-      showToast('Test spend ran on testnet!');
-      setActionStatus({ type: 'success', msg: `Test action ran successfully! Amount: ${res.amountUsdc} USDC to ${res.target}. Tx: ${res.txHash || 'Simulated/Verified'}` });
+  const killMut = useKillAutonomy({
+    onSuccess: () => {
+      showToast('Autonomy kill switch activated');
+      setActionStatus({ type: 'success', msg: 'Future preparations are blocked and active budget reservations were released.' });
     },
-    onError: (err: any) => {
-      setActionStatus({ type: 'error', msg: err?.message || 'Test action failed (check nonce or spend limits)' });
+    onError: (err) => {
+      setActionStatus({ type: 'error', msg: err?.message || 'Failed to activate the kill switch' });
     },
   });
 
@@ -115,23 +112,32 @@ export function ConfigureView() {
       ? 'bg-risk-soft border-risk/20 text-risk'
       : 'bg-warn-soft border-warn/20 text-warn';
 
-  const handleSetupPermission = () => {
+  const whitelist = whitelistAddr
+    .split(/[\s,]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const limitsValid = Number(dailyLimit) > 0
+    && Number(maxPerAction) > 0
+    && Number(maxPerAction) <= Number(dailyLimit)
+    && Number(ttlHours) >= 1 / 12;
+  const addressesValid = whitelist.length > 0 && whitelist.every((entry) => /^0x[0-9a-fA-F]{40}$/.test(entry));
+  const policyFormValid = Boolean(address) && limitsValid && addressesValid && (!mainnetOptIn || acknowledgeMainnetRisk);
+  const policy = autonomyState?.sessionKey;
+  const globalGateReady = runtimeChainEnv === 'mainnet' && sd?.autonomy?.mainnetExecutionEnabled === true;
+  const policyConfigured = policy?.source === 'database' && policy.status === 'configured' && !policy.killSwitch;
+  const walletGateReady = Boolean(address && policy?.walletAddress && address.toLowerCase() === policy.walletAddress.toLowerCase());
+
+  const handleSavePolicy = () => {
     setActionStatus(null);
     configMut.mutate({
-      owner: address || '0x1111111111111111111111111111111111111111',
       dailyLimitUsdc: dailyLimit,
       maxPerActionUsdc: maxPerAction,
-      ttlSeconds: Number(ttlHours) * 3600,
-      whitelist: [whitelistAddr],
-    });
-  };
-
-  const handleExecuteTest = () => {
-    setActionStatus(null);
-    executeMut.mutate({
-      owner: address || '0x1111111111111111111111111111111111111111',
-      amountUsdc: '5',
-      target: whitelistAddr,
+      ttlSeconds: Math.floor(Number(ttlHours) * 3600),
+      whitelist,
+      scope: 'bounded-approval',
+      walletAddress: address!,
+      mainnetOptIn,
+      acknowledgeMainnetRisk,
     });
   };
 
@@ -232,39 +238,18 @@ export function ConfigureView() {
           </div>
         )}
 
-        {/* Action buttons */}
+        <div className="text-[11px] text-warn bg-warn-soft border border-warn/20 rounded-lg px-3 py-2">
+          Direct backend signing has been retired. Configure, revoke, or test this contract only through a connected wallet, then submit its transaction proof to the API.
+        </div>
+
         <div className="flex flex-wrap items-center gap-2.5 pt-1">
-          <button
-            onClick={handleSetupPermission}
-            disabled={configMut.isPending}
-            className="text-xs font-bold bg-accent text-white px-3.5 py-2 rounded-lg hover:bg-accent/90 disabled:opacity-50 transition-colors shadow-sm"
-          >
-            {configMut.isPending ? 'Configuring...' : 'Setup Testnet Spend Permission'}
-          </button>
-          <button
-            onClick={handleExecuteTest}
-            disabled={executeMut.isPending}
-            className="text-xs font-bold bg-panel-2 text-ink border border-line px-3.5 py-2 rounded-lg hover:bg-line/50 disabled:opacity-50 transition-colors"
-          >
-            {executeMut.isPending ? 'Running…' : 'Run Test Action (testnet, $5 USDC)'}
-          </button>
-          <button
-            onClick={() => {
-              setActionStatus(null);
-              revokeMut.mutate({});
-            }}
-            disabled={revokeMut.isPending}
-            className="text-xs font-bold bg-risk-soft text-risk border border-risk/30 px-3.5 py-2 rounded-lg hover:bg-risk/10 disabled:opacity-50 transition-colors ml-auto"
-          >
-            {revokeMut.isPending ? 'Revoking...' : 'Revoke Permission (Kill Switch)'}
-          </button>
           <button
             onClick={() => {
               setActionStatus(null);
               resetMut.mutate();
             }}
             disabled={resetMut.isPending}
-            className={`text-xs font-medium border px-3 py-2 rounded-lg transition-colors ${isStale || isExpired ? 'bg-warn-soft text-warn border-warn/30 hover:bg-warn/10' : 'bg-panel-2 text-ink-3 border-line hover:text-ink'}`}
+            className={`ml-auto text-xs font-medium border px-3 py-2 rounded-lg transition-colors ${isStale || isExpired ? 'bg-warn-soft text-warn border-warn/30 hover:bg-warn/10' : 'bg-panel-2 text-ink-3 border-line hover:text-ink'}`}
           >
             {resetMut.isPending ? 'Resetting...' : isStale ? 'Reset Stale Memory' : isExpired ? 'Reset Expired Memory' : 'Reset Memory State'}
           </button>
@@ -274,37 +259,92 @@ export function ConfigureView() {
       <section className="bg-panel border border-line rounded-xl p-4 flex flex-col gap-4">
         <div className="flex items-center justify-between border-b border-line pb-3">
           <div>
-            <h3 className="text-sm font-bold text-ink">Autonomy & Spend Permissions (DB-backed)</h3>
+            <h3 className="text-sm font-bold text-ink">Bounded Mainnet Autonomy</h3>
             <p className="text-xs text-ink-3 mt-0.5">
-              Current mode is Base Mainnet Read-only. Server execution is disabled; spend permission state is persisted in the database.
+              Hard limits are enforced before an unsigned Base Account approval is prepared. The server never signs or broadcasts.
             </p>
           </div>
           <StateBadge
-            state={sd?.autonomy?.databaseConfigured ? 'live' : 'missing'}
-            label={sd?.autonomy?.databaseConfigured ? 'database-backed' : 'database missing'}
-            title="Source: /api/status autonomy"
+            state={policy?.executionReady ? 'live' : policyConfigured ? 'stale' : policy?.killSwitch ? 'failed' : 'missing'}
+            label={policy?.executionReady ? 'ready for approvals' : policyConfigured ? 'policy staged' : policy?.killSwitch ? 'kill switch active' : 'not configured'}
+            title="Source: DB-backed Autonomous Execution Gateway"
           />
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-          <div className="bg-panel-2 border border-line rounded-lg p-3">
-            <div className="text-[10px] uppercase tracking-[0.06em] text-ink-3">Runtime Chain</div>
-            <div className="mt-1 font-mono font-bold text-ink">{runtimeChainEnv}</div>
+
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-px overflow-hidden rounded-lg border border-line bg-line" aria-label="Mainnet execution gates">
+          <div className="bg-panel-2 p-3">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.06em] text-ink-3"><span className="font-mono">01</span> Runtime gate</div>
+            <div className={`mt-1.5 text-xs font-bold ${globalGateReady ? 'text-ok' : 'text-warn'}`}>{globalGateReady ? 'Mainnet enabled' : runtimeIsMainnetReadonly ? 'Read-only runtime' : 'Global flag off'}</div>
           </div>
-          <div className="bg-panel-2 border border-line rounded-lg p-3">
-            <div className="text-[10px] uppercase tracking-[0.06em] text-ink-3">Persistence</div>
-            <div className="mt-1 font-mono font-bold text-ink">{sd?.autonomy?.spendPermissionsPersistence || 'database'}</div>
+          <div className="bg-panel-2 p-3">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.06em] text-ink-3"><span className="font-mono">02</span> User opt-in</div>
+            <div className={`mt-1.5 text-xs font-bold ${policy?.mainnetOptIn ? 'text-ok' : 'text-warn'}`}>{policy?.mainnetOptIn ? 'Recorded' : 'Required'}</div>
           </div>
-          <div className="bg-panel-2 border border-line rounded-lg p-3">
-            <div className="text-[10px] uppercase tracking-[0.06em] text-ink-3">Server Broadcast</div>
-            <div className="mt-1 font-mono font-bold text-warn">disabled</div>
+          <div className="bg-panel-2 p-3">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.06em] text-ink-3"><span className="font-mono">03</span> Policy + wallet</div>
+            <div className={`mt-1.5 text-xs font-bold ${policyConfigured && walletGateReady ? 'text-ok' : 'text-warn'}`}>{policyConfigured && walletGateReady ? 'Matched' : policyConfigured ? 'Wallet mismatch' : 'Policy missing'}</div>
           </div>
-          <div className="bg-panel-2 border border-line rounded-lg p-3">
-            <div className="text-[10px] uppercase tracking-[0.06em] text-ink-3">User Confirmation</div>
-            <div className="mt-1 font-mono font-bold text-ok">{sd?.execution?.userConfirmedEnabled ? 'enabled' : 'not reported'}</div>
+          <div className="bg-panel-2 p-3">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.06em] text-ink-3"><span className="font-mono">04</span> Base Account</div>
+            <div className="mt-1.5 text-xs font-bold text-accent">Approval always required</div>
           </div>
         </div>
-        <div className="text-[11px] text-ink-3 bg-panel-2 border border-line rounded-lg px-3 py-2">
-          Mainnet automation remains read-only unless explicit user-confirmed wallet flow is used. Testnet setup controls are hidden for this runtime.
+
+        {policyConfigured && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+            <div><div className="text-[10px] uppercase tracking-[0.06em] text-ink-3">Daily limit</div><div className="mt-1 font-mono text-ink">{policy?.dailyLimitUsdc} USDC</div></div>
+            <div><div className="text-[10px] uppercase tracking-[0.06em] text-ink-3">Per action</div><div className="mt-1 font-mono text-ink">{policy?.maxPerActionUsdc} USDC</div></div>
+            <div><div className="text-[10px] uppercase tracking-[0.06em] text-ink-3">Spent today</div><div className="mt-1 font-mono text-ink">{policy?.spentTodayUsdc} USDC</div></div>
+            <div><div className="text-[10px] uppercase tracking-[0.06em] text-ink-3">Reserved</div><div className="mt-1 font-mono text-ink">{policy?.reservedTodayUsdc || '0'} USDC</div></div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <label className="flex flex-col gap-1 text-[11px] font-medium text-ink-2">
+            Daily limit (USDC)
+            <input type="number" min="0" step="0.000001" value={dailyLimit} onChange={(event) => setDailyLimit(event.target.value)} className="bg-panel-2 border border-line rounded px-2.5 py-2 text-xs text-ink font-mono focus:outline-none focus:border-accent" />
+          </label>
+          <label className="flex flex-col gap-1 text-[11px] font-medium text-ink-2">
+            Max per action (USDC)
+            <input type="number" min="0" step="0.000001" value={maxPerAction} onChange={(event) => setMaxPerAction(event.target.value)} className="bg-panel-2 border border-line rounded px-2.5 py-2 text-xs text-ink font-mono focus:outline-none focus:border-accent" />
+          </label>
+          <label className="flex flex-col gap-1 text-[11px] font-medium text-ink-2">
+            Policy lifetime (hours)
+            <input type="number" min="0.0834" step="0.25" value={ttlHours} onChange={(event) => setTtlHours(event.target.value)} className="bg-panel-2 border border-line rounded px-2.5 py-2 text-xs text-ink font-mono focus:outline-none focus:border-accent" />
+          </label>
+          <label className="md:col-span-3 flex flex-col gap-1 text-[11px] font-medium text-ink-2">
+            Allowed USDC recipients — one address per line
+            <textarea value={whitelistAddr} onChange={(event) => setWhitelistAddr(event.target.value)} rows={3} placeholder="0x..." className="resize-y bg-panel-2 border border-line rounded px-2.5 py-2 text-xs text-ink font-mono focus:outline-none focus:border-accent" />
+          </label>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <label className="flex items-start gap-2 rounded-lg border border-line bg-panel-2 p-3 text-xs text-ink-2">
+            <input type="checkbox" checked={mainnetOptIn} onChange={(event) => setMainnetOptIn(event.target.checked)} className="mt-0.5 accent-accent" />
+            <span><strong className="block text-ink">Enable mainnet policy opt-in</strong>This permits bounded preparation only when the global runtime gate is also enabled.</span>
+          </label>
+          <label className={`flex items-start gap-2 rounded-lg border p-3 text-xs ${mainnetOptIn ? 'border-warn/30 bg-warn-soft text-warn' : 'border-line bg-panel-2 text-ink-3'}`}>
+            <input type="checkbox" checked={acknowledgeMainnetRisk} onChange={(event) => setAcknowledgeMainnetRisk(event.target.checked)} disabled={!mainnetOptIn} className="mt-0.5 accent-accent" />
+            <span><strong className="block">Acknowledge mainnet risk</strong>Limits reduce exposure, but each approved transaction can move real USDC.</span>
+          </label>
+        </div>
+
+        {actionStatus && (
+          <div className={`text-xs p-3 rounded-lg border ${actionStatus.type === 'success' ? 'bg-ok-soft text-ok border-ok/30' : 'bg-risk-soft text-risk border-risk/30'}`}>{actionStatus.msg}</div>
+        )}
+        {policy?.blockedReasons && policy.blockedReasons.length > 0 && (
+          <div className="text-[11px] text-warn bg-warn-soft border border-warn/20 rounded-lg px-3 py-2 font-mono">Blocked: {policy.blockedReasons.join(' · ')}</div>
+        )}
+
+        <div className="flex flex-wrap gap-2.5">
+          <button type="button" onClick={handleSavePolicy} disabled={!policyFormValid || configMut.isPending} className="text-xs font-bold bg-accent text-white px-3.5 py-2 rounded-lg hover:bg-accent/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+            {configMut.isPending ? 'Saving policy…' : 'Save bounded policy'}
+          </button>
+          {policy?.source === 'database' && !policy.killSwitch && (
+            <button type="button" onClick={() => killMut.mutate()} disabled={killMut.isPending} className="ml-auto text-xs font-bold bg-risk-soft text-risk border border-risk/30 px-3.5 py-2 rounded-lg hover:bg-risk/10 disabled:opacity-50 transition-colors">
+              {killMut.isPending ? 'Stopping…' : 'Activate kill switch'}
+            </button>
+          )}
         </div>
       </section>
       )}

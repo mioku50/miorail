@@ -16,7 +16,9 @@ async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
     try {
       const errJson = await response.json();
       if (errJson.error) errorMsg = errJson.error;
-    } catch {}
+    } catch {
+      // Preserve the HTTP status message when the error body is not JSON.
+    }
     throw new Error(errorMsg);
   }
   return response.json();
@@ -285,7 +287,7 @@ export function usePrepareAction(
       fetchApi<apiSpec.PrepareActionResponse>(`/api/actions/${data.actionId}/prepare`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ walletAddress: data.walletAddress }),
       }),
     ...options,
   });
