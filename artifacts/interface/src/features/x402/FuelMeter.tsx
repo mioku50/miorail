@@ -113,7 +113,9 @@ export function FuelMeter() {
     fuel?.status === 'permission_inactive' ? 'inactive' :
     'unavailable';
 
-  const buyerReceipts = ledger?.entries?.filter((entry) => entry.direction === 'outgoing_buyer_payment') || [];
+  const settledBuyerReceipts = ledger?.entries?.filter((entry) => entry.direction === 'outgoing_buyer_payment' && entry.status === 'settled') || [];
+  const failedBuyerAttempts = ledger?.entries?.filter((entry) => entry.direction === 'outgoing_buyer_payment' && entry.status === 'failed') || [];
+  const unreimbursedBuyerAttempts = failedBuyerAttempts.filter((entry) => Boolean(entry.txHash && !entry.fuelChargeTxHash));
   const sellerSmokeReceipts = ledger?.entries?.filter((entry) => entry.direction !== 'outgoing_buyer_payment') || [];
   const ownerUnavailable = fuelOwner?.status && fuelOwner.status !== 'ready';
   const createDisabled = !isConnected || fuelOwnerLoading || fuelOwner?.status !== 'ready' || createFuelPermission.isPending;
@@ -289,7 +291,7 @@ export function FuelMeter() {
         <section className="bg-panel border border-line rounded-[var(--radius-lg)] p-4 shadow-[var(--shadow-card)]">
           <div className="flex items-center justify-between mb-3">
             <div className="text-[11px] font-sans font-semibold tracking-[0.08em] uppercase text-ink-3">Spend by category</div>
-            <span className="text-[10px] font-mono bg-panel-2 px-2 py-0.5 rounded-full text-ink-3">{buyerReceipts.length} buyer receipts</span>
+            <span className="text-[10px] font-mono bg-panel-2 px-2 py-0.5 rounded-full text-ink-3">{settledBuyerReceipts.length} settled receipts</span>
           </div>
           <div className="grid grid-cols-2 gap-3 text-xs">
             <Metric label="Inference" amount={`${fuel?.spendByCategory?.inference || ledger?.summary?.inferenceSpentUsdc || '0.0000'} USDC`} sub="paid LLM" />
@@ -320,12 +322,12 @@ export function FuelMeter() {
 
       <section className="bg-panel border border-line rounded-[var(--radius-lg)] p-4 shadow-[var(--shadow-card)]">
         <div className="flex items-center justify-between mb-3">
-          <div className="text-[11px] font-sans font-semibold tracking-[0.08em] uppercase text-ink-3">Buyer receipts</div>
+          <div className="text-[11px] font-sans font-semibold tracking-[0.08em] uppercase text-ink-3">Settled buyer spend</div>
           <span className="text-[10px] font-mono text-ink-3">source: x402_receipts</span>
         </div>
-        {buyerReceipts.length > 0 ? (
+        {settledBuyerReceipts.length > 0 ? (
           <div className="space-y-1.5 max-h-[210px] overflow-y-auto">
-            {buyerReceipts.map((entry) => {
+            {settledBuyerReceipts.map((entry) => {
               const txUrl = baseScanTxUrl(entry.network, entry.txHash);
               return (
                 <div key={entry.id} className="grid grid-cols-1 md:grid-cols-[1fr_120px_140px] gap-2 items-center bg-panel-2 p-2 rounded-[var(--radius-md)] border border-line text-xs">
@@ -345,7 +347,58 @@ export function FuelMeter() {
           </div>
         ) : (
           <div className="text-xs text-ink-3 italic bg-panel-2 p-3 rounded-[var(--radius-md)] border border-line font-sans">
-            No buyer fuel receipts yet. Free read-only scans do not create fuel spend.
+            No settled buyer fuel spend yet. Free read-only scans do not create fuel spend.
+          </div>
+        )}
+      </section>
+
+      <section className="bg-panel border border-line rounded-[var(--radius-lg)] p-4 shadow-[var(--shadow-card)]">
+        <div className="flex items-start justify-between gap-4 mb-3">
+          <div>
+            <div className="text-[11px] font-sans font-semibold tracking-[0.08em] uppercase text-ink-3">Failed buyer attempts</div>
+            <div className="text-[12px] text-ink-3 mt-1 max-w-[760px]">
+              Failed attempts never increase settled spend. An unreimbursed attempt means the paid resource has an x402 tx proof but the matching fuel charge proof is missing.
+            </div>
+          </div>
+          <div className="flex gap-2 text-[10px] font-mono">
+            <span className="bg-risk-soft border border-risk/25 rounded-full px-2 py-1 text-risk">
+              {ledger?.summary?.failedBuyerAttemptsCount ?? failedBuyerAttempts.length} failed
+            </span>
+            <span className="bg-warn-soft border border-warn/25 rounded-full px-2 py-1 text-warn">
+              {ledger?.summary?.unreimbursedBuyerAttemptsCount ?? unreimbursedBuyerAttempts.length} unreimbursed
+            </span>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs mb-3">
+          <Metric label="Failed attempt value" amount={`${ledger?.summary?.failedBuyerAttemptsUsdc || '0.0000'} USDC`} sub="not settled spend" />
+          <Metric label="Unreimbursed payer value" amount={`${ledger?.summary?.unreimbursedBuyerAttemptsUsdc || '0.0000'} USDC`} sub="requires review" />
+        </div>
+        {failedBuyerAttempts.length > 0 ? (
+          <div className="space-y-1.5 max-h-[180px] overflow-y-auto">
+            {failedBuyerAttempts.map((entry) => {
+              const txUrl = baseScanTxUrl(entry.network, entry.txHash);
+              const unreimbursed = Boolean(entry.txHash && !entry.fuelChargeTxHash);
+              return (
+                <div key={entry.id} className="grid grid-cols-1 md:grid-cols-[1fr_120px_140px] gap-2 items-center bg-panel-2 p-2 rounded-[var(--radius-md)] border border-line text-xs">
+                  <div className="min-w-0">
+                    <div className="text-ink font-sans font-semibold truncate">{entry.actionType}</div>
+                    <div className="text-[10px] text-ink-3 font-mono truncate">{entry.category || 'mcp_tool'} / {new Date(entry.createdAt).toLocaleString()}</div>
+                  </div>
+                  <div className="font-mono text-ink font-bold">{entry.cost || '0'} USDC</div>
+                  {txUrl ? (
+                    <a href={txUrl} target="_blank" rel="noreferrer" className={`font-mono truncate ${unreimbursed ? 'text-risk' : 'text-accent-2'}`}>
+                      {unreimbursed ? 'unreimbursed ' : ''}{shortHash(entry.txHash)}
+                    </a>
+                  ) : (
+                    <span className="text-warn font-sans">no payment proof</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-xs text-ink-3 italic bg-panel-2 p-3 rounded-[var(--radius-md)] border border-line font-sans">
+            No failed buyer attempts.
           </div>
         )}
       </section>

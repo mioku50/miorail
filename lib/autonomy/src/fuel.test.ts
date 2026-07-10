@@ -89,6 +89,41 @@ test('FuelChargeService does not increment spent when charge proof is missing', 
   assert.strictEqual(stored?.spent, 0);
 });
 
+test('FuelChargeService treats the Base Account charge id as transaction proof', async (t) => {
+  clearFuelReservationsForTests();
+  const repository = await repositoryWithPermission();
+  const service = new FuelChargeService(repository);
+  const txHash = `0x${'a'.repeat(64)}`;
+
+  const getStatus = mock.method(base.subscription, 'getStatus', async () => ({
+    isSubscribed: true,
+    remainingChargeInPeriod: '10',
+  }));
+  const charge = mock.method(base.subscription, 'charge', async () => ({
+    success: true,
+    id: txHash,
+    subscriptionId: 'fuel-permission',
+    amount: '1',
+    subscriptionOwner: '0x1111111111111111111111111111111111111111',
+  }));
+  t.after(() => {
+    getStatus.mock.restore();
+    charge.mock.restore();
+    clearFuelReservationsForTests();
+  });
+
+  const result = await service.charge({
+    permissionId: 'fuel-permission',
+    amount: 1,
+    category: 'inference',
+    chainEnv: 'mainnet',
+  });
+
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.proof?.txHash, txHash);
+  assert.strictEqual((await repository.getById('fuel-permission'))?.spent, 1);
+});
+
 test('FuelChargeService pending reservations prevent concurrent limit overrun', async () => {
   clearFuelReservationsForTests();
   const repository = await repositoryWithPermission(5);
@@ -112,6 +147,86 @@ test('FuelChargeService pending reservations prevent concurrent limit overrun', 
   assert.strictEqual(blocked.status, 'limit_exhausted');
   if (reserved.reservation) service.release(reserved.reservation.id);
   clearFuelReservationsForTests();
+});
+
+test('FuelChargeService preflights subscription status and charge calldata without spending', async (t) => {
+  clearFuelReservationsForTests();
+  const repository = await repositoryWithPermission();
+  const service = new FuelChargeService(repository, { rpcUrl: 'https://rpc.example.test' });
+
+  const getStatus = mock.method(base.subscription, 'getStatus', async () => ({
+    isSubscribed: true,
+    remainingChargeInPeriod: '10',
+    subscriptionOwner: '0x1111111111111111111111111111111111111111',
+  }));
+  const prepareCharge = mock.method(base.subscription, 'prepareCharge', async () => ([{
+    to: BASE_MAINNET_USDC,
+    data: '0x1234',
+    value: 0n,
+  }]));
+  t.after(() => {
+    getStatus.mock.restore();
+    prepareCharge.mock.restore();
+    clearFuelReservationsForTests();
+  });
+
+  const reserved = await service.reserve({
+    permissionId: 'fuel-permission',
+    amount: 1,
+    category: 'inference',
+    chainEnv: 'mainnet',
+  });
+  assert.ok(reserved.reservation);
+
+  const result = await service.preflightReserved({
+    permissionId: 'fuel-permission',
+    amount: 1,
+    category: 'inference',
+    chainEnv: 'mainnet',
+    expectedSubscriptionOwner: '0x1111111111111111111111111111111111111111',
+  }, reserved.reservation!);
+
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(result.preflight?.callsPrepared, 1);
+  assert.deepStrictEqual(getStatus.mock.calls[0].arguments, [{
+    id: 'fuel-permission',
+    testnet: false,
+    rpcUrl: 'https://rpc.example.test',
+  }]);
+  assert.strictEqual((await repository.getById('fuel-permission'))?.spent, 0);
+  service.release(reserved.reservation!.id);
+});
+
+test('FuelChargeService blocks zero remaining period allowance before charge', async (t) => {
+  clearFuelReservationsForTests();
+  const repository = await repositoryWithPermission();
+  const service = new FuelChargeService(repository);
+
+  const getStatus = mock.method(base.subscription, 'getStatus', async () => ({
+    isSubscribed: true,
+    remainingChargeInPeriod: '0',
+  }));
+  const charge = mock.method(base.subscription, 'charge', async () => ({
+    success: true,
+    id: `0x${'a'.repeat(64)}`,
+  }));
+  t.after(() => {
+    getStatus.mock.restore();
+    charge.mock.restore();
+    clearFuelReservationsForTests();
+  });
+
+  const result = await service.charge({
+    permissionId: 'fuel-permission',
+    amount: 1,
+    category: 'mcp_tool',
+    chainEnv: 'mainnet',
+  });
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.status, 'limit_exhausted');
+  assert.strictEqual(charge.mock.callCount(), 0);
+  assert.strictEqual((await repository.getById('fuel-permission'))?.spent, 0);
 });
 
 test('FuelChargeService charges an existing reservation without double-counting it as pending', async (t) => {

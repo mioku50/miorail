@@ -21,6 +21,7 @@ export interface FuelReservation {
 export interface FuelChargeOptions {
   walletName?: string;
   paymasterUrl?: string;
+  rpcUrl?: string;
 }
 
 export interface FuelChargeInput {
@@ -29,6 +30,7 @@ export interface FuelChargeInput {
   category: FuelCategory;
   recipient?: string;
   chainEnv?: string | number;
+  expectedSubscriptionOwner?: string;
 }
 
 export interface FuelChargeResult {
@@ -39,11 +41,17 @@ export interface FuelChargeResult {
   proof?: ConfirmedSettlementProof;
   error?: string;
   status?: string;
+  preflight?: {
+    subscriptionActive: boolean;
+    remainingChargeInPeriod?: number;
+    callsPrepared: number;
+  };
 }
 
 type BaseSubscriptionStatus = {
   isSubscribed?: boolean;
   remainingChargeInPeriod?: string | number | null;
+  subscriptionOwner?: string | null;
 };
 
 type BaseChargeResponse = {
@@ -95,10 +103,11 @@ function hasCanonicalAsset(permission: SpendPermission, chainId: SupportedBaseCh
 }
 
 function proofFromCharge(charge: BaseChargeResponse): ConfirmedSettlementProof {
-  const txHash = charge.transactionHash || charge.txHash;
+  const idIsTxHash = typeof charge.id === 'string' && /^0x[a-fA-F0-9]{64}$/.test(charge.id);
+  const txHash = charge.transactionHash || charge.txHash || (idIsTxHash ? charge.id : undefined);
   return {
     ...(txHash ? { txHash } : {}),
-    ...(charge.id || charge.chargeId ? { receiptId: charge.id || charge.chargeId } : {}),
+    ...(!idIsTxHash && (charge.id || charge.chargeId) ? { receiptId: charge.id || charge.chargeId } : {}),
     confirmedAt: nowIso(),
   };
 }
@@ -147,6 +156,71 @@ export class FuelChargeService {
     return this.chargeReserved(input, reserved.reservation);
   }
 
+  async preflightReserved(input: FuelChargeInput, reservation: FuelReservation): Promise<FuelChargeResult> {
+    if (reservation.permissionId !== input.permissionId || reservation.amount !== input.amount || reservation.category !== input.category) {
+      return { success: false, error: 'Fuel reservation does not match preflight request', status: 'reservation_mismatch' };
+    }
+
+    const validation = await this.validate(input, { excludeReservationId: reservation.id });
+    if (!validation.success || !validation.permission) return validation;
+
+    const chain = deriveChain(input.chainEnv, validation.permission);
+    const testnet = chain.chainId === BASE_SEPOLIA_CHAIN_ID;
+    try {
+      const status = await base.subscription.getStatus({
+        id: input.permissionId,
+        testnet,
+        ...(this.options.rpcUrl ? { rpcUrl: this.options.rpcUrl } : {}),
+      }) as BaseSubscriptionStatus;
+      if (!status.isSubscribed) {
+        return { success: false, permission: validation.permission, error: 'Spend permission is not subscribed', status: 'permission_inactive' };
+      }
+      if (
+        input.expectedSubscriptionOwner &&
+        status.subscriptionOwner &&
+        input.expectedSubscriptionOwner.toLowerCase() !== status.subscriptionOwner.toLowerCase()
+      ) {
+        return { success: false, permission: validation.permission, error: 'Spend permission owner does not match the configured subscription owner', status: 'subscription_owner_mismatch' };
+      }
+
+      const remainingRaw = status.remainingChargeInPeriod;
+      const remaining = remainingRaw == null ? undefined : numberFrom(remainingRaw);
+      if (remaining !== undefined && (!Number.isFinite(remaining) || remaining < input.amount)) {
+        return { success: false, permission: validation.permission, error: 'Spend permission period limit exceeded', status: 'limit_exhausted' };
+      }
+
+      const calls = await base.subscription.prepareCharge({
+        id: input.permissionId,
+        amount: input.amount.toString(),
+        ...(input.recipient ? { recipient: input.recipient as `0x${string}` } : {}),
+        testnet,
+        ...(this.options.rpcUrl ? { rpcUrl: this.options.rpcUrl } : {}),
+      });
+      if (!Array.isArray(calls) || calls.length === 0) {
+        return { success: false, permission: validation.permission, error: 'Spend permission charge produced no executable calls', status: 'charge_preflight_failed' };
+      }
+
+      return {
+        success: true,
+        permission: validation.permission,
+        reservation,
+        status: 'ready',
+        preflight: {
+          subscriptionActive: true,
+          ...(remaining !== undefined ? { remainingChargeInPeriod: remaining } : {}),
+          callsPrepared: calls.length,
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        permission: validation.permission,
+        error: error instanceof Error ? error.message : String(error),
+        status: 'charge_preflight_failed',
+      };
+    }
+  }
+
   async chargeReserved(input: FuelChargeInput, reservation: FuelReservation): Promise<FuelChargeResult> {
     if (reservation.permissionId !== input.permissionId || reservation.amount !== input.amount || reservation.category !== input.category) {
       this.release(reservation.id);
@@ -164,12 +238,21 @@ export class FuelChargeService {
       const status = await base.subscription.getStatus({
         id: input.permissionId,
         testnet: chain.chainId === BASE_SEPOLIA_CHAIN_ID,
+        ...(this.options.rpcUrl ? { rpcUrl: this.options.rpcUrl } : {}),
       }) as BaseSubscriptionStatus;
       if (!status.isSubscribed) {
         return { success: false, error: 'Spend permission is not subscribed', status: 'permission_inactive' };
       }
-      const remaining = numberFrom(status.remainingChargeInPeriod);
-      if (remaining > 0 && remaining < input.amount) {
+      if (
+        input.expectedSubscriptionOwner &&
+        status.subscriptionOwner &&
+        input.expectedSubscriptionOwner.toLowerCase() !== status.subscriptionOwner.toLowerCase()
+      ) {
+        return { success: false, error: 'Spend permission owner does not match the configured subscription owner', status: 'subscription_owner_mismatch' };
+      }
+      const remainingRaw = status.remainingChargeInPeriod;
+      const remaining = remainingRaw == null ? undefined : numberFrom(remainingRaw);
+      if (remaining !== undefined && (!Number.isFinite(remaining) || remaining < input.amount)) {
         return { success: false, error: 'Spend permission period limit exceeded', status: 'limit_exhausted' };
       }
 
@@ -179,6 +262,7 @@ export class FuelChargeService {
         ...(input.recipient ? { recipient: input.recipient } : {}),
         ...(this.options.paymasterUrl ? { paymasterUrl: this.options.paymasterUrl } : {}),
         ...(this.options.walletName ? { walletName: this.options.walletName } : {}),
+        ...(this.options.rpcUrl ? { rpcUrl: this.options.rpcUrl } : {}),
         testnet: chain.chainId === BASE_SEPOLIA_CHAIN_ID,
       } as never) as BaseChargeResponse;
 
@@ -193,7 +277,13 @@ export class FuelChargeService {
 
       const updated = await this.repository.incrementSpent(input.permissionId, input.amount, proof);
       if (!updated) {
-        return { success: false, error: 'Spend limit exceeded or permission inactive', status: 'limit_exhausted' };
+        return {
+          success: false,
+          chargeId: charge.id || charge.chargeId,
+          proof,
+          error: 'Charge settled but local spent accounting requires reconciliation',
+          status: 'accounting_reconciliation_required',
+        };
       }
 
       return {

@@ -5,7 +5,7 @@ import express from 'express';
 import { clearX402FacilitatorStatusForTests, ExactEvmScheme } from '@mioagent/x402-gateway';
 import { privateKeyToAccount } from 'viem/accounts';
 import { InMemorySpendPermissionRepository, clearFuelReservationsForTests } from '@mioagent/autonomy';
-import { createX402Router, x402Router } from './index.js';
+import { createX402Router, summarizeX402LedgerEntries, x402Router } from './index.js';
 
 const app = express();
 app.use('/x402', x402Router);
@@ -465,6 +465,12 @@ describe('x402 official smoke endpoint', () => {
         address: '0x3333333333333333333333333333333333333333',
         walletName: 'miorail-fuel-owner',
       }),
+      subscriptionOwnerReadinessResolver: async () => ({
+        ready: true,
+        deployed: true,
+        nativeBalancePresent: true,
+        gasSponsored: false,
+      }),
       spendPermissionRepository: repository,
       findActiveFuelPermission: async () => repository.getById('real-subscription-2') || null,
       fuelChargeServiceFactory: () => ({
@@ -480,6 +486,12 @@ describe('x402 official smoke endpoint', () => {
           },
         }),
         release: () => {},
+        preflightReserved: async (_input, reservation) => ({
+          success: true,
+          status: 'ready',
+          reservation,
+          preflight: { subscriptionActive: true, remainingChargeInPeriod: 10, callsPrepared: 1 },
+        }),
         chargeReserved: async (input, reservation) => {
           chargeCalls++;
           const updated = await repository.incrementSpent(input.permissionId, input.amount, {
@@ -566,6 +578,58 @@ describe('x402 official smoke endpoint', () => {
     assert.strictEqual(paidFetchCalled, false);
   });
 
+  it('buyer smoke fails preflight before paying the x402 resource', async () => {
+    const repository = await fuelRepository();
+    let paidFetchCalled = false;
+    let released = false;
+    const app = express();
+    app.use(express.json());
+    app.use('/x402', createX402Router({
+      dbEnabled: false,
+      env: configuredEnv({ X402_BUYER_SMOKE_URL: 'https://paid-resource.example.test/smoke' }),
+      runtimeMode: 'official',
+      findActiveFuelPermission: async () => activeFuelPermissionRow(),
+      spendPermissionRepository: repository,
+      subscriptionOwnerWalletResolver: async () => ({
+        address: '0x3333333333333333333333333333333333333333',
+        walletName: 'miorail-fuel-owner',
+      }),
+      fuelChargeServiceFactory: () => ({
+        reserve: async (input) => ({
+          success: true,
+          status: 'reserved',
+          reservation: {
+            id: 'reservation-preflight',
+            permissionId: input.permissionId,
+            amount: input.amount,
+            category: input.category,
+            createdAt: new Date().toISOString(),
+          },
+        }),
+        release: () => { released = true; },
+        preflightReserved: async () => ({
+          success: false,
+          status: 'charge_preflight_failed',
+          error: 'subscription owner cannot fund a charge',
+        }),
+        chargeReserved: async () => {
+          throw new Error('charge should not be called after failed preflight');
+        },
+      }),
+      buyerPaidFetch: async () => {
+        paidFetchCalled = true;
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      },
+    }));
+
+    const res = await request(app).post('/x402/buyer-smoke').send({});
+    assert.strictEqual(res.status, 503);
+    assert.strictEqual(res.body.error, 'fuel_charge_preflight_failed');
+    assert.strictEqual(res.body.paidResourceCalled, false);
+    assert.strictEqual(paidFetchCalled, false);
+    assert.strictEqual(released, true);
+  });
+
   it('buyer smoke records outgoing x402 tx and charges reserved fuel after durable proof', async () => {
     const repository = await fuelRepository();
     let chargeCalls = 0;
@@ -582,6 +646,16 @@ describe('x402 official smoke endpoint', () => {
       runtimeMode: 'official',
       findActiveFuelPermission: async () => activeFuelPermissionRow(),
       spendPermissionRepository: repository,
+      subscriptionOwnerWalletResolver: async () => ({
+        address: '0x3333333333333333333333333333333333333333',
+        walletName: 'miorail-fuel-owner',
+      }),
+      subscriptionOwnerReadinessResolver: async () => ({
+        ready: true,
+        deployed: true,
+        nativeBalancePresent: true,
+        gasSponsored: false,
+      }),
       fuelChargeServiceFactory: () => ({
         reserve: async (input) => ({
           success: true,
@@ -595,6 +669,12 @@ describe('x402 official smoke endpoint', () => {
           },
         }),
         release: () => {},
+        preflightReserved: async (_input, reservation) => ({
+          success: true,
+          status: 'ready',
+          reservation,
+          preflight: { subscriptionActive: true, remainingChargeInPeriod: 10, callsPrepared: 1 },
+        }),
         chargeReserved: async (input, reservation) => {
           chargeCalls++;
           const updated = await repository.incrementSpent(input.permissionId, input.amount, {
@@ -661,5 +741,24 @@ describe('x402 official smoke endpoint', () => {
     const ledgerCurrent = await request(app).get(`/x402/ledger?runId=${runId}`);
     assert.strictEqual(ledgerCurrent.status, 200);
     assert.strictEqual(ledgerCurrent.body.summary.totalSpentUsdc, '0.0000');
+  });
+
+  it('counts only settled buyer receipts as spend and isolates unreimbursed attempts', () => {
+    const summary = summarizeX402LedgerEntries([
+      { direction: 'outgoing_buyer_payment', status: 'settled', category: 'inference', cost: '0.001' },
+      { direction: 'outgoing_buyer_payment', status: 'failed', category: 'mcp_tool', cost: '0.500', txHash: '0xpaid' },
+      { direction: 'outgoing_buyer_payment', status: 'failed', category: 'mcp_tool', cost: '0.250', txHash: null },
+      { direction: 'outgoing_buyer_payment', status: 'pending', category: 'execution', cost: '1.000' },
+      { direction: 'incoming_seller_smoke', status: 'settled', category: 'dev_smoke', cost: '2.000' },
+    ]);
+
+    assert.strictEqual(summary.totalSpentUsdc, '0.0010');
+    assert.strictEqual(summary.inferenceSpentUsdc, '0.0010');
+    assert.strictEqual(summary.failedBuyerAttemptsUsdc, '0.7500');
+    assert.strictEqual(summary.unreimbursedBuyerAttemptsUsdc, '0.5000');
+    assert.strictEqual(summary.failedBuyerAttemptsCount, 2);
+    assert.strictEqual(summary.unreimbursedBuyerAttemptsCount, 1);
+    assert.strictEqual(summary.pendingBuyerAttemptsCount, 1);
+    assert.strictEqual(summary.sellerSmokeDiagnosticsCount, 1);
   });
 });
