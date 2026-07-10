@@ -1,3 +1,5 @@
+import { DIAGNOSTICS_ENABLED } from '../lib/diagnostics';
+
 // Route + command tables — the single source of truth shared by TabBar and
 // CommandPalette so deep-links and palette entries stay in sync.
 
@@ -26,7 +28,10 @@ export const COMMANDS: AppCommand[] = [
   { id: 'actions', icon: '⚡', label: 'Action inbox · review', path: '/actions' },
   { id: 'stream', icon: '💬', label: 'Agent stream · chat', path: '/stream' },
   { id: 'fuel', icon: '⛽', label: 'x402 fuel meter', path: '/fuel' },
-  { id: 'configure', icon: '🔑', label: 'Configure providers · keys', path: '/configure' },
+  { id: 'configure', icon: '🛡️', label: 'Spending limits · safety', path: '/configure' },
   { id: 'scan', icon: '📡', label: 'Actions builder · scan', path: '/build' },
   { id: 'memory', icon: '🧠', label: 'Agent history · memory', path: '/history' },
+  ...(DIAGNOSTICS_ENABLED
+    ? [{ id: 'diagnostics', icon: '🧰', label: 'Operator diagnostics', path: '/diagnostics' }]
+    : []),
 ];

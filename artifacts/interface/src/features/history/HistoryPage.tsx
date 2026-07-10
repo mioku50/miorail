@@ -26,7 +26,6 @@ export function HistoryPage() {
           <div className="flex flex-col gap-2.5 max-h-[400px] overflow-y-auto">
             {actions.map((a: any, i: number) => {
               const source = a.metadata?.createdBy || a.metadata?.source || 'system';
-              const provider = a.metadata?.analysis?.provider || a.metadata?.provider || (a.kind === 'recommendation' ? 'moralis' : null);
               const statusBadge = a.status === 'executed' ? 'bg-ok-soft text-ok' : a.status === 'dismissed' ? 'bg-panel-2 text-ink-3' : a.status === 'failed' ? 'bg-risk-soft text-risk' : 'bg-warn-soft text-warn';
 
               return (
@@ -43,7 +42,7 @@ export function HistoryPage() {
                   </div>
                   <div className="flex items-center justify-between text-[11px] text-ink-3 font-mono pt-1 border-t border-line/50">
                     <span>Source: <span className="text-ink-2 font-medium capitalize">{source}</span></span>
-                    {provider && <span>Provider: <span className="text-ink-2 font-medium capitalize">{provider}</span></span>}
+                    <span>Safety: <span className="text-ink-2 font-medium">Screened</span></span>
                   </div>
                 </div>
               );

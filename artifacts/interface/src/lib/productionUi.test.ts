@@ -1,0 +1,41 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+function source(relativePath: string): string {
+  return readFileSync(fileURLToPath(new URL(relativePath, import.meta.url)), 'utf8');
+}
+
+test('production navigation hides operator diagnostics unless the build flag is enabled', () => {
+  const app = source('../app/App.tsx');
+  const routes = source('../app/routes.tsx');
+  assert.match(app, /DIAGNOSTICS_ENABLED \? <ConfigureView diagnosticsOnly \/> : <Redirect to="\/configure" \/>/);
+  assert.match(app, /DIAGNOSTICS_ENABLED && <StatusBar \/>/);
+  assert.match(routes, /DIAGNOSTICS_ENABLED/);
+  assert.match(routes, /Operator diagnostics/);
+});
+
+test('ordinary user surfaces do not regress to vendor or transport jargon', () => {
+  const userCopy = [
+    source('../features/cockpit/CockpitRoute.tsx'),
+    source('../features/portfolio/PortfolioCard.tsx'),
+    source('../features/portfolio/PortfolioProviderChips.tsx'),
+    source('../features/portfolio/ProtocolsCard.tsx'),
+    source('../features/inbox/PortfolioAnalysisView.tsx'),
+    source('../features/inbox/ApprovalAnalysisView.tsx'),
+    source('../features/history/HistoryPage.tsx'),
+  ].join('\n');
+  for (const phrase of [
+    'Alchemy rate-limited',
+    'via Moralis',
+    'via CoinGecko',
+    'GoPlus connected',
+    'Settlement ledger wired',
+    'resolves on first payment',
+    'database-backed',
+    'Active & Live',
+  ]) {
+    assert.equal(userCopy.includes(phrase), false, `forbidden user-facing copy: ${phrase}`);
+  }
+});

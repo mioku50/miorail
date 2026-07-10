@@ -3,6 +3,8 @@ import { base } from '@base-org/account';
 import { useAccount } from 'wagmi';
 import { useCreateX402FuelPermission, useStatus, useX402Fuel, useX402FuelOwner, useX402Ledger, useX402Pricing } from '@mioagent/api-client-react';
 import { StateBadge } from '@mioagent/ui';
+import { capabilityLabel, x402CapabilityState, type CapabilityState } from '../../lib/capabilityStatus';
+import { DIAGNOSTICS_ENABLED } from '../../lib/diagnostics';
 
 function Metric({ label, amount, sub }: { label: string; amount: string; sub: string }) {
   return (
@@ -31,18 +33,18 @@ function baseScanTxUrl(network?: string, txHash?: string | null): string | null 
 function x402BlockedCopy(x402?: any): string {
   const reason = x402?.settleBlockedReason || x402?.errorCode || x402?.status;
   if (reason === 'facilitator_auth_missing' || reason === 'facilitator_auth_required') {
-    return 'Facilitator auth is required before x402 settlement can run.';
+    return 'Premium action payments are waiting for operator authentication.';
   }
   if (reason === 'cdp_api_key_pair_incomplete') {
-    return 'CDP API key pair is incomplete. Buyer fuel remains blocked until facilitator auth is configured.';
+    return 'Premium action payments are unavailable until operator authentication is restored.';
   }
   if (reason === 'network_not_supported' || reason === 'unsupported_network_for_settlement') {
-    return 'The facilitator is reachable, but this x402 network is not supported for settlement.';
+    return 'Premium action payments are not available on this network.';
   }
-  if (reason === 'facilitator_rate_limited') return 'x402 facilitator is rate-limited. Buyer payments fail closed until it recovers.';
-  if (reason === 'facilitator_unreachable' || reason === 'facilitator_degraded') return 'x402 facilitator is unavailable or degraded.';
-  if (reason === 'x402_not_configured') return 'x402 env is incomplete. Configure facilitator, payTo, and CAIP-2 network.';
-  return 'x402 settlement is not ready.';
+  if (reason === 'facilitator_rate_limited') return 'Premium action payments are temporarily limited. Try again later.';
+  if (reason === 'facilitator_unreachable' || reason === 'facilitator_degraded') return 'Premium action payments are temporarily unavailable.';
+  if (reason === 'x402_not_configured') return 'Premium action payments are not enabled.';
+  return 'Premium action payments are not ready.';
 }
 
 function networkLabel(network?: string): string {
@@ -90,19 +92,14 @@ export function FuelMeter() {
   const payerCopy = buyerPayerCopy(buyerPayer);
   const settleReady = x402?.settleReady === true;
   const buyerFuelReady = settleReady && payerCopy.ready && fuel?.status === 'ready';
-  const badgeState = buyerFuelReady ? 'live' : x402?.status === 'missing' ? 'missing' : 'mock';
-  const badgeLabel =
-    buyerFuelReady ? 'buyer fuel ready' :
-    settleReady && !payerCopy.ready ? 'payer blocked' :
-    settleReady && fuel?.status !== 'ready' ? 'permission required' :
-    x402?.status === 'facilitator_auth_required' ? 'auth required' :
-    x402?.status === 'facilitator_auth_invalid' ? 'auth invalid' :
-    x402?.status === 'facilitator_rate_limited' ? 'rate limited' :
-    x402?.status === 'facilitator_unreachable' ? 'unreachable' :
-    x402?.status === 'unsupported_network_for_settlement' ? 'network blocked' :
-    x402?.status === 'degraded' ? 'degraded' :
-    x402?.status === 'missing' ? 'not configured' :
-    'simulated';
+  const paymentRailState = x402CapabilityState(x402);
+  const fuelCapabilityState: CapabilityState = buyerFuelReady
+    ? 'active'
+    : settleReady || paymentRailState === 'limited'
+      ? 'limited'
+      : 'off';
+  const badgeState = fuelCapabilityState === 'active' ? 'live' : fuelCapabilityState === 'limited' ? 'stale' : 'missing';
+  const badgeLabel = capabilityLabel(fuelCapabilityState);
 
   const permission = fuel?.activePermission;
   const fuelStatus =
@@ -175,12 +172,12 @@ export function FuelMeter() {
     <main className="flex-1 bg-bg p-5 flex flex-col gap-4 overflow-y-auto select-none pb-16 md:pb-5">
       <div className="flex items-center justify-between border-b border-line pb-4">
         <div>
-          <h1 className="text-[20px] font-display font-bold text-ink tracking-[-0.02em]">x402 Buyer Fuel</h1>
+          <h1 className="text-[20px] font-display font-bold text-ink tracking-[-0.02em]">Agent Fuel</h1>
           <p className="text-xs text-ink-3 mt-0.5 font-sans">
-            Agent-paid outgoing resources backed by Base Account spend permissions.
+            A wallet allowance for premium inference, data, and tools.
           </p>
         </div>
-        <StateBadge state={badgeState} label={badgeLabel} title="Source: /api/status x402.settleReady" />
+        <StateBadge state={badgeState} label={badgeLabel} title="Agent fuel readiness" />
       </div>
 
       <section className="bg-panel border border-line rounded-[var(--radius-lg)] p-4 shadow-[var(--shadow-card)]">
@@ -193,13 +190,13 @@ export function FuelMeter() {
             </div>
           </div>
           <span className={`text-[10px] font-bold px-2 py-1 rounded-full border ${fuel?.status === 'ready' ? 'text-ok bg-ok-soft border-ok/30' : 'text-warn bg-warn-soft border-warn/30'}`}>
-            buyer mode
+            User allowance
           </span>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs mt-4">
           <Metric label="Remaining fuel" amount={permission ? `${permission.remainingUsdc} USDC` : '-'} sub={permission ? 'permission balance' : 'no permission'} />
           <Metric label="Spent" amount={permission ? `${permission.spentUsdc} USDC` : '0 USDC'} sub={permission ? `limit ${permission.limitUsdc}` : 'no active spend'} />
-          <Metric label="Permission" amount={permission ? shortHash(permission.id) : 'missing'} sub={permission ? networkLabel(`eip155:${permission.chainId}`) : 'connect in autonomy'} />
+          <Metric label="Permission" amount={permission ? shortHash(permission.id) : 'missing'} sub={permission ? networkLabel(`eip155:${permission.chainId}`) : 'not enabled'} />
           <Metric label="Reservations" amount={String(fuel?.pendingReservations?.length || 0)} sub="in flight" />
         </div>
         {!settleReady && (
@@ -209,7 +206,16 @@ export function FuelMeter() {
         )}
         {settleReady && !payerCopy.ready && (
           <div className="mt-3 text-[11px] text-warn bg-warn-soft border border-warn/20 rounded-[var(--radius-md)] px-3 py-2 font-sans">
-            Buyer payer {payerCopy.label}: {payerCopy.detail}
+            Premium action payments are limited. Existing free scans remain available.
+          </div>
+        )}
+        {!permission && (
+          <div className="mt-4 flex flex-col gap-1 rounded-[var(--radius-md)] border border-accent/25 bg-accent-soft px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-xs font-bold text-ink">Enable a USDC fuel allowance</div>
+              <div className="mt-0.5 text-[11px] text-ink-2">Choose a budget and lifetime below. Base Account asks for confirmation.</div>
+            </div>
+            <span className="text-[10px] font-semibold text-accent-2">No funds are held by Miorail</span>
           </div>
         )}
         <div className="mt-4 border-t border-line/60 pt-4">
@@ -241,9 +247,9 @@ export function FuelMeter() {
               onClick={handleCreateFuelPermission}
               disabled={createDisabled}
               className="h-[42px] px-4 rounded-[var(--radius-md)] border border-accent/50 bg-accent text-white text-xs font-sans font-bold disabled:opacity-50 disabled:cursor-not-allowed"
-              title={isConnected ? 'Create a Base Account spend permission for x402 buyer fuel' : 'Connect wallet first'}
+              title={isConnected ? 'Create a Base Account allowance for Agent Fuel' : 'Connect wallet first'}
             >
-              Create USDC Fuel Permission
+              Enable USDC fuel
             </button>
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-ink-3">
@@ -264,7 +270,7 @@ export function FuelMeter() {
         </div>
       </section>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+      {DIAGNOSTICS_ENABLED && <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
         <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-3.5 shadow-[var(--shadow-card)]">
           <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Settlement rail</div>
           <div className="text-sm font-sans font-bold text-ink">{settleReady ? 'Ready' : 'Blocked'}</div>
@@ -285,7 +291,7 @@ export function FuelMeter() {
           <div className="text-sm font-sans font-bold text-ink">{x402?.builderCodeConfigured ? 'Configured' : 'Missing'}</div>
           <div className="text-[11px] text-ink-3 mt-2 border-t border-line/50 pt-2">{x402?.builderCodeAttribution || 'unavailable'}</div>
         </div>
-      </div>
+      </div>}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <section className="bg-panel border border-line rounded-[var(--radius-lg)] p-4 shadow-[var(--shadow-card)]">
@@ -306,24 +312,31 @@ export function FuelMeter() {
             <div className="text-[11px] font-sans font-semibold tracking-[0.08em] uppercase text-ink-3">Pricing schedule</div>
             <span className="text-[10px] font-mono bg-panel-2 px-2 py-0.5 rounded-full text-ink-3">read-only free</span>
           </div>
-          <div className="space-y-2 max-h-[170px] overflow-y-auto">
-            {pricing?.pricing?.map((p) => (
-              <div key={p.actionType} className="flex items-center justify-between gap-3 bg-panel-2 p-2 rounded-[var(--radius-md)] border border-line text-xs">
-                <div className="min-w-0">
-                  <div className="text-ink font-sans font-semibold truncate">{p.label}</div>
-                  <div className="text-[10px] text-ink-3 truncate">{p.description}</div>
-                </div>
-                <span className="shrink-0 text-accent-2 font-mono font-bold">{p.priceUsdc} USDC</span>
-              </div>
-            ))}
+          <div className="max-h-[190px] overflow-auto rounded-[var(--radius-md)] border border-line">
+            <table className="w-full border-collapse text-left text-xs">
+              <thead className="sticky top-0 bg-panel-2 text-[10px] uppercase tracking-[0.06em] text-ink-3">
+                <tr><th className="px-2.5 py-2 font-semibold">Category</th><th className="px-2.5 py-2 text-right font-semibold">Price</th></tr>
+              </thead>
+              <tbody>
+                {pricing?.pricing?.map((p) => (
+                  <tr key={p.actionType} className="border-t border-line">
+                    <td className="px-2.5 py-2">
+                      <div className="font-sans font-semibold text-ink">{p.label}</div>
+                      <div className="mt-0.5 text-[10px] text-ink-3">{p.description}</div>
+                    </td>
+                    <td className="whitespace-nowrap px-2.5 py-2 text-right font-mono font-bold text-accent-2">{p.priceUsdc} USDC</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </section>
       </div>
 
       <section className="bg-panel border border-line rounded-[var(--radius-lg)] p-4 shadow-[var(--shadow-card)]">
         <div className="flex items-center justify-between mb-3">
-          <div className="text-[11px] font-sans font-semibold tracking-[0.08em] uppercase text-ink-3">Settled buyer spend</div>
-          <span className="text-[10px] font-mono text-ink-3">source: x402_receipts</span>
+          <div className="text-[11px] font-sans font-semibold tracking-[0.08em] uppercase text-ink-3">Paid activity</div>
+          <span className="text-[10px] font-sans text-ink-3">Receipts save automatically</span>
         </div>
         {settledBuyerReceipts.length > 0 ? (
           <div className="space-y-1.5 max-h-[210px] overflow-y-auto">

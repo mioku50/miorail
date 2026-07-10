@@ -244,7 +244,7 @@ function evaluateContractSecurity(
   if (!required) return contractState(input, false, 'skipped');
   const provider = input.providerContext?.securityProvider || input.providerContext?.riskProvider || 'none';
   if (provider !== 'goplus') {
-    return contractState(input, true, 'blocked', ['GoPlus contract security is required for mainnet transfers']);
+    return contractState(input, true, 'blocked', ['A live contract security check is required for mainnet transfers']);
   }
 
   const results = input.tokenSecurity || [];
@@ -253,16 +253,16 @@ function evaluateContractSecurity(
   for (const address of addresses) {
     const result = results.find((entry) => entry.address.toLowerCase() === address.toLowerCase());
     if (!result || result.provider !== 'goplus' || result.status === 'failed' || result.status === 'unknown') {
-      warnings.push(`No usable GoPlus verdict for ${address}`);
+      warnings.push(`No usable contract security verdict for ${address}`);
       continue;
     }
     if (result.status === 'high-risk') {
-      warnings.push(result.summary || `GoPlus marked ${address} high-risk`);
+      warnings.push(result.summary || `Contract security check marked ${address} high-risk`);
       continue;
     }
     if (result.status === 'warning') {
       hasWarning = true;
-      warnings.push(result.summary || `GoPlus reported warnings for ${address}`);
+      warnings.push(result.summary || `Contract security check reported warnings for ${address}`);
     }
   }
 

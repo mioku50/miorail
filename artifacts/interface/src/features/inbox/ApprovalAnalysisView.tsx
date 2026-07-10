@@ -75,7 +75,7 @@ export function ApprovalAnalysisView({ approvalAnalysis }: { approvalAnalysis: a
       {scannerUnavailable ? (
         <div className="flex flex-col gap-2 bg-warn-soft border border-warn/20 rounded p-2.5 text-[11px]">
           <div className="text-warn font-semibold">
-            Approval scanner unavailable — Moralis CU limit reached. Try after reset or upgrade provider.
+            Approval review is temporarily limited. Try again after the service window resets.
           </div>
           {approvalAnalysis.note && (
             <div className="text-warn/90 leading-snug">{approvalAnalysis.note}</div>

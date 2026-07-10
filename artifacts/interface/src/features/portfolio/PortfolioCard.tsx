@@ -23,8 +23,7 @@ export function PortfolioCard({ portfolio, statusData, address, isPortfolioFetch
   const usdcToken = tokens.find((b: any) => b.symbol === 'USDC');
   const usdcBalance = usdcToken?.balanceFormatted;
   const displayAddress = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : '';
-  const isAlchemyRateLimited = portfolio?.providerCallSummary?.balances?.provider === 'alchemy'
-    && portfolio?.providerCallSummary?.balances?.status === 'rate_limited';
+  const isBalanceSourceRateLimited = portfolio?.providerCallSummary?.balances?.status === 'rate_limited';
 
   const nonEthTokens = tokens.filter((b: any) => b.symbol !== 'ETH');
   const sortedTokens = [...nonEthTokens].sort((a: any, b: any) => {
@@ -57,9 +56,9 @@ export function PortfolioCard({ portfolio, statusData, address, isPortfolioFetch
               {portfolioFreshnessLabel(portfolio)}
             </span>
           )}
-          {isAlchemyRateLimited ? (
+          {isBalanceSourceRateLimited ? (
             <span className="text-[10px] font-mono font-normal text-warn lowercase bg-warn-soft px-1.5 py-0.5 rounded border border-warn/20">
-              Alchemy rate-limited. Showing cached/native balance data.
+              Balance updates are limited. Showing cached/native data.
             </span>
           ) : portfolio.providerBudgetStatus?.exhausted && (
             <span className="text-[10px] font-mono font-normal text-warn lowercase bg-warn-soft px-1.5 py-0.5 rounded border border-warn/20">
@@ -73,8 +72,8 @@ export function PortfolioCard({ portfolio, statusData, address, isPortfolioFetch
       {isPortfolioError ? (
          <div className="text-[13px] text-risk bg-risk-soft p-3 rounded-md font-medium border border-risk/20">
            {portfolioError?.message?.includes('wallet') || portfolioError?.message?.includes('address') ? 'Wallet address not configured' :
-            portfolioError?.message?.includes('RPC') ? 'RPC provider not configured' :
-            portfolioError?.message?.includes('key') ? 'Provider key missing' :
+            portfolioError?.message?.includes('RPC') ? 'Base network data is unavailable' :
+            portfolioError?.message?.includes('key') ? 'Portfolio data is unavailable' :
             'Unable to load portfolio'}
          </div>
       ) : !address ? (

@@ -5,30 +5,32 @@ import { useStatus, useAutonomy, useResetAutonomy, usePortfolio, useCreateRecomm
 import { useUiStore } from '../../lib/state';
 import { isMainnetReadonly } from '../../lib/chain';
 import {
-  approvalProviderHint,
-  approvalProviderState,
   baseMcpConnectHref,
-  baseMcpConnectLabel,
-  baseMcpHint,
   baseMcpNeedsAuth,
-  formatApprovalProviderStatus,
-  formatBaseMcpStatus,
   portfolioFreshnessLabel,
 } from '../../lib/format';
-import { PlugZap, X } from 'lucide-react';
+import {
+  capabilityDot,
+  capabilityLabel,
+  capabilityState,
+  capabilityTone,
+  x402CapabilityState,
+  type CapabilityState,
+} from '../../lib/capabilityStatus';
+import { Check, Copy, PlugZap, X } from 'lucide-react';
 
-function Dot({ status }: { status?: string }) {
-  let bg = 'bg-ink-3 shadow-none';
-  if (status === 'connected' || status === 'configured' || status === 'ok' || status === 'live') {
-    bg = 'bg-ok shadow-[0_0_6px_rgba(61,220,151,0.6)]';
-  } else if (status === 'stale' || status === 'partial' || status === 'simulated' || status === 'degraded') {
-    bg = 'bg-warn shadow-[0_0_6px_rgba(255,180,84,0.6)]';
-  } else if (status === 'needs_reauth') {
-    bg = 'bg-warn shadow-[0_0_6px_rgba(255,180,84,0.6)]';
-  } else if (status === 'failed' || status === 'error' || status === 'blocked' || status === 'unreachable' || status === 'unsupported') {
-    bg = 'bg-risk shadow-[0_0_6px_rgba(255,92,92,0.6)]';
-  }
-  return <span className={`w-2 h-2 rounded-full shrink-0 ${bg}`} />;
+function CapabilityLine({ label, state }: { label: string; state: CapabilityState }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-xs text-ink-2 font-sans">{label}</span>
+      <div className="flex items-center gap-1.5">
+        <span className={`w-2 h-2 rounded-full shrink-0 ${capabilityDot(state)}`} />
+        <span className={`text-xs font-sans font-semibold ${state === 'active' ? 'text-ok' : state === 'limited' ? 'text-warn' : 'text-ink-3'}`}>
+          {capabilityLabel(state)}
+        </span>
+      </div>
+    </div>
+  );
 }
 
 function SectionHeader({ title }: { title: string }) {
@@ -51,32 +53,10 @@ export function OpsRail({ onClose }: OpsRailProps) {
   const mcpReturnTo = typeof window === 'undefined' ? '/' : window.location.pathname || '/';
   const x402Status = sd?.x402?.status;
   const x402Live = sd?.x402?.settleReady === true;
-  const x402Unavailable = !x402Live && (
-    x402Status === 'facilitator_auth_required' ||
-    x402Status === 'facilitator_auth_invalid' ||
-    x402Status === 'facilitator_rate_limited' ||
-    x402Status === 'facilitator_unreachable' ||
-    x402Status === 'unsupported_network_for_settlement' ||
-    x402Status === 'degraded'
-  );
-  const x402RailLabel =
-    x402Live ? 'live' :
-    x402Status === 'facilitator_auth_required' ? 'auth' :
-    x402Status === 'facilitator_auth_invalid' ? 'invalid' :
-    x402Status === 'facilitator_rate_limited' ? 'limited' :
-    x402Status === 'facilitator_unreachable' ? 'unreachable' :
-    x402Status === 'unsupported_network_for_settlement' ? 'blocked' :
-    x402Status === 'degraded' ? 'degraded' :
-    x402Status === 'missing' ? 'missing' :
-    'simulated';
-  const x402RailClass =
-    x402Live
-      ? 'bg-ok-soft text-ok'
-      : x402Status === 'missing'
-        ? 'bg-risk-soft text-risk'
-        : 'bg-warn-soft text-warn';
+  const x402State = x402CapabilityState({ settleReady: x402Live, status: x402Status });
 
   const [portfolioRequested, setPortfolioRequested] = useState(false);
+  const [addressCopied, setAddressCopied] = useState(false);
 
   useEffect(() => {
     setPortfolioRequested(false);
@@ -87,6 +67,18 @@ export function OpsRail({ onClose }: OpsRailProps) {
     refetchInterval: false,
   });
   const createRecommendation = useCreateRecommendation();
+
+  const copyAddress = async () => {
+    if (!address || !navigator.clipboard) return;
+    try {
+      await navigator.clipboard.writeText(address);
+      setAddressCopied(true);
+      showToast('Wallet address copied');
+      window.setTimeout(() => setAddressCopied(false), 1400);
+    } catch {
+      showToast('Copy is unavailable in this browser');
+    }
+  };
 
   const handleAnalyzePortfolio = () => {
     if (!address) return;
@@ -129,42 +121,26 @@ export function OpsRail({ onClose }: OpsRailProps) {
   const runtimeIsMainnetReadonly = runtimeChainEnv === 'mainnet-readonly';
   const isStale = runtimeIsSepolia && (autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory);
   const isExpired = runtimeIsSepolia && (autonomyState?.isExpiredMemory || autonomyState?.sessionKey?.isExpiredMemory || autonomyState?.status === 'expired' || autonomyState?.sessionKey?.status === 'expired');
-  const autonomyBadgeClass = !runtimeIsSepolia
-    ? sd?.autonomy?.databaseConfigured
-      ? 'bg-ok-soft text-ok'
-      : 'bg-warn-soft text-warn'
-    : isStale || isExpired
-      ? 'bg-warn-soft text-warn'
-      : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract'
-        ? 'bg-ok-soft text-ok'
-        : autonomyState?.sessionKey?.status === 'configured'
-          ? 'bg-ok-soft text-ok'
-          : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch
-            ? 'bg-risk-soft text-risk'
-            : 'bg-panel-2 text-ink-3';
-  const autonomyBadgeLabel = !runtimeIsSepolia
-    ? sd?.autonomy?.databaseConfigured ? 'database-backed' : 'database missing'
-    : isStale
-      ? 'stale test memory'
-      : isExpired
-        ? 'expired memory config'
-        : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract'
-          ? 'testnet verified'
-          : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch
-            ? 'revoked'
-            : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory'
-              ? 'configured in app'
-              : 'missing';
+  const autonomyStateLabel: CapabilityState = autonomyState?.sessionKey?.killSwitch
+    || autonomyState?.sessionKey?.status === 'revoked'
+    || autonomyState?.sessionKey?.status === 'inactive'
+    ? 'off'
+    : autonomyState?.sessionKey?.executionReady
+      || (runtimeIsSepolia && autonomyState?.sessionKey?.status === 'configured' && !isStale && !isExpired)
+      ? 'active'
+      : autonomyState?.sessionKey?.status === 'configured' || isStale || isExpired
+        ? 'limited'
+        : 'off';
   const autonomySummary = !runtimeIsSepolia
-    ? sd?.autonomy?.databaseConfigured ? 'DB-backed permissions' : 'Database not configured'
+    ? autonomyState?.sessionKey?.status === 'configured' ? 'Spending limits saved' : 'Set spending limits'
     : autonomyState?.sessionKey?.status === 'configured'
       ? `Active limit: ${autonomyState.sessionKey.dailyLimitUsdc} USDC/day`
-      : 'Session key not configured';
+      : 'Permission not configured';
   const autonomyHint = !runtimeIsSepolia
-    ? 'Mainnet server execution is disabled; wallet confirmation remains required.'
+    ? 'Every prepared action still requires wallet approval.'
     : autonomyState?.sessionKey?.status === 'configured'
-      ? 'Autonomy running in app memory.'
-      : 'Kill switch active by default. Manual sign required.';
+      ? 'Bounded actions use the saved limits.'
+      : 'Manual wallet approval remains required.';
 
   return (
     <aside className="w-[240px] min-w-[240px] shrink-0 border-r border-line bg-panel-2 flex flex-col gap-4 overflow-y-auto select-none h-full">
@@ -190,68 +166,51 @@ export function OpsRail({ onClose }: OpsRailProps) {
             <div className="flex items-center justify-between">
               <span className="text-xs text-ink-2 font-sans">Status</span>
               <div className="flex items-center gap-1.5">
-                <Dot status={isConnected ? 'connected' : 'disconnected'} />
+                <span className={`w-2 h-2 rounded-full ${capabilityDot(isConnected ? 'active' : 'off')}`} />
                 <span className={`text-xs font-sans font-medium ${isConnected ? 'text-ok' : 'text-warn'}`}>
-                  {isConnected ? 'Connected' : 'Offline'}
+                  {isConnected ? 'Active' : 'Off'}
                 </span>
               </div>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-xs text-ink-2 font-sans">Address</span>
-              <span className="text-xs text-ink font-mono">{shortAddr}</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-ink font-mono">{shortAddr}</span>
+                {address && (
+                  <button
+                    type="button"
+                    onClick={copyAddress}
+                    className="grid h-6 w-6 place-items-center rounded text-ink-3 hover:bg-panel-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                    aria-label="Copy wallet address"
+                    title="Copy wallet address"
+                  >
+                    {addressCopied ? <Check size={12} /> : <Copy size={12} />}
+                  </button>
+                )}
+              </div>
             </div>
             <div className="flex items-center justify-between border-t border-line/50 pt-2">
               <span className="text-xs text-ink-2 font-sans">Chain</span>
-              <span className="text-xs text-ink font-sans font-medium">Base (8453)</span>
+              <span className="rounded-full border border-accent/20 bg-accent-soft px-2 py-0.5 text-[10px] font-semibold text-accent-2">
+                {runtimeIsSepolia ? 'Base Sepolia · 84532' : 'Base · 8453'}
+              </span>
             </div>
           </div>
         </div>
 
-        {/* Provider Pipeline Status */}
+        {/* One user-facing source of truth: capabilities, never vendors. */}
         <div>
-          <SectionHeader title="Providers" />
+          <SectionHeader title="Capabilities" />
           <div className="bg-panel border border-line rounded-[var(--radius-md)] p-3 flex flex-col gap-2 shadow-[var(--shadow-card)]">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-ink-2 font-sans">Token Balances</span>
-              <div className="flex items-center gap-1.5">
-                <Dot status={sd?.tokenBalances?.status} />
-                <span className="text-xs text-ink font-sans font-medium">{sd?.tokenBalances?.provider || 'none'}</span>
-              </div>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-ink-2 font-sans">Price Engine</span>
-              <div className="flex items-center gap-1.5">
-                <Dot status={sd?.prices?.status} />
-                <span className="text-xs text-ink font-sans font-medium">{sd?.prices?.provider || 'none'}</span>
-              </div>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-ink-2 font-sans">Security Risk</span>
-              <div className="flex items-center gap-1.5">
-                <Dot status={sd?.risk?.status} />
-                <span className="text-xs text-ink font-sans font-medium">{sd?.risk?.provider || 'none'}</span>
-              </div>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-ink-2 font-sans">Approval Scanner</span>
-              <div className="flex items-center gap-1.5">
-                <Dot status={approvalProviderState(sd?.approvals?.status)} />
-                <span className="text-xs text-ink font-sans font-medium">{sd ? formatApprovalProviderStatus(sd.approvals, sd.budgets) : 'none'}</span>
-              </div>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-ink-2 font-sans">base-mcp</span>
-              <div className="flex items-center gap-1.5">
-                <Dot status={sd?.baseMcp?.status} />
-                <span className="text-xs text-ink font-sans font-medium">{formatBaseMcpStatus(sd?.baseMcp, 'none')}</span>
-              </div>
-            </div>
+            <CapabilityLine label="Balances" state={capabilityState(sd?.tokenBalances?.status)} />
+            <CapabilityLine label="Market prices" state={capabilityState(sd?.prices?.status)} />
+            <CapabilityLine label="Contract checks" state={capabilityState(sd?.risk?.status)} />
+            <CapabilityLine
+              label="Approval review"
+              state={capabilityState(sd?.budgets?.moralis?.budgetExhausted ? sd.budgets.moralis.status : sd?.approvals?.status)}
+            />
+            <CapabilityLine label="Wallet tools" state={capabilityState(sd?.baseMcp?.status)} />
             <div className="border-t border-line/50 pt-2.5 mt-0.5 flex flex-col gap-2">
-              {baseMcpHint(sd?.baseMcp) && (
-                <div className="text-[10px] font-sans text-ink-3 bg-panel-2 px-2 py-1.5 rounded border border-line leading-normal">
-                  {baseMcpHint(sd?.baseMcp)}
-                </div>
-              )}
               {baseMcpNeedsAuth(sd?.baseMcp) && (
                 <div className="text-[10px] font-sans bg-panel-2 px-2 py-1.5 rounded border border-line leading-normal">
                   {isConnected ? (
@@ -260,7 +219,7 @@ export function OpsRail({ onClose }: OpsRailProps) {
                       className="inline-flex w-full items-center justify-center gap-1.5 text-accent font-bold"
                     >
                       <PlugZap size={12} />
-                      {baseMcpConnectLabel(sd?.baseMcp)}
+                      {sd?.baseMcp?.auth?.connected ? 'Reconnect wallet tools' : 'Connect wallet tools'}
                     </a>
                   ) : (
                     <span className="inline-flex w-full items-center justify-center gap-1.5 text-ink-3 font-bold">
@@ -270,14 +229,14 @@ export function OpsRail({ onClose }: OpsRailProps) {
                   )}
                 </div>
               )}
-              {approvalProviderHint(sd?.approvals, sd?.budgets) && (
+              {capabilityState(sd?.budgets?.moralis?.budgetExhausted ? sd.budgets.moralis.status : sd?.approvals?.status) === 'limited' && (
                 <div className="text-[10px] font-sans text-warn bg-warn-soft px-2 py-1.5 rounded border border-warn/20 leading-normal">
-                  {approvalProviderHint(sd?.approvals, sd?.budgets)}
+                  Approval review is temporarily limited. Existing execution guards remain active.
                 </div>
               )}
               {isProviderMissingOrDisabled && (
                 <div className="text-[10px] font-sans text-warn bg-warn-soft px-2 py-1.5 rounded border border-warn/20 leading-normal">
-                  Read providers missing or disabled. Configure MORALIS_API_KEY / TOKEN_BALANCES_PROVIDER.
+                  Portfolio data is unavailable. Manual wallet actions remain protected.
                 </div>
               )}
               {isPortfolioError && (
@@ -291,7 +250,7 @@ export function OpsRail({ onClose }: OpsRailProps) {
                 disabled={!address || isPortfolioFetching || createRecommendation.isPending}
                 className="w-full text-[11px] font-mono px-2.5 py-1.5 rounded border border-line/60 bg-panel-2 text-ink hover:bg-bg hover:border-line font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 shadow-sm"
               >
-                {isPortfolioFetching || createRecommendation.isPending ? 'Analyzing…' : 'Analyze Base Portfolio'}
+                {isPortfolioFetching || createRecommendation.isPending ? 'Scanning…' : 'Scan portfolio'}
               </button>
               {portfolio && (
                 <div className="flex flex-col gap-1 text-[10px] font-sans text-ink-3">
@@ -330,19 +289,19 @@ export function OpsRail({ onClose }: OpsRailProps) {
 
         {/* Fuel State */}
         <div>
-          <SectionHeader title="x402 Fuel" />
+          <SectionHeader title="Agent Fuel" />
           <Link href="/fuel" className="block bg-panel border border-line rounded-[var(--radius-md)] p-3 hover:border-accent/40 hover:-translate-y-px transition-all duration-150 shadow-[var(--shadow-card)]">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-ink-2 font-sans">USDC Budget</span>
-              <span className={`text-[10px] font-sans font-medium px-2 py-0.5 rounded-full ${x402RailClass}`}>
-                {x402RailLabel}
+              <span className={`text-[10px] font-sans font-semibold px-2 py-0.5 rounded-full border ${capabilityTone(x402State)}`}>
+                {capabilityLabel(x402State)}
               </span>
             </div>
             <div className="text-xs font-sans font-medium text-ink-2 bg-panel-2 px-2 py-1.5 rounded-[var(--radius-sm)] border border-line my-1 text-center">
-              {x402Live ? 'Settlement ledger wired' : x402Unavailable ? 'Settlement blocked' : 'No spend source wired'}
+              {x402Live ? 'Receipts save automatically' : x402State === 'limited' ? 'Premium actions are limited' : 'Fuel permission is off'}
             </div>
             <div className="text-[10px] text-ink-3 mt-1 font-sans leading-tight">
-              {x402Live ? 'Real receipts recorded after paid calls.' : x402Unavailable ? 'Paid routes fail closed.' : 'Click to configure x402.'}
+              {x402Live ? 'Paid actions use only your saved allowance.' : x402State === 'limited' ? 'Paid actions fail closed until service recovers.' : 'Open Fuel to set a spending allowance.'}
             </div>
           </Link>
         </div>
@@ -353,8 +312,8 @@ export function OpsRail({ onClose }: OpsRailProps) {
           <div className="bg-panel border border-line rounded-[var(--radius-md)] p-3 flex flex-col gap-2 shadow-[var(--shadow-card)]">
             <div className="flex items-center justify-between">
               <span className="text-xs text-ink-2 font-sans">Session Key</span>
-              <span className={`text-[10px] font-sans font-medium px-2 py-0.5 rounded-full ${autonomyBadgeClass}`}>
-                {autonomyBadgeLabel}
+              <span className={`text-[10px] font-sans font-semibold px-2 py-0.5 rounded-full border ${capabilityTone(autonomyStateLabel)}`}>
+                {capabilityLabel(autonomyStateLabel)}
               </span>
             </div>
             {runtimeIsSepolia && (isStale || isExpired) && (

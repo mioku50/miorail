@@ -118,7 +118,7 @@ export function ActionsBuilder() {
               </div>
               <div>
                 <span className="font-semibold text-ink-2">Expected Effect: </span>
-                <span className="text-ink">{isMainnetReadonly ? 'User-confirmed action plan on mainnet-readonly' : `Simulate action execution on ${import.meta.env.VITE_CHAIN_ENV || 'sepolia'}`}</span>
+                <span className="text-ink">{isMainnetReadonly ? 'Wallet approval plan · read-only runtime' : `Preview action on ${import.meta.env.VITE_CHAIN_ENV || 'sepolia'}`}</span>
               </div>
               <div className="flex flex-wrap gap-1.5 mt-1">
                 <span className="px-2 py-0.5 rounded text-[11px] font-medium border bg-panel text-ink-2 border-line">

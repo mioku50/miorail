@@ -52,11 +52,15 @@ export function TopBar({ onHamburgerClick, drawerOpen }: TopBarProps) {
 
       <div className="flex-1" />
 
-      {/* Scanners indicator */}
-      <div className="hidden sm:flex items-center gap-[7px] bg-panel-2 text-ink-3 border border-line px-2.5 py-1 rounded-full text-xs font-medium">
+      {/* Background scan state — plain product language with an actionable tooltip. */}
+      <div
+        className="hidden sm:flex items-center gap-[7px] bg-panel-2 text-ink-2 border border-line px-2.5 py-1 rounded-full text-xs font-medium"
+        title="Background scanning is paused. Manual portfolio scans remain available."
+        aria-label="Background scans paused. Manual scans remain available."
+      >
         <span className="w-1.5 h-1.5 rounded-full bg-ink-3" />
-        <span className="hidden lg:inline">scanners off</span>
-        <span className="lg:hidden">off</span>
+        <span className="hidden lg:inline">Background scans paused</span>
+        <span className="lg:hidden">Scans paused</span>
       </div>
 
       {/* Command palette button */}

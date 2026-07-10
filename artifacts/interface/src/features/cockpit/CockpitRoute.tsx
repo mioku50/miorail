@@ -3,6 +3,8 @@ import { StateBadge } from '@mioagent/ui';
 import { useStatus, useAutonomy, useKillAutonomy, useResetAutonomy } from '@mioagent/api-client-react';
 import { RiskQueue, RiskQueueContent } from './RiskQueue';
 import { useActionsFeed, useChatHistory } from '@mioagent/api-client-react';
+import { Link } from 'wouter';
+import { capabilityLabel, type CapabilityState } from '../../lib/capabilityStatus';
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
@@ -48,6 +50,15 @@ export function CockpitRoute() {
 
   const isStale = autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory;
   const isExpired = autonomyState?.isExpiredMemory || autonomyState?.sessionKey?.isExpiredMemory || autonomyState?.status === 'expired' || autonomyState?.sessionKey?.status === 'expired';
+  const permissionState: CapabilityState = autonomyState?.sessionKey?.killSwitch
+    || autonomyState?.sessionKey?.status === 'revoked'
+    || autonomyState?.sessionKey?.status === 'inactive'
+    ? 'off'
+    : autonomyState?.sessionKey?.executionReady || (autonomyState?.sessionKey?.status === 'configured' && !isStale && !isExpired)
+      ? 'active'
+      : isStale || isExpired
+        ? 'limited'
+        : 'off';
 
   return (
     <div className="flex-1 flex overflow-hidden w-full h-full">
@@ -63,7 +74,7 @@ export function CockpitRoute() {
           <div className="flex items-center gap-3">
             <StateBadge
               state={isStale ? 'stale' : isExpired ? 'stale' : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'live' : autonomyState?.sessionKey?.status === 'configured' ? 'live' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'failed' : 'missing'}
-              label={isStale ? 'stale test memory' : isExpired ? 'expired memory config' : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'testnet verified' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'revoked' : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory' ? 'configured in app' : 'missing'}
+              label={capabilityLabel(permissionState)}
               title={isStale ? 'Stale test memory detected. Click Reset to clear.' : isExpired ? 'Memory autonomy config has expired. Click Reset Memory to clear.' : autonomyState?.autonomy?.source === 'base-sepolia-contract' ? 'Verified on Base Sepolia contract' : autonomyState?.sessionKey?.status === 'configured' ? 'Session key configured in app memory' : 'No session key is active'}
             />
             {(isStale || isExpired) && (
@@ -84,11 +95,11 @@ export function CockpitRoute() {
             <div>
               <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">What Miorail Can Do Now</div>
               <div className="text-[11px] text-ink-2 leading-relaxed font-sans">
-                Scan wallet token balances via Moralis, query prices via CoinGecko, evaluate token security via GoPlus, and generate risk recommendations.
+                Scan wallet balances, refresh market prices, check token contracts, and create risk recommendations.
               </div>
             </div>
-            <div className="text-[10px] font-mono text-ok bg-ok-soft px-2 py-0.5 rounded-full w-fit">
-              Status: Active & Live
+            <div className="text-[10px] font-sans font-semibold text-ok bg-ok-soft border border-ok/20 px-2 py-0.5 rounded-full w-fit">
+              Active
             </div>
           </div>
 
@@ -99,21 +110,21 @@ export function CockpitRoute() {
                 Onchain execution is disabled on Base Mainnet. No revoke transactions or batched swaps can be broadcast until explicitly unlocked.
               </div>
             </div>
-            <div className="text-[10px] font-mono text-warn bg-warn-soft px-2 py-0.5 rounded-full w-fit">
-              Safety: 100% Read-Only
+            <div className="text-[10px] font-sans font-semibold text-warn bg-warn-soft border border-warn/20 px-2 py-0.5 rounded-full w-fit">
+              Limited · read-only
             </div>
           </div>
 
           <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-3.5 flex flex-col justify-between gap-2 shadow-[var(--shadow-card)]">
             <div>
-              <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Unlocks After x402 / Session Key</div>
+              <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">What remains to unlock</div>
               <div className="text-[11px] text-ink-2 leading-relaxed font-sans">
-                Autonomous background execution within strict USDC daily limits, paid HTTP 402 data queries, and automated portfolio rebalancing.
+                Save a wallet-bound allowance, choose recipients and limits, then keep final approval in Base Account.
               </div>
             </div>
-            <div className="text-[10px] font-mono text-accent-2 bg-accent-soft px-2 py-0.5 rounded-full w-fit">
-              Next: Phase 7.4
-            </div>
+            <Link href="/configure" className="inline-flex w-fit items-center rounded-full border border-accent/25 bg-accent-soft px-2.5 py-1 text-[10px] font-sans font-bold text-accent-2 hover:border-accent/50 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+              Review unlock steps →
+            </Link>
           </div>
         </section>
 
@@ -124,7 +135,7 @@ export function CockpitRoute() {
             <div className="bg-panel-2 p-3 rounded-[var(--radius-md)] border border-line">
               <div className="font-sans font-semibold text-ink mb-1">1. Read-Only Intelligence</div>
               <p className="text-ink-3 text-[11px] leading-relaxed font-sans">
-                Continuous scanning of wallet token balances, price deviations, and GoPlus contract security heuristics without holding keys.
+                Continuous balance, price, and contract checks without holding wallet keys.
               </p>
             </div>
             <div className="bg-panel-2 p-3 rounded-[var(--radius-md)] border border-line">
@@ -157,13 +168,7 @@ export function CockpitRoute() {
                         ? 'bg-risk-soft text-risk'
                         : 'bg-panel-2 text-ink-3'
                 }`}>
-                  {autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract'
-                    ? 'testnet verified'
-                    : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch
-                      ? 'revoked'
-                      : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory'
-                        ? 'configured in app'
-                        : 'missing'}
+                  {capabilityLabel(permissionState)}
                 </span>
               </div>
               <div className="grid grid-cols-2 gap-2.5 text-xs">
@@ -236,9 +241,9 @@ export function CockpitRoute() {
               <div className="flex items-start gap-2 bg-panel p-2.5 rounded-[var(--radius-md)] border border-line">
                 <span className={anyProviderLive ? "text-ok font-bold" : "text-warn font-bold"}>{anyProviderLive ? "☑" : "☐"}</span>
                 <div>
-                  <div className="font-sans font-semibold text-ink">1. Read-Only Providers Wired</div>
+                  <div className="font-sans font-semibold text-ink">1. Read-only intelligence</div>
                   <div className="text-[11px] text-ink-3 mt-0.5 font-sans">
-                    {anyProviderLive ? `Active: ${[balancesLive && sd?.tokenBalances?.provider, pricesLive && sd?.prices?.provider, securityLive && sd?.risk?.provider].filter(Boolean).join(', ')}` : "No read-only providers connected (balances, prices, or security)."}
+                    {anyProviderLive ? 'Balances, market prices, or contract checks are active.' : 'Balances, prices, and contract checks are currently off.'}
                   </div>
                 </div>
               </div>
@@ -246,7 +251,7 @@ export function CockpitRoute() {
                 <span className={autonomyState?.sessionKey?.status === 'configured' ? "text-ok font-bold" : "text-ink-3 font-bold"}>{autonomyState?.sessionKey?.status === 'configured' ? "☑" : "☐"}</span>
                 <div>
                   <div className="font-sans font-semibold text-ink">2. Configure Session Key & Whitelist</div>
-                  <div className="text-[11px] text-ink-3 mt-0.5 font-sans">{autonomyState?.sessionKey?.status === 'configured' ? `Configured in app memory: ${autonomyState.sessionKey.dailyLimitUsdc} USDC daily limit.` : 'Assign daily USDC spend limits and approved contract targets.'}</div>
+                  <div className="text-[11px] text-ink-3 mt-0.5 font-sans">{autonomyState?.sessionKey?.status === 'configured' ? `Saved limit: ${autonomyState.sessionKey.dailyLimitUsdc} USDC per day.` : 'Assign daily USDC spend limits and approved contract targets.'}</div>
                 </div>
               </div>
               <div className="flex items-start gap-2 bg-panel p-2.5 rounded-[var(--radius-md)] border border-line opacity-80">

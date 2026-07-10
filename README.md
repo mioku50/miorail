@@ -213,6 +213,8 @@ Miorail keeps autonomous spend permissions fail-closed by default:
 
 Provider readiness is based on evidence, not configuration alone: GoPlus is reported as connected only after a usable token scan. The same health state is shared by the status endpoint, scanner output, and execution guard.
 
+The production interface exposes capability states (`Active`, `Limited`, `Off`) instead of vendor and transport details. The regular Configure screen contains only wallet-bound permissions, limits, recipients, lifetime, and the kill switch. Operators can build the separate `/diagnostics` surface with `VITE_ENABLE_DIAGNOSTICS=true`; keep it disabled in user builds.
+
 The Configure screen exposes the four independent execution gates: runtime/global flag, per-user mainnet opt-in, DB policy plus wallet match, and mandatory Base Account approval. A saved policy can therefore be honestly shown as **staged** while the runtime remains `mainnet-readonly`.
 
 The legacy Base Sepolia helper is read-only. API routes no longer read `TESTNET_PRIVATE_KEY` or `PRIVATE_KEY`; testnet mutations must be signed by a connected wallet and submitted with transaction proof.

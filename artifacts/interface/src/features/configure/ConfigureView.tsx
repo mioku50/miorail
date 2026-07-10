@@ -26,6 +26,7 @@ import {
 import { StateBadge, type StateKind } from '@mioagent/ui';
 import { useUiStore } from '../../lib/state';
 import { PlugZap } from 'lucide-react';
+import { capabilityLabel, type CapabilityState } from '../../lib/capabilityStatus';
 
 function tbState(s?: string): StateKind {
   if (s === 'connected') return 'live';
@@ -47,7 +48,20 @@ function Row({ label, children, last }: { label: string; children: ReactNode; la
 
 const Checking = () => <span className="text-xs text-ink-3 font-mono">Checking...</span>;
 
-export function ConfigureView() {
+function userBlockedReason(reason: string): string {
+  const labels: Record<string, string> = {
+    mainnet_readonly: 'Read-only safety mode is on',
+    mainnet_execution_disabled: 'Action preparation is paused',
+    mainnet_opt_in_required: 'Mainnet permission is required',
+    kill_switch: 'Kill switch is active',
+    permission_expired: 'Permission has expired',
+    autonomy_policy_missing: 'Spending limits are not saved',
+    autonomy_database_unavailable: 'Saved limits are temporarily unavailable',
+  };
+  return labels[reason] || 'A safety requirement is not ready';
+}
+
+export function ConfigureView({ diagnosticsOnly = false }: { diagnosticsOnly?: boolean }) {
   const { address } = useAccount();
   const chainId = useChainId();
   const { switchChain } = useSwitchChain();
@@ -66,17 +80,17 @@ export function ConfigureView() {
 
   const configMut = useConfigureAutonomy({
     onSuccess: (res) => {
-      showToast('Bounded autonomy policy saved');
+      showToast('Spending limits saved');
       const ready = res.state.sessionKey.executionReady;
       setActionStatus({
         type: 'success',
         msg: ready
-          ? 'Policy is ready. Every action still requires approval in Base Account.'
-          : 'Policy saved in staged mode. Resolve the execution gates shown below before it can prepare approvals.',
+          ? 'Limits are active. Every action still requires approval in Base Account.'
+          : 'Limits are saved. Complete the readiness steps above before Miorail can prepare an approval.',
       });
     },
     onError: (err) => {
-      setActionStatus({ type: 'error', msg: err?.message || 'Failed to save bounded autonomy policy' });
+      setActionStatus({ type: 'error', msg: err?.message || 'Failed to save spending limits' });
     },
   });
 
@@ -123,9 +137,18 @@ export function ConfigureView() {
   const addressesValid = whitelist.length > 0 && whitelist.every((entry) => /^0x[0-9a-fA-F]{40}$/.test(entry));
   const policyFormValid = Boolean(address) && limitsValid && addressesValid && (!mainnetOptIn || acknowledgeMainnetRisk);
   const policy = autonomyState?.sessionKey;
-  const globalGateReady = runtimeChainEnv === 'mainnet' && sd?.autonomy?.mainnetExecutionEnabled === true;
   const policyConfigured = policy?.source === 'database' && policy.status === 'configured' && !policy.killSwitch;
   const walletGateReady = Boolean(address && policy?.walletAddress && address.toLowerCase() === policy.walletAddress.toLowerCase());
+  const sepoliaPermissionState: CapabilityState = autonomyState?.sessionKey?.status === 'configured' && !isStale && !isExpired
+    ? 'active'
+    : isStale || isExpired
+      ? 'limited'
+      : 'off';
+  const mainnetPermissionState: CapabilityState = policy?.executionReady
+    ? 'active'
+    : policyConfigured
+      ? 'limited'
+      : 'off';
 
   const handleSavePolicy = () => {
     setActionStatus(null);
@@ -145,15 +168,19 @@ export function ConfigureView() {
     <main className="flex-1 bg-bg p-5 flex flex-col gap-5 overflow-y-auto select-none pb-16 md:pb-5">
       <div className="flex items-center justify-between border-b border-line pb-3">
         <div>
-          <h1 className="text-[20px] font-display font-bold text-ink tracking-[-0.02em]">System & Autonomy Configuration</h1>
+          <h1 className="text-[20px] font-display font-bold text-ink tracking-[-0.02em]">
+            {diagnosticsOnly ? 'Operator Diagnostics' : 'Spending & Safety'}
+          </h1>
           <p className="text-[12px] text-ink-3 mt-0.5">
-            Manage provider connections, DB-backed spend permissions, and autonomy kill-switch boundaries.
+            {diagnosticsOnly
+              ? 'Vendor, transport, and runtime details for operators. Hidden from production user builds.'
+              : 'Set wallet-bound limits, allowed recipients, permission lifetime, and the kill switch.'}
           </p>
         </div>
       </div>
 
       {/* Autonomy & Session Key Configuration (Base Sepolia Testnet) */}
-      {runtimeIsSepolia ? (
+      {!diagnosticsOnly && (runtimeIsSepolia ? (
       <section className="bg-panel border border-line rounded-xl p-4 flex flex-col gap-4">
         <div className="flex items-center justify-between border-b border-line pb-3">
           <div>
@@ -164,7 +191,7 @@ export function ConfigureView() {
           </div>
           <StateBadge
             state={isStale ? 'stale' : isExpired ? 'stale' : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'live' : autonomyState?.sessionKey?.status === 'configured' ? 'live' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'failed' : 'missing'}
-            label={isStale ? 'stale test memory' : isExpired ? 'expired memory config' : autonomyState?.autonomy?.source === 'base-sepolia-contract' || autonomyState?.sessionKey?.source === 'base-sepolia-contract' ? 'testnet verified' : autonomyState?.sessionKey?.status === 'revoked' || autonomyState?.sessionKey?.status === 'inactive' || autonomyState?.sessionKey?.killSwitch ? 'revoked' : autonomyState?.autonomy?.source === 'memory' || autonomyState?.sessionKey?.source === 'memory' ? 'configured in app' : 'missing'}
+            label={capabilityLabel(sepoliaPermissionState)}
             title={isStale ? 'Stale test memory detected. Click Reset Memory State below.' : isExpired ? 'Memory autonomy config has expired. Click Reset Memory State below.' : autonomyState?.autonomy?.source === 'base-sepolia-contract' ? 'Verified on Base Sepolia contract' : autonomyState?.sessionKey?.status === 'configured' ? 'Session key configured in app memory' : 'No session key is active'}
           />
         </div>
@@ -259,33 +286,29 @@ export function ConfigureView() {
       <section className="bg-panel border border-line rounded-xl p-4 flex flex-col gap-4">
         <div className="flex items-center justify-between border-b border-line pb-3">
           <div>
-            <h3 className="text-sm font-bold text-ink">Bounded Mainnet Autonomy</h3>
+            <h3 className="text-sm font-bold text-ink">Mainnet spending limits</h3>
             <p className="text-xs text-ink-3 mt-0.5">
-              Hard limits are enforced before an unsigned Base Account approval is prepared. The server never signs or broadcasts.
+              Miorail checks every amount and recipient before asking Base Account for approval.
             </p>
           </div>
           <StateBadge
             state={policy?.executionReady ? 'live' : policyConfigured ? 'stale' : policy?.killSwitch ? 'failed' : 'missing'}
-            label={policy?.executionReady ? 'ready for approvals' : policyConfigured ? 'policy staged' : policy?.killSwitch ? 'kill switch active' : 'not configured'}
-            title="Source: DB-backed Autonomous Execution Gateway"
+            label={capabilityLabel(mainnetPermissionState)}
+            title="Wallet-bound spending permission readiness"
           />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-px overflow-hidden rounded-lg border border-line bg-line" aria-label="Mainnet execution gates">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-px overflow-hidden rounded-lg border border-line bg-line" aria-label="Mainnet action readiness">
           <div className="bg-panel-2 p-3">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.06em] text-ink-3"><span className="font-mono">01</span> Runtime gate</div>
-            <div className={`mt-1.5 text-xs font-bold ${globalGateReady ? 'text-ok' : 'text-warn'}`}>{globalGateReady ? 'Mainnet enabled' : runtimeIsMainnetReadonly ? 'Read-only runtime' : 'Global flag off'}</div>
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.06em] text-ink-3"><span className="font-mono">01</span> Wallet</div>
+            <div className={`mt-1.5 text-xs font-bold ${address && (!policyConfigured || walletGateReady) ? 'text-ok' : 'text-warn'}`}>{!address ? 'Connect wallet' : policyConfigured && !walletGateReady ? 'Wallet does not match' : 'Connected'}</div>
           </div>
           <div className="bg-panel-2 p-3">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.06em] text-ink-3"><span className="font-mono">02</span> User opt-in</div>
-            <div className={`mt-1.5 text-xs font-bold ${policy?.mainnetOptIn ? 'text-ok' : 'text-warn'}`}>{policy?.mainnetOptIn ? 'Recorded' : 'Required'}</div>
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.06em] text-ink-3"><span className="font-mono">02</span> Limits</div>
+            <div className={`mt-1.5 text-xs font-bold ${policyConfigured ? 'text-ok' : 'text-warn'}`}>{policyConfigured ? 'Saved' : 'Not saved'}</div>
           </div>
           <div className="bg-panel-2 p-3">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.06em] text-ink-3"><span className="font-mono">03</span> Policy + wallet</div>
-            <div className={`mt-1.5 text-xs font-bold ${policyConfigured && walletGateReady ? 'text-ok' : 'text-warn'}`}>{policyConfigured && walletGateReady ? 'Matched' : policyConfigured ? 'Wallet mismatch' : 'Policy missing'}</div>
-          </div>
-          <div className="bg-panel-2 p-3">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.06em] text-ink-3"><span className="font-mono">04</span> Base Account</div>
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.06em] text-ink-3"><span className="font-mono">03</span> Final approval</div>
             <div className="mt-1.5 text-xs font-bold text-accent">Approval always required</div>
           </div>
         </div>
@@ -321,7 +344,7 @@ export function ConfigureView() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <label className="flex items-start gap-2 rounded-lg border border-line bg-panel-2 p-3 text-xs text-ink-2">
             <input type="checkbox" checked={mainnetOptIn} onChange={(event) => setMainnetOptIn(event.target.checked)} className="mt-0.5 accent-accent" />
-            <span><strong className="block text-ink">Enable mainnet policy opt-in</strong>This permits bounded preparation only when the global runtime gate is also enabled.</span>
+            <span><strong className="block text-ink">Enable bounded mainnet actions</strong>Miorail may prepare actions inside these limits. Nothing moves without your approval.</span>
           </label>
           <label className={`flex items-start gap-2 rounded-lg border p-3 text-xs ${mainnetOptIn ? 'border-warn/30 bg-warn-soft text-warn' : 'border-line bg-panel-2 text-ink-3'}`}>
             <input type="checkbox" checked={acknowledgeMainnetRisk} onChange={(event) => setAcknowledgeMainnetRisk(event.target.checked)} disabled={!mainnetOptIn} className="mt-0.5 accent-accent" />
@@ -333,12 +356,14 @@ export function ConfigureView() {
           <div className={`text-xs p-3 rounded-lg border ${actionStatus.type === 'success' ? 'bg-ok-soft text-ok border-ok/30' : 'bg-risk-soft text-risk border-risk/30'}`}>{actionStatus.msg}</div>
         )}
         {policy?.blockedReasons && policy.blockedReasons.length > 0 && (
-          <div className="text-[11px] text-warn bg-warn-soft border border-warn/20 rounded-lg px-3 py-2 font-mono">Blocked: {policy.blockedReasons.join(' · ')}</div>
+          <div className="text-[11px] text-warn bg-warn-soft border border-warn/20 rounded-lg px-3 py-2">
+            Limited by: {policy.blockedReasons.map(userBlockedReason).join(' · ')}
+          </div>
         )}
 
         <div className="flex flex-wrap gap-2.5">
           <button type="button" onClick={handleSavePolicy} disabled={!policyFormValid || configMut.isPending} className="text-xs font-bold bg-accent text-white px-3.5 py-2 rounded-lg hover:bg-accent/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-            {configMut.isPending ? 'Saving policy…' : 'Save bounded policy'}
+            {configMut.isPending ? 'Saving limits…' : 'Save spending limits'}
           </button>
           {policy?.source === 'database' && !policy.killSwitch && (
             <button type="button" onClick={() => killMut.mutate()} disabled={killMut.isPending} className="ml-auto text-xs font-bold bg-risk-soft text-risk border border-risk/30 px-3.5 py-2 rounded-lg hover:bg-risk/10 disabled:opacity-50 transition-colors">
@@ -347,10 +372,10 @@ export function ConfigureView() {
           )}
         </div>
       </section>
-      )}
+      ))}
 
       {/* System Provider Status */}
-      <section className="bg-panel border border-line rounded-xl p-4 flex flex-col gap-3">
+      {diagnosticsOnly && <section className="bg-panel border border-line rounded-xl p-4 flex flex-col gap-3">
         <h3 className="text-sm font-bold text-ink mb-1">System Provider Status</h3>
         <Row label="Execution Mode">
           <div className="flex items-center gap-2">
@@ -455,7 +480,7 @@ export function ConfigureView() {
             <span className="text-ink-3">Authorize user-scoped Base MCP tools.</span>
             {address ? (
               <a
-                href={baseMcpConnectHref('/configure')}
+                href={baseMcpConnectHref('/diagnostics')}
                 className="inline-flex items-center gap-1.5 font-bold text-accent hover:text-accent/80 whitespace-nowrap"
               >
                 <PlugZap size={13} />
@@ -502,7 +527,7 @@ export function ConfigureView() {
         <Row label="LLM Provider" last>
           <span className="text-xs font-medium px-2.5 py-0.5 rounded border bg-panel-2 text-ink-3 border-line" title="LLM provider status is not reported by /api/status">Not reported</span>
         </Row>
-      </section>
+      </section>}
     </main>
   );
 }

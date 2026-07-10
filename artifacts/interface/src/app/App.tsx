@@ -17,6 +17,7 @@ import { HistoryPage } from '../features/history/HistoryPage';
 import { ConfigureView } from '../features/configure/ConfigureView';
 import { BaseMcpView } from '../features/configure/BaseMcpView';
 import { FuelMeter } from '../features/x402/FuelMeter';
+import { DIAGNOSTICS_ENABLED } from '../lib/diagnostics';
 
 function ChainEnvMismatchBanner() {
   const { data: sd } = useStatus();
@@ -93,9 +94,14 @@ export function App() {
             <Route path="/stream"><StreamPage /></Route>
             <Route path="/fuel"><FuelMeter /></Route>
             <Route path="/configure"><ConfigureView /></Route>
+            <Route path="/diagnostics">
+              {DIAGNOSTICS_ENABLED ? <ConfigureView diagnosticsOnly /> : <Redirect to="/configure" />}
+            </Route>
             <Route path="/build"><ActionsBuilder /></Route>
             <Route path="/history"><HistoryPage /></Route>
-            <Route path="/base-mcp"><BaseMcpView /></Route>
+            <Route path="/base-mcp">
+              {DIAGNOSTICS_ENABLED ? <BaseMcpView /> : <Redirect to="/configure" />}
+            </Route>
             <Route path="/autonomy"><CockpitRoute /></Route>
             {/* T19.2: /inbox/:actionId is a legacy alias — redirect to the
                 canonical /actions/:actionId deep link (still focuses the card). */}
@@ -105,7 +111,7 @@ export function App() {
         </div>
       </div>
 
-      <StatusBar />
+      {DIAGNOSTICS_ENABLED && <StatusBar />}
       <BottomNav />
       {/* Add bottom padding on mobile so content isn't hidden under bottom nav */}
       <CommandPalette />

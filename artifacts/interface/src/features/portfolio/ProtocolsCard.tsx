@@ -1,5 +1,5 @@
 import { isMainnetReadonly } from '../../lib/chain';
-import { baseMcpHint, formatBaseMcpStatus, formatRiskProvider } from '../../lib/format';
+import { capabilityLabel, capabilityState, type CapabilityState } from '../../lib/capabilityStatus';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 interface ProtocolsCardProps {
@@ -11,76 +11,28 @@ interface ProtocolsCardProps {
 }
 
 export function ProtocolsCard({ statusData, protocolsData, isProtocolsError, address, toggleProtocol }: ProtocolsCardProps) {
+  const CapabilityRow = ({ label, state }: { label: string; state: CapabilityState }) => (
+    <div className="flex items-center justify-between border-b border-line py-1 text-[12px] last:border-b-0">
+      <span className="text-ink-2">{label}</span>
+      <span className={`font-semibold ${state === 'active' ? 'text-ok' : state === 'limited' ? 'text-warn' : 'text-ink-3'}`}>
+        {capabilityLabel(state)}
+      </span>
+    </div>
+  );
+
   return (
     <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
-      <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-3">Protocols</div>
+      <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3 mb-3">Capabilities</div>
       {isMainnetReadonly ? (
         <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
-            <span className="text-ink-2">Base RPC</span>
-            {statusData ? (
-              <span className={statusData.rpc.status === 'connected' ? 'text-ok font-medium' : statusData.rpc.status === 'failed' ? 'text-risk font-medium' : 'text-warn font-medium'}>
-                {statusData.rpc.status === 'connected' ? 'Connected' : statusData.rpc.status === 'failed' ? 'Failed' : 'Missing'}
-              </span>
-            ) : address ? (
-              <span className="text-ok font-medium">Connected</span>
-            ) : (
-              <span className="text-warn font-medium">Missing</span>
-            )}
-          </div>
-          <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
-            <span className="text-ink-2">Token balances</span>
-            {statusData ? (
-               <span className={statusData.tokenBalances.status === 'connected' ? 'text-ok font-medium' : statusData.tokenBalances.status === 'failed' ? 'text-risk font-medium' : statusData.tokenBalances.status === 'disabled' ? 'text-ink-3 font-medium' : 'text-warn font-medium'}>
-                 {statusData.tokenBalances.status === 'connected'
-                   ? (statusData.tokenBalances.provider === 'moralis' ? 'Moralis connected' : statusData.tokenBalances.provider === 'alchemy' ? 'Alchemy connected' : 'Connected')
-                   : statusData.tokenBalances.status === 'stale'
-                     ? (statusData.tokenBalances.provider === 'moralis' ? 'Moralis cached' : 'Cached')
-                     : statusData.tokenBalances.status === 'failed' ? (statusData.tokenBalances.provider === 'moralis' ? 'Moralis failed' : 'Failed')
-                     : statusData.tokenBalances.status === 'disabled' ? 'Disabled by config' : 'Missing'}
-               </span>
-             ) : (
-               <span className="text-warn font-medium">Missing</span>
-             )}
-          </div>
-          <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
-             <span className="text-ink-2">Risk provider</span>
-             {statusData ? (
-               <span className={statusData.risk.status === 'connected' ? 'text-ok font-medium' : statusData.risk.status === 'failed' ? 'text-risk font-medium' : statusData.risk.status === 'disabled' ? 'text-ink-3 font-medium' : 'text-warn font-medium'}>
-                 {formatRiskProvider(statusData, 'Missing')}
-               </span>
-             ) : (
-               <span className="text-warn font-medium">Missing</span>
-             )}
-           </div>
-           <div className="flex items-center justify-between py-1 border-b border-line text-[12px]">
-             <span className="text-ink-2">Price Provider</span>
-             {statusData ? (
-               <span className={statusData.prices.status === 'connected' ? 'text-ok font-medium' : statusData.prices.status === 'failed' ? 'text-risk font-medium' : statusData.prices.status === 'disabled' ? 'text-ink-3 font-medium' : 'text-warn font-medium'}>
-                 {statusData.prices.status === 'connected' ? `Connected (${statusData.prices.provider})` : statusData.prices.status === 'failed' ? 'Price provider failed' : statusData.prices.status === 'disabled' ? 'Disabled by config' : 'Missing'}
-               </span>
-             ) : (
-               <span className="text-warn font-medium">Missing</span>
-             )}
-           </div>
-          <div className="flex items-center justify-between py-1 text-[12px]">
-            <span className="text-ink-2">Base MCP</span>
-            {statusData ? (
-              <span className={statusData.baseMcp.status === 'connected' ? 'text-ok font-medium' : statusData.baseMcp.status === 'disabled' ? 'text-ink-3 font-medium' : statusData.baseMcp.status === 'unreachable' || statusData.baseMcp.status === 'unsupported' ? 'text-risk font-medium' : 'text-warn font-medium'}>
-                {formatBaseMcpStatus(statusData.baseMcp)}
-              </span>
-            ) : (
-              <span className="text-warn font-medium">Status unavailable</span>
-            )}
-          </div>
-          {baseMcpHint(statusData?.baseMcp) && (
-            <div className="text-[11px] text-ink-3 bg-panel-2 border border-line rounded-md px-2 py-1.5">
-              {baseMcpHint(statusData?.baseMcp)}
-            </div>
-          )}
+          <CapabilityRow label="Base network" state={capabilityState(statusData?.rpc?.status || (address ? 'connected' : 'missing'))} />
+          <CapabilityRow label="Balances" state={capabilityState(statusData?.tokenBalances?.status)} />
+          <CapabilityRow label="Contract checks" state={capabilityState(statusData?.risk?.status)} />
+          <CapabilityRow label="Market prices" state={capabilityState(statusData?.prices?.status)} />
+          <CapabilityRow label="Wallet tools" state={capabilityState(statusData?.baseMcp?.status)} />
         </div>
       ) : isProtocolsError || !protocolsData ? (
-        <div className="text-[13px] text-risk bg-risk-soft p-3 rounded-md font-medium border border-risk/20 mt-2">Provider disconnected</div>
+        <div className="text-[13px] text-risk bg-risk-soft p-3 rounded-md font-medium border border-risk/20 mt-2">Capabilities unavailable</div>
       ) : (
         <div className="flex flex-col">
           {protocolsData.protocols.map((p: any, i: number) => (

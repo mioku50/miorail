@@ -39,18 +39,14 @@ export function PortfolioAnalysisView({ analysis, chainMode }: { analysis: any; 
             <span className={`font-semibold ${(analysis.portfolioSnapshot.securityHighRiskCount || 0) > 0 ? 'text-risk' : 'text-ok'}`}>{analysis.portfolioSnapshot.securityHighRiskCount || 0}</span>
           </div>
           <div>
-            <span className="text-ink-3">Provider: </span>
-            <span className="font-mono text-ink">{analysis.portfolioSnapshot.provider}</span>
-          </div>
-          {analysis.portfolioSnapshot.priceProvider && (
-            <div>
-              <span className="text-ink-3">Price provider: </span>
-              <span className="font-mono text-ink">{analysis.portfolioSnapshot.priceProvider}</span>
-            </div>
-          )}
-          <div>
-            <span className="text-ink-3">Security provider: </span>
-            <span className="font-mono text-ink">{analysis.securityProvider?.provider === 'goplus' ? (analysis.securityProvider.status === 'failed' ? 'GoPlus failed' : analysis.securityProvider.status === 'partial' ? 'GoPlus partial' : 'GoPlus') : analysis.securityProvider?.status === 'disabled' ? 'Disabled by config' : 'Missing'}</span>
+            <span className="text-ink-3">Contract checks: </span>
+            <span className="font-semibold text-ink">
+              {analysis.securityProvider?.status === 'failed' || analysis.securityProvider?.status === 'disabled'
+                ? 'Off'
+                : analysis.securityProvider?.status === 'partial'
+                  ? 'Limited'
+                  : 'Active'}
+            </span>
           </div>
           {analysis.portfolioSnapshot.snapshotTimestamp && (
             <div className="ml-auto">

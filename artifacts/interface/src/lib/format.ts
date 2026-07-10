@@ -133,10 +133,10 @@ export function approvalProviderHint(approvals?: any, budgets?: any): string | n
 
 export function tokenSecurityIndicator(token: any, riskProviderStatus?: string) {
   const status = token.security?.status || (riskProviderStatus === 'missing' ? 'missing' : 'unknown');
-  if (status === 'ok') return { className: 'bg-ok/70', title: 'GoPlus: no major warnings detected' };
-  if (status === 'warning') return { className: 'bg-warn', title: 'GoPlus: warning flags detected' };
-  if (status === 'high-risk') return { className: 'bg-risk', title: 'GoPlus: high-risk flags detected' };
-  if (status === 'failed') return { className: 'bg-ink-3', title: 'GoPlus: security scan failed' };
+  if (status === 'ok') return { className: 'bg-ok/70', title: 'Contract check: no major warnings detected' };
+  if (status === 'warning') return { className: 'bg-warn', title: 'Contract check: warning flags detected' };
+  if (status === 'high-risk') return { className: 'bg-risk', title: 'Contract check: high-risk flags detected' };
+  if (status === 'failed') return { className: 'bg-ink-3', title: 'Contract check unavailable' };
   if (status === 'missing') return { className: 'bg-ink-3/50', title: 'Security provider missing' };
   return { className: 'bg-ink-3/50', title: 'Security not checked' };
 }

@@ -92,8 +92,8 @@ export function screenAction(a: ScreenableAction): ScreenResult {
 
   if (a.providerContext?.requiresTokenSecurity && !goPlusRan) {
     const reason = securityProvider === 'goplus'
-      ? 'GoPlus token security gate unavailable'
-      : 'Token security provider is required for this action';
+      ? 'Contract security check is temporarily unavailable'
+      : 'Contract security checks are required for this action';
     return { allowed: false, reason, checks: buildChecks('goplus', false) };
   }
 
