@@ -20,8 +20,18 @@ import { formatUnits, type Hex } from 'viem';
 
 export const autonomyRouter = Router();
 
+/**
+ * Database edge kept mutable so route tests can prove autonomy invariants without
+ * depending on a live Neon connection. Production defaults still use MemoryService.
+ */
+export const autonomyRouteRuntime = {
+  getUserSettings: (userId: string) => MemoryService.getUserSettings(userId),
+  updateUserSettings: (userId: string, data: Parameters<typeof MemoryService.updateUserSettings>[1]) =>
+    MemoryService.updateUserSettings(userId, data),
+};
+
 async function getAutonomyState(userId: string, query?: { owner?: string; executor?: string; token?: string }) {
-  const settings = await MemoryService.getUserSettings(userId).catch(() => null);
+  const settings = await autonomyRouteRuntime.getUserSettings(userId).catch(() => null);
   const autonomy = (settings?.protocolToggles as any)?.autonomy || {};
 
   const isConfigured = autonomy.status === 'configured' || !!autonomy.dailyLimitUsdc;
@@ -314,7 +324,7 @@ autonomyRouter.post('/config', async (req, res, next) => {
       });
     }
 
-    const settings = await MemoryService.getUserSettings(userId).catch(() => null);
+    const settings = await autonomyRouteRuntime.getUserSettings(userId).catch(() => null);
     const existingToggles = (settings?.protocolToggles as any) || {};
     const existingAutonomy = existingToggles.autonomy || {};
 
@@ -338,9 +348,9 @@ autonomyRouter.post('/config', async (req, res, next) => {
     };
 
     if (runtimeChainEnv === 'mainnet' || runtimeChainEnv === 'mainnet-readonly') {
-      await MemoryService.updateUserSettings(userId, { protocolToggles: newToggles }).catch(() => undefined);
+      await autonomyRouteRuntime.updateUserSettings(userId, { protocolToggles: newToggles }).catch(() => undefined);
     } else {
-      await MemoryService.updateUserSettings(userId, { protocolToggles: newToggles });
+      await autonomyRouteRuntime.updateUserSettings(userId, { protocolToggles: newToggles });
     }
     const state = await getAutonomyState(userId);
     res.json(ConfigureAutonomyResponseSchema.parse({ success: true, state }));
@@ -373,7 +383,7 @@ autonomyRouter.post('/testnet/configure', async (req, res, next) => {
       });
     }
 
-    const settings = await MemoryService.getUserSettings(userId);
+    const settings = await autonomyRouteRuntime.getUserSettings(userId);
     const existingToggles = (settings?.protocolToggles as any) || {};
     const existingAutonomy = existingToggles.autonomy || {};
 
@@ -397,7 +407,7 @@ autonomyRouter.post('/testnet/configure', async (req, res, next) => {
       autonomy: newAutonomy,
     };
 
-    await MemoryService.updateUserSettings(userId, { protocolToggles: newToggles });
+    await autonomyRouteRuntime.updateUserSettings(userId, { protocolToggles: newToggles });
     const state = await getAutonomyState(userId, { owner: owner || undefined, executor: executor || undefined, token });
     res.json({ success: true, state, txHash });
   } catch (error) {
@@ -414,7 +424,7 @@ autonomyRouter.post('/testnet/revoke', async (req, res, next) => {
     const parsed = TestnetRevokeAutonomyRequestSchema.safeParse(req.body);
     const data = parsed.success ? parsed.data : {};
 
-    const settings = await MemoryService.getUserSettings(userId);
+    const settings = await autonomyRouteRuntime.getUserSettings(userId);
     const existingToggles = (settings?.protocolToggles as any) || {};
     const existingAutonomy = existingToggles.autonomy || {};
 
@@ -442,7 +452,7 @@ autonomyRouter.post('/testnet/revoke', async (req, res, next) => {
       autonomy: newAutonomy,
     };
 
-    await MemoryService.updateUserSettings(userId, { protocolToggles: newToggles });
+    await autonomyRouteRuntime.updateUserSettings(userId, { protocolToggles: newToggles });
     const state = await getAutonomyState(userId, { owner: owner || undefined, executor: executor || undefined, token });
     res.json({ success: true, state, txHash });
   } catch (error) {
@@ -486,7 +496,7 @@ autonomyRouter.post('/kill', async (req, res, next) => {
       const policy = await getAutonomyPolicyRepository().getByUser(userId, chainId);
       if (policy) await getAutonomyPolicyRepository().setKillSwitch(policy.id, true);
     }
-    const settings = await MemoryService.getUserSettings(userId).catch(() => null);
+    const settings = await autonomyRouteRuntime.getUserSettings(userId).catch(() => null);
     const existingToggles = (settings?.protocolToggles as any) || {};
     const existingAutonomy = existingToggles.autonomy || {};
 
@@ -501,7 +511,7 @@ autonomyRouter.post('/kill', async (req, res, next) => {
       autonomy: newAutonomy,
     };
 
-    await MemoryService.updateUserSettings(userId, { protocolToggles: newToggles }).catch(() => undefined);
+    await autonomyRouteRuntime.updateUserSettings(userId, { protocolToggles: newToggles }).catch(() => undefined);
     const state = await getAutonomyState(userId);
     res.json(KillAutonomyResponseSchema.parse({ success: true, state }));
   } catch (error) {
@@ -518,7 +528,7 @@ autonomyRouter.post('/reset', async (req, res, next) => {
       const policy = await getAutonomyPolicyRepository().getByUser(userId, chainId);
       if (policy) await getAutonomyPolicyRepository().setKillSwitch(policy.id, true);
     }
-    const settings = await MemoryService.getUserSettings(userId).catch(() => null);
+    const settings = await autonomyRouteRuntime.getUserSettings(userId).catch(() => null);
     const existingToggles = (settings?.protocolToggles as any) || {};
 
     const newToggles = {
@@ -529,7 +539,7 @@ autonomyRouter.post('/reset', async (req, res, next) => {
       },
     };
 
-    await MemoryService.updateUserSettings(userId, { protocolToggles: newToggles }).catch(() => undefined);
+    await autonomyRouteRuntime.updateUserSettings(userId, { protocolToggles: newToggles }).catch(() => undefined);
     const state = await getAutonomyState(userId);
     res.json(KillAutonomyResponseSchema.parse({ success: true, state }));
   } catch (error) {

@@ -27,12 +27,13 @@ import {
 } from '../lib/portfolioAnalysis.js';
 import { buildActionPlan, planHasCalls, parseRevokeApproval, findActiveApproval } from '../lib/actionPlan.js';
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
-import { screenAction, simulateTrade } from '@mioagent/security';
+import { evaluateExecutableAction, screenAction, simulateTrade } from '@mioagent/security';
 import { normalizeBaseChain } from '@mioagent/security/baseGuards';
 import { isProductionActionType } from '@mioagent/api-zod';
 import { MemoryService } from '@mioagent/memory';
 import { getSystemStatus } from './status.js';
 import { getAutonomousExecutionGateway, getAutonomyPolicyRepository } from '../lib/autonomyGateway.js';
+import { loadExecutionSecurityContext } from '../lib/executionSecurity.js';
 import {
   actionProofRuntime,
   buildBaseReceiptProof,
@@ -48,6 +49,7 @@ import {
 } from '../lib/actionProofs.js';
 
 export const actionsRouter = Router();
+export const actionsRouteRuntime = { loadExecutionSecurityContext };
 
 async function releaseActionAutonomyReservation(userId: string, actionId: string, reason: string): Promise<void> {
   const [action] = await db.select().from(actions).where(and(eq(actions.id, actionId), eq(actions.userId, userId)));
@@ -651,54 +653,50 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
       return res.json({ success: false, error: 'Action type is not on the production whitelist' });
     }
 
-    // Re-derive screening live. The instruction is stored on metadata.
+    // One fail-closed guard owns prompt, calldata semantics, preflight and
+    // token-level contract security for every wallet-confirmed execution path.
     const meta = (action.metadata || {}) as any;
     const instruction = meta.instruction || action.suggestedPrompt || '';
     const memoryMd = (await MemoryService.getUserSettings(userId).catch(() => null))?.memoryMd || null;
-    const statusRes = getSystemStatus(process.env.CHAIN_ENV || 'mainnet-readonly');
-    const secProvider = statusRes.risk.provider || process.env.TOKEN_SECURITY_PROVIDER || 'none';
-    const screenRes = screenAction({
+    const executionSecurity = await actionsRouteRuntime.loadExecutionSecurityContext(
+      normalizedChain.chainId,
+      payload.actionType,
+      payload.calls,
+    );
+    const guardResult = await evaluateExecutableAction({
+      chain: normalizedChain.chainId,
+      actionType: payload.actionType,
+      calls: payload.calls,
       instruction,
       memoryMd,
-      providerContext: {
-        risk: statusRes.risk.status,
-        riskProvider: secProvider,
-        securityProvider: secProvider,
-      },
+      providerContext: executionSecurity.providerContext,
+      tokenSecurity: executionSecurity.tokenSecurity,
     });
-    if (!screenRes.allowed) {
-      return res.json(PrepareActionResponseSchema.parse({
-        success: false,
-        actionId,
-        chainId: normalizedChain.hexChainId,
-        from: userAddress,
-        calls: payload.calls,
-        atomicRequired: true,
-        screening: {
-          screenedAt: new Date().toISOString(),
-          allowed: false,
-          verdict: 'BLOCKED',
-          reason: screenRes.reason || 'Blocked by security screening',
-          checks: screenRes.checks || [],
-        },
-        simulation: {
-          success: false, allowed: false, riskLevel: 'blocked',
-          reason: 'Screening blocked; simulation skipped',
-          checks: ['Instruction screening: Failed'],
-        },
-        builderCodeAttached: false,
-        error: `Security screening blocked: ${screenRes.reason || 'unsafe instruction'}`,
-      }));
-    }
+    const screenRes = guardResult.screening || {
+      allowed: false,
+      reason: guardResult.reason || 'Unified execution guard blocked action',
+      checks: [],
+    };
+    const simRes = guardResult.simulation || {
+      success: false,
+      allowed: false,
+      riskLevel: 'blocked' as const,
+      reason: guardResult.reason || 'Guard blocked before preflight',
+      checks: ['Unified execution guard: Blocked'],
+    };
+    const guardResponse = {
+      code: guardResult.code,
+      contractSecurity: guardResult.contractSecurity,
+    };
+    const guardAudit = {
+      evaluatedAt: new Date().toISOString(),
+      code: guardResult.code,
+      allowed: guardResult.allowed,
+      semantics: guardResult.semantics,
+      contractSecurity: guardResult.contractSecurity,
+    };
 
-    // Re-derive simulation live. Reject any non-canon-token calldata.
-    let simRes;
-    try {
-      simRes = await simulateTrade({ ...(payload as any), instruction, memoryMd });
-    } catch {
-      simRes = { success: false, allowed: false, riskLevel: 'blocked', checks: ['Simulation failed'] };
-    }
-    if (!simRes.success) {
+    if (!guardResult.allowed) {
       return res.json(PrepareActionResponseSchema.parse({
         success: false,
         actionId,
@@ -708,14 +706,15 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
         atomicRequired: true,
         screening: {
           screenedAt: new Date().toISOString(),
-          allowed: true,
-          verdict: 'PASSED',
-          reason: screenRes.reason || 'Passed',
+          allowed: screenRes.allowed,
+          verdict: screenRes.allowed ? 'PASSED' : 'BLOCKED',
+          reason: screenRes.reason || guardResult.reason || 'Blocked by unified execution guard',
           checks: screenRes.checks || [],
         },
         simulation: simRes,
         builderCodeAttached: false,
-        error: `Simulation rejected: ${simRes.error || simRes.reason || 'unsafe calls'}`,
+        guard: guardResponse,
+        error: `Execution guard blocked: ${guardResult.reason || guardResult.code}`,
       }));
     }
 
@@ -766,6 +765,8 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
         calls: payload.calls,
         instruction,
         memoryMd,
+        providerContext: executionSecurity.providerContext,
+        tokenSecurity: executionSecurity.tokenSecurity,
       });
       if (!gatewayResult.success || !gatewayResult.reservation || !gatewayResult.policy || !gatewayResult.sendCallsRequest) {
         return res.json(PrepareActionResponseSchema.parse({
@@ -787,6 +788,9 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
           builderCodeAttached,
           executionMode: 'bounded-approval',
           requiresUserApproval: true,
+          guard: gatewayResult.guard
+            ? { code: gatewayResult.guard.code, contractSecurity: gatewayResult.guard.contractSecurity }
+            : guardResponse,
           error: gatewayResult.error || 'Autonomous execution gateway blocked the action',
         }));
       }
@@ -801,7 +805,7 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
         requiresUserApproval: true,
       };
       await db.update(actions)
-        .set({ metadata: { ...meta, autonomyReservation }, updatedAt: new Date() })
+        .set({ metadata: { ...meta, autonomyReservation, executionGuard: guardAudit }, updatedAt: new Date() })
         .where(and(eq(actions.id, actionId), eq(actions.userId, userId), eq(actions.status, 'pending')));
 
       return res.json(PrepareActionResponseSchema.parse({
@@ -823,6 +827,7 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
         builderCodeAttached,
         executionMode: 'bounded-approval',
         requiresUserApproval: true,
+        guard: guardResponse,
         autonomy: {
           reservationId: gatewayResult.reservation.id,
           amountUsdc: gatewayResult.spendAmountUsdc || 0,
@@ -832,6 +837,10 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
         },
       }));
     }
+
+    await db.update(actions)
+      .set({ metadata: { ...meta, executionGuard: guardAudit }, updatedAt: new Date() })
+      .where(and(eq(actions.id, actionId), eq(actions.userId, userId), eq(actions.status, 'pending')));
 
     return res.json(PrepareActionResponseSchema.parse({
       success: true,
@@ -852,6 +861,7 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
       builderCodeAttached,
       executionMode: 'manual-approval',
       requiresUserApproval: true,
+      guard: guardResponse,
     }));
   } catch (error) {
     next(error);

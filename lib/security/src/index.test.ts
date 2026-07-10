@@ -79,3 +79,16 @@ test('blocks token-security recommendations when required GoPlus gate is unavail
   assert.strictEqual(res.allowed, false);
   assert.strictEqual(res.checks?.find((c) => c.name === 'GoPlus Contract Security')?.status, 'BLOCKED');
 });
+
+test('blocks token-security actions when no provider is configured', () => {
+  const res = screenAction({
+    instruction: 'transfer a bounded token amount',
+    providerContext: {
+      risk: 'missing',
+      securityProvider: 'none',
+      requiresTokenSecurity: true,
+    },
+  });
+  assert.strictEqual(res.allowed, false);
+  assert.match(res.reason || '', /required/i);
+});

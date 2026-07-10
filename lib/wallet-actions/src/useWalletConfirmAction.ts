@@ -5,7 +5,7 @@
 //   → poll wallet_getCallsStatus → confirm (server records, read-only verify).
 
 import { useEffect, useRef, useState, useCallback, createElement, type ReactNode } from 'react';
-import { useAccount, useSendCalls, useCallsStatus } from 'wagmi';
+import { useAccount, useCapabilities, useSendCalls, useCallsStatus } from 'wagmi';
 import { base } from 'wagmi/chains';
 import type { Address, Hex } from 'viem';
 import { usePrepareAction, useConfirmAction } from '@mioagent/api-client-react';
@@ -125,6 +125,30 @@ export function sanitizeBigInts<T>(value: T): T {
   return value;
 }
 
+export type AtomicCapabilityStatus = 'supported' | 'ready' | 'unsupported';
+
+export function readAtomicCapabilityStatus(value: unknown): AtomicCapabilityStatus | null {
+  if (!value || typeof value !== 'object') return null;
+  const root = value as Record<string, unknown>;
+  const chainCapabilities = (
+    root.atomic
+      ? root
+      : root[base.id]
+        || root[String(base.id)]
+        || root['0x2105']
+  ) as Record<string, unknown> | undefined;
+  const atomic = chainCapabilities?.atomic;
+  if (!atomic || typeof atomic !== 'object') return null;
+  const entry = atomic as Record<string, unknown>;
+  const status = entry.status || entry.supported;
+  return status === 'supported' || status === 'ready' || status === 'unsupported' ? status : null;
+}
+
+export function atomicCapabilityAllowsBatch(value: unknown): boolean {
+  const status = readAtomicCapabilityStatus(value);
+  return status === 'supported' || status === 'ready';
+}
+
 export function useWalletConfirmAction({
   actionId,
   dataSuffix,
@@ -134,6 +158,11 @@ export function useWalletConfirmAction({
   const confirmAction = useConfirmAction();
   const sendCalls = useSendCalls();
   const { address } = useAccount();
+  const walletCapabilities = useCapabilities({
+    account: address,
+    chainId: base.id,
+    query: { enabled: Boolean(address), retry: false },
+  });
 
   const [batchId, setBatchId] = useState<string | null>(initialBatchId || null);
   const [status, setStatus] = useState<ConfirmFlowStatus>(initialBatchId ? 'pending' : 'idle');
@@ -203,6 +232,16 @@ export function useWalletConfirmAction({
   const confirm = async () => {
     if (!address) {
       setError('Connect your Base Account wallet first');
+      setStatus('failed');
+      return;
+    }
+    let capabilityData: unknown = walletCapabilities.data;
+    if (!readAtomicCapabilityStatus(capabilityData)) {
+      const refreshed = await walletCapabilities.refetch();
+      capabilityData = refreshed.data;
+    }
+    if (!atomicCapabilityAllowsBatch(capabilityData)) {
+      setError('Connected wallet does not report atomic Base transaction support');
       setStatus('failed');
       return;
     }

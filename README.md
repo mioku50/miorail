@@ -203,10 +203,15 @@ Miorail keeps autonomous spend permissions fail-closed by default:
 - `CHAIN_ENV=mainnet` can prepare mainnet EIP-5792 requests only when `MAINNET_EXECUTION_ENABLED=true` and the user has an explicit server-side mainnet autonomy opt-in;
 - only canonical USDC for the selected Base chain is accepted;
 - transfer recipients must be in the policy whitelist; approval actions are restricted to `approve(spender, 0)` revocations;
+- one execution guard binds the declared action type to the exact calldata semantics before a wallet payload can be prepared, then applies prompt/memory screening, canonical-chain checks, preflight validation, and contract risk gates;
+- mainnet USDC transfers require a usable token-level GoPlus verdict; missing, failed, unknown, or high-risk verdicts fail closed, while zero-only approval revocations remain available because they reduce exposure;
 - `spent_today + reserved_today + action_amount <= daily_limit` is enforced by one atomic database update, preventing concurrent prepares from overspending the cap;
 - a prepare reserves budget but returns only an unsigned EIP-5792 `wallet_sendCalls` payload; it never signs or broadcasts;
+- the client verifies the connected Base Account reports atomic batch support before calling the prepare endpoint, so an unsupported wallet cannot create a budget reservation;
 - reservations settle only after durable onchain/wallet proof and are released after cancellation, failure, dismissal, expiry, or kill switch;
 - the kill switch marks the policy inactive, releases active reservations, and blocks future prepares.
+
+Provider readiness is based on evidence, not configuration alone: GoPlus is reported as connected only after a usable token scan. The same health state is shared by the status endpoint, scanner output, and execution guard.
 
 The Configure screen exposes the four independent execution gates: runtime/global flag, per-user mainnet opt-in, DB policy plus wallet match, and mandatory Base Account approval. A saved policy can therefore be honestly shown as **staged** while the runtime remains `mainnet-readonly`.
 

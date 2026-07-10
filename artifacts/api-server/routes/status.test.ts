@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { generateKeyPairSync } from 'node:crypto';
 import request from 'supertest';
 import { app } from '../app.js';
-import { clearTokenSecurityCacheForTests } from '@mioagent/data-providers';
+import { clearTokenSecurityCacheForTests, getTokenSecurityProviderFromEnv, setTokenSecurityHealthStatus } from '@mioagent/data-providers';
 import { clearX402FacilitatorStatusForTests } from '@mioagent/x402-gateway';
 import { clearBaseMcpStatusForTests, recordBaseMcpToolProbe } from '../lib/baseMcpStatus.js';
 import { statusRouteRuntime } from './status.js';
@@ -99,7 +99,7 @@ describe('Status API', () => {
     restoreEnv('GOPLUS_API_KEY', originalApiKey);
   });
 
-  test('GET /api/status returns GoPlus connected without requiring API key', async () => {
+  test('GET /api/status reports GoPlus configured but unverified before a successful scan', async () => {
     clearTokenSecurityCacheForTests();
     const original = process.env.TOKEN_SECURITY_PROVIDER;
     const originalApiKey = process.env.GOPLUS_API_KEY;
@@ -109,10 +109,25 @@ describe('Status API', () => {
     const response = await request(app).get('/api/status');
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.risk.provider, 'goplus');
-    assert.strictEqual(response.body.risk.status, 'connected');
+    assert.strictEqual(response.body.risk.status, 'missing');
 
     restoreEnv('TOKEN_SECURITY_PROVIDER', original);
     restoreEnv('GOPLUS_API_KEY', originalApiKey);
+  });
+
+  test('GET /api/status reports GoPlus connected only after shared token-level health succeeds', async () => {
+    clearTokenSecurityCacheForTests();
+    const original = process.env.TOKEN_SECURITY_PROVIDER;
+    process.env.TOKEN_SECURITY_PROVIDER = 'goplus';
+    getTokenSecurityProviderFromEnv();
+    setTokenSecurityHealthStatus('connected');
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.risk.provider, 'goplus');
+    assert.strictEqual(response.body.risk.status, 'connected');
+
+    restoreEnv('TOKEN_SECURITY_PROVIDER', original);
   });
 
   test('GET /api/status reports disabled (not failed) when providers are explicitly none', async () => {

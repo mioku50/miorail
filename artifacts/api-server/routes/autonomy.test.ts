@@ -2,16 +2,24 @@ import test, { describe, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import request from 'supertest';
 import { app } from '../app.js';
-import { InMemoryAutonomyPolicyRepository } from '@mioagent/autonomy';
+import { AutonomousExecutionGateway, InMemoryAutonomyPolicyRepository } from '@mioagent/autonomy';
 import { setAutonomyPolicyRepositoryForTests } from '../lib/autonomyGateway.js';
+import { autonomyRouteRuntime } from './autonomy.js';
 
 const WALLET = '0x9999999999999999999999999999999999999999';
+let policyRepository: InMemoryAutonomyPolicyRepository;
 
 describe('Autonomy API Hardening Guarantees', () => {
   beforeEach(async () => {
     process.env.CHAIN_ENV = 'mainnet-readonly';
     delete process.env.ENABLE_TESTNET_AUTONOMY;
-    setAutonomyPolicyRepositoryForTests(new InMemoryAutonomyPolicyRepository());
+    const settings = new Map<string, any>();
+    autonomyRouteRuntime.getUserSettings = async (userId) => settings.get(userId) ?? null;
+    autonomyRouteRuntime.updateUserSettings = async (userId, update) => {
+      settings.set(userId, { ...(settings.get(userId) ?? {}), ...update });
+    };
+    policyRepository = new InMemoryAutonomyPolicyRepository();
+    setAutonomyPolicyRepositoryForTests(policyRepository);
     await request(app).post('/api/autonomy/reset').send({});
   });
 
@@ -173,5 +181,67 @@ describe('Autonomy API Hardening Guarantees', () => {
       acknowledgeMainnetRisk: false,
     });
     assert.strictEqual(res.status, 400);
+  });
+
+  test('kill switch releases reservations and blocks the next gateway prepare', async () => {
+    process.env.CHAIN_ENV = 'mainnet';
+    process.env.MAINNET_EXECUTION_ENABLED = 'true';
+    const recipient = '0x3333333333333333333333333333333333333333';
+    const config = await request(app).post('/api/autonomy/config').send({
+      dailyLimitUsdc: '10',
+      maxPerActionUsdc: '5',
+      whitelist: [recipient],
+      ttlSeconds: 3600,
+      walletAddress: WALLET,
+      mainnetOptIn: true,
+      acknowledgeMainnetRisk: true,
+    });
+    assert.strictEqual(config.status, 200);
+
+    const gateway = new AutonomousExecutionGateway({ repository: policyRepository, mainnetExecutionEnabled: true });
+    const call = {
+      to: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      value: '0',
+      data: `0xa9059cbb${recipient.slice(2).padStart(64, '0')}${(1_000_000).toString(16).padStart(64, '0')}`,
+    };
+    const security = {
+      providerContext: { risk: 'connected', riskProvider: 'goplus', securityProvider: 'goplus' },
+      tokenSecurity: [{
+        address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        provider: 'goplus' as const,
+        status: 'ok' as const,
+      }],
+    };
+    const prepared = await gateway.prepare({
+      userId: 'default-user',
+      actionId: 'kill-switch-reservation',
+      chainEnv: 'mainnet',
+      walletAddress: WALLET,
+      actionType: 'limited_transfer',
+      calls: [call],
+      instruction: 'Transfer 1 USDC to an approved recipient',
+      ...security,
+    });
+    assert.strictEqual(prepared.success, true);
+    assert.strictEqual((await policyRepository.getByUser('default-user', 8453))?.reservedToday, 1);
+
+    const killed = await request(app).post('/api/autonomy/kill').send({});
+    assert.strictEqual(killed.status, 200);
+    assert.strictEqual(killed.body.state.sessionKey.killSwitch, true);
+    assert.strictEqual((await policyRepository.getByUser('default-user', 8453))?.reservedToday, 0);
+
+    const blocked = await gateway.prepare({
+      userId: 'default-user',
+      actionId: 'kill-switch-blocked',
+      chainEnv: 'mainnet',
+      walletAddress: WALLET,
+      actionType: 'limited_transfer',
+      calls: [call],
+      instruction: 'Transfer 1 USDC to an approved recipient',
+      ...security,
+    });
+    assert.strictEqual(blocked.success, false);
+    assert.strictEqual(blocked.status, 'kill_switch');
+    process.env.MAINNET_EXECUTION_ENABLED = 'false';
   });
 });

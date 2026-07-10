@@ -68,3 +68,16 @@ test('T19.8: sanitizeBigInts recursively converts any bigint in status/receipts 
   assert.equal(parsed[0].gasUsed, '21000');
 });
 
+test('reads Base atomic capability from viem-normalized and raw provider responses', () => {
+  assert.equal(mod.readAtomicCapabilityStatus({ atomic: { status: 'supported' } }), 'supported');
+  assert.equal(mod.readAtomicCapabilityStatus({ 8453: { atomic: { status: 'ready' } } }), 'ready');
+  assert.equal(mod.readAtomicCapabilityStatus({ '0x2105': { atomic: { supported: 'unsupported' } } }), 'unsupported');
+  assert.equal(mod.readAtomicCapabilityStatus({}), null);
+});
+
+test('allows only supported or ready atomic Base Account batches', () => {
+  assert.equal(mod.atomicCapabilityAllowsBatch({ atomic: { status: 'supported' } }), true);
+  assert.equal(mod.atomicCapabilityAllowsBatch({ atomic: { status: 'ready' } }), true);
+  assert.equal(mod.atomicCapabilityAllowsBatch({ atomic: { status: 'unsupported' } }), false);
+  assert.equal(mod.atomicCapabilityAllowsBatch(undefined), false);
+});

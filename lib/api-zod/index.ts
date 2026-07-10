@@ -191,6 +191,16 @@ export const PrepareActionResponseSchema = z.object({
     dailyLimitUsdc: z.number(),
     expiresAt: z.string(),
   }).optional(),
+  guard: z.object({
+    code: z.string(),
+    contractSecurity: z.object({
+      required: z.boolean(),
+      status: z.enum(['passed', 'warning', 'blocked', 'skipped']),
+      provider: z.string(),
+      checkedAddresses: z.array(z.string()),
+      warnings: z.array(z.string()),
+    }),
+  }).optional(),
   error: z.string().optional(),
 });
 

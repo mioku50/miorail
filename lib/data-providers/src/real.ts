@@ -342,10 +342,19 @@ export function getTokenSecurityProviderFromEnv(): TokenSecurityProviderEnvResul
   }
   if (mode === 'goplus') {
     if (tokenSecurityHealth.providerName !== 'goplus') {
-      tokenSecurityHealth = { providerName: 'goplus', statusCode: 'connected' };
+      // Configuration is not proof of operational health. Report missing until
+      // a real token-level request succeeds, then keep the shared health result
+      // so Status, Stream and execution guards cannot contradict each other.
+      tokenSecurityHealth = { providerName: 'goplus', statusCode: 'missing' };
     }
     const statusCode = tokenSecurityHealth.statusCode;
-    const statusText = statusCode === 'failed' ? 'GoPlus failed' : statusCode === 'partial' ? 'GoPlus partial' : 'GoPlus connected';
+    const statusText = statusCode === 'failed'
+      ? 'GoPlus failed'
+      : statusCode === 'partial'
+        ? 'GoPlus partial'
+        : statusCode === 'connected'
+          ? 'GoPlus connected'
+          : 'GoPlus configured; awaiting successful scan';
     return { provider: new GoPlusTokenSecurityProvider(process.env.GOPLUS_API_KEY), status: statusText, statusCode, providerName: 'goplus' };
   }
   if (mode === 'mock') {
@@ -365,11 +374,11 @@ export class AlchemyTokenBalancesProvider implements TokenBalancesProvider {
   constructor(private readonly apiKey?: string, private readonly customRpcUrl?: string) {}
 
   private async parseAlchemyResponse<T>(res: Response, operation: string): Promise<T> {
-    let data: any = undefined;
+    let data: any;
     try {
       data = await res.json();
     } catch {
-      data = undefined;
+      // The status-based error path below still handles non-JSON responses.
     }
     if (res.status === 429 || data?.error?.code === 429 || data?.error?.code === '429') {
       const message = data?.error?.message || res.statusText || `Alchemy ${operation} rate limited`;

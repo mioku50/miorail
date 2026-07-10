@@ -90,8 +90,11 @@ export function screenAction(a: ScreenableAction): ScreenResult {
   const riskStatus = a.providerContext?.risk;
   const goPlusRan = securityProvider === 'goplus' && (riskStatus === 'connected' || riskStatus === 'ok' || riskStatus === 'partial');
 
-  if (a.providerContext?.requiresTokenSecurity && securityProvider === 'goplus' && !goPlusRan) {
-    return { allowed: false, reason: 'GoPlus token security gate unavailable', checks: buildChecks('goplus', false) };
+  if (a.providerContext?.requiresTokenSecurity && !goPlusRan) {
+    const reason = securityProvider === 'goplus'
+      ? 'GoPlus token security gate unavailable'
+      : 'Token security provider is required for this action';
+    return { allowed: false, reason, checks: buildChecks('goplus', false) };
   }
 
   const memoryBlock = memoryPolicyBlocks(raw, clean, a.memoryMd);
@@ -180,3 +183,4 @@ export * from './payment-policy.js';
 export * from './budget.js';
 export * from './simulation.js';
 export * from './baseGuards.js';
+export * from './executionGuard.js';

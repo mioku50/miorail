@@ -9,6 +9,7 @@ import * as toolsModule from '@mioagent/tools';
 import { actionProofRuntime } from '../lib/actionProofs.js';
 import { InMemoryAutonomyPolicyRepository } from '@mioagent/autonomy';
 import { setAutonomyPolicyRepositoryForTests } from '../lib/autonomyGateway.js';
+import { actionsRouteRuntime } from './actions.js';
 
 test('Actions API', async (t) => {
   await t.test('GET /api/actions returns actions', async () => {
@@ -366,6 +367,12 @@ test('Actions API', async (t) => {
       })),
     }));
     mock.method(db, 'select', mockSelect);
+    mock.method(db, 'update', () => ({ set: () => ({ where: async () => [] }) }) as any);
+    mock.method(actionsRouteRuntime, 'loadExecutionSecurityContext', async () => ({
+      required: true,
+      providerContext: { risk: 'connected', riskProvider: 'goplus', securityProvider: 'goplus' },
+      tokenSecurity: [{ address: BASE_MAINNET_USDC, provider: 'goplus', status: 'ok' }],
+    }));
 
     const response = await request(app).post('/api/actions/act-prepare/prepare');
     assert.strictEqual(response.status, 200);
@@ -376,6 +383,8 @@ test('Actions API', async (t) => {
     assert.ok(Array.isArray(response.body.calls) && response.body.calls.length === 1);
     assert.strictEqual(response.body.screening.allowed, true);
     assert.strictEqual(response.body.simulation.success, true);
+    assert.strictEqual(response.body.guard.code, 'allowed');
+    assert.strictEqual(response.body.guard.contractSecurity.status, 'passed');
 
     mock.restoreAll();
     process.env.CHAIN_ENV = 'sepolia';
@@ -432,6 +441,11 @@ test('Actions API', async (t) => {
     }));
     mock.method(db, 'select', mockSelect);
     mock.method(db, 'update', mockUpdate);
+    mock.method(actionsRouteRuntime, 'loadExecutionSecurityContext', async () => ({
+      required: true,
+      providerContext: { risk: 'connected', riskProvider: 'goplus', securityProvider: 'goplus' },
+      tokenSecurity: [{ address: BASE_MAINNET_USDC, provider: 'goplus', status: 'ok' }],
+    }));
     const { MemoryService } = await import('@mioagent/memory');
     mock.method(MemoryService, 'getUserSettings', async () => null);
 
@@ -448,6 +462,48 @@ test('Actions API', async (t) => {
     mock.restoreAll();
     process.env.CHAIN_ENV = 'sepolia';
     process.env.MAINNET_EXECUTION_ENABLED = 'false';
+  });
+
+  await t.test('unified prepare guard rejects actionType/calldata mismatch before wallet approval', async () => {
+    process.env.CHAIN_ENV = 'mainnet-readonly';
+    const spender = '0x2222222222222222222222222222222222222222';
+    const mockSelect = mock.fn(() => ({
+      from: mock.fn(() => ({
+        where: mock.fn(async () => [{
+          id: 'act-semantic-mismatch',
+          userId: 'default-user',
+          status: 'pending',
+          suggestedPrompt: 'Revoke approval',
+          executionPayload: {
+            chain: 'eip155:8453',
+            actionType: 'revoke_approval',
+            calls: [{
+              to: BASE_MAINNET_USDC,
+              value: '0',
+              data: `0x095ea7b3${spender.slice(2).padStart(64, '0')}${'1'.padStart(64, '0')}`,
+            }],
+          },
+          metadata: { instruction: 'Revoke approval' },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }]),
+      })),
+    }));
+    mock.method(db, 'select', mockSelect);
+    mock.method(actionsRouteRuntime, 'loadExecutionSecurityContext', async () => ({
+      required: false,
+      providerContext: { risk: 'missing', riskProvider: 'none', securityProvider: 'none' },
+      tokenSecurity: [],
+    }));
+
+    const response = await request(app).post('/api/actions/act-semantic-mismatch/prepare');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, false);
+    assert.match(response.body.error, /approve\(spender, 0\)/);
+    assert.strictEqual(response.body.guard.code, 'action_calldata_mismatch');
+
+    mock.restoreAll();
+    process.env.CHAIN_ENV = 'sepolia';
   });
 
   await t.test('POST /api/actions/:actionId/prepare rejects a payload whose actionType is not whitelisted', async () => {

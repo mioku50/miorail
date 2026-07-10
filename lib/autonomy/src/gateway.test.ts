@@ -31,7 +31,17 @@ async function setup(overrides: Partial<Parameters<InMemoryAutonomyPolicyReposit
     mainnetOptIn: true,
     ...overrides,
   });
-  return { repository, policy, gateway: new AutonomousExecutionGateway({ repository, mainnetExecutionEnabled: true }) };
+  const rawGateway = new AutonomousExecutionGateway({ repository, mainnetExecutionEnabled: true });
+  const gateway = {
+    prepare(input: Parameters<AutonomousExecutionGateway['prepare']>[0]) {
+      return rawGateway.prepare({
+        ...input,
+        providerContext: { risk: 'connected', riskProvider: 'goplus', securityProvider: 'goplus' },
+        tokenSecurity: [{ address: MAINNET_USDC, provider: 'goplus', status: 'ok' }],
+      });
+    },
+  };
+  return { repository, policy, gateway };
 }
 
 test('prepares unsigned atomic Base Account calls and reserves the transfer amount', async () => {
@@ -110,7 +120,7 @@ test('enforces whitelist, zero-only revokes and max-per-action', async () => {
     actionType: 'revoke_approval',
     calls: [{ to: MAINNET_USDC, data: calldata('0x095ea7b3', OTHER, 1n), value: '0' }],
     instruction: 'Revoke approval',
-  })).status, 'unsafe_approval');
+  })).status, 'action_calldata_mismatch');
 
   const revoke = await gateway.prepare({
     userId: USER,
