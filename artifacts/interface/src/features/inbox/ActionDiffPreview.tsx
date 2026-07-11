@@ -15,7 +15,17 @@ const BUILDER_CODE = import.meta.env.VITE_BUILDER_CODE;
 // where the backend genuinely stored none, it renders honest empty states —
 // never fabricated results.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function ActionDiffPreview({ action, onRefresh }: { action: any; onRefresh?: () => void }) {
+export function ActionDiffPreview({
+  action,
+  onRefresh,
+  onRetrySecurity,
+  isRetryingSecurity,
+}: {
+  action: any;
+  onRefresh?: () => void;
+  onRetrySecurity?: () => void;
+  isRetryingSecurity?: boolean;
+}) {
   const { address, isConnected } = useAccount();
   const showToast = useUiStore((s) => s.showToast);
   const meta = action.metadata || {};
@@ -227,7 +237,14 @@ export function ActionDiffPreview({ action, onRefresh }: { action: any; onRefres
         )}
       </div>
 
-      {meta.analysis && <PortfolioAnalysisView analysis={meta.analysis} chainMode={chainMode} />}
+      {meta.analysis && (
+        <PortfolioAnalysisView
+          analysis={meta.analysis}
+          chainMode={chainMode}
+          onRetrySecurity={onRetrySecurity}
+          isRetrying={isRetryingSecurity}
+        />
+      )}
     </div>
   );
 }

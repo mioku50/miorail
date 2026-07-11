@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useAccount, useChainId, useSwitchChain } from 'wagmi';
 import {
   useStatus,
@@ -27,6 +27,7 @@ import { StateBadge, type StateKind } from '@mioagent/ui';
 import { useUiStore } from '../../lib/state';
 import { PlugZap } from 'lucide-react';
 import { capabilityLabel, type CapabilityState } from '../../lib/capabilityStatus';
+import { savedPolicyForm, visibleAutonomyBlockedReasons } from '../../lib/autonomyUi';
 
 function tbState(s?: string): StateKind {
   if (s === 'connected') return 'live';
@@ -77,6 +78,7 @@ export function ConfigureView({ diagnosticsOnly = false }: { diagnosticsOnly?: b
   const [mainnetOptIn, setMainnetOptIn] = useState(false);
   const [acknowledgeMainnetRisk, setAcknowledgeMainnetRisk] = useState(false);
   const [actionStatus, setActionStatus] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+  const hydratedPolicyRef = useRef<string | null>(null);
 
   const configMut = useConfigureAutonomy({
     onSuccess: (res) => {
@@ -137,6 +139,20 @@ export function ConfigureView({ diagnosticsOnly = false }: { diagnosticsOnly?: b
   const addressesValid = whitelist.length > 0 && whitelist.every((entry) => /^0x[0-9a-fA-F]{40}$/.test(entry));
   const policyFormValid = Boolean(address) && limitsValid && addressesValid && (!mainnetOptIn || acknowledgeMainnetRisk);
   const policy = autonomyState?.sessionKey;
+  const hydratedPolicy = savedPolicyForm(autonomyState);
+  const blockedReasons = visibleAutonomyBlockedReasons(autonomyState);
+
+  useEffect(() => {
+    if (!hydratedPolicy || hydratedPolicyRef.current === hydratedPolicy.hydrationKey) return;
+    hydratedPolicyRef.current = hydratedPolicy.hydrationKey;
+    setDailyLimit(hydratedPolicy.dailyLimit);
+    setMaxPerAction(hydratedPolicy.maxPerAction);
+    setTtlHours(hydratedPolicy.ttlHours);
+    setWhitelistAddr(hydratedPolicy.whitelistAddr);
+    setMainnetOptIn(hydratedPolicy.mainnetOptIn);
+    setAcknowledgeMainnetRisk(hydratedPolicy.acknowledgeMainnetRisk);
+  }, [hydratedPolicy]);
+
   const policyConfigured = policy?.source === 'database' && policy.status === 'configured' && !policy.killSwitch;
   const walletGateReady = Boolean(address && policy?.walletAddress && address.toLowerCase() === policy.walletAddress.toLowerCase());
   const sepoliaPermissionState: CapabilityState = autonomyState?.sessionKey?.status === 'configured' && !isStale && !isExpired
@@ -355,9 +371,9 @@ export function ConfigureView({ diagnosticsOnly = false }: { diagnosticsOnly?: b
         {actionStatus && (
           <div className={`text-xs p-3 rounded-lg border ${actionStatus.type === 'success' ? 'bg-ok-soft text-ok border-ok/30' : 'bg-risk-soft text-risk border-risk/30'}`}>{actionStatus.msg}</div>
         )}
-        {policy?.blockedReasons && policy.blockedReasons.length > 0 && (
+        {blockedReasons.length > 0 && (
           <div className="text-[11px] text-warn bg-warn-soft border border-warn/20 rounded-lg px-3 py-2">
-            Limited by: {policy.blockedReasons.map(userBlockedReason).join(' · ')}
+            Limited by: {blockedReasons.map(userBlockedReason).join(' · ')}
           </div>
         )}
 

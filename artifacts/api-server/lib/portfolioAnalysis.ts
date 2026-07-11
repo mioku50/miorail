@@ -207,6 +207,8 @@ export interface PortfolioRiskAnalysis {
   securityProvider: {
     provider: TokenSecurityProviderName;
     status: "connected" | "missing" | "failed" | "partial" | "disabled";
+    coverage: "complete" | "partial" | "unavailable";
+    failureReason?: string;
   };
   tokenFindings: TokenFinding[];
   suggestedNextSteps: string[];
@@ -215,6 +217,26 @@ export interface PortfolioRiskAnalysis {
 
 export const APPROVAL_SCANNER_UNAVAILABLE_NOTE = "Moralis approval scanner is temporarily unavailable due to provider budget/rate limits.";
 export const APPROVAL_SCANNER_UNAVAILABLE_UI_NOTE = "Approval scanner unavailable — Moralis CU limit reached. Try after reset or upgrade provider.";
+
+export function sanitizeSecurityFailureReason(value?: string): string {
+  const normalized = (value || '').toLowerCase();
+  if (/rate|429|budget|quota|limit/.test(normalized)) {
+    return 'Contract check service is temporarily rate-limited.';
+  }
+  if (/auth|unauthor|forbidden|401|403/.test(normalized)) {
+    return 'Contract check service authentication is unavailable.';
+  }
+  if (/timeout|timed out|network|fetch|unreachable|econn|enotfound/.test(normalized)) {
+    return 'Contract check service is temporarily unreachable.';
+  }
+  if (/no usable|unknown result|empty result/.test(normalized)) {
+    return 'No usable token-security verdicts were returned.';
+  }
+  if (/not configured|disabled|missing/.test(normalized)) {
+    return 'Contract checks are not configured for this scan.';
+  }
+  return 'Contract check service did not return usable results.';
+}
 
 export function isApprovalScannerUnavailableStatus(status?: string): boolean {
   return status === 'budget_exhausted' || status === 'rate_limited' || status === 'temporarily_unavailable';
@@ -679,6 +701,8 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
         budgetExhausted: secRes.budgetExhausted,
         cacheAgeSeconds: secRes.cacheAgeSeconds,
         requested: true,
+        errorCode: secRes.errorCode,
+        note: secRes.error ? sanitizeSecurityFailureReason(`${secRes.errorCode || ''} ${secRes.error}`) : undefined,
       };
 
       if (secRes.data) {
@@ -1133,6 +1157,13 @@ export function analyzePortfolioForRisk(
     securityProviderName === 'none'
       ? (portfolio.providers?.risk === 'disabled' ? 'disabled' : 'missing')
       : providerStatusToSecurityStatus(portfolio.providers?.risk || 'missing');
+  const tokenContractCount = tokens.filter(t => t.address !== 'native' && t.symbol !== 'ETH').length;
+  const securityCheckedTokenCount = tokens.filter(t => t.security && t.security.provider !== 'none' && t.security.status !== 'failed' && t.security.status !== 'unknown').length;
+  if (securityProviderStatus === 'connected' && securityCheckedTokenCount === 0 && tokenContractCount > 0 && securityProviderName !== 'none') {
+    securityProviderStatus = 'failed';
+  } else if (securityProviderStatus === 'connected' && securityCheckedTokenCount < tokenContractCount) {
+    securityProviderStatus = 'partial';
+  }
 
   for (const t of tokens) {
     const isNative = t.address === 'native' || (t.symbol === 'ETH' && t.address === 'native');
@@ -1169,11 +1200,13 @@ export function analyzePortfolioForRisk(
       risk = "medium";
       reason = `Contract-level security provider reported warning flags: ${describeSecurityFlags(t)}.`;
       suggestedHandling = "verify";
-    } else if (t.security?.status === 'failed' || securityProviderStatus === 'missing') {
+    } else if (t.security?.status === 'failed' || (!t.security && securityProviderStatus !== 'connected')) {
       risk = "unknown";
-      reason = securityProviderStatus === 'missing'
+      reason = securityProviderStatus === 'missing' || securityProviderStatus === 'disabled'
         ? "Token security provider is not configured, so contract-level checks are limited."
-        : "Token security scan failed, so contract-level checks are unknown.";
+        : securityProviderStatus === 'partial'
+          ? "Token security coverage is incomplete, so this contract-level result is unknown."
+          : "Token security scan failed, so contract-level checks are unknown.";
       suggestedHandling = "verify";
     } else if (isKnownStable && (t.verified || !t.possibleSpam)) {
       risk = "low";
@@ -1238,23 +1271,37 @@ export function analyzePortfolioForRisk(
     }
   }
 
-  const securityCheckedTokenCount = tokens.filter(t => t.security && t.security.provider !== 'none' && t.security.status !== 'failed' && t.security.status !== 'unknown').length;
-  if (securityProviderStatus === 'connected' && securityCheckedTokenCount === 0 && tokens.filter(t => t.address !== 'native' && t.symbol !== 'ETH').length > 0 && securityProviderName !== 'none') {
-    securityProviderStatus = 'failed';
-  }
   const securityHighRiskCount = tokens.filter(t => t.security?.status === 'high-risk').length;
   const securityWarningCount = tokens.filter(t => t.security?.status === 'warning').length;
 
-  let summary: string;
+  const securityCoverage: PortfolioRiskAnalysis['securityProvider']['coverage'] = securityCheckedTokenCount === 0
+    ? 'unavailable'
+    : securityProviderStatus === 'connected' && securityCheckedTokenCount >= tokenContractCount
+      ? 'complete'
+      : 'partial';
+  const securityFailureReason = securityCoverage === 'complete'
+    ? undefined
+    : securityCoverage === 'partial'
+      ? `Usable verdicts were returned for ${securityCheckedTokenCount} of ${tokenContractCount} token contracts.`
+      : sanitizeSecurityFailureReason(
+        portfolio.providerCallSummary?.risk?.note
+          || `${portfolio.providerCallSummary?.risk?.errorCode || ''} ${securityProviderStatus}`,
+      );
+
+  let findingSummary: string;
   if (securityHighRiskCount > 0) {
-    summary = `Detected ${securityHighRiskCount} tokens with high-risk security flags and ${suspiciousTokenCount} suspicious or low-confidence tokens out of ${tokenCount} assets. No execution is possible in read-only mode.`;
+    findingSummary = `Detected ${securityHighRiskCount} tokens with high-risk security flags and ${suspiciousTokenCount} suspicious or low-confidence tokens out of ${tokenCount} assets.`;
   } else if (suspiciousTokenCount > 0) {
-    summary = `Detected ${suspiciousTokenCount} low-confidence or suspicious tokens out of ${tokenCount} assets. Some may be unverified, unpriced, or have warning-level provider signals. No execution is possible in read-only mode.`;
-  } else if (securityProviderStatus === 'missing' || securityProviderStatus === 'disabled') {
-    summary = `Reviewed ${tokenCount} Base portfolio assets using available metadata. Token security provider is not configured, so contract-level checks are limited. No execution is possible in read-only mode.`;
+    findingSummary = `Detected ${suspiciousTokenCount} low-confidence or suspicious tokens out of ${tokenCount} assets using available metadata.`;
   } else {
-    summary = `Reviewed ${tokenCount} Base portfolio assets. No major warnings detected by configured providers. No execution is possible in read-only mode.`;
+    findingSummary = `Reviewed ${tokenCount} Base portfolio assets using available metadata.`;
   }
+  const coverageSummary = securityCoverage === 'complete'
+    ? `Contract checks completed for ${securityCheckedTokenCount} token contracts.`
+    : securityCoverage === 'partial'
+      ? `Contract checks are incomplete. ${securityFailureReason}`
+      : `Contract checks are unavailable. ${securityFailureReason}`;
+  const summary = `${findingSummary} ${coverageSummary} No execution is possible in read-only mode.`;
 
   const isPriceMissing = portfolio.providers?.prices === "missing" || portfolio.providers?.prices === "disabled" || priceProvider === "none" || priceProvider === "missing";
   const isPriceFailed = portfolio.providers?.prices === "failed" || priceProvider === "failed";
@@ -1264,13 +1311,11 @@ export function analyzePortfolioForRisk(
       ? "Price provider is not configured, so value-based ranking is limited."
       : "Ranked findings using available USD values.";
 
-  const securityStep = securityProviderStatus === 'missing' || securityProviderStatus === 'disabled'
-    ? "Token security provider is not configured, so contract-level checks are limited."
-    : securityProviderStatus === 'failed'
-      ? "Security scan did not return token-level results."
-      : securityProviderStatus === 'partial'
-        ? "Token security scan was partial; some contract-level checks may be unavailable."
-        : "Reviewed configured token security provider signals where available.";
+  const securityStep = securityCoverage === 'complete'
+    ? `Contract checks completed for ${securityCheckedTokenCount} token contracts.`
+    : securityCoverage === 'partial'
+      ? `Contract checks are incomplete. ${securityFailureReason}`
+      : `Contract checks are unavailable. ${securityFailureReason}`;
 
   const suggestedNextSteps: string[] = [];
   if (portfolio.providerCallSummary?.balances?.status === 'rate_limited') {
@@ -1312,8 +1357,16 @@ export function analyzePortfolioForRisk(
     }
   }
 
+  const overallRiskLevel: PortfolioRiskAnalysis['overallRiskLevel'] = findings.some(f => f.risk === 'high') || securityHighRiskCount > 0
+    ? 'high'
+    : findings.some(f => f.risk === 'medium') || securityWarningCount > 0
+      ? 'medium'
+      : securityCoverage !== 'complete' && tokenContractCount > 0
+        ? 'unknown'
+        : 'low';
+
   return {
-    overallRiskLevel: findings.some(f => f.risk === 'high') || securityHighRiskCount > 0 ? 'high' : findings.some(f => f.risk === 'medium') || securityWarningCount > 0 ? 'medium' : 'low',
+    overallRiskLevel,
     summary,
     providerContext: portfolio.providerContext,
     totalTokens: tokenCount,
@@ -1344,12 +1397,30 @@ export function analyzePortfolioForRisk(
     },
     securityProvider: {
       provider: securityProviderName,
-      status: securityProviderStatus
+      status: securityProviderStatus,
+      coverage: securityCoverage,
+      failureReason: securityFailureReason,
     },
     tokenFindings: findings.slice(0, 10),
     suggestedNextSteps,
     approvalAnalysis
   };
+}
+
+export function buildPortfolioReviewAssistantContent(
+  analysis: PortfolioRiskAnalysis,
+  isReadonly: boolean,
+): string {
+  const checked = analysis.portfolioSnapshot.securityCheckedTokenCount || 0;
+  const suspicious = analysis.portfolioSnapshot.suspiciousTokenCount;
+  const monitored = Math.max(0, analysis.portfolioSnapshot.tokenCount - suspicious);
+  const coverage = analysis.securityProvider.coverage;
+  const securityCopy = checked > 0 && coverage === 'complete'
+    ? `Contract checks returned ${checked} usable token-security verdict${checked === 1 ? '' : 's'}.`
+    : checked > 0
+      ? `Contract checks are incomplete: only ${checked} token contract${checked === 1 ? '' : 's'} returned a usable verdict.`
+      : `Contract checks are unavailable: ${sanitizeSecurityFailureReason(analysis.securityProvider.failureReason || analysis.securityProvider.status)}`;
+  return `I reviewed your Base token list and created a${isReadonly ? ' read-only' : ''} risk recommendation. ${securityCopy} I found ${suspicious} suspicious/low-confidence tokens and ${monitored} tokens worth monitoring.${isReadonly ? ' No transaction was executed.' : ''}`;
 }
 
 export function buildRecommendationMetadataFromAnalysis(input: {
@@ -1365,7 +1436,11 @@ export function buildRecommendationMetadataFromAnalysis(input: {
   const isMainnetExecEnabled = process.env.MAINNET_EXECUTION_ENABLED === 'true';
   const canExecute = !isReadonly && (chainEnv !== 'mainnet' || isMainnetExecEnabled);
 
-  const overallRisk = analysis.portfolioSnapshot.securityHighRiskCount > 0 || analysis.portfolioSnapshot.suspiciousTokenCount > 0 ? "high" : "low";
+  const overallRisk = analysis.portfolioSnapshot.securityHighRiskCount > 0 || analysis.portfolioSnapshot.suspiciousTokenCount > 0
+    ? "high"
+    : analysis.securityProvider.coverage !== 'complete'
+      ? "unknown"
+      : "low";
 
   return {
     type: "recommendation",
@@ -1373,8 +1448,8 @@ export function buildRecommendationMetadataFromAnalysis(input: {
     instruction: message,
     reason: intent?.reason || `Automated risk analysis created by Agent Stream for: "${message}"`,
     expectedEffect: intent?.expectedEffect || "Analyze Base token list, filter spam/airdrop tokens, and flag any high-risk assets.",
-    risk: isReadonly ? (overallRisk === 'high' ? "medium" : "low") : overallRisk,
-    riskScore: analysis.portfolioSnapshot.securityHighRiskCount > 0 ? 85 : analysis.portfolioSnapshot.suspiciousTokenCount > 0 ? 75 : 15,
+    risk: isReadonly ? (overallRisk === 'low' ? "low" : "medium") : (overallRisk === 'unknown' ? "medium" : overallRisk),
+    riskScore: analysis.portfolioSnapshot.securityHighRiskCount > 0 ? 85 : analysis.portfolioSnapshot.suspiciousTokenCount > 0 ? 75 : overallRisk === 'unknown' ? 50 : 15,
     chainMode: chainEnv,
     safetyState: isReadonly ? "blocked" : (canExecute ? "executable" : "blocked"),
     executable: canExecute,

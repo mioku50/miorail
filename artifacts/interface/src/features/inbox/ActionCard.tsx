@@ -21,6 +21,19 @@ export function ActionCard({ action, onRefresh }: ActionCardProps) {
   const isDismissing = dismissAction.isPending;
   const isDeleting = deleteAction.isPending;
   const isRegenerating = regenerateAction.isPending;
+  const regenerateAnalysis = () => regenerateAction.mutate(
+    {
+      actionId: action.id,
+      walletAddress: address,
+      chainEnv: import.meta.env.VITE_CHAIN_ENV || 'mainnet-readonly',
+    },
+    {
+      onSuccess: () => {
+        showToast('Recommendation analysis regenerated');
+        onRefresh();
+      },
+    },
+  );
 
   // T19.1: the confirm button renders ONLY for a whitelisted production action
   // type (revoke_approval / limited_transfer) that carries onchain calls. The
@@ -61,7 +74,12 @@ export function ActionCard({ action, onRefresh }: ActionCardProps) {
 
       <div className="text-[13px] text-ink-2 leading-relaxed">{action.suggestedPrompt}</div>
 
-      <ActionDiffPreview action={action} onRefresh={onRefresh} />
+      <ActionDiffPreview
+        action={action}
+        onRefresh={onRefresh}
+        onRetrySecurity={action.kind === 'recommendation' ? regenerateAnalysis : undefined}
+        isRetryingSecurity={isRegenerating}
+      />
 
       {action.status === 'failed' && (
         <div className="flex items-center gap-[7px] text-[12px] font-bold text-risk bg-risk-soft px-[10px] py-[6px] rounded-[9px] mt-1 w-fit">🛡️ blocked by security</div>
@@ -90,7 +108,7 @@ export function ActionCard({ action, onRefresh }: ActionCardProps) {
           )}
           {action.kind === 'recommendation' && (
             <button
-              onClick={() => regenerateAction.mutate({ actionId: action.id, walletAddress: address, chainEnv: import.meta.env.VITE_CHAIN_ENV || 'mainnet-readonly' }, { onSuccess: () => { showToast('Recommendation analysis regenerated'); onRefresh(); } })}
+              onClick={regenerateAnalysis}
               disabled={isDismissing || isDeleting || isRegenerating}
               className="bg-bg hover:bg-panel border border-line text-ink px-[15px] py-[9px] rounded-[11px] font-semibold text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >

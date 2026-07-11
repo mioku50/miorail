@@ -11,6 +11,7 @@ import { getSystemStatus } from './status.js';
 import {
   APPROVAL_SCANNER_UNAVAILABLE_UI_NOTE,
   analyzePortfolioForRisk,
+  buildPortfolioReviewAssistantContent,
   buildRecommendationMetadataFromAnalysis,
   fetchInternalApprovals,
   fetchInternalPortfolio,
@@ -187,7 +188,7 @@ chatRouter.post('/', async (req, res, next) => {
           });
 
           const analysis = analyzePortfolioForRisk(portfolio, walletAddress, chainEnvVal);
-          riskStatus = portfolio.providers.risk || riskStatus;
+          riskStatus = analysis.securityProvider.status;
           securityProvider = portfolio.providers.riskProvider || securityProvider;
           toolCallTraces.push({
             toolName: 'analyze_portfolio_for_risk',
@@ -205,21 +206,13 @@ chatRouter.post('/', async (req, res, next) => {
             providerContext: {
               tokenBalances: portfolio.providers.tokenBalancesProvider || tokenBalancesProvider,
               prices: portfolio.providers.priceProvider || pricesStatus,
-              risk: portfolio.providers.risk || riskStatus,
+              risk: analysis.securityProvider.status,
               securityProvider: portfolio.providers.riskProvider || 'none',
               approvals: portfolio.approvalScan?.status || 'not_requested',
               approvalProvider: portfolio.providers.approvalProvider || 'none',
             }
           });
-          const suspiciousCount = analysis.portfolioSnapshot.suspiciousTokenCount;
-          const monitorCount = Math.max(0, analysis.portfolioSnapshot.tokenCount - suspiciousCount);
-          if (analysis.securityProvider.status === 'missing' || analysis.securityProvider.status === 'disabled') {
-            assistantContent = 'I created a read-only recommendation using available metadata. Token security provider is not configured, so contract-level checks are limited.';
-          } else if (isReadonly) {
-            assistantContent = `I reviewed your Base token list and created a read-only risk recommendation with ${analysis.securityProvider.provider} security context. I found ${suspiciousCount} suspicious/low-confidence tokens and ${monitorCount} tokens worth monitoring. No transaction was executed.`;
-          } else {
-            assistantContent = `I reviewed your Base token list and created a risk recommendation with ${analysis.securityProvider.provider} security context. I found ${suspiciousCount} suspicious/low-confidence tokens and ${monitorCount} tokens worth monitoring.`;
-          }
+          assistantContent = buildPortfolioReviewAssistantContent(analysis, isReadonly);
           tokensList = analysis.tokenFindings.map(f => `${f.balanceFormatted || ''} ${f.symbol}`.trim()).slice(0, 5);
         } catch (err) {
           console.error("Failed portfolio analysis in chat:", err);
@@ -251,13 +244,15 @@ chatRouter.post('/', async (req, res, next) => {
         screenedAt: new Date().toISOString(),
         allowed: screenRes.allowed,
         verdict: screenRes.allowed ? 'PASSED' : 'BLOCKED',
-        reason: screenRes.reason || 'All action-security heuristics and contract security checks evaluated.',
+        reason: screenRes.reason || (riskStatus === 'connected' || riskStatus === 'partial'
+          ? 'Action-security heuristics and available contract checks evaluated.'
+          : 'Action-security heuristics evaluated; contract checks are unavailable or incomplete.'),
         checks: screenRes.checks || [
           { name: 'Prompt Injection / Jailbreak', status: 'PASSED' },
           { name: 'Credential Exfiltration', status: 'PASSED' },
           { name: 'Wallet Drain / Sweep', status: screenRes.allowed ? 'PASSED' : 'BLOCKED' },
           { name: 'Unlimited Token Approval', status: screenRes.allowed ? 'PASSED' : 'BLOCKED' },
-          { name: 'GoPlus Contract Security', status: riskStatus === 'connected' || secProvider === 'goplus' ? 'PASSED' : 'SKIPPED' }
+          { name: 'GoPlus Contract Security', status: riskStatus === 'connected' || riskStatus === 'partial' ? 'PASSED' : 'SKIPPED' }
         ]
       };
 

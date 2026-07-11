@@ -1,6 +1,14 @@
 import test, { describe, beforeEach } from 'node:test';
 import assert from 'node:assert';
-import { analyzePortfolioForRisk, buildRecommendationMetadataFromAnalysis, fetchInternalPortfolio, clearTokenBalancesCacheForTests, type PortfolioData, type PortfolioRiskAnalysis } from './portfolioAnalysis.js';
+import {
+  analyzePortfolioForRisk,
+  buildPortfolioReviewAssistantContent,
+  buildRecommendationMetadataFromAnalysis,
+  fetchInternalPortfolio,
+  clearTokenBalancesCacheForTests,
+  type PortfolioData,
+  type PortfolioRiskAnalysis,
+} from './portfolioAnalysis.js';
 
 function restoreEnv(name: string, value: string | undefined) {
   if (value === undefined) {
@@ -70,7 +78,14 @@ describe('Portfolio Risk Analysis Utility', () => {
           balanceFormatted: '500.0000',
           usdValue: '500.00',
           verified: true,
-          possibleSpam: false
+          possibleSpam: false,
+          security: {
+            provider: 'goplus',
+            status: 'ok',
+            summary: 'No high-risk contract flags returned.',
+            riskLabels: [],
+            flags: {},
+          },
         }
       ]
     };
@@ -295,7 +310,8 @@ describe('Portfolio Risk Analysis Utility', () => {
       },
       securityProvider: {
         provider: 'goplus',
-        status: 'connected'
+        status: 'connected',
+        coverage: 'complete',
       },
       tokenFindings: [],
       suggestedNextSteps: ['Monitor']
@@ -315,5 +331,53 @@ describe('Portfolio Risk Analysis Utility', () => {
     assert.strictEqual(meta.executionStatus, 'read-only');
     assert.deepStrictEqual(meta.analysis, mockAnalysis);
   });
-});
 
+  test('failed GoPlus scan with zero usable verdicts is never described optimistically', () => {
+    const analysis = analyzePortfolioForRisk({
+      updatedAt: new Date().toISOString(),
+      providerStatus: 'connected',
+      providers: {
+        rpc: 'connected',
+        tokenBalances: 'connected',
+        tokenBalancesProvider: 'moralis',
+        prices: 'connected',
+        risk: 'failed',
+        riskProvider: 'goplus',
+      },
+      providerCallSummary: {
+        risk: {
+          provider: 'goplus',
+          status: 'failed',
+          providerCalled: true,
+          budgetExhausted: false,
+          errorCode: 'unauthorized',
+          note: 'Contract check service authentication is unavailable.',
+        },
+      },
+      tokens: [{
+        symbol: 'TOKEN',
+        name: 'Token',
+        address: '0x1111111111111111111111111111111111111111',
+        balance: '1',
+        balanceFormatted: '1',
+        verified: true,
+        security: {
+          provider: 'goplus',
+          status: 'failed',
+          summary: 'Token security scan failed.',
+          riskLabels: [],
+          flags: {},
+        },
+      }],
+    }, '0x123', 'mainnet-readonly');
+
+    assert.equal(analysis.securityProvider.status, 'failed');
+    assert.equal(analysis.securityProvider.coverage, 'unavailable');
+    assert.equal(analysis.portfolioSnapshot.securityCheckedTokenCount, 0);
+    assert.match(analysis.summary, /Contract checks are unavailable/);
+
+    const assistantCopy = buildPortfolioReviewAssistantContent(analysis, true);
+    assert.match(assistantCopy, /Contract checks are unavailable/);
+    assert.doesNotMatch(assistantCopy, /with goplus security context/i);
+  });
+});

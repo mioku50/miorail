@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import type { UseQueryOptions, UseMutationOptions } from '@tanstack/react-query';
+import type { QueryClient, UseQueryOptions, UseMutationOptions } from '@tanstack/react-query';
 import * as apiSpec from '@mioagent/api-spec';
 
 // T19.1: re-export the production action-type whitelist so both surfaces can
@@ -441,17 +441,34 @@ export function useAutonomy(options?: Omit<UseQueryOptions<apiSpec.AutonomyState
   });
 }
 
+export function syncConfiguredAutonomyState(
+  queryClient: QueryClient,
+  response: apiSpec.ConfigureAutonomyResponse,
+): Promise<void> {
+  // The API response is authoritative. Publish it synchronously so no render
+  // can show the previous autonomy_policy_missing state after a successful save.
+  queryClient.setQueryData<apiSpec.AutonomyStateResponse>(['autonomy'], response.state);
+  return queryClient
+    .cancelQueries({ queryKey: ['autonomy'] }, { revert: false })
+    .then(() => queryClient.invalidateQueries({ queryKey: ['autonomy'], refetchType: 'active' }));
+}
+
 export function useConfigureAutonomy(options?: Omit<UseMutationOptions<apiSpec.ConfigureAutonomyResponse, Error, apiSpec.ConfigureAutonomyRequest>, 'mutationFn'>) {
   const queryClient = useQueryClient();
+  const { onSuccess, ...mutationOptions } = options || {};
   return useMutation({
+    ...mutationOptions,
     mutationFn: (data: apiSpec.ConfigureAutonomyRequest) =>
       fetchApi<apiSpec.ConfigureAutonomyResponse>('/api/autonomy/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['autonomy'] }),
-    ...options,
+    onSuccess: (data, variables, onMutateResult, context) => {
+      const refresh = syncConfiguredAutonomyState(queryClient, data);
+      const consumer = onSuccess?.(data, variables, onMutateResult, context);
+      return Promise.all([refresh, consumer]).then(() => undefined);
+    },
   });
 }
 

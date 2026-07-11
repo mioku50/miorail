@@ -325,15 +325,15 @@ actionsRouter.post('/recommend', async (req, res, next) => {
         const portfolio = await fetchInternalPortfolio(walletAddress, chainEnv, {
           includeApprovals: intent.intentType === 'approvals',
         });
-        riskStatus = portfolio.providers.risk || riskStatus;
         secProvider = portfolio.providers.riskProvider || secProvider;
+        const analysis = analyzePortfolioForRisk(portfolio, walletAddress, chainEnv);
+        riskStatus = analysis.securityProvider.status;
         securityProviderContext = {
           risk: riskStatus,
           riskProvider: secProvider,
           securityProvider: secProvider,
           requiresTokenSecurity,
         };
-        const analysis = analyzePortfolioForRisk(portfolio, walletAddress, chainEnv);
         metadata = buildRecommendationMetadataFromAnalysis({
           intent: { ...intent, createdBy: 'actions-builder' },
           message: instruction,
@@ -343,7 +343,7 @@ actionsRouter.post('/recommend', async (req, res, next) => {
           providerContext: {
             tokenBalances: portfolio.providers.tokenBalancesProvider,
             prices: portfolio.providers.priceProvider || portfolio.providers.prices,
-            risk: portfolio.providers.risk,
+            risk: analysis.securityProvider.status,
             securityProvider: portfolio.providers.riskProvider || 'none',
             approvals: portfolio.approvalScan?.status || 'not_requested',
             approvalProvider: portfolio.providers.approvalProvider || 'none',
@@ -364,13 +364,15 @@ actionsRouter.post('/recommend', async (req, res, next) => {
       screenedAt: new Date().toISOString(),
       allowed: screenRes.allowed,
       verdict: screenRes.allowed ? 'PASSED' : 'BLOCKED',
-      reason: screenRes.reason || 'All action-security heuristics and contract security checks evaluated.',
+      reason: screenRes.reason || (riskStatus === 'connected' || riskStatus === 'partial'
+        ? 'Action-security heuristics and available contract checks evaluated.'
+        : 'Action-security heuristics evaluated; contract checks are unavailable or incomplete.'),
       checks: screenRes.checks || [
         { name: 'Prompt Injection / Jailbreak', status: 'PASSED' },
         { name: 'Credential Exfiltration', status: 'PASSED' },
         { name: 'Wallet Drain / Sweep', status: screenRes.allowed ? 'PASSED' : 'BLOCKED' },
         { name: 'Unlimited Token Approval', status: screenRes.allowed ? 'PASSED' : 'BLOCKED' },
-        { name: 'GoPlus Contract Security', status: secProvider === 'goplus' ? 'PASSED' : 'SKIPPED' }
+        { name: 'GoPlus Contract Security', status: riskStatus === 'connected' || riskStatus === 'partial' ? 'PASSED' : 'SKIPPED' }
       ]
     };
 
@@ -1167,7 +1169,8 @@ actionsRouter.post('/:actionId/regenerate', async (req, res, next) => {
       providerContext: {
         tokenBalances: portfolioData.providers.tokenBalancesProvider,
         prices: portfolioData.providers.prices,
-        risk: portfolioData.providers.risk
+        risk: analysis.securityProvider.status,
+        securityProvider: analysis.securityProvider.provider,
       }
     });
     const newMeta = {

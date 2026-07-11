@@ -89,7 +89,8 @@ describe('Portfolio Resilience and Stale Cache Tests', () => {
     const analysis = analyzePortfolioForRisk(mockPortfolio, '0x123', 'mainnet-readonly');
     assert.strictEqual(analysis.portfolioSnapshot.tokenCount, 2);
     assert.strictEqual(analysis.securityProvider.status, 'failed');
-    assert.ok(analysis.suggestedNextSteps.some(step => step.includes('Security scan did not return token-level results')));
+    assert.strictEqual(analysis.securityProvider.coverage, 'unavailable');
+    assert.ok(analysis.suggestedNextSteps.some(step => step.includes('Contract checks are unavailable')));
   });
 
   test('if live provider fails on subsequent refresh, cached token balances return with stale status', async () => {
