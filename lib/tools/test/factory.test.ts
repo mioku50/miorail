@@ -20,6 +20,16 @@ describe('createToolAggregatorForUser', () => {
         assert.strictEqual(selected.every((tool) => tool.capability === 'read_only'), true);
     });
 
+    test('user-confirmed swap selection adds only Base MCP swap to the read inventory', () => {
+        const discovered = classifyDynamicBaseMcpTools([
+            { name: 'get_portfolio', description: 'Read balances' },
+            { name: 'swap', description: 'Swap tokens' },
+            { name: 'morpho_prepare_deposit', description: 'Prepare deposit' },
+        ]);
+        const selected = selectBaseMcpRuntimeTools(discovered, true, true);
+        assert.deepStrictEqual(selected.map((tool) => tool.name), ['get_portfolio', 'swap']);
+    });
+
     test('returns mock providers when toggles are missing or false', async () => {
         const mockGetSettings = mock.method(settingsAPI, 'getUserSettings', async () => ({
             protocolToggles: {}

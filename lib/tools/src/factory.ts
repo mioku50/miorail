@@ -25,6 +25,7 @@ export interface CreateToolAggregatorOptions {
   baseMcpReadOnlyOnly?: boolean;
   includeMorphoReadOnly?: boolean;
   includeUniswapQuote?: boolean;
+  includeBaseMcpSwap?: boolean;
 }
 
 function parseBool(value?: string): boolean {
@@ -50,9 +51,11 @@ function baseMcpCatalogEnabled(toggles?: Record<string, boolean>): boolean {
 export function selectBaseMcpRuntimeTools(
   tools: DynamicBaseMcpTool[],
   readOnlyOnly = false,
+  includeUserConfirmedSwap = false,
 ): DynamicBaseMcpTool[] {
   return readOnlyOnly
-    ? tools.filter((tool) => tool.capability === 'read_only' && tool.enabled)
+    ? tools.filter((tool) => (tool.capability === 'read_only' && tool.enabled)
+      || (includeUserConfirmedSwap && tool.capability === 'user_confirmed_transaction' && tool.group === 'swap'))
     : tools;
 }
 
@@ -102,9 +105,15 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
       }
       try {
         const discoveredTools = await listDynamicBaseMcpToolsFromClient(baseClient, toggles);
-        const dynamicTools = selectBaseMcpRuntimeTools(discoveredTools, options.baseMcpReadOnlyOnly);
+        const dynamicTools = selectBaseMcpRuntimeTools(
+          discoveredTools,
+          options.baseMcpReadOnlyOnly,
+          options.includeBaseMcpSwap,
+        );
         if (dynamicTools.length > 0) {
-          aggregator.registerProvider(new DynamicBaseMcpToolProvider(baseClient, dynamicTools));
+          aggregator.registerProvider(new DynamicBaseMcpToolProvider(baseClient, dynamicTools, {
+            allowUserConfirmedSwap: options.includeBaseMcpSwap,
+          }));
         }
       } catch (error) {
         console.warn('Failed to list dynamic Base MCP tools', {

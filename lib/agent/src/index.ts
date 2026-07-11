@@ -38,6 +38,11 @@ function isNamespacedPartnerTool(toolName: string): boolean {
   return parts.length >= 2 && !NAMESPACED_TOOL_VERBS.has(parts[0]!) && NAMESPACED_TOOL_VERBS.has(parts[1]!);
 }
 
+function isWriteTool(toolName: string): boolean {
+  const parts = toolName.toLowerCase().split(/[_:.\-/]/).filter(Boolean);
+  return parts.some((part) => ['swap', 'send', 'sendcalls', 'sign', 'prepare', 'deposit', 'withdraw', 'supply', 'borrow', 'repay', 'approve'].includes(part));
+}
+
 export class Agent {
   constructor(private config: AgentConfig) {}
 
@@ -52,7 +57,7 @@ export class Agent {
     const allTools = providerInventory.flatMap((entry) => entry.tools);
     const runtime = this.config.runtimeContext;
     const providerNamespace = runtime?.providerNamespace?.toLowerCase();
-    const tools = providerNamespace
+    const scopedTools = providerNamespace
       ? allTools.filter((tool) => {
           const lower = tool.name.toLowerCase();
           return lower === providerNamespace || lower.startsWith(`${providerNamespace}_`)
@@ -62,6 +67,9 @@ export class Agent {
       : runtime?.executionMode === 'read-only'
         ? allTools.filter((tool) => !isNamespacedPartnerTool(tool.name))
         : allTools;
+    // Write tools are orchestrated by dedicated server routes. The generic LLM
+    // loop never receives them, even in user-confirmed mode.
+    const tools = runtime ? scopedTools.filter((tool) => !isWriteTool(tool.name)) : scopedTools;
     const allowedToolNames = new Set(tools.map((tool) => tool.name));
     console.log("TRACE: listed tools");
     const baseMcpTools = providerInventory

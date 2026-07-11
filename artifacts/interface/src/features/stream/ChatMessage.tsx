@@ -22,6 +22,9 @@ export function ChatMessage({ m, networkLabel }: { m: any; networkLabel: string 
   if (m.role === 'assistant') {
     const actionIdVal = m.actionId || m.metadata?.actionId;
     const meta = m.metadata || {};
+    const approvalUrl = typeof meta.approvalUrl === 'string' && meta.approvalUrl.startsWith('https://')
+      ? meta.approvalUrl
+      : null;
     const riskVal = meta.risk || 'low';
     return (
       <div className="flex flex-col items-start gap-1 w-full animate-in fade-in slide-in-from-left-1">
@@ -81,6 +84,16 @@ export function ChatMessage({ m, networkLabel }: { m: any; networkLabel: string 
               <span>→</span>
             </button>
           </div>
+        )}
+        {approvalUrl && meta.requestId && (
+          <a
+            href={approvalUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="rounded-xl bg-accent px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-accent-2"
+          >
+            Approve Transaction in Base Account
+          </a>
         )}
         <ToolCallTrace toolCalls={m.toolCalls} />
         <span className="text-[10px] text-ink-3 font-mono ml-1">Miorail</span>

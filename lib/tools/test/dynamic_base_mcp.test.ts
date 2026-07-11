@@ -84,6 +84,28 @@ describe('DynamicBaseMcpToolProvider', () => {
     assert.strictEqual(mockClient.calls.length, 0);
   });
 
+  test('explicitly enabled Base MCP swap calls only the approval-mode tool', async () => {
+    const tools = classifyDynamicBaseMcpTools([
+      { name: 'swap', description: 'Swap tokens', inputSchema: { type: 'object' } },
+    ]);
+    const calls: string[] = [];
+    const client = {
+      getClient() {
+        return {
+          callTool: async ({ name }: { name: string }) => {
+            calls.push(name);
+            return { content: [{ type: 'text', text: JSON.stringify({ approvalUrl: 'https://wallet.base.org/approve', requestId: 'req-1' }) }] };
+          },
+        };
+      },
+    };
+    const provider = new DynamicBaseMcpToolProvider(client, tools, { allowUserConfirmedSwap: true });
+    const result = await provider.callTool('swap', { fromToken: 'USDC', toToken: 'ETH', amount: '1' });
+    assert.equal(result.isError, false);
+    assert.deepEqual(calls, ['swap']);
+    assert.match(result.content, /approvalUrl/);
+  });
+
   test('exact send_calls tools are not duplicated by dynamic provider', () => {
     const tools = classifyDynamicBaseMcpTools([
       { name: 'send_calls', description: 'Send calls' },

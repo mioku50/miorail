@@ -63,6 +63,11 @@ function normalizeToolName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+function isSwapTool(name: string): boolean {
+  const normalized = normalizeToolName(name);
+  return normalized === 'swap' || normalized === 'swaptokens' || normalized === 'tokenswap';
+}
+
 export function inferBaseMcpToolGroup(name: string): string {
   const normalized = normalizeToolName(name);
   if (normalized.includes('balance') || normalized.includes('wallet') || normalized.includes('account')) return 'wallet';
@@ -174,6 +179,7 @@ export class DynamicBaseMcpToolProvider implements ToolProvider {
   constructor(
     private client: BaseMcpCallClient,
     tools: DynamicBaseMcpTool[],
+    private readonly options: { allowUserConfirmedSwap?: boolean } = {},
   ) {
     this.toolMap = new Map(tools.map((tool) => [tool.name, tool]));
   }
@@ -192,6 +198,21 @@ export class DynamicBaseMcpToolProvider implements ToolProvider {
     if (!tool) return { content: `Unknown tool: ${name}`, isError: true };
 
     if (tool.capability === 'user_confirmed_transaction') {
+      if (this.options.allowUserConfirmedSwap && isSwapTool(tool.name)) {
+        try {
+          const result = await this.client.getClient().callTool({ name, arguments: args });
+          const serialized = serializeToolResult(result);
+          if (!containsApprovalReference(result)) {
+            return {
+              isError: true,
+              content: JSON.stringify({ errorCode: 'base_mcp_approval_reference_missing' }),
+            };
+          }
+          return { content: serialized, isError: false };
+        } catch (error) {
+          return { content: JSON.stringify({ errorCode: safeCallErrorCode(error) }), isError: true };
+        }
+      }
       return {
         isError: true,
         content: JSON.stringify({
@@ -214,4 +235,17 @@ export class DynamicBaseMcpToolProvider implements ToolProvider {
       return { content: JSON.stringify({ errorCode: safeCallErrorCode(error) }), isError: true };
     }
   }
+}
+
+function containsApprovalReference(value: unknown, depth = 0): boolean {
+  if (depth > 8 || value === null || value === undefined) return false;
+  if (typeof value === 'string') {
+    try { return containsApprovalReference(JSON.parse(value), depth + 1); } catch { return false; }
+  }
+  if (Array.isArray(value)) return value.some((item) => containsApprovalReference(item, depth + 1));
+  if (typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  if (typeof record.approvalUrl === 'string' && typeof record.requestId === 'string') return true;
+  if (record.type === 'text' && typeof record.text === 'string') return containsApprovalReference(record.text, depth + 1);
+  return Object.values(record).some((item) => containsApprovalReference(item, depth + 1));
 }

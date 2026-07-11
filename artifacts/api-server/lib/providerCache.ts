@@ -305,8 +305,9 @@ export async function cachedProviderCall<T>(params: {
   store: ProviderCacheStore;
   budget: ProviderBudget;
   fetcher: () => Promise<T>;
+  shouldCache?: (data: T) => boolean;
 }): Promise<CachedCallResult<T>> {
-  const { key, provider, chainId, ttlSeconds, store, budget, fetcher } = params;
+  const { key, provider, chainId, ttlSeconds, store, budget, fetcher, shouldCache } = params;
   const now = Date.now();
 
   // Reuse an in-flight call for the same key (de-duplication).
@@ -381,10 +382,12 @@ export async function cachedProviderCall<T>(params: {
         updatedAt: now,
         expiresAt: now + ttlSeconds * 1000,
       };
-      try {
-        await store.set(liveEntry);
-      } catch {
-        // store write failure is non-fatal; result still returned
+      if (!shouldCache || shouldCache(data)) {
+        try {
+          await store.set(liveEntry);
+        } catch {
+          // store write failure is non-fatal; result still returned
+        }
       }
       return {
         data,

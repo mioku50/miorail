@@ -8,6 +8,7 @@ import { autonomyRouteRuntime } from './autonomy.js';
 
 const WALLET = '0x9999999999999999999999999999999999999999';
 let policyRepository: InMemoryAutonomyPolicyRepository;
+const originalGetTokenSecurityProvider = autonomyRouteRuntime.getTokenSecurityProvider;
 
 describe('Autonomy API Hardening Guarantees', () => {
   beforeEach(async () => {
@@ -20,6 +21,7 @@ describe('Autonomy API Hardening Guarantees', () => {
     autonomyRouteRuntime.updateUserSettings = async (userId, update) => {
       settings.set(userId, { ...(settings.get(userId) ?? {}), ...update });
     };
+    autonomyRouteRuntime.getTokenSecurityProvider = originalGetTokenSecurityProvider;
     policyRepository = new InMemoryAutonomyPolicyRepository();
     setAutonomyPolicyRepositoryForTests(policyRepository);
     await request(app).post('/api/autonomy/reset').send({});
@@ -188,7 +190,23 @@ describe('Autonomy API Hardening Guarantees', () => {
   test('mainnet activation readiness requires usable contract checks', async () => {
     process.env.CHAIN_ENV = 'mainnet';
     process.env.MAINNET_EXECUTION_ENABLED = 'true';
-    process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    autonomyRouteRuntime.getTokenSecurityProvider = () => ({
+      providerName: 'goplus',
+      status: 'partial',
+      statusCode: 'partial',
+      provider: {
+        async getTokenSecurity({ tokenAddresses }) {
+          return tokenAddresses.map((address) => ({
+            address,
+            provider: 'goplus' as const,
+            status: 'unknown' as const,
+            flags: {},
+            rawRiskLabels: [],
+            summary: 'unknown',
+          }));
+        },
+      },
+    });
     const payload = {
       dailyLimitUsdc: '10',
       maxPerActionUsdc: '5',
@@ -203,12 +221,28 @@ describe('Autonomy API Hardening Guarantees', () => {
     assert.strictEqual(unavailable.body.state.sessionKey.executionReady, false);
     assert.ok(unavailable.body.state.sessionKey.blockedReasons.includes('contract_checks_unavailable'));
 
-    process.env.TOKEN_SECURITY_PROVIDER = 'mock';
+    autonomyRouteRuntime.getTokenSecurityProvider = () => ({
+      providerName: 'goplus',
+      status: 'partial',
+      statusCode: 'partial',
+      provider: {
+        async getTokenSecurity({ tokenAddresses }) {
+          return tokenAddresses.map((address) => ({
+            address,
+            provider: 'goplus' as const,
+            status: 'ok' as const,
+            flags: {},
+            rawRiskLabels: [],
+            summary: 'verified',
+          }));
+        },
+      },
+    });
     const usable = await request(app).get('/api/autonomy');
     assert.strictEqual(usable.body.sessionKey.executionReady, true);
     assert.deepStrictEqual(usable.body.sessionKey.blockedReasons, []);
     process.env.MAINNET_EXECUTION_ENABLED = 'false';
-    process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    autonomyRouteRuntime.getTokenSecurityProvider = originalGetTokenSecurityProvider;
   });
 
   test('kill switch releases reservations and blocks the next gateway prepare', async () => {

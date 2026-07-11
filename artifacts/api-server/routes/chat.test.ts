@@ -7,6 +7,8 @@ import { eq } from 'drizzle-orm';
 import { clearTokenSecurityCacheForTests } from '@mioagent/data-providers';
 import { ToolAggregator, type ToolDef, type ToolProvider } from '@mioagent/tools';
 import { chatRouteRuntime } from './chat.js';
+import { executionSecurityRuntime } from '../lib/executionSecurity.js';
+import { baseMcpSwapRuntime } from '../lib/streamBaseMcpSwapRouting.js';
 
 function restoreEnv(name: string, value: string | undefined) {
   if (value === undefined) {
@@ -126,6 +128,72 @@ describe('Chat API & Recommendation Guardrails', () => {
     } finally {
       chatRouteRuntime.createApiToolAggregatorForUser = originalCreateTools;
       chatRouteRuntime.createLlmProvider = originalCreateLlm;
+    }
+  });
+
+  test('POST /api/chat uses Base MCP-first swap approval without requiring a Uniswap key', async () => {
+    class BaseSwapProvider implements ToolProvider {
+      id = 'base-mcp-dynamic';
+      calls: string[] = [];
+      private tool: ToolDef = {
+        name: 'swap',
+        description: 'Base MCP swap',
+        inputSchema: { type: 'object', properties: { amount: {}, fromToken: {}, toToken: {}, walletAddress: {}, chainId: {} } },
+      };
+      async listTools() { return [this.tool]; }
+      findTool(name: string) { return name === 'swap' ? this.tool : undefined; }
+      async callTool(name: string) {
+        this.calls.push(name);
+        return { content: JSON.stringify({ approvalUrl: 'https://wallet.base.org/approve/swap', requestId: 'swap-1' }), isError: false };
+      }
+    }
+    const origChain = process.env.CHAIN_ENV;
+    const origExecution = process.env.MAINNET_EXECUTION_ENABLED;
+    const origUniswapKey = process.env.UNISWAP_API_KEY;
+    const originalCreateTools = chatRouteRuntime.createApiToolAggregatorForUser;
+    const originalGetSecurity = executionSecurityRuntime.getProvider;
+    const originalGetPolicy = baseMcpSwapRuntime.getPolicy;
+    process.env.CHAIN_ENV = 'mainnet';
+    process.env.MAINNET_EXECUTION_ENABLED = 'true';
+    delete process.env.UNISWAP_API_KEY;
+    executionSecurityRuntime.getProvider = () => ({
+      providerName: 'goplus', status: 'partial', statusCode: 'partial',
+      provider: { async getTokenSecurity({ tokenAddresses }) {
+        return tokenAddresses.map((address) => ({ address, provider: 'goplus' as const, status: 'ok' as const, flags: {}, rawRiskLabels: [], summary: 'verified' }));
+      } },
+    });
+    baseMcpSwapRuntime.getPolicy = async () => ({
+      id: 'swap-policy', userId: 'default-user', chainId: 8453,
+      walletAddress: '0x1234567890123456789012345678901234567890',
+      dailyLimit: 10, maxPerAction: 5, spentToday: 0, reservedToday: 0, periodStartedAt: Date.now(),
+      whitelist: [], scope: 'bounded-approval', expiresAt: Date.now() + 60_000,
+      isActive: true, killSwitch: false, mainnetOptIn: true,
+    });
+    const provider = new BaseSwapProvider();
+    const aggregator = new ToolAggregator();
+    aggregator.registerProvider(provider);
+    chatRouteRuntime.createApiToolAggregatorForUser = async () => aggregator;
+    await request(app).delete('/api/chat/history');
+    const beforeActions = (await db.select().from(actions)).length;
+    try {
+      const response = await request(app).post('/api/chat').send({
+        message: 'swap 0.1 USDC to ETH',
+        walletAddress: '0x1234567890123456789012345678901234567890',
+      });
+      assert.equal(response.status, 200);
+      assert.equal(response.body.metadata.directReadKind, 'base_mcp_swap');
+      assert.equal(response.body.metadata.requestId, 'swap-1');
+      assert.equal(response.body.metadata.approvalUrl, 'https://wallet.base.org/approve/swap');
+      assert.deepEqual(provider.calls, ['swap']);
+      assert.equal(response.body.actionId, undefined);
+      assert.equal((await db.select().from(actions)).length, beforeActions);
+    } finally {
+      chatRouteRuntime.createApiToolAggregatorForUser = originalCreateTools;
+      executionSecurityRuntime.getProvider = originalGetSecurity;
+      baseMcpSwapRuntime.getPolicy = originalGetPolicy;
+      restoreEnv('CHAIN_ENV', origChain);
+      restoreEnv('MAINNET_EXECUTION_ENABLED', origExecution);
+      restoreEnv('UNISWAP_API_KEY', origUniswapKey);
     }
   });
 

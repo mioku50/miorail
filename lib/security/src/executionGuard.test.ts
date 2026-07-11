@@ -28,6 +28,23 @@ test('allows a semantic limited transfer only with a usable contract verdict', a
   assert.equal(result.contractSecurity.status, 'passed');
 });
 
+test('verified USDC is permitted even when an unrelated wallet token is unknown', async () => {
+  const result = await evaluateExecutableAction({
+    chain: 8453,
+    actionType: 'limited_transfer',
+    calls: [{ to: USDC, value: '0', data: calldata('0xa9059cbb', RECIPIENT, 1_000_000n) }],
+    instruction: 'Transfer 1 USDC to an approved recipient',
+    providerContext: { risk: 'partial', riskProvider: 'goplus', securityProvider: 'goplus' },
+    tokenSecurity: [
+      ...tokenSecurity,
+      { address: '0x9999999999999999999999999999999999999999', provider: 'goplus', status: 'unknown' },
+    ],
+  });
+  assert.equal(result.allowed, true);
+  assert.equal(result.contractSecurity.status, 'passed');
+  assert.deepEqual(result.contractSecurity.checkedAddresses, [USDC.toLowerCase()]);
+});
+
 test('blocks actionType/calldata mismatch and nonzero approvals', async () => {
   const result = await evaluateExecutableAction({
     chain: 8453,

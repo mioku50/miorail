@@ -19,6 +19,7 @@ import {
   isProviderRateLimitError
 } from './interfaces.js';
 import { MockPriceProvider, MockApprovalProvider, MockTokenBalancesProvider } from './mocks.js';
+import { createHash } from 'node:crypto';
 
 export class RealMoralisProvider implements MoralisProvider {
   constructor(private readonly apiKey: string) {}
@@ -79,6 +80,9 @@ type TokenSecurityCacheEntry = {
 };
 
 const tokenSecurityCache = new Map<string, TokenSecurityCacheEntry>();
+type GoPlusAppCredentials = { appKey: string; appSecret: string };
+let goPlusAccessToken: { appKey: string; value: string; expiresAt: number } | null = null;
+let goPlusAccessTokenPromise: Promise<string | undefined> | null = null;
 let tokenSecurityHealth: { providerName: 'goplus' | 'none'; statusCode: 'connected' | 'missing' | 'failed' | 'partial' | 'disabled' } = {
   providerName: 'none',
   statusCode: 'missing'
@@ -92,6 +96,8 @@ export function setTokenSecurityHealthStatus(statusCode: 'connected' | 'missing'
 
 export function clearTokenSecurityCacheForTests() {
   tokenSecurityCache.clear();
+  goPlusAccessToken = null;
+  goPlusAccessTokenPromise = null;
   tokenSecurityHealth = { providerName: 'none', statusCode: 'missing' };
 }
 
@@ -257,7 +263,7 @@ class MockTokenSecurityProvider implements TokenSecurityProvider {
 }
 
 export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
-  constructor(private readonly apiKey?: string, private readonly timeoutMs = 6000) {}
+  constructor(private readonly appCredentials?: GoPlusAppCredentials, private readonly timeoutMs = 6000) {}
 
   async getTokenSecurity(params: { chainId: number; tokenAddresses: string[] }): Promise<TokenSecurityResult[]> {
     const addresses = normalizeAddresses(params.tokenAddresses);
@@ -280,7 +286,7 @@ export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
       const fetched = await this.fetchTokenSecurity(params.chainId, missing);
       for (const result of fetched) {
         results.set(result.address, result);
-        if (result.status !== 'failed') {
+        if (!['failed', 'unknown'].includes(result.status)) {
           tokenSecurityCache.set(cacheKey(params.chainId, result.address), {
             expiresAt: Date.now() + TOKEN_SECURITY_CACHE_TTL_MS,
             result
@@ -289,44 +295,111 @@ export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
       }
     }
 
-    return addresses.map(address => results.get(address) || failedSecurityResult(address));
+    const ordered = addresses.map(address => results.get(address) || failedSecurityResult(address));
+    const usableCount = ordered.filter((result) => !['failed', 'unknown'].includes(result.status)).length;
+    tokenSecurityHealth = {
+      providerName: 'goplus',
+      statusCode: usableCount === addresses.length ? 'connected' : usableCount > 0 ? 'partial' : 'failed',
+    };
+    return ordered;
   }
 
   private async fetchTokenSecurity(chainId: number, addresses: string[]): Promise<TokenSecurityResult[]> {
-    const url = new URL(`https://api.gopluslabs.io/api/v1/token_security/${chainId}`);
-    url.searchParams.set('contract_addresses', addresses.join(','));
-
-    const headers: Record<string, string> = { accept: 'application/json' };
-    if (this.apiKey) {
-      headers.Authorization = `Bearer ${this.apiKey}`;
-      headers['X-API-Key'] = this.apiKey;
+    const rawResults = new Map<string, Record<string, unknown>>();
+    try {
+      for (const [address, raw] of await this.requestRaw(chainId, addresses)) rawResults.set(address, raw);
+    } catch {
+      // A failed batch is retried per address below. This also handles GoPlus
+      // returning a successful but incomplete batch response.
     }
 
-    for (let attempt = 0; attempt < 2; attempt++) {
+    const missing = addresses.filter((address) => {
+      const raw = rawResults.get(address);
+      return !raw || mapGoPlusTokenSecurity(address, raw).status === 'unknown';
+    });
+    for (const address of missing) {
       try {
-        const res = await fetch(url.toString(), {
-          headers,
-          signal: AbortSignal.timeout(this.timeoutMs)
-        });
-        if (!res.ok) {
-          if (attempt === 0 && (res.status === 408 || res.status === 429 || res.status >= 500)) {
-            continue;
-          }
-          throw new Error(`GoPlus API error: ${res.statusText || res.status}`);
-        }
-        const data = await res.json() as { result?: Record<string, Record<string, unknown>> };
-        const rawResults = data.result || {};
-        tokenSecurityHealth = { providerName: 'goplus', statusCode: 'connected' };
-        return addresses.map(address => mapGoPlusTokenSecurity(address, rawResults[address.toLowerCase()] || {}));
-      } catch (err) {
-        if (attempt === 0) continue;
-        tokenSecurityHealth = { providerName: 'goplus', statusCode: 'failed' };
-        return addresses.map(address => failedSecurityResult(address, err instanceof Error ? err.message : undefined));
+        for (const [key, raw] of await this.requestRaw(chainId, [address])) rawResults.set(key, raw);
+      } catch {
+        // Preserve a failed result for this address without poisoning cache.
       }
     }
 
-    tokenSecurityHealth = { providerName: 'goplus', statusCode: 'failed' };
-    return addresses.map(address => failedSecurityResult(address));
+    const mapped = addresses.map((address) => {
+      const raw = rawResults.get(address);
+      return raw ? mapGoPlusTokenSecurity(address, raw) : failedSecurityResult(address);
+    });
+    return mapped;
+  }
+
+  private async requestRaw(chainId: number, addresses: string[]): Promise<Map<string, Record<string, unknown>>> {
+    const url = new URL(`https://api.gopluslabs.io/api/v1/token_security/${chainId}`);
+    url.searchParams.set('contract_addresses', addresses.join(','));
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const headers: Record<string, string> = { accept: 'application/json' };
+        const accessToken = await this.getAccessToken();
+        if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+        const res = await fetch(url.toString(), { headers, signal: AbortSignal.timeout(this.timeoutMs) });
+        if (!res.ok) {
+          if (res.status === 401 && accessToken) goPlusAccessToken = null;
+          throw new Error(`GoPlus API error: ${res.statusText || res.status}`);
+        }
+        const data = await res.json() as { result?: Record<string, Record<string, unknown>> };
+        const normalized = new Map<string, Record<string, unknown>>();
+        for (const [key, value] of Object.entries(data.result || {})) {
+          const address = key.trim().toLowerCase();
+          if (ERC20_ADDRESS_RE.test(address) && value && typeof value === 'object') normalized.set(address, value);
+        }
+        return normalized;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error('GoPlus request failed');
+  }
+
+  private async getAccessToken(): Promise<string | undefined> {
+    const credentials = this.appCredentials;
+    if (!credentials?.appKey || !credentials.appSecret) return undefined;
+    const now = Date.now();
+    if (goPlusAccessToken?.appKey === credentials.appKey && goPlusAccessToken.expiresAt > now + 60_000) {
+      return goPlusAccessToken.value;
+    }
+    if (goPlusAccessTokenPromise) return goPlusAccessTokenPromise;
+    goPlusAccessTokenPromise = (async () => {
+      try {
+        const time = Math.floor(Date.now() / 1000);
+        const sign = createHash('sha1')
+          .update(`${credentials.appKey}${time}${credentials.appSecret}`)
+          .digest('hex');
+        const response = await fetch('https://api.gopluslabs.io/api/v1/token', {
+          method: 'POST',
+          headers: { accept: 'application/json', 'content-type': 'application/json' },
+          body: JSON.stringify({ app_key: credentials.appKey, time, sign }),
+          signal: AbortSignal.timeout(this.timeoutMs),
+        });
+        if (!response.ok) return undefined;
+        const payload = await response.json() as Record<string, any>;
+        const result = payload.result && typeof payload.result === 'object' ? payload.result : payload;
+        const value = typeof result.access_token === 'string' ? result.access_token : undefined;
+        const expiresIn = Number(result.expires_in || 0);
+        if (!value) return undefined;
+        goPlusAccessToken = {
+          appKey: credentials.appKey,
+          value,
+          expiresAt: Date.now() + (Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn * 1000 : 5 * 60_000),
+        };
+        return value;
+      } catch {
+        // The Token Security API remains available without authentication.
+        return undefined;
+      } finally {
+        goPlusAccessTokenPromise = null;
+      }
+    })();
+    return goPlusAccessTokenPromise;
   }
 }
 
@@ -355,7 +428,10 @@ export function getTokenSecurityProviderFromEnv(): TokenSecurityProviderEnvResul
         : statusCode === 'connected'
           ? 'GoPlus connected'
           : 'GoPlus configured; awaiting successful scan';
-    return { provider: new GoPlusTokenSecurityProvider(process.env.GOPLUS_API_KEY), status: statusText, statusCode, providerName: 'goplus' };
+    const appKey = process.env.GOPLUS_APP_KEY?.trim();
+    const appSecret = process.env.GOPLUS_APP_SECRET?.trim();
+    const credentials = appKey && appSecret ? { appKey, appSecret } : undefined;
+    return { provider: new GoPlusTokenSecurityProvider(credentials), status: statusText, statusCode, providerName: 'goplus' };
   }
   if (mode === 'mock') {
     return { provider: new MockTokenSecurityProvider(), status: 'mock', statusCode: 'connected', providerName: 'goplus' };

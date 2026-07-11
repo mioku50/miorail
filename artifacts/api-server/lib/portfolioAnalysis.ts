@@ -668,6 +668,8 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
         ttlSeconds: orch.ttls.security,
         store: orch.store,
         budget: orch.budget,
+        shouldCache: (results) => results.length > 0
+          && results.every((result) => result.status !== 'failed' && result.status !== 'unknown'),
         fetcher: async () => {
           const results = await tokenSecurityProvider.getTokenSecurity({
             chainId,

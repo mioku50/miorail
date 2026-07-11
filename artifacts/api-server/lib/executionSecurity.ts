@@ -39,7 +39,15 @@ export async function loadExecutionSecurityContext(
   if (calls.length === 0 || calls.some((call) => call.to.toLowerCase() !== canonicalUsdc)) {
     return contextFrom(configured, [], true);
   }
-  const tokenAddresses = [canonicalUsdc];
+  return loadTokenSecurityContext(chainId, [canonicalUsdc]);
+}
+
+export async function loadTokenSecurityContext(
+  chainId: number,
+  tokenAddresses: string[],
+): Promise<ExecutionSecurityContext> {
+  const configured = executionSecurityRuntime.getProvider();
+  if (configured.providerName !== 'goplus') return contextFrom(configured, [], true);
   let results: TokenSecurityResult[];
   try {
     results = await configured.provider.getTokenSecurity({ chainId, tokenAddresses });

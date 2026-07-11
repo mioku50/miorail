@@ -21,11 +21,10 @@ const SKILLS: RuntimeSkillDefinition[] = [
   {
     namespace: 'uniswap',
     displayName: 'Uniswap',
-    allowedIntents: ['quote', 'read', 'write'],
+    allowedIntents: ['quote', 'read'],
     requiredTools: [
       { intent: 'quote', anyOf: ['uniswap_quote'] },
       { intent: 'read', anyOf: ['uniswap_get_*', 'uniswap_query_*', 'uniswap_list_*'] },
-      { intent: 'write', anyOf: ['uniswap_prepare_*'] },
     ],
     argumentMapper: (intent, input) => intent === 'quote'
       ? { chain: 'base', ...input, quoteOnly: true }
@@ -34,6 +33,7 @@ const SKILLS: RuntimeSkillDefinition[] = [
     instructions: [
       'Use only Uniswap-namespaced tools.',
       'Quote intent is read-only: never request calldata, approval, permit, signature, or transaction preparation.',
+      'Normal swap execution uses the Base MCP swap tool and Base Account approval flow; direct provider credentials are optional and server-side only.',
       'Report route, token decimals, slippage, price impact, and gas only from screened tool output.',
     ],
   },

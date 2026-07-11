@@ -18,6 +18,7 @@ import {
 import { getAutonomyPolicyRepository } from '../lib/autonomyGateway.js';
 import { formatUnits, type Hex } from 'viem';
 import { getTokenSecurityProviderFromEnv } from '@mioagent/data-providers';
+import { getBaseMainnetUsdcAddress } from '@mioagent/security';
 
 export const autonomyRouter = Router();
 
@@ -29,6 +30,7 @@ export const autonomyRouteRuntime = {
   getUserSettings: (userId: string) => MemoryService.getUserSettings(userId),
   updateUserSettings: (userId: string, data: Parameters<typeof MemoryService.updateUserSettings>[1]) =>
     MemoryService.updateUserSettings(userId, data),
+  getTokenSecurityProvider: getTokenSecurityProviderFromEnv,
 };
 
 async function getAutonomyState(userId: string, query?: { owner?: string; executor?: string; token?: string }) {
@@ -96,9 +98,22 @@ async function getAutonomyState(userId: string, query?: { owner?: string; execut
         if (!policy.mainnetOptIn) blockedReasons.push('mainnet_opt_in_required');
         if (policy.killSwitch || !policy.isActive) blockedReasons.push('kill_switch');
         if (expired) blockedReasons.push('permission_expired');
-        const contractChecks = getTokenSecurityProviderFromEnv();
-        const contractChecksUsable = contractChecks.providerName === 'goplus'
-          && (contractChecks.statusCode === 'connected' || contractChecks.statusCode === 'partial');
+        const contractChecks = autonomyRouteRuntime.getTokenSecurityProvider();
+        let contractChecksUsable = false;
+        if (contractChecks.providerName === 'goplus') {
+          try {
+            const canonicalUsdc = getBaseMainnetUsdcAddress().toLowerCase();
+            const verdicts = await contractChecks.provider.getTokenSecurity({
+              chainId,
+              tokenAddresses: [canonicalUsdc],
+            });
+            const usdcVerdict = verdicts.find((verdict) => verdict.address.toLowerCase() === canonicalUsdc);
+            contractChecksUsable = usdcVerdict?.provider === 'goplus'
+              && (usdcVerdict.status === 'ok' || usdcVerdict.status === 'warning');
+          } catch {
+            contractChecksUsable = false;
+          }
+        }
         if (!contractChecksUsable) blockedReasons.push('contract_checks_unavailable');
         executionReady = blockedReasons.length === 0;
       } else {

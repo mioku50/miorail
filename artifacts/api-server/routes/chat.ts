@@ -33,6 +33,7 @@ import { screenPartnerToolResult } from '../lib/partnerResultTrust.js';
 import { runDirectQuoteRead } from '../lib/streamQuoteRouting.js';
 import { detectRuntimeSkill, runtimeSkillAvailability } from '@mioagent/runtime-skills';
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
+import { runDirectBaseMcpSwap } from '../lib/streamBaseMcpSwapRouting.js';
 
 export const chatRouter = Router();
 
@@ -86,11 +87,17 @@ chatRouter.post('/', async (req, res, next) => {
       ? 'mainnet-readonly'
       : configuredChainEnv;
     const runtimeChainId = runtimeChainEnv === 'sepolia' ? 84532 : 8453;
+    const runtimeExecutionCapabilities = getExecutionCapabilities(runtimeChainEnv);
     const tools = await chatRouteRuntime.createApiToolAggregatorForUser(
       req,
       userId,
       process.env.SESSION_SECRET || 'test-secret',
-      { readOnlyOnly: true, includeMorphoReadOnly: true, includeUniswapQuote: true },
+      {
+        readOnlyOnly: true,
+        includeMorphoReadOnly: true,
+        includeUniswapQuote: true,
+        includeBaseMcpSwap: runtimeExecutionCapabilities.userConfirmedEnabled,
+      },
     );
     res.once('finish', () => { void tools.close(); });
     console.log("TRACE: tools created");
@@ -123,7 +130,14 @@ chatRouter.post('/', async (req, res, next) => {
 
     currentMessages.push(userMsg);
 
-    const directRead = await runDirectQuoteRead({ message, walletAddress, tools })
+    const directRead = await runDirectBaseMcpSwap({
+      message,
+      walletAddress,
+      tools,
+      userConfirmedEnabled: runtimeExecutionCapabilities.userConfirmedEnabled,
+      userId,
+    })
+      || await runDirectQuoteRead({ message, walletAddress, tools })
       || await runDirectStreamRead({ message, walletAddress, tools });
     if (directRead) {
       const assistantMsg = {
@@ -138,6 +152,8 @@ chatRouter.post('/', async (req, res, next) => {
           chainId: runtimeChainId,
           directReadKind: directRead.kind,
           ...(directRead.errorCode ? { errorCode: directRead.errorCode } : {}),
+          ...('approvalUrl' in directRead && directRead.approvalUrl ? { approvalUrl: directRead.approvalUrl } : {}),
+          ...('requestId' in directRead && directRead.requestId ? { requestId: directRead.requestId } : {}),
         },
       };
       currentMessages.push(assistantMsg);
@@ -222,7 +238,7 @@ chatRouter.post('/', async (req, res, next) => {
       const actionId = crypto.randomUUID();
       const chainEnvVal = runtimeChainEnv;
       const isReadonly = chainEnvVal === 'mainnet-readonly';
-      const executionCapabilities = getExecutionCapabilities(chainEnvVal);
+      const executionCapabilities = runtimeExecutionCapabilities;
       const canExecute = executionCapabilities.serverBroadcastEnabled;
       const canUserConfirm = executionCapabilities.userConfirmedEnabled;
 

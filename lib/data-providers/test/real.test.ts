@@ -305,14 +305,15 @@ describe('Real Providers', () => {
         mock.restoreAll();
     });
 
-    test('GoPlusTokenSecurityProvider uses API key header only and never private key env', async () => {
+    test('GoPlusTokenSecurityProvider supports the public API without auth headers', async () => {
         clearTokenSecurityCacheForTests();
         process.env.PRIVATE_KEY = 'super-secret-private-key';
         const token = '0x2222222222222222222222222222222222222222';
         const mockFetch = mock.fn(async (_url: string | URL | Request, options?: RequestInit) => {
             const serializedOptions = JSON.stringify(options || {});
             assert.ok(!serializedOptions.includes('super-secret-private-key'));
-            assert.ok(serializedOptions.includes('test-goplus-key'));
+            assert.ok(!serializedOptions.includes('Authorization'));
+            assert.ok(!serializedOptions.includes('X-API-Key'));
             return {
                 ok: true,
                 json: async () => ({ result: { [token]: { is_honeypot: '0', is_open_source: '1' } } })
@@ -320,11 +321,70 @@ describe('Real Providers', () => {
         });
         global.fetch = mockFetch as unknown as typeof fetch;
 
-        const provider = new GoPlusTokenSecurityProvider('test-goplus-key', 1000);
+        const provider = new GoPlusTokenSecurityProvider(undefined, 1000);
         const [security] = await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [token] });
         assert.strictEqual(security.status, 'ok');
         assert.strictEqual(mockFetch.mock.calls.length, 1);
         delete process.env.PRIVATE_KEY;
+        mock.restoreAll();
+    });
+
+    test('GoPlus retries tokens omitted from a partial batch and keeps unknown results uncached', async () => {
+        clearTokenSecurityCacheForTests();
+        const originalProvider = process.env.TOKEN_SECURITY_PROVIDER;
+        process.env.TOKEN_SECURITY_PROVIDER = 'goplus';
+        const katana = '0x1111111111111111111111111111111111111111';
+        const usdc = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+        const spam = '0x3333333333333333333333333333333333333333';
+        const mockFetch = mock.fn(async (url: string | URL | Request) => {
+            const addresses = new URL(String(url)).searchParams.get('contract_addresses') || '';
+            if (addresses.includes(',')) {
+                return { ok: true, json: async () => ({ result: {
+                    [katana.toUpperCase()]: { is_honeypot: '0', is_open_source: '1' },
+                } }) } as Response;
+            }
+            if (addresses.toLowerCase() === usdc.toLowerCase()) {
+                return { ok: true, json: async () => ({ result: {
+                    [usdc.toUpperCase()]: { is_honeypot: '0', is_open_source: '1' },
+                } }) } as Response;
+            }
+            return { ok: true, json: async () => ({ result: {} }) } as Response;
+        });
+        global.fetch = mockFetch as unknown as typeof fetch;
+
+        const provider = new GoPlusTokenSecurityProvider(undefined, 1000);
+        const results = await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [katana, usdc, spam] });
+        assert.deepStrictEqual(results.map((result) => result.status), ['ok', 'ok', 'failed']);
+        assert.strictEqual(getTokenSecurityProviderFromEnv().statusCode, 'partial');
+        assert.strictEqual(mockFetch.mock.calls.length, 3);
+
+        await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [katana, usdc, spam] });
+        assert.strictEqual(mockFetch.mock.calls.length, 5, 'only the unknown spam result is retried and remains uncached');
+        assert.strictEqual(getTokenSecurityProviderFromEnv().statusCode, 'partial');
+        restoreEnv('TOKEN_SECURITY_PROVIDER', originalProvider);
+        clearTokenSecurityCacheForTests();
+        mock.restoreAll();
+    });
+
+    test('GoPlus app credentials use the official backend access-token lifecycle', async () => {
+        clearTokenSecurityCacheForTests();
+        const token = '0x4444444444444444444444444444444444444444';
+        const mockFetch = mock.fn(async (url: string | URL | Request, options?: RequestInit) => {
+            if (String(url).endsWith('/api/v1/token')) {
+                const body = JSON.parse(String(options?.body || '{}'));
+                assert.equal(body.app_key, 'app-key');
+                assert.match(body.sign, /^[a-f0-9]{40}$/);
+                assert.equal(JSON.stringify(options).includes('app-secret'), false);
+                return { ok: true, json: async () => ({ result: { access_token: 'backend-token', expires_in: 3600 } }) } as Response;
+            }
+            assert.equal((options?.headers as Record<string, string>).Authorization, 'Bearer backend-token');
+            return { ok: true, json: async () => ({ result: { [token]: { is_open_source: '1' } } }) } as Response;
+        });
+        global.fetch = mockFetch as unknown as typeof fetch;
+        const provider = new GoPlusTokenSecurityProvider({ appKey: 'app-key', appSecret: 'app-secret' }, 1000);
+        const [security] = await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [token] });
+        assert.equal(security.status, 'ok');
+        assert.equal(mockFetch.mock.calls.length, 2);
         mock.restoreAll();
     });
 
