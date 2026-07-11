@@ -430,14 +430,33 @@ describe('Status API', () => {
     const response = await request(app).get('/api/status');
     assert.strictEqual(response.status, 200);
     const exec = response.body.execution;
-    assert.strictEqual(exec.mode, 'user-confirmed');
-    assert.strictEqual(exec.userConfirmedEnabled, true);
+    assert.strictEqual(exec.mode, 'read-only');
+    assert.strictEqual(exec.userConfirmedEnabled, false);
     assert.strictEqual(exec.serverBroadcastEnabled, false);
     assert.strictEqual(exec.mainnetExecutionEnabled, false);
     assert.strictEqual(exec.broadcastEnabled, false);
     // T19.1: the generic `enabled` flag is removed so the UI can never infer
     // "Execute" from a single flag.
     assert.strictEqual(exec.enabled, undefined);
+
+    restoreEnv('CHAIN_ENV', origChain);
+    restoreEnv('MAINNET_EXECUTION_ENABLED', origMainnetExec);
+  });
+
+  test('GET /api/status activates mainnet only as user-confirmed and never server-broadcast', async () => {
+    const origChain = process.env.CHAIN_ENV;
+    const origMainnetExec = process.env.MAINNET_EXECUTION_ENABLED;
+    process.env.CHAIN_ENV = 'mainnet';
+    process.env.MAINNET_EXECUTION_ENABLED = 'true';
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    const exec = response.body.execution;
+    assert.strictEqual(exec.mode, 'user-confirmed');
+    assert.strictEqual(exec.userConfirmedEnabled, true);
+    assert.strictEqual(exec.serverBroadcastEnabled, false);
+    assert.strictEqual(exec.mainnetExecutionEnabled, true);
+    assert.strictEqual(exec.broadcastEnabled, false);
 
     restoreEnv('CHAIN_ENV', origChain);
     restoreEnv('MAINNET_EXECUTION_ENABLED', origMainnetExec);

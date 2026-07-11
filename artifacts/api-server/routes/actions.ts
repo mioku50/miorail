@@ -603,8 +603,9 @@ actionsRouter.post('/:actionId/execute', async (req, res, next) => {
 });
 
 // T19: Prepare an UNSIGNED EIP-5792 payload for the user to confirm in their
-// Base Account. The server never broadcasts here, never reads
-// MAINNET_EXECUTION_ENABLED, and uses no backend key. Screening + simulation
+// Base Account. The server never broadcasts here and uses no backend key.
+// Mainnet preparation is available only in the explicitly activated
+// user-confirmed mode. Screening + simulation
 // are re-derived LIVE (stored metadata is advisory only) and gate the response.
 actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
   try {
@@ -646,6 +647,15 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
       normalizedChain = normalizeBaseChain(payload.chain);
     } catch {
       return res.status(400).json({ success: false, error: 'Unsupported Base chain for wallet confirmation' });
+    }
+
+    const runtimeChainEnv = process.env.CHAIN_ENV || 'mainnet-readonly';
+    const executionCapabilities = getExecutionCapabilities(runtimeChainEnv);
+    if (normalizedChain.chainId === 8453 && !executionCapabilities.userConfirmedEnabled) {
+      return res.json({
+        success: false,
+        error: 'Mainnet is read-only. User-confirmed transaction preparation is not active.',
+      });
     }
 
     // T19.1: defensive whitelist gate. actionPlan only ever produces
@@ -724,7 +734,6 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
     // only reports whether a code is configured so the UI can show it.
     const builderCodeAttached = !!(process.env.BUILDER_CODE || process.env.VITE_BUILDER_CODE || process.env.NEXT_PUBLIC_BUILDER_CODE);
 
-    const runtimeChainEnv = process.env.CHAIN_ENV || 'mainnet-readonly';
     if (runtimeChainEnv === 'mainnet' && normalizedChain.chainId === 8453) {
       if (
         userAddress

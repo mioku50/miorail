@@ -196,8 +196,10 @@ test('read-only Agent without an explicit provider cannot call partner tools', a
 
 test('Agent provider scope exposes only matching tools and blocks a cross-provider hallucination', async () => {
   let exposedTools: string[] = [];
+  let systemPrompt = '';
   const calls: string[] = [];
   const llm = new MockLlmProvider((req: LlmRequest) => {
+    systemPrompt = req.messages[0].content;
     exposedTools = (req.tools || []).map((tool) => tool.function.name);
     if (req.messages.length <= 2) return 'TOOL:morpho_query_vaults|{"chain":"base"}';
     return 'Moonwell data is unavailable.';
@@ -225,6 +227,9 @@ test('Agent provider scope exposes only matching tools and blocks a cross-provid
       chainId: 8453,
       executionMode: 'read-only',
       providerNamespace: 'moonwell',
+      skillNamespace: 'moonwell',
+      skillInstructions: ['Use only Moonwell tools.', 'Supply markets are read-only.'],
+      skillLoaded: true,
     },
   });
   const { MemoryService } = await import('@mioagent/memory');
@@ -235,6 +240,8 @@ test('Agent provider scope exposes only matching tools and blocks a cross-provid
     for await (const event of agent.chatStream('test-user', 'Show Moonwell markets')) events.push(event);
     assert.deepEqual(exposedTools, ['moonwell_get_markets']);
     assert.deepEqual(calls, []);
+    assert.match(systemPrompt, /Runtime skill moonwell is loaded from the packaged registry/);
+    assert.doesNotMatch(systemPrompt, /Never claim you read or loaded plugin instructions/);
     const blocked = events.find((event) => event.type === 'tool_result') as any;
     assert.equal(blocked?.isError, true);
     assert.match(blocked?.result || '', /provider_tool_scope_violation/);

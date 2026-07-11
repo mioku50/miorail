@@ -3,6 +3,7 @@ import { NativeToolProvider } from './native.js';
 import { BaseMcpToolProvider } from './base_mcp.js';
 import { DynamicBaseMcpToolProvider, listDynamicBaseMcpToolsFromClient, type DynamicBaseMcpTool } from './dynamic_base_mcp.js';
 import { MorphoMcpToolProvider } from './morpho_mcp.js';
+import { UniswapQuoteToolProvider } from './uniswap_quote.js';
 import type { BaseMcpOAuthProvider } from '@mioagent/mcp';
 import * as settingsModule from '@mioagent/settings';
 import {
@@ -23,6 +24,7 @@ export interface CreateToolAggregatorOptions {
   baseMcpOAuthProvider?: BaseMcpOAuthProvider;
   baseMcpReadOnlyOnly?: boolean;
   includeMorphoReadOnly?: boolean;
+  includeUniswapQuote?: boolean;
 }
 
 function parseBool(value?: string): boolean {
@@ -118,6 +120,10 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
 
   if (options.includeMorphoReadOnly && toggles?.morpho !== false) {
     aggregator.registerProvider(new MorphoMcpToolProvider());
+  }
+
+  if (options.includeUniswapQuote && toggles?.uniswap !== false) {
+    aggregator.registerProvider(new UniswapQuoteToolProvider());
   }
 
   if (process.env.CHAIN_ENV === 'sepolia' && !options.baseMcpReadOnlyOnly) {

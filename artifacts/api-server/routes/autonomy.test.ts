@@ -12,6 +12,8 @@ let policyRepository: InMemoryAutonomyPolicyRepository;
 describe('Autonomy API Hardening Guarantees', () => {
   beforeEach(async () => {
     process.env.CHAIN_ENV = 'mainnet-readonly';
+    process.env.MAINNET_EXECUTION_ENABLED = 'false';
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
     delete process.env.ENABLE_TESTNET_AUTONOMY;
     const settings = new Map<string, any>();
     autonomyRouteRuntime.getUserSettings = async (userId) => settings.get(userId) ?? null;
@@ -181,6 +183,32 @@ describe('Autonomy API Hardening Guarantees', () => {
       acknowledgeMainnetRisk: false,
     });
     assert.strictEqual(res.status, 400);
+  });
+
+  test('mainnet activation readiness requires usable contract checks', async () => {
+    process.env.CHAIN_ENV = 'mainnet';
+    process.env.MAINNET_EXECUTION_ENABLED = 'true';
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    const payload = {
+      dailyLimitUsdc: '10',
+      maxPerActionUsdc: '5',
+      whitelist: ['0x3333333333333333333333333333333333333333'],
+      ttlSeconds: 3600,
+      walletAddress: WALLET,
+      mainnetOptIn: true,
+      acknowledgeMainnetRisk: true,
+    };
+    const unavailable = await request(app).post('/api/autonomy/config').send(payload);
+    assert.strictEqual(unavailable.status, 200);
+    assert.strictEqual(unavailable.body.state.sessionKey.executionReady, false);
+    assert.ok(unavailable.body.state.sessionKey.blockedReasons.includes('contract_checks_unavailable'));
+
+    process.env.TOKEN_SECURITY_PROVIDER = 'mock';
+    const usable = await request(app).get('/api/autonomy');
+    assert.strictEqual(usable.body.sessionKey.executionReady, true);
+    assert.deepStrictEqual(usable.body.sessionKey.blockedReasons, []);
+    process.env.MAINNET_EXECUTION_ENABLED = 'false';
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
   });
 
   test('kill switch releases reservations and blocks the next gateway prepare', async () => {

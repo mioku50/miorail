@@ -12,6 +12,9 @@ export interface AgentConfig {
     chain: string;
     executionMode: 'read-only' | 'user-confirmed';
     providerNamespace?: string;
+    skillNamespace?: string;
+    skillInstructions?: string[];
+    skillLoaded?: boolean;
   };
   toolResultGuard?: (input: {
     toolName: string;
@@ -74,7 +77,9 @@ export class Agent {
       'Never invent tool results. Never request, read, or store a private key.',
       runtime ? `Runtime: wallet=${runtime.walletAddress || 'Base Account user scope'}, chain=${runtime.chain}, chainId=${runtime.chainId}, executionMode=${runtime.executionMode}.` : '',
       providerNamespace ? `Provider scope is ${providerNamespace}. Use only ${providerNamespace}-namespaced tools and never substitute another protocol.` : '',
-      'Tool inventory does not prove that plugin instructions were loaded. Never claim you read or loaded plugin instructions unless the runtime explicitly confirms it.',
+      runtime?.skillLoaded && runtime.skillNamespace
+        ? `Runtime skill ${runtime.skillNamespace} is loaded from the packaged registry. Follow these instructions: ${(runtime.skillInstructions || []).join(' ')}`
+        : 'Tool inventory does not prove that plugin instructions were loaded. Never claim you read or loaded plugin instructions unless the runtime explicitly confirms it.',
       `Enabled Base MCP read tools: ${baseMcpTools.join(', ') || 'none'}.`,
       `Enabled partner read tools: ${partnerTools.join(', ') || 'none'}.`,
       'In read-only mode, do not call send_calls, swap, sign, prepare, deposit, withdraw, or any transaction tool.',

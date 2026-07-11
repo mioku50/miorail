@@ -27,8 +27,12 @@ import {
   sanitizeStreamToolArgs,
   sanitizedToolErrorCode,
   shouldPreferPartnerRuntimeRead,
+  isPartnerWriteCommand,
 } from '../lib/streamReadRouting.js';
 import { screenPartnerToolResult } from '../lib/partnerResultTrust.js';
+import { runDirectQuoteRead } from '../lib/streamQuoteRouting.js';
+import { detectRuntimeSkill, runtimeSkillAvailability } from '@mioagent/runtime-skills';
+import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
 
 export const chatRouter = Router();
 
@@ -36,6 +40,8 @@ export const chatRouteRuntime = {
   createApiToolAggregatorForUser,
   createLlmProvider,
 };
+
+const EXPLICIT_TRANSACTION_REQUEST = /\b(?:swap|buy|sell|approve|revoke)\b/i;
 
 chatRouter.get('/history', async (req, res, next) => {
   try {
@@ -71,15 +77,20 @@ chatRouter.delete('/history', async (req, res, next) => {
 
 chatRouter.post('/', async (req, res, next) => {
   try {
-    const { message, walletAddress, chainEnv } = ChatMessageRequestSchema.parse(req.body);
+    const { message, walletAddress } = ChatMessageRequestSchema.parse(req.body);
     const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
-    const runtimeChainEnv = chainEnv || process.env.CHAIN_ENV || 'mainnet-readonly';
+    // The client may describe its UI network, but it must never promote the
+    // server from read-only to an executable environment.
+    const configuredChainEnv = process.env.CHAIN_ENV || 'mainnet-readonly';
+    const runtimeChainEnv = configuredChainEnv === 'mainnet-readonly'
+      ? 'mainnet-readonly'
+      : configuredChainEnv;
     const runtimeChainId = runtimeChainEnv === 'sepolia' ? 84532 : 8453;
     const tools = await chatRouteRuntime.createApiToolAggregatorForUser(
       req,
       userId,
       process.env.SESSION_SECRET || 'test-secret',
-      { readOnlyOnly: true, includeMorphoReadOnly: true },
+      { readOnlyOnly: true, includeMorphoReadOnly: true, includeUniswapQuote: true },
     );
     res.once('finish', () => { void tools.close(); });
     console.log("TRACE: tools created");
@@ -112,7 +123,8 @@ chatRouter.post('/', async (req, res, next) => {
 
     currentMessages.push(userMsg);
 
-    const directRead = await runDirectStreamRead({ message, walletAddress, tools });
+    const directRead = await runDirectQuoteRead({ message, walletAddress, tools })
+      || await runDirectStreamRead({ message, walletAddress, tools });
     if (directRead) {
       const assistantMsg = {
         chatId,
@@ -143,11 +155,49 @@ chatRouter.post('/', async (req, res, next) => {
       return res.json(assistantMsg);
     }
 
+    if (runtimeChainEnv === 'mainnet-readonly'
+      && (isPartnerWriteCommand(message) || EXPLICIT_TRANSACTION_REQUEST.test(message))) {
+      const assistantMsg = {
+        chatId,
+        messageId: crypto.randomUUID(),
+        content: 'Mainnet is read-only. No transaction or Action Inbox item was prepared. Activate Mainnet · User-confirmed only after all readiness checks pass.',
+        role: 'assistant' as const,
+        createdAt: new Date().toISOString(),
+        metadata: { readOnly: true, blocked: true, errorCode: 'mainnet_readonly' },
+      };
+      currentMessages.push(assistantMsg);
+      if (userChats.length > 0) {
+        await db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(eq(chats.id, chatId));
+      } else {
+        await db.insert(chats).values({ id: chatId, userId, messages: currentMessages, createdAt: new Date(), updatedAt: new Date() });
+      }
+      return res.json(assistantMsg);
+    }
+
     const runtimeToolInventory = await tools.listTools();
     const requestedProvider = detectRequestedProvider(message, runtimeToolInventory);
+    const runtimeSkill = detectRuntimeSkill(message);
+    const runtimeSkillState = runtimeSkill
+      ? runtimeSkillAvailability({
+          skill: runtimeSkill,
+          intent: 'read',
+          toolNames: runtimeToolInventory.map((tool) => tool.name),
+        })
+      : undefined;
     const preferRuntimeReadTools = shouldPreferPartnerRuntimeRead(message, runtimeToolInventory);
+    const directTransactionIntent = isPartnerWriteCommand(message) || EXPLICIT_TRANSACTION_REQUEST.test(message);
     const intent = preferRuntimeReadTools
       ? { isActionIntent: false, confidence: 1 }
+      : directTransactionIntent
+        ? {
+            isActionIntent: true,
+            intentType: 'general_recommendation' as const,
+            title: 'User-confirmed transaction request',
+            reason: 'Transaction request requires security screening and final Base Account approval.',
+            expectedEffect: 'Prepare only a whitelisted unsigned EIP-5792 request when all production gates pass.',
+            risk: 'medium' as const,
+            confidence: 1,
+          }
       : detectActionIntent(message);
     const isWalletConnected = !!(walletAddress && walletAddress !== 'None' && walletAddress !== '0x0' && walletAddress !== '');
 
@@ -172,8 +222,9 @@ chatRouter.post('/', async (req, res, next) => {
       const actionId = crypto.randomUUID();
       const chainEnvVal = runtimeChainEnv;
       const isReadonly = chainEnvVal === 'mainnet-readonly';
-      const isMainnetExecEnabled = process.env.MAINNET_EXECUTION_ENABLED === 'true';
-      const canExecute = !isReadonly && (chainEnvVal !== 'mainnet' || isMainnetExecEnabled);
+      const executionCapabilities = getExecutionCapabilities(chainEnvVal);
+      const canExecute = executionCapabilities.serverBroadcastEnabled;
+      const canUserConfirm = executionCapabilities.userConfirmedEnabled;
 
       let tokenBalancesProvider = 'none';
       let pricesStatus = 'missing';
@@ -209,9 +260,10 @@ chatRouter.post('/', async (req, res, next) => {
         risk: intent.risk || (isReadonly ? "unknown" : "low"),
         riskScore: intent.risk === 'high' ? 85 : intent.risk === 'medium' ? 50 : 15,
         chainMode: chainEnvVal,
-        safetyState: isReadonly ? "blocked" : (canExecute ? "executable" : "blocked"),
+        safetyState: isReadonly ? "blocked" : (canExecute || canUserConfirm ? "executable" : "blocked"),
         executable: canExecute,
-        executionStatus: isReadonly ? "read-only" : (canExecute ? "executable" : "blocked"),
+        userConfirmable: canUserConfirm,
+        executionStatus: isReadonly ? "read-only" : (canExecute ? "executable" : (canUserConfirm ? "user-confirmable" : "blocked")),
         createdBy: "agent-stream",
         walletAddress: walletAddress,
         providerContext: {
@@ -346,7 +398,7 @@ chatRouter.post('/', async (req, res, next) => {
         ]
       };
 
-      if (isMainnetLike && revokeIntent) {
+      if (isMainnetLike) {
         payload = buildActionPlan(message, {
           chainEnv: chainEnvVal,
           walletAddress,
@@ -418,9 +470,9 @@ chatRouter.post('/', async (req, res, next) => {
         metadata.reason = `Automated recommendation to revoke spend access for ${activeRevoke.spenderLabel || activeRevoke.spenderAddress}`;
         metadata.actionType = "revoke_approval";
         metadata.preferredFirstAction = true;
-        metadata.userConfirmable = isReadonly ? true : false;
-        metadata.executable = !isReadonly;
-        metadata.executionStatus = isReadonly ? "user-confirmable" : "executable";
+        metadata.userConfirmable = canUserConfirm;
+        metadata.executable = canExecute;
+        metadata.executionStatus = canExecute ? "executable" : (canUserConfirm ? "user-confirmable" : "read-only");
         metadata.allowanceBefore = activeRevoke.allowanceFormatted;
         metadata.allowanceAfter = "0";
         metadata.tokenSymbol = activeRevoke.tokenSymbol;
@@ -430,6 +482,16 @@ chatRouter.post('/', async (req, res, next) => {
         metadata.validationMethod = "preflight-validation";
         metadata.simulationLabel = "Preflight validation — no fork simulation";
         assistantContent = `I prepared a transaction to revoke spend access for ${activeRevoke.tokenSymbol || 'token'}. You can confirm this action in your Action Inbox.`;
+      } else if (payload.actionType === 'limited_transfer' && payload.calls?.length > 0) {
+        metadata.title = 'User-confirmed USDC Transfer';
+        metadata.actionType = 'limited_transfer';
+        metadata.userConfirmable = canUserConfirm;
+        metadata.executable = false;
+        metadata.safetyState = canUserConfirm ? 'user-confirmable' : 'blocked';
+        metadata.executionStatus = canUserConfirm ? 'user-confirmable' : 'read-only';
+        assistantContent = canUserConfirm
+          ? 'I created a screened transfer request in Action Inbox. It remains unsigned until you review it and approve the final wallet_sendCalls request in Base Account.'
+          : 'Mainnet is read-only. No transaction was prepared.';
       } else {
         metadata.actionType = payload.actionType;
         metadata.preferredFirstAction = payload.actionType === 'revoke_approval';
@@ -504,8 +566,11 @@ chatRouter.post('/', async (req, res, next) => {
         walletAddress,
         chainId: runtimeChainId,
         chain: runtimeChainEnv === 'sepolia' ? 'base-sepolia' : 'base',
-        executionMode: 'read-only',
+        executionMode: getExecutionCapabilities(runtimeChainEnv).userConfirmedEnabled ? 'user-confirmed' : 'read-only',
         providerNamespace: requestedProvider?.namespace,
+        skillNamespace: runtimeSkillState?.available ? runtimeSkill?.namespace : undefined,
+        skillInstructions: runtimeSkillState?.available ? runtimeSkill?.instructions : undefined,
+        skillLoaded: runtimeSkillState?.available === true,
       },
     });
     console.log("TRACE: agent created");

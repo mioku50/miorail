@@ -1,8 +1,10 @@
 import { useStatus } from '@mioagent/api-client-react';
-import { CHAIN_ENV, isMainnetReadonly } from '../../lib/chain';
+import { CHAIN_ENV } from '../../lib/chain';
+import { useNetworkLabel } from '../../lib/useNetworkLabel';
 
 export function StatusBar() {
   const { data: sd } = useStatus();
+  const { label: executionLabel, readOnly } = useNetworkLabel();
 
   const rpcProv = sd?.rpc?.provider || 'default';
   const balProv = sd?.tokenBalances?.provider || 'none';
@@ -32,8 +34,8 @@ export function StatusBar() {
       <div className="flex items-center gap-3 shrink-0">
         <span><span className="text-ink-3 font-sans">x402:</span> <span className="font-mono text-ink-2">{x402Status}</span></span>
         <span className="text-line">·</span>
-        <span className={`font-mono font-semibold ${isMainnetReadonly ? 'text-warn' : 'text-accent-2'}`}>
-          {sd?.execution?.mode || CHAIN_ENV}
+        <span className={`font-mono font-semibold ${readOnly ? 'text-warn' : 'text-accent-2'}`}>
+          {executionLabel || CHAIN_ENV}
         </span>
       </div>
     </footer>

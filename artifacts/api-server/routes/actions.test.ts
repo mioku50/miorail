@@ -342,7 +342,7 @@ test('Actions API', async (t) => {
   // never broadcasts. confirm records the result with no server-side signing.
   const BASE_MAINNET_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 
-  await t.test('POST /api/actions/:actionId/prepare returns an unsigned EIP-5792 payload for a safe USDC transfer', async () => {
+  await t.test('POST /api/actions/:actionId/prepare blocks a safe USDC transfer while mainnet is read-only', async () => {
     process.env.CHAIN_ENV = 'mainnet-readonly';
     process.env.MAINNET_EXECUTION_ENABLED = 'false';
     const mockSelect = mock.fn(() => ({
@@ -376,15 +376,8 @@ test('Actions API', async (t) => {
 
     const response = await request(app).post('/api/actions/act-prepare/prepare');
     assert.strictEqual(response.status, 200);
-    assert.strictEqual(response.body.success, true);
-    assert.strictEqual(response.body.chainId, '0x2105');
-    assert.strictEqual(response.body.atomicRequired, true);
-    assert.strictEqual(response.body.actionType, 'limited_transfer');
-    assert.ok(Array.isArray(response.body.calls) && response.body.calls.length === 1);
-    assert.strictEqual(response.body.screening.allowed, true);
-    assert.strictEqual(response.body.simulation.success, true);
-    assert.strictEqual(response.body.guard.code, 'allowed');
-    assert.strictEqual(response.body.guard.contractSecurity.status, 'passed');
+    assert.strictEqual(response.body.success, false);
+    assert.match(response.body.error, /Mainnet is read-only/);
 
     mock.restoreAll();
     process.env.CHAIN_ENV = 'sepolia';
@@ -465,7 +458,8 @@ test('Actions API', async (t) => {
   });
 
   await t.test('unified prepare guard rejects actionType/calldata mismatch before wallet approval', async () => {
-    process.env.CHAIN_ENV = 'mainnet-readonly';
+    process.env.CHAIN_ENV = 'mainnet';
+    process.env.MAINNET_EXECUTION_ENABLED = 'true';
     const spender = '0x2222222222222222222222222222222222222222';
     const mockSelect = mock.fn(() => ({
       from: mock.fn(() => ({
@@ -507,7 +501,8 @@ test('Actions API', async (t) => {
   });
 
   await t.test('POST /api/actions/:actionId/prepare rejects a payload whose actionType is not whitelisted', async () => {
-    process.env.CHAIN_ENV = 'mainnet-readonly';
+    process.env.CHAIN_ENV = 'mainnet';
+    process.env.MAINNET_EXECUTION_ENABLED = 'true';
     const mockSelect = mock.fn(() => ({
       from: mock.fn(() => ({
         where: mock.fn(async () => [

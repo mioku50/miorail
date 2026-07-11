@@ -26,7 +26,7 @@ export async function createApiToolAggregatorForUser(
   req: Request,
   userId: string,
   sessionSecret: string,
-  options: { readOnlyOnly?: boolean; includeMorphoReadOnly?: boolean } = {},
+  options: { readOnlyOnly?: boolean; includeMorphoReadOnly?: boolean; includeUniswapQuote?: boolean } = {},
 ) {
   const enabled = baseMcpEnabledFromEnv();
   const serverUrl = baseMcpServerUrlFromEnv();
@@ -52,5 +52,6 @@ export async function createApiToolAggregatorForUser(
     baseMcpOAuthProvider: oauthProvider,
     baseMcpReadOnlyOnly: options.readOnlyOnly,
     includeMorphoReadOnly: options.includeMorphoReadOnly,
+    includeUniswapQuote: options.includeUniswapQuote,
   });
 }

@@ -53,6 +53,7 @@ function userBlockedReason(reason: string): string {
   const labels: Record<string, string> = {
     mainnet_readonly: 'Read-only safety mode is on',
     mainnet_execution_disabled: 'Action preparation is paused',
+    contract_checks_unavailable: 'Contract security checks are unavailable or incomplete',
     mainnet_opt_in_required: 'Mainnet permission is required',
     kill_switch: 'Kill switch is active',
     permission_expired: 'Permission has expired',

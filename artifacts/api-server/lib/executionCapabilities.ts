@@ -6,15 +6,15 @@
 //
 // Production baseline: CHAIN_ENV=mainnet-readonly, MAINNET_EXECUTION_ENABLED=false
 //  → serverBroadcastEnabled=false, mainnetExecutionEnabled=false,
-//    userConfirmedEnabled=true, mode='user-confirmed'.
+//    userConfirmedEnabled=false, mode='read-only'.
 
 export type ExecutionMode = 'read-only' | 'user-confirmed' | 'server-execution';
 
 export interface ExecutionCapabilities {
   mode: ExecutionMode;
-  /** Base Account wallet_sendCalls flow is available (always true today). */
+  /** Base Account wallet_sendCalls flow is activated for this environment. */
   userConfirmedEnabled: boolean;
-  /** Legacy /execute server-broadcast capability (testnet, or mainnet+flag). */
+  /** Legacy /execute server-broadcast capability (testnet only). */
   serverBroadcastEnabled: boolean;
   /** === MAINNET_EXECUTION_ENABLED === 'true'. Stays false in production. */
   mainnetExecutionEnabled: boolean;
@@ -26,11 +26,11 @@ export interface ExecutionCapabilities {
 export function getExecutionCapabilities(chainEnv: string): ExecutionCapabilities {
   const isReadonly = chainEnv === 'mainnet-readonly';
   const mainnetExecutionEnabled = process.env.MAINNET_EXECUTION_ENABLED === 'true';
-  // Server may broadcast only off-mainnet-readonly AND (not mainnet, or the
-  // mainnet flag is explicitly on). This is the ONLY flag that authorizes a
-  // server-side broadcast.
-  const serverBroadcastEnabled = !isReadonly && (chainEnv !== 'mainnet' || mainnetExecutionEnabled);
-  const userConfirmedEnabled = true;
+  const isMainnet = chainEnv === 'mainnet';
+  // Mainnet is never server-broadcast by design. Activation only exposes the
+  // Base Account user-confirmed EIP-5792 flow.
+  const serverBroadcastEnabled = chainEnv === 'sepolia';
+  const userConfirmedEnabled = chainEnv === 'sepolia' || (isMainnet && mainnetExecutionEnabled);
 
   const mode: ExecutionMode = serverBroadcastEnabled
     ? 'server-execution'
@@ -39,10 +39,12 @@ export function getExecutionCapabilities(chainEnv: string): ExecutionCapabilitie
       : 'read-only';
 
   const reason = isReadonly
-    ? 'User-confirmed flow via Base Account; server never broadcasts'
+    ? 'Mainnet read-only; transaction preparation is disabled'
     : serverBroadcastEnabled
       ? 'Server-broadcast enabled (testnet/dev); user-confirmed flow also available'
-      : 'User-confirmed flow via Base Account; server-broadcast disabled';
+      : userConfirmedEnabled
+        ? 'Mainnet user-confirmed via Base Account; server never signs or broadcasts'
+        : 'Transaction preparation is disabled';
 
   return {
     mode,

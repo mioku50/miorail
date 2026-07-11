@@ -1,5 +1,6 @@
 import { getBaseMainnetUsdcAddress } from '@mioagent/security';
 import { filterTrustedMorphoMarkets, filterTrustedMorphoVaults } from './morphoVaultTrust.js';
+import { getRuntimeSkill } from '@mioagent/runtime-skills';
 
 export interface PartnerToolResultScreenInput {
   toolName: string;
@@ -196,7 +197,8 @@ export function screenPartnerToolResult(input: PartnerToolResultScreenInput): Pa
   if (input.isError) return { content: JSON.stringify(sanitize(unwrap(input.content))), isError: true };
   const provider = input.providerNamespace?.toLowerCase() || providerFromToolName(input.toolName);
   if (!provider) return { content: input.content, isError: false };
-  if (provider === 'morpho') return screenMorpho(input.toolName, input.content);
-  if (provider === 'moonwell') return screenMoonwell(input.content);
+  const screener = getRuntimeSkill(provider)?.resultScreener;
+  if (screener === 'morpho') return screenMorpho(input.toolName, input.content);
+  if (screener === 'moonwell') return screenMoonwell(input.content);
   return error(`${provider}_result_screening_unavailable`);
 }

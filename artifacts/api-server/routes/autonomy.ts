@@ -17,6 +17,7 @@ import {
 } from '../lib/testnetAutonomy.js';
 import { getAutonomyPolicyRepository } from '../lib/autonomyGateway.js';
 import { formatUnits, type Hex } from 'viem';
+import { getTokenSecurityProviderFromEnv } from '@mioagent/data-providers';
 
 export const autonomyRouter = Router();
 
@@ -95,6 +96,10 @@ async function getAutonomyState(userId: string, query?: { owner?: string; execut
         if (!policy.mainnetOptIn) blockedReasons.push('mainnet_opt_in_required');
         if (policy.killSwitch || !policy.isActive) blockedReasons.push('kill_switch');
         if (expired) blockedReasons.push('permission_expired');
+        const contractChecks = getTokenSecurityProviderFromEnv();
+        const contractChecksUsable = contractChecks.providerName === 'goplus'
+          && (contractChecks.statusCode === 'connected' || contractChecks.statusCode === 'partial');
+        if (!contractChecksUsable) blockedReasons.push('contract_checks_unavailable');
         executionReady = blockedReasons.length === 0;
       } else {
         source = 'missing';

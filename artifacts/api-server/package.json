@@ -18,6 +18,7 @@
     "@mioagent/memory": "workspace:*",
     "@mioagent/mcp": "workspace:*",
     "@mioagent/observability": "workspace:*",
+    "@mioagent/runtime-skills": "workspace:*",
     "@mioagent/security": "workspace:*",
     "@mioagent/tools": "workspace:*",
     "@mioagent/utils": "workspace:*",

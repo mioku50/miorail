@@ -5,9 +5,10 @@ interface AgentComposerProps {
   isPending: boolean;
   errorMsg: string | null;
   onClearError: () => void;
+  executionMode: 'read-only' | 'user-confirmed';
 }
 
-export function AgentComposer({ input, setInput, onSend, isPending, errorMsg, onClearError }: AgentComposerProps) {
+export function AgentComposer({ input, setInput, onSend, isPending, errorMsg, onClearError, executionMode }: AgentComposerProps) {
   return (
     <div className="p-3 border-t border-line bg-panel shrink-0 flex flex-col gap-2 shadow-sm">
       {errorMsg && (
@@ -56,7 +57,9 @@ export function AgentComposer({ input, setInput, onSend, isPending, errorMsg, on
       </div>
       <div className="text-[11px] text-ink-3 flex items-center gap-1.5 px-1 font-medium">
         <span className="text-ok shrink-0">🛡️</span>
-        <span className="leading-snug">Read-only mode: Miorail can create recommendations, but cannot execute mainnet transactions.</span>
+        <span className="leading-snug">{executionMode === 'user-confirmed'
+          ? 'Mainnet · User-confirmed: every unsigned call requires final approval in Base Account.'
+          : 'Read-only mode: quotes and analysis cannot prepare mainnet transactions.'}</span>
       </div>
     </div>
   );

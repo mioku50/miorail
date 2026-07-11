@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAccount } from 'wagmi';
-import { useChatHistory, useSendMessage, useClearChatHistory, useStatus, useBaseMcpToolsProbe } from '@mioagent/api-client-react';
+import { useChatHistory, useSendMessage, useClearChatHistory, useStatus, useBaseMcpToolsProbe, useAutonomy } from '@mioagent/api-client-react';
 import { useUiStore } from '../../lib/state';
 import { useNetworkLabel } from '../../lib/useNetworkLabel';
 import { ChatMessage } from './ChatMessage';
@@ -20,6 +20,7 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
   const { address } = useAccount();
   const { data: chatData, refetch } = useChatHistory();
   const { data: statusData } = useStatus();
+  const { data: autonomyState } = useAutonomy();
   const baseMcpProbe = useBaseMcpToolsProbe();
   const sendMessageMutation = useSendMessage();
   const clearChat = useClearChatHistory();
@@ -32,6 +33,11 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
   const baseMcpProbeStarted = useRef(false);
   const oauthParams = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search);
   const oauthMessage = baseMcpOAuthResultMessage(oauthParams?.get('mcp'), oauthParams?.get('code'));
+  const executionMode = statusData?.execution?.mode === 'user-confirmed'
+    && statusData.execution.userConfirmedEnabled === true
+    && autonomyState?.sessionKey?.executionReady === true
+      ? 'user-confirmed' as const
+      : 'read-only' as const;
 
   const messages = chatData?.messages || [];
   const displayMessages = messages;
@@ -57,7 +63,7 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
       await sendMessageMutation.mutateAsync({
         message: msgText,
         walletAddress: address,
-        chainEnv: import.meta.env.VITE_CHAIN_ENV || 'sepolia',
+        chainEnv: statusData?.chainEnv || 'mainnet-readonly',
       });
       refetch();
       setTimeout(() => document.getElementById('agent-stream-input')?.focus(), 50);
@@ -200,6 +206,7 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
         isPending={sendMessageMutation.isPending}
         errorMsg={errorMsg}
         onClearError={() => setErrorMsg(null)}
+        executionMode={executionMode}
       />
     </aside>
   );

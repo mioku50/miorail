@@ -77,6 +77,9 @@ importers:
       '@mioagent/observability':
         specifier: workspace:*
         version: link:../../lib/observability
+      '@mioagent/runtime-skills':
+        specifier: workspace:*
+        version: link:../../lib/runtime-skills
       '@mioagent/security':
         specifier: workspace:*
         version: link:../../lib/security
@@ -481,6 +484,15 @@ importers:
       '@types/node':
         specifier: ^26.0.0
         version: 26.0.0
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+
+  lib/runtime-skills:
+    devDependencies:
       tsx:
         specifier: ^4.22.4
         version: 4.22.4
