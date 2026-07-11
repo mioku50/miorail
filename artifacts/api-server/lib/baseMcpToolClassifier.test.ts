@@ -71,6 +71,12 @@ test('send_calls and sepolia_send_calls are never classified read_only', () => {
   }
 });
 
+test('exact Base MCP send is user_confirmed_transaction', () => {
+  const result = classifyBaseMcpTools([{ name: 'send', description: 'Send a token through Base Account' }]);
+  assert.equal(result.tools[0].capability, 'user_confirmed_transaction');
+  assert.equal(result.tools[0].enabled, false);
+});
+
 test('unknown tools are classified unknown and disabled by default', () => {
   const result = classifyBaseMcpTools([{ name: 'mystery_plugin_magic' }]);
 

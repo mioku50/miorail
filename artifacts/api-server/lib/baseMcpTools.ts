@@ -26,7 +26,7 @@ export async function createApiToolAggregatorForUser(
   req: Request,
   userId: string,
   sessionSecret: string,
-  options: { readOnlyOnly?: boolean; includeMorphoReadOnly?: boolean; includeUniswapQuote?: boolean; includeBaseMcpSwap?: boolean } = {},
+  options: { readOnlyOnly?: boolean; includeMorphoReadOnly?: boolean; includeUniswapQuote?: boolean; includeBaseMcpSwap?: boolean; includeBaseMcpSend?: boolean } = {},
 ) {
   const enabled = baseMcpEnabledFromEnv();
   const serverUrl = baseMcpServerUrlFromEnv();
@@ -54,5 +54,6 @@ export async function createApiToolAggregatorForUser(
     includeMorphoReadOnly: options.includeMorphoReadOnly,
     includeUniswapQuote: options.includeUniswapQuote,
     includeBaseMcpSwap: options.includeBaseMcpSwap,
+    includeBaseMcpSend: options.includeBaseMcpSend,
   });
 }

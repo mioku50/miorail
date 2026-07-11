@@ -78,6 +78,7 @@ const READ_ONLY_PREFIXES = [
 ];
 
 const DEFAULT_USER_CONFIRMED_TRANSACTION_TOOLS = new Set([
+  'send',
   'sendcalls',
   'sepoliasendcalls',
   'walletsendcalls',

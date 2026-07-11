@@ -3,6 +3,10 @@ import { screenAction } from '@mioagent/security';
 import { loadTokenSecurityContext } from './executionSecurity.js';
 import { sanitizeStreamToolArgs, sanitizedToolErrorCode, type StreamToolTrace } from './streamReadRouting.js';
 import { getAutonomyPolicyRepository } from './autonomyGateway.js';
+import {
+  resolveBaseMcpApprovalLifecycle,
+  type BaseMcpApprovalState,
+} from './baseMcpApprovalLifecycle.js';
 
 const TOKENS: Record<string, string | undefined> = {
   USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
@@ -17,6 +21,7 @@ export interface DirectBaseMcpSwapResult {
   errorCode?: string;
   approvalUrl?: string;
   requestId?: string;
+  approvalState?: BaseMcpApprovalState;
 }
 
 export const baseMcpSwapRuntime = {
@@ -53,38 +58,6 @@ function mapArgs(tool: ToolDef, intent: { amount: string; tokenIn: string; token
   return Object.keys(args).length > 0
     ? args
     : { amount: intent.amount, fromToken: intent.tokenIn, toToken: intent.tokenOut, walletAddress, chainId: 8453 };
-}
-
-function approvalReference(value: unknown, depth = 0): { approvalUrl: string; requestId: string } | null {
-  if (depth > 8 || value === null || value === undefined) return null;
-  if (typeof value === 'string') {
-    try { return approvalReference(JSON.parse(value), depth + 1); } catch { return null; }
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = approvalReference(item, depth + 1);
-      if (found) return found;
-    }
-    return null;
-  }
-  if (typeof value !== 'object') return null;
-  const record = value as Record<string, unknown>;
-  if (typeof record.approvalUrl === 'string' && typeof record.requestId === 'string') {
-    try {
-      const url = new URL(record.approvalUrl);
-      if (url.protocol === 'https:' && record.requestId.length > 0 && record.requestId.length <= 200) {
-        return { approvalUrl: url.toString(), requestId: record.requestId };
-      }
-    } catch {
-      return null;
-    }
-  }
-  if (record.type === 'text' && typeof record.text === 'string') return approvalReference(record.text, depth + 1);
-  for (const item of Object.values(record)) {
-    const found = approvalReference(item, depth + 1);
-    if (found) return found;
-  }
-  return null;
 }
 
 export async function runDirectBaseMcpSwap(input: {
@@ -153,20 +126,35 @@ export async function runDirectBaseMcpSwap(input: {
   if (called.isError) {
     return { kind: 'base_mcp_swap', content: `Base MCP swap is unavailable (${errorCode}).`, toolCalls: [trace], errorCode };
   }
-  const approval = approvalReference(called.content);
-  if (!approval) {
+  const approval = await resolveBaseMcpApprovalLifecycle({ initialResult: called.content, tools: input.tools });
+  const toolCalls = [trace, ...approval.toolCalls];
+  if (approval.state === 'failed' && !approval.approvalUrl && !approval.requestId) {
     return {
       kind: 'base_mcp_swap',
-      content: 'Base MCP did not return a valid Base Account approval reference. No swap was submitted.',
-      toolCalls: [trace],
-      errorCode: 'base_mcp_approval_reference_missing',
+      content: 'Base MCP returned a successful protected-tool response, but its approval state is unavailable. The response was not treated as settled.',
+      toolCalls,
+      errorCode: approval.errorCode || 'base_mcp_approval_state_unknown',
+      approvalState: 'failed',
     };
   }
+  const content = approval.state === 'completed'
+    ? 'Base MCP confirms that the swap completed.'
+    : approval.state === 'rejected'
+      ? 'The Base Account swap confirmation was rejected.'
+      : approval.state === 'failed'
+        ? 'The Base MCP swap request failed.'
+        : approval.approvalUrl
+          ? `Base MCP prepared the ${intent.amount} ${intent.tokenIn} → ${intent.tokenOut} swap. Confirm in Base Account.`
+          : 'The Base MCP swap request is pending. It is not confirmed or settled yet.';
   return {
     kind: 'base_mcp_swap',
-    content: `Base MCP prepared the ${intent.amount} ${intent.tokenIn} → ${intent.tokenOut} swap. Final Base Account approval is required.`,
-    toolCalls: [trace],
-    approvalUrl: approval.approvalUrl,
-    requestId: approval.requestId,
+    content,
+    toolCalls,
+    approvalState: approval.state,
+    ...(approval.approvalUrl ? { approvalUrl: approval.approvalUrl } : {}),
+    ...(approval.requestId ? { requestId: approval.requestId } : {}),
+    ...(['rejected', 'failed'].includes(approval.state)
+      ? { errorCode: approval.errorCode || `base_mcp_${approval.state}` }
+      : {}),
   };
 }

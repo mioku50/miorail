@@ -117,7 +117,12 @@ test('Agent prompt receives user-scoped Base inventory and read-only Base runtim
   class BaseReadProvider implements ToolProvider {
     id = 'base-mcp-dynamic';
     async listTools(): Promise<ToolDef[]> {
-      return [{ name: 'get_portfolio', description: 'Read portfolio', inputSchema: { type: 'object' } }];
+      return [
+        { name: 'get_portfolio', description: 'Read portfolio', inputSchema: { type: 'object' } },
+        { name: 'send', description: 'Send token', inputSchema: { type: 'object' } },
+        { name: 'swap', description: 'Swap token', inputSchema: { type: 'object' } },
+        { name: 'sign', description: 'Sign payload', inputSchema: { type: 'object' } },
+      ];
     }
     findTool() { return undefined; }
     async callTool() { return { content: '{}', isError: false }; }

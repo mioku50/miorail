@@ -106,6 +106,26 @@ describe('DynamicBaseMcpToolProvider', () => {
     assert.match(result.content, /approvalUrl/);
   });
 
+  test('protected transaction result stays successful and preserves sanitized request structure', async () => {
+    const tools = classifyDynamicBaseMcpTools([
+      { name: 'send', description: 'Send tokens', inputSchema: { type: 'object' } },
+    ]);
+    const client = {
+      getClient() {
+        return {
+          callTool: async () => ({
+            content: [{ type: 'text', text: JSON.stringify({ request_id: 'send-1', access_token: 'secret-token', calldata: '0xdeadbeef' }) }],
+          }),
+        };
+      },
+    };
+    const provider = new DynamicBaseMcpToolProvider(client, tools, { allowUserConfirmedSend: true });
+    const result = await provider.callTool('send', { amount: '1', token: 'USDC' });
+    assert.equal(result.isError, false);
+    assert.match(result.content, /send-1/);
+    assert.doesNotMatch(result.content, /secret-token|deadbeef/);
+  });
+
   test('exact send_calls tools are not duplicated by dynamic provider', () => {
     const tools = classifyDynamicBaseMcpTools([
       { name: 'send_calls', description: 'Send calls' },

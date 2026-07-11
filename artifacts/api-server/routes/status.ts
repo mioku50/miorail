@@ -45,7 +45,12 @@ export function getSystemStatus(envOverride?: string) {
   const priceStatus: "connected" | "missing" | "failed" | "disabled" = priceStatusCode;
 
 
-  const { providerName: riskProvider, statusCode: riskStatus } = getTokenSecurityProviderFromEnv();
+  const {
+    providerName: riskProvider,
+    statusCode: riskStatus,
+    authMode: riskAuthMode,
+    errorCode: riskErrorCode,
+  } = getTokenSecurityProviderFromEnv();
   const { providerName: approvalProvider, statusCode: approvalStatusCode } = getApprovalProviderFromEnv();
 
   const x402Config = x402ConfigFromEnv();
@@ -89,6 +94,8 @@ export function getSystemStatus(envOverride?: string) {
     risk: {
       status: riskStatus,
       provider: riskProvider,
+      ...(riskAuthMode ? { authMode: riskAuthMode } : {}),
+      ...(riskErrorCode ? { errorCode: riskErrorCode } : {}),
     },
     approvals: {
       status: approvalStatus,

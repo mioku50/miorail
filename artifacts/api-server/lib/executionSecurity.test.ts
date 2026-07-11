@@ -34,13 +34,21 @@ function provider(resultStatus: 'ok' | 'failed' | 'high-risk'): TokenSecurityPro
 
 test('execution transfer runs token-level provider and records shared connected health', async () => {
   let health = '';
-  executionSecurityRuntime.getProvider = () => provider('ok');
+  const configured = provider('ok');
+  let forceFresh: boolean | undefined;
+  const getTokenSecurity = configured.provider.getTokenSecurity.bind(configured.provider);
+  configured.provider.getTokenSecurity = async (params) => {
+    forceFresh = params.forceFresh;
+    return getTokenSecurity(params);
+  };
+  executionSecurityRuntime.getProvider = () => configured;
   executionSecurityRuntime.setHealth = (status) => { health = status; };
   const result = await loadExecutionSecurityContext(8453, 'limited_transfer', [{ to: USDC }]);
   assert.equal(result.required, true);
   assert.equal(result.providerContext.risk, 'connected');
   assert.equal(result.tokenSecurity[0].status, 'ok');
   assert.equal(health, 'connected');
+  assert.equal(forceFresh, true);
 });
 
 test('execution transfer fails provider health when verdicts are unusable', async () => {

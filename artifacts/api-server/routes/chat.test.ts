@@ -9,6 +9,8 @@ import { ToolAggregator, type ToolDef, type ToolProvider } from '@mioagent/tools
 import { chatRouteRuntime } from './chat.js';
 import { executionSecurityRuntime } from '../lib/executionSecurity.js';
 import { baseMcpSwapRuntime } from '../lib/streamBaseMcpSwapRouting.js';
+import { baseMcpSendRuntime } from '../lib/streamBaseMcpSendRouting.js';
+import { InMemoryAutonomyPolicyRepository } from '@mioagent/autonomy';
 
 function restoreEnv(name: string, value: string | undefined) {
   if (value === undefined) {
@@ -224,45 +226,74 @@ describe('Chat API & Recommendation Guardrails', () => {
     }
   });
 
-  test('POST /api/chat in user-confirmed mainnet creates only an unsigned limited-transfer request', async () => {
+  test('POST /api/chat routes a whitelisted send to Base MCP and returns confirmation metadata', async () => {
     const origChain = process.env.CHAIN_ENV;
     const origExecution = process.env.MAINNET_EXECUTION_ENABLED;
-    const origSecurity = process.env.TOKEN_SECURITY_PROVIDER;
     process.env.CHAIN_ENV = 'mainnet';
     process.env.MAINNET_EXECUTION_ENABLED = 'true';
-    process.env.TOKEN_SECURITY_PROVIDER = 'none';
-    const aggregator = new ToolAggregator();
     const originalCreateTools = chatRouteRuntime.createApiToolAggregatorForUser;
+    const originalGetSecurity = executionSecurityRuntime.getProvider;
+    const originalGetRepository = baseMcpSendRuntime.getRepository;
+    class BaseSendProvider implements ToolProvider {
+      id = 'base-mcp-dynamic';
+      calls: string[] = [];
+      private tool: ToolDef = {
+        name: 'send', description: 'Send USDC',
+        inputSchema: { type: 'object', properties: { amount: {}, token: {}, recipient: {}, walletAddress: {}, chainId: {} } },
+      };
+      async listTools() { return [this.tool]; }
+      findTool(name: string) { return name === 'send' ? this.tool : undefined; }
+      async callTool(name: string) {
+        this.calls.push(name);
+        return { content: JSON.stringify({ approval_url: 'https://wallet.base.org/approve/send' }), isError: false };
+      }
+    }
+    const provider = new BaseSendProvider();
+    const aggregator = new ToolAggregator();
+    aggregator.registerProvider(provider);
+    const repository = new InMemoryAutonomyPolicyRepository();
+    await repository.configure({
+      userId: 'default-user', chainId: 8453,
+      walletAddress: '0x1234567890123456789012345678901234567890',
+      dailyLimit: 10, maxPerAction: 2,
+      whitelist: ['0x1111111111111111111111111111111111111111'],
+      scope: 'bounded-approval', expiresAt: Date.now() + 60_000, mainnetOptIn: true,
+    });
+    baseMcpSendRuntime.getRepository = () => repository;
+    executionSecurityRuntime.getProvider = () => ({
+      providerName: 'goplus', status: 'connected', statusCode: 'connected', authMode: 'public',
+      provider: { async getTokenSecurity({ tokenAddresses }) {
+        return tokenAddresses.map((address) => ({ address, provider: 'goplus' as const, status: 'ok' as const, flags: {}, rawRiskLabels: [], summary: 'verified' }));
+      } },
+    });
     chatRouteRuntime.createApiToolAggregatorForUser = async () => aggregator;
     await request(app).delete('/api/chat/history');
+    const beforeActions = (await db.select().from(actions)).length;
     try {
       const response = await request(app).post('/api/chat').send({
         message: 'send 0.05 USDC to 0x1111111111111111111111111111111111111111',
         walletAddress: '0x1234567890123456789012345678901234567890',
-        chainEnv: 'mainnet-readonly',
       });
       assert.equal(response.status, 200);
-      assert.ok(response.body.actionId);
-      const [created] = await db.select().from(actions).where(eq(actions.id, response.body.actionId));
-      const payload = typeof created.executionPayload === 'string'
-        ? JSON.parse(created.executionPayload)
-        : created.executionPayload as any;
-      assert.equal(payload.actionType, 'limited_transfer');
-      assert.equal(payload.calls.length, 1);
-      assert.equal((created.metadata as any).userConfirmable, true);
-      assert.equal((created.metadata as any).executable, false);
-      assert.equal(JSON.stringify(payload).includes('signature'), false);
-      assert.equal(JSON.stringify(payload).includes('privateKey'), false);
+      assert.equal(response.body.actionId, undefined);
+      assert.equal(response.body.metadata.directReadKind, 'base_mcp_send');
+      assert.equal(response.body.metadata.approvalUrl, 'https://wallet.base.org/approve/send');
+      assert.equal(response.body.metadata.approvalState, 'approval_required');
+      assert.deepEqual(provider.calls, ['send']);
+      assert.equal((await db.select().from(actions)).length, beforeActions);
     } finally {
       chatRouteRuntime.createApiToolAggregatorForUser = originalCreateTools;
+      executionSecurityRuntime.getProvider = originalGetSecurity;
+      baseMcpSendRuntime.getRepository = originalGetRepository;
       restoreEnv('CHAIN_ENV', origChain);
       restoreEnv('MAINNET_EXECUTION_ENABLED', origExecution);
-      restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurity);
     }
   });
 
   test('POST /api/chat with action intent in mainnet-readonly generates blocked read-only recommendation', async () => {
     clearTokenSecurityCacheForTests();
+    const origChain = process.env.CHAIN_ENV;
+    const origExecution = process.env.MAINNET_EXECUTION_ENABLED;
     const origSecurityProvider = process.env.TOKEN_SECURITY_PROVIDER;
     const origBalancesProvider = process.env.TOKEN_BALANCES_PROVIDER;
     const origPriceProvider = process.env.PRICE_PROVIDER;
@@ -271,6 +302,8 @@ describe('Chat API & Recommendation Guardrails', () => {
     process.env.TOKEN_BALANCES_PROVIDER = 'none';
     process.env.PRICE_PROVIDER = 'none';
     process.env.APPROVAL_PROVIDER = 'none';
+    process.env.CHAIN_ENV = 'mainnet-readonly';
+    process.env.MAINNET_EXECUTION_ENABLED = 'false';
     await request(app).delete('/api/chat/history');
 
     const response = await request(app)
@@ -308,6 +341,8 @@ describe('Chat API & Recommendation Guardrails', () => {
     restoreEnv('TOKEN_BALANCES_PROVIDER', origBalancesProvider);
     restoreEnv('PRICE_PROVIDER', origPriceProvider);
     restoreEnv('APPROVAL_PROVIDER', origApprovalProvider);
+    restoreEnv('CHAIN_ENV', origChain);
+    restoreEnv('MAINNET_EXECUTION_ENABLED', origExecution);
   });
 
   test('POST /api/actions/recommend with portfolio intent generates analysis metadata', async () => {

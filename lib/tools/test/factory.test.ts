@@ -30,6 +30,17 @@ describe('createToolAggregatorForUser', () => {
         assert.deepStrictEqual(selected.map((tool) => tool.name), ['get_portfolio', 'swap']);
     });
 
+    test('protected direct-send selection adds exact Base MCP send only when explicitly enabled', () => {
+        const discovered = classifyDynamicBaseMcpTools([
+            { name: 'get_portfolio', description: 'Read balances' },
+            { name: 'send', description: 'Send a token' },
+            { name: 'send_calls', description: 'Generic call batch' },
+            { name: 'morpho_prepare_deposit', description: 'Prepare deposit' },
+        ]);
+        const selected = selectBaseMcpRuntimeTools(discovered, true, false, true);
+        assert.deepStrictEqual(selected.map((tool) => tool.name), ['get_portfolio', 'send']);
+    });
+
     test('returns mock providers when toggles are missing or false', async () => {
         const mockGetSettings = mock.method(settingsAPI, 'getUserSettings', async () => ({
             protocolToggles: {}

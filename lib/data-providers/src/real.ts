@@ -87,6 +87,10 @@ let tokenSecurityHealth: { providerName: 'goplus' | 'none'; statusCode: 'connect
   providerName: 'none',
   statusCode: 'missing'
 };
+let goPlusDiagnostics: {
+  authMode: 'public' | 'app_token' | 'public_fallback' | 'disabled';
+  errorCode?: string;
+} = { authMode: 'disabled' };
 
 export function setTokenSecurityHealthStatus(statusCode: 'connected' | 'missing' | 'failed' | 'partial') {
   if (tokenSecurityHealth.providerName === 'goplus') {
@@ -99,6 +103,7 @@ export function clearTokenSecurityCacheForTests() {
   goPlusAccessToken = null;
   goPlusAccessTokenPromise = null;
   tokenSecurityHealth = { providerName: 'none', statusCode: 'missing' };
+  goPlusDiagnostics = { authMode: 'disabled' };
 }
 
 function cacheKey(chainId: number, address: string) {
@@ -232,7 +237,7 @@ function failedSecurityResult(address: string, summary = 'GoPlus token security 
 }
 
 export class NoneTokenSecurityProvider implements TokenSecurityProvider {
-  async getTokenSecurity(params: { chainId: number; tokenAddresses: string[] }): Promise<TokenSecurityResult[]> {
+  async getTokenSecurity(params: { chainId: number; tokenAddresses: string[]; forceFresh?: boolean }): Promise<TokenSecurityResult[]> {
     return normalizeAddresses(params.tokenAddresses).map(address => ({
       address,
       provider: 'none' as const,
@@ -265,7 +270,7 @@ class MockTokenSecurityProvider implements TokenSecurityProvider {
 export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
   constructor(private readonly appCredentials?: GoPlusAppCredentials, private readonly timeoutMs = 6000) {}
 
-  async getTokenSecurity(params: { chainId: number; tokenAddresses: string[] }): Promise<TokenSecurityResult[]> {
+  async getTokenSecurity(params: { chainId: number; tokenAddresses: string[]; forceFresh?: boolean }): Promise<TokenSecurityResult[]> {
     const addresses = normalizeAddresses(params.tokenAddresses);
     if (addresses.length === 0) return [];
 
@@ -274,7 +279,7 @@ export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
     const missing: string[] = [];
 
     for (const address of addresses) {
-      const cached = tokenSecurityCache.get(cacheKey(params.chainId, address));
+      const cached = params.forceFresh ? undefined : tokenSecurityCache.get(cacheKey(params.chainId, address));
       if (cached && cached.expiresAt > now) {
         results.set(address, cached.result);
       } else {
@@ -301,6 +306,9 @@ export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
       providerName: 'goplus',
       statusCode: usableCount === addresses.length ? 'connected' : usableCount > 0 ? 'partial' : 'failed',
     };
+    if (usableCount === 0) goPlusDiagnostics.errorCode = goPlusDiagnostics.errorCode || 'goplus_no_usable_verdict';
+    else if (usableCount < addresses.length) goPlusDiagnostics.errorCode = goPlusDiagnostics.errorCode || 'goplus_partial_result';
+    else if (goPlusDiagnostics.authMode !== 'public_fallback') delete goPlusDiagnostics.errorCode;
     return ordered;
   }
 
@@ -344,6 +352,11 @@ export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
         const res = await fetch(url.toString(), { headers, signal: AbortSignal.timeout(this.timeoutMs) });
         if (!res.ok) {
           if (res.status === 401 && accessToken) goPlusAccessToken = null;
+          goPlusDiagnostics.errorCode = res.status === 401 || res.status === 403
+            ? 'goplus_authorization_failed'
+            : res.status === 429
+              ? 'goplus_rate_limited'
+              : 'goplus_provider_error';
           throw new Error(`GoPlus API error: ${res.statusText || res.status}`);
         }
         const data = await res.json() as { result?: Record<string, Record<string, unknown>> };
@@ -354,6 +367,11 @@ export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
         }
         return normalized;
       } catch (error) {
+        if (error instanceof Error && /abort|timeout/i.test(`${error.name} ${error.message}`)) {
+          goPlusDiagnostics.errorCode = 'goplus_timeout';
+        } else if (!goPlusDiagnostics.errorCode) {
+          goPlusDiagnostics.errorCode = 'goplus_unavailable';
+        }
         lastError = error;
       }
     }
@@ -362,9 +380,13 @@ export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
 
   private async getAccessToken(): Promise<string | undefined> {
     const credentials = this.appCredentials;
-    if (!credentials?.appKey || !credentials.appSecret) return undefined;
+    if (!credentials?.appKey || !credentials.appSecret) {
+      goPlusDiagnostics = { authMode: 'public' };
+      return undefined;
+    }
     const now = Date.now();
     if (goPlusAccessToken?.appKey === credentials.appKey && goPlusAccessToken.expiresAt > now + 60_000) {
+      goPlusDiagnostics = { authMode: 'app_token' };
       return goPlusAccessToken.value;
     }
     if (goPlusAccessTokenPromise) return goPlusAccessTokenPromise;
@@ -380,20 +402,28 @@ export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
           body: JSON.stringify({ app_key: credentials.appKey, time, sign }),
           signal: AbortSignal.timeout(this.timeoutMs),
         });
-        if (!response.ok) return undefined;
+        if (!response.ok) {
+          goPlusDiagnostics = { authMode: 'public_fallback', errorCode: 'goplus_auth_failed' };
+          return undefined;
+        }
         const payload = await response.json() as Record<string, any>;
         const result = payload.result && typeof payload.result === 'object' ? payload.result : payload;
         const value = typeof result.access_token === 'string' ? result.access_token : undefined;
         const expiresIn = Number(result.expires_in || 0);
-        if (!value) return undefined;
+        if (!value) {
+          goPlusDiagnostics = { authMode: 'public_fallback', errorCode: 'goplus_auth_failed' };
+          return undefined;
+        }
         goPlusAccessToken = {
           appKey: credentials.appKey,
           value,
           expiresAt: Date.now() + (Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn * 1000 : 5 * 60_000),
         };
+        goPlusDiagnostics = { authMode: 'app_token' };
         return value;
       } catch {
         // The Token Security API remains available without authentication.
+        goPlusDiagnostics = { authMode: 'public_fallback', errorCode: 'goplus_auth_failed' };
         return undefined;
       } finally {
         goPlusAccessTokenPromise = null;
@@ -411,7 +441,8 @@ export function getTokenSecurityProviderFromEnv(): TokenSecurityProviderEnvResul
       && process.env.TOKEN_SECURITY_PROVIDER.trim().toLowerCase() === 'none';
     const statusCode = explicitNone ? 'disabled' : 'missing';
     tokenSecurityHealth = { providerName: 'none', statusCode };
-    return { provider: new NoneTokenSecurityProvider(), status: 'Token security provider not configured', statusCode, providerName: 'none' };
+    goPlusDiagnostics = { authMode: 'disabled' };
+    return { provider: new NoneTokenSecurityProvider(), status: 'Token security provider not configured', statusCode, providerName: 'none', ...goPlusDiagnostics };
   }
   if (mode === 'goplus') {
     if (tokenSecurityHealth.providerName !== 'goplus') {
@@ -431,13 +462,15 @@ export function getTokenSecurityProviderFromEnv(): TokenSecurityProviderEnvResul
     const appKey = process.env.GOPLUS_APP_KEY?.trim();
     const appSecret = process.env.GOPLUS_APP_SECRET?.trim();
     const credentials = appKey && appSecret ? { appKey, appSecret } : undefined;
-    return { provider: new GoPlusTokenSecurityProvider(credentials), status: statusText, statusCode, providerName: 'goplus' };
+    if (goPlusDiagnostics.authMode === 'disabled') goPlusDiagnostics = { authMode: 'public' };
+    return { provider: new GoPlusTokenSecurityProvider(credentials), status: statusText, statusCode, providerName: 'goplus', ...goPlusDiagnostics };
   }
   if (mode === 'mock') {
-    return { provider: new MockTokenSecurityProvider(), status: 'mock', statusCode: 'connected', providerName: 'goplus' };
+    return { provider: new MockTokenSecurityProvider(), status: 'mock', statusCode: 'connected', providerName: 'goplus', authMode: 'public' };
   }
   tokenSecurityHealth = { providerName: 'none', statusCode: 'missing' };
-  return { provider: new NoneTokenSecurityProvider(), status: 'Token security provider not configured', statusCode: 'missing', providerName: 'none' };
+  goPlusDiagnostics = { authMode: 'disabled' };
+  return { provider: new NoneTokenSecurityProvider(), status: 'Token security provider not configured', statusCode: 'missing', providerName: 'none', ...goPlusDiagnostics };
 }
 
 export class NoneTokenBalancesProvider implements TokenBalancesProvider {

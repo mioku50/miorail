@@ -34,6 +34,7 @@ import { runDirectQuoteRead } from '../lib/streamQuoteRouting.js';
 import { detectRuntimeSkill, runtimeSkillAvailability } from '@mioagent/runtime-skills';
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
 import { runDirectBaseMcpSwap } from '../lib/streamBaseMcpSwapRouting.js';
+import { runDirectBaseMcpSend } from '../lib/streamBaseMcpSendRouting.js';
 
 export const chatRouter = Router();
 
@@ -97,6 +98,7 @@ chatRouter.post('/', async (req, res, next) => {
         includeMorphoReadOnly: true,
         includeUniswapQuote: true,
         includeBaseMcpSwap: runtimeExecutionCapabilities.userConfirmedEnabled,
+        includeBaseMcpSend: runtimeExecutionCapabilities.userConfirmedEnabled,
       },
     );
     res.once('finish', () => { void tools.close(); });
@@ -130,7 +132,14 @@ chatRouter.post('/', async (req, res, next) => {
 
     currentMessages.push(userMsg);
 
-    const directRead = await runDirectBaseMcpSwap({
+    const directRead = await runDirectBaseMcpSend({
+      message,
+      walletAddress,
+      tools,
+      userConfirmedEnabled: runtimeExecutionCapabilities.userConfirmedEnabled,
+      userId,
+    })
+      || await runDirectBaseMcpSwap({
       message,
       walletAddress,
       tools,
@@ -148,12 +157,13 @@ chatRouter.post('/', async (req, res, next) => {
         createdAt: new Date().toISOString(),
         toolCalls: directRead.toolCalls,
         metadata: {
-          readOnly: true,
+          readOnly: !['base_mcp_send', 'base_mcp_swap'].includes(directRead.kind),
           chainId: runtimeChainId,
           directReadKind: directRead.kind,
           ...(directRead.errorCode ? { errorCode: directRead.errorCode } : {}),
           ...('approvalUrl' in directRead && directRead.approvalUrl ? { approvalUrl: directRead.approvalUrl } : {}),
           ...('requestId' in directRead && directRead.requestId ? { requestId: directRead.requestId } : {}),
+          ...('approvalState' in directRead && directRead.approvalState ? { approvalState: directRead.approvalState } : {}),
         },
       };
       currentMessages.push(assistantMsg);

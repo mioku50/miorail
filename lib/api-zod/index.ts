@@ -470,6 +470,8 @@ export const StatusResponseSchema = z.object({
   risk: z.object({
     status: z.enum(["connected", "missing", "failed", "partial", "disabled"]),
     provider: z.string(),
+    authMode: z.enum(["public", "app_token", "public_fallback", "disabled"]).optional(),
+    errorCode: z.string().max(120).optional(),
   }),
   approvals: z.object({
     status: z.enum(["connected", "missing", "failed", "partial", "disabled", "rate_limited", "budget_exhausted", "temporarily_unavailable", "auth_or_budget_issue"]),

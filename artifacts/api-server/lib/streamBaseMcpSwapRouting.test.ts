@@ -114,3 +114,39 @@ test('unknown canonical USDC verdict blocks Base MCP swap before the tool call',
   assert.equal(result?.errorCode, 'swap_token_security_unavailable');
   assert.equal(provider.calls.length, 0);
 });
+
+test('requestId-only swap polls Base MCP request status and stays pending until confirmed', async () => {
+  securityProvider('ok');
+  readyPolicy();
+  class RequestIdSwapProvider implements ToolProvider {
+    id = 'base-mcp-dynamic';
+    calls: string[] = [];
+    private tools: ToolDef[] = [
+      { name: 'swap', description: 'Swap', inputSchema: { type: 'object' } },
+      { name: 'get_request_status', description: 'Status', inputSchema: { type: 'object', properties: { requestId: {} } } },
+    ];
+    async listTools() { return this.tools; }
+    findTool(name: string) { return this.tools.find((tool) => tool.name === name); }
+    async callTool(name: string) {
+      this.calls.push(name);
+      return name === 'swap'
+        ? { content: JSON.stringify({ request_id: 'swap-request-only' }), isError: false }
+        : { content: JSON.stringify({ status: 'pending', nested: { approval_url: 'https://wallet.base.org/approve/request-only' } }), isError: false };
+    }
+  }
+  const provider = new RequestIdSwapProvider();
+  const tools = new ToolAggregator();
+  tools.registerProvider(provider);
+  const result = await runDirectBaseMcpSwap({
+    message: 'swap 0.1 USDC to ETH',
+    walletAddress: '0x1111111111111111111111111111111111111111',
+    tools,
+    userConfirmedEnabled: true,
+    userId: 'default-user',
+  });
+  assert.deepEqual(provider.calls, ['swap', 'get_request_status']);
+  assert.equal(result?.requestId, 'swap-request-only');
+  assert.equal(result?.approvalUrl, 'https://wallet.base.org/approve/request-only');
+  assert.equal(result?.approvalState, 'pending');
+  assert.doesNotMatch(result?.content || '', /completed|settled/i);
+});

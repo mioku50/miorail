@@ -50,7 +50,9 @@ export async function loadTokenSecurityContext(
   if (configured.providerName !== 'goplus') return contextFrom(configured, [], true);
   let results: TokenSecurityResult[];
   try {
-    results = await configured.provider.getTokenSecurity({ chainId, tokenAddresses });
+    // Execution decisions always bypass portfolio/cache freshness. A previous
+    // unknown verdict must trigger a new token-level request before preparation.
+    results = await configured.provider.getTokenSecurity({ chainId, tokenAddresses, forceFresh: true });
   } catch {
     executionSecurityRuntime.setHealth('failed');
     return contextFrom({ ...configured, statusCode: 'failed' }, [], true);

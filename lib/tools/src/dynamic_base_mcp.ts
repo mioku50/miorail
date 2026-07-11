@@ -68,8 +68,14 @@ function isSwapTool(name: string): boolean {
   return normalized === 'swap' || normalized === 'swaptokens' || normalized === 'tokenswap';
 }
 
+function isSendTool(name: string): boolean {
+  const normalized = normalizeToolName(name);
+  return normalized === 'send' || normalized === 'transfer' || normalized === 'sendtoken' || normalized === 'transfertoken';
+}
+
 export function inferBaseMcpToolGroup(name: string): string {
   const normalized = normalizeToolName(name);
+  if (isSendTool(name)) return 'base';
   if (normalized.includes('balance') || normalized.includes('wallet') || normalized.includes('account')) return 'wallet';
   if (normalized.includes('price') || normalized.includes('quote') || normalized.includes('swap')) return 'swap';
   if (normalized.includes('history') || normalized.includes('transaction')) return 'history';
@@ -108,25 +114,33 @@ function toToolDef(tool: DynamicBaseMcpTool): ToolDef {
   };
 }
 
-function redactSecrets(value: unknown, depth = 0): unknown {
+function redactSecrets(value: unknown, depth = 0, transactionResult = false): unknown {
   if (depth > 6) return '[truncated]';
-  if (Array.isArray(value)) return value.map((item) => redactSecrets(item, depth + 1));
+  if (Array.isArray(value)) return value.slice(0, 100).map((item) => redactSecrets(item, depth + 1, transactionResult));
+  if (typeof value === 'string') {
+    try {
+      return JSON.stringify(redactSecrets(JSON.parse(value), depth + 1, transactionResult));
+    } catch {
+      return value.replace(/Bearer\s+[A-Za-z0-9._~+\/-]+/gi, 'Bearer [redacted]').slice(0, 20_000);
+    }
+  }
   if (!value || typeof value !== 'object') return value;
 
   const output: Record<string, unknown> = {};
   for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
-    if (/^(access_?token|refresh_?token|id_?token|api_?token|secret|authorization|cookie|password|private_?key|credential|signature)$/i.test(key)) {
+    if (/^(access_?token|refresh_?token|id_?token|api_?token|secret|authorization|cookie|password|private_?key|credential|signature)$/i.test(key)
+      || (transactionResult && (/^(calldata|raw_?transaction|signed_?transaction|permit|permit_?data|signature_?data)$/i.test(key)
+        || (/^data$/i.test(key) && typeof inner === 'string' && /^0x[0-9a-f]+$/i.test(inner))))) {
       output[key] = '[redacted]';
     } else {
-      output[key] = redactSecrets(inner, depth + 1);
+      output[key] = redactSecrets(inner, depth + 1, transactionResult);
     }
   }
   return output;
 }
 
-function serializeToolResult(value: unknown): string {
-  if (typeof value === 'string') return value;
-  return JSON.stringify(redactSecrets(value));
+function serializeToolResult(value: unknown, transactionResult = false): string {
+  return JSON.stringify(redactSecrets(value, 0, transactionResult));
 }
 
 function safeCallErrorCode(error: unknown): string {
@@ -179,7 +193,7 @@ export class DynamicBaseMcpToolProvider implements ToolProvider {
   constructor(
     private client: BaseMcpCallClient,
     tools: DynamicBaseMcpTool[],
-    private readonly options: { allowUserConfirmedSwap?: boolean } = {},
+    private readonly options: { allowUserConfirmedSwap?: boolean; allowUserConfirmedSend?: boolean } = {},
   ) {
     this.toolMap = new Map(tools.map((tool) => [tool.name, tool]));
   }
@@ -198,17 +212,12 @@ export class DynamicBaseMcpToolProvider implements ToolProvider {
     if (!tool) return { content: `Unknown tool: ${name}`, isError: true };
 
     if (tool.capability === 'user_confirmed_transaction') {
-      if (this.options.allowUserConfirmedSwap && isSwapTool(tool.name)) {
+      const allowedProtectedTool = (this.options.allowUserConfirmedSwap && isSwapTool(tool.name))
+        || (this.options.allowUserConfirmedSend && isSendTool(tool.name));
+      if (allowedProtectedTool) {
         try {
           const result = await this.client.getClient().callTool({ name, arguments: args });
-          const serialized = serializeToolResult(result);
-          if (!containsApprovalReference(result)) {
-            return {
-              isError: true,
-              content: JSON.stringify({ errorCode: 'base_mcp_approval_reference_missing' }),
-            };
-          }
-          return { content: serialized, isError: false };
+          return { content: serializeToolResult(result, true), isError: false };
         } catch (error) {
           return { content: JSON.stringify({ errorCode: safeCallErrorCode(error) }), isError: true };
         }
@@ -235,17 +244,4 @@ export class DynamicBaseMcpToolProvider implements ToolProvider {
       return { content: JSON.stringify({ errorCode: safeCallErrorCode(error) }), isError: true };
     }
   }
-}
-
-function containsApprovalReference(value: unknown, depth = 0): boolean {
-  if (depth > 8 || value === null || value === undefined) return false;
-  if (typeof value === 'string') {
-    try { return containsApprovalReference(JSON.parse(value), depth + 1); } catch { return false; }
-  }
-  if (Array.isArray(value)) return value.some((item) => containsApprovalReference(item, depth + 1));
-  if (typeof value !== 'object') return false;
-  const record = value as Record<string, unknown>;
-  if (typeof record.approvalUrl === 'string' && typeof record.requestId === 'string') return true;
-  if (record.type === 'text' && typeof record.text === 'string') return containsApprovalReference(record.text, depth + 1);
-  return Object.values(record).some((item) => containsApprovalReference(item, depth + 1));
 }

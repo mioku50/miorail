@@ -2,6 +2,15 @@ import { useLocation } from 'wouter';
 import { useUiStore } from '../../lib/state';
 import { ToolCallTrace } from './ToolCallTrace';
 
+export function baseMcpApprovalLabel(state: unknown): string | null {
+  if (state === 'approval_required') return 'Pending Base Account confirmation';
+  if (state === 'pending') return 'Pending';
+  if (state === 'completed') return 'Completed';
+  if (state === 'rejected') return 'Rejected';
+  if (state === 'failed') return 'Failed';
+  return null;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function ChatMessage({ m, networkLabel }: { m: any; networkLabel: string }) {
   const [, navigate] = useLocation();
@@ -25,6 +34,7 @@ export function ChatMessage({ m, networkLabel }: { m: any; networkLabel: string 
     const approvalUrl = typeof meta.approvalUrl === 'string' && meta.approvalUrl.startsWith('https://')
       ? meta.approvalUrl
       : null;
+    const approvalLabel = baseMcpApprovalLabel(meta.approvalState);
     const riskVal = meta.risk || 'low';
     return (
       <div className="flex flex-col items-start gap-1 w-full animate-in fade-in slide-in-from-left-1">
@@ -85,14 +95,25 @@ export function ChatMessage({ m, networkLabel }: { m: any; networkLabel: string 
             </button>
           </div>
         )}
-        {approvalUrl && meta.requestId && (
+        {approvalLabel && (
+          <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
+            meta.approvalState === 'completed'
+              ? 'bg-ok-soft text-ok'
+              : meta.approvalState === 'rejected' || meta.approvalState === 'failed'
+                ? 'bg-risk-soft text-risk'
+                : 'bg-warn-soft text-warn'
+          }`}>
+            {approvalLabel}
+          </span>
+        )}
+        {approvalUrl && !['completed', 'rejected', 'failed'].includes(meta.approvalState) && (
           <a
             href={approvalUrl}
             target="_blank"
             rel="noreferrer noopener"
             className="rounded-xl bg-accent px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-accent-2"
           >
-            Approve Transaction in Base Account
+            Confirm in Base Account
           </a>
         )}
         <ToolCallTrace toolCalls={m.toolCalls} />

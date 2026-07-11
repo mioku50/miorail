@@ -26,6 +26,7 @@ export interface CreateToolAggregatorOptions {
   includeMorphoReadOnly?: boolean;
   includeUniswapQuote?: boolean;
   includeBaseMcpSwap?: boolean;
+  includeBaseMcpSend?: boolean;
 }
 
 function parseBool(value?: string): boolean {
@@ -52,10 +53,13 @@ export function selectBaseMcpRuntimeTools(
   tools: DynamicBaseMcpTool[],
   readOnlyOnly = false,
   includeUserConfirmedSwap = false,
+  includeUserConfirmedSend = false,
 ): DynamicBaseMcpTool[] {
   return readOnlyOnly
     ? tools.filter((tool) => (tool.capability === 'read_only' && tool.enabled)
-      || (includeUserConfirmedSwap && tool.capability === 'user_confirmed_transaction' && tool.group === 'swap'))
+      || (includeUserConfirmedSwap && tool.capability === 'user_confirmed_transaction' && tool.group === 'swap')
+      || (includeUserConfirmedSend && tool.capability === 'user_confirmed_transaction' && tool.group === 'base'
+        && /^(?:send|transfer|send_token|transfer_token)$/i.test(tool.name)))
     : tools;
 }
 
@@ -109,10 +113,12 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
           discoveredTools,
           options.baseMcpReadOnlyOnly,
           options.includeBaseMcpSwap,
+          options.includeBaseMcpSend,
         );
         if (dynamicTools.length > 0) {
           aggregator.registerProvider(new DynamicBaseMcpToolProvider(baseClient, dynamicTools, {
             allowUserConfirmedSwap: options.includeBaseMcpSwap,
+            allowUserConfirmedSend: options.includeBaseMcpSend,
           }));
         }
       } catch (error) {

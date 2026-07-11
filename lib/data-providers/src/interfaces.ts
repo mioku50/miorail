@@ -157,6 +157,7 @@ export interface TokenSecurityProvider {
   getTokenSecurity(params: {
     chainId: number;
     tokenAddresses: string[];
+    forceFresh?: boolean;
   }): Promise<TokenSecurityResult[]>;
 }
 
@@ -165,6 +166,8 @@ export interface TokenSecurityProviderEnvResult {
   status: string;
   statusCode: "connected" | "missing" | "failed" | "partial" | "disabled";
   providerName: TokenSecurityProviderName;
+  authMode?: "public" | "app_token" | "public_fallback" | "disabled";
+  errorCode?: string;
 }
 
 export interface TokenApproval {
