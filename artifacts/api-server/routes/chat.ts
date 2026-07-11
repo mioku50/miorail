@@ -21,8 +21,19 @@ import { buildActionPlan, parseRevokeApproval, findActiveApproval } from '../lib
 import { screenAction, simulateTrade } from '@mioagent/security';
 import { ObservabilityService } from '@mioagent/observability';
 import { MemoryService } from '@mioagent/memory';
+import {
+  runDirectStreamRead,
+  sanitizeStreamToolArgs,
+  sanitizedToolErrorCode,
+  shouldPreferPartnerRuntimeRead,
+} from '../lib/streamReadRouting.js';
 
 export const chatRouter = Router();
+
+export const chatRouteRuntime = {
+  createApiToolAggregatorForUser,
+  createLlmProvider,
+};
 
 chatRouter.get('/history', async (req, res, next) => {
   try {
@@ -60,13 +71,16 @@ chatRouter.post('/', async (req, res, next) => {
   try {
     const { message, walletAddress, chainEnv } = ChatMessageRequestSchema.parse(req.body);
     const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
-    const tools = await createApiToolAggregatorForUser(req, userId, process.env.SESSION_SECRET || 'test-secret');
+    const runtimeChainEnv = chainEnv || process.env.CHAIN_ENV || 'mainnet-readonly';
+    const runtimeChainId = runtimeChainEnv === 'sepolia' ? 84532 : 8453;
+    const tools = await chatRouteRuntime.createApiToolAggregatorForUser(
+      req,
+      userId,
+      process.env.SESSION_SECRET || 'test-secret',
+      { readOnlyOnly: true, includeMorphoReadOnly: true },
+    );
+    res.once('finish', () => { void tools.close(); });
     console.log("TRACE: tools created");
-
-    const llm = createLlmProvider();
-    console.log("TRACE: llm created");
-    const agent = new Agent({ llmProvider: llm, toolAggregator: tools });
-    console.log("TRACE: agent created");
 
     console.log("TRACE: querying chats db");
     const userChats = await db
@@ -96,7 +110,41 @@ chatRouter.post('/', async (req, res, next) => {
 
     currentMessages.push(userMsg);
 
-    const intent = detectActionIntent(message);
+    const directRead = await runDirectStreamRead({ message, walletAddress, tools });
+    if (directRead) {
+      const assistantMsg = {
+        chatId,
+        messageId: crypto.randomUUID(),
+        content: directRead.content,
+        role: 'assistant' as const,
+        createdAt: new Date().toISOString(),
+        toolCalls: directRead.toolCalls,
+        metadata: {
+          readOnly: true,
+          chainId: runtimeChainId,
+          directReadKind: directRead.kind,
+          ...(directRead.errorCode ? { errorCode: directRead.errorCode } : {}),
+        },
+      };
+      currentMessages.push(assistantMsg);
+      if (userChats.length > 0) {
+        await db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(eq(chats.id, chatId));
+      } else {
+        await db.insert(chats).values({
+          id: chatId,
+          userId,
+          messages: currentMessages,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+      }
+      return res.json(assistantMsg);
+    }
+
+    const preferRuntimeReadTools = shouldPreferPartnerRuntimeRead(message, await tools.listTools());
+    const intent = preferRuntimeReadTools
+      ? { isActionIntent: false, confidence: 1 }
+      : detectActionIntent(message);
     const isWalletConnected = !!(walletAddress && walletAddress !== 'None' && walletAddress !== '0x0' && walletAddress !== '');
 
     if (intent.isActionIntent && !isWalletConnected) {
@@ -118,7 +166,7 @@ chatRouter.post('/', async (req, res, next) => {
 
     if (intent.isActionIntent && isWalletConnected) {
       const actionId = crypto.randomUUID();
-      const chainEnvVal = chainEnv || process.env.CHAIN_ENV || 'sepolia';
+      const chainEnvVal = runtimeChainEnv;
       const isReadonly = chainEnvVal === 'mainnet-readonly';
       const isMainnetExecEnabled = process.env.MAINNET_EXECUTION_ENABLED === 'true';
       const canExecute = !isReadonly && (chainEnvVal !== 'mainnet' || isMainnetExecEnabled);
@@ -439,6 +487,20 @@ chatRouter.post('/', async (req, res, next) => {
       return res.json(assistantMsg);
     }
 
+    const llm = chatRouteRuntime.createLlmProvider();
+    console.log("TRACE: llm created");
+    const agent = new Agent({
+      llmProvider: llm,
+      toolAggregator: tools,
+      runtimeContext: {
+        walletAddress,
+        chainId: runtimeChainId,
+        chain: runtimeChainEnv === 'sepolia' ? 'base-sepolia' : 'base',
+        executionMode: 'read-only',
+      },
+    });
+    console.log("TRACE: agent created");
+
     if (userChats.length > 0) {
       console.log("TRACE: updating chats db");
       await db.update(chats)
@@ -465,16 +527,24 @@ chatRouter.post('/', async (req, res, next) => {
       if (event.type === 'message') {
         finalContent += event.content;
       } else if (event.type === 'tool_call') {
+        let args: unknown = {};
+        try {
+          args = event.args ? JSON.parse(event.args) : {};
+        } catch {
+          args = {};
+        }
         toolCallsMap.set(event.toolName, {
           toolName: event.toolName,
-          args: event.args ? (typeof event.args === 'string' ? JSON.parse(event.args) : event.args) : {},
+          args: sanitizeStreamToolArgs(args),
           result: undefined,
           isError: false
         });
       } else if (event.type === 'tool_result') {
         const existing = toolCallsMap.get(event.toolName) || { toolName: event.toolName, args: {} };
-        existing.result = event.result ? (typeof event.result === 'string' ? event.result : JSON.stringify(event.result)) : 'Success';
         existing.isError = event.isError || false;
+        existing.result = event.isError
+          ? { status: 'error', errorCode: sanitizedToolErrorCode(event.result) }
+          : { status: 'success' };
         toolCallsMap.set(event.toolName, existing);
       }
     }
@@ -491,8 +561,8 @@ chatRouter.post('/', async (req, res, next) => {
       });
       toolCallTraces.push({
         toolName: 'llm_inference',
-        args: { prompt: message },
-        result: 'Response generated',
+        args: { mode: 'read-only' },
+        result: { status: 'success' },
         isError: false,
       });
     }

@@ -157,6 +157,32 @@ test('probeBaseMcpTools returns needs_reauth without connecting when token is mi
   restoreEnv('BASE_MCP_SERVER_URL', origUrl);
 });
 
+test('probeBaseMcpTools treats OAuth with zero tools as degraded and unusable', async () => {
+  const origEnabled = process.env.BASE_MCP_ENABLED;
+  const origUrl = process.env.BASE_MCP_SERVER_URL;
+  process.env.BASE_MCP_ENABLED = 'true';
+  process.env.BASE_MCP_SERVER_URL = 'https://mcp.base.org';
+  baseMcpToolProbeRuntime.getBaseMcpAuthStatus = async () => ({ connected: true, needsReauth: false, userScoped: true });
+  baseMcpToolProbeRuntime.createOAuthProvider = () => ({}) as any;
+  baseMcpToolProbeRuntime.createTransport = () => ({}) as any;
+  baseMcpToolProbeRuntime.createClient = () => ({
+    connect: async () => undefined,
+    close: async () => undefined,
+    getClient: () => ({ listTools: async () => ({ tools: [] }) }),
+  });
+
+  const result = await probeBaseMcpTools({
+    userId: 'user-1',
+    sessionSecret: 'session-secret',
+    redirectUrl: 'https://miorail.xyz/api/mcp/base/callback',
+  });
+  assert.equal(result.status, 'degraded');
+  assert.equal(result.toolsCount, 0);
+  assert.equal(result.errorCode, 'no_tools_available');
+  restoreEnv('BASE_MCP_ENABLED', origEnabled);
+  restoreEnv('BASE_MCP_SERVER_URL', origUrl);
+});
+
 test('probeBaseMcpTools classifies network failures as unreachable', async () => {
   const origEnabled = process.env.BASE_MCP_ENABLED;
   const origUrl = process.env.BASE_MCP_SERVER_URL;
@@ -229,6 +255,35 @@ test('probeBaseMcpTools marks needs_reauth on auth failure', async () => {
   assert.strictEqual(result.status, 'needs_reauth');
   assert.strictEqual(markedUserId, 'user-1');
 
+  restoreEnv('BASE_MCP_ENABLED', origEnabled);
+  restoreEnv('BASE_MCP_SERVER_URL', origUrl);
+});
+
+test('probeBaseMcpTools sanitizes undecryptable OAuth credentials and requests reconnect', async () => {
+  const origEnabled = process.env.BASE_MCP_ENABLED;
+  const origUrl = process.env.BASE_MCP_SERVER_URL;
+  process.env.BASE_MCP_ENABLED = 'true';
+  process.env.BASE_MCP_SERVER_URL = 'https://mcp.base.org';
+  let markedError = '';
+  baseMcpToolProbeRuntime.getBaseMcpAuthStatus = async () => ({ connected: true, needsReauth: false, userScoped: true, expired: true });
+  baseMcpToolProbeRuntime.markBaseMcpNeedsReauth = async ({ error }) => { markedError = error || ''; };
+  baseMcpToolProbeRuntime.createOAuthProvider = () => ({}) as any;
+  baseMcpToolProbeRuntime.createTransport = () => ({}) as any;
+  baseMcpToolProbeRuntime.createClient = () => ({
+    connect: async () => { throw new Error('Unsupported state or unable to authenticate data: secret-value'); },
+    close: async () => undefined,
+    getClient: () => ({ listTools: async () => ({ tools: [] }) }),
+  });
+
+  const result = await probeBaseMcpTools({
+    userId: 'user-1',
+    sessionSecret: 'session-secret',
+    redirectUrl: 'https://miorail.xyz/api/mcp/base/callback',
+  });
+  assert.equal(result.status, 'needs_reauth');
+  assert.equal(result.errorCode, 'oauth_credentials_invalid');
+  assert.equal(markedError, 'oauth_credentials_invalid');
+  assert.equal(JSON.stringify(result).includes('secret-value'), false);
   restoreEnv('BASE_MCP_ENABLED', origEnabled);
   restoreEnv('BASE_MCP_SERVER_URL', origUrl);
 });

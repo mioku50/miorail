@@ -33,7 +33,9 @@ test('Base MCP UI helpers classify connected and degraded states', () => {
 
   assert.strictEqual(baseMcpState('degraded'), 'stale');
   assert.strictEqual(formatBaseMcpStatus({ status: 'degraded', errorCode: 'rate_limited' }), 'degraded (rate limited)');
-  assert.strictEqual(baseMcpHint({ status: 'degraded' }), null);
+  assert.strictEqual(baseMcpHint({ status: 'degraded', readiness: 'degraded', errorCode: 'tool_probe_failed' }), 'Base MCP is degraded (tool_probe_failed).');
+  assert.strictEqual(formatBaseMcpStatus({ status: 'connected', readiness: 'tools_available', toolsCount: 14 }), '14 tools available');
+  assert.strictEqual(formatBaseMcpStatus({ status: 'degraded', readiness: 'oauth_connected', toolsCount: 0 }), 'OAuth connected · tools unavailable');
 });
 
 test('Base MCP UI helpers classify needs_reauth as reconnectable stale state', () => {
@@ -46,6 +48,8 @@ test('Base MCP UI helpers classify needs_reauth as reconnectable stale state', (
   assert.strictEqual(baseMcpNeedsAuth({ status: 'needs_reauth', configured: true, enabled: true }), true);
   assert.strictEqual(baseMcpNeedsAuth({ status: 'needs_auth', configured: true, enabled: true }), true);
   assert.strictEqual(baseMcpNeedsAuth({ status: 'connected', configured: true, enabled: true, auth: { connected: true } }), false);
+  assert.strictEqual(baseMcpNeedsAuth({ status: 'degraded', configured: true, enabled: true, usable: false, auth: { connected: true } }), true);
+  assert.strictEqual(baseMcpNeedsAuth({ status: 'connected', configured: true, enabled: true, auth: { connected: true, expired: true } }), true);
   assert.strictEqual(baseMcpConnectLabel({ auth: { connected: false } }), 'Connect Base MCP');
   assert.strictEqual(baseMcpConnectLabel({ auth: { connected: true } }), 'Reconnect Base MCP');
   assert.strictEqual(baseMcpConnectHref('/configure'), '/api/mcp/base/connect?returnTo=%2Fconfigure');

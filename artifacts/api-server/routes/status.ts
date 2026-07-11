@@ -3,7 +3,7 @@ import { StatusResponseSchema } from '@mioagent/api-zod';
 import { getTokenBalancesProviderFromEnv, getPriceProviderFromEnv, getTokenSecurityProviderFromEnv, getApprovalProviderFromEnv } from '@mioagent/data-providers';
 import { getProviderBudgetSnapshot, getProviderCacheDiagnostics } from '../lib/providerCache.js';
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
-import { attachBaseMcpToolProbeStatus, getBaseMcpStatusSnapshot, probeBaseMcpStatus, type BaseMcpStatus } from '../lib/baseMcpStatus.js';
+import { attachBaseMcpToolProbeStatus, finalizeBaseMcpReadiness, getBaseMcpStatusSnapshot, probeBaseMcpStatus, type BaseMcpStatus } from '../lib/baseMcpStatus.js';
 import { getBaseMcpAuthStatus, type StoredBaseMcpAuthStatus } from '../lib/baseMcpOAuthStore.js';
 import {
   x402ConfigFromEnv,
@@ -96,7 +96,7 @@ export function getSystemStatus(envOverride?: string) {
     },
     cache,
     budgets,
-    baseMcp: getBaseMcpStatusSnapshot(),
+    baseMcp: finalizeBaseMcpReadiness(getBaseMcpStatusSnapshot()),
     x402: {
       status: x402Config.status,
       configured: x402Config.configured,
@@ -194,8 +194,9 @@ export const statusRouteRuntime = {
 };
 
 function mergeBaseMcpAuthStatus(base: BaseMcpStatus, auth: StoredBaseMcpAuthStatus): BaseMcpStatus {
+  const transportDegraded = base.status === 'unreachable' || base.status === 'degraded' || base.status === 'unsupported';
   const publicAuth: StoredBaseMcpAuthStatus =
-    base.enabled && base.configured && !auth.connected
+    base.enabled && base.configured && !auth.connected && !transportDegraded
       ? { ...auth, needsReauth: true }
       : auth;
   const withAuth = { ...base, auth: publicAuth };
@@ -216,7 +217,7 @@ statusRouter.get('/', async (req, res, next) => {
       .catch(() => defaultBaseMcpAuthStatus);
     const statusData = {
       ...getSystemStatus(),
-      baseMcp: attachBaseMcpToolProbeStatus(mergeBaseMcpAuthStatus(baseMcp, auth)),
+      baseMcp: finalizeBaseMcpReadiness(attachBaseMcpToolProbeStatus(mergeBaseMcpAuthStatus(baseMcp, auth))),
       x402: publicX402Status(await x402StatusFromEnv()),
     };
     res.json(StatusResponseSchema.parse(statusData));

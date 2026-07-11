@@ -496,7 +496,7 @@ export function ConfigureView({ diagnosticsOnly = false }: { diagnosticsOnly?: b
             <span className="text-ink-3">Authorize user-scoped Base MCP tools.</span>
             {address ? (
               <a
-                href={baseMcpConnectHref('/diagnostics')}
+                href={baseMcpConnectHref(diagnosticsOnly ? '/diagnostics' : '/configure')}
                 className="inline-flex items-center gap-1.5 font-bold text-accent hover:text-accent/80 whitespace-nowrap"
               >
                 <PlugZap size={13} />

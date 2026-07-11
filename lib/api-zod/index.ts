@@ -500,6 +500,8 @@ export const StatusResponseSchema = z.object({
     endpointHost: z.string().optional(),
     lastCheckedAt: z.string().optional(),
     errorCode: z.string().optional(),
+    readiness: z.enum(['not_configured', 'configured', 'oauth_connected', 'tools_available', 'degraded']).optional(),
+    usable: z.boolean().optional(),
     capabilities: z.object({
       toolsCount: z.number().optional(),
       resourcesCount: z.number().optional(),
@@ -514,6 +516,7 @@ export const StatusResponseSchema = z.object({
       connected: z.boolean(),
       needsReauth: z.boolean(),
       userScoped: z.literal(true),
+      expired: z.boolean().optional(),
       expiresAt: z.string().optional(),
       connectedAt: z.string().optional(),
     }).optional(),

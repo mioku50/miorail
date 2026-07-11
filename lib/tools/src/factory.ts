@@ -1,7 +1,8 @@
 import { ToolAggregator } from './aggregator.js';
 import { NativeToolProvider } from './native.js';
 import { BaseMcpToolProvider } from './base_mcp.js';
-import { DynamicBaseMcpToolProvider, listDynamicBaseMcpToolsFromClient } from './dynamic_base_mcp.js';
+import { DynamicBaseMcpToolProvider, listDynamicBaseMcpToolsFromClient, type DynamicBaseMcpTool } from './dynamic_base_mcp.js';
+import { MorphoMcpToolProvider } from './morpho_mcp.js';
 import type { BaseMcpOAuthProvider } from '@mioagent/mcp';
 import * as settingsModule from '@mioagent/settings';
 import {
@@ -20,6 +21,8 @@ export interface CreateToolAggregatorOptions {
   baseMcpEnabled?: boolean;
   baseMcpServerUrl?: string;
   baseMcpOAuthProvider?: BaseMcpOAuthProvider;
+  baseMcpReadOnlyOnly?: boolean;
+  includeMorphoReadOnly?: boolean;
 }
 
 function parseBool(value?: string): boolean {
@@ -40,6 +43,15 @@ function baseMcpServerUrlFromEnv(): string | undefined {
 
 function baseMcpCatalogEnabled(toggles?: Record<string, boolean>): boolean {
   return toggles?.base_mcp !== false && toggles?.['base-mcp'] !== false;
+}
+
+export function selectBaseMcpRuntimeTools(
+  tools: DynamicBaseMcpTool[],
+  readOnlyOnly = false,
+): DynamicBaseMcpTool[] {
+  return readOnlyOnly
+    ? tools.filter((tool) => tool.capability === 'read_only' && tool.enabled)
+    : tools;
 }
 
 export async function createToolAggregatorForUser(userId: string, sessionSecret: string, options: CreateToolAggregatorOptions = {}): Promise<ToolAggregator> {
@@ -81,10 +93,14 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
       const baseClient = new BaseMcpClient();
       const transport = createBaseMcpHttpTransport(new URL(baseMcpServerUrl), options.baseMcpOAuthProvider);
       await baseClient.connect(transport);
+      aggregator.registerCleanup(() => baseClient.close());
       mcpClient = new McpSendCallsClient(baseClient);
-      aggregator.registerProvider(new BaseMcpToolProvider(mcpClient));
+      if (!options.baseMcpReadOnlyOnly) {
+        aggregator.registerProvider(new BaseMcpToolProvider(mcpClient));
+      }
       try {
-        const dynamicTools = await listDynamicBaseMcpToolsFromClient(baseClient, toggles);
+        const discoveredTools = await listDynamicBaseMcpToolsFromClient(baseClient, toggles);
+        const dynamicTools = selectBaseMcpRuntimeTools(discoveredTools, options.baseMcpReadOnlyOnly);
         if (dynamicTools.length > 0) {
           aggregator.registerProvider(new DynamicBaseMcpToolProvider(baseClient, dynamicTools));
         }
@@ -100,10 +116,14 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
     }
   }
 
-  if (process.env.CHAIN_ENV === 'sepolia') {
+  if (options.includeMorphoReadOnly && toggles?.morpho !== false) {
+    aggregator.registerProvider(new MorphoMcpToolProvider());
+  }
+
+  if (process.env.CHAIN_ENV === 'sepolia' && !options.baseMcpReadOnlyOnly) {
     const { SepoliaToolProvider } = await import('./sepolia.js');
     aggregator.registerProvider(new SepoliaToolProvider(mcpClient));
-  } else if (process.env.NODE_ENV === 'test') {
+  } else if (process.env.NODE_ENV === 'test' && !options.baseMcpReadOnlyOnly) {
     const { MockMcpToolProvider } = await import('./mock_mcp.js');
     aggregator.registerProvider(new MockMcpToolProvider());
   }

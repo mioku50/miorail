@@ -21,6 +21,10 @@ export function baseMcpState(status?: string): StateKind {
 
 export function formatBaseMcpStatus(baseMcp?: any, pendingLabel = 'Checking...') {
   if (!baseMcp) return pendingLabel;
+  if (baseMcp.readiness === 'tools_available') return `${baseMcp.toolsCount ?? baseMcp.capabilities?.toolsCount ?? 0} tools available`;
+  if (baseMcp.readiness === 'oauth_connected') return 'OAuth connected · tools unavailable';
+  if (baseMcp.readiness === 'configured') return baseMcp.auth?.connected ? 'OAuth connected' : 'configured · connect required';
+  if (baseMcp.readiness === 'not_configured') return 'not configured';
   if (baseMcp.status === 'connected') return baseMcp.endpointHost ? `connected (${baseMcp.endpointHost})` : 'connected';
   if (baseMcp.status === 'needs_reauth' || baseMcp.status === 'needs_auth') return 'needs auth';
   if (baseMcp.status === 'degraded') return baseMcp.errorCode === 'rate_limited' ? 'degraded (rate limited)' : 'degraded';
@@ -32,6 +36,8 @@ export function formatBaseMcpStatus(baseMcp?: any, pendingLabel = 'Checking...')
 
 export function baseMcpHint(baseMcp?: any): string | null {
   if (!baseMcp) return null;
+  if (baseMcp.readiness === 'oauth_connected' && !baseMcp.usable) return 'OAuth is connected, but no usable tools were verified. Reconnect Base MCP and retry.';
+  if (baseMcp.readiness === 'degraded') return `Base MCP is degraded${baseMcp.errorCode ? ` (${baseMcp.errorCode})` : ''}.`;
   if (baseMcp.status === 'needs_reauth' || baseMcp.status === 'needs_auth') return 'Base MCP is configured. Connect Base MCP to authorize user-scoped tools.';
   if (baseMcp.status !== 'missing') return null;
   if (baseMcp.configured && baseMcp.enabled) return 'Base MCP is optional. Connect Base Account to enable user-scoped tool status.';
@@ -40,8 +46,10 @@ export function baseMcpHint(baseMcp?: any): string | null {
 
 export function baseMcpNeedsAuth(baseMcp?: any): boolean {
   if (!baseMcp?.enabled || !baseMcp?.configured) return false;
+  if (baseMcp.auth?.expired) return true;
+  if (baseMcp.auth?.connected && baseMcp.usable === false) return true;
   if (baseMcp.auth?.connected) return false;
-  return baseMcp.status === 'needs_reauth' || baseMcp.status === 'needs_auth' || baseMcp.status === 'missing';
+  return baseMcp.status === 'needs_reauth' || baseMcp.status === 'needs_auth' || baseMcp.status === 'missing' || baseMcp.status === 'degraded';
 }
 
 export function baseMcpConnectLabel(baseMcp?: any): string {

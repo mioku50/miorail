@@ -6,6 +6,12 @@ import { logger } from '@mioagent/utils';
 export interface AgentConfig {
   llmProvider: LlmProvider;
   toolAggregator: ToolAggregator;
+  runtimeContext?: {
+    walletAddress?: string;
+    chainId: number;
+    chain: string;
+    executionMode: 'read-only' | 'user-confirmed';
+  };
 }
 
 export type AgentEvent =
@@ -18,12 +24,30 @@ export class Agent {
 
   async *chatStream(userId: string, userMessage: string, history: LlmMessage[] = []): AsyncGenerator<AgentEvent, void, unknown> {
     console.log("TRACE: agent.chatStream started");
-    const basePrompt = 'You are a helpful assistant. Use tools if necessary.';
-
     console.log("TRACE: getting user settings");
     const userSettings = await MemoryService.getUserSettings(userId);
     console.log("TRACE: got user settings");
     const memory = userSettings?.memoryMd;
+    console.log("TRACE: listing tools");
+    const providerInventory = await this.config.toolAggregator.listProviderTools();
+    const tools = providerInventory.flatMap((entry) => entry.tools);
+    console.log("TRACE: listed tools");
+    const baseMcpTools = providerInventory
+      .filter((entry) => entry.providerId.startsWith('base-mcp'))
+      .flatMap((entry) => entry.tools.map((tool) => tool.name));
+    const partnerTools = providerInventory
+      .filter((entry) => entry.providerId !== 'native' && !entry.providerId.startsWith('base-mcp'))
+      .flatMap((entry) => entry.tools.map((tool) => tool.name));
+    const runtime = this.config.runtimeContext;
+    const basePrompt = [
+      'You are Miorail Agent Stream. Use an enabled matching tool before claiming a provider or MCP capability is unavailable.',
+      'Never invent tool results. Never request, read, or store a private key.',
+      runtime ? `Runtime: wallet=${runtime.walletAddress || 'Base Account user scope'}, chain=${runtime.chain}, chainId=${runtime.chainId}, executionMode=${runtime.executionMode}.` : '',
+      `Enabled Base MCP read tools: ${baseMcpTools.join(', ') || 'none'}.`,
+      `Enabled partner read tools: ${partnerTools.join(', ') || 'none'}.`,
+      'In read-only mode, do not call send_calls, swap, sign, prepare, deposit, withdraw, or any transaction tool.',
+    ].filter(Boolean).join('\n');
+
     let systemPrompt = basePrompt;
     if (memory && memory.trim().length > 0) {
       systemPrompt = `${basePrompt}\n\n<user_memory>\n${memory.trim()}\n</user_memory>`;
@@ -35,9 +59,6 @@ export class Agent {
       { role: 'user', content: userMessage }
     ];
 
-    console.log("TRACE: listing tools");
-    const tools = await this.config.toolAggregator.listTools();
-    console.log("TRACE: listed tools");
     const llmTools = tools.length > 0 ? tools.map(t => ({
       type: 'function' as const,
       function: {

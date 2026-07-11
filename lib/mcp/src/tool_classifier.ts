@@ -69,10 +69,12 @@ const READ_ONLY_PREFIXES = [
   'list',
   'lookup',
   'quote',
+  'query',
   'read',
   'resolve',
   'search',
   'simulate',
+  'view',
 ];
 
 const DEFAULT_USER_CONFIRMED_TRANSACTION_TOOLS = new Set([
@@ -159,6 +161,13 @@ function normalizeToolName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+function hasNamespacedReadVerb(name: string): boolean {
+  const segments = name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return segments.some((segment, index) => index > 0 && READ_ONLY_PREFIXES.some(
+    (prefix) => segment === prefix || segment.startsWith(prefix),
+  ));
+}
+
 function capabilityCounts(): BaseMcpToolCapabilityCounts {
   return {
     readOnly: 0,
@@ -215,7 +224,8 @@ function classifyTool(tool: BaseMcpToolForClassification): ClassifiedBaseMcpTool
   if (
     configuredReadOnly.has(normalized) ||
     DEFAULT_READ_ONLY_ALLOWLIST.has(normalized) ||
-    READ_ONLY_PREFIXES.some((prefix) => normalized.startsWith(prefix))
+    READ_ONLY_PREFIXES.some((prefix) => normalized.startsWith(prefix)) ||
+    hasNamespacedReadVerb(tool.name)
   ) {
     return {
       ...tool,

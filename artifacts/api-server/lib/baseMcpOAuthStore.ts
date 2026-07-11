@@ -13,6 +13,7 @@ export interface StoredBaseMcpAuthStatus {
   connected: boolean;
   needsReauth: boolean;
   userScoped: true;
+  expired?: boolean;
   expiresAt?: string;
   connectedAt?: string;
 }
@@ -297,10 +298,12 @@ export async function getBaseMcpAuthStatus(userId: string): Promise<StoredBaseMc
     .from(baseMcpOauthTokens)
     .where(eq(baseMcpOauthTokens.id, tokenRowId(userId)));
   const row = rows[0];
+  const expired = row?.tokenExpiresAt ? row.tokenExpiresAt.getTime() <= Date.now() : false;
   return {
     connected: row?.status === 'connected',
     needsReauth: row?.status === 'needs_reauth',
     userScoped: true,
+    ...(row?.tokenExpiresAt ? { expired } : {}),
     expiresAt: row?.tokenExpiresAt ? row.tokenExpiresAt.toISOString() : undefined,
     connectedAt: row?.connectedAt ? row.connectedAt.toISOString() : undefined,
   };

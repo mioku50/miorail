@@ -106,9 +106,10 @@ function classifyProbeError(error: unknown): { status: BaseMcpToolProbeStatus; e
   if (
     status === 401 ||
     status === 403 ||
-    /401|403|unauthori[sz]ed|invalid_grant|invalid token|reauth|authorization/i.test(message)
+    /401|403|unauthori[sz]ed|invalid_grant|invalid token|reauth|authorization|authenticate data|decrypt|credential/i.test(message)
   ) {
-    return { status: 'needs_reauth', errorCode: 'needs_reauth' };
+    const credentialsInvalid = /authenticate data|decrypt|credential/i.test(message);
+    return { status: 'needs_reauth', errorCode: credentialsInvalid ? 'oauth_credentials_invalid' : 'needs_reauth' };
   }
 
   if (
@@ -191,12 +192,13 @@ export async function probeBaseMcpTools(input: {
     const tools = await withTimeout(listAllTools(client), timeoutMsFromEnv());
     const classified = classifyBaseMcpTools(tools);
     const result: BaseMcpToolProbeResult = {
-      status: 'connected',
+      status: classified.tools.length > 0 ? 'connected' : 'degraded',
       endpointHost,
       toolsCount: classified.tools.length,
       capabilities: classified.capabilities,
       tools: classified.tools,
       checkedAt,
+      ...(classified.tools.length > 0 ? {} : { errorCode: 'no_tools_available' }),
     };
     if (endpointHost) {
       recordBaseMcpToolProbe({

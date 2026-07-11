@@ -147,6 +147,14 @@ test('Base MCP OAuth tokens are encrypted and status exposes no plaintext token'
   assert.strictEqual(status.connected, true);
   assert.strictEqual(status.needsReauth, false);
   assert.strictEqual(JSON.stringify(status).includes('plain-access-token'), false);
+  assert.strictEqual(status.expired, false);
+
+  const tokenRow = Array.from(fake.tokens.values())[0];
+  tokenRow.tokenExpiresAt = new Date(Date.now() - 1_000);
+  const expiredStatus = await getBaseMcpAuthStatus('user-1');
+  assert.strictEqual(expiredStatus.connected, true);
+  assert.strictEqual(expiredStatus.expired, true);
+  assert.strictEqual(expiredStatus.needsReauth, false);
 
   await clearBaseMcpCredentialScope({ userId: 'user-1', scope: 'tokens' });
   const afterInvalidation = await getBaseMcpAuthStatus('user-1');

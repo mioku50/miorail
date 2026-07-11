@@ -39,3 +39,10 @@ test('ordinary user surfaces do not regress to vendor or transport jargon', () =
     assert.equal(userCopy.includes(phrase), false, `forbidden user-facing copy: ${phrase}`);
   }
 });
+
+test('Agent Stream exposes the Base MCP reconnect CTA outside diagnostics', () => {
+  const stream = source('../features/stream/AgentStream.tsx');
+  assert.match(stream, /baseMcpNeedsAuth\(statusData\?\.baseMcp\)/);
+  assert.match(stream, /baseMcpConnectHref\('\/stream'\)/);
+  assert.match(stream, /baseMcpConnectLabel\(statusData\?\.baseMcp\)/);
+});

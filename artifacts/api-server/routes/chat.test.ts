@@ -5,6 +5,8 @@ import { app } from '../app.js';
 import { db, actions } from '@mioagent/db';
 import { eq } from 'drizzle-orm';
 import { clearTokenSecurityCacheForTests } from '@mioagent/data-providers';
+import { ToolAggregator, type ToolDef, type ToolProvider } from '@mioagent/tools';
+import { chatRouteRuntime } from './chat.js';
 
 function restoreEnv(name: string, value: string | undefined) {
   if (value === undefined) {
@@ -25,6 +27,52 @@ describe('Chat API & Recommendation Guardrails', () => {
     assert.deepStrictEqual(getRes.body.messages, []);
   });
 
+  test('POST /api/chat routes simple balance reads to Base MCP without creating an inbox action', async () => {
+    class BaseReadProvider implements ToolProvider {
+      id = 'base-mcp-dynamic';
+      calls: string[] = [];
+      private tool: ToolDef = {
+        name: 'get_portfolio',
+        description: 'Read Base Account portfolio',
+        inputSchema: { type: 'object', properties: { address: { type: 'string' }, chain: { enum: ['base'] } } },
+      };
+      async listTools() { return [this.tool]; }
+      findTool(name: string) { return name === this.tool.name ? this.tool : undefined; }
+      async callTool(name: string) {
+        this.calls.push(name);
+        return { content: '{"tokens":[{"symbol":"USDC","balance":"42.5"}]}', isError: false };
+      }
+    }
+
+    const provider = new BaseReadProvider();
+    const aggregator = new ToolAggregator();
+    aggregator.registerProvider(provider);
+    const originalCreateTools = chatRouteRuntime.createApiToolAggregatorForUser;
+    const originalCreateLlm = chatRouteRuntime.createLlmProvider;
+    chatRouteRuntime.createApiToolAggregatorForUser = async () => aggregator;
+    chatRouteRuntime.createLlmProvider = () => { throw new Error('LLM must not run for direct Base reads'); };
+    await request(app).delete('/api/chat/history');
+    const beforeActions = (await db.select().from(actions)).length;
+
+    try {
+      const response = await request(app).post('/api/chat').send({
+        message: 'check my balance',
+        walletAddress: '0x1234567890123456789012345678901234567890',
+        chainEnv: 'mainnet-readonly',
+      });
+      assert.equal(response.status, 200);
+      assert.equal(response.body.actionId, undefined);
+      assert.equal(response.body.metadata.directReadKind, 'base_portfolio');
+      assert.match(response.body.content, /42\.5/);
+      assert.deepEqual(provider.calls, ['get_portfolio']);
+      assert.deepEqual(response.body.toolCalls[0].result, { status: 'success' });
+      assert.equal((await db.select().from(actions)).length, beforeActions);
+    } finally {
+      chatRouteRuntime.createApiToolAggregatorForUser = originalCreateTools;
+      chatRouteRuntime.createLlmProvider = originalCreateLlm;
+    }
+  });
+
   test('POST /api/chat with action intent in mainnet-readonly generates blocked read-only recommendation', async () => {
     clearTokenSecurityCacheForTests();
     const origSecurityProvider = process.env.TOKEN_SECURITY_PROVIDER;
@@ -40,7 +88,7 @@ describe('Chat API & Recommendation Guardrails', () => {
     const response = await request(app)
       .post('/api/chat')
       .send({
-        message: 'check my token portfolio and rebalance risky assets',
+        message: 'review my portfolio',
         walletAddress: '0x1234567890123456789012345678901234567890',
         chainEnv: 'mainnet-readonly'
       });

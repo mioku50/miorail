@@ -1,11 +1,24 @@
 import { test, describe, mock } from 'node:test';
 
 import assert from 'node:assert';
-import { createToolAggregatorForUser, settingsAPI } from '../src/factory.js';
+import { createToolAggregatorForUser, selectBaseMcpRuntimeTools, settingsAPI } from '../src/factory.js';
 import { NativeToolProvider } from '../src/native.js';
 import { MockCoinGeckoProvider, RealCoinGeckoProvider, MockMoralisProvider, RealMoralisProvider } from '@mioagent/data-providers';
+import { classifyDynamicBaseMcpTools } from '../src/dynamic_base_mcp.js';
 
 describe('createToolAggregatorForUser', () => {
+
+    test('read-only Agent runtime excludes swap and every transaction-capable Base MCP tool', () => {
+        const discovered = classifyDynamicBaseMcpTools([
+            { name: 'get_portfolio', description: 'Read balances' },
+            { name: 'moonwell_get_markets', description: 'Read markets' },
+            { name: 'swap_tokens', description: 'Swap tokens' },
+            { name: 'morpho_prepare_deposit', description: 'Prepare deposit' },
+        ]);
+        const selected = selectBaseMcpRuntimeTools(discovered, true);
+        assert.deepStrictEqual(selected.map((tool) => tool.name), ['get_portfolio', 'moonwell_get_markets']);
+        assert.strictEqual(selected.every((tool) => tool.capability === 'read_only'), true);
+    });
 
     test('returns mock providers when toggles are missing or false', async () => {
         const mockGetSettings = mock.method(settingsAPI, 'getUserSettings', async () => ({

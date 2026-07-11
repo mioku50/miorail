@@ -15,6 +15,8 @@ export interface BaseMcpStatus {
   endpointHost?: string;
   lastCheckedAt?: string;
   errorCode?: string;
+  readiness?: 'not_configured' | 'configured' | 'oauth_connected' | 'tools_available' | 'degraded';
+  usable?: boolean;
   capabilities?: {
     toolsCount?: number;
     resourcesCount?: number;
@@ -29,6 +31,7 @@ export interface BaseMcpStatus {
     connected: boolean;
     needsReauth: boolean;
     userScoped: true;
+    expired?: boolean;
     expiresAt?: string;
     connectedAt?: string;
   };
@@ -326,6 +329,51 @@ export function attachBaseMcpToolProbeStatus(base: BaseMcpStatus): BaseMcpStatus
     unknownToolsCount: toolProbe.unknownToolsCount,
     lastToolProbeAt: toolProbe.checkedAt,
   };
+}
+
+export function finalizeBaseMcpReadiness(base: BaseMcpStatus): BaseMcpStatus {
+  if (!base.configured) return { ...base, readiness: 'not_configured', usable: false };
+  if (!base.enabled) return { ...base, readiness: 'configured', usable: false };
+  if (base.auth?.needsReauth || (!base.auth?.connected && base.status === 'needs_reauth')) {
+    return { ...base, status: 'needs_reauth', readiness: 'configured', usable: false };
+  }
+
+  if (base.auth?.connected && base.auth.expired) {
+    return {
+      ...base,
+      status: 'degraded',
+      readiness: 'oauth_connected',
+      usable: false,
+      errorCode: base.errorCode || 'oauth_token_expired',
+    };
+  }
+
+  const toolsCount = base.toolsCount;
+  if (base.auth?.connected && typeof toolsCount === 'number' && toolsCount > 0) {
+    return { ...base, status: 'connected', readiness: 'tools_available', usable: true };
+  }
+  if (base.auth?.connected && toolsCount === 0) {
+    return {
+      ...base,
+      status: 'degraded',
+      readiness: 'oauth_connected',
+      usable: false,
+      errorCode: base.errorCode || 'no_tools_available',
+    };
+  }
+  if (base.status === 'unreachable' || base.status === 'degraded' || base.status === 'unsupported') {
+    return { ...base, readiness: 'degraded', usable: false };
+  }
+  if (base.auth?.connected) {
+    return {
+      ...base,
+      status: 'degraded',
+      readiness: 'oauth_connected',
+      usable: false,
+      errorCode: base.errorCode || 'tool_inventory_unverified',
+    };
+  }
+  return { ...base, readiness: 'configured', usable: false };
 }
 
 export function clearBaseMcpStatusForTests(): void {

@@ -21,7 +21,12 @@ function callbackUrl(req: Request): string {
   return `${publicOrigin(req)}/api/mcp/base/callback`;
 }
 
-export async function createApiToolAggregatorForUser(req: Request, userId: string, sessionSecret: string) {
+export async function createApiToolAggregatorForUser(
+  req: Request,
+  userId: string,
+  sessionSecret: string,
+  options: { readOnlyOnly?: boolean; includeMorphoReadOnly?: boolean } = {},
+) {
   const enabled = baseMcpEnabledFromEnv();
   const serverUrl = baseMcpServerUrlFromEnv();
   const oauthProvider = enabled && serverUrl
@@ -36,5 +41,7 @@ export async function createApiToolAggregatorForUser(req: Request, userId: strin
     baseMcpEnabled: enabled,
     baseMcpServerUrl: serverUrl?.toString(),
     baseMcpOAuthProvider: oauthProvider,
+    baseMcpReadOnlyOnly: options.readOnlyOnly,
+    includeMorphoReadOnly: options.includeMorphoReadOnly,
   });
 }

@@ -110,7 +110,7 @@ function redactSecrets(value: unknown, depth = 0): unknown {
 
   const output: Record<string, unknown> = {};
   for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
-    if (/token|secret|authorization|cookie|password|private/i.test(key)) {
+    if (/^(access_?token|refresh_?token|id_?token|api_?token|secret|authorization|cookie|password|private_?key|credential|signature)$/i.test(key)) {
       output[key] = '[redacted]';
     } else {
       output[key] = redactSecrets(inner, depth + 1);
@@ -122,6 +122,14 @@ function redactSecrets(value: unknown, depth = 0): unknown {
 function serializeToolResult(value: unknown): string {
   if (typeof value === 'string') return value;
   return JSON.stringify(redactSecrets(value));
+}
+
+function safeCallErrorCode(error: unknown): string {
+  const value = error instanceof Error ? `${error.name} ${error.message}` : String(error || '');
+  if (/401|403|unauthor|forbidden|invalid_grant|invalid token/i.test(value)) return 'base_mcp_reauth_required';
+  if (/abort|timeout/i.test(value)) return 'base_mcp_timeout';
+  if (/network|fetch|econn|enotfound|unreachable/i.test(value)) return 'base_mcp_unreachable';
+  return 'base_mcp_tool_failed';
 }
 
 export function classifyDynamicBaseMcpTools(
@@ -203,7 +211,7 @@ export class DynamicBaseMcpToolProvider implements ToolProvider {
       const result = await this.client.getClient().callTool({ name, arguments: args });
       return { content: serializeToolResult(result), isError: false };
     } catch (error) {
-      return { content: error instanceof Error ? error.message : String(error), isError: true };
+      return { content: JSON.stringify({ errorCode: safeCallErrorCode(error) }), isError: true };
     }
   }
 }

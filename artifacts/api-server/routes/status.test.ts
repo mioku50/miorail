@@ -478,6 +478,8 @@ describe('Status API', () => {
       provider: 'base-mcp',
       configured: false,
       enabled: false,
+      readiness: 'not_configured',
+      usable: false,
       auth: DEFAULT_BASE_MCP_AUTH,
     });
 
@@ -505,6 +507,8 @@ describe('Status API', () => {
       configured: true,
       enabled: false,
       endpointHost: 'mcp.base.org',
+      readiness: 'configured',
+      usable: false,
       auth: DEFAULT_BASE_MCP_AUTH,
     });
     assert.strictEqual(JSON.stringify(response.body.baseMcp).includes('private/path'), false);
@@ -515,7 +519,7 @@ describe('Status API', () => {
     restoreEnv('MCP_SERVER_URL', origLegacyMcpUrl);
   });
 
-  test('GET /api/status probes configured Base MCP and reports connected capabilities', async () => {
+  test('GET /api/status distinguishes OAuth connected from user-scoped tools verified', async () => {
     const origEnabled = process.env.BASE_MCP_ENABLED;
     const origUrl = process.env.BASE_MCP_SERVER_URL;
     const origPath = process.env.BASE_MCP_STATUS_PATH;
@@ -543,7 +547,10 @@ describe('Status API', () => {
 
     const response = await request(app).get('/api/status');
     assert.strictEqual(response.status, 200);
-    assert.strictEqual(response.body.baseMcp.status, 'connected');
+    assert.strictEqual(response.body.baseMcp.status, 'degraded');
+    assert.strictEqual(response.body.baseMcp.readiness, 'oauth_connected');
+    assert.strictEqual(response.body.baseMcp.usable, false);
+    assert.strictEqual(response.body.baseMcp.errorCode, 'tool_inventory_unverified');
     assert.strictEqual(response.body.baseMcp.provider, 'base-mcp');
     assert.strictEqual(response.body.baseMcp.configured, true);
     assert.strictEqual(response.body.baseMcp.enabled, true);
@@ -600,6 +607,8 @@ describe('Status API', () => {
     const response = await request(app).get('/api/status');
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.baseMcp.status, 'connected');
+    assert.strictEqual(response.body.baseMcp.readiness, 'tools_available');
+    assert.strictEqual(response.body.baseMcp.usable, true);
     assert.strictEqual(response.body.baseMcp.toolsCount, 7);
     assert.strictEqual(response.body.baseMcp.readOnlyToolsCount, 3);
     assert.strictEqual(response.body.baseMcp.transactionToolsCount, 2);

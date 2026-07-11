@@ -1,22 +1,26 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAccount } from 'wagmi';
-import { useChatHistory, useSendMessage, useClearChatHistory } from '@mioagent/api-client-react';
+import { useChatHistory, useSendMessage, useClearChatHistory, useStatus, useBaseMcpToolsProbe } from '@mioagent/api-client-react';
 import { useUiStore } from '../../lib/state';
 import { useNetworkLabel } from '../../lib/useNetworkLabel';
 import { ChatMessage } from './ChatMessage';
 import { AgentComposer } from './AgentComposer';
+import { baseMcpConnectHref, baseMcpConnectLabel, baseMcpNeedsAuth } from '../../lib/format';
 
 const PROMPT_CHIPS = [
+  'Check my Base balance',
   'Review my Base tokens',
   'Check token security',
   'Create a read-only rebalance plan',
   'Check spend permissions',
-  'Find yield opportunities',
+  'Show available USDC Morpho vaults',
 ];
 
 export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
   const { address } = useAccount();
   const { data: chatData, refetch } = useChatHistory();
+  const { data: statusData } = useStatus();
+  const baseMcpProbe = useBaseMcpToolsProbe();
   const sendMessageMutation = useSendMessage();
   const clearChat = useClearChatHistory();
   const showToast = useUiStore((s) => s.showToast);
@@ -25,6 +29,7 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const streamRef = useRef<HTMLDivElement>(null);
+  const baseMcpProbeStarted = useRef(false);
 
   const messages = chatData?.messages || [];
   const displayMessages = messages;
@@ -34,6 +39,13 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
       streamRef.current.scrollTop = streamRef.current.scrollHeight;
     }
   }, [displayMessages, isCollapsed]);
+
+  useEffect(() => {
+    if (!statusData?.baseMcp?.auth?.connected || baseMcpProbeStarted.current) return;
+    if ((statusData.baseMcp.toolsCount || 0) > 0 && !statusData.baseMcp.auth.expired) return;
+    baseMcpProbeStarted.current = true;
+    baseMcpProbe.mutate();
+  }, [baseMcpProbe, statusData?.baseMcp?.auth?.connected, statusData?.baseMcp?.auth?.expired, statusData?.baseMcp?.toolsCount]);
 
   const handleSendMsg = async (msgText: string) => {
     if (!msgText.trim() || sendMessageMutation.isPending) return;
@@ -121,6 +133,18 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
           )}
         </div>
       </div>
+
+      {baseMcpNeedsAuth(statusData?.baseMcp) && (
+        <div className="flex items-center justify-between gap-3 border-b border-warn/20 bg-warn-soft px-4 py-2 text-[11px] text-warn">
+          <span>Base MCP wallet reads need authorization or a refreshed tool inventory.</span>
+          <a
+            href={baseMcpConnectHref('/stream')}
+            className="shrink-0 rounded-lg border border-warn/30 bg-panel px-2.5 py-1 font-bold text-warn hover:bg-bg"
+          >
+            {baseMcpConnectLabel(statusData?.baseMcp)}
+          </a>
+        </div>
+      )}
 
       {/* Stream */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-bg/40" ref={streamRef}>

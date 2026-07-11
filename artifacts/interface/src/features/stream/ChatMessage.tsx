@@ -26,7 +26,7 @@ export function ChatMessage({ m, networkLabel }: { m: any; networkLabel: string 
     return (
       <div className="flex flex-col items-start gap-1 w-full animate-in fade-in slide-in-from-left-1">
         {m.content && (
-          <div className="bg-panel border border-line rounded-2xl rounded-tl-sm px-4 py-3 text-[13px] text-ink font-normal leading-relaxed max-w-[92%] shadow-sm break-words mb-1.5">
+          <div className="whitespace-pre-wrap bg-panel border border-line rounded-2xl rounded-tl-sm px-4 py-3 text-[13px] text-ink font-normal leading-relaxed max-w-[92%] shadow-sm break-words mb-1.5">
             {m.content}
           </div>
         )}

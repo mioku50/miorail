@@ -235,7 +235,9 @@ test('GET /api/mcp/base/callback stores encrypted tokens and redirects locally',
   clearBaseMcpStatusForTests();
   const statusResponse = await request(app).get('/api/status');
   assert.strictEqual(statusResponse.status, 200);
-  assert.strictEqual(statusResponse.body.baseMcp.status, 'connected');
+  assert.strictEqual(statusResponse.body.baseMcp.status, 'degraded');
+  assert.strictEqual(statusResponse.body.baseMcp.readiness, 'oauth_connected');
+  assert.strictEqual(statusResponse.body.baseMcp.usable, false);
   assert.strictEqual(statusResponse.body.baseMcp.auth.connected, true);
   assert.strictEqual(statusResponse.body.baseMcp.auth.needsReauth, false);
   const publicStatusJson = JSON.stringify(statusResponse.body);

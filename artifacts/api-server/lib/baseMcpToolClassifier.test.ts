@@ -33,6 +33,24 @@ test('known safe read-only Base MCP tool is enabled as read_only', () => {
   });
 });
 
+test('safe namespaced partner reads are enabled without allowing partner writes', () => {
+  const result = classifyBaseMcpTools([
+    { name: 'morpho_query_vaults' },
+    { name: 'moonwell_get_markets' },
+    { name: 'aerodrome_list_pools' },
+    { name: 'morpho_prepare_deposit' },
+    { name: 'uniswap_swap_tokens' },
+  ]);
+
+  assert.deepStrictEqual(result.tools.map((tool) => [tool.name, tool.capability, tool.enabled]), [
+    ['morpho_query_vaults', 'read_only', true],
+    ['moonwell_get_markets', 'read_only', true],
+    ['aerodrome_list_pools', 'read_only', true],
+    ['morpho_prepare_deposit', 'user_confirmed_transaction', false],
+    ['uniswap_swap_tokens', 'user_confirmed_transaction', false],
+  ]);
+});
+
 test('send_calls and sepolia_send_calls are never classified read_only', () => {
   const result = classifyBaseMcpTools([
     { name: 'send_calls' },

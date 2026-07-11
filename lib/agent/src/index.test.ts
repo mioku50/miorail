@@ -104,3 +104,48 @@ test('Agent loop extracts approvalUrl and requestId from tool results', async ()
     await closeDb();
   }
 });
+
+test('Agent prompt receives user-scoped Base inventory and read-only Base runtime context', async () => {
+  let systemPrompt = '';
+  let exposedTools: string[] = [];
+  const llm = new MockLlmProvider((req: LlmRequest) => {
+    systemPrompt = req.messages[0].content;
+    exposedTools = (req.tools || []).map((tool) => tool.function.name);
+    return 'Ready for read-only wallet questions.';
+  });
+  const tools = new ToolAggregator();
+  class BaseReadProvider implements ToolProvider {
+    id = 'base-mcp-dynamic';
+    async listTools(): Promise<ToolDef[]> {
+      return [{ name: 'get_portfolio', description: 'Read portfolio', inputSchema: { type: 'object' } }];
+    }
+    findTool() { return undefined; }
+    async callTool() { return { content: '{}', isError: false }; }
+  }
+  tools.registerProvider(new BaseReadProvider());
+  const agent = new Agent({
+    llmProvider: llm,
+    toolAggregator: tools,
+    runtimeContext: {
+      walletAddress: '0x1111111111111111111111111111111111111111',
+      chain: 'base',
+      chainId: 8453,
+      executionMode: 'read-only',
+    },
+  });
+  const { MemoryService } = await import('@mioagent/memory');
+  const originalGetUserSettings = MemoryService.getUserSettings;
+  MemoryService.getUserSettings = async () => null;
+  try {
+    for await (const _event of agent.chatStream('test-user', 'what can you read?')) { /* exhaust */ }
+    assert.match(systemPrompt, /chain=base, chainId=8453, executionMode=read-only/);
+    assert.match(systemPrompt, /Enabled Base MCP read tools: get_portfolio/);
+    assert.match(systemPrompt, /before claiming.*unavailable/i);
+    assert.deepEqual(exposedTools, ['get_portfolio']);
+    assert.doesNotMatch(systemPrompt, /private key value/i);
+  } finally {
+    MemoryService.getUserSettings = originalGetUserSettings;
+    const { closeDb } = await import('@mioagent/db');
+    await closeDb();
+  }
+});
