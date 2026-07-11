@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ToolAggregator, type ToolDef, type ToolProvider } from '@mioagent/tools';
-import { detectDirectStreamRead, runDirectStreamRead, shouldPreferPartnerRuntimeRead } from './streamReadRouting.js';
+import {
+  detectDirectStreamRead,
+  detectProviderReadScope,
+  detectRequestedProvider,
+  isAmbiguousPartnerMarketRead,
+  isPartnerWriteCommand,
+  runDirectStreamRead,
+  shouldPreferPartnerRuntimeRead,
+} from './streamReadRouting.js';
 
 class ReadProvider implements ToolProvider {
   id = 'base-mcp-dynamic';
@@ -77,20 +85,47 @@ test('Morpho USDC opportunity request uses the dedicated read-only tool', async 
   assert.doesNotMatch(result?.content || '', /best|safe/i);
 });
 
-test('Moonwell read never substitutes Morpho when Moonwell tools are unavailable', async () => {
+test('Moonwell supply-market read never substitutes Morpho when Moonwell tools are unavailable', async () => {
   const provider = new ReadProvider();
   const tools = new ToolAggregator();
   tools.registerProvider(provider);
 
   const result = await runDirectStreamRead({
-    message: 'Show available Moonwell USDC markets on Base',
+    message: 'Show available Moonwell USDC supply markets on Base',
     tools,
   });
 
   assert.equal(result?.kind, 'partner_provider_unavailable');
   assert.equal(result?.errorCode, 'moonwell_tools_unavailable');
-  assert.match(result?.content || '', /Moonwell read tools are currently unavailable/);
-  assert.match(result?.content || '', /No data from another protocol was substituted/);
+  assert.equal(result?.content, 'Moonwell read tools are unavailable.');
+  assert.deepEqual(provider.calls, []);
+});
+
+test('provider parsing treats supply-market language as read and quantified supply as write', () => {
+  const inventory: ToolDef[] = [
+    { name: 'moonwell_query_markets', description: 'Moonwell supply markets', inputSchema: { type: 'object' } },
+    { name: 'morpho_query_markets', description: 'Morpho markets', inputSchema: { type: 'object' } },
+  ];
+  const prompt = 'Moonwell USDC supply markets';
+  assert.equal(detectRequestedProvider(prompt, inventory)?.namespace, 'moonwell');
+  assert.equal(detectProviderReadScope(prompt, inventory)?.namespace, 'moonwell');
+  assert.equal(detectProviderReadScope('Moonwell supply APY on Base', inventory)?.namespace, 'moonwell');
+  assert.equal(detectProviderReadScope('Show available Moonwell supply rates', inventory)?.namespace, 'moonwell');
+  assert.equal(isPartnerWriteCommand('Supply 10 USDC'), true);
+  assert.equal(isAmbiguousPartnerMarketRead('Show available USDC supply markets on Base'), true);
+  assert.equal(detectProviderReadScope('Moonwell supply 10 USDC', inventory), null);
+});
+
+test('provider-ambiguous supply-market read stops before any partner tool call', async () => {
+  const provider = new ReadProvider();
+  const tools = new ToolAggregator();
+  tools.registerProvider(provider);
+  const result = await runDirectStreamRead({
+    message: 'Show available USDC supply markets on Base',
+    tools,
+  });
+  assert.equal(result?.kind, 'partner_provider_required');
+  assert.equal(result?.errorCode, 'partner_provider_required');
   assert.deepEqual(provider.calls, []);
 });
 

@@ -1,7 +1,7 @@
 import type { ToolAggregator, ToolDef } from '@mioagent/tools';
 import { filterTrustedMorphoVaults, formatTrustedMorphoVaults } from './morphoVaultTrust.js';
 
-export type DirectStreamReadKind = 'base_portfolio' | 'morpho_usdc_vaults' | 'partner_provider_unavailable';
+export type DirectStreamReadKind = 'base_portfolio' | 'morpho_usdc_vaults' | 'partner_provider_unavailable' | 'partner_provider_required';
 
 export interface StreamToolTrace {
   toolName: string;
@@ -18,8 +18,11 @@ export interface DirectStreamReadResult {
 }
 
 const PRIVATE_KEY_NAMES = /^(access_?token|refresh_?token|id_?token|api_?token|secret|authorization|cookie|password|private_?key|credential|signature)$/i;
-const WRITE_LANGUAGE = /deposit|withdraw|supply|borrow|repay|swap|send|transfer|sign|execute|prepare|transaction/;
 const READ_LANGUAGE = /show|find|list|check|query|view|available|opportunit|position|market|vault|pool|rate|apy|yield/;
+const READ_NOUN_LANGUAGE = /\b(?:supply|borrow|deposit)\s+(?:apy|rates?|markets?|yield|opportunit(?:y|ies))\b|\b(?:apy|rates?|markets?|yield|opportunit(?:y|ies))\s+(?:for\s+)?(?:supply|borrow|deposit)\b/;
+const QUANTIFIED_WRITE_LANGUAGE = /\b(?:supply|deposit|withdraw|borrow|repay|swap|send|transfer)\s+(?:all|max|\$?\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:usdc|eth|tokens?))/;
+const FUNDS_WRITE_LANGUAGE = /\b(?:supply|deposit|withdraw|repay|send|transfer)\s+(?:my\s+|the\s+)?(?:funds?|assets?|tokens?|usdc|eth)\b/;
+const EXPLICIT_WRITE_LANGUAGE = /\b(?:sign|execute|prepare)\b|\b(?:make|create|submit)\s+(?:a\s+)?transaction\b/;
 const PROVIDER_NAMES = new Map<string, string>([
   ['morpho', 'Morpho'],
   ['moonwell', 'Moonwell'],
@@ -36,16 +39,20 @@ export interface ProviderReadScope {
   matchingTools: ToolDef[];
 }
 
+export interface RequestedProvider {
+  namespace: string;
+  displayName: string;
+  matchingTools: ToolDef[];
+}
+
 export function toolMatchesProviderNamespace(toolName: string, namespace: string): boolean {
   const lower = toolName.toLowerCase();
   return lower === namespace || lower.startsWith(`${namespace}_`) || lower.startsWith(`${namespace}:`)
     || lower.startsWith(`${namespace}.`) || lower.startsWith(`${namespace}-`) || lower.startsWith(`${namespace}/`);
 }
 
-export function detectProviderReadScope(message: string, inventory: ToolDef[]): ProviderReadScope | null {
+export function detectRequestedProvider(message: string, inventory: ToolDef[]): RequestedProvider | null {
   const lower = message.trim().toLowerCase();
-  if (WRITE_LANGUAGE.test(lower) || !READ_LANGUAGE.test(lower)) return null;
-
   let namespace: string | undefined;
   let displayName: string | undefined;
   for (const [candidate, label] of PROVIDER_NAMES) {
@@ -68,6 +75,29 @@ export function detectProviderReadScope(message: string, inventory: ToolDef[]): 
     displayName,
     matchingTools: inventory.filter((tool) => toolMatchesProviderNamespace(tool.name, namespace!)),
   };
+}
+
+export function isPartnerWriteCommand(message: string): boolean {
+  const lower = message.trim().toLowerCase();
+  if (READ_NOUN_LANGUAGE.test(lower)) return false;
+  return QUANTIFIED_WRITE_LANGUAGE.test(lower)
+    || FUNDS_WRITE_LANGUAGE.test(lower)
+    || EXPLICIT_WRITE_LANGUAGE.test(lower);
+}
+
+export function isAmbiguousPartnerMarketRead(message: string): boolean {
+  const lower = message.trim().toLowerCase();
+  return READ_NOUN_LANGUAGE.test(lower) && !isPartnerWriteCommand(message);
+}
+
+export function detectProviderReadScope(message: string, inventory: ToolDef[]): ProviderReadScope | null {
+  // Resolve an explicit provider first. Words such as "supply" are ambiguous:
+  // they are read nouns in "supply markets" and commands in "supply 10 USDC".
+  const provider = detectRequestedProvider(message, inventory);
+  if (!provider || isPartnerWriteCommand(message)) return null;
+  const lower = message.trim().toLowerCase();
+  if (!READ_LANGUAGE.test(lower) && !READ_NOUN_LANGUAGE.test(lower)) return null;
+  return provider;
 }
 
 export function sanitizeStreamToolArgs(value: unknown, depth = 0): unknown {
@@ -214,9 +244,17 @@ export async function runDirectStreamRead(input: {
     if (providerScope && providerScope.matchingTools.length === 0) {
       return {
         kind: 'partner_provider_unavailable',
-        content: `${providerScope.displayName} read tools are currently unavailable. No data from another protocol was substituted, and no transaction was prepared.`,
+        content: `${providerScope.displayName} read tools are unavailable.`,
         toolCalls: traces,
         errorCode: `${providerScope.namespace}_tools_unavailable`,
+      };
+    }
+    if (!providerScope && isAmbiguousPartnerMarketRead(input.message)) {
+      return {
+        kind: 'partner_provider_required',
+        content: 'Specify a provider, such as Moonwell or Morpho, before requesting supply markets or rates.',
+        toolCalls: traces,
+        errorCode: 'partner_provider_required',
       };
     }
     return null;

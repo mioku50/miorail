@@ -13,12 +13,27 @@ export interface AgentConfig {
     executionMode: 'read-only' | 'user-confirmed';
     providerNamespace?: string;
   };
+  toolResultGuard?: (input: {
+    toolName: string;
+    content: string;
+    isError: boolean;
+  }) => { content: string; isError: boolean } | Promise<{ content: string; isError: boolean }>;
 }
 
 export type AgentEvent =
   | { type: 'message'; content: string }
   | { type: 'tool_call'; toolName: string; args: string }
   | { type: 'tool_result'; toolName: string; result: string; isError: boolean; approvalUrl?: string; requestId?: string };
+
+const NAMESPACED_TOOL_VERBS = new Set([
+  'get', 'list', 'query', 'read', 'search', 'check', 'fetch', 'lookup', 'view', 'find',
+  'quote', 'prepare', 'swap', 'send', 'sign', 'deposit', 'withdraw', 'supply', 'borrow', 'repay',
+]);
+
+function isNamespacedPartnerTool(toolName: string): boolean {
+  const parts = toolName.toLowerCase().split(/[_:.\-/]/).filter(Boolean);
+  return parts.length >= 2 && !NAMESPACED_TOOL_VERBS.has(parts[0]!) && NAMESPACED_TOOL_VERBS.has(parts[1]!);
+}
 
 export class Agent {
   constructor(private config: AgentConfig) {}
@@ -32,7 +47,8 @@ export class Agent {
     console.log("TRACE: listing tools");
     const providerInventory = await this.config.toolAggregator.listProviderTools();
     const allTools = providerInventory.flatMap((entry) => entry.tools);
-    const providerNamespace = this.config.runtimeContext?.providerNamespace?.toLowerCase();
+    const runtime = this.config.runtimeContext;
+    const providerNamespace = runtime?.providerNamespace?.toLowerCase();
     const tools = providerNamespace
       ? allTools.filter((tool) => {
           const lower = tool.name.toLowerCase();
@@ -40,7 +56,9 @@ export class Agent {
             || lower.startsWith(`${providerNamespace}:`) || lower.startsWith(`${providerNamespace}.`)
             || lower.startsWith(`${providerNamespace}-`) || lower.startsWith(`${providerNamespace}/`);
         })
-      : allTools;
+      : runtime?.executionMode === 'read-only'
+        ? allTools.filter((tool) => !isNamespacedPartnerTool(tool.name))
+        : allTools;
     const allowedToolNames = new Set(tools.map((tool) => tool.name));
     console.log("TRACE: listed tools");
     const baseMcpTools = providerInventory
@@ -51,12 +69,12 @@ export class Agent {
       .filter((entry) => entry.providerId !== 'native' && !entry.providerId.startsWith('base-mcp'))
       .flatMap((entry) => entry.tools.map((tool) => tool.name))
       .filter((name) => allowedToolNames.has(name));
-    const runtime = this.config.runtimeContext;
     const basePrompt = [
       'You are Miorail Agent Stream. Use an enabled matching tool before claiming a provider or MCP capability is unavailable.',
       'Never invent tool results. Never request, read, or store a private key.',
       runtime ? `Runtime: wallet=${runtime.walletAddress || 'Base Account user scope'}, chain=${runtime.chain}, chainId=${runtime.chainId}, executionMode=${runtime.executionMode}.` : '',
       providerNamespace ? `Provider scope is ${providerNamespace}. Use only ${providerNamespace}-namespaced tools and never substitute another protocol.` : '',
+      'Tool inventory does not prove that plugin instructions were loaded. Never claim you read or loaded plugin instructions unless the runtime explicitly confirms it.',
       `Enabled Base MCP read tools: ${baseMcpTools.join(', ') || 'none'}.`,
       `Enabled partner read tools: ${partnerTools.join(', ') || 'none'}.`,
       'In read-only mode, do not call send_calls, swap, sign, prepare, deposit, withdraw, or any transaction tool.',
@@ -115,10 +133,10 @@ export class Agent {
           let isErr;
           logger.info('Agent calling tool', { toolName: tc.function.name });
           const toolStart = Date.now();
-          if (providerNamespace && !allowedToolNames.has(tc.function.name)) {
+          if (!allowedToolNames.has(tc.function.name)) {
             resultStr = JSON.stringify({
-              errorCode: 'provider_tool_scope_violation',
-              requiredProvider: providerNamespace,
+              errorCode: providerNamespace ? 'provider_tool_scope_violation' : 'tool_not_available_in_runtime',
+              ...(providerNamespace ? { requiredProvider: providerNamespace } : {}),
             });
             isErr = true;
             logger.warn('Agent blocked cross-provider tool call', {
@@ -129,6 +147,20 @@ export class Agent {
             const res = await this.config.toolAggregator.callTool(tc.function.name, argsObj);
             resultStr = res.content;
             isErr = res.isError;
+            if (this.config.toolResultGuard) {
+              try {
+                const guarded = await this.config.toolResultGuard({
+                  toolName: tc.function.name,
+                  content: resultStr,
+                  isError: isErr,
+                });
+                resultStr = guarded.content;
+                isErr = guarded.isError;
+              } catch {
+                resultStr = JSON.stringify({ errorCode: 'tool_result_screening_failed' });
+                isErr = true;
+              }
+            }
             logger.info('Agent tool call success', { toolName: tc.function.name, durationMs: Date.now() - toolStart });
           } catch (e) {
             resultStr = e instanceof Error ? e.message : String(e);

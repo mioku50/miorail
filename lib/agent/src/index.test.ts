@@ -141,8 +141,52 @@ test('Agent prompt receives user-scoped Base inventory and read-only Base runtim
     assert.match(systemPrompt, /chain=base, chainId=8453, executionMode=read-only/);
     assert.match(systemPrompt, /Enabled Base MCP read tools: get_portfolio/);
     assert.match(systemPrompt, /before claiming.*unavailable/i);
+    assert.match(systemPrompt, /Never claim you read or loaded plugin instructions/i);
     assert.deepEqual(exposedTools, ['get_portfolio']);
     assert.doesNotMatch(systemPrompt, /private key value/i);
+  } finally {
+    MemoryService.getUserSettings = originalGetUserSettings;
+    const { closeDb } = await import('@mioagent/db');
+    await closeDb();
+  }
+});
+
+test('read-only Agent without an explicit provider cannot call partner tools', async () => {
+  const calls: string[] = [];
+  let exposedTools: string[] = [];
+  const llm = new MockLlmProvider((req: LlmRequest) => {
+    exposedTools = (req.tools || []).map((tool) => tool.function.name);
+    if (req.messages.length <= 2) return 'TOOL:morpho_query_markets|{"chain":"base"}';
+    return 'A provider must be specified.';
+  });
+  const tools = new ToolAggregator();
+  class MixedReadProvider implements ToolProvider {
+    id = 'base-mcp-dynamic';
+    async listTools(): Promise<ToolDef[]> {
+      return [
+        { name: 'get_portfolio', description: 'Portfolio', inputSchema: { type: 'object' } },
+        { name: 'morpho_query_markets', description: 'Morpho markets', inputSchema: { type: 'object' } },
+      ];
+    }
+    findTool(name: string) { return { name, description: name, inputSchema: { type: 'object' } }; }
+    async callTool(name: string) { calls.push(name); return { content: '{}', isError: false }; }
+  }
+  tools.registerProvider(new MixedReadProvider());
+  const agent = new Agent({
+    llmProvider: llm,
+    toolAggregator: tools,
+    runtimeContext: { chain: 'base', chainId: 8453, executionMode: 'read-only' },
+  });
+  const { MemoryService } = await import('@mioagent/memory');
+  const originalGetUserSettings = MemoryService.getUserSettings;
+  MemoryService.getUserSettings = async () => null;
+  try {
+    const events = [];
+    for await (const event of agent.chatStream('test-user', 'Show available USDC supply markets on Base')) events.push(event);
+    assert.deepEqual(exposedTools, ['get_portfolio']);
+    assert.deepEqual(calls, []);
+    const blocked = events.find((event) => event.type === 'tool_result') as any;
+    assert.match(blocked?.result || '', /tool_not_available_in_runtime/);
   } finally {
     MemoryService.getUserSettings = originalGetUserSettings;
     const { closeDb } = await import('@mioagent/db');

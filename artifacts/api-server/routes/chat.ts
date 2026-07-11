@@ -23,11 +23,12 @@ import { ObservabilityService } from '@mioagent/observability';
 import { MemoryService } from '@mioagent/memory';
 import {
   runDirectStreamRead,
-  detectProviderReadScope,
+  detectRequestedProvider,
   sanitizeStreamToolArgs,
   sanitizedToolErrorCode,
   shouldPreferPartnerRuntimeRead,
 } from '../lib/streamReadRouting.js';
+import { screenPartnerToolResult } from '../lib/partnerResultTrust.js';
 
 export const chatRouter = Router();
 
@@ -143,7 +144,7 @@ chatRouter.post('/', async (req, res, next) => {
     }
 
     const runtimeToolInventory = await tools.listTools();
-    const providerReadScope = detectProviderReadScope(message, runtimeToolInventory);
+    const requestedProvider = detectRequestedProvider(message, runtimeToolInventory);
     const preferRuntimeReadTools = shouldPreferPartnerRuntimeRead(message, runtimeToolInventory);
     const intent = preferRuntimeReadTools
       ? { isActionIntent: false, confidence: 1 }
@@ -495,12 +496,16 @@ chatRouter.post('/', async (req, res, next) => {
     const agent = new Agent({
       llmProvider: llm,
       toolAggregator: tools,
+      toolResultGuard: (result) => screenPartnerToolResult({
+        ...result,
+        providerNamespace: requestedProvider?.namespace,
+      }),
       runtimeContext: {
         walletAddress,
         chainId: runtimeChainId,
         chain: runtimeChainEnv === 'sepolia' ? 'base-sepolia' : 'base',
         executionMode: 'read-only',
-        providerNamespace: providerReadScope?.namespace,
+        providerNamespace: requestedProvider?.namespace,
       },
     });
     console.log("TRACE: agent created");

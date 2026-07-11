@@ -17,8 +17,29 @@ export interface MorphoVaultTrustConfig {
   trustedVaultAddresses: Set<string>;
 }
 
+export interface TrustedMorphoMarket {
+  id: string;
+  loanAsset: { address: string; symbol: string };
+  collateralAsset: { address: string; symbol: string };
+  supplyApyPct: number;
+  borrowApyPct: number;
+  supplyAssetsUsd: number;
+  liquidityAssetsUsd: number;
+  lltvPct: number;
+  utilizationPct: number;
+  riskLabel: string;
+}
+
+export interface MorphoMarketTrustConfig {
+  minSupplyUsd: number;
+  minLiquidityUsd: number;
+  maxApyPct: number;
+  trustedMarketIds: Set<string>;
+}
+
 const BLOCKED_NAME_MARKERS = /\b(test|testing|demo|mock|fake|spam|scam|deprecated|honeypot)\b/i;
 const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
+const MARKET_ID_PATTERN = /^0x[a-fA-F0-9]{64}$/;
 
 function positiveEnvNumber(name: string, fallback: number): number {
   const parsed = Number(process.env[name]);
@@ -36,6 +57,21 @@ export function morphoVaultTrustConfigFromEnv(): MorphoVaultTrustConfig {
     minTvlUsd: positiveEnvNumber('MORPHO_MIN_TVL_USD', 1_000_000),
     maxApyPct: positiveEnvNumber('MORPHO_MAX_APY_PCT', 100),
     trustedVaultAddresses,
+  };
+}
+
+export function morphoMarketTrustConfigFromEnv(): MorphoMarketTrustConfig {
+  const trustedMarketIds = new Set(
+    (process.env.MORPHO_TRUSTED_MARKET_IDS || '')
+      .split(',')
+      .map((value) => value.trim().toLowerCase())
+      .filter((value) => MARKET_ID_PATTERN.test(value)),
+  );
+  return {
+    minSupplyUsd: positiveEnvNumber('MORPHO_MIN_MARKET_SUPPLY_USD', 1_000_000),
+    minLiquidityUsd: positiveEnvNumber('MORPHO_MIN_MARKET_LIQUIDITY_USD', 100_000),
+    maxApyPct: positiveEnvNumber('MORPHO_MAX_APY_PCT', 100),
+    trustedMarketIds,
   };
 }
 
@@ -131,6 +167,70 @@ export function filterTrustedMorphoVaults(
   return trusted
     .sort((a, b) => b.verificationRank - a.verificationRank || b.tvlUsd - a.tvlUsd)
     .slice(0, 10);
+}
+
+export function filterTrustedMorphoMarkets(
+  payload: unknown,
+  config: MorphoMarketTrustConfig = morphoMarketTrustConfigFromEnv(),
+): TrustedMorphoMarket[] {
+  const root = asRecord(payload);
+  const data = asRecord(root?.data);
+  const chain = root?.chain ?? data?.chain;
+  const markets = Array.isArray(root?.markets)
+    ? root.markets
+    : Array.isArray(data?.markets)
+      ? data.markets
+      : [];
+  if (!isBaseMainnet(chain)) return [];
+
+  const canonicalUsdc = getBaseMainnetUsdcAddress().toLowerCase();
+  const trusted: TrustedMorphoMarket[] = [];
+  for (const raw of markets) {
+    const market = asRecord(raw);
+    if (!market) continue;
+    const id = String(market.id || '').toLowerCase();
+    const loanAsset = asRecord(market.loanAsset);
+    const collateralAsset = asRecord(market.collateralAsset);
+    const loanAddress = String(loanAsset?.address || '').toLowerCase();
+    const loanSymbol = String(loanAsset?.symbol || '').toUpperCase();
+    const collateralAddress = String(collateralAsset?.address || '').toLowerCase();
+    const collateralSymbol = String(collateralAsset?.symbol || '').trim();
+    const supplyApyPct = numeric(market.supplyApyPct);
+    const borrowApyPct = numeric(market.borrowApyPct);
+    const supplyAssetsUsd = numeric(market.supplyAssetsUsd);
+    const liquidityAssetsUsd = numeric(market.liquidityAssetsUsd);
+    const lltvPct = numeric(market.lltvPct);
+    const utilizationPct = numeric(market.utilizationPct);
+    const verified = config.trustedMarketIds.has(id)
+      || market.verified === true
+      || market.isVerified === true
+      || market.whitelisted === true;
+
+    if (!MARKET_ID_PATTERN.test(id) || !verified) continue;
+    if (loanAddress !== canonicalUsdc || loanSymbol !== 'USDC') continue;
+    if (!ADDRESS_PATTERN.test(collateralAddress) || !collateralSymbol || BLOCKED_NAME_MARKERS.test(collateralSymbol)) continue;
+    if (supplyApyPct === null || supplyApyPct < 0 || supplyApyPct > config.maxApyPct) continue;
+    if (borrowApyPct === null || borrowApyPct < 0 || borrowApyPct > config.maxApyPct) continue;
+    if (supplyAssetsUsd === null || supplyAssetsUsd < config.minSupplyUsd) continue;
+    if (liquidityAssetsUsd === null || liquidityAssetsUsd < config.minLiquidityUsd) continue;
+    if (lltvPct === null || lltvPct <= 0 || lltvPct > 100) continue;
+    if (utilizationPct === null || utilizationPct < 0 || utilizationPct > 100) continue;
+
+    trusted.push({
+      id,
+      loanAsset: { address: loanAddress, symbol: loanSymbol },
+      collateralAsset: { address: collateralAddress, symbol: collateralSymbol.slice(0, 80) },
+      supplyApyPct,
+      borrowApyPct,
+      supplyAssetsUsd,
+      liquidityAssetsUsd,
+      lltvPct,
+      utilizationPct,
+      riskLabel: 'Verified market metadata; collateral, oracle, liquidity, and liquidation risk remain',
+    });
+  }
+
+  return trusted.sort((a, b) => b.liquidityAssetsUsd - a.liquidityAssetsUsd).slice(0, 10);
 }
 
 function usd(value: number): string {
