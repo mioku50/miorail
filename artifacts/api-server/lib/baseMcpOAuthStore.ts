@@ -127,6 +127,12 @@ export async function deleteBaseMcpOAuthState(input: {
     ));
 }
 
+export async function clearBaseMcpOAuthStatesForUser(userId: string): Promise<void> {
+  await baseMcpOAuthStoreRuntime.db
+    .delete(baseMcpOauthStates)
+    .where(eq(baseMcpOauthStates.userId, userId));
+}
+
 export async function saveBaseMcpClientInformation(input: {
   userId: string;
   sessionSecret: string;

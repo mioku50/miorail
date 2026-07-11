@@ -23,6 +23,7 @@ import { ObservabilityService } from '@mioagent/observability';
 import { MemoryService } from '@mioagent/memory';
 import {
   runDirectStreamRead,
+  detectProviderReadScope,
   sanitizeStreamToolArgs,
   sanitizedToolErrorCode,
   shouldPreferPartnerRuntimeRead,
@@ -141,7 +142,9 @@ chatRouter.post('/', async (req, res, next) => {
       return res.json(assistantMsg);
     }
 
-    const preferRuntimeReadTools = shouldPreferPartnerRuntimeRead(message, await tools.listTools());
+    const runtimeToolInventory = await tools.listTools();
+    const providerReadScope = detectProviderReadScope(message, runtimeToolInventory);
+    const preferRuntimeReadTools = shouldPreferPartnerRuntimeRead(message, runtimeToolInventory);
     const intent = preferRuntimeReadTools
       ? { isActionIntent: false, confidence: 1 }
       : detectActionIntent(message);
@@ -497,6 +500,7 @@ chatRouter.post('/', async (req, res, next) => {
         chainId: runtimeChainId,
         chain: runtimeChainEnv === 'sepolia' ? 'base-sepolia' : 'base',
         executionMode: 'read-only',
+        providerNamespace: providerReadScope?.namespace,
       },
     });
     console.log("TRACE: agent created");

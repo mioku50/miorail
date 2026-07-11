@@ -5,7 +5,7 @@ import { useUiStore } from '../../lib/state';
 import { useNetworkLabel } from '../../lib/useNetworkLabel';
 import { ChatMessage } from './ChatMessage';
 import { AgentComposer } from './AgentComposer';
-import { baseMcpConnectHref, baseMcpConnectLabel, baseMcpNeedsAuth } from '../../lib/format';
+import { baseMcpConnectHref, baseMcpConnectLabel, baseMcpNeedsAuth, baseMcpOAuthResultMessage } from '../../lib/format';
 
 const PROMPT_CHIPS = [
   'Check my Base balance',
@@ -30,6 +30,8 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const streamRef = useRef<HTMLDivElement>(null);
   const baseMcpProbeStarted = useRef(false);
+  const oauthParams = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search);
+  const oauthMessage = baseMcpOAuthResultMessage(oauthParams?.get('mcp'), oauthParams?.get('code'));
 
   const messages = chatData?.messages || [];
   const displayMessages = messages;
@@ -134,9 +136,9 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
         </div>
       </div>
 
-      {baseMcpNeedsAuth(statusData?.baseMcp) && (
+      {(oauthMessage?.kind === 'error' || baseMcpNeedsAuth(statusData?.baseMcp)) && (
         <div className="flex items-center justify-between gap-3 border-b border-warn/20 bg-warn-soft px-4 py-2 text-[11px] text-warn">
-          <span>Base MCP wallet reads need authorization or a refreshed tool inventory.</span>
+          <span>{oauthMessage?.kind === 'error' ? oauthMessage.text : 'Base MCP wallet reads need authorization or a refreshed tool inventory.'}</span>
           <a
             href={baseMcpConnectHref('/stream')}
             className="shrink-0 rounded-lg border border-warn/30 bg-panel px-2.5 py-1 font-bold text-warn hover:bg-bg"

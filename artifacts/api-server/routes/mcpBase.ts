@@ -8,6 +8,8 @@ import {
   baseMcpServerUrlFromEnv,
 } from '../lib/baseMcpStatus.js';
 import {
+  clearBaseMcpCredentialScope,
+  clearBaseMcpOAuthStatesForUser,
   createBaseMcpOAuthProviderForUser,
   deleteBaseMcpOAuthState,
   loadBaseMcpOAuthState,
@@ -56,6 +58,13 @@ function redirectWithParam(path: string, key: string, value: string): string {
   return `${url.pathname}${url.search}`;
 }
 
+function oauthErrorRedirect(code: string): string {
+  const url = new URL('/stream', 'http://local');
+  url.searchParams.set('mcp', 'error');
+  url.searchParams.set('code', code);
+  return `${url.pathname}${url.search}`;
+}
+
 function requiredConnectConfig(): { serverUrl: URL | null; missingConfig: string[] } {
   const missingConfig: string[] = [];
   const serverUrl = baseMcpServerUrlFromEnv();
@@ -67,22 +76,12 @@ function requiredConnectConfig(): { serverUrl: URL | null; missingConfig: string
   return { serverUrl, missingConfig };
 }
 
-function sendMissingConfig(res: Response, missingConfig: string[]) {
-  return res.status(400).json({
-    success: false,
-    error: 'missing_config',
-    missing_config: missingConfig,
-  });
-}
-
-function safeOAuthErrorCode(error: unknown): string {
+export function safeOAuthErrorCode(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error || '');
-  if (/cancel|access_denied/i.test(message)) return 'oauth_cancelled';
-  if (/timeout|abort/i.test(message)) return 'oauth_timeout';
-  if (/state/i.test(message)) return 'invalid_state';
-  if (/refresh/i.test(message)) return 'refresh_failed';
-  if (/unauthori[sz]ed|auth/i.test(message)) return 'authorization_failed';
-  return 'oauth_failed';
+  if (/authenticate data|decrypt|decipher|credential/i.test(message)) return 'credentials_invalid';
+  if (/expired[_ ]token|token.*expired/i.test(message)) return 'expired_token';
+  if (/refresh|invalid_grant/i.test(message)) return 'refresh_failed';
+  return 'authorization_failed';
 }
 
 function logOAuthEvent(
@@ -97,16 +96,21 @@ function logOAuthEvent(
   });
 }
 
-mcpBaseRouter.get('/connect', async (req, res, next) => {
+mcpBaseRouter.get('/connect', async (req, res) => {
+  const userId = userIdFromRequest(req);
   try {
     const { serverUrl, missingConfig } = requiredConnectConfig();
-    if (missingConfig.length || !serverUrl) return sendMissingConfig(res, missingConfig);
+    if (missingConfig.length || !serverUrl) return res.redirect(oauthErrorRedirect('missing_config'));
 
-    const userId = userIdFromRequest(req);
     const secret = sessionSecret();
     const state = crypto.randomBytes(32).toString('base64url');
     const returnTo = sanitizeReturnTo(typeof req.query.returnTo === 'string' ? req.query.returnTo : undefined);
     let authorizationUrl: string | null = null;
+
+    // An explicit Connect/Reconnect is a clean OAuth boundary. Never attempt to
+    // decrypt or refresh stale credentials while starting a new browser flow.
+    await clearBaseMcpOAuthStatesForUser(userId);
+    await clearBaseMcpCredentialScope({ userId, scope: 'all' });
 
     const provider = createBaseMcpOAuthProviderForUser({
       userId,
@@ -131,18 +135,21 @@ mcpBaseRouter.get('/connect', async (req, res, next) => {
 
     return res.redirect(redirectWithParam(returnTo, 'mcp', 'connected'));
   } catch (error) {
-    next(error);
+    const errorCode = safeOAuthErrorCode(error);
+    await markBaseMcpNeedsReauth({ userId, error: errorCode }).catch(() => undefined);
+    logOAuthEvent('warn', 'base-mcp-oauth-callback-failed', { userId, errorCode });
+    return res.redirect(oauthErrorRedirect(errorCode));
   }
 });
 
-mcpBaseRouter.get('/callback', async (req, res, next) => {
+mcpBaseRouter.get('/callback', async (req, res) => {
   const userId = userIdFromRequest(req);
   let pending: Awaited<ReturnType<typeof loadBaseMcpOAuthState>> = null;
   let serverUrl: URL | null = null;
   try {
     const config = requiredConnectConfig();
     serverUrl = config.serverUrl;
-    if (config.missingConfig.length || !serverUrl) return sendMissingConfig(res, config.missingConfig);
+    if (config.missingConfig.length || !serverUrl) return res.redirect(oauthErrorRedirect('missing_config'));
 
     const secret = sessionSecret();
     const errorParam = typeof req.query.error === 'string' ? req.query.error : '';
@@ -151,13 +158,13 @@ mcpBaseRouter.get('/callback', async (req, res, next) => {
     if (errorParam) {
       if (state) pending = await loadBaseMcpOAuthState({ userId, sessionSecret: secret, state });
       if (pending) await deleteBaseMcpOAuthState({ userId, sessionSecret: secret, state });
-      await markBaseMcpNeedsReauth({ userId, error: 'oauth_cancelled' });
+      await markBaseMcpNeedsReauth({ userId, error: 'authorization_failed' });
       logOAuthEvent('warn', 'base-mcp-oauth-callback-failed', {
         userId,
         endpointHost: serverUrl.host,
-        errorCode: 'oauth_cancelled',
+        errorCode: 'authorization_failed',
       });
-      return res.redirect(redirectWithParam(pending?.returnTo || '/base-mcp', 'mcp', 'cancelled'));
+      return res.redirect(oauthErrorRedirect('authorization_failed'));
     }
 
     if (!code || !state) {
@@ -166,7 +173,7 @@ mcpBaseRouter.get('/callback', async (req, res, next) => {
         endpointHost: serverUrl.host,
         errorCode: 'missing_code_or_state',
       });
-      return res.status(400).json({ success: false, error: 'Missing OAuth code or state' });
+      return res.redirect(oauthErrorRedirect('authorization_failed'));
     }
 
     pending = await loadBaseMcpOAuthState({ userId, sessionSecret: secret, state });
@@ -176,7 +183,7 @@ mcpBaseRouter.get('/callback', async (req, res, next) => {
         endpointHost: serverUrl.host,
         errorCode: 'invalid_or_expired_state',
       });
-      return res.status(400).json({ success: false, error: 'Invalid or expired OAuth state' });
+      return res.redirect(oauthErrorRedirect('authorization_failed'));
     }
 
     const provider = createBaseMcpOAuthProviderForUser({
@@ -215,14 +222,14 @@ mcpBaseRouter.get('/callback', async (req, res, next) => {
         endpointHost: serverUrl?.host,
         errorCode,
       });
-      return res.redirect(redirectWithParam(pending.returnTo, 'mcp', 'error'));
+      return res.redirect(oauthErrorRedirect(errorCode));
     }
     logOAuthEvent('warn', 'base-mcp-oauth-callback-failed', {
       userId,
       endpointHost: serverUrl?.host,
       errorCode,
     });
-    next(error);
+    return res.redirect(oauthErrorRedirect(errorCode));
   }
 });
 

@@ -265,7 +265,7 @@ test('probeBaseMcpTools sanitizes undecryptable OAuth credentials and requests r
   process.env.BASE_MCP_ENABLED = 'true';
   process.env.BASE_MCP_SERVER_URL = 'https://mcp.base.org';
   let markedError = '';
-  baseMcpToolProbeRuntime.getBaseMcpAuthStatus = async () => ({ connected: true, needsReauth: false, userScoped: true, expired: true });
+  baseMcpToolProbeRuntime.getBaseMcpAuthStatus = async () => ({ connected: true, needsReauth: false, userScoped: true });
   baseMcpToolProbeRuntime.markBaseMcpNeedsReauth = async ({ error }) => { markedError = error || ''; };
   baseMcpToolProbeRuntime.createOAuthProvider = () => ({}) as any;
   baseMcpToolProbeRuntime.createTransport = () => ({}) as any;
@@ -281,8 +281,8 @@ test('probeBaseMcpTools sanitizes undecryptable OAuth credentials and requests r
     redirectUrl: 'https://miorail.xyz/api/mcp/base/callback',
   });
   assert.equal(result.status, 'needs_reauth');
-  assert.equal(result.errorCode, 'oauth_credentials_invalid');
-  assert.equal(markedError, 'oauth_credentials_invalid');
+  assert.equal(result.errorCode, 'credentials_invalid');
+  assert.equal(markedError, 'credentials_invalid');
   assert.equal(JSON.stringify(result).includes('secret-value'), false);
   restoreEnv('BASE_MCP_ENABLED', origEnabled);
   restoreEnv('BASE_MCP_SERVER_URL', origUrl);

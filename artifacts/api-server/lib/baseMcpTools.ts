@@ -5,6 +5,7 @@ import {
   baseMcpServerUrlFromEnv,
 } from './baseMcpStatus.js';
 import { createBaseMcpOAuthProviderForUser } from './baseMcpOAuthStore.js';
+import { refreshBaseMcpOAuthIfNeeded } from './baseMcpOAuthLifecycle.js';
 
 function publicOrigin(req: Request): string {
   const fromEnv = (process.env.PUBLIC_API_BASE_URL || process.env.API_PUBLIC_URL || '').trim();
@@ -29,7 +30,15 @@ export async function createApiToolAggregatorForUser(
 ) {
   const enabled = baseMcpEnabledFromEnv();
   const serverUrl = baseMcpServerUrlFromEnv();
-  const oauthProvider = enabled && serverUrl
+  const refresh = enabled && serverUrl
+    ? await refreshBaseMcpOAuthIfNeeded({
+        userId,
+        sessionSecret,
+        redirectUrl: callbackUrl(req),
+        serverUrl,
+      })
+    : undefined;
+  const oauthProvider = enabled && serverUrl && refresh?.status !== 'needs_reauth'
     ? createBaseMcpOAuthProviderForUser({
         userId,
         sessionSecret,

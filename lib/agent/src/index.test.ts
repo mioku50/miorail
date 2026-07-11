@@ -149,3 +149,54 @@ test('Agent prompt receives user-scoped Base inventory and read-only Base runtim
     await closeDb();
   }
 });
+
+test('Agent provider scope exposes only matching tools and blocks a cross-provider hallucination', async () => {
+  let exposedTools: string[] = [];
+  const calls: string[] = [];
+  const llm = new MockLlmProvider((req: LlmRequest) => {
+    exposedTools = (req.tools || []).map((tool) => tool.function.name);
+    if (req.messages.length <= 2) return 'TOOL:morpho_query_vaults|{"chain":"base"}';
+    return 'Moonwell data is unavailable.';
+  });
+  const tools = new ToolAggregator();
+  class PartnerProvider implements ToolProvider {
+    id = 'base-mcp-dynamic';
+    async listTools(): Promise<ToolDef[]> {
+      return [
+        { name: 'moonwell_get_markets', description: 'Moonwell markets', inputSchema: { type: 'object' } },
+        { name: 'morpho_query_vaults', description: 'Morpho vaults', inputSchema: { type: 'object' } },
+      ];
+    }
+    findTool(name: string) { return (name === 'moonwell_get_markets' || name === 'morpho_query_vaults')
+      ? { name, description: name, inputSchema: { type: 'object' } }
+      : undefined; }
+    async callTool(name: string) { calls.push(name); return { content: '{}', isError: false }; }
+  }
+  tools.registerProvider(new PartnerProvider());
+  const agent = new Agent({
+    llmProvider: llm,
+    toolAggregator: tools,
+    runtimeContext: {
+      chain: 'base',
+      chainId: 8453,
+      executionMode: 'read-only',
+      providerNamespace: 'moonwell',
+    },
+  });
+  const { MemoryService } = await import('@mioagent/memory');
+  const originalGetUserSettings = MemoryService.getUserSettings;
+  MemoryService.getUserSettings = async () => null;
+  try {
+    const events = [];
+    for await (const event of agent.chatStream('test-user', 'Show Moonwell markets')) events.push(event);
+    assert.deepEqual(exposedTools, ['moonwell_get_markets']);
+    assert.deepEqual(calls, []);
+    const blocked = events.find((event) => event.type === 'tool_result') as any;
+    assert.equal(blocked?.isError, true);
+    assert.match(blocked?.result || '', /provider_tool_scope_violation/);
+  } finally {
+    MemoryService.getUserSettings = originalGetUserSettings;
+    const { closeDb } = await import('@mioagent/db');
+    await closeDb();
+  }
+});

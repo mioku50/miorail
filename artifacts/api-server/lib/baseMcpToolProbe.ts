@@ -14,6 +14,7 @@ import {
   getBaseMcpAuthStatus,
   markBaseMcpNeedsReauth,
 } from './baseMcpOAuthStore.js';
+import { refreshBaseMcpOAuthIfNeeded } from './baseMcpOAuthLifecycle.js';
 import {
   classifyBaseMcpTools,
   emptyBaseMcpToolCapabilityCounts,
@@ -53,6 +54,7 @@ export const baseMcpToolProbeRuntime = {
   getBaseMcpAuthStatus,
   markBaseMcpNeedsReauth,
   createOAuthProvider: createBaseMcpOAuthProviderForUser,
+  refreshOAuthIfNeeded: refreshBaseMcpOAuthIfNeeded,
   createClient: (): MinimalMcpClient => new BaseMcpClient(),
   createTransport: (serverUrl: URL, oauthProvider: BaseMcpOAuthProvider): Transport =>
     createBaseMcpHttpTransport(serverUrl, oauthProvider),
@@ -109,7 +111,7 @@ function classifyProbeError(error: unknown): { status: BaseMcpToolProbeStatus; e
     /401|403|unauthori[sz]ed|invalid_grant|invalid token|reauth|authorization|authenticate data|decrypt|credential/i.test(message)
   ) {
     const credentialsInvalid = /authenticate data|decrypt|credential/i.test(message);
-    return { status: 'needs_reauth', errorCode: credentialsInvalid ? 'oauth_credentials_invalid' : 'needs_reauth' };
+    return { status: 'needs_reauth', errorCode: credentialsInvalid ? 'credentials_invalid' : 'authorization_failed' };
   }
 
   if (
@@ -164,7 +166,13 @@ export async function probeBaseMcpTools(input: {
 
   const auth = await baseMcpToolProbeRuntime
     .getBaseMcpAuthStatus(input.userId)
-    .catch(() => ({ connected: false, needsReauth: true, userScoped: true as const }));
+    .catch(() => ({
+      connected: false,
+      needsReauth: true,
+      userScoped: true as const,
+      expired: false,
+      expiresAt: undefined,
+    }));
   if (!auth.connected) {
     return {
       status: 'needs_reauth',
@@ -175,6 +183,27 @@ export async function probeBaseMcpTools(input: {
       checkedAt,
       errorCode: 'needs_reauth',
     };
+  }
+
+  const expiresAt = auth.expiresAt ? Date.parse(auth.expiresAt) : Number.POSITIVE_INFINITY;
+  if (auth.expired || (Number.isFinite(expiresAt) && expiresAt <= Date.now() + 5 * 60 * 1000)) {
+    const refresh = await baseMcpToolProbeRuntime.refreshOAuthIfNeeded({
+      userId: input.userId,
+      sessionSecret: input.sessionSecret,
+      redirectUrl: input.redirectUrl,
+      serverUrl,
+    });
+    if (refresh.status === 'needs_reauth') {
+      return {
+        status: 'needs_reauth',
+        endpointHost,
+        toolsCount: 0,
+        capabilities: emptyBaseMcpToolCapabilityCounts(),
+        tools: [],
+        checkedAt,
+        errorCode: refresh.errorCode,
+      };
+    }
   }
 
   const oauthProvider = baseMcpToolProbeRuntime.createOAuthProvider({

@@ -69,6 +69,14 @@ test('Base MCP OAuth result messages are explicit and non-crashing', () => {
     kind: 'error',
     text: 'Base MCP connection failed. Connect again to reauthorize.',
   });
+  assert.deepStrictEqual(baseMcpOAuthResultMessage('error', 'refresh_failed'), {
+    kind: 'error',
+    text: 'Base MCP token refresh failed. Reconnect to start a clean authorization flow.',
+  });
+  assert.deepStrictEqual(baseMcpOAuthResultMessage('error', 'credentials_invalid'), {
+    kind: 'error',
+    text: 'Stored Base MCP credentials cannot be opened. Reconnect to replace them safely.',
+  });
   assert.strictEqual(baseMcpOAuthResultMessage('unknown'), null);
 });
 

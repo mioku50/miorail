@@ -11,6 +11,7 @@ export interface AgentConfig {
     chainId: number;
     chain: string;
     executionMode: 'read-only' | 'user-confirmed';
+    providerNamespace?: string;
   };
 }
 
@@ -30,19 +31,32 @@ export class Agent {
     const memory = userSettings?.memoryMd;
     console.log("TRACE: listing tools");
     const providerInventory = await this.config.toolAggregator.listProviderTools();
-    const tools = providerInventory.flatMap((entry) => entry.tools);
+    const allTools = providerInventory.flatMap((entry) => entry.tools);
+    const providerNamespace = this.config.runtimeContext?.providerNamespace?.toLowerCase();
+    const tools = providerNamespace
+      ? allTools.filter((tool) => {
+          const lower = tool.name.toLowerCase();
+          return lower === providerNamespace || lower.startsWith(`${providerNamespace}_`)
+            || lower.startsWith(`${providerNamespace}:`) || lower.startsWith(`${providerNamespace}.`)
+            || lower.startsWith(`${providerNamespace}-`) || lower.startsWith(`${providerNamespace}/`);
+        })
+      : allTools;
+    const allowedToolNames = new Set(tools.map((tool) => tool.name));
     console.log("TRACE: listed tools");
     const baseMcpTools = providerInventory
       .filter((entry) => entry.providerId.startsWith('base-mcp'))
-      .flatMap((entry) => entry.tools.map((tool) => tool.name));
+      .flatMap((entry) => entry.tools.map((tool) => tool.name))
+      .filter((name) => allowedToolNames.has(name));
     const partnerTools = providerInventory
       .filter((entry) => entry.providerId !== 'native' && !entry.providerId.startsWith('base-mcp'))
-      .flatMap((entry) => entry.tools.map((tool) => tool.name));
+      .flatMap((entry) => entry.tools.map((tool) => tool.name))
+      .filter((name) => allowedToolNames.has(name));
     const runtime = this.config.runtimeContext;
     const basePrompt = [
       'You are Miorail Agent Stream. Use an enabled matching tool before claiming a provider or MCP capability is unavailable.',
       'Never invent tool results. Never request, read, or store a private key.',
       runtime ? `Runtime: wallet=${runtime.walletAddress || 'Base Account user scope'}, chain=${runtime.chain}, chainId=${runtime.chainId}, executionMode=${runtime.executionMode}.` : '',
+      providerNamespace ? `Provider scope is ${providerNamespace}. Use only ${providerNamespace}-namespaced tools and never substitute another protocol.` : '',
       `Enabled Base MCP read tools: ${baseMcpTools.join(', ') || 'none'}.`,
       `Enabled partner read tools: ${partnerTools.join(', ') || 'none'}.`,
       'In read-only mode, do not call send_calls, swap, sign, prepare, deposit, withdraw, or any transaction tool.',
@@ -101,7 +115,17 @@ export class Agent {
           let isErr;
           logger.info('Agent calling tool', { toolName: tc.function.name });
           const toolStart = Date.now();
-          try {
+          if (providerNamespace && !allowedToolNames.has(tc.function.name)) {
+            resultStr = JSON.stringify({
+              errorCode: 'provider_tool_scope_violation',
+              requiredProvider: providerNamespace,
+            });
+            isErr = true;
+            logger.warn('Agent blocked cross-provider tool call', {
+              toolName: tc.function.name,
+              requiredProvider: providerNamespace,
+            });
+          } else try {
             const res = await this.config.toolAggregator.callTool(tc.function.name, argsObj);
             resultStr = res.content;
             isErr = res.isError;

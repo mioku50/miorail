@@ -63,7 +63,7 @@ export function baseMcpConnectHref(returnTo = '/base-mcp'): string {
   return `/api/mcp/base/connect?returnTo=${encodeURIComponent(safeReturnTo)}`;
 }
 
-export function baseMcpOAuthResultMessage(result?: string | null): { kind: 'success' | 'warn' | 'error'; text: string } | null {
+export function baseMcpOAuthResultMessage(result?: string | null, code?: string | null): { kind: 'success' | 'warn' | 'error'; text: string } | null {
   if (result === 'connected') {
     return { kind: 'success', text: 'Base MCP connected. User-scoped tools are authorized.' };
   }
@@ -71,7 +71,14 @@ export function baseMcpOAuthResultMessage(result?: string | null): { kind: 'succ
     return { kind: 'warn', text: 'Base MCP connection was cancelled. Connect again when ready.' };
   }
   if (result === 'error') {
-    return { kind: 'error', text: 'Base MCP connection failed. Connect again to reauthorize.' };
+    const messages: Record<string, string> = {
+      expired_token: 'Base MCP authorization expired. Reconnect to continue.',
+      refresh_failed: 'Base MCP token refresh failed. Reconnect to start a clean authorization flow.',
+      credentials_invalid: 'Stored Base MCP credentials cannot be opened. Reconnect to replace them safely.',
+      authorization_failed: 'Base MCP authorization failed or was cancelled. Reconnect when ready.',
+      missing_config: 'Base MCP is not fully configured on the server.',
+    };
+    return { kind: 'error', text: messages[code || ''] || 'Base MCP connection failed. Connect again to reauthorize.' };
   }
   return null;
 }

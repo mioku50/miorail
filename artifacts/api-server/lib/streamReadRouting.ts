@@ -1,6 +1,7 @@
 import type { ToolAggregator, ToolDef } from '@mioagent/tools';
+import { filterTrustedMorphoVaults, formatTrustedMorphoVaults } from './morphoVaultTrust.js';
 
-export type DirectStreamReadKind = 'base_portfolio' | 'morpho_usdc_vaults';
+export type DirectStreamReadKind = 'base_portfolio' | 'morpho_usdc_vaults' | 'partner_provider_unavailable';
 
 export interface StreamToolTrace {
   toolName: string;
@@ -17,6 +18,57 @@ export interface DirectStreamReadResult {
 }
 
 const PRIVATE_KEY_NAMES = /^(access_?token|refresh_?token|id_?token|api_?token|secret|authorization|cookie|password|private_?key|credential|signature)$/i;
+const WRITE_LANGUAGE = /deposit|withdraw|supply|borrow|repay|swap|send|transfer|sign|execute|prepare|transaction/;
+const READ_LANGUAGE = /show|find|list|check|query|view|available|opportunit|position|market|vault|pool|rate|apy|yield/;
+const PROVIDER_NAMES = new Map<string, string>([
+  ['morpho', 'Morpho'],
+  ['moonwell', 'Moonwell'],
+  ['uniswap', 'Uniswap'],
+  ['avantis', 'Avantis'],
+  ['virtuals', 'Virtuals'],
+  ['aerodrome', 'Aerodrome'],
+  ['bankr', 'Bankr'],
+]);
+
+export interface ProviderReadScope {
+  namespace: string;
+  displayName: string;
+  matchingTools: ToolDef[];
+}
+
+export function toolMatchesProviderNamespace(toolName: string, namespace: string): boolean {
+  const lower = toolName.toLowerCase();
+  return lower === namespace || lower.startsWith(`${namespace}_`) || lower.startsWith(`${namespace}:`)
+    || lower.startsWith(`${namespace}.`) || lower.startsWith(`${namespace}-`) || lower.startsWith(`${namespace}/`);
+}
+
+export function detectProviderReadScope(message: string, inventory: ToolDef[]): ProviderReadScope | null {
+  const lower = message.trim().toLowerCase();
+  if (WRITE_LANGUAGE.test(lower) || !READ_LANGUAGE.test(lower)) return null;
+
+  let namespace: string | undefined;
+  let displayName: string | undefined;
+  for (const [candidate, label] of PROVIDER_NAMES) {
+    if (new RegExp(`\\b${candidate}\\b`, 'i').test(lower)) {
+      namespace = candidate;
+      displayName = label;
+      break;
+    }
+  }
+  if (!namespace) {
+    const discovered = inventory
+      .map((tool) => tool.name.toLowerCase().split(/[_:.\-/]/)[0])
+      .filter((value): value is string => !!value && !['get', 'list', 'query', 'read', 'search', 'check'].includes(value));
+    namespace = discovered.find((candidate) => new RegExp(`\\b${candidate}\\b`, 'i').test(lower));
+    displayName = namespace ? namespace.charAt(0).toUpperCase() + namespace.slice(1) : undefined;
+  }
+  if (!namespace || !displayName) return null;
+  return {
+    namespace,
+    displayName,
+    matchingTools: inventory.filter((tool) => toolMatchesProviderNamespace(tool.name, namespace!)),
+  };
+}
 
 export function sanitizeStreamToolArgs(value: unknown, depth = 0): unknown {
   if (depth > 6) return '[truncated]';
@@ -58,17 +110,7 @@ export function detectDirectStreamRead(message: string): DirectStreamReadKind | 
 }
 
 export function shouldPreferPartnerRuntimeRead(message: string, inventory: ToolDef[]): boolean {
-  const lower = message.trim().toLowerCase();
-  if (/deposit|withdraw|supply|borrow|repay|swap|send|transfer|sign|execute|prepare|transaction/.test(lower)) {
-    return false;
-  }
-  if (!/show|find|list|check|query|view|available|opportunit|position|market|vault|pool|rate|apy/.test(lower)) {
-    return false;
-  }
-  const namespaces = inventory
-    .map((tool) => tool.name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)[0])
-    .filter((name): name is string => !!name && !['get', 'list', 'query', 'read', 'search', 'check'].includes(name));
-  return namespaces.some((namespace) => lower.includes(namespace));
+  return (detectProviderReadScope(message, inventory)?.matchingTools.length || 0) > 0;
 }
 
 function schemaProperties(tool: ToolDef): Record<string, any> {
@@ -164,9 +206,21 @@ export async function runDirectStreamRead(input: {
   tools: ToolAggregator;
 }): Promise<DirectStreamReadResult | null> {
   const kind = detectDirectStreamRead(input.message);
-  if (!kind) return null;
   const inventory = await input.tools.listTools();
   const traces: StreamToolTrace[] = [];
+
+  if (!kind) {
+    const providerScope = detectProviderReadScope(input.message, inventory);
+    if (providerScope && providerScope.matchingTools.length === 0) {
+      return {
+        kind: 'partner_provider_unavailable',
+        content: `${providerScope.displayName} read tools are currently unavailable. No data from another protocol was substituted, and no transaction was prepared.`,
+        toolCalls: traces,
+        errorCode: `${providerScope.namespace}_tools_unavailable`,
+      };
+    }
+    return null;
+  }
 
   if (kind === 'morpho_usdc_vaults') {
     const tool = inventory.find((item) => item.name === 'morpho_query_vaults');
@@ -181,8 +235,8 @@ export async function runDirectStreamRead(input: {
     const call = await callReadTool(input.tools, tool, {
       chain: 'base',
       assetSymbol: 'USDC',
-      sort: 'apy_desc',
-      limit: 5,
+      sort: 'tvl_desc',
+      limit: 50,
     });
     traces.push(call.trace);
     if (call.errorCode) {
@@ -193,9 +247,18 @@ export async function runDirectStreamRead(input: {
         errorCode: call.errorCode,
       };
     }
+    const trustworthyVaults = filterTrustedMorphoVaults(unwrapToolPayload(call.content));
+    if (trustworthyVaults.length === 0) {
+      return {
+        kind,
+        content: 'No trustworthy Morpho USDC vault results remained after Base mainnet, canonical USDC, verification, TVL, and APY screening. No transaction was prepared.',
+        toolCalls: traces,
+        errorCode: 'morpho_no_trustworthy_vaults',
+      };
+    }
     return {
       kind,
-      content: `Live Morpho USDC vault opportunities on Base:\n${displayPayload(unwrapToolPayload(call.content))}\n\nRead-only result — no deposit or transaction was prepared.`,
+      content: `Live screened Morpho USDC vault results on Base:\n${formatTrustedMorphoVaults(trustworthyVaults)}\n\nOrdered by verification metadata and TVL; this is not a recommendation. No deposit or transaction was prepared.`,
       toolCalls: traces,
     };
   }
