@@ -215,7 +215,7 @@ export async function runDirectMoonwellWrite(input: {
       errorCode: prepare.errorCode,
     };
   }
-  let transactions: Array<{ to: string; data?: string; value?: string; chainId?: number }> = [];
+  let transactions: Array<{ to: string; data?: string; value?: string; chainId?: number }>;
   try {
     const parsed = JSON.parse(prepare.content) as { transactions?: Array<{ to: string; data?: string; value?: string; chainId?: number }> };
     transactions = Array.isArray(parsed.transactions) ? parsed.transactions : [];

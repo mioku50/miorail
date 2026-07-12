@@ -53,7 +53,10 @@ function safeHttpsUrl(value: unknown): string | undefined {
 
 function safeRequestId(value: unknown): string | undefined {
   if (typeof value !== 'string' && typeof value !== 'number') return undefined;
-  const normalized = String(value).replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  const normalized = [...String(value)]
+    .filter((char) => char.charCodeAt(0) > 31 && char.charCodeAt(0) !== 127)
+    .join('')
+    .trim();
   return normalized && normalized.length <= 200 ? normalized : undefined;
 }
 

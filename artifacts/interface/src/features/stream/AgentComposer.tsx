@@ -1,3 +1,5 @@
+import { composerPolicyMessage, type ComposerExecutionMode } from './agentComposerState';
+
 interface AgentComposerProps {
   input: string;
   setInput: (value: string) => void;
@@ -5,10 +7,12 @@ interface AgentComposerProps {
   isPending: boolean;
   errorMsg: string | null;
   onClearError: () => void;
-  executionMode: 'read-only' | 'user-confirmed';
+  executionMode: ComposerExecutionMode;
+  policyConfigured: boolean;
 }
 
-export function AgentComposer({ input, setInput, onSend, isPending, errorMsg, onClearError, executionMode }: AgentComposerProps) {
+export function AgentComposer({ input, setInput, onSend, isPending, errorMsg, onClearError, executionMode, policyConfigured }: AgentComposerProps) {
+  const policyMessage = composerPolicyMessage({ executionMode, policyConfigured });
   return (
     <div className="p-3 border-t border-line bg-panel shrink-0 flex flex-col gap-2 shadow-sm">
       {errorMsg && (
@@ -61,6 +65,9 @@ export function AgentComposer({ input, setInput, onSend, isPending, errorMsg, on
           ? 'Mainnet · User-confirmed: every unsigned call requires final approval in Base Account.'
           : 'Read-only mode: quotes and analysis cannot prepare mainnet transactions.'}</span>
       </div>
+      {policyMessage && (
+        <div className="px-1 text-[11px] font-medium text-warn">{policyMessage}</div>
+      )}
     </div>
   );
 }

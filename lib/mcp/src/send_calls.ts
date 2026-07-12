@@ -14,7 +14,7 @@ export class McpSendCallsClient {
     try {
       normalized = validateBaseCalls(chain, calls);
     } catch (error) {
-      throw new Error(`Security check failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`Security check failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
 
     const result = await this.client.getClient().callTool({

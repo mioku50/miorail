@@ -16,6 +16,8 @@ import { sanitizeStreamToolArgs, sanitizedToolErrorCode, type StreamToolTrace } 
 import {
   BASE_MCP_WALLET_MISMATCH_ERROR_CODE,
   BASE_MCP_WALLET_MISMATCH_MESSAGE,
+  BASE_MCP_WALLET_UNVERIFIED_ERROR_CODE,
+  BASE_MCP_WALLET_UNVERIFIED_MESSAGE,
   verifyBaseMcpWalletMatch,
 } from './baseMcpWalletReconciliation.js';
 
@@ -45,7 +47,7 @@ export const baseMcpSendRuntime: {
 };
 
 export function detectBaseMcpSendIntent(message: string): BaseMcpSendIntent | null {
-  const match = message.match(/(?:^|\s)(?:send|transfer|отправь|отправить|отправляй|переведи|перевести)\s+(\d+(?:[.,]\d+)?)\s+USDC\s+(?:to|на(?:\s+адрес)?|по\s+адресу|в)\s*(0x[a-fA-F0-9]{40})(?:\s|$)/iu);
+  const match = message.match(/(?:^|\s)(?:send|transfer|отправь|отправить|отправляй|переведи|перевести)\s+(\d+(?:[.,]\d+)?)\s+USDC\s+(?:to(?:\s+address)?|on(?:\s+address)?|на(?:\s+адрес)?|по\s+адресу|в)\s*(0x[a-fA-F0-9]{40})(?:\s|$)/iu);
   if (!match) return null;
   const amountText = match[1].replace(',', '.');
   const amount = Number(amountText);
@@ -134,10 +136,13 @@ export async function runDirectBaseMcpSend(input: {
   if (!tool) return blocked('Base MCP send tools are unavailable.', 'base_mcp_send_unavailable');
 
   // T44: Base MCP may be OAuth-connected to a different Base Account than the
-  // SIWE session wallet. A VERIFIED mismatch blocks send; an unverifiable
-  // get_wallets read does not.
+  // Write routing is fail-closed: Base MCP must positively prove that its
+  // connected account is the authenticated tenant wallet.
   const walletMatch = await verifyBaseMcpWalletMatch(input.tools, walletAddress);
-  if (walletMatch.checked && !walletMatch.match) {
+  if (!walletMatch.checked) {
+    return blocked(BASE_MCP_WALLET_UNVERIFIED_MESSAGE, BASE_MCP_WALLET_UNVERIFIED_ERROR_CODE);
+  }
+  if (!walletMatch.match) {
     return blocked(BASE_MCP_WALLET_MISMATCH_MESSAGE, BASE_MCP_WALLET_MISMATCH_ERROR_CODE);
   }
 

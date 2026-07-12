@@ -137,14 +137,16 @@ describe('Chat API & Recommendation Guardrails', () => {
     class BaseSwapProvider implements ToolProvider {
       id = 'base-mcp-dynamic';
       calls: string[] = [];
-      private tool: ToolDef = {
+      private swapTool: ToolDef = {
         name: 'swap',
         description: 'Base MCP swap',
         inputSchema: { type: 'object', properties: { amount: {}, fromAsset: {}, toAsset: {} }, required: ['amount', 'fromAsset', 'toAsset'] },
       };
-      async listTools() { return [this.tool]; }
-      findTool(name: string) { return name === 'swap' ? this.tool : undefined; }
+      private walletTool: ToolDef = { name: 'get_wallets', description: 'Wallets', inputSchema: { type: 'object' } };
+      async listTools() { return [this.swapTool, this.walletTool]; }
+      findTool(name: string) { return [this.swapTool, this.walletTool].find((tool) => tool.name === name); }
       async callTool(name: string) {
+        if (name === 'get_wallets') return { content: JSON.stringify({ address: '0x1234567890123456789012345678901234567890' }), isError: false };
         this.calls.push(name);
         return { content: JSON.stringify({ approvalUrl: 'https://wallet.base.org/approve/swap', requestId: 'swap-1' }), isError: false };
       }
@@ -267,13 +269,15 @@ describe('Chat API & Recommendation Guardrails', () => {
     class BaseSendProvider implements ToolProvider {
       id = 'base-mcp-dynamic';
       calls: string[] = [];
-      private tool: ToolDef = {
+      private sendTool: ToolDef = {
         name: 'send', description: 'Send USDC',
         inputSchema: { type: 'object', properties: { amount: {}, token: {}, recipient: {}, walletAddress: {}, chainId: {} } },
       };
-      async listTools() { return [this.tool]; }
-      findTool(name: string) { return name === 'send' ? this.tool : undefined; }
+      private walletTool: ToolDef = { name: 'get_wallets', description: 'Wallets', inputSchema: { type: 'object' } };
+      async listTools() { return [this.sendTool, this.walletTool]; }
+      findTool(name: string) { return [this.sendTool, this.walletTool].find((tool) => tool.name === name); }
       async callTool(name: string) {
+        if (name === 'get_wallets') return { content: JSON.stringify({ address: '0x1234567890123456789012345678901234567890' }), isError: false };
         this.calls.push(name);
         return { content: JSON.stringify({ approval_url: 'https://wallet.base.org/approve/send' }), isError: false };
       }
@@ -353,11 +357,13 @@ describe('Chat API & Recommendation Guardrails', () => {
       statusCalls = 0;
       private tools: ToolDef[] = [
         { name: 'send', description: 'Send USDC', inputSchema: { type: 'object', properties: { amount: {}, token: {}, recipient: {} } } },
+        { name: 'get_wallets', description: 'Wallets', inputSchema: { type: 'object' } },
         { name: 'get_request_status', description: 'Status', inputSchema: { type: 'object', properties: { requestId: {} } } },
       ];
       async listTools() { return this.tools; }
       findTool(name: string) { return this.tools.find((tool) => tool.name === name); }
       async callTool(name: string) {
+        if (name === 'get_wallets') return { content: JSON.stringify({ address: '0x1234567890123456789012345678901234567890' }), isError: false };
         if (name === 'send') return { content: JSON.stringify({ approvalUrl: 'https://wallet.base.org/approve/live', requestId: 'live-request' }), isError: false };
         this.statusCalls += 1;
         return this.statusCalls === 1

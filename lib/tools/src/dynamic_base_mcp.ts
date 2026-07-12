@@ -34,7 +34,11 @@ const EXACT_SEND_CALLS = new Set(['sendcalls', 'sepoliasendcalls', 'walletsendca
 
 function sanitizeText(value: unknown, maxLength: number): string | undefined {
   if (typeof value !== 'string') return undefined;
-  const normalized = value.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+  const normalized = [...value]
+    .map((char) => char.charCodeAt(0) <= 31 || char.charCodeAt(0) === 127 ? ' ' : char)
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (!normalized) return undefined;
   return normalized.slice(0, maxLength);
 }
@@ -121,7 +125,7 @@ function redactSecrets(value: unknown, depth = 0, transactionResult = false): un
     try {
       return JSON.stringify(redactSecrets(JSON.parse(value), depth + 1, transactionResult));
     } catch {
-      return value.replace(/Bearer\s+[A-Za-z0-9._~+\/-]+/gi, 'Bearer [redacted]').slice(0, 20_000);
+      return value.replace(/Bearer\s+[A-Za-z0-9._~+/-]+/gi, 'Bearer [redacted]').slice(0, 20_000);
     }
   }
   if (!value || typeof value !== 'object') return value;

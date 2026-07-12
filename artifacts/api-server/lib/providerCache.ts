@@ -106,7 +106,7 @@ export class DbProviderCacheStore implements ProviderCacheStore {
         expiresAt: row.expiresAt.getTime(),
         lastError: row.lastError ?? undefined,
       };
-    } catch (err) {
+    } catch {
       this.disable();
       return this.fallback.get<T>(key);
     }
@@ -141,7 +141,7 @@ export class DbProviderCacheStore implements ProviderCacheStore {
             expiresAt: new Date(entry.expiresAt),
           },
         });
-    } catch (err) {
+    } catch {
       this.disable();
       await this.fallback.set(entry);
     }
@@ -151,7 +151,7 @@ export class DbProviderCacheStore implements ProviderCacheStore {
     if (this.disabled) return this.fallback.delete(key);
     try {
       await db.delete(providerCache).where(eq(providerCache.key, key));
-    } catch (err) {
+    } catch {
       this.disable();
       await this.fallback.delete(key);
     }
@@ -318,7 +318,7 @@ export async function cachedProviderCall<T>(params: {
   }
 
   const promise = (async (): Promise<CachedCallResult<T>> => {
-    let entry: CacheEntry<T> | null = null;
+    let entry: CacheEntry<T> | null;
     try {
       entry = await store.get<T>(key);
     } catch {

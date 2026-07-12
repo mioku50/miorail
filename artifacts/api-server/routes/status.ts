@@ -58,7 +58,6 @@ export function getSystemStatus(envOverride?: string) {
   const x402Diagnostics = x402MiddlewareDiagnosticsFromEnv(undefined, { config: x402Config });
   const buyerPayer = getDefaultX402BuyerPayerRuntime().status();
 
-  const isReadonly = chainEnv === 'mainnet-readonly';
   // T19.1: split execution into explicit flags via a shared helper. The UI may
   // show "Confirm in Base Account" only when userConfirmedEnabled is true, and
   // must never infer "Execute" from a single generic flag. `serverBroadcastEnabled`

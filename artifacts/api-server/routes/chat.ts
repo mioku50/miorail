@@ -339,7 +339,7 @@ chatRouter.post('/', async (req, res, next) => {
         pricesStatus = statusRes.prices.status;
         riskStatus = statusRes.risk.status;
         securityProvider = statusRes.risk.provider;
-      } catch (e) {
+      } catch {
         // ignore fallback
       }
       const memoryMd = (await MemoryService.getUserSettings(userId).catch(() => null))?.memoryMd || null;
@@ -523,7 +523,7 @@ chatRouter.post('/', async (req, res, next) => {
       if (!isReadonly && payload.calls && payload.calls.length > 0) {
         try {
           simRes = await simulateTrade({ ...(payload as any), instruction: message, memoryMd });
-        } catch (e) {
+        } catch {
           simRes = { success: false, allowed: false, riskLevel: 'blocked', checks: ['Simulation failed'] };
         }
       } else {

@@ -15,6 +15,8 @@ import {
 import {
   BASE_MCP_WALLET_MISMATCH_ERROR_CODE,
   BASE_MCP_WALLET_MISMATCH_MESSAGE,
+  BASE_MCP_WALLET_UNVERIFIED_ERROR_CODE,
+  BASE_MCP_WALLET_UNVERIFIED_MESSAGE,
   verifyBaseMcpWalletMatch,
 } from './baseMcpWalletReconciliation.js';
 
@@ -156,10 +158,18 @@ export async function runDirectBaseMcpSwap(input: {
     return { kind: 'base_mcp_swap', content: 'Base MCP swap tools are unavailable.', toolCalls: [], errorCode: 'base_mcp_swap_unavailable' };
   }
 
-  // T44: a VERIFIED wallet mismatch between the Base MCP account and the
-  // session wallet blocks the swap; an unverifiable get_wallets read does not.
+  // Write routing is fail-closed: Base MCP must positively prove that its
+  // connected account is the authenticated tenant wallet.
   const walletMatch = await verifyBaseMcpWalletMatch(input.tools, input.walletAddress);
-  if (walletMatch.checked && !walletMatch.match) {
+  if (!walletMatch.checked) {
+    return {
+      kind: 'base_mcp_swap',
+      content: BASE_MCP_WALLET_UNVERIFIED_MESSAGE,
+      toolCalls: [],
+      errorCode: BASE_MCP_WALLET_UNVERIFIED_ERROR_CODE,
+    };
+  }
+  if (!walletMatch.match) {
     return {
       kind: 'base_mcp_swap',
       content: BASE_MCP_WALLET_MISMATCH_MESSAGE,

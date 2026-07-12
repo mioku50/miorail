@@ -156,7 +156,7 @@ export function mapPaidActionError(error: unknown): PaidActionError {
 
 export function decodeX402PaymentResponseHeader(header: string | null): X402PaymentReceipt | null {
   if (!header) return null;
-  let parsed: unknown = null;
+  let parsed: unknown;
   try {
     parsed = decodePaymentResponseHeader(header);
   } catch {

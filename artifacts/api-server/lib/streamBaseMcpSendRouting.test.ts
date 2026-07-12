@@ -24,7 +24,7 @@ afterEach(() => {
 class BaseSendProvider implements ToolProvider {
   id = 'base-mcp-dynamic';
   calls: Array<Record<string, unknown>> = [];
-  private readonly tool: ToolDef = {
+  private readonly sendTool: ToolDef = {
     name: 'send',
     description: 'Base Account token send',
     inputSchema: {
@@ -38,9 +38,11 @@ class BaseSendProvider implements ToolProvider {
       },
     },
   };
-  async listTools() { return [this.tool]; }
-  findTool(name: string) { return name === this.tool.name ? this.tool : undefined; }
-  async callTool(_name: string, args: Record<string, unknown>) {
+  private readonly walletTool: ToolDef = { name: 'get_wallets', description: 'Wallets', inputSchema: { type: 'object' } };
+  async listTools() { return [this.sendTool, this.walletTool]; }
+  findTool(name: string) { return [this.sendTool, this.walletTool].find((tool) => tool.name === name); }
+  async callTool(name: string, args: Record<string, unknown>) {
+    if (name === 'get_wallets') return { content: JSON.stringify({ address: WALLET }), isError: false };
     this.calls.push(args);
     return { content: JSON.stringify({ link: 'https://wallet.base.org/approve/send-only' }), isError: false };
   }
@@ -85,17 +87,27 @@ async function readyRepository() {
   return repository;
 }
 
-test('exact USDC send intent is detected before the generic Agent', () => {
-  assert.deepEqual(detectBaseMcpSendIntent(`transfer 0.25 USDC to ${RECIPIENT}`), {
-    amount: 0.25,
-    amountText: '0.25',
-    recipient: RECIPIENT,
-  });
-  assert.deepEqual(detectBaseMcpSendIntent(`переведи 0,25 USDC на адрес ${RECIPIENT}`), {
-    amount: 0.25,
-    amountText: '0.25',
-    recipient: RECIPIENT,
-  });
+test('exact EN/RU USDC send intents are detected before the generic Agent', () => {
+  for (const message of [
+    `transfer 0.25 USDC to ${RECIPIENT}`,
+    `send 0.25 USDC to address ${RECIPIENT}`,
+    `send 0.25 USDC on ${RECIPIENT}`,
+    `transfer 0.25 USDC on address ${RECIPIENT}`,
+    `переведи 0,25 USDC на адрес ${RECIPIENT}`,
+    `отправь 0,25 USDC по адресу ${RECIPIENT}`,
+  ]) {
+    assert.deepEqual(detectBaseMcpSendIntent(message), {
+      amount: 0.25,
+      amountText: '0.25',
+      recipient: RECIPIENT,
+    });
+  }
+});
+
+test('unrecognized or incomplete transaction commands stay fail-closed', () => {
+  assert.equal(detectBaseMcpSendIntent(`send USDC to ${RECIPIENT}`), null);
+  assert.equal(detectBaseMcpSendIntent(`send 1 USDC near ${RECIPIENT}`), null);
+  assert.equal(detectBaseMcpSendIntent(`send 1 ETH to ${RECIPIENT}`), null);
 });
 
 test('whitelisted recipient receives Base Account CTA metadata without needing wallet ownership', async () => {
@@ -144,11 +156,13 @@ test('send reservation settles only after Base MCP reports completed', async () 
     id = 'base-mcp-dynamic';
     private tools: ToolDef[] = [
       { name: 'send', description: 'Send USDC', inputSchema: { type: 'object' } },
+      { name: 'get_wallets', description: 'Wallets', inputSchema: { type: 'object' } },
       { name: 'get_request_status', description: 'Request status', inputSchema: { type: 'object' } },
     ];
     async listTools() { return this.tools; }
     findTool(name: string) { return this.tools.find((tool) => tool.name === name); }
     async callTool(name: string) {
+      if (name === 'get_wallets') return { content: JSON.stringify({ address: WALLET }), isError: false };
       return name === 'send'
         ? { content: JSON.stringify({ requestId: 'completed-send' }), isError: false }
         : { content: JSON.stringify({ requestId: 'completed-send', status: 'completed', transactionHash: `0x${'a'.repeat(64)}` }), isError: false };
@@ -176,11 +190,13 @@ test('completed status without durable proof never settles the reservation', asy
     id = 'base-mcp-dynamic';
     private tools: ToolDef[] = [
       { name: 'send', description: 'Send USDC', inputSchema: { type: 'object' } },
+      { name: 'get_wallets', description: 'Wallets', inputSchema: { type: 'object' } },
       { name: 'get_request_status', description: 'Request status', inputSchema: { type: 'object' } },
     ];
     async listTools() { return this.tools; }
     findTool(name: string) { return this.tools.find((tool) => tool.name === name); }
     async callTool(name: string) {
+      if (name === 'get_wallets') return { content: JSON.stringify({ address: WALLET }), isError: false };
       return name === 'send'
         ? { content: JSON.stringify({ requestId: 'proofless-send' }), isError: false }
         : { content: JSON.stringify({ requestId: 'proofless-send', status: 'completed' }), isError: false };

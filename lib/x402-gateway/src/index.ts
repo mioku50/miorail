@@ -1540,7 +1540,7 @@ export function createX402BuyerPaidFetch(options: CreateX402BuyerPaidFetchOption
 
 export function createLazyX402BuyerPaidFetch(
   env: NodeJS.ProcessEnv = process.env,
-  options: CreateX402BuyerPayerRuntimeOptions = {},
+  _options: CreateX402BuyerPayerRuntimeOptions = {},
 ): typeof globalThis.fetch {
   const runtime = getDefaultX402BuyerPayerRuntime(env);
   return async (input, init) => {

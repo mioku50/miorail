@@ -93,7 +93,7 @@ authRouter.post('/verify', async (req, res) => {
     return;
   }
 
-  let verified = false;
+  let verified: boolean;
   try {
     verified = await verifyWalletSignature({
       address: challenge.address,

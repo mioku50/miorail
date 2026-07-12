@@ -4,6 +4,7 @@ import { ToolAggregator, type ToolDef, type ToolProvider } from '@mioagent/tools
 import { InMemoryAutonomyPolicyRepository } from '@mioagent/autonomy';
 import { executionSecurityRuntime } from './executionSecurity.js';
 import { baseMcpSwapRuntime, mapBaseMcpSwapArgs, runDirectBaseMcpSwap } from './streamBaseMcpSwapRouting.js';
+import { BASE_MCP_WALLET_UNVERIFIED_ERROR_CODE } from './baseMcpWalletReconciliation.js';
 
 const originalGetProvider = executionSecurityRuntime.getProvider;
 const originalSetHealth = executionSecurityRuntime.setHealth;
@@ -18,7 +19,7 @@ afterEach(() => {
 class BaseSwapProvider implements ToolProvider {
   id = 'base-mcp-dynamic';
   calls: Array<Record<string, unknown>> = [];
-  private tool: ToolDef = {
+  private swapTool: ToolDef = {
     name: 'swap',
     description: 'Base MCP user-confirmed swap',
     inputSchema: {
@@ -31,9 +32,11 @@ class BaseSwapProvider implements ToolProvider {
       required: ['amount', 'fromAsset', 'toAsset'],
     },
   };
-  async listTools() { return [this.tool]; }
-  findTool(name: string) { return name === 'swap' ? this.tool : undefined; }
-  async callTool(_name: string, args: Record<string, unknown>) {
+  private walletTool: ToolDef = { name: 'get_wallets', description: 'Wallets', inputSchema: { type: 'object' } };
+  async listTools() { return [this.swapTool, this.walletTool]; }
+  findTool(name: string) { return [this.swapTool, this.walletTool].find((tool) => tool.name === name); }
+  async callTool(name: string, args: Record<string, unknown>) {
+    if (name === 'get_wallets') return { content: JSON.stringify({ address: '0x1111111111111111111111111111111111111111' }), isError: false };
     this.calls.push(args);
     return {
       content: JSON.stringify({ approvalUrl: 'https://wallet.base.org/approve/test', requestId: 'swap-request-1' }),
@@ -117,6 +120,30 @@ test('unknown canonical USDC verdict blocks Base MCP swap before the tool call',
   assert.equal(provider.calls.length, 0);
 });
 
+test('Base MCP swap blocks before reservation when wallet verification is unavailable', async () => {
+  securityProvider('ok');
+  const repository = await readyPolicy();
+  class UnverifiedSwapProvider implements ToolProvider {
+    id = 'base-mcp-dynamic';
+    calls = 0;
+    private tool: ToolDef = { name: 'swap', description: 'Swap', inputSchema: { type: 'object' } };
+    async listTools() { return [this.tool]; }
+    findTool(name: string) { return name === this.tool.name ? this.tool : undefined; }
+    async callTool() { this.calls += 1; return { content: '{}', isError: false }; }
+  }
+  const provider = new UnverifiedSwapProvider();
+  const tools = new ToolAggregator();
+  tools.registerProvider(provider);
+  const result = await runDirectBaseMcpSwap({
+    message: 'swap 0.1 USDC to ETH',
+    walletAddress: '0x1111111111111111111111111111111111111111',
+    tools, userConfirmedEnabled: true, userId: 'default-user',
+  });
+  assert.equal(result?.errorCode, BASE_MCP_WALLET_UNVERIFIED_ERROR_CODE);
+  assert.equal(provider.calls, 0);
+  assert.equal((await repository.getByUser('default-user', 8453))?.reservedToday, 0);
+});
+
 test('requestId-only swap polls Base MCP request status and stays pending until confirmed', async () => {
   securityProvider('ok');
   await readyPolicy();
@@ -125,11 +152,13 @@ test('requestId-only swap polls Base MCP request status and stays pending until 
     calls: string[] = [];
     private tools: ToolDef[] = [
       { name: 'swap', description: 'Swap', inputSchema: { type: 'object' } },
+      { name: 'get_wallets', description: 'Wallets', inputSchema: { type: 'object' } },
       { name: 'get_request_status', description: 'Status', inputSchema: { type: 'object', properties: { requestId: {} } } },
     ];
     async listTools() { return this.tools; }
     findTool(name: string) { return this.tools.find((tool) => tool.name === name); }
     async callTool(name: string) {
+      if (name === 'get_wallets') return { content: JSON.stringify({ address: '0x1111111111111111111111111111111111111111' }), isError: false };
       this.calls.push(name);
       return name === 'swap'
         ? { content: JSON.stringify({ request_id: 'swap-request-only' }), isError: false }
@@ -159,10 +188,14 @@ test('inputSchema=null uses the canonical live fromAsset/toAsset payload without
   class NullSchemaSwapProvider implements ToolProvider {
     id = 'base-mcp-dynamic';
     calls: Record<string, unknown>[] = [];
-    private tool = { name: 'swap', description: 'Requires fromAsset, toAsset, amount', inputSchema: null as any };
-    async listTools() { return [this.tool]; }
-    findTool(name: string) { return name === 'swap' ? this.tool : undefined; }
-    async callTool(_name: string, args: Record<string, unknown>) {
+    private tools = [
+      { name: 'swap', description: 'Requires fromAsset, toAsset, amount', inputSchema: null as any },
+      { name: 'get_wallets', description: 'Wallets', inputSchema: { type: 'object' } },
+    ];
+    async listTools() { return this.tools; }
+    findTool(name: string) { return this.tools.find((tool) => tool.name === name); }
+    async callTool(name: string, args: Record<string, unknown>) {
+      if (name === 'get_wallets') return { content: JSON.stringify({ address: '0x1111111111111111111111111111111111111111' }), isError: false };
       this.calls.push(args);
       return { content: JSON.stringify({ approvalUrl: 'https://wallet.base.org/approve/null-schema', requestId: 'null-schema' }), isError: false };
     }
@@ -203,13 +236,17 @@ test('unmappable required swap schema fails before calling Base MCP', async () =
   class UnsafeSchemaProvider implements ToolProvider {
     id = 'base-mcp-dynamic';
     calls = 0;
-    private tool: ToolDef = {
+    private swapTool: ToolDef = {
       name: 'swap', description: 'Unknown schema',
       inputSchema: { type: 'object', properties: { sourceCoin: {}, targetCoin: {}, amount: {} }, required: ['sourceCoin', 'targetCoin', 'amount'] },
     };
-    async listTools() { return [this.tool]; }
-    findTool(name: string) { return name === 'swap' ? this.tool : undefined; }
-    async callTool() { this.calls += 1; return { content: '{}', isError: false }; }
+    private walletTool: ToolDef = { name: 'get_wallets', description: 'Wallets', inputSchema: { type: 'object' } };
+    async listTools() { return [this.swapTool, this.walletTool]; }
+    findTool(name: string) { return [this.swapTool, this.walletTool].find((tool) => tool.name === name); }
+    async callTool(name: string) {
+      if (name === 'get_wallets') return { content: JSON.stringify({ address: '0x1111111111111111111111111111111111111111' }), isError: false };
+      this.calls += 1; return { content: '{}', isError: false };
+    }
   }
   const provider = new UnsafeSchemaProvider();
   const tools = new ToolAggregator();
@@ -228,13 +265,17 @@ test('successful protected tool call without approval reference is released and 
   const repository = await readyPolicy();
   class ReferenceMissingProvider implements ToolProvider {
     id = 'base-mcp-dynamic';
-    private tool: ToolDef = {
+    private swapTool: ToolDef = {
       name: 'swap', description: 'Swap',
       inputSchema: { type: 'object', properties: { amount: {}, fromAsset: {}, toAsset: {} }, required: ['amount', 'fromAsset', 'toAsset'] },
     };
-    async listTools() { return [this.tool]; }
-    findTool(name: string) { return name === 'swap' ? this.tool : undefined; }
-    async callTool() { return { content: JSON.stringify({ ok: true, access_token: 'must-never-be-logged' }), isError: false }; }
+    private walletTool: ToolDef = { name: 'get_wallets', description: 'Wallets', inputSchema: { type: 'object' } };
+    async listTools() { return [this.swapTool, this.walletTool]; }
+    findTool(name: string) { return [this.swapTool, this.walletTool].find((tool) => tool.name === name); }
+    async callTool(name: string) {
+      if (name === 'get_wallets') return { content: JSON.stringify({ address: '0x1111111111111111111111111111111111111111' }), isError: false };
+      return { content: JSON.stringify({ ok: true, access_token: 'must-never-be-logged' }), isError: false };
+    }
   }
   const tools = new ToolAggregator();
   tools.registerProvider(new ReferenceMissingProvider());

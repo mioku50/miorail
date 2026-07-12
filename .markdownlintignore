@@ -2,6 +2,10 @@ node_modules
 dist
 build
 CHANGELOG.md
+# Vendored Foundry sources and packaged third-party runtime instructions retain
+# their upstream Markdown formatting.
+contracts/lib
+lib/runtime-skills/plugins
 # Untracked user spec/roadmap docs (not part of the repo; left as-is on purpose).
 agent_tasks.md
 Base Agent — Канонический спек (OrbitLab-киллер на  c115ec9754214d0bbf53c28557f79d09 (1).md

@@ -6,6 +6,7 @@ import { useNetworkLabel } from '../../lib/useNetworkLabel';
 import { ChatMessage } from './ChatMessage';
 import { AgentComposer } from './AgentComposer';
 import { baseMcpConnectHref, baseMcpConnectLabel, baseMcpNeedsAuth, baseMcpOAuthResultMessage } from '../../lib/format';
+import { deriveComposerExecutionMode } from './agentComposerState';
 
 const PROMPT_CHIPS = [
   'Check my Base balance',
@@ -37,11 +38,10 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
   reconciliationMutationRef.current = reconcileTransactions;
   const oauthParams = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search);
   const oauthMessage = baseMcpOAuthResultMessage(oauthParams?.get('mcp'), oauthParams?.get('code'), oauthParams?.get('mcpWallet'));
-  const executionMode = statusData?.execution?.mode === 'user-confirmed'
-    && statusData.execution.userConfirmedEnabled === true
-    && autonomyState?.sessionKey?.executionReady === true
-      ? 'user-confirmed' as const
-      : 'read-only' as const;
+  const executionMode = deriveComposerExecutionMode(statusData?.execution);
+  const policyConfigured = autonomyState?.sessionKey?.source === 'database'
+    && autonomyState.sessionKey.status === 'configured'
+    && autonomyState.sessionKey.killSwitch !== true;
 
   const messages = chatData?.messages || [];
   const displayMessages = messages;
@@ -243,6 +243,7 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
         errorMsg={errorMsg}
         onClearError={() => setErrorMsg(null)}
         executionMode={executionMode}
+        policyConfigured={policyConfigured}
       />
     </aside>
   );

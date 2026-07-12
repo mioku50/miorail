@@ -67,6 +67,31 @@ test('simple balance reads route to Base MCP and do not match recommendation lan
   assert.deepEqual(result?.toolCalls[0].result, { status: 'success' });
 });
 
+test('read-only Base MCP portfolio continues when wallet reconciliation is unavailable', async () => {
+  class PortfolioOnlyProvider implements ToolProvider {
+    id = 'base-mcp-dynamic';
+    calls: string[] = [];
+    private tool: ToolDef = { name: 'get_portfolio', description: 'Portfolio read', inputSchema: { type: 'object' } };
+    async listTools() { return [this.tool]; }
+    findTool(name: string) { return name === this.tool.name ? this.tool : undefined; }
+    async callTool(name: string) {
+      this.calls.push(name);
+      return { content: JSON.stringify({ tokens: [{ symbol: 'USDC', balance: '7' }] }), isError: false };
+    }
+  }
+  const provider = new PortfolioOnlyProvider();
+  const tools = new ToolAggregator();
+  tools.registerProvider(provider);
+  const result = await runDirectStreamRead({
+    message: 'check my balance',
+    walletAddress: '0x2222222222222222222222222222222222222222',
+    tools,
+  });
+  assert.equal(result?.errorCode, undefined);
+  assert.deepEqual(provider.calls, ['get_portfolio']);
+  assert.match(result?.content || '', /USDC/);
+});
+
 test('Morpho USDC opportunity request uses the dedicated read-only tool', async () => {
   const provider = new ReadProvider();
   const tools = new ToolAggregator();

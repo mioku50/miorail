@@ -142,7 +142,7 @@ test('Agent prompt receives user-scoped Base inventory and read-only Base runtim
   const originalGetUserSettings = MemoryService.getUserSettings;
   MemoryService.getUserSettings = async () => null;
   try {
-    for await (const _event of agent.chatStream('test-user', 'what can you read?')) { /* exhaust */ }
+    for await (const event of agent.chatStream('test-user', 'what can you read?')) { void event; }
     assert.match(systemPrompt, /chain=base, chainId=8453, executionMode=read-only/);
     assert.match(systemPrompt, /Enabled Base MCP read tools: get_portfolio/);
     assert.match(systemPrompt, /before claiming.*unavailable/i);
@@ -233,7 +233,7 @@ test('LLM tool list never contains send_calls, swap, moonwell_prepare_* or web_r
       toolAggregator: tools,
       runtimeContext: { chain: 'base', chainId: 8453, executionMode: 'user-confirmed' },
     });
-    for await (const _event of agent.chatStream('test-user', 'what can you read?')) { /* exhaust */ }
+    for await (const event of agent.chatStream('test-user', 'what can you read?')) { void event; }
     assert.ok(exposedTools.includes('get_portfolio'));
     assert.ok(exposedTools.includes('moonwell_get_markets'));
     for (const forbidden of ['send_calls', 'swap', 'moonwell_prepare_supply', 'moonwell_prepare_borrow', 'web_request']) {
@@ -246,7 +246,7 @@ test('LLM tool list never contains send_calls, swap, moonwell_prepare_* or web_r
       toolAggregator: tools,
       runtimeContext: { chain: 'base', chainId: 8453, executionMode: 'user-confirmed', providerNamespace: 'moonwell' },
     });
-    for await (const _event of scoped.chatStream('test-user', 'what moonwell data can you read?')) { /* exhaust */ }
+    for await (const event of scoped.chatStream('test-user', 'what moonwell data can you read?')) { void event; }
     assert.deepStrictEqual(exposedTools, ['moonwell_get_markets']);
 
     // Read-only runtime keeps the same invariant.
@@ -255,7 +255,7 @@ test('LLM tool list never contains send_calls, swap, moonwell_prepare_* or web_r
       toolAggregator: tools,
       runtimeContext: { chain: 'base', chainId: 8453, executionMode: 'read-only' },
     });
-    for await (const _event of readOnly.chatStream('test-user', 'what can you read?')) { /* exhaust */ }
+    for await (const event of readOnly.chatStream('test-user', 'what can you read?')) { void event; }
     for (const forbidden of ['send_calls', 'swap', 'moonwell_prepare_supply', 'moonwell_prepare_borrow', 'web_request']) {
       assert.strictEqual(exposedTools.includes(forbidden), false, `${forbidden} must never reach the LLM in read-only mode`);
     }

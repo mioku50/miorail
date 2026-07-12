@@ -3,6 +3,7 @@ import test, { afterEach } from 'node:test';
 import { InMemoryAutonomyPolicyRepository } from '@mioagent/autonomy';
 import { ToolAggregator, type ToolDef, type ToolProvider } from '@mioagent/tools';
 import {
+  BASE_MCP_WALLET_UNVERIFIED_ERROR_CODE,
   extractWalletAddresses,
   verifyBaseMcpWalletMatch,
 } from './baseMcpWalletReconciliation.js';
@@ -143,5 +144,36 @@ test('runDirectBaseMcpSend blocks on a verified Base MCP wallet mismatch', async
   });
   assert.equal(result?.errorCode, 'base_mcp_wallet_mismatch');
   assert.match(result?.content || '', /Reconnect Base MCP with the same account/);
+  assert.equal((await repository.getByUser('default-user', 8453))?.reservedToday, 0);
+});
+
+test('runDirectBaseMcpSend blocks when the Base MCP wallet cannot be verified', async () => {
+  executionSecurityRuntime.getProvider = () => ({
+    providerName: 'goplus', status: 'partial', statusCode: 'partial', authMode: 'public',
+    provider: { async getTokenSecurity({ tokenAddresses }: { tokenAddresses: string[] }) {
+      return tokenAddresses.map((address) => ({
+        address, provider: 'goplus' as const, status: 'ok' as const,
+        flags: {}, rawRiskLabels: [], summary: 'usable',
+      }));
+    } },
+  }) as any;
+  const repository = new InMemoryAutonomyPolicyRepository();
+  await repository.configure({
+    userId: 'default-user', chainId: 8453, walletAddress: TENANT,
+    dailyLimit: 10, maxPerAction: 2, whitelist: [RECIPIENT], scope: 'bounded-approval',
+    expiresAt: Date.now() + 60_000, mainnetOptIn: true,
+  });
+  baseMcpSendRuntime.getRepository = () => repository;
+
+  const sendTool: ToolDef = { name: 'send', description: 'Send', inputSchema: { type: 'object' } };
+  const provider = new FakeWalletProvider(null, false, [sendTool]);
+  const tools = new ToolAggregator();
+  tools.registerProvider(provider);
+  const result = await runDirectBaseMcpSend({
+    message: `send 0.25 USDC to ${RECIPIENT}`,
+    walletAddress: TENANT, tools, userConfirmedEnabled: true, userId: 'default-user',
+  });
+
+  assert.equal(result?.errorCode, BASE_MCP_WALLET_UNVERIFIED_ERROR_CODE);
   assert.equal((await repository.getByUser('default-user', 8453))?.reservedToday, 0);
 });

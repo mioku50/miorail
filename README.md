@@ -323,7 +323,7 @@ The user should understand not only **what** the agent wants to do, but **why** 
 
 ---
 
-## Target feature map
+## Target feature map (русская версия)
 
 | Area | Target behavior |
 | --- | --- |
@@ -398,7 +398,7 @@ Make it usable where Base users already live:
 
 ---
 
-## Current MVP status
+## Current MVP status (русская версия)
 
 The current MVP already demonstrates the foundation:
 
@@ -414,7 +414,7 @@ This is not the final product yet. The current version proves the architecture a
 
 ---
 
-## Safety notice
+## Safety notice (русская версия)
 
 Miorail is an experimental MVP.
 
@@ -422,9 +422,9 @@ Do not use it with real funds until the wallet approval flow, action simulation,
 
 ---
 
-# Русская версия
+## Русская версия
 
-# Miorail
+### Miorail (русская версия)
 
 **Miorail** — это Base-native AI command center для пользователей, которым нужен агент, способный следить за рынком, понимать их предпочтения, готовить onchain-действия и выполнять их только внутри заранее заданных границ безопасности.
 

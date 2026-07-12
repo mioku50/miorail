@@ -32,7 +32,9 @@ function sanitize(value: unknown, depth = 0): unknown {
   if (depth > 8) return '[truncated]';
   if (Array.isArray(value)) return value.slice(0, 100).map((item) => sanitize(item, depth + 1));
   if (!value || typeof value !== 'object') {
-    return typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 10_000) : value;
+    return typeof value === 'string'
+      ? [...value].map((char) => char.charCodeAt(0) <= 31 || char.charCodeAt(0) === 127 ? ' ' : char).join('').slice(0, 10_000)
+      : value;
   }
   const output: Record<string, unknown> = {};
   for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {

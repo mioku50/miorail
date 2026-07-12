@@ -47,7 +47,7 @@ capabilities: dataSuffix
 
 ## Setup
 
-1. Register at https://base.dev > Settings > Builder Codes to obtain a `bc_…` code.
+1. Register at <https://base.dev> > Settings > Builder Codes to obtain a `bc_…` code.
 2. Set the env var for each surface:
    - `artifacts/interface/.env` → `VITE_BUILDER_CODE=bc_yourcode`
    - `artifacts/miniapp/.env` → `NEXT_PUBLIC_BUILDER_CODE=bc_yourcode`
@@ -59,7 +59,7 @@ capabilities: dataSuffix
   counts appear after confirmed transactions.
 - On Basescan, inspect a confirmed tx's input data: the last 16 bytes are
   `8021` repeating when attribution is attached.
-- Validator: https://builder-code-checker.vercel.app/
+- Validator: <https://builder-code-checker.vercel.app/>
 
 ## Rule
 

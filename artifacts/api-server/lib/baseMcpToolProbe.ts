@@ -85,7 +85,11 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
 
 function sanitizeText(value: unknown, maxLength: number): string | undefined {
   if (typeof value !== 'string') return undefined;
-  const normalized = value.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+  const normalized = [...value]
+    .map((char) => char.charCodeAt(0) <= 31 || char.charCodeAt(0) === 127 ? ' ' : char)
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (!normalized) return undefined;
   return normalized.slice(0, maxLength);
 }

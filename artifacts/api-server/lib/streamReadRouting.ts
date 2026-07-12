@@ -104,7 +104,9 @@ export function sanitizeStreamToolArgs(value: unknown, depth = 0): unknown {
   if (depth > 6) return '[truncated]';
   if (Array.isArray(value)) return value.slice(0, 50).map((item) => sanitizeStreamToolArgs(item, depth + 1));
   if (!value || typeof value !== 'object') {
-    return typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 500) : value;
+    return typeof value === 'string'
+      ? [...value].map((char) => char.charCodeAt(0) <= 31 || char.charCodeAt(0) === 127 ? ' ' : char).join('').slice(0, 500)
+      : value;
   }
   const output: Record<string, unknown> = {};
   for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {

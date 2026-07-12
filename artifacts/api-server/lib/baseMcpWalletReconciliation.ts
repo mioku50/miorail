@@ -1,8 +1,9 @@
 // T44: Base MCP is an OAuth integration into a Base Account that may not be
 // the wallet authenticated in the SIWE session. `get_wallets` was previously
 // used only as an address fallback and never reconciled against the tenant
-// wallet. This helper verifies the two agree; callers decide what a mismatch
-// means (OAuth callback: warn but keep the connection; send/swap: block).
+// wallet. This helper verifies the two agree; callers apply intent-specific
+// policy (OAuth/read: tolerate unavailable verification; send/swap: require a
+// positive checked+match verdict).
 
 import {
   BaseMcpClient,
@@ -14,6 +15,9 @@ import { createBaseMcpOAuthProviderForUser } from './baseMcpOAuthStore.js';
 export const BASE_MCP_WALLET_MISMATCH_ERROR_CODE = 'base_mcp_wallet_mismatch';
 export const BASE_MCP_WALLET_MISMATCH_MESSAGE =
   'Base MCP connected to a different wallet than your session wallet. Reconnect Base MCP with the same account.';
+export const BASE_MCP_WALLET_UNVERIFIED_ERROR_CODE = 'base_mcp_wallet_unverified';
+export const BASE_MCP_WALLET_UNVERIFIED_MESSAGE =
+  'Base MCP wallet could not be verified against your session wallet. Reconnect Base MCP and retry.';
 
 const ADDRESS_PATTERN = /0x[a-fA-F0-9]{40}/g;
 
@@ -62,9 +66,8 @@ function compare(tenantAddress: string, mcpAddresses: string[]): BaseMcpWalletMa
 /**
  * Calls Base MCP `get_wallets` through the given client and compares the
  * returned addresses (lowercased) with the tenant/session wallet. A missing
- * tool or a failed call returns `checked: false, match: true` — only a
- * VERIFIED mismatch should block anything; an unverifiable state must not
- * break read paths or OAuth.
+ * tool or a failed call returns `checked: false`. Read paths and OAuth may
+ * continue, but transaction routes must require checked=true and match=true.
  */
 export async function verifyBaseMcpWalletMatch(
   client: WalletToolCaller | WalletSdkClient,

@@ -551,7 +551,7 @@ export async function fetchInternalPortfolio(address: string, chainEnv: string =
   }
 
   // --- Token prices (cached + budget-guarded) ---
-  const { provider: priceProvider, status: priceStatusText, statusCode: priceStatusCode, providerName: priceProviderName } = getPriceProviderFromEnv();
+  const { provider: priceProvider, statusCode: priceStatusCode, providerName: priceProviderName } = getPriceProviderFromEnv();
   let pricesStatus: "connected" | "missing" | "failed" | "partial" | "disabled" = priceStatusCode;
 
   if (priceProvider && priceProviderName !== 'none') {
@@ -974,8 +974,8 @@ export function analyzeApprovalsForRisk(
       }
     }
 
-    let riskLevel: "critical" | "high" | "medium" | "low" = "low";
-    let reason = "Well-known protocol with limited spend access.";
+    let riskLevel: "critical" | "high" | "medium" | "low";
+    let reason: string;
 
     if (isZero) {
       riskLevel = "low";

@@ -121,7 +121,7 @@ suite('Approval Providers', () => {
   test('getApprovalProviderFromEnv returns none by default', () => {
     delete process.env.APPROVAL_PROVIDER;
     delete process.env.MORALIS_API_KEY;
-    const { provider, status, statusCode, providerName } = getApprovalProviderFromEnv();
+    const { provider, statusCode, providerName } = getApprovalProviderFromEnv();
     assert.strictEqual(providerName, 'none');
     assert.strictEqual(statusCode, 'missing');
     assert.ok(provider instanceof NoneApprovalProvider);

@@ -1,6 +1,6 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
-import { db, client, closeDb } from './index';
+import { db, closeDb } from './index';
 
 import {
   users,
