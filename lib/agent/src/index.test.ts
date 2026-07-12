@@ -199,6 +199,73 @@ test('read-only Agent without an explicit provider cannot call partner tools', a
   }
 });
 
+test('LLM tool list never contains send_calls, swap, moonwell_prepare_* or web_request', async () => {
+  let exposedTools: string[] = [];
+  const makeLlm = () => new MockLlmProvider((req: LlmRequest) => {
+    exposedTools = (req.tools || []).map((tool) => tool.function.name);
+    return 'Read-only inventory acknowledged.';
+  });
+  const tools = new ToolAggregator();
+  class WriteHeavyProvider implements ToolProvider {
+    id = 'base-mcp-dynamic';
+    async listTools(): Promise<ToolDef[]> {
+      return [
+        { name: 'get_portfolio', description: 'Read portfolio', inputSchema: { type: 'object' } },
+        { name: 'send_calls', description: 'Send batched calls', inputSchema: { type: 'object' } },
+        { name: 'swap', description: 'Swap tokens', inputSchema: { type: 'object' } },
+        { name: 'moonwell_get_markets', description: 'Moonwell markets', inputSchema: { type: 'object' } },
+        { name: 'moonwell_prepare_supply', description: 'Prepare supply', inputSchema: { type: 'object' } },
+        { name: 'moonwell_prepare_borrow', description: 'Prepare borrow', inputSchema: { type: 'object' } },
+        { name: 'web_request', description: 'Arbitrary HTTP request', inputSchema: { type: 'object' } },
+      ];
+    }
+    findTool() { return undefined; }
+    async callTool() { return { content: '{}', isError: false }; }
+  }
+  tools.registerProvider(new WriteHeavyProvider());
+  const { MemoryService } = await import('@mioagent/memory');
+  const originalGetUserSettings = MemoryService.getUserSettings;
+  MemoryService.getUserSettings = async () => null;
+  try {
+    // Unscoped user-confirmed runtime: reads only.
+    const agent = new Agent({
+      llmProvider: makeLlm(),
+      toolAggregator: tools,
+      runtimeContext: { chain: 'base', chainId: 8453, executionMode: 'user-confirmed' },
+    });
+    for await (const _event of agent.chatStream('test-user', 'what can you read?')) { /* exhaust */ }
+    assert.ok(exposedTools.includes('get_portfolio'));
+    assert.ok(exposedTools.includes('moonwell_get_markets'));
+    for (const forbidden of ['send_calls', 'swap', 'moonwell_prepare_supply', 'moonwell_prepare_borrow', 'web_request']) {
+      assert.strictEqual(exposedTools.includes(forbidden), false, `${forbidden} must never reach the LLM`);
+    }
+
+    // Moonwell-scoped runtime: only the moonwell read survives.
+    const scoped = new Agent({
+      llmProvider: makeLlm(),
+      toolAggregator: tools,
+      runtimeContext: { chain: 'base', chainId: 8453, executionMode: 'user-confirmed', providerNamespace: 'moonwell' },
+    });
+    for await (const _event of scoped.chatStream('test-user', 'what moonwell data can you read?')) { /* exhaust */ }
+    assert.deepStrictEqual(exposedTools, ['moonwell_get_markets']);
+
+    // Read-only runtime keeps the same invariant.
+    const readOnly = new Agent({
+      llmProvider: makeLlm(),
+      toolAggregator: tools,
+      runtimeContext: { chain: 'base', chainId: 8453, executionMode: 'read-only' },
+    });
+    for await (const _event of readOnly.chatStream('test-user', 'what can you read?')) { /* exhaust */ }
+    for (const forbidden of ['send_calls', 'swap', 'moonwell_prepare_supply', 'moonwell_prepare_borrow', 'web_request']) {
+      assert.strictEqual(exposedTools.includes(forbidden), false, `${forbidden} must never reach the LLM in read-only mode`);
+    }
+  } finally {
+    MemoryService.getUserSettings = originalGetUserSettings;
+    const { closeDb } = await import('@mioagent/db');
+    await closeDb();
+  }
+});
+
 test('Agent provider scope exposes only matching tools and blocks a cross-provider hallucination', async () => {
   let exposedTools: string[] = [];
   let systemPrompt = '';

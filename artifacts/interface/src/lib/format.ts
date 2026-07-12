@@ -38,9 +38,9 @@ export function baseMcpHint(baseMcp?: any): string | null {
   if (!baseMcp) return null;
   if (baseMcp.readiness === 'oauth_connected' && !baseMcp.usable) return 'OAuth is connected, but no usable tools were verified. Reconnect Base MCP and retry.';
   if (baseMcp.readiness === 'degraded') return `Base MCP is degraded${baseMcp.errorCode ? ` (${baseMcp.errorCode})` : ''}.`;
-  if (baseMcp.status === 'needs_reauth' || baseMcp.status === 'needs_auth') return 'Base MCP is configured. Connect Base MCP to authorize user-scoped tools.';
+  if (baseMcp.status === 'needs_reauth' || baseMcp.status === 'needs_auth') return 'Optional: connect Base MCP to enable portfolio, send and swap via Base.';
   if (baseMcp.status !== 'missing') return null;
-  if (baseMcp.configured && baseMcp.enabled) return 'Base MCP is optional. Connect Base Account to enable user-scoped tool status.';
+  if (baseMcp.configured && baseMcp.enabled) return 'Optional: connect Base MCP to enable portfolio, send and swap via Base.';
   return 'Base MCP is optional. Configure BASE_MCP_SERVER_URL to enable tool status.';
 }
 
@@ -63,7 +63,13 @@ export function baseMcpConnectHref(returnTo = '/base-mcp'): string {
   return `/api/mcp/base/connect?returnTo=${encodeURIComponent(safeReturnTo)}`;
 }
 
-export function baseMcpOAuthResultMessage(result?: string | null, code?: string | null): { kind: 'success' | 'warn' | 'error'; text: string } | null {
+export function baseMcpOAuthResultMessage(result?: string | null, code?: string | null, wallet?: string | null): { kind: 'success' | 'warn' | 'error'; text: string } | null {
+  if (result === 'connected' && wallet === 'mismatch') {
+    return {
+      kind: 'warn',
+      text: 'Base MCP connected to a different wallet than your session wallet. Reconnect Base MCP with the same account to enable send and swap.',
+    };
+  }
   if (result === 'connected') {
     return { kind: 'success', text: 'Base MCP connected. User-scoped tools are authorized.' };
   }

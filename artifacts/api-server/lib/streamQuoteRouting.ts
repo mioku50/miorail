@@ -137,6 +137,9 @@ export async function runDirectQuoteRead(input: {
     };
   }
 
+  // T44 invariant: the SIWE session address is authoritative. get_wallets is
+  // only a fallback when NO session address exists — a Base MCP address never
+  // substitutes or overrides the session wallet.
   let walletAddress = input.walletAddress;
   if (!walletAddress) {
     const walletTool = inventory.find((tool) => tool.name === 'get_wallets');

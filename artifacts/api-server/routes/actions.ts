@@ -28,8 +28,9 @@ import {
 import { buildActionPlan, planHasCalls, parseRevokeApproval, findActiveApproval } from '../lib/actionPlan.js';
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
 import { evaluateExecutableAction, screenAction, simulateTrade } from '@mioagent/security';
+import { isMoonwellActionType } from '@mioagent/security/moonwellGuard';
 import { normalizeBaseChain } from '@mioagent/security/baseGuards';
-import { isProductionActionType } from '@mioagent/api-zod';
+import { isProductionActionType, type ProductionActionType } from '@mioagent/api-zod';
 import { MemoryService } from '@mioagent/memory';
 import { getSystemStatus } from './status.js';
 import { getAutonomousExecutionGateway, getAutonomyPolicyRepository } from '../lib/autonomyGateway.js';
@@ -626,8 +627,9 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
       return res.status(400).json({ success: false, error: 'Action is not pending' });
     }
 
-    // Extract execution payload (same logic as /execute).
-    let payload: { chain: string; actionType?: 'revoke_approval' | 'limited_transfer'; calls: { to: string; value?: string; data?: string }[] };
+    // Extract execution payload (same logic as /execute). T44b: the whitelist
+    // now includes moonwell_* verbs (validated by the strict Moonwell guard).
+    let payload: { chain: string; actionType?: ProductionActionType; calls: { to: string; value?: string; data?: string }[] };
     try {
       const raw = action.executionPayload;
       const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
@@ -671,6 +673,12 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
     const meta = (action.metadata || {}) as any;
     const instruction = meta.instruction || action.suggestedPrompt || '';
     const memoryMd = (await MemoryService.getUserSettings(userId).catch(() => null))?.memoryMd || null;
+    // T44b: the Moonwell context (prepared amount) comes ONLY from the
+    // server-stored action metadata written by streamMoonwellWriteRouting —
+    // never from the client request.
+    const moonwellContext = isMoonwellActionType(payload.actionType) && meta.moonwell?.amountDecimal
+      ? { amountDecimal: String(meta.moonwell.amountDecimal) }
+      : undefined;
     const executionSecurity = await actionsRouteRuntime.loadExecutionSecurityContext(
       normalizedChain.chainId,
       payload.actionType,
@@ -684,6 +692,7 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
       memoryMd,
       providerContext: executionSecurity.providerContext,
       tokenSecurity: executionSecurity.tokenSecurity,
+      ...(moonwellContext ? { moonwell: moonwellContext } : {}),
     });
     const screenRes = guardResult.screening || {
       allowed: false,
@@ -779,6 +788,7 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
         memoryMd,
         providerContext: executionSecurity.providerContext,
         tokenSecurity: executionSecurity.tokenSecurity,
+        ...(moonwellContext ? { moonwell: moonwellContext } : {}),
       });
       if (!gatewayResult.success || !gatewayResult.reservation || !gatewayResult.policy || !gatewayResult.sendCallsRequest) {
         return res.json(PrepareActionResponseSchema.parse({

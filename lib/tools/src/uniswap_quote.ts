@@ -1,4 +1,5 @@
 import type { ToolDef, ToolProvider } from './provider.js';
+import { partnerFetch } from '@mioagent/security/httpAllowlist';
 
 const QUOTE_ENDPOINT = 'https://trade-api.gateway.uniswap.org/v1/quote';
 const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
@@ -155,8 +156,6 @@ export class UniswapQuoteToolProvider implements ToolProvider {
       return { content: JSON.stringify({ errorCode: 'uniswap_quote_invalid_slippage' }), isError: true };
     }
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs());
     try {
       const body: Record<string, unknown> = {
         type: 'EXACT_INPUT',
@@ -170,7 +169,7 @@ export class UniswapQuoteToolProvider implements ToolProvider {
         routingPreference: 'BEST_PRICE',
         ...(requestedSlippage === undefined ? { autoSlippage: 'DEFAULT' } : { slippageTolerance: requestedSlippage }),
       };
-      const response = await this.fetchImpl(this.endpoint, {
+      const response = await partnerFetch(this.endpoint, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -178,8 +177,7 @@ export class UniswapQuoteToolProvider implements ToolProvider {
           'x-permit2-disabled': 'true',
         },
         body: JSON.stringify(body),
-        signal: controller.signal,
-      });
+      }, { timeoutMs: timeoutMs(), fetchImpl: this.fetchImpl });
       if (!response.ok) throw new Error(`uniswap_quote_http_${response.status}`);
       const payload = await response.json() as Record<string, any>;
       const normalized = normalizeQuoteResponse({ payload, amountInRaw, tokenIn, tokenOut, requestedSlippage: requestedSlippage ?? undefined });
@@ -187,8 +185,6 @@ export class UniswapQuoteToolProvider implements ToolProvider {
       return { content: JSON.stringify(normalized), isError: false };
     } catch (error) {
       return { content: JSON.stringify({ errorCode: errorCode(error) }), isError: true };
-    } finally {
-      clearTimeout(timer);
     }
   }
 }

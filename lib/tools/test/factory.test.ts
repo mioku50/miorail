@@ -6,6 +6,68 @@ import { NativeToolProvider } from '../src/native.js';
 import { MockCoinGeckoProvider, RealCoinGeckoProvider, MockMoralisProvider, RealMoralisProvider } from '@mioagent/data-providers';
 import { classifyDynamicBaseMcpTools } from '../src/dynamic_base_mcp.js';
 
+describe('createToolAggregatorForUser Moonwell registration', () => {
+    test('registers the Moonwell HTTP provider outside Sepolia when requested', async () => {
+        const mockGetSettings = mock.method(settingsAPI, 'getUserSettings', async () => ({ protocolToggles: {} }));
+        const mockGetDecryptedKey = mock.method(settingsAPI, 'getDecryptedKey', async () => null);
+        const previousChainEnv = process.env.CHAIN_ENV;
+        process.env.CHAIN_ENV = 'mainnet';
+        try {
+            const aggregator = await createToolAggregatorForUser('u1', 'secret', { includeMoonwell: true });
+            assert.ok(aggregator['providers'].has('moonwell-http'));
+        } finally {
+            process.env.CHAIN_ENV = previousChainEnv;
+            mockGetSettings.mock.restore();
+            mockGetDecryptedKey.mock.restore();
+        }
+    });
+
+    test('does not register Moonwell on Sepolia even when requested', async () => {
+        const mockGetSettings = mock.method(settingsAPI, 'getUserSettings', async () => ({ protocolToggles: {} }));
+        const mockGetDecryptedKey = mock.method(settingsAPI, 'getDecryptedKey', async () => null);
+        const previousChainEnv = process.env.CHAIN_ENV;
+        process.env.CHAIN_ENV = 'sepolia';
+        try {
+            const aggregator = await createToolAggregatorForUser('u1', 'secret', { includeMoonwell: true });
+            assert.equal(aggregator['providers'].has('moonwell-http'), false);
+        } finally {
+            process.env.CHAIN_ENV = previousChainEnv;
+            mockGetSettings.mock.restore();
+            mockGetDecryptedKey.mock.restore();
+        }
+    });
+
+    test('does not register Moonwell when the protocol toggle is disabled', async () => {
+        const mockGetSettings = mock.method(settingsAPI, 'getUserSettings', async () => ({ protocolToggles: { moonwell: false } }));
+        const mockGetDecryptedKey = mock.method(settingsAPI, 'getDecryptedKey', async () => null);
+        const previousChainEnv = process.env.CHAIN_ENV;
+        process.env.CHAIN_ENV = 'mainnet';
+        try {
+            const aggregator = await createToolAggregatorForUser('u1', 'secret', { includeMoonwell: true });
+            assert.equal(aggregator['providers'].has('moonwell-http'), false);
+        } finally {
+            process.env.CHAIN_ENV = previousChainEnv;
+            mockGetSettings.mock.restore();
+            mockGetDecryptedKey.mock.restore();
+        }
+    });
+
+    test('does not register Moonwell when not requested by the caller', async () => {
+        const mockGetSettings = mock.method(settingsAPI, 'getUserSettings', async () => ({ protocolToggles: {} }));
+        const mockGetDecryptedKey = mock.method(settingsAPI, 'getDecryptedKey', async () => null);
+        const previousChainEnv = process.env.CHAIN_ENV;
+        process.env.CHAIN_ENV = 'mainnet';
+        try {
+            const aggregator = await createToolAggregatorForUser('u1', 'secret', {});
+            assert.equal(aggregator['providers'].has('moonwell-http'), false);
+        } finally {
+            process.env.CHAIN_ENV = previousChainEnv;
+            mockGetSettings.mock.restore();
+            mockGetDecryptedKey.mock.restore();
+        }
+    });
+});
+
 describe('createToolAggregatorForUser', () => {
 
     test('read-only Agent runtime excludes swap and every transaction-capable Base MCP tool', () => {

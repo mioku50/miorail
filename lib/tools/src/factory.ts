@@ -4,6 +4,7 @@ import { BaseMcpToolProvider } from './base_mcp.js';
 import { DynamicBaseMcpToolProvider, listDynamicBaseMcpToolsFromClient, type DynamicBaseMcpTool } from './dynamic_base_mcp.js';
 import { MorphoMcpToolProvider } from './morpho_mcp.js';
 import { UniswapQuoteToolProvider } from './uniswap_quote.js';
+import { MoonwellHttpToolProvider } from './moonwell_http.js';
 import type { BaseMcpOAuthProvider } from '@mioagent/mcp';
 import * as settingsModule from '@mioagent/settings';
 import {
@@ -25,6 +26,7 @@ export interface CreateToolAggregatorOptions {
   baseMcpReadOnlyOnly?: boolean;
   includeMorphoReadOnly?: boolean;
   includeUniswapQuote?: boolean;
+  includeMoonwell?: boolean;
   includeBaseMcpSwap?: boolean;
   includeBaseMcpSend?: boolean;
 }
@@ -139,6 +141,12 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
 
   if (options.includeUniswapQuote && toggles?.uniswap !== false) {
     aggregator.registerProvider(new UniswapQuoteToolProvider());
+  }
+
+  // Moonwell is a plain HTTP API (no MCP server, no API key). It is a Base
+  // mainnet product, so it is only registered outside the Sepolia runtime.
+  if (options.includeMoonwell && toggles?.moonwell !== false && process.env.CHAIN_ENV !== 'sepolia') {
+    aggregator.registerProvider(new MoonwellHttpToolProvider());
   }
 
   if (process.env.CHAIN_ENV === 'sepolia' && !options.baseMcpReadOnlyOnly) {

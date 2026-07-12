@@ -145,6 +145,74 @@ test('enforces whitelist, zero-only revokes and max-per-action', async () => {
   })).status, 'max_per_action_exceeded');
 });
 
+const M_USDC = '0x4444444444444444444444444444444444444444';
+
+function moonwellApprove(usdc = 25): { to: string; data: string; value: string } {
+  return { to: MAINNET_USDC, data: calldata('0x095ea7b3', M_USDC, BigInt(usdc * 1_000_000)), value: '0' };
+}
+
+function moonwellVerb(): { to: string; data: string; value: string } {
+  return { to: M_USDC, data: `0xa0712d68${(25_000_000n).toString(16).padStart(64, '0')}`, value: '0' };
+}
+
+test('T44b: moonwell supply prepares the stored batch and reserves the prepared amount', async () => {
+  const { gateway, repository } = await setup();
+  const calls = [moonwellApprove(25), moonwellVerb()];
+  const result = await gateway.prepare({
+    userId: USER,
+    actionId: 'moonwell-1',
+    chainEnv: 'mainnet',
+    walletAddress: WALLET,
+    actionType: 'moonwell_supply',
+    calls,
+    instruction: 'supply 25 USDC to moonwell',
+    moonwell: { amountDecimal: '25' },
+  });
+
+  assert.equal(result.success, true, result.error);
+  assert.equal(result.status, 'approval_required');
+  assert.equal(result.spendAmountUsdc, 25);
+  assert.equal(result.requiresUserApproval, true);
+  assert.equal(result.broadcasted, false);
+  assert.deepEqual(result.sendCallsRequest?.calls, calls);
+  assert.equal(result.sendCallsRequest?.chainId, '0x2105');
+  assert.equal((await repository.getByUser(USER, 8453))?.reservedToday, 25);
+});
+
+test('T44b: moonwell amounts above maxPerAction fail the reservation', async () => {
+  const { gateway, repository } = await setup();
+  const result = await gateway.prepare({
+    userId: USER,
+    actionId: 'moonwell-over-cap',
+    chainEnv: 'mainnet',
+    walletAddress: WALLET,
+    actionType: 'moonwell_borrow',
+    calls: [{ to: M_USDC, data: `0xc5ebeaec${(76_000_000n).toString(16).padStart(64, '0')}`, value: '0' }],
+    instruction: 'borrow 76 USDC on moonwell',
+    moonwell: { amountDecimal: '76' },
+  });
+  assert.equal(result.success, false);
+  assert.equal(result.status, 'max_per_action_exceeded');
+  assert.equal((await repository.getByUser(USER, 8453))?.reservedToday, 0);
+});
+
+test('T44b: a moonwell batch whose approve mismatches the prepared amount is guard-blocked before reservation', async () => {
+  const { gateway, repository } = await setup();
+  const result = await gateway.prepare({
+    userId: USER,
+    actionId: 'moonwell-bad-approve',
+    chainEnv: 'mainnet',
+    walletAddress: WALLET,
+    actionType: 'moonwell_supply',
+    calls: [moonwellApprove(60), moonwellVerb()],
+    instruction: 'supply 25 USDC to moonwell',
+    moonwell: { amountDecimal: '25' },
+  });
+  assert.equal(result.success, false);
+  assert.equal(result.status, 'moonwell_approve_amount_mismatch');
+  assert.equal((await repository.getByUser(USER, 8453))?.reservedToday, 0);
+});
+
 test('atomic reservations prevent concurrent daily-limit overspend', async () => {
   const { gateway, repository } = await setup({ maxPerAction: 100 });
   const prepare = (actionId: string) => gateway.prepare({

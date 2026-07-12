@@ -12,6 +12,11 @@ import {
   sanitizedBaseMcpResponseShape,
   type BaseMcpApprovalState,
 } from './baseMcpApprovalLifecycle.js';
+import {
+  BASE_MCP_WALLET_MISMATCH_ERROR_CODE,
+  BASE_MCP_WALLET_MISMATCH_MESSAGE,
+  verifyBaseMcpWalletMatch,
+} from './baseMcpWalletReconciliation.js';
 
 const TOKENS: Record<string, string | undefined> = {
   USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
@@ -149,6 +154,18 @@ export async function runDirectBaseMcpSwap(input: {
   const tool = swapToolFromProviderInventory(inventory);
   if (!tool) {
     return { kind: 'base_mcp_swap', content: 'Base MCP swap tools are unavailable.', toolCalls: [], errorCode: 'base_mcp_swap_unavailable' };
+  }
+
+  // T44: a VERIFIED wallet mismatch between the Base MCP account and the
+  // session wallet blocks the swap; an unverifiable get_wallets read does not.
+  const walletMatch = await verifyBaseMcpWalletMatch(input.tools, input.walletAddress);
+  if (walletMatch.checked && !walletMatch.match) {
+    return {
+      kind: 'base_mcp_swap',
+      content: BASE_MCP_WALLET_MISMATCH_MESSAGE,
+      toolCalls: [],
+      errorCode: BASE_MCP_WALLET_MISMATCH_ERROR_CODE,
+    };
   }
   const mapped = mapBaseMcpSwapArgs(tool, intent, input.walletAddress);
   if (!mapped.ok) {

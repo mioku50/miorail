@@ -17,7 +17,8 @@ import {
   sanitizeReturnTo,
 } from '../lib/baseMcpOAuthStore.js';
 import { probeBaseMcpTools } from '../lib/baseMcpToolProbe.js';
-import { tenantUserId } from '../middleware/tenantAuth';
+import { verifyBaseMcpWalletMatchViaOAuth } from '../lib/baseMcpWalletReconciliation.js';
+import { tenantUserId, tenantWalletAddress } from '../middleware/tenantAuth';
 
 export const mcpBaseRouter = Router();
 
@@ -25,6 +26,7 @@ export const mcpBaseRouteRuntime = {
   auth,
   logger,
   probeBaseMcpTools,
+  verifyBaseMcpWalletMatchViaOAuth,
 };
 
 function sessionSecret(): string {
@@ -201,6 +203,29 @@ mcpBaseRouter.get('/callback', async (req, res) => {
       userId,
       endpointHost: serverUrl.host,
     });
+
+    // T44: reconcile the Base MCP account wallet with the SIWE session wallet.
+    // A mismatch never breaks OAuth — it is surfaced to the UI as a warning
+    // param so the user can reconnect with the right account. Base MCP
+    // send/swap remain blocked separately while the mismatch persists.
+    const walletMatch = await mcpBaseRouteRuntime
+      .verifyBaseMcpWalletMatchViaOAuth({
+        userId,
+        sessionSecret: secret,
+        redirectUrl: callbackUrl(req),
+        serverUrl,
+        tenantAddress: tenantWalletAddress(req),
+      })
+      .catch(() => ({ match: true, mcpAddresses: [], checked: false }));
+    if (walletMatch.checked && !walletMatch.match) {
+      logOAuthEvent('warn', 'base-mcp-oauth-callback-success', {
+        userId,
+        endpointHost: serverUrl.host,
+        walletMismatch: true,
+      });
+      const redirectPath = redirectWithParam(pending.returnTo, 'mcp', 'connected');
+      return res.redirect(redirectWithParam(redirectPath, 'mcpWallet', 'mismatch'));
+    }
     return res.redirect(redirectWithParam(pending.returnTo, 'mcp', 'connected'));
   } catch (error) {
     const errorCode = safeOAuthErrorCode(error);

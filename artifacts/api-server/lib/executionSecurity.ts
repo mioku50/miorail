@@ -10,6 +10,7 @@ import type {
   ExecutionGuardProviderContext,
   ExecutionTokenSecurityResult,
 } from '@mioagent/security';
+import { isMoonwellActionType } from '@mioagent/security/moonwellGuard';
 import { canonicalUsdcForBaseChain } from '@mioagent/security/baseGuards';
 
 export interface ExecutionSecurityContext {
@@ -28,14 +29,22 @@ export async function loadExecutionSecurityContext(
   actionType: ExecutableActionType,
   calls: BaseCall[],
 ): Promise<ExecutionSecurityContext> {
-  const required = chainId === 8453 && actionType === 'limited_transfer';
+  const moonwell = isMoonwellActionType(actionType);
+  const required = chainId === 8453 && (actionType === 'limited_transfer' || moonwell);
   const configured = executionSecurityRuntime.getProvider();
   if (!required) return contextFrom(configured, [], false);
   if (configured.providerName !== 'goplus') return contextFrom(configured, [], true);
 
+  const canonicalUsdc = canonicalUsdcForBaseChain(chainId).toLowerCase();
+  // T44b: Moonwell batches legitimately target protocol contracts, but the
+  // token-security question is always about canonical USDC — a fixed, never
+  // attacker-controlled address, so querying it is safe unconditionally.
+  if (moonwell) {
+    return loadTokenSecurityContext(chainId, [canonicalUsdc]);
+  }
+
   // Never spend an external provider request on attacker-controlled addresses.
   // The unified guard will report the precise structural error afterwards.
-  const canonicalUsdc = canonicalUsdcForBaseChain(chainId).toLowerCase();
   if (calls.length === 0 || calls.some((call) => call.to.toLowerCase() !== canonicalUsdc)) {
     return contextFrom(configured, [], true);
   }

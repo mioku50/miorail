@@ -24,8 +24,9 @@ export function BaseMcpView() {
   const canConnect = !!mcp?.enabled && !!mcp?.configured;
   const capabilityBreakdown = baseMcpCapabilityBreakdown(toolsProbe.data || mcp);
   const connectLabel = baseMcpConnectLabel(mcp);
-  const oauthResult = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('mcp');
-  const oauthMessage = baseMcpOAuthResultMessage(oauthResult);
+  const oauthParams = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search);
+  const oauthResult = oauthParams?.get('mcp') ?? null;
+  const oauthMessage = baseMcpOAuthResultMessage(oauthResult, null, oauthParams?.get('mcpWallet'));
   const oauthClassName = oauthMessage?.kind === 'success'
     ? 'bg-ok-soft border-ok/20 text-ok'
     : oauthMessage?.kind === 'error'
@@ -82,7 +83,7 @@ export function BaseMcpView() {
           <div className="flex flex-col gap-0.5">
             <span className="font-medium text-sm">Base Account OAuth</span>
             <span className="text-xs text-ink-3">
-              {mcp?.auth?.connected ? 'User-scoped MCP tokens are stored server-side.' : 'No user-scoped Base MCP token is active.'}
+              {mcp?.auth?.connected ? 'User-scoped MCP tokens are stored server-side.' : 'Optional: connect Base MCP to enable portfolio, send and swap via Base.'}
             </span>
             {mcp?.lastToolProbeAt && (
               <span className="text-[11px] text-ink-3 font-mono">

@@ -28,6 +28,7 @@ import { useUiStore } from '../../lib/state';
 import { PlugZap } from 'lucide-react';
 import { capabilityLabel, type CapabilityState } from '../../lib/capabilityStatus';
 import { savedPolicyForm, visibleAutonomyBlockedReasons } from '../../lib/autonomyUi';
+import { policyFormBlockers } from '../../lib/policyFormBlockers';
 
 function tbState(s?: string): StateKind {
   if (s === 'connected') return 'live';
@@ -120,8 +121,9 @@ export function ConfigureView({ diagnosticsOnly = false }: { diagnosticsOnly?: b
   const isBaseSepolia = chainId === 84532;
   const isStale = runtimeIsSepolia && (autonomyState?.isStaleTestMemory || autonomyState?.sessionKey?.isStaleTestMemory);
   const isExpired = runtimeIsSepolia && (autonomyState?.isExpiredMemory || autonomyState?.sessionKey?.isExpiredMemory || autonomyState?.status === 'expired' || autonomyState?.sessionKey?.status === 'expired');
-  const mcpOauthResult = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('mcp');
-  const mcpOauthMessage = baseMcpOAuthResultMessage(mcpOauthResult);
+  const mcpOauthParams = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search);
+  const mcpOauthResult = mcpOauthParams?.get('mcp') ?? null;
+  const mcpOauthMessage = baseMcpOAuthResultMessage(mcpOauthResult, null, mcpOauthParams?.get('mcpWallet'));
   const baseMcpBreakdown = baseMcpCapabilityBreakdown(toolsProbe.data || sd?.baseMcp);
   const mcpOauthClassName = mcpOauthMessage?.kind === 'success'
     ? 'bg-ok-soft border-ok/20 text-ok'
@@ -139,6 +141,16 @@ export function ConfigureView({ diagnosticsOnly = false }: { diagnosticsOnly?: b
     && Number(ttlHours) >= 1 / 12;
   const addressesValid = whitelist.length > 0 && whitelist.every((entry) => /^0x[0-9a-fA-F]{40}$/.test(entry));
   const policyFormValid = Boolean(address) && limitsValid && addressesValid && (!mainnetOptIn || acknowledgeMainnetRisk);
+  // T44: human-readable reasons why Save is disabled — same conditions as above.
+  const saveBlockers = policyFormValid ? [] : policyFormBlockers({
+    address,
+    dailyLimit,
+    maxPerAction,
+    ttlHours,
+    whitelist,
+    mainnetOptIn,
+    acknowledgeMainnetRisk,
+  });
   const policy = autonomyState?.sessionKey;
   const hydratedPolicy = savedPolicyForm(autonomyState);
   const blockedReasons = visibleAutonomyBlockedReasons(autonomyState);
@@ -237,6 +249,7 @@ export function ConfigureView({ diagnosticsOnly = false }: { diagnosticsOnly?: b
             <label className="text-[11px] font-medium text-ink-2">Daily Spend Limit (USDC)</label>
             <input
               type="number"
+              inputMode="decimal"
               value={dailyLimit}
               onChange={(e) => setDailyLimit(e.target.value)}
               className="bg-panel-2 border border-line rounded px-2.5 py-1.5 text-xs text-ink font-mono focus:outline-none focus:border-accent"
@@ -247,6 +260,7 @@ export function ConfigureView({ diagnosticsOnly = false }: { diagnosticsOnly?: b
             <label className="text-[11px] font-medium text-ink-2">Max / Action (USDC)</label>
             <input
               type="number"
+              inputMode="decimal"
               value={maxPerAction}
               onChange={(e) => setMaxPerAction(e.target.value)}
               className="bg-panel-2 border border-line rounded px-2.5 py-1.5 text-xs text-ink font-mono focus:outline-none focus:border-accent"
@@ -257,6 +271,7 @@ export function ConfigureView({ diagnosticsOnly = false }: { diagnosticsOnly?: b
             <label className="text-[11px] font-medium text-ink-2">Valid Duration (Hours)</label>
             <input
               type="number"
+              inputMode="decimal"
               value={ttlHours}
               onChange={(e) => setTtlHours(e.target.value)}
               className="bg-panel-2 border border-line rounded px-2.5 py-1.5 text-xs text-ink font-mono focus:outline-none focus:border-accent"
@@ -342,15 +357,15 @@ export function ConfigureView({ diagnosticsOnly = false }: { diagnosticsOnly?: b
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <label className="flex flex-col gap-1 text-[11px] font-medium text-ink-2">
             Daily limit (USDC)
-            <input type="number" min="0" step="0.000001" value={dailyLimit} onChange={(event) => setDailyLimit(event.target.value)} className="bg-panel-2 border border-line rounded px-2.5 py-2 text-xs text-ink font-mono focus:outline-none focus:border-accent" />
+            <input type="number" inputMode="decimal" min="0" step="0.000001" value={dailyLimit} onChange={(event) => setDailyLimit(event.target.value)} className="bg-panel-2 border border-line rounded px-2.5 py-2 text-xs text-ink font-mono focus:outline-none focus:border-accent" />
           </label>
           <label className="flex flex-col gap-1 text-[11px] font-medium text-ink-2">
             Max per action (USDC)
-            <input type="number" min="0" step="0.000001" value={maxPerAction} onChange={(event) => setMaxPerAction(event.target.value)} className="bg-panel-2 border border-line rounded px-2.5 py-2 text-xs text-ink font-mono focus:outline-none focus:border-accent" />
+            <input type="number" inputMode="decimal" min="0" step="0.000001" value={maxPerAction} onChange={(event) => setMaxPerAction(event.target.value)} className="bg-panel-2 border border-line rounded px-2.5 py-2 text-xs text-ink font-mono focus:outline-none focus:border-accent" />
           </label>
           <label className="flex flex-col gap-1 text-[11px] font-medium text-ink-2">
             Policy lifetime (hours)
-            <input type="number" min="0.0834" step="0.25" value={ttlHours} onChange={(event) => setTtlHours(event.target.value)} className="bg-panel-2 border border-line rounded px-2.5 py-2 text-xs text-ink font-mono focus:outline-none focus:border-accent" />
+            <input type="number" inputMode="decimal" min="0.0834" step="0.25" value={ttlHours} onChange={(event) => setTtlHours(event.target.value)} className="bg-panel-2 border border-line rounded px-2.5 py-2 text-xs text-ink font-mono focus:outline-none focus:border-accent" />
           </label>
           <label className="md:col-span-3 flex flex-col gap-1 text-[11px] font-medium text-ink-2">
             Allowed USDC recipients — one address per line
@@ -388,6 +403,13 @@ export function ConfigureView({ diagnosticsOnly = false }: { diagnosticsOnly?: b
             </button>
           )}
         </div>
+        {saveBlockers.length > 0 && (
+          <ul className="text-[11px] text-warn leading-relaxed list-disc list-inside" aria-label="Why Save is disabled">
+            {saveBlockers.map((blocker) => (
+              <li key={blocker}>{blocker}</li>
+            ))}
+          </ul>
+        )}
       </section>
       ))}
 
@@ -494,7 +516,7 @@ export function ConfigureView({ diagnosticsOnly = false }: { diagnosticsOnly?: b
         )}
         {baseMcpNeedsAuth(sd?.baseMcp) && (
           <div className="flex items-center justify-between gap-3 text-[11px] bg-panel-2 border border-line rounded-md px-3 py-2">
-            <span className="text-ink-3">Authorize user-scoped Base MCP tools.</span>
+            <span className="text-ink-3">Optional: connect Base MCP to enable portfolio, send and swap via Base.</span>
             {address ? (
               <a
                 href={baseMcpConnectHref(diagnosticsOnly ? '/diagnostics' : '/configure')}

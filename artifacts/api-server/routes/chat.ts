@@ -36,6 +36,7 @@ import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
 import { tenantUserId, tenantWalletAddress } from '../middleware/tenantAuth';
 import { runDirectBaseMcpSwap } from '../lib/streamBaseMcpSwapRouting.js';
 import { runDirectBaseMcpSend } from '../lib/streamBaseMcpSendRouting.js';
+import { runDirectMoonwellWrite } from '../lib/streamMoonwellWriteRouting.js';
 import { getAutonomyPolicyRepository } from '../lib/autonomyGateway.js';
 import { reconcileBaseMcpChatMessages } from '../lib/baseMcpTransactionReconciliation.js';
 
@@ -148,6 +149,7 @@ chatRouter.post('/', async (req, res, next) => {
         readOnlyOnly: true,
         includeMorphoReadOnly: true,
         includeUniswapQuote: true,
+        includeMoonwell: true,
         includeBaseMcpSwap: runtimeExecutionCapabilities.userConfirmedEnabled,
         includeBaseMcpSend: runtimeExecutionCapabilities.userConfirmedEnabled,
       },
@@ -197,6 +199,13 @@ chatRouter.post('/', async (req, res, next) => {
       userConfirmedEnabled: runtimeExecutionCapabilities.userConfirmedEnabled,
       userId,
     })
+      || await runDirectMoonwellWrite({
+      message,
+      walletAddress,
+      tools,
+      userConfirmedEnabled: runtimeExecutionCapabilities.userConfirmedEnabled,
+      userId,
+    })
       || await runDirectQuoteRead({ message, walletAddress, tools })
       || await runDirectStreamRead({ message, walletAddress, tools });
     if (directRead) {
@@ -207,13 +216,15 @@ chatRouter.post('/', async (req, res, next) => {
         role: 'assistant' as const,
         createdAt: new Date().toISOString(),
         toolCalls: directRead.toolCalls,
+        ...('actionId' in directRead && directRead.actionId ? { actionId: directRead.actionId } : {}),
         metadata: {
-          readOnly: !['base_mcp_send', 'base_mcp_swap'].includes(directRead.kind),
+          readOnly: !['base_mcp_send', 'base_mcp_swap', 'moonwell_write'].includes(directRead.kind),
           chainId: runtimeChainId,
           chainMode: runtimeChainEnv,
-          userConfirmed: ['base_mcp_send', 'base_mcp_swap'].includes(directRead.kind)
+          userConfirmed: ['base_mcp_send', 'base_mcp_swap', 'moonwell_write'].includes(directRead.kind)
             && runtimeExecutionCapabilities.userConfirmedEnabled,
           directReadKind: directRead.kind,
+          ...('actionId' in directRead && directRead.actionId ? { actionId: directRead.actionId } : {}),
           ...(directRead.errorCode ? { errorCode: directRead.errorCode } : {}),
           ...('approvalUrl' in directRead && directRead.approvalUrl ? { approvalUrl: directRead.approvalUrl } : {}),
           ...('requestId' in directRead && directRead.requestId ? { requestId: directRead.requestId } : {}),

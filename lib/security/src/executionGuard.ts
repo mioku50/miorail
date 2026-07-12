@@ -8,8 +8,12 @@ import {
   type NormalizedBaseChain,
 } from './baseGuards.js';
 import { simulateTrade, type SimulationResult } from './simulation.js';
+import { isMoonwellActionType, validateMoonwellAction, type MoonwellActionCall, type MoonwellActionType } from './moonwellGuard.js';
 
-export type ExecutableActionType = 'revoke_approval' | 'limited_transfer';
+// T44b: moonwell_* verbs join the typed whitelist with their OWN strict
+// validator (moonwellGuard). revoke_approval/limited_transfer semantics are
+// untouched — they keep the exact path below.
+export type ExecutableActionType = 'revoke_approval' | 'limited_transfer' | MoonwellActionType;
 
 export interface ExecutionTokenSecurityResult {
   address: string;
@@ -42,6 +46,12 @@ export interface ExecutionGuardInput {
   memoryMd?: string | null;
   providerContext?: ExecutionGuardProviderContext;
   tokenSecurity?: ExecutionTokenSecurityResult[];
+  /**
+   * T44b: server-stored Moonwell context (prepared amount) from the action
+   * record created by streamMoonwellWriteRouting. Required for moonwell_*
+   * action types; ignored for every other type.
+   */
+  moonwell?: { amountDecimal: string };
 }
 
 export interface ExecutionGuardResult {
@@ -77,7 +87,11 @@ export async function evaluateExecutableAction(input: ExecutionGuardInput): Prom
     return blocked('unsupported_chain', error);
   }
 
-  const requiresContractSecurity = chain.chainId === BASE_MAINNET_CHAIN_ID && input.actionType === 'limited_transfer';
+  // T44b: Moonwell verbs use their own strict validator instead of the
+  // canonical-USDC calldata path. Contract security (GoPlus on canonical USDC)
+  // is REQUIRED for them on mainnet, same as limited_transfer.
+  const requiresContractSecurity = chain.chainId === BASE_MAINNET_CHAIN_ID
+    && (input.actionType === 'limited_transfer' || isMoonwellActionType(input.actionType));
   const screening = screenAction({
     instruction: input.instruction,
     memoryMd: input.memoryMd,
@@ -92,6 +106,67 @@ export async function evaluateExecutableAction(input: ExecutionGuardInput): Prom
       screening,
       contractSecurity: contractState(input, requiresContractSecurity, 'blocked'),
     });
+  }
+
+  if (isMoonwellActionType(input.actionType)) {
+    const validated = validateMoonwellAction({
+      chain: input.chain,
+      actionType: input.actionType,
+      calls: input.calls as MoonwellActionCall[],
+      amountDecimal: input.moonwell?.amountDecimal,
+    });
+    const simulation: SimulationResult = validated.success
+      ? {
+          success: true,
+          allowed: true,
+          riskLevel: 'low',
+          method: 'preflight-validation',
+          reason: 'Moonwell ordered-batch preflight validation passed (no fork simulation)',
+          estimatedGas: '21000',
+          expectedOutput: 'Server-prepared Moonwell batch validated against the strict Moonwell guard',
+          checks: validated.checks,
+        }
+      : {
+          success: false,
+          allowed: false,
+          riskLevel: 'blocked',
+          method: 'preflight-validation',
+          reason: validated.reason,
+          error: validated.reason,
+          checks: validated.checks,
+        };
+    if (!validated.success || !validated.semantics) {
+      return blocked(validated.code, validated.reason || 'Moonwell guard blocked action', {
+        chain,
+        screening,
+        simulation,
+        contractSecurity: contractState(input, requiresContractSecurity, 'blocked'),
+      });
+    }
+    const moonwellContractSecurity = evaluateContractSecurity(
+      input,
+      validated.semantics.tokenAddresses,
+      requiresContractSecurity,
+    );
+    if (moonwellContractSecurity.status === 'blocked') {
+      return blocked('contract_security_blocked', moonwellContractSecurity.warnings.join('; ') || 'Contract security gate blocked action', {
+        chain,
+        screening,
+        simulation,
+        semantics: validated.semantics,
+        contractSecurity: moonwellContractSecurity,
+      });
+    }
+    return {
+      success: true,
+      allowed: true,
+      code: 'allowed',
+      chain,
+      screening,
+      simulation,
+      semantics: validated.semantics,
+      contractSecurity: moonwellContractSecurity,
+    };
   }
 
   if (input.calls.length > MAX_ATOMIC_CALLS) {

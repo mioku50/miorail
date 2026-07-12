@@ -43,7 +43,7 @@ test('Base MCP UI helpers classify needs_reauth as reconnectable stale state', (
   assert.strictEqual(formatBaseMcpStatus({ status: 'needs_reauth' }), 'needs auth');
   assert.strictEqual(
     baseMcpHint({ status: 'needs_reauth' }),
-    'Base MCP is configured. Connect Base MCP to authorize user-scoped tools.'
+    'Optional: connect Base MCP to enable portfolio, send and swap via Base.'
   );
   assert.strictEqual(baseMcpNeedsAuth({ status: 'needs_reauth', configured: true, enabled: true }), true);
   assert.strictEqual(baseMcpNeedsAuth({ status: 'needs_auth', configured: true, enabled: true }), true);
@@ -78,6 +78,10 @@ test('Base MCP OAuth result messages are explicit and non-crashing', () => {
     text: 'Stored Base MCP credentials cannot be opened. Reconnect to replace them safely.',
   });
   assert.strictEqual(baseMcpOAuthResultMessage('unknown'), null);
+  assert.deepStrictEqual(baseMcpOAuthResultMessage('connected', null, 'mismatch'), {
+    kind: 'warn',
+    text: 'Base MCP connected to a different wallet than your session wallet. Reconnect Base MCP with the same account to enable send and swap.',
+  });
 });
 
 test('Base MCP capability breakdown renders disabled unknown tools safely', () => {

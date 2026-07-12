@@ -1,5 +1,6 @@
 import type { ToolDef, ToolProvider } from './provider.js';
 import { randomUUID } from 'node:crypto';
+import { partnerFetch } from '@mioagent/security/httpAllowlist';
 
 const MORPHO_MCP_ENDPOINT = 'https://mcp.morpho.org/';
 const READ_TOOLS = new Map<string, ToolDef>([
@@ -147,10 +148,8 @@ export class MorphoMcpToolProvider implements ToolProvider {
     const validationError = validateArgs(name, args);
     if (validationError) return { content: JSON.stringify({ errorCode: validationError }), isError: true };
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs());
     try {
-      const response = await this.fetchImpl(this.endpoint, {
+      const response = await partnerFetch(this.endpoint, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -162,15 +161,12 @@ export class MorphoMcpToolProvider implements ToolProvider {
           method: 'tools/call',
           params: { name, arguments: args },
         }),
-        signal: controller.signal,
-      });
+      }, { timeoutMs: timeoutMs(), fetchImpl: this.fetchImpl });
       if (!response.ok) throw new Error(`morpho_http_${response.status}`);
       const payload = sanitizePayload(parseSseEnvelope(await response.text()));
       return { content: JSON.stringify(payload), isError: false };
     } catch (error) {
       return { content: JSON.stringify({ errorCode: safeErrorCode(error) }), isError: true };
-    } finally {
-      clearTimeout(timer);
     }
   }
 }

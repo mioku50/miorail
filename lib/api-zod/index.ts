@@ -93,13 +93,21 @@ export const ChatListResponseSchema = z.object({
 // first mainnet action — no funds move. `limited_transfer` is a bounded USDC
 // transfer (capped server-side by MAX_LIMITED_TRANSFER_USDC). Anything else
 // stays a read-only recommendation with no confirm button.
-export const ProductionActionTypeSchema = z.enum(['revoke_approval', 'limited_transfer']);
-export const PRODUCTION_ACTION_TYPES = ProductionActionTypeSchema.options as readonly [
+// T44b: moonwell_* verbs join the whitelist. Their calldata is validated by a
+// dedicated strict guard (lib/security moonwellGuard) fed exclusively from the
+// server-stored action payload — never from client input.
+export const ProductionActionTypeSchema = z.enum([
   'revoke_approval',
   'limited_transfer',
-];
-export function isProductionActionType(t?: string | null): t is 'revoke_approval' | 'limited_transfer' {
-  return t === 'revoke_approval' || t === 'limited_transfer';
+  'moonwell_supply',
+  'moonwell_withdraw',
+  'moonwell_borrow',
+  'moonwell_repay',
+]);
+export type ProductionActionType = z.infer<typeof ProductionActionTypeSchema>;
+export const PRODUCTION_ACTION_TYPES = ProductionActionTypeSchema.options as readonly ProductionActionType[];
+export function isProductionActionType(t?: string | null): t is ProductionActionType {
+  return (PRODUCTION_ACTION_TYPES as readonly string[]).includes(String(t || ''));
 }
 
 export const ExecutionPayloadSchema = z.object({

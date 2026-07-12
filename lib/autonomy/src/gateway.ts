@@ -2,6 +2,7 @@ import {
   BASE_MAINNET_CHAIN_ID,
   evaluateExecutableAction,
   normalizeBaseChain,
+  type ExecutableActionType,
   type ExecutionGuardProviderContext,
   type ExecutionGuardResult,
   type ExecutionTokenSecurityResult,
@@ -16,7 +17,11 @@ import type {
   AutonomyPolicyRepository,
 } from './policyRepository';
 
-export type AutonomousActionType = 'revoke_approval' | 'limited_transfer';
+// T44b: the gateway mirrors the unified guard's typed whitelist —
+// revoke_approval | limited_transfer | moonwell_*. The reservation/settle/
+// release lifecycle is identical for every type (maxPerAction + dailyLimit
+// enforced atomically in the repository reserve).
+export type AutonomousActionType = ExecutableActionType;
 
 export interface PrepareAutonomousExecutionInput {
   userId: string;
@@ -29,6 +34,8 @@ export interface PrepareAutonomousExecutionInput {
   memoryMd?: string | null;
   providerContext?: ExecutionGuardProviderContext;
   tokenSecurity?: ExecutionTokenSecurityResult[];
+  /** T44b: server-stored Moonwell context (prepared amount) for moonwell_* types. */
+  moonwell?: { amountDecimal: string };
   reservationTtlMs?: number;
 }
 
@@ -116,6 +123,7 @@ export class AutonomousExecutionGateway {
       memoryMd: input.memoryMd,
       providerContext: input.providerContext,
       tokenSecurity: input.tokenSecurity,
+      ...(input.moonwell ? { moonwell: input.moonwell } : {}),
     });
     if (!guard.allowed || !guard.semantics) {
       return failure(guard.code, guard.reason || 'Unified execution guard blocked action', {

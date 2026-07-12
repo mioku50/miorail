@@ -5,7 +5,9 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./baseGuards": "./src/baseGuards.ts"
+    "./baseGuards": "./src/baseGuards.ts",
+    "./httpAllowlist": "./src/httpAllowlist.ts",
+    "./moonwellGuard": "./src/moonwellGuard.ts"
   },
   "scripts": {
     "test": "tsx --test src/**/*.test.ts"

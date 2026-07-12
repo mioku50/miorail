@@ -43,6 +43,13 @@ function isWriteTool(toolName: string): boolean {
   return parts.some((part) => ['swap', 'send', 'sendcalls', 'sign', 'prepare', 'deposit', 'withdraw', 'supply', 'borrow', 'repay', 'approve'].includes(part));
 }
 
+// T44 hardening (strengthens, never weakens, the write filter): a generic
+// HTTP tool must never reach the LLM — all partner HTTP goes through typed,
+// allowlisted server-side providers.
+function isGenericHttpTool(toolName: string): boolean {
+  return /^web[_:.\-/]?request$/i.test(toolName.trim());
+}
+
 export class Agent {
   constructor(private config: AgentConfig) {}
 
@@ -68,8 +75,11 @@ export class Agent {
         ? allTools.filter((tool) => !isNamespacedPartnerTool(tool.name))
         : allTools;
     // Write tools are orchestrated by dedicated server routes. The generic LLM
-    // loop never receives them, even in user-confirmed mode.
-    const tools = runtime ? scopedTools.filter((tool) => !isWriteTool(tool.name)) : scopedTools;
+    // loop never receives them (nor a generic web_request), even in
+    // user-confirmed mode.
+    const tools = runtime
+      ? scopedTools.filter((tool) => !isWriteTool(tool.name) && !isGenericHttpTool(tool.name))
+      : scopedTools;
     const allowedToolNames = new Set(tools.map((tool) => tool.name));
     console.log("TRACE: listed tools");
     const baseMcpTools = providerInventory

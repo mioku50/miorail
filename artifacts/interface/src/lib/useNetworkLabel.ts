@@ -1,20 +1,20 @@
 import { useAutonomy, useStatus } from '@mioagent/api-client-react';
 import { CHAIN_ENV } from './chain';
+import { deriveNetworkLabel, type NetworkExecutionMode } from './networkLabel';
 
-// Honest network label from /api/status (falls back to the build-time env while
-// status loads). Replaces the hardcoded network-mode literals that used to be
-// string-pasted across TopBar, AgentStream, and ChatMessage.
-export function useNetworkLabel(): { label: string; readOnly: boolean } {
+// T44: honest SPLIT statuses. The network label reflects the server execution
+// CAPABILITY only ('Base Mainnet · User-confirmed' whenever the server enables
+// the user-confirmed flow, even if no policy is saved yet). Policy readiness
+// (Off/Limited/Active) is a separate badge via cockpitAutonomyPresentation.
+// Consumers that gate ACTIONS must use `executionUnlocked` (strict: policy
+// executionReady), never `readOnly`.
+export function useNetworkLabel(): { label: string; readOnly: boolean; executionUnlocked: boolean } {
   const { data } = useStatus();
   const { data: autonomy } = useAutonomy();
-  const chainEnv = data?.chainEnv || CHAIN_ENV;
-  const userConfirmed = data?.execution?.mode === 'user-confirmed'
-    && data.execution.userConfirmedEnabled === true
-    && autonomy?.sessionKey?.executionReady === true;
-  const readOnly = !userConfirmed && (data?.execution?.mode === 'read-only' || chainEnv === 'mainnet-readonly' || chainEnv === 'mainnet');
-  const label =
-    userConfirmed ? 'Mainnet · User-confirmed'
-      : chainEnv === 'mainnet-readonly' || chainEnv === 'mainnet' ? 'Base Mainnet · Read-only'
-        : 'Base Sepolia';
-  return { label, readOnly };
+  return deriveNetworkLabel({
+    chainEnv: data?.chainEnv || CHAIN_ENV,
+    executionMode: data?.execution?.mode as NetworkExecutionMode | undefined,
+    userConfirmedEnabled: data?.execution?.userConfirmedEnabled === true,
+    executionReady: autonomy?.sessionKey?.executionReady === true,
+  });
 }

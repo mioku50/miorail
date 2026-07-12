@@ -30,11 +30,14 @@ const SKILLS: RuntimeSkillDefinition[] = [
       ? { chain: 'base', ...input, quoteOnly: true }
       : { chain: 'base', ...input },
     resultScreener: 'uniswap_quote_or_protocol',
+    // source: lib/runtime-skills/plugins/uniswap.md (base/skills)
     instructions: [
-      'Use only Uniswap-namespaced tools.',
-      'Quote intent is read-only: never request calldata, approval, permit, signature, or transaction preparation.',
-      'Normal swap execution uses the Base MCP swap tool and Base Account approval flow; direct provider credentials are optional and server-side only.',
-      'Report route, token decimals, slippage, price impact, and gas only from screened tool output.',
+      'Use only Uniswap-namespaced tools on Base mainnet (chainId 8453).',
+      'Quote intent is read-only for the LLM: never request calldata, approval, permit, signature, or transaction preparation.',
+      'Token amounts are base units: USDC = 1e6, ETH/WETH = 1e18; report decimals only from screened tool output.',
+      'Slippage thresholds: <=1% proceed; >1% to 5% ask the user to confirm; >5% to 20% warn about worse fills and sandwich/MEV risk and require explicit confirmation; >20% strongly warn and require the exact number to be re-confirmed.',
+      'If the user did not specify slippage, prefer default auto slippage rather than picking a high number.',
+      'Normal swap execution uses the Base MCP swap tool and Base Account approval flow; the Uniswap API key is server-side env only and never appears in the repo, tool arguments, or output.',
     ],
   },
   {
@@ -47,9 +50,15 @@ const SKILLS: RuntimeSkillDefinition[] = [
     ],
     argumentMapper: identityMapper,
     resultScreener: 'moonwell',
+    // source: lib/runtime-skills/plugins/moonwell.md (base/skills)
     instructions: [
       'Use only Moonwell-namespaced tools and never substitute Morpho or another lending protocol.',
       'Treat supply markets, APY, rates, positions, and health as reads unless an amount/funds command is explicit.',
+      'Health factor rules: >1.5 healthy, 1.1-1.5 caution, <1.1 liquidation risk, null means no borrows; always read health before a borrow or withdraw and surface the value to the user.',
+      'Prepared transactions[] are ordered (approve and enter-market before the protocol action) and must execute as ONE atomic wallet batch, never one by one.',
+      'Asset ETH is an alias for WETH: both resolve to the same mWETH market; borrow/withdraw deliver native ETH while supply/repay use ERC-20 WETH.',
+      'Base has two mUSDC entries: the current market and a deprecated bridged-USDC market marked deprecated: true — never use the deprecated market.',
+      'Use amountDecimal (human-readable string) OR amount (base units), never both, when preparing an action.',
     ],
   },
   {

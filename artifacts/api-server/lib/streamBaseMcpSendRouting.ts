@@ -13,6 +13,11 @@ import {
   type BaseMcpApprovalState,
 } from './baseMcpApprovalLifecycle.js';
 import { sanitizeStreamToolArgs, sanitizedToolErrorCode, type StreamToolTrace } from './streamReadRouting.js';
+import {
+  BASE_MCP_WALLET_MISMATCH_ERROR_CODE,
+  BASE_MCP_WALLET_MISMATCH_MESSAGE,
+  verifyBaseMcpWalletMatch,
+} from './baseMcpWalletReconciliation.js';
 
 export interface DirectBaseMcpSendResult {
   kind: 'base_mcp_send';
@@ -127,6 +132,14 @@ export async function runDirectBaseMcpSend(input: {
   const inventory = await input.tools.listProviderTools();
   const tool = sendToolFromProviderInventory(inventory);
   if (!tool) return blocked('Base MCP send tools are unavailable.', 'base_mcp_send_unavailable');
+
+  // T44: Base MCP may be OAuth-connected to a different Base Account than the
+  // SIWE session wallet. A VERIFIED mismatch blocks send; an unverifiable
+  // get_wallets read does not.
+  const walletMatch = await verifyBaseMcpWalletMatch(input.tools, walletAddress);
+  if (walletMatch.checked && !walletMatch.match) {
+    return blocked(BASE_MCP_WALLET_MISMATCH_MESSAGE, BASE_MCP_WALLET_MISMATCH_ERROR_CODE);
+  }
 
   const actionId = `base-mcp-send:${crypto.randomUUID()}`;
   const ttlMs = Math.max(1, Math.min(30 * 60_000, policy.expiresAt - Date.now()));

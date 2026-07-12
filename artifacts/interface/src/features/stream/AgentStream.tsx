@@ -36,7 +36,7 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
   const reconciliationMutationRef = useRef(reconcileTransactions);
   reconciliationMutationRef.current = reconcileTransactions;
   const oauthParams = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search);
-  const oauthMessage = baseMcpOAuthResultMessage(oauthParams?.get('mcp'), oauthParams?.get('code'));
+  const oauthMessage = baseMcpOAuthResultMessage(oauthParams?.get('mcp'), oauthParams?.get('code'), oauthParams?.get('mcpWallet'));
   const executionMode = statusData?.execution?.mode === 'user-confirmed'
     && statusData.execution.userConfirmedEnabled === true
     && autonomyState?.sessionKey?.executionReady === true
