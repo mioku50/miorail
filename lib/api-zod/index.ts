@@ -52,6 +52,16 @@ export const ChatHistoryResponseSchema = z.object({
   nextCursor: z.string().optional(),
 });
 
+export const ChatReconcileResponseSchema = z.object({
+  messages: z.array(ChatMessageResponseSchema),
+  polledCount: z.number().int().nonnegative(),
+  updatedCount: z.number().int().nonnegative(),
+  autonomy: z.object({
+    spentTodayUsdc: z.string(),
+    reservedTodayUsdc: z.string(),
+  }),
+});
+
 export const ChatListResponseSchema = z.object({
   chats: z.array(
     z.object({

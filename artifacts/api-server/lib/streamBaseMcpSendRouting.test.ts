@@ -91,6 +91,11 @@ test('exact USDC send intent is detected before the generic Agent', () => {
     amountText: '0.25',
     recipient: RECIPIENT,
   });
+  assert.deepEqual(detectBaseMcpSendIntent(`переведи 0,25 USDC на адрес ${RECIPIENT}`), {
+    amount: 0.25,
+    amountText: '0.25',
+    recipient: RECIPIENT,
+  });
 });
 
 test('whitelisted recipient receives Base Account CTA metadata without needing wallet ownership', async () => {
@@ -146,7 +151,7 @@ test('send reservation settles only after Base MCP reports completed', async () 
     async callTool(name: string) {
       return name === 'send'
         ? { content: JSON.stringify({ requestId: 'completed-send' }), isError: false }
-        : { content: JSON.stringify({ requestId: 'completed-send', status: 'completed' }), isError: false };
+        : { content: JSON.stringify({ requestId: 'completed-send', status: 'completed', transactionHash: `0x${'a'.repeat(64)}` }), isError: false };
     }
   }
   const tools = new ToolAggregator();
@@ -162,4 +167,35 @@ test('send reservation settles only after Base MCP reports completed', async () 
   const policy = await repository.getByUser('default-user', 8453);
   assert.equal(policy?.reservedToday, 0);
   assert.equal(policy?.spentToday, 0.25);
+});
+
+test('completed status without durable proof never settles the reservation', async () => {
+  usableSecurity();
+  const repository = await readyRepository();
+  class ProoflessSendProvider implements ToolProvider {
+    id = 'base-mcp-dynamic';
+    private tools: ToolDef[] = [
+      { name: 'send', description: 'Send USDC', inputSchema: { type: 'object' } },
+      { name: 'get_request_status', description: 'Request status', inputSchema: { type: 'object' } },
+    ];
+    async listTools() { return this.tools; }
+    findTool(name: string) { return this.tools.find((tool) => tool.name === name); }
+    async callTool(name: string) {
+      return name === 'send'
+        ? { content: JSON.stringify({ requestId: 'proofless-send' }), isError: false }
+        : { content: JSON.stringify({ requestId: 'proofless-send', status: 'completed' }), isError: false };
+    }
+  }
+  const tools = new ToolAggregator();
+  tools.registerProvider(new ProoflessSendProvider());
+  const result = await runDirectBaseMcpSend({
+    message: `send 0.25 USDC to ${RECIPIENT}`,
+    walletAddress: WALLET,
+    tools, userConfirmedEnabled: true, userId: 'default-user',
+  });
+  assert.equal(result?.approvalState, 'pending');
+  assert.equal(result?.errorCode, 'base_mcp_durable_proof_missing');
+  const policy = await repository.getByUser('default-user', 8453);
+  assert.equal(policy?.spentToday, 0);
+  assert.equal(policy?.reservedToday, 0.25);
 });

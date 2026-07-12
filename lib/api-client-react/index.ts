@@ -49,6 +49,39 @@ export function useChatHistory(
   });
 }
 
+export function useReconcileBaseMcpTransactions(
+  options?: Omit<UseMutationOptions<apiSpec.ChatReconcileResponse, Error, void>, 'mutationFn'>,
+) {
+  const queryClient = useQueryClient();
+  const { onSuccess, ...mutationOptions } = options || {};
+  return useMutation({
+    ...mutationOptions,
+    mutationFn: () => fetchApi<apiSpec.ChatReconcileResponse>('/api/chat/reconcile', { method: 'POST' }),
+    onSuccess: (data, variables, onMutateResult, context) => {
+      queryClient.setQueriesData<apiSpec.ChatHistoryResponse>(
+        { queryKey: ['chat', 'history'] },
+        (current) => current ? { ...current, messages: data.messages } : { messages: data.messages },
+      );
+      queryClient.setQueryData<apiSpec.AutonomyStateResponse>(['autonomy'], (current) => current
+        ? {
+            ...current,
+            sessionKey: {
+              ...current.sessionKey,
+              spentTodayUsdc: data.autonomy.spentTodayUsdc,
+              reservedTodayUsdc: data.autonomy.reservedTodayUsdc,
+            },
+            autonomy: {
+              ...current.autonomy,
+              reservedTodayUsdc: data.autonomy.reservedTodayUsdc,
+            },
+          }
+        : current);
+      void queryClient.invalidateQueries({ queryKey: ['autonomy'], refetchType: 'active' });
+      return onSuccess?.(data, variables, onMutateResult, context);
+    },
+  });
+}
+
 export function useActionsFeed(
   params?: apiSpec.PaginationParams,
   options?: Omit<UseQueryOptions<apiSpec.ActionsFeedResponse, Error, apiSpec.ActionsFeedResponse, (string | apiSpec.PaginationParams | undefined)[]>, 'queryKey' | 'queryFn'>,

@@ -1,15 +1,7 @@
 import { useLocation } from 'wouter';
 import { useUiStore } from '../../lib/state';
 import { ToolCallTrace } from './ToolCallTrace';
-
-export function baseMcpApprovalLabel(state: unknown): string | null {
-  if (state === 'approval_required') return 'Pending Base Account confirmation';
-  if (state === 'pending') return 'Pending';
-  if (state === 'completed') return 'Completed';
-  if (state === 'rejected') return 'Rejected';
-  if (state === 'failed') return 'Failed';
-  return null;
-}
+import { baseMcpApprovalLabel, historicalMessageModeLabel, shouldShowBaseMcpConfirmation } from './chatMessageState';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function ChatMessage({ m, networkLabel }: { m: any; networkLabel: string }) {
@@ -35,6 +27,7 @@ export function ChatMessage({ m, networkLabel }: { m: any; networkLabel: string 
       ? meta.approvalUrl
       : null;
     const approvalLabel = baseMcpApprovalLabel(meta.approvalState);
+    const messageMode = historicalMessageModeLabel(meta, networkLabel);
     const riskVal = meta.risk || 'low';
     return (
       <div className="flex flex-col items-start gap-1 w-full animate-in fade-in slide-in-from-left-1">
@@ -63,7 +56,7 @@ export function ChatMessage({ m, networkLabel }: { m: any; networkLabel: string 
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-ink-3">Mode</span>
-                <span className="font-mono text-ink">{networkLabel}</span>
+                <span className="font-mono text-ink">{messageMode}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-ink-3">Safety</span>
@@ -106,7 +99,7 @@ export function ChatMessage({ m, networkLabel }: { m: any; networkLabel: string 
             {approvalLabel}
           </span>
         )}
-        {approvalUrl && !['completed', 'rejected', 'failed'].includes(meta.approvalState) && (
+        {approvalUrl && shouldShowBaseMcpConfirmation(meta) && (
           <a
             href={approvalUrl}
             target="_blank"

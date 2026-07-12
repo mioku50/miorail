@@ -3,10 +3,13 @@ import type { AutonomyPolicyRepository } from '@mioagent/autonomy';
 import type { ToolAggregator, ToolDef } from '@mioagent/tools';
 import { screenAction } from '@mioagent/security';
 import { canonicalUsdcForBaseChain } from '@mioagent/security/baseGuards';
+import { logger } from '@mioagent/utils';
 import { getAutonomyPolicyRepository } from './autonomyGateway.js';
 import { loadTokenSecurityContext } from './executionSecurity.js';
 import {
   resolveBaseMcpApprovalLifecycle,
+  hasBaseMcpDurableProof,
+  sanitizedBaseMcpResponseShape,
   type BaseMcpApprovalState,
 } from './baseMcpApprovalLifecycle.js';
 import { sanitizeStreamToolArgs, sanitizedToolErrorCode, type StreamToolTrace } from './streamReadRouting.js';
@@ -19,6 +22,9 @@ export interface DirectBaseMcpSendResult {
   approvalUrl?: string;
   requestId?: string;
   approvalState?: BaseMcpApprovalState;
+  reservationActionId?: string;
+  reservationExpiresAt?: string;
+  approvalTerminal?: boolean;
 }
 
 export interface BaseMcpSendIntent {
@@ -34,11 +40,12 @@ export const baseMcpSendRuntime: {
 };
 
 export function detectBaseMcpSendIntent(message: string): BaseMcpSendIntent | null {
-  const match = message.match(/\b(?:send|transfer)\s+(\d+(?:\.\d+)?)\s+USDC\s+to\s+(0x[a-fA-F0-9]{40})\b/i);
+  const match = message.match(/(?:^|\s)(?:send|transfer|отправь|отправить|отправляй|переведи|перевести)\s+(\d+(?:[.,]\d+)?)\s+USDC\s+(?:to|на(?:\s+адрес)?|по\s+адресу|в)\s*(0x[a-fA-F0-9]{40})(?:\s|$)/iu);
   if (!match) return null;
-  const amount = Number(match[1]);
+  const amountText = match[1].replace(',', '.');
+  const amount = Number(amountText);
   if (!Number.isFinite(amount) || amount <= 0) return null;
-  return { amount, amountText: match[1], recipient: match[2].toLowerCase() };
+  return { amount, amountText, recipient: match[2].toLowerCase() };
 }
 
 function sendToolFromProviderInventory(inventory: Array<{ providerId: string; tools: ToolDef[] }>): ToolDef | undefined {
@@ -161,17 +168,34 @@ export async function runDirectBaseMcpSend(input: {
 
   const approval = await resolveBaseMcpApprovalLifecycle({ initialResult: called.content, tools: input.tools });
   const toolCalls = [trace, ...approval.toolCalls];
-  if (approval.state === 'completed') {
-    await repository.settle(actionId, {
-      receiptId: approval.requestId || actionId,
+  const durableProof = hasBaseMcpDurableProof(approval.proof);
+  let settlementConfirmed = false;
+  if (approval.state === 'completed' && durableProof) {
+    const settled = await repository.settle(actionId, {
+      ...approval.proof,
       confirmedAt: new Date().toISOString(),
     });
+    settlementConfirmed = settled.success && settled.status === 'settled';
   } else if (['rejected', 'failed'].includes(approval.state)) {
     await repository.release(actionId, `base_mcp_${approval.state}`);
   }
+  const approvalState: BaseMcpApprovalState = approval.state === 'completed' && !settlementConfirmed
+    ? 'pending'
+    : approval.state;
 
-  const content = approval.state === 'completed'
+  if (!approval.approvalUrl && !approval.requestId) {
+    logger.warn('base-mcp-send-approval-reference-missing', {
+      toolName: tool.name,
+      responseShape: sanitizedBaseMcpResponseShape(called.content),
+    });
+  }
+
+  const content = approval.state === 'completed' && settlementConfirmed
     ? 'Base MCP confirms that the USDC transfer completed.'
+    : approval.state === 'completed' && durableProof
+      ? 'Base MCP confirmed the transaction, but local settlement accounting is still pending.'
+    : approval.state === 'completed'
+      ? 'Base MCP reports completion, but durable transaction proof is not available yet. The spending reservation remains pending.'
     : approval.state === 'rejected'
       ? 'The Base Account transfer confirmation was rejected.'
       : approval.state === 'failed'
@@ -184,10 +208,15 @@ export async function runDirectBaseMcpSend(input: {
     kind: 'base_mcp_send',
     content,
     toolCalls,
-    approvalState: approval.state,
+    approvalState,
+    approvalTerminal: ['completed', 'rejected', 'failed'].includes(approval.state),
+    reservationActionId: actionId,
+    reservationExpiresAt: new Date(reservation.reservation?.expiresAt || Date.now() + ttlMs).toISOString(),
     ...(approval.approvalUrl ? { approvalUrl: approval.approvalUrl } : {}),
     ...(approval.requestId ? { requestId: approval.requestId } : {}),
-    ...(['rejected', 'failed'].includes(approval.state)
+    ...(approval.state === 'completed' && !settlementConfirmed
+      ? { errorCode: durableProof ? 'base_mcp_settlement_accounting_failed' : 'base_mcp_durable_proof_missing' }
+      : ['rejected', 'failed'].includes(approval.state)
       ? { errorCode: approval.errorCode || `base_mcp_${approval.state}` }
       : {}),
   };

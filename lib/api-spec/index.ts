@@ -16,6 +16,7 @@ export type SessionResponse = z.infer<typeof schemas.SessionResponseSchema>;
 export type ChatMessageRequest = z.infer<typeof schemas.ChatMessageRequestSchema>;
 export type ChatMessageResponse = z.infer<typeof schemas.ChatMessageResponseSchema>;
 export type ChatHistoryResponse = z.infer<typeof schemas.ChatHistoryResponseSchema>;
+export type ChatReconcileResponse = z.infer<typeof schemas.ChatReconcileResponseSchema>;
 export type ChatListResponse = z.infer<typeof schemas.ChatListResponseSchema>;
 
 // Actions

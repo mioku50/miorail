@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { ChatMessageRequestSchema, ChatHistoryResponseSchema } from '@mioagent/api-zod';
+import { ChatMessageRequestSchema, ChatHistoryResponseSchema, ChatReconcileResponseSchema } from '@mioagent/api-zod';
 import { Agent } from '@mioagent/agent';
 import { createLlmProvider } from '@mioagent/llm';
 import { createApiToolAggregatorForUser } from '../lib/baseMcpTools.js';
@@ -35,15 +35,18 @@ import { detectRuntimeSkill, runtimeSkillAvailability } from '@mioagent/runtime-
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
 import { runDirectBaseMcpSwap } from '../lib/streamBaseMcpSwapRouting.js';
 import { runDirectBaseMcpSend } from '../lib/streamBaseMcpSendRouting.js';
+import { getAutonomyPolicyRepository } from '../lib/autonomyGateway.js';
+import { reconcileBaseMcpChatMessages } from '../lib/baseMcpTransactionReconciliation.js';
 
 export const chatRouter = Router();
 
 export const chatRouteRuntime = {
   createApiToolAggregatorForUser,
   createLlmProvider,
+  getAutonomyPolicyRepository,
 };
 
-const EXPLICIT_TRANSACTION_REQUEST = /\b(?:swap|buy|sell|approve|revoke)\b/i;
+const EXPLICIT_TRANSACTION_REQUEST = /(?:\b(?:swap|exchange|buy|sell|approve|revoke|send|transfer)\b|(?:обменяй|обменять|свапни|свапнуть|купи|купить|отправь|отправить|переведи|перевести))/iu;
 
 chatRouter.get('/history', async (req, res, next) => {
   try {
@@ -71,6 +74,52 @@ chatRouter.delete('/history', async (req, res, next) => {
     const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
     await db.delete(chats).where(eq(chats.userId, userId));
     res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+chatRouter.post('/reconcile', async (req, res, next) => {
+  try {
+    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const [chat] = await db.select().from(chats).where(eq(chats.userId, userId)).orderBy(desc(chats.updatedAt)).limit(1);
+    if (!chat) {
+      return res.json(ChatReconcileResponseSchema.parse({
+        messages: [],
+        polledCount: 0,
+        updatedCount: 0,
+        autonomy: { spentTodayUsdc: '0', reservedTodayUsdc: '0' },
+      }));
+    }
+
+    const tools = await chatRouteRuntime.createApiToolAggregatorForUser(
+      req,
+      userId,
+      process.env.SESSION_SECRET || 'test-secret',
+      { readOnlyOnly: true },
+    );
+    try {
+      const result = await reconcileBaseMcpChatMessages({
+        messages: (chat.messages as any[]) || [],
+        tools,
+        repository: chatRouteRuntime.getAutonomyPolicyRepository(),
+        userId,
+      });
+      if (result.changed) {
+        await db.update(chats).set({ messages: result.messages, updatedAt: new Date() }).where(eq(chats.id, chat.id));
+      }
+      return res.json(ChatReconcileResponseSchema.parse({
+        messages: result.messages,
+        polledCount: result.polledCount,
+        updatedCount: result.updatedCount,
+        autonomy: {
+          spentTodayUsdc: result.spentTodayUsdc,
+          reservedTodayUsdc: result.reservedTodayUsdc,
+        },
+      }));
+    } finally {
+      await tools.close();
+    }
   } catch (error) {
     next(error);
   }
@@ -159,11 +208,17 @@ chatRouter.post('/', async (req, res, next) => {
         metadata: {
           readOnly: !['base_mcp_send', 'base_mcp_swap'].includes(directRead.kind),
           chainId: runtimeChainId,
+          chainMode: runtimeChainEnv,
+          userConfirmed: ['base_mcp_send', 'base_mcp_swap'].includes(directRead.kind)
+            && runtimeExecutionCapabilities.userConfirmedEnabled,
           directReadKind: directRead.kind,
           ...(directRead.errorCode ? { errorCode: directRead.errorCode } : {}),
           ...('approvalUrl' in directRead && directRead.approvalUrl ? { approvalUrl: directRead.approvalUrl } : {}),
           ...('requestId' in directRead && directRead.requestId ? { requestId: directRead.requestId } : {}),
           ...('approvalState' in directRead && directRead.approvalState ? { approvalState: directRead.approvalState } : {}),
+          ...('reservationActionId' in directRead && directRead.reservationActionId ? { reservationActionId: directRead.reservationActionId } : {}),
+          ...('reservationExpiresAt' in directRead && directRead.reservationExpiresAt ? { reservationExpiresAt: directRead.reservationExpiresAt } : {}),
+          ...('approvalTerminal' in directRead && directRead.approvalTerminal ? { approvalTerminal: true } : {}),
         },
       };
       currentMessages.push(assistantMsg);
@@ -181,15 +236,17 @@ chatRouter.post('/', async (req, res, next) => {
       return res.json(assistantMsg);
     }
 
-    if (runtimeChainEnv === 'mainnet-readonly'
-      && (isPartnerWriteCommand(message) || EXPLICIT_TRANSACTION_REQUEST.test(message))) {
+    if (isPartnerWriteCommand(message) || EXPLICIT_TRANSACTION_REQUEST.test(message)) {
+      const readOnly = runtimeChainEnv === 'mainnet-readonly' || !runtimeExecutionCapabilities.userConfirmedEnabled;
       const assistantMsg = {
         chatId,
         messageId: crypto.randomUUID(),
-        content: 'Mainnet is read-only. No transaction or Action Inbox item was prepared. Activate Mainnet · User-confirmed only after all readiness checks pass.',
+        content: readOnly
+          ? 'Mainnet is read-only. No transaction or Action Inbox item was prepared. Activate Mainnet · User-confirmed only after all readiness checks pass.'
+          : 'The transaction command could not be mapped safely to a supported Base MCP send or swap intent. No tool was called and no Action Inbox item was created.',
         role: 'assistant' as const,
         createdAt: new Date().toISOString(),
-        metadata: { readOnly: true, blocked: true, errorCode: 'mainnet_readonly' },
+        metadata: { readOnly, blocked: true, errorCode: readOnly ? 'mainnet_readonly' : 'transaction_intent_unrecognized' },
       };
       currentMessages.push(assistantMsg);
       if (userChats.length > 0) {

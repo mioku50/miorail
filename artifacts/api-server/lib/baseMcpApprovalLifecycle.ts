@@ -16,6 +16,13 @@ export interface BaseMcpApprovalSnapshot {
   approvalUrl?: string;
   requestId?: string;
   state?: BaseMcpApprovalState;
+  proof?: BaseMcpDurableProof;
+}
+
+export interface BaseMcpDurableProof {
+  txHash?: string;
+  batchId?: string;
+  receiptId?: string;
 }
 
 export interface BaseMcpApprovalOutcome extends BaseMcpApprovalSnapshot {
@@ -24,9 +31,15 @@ export interface BaseMcpApprovalOutcome extends BaseMcpApprovalSnapshot {
   errorCode?: string;
 }
 
-const URL_KEYS = new Set(['approvalurl', 'approval_url', 'url', 'link']);
-const REQUEST_ID_KEYS = new Set(['requestid', 'request_id', 'id']);
+const URL_KEYS = new Set([
+  'approvalurl', 'approval_url', 'approvallink', 'approval_link',
+  'confirmationurl', 'confirmation_url', 'url', 'link',
+]);
+const REQUEST_ID_KEYS = new Set(['requestid', 'request_id', 'transactionid', 'transaction_id', 'id']);
 const STATUS_KEYS = new Set(['status', 'state', 'requeststatus', 'request_status']);
+const TX_HASH_KEYS = new Set(['txhash', 'tx_hash', 'transactionhash', 'transaction_hash']);
+const BATCH_ID_KEYS = new Set(['batchid', 'batch_id']);
+const RECEIPT_ID_KEYS = new Set(['receiptid', 'receipt_id']);
 
 function safeHttpsUrl(value: unknown): string | undefined {
   if (typeof value !== 'string' || value.length > 4_096) return undefined;
@@ -44,6 +57,22 @@ function safeRequestId(value: unknown): string | undefined {
   return normalized && normalized.length <= 200 ? normalized : undefined;
 }
 
+function safeTxHash(value: unknown): string | undefined {
+  return typeof value === 'string' && /^0x[a-fA-F0-9]{64}$/.test(value) ? value : undefined;
+}
+
+function mergeProof(current?: BaseMcpDurableProof, next?: BaseMcpDurableProof): BaseMcpDurableProof | undefined {
+  const merged = {
+    ...(current || {}),
+    ...(next || {}),
+  };
+  return hasBaseMcpDurableProof(merged) ? merged : undefined;
+}
+
+export function hasBaseMcpDurableProof(proof?: BaseMcpDurableProof): boolean {
+  return Boolean(proof?.txHash || proof?.batchId || proof?.receiptId);
+}
+
 export function normalizeBaseMcpApprovalState(value: unknown): BaseMcpApprovalState | undefined {
   if (typeof value !== 'string') return undefined;
   const status = value.trim().toLowerCase().replace(/[\s-]+/g, '_');
@@ -51,7 +80,7 @@ export function normalizeBaseMcpApprovalState(value: unknown): BaseMcpApprovalSt
   if (['pending', 'submitted', 'processing', 'in_progress', 'queued'].includes(status)) return 'pending';
   if (['completed', 'confirmed', 'success', 'succeeded', 'settled'].includes(status)) return 'completed';
   if (['rejected', 'declined', 'cancelled', 'canceled'].includes(status)) return 'rejected';
-  if (['failed', 'error', 'errored'].includes(status)) return 'failed';
+  if (['failed', 'error', 'errored', 'expired'].includes(status)) return 'failed';
   return undefined;
 }
 
@@ -74,10 +103,15 @@ export function extractBaseMcpApprovalSnapshot(value: unknown, depth = 0): BaseM
 
   let snapshot: BaseMcpApprovalSnapshot = {};
   for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-    const normalizedKey = key.toLowerCase();
+    const normalizedKey = key.toLowerCase().replace(/[\s-]+/g, '_');
     if (!snapshot.approvalUrl && URL_KEYS.has(normalizedKey)) snapshot.approvalUrl = safeHttpsUrl(item);
     if (!snapshot.requestId && REQUEST_ID_KEYS.has(normalizedKey)) snapshot.requestId = safeRequestId(item);
     if (!snapshot.state && STATUS_KEYS.has(normalizedKey)) snapshot.state = normalizeBaseMcpApprovalState(item);
+    const proof: BaseMcpDurableProof = {};
+    if (TX_HASH_KEYS.has(normalizedKey)) proof.txHash = safeTxHash(item);
+    if (BATCH_ID_KEYS.has(normalizedKey)) proof.batchId = safeRequestId(item);
+    if (RECEIPT_ID_KEYS.has(normalizedKey)) proof.receiptId = safeRequestId(item);
+    snapshot.proof = mergeProof(snapshot.proof, proof);
     snapshot = mergeBaseMcpApprovalSnapshots(snapshot, extractBaseMcpApprovalSnapshot(item, depth + 1));
   }
   return snapshot;
@@ -91,6 +125,40 @@ export function mergeBaseMcpApprovalSnapshots(
     approvalUrl: next.approvalUrl || current.approvalUrl,
     requestId: next.requestId || current.requestId,
     state: next.state || current.state,
+    proof: mergeProof(current.proof, next.proof),
+  };
+}
+
+export interface SanitizedResponseShape {
+  type: string;
+  keys?: string[];
+  children?: Record<string, SanitizedResponseShape>;
+}
+
+export function sanitizedBaseMcpResponseShape(value: unknown, depth = 0): SanitizedResponseShape {
+  if (depth > 5) return { type: 'truncated' };
+  if (typeof value === 'string') {
+    if (value.length <= 100_000) {
+      try {
+        return sanitizedBaseMcpResponseShape(JSON.parse(value), depth + 1);
+      } catch {
+        // Only the scalar type is exposed; never log the string value.
+      }
+    }
+    return { type: 'string' };
+  }
+  if (Array.isArray(value)) {
+    return {
+      type: 'array',
+      ...(value.length > 0 ? { children: { item: sanitizedBaseMcpResponseShape(value[0], depth + 1) } } : {}),
+    };
+  }
+  if (!value || typeof value !== 'object') return { type: value === null ? 'null' : typeof value };
+  const entries = Object.entries(value as Record<string, unknown>).slice(0, 50);
+  return {
+    type: 'object',
+    keys: entries.map(([key]) => key.slice(0, 120)),
+    children: Object.fromEntries(entries.map(([key, item]) => [key.slice(0, 120), sanitizedBaseMcpResponseShape(item, depth + 1)])),
   };
 }
 
@@ -124,6 +192,7 @@ export const baseMcpApprovalRuntime = {
 export async function resolveBaseMcpApprovalLifecycle(input: {
   initialResult: unknown;
   tools: ToolAggregator;
+  pollAttempts?: number;
 }): Promise<BaseMcpApprovalOutcome> {
   let snapshot = extractBaseMcpApprovalSnapshot(input.initialResult);
   const toolCalls: StreamToolTrace[] = [];
@@ -134,7 +203,9 @@ export async function resolveBaseMcpApprovalLifecycle(input: {
     const inventory = await input.tools.listProviderTools();
     const tool = requestStatusTool(inventory);
     if (tool) {
-      const attempts = boundedPollAttempts();
+      const attempts = input.pollAttempts === undefined
+        ? boundedPollAttempts()
+        : Math.max(1, Math.min(5, Math.floor(input.pollAttempts)));
       for (let attempt = 0; attempt < attempts; attempt += 1) {
         if (attempt > 0) await baseMcpApprovalRuntime.wait(boundedPollIntervalMs());
         const args = statusArgs(tool, requestId);

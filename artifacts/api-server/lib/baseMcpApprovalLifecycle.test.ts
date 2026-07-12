@@ -5,6 +5,7 @@ import {
   baseMcpApprovalRuntime,
   extractBaseMcpApprovalSnapshot,
   normalizeBaseMcpApprovalState,
+  sanitizedBaseMcpResponseShape,
   resolveBaseMcpApprovalLifecycle,
 } from './baseMcpApprovalLifecycle.js';
 
@@ -69,4 +70,19 @@ test('nested approval link aliases are recognized and an unconfirmed response is
   });
   assert.equal(result.approvalUrl, 'https://wallet.base.org/approve/nested');
   assert.equal(result.state, undefined);
+});
+
+test('durable transaction proof aliases are extracted without treating requestId as proof', () => {
+  const txHash = `0x${'c'.repeat(64)}`;
+  const completed = extractBaseMcpApprovalSnapshot({ status: 'completed', requestId: 'request-1', transaction_hash: txHash });
+  assert.equal(completed.proof?.txHash, txHash);
+  const requestOnly = extractBaseMcpApprovalSnapshot({ status: 'completed', requestId: 'request-1' });
+  assert.equal(requestOnly.proof, undefined);
+});
+
+test('sanitized response diagnostics expose shape and keys but never secret values', () => {
+  const shape = sanitizedBaseMcpResponseShape(JSON.stringify({ result: { access_token: 'never-log-me', nested: { id: 'request-1' } } }));
+  const serialized = JSON.stringify(shape);
+  assert.match(serialized, /access_token|nested|id/);
+  assert.doesNotMatch(serialized, /never-log-me|request-1/);
 });

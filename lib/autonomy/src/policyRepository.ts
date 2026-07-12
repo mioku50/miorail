@@ -68,6 +68,7 @@ export interface AutonomyPolicyRepository {
   settle(actionId: string, proof: ConfirmedSettlementProof): Promise<AutonomyReservationResult>;
   release(actionId: string, reason?: string): Promise<AutonomyReservationResult>;
   setKillSwitch(policyId: string, enabled: boolean): Promise<AutonomyPolicy | undefined>;
+  listReservationsByUser?(userId: string): Promise<AutonomyExecutionReservation[]>;
 }
 
 const DEFAULT_RESERVATION_TTL_MS = 30 * 60_000;
@@ -230,6 +231,12 @@ export class InMemoryAutonomyPolicyRepository implements AutonomyPolicyRepositor
       policy.reservedToday = 0;
     }
     return clonePolicy(policy);
+  }
+
+  async listReservationsByUser(userId: string): Promise<AutonomyExecutionReservation[]> {
+    return [...this.reservations.values()]
+      .filter((reservation) => reservation.userId === userId)
+      .map(cloneReservation);
   }
 
   private resetPeriod(policy: AutonomyPolicy): void {
@@ -531,6 +538,17 @@ export function createDatabaseAutonomyPolicyRepository(sql: SqlTemplateExecutor)
                   whitelist, scope, expires_at, is_active, kill_switch, mainnet_opt_in
       `;
       return rows[0] ? rowToPolicy(rows[0]) : undefined;
+    },
+
+    async listReservationsByUser(userId): Promise<AutonomyExecutionReservation[]> {
+      const rows = await sql`
+        SELECT id, policy_id, user_id, action_id, amount, status, proof, expires_at
+        FROM autonomy_execution_reservations
+        WHERE user_id = ${userId}
+        ORDER BY created_at DESC
+        LIMIT 100
+      `;
+      return rows.map(rowToReservation);
     },
   };
 }

@@ -56,6 +56,9 @@ export function CockpitRoute() {
     expired: Boolean(isExpired),
   });
   const permissionState: CapabilityState = autonomyPresentation.capability;
+  const userConfirmedMode = sd?.execution?.mode === 'user-confirmed'
+    && sd.execution.userConfirmedEnabled === true;
+  const userConfirmedReady = userConfirmedMode && autonomyState?.sessionKey?.executionReady === true;
 
   return (
     <div className="flex-1 flex overflow-hidden w-full h-full">
@@ -102,13 +105,17 @@ export function CockpitRoute() {
 
           <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-3.5 flex flex-col justify-between gap-2 shadow-[var(--shadow-card)]">
             <div>
-              <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Blocked in Read-Only Mode</div>
+              <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">{userConfirmedMode ? 'Mainnet · User-Confirmed' : 'Blocked in Read-Only Mode'}</div>
               <div className="text-[11px] text-ink-2 leading-relaxed font-sans">
-                Onchain execution is disabled on Base Mainnet. No revoke transactions or batched swaps can be broadcast until explicitly unlocked.
+                {userConfirmedMode
+                  ? userConfirmedReady
+                    ? 'Bounded sends and swaps can be prepared through Base MCP. Every transaction still requires final Base Account confirmation.'
+                    : 'User-confirmed mode is enabled, but transaction preparation remains gated by the saved policy and security readiness checks.'
+                  : 'Onchain execution is disabled on Base Mainnet. No revoke transactions or batched swaps can be broadcast until explicitly unlocked.'}
               </div>
             </div>
-            <div className="text-[10px] font-sans font-semibold text-warn bg-warn-soft border border-warn/20 px-2 py-0.5 rounded-full w-fit">
-              Limited · read-only
+            <div className={`text-[10px] font-sans font-semibold px-2 py-0.5 rounded-full w-fit ${userConfirmedMode ? 'text-ok bg-ok-soft border border-ok/20' : 'text-warn bg-warn-soft border border-warn/20'}`}>
+              {userConfirmedMode ? userConfirmedReady ? 'Active · approval required' : 'Awaiting readiness' : 'Limited · read-only'}
             </div>
           </div>
 
@@ -171,6 +178,7 @@ export function CockpitRoute() {
               <div className="grid grid-cols-2 gap-2.5 text-xs">
                 <Metric label="Daily limit" value={autonomyState?.sessionKey?.dailyLimitUsdc ? `${autonomyState.sessionKey.dailyLimitUsdc} USDC` : 'Not set'} />
                 <Metric label="Spent today" value={autonomyState?.sessionKey?.spentTodayUsdc ? `${autonomyState.sessionKey.spentTodayUsdc} USDC` : '0 USDC'} />
+                <Metric label="Reserved" value={autonomyState?.sessionKey?.reservedTodayUsdc ? `${autonomyState.sessionKey.reservedTodayUsdc} USDC` : '0 USDC'} />
                 <Metric label="Max / action" value={autonomyState?.sessionKey?.maxPerActionUsdc ? `${autonomyState.sessionKey.maxPerActionUsdc} USDC` : 'Not set'} />
                 <Metric label="TTL" value={autonomyState?.sessionKey?.ttlSeconds ? `${autonomyState.sessionKey.ttlSeconds}s (${Math.round(autonomyState.sessionKey.ttlSeconds / 3600)}h)` : 'Inactive'} />
               </div>

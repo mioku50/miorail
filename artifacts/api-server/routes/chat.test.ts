@@ -140,7 +140,7 @@ describe('Chat API & Recommendation Guardrails', () => {
       private tool: ToolDef = {
         name: 'swap',
         description: 'Base MCP swap',
-        inputSchema: { type: 'object', properties: { amount: {}, fromToken: {}, toToken: {}, walletAddress: {}, chainId: {} } },
+        inputSchema: { type: 'object', properties: { amount: {}, fromAsset: {}, toAsset: {} }, required: ['amount', 'fromAsset', 'toAsset'] },
       };
       async listTools() { return [this.tool]; }
       findTool(name: string) { return name === 'swap' ? this.tool : undefined; }
@@ -154,7 +154,7 @@ describe('Chat API & Recommendation Guardrails', () => {
     const origUniswapKey = process.env.UNISWAP_API_KEY;
     const originalCreateTools = chatRouteRuntime.createApiToolAggregatorForUser;
     const originalGetSecurity = executionSecurityRuntime.getProvider;
-    const originalGetPolicy = baseMcpSwapRuntime.getPolicy;
+    const originalGetRepository = baseMcpSwapRuntime.getRepository;
     process.env.CHAIN_ENV = 'mainnet';
     process.env.MAINNET_EXECUTION_ENABLED = 'true';
     delete process.env.UNISWAP_API_KEY;
@@ -164,13 +164,14 @@ describe('Chat API & Recommendation Guardrails', () => {
         return tokenAddresses.map((address) => ({ address, provider: 'goplus' as const, status: 'ok' as const, flags: {}, rawRiskLabels: [], summary: 'verified' }));
       } },
     });
-    baseMcpSwapRuntime.getPolicy = async () => ({
-      id: 'swap-policy', userId: 'default-user', chainId: 8453,
+    const swapRepository = new InMemoryAutonomyPolicyRepository();
+    await swapRepository.configure({
+      userId: 'default-user', chainId: 8453,
       walletAddress: '0x1234567890123456789012345678901234567890',
-      dailyLimit: 10, maxPerAction: 5, spentToday: 0, reservedToday: 0, periodStartedAt: Date.now(),
-      whitelist: [], scope: 'bounded-approval', expiresAt: Date.now() + 60_000,
-      isActive: true, killSwitch: false, mainnetOptIn: true,
+      dailyLimit: 10, maxPerAction: 5, whitelist: ['0x2222222222222222222222222222222222222222'], scope: 'bounded-approval',
+      expiresAt: Date.now() + 60_000, mainnetOptIn: true,
     });
+    baseMcpSwapRuntime.getRepository = () => swapRepository;
     const provider = new BaseSwapProvider();
     const aggregator = new ToolAggregator();
     aggregator.registerProvider(provider);
@@ -186,13 +187,14 @@ describe('Chat API & Recommendation Guardrails', () => {
       assert.equal(response.body.metadata.directReadKind, 'base_mcp_swap');
       assert.equal(response.body.metadata.requestId, 'swap-1');
       assert.equal(response.body.metadata.approvalUrl, 'https://wallet.base.org/approve/swap');
+      assert.ok(response.body.metadata.reservationActionId.startsWith('base-mcp-swap:'));
       assert.deepEqual(provider.calls, ['swap']);
       assert.equal(response.body.actionId, undefined);
       assert.equal((await db.select().from(actions)).length, beforeActions);
     } finally {
       chatRouteRuntime.createApiToolAggregatorForUser = originalCreateTools;
       executionSecurityRuntime.getProvider = originalGetSecurity;
-      baseMcpSwapRuntime.getPolicy = originalGetPolicy;
+      baseMcpSwapRuntime.getRepository = originalGetRepository;
       restoreEnv('CHAIN_ENV', origChain);
       restoreEnv('MAINNET_EXECUTION_ENABLED', origExecution);
       restoreEnv('UNISWAP_API_KEY', origUniswapKey);
@@ -221,6 +223,34 @@ describe('Chat API & Recommendation Guardrails', () => {
       assert.equal((await db.select().from(actions)).length, beforeActions);
     } finally {
       chatRouteRuntime.createApiToolAggregatorForUser = originalCreateTools;
+      restoreEnv('CHAIN_ENV', origChain);
+      restoreEnv('MAINNET_EXECUTION_ENABLED', origExecution);
+    }
+  });
+
+  test('unmappable RU/EN transaction commands never fall through to the generic LLM', async () => {
+    const origChain = process.env.CHAIN_ENV;
+    const origExecution = process.env.MAINNET_EXECUTION_ENABLED;
+    const originalCreateTools = chatRouteRuntime.createApiToolAggregatorForUser;
+    const originalCreateLlm = chatRouteRuntime.createLlmProvider;
+    process.env.CHAIN_ENV = 'mainnet';
+    process.env.MAINNET_EXECUTION_ENABLED = 'true';
+    chatRouteRuntime.createApiToolAggregatorForUser = async () => new ToolAggregator();
+    chatRouteRuntime.createLlmProvider = () => { throw new Error('Generic LLM must not receive transaction commands'); };
+    await request(app).delete('/api/chat/history');
+    try {
+      for (const message of ['обменяй USDC на ETH', 'send USDC to 0x1111111111111111111111111111111111111111']) {
+        const response = await request(app).post('/api/chat').send({
+          message,
+          walletAddress: '0x1234567890123456789012345678901234567890',
+        });
+        assert.equal(response.status, 200);
+        assert.equal(response.body.metadata.errorCode, 'transaction_intent_unrecognized');
+        assert.equal(response.body.actionId, undefined);
+      }
+    } finally {
+      chatRouteRuntime.createApiToolAggregatorForUser = originalCreateTools;
+      chatRouteRuntime.createLlmProvider = originalCreateLlm;
       restoreEnv('CHAIN_ENV', origChain);
       restoreEnv('MAINNET_EXECUTION_ENABLED', origExecution);
     }
@@ -279,12 +309,87 @@ describe('Chat API & Recommendation Guardrails', () => {
       assert.equal(response.body.metadata.directReadKind, 'base_mcp_send');
       assert.equal(response.body.metadata.approvalUrl, 'https://wallet.base.org/approve/send');
       assert.equal(response.body.metadata.approvalState, 'approval_required');
+      assert.ok(response.body.metadata.reservationActionId.startsWith('base-mcp-send:'));
       assert.deepEqual(provider.calls, ['send']);
       assert.equal((await db.select().from(actions)).length, beforeActions);
     } finally {
       chatRouteRuntime.createApiToolAggregatorForUser = originalCreateTools;
       executionSecurityRuntime.getProvider = originalGetSecurity;
       baseMcpSendRuntime.getRepository = originalGetRepository;
+      restoreEnv('CHAIN_ENV', origChain);
+      restoreEnv('MAINNET_EXECUTION_ENABLED', origExecution);
+    }
+  });
+
+  test('POST /api/chat/reconcile settles an externally approved send and updates the existing message', async () => {
+    const origChain = process.env.CHAIN_ENV;
+    const origExecution = process.env.MAINNET_EXECUTION_ENABLED;
+    const originalCreateTools = chatRouteRuntime.createApiToolAggregatorForUser;
+    const originalGetChatRepository = chatRouteRuntime.getAutonomyPolicyRepository;
+    const originalGetSendRepository = baseMcpSendRuntime.getRepository;
+    const originalGetSecurity = executionSecurityRuntime.getProvider;
+    process.env.CHAIN_ENV = 'mainnet';
+    process.env.MAINNET_EXECUTION_ENABLED = 'true';
+
+    const repository = new InMemoryAutonomyPolicyRepository();
+    await repository.configure({
+      userId: 'default-user', chainId: 8453,
+      walletAddress: '0x1234567890123456789012345678901234567890',
+      dailyLimit: 10, maxPerAction: 2,
+      whitelist: ['0x1111111111111111111111111111111111111111'],
+      scope: 'bounded-approval', expiresAt: Date.now() + 60_000, mainnetOptIn: true,
+    });
+    baseMcpSendRuntime.getRepository = () => repository;
+    chatRouteRuntime.getAutonomyPolicyRepository = () => repository;
+    executionSecurityRuntime.getProvider = () => ({
+      providerName: 'goplus', status: 'connected', statusCode: 'connected', authMode: 'public',
+      provider: { async getTokenSecurity({ tokenAddresses }) {
+        return tokenAddresses.map((address) => ({ address, provider: 'goplus' as const, status: 'ok' as const, flags: {}, rawRiskLabels: [], summary: 'verified' }));
+      } },
+    });
+
+    class LifecycleProvider implements ToolProvider {
+      id = 'base-mcp-dynamic';
+      statusCalls = 0;
+      private tools: ToolDef[] = [
+        { name: 'send', description: 'Send USDC', inputSchema: { type: 'object', properties: { amount: {}, token: {}, recipient: {} } } },
+        { name: 'get_request_status', description: 'Status', inputSchema: { type: 'object', properties: { requestId: {} } } },
+      ];
+      async listTools() { return this.tools; }
+      findTool(name: string) { return this.tools.find((tool) => tool.name === name); }
+      async callTool(name: string) {
+        if (name === 'send') return { content: JSON.stringify({ approvalUrl: 'https://wallet.base.org/approve/live', requestId: 'live-request' }), isError: false };
+        this.statusCalls += 1;
+        return this.statusCalls === 1
+          ? { content: JSON.stringify({ status: 'pending', requestId: 'live-request' }), isError: false }
+          : { content: JSON.stringify({ status: 'completed', requestId: 'live-request', txHash: `0x${'d'.repeat(64)}` }), isError: false };
+      }
+    }
+    const provider = new LifecycleProvider();
+    const aggregator = new ToolAggregator();
+    aggregator.registerProvider(provider);
+    chatRouteRuntime.createApiToolAggregatorForUser = async () => aggregator;
+    await request(app).delete('/api/chat/history');
+
+    try {
+      const created = await request(app).post('/api/chat').send({
+        message: 'send 0.05 USDC to 0x1111111111111111111111111111111111111111',
+        walletAddress: '0x1234567890123456789012345678901234567890',
+      });
+      assert.equal(created.body.metadata.approvalState, 'pending');
+      assert.equal((await repository.getByUser('default-user', 8453))?.reservedToday, 0.05);
+
+      const reconciled = await request(app).post('/api/chat/reconcile').send({});
+      assert.equal(reconciled.status, 200);
+      assert.equal(reconciled.body.updatedCount, 1);
+      assert.equal(reconciled.body.messages.at(-1).metadata.approvalState, 'completed');
+      assert.equal(reconciled.body.autonomy.spentTodayUsdc, '0.05');
+      assert.equal(reconciled.body.autonomy.reservedTodayUsdc, '0');
+    } finally {
+      chatRouteRuntime.createApiToolAggregatorForUser = originalCreateTools;
+      chatRouteRuntime.getAutonomyPolicyRepository = originalGetChatRepository;
+      baseMcpSendRuntime.getRepository = originalGetSendRepository;
+      executionSecurityRuntime.getProvider = originalGetSecurity;
       restoreEnv('CHAIN_ENV', origChain);
       restoreEnv('MAINNET_EXECUTION_ENABLED', origExecution);
     }

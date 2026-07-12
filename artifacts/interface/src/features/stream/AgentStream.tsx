@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAccount } from 'wagmi';
-import { useChatHistory, useSendMessage, useClearChatHistory, useStatus, useBaseMcpToolsProbe, useAutonomy } from '@mioagent/api-client-react';
+import { useChatHistory, useSendMessage, useClearChatHistory, useStatus, useBaseMcpToolsProbe, useAutonomy, useReconcileBaseMcpTransactions } from '@mioagent/api-client-react';
 import { useUiStore } from '../../lib/state';
 import { useNetworkLabel } from '../../lib/useNetworkLabel';
 import { ChatMessage } from './ChatMessage';
@@ -24,6 +24,7 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
   const baseMcpProbe = useBaseMcpToolsProbe();
   const sendMessageMutation = useSendMessage();
   const clearChat = useClearChatHistory();
+  const reconcileTransactions = useReconcileBaseMcpTransactions();
   const showToast = useUiStore((s) => s.showToast);
   const { label: networkLabel } = useNetworkLabel();
   const [input, setInput] = useState('');
@@ -31,6 +32,9 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const streamRef = useRef<HTMLDivElement>(null);
   const baseMcpProbeStarted = useRef(false);
+  const pendingReconciliationRef = useRef('');
+  const reconciliationMutationRef = useRef(reconcileTransactions);
+  reconciliationMutationRef.current = reconcileTransactions;
   const oauthParams = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search);
   const oauthMessage = baseMcpOAuthResultMessage(oauthParams?.get('mcp'), oauthParams?.get('code'));
   const executionMode = statusData?.execution?.mode === 'user-confirmed'
@@ -41,6 +45,33 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
 
   const messages = chatData?.messages || [];
   const displayMessages = messages;
+  const pendingReconciliationKey = messages
+    .filter((message: any) => ['approval_required', 'pending'].includes(message.metadata?.approvalState) && message.metadata?.requestId)
+    .map((message: any) => message.metadata.requestId)
+    .sort()
+    .join('|');
+
+  useEffect(() => {
+    if (!pendingReconciliationKey || pendingReconciliationRef.current === pendingReconciliationKey) return;
+    pendingReconciliationRef.current = pendingReconciliationKey;
+    reconciliationMutationRef.current.mutate();
+  }, [pendingReconciliationKey]);
+
+  useEffect(() => {
+    const reconcileOnFocus = () => {
+      if (!pendingReconciliationKey || reconciliationMutationRef.current.isPending) return;
+      reconciliationMutationRef.current.mutate();
+    };
+    const reconcileOnVisibility = () => {
+      if (document.visibilityState === 'visible') reconcileOnFocus();
+    };
+    window.addEventListener('focus', reconcileOnFocus);
+    document.addEventListener('visibilitychange', reconcileOnVisibility);
+    return () => {
+      window.removeEventListener('focus', reconcileOnFocus);
+      document.removeEventListener('visibilitychange', reconcileOnVisibility);
+    };
+  }, [pendingReconciliationKey]);
 
   useEffect(() => {
     if (streamRef.current) {
@@ -118,7 +149,12 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
                 {sendMessageMutation.isPending ? 'Thinking...' : sendMessageMutation.isError ? 'Error' : displayMessages.some((m: any) => m.role === 'assistant' && (m.actionId || m.metadata?.actionId)) ? 'Recommendation created' : 'Ready'}
               </span>
             </div>
-            <div className="text-[11px] text-ink-3 font-medium">{networkLabel} {address ? '· Connected' : ''}</div>
+            <div className="text-[11px] text-ink-3 font-medium">
+              {networkLabel} {address ? '· Connected' : ''}
+              {autonomyState?.sessionKey?.source === 'database'
+                ? ` · Spent ${autonomyState.sessionKey.spentTodayUsdc} · Reserved ${autonomyState.sessionKey.reservedTodayUsdc || '0'} USDC`
+                : ''}
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-1.5">

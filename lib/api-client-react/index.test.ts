@@ -15,6 +15,7 @@ describe('api-client-react', () => {
     assert.ok(apiClient.usePortfolio, 'usePortfolio should be exported');
 
     assert.ok(apiClient.useSendMessage, 'useSendMessage should be exported');
+    assert.ok(apiClient.useReconcileBaseMcpTransactions, 'useReconcileBaseMcpTransactions should be exported');
     assert.ok(apiClient.useExecuteAction, 'useExecuteAction should be exported');
     assert.ok(apiClient.useDismissAction, 'useDismissAction should be exported');
     assert.ok(apiClient.useUpdateSettings, 'useUpdateSettings should be exported');
