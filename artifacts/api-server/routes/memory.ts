@@ -5,12 +5,13 @@ import {
   UpdateMemoryResponseSchema,
   MemoryResponseSchema,
 } from '@mioagent/api-zod';
+import { tenantUserId } from '../middleware/tenantAuth';
 
 export const memoryRouter = Router();
 
 memoryRouter.get('/', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user'; // Mock auth for now
+    const userId = tenantUserId(req);
     const settings = await MemoryService.getUserSettings(userId);
 
     res.json(
@@ -26,7 +27,7 @@ memoryRouter.get('/', async (req, res, next) => {
 
 memoryRouter.post('/', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user'; // Mock auth for now
+    const userId = tenantUserId(req);
     const { memoryMd } = UpdateMemoryRequestSchema.parse(req.body);
 
     await MemoryService.updateUserSettings(userId, { memoryMd });

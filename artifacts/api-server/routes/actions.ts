@@ -33,6 +33,7 @@ import { isProductionActionType } from '@mioagent/api-zod';
 import { MemoryService } from '@mioagent/memory';
 import { getSystemStatus } from './status.js';
 import { getAutonomousExecutionGateway, getAutonomyPolicyRepository } from '../lib/autonomyGateway.js';
+import { tenantUserId, tenantWalletAddress } from '../middleware/tenantAuth';
 import { loadExecutionSecurityContext } from '../lib/executionSecurity.js';
 import {
   actionProofRuntime,
@@ -65,7 +66,7 @@ async function releaseActionAutonomyReservation(userId: string, actionId: string
 
 actionsRouter.delete('/demo', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userId = tenantUserId(req);
     const userActions = await db.select().from(actions).where(eq(actions.userId, userId));
     const demoIds = userActions
       .filter(a => {
@@ -88,7 +89,7 @@ actionsRouter.delete('/demo', async (req, res, next) => {
 
 actionsRouter.patch('/recommendations/dismiss-all', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userId = tenantUserId(req);
     const userActions = await db.select().from(actions).where(and(eq(actions.userId, userId), eq(actions.kind, 'recommendation'), eq(actions.status, 'pending')));
     const targetIds = userActions.map(a => a.id);
 
@@ -105,7 +106,7 @@ actionsRouter.patch('/recommendations/dismiss-all', async (req, res, next) => {
 
 actionsRouter.delete('/recommendations', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userId = tenantUserId(req);
     const confirm = req.query.confirm === 'true' || req.body?.confirm === true || req.body?.confirm === 'true';
     if (!confirm) {
       return res.status(400).json({ success: false, error: 'Confirmation required' });
@@ -126,8 +127,8 @@ actionsRouter.delete('/recommendations', async (req, res, next) => {
 actionsRouter.get('/', async (req, res, next) => {
   try {
     console.log("TRACE: actions GET start");
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user'; // Mock auth for now
-    const userAddress = (req as { session?: { user?: { address?: string } } }).session?.user?.address || null;
+    const userId = tenantUserId(req);
+    const userAddress = tenantWalletAddress(req);
 
     console.log("TRACE: actions GET querying db");
     let userActions = await db
@@ -206,9 +207,9 @@ import { createApiToolAggregatorForUser } from '../lib/baseMcpTools.js';
 
 actionsRouter.post('/recommend', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
-    const { instruction, walletAddress: reqWallet, chainEnv: reqChainEnv } = req.body;
-    const walletAddress = reqWallet || (req as { session?: { user?: { address?: string } } }).session?.user?.address;
+    const userId = tenantUserId(req);
+    const { instruction, chainEnv: reqChainEnv } = req.body;
+    const walletAddress = tenantWalletAddress(req);
     
     if (!instruction) {
       return res.status(400).json({ success: false, error: 'Instruction required' });
@@ -466,7 +467,7 @@ actionsRouter.post('/recommend', async (req, res, next) => {
 actionsRouter.post('/:actionId/execute', async (req, res, next) => {
   try {
     console.log("TRACE: execute start");
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user'; // Mock auth for now
+    const userId = tenantUserId(req);
     const actionId = req.params.actionId;
 
     const [actionToExecute] = await db.select().from(actions).where(and(eq(actions.id, actionId), eq(actions.userId, userId)));
@@ -609,8 +610,8 @@ actionsRouter.post('/:actionId/execute', async (req, res, next) => {
 // are re-derived LIVE (stored metadata is advisory only) and gate the response.
 actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
-    const userAddress = (req as { session?: { user?: { address?: string } } }).session?.user?.address || null;
+    const userId = tenantUserId(req);
+    const userAddress = tenantWalletAddress(req);
     const actionId = req.params.actionId;
     const prepareRequest = PrepareActionRequestSchema.safeParse({ actionId, ...req.body });
     if (!prepareRequest.success) {
@@ -884,8 +885,8 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
 // public client and persists the outcome. Replay-guarded by `status='pending'`.
 actionsRouter.post('/:actionId/confirm', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
-    const userAddress = (req as { session?: { user?: { address?: string } } }).session?.user?.address || null;
+    const userId = tenantUserId(req);
+    const userAddress = tenantWalletAddress(req);
     const actionId = req.params.actionId;
 
     const parsed = ConfirmActionRequestSchema.safeParse({ actionId, ...req.body });
@@ -1114,7 +1115,7 @@ actionsRouter.post('/:actionId/confirm', async (req, res, next) => {
 
 actionsRouter.post('/:actionId/dismiss', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user'; // Mock auth for now
+    const userId = tenantUserId(req);
     const actionId = req.params.actionId;
 
     await releaseActionAutonomyReservation(userId, actionId, 'dismissed');
@@ -1131,7 +1132,7 @@ actionsRouter.post('/:actionId/dismiss', async (req, res, next) => {
 
 actionsRouter.delete('/:actionId', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userId = tenantUserId(req);
     const actionId = req.params.actionId;
 
     await releaseActionAutonomyReservation(userId, actionId, 'deleted');
@@ -1145,7 +1146,7 @@ actionsRouter.delete('/:actionId', async (req, res, next) => {
 
 actionsRouter.post('/:actionId/regenerate', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userId = tenantUserId(req);
     const actionId = req.params.actionId;
 
     const existing = await db.select().from(actions).where(and(eq(actions.id, actionId), eq(actions.userId, userId)));

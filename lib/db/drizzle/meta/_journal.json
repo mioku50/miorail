@@ -64,6 +64,13 @@
       "when": 1783680219000,
       "tag": "0008_autonomy_execution_gateway",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1783857600000,
+      "tag": "0009_wallet_tenant_isolation",
+      "breakpoints": true
     }
   ]
 }

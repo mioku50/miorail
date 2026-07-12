@@ -12,6 +12,7 @@ import {
   x402StatusFromEnv,
   type X402RuntimeConfig,
 } from '@mioagent/x402-gateway';
+import { tenantUserId } from '../middleware/tenantAuth';
 
 export function getSystemStatus(envOverride?: string) {
   const chainEnv = envOverride || process.env.CHAIN_ENV || 'sepolia';
@@ -186,10 +187,6 @@ function publicX402Status(x402Config: X402RuntimeConfig) {
 
 export const statusRouter = Router();
 
-function userIdFromRequest(req: { session?: { user?: { id?: string } } }): string {
-  return req.session?.user?.id || 'default-user';
-}
-
 const defaultBaseMcpAuthStatus: StoredBaseMcpAuthStatus = {
   connected: false,
   needsReauth: false,
@@ -220,7 +217,7 @@ statusRouter.get('/', async (req, res, next) => {
   try {
     const baseMcp = await probeBaseMcpStatus();
     const auth = await statusRouteRuntime
-      .getBaseMcpAuthStatus(userIdFromRequest(req as { session?: { user?: { id?: string } } }))
+      .getBaseMcpAuthStatus(tenantUserId(req))
       .catch(() => defaultBaseMcpAuthStatus);
     const statusData = {
       ...getSystemStatus(),

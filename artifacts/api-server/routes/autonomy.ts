@@ -19,6 +19,7 @@ import { getAutonomyPolicyRepository } from '../lib/autonomyGateway.js';
 import { formatUnits, type Hex } from 'viem';
 import { getTokenSecurityProviderFromEnv } from '@mioagent/data-providers';
 import { getBaseMainnetUsdcAddress } from '@mioagent/security';
+import { tenantUserId, tenantWalletAddress } from '../middleware/tenantAuth';
 
 export const autonomyRouter = Router();
 
@@ -302,7 +303,7 @@ async function getAutonomyState(userId: string, query?: { owner?: string; execut
 
 autonomyRouter.get('/', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userId = tenantUserId(req);
     const query = {
       owner: req.query.owner as string | undefined,
       executor: req.query.executor as string | undefined,
@@ -317,12 +318,15 @@ autonomyRouter.get('/', async (req, res, next) => {
 
 autonomyRouter.post('/config', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userId = tenantUserId(req);
     const parsed = ConfigureAutonomyRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: 'Invalid autonomy configuration payload', details: parsed.error });
     }
     const data = parsed.data;
+    if (data.walletAddress.toLowerCase() !== tenantWalletAddress(req)) {
+      return res.status(403).json({ error: 'wallet_mismatch', code: 'wallet_mismatch' });
+    }
     if (data.mainnetOptIn && !data.acknowledgeMainnetRisk) {
       return res.status(400).json({ error: 'Explicit mainnet risk acknowledgement is required' });
     }
@@ -384,7 +388,7 @@ autonomyRouter.post('/testnet/configure', async (req, res, next) => {
     if (!isTestnetAutonomyEnabled()) {
       return res.status(403).json({ error: 'Testnet autonomy is disabled. Set ENABLE_TESTNET_AUTONOMY=true' });
     }
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userId = tenantUserId(req);
     const parsed = TestnetConfigureAutonomyRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: 'Invalid testnet autonomy configuration payload', details: parsed.error });
@@ -440,7 +444,7 @@ autonomyRouter.post('/testnet/revoke', async (req, res, next) => {
     if (!isTestnetAutonomyEnabled()) {
       return res.status(403).json({ error: 'Testnet autonomy is disabled. Set ENABLE_TESTNET_AUTONOMY=true' });
     }
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userId = tenantUserId(req);
     const parsed = TestnetRevokeAutonomyRequestSchema.safeParse(req.body);
     const data = parsed.success ? parsed.data : {};
 
@@ -509,7 +513,7 @@ autonomyRouter.post('/testnet/execute-test-action', async (req, res, next) => {
 
 autonomyRouter.post('/kill', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userId = tenantUserId(req);
     const runtimeChainEnv = process.env.CHAIN_ENV || 'mainnet-readonly';
     const chainId = runtimeChainEnv === 'sepolia' ? 84532 : 8453;
     if (runtimeChainEnv === 'mainnet' || runtimeChainEnv === 'mainnet-readonly') {
@@ -541,7 +545,7 @@ autonomyRouter.post('/kill', async (req, res, next) => {
 
 autonomyRouter.post('/reset', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userId = tenantUserId(req);
     const runtimeChainEnv = process.env.CHAIN_ENV || 'mainnet-readonly';
     const chainId = runtimeChainEnv === 'sepolia' ? 84532 : 8453;
     if (runtimeChainEnv === 'mainnet' || runtimeChainEnv === 'mainnet-readonly') {

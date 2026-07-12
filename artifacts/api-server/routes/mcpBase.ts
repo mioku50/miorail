@@ -17,6 +17,7 @@ import {
   sanitizeReturnTo,
 } from '../lib/baseMcpOAuthStore.js';
 import { probeBaseMcpTools } from '../lib/baseMcpToolProbe.js';
+import { tenantUserId } from '../middleware/tenantAuth';
 
 export const mcpBaseRouter = Router();
 
@@ -25,10 +26,6 @@ export const mcpBaseRouteRuntime = {
   logger,
   probeBaseMcpTools,
 };
-
-function userIdFromRequest(req: Request): string {
-  return (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
-}
 
 function sessionSecret(): string {
   const secret = process.env.SESSION_SECRET;
@@ -97,7 +94,7 @@ function logOAuthEvent(
 }
 
 mcpBaseRouter.get('/connect', async (req, res) => {
-  const userId = userIdFromRequest(req);
+  const userId = tenantUserId(req);
   try {
     const { serverUrl, missingConfig } = requiredConnectConfig();
     if (missingConfig.length || !serverUrl) return res.redirect(oauthErrorRedirect('missing_config'));
@@ -143,7 +140,7 @@ mcpBaseRouter.get('/connect', async (req, res) => {
 });
 
 mcpBaseRouter.get('/callback', async (req, res) => {
-  const userId = userIdFromRequest(req);
+  const userId = tenantUserId(req);
   let pending: Awaited<ReturnType<typeof loadBaseMcpOAuthState>> = null;
   let serverUrl: URL | null = null;
   try {
@@ -235,7 +232,7 @@ mcpBaseRouter.get('/callback', async (req, res) => {
 
 async function handleToolsProbe(req: Request, res: Response, next: NextFunction) {
   try {
-    const userId = userIdFromRequest(req);
+    const userId = tenantUserId(req);
     const secret = process.env.SESSION_SECRET;
     if (!secret) {
       return res.json(BaseMcpToolProbeResponseSchema.parse({

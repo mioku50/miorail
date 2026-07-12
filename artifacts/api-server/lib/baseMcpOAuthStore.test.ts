@@ -161,3 +161,29 @@ test('Base MCP OAuth tokens are encrypted and status exposes no plaintext token'
   assert.strictEqual(afterInvalidation.connected, false);
   assert.strictEqual(afterInvalidation.needsReauth, true);
 });
+
+test('T43: Base MCP OAuth credentials are stored in distinct authenticated user scopes', async () => {
+  const fake = createFakeDb();
+  baseMcpOAuthStoreRuntime.db = fake.db;
+  const walletA = 'eip155:8453:0x1111111111111111111111111111111111111111';
+  const walletB = 'eip155:8453:0x2222222222222222222222222222222222222222';
+
+  await saveBaseMcpTokens({
+    userId: walletA,
+    sessionSecret: 'test-session-secret',
+    tokens: { access_token: 'wallet-a-token', token_type: 'Bearer' },
+  });
+  await saveBaseMcpTokens({
+    userId: walletB,
+    sessionSecret: 'test-session-secret',
+    tokens: { access_token: 'wallet-b-token', token_type: 'Bearer' },
+  });
+
+  assert.equal(fake.tokens.size, 2);
+  assert.ok(fake.tokens.has(`${walletA}:base-mcp`));
+  assert.ok(fake.tokens.has(`${walletB}:base-mcp`));
+  assert.notEqual(
+    fake.tokens.get(`${walletA}:base-mcp`)?.encryptedTokens,
+    fake.tokens.get(`${walletB}:base-mcp`)?.encryptedTokens,
+  );
+});

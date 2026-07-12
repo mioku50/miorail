@@ -11,6 +11,8 @@ export type PaginationParams = z.infer<typeof schemas.PaginationParamsSchema>;
 export type LoginRequest = z.infer<typeof schemas.LoginRequestSchema>;
 export type LoginResponse = z.infer<typeof schemas.LoginResponseSchema>;
 export type SessionResponse = z.infer<typeof schemas.SessionResponseSchema>;
+export type WalletChallengeRequest = z.infer<typeof schemas.WalletChallengeRequestSchema>;
+export type WalletChallengeResponse = z.infer<typeof schemas.WalletChallengeResponseSchema>;
 
 // Chat
 export type ChatMessageRequest = z.infer<typeof schemas.ChatMessageRequestSchema>;

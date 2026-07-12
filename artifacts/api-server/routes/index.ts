@@ -11,9 +11,13 @@ import { protocolsRouter } from './protocols';
 import { statusRouter } from './status';
 import { autonomyRouter } from './autonomy';
 import { mcpBaseRouter } from './mcpBase';
+import { authRouter } from './auth';
+import { enforceTenantBinding, requireTenant } from '../middleware/tenantAuth';
 
 export const routes = Router();
 
+routes.use('/auth', authRouter);
+routes.use(requireTenant, enforceTenantBinding);
 routes.use('/memory', memoryRouter);
 routes.use('/settings', settingsRouter);
 routes.use('/chat', chatRouter);
@@ -26,4 +30,3 @@ routes.use('/protocols', protocolsRouter);
 routes.use('/status', statusRouter);
 routes.use('/autonomy', autonomyRouter);
 routes.use('/mcp/base', mcpBaseRouter);
-

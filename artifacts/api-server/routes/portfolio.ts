@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { PortfolioResponseSchema } from '@mioagent/api-zod';
 import { analyzePortfolioForRisk, fetchInternalPortfolio } from '../lib/portfolioAnalysis.js';
+import { tenantWalletAddress } from '../middleware/tenantAuth';
 
 export const portfolioRouter = Router();
 
@@ -13,12 +14,8 @@ function queryFlag(value: unknown): boolean {
 
 portfolioRouter.get('/', async (req, res, next) => {
   try {
-    const address =
-      (req.query.address as string)
-      || (req.query.walletAddress as string)
-      || (req as { session?: { user?: { address?: string } } }).session?.user?.address;
-
-    if (!address) {
+    const address = tenantWalletAddress(req);
+    if (address === '0x0000000000000000000000000000000000000000') {
       return res.status(400).json({ error: 'Wallet address not configured' });
     }
 

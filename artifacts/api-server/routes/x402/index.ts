@@ -1,4 +1,5 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, type NextFunction } from 'express';
+import { tenantUserFromRequest, tenantUserId } from '../../middleware/tenantAuth';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { base } from '@base-org/account/node';
 import {
@@ -119,10 +120,6 @@ let lastBrowserRun: {
   settledAt?: string;
   errorReason?: string;
 } | null = null;
-
-function userIdFromRequest(req: Request): string {
-  return (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
-}
 
 function sanitizedUrlHost(value?: string): string | undefined {
   if (!value) return undefined;
@@ -364,7 +361,7 @@ async function persistSettlement(record: X402SettlementRecord, persistDb = true)
       ...detailsRecord,
       ...(runId ? { runId } : {}),
     },
-    userId: record.userId || 'default-user',
+    ...(record.userId ? { userId: record.userId } : {}),
   };
   if (!persistDb) return;
   try {
@@ -668,6 +665,7 @@ async function persistBuyerReceipt(input: {
   if (!persistDb) return receipt;
   await db.insert(x402Receipts).values({
     id,
+    userId: input.userId,
     receipt,
     updatedAt: new Date(),
   });
@@ -712,6 +710,18 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
   const buyerPayerRuntime = options.buyerPayerRuntime || getDefaultX402BuyerPayerRuntime(env);
   const resolveActiveFuelPermission = options.findActiveFuelPermission || findActiveFuelPermission;
   const repository = options.spendPermissionRepository || createDatabaseSpendPermissionRepository(sql);
+  const requireDiagnosticsAdmin = (req: Request, res: Response, next: NextFunction) => {
+    if (process.env.NODE_ENV === 'test') return next();
+    const configuredAdmins = (env.OPERATOR_ADMIN_WALLETS || '')
+      .split(',')
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean);
+    const user = tenantUserFromRequest(req);
+    if (env.ENABLE_OPERATOR_DIAGNOSTICS !== 'true' || !user || !configuredAdmins.includes(user.address)) {
+      return res.status(403).json({ error: 'operator_access_required', code: 'operator_access_required' });
+    }
+    next();
+  };
   const commonMiddlewareOptions = {
     serviceName: 'Miorail',
     onSettlement: (record: X402SettlementRecord) => persistSettlement(record, dbEnabled),
@@ -727,12 +737,13 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
     routePath: '/smoke-paid',
   }, env);
 
-  router.get('/mock-paid-endpoint', legacyGateway, (_req: Request, res: Response) => {
+  router.get('/mock-paid-endpoint', requireDiagnosticsAdmin, legacyGateway, (_req: Request, res: Response) => {
     res.status(200).json({ data: 'This is premium mock data protected by x402 payment.' });
   });
 
   router.get(
     '/smoke-paid',
+    requireDiagnosticsAdmin,
     (req: Request, _res: Response, next) => {
       const runId = extractRunId(req);
       smokeRunIdStorage.run(runId, () => next());
@@ -784,7 +795,7 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
     }
   );
 
-  router.get('/diagnostics', async (_req: Request, res: Response) => {
+  router.get('/diagnostics', requireDiagnosticsAdmin, async (_req: Request, res: Response) => {
     const statusConfig = await x402StatusFromEnv(env);
     const diagnostics = x402MiddlewareDiagnosticsFromEnv(env, {
       runtimeMode,
@@ -927,7 +938,7 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
       }
 
       const input = parsed.data;
-      const userId = userIdFromRequest(req);
+      const userId = tenantUserId(req);
       const wallet = await resolveSubscriptionOwnerWallet();
       if (wallet.address.toLowerCase() !== input.subscriptionOwner.toLowerCase()) {
         return res.status(400).json({
@@ -992,7 +1003,7 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
 
   router.get('/fuel', async (req: Request, res: Response, next) => {
     try {
-      const userId = userIdFromRequest(req);
+      const userId = tenantUserId(req);
       const statusConfig = await x402StatusFromEnv(env);
       const active = await resolveActiveFuelPermission(userId, dbEnabled);
       const activePermission = permissionResponse(active);
@@ -1003,10 +1014,11 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
         if (dbEnabled) {
           const rows = await db.select()
             .from(x402Receipts)
+            .where(eq(x402Receipts.userId, userId))
             .orderBy(desc(x402Receipts.createdAt))
             .limit(100);
           records = rows.map(receiptRecord)
-            .filter((record) => !record.userId || record.userId === userId);
+            .filter((record) => record.userId === userId);
         }
       } catch {
         records = [];
@@ -1113,7 +1125,7 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
 
   router.post('/buyer-smoke', async (req: Request, res: Response, next) => {
     try {
-      const userId = userIdFromRequest(req);
+      const userId = tenantUserId(req);
       const smokeUrl = env.X402_BUYER_SMOKE_URL;
       if (!smokeUrl) {
         return res.status(503).json({
@@ -1374,13 +1386,14 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
 
   router.get('/ledger', async (req: Request, res: Response, next) => {
     try {
-      const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+      const userId = tenantUserId(req);
       let rows: any[] = [];
       let auditContext: any[] = [];
       try {
         if (dbEnabled) {
           rows = await db.select()
             .from(x402Receipts)
+            .where(eq(x402Receipts.userId, userId))
             .orderBy(desc(x402Receipts.createdAt))
             .limit(100);
           auditContext = await db.select()
@@ -1396,7 +1409,7 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
       const filterRunId = typeof req.query.runId === 'string' ? req.query.runId : undefined;
       const records = rows
         .map(receiptRecord)
-        .filter((record) => !record.userId || record.userId === userId)
+        .filter((record) => record.userId === userId)
         .filter((record) => !filterRunId || record.runId === filterRunId);
       const auditByActionId = new Map(auditContext.map((log) => [log.actionId, log]));
 

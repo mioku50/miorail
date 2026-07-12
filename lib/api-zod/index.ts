@@ -16,6 +16,7 @@ export const LoginResponseSchema = z.object({
   user: z.object({
     id: z.string(),
     address: z.string(),
+    chainId: z.literal(8453),
   }),
 });
 
@@ -24,8 +25,20 @@ export const SessionResponseSchema = z.object({
     .object({
       id: z.string(),
       address: z.string(),
+      chainId: z.literal(8453),
     })
     .nullable(),
+});
+
+export const WalletChallengeRequestSchema = z.object({
+  address: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+});
+
+export const WalletChallengeResponseSchema = z.object({
+  nonce: z.string(),
+  message: z.string(),
+  expiresAt: z.string(),
+  chainId: z.literal(8453),
 });
 
 // Chat

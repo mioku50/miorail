@@ -8,6 +8,13 @@ import { InMemoryRateLimiter } from '@mioagent/utils';
 import { rateLimit } from './middleware/rate-limit';
 
 export const app = express();
+app.set('trust proxy', 1);
+
+function configuredSessionSecret(): string {
+  if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
+  if (process.env.NODE_ENV === 'production') throw new Error('SESSION_SECRET is required in production');
+  return 'dev_secret_key';
+}
 
 // Global rate limiter instance
 const globalLimiter = new InMemoryRateLimiter({
@@ -34,12 +41,13 @@ app.use(express.json());
 // Session middleware
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || 'dev_secret_key',
+    secret: configuredSessionSecret(),
     resave: false,
     saveUninitialized: false,
     cookie: {
       secure: process.env.NODE_ENV === 'production',
       httpOnly: true,
+      sameSite: 'lax',
       maxAge: 1000 * 60 * 60 * 24, // 1 day
     },
   })

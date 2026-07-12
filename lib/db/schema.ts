@@ -220,12 +220,19 @@ export const autonomyExecutionReservations = pgTable(
   ],
 );
 
-export const x402Receipts = pgTable('x402_receipts', {
-  id: text('id').primaryKey(),
-  receipt: jsonb('receipt'),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
-});
+export const x402Receipts = pgTable(
+  'x402_receipts',
+  {
+    id: text('id').primaryKey(),
+    // Null is reserved for global seller-smoke diagnostics. Product buyer
+    // receipts always carry the authenticated tenant id.
+    userId: text('user_id').references(() => users.id),
+    receipt: jsonb('receipt'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [index('x402_receipts_user_created_idx').on(table.userId, table.createdAt)],
+);
 
 export const auditLogs = pgTable('audit_logs', {
   id: text('id').primaryKey(),

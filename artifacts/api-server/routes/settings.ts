@@ -5,12 +5,13 @@ import {
   UpdateSettingsRequestSchema,
   UpdateSettingsResponseSchema,
 } from '@mioagent/api-zod';
+import { tenantUserId } from '../middleware/tenantAuth';
 
 export const settingsRouter = Router();
 
 settingsRouter.get('/', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user'; // Mock auth for now
+    const userId = tenantUserId(req);
     const settings = await MemoryService.getUserSettings(userId);
 
     res.json(
@@ -27,7 +28,7 @@ settingsRouter.get('/', async (req, res, next) => {
 
 settingsRouter.post('/', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user'; // Mock auth for now
+    const userId = tenantUserId(req);
     const data = UpdateSettingsRequestSchema.parse(req.body);
 
     const updateData: Record<string, unknown> = {};

@@ -10,7 +10,7 @@ export const PRODUCTION_ACTION_TYPES = apiSpec.PRODUCTION_ACTION_TYPES;
 
 // Simple fetch wrapper
 async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(url, options);
+  const response = await fetch(url, { credentials: 'same-origin', ...options });
   if (!response.ok) {
     let errorMsg = `API error: ${response.status} ${response.statusText}`;
     try {
@@ -31,6 +31,36 @@ export function useSession(options?: Omit<UseQueryOptions<apiSpec.SessionRespons
     queryFn: () => fetchApi<apiSpec.SessionResponse>('/api/auth/session'),
     ...options,
   });
+}
+
+export function useWalletChallenge(
+  options?: Omit<UseMutationOptions<apiSpec.WalletChallengeResponse, Error, apiSpec.WalletChallengeRequest>, 'mutationFn'>,
+) {
+  return useMutation({
+    mutationFn: (data) => fetchApi<apiSpec.WalletChallengeResponse>('/api/auth/challenge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
+    ...options,
+  });
+}
+
+export function useVerifyWallet(
+  options?: Omit<UseMutationOptions<apiSpec.LoginResponse, Error, apiSpec.LoginRequest>, 'mutationFn'>,
+) {
+  return useMutation({
+    mutationFn: (data) => fetchApi<apiSpec.LoginResponse>('/api/auth/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
+    ...options,
+  });
+}
+
+export async function logoutWalletSession(): Promise<void> {
+  await fetchApi<{ success: boolean }>('/api/auth/logout', { method: 'POST' });
 }
 
 export function useChatHistory(

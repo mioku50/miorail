@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { MemoryService } from '@mioagent/memory';
 import { ProtocolsListResponseSchema, ToggleProtocolResponseSchema } from '@mioagent/api-zod';
+import { tenantUserId } from '../middleware/tenantAuth';
 
 export const protocolsRouter = Router();
 
@@ -16,7 +17,7 @@ const DEFAULT_PROTOCOLS = [
 
 protocolsRouter.get('/', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userId = tenantUserId(req);
     const settings = await MemoryService.getUserSettings(userId);
     const toggles = settings?.protocolToggles || {};
 
@@ -36,7 +37,7 @@ protocolsRouter.get('/', async (req, res, next) => {
 
 protocolsRouter.patch('/:id', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userId = tenantUserId(req);
     const protocolId = req.params.id;
     const enabled = req.body.enabled;
 

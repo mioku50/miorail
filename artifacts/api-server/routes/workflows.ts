@@ -8,12 +8,13 @@ import {
   DeleteWorkflowResponseSchema,
 } from '@mioagent/api-zod';
 import crypto from 'crypto';
+import { tenantUserId } from '../middleware/tenantAuth';
 
 export const workflowsRouter = Router();
 
 workflowsRouter.get('/', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userId = tenantUserId(req);
 
     const userWorkflows = await db
       .select()
@@ -39,7 +40,7 @@ workflowsRouter.get('/', async (req, res, next) => {
 
 workflowsRouter.post('/', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userId = tenantUserId(req);
     const body = CreateWorkflowRequestSchema.parse(req.body);
 
     const workflowId = crypto.randomUUID();
@@ -73,7 +74,7 @@ workflowsRouter.post('/', async (req, res, next) => {
 
 workflowsRouter.delete('/:workflowId', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userId = tenantUserId(req);
     const workflowId = req.params.workflowId;
 
     await db.delete(workflows)

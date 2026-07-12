@@ -4,7 +4,7 @@ import { Agent } from '@mioagent/agent';
 import { createLlmProvider } from '@mioagent/llm';
 import { createApiToolAggregatorForUser } from '../lib/baseMcpTools.js';
 import { db, chats, actions } from '@mioagent/db';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, and } from 'drizzle-orm';
 import crypto from 'node:crypto';
 import { detectActionIntent } from '../lib/intent.js';
 import { getSystemStatus } from './status.js';
@@ -33,6 +33,7 @@ import { screenPartnerToolResult } from '../lib/partnerResultTrust.js';
 import { runDirectQuoteRead } from '../lib/streamQuoteRouting.js';
 import { detectRuntimeSkill, runtimeSkillAvailability } from '@mioagent/runtime-skills';
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
+import { tenantUserId, tenantWalletAddress } from '../middleware/tenantAuth';
 import { runDirectBaseMcpSwap } from '../lib/streamBaseMcpSwapRouting.js';
 import { runDirectBaseMcpSend } from '../lib/streamBaseMcpSendRouting.js';
 import { getAutonomyPolicyRepository } from '../lib/autonomyGateway.js';
@@ -50,7 +51,7 @@ const EXPLICIT_TRANSACTION_REQUEST = /(?:\b(?:swap|exchange|buy|sell|approve|rev
 
 chatRouter.get('/history', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userId = tenantUserId(req);
     const userChats = await db
       .select()
       .from(chats)
@@ -71,7 +72,7 @@ chatRouter.get('/history', async (req, res, next) => {
 
 chatRouter.delete('/history', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userId = tenantUserId(req);
     await db.delete(chats).where(eq(chats.userId, userId));
     res.json({ success: true });
   } catch (error) {
@@ -81,7 +82,7 @@ chatRouter.delete('/history', async (req, res, next) => {
 
 chatRouter.post('/reconcile', async (req, res, next) => {
   try {
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const userId = tenantUserId(req);
     const [chat] = await db.select().from(chats).where(eq(chats.userId, userId)).orderBy(desc(chats.updatedAt)).limit(1);
     if (!chat) {
       return res.json(ChatReconcileResponseSchema.parse({
@@ -106,7 +107,7 @@ chatRouter.post('/reconcile', async (req, res, next) => {
         userId,
       });
       if (result.changed) {
-        await db.update(chats).set({ messages: result.messages, updatedAt: new Date() }).where(eq(chats.id, chat.id));
+        await db.update(chats).set({ messages: result.messages, updatedAt: new Date() }).where(and(eq(chats.id, chat.id), eq(chats.userId, userId)));
       }
       return res.json(ChatReconcileResponseSchema.parse({
         messages: result.messages,
@@ -128,8 +129,9 @@ chatRouter.post('/reconcile', async (req, res, next) => {
 
 chatRouter.post('/', async (req, res, next) => {
   try {
-    const { message, walletAddress } = ChatMessageRequestSchema.parse(req.body);
-    const userId = (req as { session?: { user?: { id?: string } } }).session?.user?.id || 'default-user';
+    const { message } = ChatMessageRequestSchema.parse(req.body);
+    const userId = tenantUserId(req);
+    const walletAddress = tenantWalletAddress(req);
     // The client may describe its UI network, but it must never promote the
     // server from read-only to an executable environment.
     const configuredChainEnv = process.env.CHAIN_ENV || 'mainnet-readonly';
@@ -223,7 +225,7 @@ chatRouter.post('/', async (req, res, next) => {
       };
       currentMessages.push(assistantMsg);
       if (userChats.length > 0) {
-        await db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(eq(chats.id, chatId));
+        await db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(and(eq(chats.id, chatId), eq(chats.userId, userId)));
       } else {
         await db.insert(chats).values({
           id: chatId,
@@ -250,7 +252,7 @@ chatRouter.post('/', async (req, res, next) => {
       };
       currentMessages.push(assistantMsg);
       if (userChats.length > 0) {
-        await db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(eq(chats.id, chatId));
+        await db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(and(eq(chats.id, chatId), eq(chats.userId, userId)));
       } else {
         await db.insert(chats).values({ id: chatId, userId, messages: currentMessages, createdAt: new Date(), updatedAt: new Date() });
       }
@@ -282,7 +284,7 @@ chatRouter.post('/', async (req, res, next) => {
             confidence: 1,
           }
       : detectActionIntent(message);
-    const isWalletConnected = !!(walletAddress && walletAddress !== 'None' && walletAddress !== '0x0' && walletAddress !== '');
+    const isWalletConnected = true;
 
     if (intent.isActionIntent && !isWalletConnected) {
       const assistantMsg = {
@@ -294,7 +296,7 @@ chatRouter.post('/', async (req, res, next) => {
       };
       currentMessages.push(assistantMsg);
       if (userChats.length > 0) {
-        await db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(eq(chats.id, chatId));
+        await db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(and(eq(chats.id, chatId), eq(chats.userId, userId)));
       } else {
         await db.insert(chats).values({ id: chatId, userId, messages: currentMessages, createdAt: new Date(), updatedAt: new Date() });
       }
@@ -616,7 +618,7 @@ chatRouter.post('/', async (req, res, next) => {
       };
       currentMessages.push(assistantMsg);
       if (userChats.length > 0) {
-        await db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(eq(chats.id, chatId));
+        await db.update(chats).set({ messages: currentMessages, updatedAt: new Date() }).where(and(eq(chats.id, chatId), eq(chats.userId, userId)));
       } else {
         await db.insert(chats).values({ id: chatId, userId, messages: currentMessages, createdAt: new Date(), updatedAt: new Date() });
       }
@@ -662,7 +664,7 @@ chatRouter.post('/', async (req, res, next) => {
       console.log("TRACE: updating chats db");
       await db.update(chats)
         .set({ messages: currentMessages, updatedAt: new Date() })
-        .where(eq(chats.id, chatId));
+        .where(and(eq(chats.id, chatId), eq(chats.userId, userId)));
       console.log("TRACE: updated chats db");
     } else {
       console.log("TRACE: inserting chats db");
@@ -741,7 +743,7 @@ chatRouter.post('/', async (req, res, next) => {
 
     await db.update(chats)
       .set({ messages: currentMessages, updatedAt: new Date() })
-      .where(eq(chats.id, chatId));
+      .where(and(eq(chats.id, chatId), eq(chats.userId, userId)));
 
     try {
       await ObservabilityService.logAction({

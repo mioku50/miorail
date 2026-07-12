@@ -45,3 +45,12 @@ export const useUiStore = create<UiState>((set) => ({
   focusAction: (id) => set({ focusActionId: id }),
   clearFocus: () => set({ focusActionId: null }),
 }));
+
+export function resetTenantUiState(): void {
+  useUiStore.setState({
+    toast: null,
+    paletteOpen: false,
+    inboxFilter: 'all',
+    focusActionId: null,
+  });
+}

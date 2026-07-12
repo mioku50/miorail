@@ -4,7 +4,7 @@
   "private": true,
   "main": "index.ts",
   "scripts": {
-    "test": "tsx --test **/*.test.ts"
+    "test": "NODE_ENV=test tsx --test **/*.test.ts"
   },
   "dependencies": {
     "@base-org/account": "2.5.6",
