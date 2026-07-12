@@ -22,7 +22,7 @@ import { MockPriceProvider, MockApprovalProvider, MockTokenBalancesProvider } fr
 import { createHash } from 'node:crypto';
 
 export class RealMoralisProvider implements MoralisProvider {
-  constructor(private readonly apiKey: string) {}
+  constructor(private readonly apiKey: string, private readonly timeoutMs = 10000) {}
 
   async getWalletTokenBalances(address: string) {
     if (!this.apiKey) throw new Error('Moralis API key missing');
@@ -30,7 +30,8 @@ export class RealMoralisProvider implements MoralisProvider {
         headers: {
             'X-API-Key': this.apiKey,
             'accept': 'application/json'
-        }
+        },
+        signal: AbortSignal.timeout(this.timeoutMs)
     });
     if (!res.ok) throw new Error(`Moralis API error: ${res.statusText}`);
     const data = await res.json() as Array<{ token_address: string; balance: string; decimals: number; symbol: string }>;
@@ -44,17 +45,25 @@ export class RealMoralisProvider implements MoralisProvider {
 }
 
 export class RealCoinGeckoProvider implements CoinGeckoProvider {
+  constructor(private readonly timeoutMs = 10000) {}
+
   async getSimplePrice(ids: string[], vsCurrencies: string[]) {
     if (!ids.length || !vsCurrencies.length) return {};
-    const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids.join(',')}&vs_currencies=${vsCurrencies.join(',')}`);
+    const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids.join(',')}&vs_currencies=${vsCurrencies.join(',')}`, {
+      signal: AbortSignal.timeout(this.timeoutMs)
+    });
     if (!res.ok) throw new Error(`CoinGecko API error: ${res.statusText}`);
     return res.json() as Promise<Record<string, Record<string, number>>>;
   }
 }
 
 export class RealDeFiLlamaProvider implements DeFiLlamaProvider {
+  constructor(private readonly timeoutMs = 10000) {}
+
   async getProtocolTvl(protocol: string) {
-    const res = await fetch(`https://api.llama.fi/tvl/${protocol}`);
+    const res = await fetch(`https://api.llama.fi/tvl/${protocol}`, {
+      signal: AbortSignal.timeout(this.timeoutMs)
+    });
     if (!res.ok) throw new Error(`DeFiLlama API error: ${res.statusText}`);
     const data = await res.json();
     return Number(data);

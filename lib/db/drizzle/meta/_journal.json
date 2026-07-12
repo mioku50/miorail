@@ -71,6 +71,13 @@
       "when": 1783857600000,
       "tag": "0009_wallet_tenant_isolation",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1783857601000,
+      "tag": "0010_spend_permission_proofs",
+      "breakpoints": true
     }
   ]
 }

@@ -160,6 +160,21 @@ export const spendPermissions = pgTable(
   ],
 );
 
+export const spendPermissionProofs = pgTable(
+  'spend_permission_proofs',
+  {
+    proof: text('proof').primaryKey(),
+    permissionId: text('permission_id')
+      .references(() => spendPermissions.id)
+      .notNull(),
+    amount: numeric('amount', { precision: 18, scale: 6 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('spend_permission_proofs_permission_idx').on(table.permissionId),
+  ],
+);
+
 export const autonomyPolicies = pgTable(
   'autonomy_policies',
   {

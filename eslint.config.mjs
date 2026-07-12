@@ -26,6 +26,16 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ['node_modules', '**/dist/**', 'build', 'coverage'],
+    // Generated/built artifacts only — real source stays linted.
+    ignores: [
+      'node_modules',
+      '**/dist/**',
+      'build',
+      'coverage',
+      '**/.next/**',
+      'contracts/lib/**',
+      'contracts/out/**',
+      'contracts/cache/**',
+    ],
   },
 );

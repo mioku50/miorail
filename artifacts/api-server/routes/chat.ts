@@ -46,6 +46,7 @@ export const chatRouteRuntime = {
   createApiToolAggregatorForUser,
   createLlmProvider,
   getAutonomyPolicyRepository,
+  fetchInternalApprovals,
 };
 
 const EXPLICIT_TRANSACTION_REQUEST = /(?:\b(?:swap|exchange|buy|sell|approve|revoke|send|transfer)\b|(?:обменяй|обменять|свапни|свапнуть|купи|купить|отправь|отправить|переведи|перевести))/iu;
@@ -249,7 +250,13 @@ chatRouter.post('/', async (req, res, next) => {
       return res.json(assistantMsg);
     }
 
-    if (isPartnerWriteCommand(message) || EXPLICIT_TRANSACTION_REQUEST.test(message)) {
+    // T42.3 regression fix: this early-return gate must not swallow explicit
+    // revoke-approval requests. Before T42.3 it only applied in
+    // mainnet-readonly, so revoke messages reached the approval-scanner branch
+    // below (parseRevokeApproval/fetchInternalApprovals). Detect that intent
+    // first and let it through so the branch stays reachable in every chain env.
+    const explicitRevokeIntent = parseRevokeApproval(message) !== null;
+    if (!explicitRevokeIntent && (isPartnerWriteCommand(message) || EXPLICIT_TRANSACTION_REQUEST.test(message))) {
       const readOnly = runtimeChainEnv === 'mainnet-readonly' || !runtimeExecutionCapabilities.userConfirmedEnabled;
       const assistantMsg = {
         chatId,
@@ -462,7 +469,7 @@ chatRouter.post('/', async (req, res, next) => {
       let approvalScannerUnavailable = false;
       if (revokeIntent && walletAddress) {
         try {
-          const appRes = await fetchInternalApprovals(walletAddress, chainEnvVal);
+          const appRes = await chatRouteRuntime.fetchInternalApprovals(walletAddress, chainEnvVal);
           if (isApprovalScannerUnavailableStatus(appRes.status)) {
             approvalScannerUnavailable = true;
             metadata.title = "Approval Scanner Unavailable";
@@ -470,13 +477,16 @@ chatRouter.post('/', async (req, res, next) => {
             metadata.message = APPROVAL_SCANNER_UNAVAILABLE_UI_NOTE;
             metadata.userConfirmable = false;
             metadata.executable = false;
-            metadata.safetyState = "safe";
+            metadata.safetyState = "blocked";
             metadata.executionStatus = "read-only";
             assistantContent = APPROVAL_SCANNER_UNAVAILABLE_UI_NOTE;
           } else {
             approvalsForPlan = appRes.approvals;
           }
-        } catch {}
+        } catch (err) {
+          console.error("Approval scanner check failed for revoke request:", err);
+          approvalScannerUnavailable = true;
+        }
       }
 
       let payload: any = isReadonly ? {
@@ -545,7 +555,7 @@ chatRouter.post('/', async (req, res, next) => {
         metadata.message = APPROVAL_SCANNER_UNAVAILABLE_UI_NOTE;
         metadata.userConfirmable = false;
         metadata.executable = false;
-        metadata.safetyState = "safe";
+        metadata.safetyState = "blocked";
         metadata.executionStatus = "read-only";
         delete metadata.actionType;
         delete metadata.preferredFirstAction;

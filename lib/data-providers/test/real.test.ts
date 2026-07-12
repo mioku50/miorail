@@ -113,6 +113,43 @@ describe('Real Providers', () => {
         mock.restoreAll();
     });
 
+    test('RealMoralisProvider wires an AbortSignal.timeout and propagates an abort as a rejection', async () => {
+        const mockFetch = mock.fn(async (_url: string | URL | Request, options?: RequestInit) => {
+            assert.ok(options?.signal instanceof AbortSignal, 'fetch must receive an AbortSignal so a hung request cannot block portfolio reads forever');
+            // Simulate the platform aborting this request once AbortSignal.timeout fires.
+            throw new DOMException('The operation was aborted.', 'AbortError');
+        });
+        global.fetch = mockFetch as unknown as typeof fetch;
+
+        const provider = new RealMoralisProvider('fake-key', 25);
+        await assert.rejects(() => provider.getWalletTokenBalances('0xabc'), /abort/i);
+        mock.restoreAll();
+    });
+
+    test('RealCoinGeckoProvider wires an AbortSignal.timeout and propagates an abort as a rejection', async () => {
+        const mockFetch = mock.fn(async (_url: string | URL | Request, options?: RequestInit) => {
+            assert.ok(options?.signal instanceof AbortSignal, 'fetch must receive an AbortSignal so a hung request cannot block portfolio reads forever');
+            throw new DOMException('The operation was aborted.', 'AbortError');
+        });
+        global.fetch = mockFetch as unknown as typeof fetch;
+
+        const provider = new RealCoinGeckoProvider(25);
+        await assert.rejects(() => provider.getSimplePrice(['ethereum'], ['usd']), /abort/i);
+        mock.restoreAll();
+    });
+
+    test('RealDeFiLlamaProvider wires an AbortSignal.timeout and propagates an abort as a rejection', async () => {
+        const mockFetch = mock.fn(async (_url: string | URL | Request, options?: RequestInit) => {
+            assert.ok(options?.signal instanceof AbortSignal, 'fetch must receive an AbortSignal so a hung request cannot block portfolio reads forever');
+            throw new DOMException('The operation was aborted.', 'AbortError');
+        });
+        global.fetch = mockFetch as unknown as typeof fetch;
+
+        const provider = new RealDeFiLlamaProvider(25);
+        await assert.rejects(() => provider.getProtocolTvl('uniswap'), /abort/i);
+        mock.restoreAll();
+    });
+
     test('AlchemyTokenBalancesProvider maps token balances and metadata', async () => {
         const token = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
         const mockFetch = mock.fn(async (_url: string | URL | Request, options?: RequestInit) => {

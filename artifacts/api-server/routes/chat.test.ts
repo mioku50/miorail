@@ -450,6 +450,152 @@ describe('Chat API & Recommendation Guardrails', () => {
     restoreEnv('MAINNET_EXECUTION_ENABLED', origExecution);
   });
 
+  test('POST /api/chat revoke request fails closed (not "safe") when the approval scanner throws', async () => {
+    clearTokenSecurityCacheForTests();
+    const origChain = process.env.CHAIN_ENV;
+    const origExecution = process.env.MAINNET_EXECUTION_ENABLED;
+    const origSecurityProvider = process.env.TOKEN_SECURITY_PROVIDER;
+    const origBalancesProvider = process.env.TOKEN_BALANCES_PROVIDER;
+    const origPriceProvider = process.env.PRICE_PROVIDER;
+    const origApprovalProvider = process.env.APPROVAL_PROVIDER;
+    const originalFetchInternalApprovals = chatRouteRuntime.fetchInternalApprovals;
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    process.env.TOKEN_BALANCES_PROVIDER = 'none';
+    process.env.PRICE_PROVIDER = 'none';
+    process.env.APPROVAL_PROVIDER = 'none';
+    process.env.CHAIN_ENV = 'mainnet-readonly';
+    process.env.MAINNET_EXECUTION_ENABLED = 'false';
+    chatRouteRuntime.fetchInternalApprovals = async () => {
+      throw new Error('approval scanner exploded');
+    };
+    await request(app).delete('/api/chat/history');
+
+    try {
+      // Uses the real word "revoke": after the T42.3 gate regression fix,
+      // explicit revoke requests bypass the EXPLICIT_TRANSACTION_REQUEST
+      // early-return gate and reach the approval-scanner code path below.
+      const response = await request(app)
+        .post('/api/chat')
+        .send({
+          message: 'revoke USDC approval for 0x1111111111111111111111111111111111111111',
+          walletAddress: '0x1234567890123456789012345678901234567890',
+          chainEnv: 'mainnet-readonly',
+        });
+
+      assert.strictEqual(response.status, 200);
+      assert.ok(response.body.actionId);
+      assert.match(response.body.content, /unavailable/i);
+
+      const dbActions = await db.select().from(actions).where(eq(actions.id, response.body.actionId));
+      assert.strictEqual(dbActions.length, 1);
+      const meta = dbActions[0].metadata as any;
+      assert.notStrictEqual(meta.safetyState, 'safe');
+      assert.strictEqual(meta.userConfirmable, false);
+      assert.strictEqual(meta.executable, false);
+    } finally {
+      chatRouteRuntime.fetchInternalApprovals = originalFetchInternalApprovals;
+      restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurityProvider);
+      restoreEnv('TOKEN_BALANCES_PROVIDER', origBalancesProvider);
+      restoreEnv('PRICE_PROVIDER', origPriceProvider);
+      restoreEnv('APPROVAL_PROVIDER', origApprovalProvider);
+      restoreEnv('CHAIN_ENV', origChain);
+      restoreEnv('MAINNET_EXECUTION_ENABLED', origExecution);
+    }
+  });
+
+  test('POST /api/chat transaction gate still blocks swap/send phrases but no longer swallows revoke requests', async () => {
+    clearTokenSecurityCacheForTests();
+    const origChain = process.env.CHAIN_ENV;
+    const origExecution = process.env.MAINNET_EXECUTION_ENABLED;
+    const origSecurityProvider = process.env.TOKEN_SECURITY_PROVIDER;
+    const origBalancesProvider = process.env.TOKEN_BALANCES_PROVIDER;
+    const origPriceProvider = process.env.PRICE_PROVIDER;
+    const origApprovalProvider = process.env.APPROVAL_PROVIDER;
+    const originalFetchInternalApprovals = chatRouteRuntime.fetchInternalApprovals;
+    const originalCreateTools = chatRouteRuntime.createApiToolAggregatorForUser;
+    process.env.TOKEN_SECURITY_PROVIDER = 'none';
+    process.env.TOKEN_BALANCES_PROVIDER = 'none';
+    process.env.PRICE_PROVIDER = 'none';
+    process.env.APPROVAL_PROVIDER = 'none';
+    process.env.CHAIN_ENV = 'mainnet-readonly';
+    process.env.MAINNET_EXECUTION_ENABLED = 'false';
+    chatRouteRuntime.fetchInternalApprovals = async () => ({
+      approvals: [],
+      status: 'connected' as const,
+      provider: 'mock' as const,
+      tokenCount: 0,
+      unlimitedCount: 0,
+      riskySpenderCount: 0,
+    });
+    // Empty aggregator so direct Base MCP/quote routers cannot intercept the
+    // messages before they reach the transaction gate under test.
+    chatRouteRuntime.createApiToolAggregatorForUser = async () => new ToolAggregator();
+    await request(app).delete('/api/chat/history');
+
+    try {
+      // Swap phrase: still blocked in read-only mode (direct swap router), no action created.
+      const swapRes = await request(app)
+        .post('/api/chat')
+        .send({
+          message: 'swap 1 USDC to ETH',
+          walletAddress: '0x1234567890123456789012345678901234567890',
+          chainEnv: 'mainnet-readonly',
+        });
+      assert.strictEqual(swapRes.status, 200);
+      assert.strictEqual(swapRes.body.metadata.errorCode, 'mainnet_readonly');
+      assert.strictEqual(swapRes.body.actionId, undefined);
+
+      // Send phrase: same blocked behavior as before, no action created.
+      const sendRes = await request(app)
+        .post('/api/chat')
+        .send({
+          message: 'send 5 USDC to 0x2222222222222222222222222222222222222222',
+          walletAddress: '0x1234567890123456789012345678901234567890',
+          chainEnv: 'mainnet-readonly',
+        });
+      assert.strictEqual(sendRes.status, 200);
+      assert.strictEqual(sendRes.body.metadata.errorCode, 'mainnet_readonly');
+      assert.strictEqual(sendRes.body.actionId, undefined);
+
+      // Sell phrase: not handled by any direct router, so this exercises the
+      // EXPLICIT_TRANSACTION_REQUEST gate itself — still intercepts as before.
+      const sellRes = await request(app)
+        .post('/api/chat')
+        .send({
+          message: 'sell all my USDC tokens',
+          walletAddress: '0x1234567890123456789012345678901234567890',
+          chainEnv: 'mainnet-readonly',
+        });
+      assert.strictEqual(sellRes.status, 200);
+      assert.strictEqual(sellRes.body.metadata.blocked, true);
+      assert.strictEqual(sellRes.body.metadata.errorCode, 'mainnet_readonly');
+      assert.strictEqual(sellRes.body.actionId, undefined);
+
+      // Revoke request: NOT swallowed by the gate anymore — reaches the
+      // approval-scanner branch and produces a read-only "nothing to revoke" answer.
+      const revokeRes = await request(app)
+        .post('/api/chat')
+        .send({
+          message: 'revoke USDC approval for 0x1111111111111111111111111111111111111111',
+          walletAddress: '0x1234567890123456789012345678901234567890',
+          chainEnv: 'mainnet-readonly',
+        });
+      assert.strictEqual(revokeRes.status, 200);
+      assert.notStrictEqual(revokeRes.body.metadata?.errorCode, 'mainnet_readonly');
+      assert.ok(revokeRes.body.actionId, 'revoke request must reach the action branch, not the transaction gate');
+      assert.match(revokeRes.body.content, /no active approval found/i);
+    } finally {
+      chatRouteRuntime.createApiToolAggregatorForUser = originalCreateTools;
+      chatRouteRuntime.fetchInternalApprovals = originalFetchInternalApprovals;
+      restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurityProvider);
+      restoreEnv('TOKEN_BALANCES_PROVIDER', origBalancesProvider);
+      restoreEnv('PRICE_PROVIDER', origPriceProvider);
+      restoreEnv('APPROVAL_PROVIDER', origApprovalProvider);
+      restoreEnv('CHAIN_ENV', origChain);
+      restoreEnv('MAINNET_EXECUTION_ENABLED', origExecution);
+    }
+  });
+
   test('POST /api/actions/recommend with portfolio intent generates analysis metadata', async () => {
     clearTokenSecurityCacheForTests();
     const origSecurityProvider = process.env.TOKEN_SECURITY_PROVIDER;
