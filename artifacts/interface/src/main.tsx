@@ -7,7 +7,7 @@ import { baseAccount, injected } from 'wagmi/connectors';
 import { ThemeProvider } from '@mioagent/ui';
 import './index.css';
 import App from './app/App';
-import { WalletAuthGate } from './app/WalletAuthGate';
+import { AuthProvider } from './app/AuthProvider';
 
 const queryClient = new QueryClient();
 
@@ -33,7 +33,7 @@ createRoot(document.getElementById('root')!).render(
     <ThemeProvider>
       <WagmiProvider config={config}>
         <QueryClientProvider client={queryClient}>
-          <WalletAuthGate><App /></WalletAuthGate>
+          <AuthProvider><App /></AuthProvider>
         </QueryClientProvider>
       </WagmiProvider>
     </ThemeProvider>

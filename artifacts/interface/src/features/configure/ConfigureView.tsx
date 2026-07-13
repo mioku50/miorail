@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { useAccount, useChainId, useSwitchChain } from 'wagmi';
+import { useAccount, useCapabilities, useChainId, useSwitchChain } from 'wagmi';
 import {
   useStatus,
   useAutonomy,
@@ -29,6 +29,9 @@ import { capabilityLabel, type CapabilityState } from '../../lib/capabilityStatu
 import { savedPolicyForm, visibleAutonomyBlockedReasons } from '../../lib/autonomyUi';
 import { policyFormBlockers } from '../../lib/policyFormBlockers';
 import { BaseMcpConnectButton } from '../../components/BaseMcpConnectButton';
+import { isBaseAppEnvironment } from '../../lib/baseAppEnvironment';
+import { collectBaseAppDiagnostics } from '../../lib/collectBaseAppDiagnostics';
+import { useAuthGate } from '../../app/AuthProvider';
 
 function tbState(s?: string): StateKind {
   if (s === 'connected') return 'live';
@@ -49,6 +52,79 @@ function Row({ label, children, last }: { label: string; children: ReactNode; la
 }
 
 const Checking = () => <span className="text-xs text-ink-3 font-mono">Checking...</span>;
+
+// T48a: BaseApp/wallet diagnostics — collection kept in a pure helper
+// (collectBaseAppDiagnostics) and only rendered here, behind DIAGNOSTICS_ENABLED.
+function BaseAppDiagnosticsSection() {
+  const { address, chainId: acctChainId, connector } = useAccount();
+  const gate = useAuthGate();
+  const [isBaseApp, setIsBaseApp] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!connector) {
+      setIsBaseApp(false);
+      return;
+    }
+    void connector.getProvider()
+      .then((provider) => {
+        if (cancelled) return;
+        setIsBaseApp(isBaseAppEnvironment({
+          connectorId: connector.id,
+          connectorName: connector.name,
+          userAgent: typeof navigator === 'undefined' ? '' : navigator.userAgent,
+          provider,
+        }));
+      })
+      .catch(() => { if (!cancelled) setIsBaseApp(false); });
+    return () => { cancelled = true; };
+  }, [connector]);
+
+  // Best-effort EIP-5792 probe — wallets that don't implement wallet_getCapabilities
+  // simply resolve with an error captured by the query, never thrown.
+  const capabilities = useCapabilities(acctChainId ? { chainId: acctChainId } : undefined);
+  const capabilitiesForChain = capabilities.data && typeof capabilities.data === 'object'
+    ? (capabilities.data as Record<string, unknown>)
+    : null;
+
+  const diagnostics = collectBaseAppDiagnostics({
+    injectedProviderDetected: typeof window !== 'undefined' && Boolean((window as typeof window & { ethereum?: unknown }).ethereum),
+    walletAddress: address,
+    chainId: acctChainId,
+    sessionAuthenticated: gate.sessionAuthenticated,
+    isBaseAppEnvironment: isBaseApp,
+    capabilities: capabilitiesForChain,
+  });
+
+  return (
+    <section className="bg-panel border border-line rounded-xl p-4 flex flex-col gap-3">
+      <h3 className="text-sm font-bold text-ink mb-1">BaseApp / Wallet Diagnostics</h3>
+      <Row label="Injected provider detected">
+        <span className="text-xs font-mono text-ink">{diagnostics.injectedProviderDetected ? 'Yes' : 'No'}</span>
+      </Row>
+      <Row label="BaseApp environment">
+        <span className="text-xs font-mono text-ink">{diagnostics.isBaseAppEnvironment ? 'Yes' : 'No'}</span>
+      </Row>
+      <Row label="Wallet address">
+        <span className="text-xs font-mono text-ink">{diagnostics.walletAddress || 'Not connected'}</span>
+      </Row>
+      <Row label="Chain ID">
+        <span className="text-xs font-mono text-ink">{diagnostics.chainId ?? 'Unknown'}</span>
+      </Row>
+      <Row label="Session authenticated">
+        <span className="text-xs font-mono text-ink">{diagnostics.sessionAuthenticated ? 'Yes' : 'No'}</span>
+      </Row>
+      <Row label="wallet_sendCalls supported" last>
+        <span className="text-xs font-mono text-ink">{diagnostics.sendCallsSupported ? 'Yes' : 'No'}</span>
+      </Row>
+      {diagnostics.walletCapabilities && (
+        <pre className="text-[10px] bg-panel-2 border border-line rounded-md p-2 overflow-x-auto text-ink-3">
+          {JSON.stringify(diagnostics.walletCapabilities, null, 2)}
+        </pre>
+      )}
+    </section>
+  );
+}
 
 function userBlockedReason(reason: string): string {
   const labels: Record<string, string> = {
@@ -567,6 +643,8 @@ export function ConfigureView({ diagnosticsOnly = false }: { diagnosticsOnly?: b
           <span className="text-xs font-medium px-2.5 py-0.5 rounded border bg-panel-2 text-ink-3 border-line" title="LLM provider status is not reported by /api/status">Not reported</span>
         </Row>
       </section>}
+
+      {diagnosticsOnly && <BaseAppDiagnosticsSection />}
     </main>
   );
 }

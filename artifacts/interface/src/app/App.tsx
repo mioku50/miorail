@@ -19,6 +19,7 @@ import { BaseMcpView } from '../features/configure/BaseMcpView';
 import { FuelMeter } from '../features/x402/FuelMeter';
 import { DIAGNOSTICS_ENABLED } from '../lib/diagnostics';
 import { BaseMcpOAuthBridge } from './BaseMcpOAuthBridge';
+import { RequireSession } from './RequireSession';
 
 function ChainEnvMismatchBanner() {
   const { data: sd } = useStatus();
@@ -90,11 +91,14 @@ export function App() {
 
         <div className="flex-1 flex overflow-hidden min-h-0">
           <Switch>
-            <Route path="/actions"><ActionsPage /></Route>
-            <Route path="/actions/:actionId">{(params) => <ActionsPage actionId={params.actionId} />}</Route>
-            <Route path="/stream"><StreamPage /></Route>
-            <Route path="/fuel"><FuelMeter /></Route>
-            <Route path="/configure"><ConfigureView /></Route>
+            {/* Private surfaces: gated behind a wallet session (T48a). Public
+                routes (cockpit, diagnostics, build, history, base-mcp) stay
+                reachable read-only, unauthenticated. */}
+            <Route path="/actions"><RequireSession><ActionsPage /></RequireSession></Route>
+            <Route path="/actions/:actionId">{(params) => <RequireSession><ActionsPage actionId={params.actionId} /></RequireSession>}</Route>
+            <Route path="/stream"><RequireSession><StreamPage /></RequireSession></Route>
+            <Route path="/fuel"><RequireSession><FuelMeter /></RequireSession></Route>
+            <Route path="/configure"><RequireSession><ConfigureView /></RequireSession></Route>
             <Route path="/diagnostics">
               {DIAGNOSTICS_ENABLED ? <ConfigureView diagnosticsOnly /> : <Redirect to="/configure" />}
             </Route>
