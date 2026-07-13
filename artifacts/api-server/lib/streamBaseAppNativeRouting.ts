@@ -3,7 +3,6 @@ import { db, actions } from '@mioagent/db';
 import type { AutonomyPolicy, AutonomyPolicyRepository } from '@mioagent/autonomy';
 import { evaluateExecutableAction } from '@mioagent/security';
 import { canonicalUsdcForBaseChain } from '@mioagent/security/baseGuards';
-import { partnerFetch } from '@mioagent/security/httpAllowlist';
 import type { UniswapSwapContext } from '@mioagent/security/uniswapGuard';
 import { getAutonomyPolicyRepository } from './autonomyGateway.js';
 import { buildActionPlan } from './actionPlan.js';
@@ -11,6 +10,7 @@ import { loadTokenSecurityContext } from './executionSecurity.js';
 import { detectBaseMcpSendIntent, type BaseMcpSendIntent } from './streamBaseMcpSendRouting.js';
 import { detectSwapIntent } from './streamBaseMcpSwapRouting.js';
 import type { StreamToolTrace } from './streamReadRouting.js';
+import { pluginHttpRequest } from './pluginHttpGateway.js';
 
 type NativeResultKind = 'baseapp_native_send' | 'baseapp_native_swap';
 
@@ -44,6 +44,8 @@ interface UniswapPreparation {
   requestId: string;
   expiresAt: string;
   context: UniswapSwapContext;
+  /** T48b: real plugin_http_request steps taken to prepare this swap (post-fact trace, not live SSE). */
+  traces?: StreamToolTrace[];
 }
 
 export const baseAppNativeRuntime: {
@@ -62,8 +64,12 @@ export const baseAppNativeRuntime: {
   prepareUniswap5792,
 };
 
-function blocked(kind: NativeResultKind, content: string, errorCode: string): DirectBaseAppNativeResult {
-  return { kind, content, toolCalls: [], errorCode };
+function blocked(kind: NativeResultKind, content: string, errorCode: string, toolCalls: StreamToolTrace[] = []): DirectBaseAppNativeResult {
+  return { kind, content, toolCalls, errorCode };
+}
+
+function skillLoadTrace(namespace: string): StreamToolTrace {
+  return { toolName: `skill_load:${namespace}`, args: { namespace }, result: { status: 'success' }, isError: false };
 }
 
 function validPolicy(policy: AutonomyPolicy | null | undefined, userId: string, walletAddress: string): policy is AutonomyPolicy {
@@ -196,21 +202,33 @@ function uniswapToken(symbol: string): { address: string; decimals: number } {
   throw new Error('uniswap_token_unsupported');
 }
 
-async function postUniswap(path: '/quote' | '/swap_5792', body: unknown): Promise<Record<string, any>> {
-  const key = process.env.UNISWAP_API_KEY?.trim();
-  if (!key) throw new Error('uniswap_not_configured');
-  const response = await partnerFetch(`https://trade-api.gateway.uniswap.org/v1${path}`, {
-    method: 'POST',
-    headers: {
-      accept: 'application/json',
-      'content-type': 'application/json',
-      'x-api-key': key,
-      'x-universal-router-version': '2.0',
-    },
-    body: JSON.stringify(body),
-  }, { timeoutMs: uniswapTimeoutMs() });
-  if (!response.ok) throw new Error(`uniswap_http_${response.status}`);
-  return response.json() as Promise<Record<string, any>>;
+// T48b: the constrained plugin_http_request gateway (pluginHttpGateway.ts)
+// resolves the Uniswap credential (mcp mode: UNISWAP_MCP_GATEWAY_KEY; direct
+// mode: UNISWAP_API_KEY) and enforces host/method/path/chain against the
+// Uniswap runtime-skill manifest. This function no longer reads
+// UNISWAP_API_KEY directly and no longer calls partnerFetch itself.
+async function postUniswap(path: '/quote' | '/swap_5792', body: unknown): Promise<{ payload: Record<string, any>; trace: StreamToolTrace }> {
+  const toolName = `plugin_http_request:POST /v1${path}`;
+  try {
+    const response = await pluginHttpRequest({
+      plugin: 'uniswap',
+      url: `https://trade-api.gateway.uniswap.org/v1${path}`,
+      method: 'POST',
+      body,
+      extraHeaders: { accept: 'application/json', 'x-universal-router-version': '2.0' },
+      timeoutMs: uniswapTimeoutMs(),
+    });
+    if (response.status < 200 || response.status >= 300) throw new Error(`uniswap_http_${response.status}`);
+    return {
+      payload: response.data as Record<string, any>,
+      trace: { toolName, args: { path }, result: { status: 'success' }, isError: false },
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw Object.assign(new Error(message), {
+      trace: { toolName, args: { path }, result: { status: 'error' as const, errorCode: 'uniswap_plugin_http_failed' }, isError: true },
+    });
+  }
 }
 
 export async function prepareUniswap5792(intent: SwapIntent, walletAddress: string): Promise<UniswapPreparation> {
@@ -218,7 +236,8 @@ export async function prepareUniswap5792(intent: SwapIntent, walletAddress: stri
   const tokenIn = uniswapToken(intent.tokenIn);
   const tokenOut = uniswapToken(intent.tokenOut);
   const amount = baseUnits(intent.amount, tokenIn.decimals);
-  const quotePayload = await postUniswap('/quote', {
+  const traces: StreamToolTrace[] = [];
+  const quoteCall = await postUniswap('/quote', {
     type: 'EXACT_INPUT',
     amount,
     tokenIn: tokenIn.address,
@@ -233,18 +252,22 @@ export async function prepareUniswap5792(intent: SwapIntent, walletAddress: stri
     generatePermitAsTransaction: true,
     permitAmount: 'EXACT',
   });
+  traces.push(quoteCall.trace);
+  const quotePayload = quoteCall.payload;
   const quote = quotePayload.quote;
   const routing = String(quotePayload.routing || quote?.routing || '').toUpperCase();
   if (!quote || typeof quote !== 'object' || !['CLASSIC', 'WRAP', 'UNWRAP'].includes(routing)) {
-    throw new Error('uniswap_quote_invalid');
+    throw Object.assign(new Error('uniswap_quote_invalid'), { trace: undefined });
   }
   const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
-  const prepared = await postUniswap('/swap_5792', {
+  const swapCall = await postUniswap('/swap_5792', {
     quote,
     ...(quotePayload.permitData ? { permitData: quotePayload.permitData } : {}),
     deadline: Math.floor(Date.parse(expiresAt) / 1000),
     urgency: 'normal',
   });
+  traces.push(swapCall.trace);
+  const prepared = swapCall.payload;
   if (String(prepared.from || '').toLowerCase() !== walletAddress
     || Number(prepared.chainId) !== 8453
     || typeof prepared.requestId !== 'string'
@@ -268,6 +291,7 @@ export async function prepareUniswap5792(intent: SwapIntent, walletAddress: stri
       routerVersion: '2.0',
       expiresAt,
     },
+    traces,
   };
 }
 
@@ -300,12 +324,22 @@ export async function runDirectBaseAppNativeSwap(input: {
   const { security, usable } = await freshUsdcSecurity();
   if (!usable) return blocked(kind, 'Swap blocked: no fresh usable GoPlus verdict exists for canonical Base USDC.', 'swap_token_security_unavailable');
 
+  // T48b: real post-fact tool-trace steps for this swap — skill_load, the
+  // plugin_http_request steps performed inside prepareUniswap5792 (if any
+  // reached the network), security_preflight, and prepare_wallet_calls. This
+  // is not live SSE; it is assembled after each step completes, same as the
+  // rest of the codebase's StreamToolTrace usage.
+  const traces: StreamToolTrace[] = [skillLoadTrace('uniswap')];
+
   let prepared: UniswapPreparation;
   try {
     prepared = await baseAppNativeRuntime.prepareUniswap5792(intent, walletAddress);
+    traces.push(...(prepared.traces || []));
   } catch (error) {
+    const failedTrace = (error as { trace?: StreamToolTrace } | undefined)?.trace;
+    if (failedTrace) traces.push(failedTrace);
     const code = error instanceof Error ? error.message.replace(/[^a-z0-9_]+/gi, '_').toLowerCase() : 'uniswap_prepare_failed';
-    return blocked(kind, `Uniswap could not prepare a native wallet batch (${code}).`, code);
+    return blocked(kind, `Uniswap could not prepare a native wallet batch (${code}).`, code, traces);
   }
   const payload = { chain: 'eip155:8453', actionType: 'uniswap_swap' as const, calls: prepared.calls };
   const guard = await baseAppNativeRuntime.evaluate({
@@ -317,7 +351,19 @@ export async function runDirectBaseAppNativeSwap(input: {
     tokenSecurity: security.tokenSecurity,
     uniswap: prepared.context,
   });
-  if (!guard.allowed) return blocked(kind, `Uniswap batch failed strict preflight (${guard.code}).`, 'uniswap_preflight_blocked');
+  traces.push({
+    toolName: 'security_preflight',
+    args: { actionType: payload.actionType, chain: 8453 },
+    result: guard.allowed ? { status: 'success' } : { status: 'error', errorCode: guard.code },
+    isError: !guard.allowed,
+  });
+  if (!guard.allowed) return blocked(kind, `Uniswap batch failed strict preflight (${guard.code}).`, 'uniswap_preflight_blocked', traces);
+  traces.push({
+    toolName: 'prepare_wallet_calls',
+    args: { chain: 'eip155:8453', callCount: payload.calls.length },
+    result: { status: 'success' },
+    isError: false,
+  });
 
   const actionId = crypto.randomUUID();
   const expiresAt = new Date(Math.min(policy.expiresAt, Date.parse(prepared.expiresAt))).toISOString();
@@ -351,7 +397,7 @@ export async function runDirectBaseAppNativeSwap(input: {
   return {
     kind,
     content: `I prepared a ${intent.amount} USDC → ${intent.tokenOut} Uniswap batch for your current BaseApp wallet. Review it in Action Inbox and confirm with wallet_sendCalls; no Base MCP approval URL was created.`,
-    toolCalls: [],
+    toolCalls: traces,
     actionId,
     actionExpiresAt: expiresAt,
     preparedPayload: { executionPayload: payload, tenantId: input.userId, walletAddress, expiresAt },

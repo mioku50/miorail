@@ -1,10 +1,12 @@
 import { ToolAggregator } from './aggregator.js';
 import { NativeToolProvider } from './native.js';
 import { BaseMcpToolProvider } from './base_mcp.js';
-import { DynamicBaseMcpToolProvider, listDynamicBaseMcpToolsFromClient, type DynamicBaseMcpTool } from './dynamic_base_mcp.js';
+import { DynamicBaseMcpToolProvider, type DynamicBaseMcpTool } from './dynamic_base_mcp.js';
+import { listDynamicBaseMcpToolsCached, dynamicBaseMcpCacheKey } from './dynamicBaseMcpCache.js';
 import { MorphoMcpToolProvider } from './morpho_mcp.js';
 import { UniswapQuoteToolProvider } from './uniswap_quote.js';
 import { MoonwellHttpToolProvider } from './moonwell_http.js';
+import { resolvePluginCredential } from '@mioagent/security/httpAllowlist';
 import type { BaseMcpOAuthProvider } from '@mioagent/mcp';
 import * as settingsModule from '@mioagent/settings';
 import {
@@ -28,6 +30,14 @@ export interface CreateToolAggregatorOptions {
   includeMoonwell?: boolean;
   includeBaseMcpSwap?: boolean;
   includeBaseMcpSend?: boolean;
+  /**
+   * T48b: version tag for the bounded TTL inventory cache
+   * (dynamicBaseMcpCache.ts), typically derived from the user's Base MCP
+   * oauth-token state (e.g. connectedAt+expiresAt). Changing this value
+   * busts the cache immediately; a stable value across calls reuses the
+   * cached `listTools()` result for up to the cache TTL (~60s).
+   */
+  dynamicToolsCacheVersion?: string;
 }
 
 function parseBool(value?: string): boolean {
@@ -109,7 +119,8 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
         aggregator.registerProvider(new BaseMcpToolProvider(mcpClient));
       }
       try {
-        const discoveredTools = await listDynamicBaseMcpToolsFromClient(baseClient, toggles);
+        const cacheKey = dynamicBaseMcpCacheKey(userId, options.dynamicToolsCacheVersion);
+        const discoveredTools = await listDynamicBaseMcpToolsCached(baseClient, cacheKey, toggles);
         const dynamicTools = selectBaseMcpRuntimeTools(
           discoveredTools,
           options.baseMcpReadOnlyOnly,
@@ -139,7 +150,12 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
   }
 
   if (options.includeUniswapQuote && toggles?.uniswap !== false) {
-    aggregator.registerProvider(new UniswapQuoteToolProvider());
+    // T48b: BASE_MCP_PLUGIN_MODE default 'mcp' resolves UNISWAP_MCP_GATEWAY_KEY
+    // here; UNISWAP_API_KEY is only consulted in 'direct' mode. Registration
+    // never fails or gates on UNISWAP_API_KEY being unset in mcp mode — the
+    // provider itself already degrades to an empty tool list when no
+    // credential is configured (read-only quote availability, not a crash).
+    aggregator.registerProvider(new UniswapQuoteToolProvider(undefined, resolvePluginCredential('uniswap')));
   }
 
   // Moonwell is a plain HTTP API (no MCP server, no API key). It is a Base

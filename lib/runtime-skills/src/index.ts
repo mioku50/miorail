@@ -5,6 +5,22 @@ export interface RuntimeSkillToolRequirement {
   anyOf: string[];
 }
 
+// T48b: structured manifest for plugins that are reached through the
+// server-side `plugin_http_request` gateway (artifacts/api-server/lib/
+// pluginHttpGateway.ts) instead of (or in addition to) live MCP tools. This is
+// the source of truth the gateway uses to enforce host/method/path/chain
+// before any network call — never parsed from the vendored `.md` (no YAML
+// dependency); the `.md` frontmatter remains human documentation only. Only
+// plugins with an HTTP-reachable surface (Uniswap, Moonwell) carry a
+// manifest; MCP-only read skills do not need one.
+export interface RuntimeSkillManifest {
+  integration: 'http-api' | 'mcp' | 'cli';
+  chains: number[];
+  allowlist: { hosts: string[]; methods: ('GET' | 'POST')[]; pathPrefixes: string[] };
+  auth: 'none' | 'api-key';
+  risk: string[];
+}
+
 export interface RuntimeSkillDefinition {
   namespace: string;
   displayName: string;
@@ -13,6 +29,7 @@ export interface RuntimeSkillDefinition {
   argumentMapper: (intent: RuntimeSkillIntent, input: Record<string, unknown>) => Record<string, unknown>;
   resultScreener: string;
   instructions: string[];
+  manifest?: RuntimeSkillManifest;
 }
 
 const identityMapper = (_intent: RuntimeSkillIntent, input: Record<string, unknown>) => ({ ...input });
@@ -31,6 +48,17 @@ const SKILLS: RuntimeSkillDefinition[] = [
       : { chain: 'base', ...input },
     resultScreener: 'uniswap_quote_or_protocol',
     // source: lib/runtime-skills/plugins/uniswap.md (base/skills)
+    manifest: {
+      integration: 'http-api',
+      chains: [8453],
+      allowlist: {
+        hosts: ['trade-api.gateway.uniswap.org', 'liquidity.api.uniswap.org'],
+        methods: ['GET', 'POST'],
+        pathPrefixes: ['/v1/check_approval', '/v1/quote', '/v1/swap', '/lp/'],
+      },
+      auth: 'api-key',
+      risk: ['slippage'],
+    },
     instructions: [
       'Use only Uniswap-namespaced tools on Base mainnet (chainId 8453).',
       'Quote intent is read-only for the LLM: never request calldata, approval, permit, signature, or transaction preparation.',
@@ -51,6 +79,17 @@ const SKILLS: RuntimeSkillDefinition[] = [
     argumentMapper: identityMapper,
     resultScreener: 'moonwell',
     // source: lib/runtime-skills/plugins/moonwell.md (base/skills)
+    manifest: {
+      integration: 'http-api',
+      chains: [8453],
+      allowlist: {
+        hosts: ['api.moonwell.fi'],
+        methods: ['GET', 'POST'],
+        pathPrefixes: ['/v1/markets', '/v1/rates', '/v1/positions', '/v1/health', '/v1/rewards', '/v1/token-balance', '/v1/prepare'],
+      },
+      auth: 'none',
+      risk: ['liquidation'],
+    },
     instructions: [
       'Use only Moonwell-namespaced tools and never substitute Morpho or another lending protocol.',
       'Treat supply markets, APY, rates, positions, and health as reads unless an amount/funds command is explicit.',

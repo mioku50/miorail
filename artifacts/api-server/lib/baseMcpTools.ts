@@ -4,7 +4,7 @@ import {
   baseMcpEnabledFromEnv,
   baseMcpServerUrlFromEnv,
 } from './baseMcpStatus.js';
-import { createBaseMcpOAuthProviderForUser } from './baseMcpOAuthStore.js';
+import { createBaseMcpOAuthProviderForUser, getBaseMcpAuthStatus } from './baseMcpOAuthStore.js';
 import { refreshBaseMcpOAuthIfNeeded } from './baseMcpOAuthLifecycle.js';
 
 function publicOrigin(req: Request): string {
@@ -46,6 +46,13 @@ export async function createApiToolAggregatorForUser(
       })
     : undefined;
 
+  // T48b: version the bounded TTL inventory cache (lib/tools
+  // dynamicBaseMcpCache.ts) off the stored oauth token's connectedAt +
+  // expiresAt. Either value changing (reconnect, refresh) busts the cache
+  // immediately; an unchanged token reuses the cached listTools() result.
+  const authStatus = oauthProvider ? await getBaseMcpAuthStatus(userId) : undefined;
+  const dynamicToolsCacheVersion = authStatus ? `${authStatus.connectedAt || ''}:${authStatus.expiresAt || ''}` : undefined;
+
   return createToolAggregatorForUser(userId, sessionSecret, {
     baseMcpEnabled: enabled,
     baseMcpServerUrl: serverUrl?.toString(),
@@ -56,5 +63,6 @@ export async function createApiToolAggregatorForUser(
     includeMoonwell: options.includeMoonwell,
     includeBaseMcpSwap: options.includeBaseMcpSwap,
     includeBaseMcpSend: options.includeBaseMcpSend,
+    dynamicToolsCacheVersion,
   });
 }

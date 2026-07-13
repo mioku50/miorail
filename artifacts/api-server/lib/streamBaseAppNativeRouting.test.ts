@@ -6,7 +6,23 @@ import {
   baseAppNativeRuntime,
   runDirectBaseAppNativeSend,
   runDirectBaseAppNativeSwap,
+  prepareUniswap5792,
 } from './streamBaseAppNativeRouting.js';
+
+function withEnv<T>(overrides: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
+  const previous: Record<string, string | undefined> = {};
+  for (const key of Object.keys(overrides)) previous[key] = process.env[key];
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  return fn().finally(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+}
 
 const TENANT_WALLET = '0x8e525bfce1ef40aa8075ef64e45421b5855c8909';
 const MCP_WALLET = '0x4de27ead5a3c9aeb58c7f812178ddde282670d70';
@@ -122,4 +138,75 @@ test('T47 native policy lookup cannot fall through to the Coinbase OAuth wallet'
     userId: `eip155:8453:${MCP_WALLET}`,
   });
   assert.equal(result?.errorCode, 'mainnet_policy_not_ready');
+});
+
+test('T48b: native swap tool trace has real skill_load, plugin_http_request, security_preflight, and prepare_wallet_calls steps in order', async () => {
+  await readyRepository();
+  usableSecurity();
+  baseAppNativeRuntime.insertAction = async () => {};
+  baseAppNativeRuntime.prepareUniswap5792 = async (_intent, walletAddress) => {
+    const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+    return {
+      calls: [{ to: BASE_UNISWAP_UNIVERSAL_ROUTER_2, value: '0', data: '0x12345678' }],
+      requestId: 'trace-swap',
+      expiresAt,
+      context: { amountDecimal: '0.5', inputToken: 'USDC', outputToken: 'ETH', swapper: walletAddress, routerVersion: '2.0', expiresAt },
+      traces: [
+        { toolName: 'plugin_http_request:POST /v1/quote', args: { path: '/quote' }, result: { status: 'success' }, isError: false },
+        { toolName: 'plugin_http_request:POST /v1/swap_5792', args: { path: '/swap_5792' }, result: { status: 'success' }, isError: false },
+      ],
+    };
+  };
+
+  const result = await runDirectBaseAppNativeSwap({
+    message: 'swap 0.5 USDC to ETH',
+    walletAddress: TENANT_WALLET,
+    userConfirmedEnabled: true,
+    userId: TENANT_ID,
+  });
+
+  const names = (result?.toolCalls || []).map((t) => t.toolName);
+  assert.deepEqual(names, [
+    'skill_load:uniswap',
+    'plugin_http_request:POST /v1/quote',
+    'plugin_http_request:POST /v1/swap_5792',
+    'security_preflight',
+    'prepare_wallet_calls',
+  ]);
+  assert.ok((result?.toolCalls || []).every((t) => !t.isError));
+  // No invented tool name like "uniswap_quote" (that's a different, LLM-facing
+  // read-only tool with no MCP counterpart in this flow).
+  assert.ok(!names.includes('uniswap_quote'));
+});
+
+test('T48b: prepareUniswap5792 goes through the plugin_http_request gateway (manifest host only) and works in mcp mode without UNISWAP_API_KEY', async () => {
+  const originalFetch = globalThis.fetch;
+  const capturedUrls: string[] = [];
+  let capturedHeaders: Record<string, string> | undefined;
+  globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+    capturedUrls.push(String(url));
+    capturedHeaders = init?.headers as Record<string, string>;
+    if (String(url).includes('/v1/quote')) {
+      return new Response(JSON.stringify({ routing: 'CLASSIC', quote: { routing: 'CLASSIC' } }), { status: 200 });
+    }
+    return new Response(JSON.stringify({
+      from: TENANT_WALLET,
+      chainId: 8453,
+      requestId: 'gateway-swap',
+      calls: [{ to: BASE_UNISWAP_UNIVERSAL_ROUTER_2, value: '0', data: '0xabcdef' }],
+    }), { status: 200 });
+  }) as typeof fetch;
+
+  try {
+    await withEnv({ BASE_MCP_PLUGIN_MODE: undefined, UNISWAP_API_KEY: undefined, UNISWAP_MCP_GATEWAY_KEY: 'gateway-secret' }, async () => {
+      const prepared = await prepareUniswap5792({ amount: '0.5', tokenIn: 'USDC', tokenOut: 'ETH' }, TENANT_WALLET);
+      assert.equal(prepared.requestId, 'gateway-swap');
+      assert.equal(prepared.traces?.length, 2);
+      assert.ok(prepared.traces?.every((t) => !t.isError));
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.ok(capturedUrls.every((url) => url.startsWith('https://trade-api.gateway.uniswap.org/')));
+  assert.equal(capturedHeaders?.['x-api-key'], 'gateway-secret');
 });

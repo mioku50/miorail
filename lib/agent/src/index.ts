@@ -45,9 +45,15 @@ function isWriteTool(toolName: string): boolean {
 
 // T44 hardening (strengthens, never weakens, the write filter): a generic
 // HTTP tool must never reach the LLM — all partner HTTP goes through typed,
-// allowlisted server-side providers.
+// allowlisted server-side providers. T48b defense-in-depth: the constrained
+// plugin_http_request gateway (artifacts/api-server/lib/pluginHttpGateway.ts)
+// is a plain function called only by deterministic server routing — it is
+// never registered on the ToolAggregator, so this filter should never
+// actually see it. This second check exists purely so an accidental future
+// registration still cannot reach the LLM loop.
 function isGenericHttpTool(toolName: string): boolean {
-  return /^web[_:.\-/]?request$/i.test(toolName.trim());
+  const trimmed = toolName.trim();
+  return /^web[_:.\-/]?request$/i.test(trimmed) || /^plugin[_:.\-/]?http[_:.\-/]?request$/i.test(trimmed);
 }
 
 export class Agent {

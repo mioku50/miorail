@@ -3,8 +3,24 @@ import { test, describe, mock } from 'node:test';
 import assert from 'node:assert';
 import { createToolAggregatorForUser, selectBaseMcpRuntimeTools, settingsAPI } from '../src/factory.js';
 import { NativeToolProvider } from '../src/native.js';
+import { UniswapQuoteToolProvider } from '../src/uniswap_quote.js';
 import { RealCoinGeckoProvider, RealMoralisProvider } from '@mioagent/data-providers';
 import { classifyDynamicBaseMcpTools } from '../src/dynamic_base_mcp.js';
+
+function withEnv<T>(overrides: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
+  const previous: Record<string, string | undefined> = {};
+  for (const key of Object.keys(overrides)) previous[key] = process.env[key];
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  return fn().finally(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+}
 
 describe('createToolAggregatorForUser Moonwell registration', () => {
     test('registers the Moonwell HTTP provider outside Sepolia when requested', async () => {
@@ -162,6 +178,53 @@ describe('createToolAggregatorForUser', () => {
 
         mockGetSettings.mock.restore();
         mockGetDecryptedKey.mock.restore();
+    });
+
+    test('T48b: in mcp mode (default), Uniswap quote registration resolves UNISWAP_MCP_GATEWAY_KEY and never requires UNISWAP_API_KEY', async () => {
+        const mockGetSettings = mock.method(settingsAPI, 'getUserSettings', async () => ({ protocolToggles: {} }));
+        const mockGetDecryptedKey = mock.method(settingsAPI, 'getDecryptedKey', async () => null);
+        try {
+            await withEnv({ BASE_MCP_PLUGIN_MODE: undefined, UNISWAP_API_KEY: undefined, UNISWAP_MCP_GATEWAY_KEY: 'gateway-secret' }, async () => {
+                const aggregator = await createToolAggregatorForUser('u1', 'secret', { includeUniswapQuote: true });
+                const provider = aggregator['providers'].get('uniswap-quote') as UniswapQuoteToolProvider;
+                assert.ok(provider);
+                assert.equal((await provider.listTools()).length, 1);
+            });
+        } finally {
+            mockGetSettings.mock.restore();
+            mockGetDecryptedKey.mock.restore();
+        }
+    });
+
+    test('T48b: registration does not crash or fall back to a fake/mocked provider when no credential is configured in mcp mode', async () => {
+        const mockGetSettings = mock.method(settingsAPI, 'getUserSettings', async () => ({ protocolToggles: {} }));
+        const mockGetDecryptedKey = mock.method(settingsAPI, 'getDecryptedKey', async () => null);
+        try {
+            await withEnv({ BASE_MCP_PLUGIN_MODE: undefined, UNISWAP_API_KEY: undefined, UNISWAP_MCP_GATEWAY_KEY: undefined }, async () => {
+                const aggregator = await createToolAggregatorForUser('u1', 'secret', { includeUniswapQuote: true });
+                const provider = aggregator['providers'].get('uniswap-quote') as UniswapQuoteToolProvider;
+                assert.ok(provider);
+                assert.deepEqual(await provider.listTools(), []);
+            });
+        } finally {
+            mockGetSettings.mock.restore();
+            mockGetDecryptedKey.mock.restore();
+        }
+    });
+
+    test('T48b: direct mode falls back to UNISWAP_API_KEY and ignores UNISWAP_MCP_GATEWAY_KEY', async () => {
+        const mockGetSettings = mock.method(settingsAPI, 'getUserSettings', async () => ({ protocolToggles: {} }));
+        const mockGetDecryptedKey = mock.method(settingsAPI, 'getDecryptedKey', async () => null);
+        try {
+            await withEnv({ BASE_MCP_PLUGIN_MODE: 'direct', UNISWAP_API_KEY: 'direct-secret', UNISWAP_MCP_GATEWAY_KEY: undefined }, async () => {
+                const aggregator = await createToolAggregatorForUser('u1', 'secret', { includeUniswapQuote: true });
+                const provider = aggregator['providers'].get('uniswap-quote') as UniswapQuoteToolProvider;
+                assert.equal((await provider.listTools()).length, 1);
+            });
+        } finally {
+            mockGetSettings.mock.restore();
+            mockGetDecryptedKey.mock.restore();
+        }
     });
 
     test('credential read failure leaves Moralis unavailable without substitute data', async () => {

@@ -200,7 +200,7 @@ test('read-only Agent without an explicit provider cannot call partner tools', a
   }
 });
 
-test('LLM tool list never contains send_calls, swap, moonwell_prepare_* or web_request', async () => {
+test('LLM tool list never contains send_calls, swap, moonwell_prepare_*, web_request, or plugin_http_request', async () => {
   let exposedTools: string[] = [];
   const makeLlm = () => new MockLlmProvider((req: LlmRequest) => {
     exposedTools = (req.tools || []).map((tool) => tool.function.name);
@@ -218,6 +218,10 @@ test('LLM tool list never contains send_calls, swap, moonwell_prepare_* or web_r
         { name: 'moonwell_prepare_supply', description: 'Prepare supply', inputSchema: { type: 'object' } },
         { name: 'moonwell_prepare_borrow', description: 'Prepare borrow', inputSchema: { type: 'object' } },
         { name: 'web_request', description: 'Arbitrary HTTP request', inputSchema: { type: 'object' } },
+        // T48b defense-in-depth: this provider never exists in production
+        // (pluginHttpRequest is a plain function, never a ToolProvider), but
+        // if it were ever accidentally registered, it must still be filtered.
+        { name: 'plugin_http_request', description: 'Constrained plugin HTTP gateway', inputSchema: { type: 'object' } },
       ];
     }
     findTool() { return undefined; }
@@ -237,7 +241,7 @@ test('LLM tool list never contains send_calls, swap, moonwell_prepare_* or web_r
     for await (const event of agent.chatStream('test-user', 'what can you read?')) { void event; }
     assert.ok(exposedTools.includes('get_portfolio'));
     assert.ok(exposedTools.includes('moonwell_get_markets'));
-    for (const forbidden of ['send_calls', 'swap', 'moonwell_prepare_supply', 'moonwell_prepare_borrow', 'web_request']) {
+    for (const forbidden of ['send_calls', 'swap', 'moonwell_prepare_supply', 'moonwell_prepare_borrow', 'web_request', 'plugin_http_request']) {
       assert.strictEqual(exposedTools.includes(forbidden), false, `${forbidden} must never reach the LLM`);
     }
 
@@ -257,7 +261,7 @@ test('LLM tool list never contains send_calls, swap, moonwell_prepare_* or web_r
       runtimeContext: { chain: 'base', chainId: 8453, executionMode: 'read-only' },
     });
     for await (const event of readOnly.chatStream('test-user', 'what can you read?')) { void event; }
-    for (const forbidden of ['send_calls', 'swap', 'moonwell_prepare_supply', 'moonwell_prepare_borrow', 'web_request']) {
+    for (const forbidden of ['send_calls', 'swap', 'moonwell_prepare_supply', 'moonwell_prepare_borrow', 'web_request', 'plugin_http_request']) {
       assert.strictEqual(exposedTools.includes(forbidden), false, `${forbidden} must never reach the LLM in read-only mode`);
     }
   } finally {
