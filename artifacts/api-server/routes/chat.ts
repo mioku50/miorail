@@ -6,6 +6,7 @@ import { createApiToolAggregatorForUser } from '../lib/baseMcpTools.js';
 import { db, chats, actions } from '@mioagent/db';
 import { eq, desc, and } from 'drizzle-orm';
 import crypto from 'node:crypto';
+import { getAddress } from 'viem';
 import { detectActionIntent } from '../lib/intent.js';
 import { getSystemStatus } from './status.js';
 import {
@@ -34,11 +35,20 @@ import { runDirectQuoteRead } from '../lib/streamQuoteRouting.js';
 import { detectRuntimeSkill, runtimeSkillAvailability } from '@mioagent/runtime-skills';
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
 import { tenantUserId, tenantWalletAddress } from '../middleware/tenantAuth';
-import { runDirectBaseMcpSwap } from '../lib/streamBaseMcpSwapRouting.js';
-import { runDirectBaseMcpSend } from '../lib/streamBaseMcpSendRouting.js';
+import { detectSwapIntent, runDirectBaseMcpSwap } from '../lib/streamBaseMcpSwapRouting.js';
+import { detectBaseMcpSendIntent, runDirectBaseMcpSend } from '../lib/streamBaseMcpSendRouting.js';
 import { runDirectMoonwellWrite } from '../lib/streamMoonwellWriteRouting.js';
 import { getAutonomyPolicyRepository } from '../lib/autonomyGateway.js';
 import { reconcileBaseMcpChatMessages } from '../lib/baseMcpTransactionReconciliation.js';
+import { routeSemanticIntent, type SemanticRoutingDecision } from '../lib/semanticIntentRouting.js';
+import {
+  looksLikePromptInjection,
+  requestsApprovalBypass,
+  resolveTrustedAsset,
+  stableSemanticHash,
+  type NormalizedSemanticIntent,
+} from '../lib/semanticIntent.js';
+import { storePreparedTransaction, updatePreparedTransactionStatus } from '../lib/preparedTransactionStore.js';
 
 export const chatRouter = Router();
 
@@ -47,9 +57,36 @@ export const chatRouteRuntime = {
   createLlmProvider,
   getAutonomyPolicyRepository,
   fetchInternalApprovals,
+  routeSemanticIntent,
 };
 
 const EXPLICIT_TRANSACTION_REQUEST = /(?:\b(?:swap|exchange|buy|sell|approve|revoke|send|transfer)\b|(?:обменяй|обменять|свапни|свапнуть|купи|купить|отправь|отправить|переведи|перевести))/iu;
+
+function deterministicPreparedIntent(message: string, kind: string): NormalizedSemanticIntent | null {
+  if (kind === 'base_mcp_send') {
+    const parsed = detectBaseMcpSendIntent(message);
+    if (!parsed) return null;
+    return {
+      intent: 'send', confidence: 1, chainId: 8453, chainSource: 'authenticated_runtime',
+      amount: { kind: 'exact', value: parsed.amountText },
+      asset: resolveTrustedAsset('USDC'), explicitAssetAddress: null, fromAsset: null, toAsset: null,
+      recipient: getAddress(parsed.recipient), protocol: 'base-mcp', executionRequested: true,
+      clarification: null, errors: [], recipientSource: 'message',
+    };
+  }
+  if (kind === 'base_mcp_swap') {
+    const parsed = detectSwapIntent(message);
+    if (!parsed) return null;
+    return {
+      intent: 'swap', confidence: 1, chainId: 8453, chainSource: 'authenticated_runtime',
+      amount: { kind: 'exact', value: parsed.amount }, asset: null, explicitAssetAddress: null,
+      fromAsset: resolveTrustedAsset(parsed.tokenIn), toAsset: resolveTrustedAsset(parsed.tokenOut),
+      recipient: null, protocol: 'base-mcp', executionRequested: true,
+      clarification: null, errors: [], recipientSource: null,
+    };
+  }
+  return null;
+}
 
 chatRouter.get('/history', async (req, res, next) => {
   try {
@@ -110,6 +147,16 @@ chatRouter.post('/reconcile', async (req, res, next) => {
       });
       if (result.changed) {
         await db.update(chats).set({ messages: result.messages, updatedAt: new Date() }).where(and(eq(chats.id, chat.id), eq(chats.userId, userId)));
+      }
+      for (const message of result.messages) {
+        const actionId = message.metadata?.reservationActionId;
+        const state = message.metadata?.approvalState;
+        if (typeof actionId !== 'string' || !['pending', 'completed', 'rejected', 'failed'].includes(String(state || ''))) continue;
+        await updatePreparedTransactionStatus({
+          userId,
+          actionId,
+          status: state as 'pending' | 'completed' | 'rejected' | 'failed',
+        });
       }
       return res.json(ChatReconcileResponseSchema.parse({
         messages: result.messages,
@@ -186,7 +233,26 @@ chatRouter.post('/', async (req, res, next) => {
 
     currentMessages.push(userMsg);
 
-    const directRead = await runDirectBaseMcpSend({
+    const semanticContext = {
+      recentMessages: currentMessages.slice(0, -1),
+      walletAddress,
+      runtimeChainId: 8453 as const,
+    };
+    let semanticDecision: SemanticRoutingDecision | undefined;
+    let semanticLlm: ReturnType<typeof createLlmProvider> | undefined;
+    const unsafeTransactionInstruction = EXPLICIT_TRANSACTION_REQUEST.test(message)
+      && (requestsApprovalBypass(message) || looksLikePromptInjection(message));
+    const explicitRevokeIntent = parseRevokeApproval(message) !== null;
+    let directRead: any = unsafeTransactionInstruction
+      ? {
+          kind: 'semantic_clarification',
+          content: requestsApprovalBypass(message)
+            ? 'Final Base Account confirmation cannot be bypassed. No transaction was prepared.'
+            : 'I cannot follow instructions that override transaction safety policy. No transaction was prepared.',
+          toolCalls: [],
+          errorCode: requestsApprovalBypass(message) ? 'approval_bypass_forbidden' : 'prompt_injection_blocked',
+        }
+      : await runDirectBaseMcpSend({
       message,
       walletAddress,
       tools,
@@ -209,7 +275,32 @@ chatRouter.post('/', async (req, res, next) => {
     })
       || await runDirectQuoteRead({ message, walletAddress, tools })
       || await runDirectStreamRead({ message, walletAddress, tools });
+    if (!directRead && !explicitRevokeIntent) {
+      semanticLlm = chatRouteRuntime.createLlmProvider();
+      semanticDecision = await chatRouteRuntime.routeSemanticIntent({
+        llm: semanticLlm,
+        message,
+        context: semanticContext,
+        walletAddress,
+        tools,
+        userConfirmedEnabled: runtimeExecutionCapabilities.userConfirmedEnabled,
+        userId,
+      });
+      directRead = semanticDecision.result;
+    }
     if (directRead) {
+      const normalizedIntent = semanticDecision?.normalized || deterministicPreparedIntent(message, directRead.kind);
+      const normalizedIntentHash = semanticDecision?.normalizedIntentHash
+        || (normalizedIntent ? stableSemanticHash(normalizedIntent) : undefined);
+      const pendingAction = normalizedIntent && normalizedIntentHash && walletAddress
+        ? await storePreparedTransaction({
+            userId,
+            walletAddress,
+            normalizedIntent,
+            normalizedIntentHash,
+            result: directRead,
+          })
+        : null;
       const assistantMsg = {
         chatId,
         messageId: crypto.randomUUID(),
@@ -233,6 +324,9 @@ chatRouter.post('/', async (req, res, next) => {
           ...('reservationActionId' in directRead && directRead.reservationActionId ? { reservationActionId: directRead.reservationActionId } : {}),
           ...('reservationExpiresAt' in directRead && directRead.reservationExpiresAt ? { reservationExpiresAt: directRead.reservationExpiresAt } : {}),
           ...('approvalTerminal' in directRead && directRead.approvalTerminal ? { approvalTerminal: true } : {}),
+          ...(normalizedIntent ? { normalizedIntent } : {}),
+          ...(normalizedIntentHash ? { normalizedIntentHash } : {}),
+          ...(pendingAction ? { pendingAction } : {}),
         },
       };
       currentMessages.push(assistantMsg);
@@ -255,8 +349,9 @@ chatRouter.post('/', async (req, res, next) => {
     // mainnet-readonly, so revoke messages reached the approval-scanner branch
     // below (parseRevokeApproval/fetchInternalApprovals). Detect that intent
     // first and let it through so the branch stays reachable in every chain env.
-    const explicitRevokeIntent = parseRevokeApproval(message) !== null;
-    if (!explicitRevokeIntent && (isPartnerWriteCommand(message) || EXPLICIT_TRANSACTION_REQUEST.test(message))) {
+    if (!explicitRevokeIntent
+      && semanticDecision?.normalized?.executionRequested !== false
+      && (isPartnerWriteCommand(message) || EXPLICIT_TRANSACTION_REQUEST.test(message))) {
       const readOnly = runtimeChainEnv === 'mainnet-readonly' || !runtimeExecutionCapabilities.userConfirmedEnabled;
       const assistantMsg = {
         chatId,
@@ -289,7 +384,17 @@ chatRouter.post('/', async (req, res, next) => {
       : undefined;
     const preferRuntimeReadTools = shouldPreferPartnerRuntimeRead(message, runtimeToolInventory);
     const directTransactionIntent = isPartnerWriteCommand(message) || EXPLICIT_TRANSACTION_REQUEST.test(message);
-    const intent = preferRuntimeReadTools
+    const intent = semanticDecision?.recommendationIntent
+      ? {
+          isActionIntent: true,
+          intentType: semanticDecision.recommendationIntent,
+          title: 'Portfolio review',
+          reason: 'The user requested portfolio analysis and recommendations.',
+          expectedEffect: 'Analyze the authenticated Base portfolio without preparing a transaction.',
+          risk: 'unknown' as const,
+          confidence: semanticDecision.normalized?.confidence ?? 1,
+        }
+      : preferRuntimeReadTools
       ? { isActionIntent: false, confidence: 1 }
       : directTransactionIntent
         ? {
@@ -657,7 +762,7 @@ chatRouter.post('/', async (req, res, next) => {
       return res.json(assistantMsg);
     }
 
-    const llm = chatRouteRuntime.createLlmProvider();
+    const llm = semanticLlm || chatRouteRuntime.createLlmProvider();
     console.log("TRACE: llm created");
     const agent = new Agent({
       llmProvider: llm,

@@ -78,6 +78,13 @@
       "when": 1783857601000,
       "tag": "0010_spend_permission_proofs",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1783944000000,
+      "tag": "0011_prepared_transaction_intents",
+      "breakpoints": true
     }
   ]
 }

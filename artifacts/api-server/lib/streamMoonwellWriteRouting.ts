@@ -113,12 +113,13 @@ function healthLabel(health: number | null): string {
 
 export async function runDirectMoonwellWrite(input: {
   message: string;
+  normalizedIntent?: MoonwellWriteIntent;
   walletAddress?: string;
   tools: ToolAggregator;
   userConfirmedEnabled: boolean;
   userId: string;
 }): Promise<DirectMoonwellWriteResult | null> {
-  const intent = detectMoonwellWriteIntent(input.message);
+  const intent = input.normalizedIntent ?? detectMoonwellWriteIntent(input.message);
   if (!intent) return null;
 
   // 1) Execution gate — identical to the Base MCP send route.

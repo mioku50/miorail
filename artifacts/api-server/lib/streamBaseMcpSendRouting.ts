@@ -92,12 +92,13 @@ function blocked(content: string, errorCode: string): DirectBaseMcpSendResult {
 
 export async function runDirectBaseMcpSend(input: {
   message: string;
+  normalizedIntent?: BaseMcpSendIntent;
   walletAddress?: string;
   tools: ToolAggregator;
   userConfirmedEnabled: boolean;
   userId: string;
 }): Promise<DirectBaseMcpSendResult | null> {
-  const intent = detectBaseMcpSendIntent(input.message);
+  const intent = input.normalizedIntent ?? detectBaseMcpSendIntent(input.message);
   if (!intent) return null;
   if (!input.userConfirmedEnabled) {
     return blocked('Mainnet is read-only. No transfer was requested.', 'mainnet_readonly');

@@ -8,6 +8,7 @@ import { AgentComposer } from './AgentComposer';
 import { baseMcpConnectLabel, baseMcpNeedsAuth, baseMcpOAuthResultMessage } from '../../lib/format';
 import { deriveComposerExecutionMode } from './agentComposerState';
 import { BaseMcpConnectButton } from '../../components/BaseMcpConnectButton';
+import { baseMcpReconnectIssue } from './chatMessageState';
 
 const PROMPT_CHIPS = [
   'Check my Base balance',
@@ -46,6 +47,7 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
 
   const messages = chatData?.messages || [];
   const displayMessages = messages;
+  const streamReconnectIssue = baseMcpReconnectIssue(messages);
   const pendingReconciliationKey = messages
     .filter((message: any) => ['approval_required', 'pending'].includes(message.metadata?.approvalState) && message.metadata?.requestId)
     .map((message: any) => message.metadata.requestId)
@@ -179,14 +181,16 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
         </div>
       </div>
 
-      {(oauthMessage?.kind === 'error' || baseMcpNeedsAuth(statusData?.baseMcp)) && (
+      {(oauthMessage?.kind === 'error' || baseMcpNeedsAuth(statusData?.baseMcp) || streamReconnectIssue) && (
         <div className="flex items-center justify-between gap-3 border-b border-warn/20 bg-warn-soft px-4 py-2 text-[11px] text-warn">
-          <span>{oauthMessage?.kind === 'error' ? oauthMessage.text : 'Base MCP wallet reads need authorization or a refreshed tool inventory.'}</span>
+          <span>{oauthMessage?.kind === 'error'
+            ? oauthMessage.text
+            : streamReconnectIssue || 'Base MCP wallet reads need authorization or a refreshed tool inventory.'}</span>
           <BaseMcpConnectButton
             returnTo="/stream"
             className="shrink-0 rounded-lg border border-warn/30 bg-panel px-2.5 py-1 font-bold text-warn hover:bg-bg"
           >
-            {baseMcpConnectLabel(statusData?.baseMcp)}
+            {streamReconnectIssue ? 'Reconnect Base MCP' : baseMcpConnectLabel(statusData?.baseMcp)}
           </BaseMcpConnectButton>
         </div>
       )}

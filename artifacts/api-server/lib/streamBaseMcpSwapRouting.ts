@@ -101,12 +101,13 @@ export function mapBaseMcpSwapArgs(
 
 export async function runDirectBaseMcpSwap(input: {
   message: string;
+  normalizedIntent?: { amount: string; tokenIn: string; tokenOut: string };
   walletAddress?: string;
   tools: ToolAggregator;
   userConfirmedEnabled: boolean;
   userId: string;
 }): Promise<DirectBaseMcpSwapResult | null> {
-  const intent = detectSwapIntent(input.message);
+  const intent = input.normalizedIntent ?? detectSwapIntent(input.message);
   if (!intent) return null;
   if (!input.userConfirmedEnabled) {
     return { kind: 'base_mcp_swap', content: 'Mainnet is read-only. No swap was requested.', toolCalls: [], errorCode: 'mainnet_readonly' };

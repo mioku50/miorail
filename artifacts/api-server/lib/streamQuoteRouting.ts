@@ -106,10 +106,11 @@ function screenedQuote(content: string): Record<string, any> | null {
 
 export async function runDirectQuoteRead(input: {
   message: string;
+  normalizedIntent?: QuoteIntent;
   walletAddress?: string;
   tools: ToolAggregator;
 }): Promise<DirectQuoteResult | null> {
-  const intent = detectQuoteIntent(input.message);
+  const intent = input.normalizedIntent ?? detectQuoteIntent(input.message);
   if (!intent) return null;
   const traces: StreamToolTrace[] = [];
   if (!intent.amountIn || !intent.tokenIn || !intent.tokenOut) {

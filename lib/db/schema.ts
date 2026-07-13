@@ -47,6 +47,29 @@ export const chats = pgTable('chats', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
+export const preparedTransactionIntents = pgTable(
+  'prepared_transaction_intents',
+  {
+    actionId: text('action_id').primaryKey(),
+    userId: text('user_id')
+      .references(() => users.id)
+      .notNull(),
+    walletAddress: text('wallet_address').notNull(),
+    normalizedIntentHash: text('normalized_intent_hash').notNull(),
+    preparedPayloadHash: text('prepared_payload_hash').notNull(),
+    normalizedIntent: jsonb('normalized_intent').notNull(),
+    preparedPayload: jsonb('prepared_payload').notNull(),
+    status: text('status').default('pending').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('prepared_transaction_intents_user_status_idx').on(table.userId, table.status, table.createdAt),
+    index('prepared_transaction_intents_expires_idx').on(table.expiresAt),
+  ],
+);
+
 export const workflows = pgTable('workflows', {
   id: text('id').primaryKey(),
   userId: text('user_id')

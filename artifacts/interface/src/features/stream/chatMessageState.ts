@@ -18,3 +18,17 @@ export function shouldShowBaseMcpConfirmation(metadata: Record<string, unknown>)
   return metadata.approvalTerminal !== true
     && !['completed', 'rejected', 'failed'].includes(String(metadata.approvalState || ''));
 }
+
+export function baseMcpReconnectIssue(messages: Array<{ metadata?: Record<string, unknown> }>): string | null {
+  for (const message of [...messages].reverse()) {
+    const code = String(message.metadata?.errorCode || '');
+    if (code === 'base_mcp_wallet_mismatch') {
+      return 'Base MCP is connected to a different wallet. Reconnect it with the authenticated Base Account.';
+    }
+    if (code === 'base_mcp_wallet_unverified') {
+      return 'Base MCP could not verify the connected wallet. Reconnect it before preparing a transaction.';
+    }
+    if (message.metadata?.directReadKind === 'base_portfolio' && !code) break;
+  }
+  return null;
+}

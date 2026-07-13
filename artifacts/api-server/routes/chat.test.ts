@@ -11,6 +11,7 @@ import { executionSecurityRuntime } from '../lib/executionSecurity.js';
 import { baseMcpSwapRuntime } from '../lib/streamBaseMcpSwapRouting.js';
 import { baseMcpSendRuntime } from '../lib/streamBaseMcpSendRouting.js';
 import { InMemoryAutonomyPolicyRepository } from '@mioagent/autonomy';
+import type { LlmRequest } from '@mioagent/llm';
 
 function restoreEnv(name: string, value: string | undefined) {
   if (value === undefined) {
@@ -202,6 +203,10 @@ describe('Chat API & Recommendation Guardrails', () => {
       assert.equal(response.body.metadata.requestId, 'swap-1');
       assert.equal(response.body.metadata.approvalUrl, 'https://wallet.base.org/approve/swap');
       assert.ok(response.body.metadata.reservationActionId.startsWith('base-mcp-swap:'));
+      assert.equal(response.body.metadata.pendingAction.type, 'base_mcp_approval');
+      assert.equal(response.body.metadata.pendingAction.actionId, response.body.metadata.reservationActionId);
+      assert.match(response.body.metadata.pendingAction.intentHash, /^[a-f0-9]{64}$/);
+      assert.match(response.body.metadata.pendingAction.payloadHash, /^[a-f0-9]{64}$/);
       assert.deepEqual(provider.calls, ['swap']);
       assert.equal(response.body.actionId, undefined);
       assert.equal((await db.select().from(actions)).length, beforeActions);
@@ -242,7 +247,7 @@ describe('Chat API & Recommendation Guardrails', () => {
     }
   });
 
-  test('unmappable RU/EN transaction commands never fall through to the generic LLM', async () => {
+  test('incomplete RU/EN transaction commands use the tool-free semantic extractor and never reach the generic tool loop', async () => {
     const origChain = process.env.CHAIN_ENV;
     const origExecution = process.env.MAINNET_EXECUTION_ENABLED;
     const originalCreateTools = chatRouteRuntime.createApiToolAggregatorForUser;
@@ -250,7 +255,25 @@ describe('Chat API & Recommendation Guardrails', () => {
     process.env.CHAIN_ENV = 'mainnet';
     process.env.MAINNET_EXECUTION_ENABLED = 'true';
     chatRouteRuntime.createApiToolAggregatorForUser = async () => new ToolAggregator();
-    chatRouteRuntime.createLlmProvider = () => { throw new Error('Generic LLM must not receive transaction commands'); };
+    chatRouteRuntime.createLlmProvider = () => ({
+      async generate(req: LlmRequest) {
+        assert.equal(req.tools, undefined, 'semantic extractor must receive no tools');
+        const content = String(req.messages.at(-1)?.content || '');
+        const isSwap = content.includes('обменяй');
+        return {
+          message: {
+            role: 'assistant' as const,
+            content: JSON.stringify({
+              intent: isSwap ? 'swap' : 'send', confidence: 0.99, chainId: 8453,
+              amount: null, asset: isSwap ? null : 'USDC',
+              fromAsset: isSwap ? 'USDC' : null, toAsset: isSwap ? 'ETH' : null,
+              recipient: isSwap ? null : '0x1111111111111111111111111111111111111111',
+              protocol: null, executionRequested: true, clarification: null,
+            }),
+          },
+        };
+      },
+    });
     await request(app).delete('/api/chat/history');
     try {
       for (const message of ['обменяй USDC на ETH', 'send USDC to 0x1111111111111111111111111111111111111111']) {
@@ -259,7 +282,8 @@ describe('Chat API & Recommendation Guardrails', () => {
           walletAddress: '0x1234567890123456789012345678901234567890',
         });
         assert.equal(response.status, 200);
-        assert.equal(response.body.metadata.errorCode, 'transaction_intent_unrecognized');
+        assert.equal(response.body.metadata.errorCode, 'transaction_parameters_required');
+        assert.match(response.body.content, /exact amount/i);
         assert.equal(response.body.actionId, undefined);
       }
     } finally {
@@ -326,6 +350,8 @@ describe('Chat API & Recommendation Guardrails', () => {
       assert.equal(response.body.metadata.approvalUrl, 'https://wallet.base.org/approve/send');
       assert.equal(response.body.metadata.approvalState, 'approval_required');
       assert.ok(response.body.metadata.reservationActionId.startsWith('base-mcp-send:'));
+      assert.equal(response.body.metadata.pendingAction.type, 'base_mcp_approval');
+      assert.equal(response.body.metadata.normalizedIntent.chainSource, 'authenticated_runtime');
       assert.deepEqual(provider.calls, ['send']);
       assert.equal((await db.select().from(actions)).length, beforeActions);
     } finally {

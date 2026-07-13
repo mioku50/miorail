@@ -27,6 +27,7 @@ export function ChatMessage({ m, networkLabel }: { m: any; networkLabel: string 
       ? meta.approvalUrl
       : null;
     const approvalLabel = baseMcpApprovalLabel(meta.approvalState);
+    const pendingAction = meta.pendingAction?.type === 'base_mcp_approval' ? meta.pendingAction : null;
     const messageMode = historicalMessageModeLabel(meta, networkLabel);
     const riskVal = meta.risk || 'low';
     return (
@@ -99,6 +100,13 @@ export function ChatMessage({ m, networkLabel }: { m: any; networkLabel: string 
             {approvalLabel}
           </span>
         )}
+        {pendingAction && (
+          <div className="rounded-xl border border-warn/25 bg-warn-soft px-3 py-2 text-[11px] text-warn">
+            <span className="font-bold">Prepared action</span>{' '}
+            <span className="font-mono">{String(pendingAction.actionId).slice(0, 18)}…</span>
+            <span> · bound to this tenant, wallet and normalized intent until {new Date(pendingAction.expiresAt).toLocaleTimeString()}</span>
+          </div>
+        )}
         {approvalUrl && shouldShowBaseMcpConfirmation(meta) && (
           <a
             href={approvalUrl}
@@ -108,6 +116,16 @@ export function ChatMessage({ m, networkLabel }: { m: any; networkLabel: string 
           >
             Confirm in Base Account
           </a>
+        )}
+        {!approvalUrl && pendingAction && shouldShowBaseMcpConfirmation(meta) && (
+          <button
+            type="button"
+            disabled
+            title="Base MCP approval link is still being resolved"
+            className="rounded-xl bg-accent px-4 py-2 text-xs font-bold text-white opacity-60"
+          >
+            Confirm in Base Account
+          </button>
         )}
         <ToolCallTrace toolCalls={m.toolCalls} />
         <span className="text-[10px] text-ink-3 font-mono ml-1">Miorail</span>
