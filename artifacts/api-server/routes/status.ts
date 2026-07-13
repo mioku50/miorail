@@ -119,7 +119,6 @@ export function getSystemStatus(envOverride?: string) {
       probeStatus: x402Config.probeStatus,
       middlewareMode: x402Diagnostics.middlewareMode,
       officialMiddlewareEnabled: x402Diagnostics.officialMiddlewareEnabled,
-      mockFacilitatorEnabled: x402Diagnostics.mockFacilitatorEnabled,
       smokeRoute: x402Diagnostics.smokeRoute,
       smokeRouteAvailable: x402Diagnostics.smokeRouteAvailable,
       builderCodeAttribution: x402Diagnostics.builderCodeAttribution,
@@ -165,7 +164,6 @@ function publicX402Status(x402Config: X402RuntimeConfig) {
     probeStatus: x402Config.probeStatus,
     middlewareMode: x402Diagnostics.middlewareMode,
     officialMiddlewareEnabled: x402Diagnostics.officialMiddlewareEnabled,
-    mockFacilitatorEnabled: x402Diagnostics.mockFacilitatorEnabled,
     smokeRoute: x402Diagnostics.smokeRoute,
     smokeRouteAvailable: x402Diagnostics.smokeRouteAvailable,
     builderCodeAttribution: x402Diagnostics.builderCodeAttribution,
@@ -186,14 +184,25 @@ function publicX402Status(x402Config: X402RuntimeConfig) {
 
 export const statusRouter = Router();
 
-const defaultBaseMcpAuthStatus: StoredBaseMcpAuthStatus = {
-  connected: false,
-  needsReauth: false,
-  userScoped: true,
-};
-
 export const statusRouteRuntime = {
   getBaseMcpAuthStatus,
+  probeRpcStatus: async (chainId: number, rpcUrl: string, provider: string) => {
+    try {
+      const response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_chainId', params: [] }),
+        signal: AbortSignal.timeout(4_000),
+      });
+      if (!response.ok) return { status: 'failed' as const, provider };
+      const payload = await response.json() as { result?: string };
+      return Number.parseInt(payload.result || '', 16) === chainId
+        ? { status: 'connected' as const, provider }
+        : { status: 'failed' as const, provider };
+    } catch {
+      return { status: 'failed' as const, provider };
+    }
+  },
 };
 
 function mergeBaseMcpAuthStatus(base: BaseMcpStatus, auth: StoredBaseMcpAuthStatus): BaseMcpStatus {
@@ -215,11 +224,14 @@ function mergeBaseMcpAuthStatus(base: BaseMcpStatus, auth: StoredBaseMcpAuthStat
 statusRouter.get('/', async (req, res, next) => {
   try {
     const baseMcp = await probeBaseMcpStatus();
-    const auth = await statusRouteRuntime
-      .getBaseMcpAuthStatus(tenantUserId(req))
-      .catch(() => defaultBaseMcpAuthStatus);
+    const auth = await statusRouteRuntime.getBaseMcpAuthStatus(tenantUserId(req));
+    const baseStatus = getSystemStatus();
+    const rpcUrl = baseStatus.chainId === 84532
+      ? process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org'
+      : process.env.BASE_MAINNET_RPC_URL || 'https://mainnet.base.org';
     const statusData = {
-      ...getSystemStatus(),
+      ...baseStatus,
+      rpc: await statusRouteRuntime.probeRpcStatus(baseStatus.chainId, rpcUrl, baseStatus.rpc.provider),
       baseMcp: finalizeBaseMcpReadiness(attachBaseMcpToolProbeStatus(mergeBaseMcpAuthStatus(baseMcp, auth))),
       x402: publicX402Status(await x402StatusFromEnv()),
     };

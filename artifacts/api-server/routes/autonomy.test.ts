@@ -19,7 +19,9 @@ describe('Autonomy API Hardening Guarantees', () => {
     const settings = new Map<string, any>();
     autonomyRouteRuntime.getUserSettings = async (userId) => settings.get(userId) ?? null;
     autonomyRouteRuntime.updateUserSettings = async (userId, update) => {
-      settings.set(userId, { ...(settings.get(userId) ?? {}), ...update });
+      const saved = { ...(settings.get(userId) ?? {}), ...update, updatedAt: new Date() };
+      settings.set(userId, saved);
+      return saved;
     };
     autonomyRouteRuntime.getTokenSecurityProvider = originalGetTokenSecurityProvider;
     policyRepository = new InMemoryAutonomyPolicyRepository();

@@ -5,7 +5,6 @@ import { useStatus, useAutonomy, useResetAutonomy, usePortfolio, useCreateRecomm
 import { useUiStore } from '../../lib/state';
 import { isMainnetReadonly } from '../../lib/chain';
 import {
-  baseMcpConnectHref,
   baseMcpNeedsAuth,
   portfolioFreshnessLabel,
 } from '../../lib/format';
@@ -18,6 +17,7 @@ import {
   type CapabilityState,
 } from '../../lib/capabilityStatus';
 import { Check, Copy, PlugZap, X } from 'lucide-react';
+import { BaseMcpConnectButton } from '../../components/BaseMcpConnectButton';
 
 function CapabilityLine({ label, state }: { label: string; state: CapabilityState }) {
   return (
@@ -214,13 +214,13 @@ export function OpsRail({ onClose }: OpsRailProps) {
               {baseMcpNeedsAuth(sd?.baseMcp) && (
                 <div className="text-[10px] font-sans bg-panel-2 px-2 py-1.5 rounded border border-line leading-normal">
                   {isConnected ? (
-                    <a
-                      href={baseMcpConnectHref(mcpReturnTo)}
+                    <BaseMcpConnectButton
+                      returnTo={mcpReturnTo}
                       className="inline-flex w-full items-center justify-center gap-1.5 text-accent font-bold"
                     >
                       <PlugZap size={12} />
                       {sd?.baseMcp?.auth?.connected ? 'Reconnect wallet tools' : 'Connect wallet tools'}
-                    </a>
+                    </BaseMcpConnectButton>
                   ) : (
                     <span className="inline-flex w-full items-center justify-center gap-1.5 text-ink-3 font-bold">
                       <PlugZap size={12} />

@@ -195,5 +195,5 @@ export interface ApprovalProviderEnvResult {
   provider: ApprovalProvider;
   status: string;
   statusCode: "connected" | "missing" | "failed" | "partial" | "disabled";
-  providerName: "moralis" | "alchemy" | "none" | "mock";
+  providerName: "moralis" | "alchemy" | "none";
 }

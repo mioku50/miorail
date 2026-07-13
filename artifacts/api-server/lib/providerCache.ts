@@ -4,16 +4,17 @@
 // @mioagent/data-providers package stays pure and DB-free.
 //
 // Safety: this module never sends API keys or private keys to providers (the fetcher
-// closures own their own auth), never executes transactions, and degrades gracefully
-// to in-memory caching when the DB is unavailable. It must never crash portfolio,
-// chat, or recommendation generation.
+// closures own their own auth) and never executes transactions. A cache-store
+// failure is treated as a cache miss/write miss: callers can still receive a real
+// provider result, but production never substitutes an in-memory or fabricated
+// payload when the database is unavailable.
 
 import { db, providerCache } from '@mioagent/db';
 import { getProviderBudgetErrorDetails } from '@mioagent/data-providers';
 import { eq } from 'drizzle-orm';
 
 export type CacheStatus = "live" | "cached" | "stale" | "failed" | "rate_limited" | "budget_exhausted";
-export type ProviderName = "moralis" | "goplus" | "alchemy" | "coingecko" | "none" | "mock";
+export type ProviderName = "moralis" | "goplus" | "alchemy" | "coingecko" | "none";
 export type BudgetStatus = "ok" | "rate-limited" | "disabled" | "rate_limited" | "budget_exhausted" | "auth_or_budget_issue";
 
 export interface CacheEntry<T = unknown> {
@@ -60,7 +61,7 @@ const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
 
 // ---------------------------------------------------------------------------
-// In-memory store (always available; used by tests and as DB fallback)
+// In-memory store used only through explicit test injection.
 // ---------------------------------------------------------------------------
 
 export class InMemoryProviderCacheStore implements ProviderCacheStore {
@@ -80,22 +81,23 @@ export class InMemoryProviderCacheStore implements ProviderCacheStore {
   }
 }
 
+class NoopProviderCacheStore implements ProviderCacheStore {
+  async get<T>(_key: string): Promise<CacheEntry<T> | null> { return null; }
+  async set<T>(_entry: CacheEntry<T>): Promise<void> { /* cache disabled */ }
+  async delete(_key: string): Promise<void> { /* cache disabled */ }
+}
+
 // ---------------------------------------------------------------------------
-// DB-backed store (provider_cache table). On any DB error it disables itself
-// once and delegates to an internal in-memory store for the rest of the process.
+// DB-backed store (provider_cache table). Errors propagate to the orchestration
+// layer, which may still call the real provider but never returns invented data.
 // ---------------------------------------------------------------------------
 
 export class DbProviderCacheStore implements ProviderCacheStore {
-  private disabled = false;
-  private fallback = new InMemoryProviderCacheStore();
-
   async get<T>(key: string): Promise<CacheEntry<T> | null> {
-    if (this.disabled) return this.fallback.get<T>(key);
-    try {
-      const rows = await db.select().from(providerCache).where(eq(providerCache.key, key)).limit(1);
-      const row = rows[0];
-      if (!row) return null;
-      return {
+    const rows = await db.select().from(providerCache).where(eq(providerCache.key, key)).limit(1);
+    const row = rows[0];
+    if (!row) return null;
+    return {
         key: row.key,
         provider: row.provider as ProviderName,
         chainId: row.chainId,
@@ -105,18 +107,12 @@ export class DbProviderCacheStore implements ProviderCacheStore {
         updatedAt: row.updatedAt.getTime(),
         expiresAt: row.expiresAt.getTime(),
         lastError: row.lastError ?? undefined,
-      };
-    } catch {
-      this.disable();
-      return this.fallback.get<T>(key);
-    }
+    };
   }
 
   async set<T>(entry: CacheEntry<T>): Promise<void> {
-    if (this.disabled) return this.fallback.set(entry);
-    try {
-      const now = new Date();
-      await db
+    const now = new Date();
+    await db
         .insert(providerCache)
         .values({
           key: entry.key,
@@ -141,30 +137,10 @@ export class DbProviderCacheStore implements ProviderCacheStore {
             expiresAt: new Date(entry.expiresAt),
           },
         });
-    } catch {
-      this.disable();
-      await this.fallback.set(entry);
-    }
   }
 
   async delete(key: string): Promise<void> {
-    if (this.disabled) return this.fallback.delete(key);
-    try {
-      await db.delete(providerCache).where(eq(providerCache.key, key));
-    } catch {
-      this.disable();
-      await this.fallback.delete(key);
-    }
-  }
-
-  private disable(): void {
-    if (this.disabled) return;
-    this.disabled = true;
-    // Intentionally non-fatal: callers continue with in-memory fallback.
-  }
-
-  isDisabled(): boolean {
-    return this.disabled;
+    await db.delete(providerCache).where(eq(providerCache.key, key));
   }
 }
 
@@ -500,7 +476,7 @@ export function getProviderCacheOrchestratorFromEnv(): ProviderCacheOrchestrator
   if (enabled && process.env.DATABASE_URL) {
     store = new DbProviderCacheStore();
   } else {
-    store = new InMemoryProviderCacheStore();
+    store = new NoopProviderCacheStore();
   }
   orchestrator = { store, budget, ttls, enabled };
   return orchestrator;

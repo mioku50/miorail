@@ -18,8 +18,20 @@ import {
   ProviderBudgetExhaustedError,
   isProviderRateLimitError
 } from './interfaces.js';
-import { MockPriceProvider, MockApprovalProvider, MockTokenBalancesProvider } from './mocks.js';
 import { createHash } from 'node:crypto';
+
+// Injectable provider factories are honored only by the test process. They
+// keep deterministic unit providers out of the production dependency graph.
+export const providerFactoryRuntime: {
+  tokenSecurity?: () => TokenSecurityProviderEnvResult;
+  tokenBalances?: () => any;
+  prices?: () => any;
+  approvals?: () => any;
+} = {};
+
+function testFactory<T>(factory: (() => T) | undefined): T | undefined {
+  return process.env.NODE_ENV === 'test' ? factory?.() : undefined;
+}
 
 export class RealMoralisProvider implements MoralisProvider {
   constructor(private readonly apiKey: string, private readonly timeoutMs = 10000) {}
@@ -258,24 +270,6 @@ export class NoneTokenSecurityProvider implements TokenSecurityProvider {
   }
 }
 
-class MockTokenSecurityProvider implements TokenSecurityProvider {
-  async getTokenSecurity(params: { chainId: number; tokenAddresses: string[] }): Promise<TokenSecurityResult[]> {
-    return normalizeAddresses(params.tokenAddresses).map(address => ({
-      address,
-      provider: 'goplus' as const,
-      status: 'ok' as const,
-      flags: {
-        isOpenSource: true,
-        isProxy: false,
-        isMintable: false,
-        isHoneypot: false,
-      },
-      rawRiskLabels: [],
-      summary: 'No major warnings detected by configured providers.'
-    }));
-  }
-}
-
 export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
   constructor(private readonly appCredentials?: GoPlusAppCredentials, private readonly timeoutMs = 6000) {}
 
@@ -443,6 +437,8 @@ export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
 }
 
 export function getTokenSecurityProviderFromEnv(): TokenSecurityProviderEnvResult {
+  const injected = testFactory(providerFactoryRuntime.tokenSecurity);
+  if (injected) return injected;
   const mode = (process.env.TOKEN_SECURITY_PROVIDER || 'none').toLowerCase();
   if (mode === 'none') {
     // "disabled" = explicitly turned off via *_PROVIDER=none; "missing" = unset / not configured.
@@ -473,9 +469,6 @@ export function getTokenSecurityProviderFromEnv(): TokenSecurityProviderEnvResul
     const credentials = appKey && appSecret ? { appKey, appSecret } : undefined;
     if (goPlusDiagnostics.authMode === 'disabled') goPlusDiagnostics = { authMode: 'public' };
     return { provider: new GoPlusTokenSecurityProvider(credentials), status: statusText, statusCode, providerName: 'goplus', ...goPlusDiagnostics };
-  }
-  if (mode === 'mock') {
-    return { provider: new MockTokenSecurityProvider(), status: 'mock', statusCode: 'connected', providerName: 'goplus', authMode: 'public' };
   }
   tokenSecurityHealth = { providerName: 'none', statusCode: 'missing' };
   goPlusDiagnostics = { authMode: 'disabled' };
@@ -699,7 +692,9 @@ export class MoralisTokenBalancesProvider implements TokenBalancesProvider {
   }
 }
 
-export function getTokenBalancesProviderFromEnv(): { provider: TokenBalancesProvider; status: string; statusCode: "connected" | "missing" | "disabled"; providerName: "moralis" | "alchemy" | "mock" | "none" } {
+export function getTokenBalancesProviderFromEnv(): { provider: TokenBalancesProvider; status: string; statusCode: "connected" | "missing" | "disabled"; providerName: "moralis" | "alchemy" | "none" } {
+  const injected = testFactory(providerFactoryRuntime.tokenBalances);
+  if (injected) return injected;
   const mode = (process.env.TOKEN_BALANCES_PROVIDER || 'alchemy').toLowerCase();
   if (mode === 'none') {
     // "disabled" = explicitly turned off via TOKEN_BALANCES_PROVIDER=none; "missing" = unset / key absent.
@@ -718,9 +713,6 @@ export function getTokenBalancesProviderFromEnv(): { provider: TokenBalancesProv
       return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', statusCode: 'missing', providerName: 'moralis' };
     }
     return { provider: new MoralisTokenBalancesProvider(process.env.MORALIS_API_KEY), status: 'Moralis connected', statusCode: 'connected', providerName: 'moralis' };
-  }
-  if (mode === 'mock') {
-    return { provider: new MockTokenBalancesProvider(), status: 'mock', statusCode: 'connected', providerName: 'mock' };
   }
   return { provider: new NoneTokenBalancesProvider(), status: 'Token balances provider not configured', statusCode: 'missing', providerName: 'none' };
 }
@@ -858,7 +850,9 @@ export class MoralisPriceProvider implements PriceProvider {
   }
 }
 
-export function getPriceProviderFromEnv(): { provider: PriceProvider; status: string; statusCode: "connected" | "missing" | "disabled"; providerName: "coingecko" | "moralis" | "none" | "mock" } {
+export function getPriceProviderFromEnv(): { provider: PriceProvider; status: string; statusCode: "connected" | "missing" | "disabled"; providerName: "coingecko" | "moralis" | "none" } {
+  const injected = testFactory(providerFactoryRuntime.prices);
+  if (injected) return injected;
   const mode = (process.env.PRICE_PROVIDER || 'coingecko').toLowerCase();
   if (mode === 'none') {
     // "disabled" = explicitly turned off via PRICE_PROVIDER=none; "missing" = unset / key absent.
@@ -874,9 +868,6 @@ export function getPriceProviderFromEnv(): { provider: PriceProvider; status: st
       return { provider: new NonePriceProvider(), status: 'Price provider not configured', statusCode: 'missing', providerName: 'moralis' };
     }
     return { provider: new MoralisPriceProvider(process.env.MORALIS_API_KEY), status: 'Moralis prices connected', statusCode: 'connected', providerName: 'moralis' };
-  }
-  if (mode === 'mock') {
-    return { provider: new MockPriceProvider(), status: 'mock', statusCode: 'connected', providerName: 'mock' };
   }
   return { provider: new NonePriceProvider(), status: 'Price provider not configured', statusCode: 'missing', providerName: 'none' };
 }
@@ -968,7 +959,9 @@ export class MoralisApprovalProvider implements ApprovalProvider {
   }
 }
 
-export function getApprovalProviderFromEnv(): { provider: ApprovalProvider; status: string; statusCode: "connected" | "missing" | "failed" | "partial" | "disabled"; providerName: "moralis" | "alchemy" | "none" | "mock" } {
+export function getApprovalProviderFromEnv(): { provider: ApprovalProvider; status: string; statusCode: "connected" | "missing" | "failed" | "partial" | "disabled"; providerName: "moralis" | "alchemy" | "none" } {
+  const injected = testFactory(providerFactoryRuntime.approvals);
+  if (injected) return injected;
   const mode = (process.env.APPROVAL_PROVIDER || 'none').toLowerCase();
   if (mode === 'none') {
     // "disabled" = explicitly turned off via APPROVAL_PROVIDER=none; "missing" = unset / key absent.
@@ -981,9 +974,6 @@ export function getApprovalProviderFromEnv(): { provider: ApprovalProvider; stat
       return { provider: new NoneApprovalProvider(), status: 'Approval provider not configured', statusCode: 'missing', providerName: 'moralis' };
     }
     return { provider: new MoralisApprovalProvider(process.env.MORALIS_API_KEY), status: 'Moralis approvals connected', statusCode: 'connected', providerName: 'moralis' };
-  }
-  if (mode === 'mock') {
-    return { provider: new MockApprovalProvider(), status: 'mock', statusCode: 'connected', providerName: 'mock' };
   }
   return { provider: new NoneApprovalProvider(), status: 'Approval provider not configured', statusCode: 'missing', providerName: 'none' };
 }

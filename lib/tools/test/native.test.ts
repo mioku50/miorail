@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { NativeToolProvider } from '../src/native.js';
-import { MockCoinGeckoProvider, MockMoralisProvider } from '@mioagent/data-providers';
+import { MockCoinGeckoProvider, MockMoralisProvider } from '@mioagent/data-providers/testing';
 
 test('NativeToolProvider lists native tools', async () => {
   const provider = new NativeToolProvider(

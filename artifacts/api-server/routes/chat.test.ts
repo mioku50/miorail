@@ -1,4 +1,4 @@
-import test, { describe } from 'node:test';
+import test, { describe, mock } from 'node:test';
 import assert from 'node:assert';
 import request from 'supertest';
 import { app } from '../app.js';
@@ -22,13 +22,25 @@ function restoreEnv(name: string, value: string | undefined) {
 
 describe('Chat API & Recommendation Guardrails', () => {
   test('DELETE /api/chat/history clears chat history and GET returns empty list', async () => {
-    const delRes = await request(app).delete('/api/chat/history');
-    assert.strictEqual(delRes.status, 200);
-    assert.strictEqual(delRes.body.success, true);
+    mock.method(db, 'delete', () => ({ where: mock.fn(async () => []) }) as any);
+    mock.method(db, 'select', () => ({
+      from: () => ({
+        where: () => ({
+          orderBy: () => ({ limit: async () => [] }),
+        }),
+      }),
+    }) as any);
+    try {
+      const delRes = await request(app).delete('/api/chat/history');
+      assert.strictEqual(delRes.status, 200);
+      assert.strictEqual(delRes.body.success, true);
 
-    const getRes = await request(app).get('/api/chat/history');
-    assert.strictEqual(getRes.status, 200);
-    assert.deepStrictEqual(getRes.body.messages, []);
+      const getRes = await request(app).get('/api/chat/history');
+      assert.strictEqual(getRes.status, 200);
+      assert.deepStrictEqual(getRes.body.messages, []);
+    } finally {
+      mock.restoreAll();
+    }
   });
 
   test('POST /api/chat routes simple balance reads to Base MCP without creating an inbox action', async () => {
@@ -528,7 +540,7 @@ describe('Chat API & Recommendation Guardrails', () => {
     chatRouteRuntime.fetchInternalApprovals = async () => ({
       approvals: [],
       status: 'connected' as const,
-      provider: 'mock' as const,
+      provider: 'none' as const,
       tokenCount: 0,
       unlimitedCount: 0,
       riskySpenderCount: 0,

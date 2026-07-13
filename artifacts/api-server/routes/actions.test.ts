@@ -10,6 +10,8 @@ import { actionProofRuntime } from '../lib/actionProofs.js';
 import { InMemoryAutonomyPolicyRepository } from '@mioagent/autonomy';
 import { setAutonomyPolicyRepositoryForTests } from '../lib/autonomyGateway.js';
 import { actionsRouteRuntime } from './actions.js';
+import { providerFactoryRuntime } from '@mioagent/data-providers';
+import { MockApprovalProvider } from '@mioagent/data-providers/testing';
 
 test('Actions API', async (t) => {
   await t.test('GET /api/actions returns actions', async () => {
@@ -955,7 +957,7 @@ test('Actions API', async (t) => {
   // and must NOT create a generic read-only recommendation either. It returns
   // an honest "nothing to revoke" note and inserts nothing.
   const FAKE_SPENDER = '0x1111111111111111111111111111111111111111';
-  const MOCK_USDC_SPENDER = '0x9999999999999999999999999999999999999999'; // MockApprovalProvider: unlimited USDC
+  const MOCK_USDC_SPENDER = '0x9999999999999999999999999999999999999999'; // unit provider: unlimited USDC
 
   await t.test('POST /api/actions/recommend revoke for a fake spender creates a read-only recommendation with calls.length=0 and message "No active approval found"', async () => {
     const origChain = process.env.CHAIN_ENV;
@@ -967,6 +969,8 @@ test('Actions API', async (t) => {
     const valuesMock = mock.fn((_vals?: any) => ({ onConflictDoNothing: onConflictMock }));
     const insertMock = mock.fn(() => ({ values: valuesMock }));
     mock.method(db, 'insert', insertMock);
+    const { MemoryService } = await import('@mioagent/memory');
+    mock.method(MemoryService, 'getUserSettings', async () => null);
 
     const response = await request(app).post('/api/actions/recommend').send({
       instruction: `revoke approval for ${FAKE_SPENDER}`,
@@ -997,7 +1001,9 @@ test('Actions API', async (t) => {
     const origPrice = process.env.PRICE_PROVIDER;
     const origSecurity = process.env.TOKEN_SECURITY_PROVIDER;
     process.env.CHAIN_ENV = 'mainnet-readonly';
-    process.env.APPROVAL_PROVIDER = 'mock';
+    providerFactoryRuntime.approvals = () => ({
+      provider: new MockApprovalProvider(), status: 'Test approvals connected', statusCode: 'connected', providerName: 'moralis',
+    });
     process.env.TOKEN_BALANCES_PROVIDER = 'none';
     process.env.PRICE_PROVIDER = 'none';
     process.env.TOKEN_SECURITY_PROVIDER = 'none';
@@ -1007,6 +1013,8 @@ test('Actions API', async (t) => {
     const valuesMock = mock.fn((_vals?: any) => ({ onConflictDoNothing: onConflictMock }));
     const insertMock = mock.fn(() => ({ values: valuesMock }));
     mock.method(db, 'insert', insertMock);
+    const { MemoryService } = await import('@mioagent/memory');
+    mock.method(MemoryService, 'getUserSettings', async () => null);
 
     const response = await request(app).post('/api/actions/recommend').send({
       instruction: `revoke approval for ${MOCK_USDC_SPENDER}`,
@@ -1016,9 +1024,12 @@ test('Actions API', async (t) => {
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.success, true);
     assert.ok(response.body.actionId, 'expected an actionId for a created revoke');
-    assert.strictEqual(insertMock.mock.calls.length, 1, 'expected exactly one insert');
+    const actionRows = valuesMock.mock.calls
+      .map((call) => call.arguments[0] as any)
+      .filter((row) => row?.executionPayload);
+    assert.strictEqual(actionRows.length, 1, 'expected exactly one action insert');
 
-    const insertedRow = valuesMock.mock.calls[0].arguments[0] as any;
+    const insertedRow = actionRows[0];
     const payload = typeof insertedRow.executionPayload === 'string'
       ? JSON.parse(insertedRow.executionPayload)
       : insertedRow.executionPayload;
@@ -1029,6 +1040,7 @@ test('Actions API', async (t) => {
     assert.ok(String(payload.calls[0].data).toLowerCase().includes(MOCK_USDC_SPENDER.toLowerCase().slice(2)));
 
     mock.restoreAll();
+    providerFactoryRuntime.approvals = undefined;
     if (origChain === undefined) delete process.env.CHAIN_ENV; else process.env.CHAIN_ENV = origChain;
     if (origApproval === undefined) delete process.env.APPROVAL_PROVIDER; else process.env.APPROVAL_PROVIDER = origApproval;
     if (origBalances === undefined) delete process.env.TOKEN_BALANCES_PROVIDER; else process.env.TOKEN_BALANCES_PROVIDER = origBalances;

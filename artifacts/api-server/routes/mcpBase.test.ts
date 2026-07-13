@@ -92,7 +92,7 @@ test('GET /api/mcp/base/connect redirects with safe missing_config when Base MCP
 
   const response = await request(app).get('/api/mcp/base/connect');
   assert.strictEqual(response.status, 302);
-  assert.strictEqual(response.headers.location, '/stream?mcp=error&code=missing_config');
+  assert.strictEqual(response.headers.location, '/base-mcp?mcp=error&code=missing_config');
 
   restoreEnv('BASE_MCP_ENABLED', originalEnabled);
   restoreEnv('BASE_MCP_SERVER_URL', originalUrl);
@@ -111,8 +111,29 @@ test('GET /api/mcp/base/connect reports missing SESSION_SECRET through a safe re
 
   const response = await request(app).get('/api/mcp/base/connect');
   assert.strictEqual(response.status, 302);
-  assert.strictEqual(response.headers.location, '/stream?mcp=error&code=missing_config');
+  assert.strictEqual(response.headers.location, '/base-mcp?mcp=error&code=missing_config');
   assert.strictEqual(response.headers.location.includes('debug_token'), false);
+
+  restoreEnv('BASE_MCP_ENABLED', originalEnabled);
+  restoreEnv('BASE_MCP_SERVER_URL', originalUrl);
+  restoreEnv('SESSION_SECRET', originalSecret);
+});
+
+test('GET /api/mcp/base/connect preserves a popup return target on safe errors', async () => {
+  const originalEnabled = process.env.BASE_MCP_ENABLED;
+  const originalUrl = process.env.BASE_MCP_SERVER_URL;
+  const originalSecret = process.env.SESSION_SECRET;
+  delete process.env.BASE_MCP_ENABLED;
+  delete process.env.BASE_MCP_SERVER_URL;
+  delete process.env.SESSION_SECRET;
+
+  const response = await request(app).get('/api/mcp/base/connect?returnTo=/configure&popup=1');
+  assert.strictEqual(response.status, 302);
+  const location = new URL(response.headers.location, 'http://local');
+  assert.strictEqual(location.pathname, '/configure');
+  assert.strictEqual(location.searchParams.get('mcpPopup'), '1');
+  assert.strictEqual(location.searchParams.get('mcp'), 'error');
+  assert.strictEqual(location.searchParams.get('code'), 'missing_config');
 
   restoreEnv('BASE_MCP_ENABLED', originalEnabled);
   restoreEnv('BASE_MCP_SERVER_URL', originalUrl);
@@ -212,7 +233,7 @@ test('GET /api/mcp/base/connect never exposes an OAuth failure as HTTP 500', asy
 
   const response = await request(app).get('/api/mcp/base/connect');
   assert.equal(response.status, 302);
-  assert.equal(response.headers.location, '/stream?mcp=error&code=credentials_invalid');
+  assert.equal(response.headers.location, '/base-mcp?mcp=error&code=credentials_invalid');
   assert.equal(JSON.stringify(response.headers).includes('authenticate data'), false);
 
   restoreEnv('BASE_MCP_ENABLED', originalEnabled);
@@ -338,7 +359,7 @@ test('GET /api/mcp/base/callback handles user cancel without calling token excha
 
   const response = await request(app).get('/api/mcp/base/callback?error=access_denied&state=valid-state');
   assert.strictEqual(response.status, 302);
-  assert.strictEqual(response.headers.location, '/stream?mcp=error&code=authorization_failed');
+  assert.strictEqual(response.headers.location, '/configure?mcp=error&code=authorization_failed');
   assert.strictEqual(fake.states.size, 0);
   const status = await getBaseMcpAuthStatus('default-user');
   assert.strictEqual(status.connected, false);
@@ -377,7 +398,7 @@ test('GET /api/mcp/base/callback marks needs_reauth and redirects safely when to
 
   const response = await request(app).get('/api/mcp/base/callback?code=auth-code&state=valid-state');
   assert.strictEqual(response.status, 302);
-  assert.strictEqual(response.headers.location, '/stream?mcp=error&code=authorization_failed');
+  assert.strictEqual(response.headers.location, '/base-mcp?mcp=error&code=authorization_failed');
   assert.strictEqual(fake.states.size, 0);
   const status = await getBaseMcpAuthStatus('default-user');
   assert.strictEqual(status.connected, false);

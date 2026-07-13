@@ -31,7 +31,7 @@ export function StatusBar() {
   const priceProv = sd?.prices?.provider || 'none';
   const riskProv = sd?.risk?.provider || 'none';
   const appProv = sd?.approvals?.provider || 'none';
-  const x402Status = sd?.x402?.settleReady ? 'settle-ready' : sd?.x402?.status || 'simulated';
+  const x402Status = sd?.x402?.settleReady ? 'settle-ready' : sd?.x402?.status || 'missing';
 
   return (
     <footer className="hidden md:flex h-[28px] border-t border-line bg-panel px-4 items-center justify-between text-[11px] shrink-0 select-none overflow-hidden">

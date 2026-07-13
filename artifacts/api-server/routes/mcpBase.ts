@@ -57,8 +57,8 @@ function redirectWithParam(path: string, key: string, value: string): string {
   return `${url.pathname}${url.search}`;
 }
 
-function oauthErrorRedirect(code: string): string {
-  const url = new URL('/stream', 'http://local');
+function oauthErrorRedirect(code: string, returnTo = '/stream'): string {
+  const url = new URL(sanitizeReturnTo(returnTo), 'http://local');
   url.searchParams.set('mcp', 'error');
   url.searchParams.set('code', code);
   return `${url.pathname}${url.search}`;
@@ -97,13 +97,16 @@ function logOAuthEvent(
 
 mcpBaseRouter.get('/connect', async (req, res) => {
   const userId = tenantUserId(req);
+  const requestedReturnTo = sanitizeReturnTo(typeof req.query.returnTo === 'string' ? req.query.returnTo : undefined);
+  const returnTo = req.query.popup === '1'
+    ? redirectWithParam(requestedReturnTo, 'mcpPopup', '1')
+    : requestedReturnTo;
   try {
     const { serverUrl, missingConfig } = requiredConnectConfig();
-    if (missingConfig.length || !serverUrl) return res.redirect(oauthErrorRedirect('missing_config'));
+    if (missingConfig.length || !serverUrl) return res.redirect(oauthErrorRedirect('missing_config', returnTo));
 
     const secret = sessionSecret();
     const state = crypto.randomBytes(32).toString('base64url');
-    const returnTo = sanitizeReturnTo(typeof req.query.returnTo === 'string' ? req.query.returnTo : undefined);
     let authorizationUrl: string | null = null;
 
     // An explicit Connect/Reconnect is a clean OAuth boundary. Never attempt to
@@ -137,7 +140,7 @@ mcpBaseRouter.get('/connect', async (req, res) => {
     const errorCode = safeOAuthErrorCode(error);
     await markBaseMcpNeedsReauth({ userId, error: errorCode }).catch(() => undefined);
     logOAuthEvent('warn', 'base-mcp-oauth-callback-failed', { userId, errorCode });
-    return res.redirect(oauthErrorRedirect(errorCode));
+    return res.redirect(oauthErrorRedirect(errorCode, returnTo));
   }
 });
 
@@ -163,7 +166,7 @@ mcpBaseRouter.get('/callback', async (req, res) => {
         endpointHost: serverUrl.host,
         errorCode: 'authorization_failed',
       });
-      return res.redirect(oauthErrorRedirect('authorization_failed'));
+      return res.redirect(oauthErrorRedirect('authorization_failed', pending?.returnTo));
     }
 
     if (!code || !state) {
@@ -244,7 +247,7 @@ mcpBaseRouter.get('/callback', async (req, res) => {
         endpointHost: serverUrl?.host,
         errorCode,
       });
-      return res.redirect(oauthErrorRedirect(errorCode));
+      return res.redirect(oauthErrorRedirect(errorCode, pending.returnTo));
     }
     logOAuthEvent('warn', 'base-mcp-oauth-callback-failed', {
       userId,

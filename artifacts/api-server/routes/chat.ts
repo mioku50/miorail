@@ -333,16 +333,12 @@ chatRouter.post('/', async (req, res, next) => {
       let pricesStatus = 'missing';
       let riskStatus = 'missing';
       let securityProvider = 'none';
-      try {
-        const statusRes = getSystemStatus(chainEnvVal);
-        tokenBalancesProvider = statusRes.tokenBalances.provider;
-        pricesStatus = statusRes.prices.status;
-        riskStatus = statusRes.risk.status;
-        securityProvider = statusRes.risk.provider;
-      } catch {
-        // ignore fallback
-      }
-      const memoryMd = (await MemoryService.getUserSettings(userId).catch(() => null))?.memoryMd || null;
+      const statusRes = getSystemStatus(chainEnvVal);
+      tokenBalancesProvider = statusRes.tokenBalances.provider;
+      pricesStatus = statusRes.prices.status;
+      riskStatus = statusRes.risk.status;
+      securityProvider = statusRes.risk.provider;
+      const memoryMd = (await MemoryService.getUserSettings(userId))?.memoryMd || null;
       const requiresTokenSecurity = ['portfolio', 'risk', 'security'].includes(intent.intentType || '');
 
       const toolCallTraces: any[] = [
@@ -528,22 +524,24 @@ chatRouter.post('/', async (req, res, next) => {
         }
       } else {
         simRes = {
-          success: true,
-          allowed: true,
-          riskLevel: metadata.risk || 'low',
-          reason: 'Read-only mode inspection verified without transaction risk',
-          estimatedGas: '0',
-          expectedOutput: 'Read-only state check without chain mutation',
-          checks: ['Chain validation: PASSED (Read-only)', 'Address check: PASSED', 'Permission bounds: SAFE']
+          performed: false,
+          success: false,
+          allowed: false,
+          riskLevel: 'blocked',
+          method: 'not-applicable',
+          reason: 'Simulation was not run because this recommendation contains no transaction calls.',
+          checks: ['Simulation not applicable: no transaction calls']
         };
       }
 
-      toolCallTraces.push({
-        toolName: 'simulate_action_execution',
-        args: { readOnly: isReadonly, chain: payload.chain },
-        result: { allowed: simRes.allowed, gas: simRes.estimatedGas || '0' },
-        isError: !simRes.allowed,
-      });
+      if (simRes.performed !== false) {
+        toolCallTraces.push({
+          toolName: 'simulate_action_execution',
+          args: { readOnly: isReadonly, chain: payload.chain },
+          result: { allowed: simRes.allowed, gas: simRes.estimatedGas },
+          isError: !simRes.allowed,
+        });
+      }
 
       metadata.securityScreening = securityScreening;
       metadata.simulationResult = simRes;

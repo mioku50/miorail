@@ -15,7 +15,13 @@ test('Memory API', async (t) => {
   });
 
   await t.test('POST /api/memory updates memory', async () => {
-    mock.method(MemoryService, 'updateUserSettings', async () => {});
+    mock.method(MemoryService, 'updateUserSettings', async () => ({
+      memoryMd: 'New memory',
+      model: null,
+      protocolToggles: null,
+      encryptedKeys: null,
+      updatedAt: new Date('2026-07-13T00:00:00.000Z'),
+    }));
 
     const response = await request(app)
       .post('/api/memory')

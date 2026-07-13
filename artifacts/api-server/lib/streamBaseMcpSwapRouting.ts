@@ -115,7 +115,7 @@ export async function runDirectBaseMcpSwap(input: {
     return { kind: 'base_mcp_swap', content: 'Connect Base Account before requesting a swap.', toolCalls: [], errorCode: 'swap_wallet_required' };
   }
   const repository = baseMcpSwapRuntime.getRepository();
-  const policy = await repository.getByUser(input.userId, 8453).catch(() => undefined);
+  const policy = await repository.getByUser(input.userId, 8453);
   if (!policy || !policy.isActive || policy.killSwitch || !policy.mainnetOptIn
     || policy.expiresAt <= Date.now() || policy.walletAddress !== input.walletAddress.toLowerCase()) {
     return {

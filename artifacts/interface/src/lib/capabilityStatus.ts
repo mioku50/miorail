@@ -6,7 +6,6 @@ const LIMITED = new Set([
   'stale',
   'cached',
   'degraded',
-  'simulated',
   'warning',
   'rate_limited',
   'budget_exhausted',

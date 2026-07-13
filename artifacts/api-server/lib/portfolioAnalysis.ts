@@ -1062,7 +1062,7 @@ export function analyzeApprovalsForRisk(
 export async function fetchInternalApprovals(address: string, chainEnv: string = 'sepolia'): Promise<{
   approvals: TokenApproval[];
   status: "connected" | "missing" | "failed" | "partial" | "disabled" | "rate_limited" | "budget_exhausted" | "temporarily_unavailable";
-  provider: "moralis" | "alchemy" | "none" | "mock";
+  provider: "moralis" | "alchemy" | "none";
   tokenCount: number;
   unlimitedCount: number;
   riskySpenderCount: number;

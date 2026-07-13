@@ -3,7 +3,7 @@ import { test, describe, mock } from 'node:test';
 import assert from 'node:assert';
 import { createToolAggregatorForUser, selectBaseMcpRuntimeTools, settingsAPI } from '../src/factory.js';
 import { NativeToolProvider } from '../src/native.js';
-import { MockCoinGeckoProvider, RealCoinGeckoProvider, MockMoralisProvider, RealMoralisProvider } from '@mioagent/data-providers';
+import { RealCoinGeckoProvider, RealMoralisProvider } from '@mioagent/data-providers';
 import { classifyDynamicBaseMcpTools } from '../src/dynamic_base_mcp.js';
 
 describe('createToolAggregatorForUser Moonwell registration', () => {
@@ -103,17 +103,14 @@ describe('createToolAggregatorForUser', () => {
         assert.deepStrictEqual(selected.map((tool) => tool.name), ['get_portfolio', 'send']);
     });
 
-    test('returns mock providers when toggles are missing or false', async () => {
+    test('does not register native tools when real providers are disabled', async () => {
         const mockGetSettings = mock.method(settingsAPI, 'getUserSettings', async () => ({
             protocolToggles: {}
         }));
         const mockGetDecryptedKey = mock.method(settingsAPI, 'getDecryptedKey', async () => null);
 
         const aggregator = await createToolAggregatorForUser('u1', 'secret');
-        const nativeToolProvider = aggregator['providers'].get('native') as NativeToolProvider;
-
-        assert.ok(nativeToolProvider['coinGecko'] instanceof MockCoinGeckoProvider);
-        assert.ok(nativeToolProvider['moralis'] instanceof MockMoralisProvider);
+        assert.equal(aggregator['providers'].has('native'), false);
 
         mockGetSettings.mock.restore();
         mockGetDecryptedKey.mock.restore();
@@ -129,7 +126,7 @@ describe('createToolAggregatorForUser', () => {
         const nativeToolProvider = aggregator['providers'].get('native') as NativeToolProvider;
 
         assert.ok(nativeToolProvider['coinGecko'] instanceof RealCoinGeckoProvider);
-        assert.ok(nativeToolProvider['moralis'] instanceof MockMoralisProvider);
+        assert.equal(nativeToolProvider['moralis'], undefined);
 
         mockGetSettings.mock.restore();
         mockGetDecryptedKey.mock.restore();
@@ -154,22 +151,20 @@ describe('createToolAggregatorForUser', () => {
         mockGetDecryptedKey.mock.restore();
     });
 
-    test('returns mock MoralisProvider when enabled but key missing', async () => {
+    test('does not register Moralis tools when enabled but key is missing', async () => {
         const mockGetSettings = mock.method(settingsAPI, 'getUserSettings', async () => ({
             protocolToggles: { moralis: true }
         }));
         const mockGetDecryptedKey = mock.method(settingsAPI, 'getDecryptedKey', async () => null);
 
         const aggregator = await createToolAggregatorForUser('u1', 'secret');
-        const nativeToolProvider = aggregator['providers'].get('native') as NativeToolProvider;
-
-        assert.ok(nativeToolProvider['moralis'] instanceof MockMoralisProvider);
+        assert.equal(aggregator['providers'].has('native'), false);
 
         mockGetSettings.mock.restore();
         mockGetDecryptedKey.mock.restore();
     });
 
-    test('missing keys do not leak secrets, fail silently to mock', async () => {
+    test('credential read failure leaves Moralis unavailable without substitute data', async () => {
         const mockGetSettings = mock.method(settingsAPI, 'getUserSettings', async () => ({
             protocolToggles: { moralis: true }
         }));
@@ -178,9 +173,7 @@ describe('createToolAggregatorForUser', () => {
         });
 
         const aggregator = await createToolAggregatorForUser('u1', 'secret');
-        const nativeToolProvider = aggregator['providers'].get('native') as NativeToolProvider;
-
-        assert.ok(nativeToolProvider['moralis'] instanceof MockMoralisProvider);
+        assert.equal(aggregator['providers'].has('native'), false);
 
         mockGetSettings.mock.restore();
         mockGetDecryptedKey.mock.restore();

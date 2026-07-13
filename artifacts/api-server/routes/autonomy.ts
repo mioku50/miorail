@@ -35,7 +35,7 @@ export const autonomyRouteRuntime = {
 };
 
 async function getAutonomyState(userId: string, query?: { owner?: string; executor?: string; token?: string }) {
-  const settings = await autonomyRouteRuntime.getUserSettings(userId).catch(() => null);
+  const settings = await autonomyRouteRuntime.getUserSettings(userId);
   const autonomy = (settings?.protocolToggles as any)?.autonomy || {};
 
   const isConfigured = autonomy.status === 'configured' || !!autonomy.dailyLimitUsdc;
@@ -348,7 +348,7 @@ autonomyRouter.post('/config', async (req, res, next) => {
       });
     }
 
-    const settings = await autonomyRouteRuntime.getUserSettings(userId).catch(() => null);
+    const settings = await autonomyRouteRuntime.getUserSettings(userId);
     const existingToggles = (settings?.protocolToggles as any) || {};
     const existingAutonomy = existingToggles.autonomy || {};
 
@@ -372,7 +372,7 @@ autonomyRouter.post('/config', async (req, res, next) => {
     };
 
     if (runtimeChainEnv === 'mainnet' || runtimeChainEnv === 'mainnet-readonly') {
-      await autonomyRouteRuntime.updateUserSettings(userId, { protocolToggles: newToggles }).catch(() => undefined);
+      await autonomyRouteRuntime.updateUserSettings(userId, { protocolToggles: newToggles });
     } else {
       await autonomyRouteRuntime.updateUserSettings(userId, { protocolToggles: newToggles });
     }
@@ -520,7 +520,7 @@ autonomyRouter.post('/kill', async (req, res, next) => {
       const policy = await getAutonomyPolicyRepository().getByUser(userId, chainId);
       if (policy) await getAutonomyPolicyRepository().setKillSwitch(policy.id, true);
     }
-    const settings = await autonomyRouteRuntime.getUserSettings(userId).catch(() => null);
+    const settings = await autonomyRouteRuntime.getUserSettings(userId);
     const existingToggles = (settings?.protocolToggles as any) || {};
     const existingAutonomy = existingToggles.autonomy || {};
 
@@ -535,7 +535,7 @@ autonomyRouter.post('/kill', async (req, res, next) => {
       autonomy: newAutonomy,
     };
 
-    await autonomyRouteRuntime.updateUserSettings(userId, { protocolToggles: newToggles }).catch(() => undefined);
+    await autonomyRouteRuntime.updateUserSettings(userId, { protocolToggles: newToggles });
     const state = await getAutonomyState(userId);
     res.json(KillAutonomyResponseSchema.parse({ success: true, state }));
   } catch (error) {
@@ -552,7 +552,7 @@ autonomyRouter.post('/reset', async (req, res, next) => {
       const policy = await getAutonomyPolicyRepository().getByUser(userId, chainId);
       if (policy) await getAutonomyPolicyRepository().setKillSwitch(policy.id, true);
     }
-    const settings = await autonomyRouteRuntime.getUserSettings(userId).catch(() => null);
+    const settings = await autonomyRouteRuntime.getUserSettings(userId);
     const existingToggles = (settings?.protocolToggles as any) || {};
 
     const newToggles = {
@@ -563,7 +563,7 @@ autonomyRouter.post('/reset', async (req, res, next) => {
       },
     };
 
-    await autonomyRouteRuntime.updateUserSettings(userId, { protocolToggles: newToggles }).catch(() => undefined);
+    await autonomyRouteRuntime.updateUserSettings(userId, { protocolToggles: newToggles });
     const state = await getAutonomyState(userId);
     res.json(KillAutonomyResponseSchema.parse({ success: true, state }));
   } catch (error) {

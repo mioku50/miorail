@@ -8,7 +8,6 @@ import { MoonwellHttpToolProvider } from './moonwell_http.js';
 import type { BaseMcpOAuthProvider } from '@mioagent/mcp';
 import * as settingsModule from '@mioagent/settings';
 import {
-  MockCoinGeckoProvider, MockMoralisProvider,
   RealCoinGeckoProvider, RealMoralisProvider
 } from '@mioagent/data-providers';
 
@@ -67,17 +66,15 @@ export function selectBaseMcpRuntimeTools(
 
 export async function createToolAggregatorForUser(userId: string, sessionSecret: string, options: CreateToolAggregatorOptions = {}): Promise<ToolAggregator> {
   const aggregator = new ToolAggregator();
-  console.log("TRACE: createToolAggregatorForUser before getUserSettings");
   const settings = await settingsAPI.getUserSettings(userId);
-  console.log("TRACE: createToolAggregatorForUser after getUserSettings");
 
   const toggles = settings?.protocolToggles as Record<string, boolean> | undefined;
 
   const useCoinGecko = toggles?.coingecko === true;
   const useMoralis = toggles?.moralis === true;
 
-  const coinGeckoProvider = useCoinGecko ? new RealCoinGeckoProvider() : new MockCoinGeckoProvider();
-  let moralisProvider: MockMoralisProvider | RealMoralisProvider = new MockMoralisProvider();
+  const coinGeckoProvider = useCoinGecko ? new RealCoinGeckoProvider() : undefined;
+  let moralisProvider: RealMoralisProvider | undefined;
 
   if (useMoralis) {
     try {
@@ -86,12 +83,14 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
         moralisProvider = new RealMoralisProvider(moralisKey);
       }
     } catch {
-      // Fallback to mock silently to prevent leaking secrets/errors
+      // Real-or-fail-closed: do not substitute balances when the encrypted
+      // credential cannot be opened.
     }
   }
 
-  // Register NativeToolProvider
-  aggregator.registerProvider(new NativeToolProvider(coinGeckoProvider, moralisProvider));
+  if (coinGeckoProvider || moralisProvider) {
+    aggregator.registerProvider(new NativeToolProvider(coinGeckoProvider, moralisProvider));
+  }
 
   const baseMcpEnabled = options.baseMcpEnabled ?? parseBool(process.env.BASE_MCP_ENABLED);
   const baseMcpServerUrl = options.baseMcpServerUrl || baseMcpServerUrlFromEnv();
@@ -152,9 +151,6 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
   if (process.env.CHAIN_ENV === 'sepolia' && !options.baseMcpReadOnlyOnly) {
     const { SepoliaToolProvider } = await import('./sepolia.js');
     aggregator.registerProvider(new SepoliaToolProvider(mcpClient));
-  } else if (process.env.NODE_ENV === 'test' && !options.baseMcpReadOnlyOnly) {
-    const { MockMcpToolProvider } = await import('./mock_mcp.js');
-    aggregator.registerProvider(new MockMcpToolProvider());
   }
 
   return aggregator;

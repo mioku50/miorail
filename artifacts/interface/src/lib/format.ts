@@ -60,7 +60,7 @@ export function baseMcpConnectHref(returnTo = '/base-mcp'): string {
   const safeReturnTo = returnTo.startsWith('/') && !returnTo.startsWith('//') && !returnTo.includes('://')
     ? returnTo
     : '/base-mcp';
-  return `/api/mcp/base/connect?returnTo=${encodeURIComponent(safeReturnTo)}`;
+  return `/api/mcp/base/connect?returnTo=${encodeURIComponent(safeReturnTo)}&popup=1`;
 }
 
 export function baseMcpOAuthResultMessage(result?: string | null, code?: string | null, wallet?: string | null): { kind: 'success' | 'warn' | 'error'; text: string } | null {

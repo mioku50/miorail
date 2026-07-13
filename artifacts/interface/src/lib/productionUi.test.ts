@@ -43,6 +43,15 @@ test('ordinary user surfaces do not regress to vendor or transport jargon', () =
 test('Agent Stream exposes the Base MCP reconnect CTA outside diagnostics', () => {
   const stream = source('../features/stream/AgentStream.tsx');
   assert.match(stream, /baseMcpNeedsAuth\(statusData\?\.baseMcp\)/);
-  assert.match(stream, /baseMcpConnectHref\('\/stream'\)/);
+  assert.match(stream, /<BaseMcpConnectButton/);
+  assert.match(stream, /returnTo="\/stream"/);
   assert.match(stream, /baseMcpConnectLabel\(statusData\?\.baseMcp\)/);
+});
+
+test('injected Base App sessions cannot launch an unsupported Spend Permission flow', () => {
+  const fuel = source('../features/x402/FuelMeter.tsx');
+  assert.match(fuel, /spendPermissionsSupported/);
+  assert.match(fuel, /!spendPermissionsSupported/);
+  assert.match(fuel, /No permission was created/);
+  assert.match(fuel, /No permission was saved/);
 });

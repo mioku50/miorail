@@ -4,8 +4,8 @@ import {
   NoneApprovalProvider,
   MoralisApprovalProvider,
   getApprovalProviderFromEnv,
-  MockApprovalProvider
 } from '../src/index.js';
+import { MockApprovalProvider } from '../src/mocks.js';
 
 suite('Approval Providers', () => {
   const originalEnv = { ...process.env };
@@ -135,12 +135,12 @@ suite('Approval Providers', () => {
     delete process.env.APPROVAL_PROVIDER;
   });
 
-  test('getApprovalProviderFromEnv returns mock when APPROVAL_PROVIDER=mock', () => {
+  test('getApprovalProviderFromEnv fails closed when APPROVAL_PROVIDER=mock', () => {
     process.env.APPROVAL_PROVIDER = 'mock';
     const { provider, statusCode, providerName } = getApprovalProviderFromEnv();
-    assert.strictEqual(providerName, 'mock');
-    assert.strictEqual(statusCode, 'connected');
-    assert.ok(provider instanceof MockApprovalProvider);
+    assert.strictEqual(providerName, 'none');
+    assert.strictEqual(statusCode, 'missing');
+    assert.ok(provider instanceof NoneApprovalProvider);
   });
 
   test('getApprovalProviderFromEnv returns moralis when APPROVAL_PROVIDER=moralis and key set', () => {

@@ -52,8 +52,8 @@ test('Base MCP UI helpers classify needs_reauth as reconnectable stale state', (
   assert.strictEqual(baseMcpNeedsAuth({ status: 'connected', configured: true, enabled: true, auth: { connected: true, expired: true } }), true);
   assert.strictEqual(baseMcpConnectLabel({ auth: { connected: false } }), 'Connect Base MCP');
   assert.strictEqual(baseMcpConnectLabel({ auth: { connected: true } }), 'Reconnect Base MCP');
-  assert.strictEqual(baseMcpConnectHref('/configure'), '/api/mcp/base/connect?returnTo=%2Fconfigure');
-  assert.strictEqual(baseMcpConnectHref('https://evil.test/callback'), '/api/mcp/base/connect?returnTo=%2Fbase-mcp');
+  assert.strictEqual(baseMcpConnectHref('/configure'), '/api/mcp/base/connect?returnTo=%2Fconfigure&popup=1');
+  assert.strictEqual(baseMcpConnectHref('https://evil.test/callback'), '/api/mcp/base/connect?returnTo=%2Fbase-mcp&popup=1');
 });
 
 test('Base MCP OAuth result messages are explicit and non-crashing', () => {

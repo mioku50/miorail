@@ -15,6 +15,7 @@ export interface SimulationInput {
 }
 
 export interface SimulationResult {
+  performed?: boolean;
   success: boolean; // keep the backward compatibility with what we injected earlier
   allowed: boolean;
   riskLevel: 'low' | 'medium' | 'high' | 'blocked';
@@ -26,7 +27,7 @@ export interface SimulationResult {
   // Honest label: this is preflight validation, NOT a fork simulation. For
   // supported ERC-20 calls it includes deterministic before/after projections
   // decoded from calldata; it does not execute or broadcast.
-  method?: 'preflight-validation';
+  method?: 'preflight-validation' | 'not-applicable';
   projections?: Array<{
     kind: 'erc20_approval' | 'erc20_transfer' | 'unknown';
     token: string;

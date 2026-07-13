@@ -26,11 +26,26 @@ const globalLimiter = new InMemoryRateLimiter({
 app.use(rateLimit(globalLimiter));
 
 // Security middleware
-app.use(helmet());
+app.use(helmet({
+  // Base Account and Base MCP OAuth use a user-opened popup. Helmet's default
+  // `same-origin` policy severs window.opener after the cross-origin hop,
+  // causing keys.coinbase.com to reject the flow. This policy retains opener
+  // for the popup without relaxing frame, content or transport protections.
+  crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
+}));
+const allowedCorsOrigins = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter((origin) => origin.length > 0 && origin !== '*');
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN || '*',
-    credentials: true,
+    // Session cookies and wildcard origins are mutually incompatible in
+    // browsers. Same-origin deployments need no CORS headers; split frontend
+    // deployments must opt in with an exact, comma-separated origin allowlist.
+    origin: allowedCorsOrigins.length === 0
+      ? false
+      : (origin, callback) => callback(null, !origin || allowedCorsOrigins.includes(origin)),
+    credentials: allowedCorsOrigins.length > 0,
     exposedHeaders: ['payment-response', 'x-payment-response', 'PAYMENT-REQUIRED'],
   })
 );

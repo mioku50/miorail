@@ -17,7 +17,7 @@ memoryRouter.get('/', async (req, res, next) => {
     res.json(
       MemoryResponseSchema.parse({
         memoryMd: settings?.memoryMd || null,
-        updatedAt: new Date().toISOString(), // we don't have updatedAt in the returned type from service, mock it
+        updatedAt: settings?.updatedAt?.toISOString() || null,
       })
     );
   } catch (error) {
@@ -30,12 +30,12 @@ memoryRouter.post('/', async (req, res, next) => {
     const userId = tenantUserId(req);
     const { memoryMd } = UpdateMemoryRequestSchema.parse(req.body);
 
-    await MemoryService.updateUserSettings(userId, { memoryMd });
+    const settings = await MemoryService.updateUserSettings(userId, { memoryMd });
 
     res.json(
       UpdateMemoryResponseSchema.parse({
-        memoryMd,
-        updatedAt: new Date().toISOString(),
+        memoryMd: settings.memoryMd,
+        updatedAt: settings.updatedAt?.toISOString(),
       })
     );
   } catch (error) {

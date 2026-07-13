@@ -1,5 +1,7 @@
-import test, { describe, beforeEach } from 'node:test';
+import test, { describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
+import { providerFactoryRuntime } from '@mioagent/data-providers';
+import { MockPriceProvider, MockTokenBalancesProvider } from '@mioagent/data-providers/testing';
 import {
   analyzePortfolioForRisk,
   buildPortfolioReviewAssistantContent,
@@ -22,6 +24,12 @@ describe('Portfolio Risk Analysis Utility', () => {
   beforeEach(() => {
     // Force an in-memory orchestrator so unit tests stay hermetic (no DB writes).
     clearTokenBalancesCacheForTests();
+    providerFactoryRuntime.tokenBalances = undefined;
+    providerFactoryRuntime.prices = undefined;
+  });
+  afterEach(() => {
+    providerFactoryRuntime.tokenBalances = undefined;
+    providerFactoryRuntime.prices = undefined;
   });
   test('analyzePortfolioForRisk flags spam token as high risk', () => {
     const mockPortfolio: PortfolioData = {
@@ -178,14 +186,18 @@ describe('Portfolio Risk Analysis Utility', () => {
     const origBalancesProvider = process.env.TOKEN_BALANCES_PROVIDER;
     const origSecurityProvider = process.env.TOKEN_SECURITY_PROVIDER;
     const origApprovalProvider = process.env.APPROVAL_PROVIDER;
-    process.env.PRICE_PROVIDER = 'mock';
-    process.env.TOKEN_BALANCES_PROVIDER = 'mock';
+    providerFactoryRuntime.prices = () => ({
+      provider: new MockPriceProvider(), status: 'Test prices connected', statusCode: 'connected', providerName: 'coingecko',
+    });
+    providerFactoryRuntime.tokenBalances = () => ({
+      provider: new MockTokenBalancesProvider(), status: 'Test balances connected', statusCode: 'connected', providerName: 'moralis',
+    });
     process.env.TOKEN_SECURITY_PROVIDER = 'none';
     process.env.APPROVAL_PROVIDER = 'none';
 
     try {
       const portfolio = await fetchInternalPortfolio('0x123', 'sepolia');
-      assert.strictEqual(portfolio.providers?.priceProvider, 'mock');
+      assert.strictEqual(portfolio.providers?.priceProvider, 'coingecko');
       assert.strictEqual(portfolio.providers?.risk, 'disabled');
       assert.ok(portfolio.totalUsdValue);
       assert.ok(Number(portfolio.totalUsdValue) > 0);

@@ -1,8 +1,9 @@
-import test, { describe, mock, beforeEach } from 'node:test';
+import test, { describe, mock, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import request from 'supertest';
 import { app } from '../app';
-import { clearTokenSecurityCacheForTests } from '@mioagent/data-providers';
+import { clearTokenSecurityCacheForTests, providerFactoryRuntime } from '@mioagent/data-providers';
+import { MockPriceProvider, MockTokenBalancesProvider } from '@mioagent/data-providers/testing';
 import { clearTokenBalancesCacheForTests, setTokenBalancesCacheForTests } from '../lib/portfolioAnalysis';
 
 function restoreEnv(name: string, value: string | undefined) {
@@ -16,6 +17,14 @@ function restoreEnv(name: string, value: string | undefined) {
 describe('Portfolio API', () => {
   beforeEach(() => {
     clearTokenBalancesCacheForTests();
+    providerFactoryRuntime.tokenBalances = undefined;
+    providerFactoryRuntime.prices = undefined;
+    providerFactoryRuntime.tokenSecurity = undefined;
+    providerFactoryRuntime.approvals = undefined;
+  });
+  afterEach(() => {
+    providerFactoryRuntime.tokenBalances = undefined;
+    providerFactoryRuntime.prices = undefined;
   });
   test('GET /api/portfolio returns 400 when address is missing', async () => {
     const response = await request(app).get('/api/portfolio');
@@ -48,8 +57,10 @@ describe('Portfolio API', () => {
     mock.restoreAll();
   });
 
-  test('GET /api/portfolio returns ERC-20 balances when provider is configured to mock', async () => {
-    process.env.TOKEN_BALANCES_PROVIDER = 'mock';
+  test('GET /api/portfolio supports an explicitly injected unit-test balance provider', async () => {
+    providerFactoryRuntime.tokenBalances = () => ({
+      provider: new MockTokenBalancesProvider(), status: 'Test token balances connected', statusCode: 'connected', providerName: 'moralis',
+    });
     process.env.PRICE_PROVIDER = 'none';
     process.env.TOKEN_SECURITY_PROVIDER = 'none';
     process.env.APPROVAL_PROVIDER = 'none';
@@ -64,7 +75,7 @@ describe('Portfolio API', () => {
     const response = await request(app).get('/api/portfolio?address=0x1234567890123456789012345678901234567890');
     assert.strictEqual(response.status, 200);
     assert.ok(response.body.tokens.length > 1);
-    assert.strictEqual(response.body.providerStatus, 'mock');
+    assert.strictEqual(response.body.providerStatus, 'Test token balances connected');
     const usdc = response.body.tokens.find((t: { symbol: string }) => t.symbol === 'USDC');
     assert.ok(usdc);
     assert.strictEqual(usdc.balanceFormatted, '15.0000');
@@ -146,8 +157,12 @@ describe('Portfolio API', () => {
     const origTokenProvider = process.env.TOKEN_BALANCES_PROVIDER;
     const origPriceProvider = process.env.PRICE_PROVIDER;
     const origSecurityProvider = process.env.TOKEN_SECURITY_PROVIDER;
-    process.env.TOKEN_BALANCES_PROVIDER = 'mock';
-    process.env.PRICE_PROVIDER = 'mock';
+    providerFactoryRuntime.tokenBalances = () => ({
+      provider: new MockTokenBalancesProvider(), status: 'Test token balances connected', statusCode: 'connected', providerName: 'moralis',
+    });
+    providerFactoryRuntime.prices = () => ({
+      provider: new MockPriceProvider(), status: 'Test prices connected', statusCode: 'connected', providerName: 'coingecko',
+    });
     process.env.TOKEN_SECURITY_PROVIDER = 'goplus';
     const mockFetch = mock.fn(async (url: string | URL | Request) => {
       if (url.toString().includes('gopluslabs.io')) {
@@ -188,8 +203,12 @@ describe('Portfolio API', () => {
     const origTokenProvider = process.env.TOKEN_BALANCES_PROVIDER;
     const origPriceProvider = process.env.PRICE_PROVIDER;
     const origSecurityProvider = process.env.TOKEN_SECURITY_PROVIDER;
-    process.env.TOKEN_BALANCES_PROVIDER = 'mock';
-    process.env.PRICE_PROVIDER = 'mock';
+    providerFactoryRuntime.tokenBalances = () => ({
+      provider: new MockTokenBalancesProvider(), status: 'Test token balances connected', statusCode: 'connected', providerName: 'moralis',
+    });
+    providerFactoryRuntime.prices = () => ({
+      provider: new MockPriceProvider(), status: 'Test prices connected', statusCode: 'connected', providerName: 'coingecko',
+    });
     process.env.TOKEN_SECURITY_PROVIDER = 'goplus';
     const mockFetch = mock.fn(async (url: string | URL | Request) => {
       if (url.toString().includes('gopluslabs.io')) {

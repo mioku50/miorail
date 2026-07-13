@@ -5,8 +5,8 @@ export class NativeToolProvider implements ToolProvider {
   id = 'native';
 
   constructor(
-    private coinGecko: CoinGeckoProvider,
-    private moralis: MoralisProvider
+    private coinGecko?: CoinGeckoProvider,
+    private moralis?: MoralisProvider
   ) {}
 
   async listTools(): Promise<ToolDef[]> {
@@ -33,7 +33,7 @@ export class NativeToolProvider implements ToolProvider {
           required: ['wallet']
         }
       }
-    ];
+    ].filter((tool) => tool.name === 'get_token_price' ? !!this.coinGecko : !!this.moralis);
   }
 
   findTool(name: string): ToolDef | undefined {
@@ -60,12 +60,13 @@ export class NativeToolProvider implements ToolProvider {
           required: ['wallet']
         }
       }
-    ].find(t => t.name === name);
+    ].filter((tool) => tool.name === 'get_token_price' ? !!this.coinGecko : !!this.moralis).find(t => t.name === name);
   }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<{ content: string; isError: boolean }> {
     try {
       if (name === 'get_token_price') {
+        if (!this.coinGecko) return { content: 'Price provider unavailable', isError: true };
         const token = args.token as string;
         if (!token) return { content: 'Missing token parameter', isError: true };
         const prices = await this.coinGecko.getSimplePrice([token.toLowerCase()], ['usd']);
@@ -73,6 +74,7 @@ export class NativeToolProvider implements ToolProvider {
         return { content: JSON.stringify({ token, priceUsd: price }), isError: false };
       }
       if (name === 'get_wallet_portfolio') {
+        if (!this.moralis) return { content: 'Portfolio provider unavailable', isError: true };
         const wallet = args.wallet as string;
         if (!wallet) return { content: 'Missing wallet parameter', isError: true };
         const balances = await this.moralis.getWalletTokenBalances(wallet);

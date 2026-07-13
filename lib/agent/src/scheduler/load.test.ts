@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { WorkflowRunner } from './index.js';
-import { MockLlmProvider } from '@mioagent/llm';
+import { MockLlmProvider } from '@mioagent/llm/testing';
 import { ToolAggregator } from '@mioagent/tools';
 import { db, workflows, users } from '@mioagent/db';
 import { eq } from 'drizzle-orm';

@@ -11,6 +11,9 @@ export function WalletConnect() {
   const showToast = useUiStore((s) => s.showToast);
 
   const isWrongNetwork = isConnected && chainId !== expectedChainId;
+  const preferredConnector = connectors.find((connector) => connector.id === 'injected')
+    ?? connectors.find((connector) => connector.id === 'baseAccount')
+    ?? connectors[0];
 
   useEffect(() => {
     if (error) {
@@ -52,7 +55,8 @@ export function WalletConnect() {
 
   return (
     <button
-      onClick={() => connect({ connector: connectors[0] })}
+      onClick={() => preferredConnector && connect({ connector: preferredConnector })}
+      disabled={!preferredConnector}
       className="bg-accent hover:bg-accent-2 text-white px-[12px] py-[7px] rounded-[10px] text-[13px] transition-colors font-medium shadow-sm"
     >
       Connect Wallet

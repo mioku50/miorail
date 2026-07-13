@@ -134,7 +134,7 @@ export async function runDirectMoonwellWrite(input: {
   // send/swap. The policy accounts spending in USDC, so only USDC amounts are
   // supported (same restriction the swap route applies).
   const repository = moonwellWriteRuntime.getRepository();
-  const policy = await repository.getByUser(input.userId, 8453).catch(() => undefined);
+  const policy = await repository.getByUser(input.userId, 8453);
   if (!policy || !policy.isActive || policy.killSwitch || !policy.mainnetOptIn
     || policy.expiresAt <= Date.now() || policy.walletAddress !== walletAddress) {
     return blocked('Moonwell actions are blocked until the active mainnet policy and connected wallet pass readiness checks.', 'mainnet_policy_not_ready');

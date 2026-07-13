@@ -243,17 +243,6 @@ export function useClearChatHistory(
   });
 }
 
-export function useClearActions(
-  options?: Omit<UseMutationOptions<{ success: boolean; count?: number }, Error, void>, 'mutationFn'>
-) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: () => fetchApi<{ success: boolean; count?: number }>('/api/actions/demo', { method: 'DELETE' }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['actions', 'feed'] }),
-    ...options,
-  });
-}
-
 export function useDismissAllRecommendations(
   options?: Omit<UseMutationOptions<apiSpec.DismissAllRecommendationsResponse, Error, void>, 'mutationFn'>
 ) {

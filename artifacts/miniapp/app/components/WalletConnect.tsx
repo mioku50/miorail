@@ -3,10 +3,9 @@ import { useState } from "react";
 import { useAccount, useConnect, useDisconnect } from "wagmi";
 import { Button, Card } from "@mioagent/ui";
 
-// Standard web-app wallet connect. Base Account ("Sign in with Base") is the
-// primary option — passkey sign-in, automatic context inside Base App, popup
-// connect in a normal browser. Coinbase Wallet and injected browser wallets are
-// fallbacks. No-custody: this only establishes wallet context / identity — no
+// Standard web-app wallet connect. The Base App injected provider is primary;
+// "Sign in with Base" is the popup fallback for a normal browser. No-custody:
+// this only establishes wallet context / identity — no
 // signing or transaction execution happens from this UI.
 
 function truncateAddress(address: string): string {
@@ -17,8 +16,7 @@ function truncateAddress(address: string): string {
 // fall back to the connector's own name.
 const LABELS: Record<string, string> = {
   baseAccount: "Sign in with Base",
-  coinbaseWalletSDK: "Coinbase Wallet",
-  injected: "Browser wallet",
+  injected: "Base App wallet",
 };
 
 export function WalletConnect() {
@@ -50,7 +48,7 @@ export function WalletConnect() {
   }
 
   // De-dup by id (wagmi can surface the same connector twice) and drop the
-  // primary Base Account connector to render it first.
+  // injected Base App connector to render it first.
   const seen = new Set<string>();
   const deduped = connectors.filter((c) => {
     if (seen.has(c.id)) return false;
@@ -58,8 +56,8 @@ export function WalletConnect() {
     return true;
   });
   const options = [
-    ...deduped.filter((c) => c.id === "baseAccount"),
-    ...deduped.filter((c) => c.id !== "baseAccount"),
+    ...deduped.filter((c) => c.id === "injected"),
+    ...deduped.filter((c) => c.id !== "injected"),
   ];
 
   return (
@@ -95,7 +93,7 @@ export function WalletConnect() {
               {options.map((c) => (
                 <Button
                   key={c.id}
-                  variant={c.id === "baseAccount" ? "primary" : "secondary"}
+                  variant={c.id === "injected" ? "primary" : "secondary"}
                   className="w-full justify-start"
                   onClick={() => {
                     connect({ connector: c });

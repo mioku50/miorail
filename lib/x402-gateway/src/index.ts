@@ -63,31 +63,9 @@ export interface X402Facilitator {
   verifyReceipt(receipt: string, requiredAmount: string): Promise<boolean>;
 }
 
-export class MockFacilitator implements X402Facilitator {
-  private usedReceipts = new Set<string>();
-
-  async verifyReceipt(receipt: string, requiredAmount: string): Promise<boolean> {
-    if (!receipt) return false;
-
-    // Anti-replay
-    if (this.usedReceipts.has(receipt)) {
-      return false;
-    }
-
-    // Simplistic mock validation based on receipt string contents
-    if (receipt.includes('valid-receipt') && receipt.includes(`amount:${requiredAmount}`)) {
-      this.usedReceipts.add(receipt);
-      return true;
-    }
-
-    return false;
-  }
-}
-
 export type X402RuntimeStatus =
   | 'connected'
   | 'configured'
-  | 'simulated'
   | 'missing'
   | 'unsupported_network_for_settlement'
   | 'facilitator_auth_required'
@@ -99,8 +77,8 @@ export type X402SettlementStatus = 'settled' | 'pending' | 'failed';
 export type SupportedX402Network = `eip155:${SupportedBaseChainId}`;
 export type BuilderCodeAttributionRole = 'seller' | 'buyer';
 export type X402FacilitatorAuthSource = 'bearer_token' | 'cdp_api_key_pair';
-export type X402MiddlewareRuntimeMode = 'auto' | 'official' | 'mock' | 'unavailable';
-export type X402ResolvedMiddlewareMode = 'official' | 'mock' | 'unavailable';
+export type X402MiddlewareRuntimeMode = 'auto' | 'official' | 'unavailable';
+export type X402ResolvedMiddlewareMode = 'official' | 'unavailable';
 export type X402BuyerPaymentMode = 'free' | 'x402';
 export type X402BuyerPayerStatus = 'ready' | 'missing_config' | 'unavailable' | 'insufficient_usdc';
 
@@ -127,7 +105,6 @@ export interface X402RuntimeConfig {
   supportedNetworks?: string[];
   middlewareMode?: X402ResolvedMiddlewareMode;
   officialMiddlewareEnabled?: boolean;
-  mockFacilitatorEnabled?: boolean;
   smokeRoute?: string;
   smokeRouteAvailable?: boolean;
   builderCodeAttribution?: 'attached' | 'unavailable';
@@ -158,7 +135,7 @@ export interface X402SettlementRecord {
   status: X402SettlementStatus;
   attribution: X402SettlementAttribution;
   checkedAt: string;
-  source: 'x402-facilitator' | 'mock';
+  source: 'x402-facilitator';
   errorReason?: string;
   errorMessage?: string;
   details?: Record<string, unknown>;
@@ -234,7 +211,6 @@ export interface CreateX402MiddlewareOptions {
 export interface X402MiddlewareDiagnostics {
   middlewareMode: X402ResolvedMiddlewareMode;
   officialMiddlewareEnabled: boolean;
-  mockFacilitatorEnabled: boolean;
   configured: boolean;
   status: X402RuntimeStatus;
   network?: SupportedX402Network;
@@ -288,17 +264,6 @@ interface X402FacilitatorAuthResolution {
 }
 
 export const DEFAULT_X402_AMOUNT_ATOMIC_USDC = '1000';
-const MOCK_PAYMENT_REQUIRED: X402PaymentRequired = {
-  accepts: [
-    {
-      amount: '1000000',
-      payTo: '0x1234567890123456789012345678901234567890',
-      asset: '0x036cbd53842c5426634e7929541ec2318f3dCF7e',
-      network: '84532',
-    },
-  ],
-};
-
 const BUILDER_CODE_PLACEHOLDERS = new Set([
   'builder_code',
   'change_me',
@@ -693,9 +658,7 @@ export function x402ConfigFromEnv(env: NodeJS.ProcessEnv = process.env): X402Run
         ? 'facilitator_auth_required'
         : configured
           ? 'configured'
-          : anyConfigured
-            ? 'missing'
-            : 'simulated';
+          : 'missing';
 
   return {
     status,
@@ -716,12 +679,10 @@ export function x402ConfigFromEnv(env: NodeJS.ProcessEnv = process.env): X402Run
   };
 }
 
-export function legacyMockPaymentRequired(): X402PaymentRequired {
-  return MOCK_PAYMENT_REQUIRED;
-}
-
 export function paymentRequiredFromRuntimeConfig(config: X402RuntimeConfig): X402PaymentRequired {
-  if (!config.payTo || !config.asset || !config.network) return legacyMockPaymentRequired();
+  if (!config.payTo || !config.asset || !config.network) {
+    throw new Error('x402_payment_configuration_incomplete');
+  }
   const extraDomain = resolveEip712DomainExtra(config.network, config.asset);
   return {
     accepts: [
@@ -740,7 +701,7 @@ export function paymentRequiredFromRuntimeConfig(config: X402RuntimeConfig): X40
 
 export function createX402RoutesConfig(
   config: X402RuntimeConfig,
-  routePath = '/mock-paid-endpoint',
+  routePath = '/paid-resource',
   serviceName = 'Miorail',
   options: Pick<CreateX402MiddlewareOptions, 'onSettlementFailure'> = {},
 ): RoutesConfig {
@@ -1142,7 +1103,7 @@ function unavailablePayload(
   errorCode = config.errorCode,
 ) {
   return {
-    error: status === 'missing' || status === 'simulated' ? 'x402_not_configured' : 'x402_facilitator_unavailable',
+    error: status === 'missing' ? 'x402_not_configured' : 'x402_facilitator_unavailable',
     status,
     errorCode,
     configured: config.configured,
@@ -1208,25 +1169,13 @@ export function createSafeOfficialX402Middleware(
   };
 }
 
-function isTestRuntime(env: NodeJS.ProcessEnv): boolean {
-  return (
-    env.NODE_ENV === 'test' ||
-    env.npm_lifecycle_event === 'test' ||
-    process.argv.some((arg) => arg === '--test') ||
-    process.execArgv.some((arg) => arg === '--test') ||
-    process.argv.some((arg) => /\.test\.[cm]?[tj]sx?$/.test(arg))
-  );
-}
-
 export function resolveX402MiddlewareMode(
   config: X402RuntimeConfig = x402ConfigFromEnv(),
-  env: NodeJS.ProcessEnv = process.env,
+  _env: NodeJS.ProcessEnv = process.env,
   runtimeMode: X402MiddlewareRuntimeMode = 'auto',
 ): X402ResolvedMiddlewareMode {
-  if (runtimeMode === 'mock') return 'mock';
   if (runtimeMode === 'official') return config.configured ? 'official' : 'unavailable';
   if (runtimeMode === 'unavailable') return 'unavailable';
-  if (isTestRuntime(env)) return 'mock';
   return config.configured ? 'official' : 'unavailable';
 }
 
@@ -1241,7 +1190,6 @@ export function x402MiddlewareDiagnosticsFromEnv(
   return {
     middlewareMode,
     officialMiddlewareEnabled: middlewareMode === 'official',
-    mockFacilitatorEnabled: middlewareMode === 'mock',
     configured: config.configured,
     status: config.status,
     network: config.network,
@@ -1274,9 +1222,6 @@ export function createX402MiddlewareFromEnv(
 ): RequestHandler {
   const config = x402ConfigFromEnv(env);
   const middlewareMode = resolveX402MiddlewareMode(config, env, options.runtimeMode);
-  if (middlewareMode === 'mock') {
-    return x402Gateway({ paymentRequired: legacyMockPaymentRequired(), facilitator: new MockFacilitator() });
-  }
   if (middlewareMode === 'official') {
     return createSafeOfficialX402Middleware(config, options, env);
   }

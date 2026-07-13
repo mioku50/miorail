@@ -5,7 +5,6 @@ import {
   approvalProviderHint,
   approvalProviderState,
   baseMcpCapabilityBreakdown,
-  baseMcpConnectHref,
   baseMcpConnectLabel,
   baseMcpHint,
   baseMcpOAuthResultMessage,
@@ -14,6 +13,7 @@ import {
   formatBaseMcpStatus,
 } from '../../lib/format';
 import { PlugZap } from 'lucide-react';
+import { BaseMcpConnectButton } from '../../components/BaseMcpConnectButton';
 
 export function BaseMcpView() {
   const { isConnected } = useAccount();
@@ -103,13 +103,13 @@ export function BaseMcpView() {
               {toolsProbe.isPending ? 'Verifying...' : 'Verify tools'}
             </button>
           ) : canConnect && isConnected ? (
-            <a
-              href={baseMcpConnectHref('/base-mcp')}
+            <BaseMcpConnectButton
+              returnTo="/base-mcp"
               className="inline-flex items-center gap-2 text-xs font-bold bg-accent text-white px-3.5 py-2 rounded-lg hover:bg-accent/90 transition-colors shadow-sm"
             >
               <PlugZap size={14} />
               {connectLabel}
-            </a>
+            </BaseMcpConnectButton>
           ) : (
             <button
               type="button"

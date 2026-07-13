@@ -5,7 +5,7 @@
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "typecheck": "pnpm -r exec tsc --noEmit",
-    "test": "node --test scripts/ && pnpm -r test",
+    "test": "node --test scripts/production_dependency_graph.test.mjs && pnpm -r test",
     "validate:tasks": "node scripts/validate_tasks.js",
     "lint": "eslint . && markdownlint '**/*.md'",
     "format": "prettier --write .",

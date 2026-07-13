@@ -27,7 +27,7 @@ class ReadProvider implements ToolProvider {
   findTool(name: string) { return this.tools.find((tool) => tool.name === name); }
   async callTool(name: string, args: Record<string, unknown>) {
     this.calls.push({ name, args });
-    if (name === 'get_wallets') return { content: '{"wallet":"0x1111111111111111111111111111111111111111"}', isError: false };
+    if (name === 'get_wallets') return { content: '{"wallet":"0x2222222222222222222222222222222222222222"}', isError: false };
     if (name === 'get_portfolio') return { content: '{"tokens":[{"symbol":"USDC","balance":"42.5"}]}', isError: false };
     return {
       content: JSON.stringify({
@@ -62,7 +62,7 @@ test('simple balance reads route to Base MCP and do not match recommendation lan
     tools,
   });
   assert.equal(result?.kind, 'base_portfolio');
-  assert.deepEqual(provider.calls.map((call) => call.name), ['get_portfolio']);
+  assert.deepEqual(provider.calls.map((call) => call.name), ['get_wallets', 'get_portfolio']);
   assert.match(result?.content || '', /42\.5/);
   assert.deepEqual(result?.toolCalls[0].result, { status: 'success' });
 });

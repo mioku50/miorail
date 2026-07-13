@@ -76,7 +76,7 @@ function buyerPayerCopy(payer?: any): { label: string; detail: string; ready: bo
 }
 
 export function FuelMeter() {
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, connector } = useAccount();
   const { data: statusData } = useStatus();
   const { data: fuel } = useX402Fuel();
   const { data: fuelOwner, error: fuelOwnerError, isLoading: fuelOwnerLoading } = useX402FuelOwner({ enabled: isConnected });
@@ -113,13 +113,18 @@ export function FuelMeter() {
   const settledBuyerReceipts = ledger?.entries?.filter((entry) => entry.direction === 'outgoing_buyer_payment' && entry.status === 'settled') || [];
   const failedBuyerAttempts = ledger?.entries?.filter((entry) => entry.direction === 'outgoing_buyer_payment' && entry.status === 'failed') || [];
   const unreimbursedBuyerAttempts = failedBuyerAttempts.filter((entry) => Boolean(entry.txHash && !entry.fuelChargeTxHash));
-  const sellerSmokeReceipts = ledger?.entries?.filter((entry) => entry.direction !== 'outgoing_buyer_payment') || [];
   const ownerUnavailable = fuelOwner?.status && fuelOwner.status !== 'ready';
-  const createDisabled = !isConnected || fuelOwnerLoading || fuelOwner?.status !== 'ready' || createFuelPermission.isPending;
+  const connectorId = String(connector?.id || '').toLowerCase();
+  const spendPermissionsSupported = connectorId === 'baseaccount' || connectorId === 'base-account';
+  const createDisabled = !isConnected || !spendPermissionsSupported || fuelOwnerLoading || fuelOwner?.status !== 'ready' || createFuelPermission.isPending;
 
   async function handleCreateFuelPermission() {
     if (!isConnected) {
       setFuelActionMessage('Connect wallet first.');
+      return;
+    }
+    if (!spendPermissionsSupported) {
+      setFuelActionMessage('This wallet session does not expose Base Account Spend Permissions. No permission was created.');
       return;
     }
     if (!fuelOwner?.subscriptionOwner) {
@@ -164,7 +169,9 @@ export function FuelMeter() {
       setFuelActionMessage('USDC fuel permission is active.');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setFuelActionMessage(message || 'Fuel permission was not created.');
+      setFuelActionMessage(/reject|cancel|denied/i.test(message)
+        ? 'Base Account confirmation was cancelled. No permission was saved.'
+        : 'Base Account did not create the permission. No permission was saved.');
     }
   }
 
@@ -216,6 +223,11 @@ export function FuelMeter() {
               <div className="mt-0.5 text-[11px] text-ink-2">Choose a budget and lifetime below. Base Account asks for confirmation.</div>
             </div>
             <span className="text-[10px] font-semibold text-accent-2">No funds are held by Miorail</span>
+          </div>
+        )}
+        {isConnected && !spendPermissionsSupported && (
+          <div className="mt-3 text-[11px] text-warn bg-warn-soft border border-warn/20 rounded-[var(--radius-md)] px-3 py-2 font-sans">
+            The current injected Base App wallet session does not expose Base Account Spend Permissions. Read-only features remain available; use a compatible Base Account browser session to create fuel permission.
           </div>
         )}
         <div className="mt-4 border-t border-line/60 pt-4">
@@ -274,7 +286,7 @@ export function FuelMeter() {
         <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-3.5 shadow-[var(--shadow-card)]">
           <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Settlement rail</div>
           <div className="text-sm font-sans font-bold text-ink">{settleReady ? 'Ready' : 'Blocked'}</div>
-          <div className="text-[11px] text-ink-3 mt-2 border-t border-line/50 pt-2">{x402?.middlewareMode || 'unknown'} middleware, mock={String(Boolean(x402?.mockFacilitatorEnabled))}</div>
+          <div className="text-[11px] text-ink-3 mt-2 border-t border-line/50 pt-2">{x402?.middlewareMode || 'unknown'} middleware</div>
         </div>
         <div className="bg-panel border border-line rounded-[var(--radius-lg)] p-3.5 shadow-[var(--shadow-card)]">
           <div className="text-[10px] font-sans font-semibold uppercase tracking-[0.08em] text-ink-3 mb-1">Network and asset</div>
@@ -416,19 +428,6 @@ export function FuelMeter() {
         )}
       </section>
 
-      <section className="bg-panel border border-line rounded-[var(--radius-lg)] p-4 shadow-[var(--shadow-card)]">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="text-[11px] font-sans font-semibold tracking-[0.08em] uppercase text-ink-3">Dev seller smoke</div>
-            <div className="text-[12px] text-ink-3 mt-1 max-w-[760px]">
-              `/api/x402/smoke-paid` remains a settlement rail diagnostic. It is not the product fuel path and is not counted as buyer spend.
-            </div>
-          </div>
-          <span className="text-[10px] font-mono bg-panel-2 border border-line rounded-full px-2 py-1 text-ink-3">
-            {sellerSmokeReceipts.length} historical
-          </span>
-        </div>
-      </section>
     </main>
   );
 }

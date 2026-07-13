@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { createLlmProvider } from './factory.js';
-import { MockLlmProvider } from './mock.js';
 import { OpenAiCompatibleClient } from './openai.js';
 
 test('createLlmProvider', async (t) => {
@@ -11,10 +10,9 @@ test('createLlmProvider', async (t) => {
     process.env = { ...originalEnv };
   });
 
-  await t.test('LLM_PROVIDER=mock returns MockLlmProvider', () => {
+  await t.test('LLM_PROVIDER=mock is rejected by the production factory', () => {
     process.env.LLM_PROVIDER = 'mock';
-    const provider = createLlmProvider();
-    assert.ok(provider instanceof MockLlmProvider);
+    assert.throws(() => createLlmProvider(), /Unsupported production LLM_PROVIDER/);
   });
 
   await t.test('LLM_PROVIDER=openai requires OPENAI_API_KEY', () => {
@@ -73,14 +71,13 @@ test('createLlmProvider', async (t) => {
     process.env.CHAIN_ENV = 'sepolia';
     process.env.NODE_ENV = 'production';
     delete process.env.LLM_PROVIDER; // defaults to mock implicitly
-    assert.throws(() => createLlmProvider(), /Real LLM configuration is required/);
+    assert.throws(() => createLlmProvider(), /LLM provider is not configured/);
   });
 
-  await t.test('CHAIN_ENV=sepolia allows explicit mock', () => {
+  await t.test('CHAIN_ENV=sepolia rejects explicit mock', () => {
     process.env.CHAIN_ENV = 'sepolia';
     process.env.NODE_ENV = 'production';
     process.env.LLM_PROVIDER = 'mock';
-    const provider = createLlmProvider();
-    assert.ok(provider instanceof MockLlmProvider);
+    assert.throws(() => createLlmProvider(), /Unsupported production LLM_PROVIDER/);
   });
 });

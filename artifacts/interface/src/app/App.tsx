@@ -18,6 +18,7 @@ import { ConfigureView } from '../features/configure/ConfigureView';
 import { BaseMcpView } from '../features/configure/BaseMcpView';
 import { FuelMeter } from '../features/x402/FuelMeter';
 import { DIAGNOSTICS_ENABLED } from '../lib/diagnostics';
+import { BaseMcpOAuthBridge } from './BaseMcpOAuthBridge';
 
 function ChainEnvMismatchBanner() {
   const { data: sd } = useStatus();
@@ -116,6 +117,7 @@ export function App() {
       {/* Add bottom padding on mobile so content isn't hidden under bottom nav */}
       <CommandPalette />
       <Toaster />
+      <BaseMcpOAuthBridge />
     </div>
   );
 }

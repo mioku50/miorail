@@ -76,6 +76,7 @@ describe('Status API', () => {
     mock.restoreAll();
     global.fetch = ORIGINAL_FETCH;
     statusRouteRuntime.getBaseMcpAuthStatus = async () => DEFAULT_BASE_MCP_AUTH;
+    statusRouteRuntime.probeRpcStatus = async (_chainId, _url, provider) => ({ status: 'connected', provider });
   });
 
   afterEach(() => {
@@ -191,7 +192,7 @@ describe('Status API', () => {
     restoreEnv('MAINNET_EXECUTION_ENABLED', origMainnetExecution);
   });
 
-  test('GET /api/status reports x402 simulated when real settlement env is absent', async () => {
+  test('GET /api/status reports x402 missing when real settlement env is absent', async () => {
     const origFacilitator = process.env.X402_FACILITATOR_URL;
     const origPayTo = process.env.X402_PAYTO_ADDRESS;
     const origNetwork = process.env.X402_NETWORK;
@@ -203,7 +204,7 @@ describe('Status API', () => {
 
     const response = await request(app).get('/api/status');
     assert.strictEqual(response.status, 200);
-    assert.strictEqual(response.body.x402.status, 'simulated');
+    assert.strictEqual(response.body.x402.status, 'missing');
     assert.strictEqual(response.body.x402.configured, false);
     assert.strictEqual(response.body.x402.settleReady, false);
     assert.strictEqual(response.body.x402.settleBlockedReason, 'x402_not_configured');

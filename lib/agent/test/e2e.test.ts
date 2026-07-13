@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { Agent } from '../src/index.js';
-import { MockLlmProvider, LlmRequest } from '@mioagent/llm';
+import { LlmRequest } from '@mioagent/llm';
+import { MockLlmProvider } from '@mioagent/llm/testing';
 import { ToolAggregator, ToolProvider, ToolDef } from '@mioagent/tools';
 import { randomUUID } from 'crypto';
 import { eq } from 'drizzle-orm';

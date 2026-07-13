@@ -1,5 +1,6 @@
-import { Router, Request, Response, type NextFunction } from 'express';
-import { tenantUserFromRequest, tenantUserId } from '../../middleware/tenantAuth';
+import { Router, Request, Response, type RequestHandler } from 'express';
+import { tenantUserId } from '../../middleware/tenantAuth';
+import { createRequireOperatorAuth } from '../../middleware/operatorAuth.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { base } from '@base-org/account/node';
 import {
@@ -54,6 +55,7 @@ function extractRunId(req: Request): string | undefined {
 interface CreateX402RouterOptions {
   env?: NodeJS.ProcessEnv;
   runtimeMode?: X402MiddlewareRuntimeMode;
+  middlewareFactory?: (routePath: string) => RequestHandler;
   buyerPaidFetch?: typeof fetch;
   buyerPayerRuntime?: X402BuyerPayerRuntime;
   subscriptionOwnerWalletResolver?: () => Promise<SubscriptionOwnerWallet>;
@@ -443,7 +445,7 @@ function receiptRecord(row: { id: string; receipt: unknown; createdAt: Date }): 
     status: receipt.status === 'pending' || receipt.status === 'failed' ? receipt.status : 'settled',
     attribution: receipt.attribution && typeof receipt.attribution === 'object' ? receipt.attribution as any : {},
     checkedAt: typeof receipt.checkedAt === 'string' ? receipt.checkedAt : row.createdAt.toISOString(),
-    source: receipt.source === 'mock' ? 'mock' : 'x402-facilitator',
+    source: 'x402-facilitator',
     errorReason: typeof receipt.errorReason === 'string' ? receipt.errorReason : undefined,
     errorMessage: typeof receipt.errorMessage === 'string' ? receipt.errorMessage : undefined,
     createdAt: row.createdAt,
@@ -585,16 +587,12 @@ export function summarizeX402LedgerEntries(entries: LedgerSummaryEntry[]) {
 
 async function findActiveFuelPermission(userId: string, dbEnabled = true) {
   if (!dbEnabled) return null;
-  try {
-    const rows = await db.select()
-      .from(spendPermissions)
-      .where(and(eq(spendPermissions.userId, userId), eq(spendPermissions.isActive, true)))
-      .orderBy(desc(spendPermissions.updatedAt))
-      .limit(1);
-    return rows[0] || null;
-  } catch {
-    return null;
-  }
+  const rows = await db.select()
+    .from(spendPermissions)
+    .where(and(eq(spendPermissions.userId, userId), eq(spendPermissions.isActive, true)))
+    .orderBy(desc(spendPermissions.updatedAt))
+    .limit(1);
+  return rows[0] || null;
 }
 
 function permissionResponse(row: Awaited<ReturnType<typeof findActiveFuelPermission>> | any) {
@@ -710,36 +708,19 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
   const buyerPayerRuntime = options.buyerPayerRuntime || getDefaultX402BuyerPayerRuntime(env);
   const resolveActiveFuelPermission = options.findActiveFuelPermission || findActiveFuelPermission;
   const repository = options.spendPermissionRepository || createDatabaseSpendPermissionRepository(sql);
-  const requireDiagnosticsAdmin = (req: Request, res: Response, next: NextFunction) => {
-    if (process.env.NODE_ENV === 'test') return next();
-    const configuredAdmins = (env.OPERATOR_ADMIN_WALLETS || '')
-      .split(',')
-      .map((value) => value.trim().toLowerCase())
-      .filter(Boolean);
-    const user = tenantUserFromRequest(req);
-    if (env.ENABLE_OPERATOR_DIAGNOSTICS !== 'true' || !user || !configuredAdmins.includes(user.address)) {
-      return res.status(403).json({ error: 'operator_access_required', code: 'operator_access_required' });
-    }
-    next();
-  };
+  const requireDiagnosticsAdmin = createRequireOperatorAuth(env);
   const commonMiddlewareOptions = {
     serviceName: 'Miorail',
     onSettlement: (record: X402SettlementRecord) => persistSettlement(record, dbEnabled),
     onSettlementFailure: recordSettlementFailure,
     runtimeMode,
   };
-  const legacyGateway = createX402MiddlewareFromEnv({
-    ...commonMiddlewareOptions,
-    routePath: '/mock-paid-endpoint',
-  }, env);
-  const smokeGateway = createX402MiddlewareFromEnv({
-    ...commonMiddlewareOptions,
-    routePath: '/smoke-paid',
-  }, env);
-
-  router.get('/mock-paid-endpoint', requireDiagnosticsAdmin, legacyGateway, (_req: Request, res: Response) => {
-    res.status(200).json({ data: 'This is premium mock data protected by x402 payment.' });
-  });
+  const smokeGateway = options.middlewareFactory
+    ? options.middlewareFactory('/smoke-paid')
+    : createX402MiddlewareFromEnv({
+        ...commonMiddlewareOptions,
+        routePath: '/smoke-paid',
+      }, env);
 
   router.get(
     '/smoke-paid',
@@ -806,26 +787,21 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
       diagnostics.configured &&
       diagnostics.officialMiddlewareEnabled &&
       diagnostics.smokeRouteAvailable &&
-      diagnostics.settleReady &&
-      !diagnostics.mockFacilitatorEnabled,
+      diagnostics.settleReady,
     );
 
     let latestGlobalRecord: { txHash?: string | null; createdAt?: Date } | null = null;
     let browserRunMatched = false;
-    try {
-      if (dbEnabled) {
-        const rows = await db.select()
-          .from(x402Receipts)
-          .orderBy(desc(x402Receipts.createdAt))
-          .limit(50);
-        const parsed = rows.map(receiptRecord);
-        latestGlobalRecord = parsed[0] || null;
-        if (lastBrowserRun?.runId) {
-          browserRunMatched = parsed.some((r) => r.runId === lastBrowserRun?.runId);
-        }
+    if (dbEnabled) {
+      const rows = await db.select()
+        .from(x402Receipts)
+        .orderBy(desc(x402Receipts.createdAt))
+        .limit(50);
+      const parsed = rows.map(receiptRecord);
+      latestGlobalRecord = parsed[0] || null;
+      if (lastBrowserRun?.runId) {
+        browserRunMatched = parsed.some((r) => r.runId === lastBrowserRun?.runId);
       }
-    } catch {
-      latestGlobalRecord = null;
     }
 
     const payerAddress = lastBrowserRun?.payer || lastSmokeSettlement?.payer || null;
@@ -845,7 +821,6 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
       status: diagnostics.status,
       middlewareMode: diagnostics.middlewareMode,
       officialMiddlewareEnabled: diagnostics.officialMiddlewareEnabled,
-      mockFacilitatorEnabled: diagnostics.mockFacilitatorEnabled,
       facilitatorHost: diagnostics.facilitatorHost,
       browserPaidFlowAvailable: browserPaidAvailable,
       browserPaidActionAvailable: browserPaidAvailable,
@@ -961,13 +936,9 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
       const asset = canonicalUsdcForBaseChain(8453);
 
       if (dbEnabled) {
-        try {
-          await db.update(spendPermissions)
-            .set({ isActive: false, updatedAt: new Date() })
-            .where(and(eq(spendPermissions.userId, userId), eq(spendPermissions.chainId, 8453), eq(spendPermissions.isActive, true)));
-        } catch {
-          // Best-effort cleanup only. The upsert below remains the source of truth for the new active permission.
-        }
+        await db.update(spendPermissions)
+          .set({ isActive: false, updatedAt: new Date() })
+          .where(and(eq(spendPermissions.userId, userId), eq(spendPermissions.chainId, 8453), eq(spendPermissions.isActive, true)));
       }
 
       const permission = {
@@ -1010,18 +981,14 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
       const pending = activePermission ? listFuelReservations(activePermission.id) : [];
 
       let records: ReturnType<typeof receiptRecord>[] = [];
-      try {
-        if (dbEnabled) {
-          const rows = await db.select()
-            .from(x402Receipts)
-            .where(eq(x402Receipts.userId, userId))
-            .orderBy(desc(x402Receipts.createdAt))
-            .limit(100);
-          records = rows.map(receiptRecord)
-            .filter((record) => record.userId === userId);
-        }
-      } catch {
-        records = [];
+      if (dbEnabled) {
+        const rows = await db.select()
+          .from(x402Receipts)
+          .where(eq(x402Receipts.userId, userId))
+          .orderBy(desc(x402Receipts.createdAt))
+          .limit(100);
+        records = rows.map(receiptRecord)
+          .filter((record) => record.userId === userId);
       }
 
       const spend = {
@@ -1123,7 +1090,7 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
     }
   });
 
-  router.post('/buyer-smoke', async (req: Request, res: Response, next) => {
+  router.post('/buyer-smoke', requireDiagnosticsAdmin, async (req: Request, res: Response, next) => {
     try {
       const userId = tenantUserId(req);
       const smokeUrl = env.X402_BUYER_SMOKE_URL;
@@ -1389,22 +1356,17 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
       const userId = tenantUserId(req);
       let rows: any[] = [];
       let auditContext: any[] = [];
-      try {
-        if (dbEnabled) {
-          rows = await db.select()
-            .from(x402Receipts)
-            .where(eq(x402Receipts.userId, userId))
-            .orderBy(desc(x402Receipts.createdAt))
-            .limit(100);
-          auditContext = await db.select()
-            .from(auditLogs)
-            .where(eq(auditLogs.userId, userId))
-            .orderBy(desc(auditLogs.createdAt))
-            .limit(100);
-        }
-      } catch {
-        rows = [];
-        auditContext = [];
+      if (dbEnabled) {
+        rows = await db.select()
+          .from(x402Receipts)
+          .where(eq(x402Receipts.userId, userId))
+          .orderBy(desc(x402Receipts.createdAt))
+          .limit(100);
+        auditContext = await db.select()
+          .from(auditLogs)
+          .where(eq(auditLogs.userId, userId))
+          .orderBy(desc(auditLogs.createdAt))
+          .limit(100);
       }
       const filterRunId = typeof req.query.runId === 'string' ? req.query.runId : undefined;
       const records = rows

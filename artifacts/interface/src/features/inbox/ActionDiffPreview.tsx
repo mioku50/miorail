@@ -226,9 +226,11 @@ export function ActionDiffPreview({
         <span className="text-ink-3">Simulation:</span>
         {simulation ? (
           <StateBadge
-            state={simulation.success ? 'mock' : 'failed'}
-            label={simulation.method === 'preflight-validation' ? 'preflight validation' : (simulation.success ? 'passed' : 'blocked')}
-            title={simulation.method === 'preflight-validation'
+            state={simulation.performed === false ? 'disabled' : simulation.success ? 'live' : 'failed'}
+            label={simulation.performed === false ? 'not applicable' : simulation.method === 'preflight-validation' ? 'preflight validation' : (simulation.success ? 'passed' : 'blocked')}
+            title={simulation.performed === false
+              ? (simulation.reason || 'No transaction calls require simulation.')
+              : simulation.method === 'preflight-validation'
               ? 'Preflight validation only: chain, call structure, instruction screening, canonical-token checks, and deterministic calldata projections. No fork simulation.'
               : (simulation.reason || simulation.error || 'Simulation verdict')}
           />

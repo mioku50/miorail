@@ -6,6 +6,7 @@ export interface UserSettingsData {
   model: string | null;
   protocolToggles: Record<string, boolean> | null;
   encryptedKeys: Record<string, unknown> | null;
+  updatedAt?: Date | null;
 }
 
 export class MemoryService {
@@ -22,25 +23,37 @@ export class MemoryService {
       model: record.model,
       protocolToggles: record.protocolToggles as Record<string, boolean> | null,
       encryptedKeys: record.encryptedKeys as Record<string, unknown> | null,
+      updatedAt: record.updatedAt,
     };
   }
 
   /**
    * Updates or creates the user's settings.
    */
-  static async updateUserSettings(userId: string, data: Partial<UserSettingsData>): Promise<void> {
+  static async updateUserSettings(userId: string, data: Partial<Omit<UserSettingsData, 'updatedAt'>>): Promise<UserSettingsData> {
     const existing = await this.getUserSettings(userId);
+    let rows;
     if (existing) {
-      await db
+      rows = await db
         .update(userSettings)
         .set({ ...data, updatedAt: new Date() })
-        .where(eq(userSettings.userId, userId));
+        .where(eq(userSettings.userId, userId))
+        .returning();
     } else {
-      await db.insert(userSettings).values({
+      rows = await db.insert(userSettings).values({
         userId,
         ...data,
-      });
+      }).returning();
     }
+    const record = rows[0];
+    if (!record) throw new Error('settings_write_not_persisted');
+    return {
+      memoryMd: record.memoryMd,
+      model: record.model,
+      protocolToggles: record.protocolToggles as Record<string, boolean> | null,
+      encryptedKeys: record.encryptedKeys as Record<string, unknown> | null,
+      updatedAt: record.updatedAt,
+    };
   }
 
   /**

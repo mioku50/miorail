@@ -1,19 +1,18 @@
 import { cookieStorage, createConfig, createStorage, http } from "wagmi";
 import { base, baseSepolia } from "wagmi/chains";
-import { baseAccount, coinbaseWallet, injected } from "wagmi/connectors";
+import { baseAccount, injected } from "wagmi/connectors";
 
 // Standard web-app wallet config (no OnchainKit / MiniKit). The Base Account SDK
-// (`baseAccount` connector) is the default wallet — passkey sign-in, automatic
-// wallet context inside Base App, and a popup connect flow in a normal browser.
-// Coinbase Wallet and injected browser wallets are fallbacks. No-custody: this
+// Base App supplies an injected EIP-1193 provider, so it must be first. The
+// Base Account SDK connector is the explicit popup fallback in a normal browser.
+// No-custody: this
 // provides wallet context / identity only — no signing or broadcast from this UI
 // (execution stays via the Base MCP approval URL).
 export const wagmiConfig = createConfig({
   chains: [base, baseSepolia],
   connectors: [
-    baseAccount({ appName: "Miorail" }),
-    coinbaseWallet({ appName: "Miorail" }),
     injected(),
+    baseAccount({ appName: "Miorail" }),
   ],
   storage: createStorage({ storage: cookieStorage }),
   ssr: true,

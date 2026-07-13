@@ -1,5 +1,6 @@
 import type { ToolAggregator, ToolDef } from '@mioagent/tools';
 import { filterTrustedMorphoVaults, formatTrustedMorphoVaults } from './morphoVaultTrust.js';
+import { extractWalletAddresses } from './baseMcpWalletReconciliation.js';
 
 export type DirectStreamReadKind = 'base_portfolio' | 'morpho_usdc_vaults' | 'partner_provider_unavailable' | 'partner_provider_required';
 
@@ -195,10 +196,6 @@ function displayPayload(value: unknown): string {
   return (json || 'No records returned.').slice(0, 12_000);
 }
 
-function extractWalletAddress(content: string): string | undefined {
-  return content.match(/0x[a-fA-F0-9]{40}/)?.[0];
-}
-
 async function callReadTool(
   tools: ToolAggregator,
   tool: ToolDef,
@@ -305,22 +302,32 @@ export async function runDirectStreamRead(input: {
 
   const portfolioTool = inventory.find((item) => item.name === 'get_portfolio');
   const walletsTool = inventory.find((item) => item.name === 'get_wallets');
-  // T44 invariant: the SIWE session address is authoritative. get_wallets is
-  // only a fallback when NO session address exists — a Base MCP address never
-  // substitutes or overrides the session wallet.
   let walletAddress = input.walletAddress;
 
-  if (!walletAddress && walletsTool) {
+  // The SIWE session remains authoritative, but Base MCP may accept only an
+  // address returned by its user-scoped get_wallets tool. Reconcile first and
+  // never query or display a different account as a fallback.
+  if (walletsTool) {
     const wallets = await callReadTool(input.tools, walletsTool, buildBaseReadArgs(walletsTool));
     traces.push(wallets.trace);
-    if (!wallets.errorCode) walletAddress = extractWalletAddress(wallets.content);
+    if (!wallets.errorCode) {
+      const mcpAddresses = extractWalletAddresses(wallets.content);
+      if (walletAddress && mcpAddresses.length > 0 && !mcpAddresses.includes(walletAddress.toLowerCase())) {
+        return {
+          kind,
+          content: 'Base MCP is connected to a different wallet than the authenticated Base App session. Reconnect Base MCP with the same account.',
+          toolCalls: traces,
+          errorCode: 'base_mcp_wallet_mismatch',
+        };
+      }
+      if (!walletAddress && mcpAddresses.length > 0) walletAddress = mcpAddresses[0];
+    }
   }
 
   if (!portfolioTool) {
-    const fallback = await runNativePortfolioFallback(input.tools, inventory, walletAddress, traces, kind);
-    return fallback || {
+    return {
       kind,
-      content: 'Base MCP get_portfolio is not available. Basic balance reads may still work via the native provider once configured. Optional: connect Base MCP to enable the full portfolio view.',
+      content: 'Base MCP get_portfolio is unavailable. No substitute provider data was returned.',
       toolCalls: traces,
       errorCode: 'base_mcp_portfolio_tool_unavailable',
     };
@@ -329,8 +336,7 @@ export async function runDirectStreamRead(input: {
   const portfolio = await callReadTool(input.tools, portfolioTool, buildBaseReadArgs(portfolioTool, walletAddress));
   traces.push(portfolio.trace);
   if (portfolio.errorCode) {
-    const fallback = await runNativePortfolioFallback(input.tools, inventory, walletAddress, traces, kind);
-    return fallback || {
+    return {
       kind,
       content: `Base MCP could not read the portfolio (${portfolio.errorCode}). Reconnect Base MCP and retry.`,
       toolCalls: traces,
@@ -340,37 +346,6 @@ export async function runDirectStreamRead(input: {
   return {
     kind,
     content: `Live Base MCP portfolio result:\n${displayPayload(unwrapToolPayload(portfolio.content))}`,
-    toolCalls: traces,
-  };
-}
-
-// T44: when Base MCP get_portfolio is unavailable or fails, basic balance
-// reads should not be blocked. The native provider (Moralis-backed
-// get_wallet_portfolio) serves a degraded token-balance view instead. Mock
-// provider output (no valid ERC-20 token addresses) is rejected so fabricated
-// balances are never presented — in that case the caller keeps its original
-// Base MCP error.
-async function runNativePortfolioFallback(
-  tools: ToolAggregator,
-  inventory: ToolDef[],
-  walletAddress: string | undefined,
-  traces: StreamToolTrace[],
-  kind: DirectStreamReadKind,
-): Promise<DirectStreamReadResult | null> {
-  if (!walletAddress || !/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) return null;
-  const nativeTool = inventory.find((item) => item.name === 'get_wallet_portfolio');
-  if (!nativeTool) return null;
-  const call = await callReadTool(tools, nativeTool, { wallet: walletAddress });
-  traces.push(call.trace);
-  if (call.errorCode) return null;
-  const payload = unwrapToolPayload(call.content) as Record<string, any> | string;
-  const tokens = typeof payload === 'object' && Array.isArray(payload?.tokens) ? payload.tokens : null;
-  if (!tokens) return null;
-  const realTokens = tokens.filter((token: any) => /^0x[a-fA-F0-9]{40}$/.test(String(token?.tokenAddress || '')));
-  if (tokens.length > 0 && realTokens.length === 0) return null;
-  return {
-    kind,
-    content: `Token balances via native provider (degraded portfolio view; connect Base MCP for the full portfolio):\n${displayPayload({ wallet: walletAddress, tokens: realTokens })}`,
     toolCalls: traces,
   };
 }

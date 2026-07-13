@@ -108,7 +108,7 @@ export async function runDirectBaseMcpSend(input: {
 
   const walletAddress = input.walletAddress.toLowerCase();
   const repository = baseMcpSendRuntime.getRepository();
-  const policy = await repository.getByUser(input.userId, 8453).catch(() => undefined);
+  const policy = await repository.getByUser(input.userId, 8453);
   if (!policy || !policy.isActive || policy.killSwitch || !policy.mainnetOptIn
     || policy.expiresAt <= Date.now() || policy.walletAddress !== walletAddress) {
     return blocked('Base MCP send is blocked until the active mainnet policy and connected wallet pass readiness checks.', 'mainnet_policy_not_ready');

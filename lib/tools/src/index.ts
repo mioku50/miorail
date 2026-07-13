@@ -6,6 +6,5 @@ export * from './dynamic_base_mcp.js';
 export * from './morpho_mcp.js';
 export * from './uniswap_quote.js';
 export * from './moonwell_http.js';
-export * from './mock_mcp.js';
 export * from './sepolia.js';
 export * from './factory.js';

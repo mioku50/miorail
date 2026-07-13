@@ -4,6 +4,10 @@
   "private": true,
   "main": "src/index.ts",
   "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/mock_transport.ts"
+  },
   "scripts": {
     "build": "tsc",
     "test": "tsx --test tests/*.test.ts"

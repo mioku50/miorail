@@ -48,7 +48,7 @@ export async function reconcileBaseMcpChatMessages(input: {
   let polledCount = 0;
   let updatedCount = 0;
   const reservations = input.repository.listReservationsByUser
-    ? await input.repository.listReservationsByUser(input.userId).catch(() => [])
+    ? await input.repository.listReservationsByUser(input.userId)
     : [];
   const claimedActionIds = new Set(
     messages
@@ -143,7 +143,7 @@ export async function reconcileBaseMcpChatMessages(input: {
     if (outcome.errorCode) metadata.errorCode = outcome.errorCode;
   }
 
-  const policy = await input.repository.getByUser(input.userId, 8453).catch(() => undefined);
+  const policy = await input.repository.getByUser(input.userId, 8453);
   return {
     messages,
     changed,

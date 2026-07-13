@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLocation } from 'wouter';
-import { useActionsFeed, useClearActions, useDismissAllRecommendations, useDeleteAllRecommendations } from '@mioagent/api-client-react';
+import { useActionsFeed, useDismissAllRecommendations, useDeleteAllRecommendations } from '@mioagent/api-client-react';
 import { useUiStore } from '../../lib/state';
 import { ActionCard } from './ActionCard';
 import { filterInboxActions } from './actionDisplay';
@@ -17,7 +17,6 @@ const FILTERS = [
 export function ActionInbox() {
   const [, navigate] = useLocation();
   const { data, isLoading, refetch } = useActionsFeed();
-  const clearActions = useClearActions();
   const dismissAllRecs = useDismissAllRecommendations();
   const deleteAllRecs = useDeleteAllRecommendations();
   const showToast = useUiStore((s) => s.showToast);
@@ -91,28 +90,6 @@ export function ActionInbox() {
                   className="w-full text-left px-3 py-2 text-xs text-risk hover:bg-risk-soft transition-colors block font-medium border-t border-line"
                 >
                   Delete all recommendations
-                </button>
-                <button
-                  onClick={() => {
-                    setShowManageMenu(false);
-                    if (confirm('This removes seeded demo actions only. Your recommendations will stay. Proceed?')) {
-                      clearActions.mutate(undefined, {
-                        onSuccess: (res: any) => {
-                          if (res && res.count === 0) {
-                            showToast('No demo actions to clear.');
-                          } else {
-                            showToast('Seeded demo actions cleared');
-                          }
-                          refetch();
-                        },
-                      });
-                    }
-                  }}
-                  disabled={clearActions.isPending}
-                  title="This removes seeded demo actions only. Your recommendations will stay."
-                  className="w-full text-left px-3 py-2 text-xs text-ink-2 hover:bg-bg transition-colors block border-t border-line"
-                >
-                  Clear demo actions
                 </button>
               </div>
             )}

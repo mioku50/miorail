@@ -93,28 +93,10 @@ function paymentResponseHeader(txHash = '0xpaid') {
   })).toString('base64');
 }
 
-describe('x402 mock endpoint', () => {
-  it('returns 402 with Payment-Required header when missing X-402-Payment', async () => {
+describe('production x402 router', () => {
+  it('does not expose the legacy mock paid endpoint', async () => {
     const res = await request(app).get('/x402/mock-paid-endpoint');
-    assert.strictEqual(res.status, 402);
-    assert.strictEqual(res.body.error, 'Payment Required');
-    assert.ok(res.headers['payment-required']);
-  });
-
-  it('returns 400 for invalid X-402-Payment header', async () => {
-    const res = await request(app)
-      .get('/x402/mock-paid-endpoint')
-      .set('x-402-payment', Buffer.from(JSON.stringify({ notReceipt: true })).toString('base64'));
-    assert.strictEqual(res.status, 400);
-    assert.strictEqual(res.body.error, 'Invalid X-402-Payment header: missing receipt');
-  });
-
-  it('returns 200 for valid X-402-Payment header', async () => {
-    const res = await request(app)
-      .get('/x402/mock-paid-endpoint')
-      .set('x-402-payment', Buffer.from(JSON.stringify({ receipt: 'valid-receipt-amount:1000000' })).toString('base64'));
-    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
-    assert.strictEqual(res.body.data, 'This is premium mock data protected by x402 payment.');
+    assert.strictEqual(res.status, 404);
   });
 });
 
@@ -141,7 +123,6 @@ describe('x402 official smoke endpoint', () => {
     assert.strictEqual(res.status, 200);
     assert.strictEqual(res.body.middlewareMode, 'official');
     assert.strictEqual(res.body.officialMiddlewareEnabled, true);
-    assert.strictEqual(res.body.mockFacilitatorEnabled, false);
     assert.strictEqual(res.body.browserPaidFlowAvailable, true);
     assert.strictEqual(res.body.settleReady, true);
     assert.strictEqual(res.body.probeStatus, 'connected');
@@ -714,12 +695,12 @@ describe('x402 official smoke endpoint', () => {
     assert.strictEqual(stored?.spent, 0.001);
   });
 
-  it('smoke-paid mock mode records runId and filters ledger by runId', async () => {
+  it('injected test middleware records runId and filters ledger by runId', async () => {
     const app = express();
     app.use('/x402', createX402Router({
       dbEnabled: false,
       env: configuredEnv(),
-      runtimeMode: 'mock',
+      middlewareFactory: () => (_req, _res, next) => next(),
     }));
     const runId = 'test-browser-run-123';
     const smokeRes = await request(app)

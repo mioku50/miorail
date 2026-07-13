@@ -168,6 +168,7 @@ export const SecurityScreeningSchema = z.object({
 });
 
 export const SimulationResultSchema = z.object({
+  performed: z.boolean().optional(),
   success: z.boolean(),
   allowed: z.boolean(),
   riskLevel: z.string(),
@@ -398,13 +399,13 @@ export const PortfolioTokenSchema = z.object({
 export const PortfolioProvidersSchema = z.object({
   rpc: z.enum(["connected", "missing", "failed"]),
   tokenBalances: z.enum(["connected", "missing", "failed", "stale", "disabled", "rate_limited"]),
-  tokenBalancesProvider: z.enum(["moralis", "alchemy", "mock", "none"]).optional(),
+  tokenBalancesProvider: z.enum(["moralis", "alchemy", "none"]).optional(),
   prices: z.enum(["connected", "missing", "failed", "partial", "disabled"]),
-  priceProvider: z.enum(["coingecko", "moralis", "mock", "none"]).optional(),
+  priceProvider: z.enum(["coingecko", "moralis", "none"]).optional(),
   risk: z.enum(["connected", "missing", "failed", "partial", "disabled"]),
   riskProvider: z.enum(["goplus", "none"]).optional(),
   approvals: z.enum(["connected", "missing", "failed", "partial", "disabled", "rate_limited", "budget_exhausted", "temporarily_unavailable"]).optional(),
-  approvalProvider: z.enum(["moralis", "alchemy", "mock", "none"]).optional(),
+  approvalProvider: z.enum(["moralis", "alchemy", "none"]).optional(),
 });
 
 
@@ -460,7 +461,7 @@ export const TokenApprovalSchema = z.object({
   allowanceUsd: z.number().optional(),
   isUnlimited: z.boolean(),
   lastUpdatedAt: z.string().optional(),
-  source: z.enum(["moralis", "alchemy", "basescan", "none", "mock", "unknown"]),
+  source: z.enum(["moralis", "alchemy", "basescan", "none", "unknown"]),
 });
 
 export const ApprovalsResponseSchema = z.object({
@@ -556,7 +557,6 @@ export const StatusResponseSchema = z.object({
   }),
   x402: z.object({
     status: z.enum([
-      "simulated",
       "configured",
       "connected",
       "missing",
@@ -578,9 +578,8 @@ export const StatusResponseSchema = z.object({
     settleReady: z.boolean().optional(),
     settleBlockedReason: z.string().optional(),
     probeStatus: z.string().optional(),
-    middlewareMode: z.enum(["official", "mock", "unavailable"]).optional(),
+    middlewareMode: z.enum(["official", "unavailable"]).optional(),
     officialMiddlewareEnabled: z.boolean().optional(),
-    mockFacilitatorEnabled: z.boolean().optional(),
     smokeRoute: z.string().optional(),
     smokeRouteAvailable: z.boolean().optional(),
     builderCodeAttribution: z.enum(["attached", "unavailable"]).optional(),

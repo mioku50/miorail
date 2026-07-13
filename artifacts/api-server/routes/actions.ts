@@ -35,6 +35,7 @@ import { MemoryService } from '@mioagent/memory';
 import { getSystemStatus } from './status.js';
 import { getAutonomousExecutionGateway, getAutonomyPolicyRepository } from '../lib/autonomyGateway.js';
 import { tenantUserId, tenantWalletAddress } from '../middleware/tenantAuth';
+import { requireOperatorAuth } from '../middleware/operatorAuth.js';
 import { loadExecutionSecurityContext } from '../lib/executionSecurity.js';
 import {
   actionProofRuntime,
@@ -65,7 +66,7 @@ async function releaseActionAutonomyReservation(userId: string, actionId: string
   }
 }
 
-actionsRouter.delete('/demo', async (req, res, next) => {
+actionsRouter.delete('/demo', requireOperatorAuth, async (req, res, next) => {
   try {
     const userId = tenantUserId(req);
     const userActions = await db.select().from(actions).where(eq(actions.userId, userId));
@@ -225,7 +226,7 @@ actionsRouter.post('/recommend', async (req, res, next) => {
     const isMainnetExecEnabled = process.env.MAINNET_EXECUTION_ENABLED === 'true';
     const canExecute = !isReadonly && (chainEnv !== 'mainnet' || isMainnetExecEnabled);
     const intent = detectActionIntent(instruction);
-    const memoryMd = (await MemoryService.getUserSettings(userId).catch(() => null))?.memoryMd || null;
+    const memoryMd = (await MemoryService.getUserSettings(userId))?.memoryMd || null;
     const statusRes = getSystemStatus(chainEnv);
     let secProvider = statusRes.risk.provider || process.env.TOKEN_SECURITY_PROVIDER || 'none';
     let riskStatus = statusRes.risk.status;
@@ -382,7 +383,8 @@ actionsRouter.post('/recommend', async (req, res, next) => {
     // T19: run the preflight validator on any payload with calls — including
     // mainnet-readonly user-confirmable plans — so the gate
     // (screening.allowed && simulation.success && hasCalls) works for the
-    // user-confirmed flow. Read-only plans with no calls get the safe mock.
+    // user-confirmed flow. A plan with no calls records that simulation was not
+    // applicable; it must never manufacture a successful verdict.
     if (payload.calls && payload.calls.length > 0) {
       try {
         simRes = await simulateTrade({ ...(payload as any), instruction, memoryMd });
@@ -391,13 +393,13 @@ actionsRouter.post('/recommend', async (req, res, next) => {
       }
     } else {
       simRes = {
-        success: true,
-        allowed: true,
-        riskLevel: metadata.risk || 'low',
-        reason: 'Read-only mode inspection verified without transaction risk',
-        estimatedGas: '0',
-        expectedOutput: 'Read-only state check without chain mutation',
-        checks: ['Chain validation: PASSED (Read-only)', 'Address check: PASSED', 'Permission bounds: SAFE']
+        performed: false,
+        success: false,
+        allowed: false,
+        riskLevel: 'blocked',
+        method: 'not-applicable',
+        reason: 'Simulation was not run because this recommendation contains no transaction calls.',
+        checks: ['Simulation not applicable: no transaction calls']
       };
     }
 
@@ -672,7 +674,7 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
     // token-level contract security for every wallet-confirmed execution path.
     const meta = (action.metadata || {}) as any;
     const instruction = meta.instruction || action.suggestedPrompt || '';
-    const memoryMd = (await MemoryService.getUserSettings(userId).catch(() => null))?.memoryMd || null;
+    const memoryMd = (await MemoryService.getUserSettings(userId))?.memoryMd || null;
     // T44b: the Moonwell context (prepared amount) comes ONLY from the
     // server-stored action metadata written by streamMoonwellWriteRouting —
     // never from the client request.

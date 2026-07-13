@@ -12,7 +12,6 @@ const DEFAULT_PROTOCOLS = [
   { id: 'moralis', name: 'Moralis', description: 'Token data', enabled: true },
   { id: 'coingecko', name: 'CoinGecko', description: 'Price feeds', enabled: true },
   { id: 'goplus', name: 'GoPlus', description: 'Security', enabled: true },
-  { id: 'bankr', name: 'Bankr', description: 'Mock', enabled: false },
 ];
 
 protocolsRouter.get('/', async (req, res, next) => {

@@ -1,15 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { Agent } from '../src/index.js';
-import { MockLlmProvider, LlmRequest } from '@mioagent/llm';
-import { ToolAggregator, ToolProvider, ToolDef } from '@mioagent/tools';
+import { LlmRequest } from '@mioagent/llm';
+import { MockLlmProvider } from '@mioagent/llm/testing';
+import { ToolAggregator, ToolProvider, ToolDef, SepoliaToolProvider } from '@mioagent/tools';
 import { randomUUID } from 'crypto';
 import { eq } from 'drizzle-orm';
 import { db, actions, users } from '@mioagent/db';
 
-import { SepoliaToolProvider } from '@mioagent/tools/src/sepolia.js';
-import { McpSendCallsClient } from '@mioagent/mcp/src/send_calls.js';
-import { BaseMcpClient } from '@mioagent/mcp/src/client.js';
+import { McpSendCallsClient, BaseMcpClient } from '@mioagent/mcp';
 
 test('T7.7 E2E on Sepolia: chat -> execute', async () => {
     const userId = 'e2e-sepolia-user-1';

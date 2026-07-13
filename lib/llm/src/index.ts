@@ -1,4 +1,3 @@
 export * from './types.js';
 export * from './openai.js';
-export * from './mock.js';
 export * from './factory.js';

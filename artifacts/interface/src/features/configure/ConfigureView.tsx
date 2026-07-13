@@ -13,7 +13,6 @@ import {
   approvalProviderHint,
   approvalProviderState,
   baseMcpCapabilityBreakdown,
-  baseMcpConnectHref,
   baseMcpConnectLabel,
   baseMcpHint,
   baseMcpNeedsAuth,
@@ -29,6 +28,7 @@ import { PlugZap } from 'lucide-react';
 import { capabilityLabel, type CapabilityState } from '../../lib/capabilityStatus';
 import { savedPolicyForm, visibleAutonomyBlockedReasons } from '../../lib/autonomyUi';
 import { policyFormBlockers } from '../../lib/policyFormBlockers';
+import { BaseMcpConnectButton } from '../../components/BaseMcpConnectButton';
 
 function tbState(s?: string): StateKind {
   if (s === 'connected') return 'live';
@@ -518,13 +518,13 @@ export function ConfigureView({ diagnosticsOnly = false }: { diagnosticsOnly?: b
           <div className="flex items-center justify-between gap-3 text-[11px] bg-panel-2 border border-line rounded-md px-3 py-2">
             <span className="text-ink-3">Optional: connect Base MCP to enable portfolio, send and swap via Base.</span>
             {address ? (
-              <a
-                href={baseMcpConnectHref(diagnosticsOnly ? '/diagnostics' : '/configure')}
+              <BaseMcpConnectButton
+                returnTo={diagnosticsOnly ? '/diagnostics' : '/configure'}
                 className="inline-flex items-center gap-1.5 font-bold text-accent hover:text-accent/80 whitespace-nowrap"
               >
                 <PlugZap size={13} />
                 {baseMcpConnectLabel(sd?.baseMcp)}
-              </a>
+              </BaseMcpConnectButton>
             ) : (
               <span className="inline-flex items-center gap-1.5 font-bold text-ink-3 whitespace-nowrap">
                 <PlugZap size={13} />
@@ -536,7 +536,7 @@ export function ConfigureView({ diagnosticsOnly = false }: { diagnosticsOnly?: b
         <Row label="x402 Micropayments">
           {sd ? (
             <StateBadge
-              state={sd.x402.settleReady ? 'live' : sd.x402.status === 'missing' ? 'missing' : 'mock'}
+              state={sd.x402.settleReady ? 'live' : sd.x402.status === 'missing' ? 'missing' : 'failed'}
               label={
                 sd.x402.settleReady ? 'Settlement ready' :
                 sd.x402.status === 'facilitator_auth_required' ? 'Auth required' :
@@ -546,7 +546,7 @@ export function ConfigureView({ diagnosticsOnly = false }: { diagnosticsOnly?: b
                 sd.x402.status === 'unsupported_network_for_settlement' ? 'Network blocked' :
                 sd.x402.status === 'degraded' ? 'Degraded' :
                 sd.x402.status === 'missing' ? 'Not configured' :
-                'Simulated'
+                'Unavailable'
               }
               title={sd.x402.settleBlockedReason ? `x402: ${sd.x402.settleBlockedReason}` : sd.x402.errorCode ? `x402: ${sd.x402.errorCode}` : 'Source: /api/status x402.status'}
             />

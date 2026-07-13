@@ -5,8 +5,9 @@ import { useUiStore } from '../../lib/state';
 import { useNetworkLabel } from '../../lib/useNetworkLabel';
 import { ChatMessage } from './ChatMessage';
 import { AgentComposer } from './AgentComposer';
-import { baseMcpConnectHref, baseMcpConnectLabel, baseMcpNeedsAuth, baseMcpOAuthResultMessage } from '../../lib/format';
+import { baseMcpConnectLabel, baseMcpNeedsAuth, baseMcpOAuthResultMessage } from '../../lib/format';
 import { deriveComposerExecutionMode } from './agentComposerState';
+import { BaseMcpConnectButton } from '../../components/BaseMcpConnectButton';
 
 const PROMPT_CHIPS = [
   'Check my Base balance',
@@ -181,12 +182,12 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
       {(oauthMessage?.kind === 'error' || baseMcpNeedsAuth(statusData?.baseMcp)) && (
         <div className="flex items-center justify-between gap-3 border-b border-warn/20 bg-warn-soft px-4 py-2 text-[11px] text-warn">
           <span>{oauthMessage?.kind === 'error' ? oauthMessage.text : 'Base MCP wallet reads need authorization or a refreshed tool inventory.'}</span>
-          <a
-            href={baseMcpConnectHref('/stream')}
+          <BaseMcpConnectButton
+            returnTo="/stream"
             className="shrink-0 rounded-lg border border-warn/30 bg-panel px-2.5 py-1 font-bold text-warn hover:bg-bg"
           >
             {baseMcpConnectLabel(statusData?.baseMcp)}
-          </a>
+          </BaseMcpConnectButton>
         </div>
       )}
 

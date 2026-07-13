@@ -8,7 +8,6 @@ import { ExactEvmScheme } from '@x402/evm';
 import { encodeBuilderCodeSuffix } from '@x402/extensions/builder-code';
 import {
   x402Gateway,
-  MockFacilitator,
   createX402RoutesConfig,
   createX402FacilitatorAuthHeaders,
   createSafeOfficialX402Middleware,
@@ -27,6 +26,7 @@ import {
   x402ConfigFromEnv,
   x402StatusFromEnv,
 } from './index.js';
+import { MockFacilitator } from './testing.js';
 
 function testEcPrivateKey(): string {
   const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
@@ -115,7 +115,7 @@ describe('x402-gateway', () => {
 
   it('fails closed when real x402 env is missing or invalid', () => {
     const missing = x402ConfigFromEnv({});
-    assert.strictEqual(missing.status, 'simulated');
+    assert.strictEqual(missing.status, 'missing');
     assert.strictEqual(missing.configured, false);
 
     const invalid = x402ConfigFromEnv({
@@ -478,7 +478,7 @@ describe('x402-gateway', () => {
       BUILDER_CODE: 'miorail',
     });
     const routes = createX402RoutesConfig(config);
-    const route = (routes as Record<string, any>)['GET /mock-paid-endpoint'];
+    const route = (routes as Record<string, any>)['GET /paid-resource'];
     assert.strictEqual(route.extensions['builder-code'].info.a, 'miorail');
     assert.strictEqual(route.accepts.network, 'eip155:84532');
     assert.strictEqual(route.accepts.price.asset, '0x036CbD53842c5426634e7929541eC2318f3dCF7e');

@@ -30,7 +30,7 @@ describe('API Gateway Load Tests', () => {
 
     const requests = Array.from({ length: totalRequests }).map((_, index) =>
       request(app)
-        .get('/api/x402/mock-paid-endpoint')
+        .get('/api/x402/smoke-paid')
         // Attempt to bypass global rate limit for this test by spoofing IP if express trusts proxies
         // Even if it's rate-limited, the gateway is handling the load.
         .set('X-Forwarded-For', `192.168.1.${index}`)
@@ -43,7 +43,10 @@ describe('API Gateway Load Tests', () => {
     console.log(`Fired ${totalRequests} x402 concurrent requests in ${durationMs}ms`);
 
     for (const res of responses) {
-      assert.ok(res.status === 402 || res.status === 429);
+      // A real facilitator can challenge with 402. An unconfigured or failed
+      // facilitator must fail closed with 503; neither path may synthesize a
+      // paid success response for this unauthenticated load probe.
+      assert.ok(res.status === 402 || res.status === 429 || res.status === 503);
     }
   });
 });

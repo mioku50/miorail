@@ -6,7 +6,6 @@ export type StateKind =
   | 'live'
   | 'cached'
   | 'stale'
-  | 'mock'
   | 'disconnected'
   | 'missing'
   | 'disabled'
@@ -16,7 +15,6 @@ const MAP: Record<StateKind, { tone: string; dot: string; label: string }> = {
   live: { tone: 'text-ok bg-ok-soft', dot: 'bg-ok', label: 'live' },
   cached: { tone: 'text-ink-2 bg-panel-2', dot: 'bg-ink-3', label: 'cached' },
   stale: { tone: 'text-warn bg-warn-soft', dot: 'bg-warn', label: 'stale' },
-  mock: { tone: 'text-ink-2 bg-panel-2', dot: 'bg-ink-3', label: 'mock' },
   disconnected: { tone: 'text-risk bg-risk-soft', dot: 'bg-risk', label: 'disconnected' },
   missing: { tone: 'text-warn bg-warn-soft', dot: 'bg-warn', label: 'missing' },
   disabled: { tone: 'text-ink-3 bg-panel-2', dot: 'bg-ink-3', label: 'disabled' },
