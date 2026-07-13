@@ -10,6 +10,7 @@ import {
   baseMcpNeedsAuth,
   baseMcpOAuthResultMessage,
   baseMcpState,
+  baseMcpStatusLabel,
   formatApprovalProviderStatus,
   formatBaseMcpStatus,
 } from './format';
@@ -54,6 +55,46 @@ test('Base MCP UI helpers classify needs_reauth as reconnectable stale state', (
   assert.strictEqual(baseMcpConnectLabel({ auth: { connected: true } }), 'Reconnect Base MCP');
   assert.strictEqual(baseMcpConnectHref('/configure'), '/api/mcp/base/connect?returnTo=%2Fconfigure&popup=1');
   assert.strictEqual(baseMcpConnectHref('https://evil.test/callback'), '/api/mcp/base/connect?returnTo=%2Fbase-mcp&popup=1');
+});
+
+test('T48a.1 baseMcpStatusLabel maps status to a sidebar indicator', () => {
+  assert.deepStrictEqual(baseMcpStatusLabel(undefined), {
+    label: 'Connect Base MCP',
+    tone: 'muted',
+    action: 'connect',
+  });
+  assert.deepStrictEqual(baseMcpStatusLabel({ status: 'missing', configured: false, enabled: false }), {
+    label: 'Connect Base MCP',
+    tone: 'muted',
+    action: 'connect',
+  });
+  assert.deepStrictEqual(
+    baseMcpStatusLabel({ status: 'connected', configured: true, enabled: true, auth: { connected: true } }),
+    { label: 'Base MCP: Connected', tone: 'connected', action: null },
+  );
+  assert.deepStrictEqual(
+    baseMcpStatusLabel({ status: 'needs_reauth', configured: true, enabled: true, auth: { connected: false } }),
+    { label: 'Connect Base MCP', tone: 'action', action: 'connect' },
+  );
+  assert.deepStrictEqual(
+    baseMcpStatusLabel({
+      status: 'degraded',
+      configured: true,
+      enabled: true,
+      usable: false,
+      auth: { connected: true },
+    }),
+    { label: 'Reconnect Base MCP', tone: 'action', action: 'reconnect' },
+  );
+  assert.deepStrictEqual(
+    baseMcpStatusLabel({
+      status: 'connected',
+      configured: true,
+      enabled: true,
+      auth: { connected: true, expired: true },
+    }),
+    { label: 'Reconnect Base MCP', tone: 'action', action: 'reconnect' },
+  );
 });
 
 test('Base MCP OAuth result messages are explicit and non-crashing', () => {

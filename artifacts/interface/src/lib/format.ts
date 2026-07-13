@@ -56,6 +56,29 @@ export function baseMcpConnectLabel(baseMcp?: any): string {
   return baseMcp?.auth?.connected ? 'Reconnect Base MCP' : 'Connect Base MCP';
 }
 
+export type BaseMcpIndicatorTone = 'connected' | 'action' | 'muted';
+
+// T48a.1: compact status→label mapping for the sidebar Base MCP indicator.
+// Reuses `baseMcpConnectLabel`/`baseMcpNeedsAuth` rather than re-deriving
+// connect/reconnect wording, so the indicator and the existing Base MCP
+// surfaces (BaseMcpView, AgentStream, OpsRail) never disagree about whether
+// a reconnect is needed.
+export function baseMcpStatusLabel(baseMcp?: any): {
+  label: string;
+  tone: BaseMcpIndicatorTone;
+  action: 'connect' | 'reconnect' | null;
+} {
+  const healthyConnected = baseMcp?.auth?.connected === true && !baseMcpNeedsAuth(baseMcp);
+  if (healthyConnected) {
+    return { label: 'Base MCP: Connected', tone: 'connected', action: null };
+  }
+  return {
+    label: baseMcpConnectLabel(baseMcp),
+    tone: baseMcpNeedsAuth(baseMcp) ? 'action' : 'muted',
+    action: baseMcp?.auth?.connected ? 'reconnect' : 'connect',
+  };
+}
+
 export function baseMcpConnectHref(returnTo = '/base-mcp'): string {
   const safeReturnTo = returnTo.startsWith('/') && !returnTo.startsWith('//') && !returnTo.includes('://')
     ? returnTo

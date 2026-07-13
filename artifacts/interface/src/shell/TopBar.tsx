@@ -3,6 +3,7 @@ import { useNetworkLabel } from '../lib/useNetworkLabel';
 import { TabBar } from './TabBar';
 import { WalletConnect } from './WalletConnect';
 import { AuthStatus } from './AuthStatus';
+import { BaseMcpStatusIndicator } from './BaseMcpStatusIndicator';
 import { Menu, X } from 'lucide-react';
 
 interface TopBarProps {
@@ -83,6 +84,7 @@ export function TopBar({ onHamburgerClick, drawerOpen }: TopBarProps) {
         <kbd className="font-mono text-[11px]">⌘K</kbd>
       </button>
 
+      <BaseMcpStatusIndicator />
       <AuthStatus />
       <WalletConnect />
     </header>

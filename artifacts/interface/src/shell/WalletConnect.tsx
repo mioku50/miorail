@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from 'wagmi';
 import { useUiStore } from '../lib/state';
 import { expectedChainId } from '../lib/chain';
+import { detectBaseAppEarly } from '../lib/detectBaseAppEarly';
 
 export function WalletConnect() {
   const { address, isConnected, isConnecting, chainId } = useAccount();
@@ -11,15 +12,49 @@ export function WalletConnect() {
   const showToast = useUiStore((s) => s.showToast);
 
   const isWrongNetwork = isConnected && chainId !== expectedChainId;
-  const preferredConnector = connectors.find((connector) => connector.id === 'injected')
-    ?? connectors.find((connector) => connector.id === 'baseAccount')
-    ?? connectors[0];
+
+  // T48a.1: `main.tsx` already excludes `baseAccount()` from the wagmi config
+  // whenever Base App is detected, so this component can never actually see
+  // a baseAccount connector in that case. The `inBaseApp` check here is a
+  // second, independent guard against relying on that alone — it also covers
+  // the case where an unexpected host still exposes both connectors.
+  // Any injected connector — the explicit `injected()` one (id `'injected'`)
+  // or an EIP-6963-discovered one (id = provider `rdns`, e.g.
+  // `'com.coinbase.wallet'`) — is tagged by wagmi with `type === 'injected'`.
+  // Only `baseAccount()` has `type === 'baseAccount'`. Preferring by `type`
+  // means a host-injected EIP-6963 provider is picked correctly even though
+  // its `id` is not literally `'injected'`.
+  const inBaseApp = detectBaseAppEarly({
+    userAgent: typeof navigator === 'undefined' ? '' : navigator.userAgent,
+    ethereum: typeof window === 'undefined' ? undefined : (window as any).ethereum,
+  });
+  const injectedConnector = connectors.find((connector) => connector.type === 'injected');
+  const baseAccountConnector = inBaseApp
+    ? undefined
+    : connectors.find((connector) => connector.id === 'baseAccount' || connector.type === 'baseAccount');
+  const preferredConnector = injectedConnector
+    ?? baseAccountConnector
+    ?? (inBaseApp ? undefined : connectors[0]);
 
   useEffect(() => {
     if (error) {
       showToast('Connection error: ' + error.message.split('\n')[0]);
     }
   }, [error, showToast]);
+
+  const handleConnectClick = () => {
+    if (preferredConnector) {
+      connect({ connector: preferredConnector });
+      return;
+    }
+    // No silent fallback to baseAccount inside Base App: tell the user what
+    // to do instead of opening keys.coinbase.com in the embedded webview.
+    if (inBaseApp) {
+      showToast('Open Miorail inside Base App to connect your Base Account');
+      return;
+    }
+    showToast('No wallet connector is available in this browser.');
+  };
 
   if (isConnecting) {
     return (
@@ -55,8 +90,7 @@ export function WalletConnect() {
 
   return (
     <button
-      onClick={() => preferredConnector && connect({ connector: preferredConnector })}
-      disabled={!preferredConnector}
+      onClick={handleConnectClick}
       className="bg-accent hover:bg-accent-2 text-white px-[12px] py-[7px] rounded-[10px] text-[13px] transition-colors font-medium shadow-sm"
     >
       Connect Wallet

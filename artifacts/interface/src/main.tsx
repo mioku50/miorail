@@ -8,20 +8,30 @@ import { ThemeProvider } from '@mioagent/ui';
 import './index.css';
 import App from './app/App';
 import { AuthProvider } from './app/AuthProvider';
+import { detectBaseAppEarly } from './lib/detectBaseAppEarly';
 
 const queryClient = new QueryClient();
 
-// Base App injects the active Base Account as an EIP-1193 provider. Prefer it
-// so the embedded app never opens the Base Account popup/keys site. The
-// baseAccount connector remains the explicit fallback for a normal browser.
+// T48a.1: detect Base App BEFORE building the wagmi config. Base App injects
+// the active Base Account as an EIP-1193 provider (including via EIP-6963
+// announce), so inside Base App we build the connector list WITHOUT
+// `baseAccount()` at all — not just a selection preference. That way
+// keys.coinbase.com is structurally unreachable from the embedded webview:
+// there is no baseAccount connector instance left that could open it.
+// Outside Base App (normal desktop browser), `baseAccount()` remains in the
+// config as the only sign-in path for users without a wallet extension.
 // No-custody: this provides wallet context / signing only; the server never
 // signs or broadcasts.
+const inBaseApp = detectBaseAppEarly({
+  userAgent: typeof navigator === 'undefined' ? '' : navigator.userAgent,
+  ethereum: typeof window === 'undefined' ? undefined : (window as any).ethereum,
+});
+
 const config = createConfig({
   chains: [base, baseSepolia],
-  connectors: [
-    injected(),
-    baseAccount({ appName: 'Miorail' }),
-  ],
+  connectors: inBaseApp
+    ? [injected()]
+    : [injected(), baseAccount({ appName: 'Miorail' })],
   transports: {
     [base.id]: http(),
     [baseSepolia.id]: http(),
