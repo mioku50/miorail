@@ -4,12 +4,11 @@ import { Agent } from '../src/index.js';
 import { LlmRequest } from '@mioagent/llm';
 import { MockLlmProvider } from '@mioagent/llm/testing';
 import { ToolAggregator, ToolProvider, ToolDef } from '@mioagent/tools';
-import { randomUUID } from 'crypto';
 import { eq } from 'drizzle-orm';
-import { db, actions, users, workflows } from '@mioagent/db';
+import { db, actions, testFixtureId, users, workflows } from '@mioagent/db';
 
 test('T6.3 E2E mock happy-path: chat -> recommendation -> execute approval URL', async () => {
-    const userId = 'e2e-user-1';
+    const userId = testFixtureId('e2e-user');
     await db.insert(users).values({ id: userId }).onConflictDoNothing();
 
     // 1. Mock LLM that generates a recommendation when chatting
@@ -41,7 +40,7 @@ test('T6.3 E2E mock happy-path: chat -> recommendation -> execute approval URL',
             if (name === 'emit_recommendation') {
                 const message = typeof _args.message === 'string' ? _args.message : 'Recommendation';
                 await db.insert(actions).values({
-                    id: randomUUID(),
+                    id: testFixtureId('e2e-action'),
                     userId,
                     kind: 'recommendation',
                     status: 'pending',
@@ -110,7 +109,7 @@ test('T6.3 E2E mock happy-path: chat -> recommendation -> execute approval URL',
 });
 
 test('T6.4 E2E scanner test: scanner tick -> emit -> feed -> execute', async () => {
-    const userId = 'e2e-scanner-user';
+    const userId = testFixtureId('e2e-scanner-user');
     await db.insert(users).values({ id: userId }).onConflictDoNothing();
 
     // 1. Mock LLM for the scanner that emits an alert/recommendation
@@ -129,7 +128,7 @@ test('T6.4 E2E scanner test: scanner tick -> emit -> feed -> execute', async () 
     });
 
     // 2. Insert workflow
-    const workflowId = 'e2e-scanner-wf';
+    const workflowId = testFixtureId('e2e-scanner-workflow');
     await db.insert(workflows).values({
         id: workflowId,
         userId,

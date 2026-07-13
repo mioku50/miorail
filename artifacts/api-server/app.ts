@@ -33,7 +33,9 @@ app.use(helmet({
   // for the popup without relaxing frame, content or transport protections.
   crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
 }));
-const allowedCorsOrigins = (process.env.CORS_ORIGIN || '')
+const corsOrigins = process.env.CORS_ORIGIN
+  || (process.env.NODE_ENV === 'test' ? 'https://miorail.xyz' : '');
+const allowedCorsOrigins = corsOrigins
   .split(',')
   .map((origin) => origin.trim())
   .filter((origin) => origin.length > 0 && origin !== '*');

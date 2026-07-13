@@ -1,8 +1,8 @@
-import test, { describe, mock } from 'node:test';
+import test, { after, before, describe, mock } from 'node:test';
 import assert from 'node:assert';
 import request from 'supertest';
 import { app } from '../app.js';
-import { db, actions } from '@mioagent/db';
+import { closeDb, db, actions, testTenantId, users } from '@mioagent/db';
 import { eq } from 'drizzle-orm';
 import { clearTokenSecurityCacheForTests } from '@mioagent/data-providers';
 import { ToolAggregator, type ToolDef, type ToolProvider } from '@mioagent/tools';
@@ -12,6 +12,16 @@ import { baseMcpSwapRuntime } from '../lib/streamBaseMcpSwapRouting.js';
 import { baseMcpSendRuntime } from '../lib/streamBaseMcpSendRouting.js';
 import { InMemoryAutonomyPolicyRepository } from '@mioagent/autonomy';
 import type { LlmRequest } from '@mioagent/llm';
+
+const DB_TEST_USER_ID = testTenantId();
+
+before(async () => {
+  await db.insert(users).values({ id: DB_TEST_USER_ID }).onConflictDoNothing();
+});
+
+after(async () => {
+  await closeDb();
+});
 
 function restoreEnv(name: string, value: string | undefined) {
   if (value === undefined) {
@@ -181,7 +191,7 @@ describe('Chat API & Recommendation Guardrails', () => {
     });
     const swapRepository = new InMemoryAutonomyPolicyRepository();
     await swapRepository.configure({
-      userId: 'default-user', chainId: 8453,
+      userId: DB_TEST_USER_ID, chainId: 8453,
       walletAddress: '0x1234567890123456789012345678901234567890',
       dailyLimit: 10, maxPerAction: 5, whitelist: ['0x2222222222222222222222222222222222222222'], scope: 'bounded-approval',
       expiresAt: Date.now() + 60_000, mainnetOptIn: true,
@@ -323,7 +333,7 @@ describe('Chat API & Recommendation Guardrails', () => {
     aggregator.registerProvider(provider);
     const repository = new InMemoryAutonomyPolicyRepository();
     await repository.configure({
-      userId: 'default-user', chainId: 8453,
+      userId: DB_TEST_USER_ID, chainId: 8453,
       walletAddress: '0x1234567890123456789012345678901234567890',
       dailyLimit: 10, maxPerAction: 2,
       whitelist: ['0x1111111111111111111111111111111111111111'],
@@ -375,7 +385,7 @@ describe('Chat API & Recommendation Guardrails', () => {
 
     const repository = new InMemoryAutonomyPolicyRepository();
     await repository.configure({
-      userId: 'default-user', chainId: 8453,
+      userId: DB_TEST_USER_ID, chainId: 8453,
       walletAddress: '0x1234567890123456789012345678901234567890',
       dailyLimit: 10, maxPerAction: 2,
       whitelist: ['0x1111111111111111111111111111111111111111'],
@@ -421,7 +431,7 @@ describe('Chat API & Recommendation Guardrails', () => {
         walletAddress: '0x1234567890123456789012345678901234567890',
       });
       assert.equal(created.body.metadata.approvalState, 'pending');
-      assert.equal((await repository.getByUser('default-user', 8453))?.reservedToday, 0.05);
+      assert.equal((await repository.getByUser(DB_TEST_USER_ID, 8453))?.reservedToday, 0.05);
 
       const reconciled = await request(app).post('/api/chat/reconcile').send({});
       assert.equal(reconciled.status, 200);
@@ -447,51 +457,70 @@ describe('Chat API & Recommendation Guardrails', () => {
     const origBalancesProvider = process.env.TOKEN_BALANCES_PROVIDER;
     const origPriceProvider = process.env.PRICE_PROVIDER;
     const origApprovalProvider = process.env.APPROVAL_PROVIDER;
+    const originalCreateLlm = chatRouteRuntime.createLlmProvider;
     process.env.TOKEN_SECURITY_PROVIDER = 'none';
     process.env.TOKEN_BALANCES_PROVIDER = 'none';
     process.env.PRICE_PROVIDER = 'none';
     process.env.APPROVAL_PROVIDER = 'none';
     process.env.CHAIN_ENV = 'mainnet-readonly';
     process.env.MAINNET_EXECUTION_ENABLED = 'false';
+    chatRouteRuntime.createLlmProvider = () => ({
+      async generate() {
+        return {
+          message: {
+            role: 'assistant' as const,
+            content: JSON.stringify({
+              intent: 'portfolio_review', confidence: 1, chainId: 8453,
+              amount: null, asset: null, fromAsset: null, toAsset: null,
+              recipient: null, protocol: null, executionRequested: false,
+              clarification: null,
+            }),
+          },
+        };
+      },
+    });
     await request(app).delete('/api/chat/history');
+    try {
+      const response = await request(app)
+        .post('/api/chat')
+        .send({
+          message: 'review my portfolio',
+          walletAddress: '0x1234567890123456789012345678901234567890',
+          chainEnv: 'mainnet-readonly'
+        });
 
-    const response = await request(app)
-      .post('/api/chat')
-      .send({
-        message: 'review my portfolio',
-        walletAddress: '0x1234567890123456789012345678901234567890',
-        chainEnv: 'mainnet-readonly'
-      });
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.role, 'assistant');
+      assert.ok(response.body.actionId);
+      assert.strictEqual(response.body.metadata.type, 'recommendation');
 
-    assert.strictEqual(response.status, 200);
-    assert.strictEqual(response.body.role, 'assistant');
-    assert.ok(response.body.actionId);
-    assert.strictEqual(response.body.metadata.type, 'recommendation');
+      const dbActions = await db.select().from(actions).where(eq(actions.id, response.body.actionId));
+      assert.strictEqual(dbActions.length, 1);
+      const createdAction = dbActions[0];
+      assert.strictEqual(createdAction.kind, 'recommendation');
+      assert.strictEqual((createdAction.metadata as any).safetyState, 'blocked');
+      assert.strictEqual((createdAction.metadata as any).chainMode, 'mainnet-readonly');
+      assert.ok((createdAction.metadata as any).analysis);
+      assert.ok((createdAction.metadata as any).analysis.securityProvider);
+      assert.strictEqual((createdAction.metadata as any).analysis.portfolioSnapshot.walletAddress, '0x1234567890123456789012345678901234567890');
+      assert.ok((createdAction.metadata as any).analysis.portfolioSnapshot.dataFreshness !== undefined);
+      assert.ok((createdAction.metadata as any).analysis.portfolioSnapshot.snapshotTimestamp !== undefined);
+      assert.ok(Array.isArray(createdAction.tokens));
 
-    const dbActions = await db.select().from(actions).where(eq(actions.id, response.body.actionId));
-    assert.strictEqual(dbActions.length, 1);
-    const createdAction = dbActions[0];
-    assert.strictEqual(createdAction.kind, 'recommendation');
-    assert.strictEqual((createdAction.metadata as any).safetyState, 'blocked');
-    assert.strictEqual((createdAction.metadata as any).chainMode, 'mainnet-readonly');
-    assert.ok((createdAction.metadata as any).analysis);
-    assert.ok((createdAction.metadata as any).analysis.securityProvider);
-    assert.strictEqual((createdAction.metadata as any).analysis.portfolioSnapshot.walletAddress, '0x1234567890123456789012345678901234567890');
-    assert.ok((createdAction.metadata as any).analysis.portfolioSnapshot.dataFreshness !== undefined);
-    assert.ok((createdAction.metadata as any).analysis.portfolioSnapshot.snapshotTimestamp !== undefined);
-    assert.ok(Array.isArray(createdAction.tokens));
-
-    const payload = typeof createdAction.executionPayload === 'string'
-      ? JSON.parse(createdAction.executionPayload)
-      : createdAction.executionPayload;
-    assert.strictEqual(payload.readOnly, true);
-    assert.deepStrictEqual(payload.calls, []);
-    restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurityProvider);
-    restoreEnv('TOKEN_BALANCES_PROVIDER', origBalancesProvider);
-    restoreEnv('PRICE_PROVIDER', origPriceProvider);
-    restoreEnv('APPROVAL_PROVIDER', origApprovalProvider);
-    restoreEnv('CHAIN_ENV', origChain);
-    restoreEnv('MAINNET_EXECUTION_ENABLED', origExecution);
+      const payload = typeof createdAction.executionPayload === 'string'
+        ? JSON.parse(createdAction.executionPayload)
+        : createdAction.executionPayload;
+      assert.strictEqual(payload.readOnly, true);
+      assert.deepStrictEqual(payload.calls, []);
+    } finally {
+      chatRouteRuntime.createLlmProvider = originalCreateLlm;
+      restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurityProvider);
+      restoreEnv('TOKEN_BALANCES_PROVIDER', origBalancesProvider);
+      restoreEnv('PRICE_PROVIDER', origPriceProvider);
+      restoreEnv('APPROVAL_PROVIDER', origApprovalProvider);
+      restoreEnv('CHAIN_ENV', origChain);
+      restoreEnv('MAINNET_EXECUTION_ENABLED', origExecution);
+    }
   });
 
   test('POST /api/chat revoke request fails closed (not "safe") when the approval scanner throws', async () => {
@@ -557,6 +586,8 @@ describe('Chat API & Recommendation Guardrails', () => {
     const origApprovalProvider = process.env.APPROVAL_PROVIDER;
     const originalFetchInternalApprovals = chatRouteRuntime.fetchInternalApprovals;
     const originalCreateTools = chatRouteRuntime.createApiToolAggregatorForUser;
+    const originalCreateLlm = chatRouteRuntime.createLlmProvider;
+    const originalRouteSemanticIntent = chatRouteRuntime.routeSemanticIntent;
     process.env.TOKEN_SECURITY_PROVIDER = 'none';
     process.env.TOKEN_BALANCES_PROVIDER = 'none';
     process.env.PRICE_PROVIDER = 'none';
@@ -574,6 +605,12 @@ describe('Chat API & Recommendation Guardrails', () => {
     // Empty aggregator so direct Base MCP/quote routers cannot intercept the
     // messages before they reach the transaction gate under test.
     chatRouteRuntime.createApiToolAggregatorForUser = async () => new ToolAggregator();
+    chatRouteRuntime.createLlmProvider = () => ({
+      async generate() {
+        throw new Error('semantic routing is stubbed in this transaction-gate test');
+      },
+    });
+    chatRouteRuntime.routeSemanticIntent = async () => ({ extraction: null, normalized: null });
     await request(app).delete('/api/chat/history');
 
     try {
@@ -630,6 +667,8 @@ describe('Chat API & Recommendation Guardrails', () => {
       assert.match(revokeRes.body.content, /no active approval found/i);
     } finally {
       chatRouteRuntime.createApiToolAggregatorForUser = originalCreateTools;
+      chatRouteRuntime.createLlmProvider = originalCreateLlm;
+      chatRouteRuntime.routeSemanticIntent = originalRouteSemanticIntent;
       chatRouteRuntime.fetchInternalApprovals = originalFetchInternalApprovals;
       restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurityProvider);
       restoreEnv('TOKEN_BALANCES_PROVIDER', origBalancesProvider);

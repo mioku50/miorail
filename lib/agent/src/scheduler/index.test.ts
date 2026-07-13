@@ -3,15 +3,15 @@ import assert from 'node:assert';
 import { WorkflowRunner } from './index.js';
 import { MockLlmProvider } from '@mioagent/llm/testing';
 import { ToolAggregator } from '@mioagent/tools';
-import { db, workflows, actions, users } from '@mioagent/db';
+import { db, testFixtureId, workflows, actions, users } from '@mioagent/db';
 import { eq } from 'drizzle-orm';
 
 test('WorkflowRunner executes and updates lastRun', async () => {
   // setup mock user and workflow in db
-  const userId = 'test-user-wf';
+  const userId = testFixtureId('scheduler-user');
   await db.insert(users).values({ id: userId }).onConflictDoNothing();
 
-  const workflowId = 'test-wf-1';
+  const workflowId = testFixtureId('scheduler-workflow');
   await db.insert(workflows).values({
     id: workflowId,
     userId,
@@ -37,10 +37,10 @@ test('WorkflowRunner executes and updates lastRun', async () => {
 });
 
 test('WorkflowRunner emit pseudo-tools', async () => {
-  const userId = 'test-user-emit';
+  const userId = testFixtureId('scheduler-emit-user');
   await db.insert(users).values({ id: userId }).onConflictDoNothing();
 
-  const workflowId = 'test-wf-2';
+  const workflowId = testFixtureId('scheduler-emit-workflow');
   await db.insert(workflows).values({
     id: workflowId,
     userId,

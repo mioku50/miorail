@@ -4,20 +4,20 @@ import postgres from 'postgres';
 import * as dotenv from 'dotenv';
 import { resolve } from 'path';
 import dns from 'node:dns';
+import { resolveDatabaseConnection } from './testDatabaseGuard';
 
 dns.setDefaultResultOrder('ipv4first');
 
-dotenv.config({ path: resolve(__dirname, '../../.env') });
-
-const url = process.env.DATABASE_URL;
-
-if (!url) {
-  throw new Error('DATABASE_URL is not set');
+if (process.env.NODE_ENV !== 'test') {
+  dotenv.config({ path: resolve(__dirname, '../../.env') });
 }
+
+const connection = resolveDatabaseConnection(process.env, { requireConnection: true });
+const url = connection.url!;
 
 // Neon Pooler usually doesn't like schema migrations, but let's try with prepare: false
 const migrationClient = postgres(url, {
-  ssl: 'require',
+  ssl: url.includes('neon.tech') ? 'require' : false,
   prepare: false,
   max: 1
 });

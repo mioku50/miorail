@@ -182,7 +182,7 @@ describe('Status API', () => {
     assert.strictEqual(response.status, 200);
     assert.deepStrictEqual(response.body.autonomy, {
       spendPermissionsPersistence: 'database',
-      databaseConfigured: true,
+      databaseConfigured: false,
       chainMode: response.body.chainEnv,
       mainnetExecutionEnabled: false,
       mainnetRequiresUserOptIn: true,

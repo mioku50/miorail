@@ -1,14 +1,17 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert';
 import { WorkflowRunner } from './index.js';
 import { MockLlmProvider } from '@mioagent/llm/testing';
 import { ToolAggregator } from '@mioagent/tools';
-import { db, workflows, users } from '@mioagent/db';
+import { closeDb, db, testFixtureId, workflows, users } from '@mioagent/db';
 import { eq } from 'drizzle-orm';
-import { randomUUID } from 'crypto';
+
+after(async () => {
+  await closeDb();
+});
 
 test('WorkflowRunner load test: processes multiple workflows efficiently', async () => {
-  const userId = 'load-test-user';
+  const userId = testFixtureId('scheduler-load-user');
   await db.insert(users).values({ id: userId }).onConflictDoNothing();
 
   const numWorkflows = 20;
@@ -16,7 +19,7 @@ test('WorkflowRunner load test: processes multiple workflows efficiently', async
 
   try {
     for (let i = 0; i < numWorkflows; i++) {
-      const id = randomUUID();
+      const id = testFixtureId(`scheduler-load-workflow-${i}`);
       workflowIds.push(id);
       await db.insert(workflows).values({
         id,

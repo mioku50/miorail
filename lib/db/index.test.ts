@@ -1,6 +1,6 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
-import { db, closeDb } from './index';
+import { db, closeDb, databaseConnectionInfo } from './index';
 
 import {
   users,
@@ -16,6 +16,19 @@ import {
 } from './index';
 
 describe('db connection', () => {
+  it('keeps unit tests disconnected from production DATABASE_URL', () => {
+    if (process.env.NODE_ENV === 'test') {
+      assert.notStrictEqual(databaseConnectionInfo.source, 'DATABASE_URL');
+      if (process.env.MIOAGENT_TEST_SUITE === 'unit') {
+        assert.deepStrictEqual(databaseConnectionInfo, {
+          source: 'disabled',
+          configured: false,
+          fingerprint: null,
+        });
+      }
+    }
+  });
+
   it('should export the db client', () => {
     assert.ok(db, 'db client should be defined');
     // Ensure we are exporting methods expected from a drizzle instance

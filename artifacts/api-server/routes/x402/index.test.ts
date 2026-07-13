@@ -15,6 +15,7 @@ const PAY_TO = '0x1111111111111111111111111111111111111111';
 
 function configuredEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
+    NODE_ENV: 'test',
     X402_FACILITATOR_URL: 'https://facilitator.example.test',
     X402_PAYTO_ADDRESS: PAY_TO,
     X402_NETWORK: 'eip155:8453',

@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { getUserSettings, updateUserSettings, setEncryptedKey, getDecryptedKey, injectMemoryIntoPrompt } from '../src/index';
-import { db, userSettings, users } from '@mioagent/db';
+import { db, testFixtureId, userSettings, users } from '@mioagent/db';
 import { eq } from 'drizzle-orm';
 
 test('Settings and Memory functions', async (t) => {
-  const userId = 'test-user-' + Date.now();
+  const userId = testFixtureId('settings-user');
   const sessionSecret = '0123456789abcdef0123456789abcdef';
 
   // Insert user first because userSettings.userId has a foreign key to users.id

@@ -31,6 +31,15 @@ export function isDevSingleUserEnabled(): boolean {
   return process.env.NODE_ENV === 'test' || envFlag(process.env.DEV_SINGLE_USER);
 }
 
+function configuredDevTenant(): { id: string; address: `0x${string}` } | null {
+  if (process.env.NODE_ENV !== 'test' || process.env.MIOAGENT_TEST_SUITE !== 'db') return null;
+  const id = process.env.MIOAGENT_TEST_TENANT_ID?.trim();
+  const address = process.env.MIOAGENT_TEST_WALLET?.trim().toLowerCase();
+  if (!id || !process.env.MIOAGENT_TEST_RUN_ID || !id.includes(process.env.MIOAGENT_TEST_RUN_ID)) return null;
+  if (!/^0x[0-9a-f]{40}$/.test(address || '')) return null;
+  return { id, address: address as `0x${string}` };
+}
+
 function validSessionUser(user: TenantUser | undefined): user is TenantUser {
   if (!user || user.chainId !== BASE_CHAIN_ID || !/^0x[0-9a-f]{40}$/.test(user.address)) return false;
   return user.id === `eip155:${BASE_CHAIN_ID}:${user.address}`;
@@ -39,6 +48,9 @@ function validSessionUser(user: TenantUser | undefined): user is TenantUser {
 export function tenantUserFromRequest(req: Request): TenantUser | null {
   if (validSessionUser(req.session?.user)) return req.session.user;
   if (!isDevSingleUserEnabled()) return null;
+
+  const testTenant = configuredDevTenant();
+  if (testTenant) return { ...testTenant, chainId: BASE_CHAIN_ID };
 
   const configuredAddress = process.env.DEV_SINGLE_USER_WALLET?.toLowerCase();
   const address = /^0x[0-9a-f]{40}$/.test(configuredAddress || '')
@@ -56,7 +68,7 @@ export function tenantUserId(req: Request): string {
 export function tenantWalletAddress(req: Request): `0x${string}` {
   const user = tenantUserFromRequest(req);
   if (!user) throw new Error('authenticated_tenant_required');
-  if (user.id === DEV_SINGLE_USER_ID) {
+  if (user.id === DEV_SINGLE_USER_ID || user.id === process.env.MIOAGENT_TEST_TENANT_ID) {
     const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
     const query = req.query as Record<string, unknown>;
     const candidate = suppliedString(body.walletAddress)
@@ -90,7 +102,7 @@ export function enforceTenantBinding(req: Request, res: Response, next: NextFunc
   }
 
   // Test/dev single-user compatibility is explicit and never active in production by default.
-  if (user.id === DEV_SINGLE_USER_ID) {
+  if (user.id === DEV_SINGLE_USER_ID || user.id === process.env.MIOAGENT_TEST_TENANT_ID) {
     next();
     return;
   }

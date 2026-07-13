@@ -1,0 +1,40 @@
+{
+	# Keep the global block intentionally small. Caddy manages TLS and HTTP/3.
+}
+
+miorail.xyz, www.miorail.xyz, {$MIORAIL_SITE_ADDRESS:98.86.240.34.sslip.io} {
+	encode zstd gzip
+
+	# These headers apply to the frontend and proxied API. CSP remains
+	# report-only until desktop web and Base App flows have been observed.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), browsing-topics=()"
+		Content-Security-Policy-Report-Only "default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://account.base.org https://keys.coinbase.com https://*.base.org https://*.coinbase.com wss://*.base.org wss://*.coinbase.com; frame-src https://account.base.org https://keys.coinbase.com https://*.base.org https://*.coinbase.com; form-action 'self' https://keys.coinbase.com https://*.coinbase.com"
+	}
+
+	@api path /api/* /health
+	handle @api {
+		reverse_proxy {$MIORAIL_API_UPSTREAM:127.0.0.1:8080}
+	}
+
+	root * {$MIORAIL_INTERFACE_ROOT:/var/www/mioagent}
+
+	# Vite content-hashed bundles can be cached forever. The matcher requires a
+	# hash-like filename suffix so unhashed files never inherit immutable cache.
+	@hashedAssets path_regexp hashed ^/assets/.+-[A-Za-z0-9_-]{6,}\.(js|css|woff2?|png|jpe?g|gif|svg|webp|avif|ico|map)$
+	handle @hashedAssets {
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
+	# index.html and SPA fallbacks must revalidate on every navigation so a new
+	# deploy cannot strand clients on an old asset manifest.
+	handle {
+		header Cache-Control "no-cache, no-store, must-revalidate"
+		try_files {path} /index.html
+		file_server
+	}
+}

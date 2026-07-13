@@ -4,14 +4,13 @@ import { Agent } from '../src/index.js';
 import { LlmRequest } from '@mioagent/llm';
 import { MockLlmProvider } from '@mioagent/llm/testing';
 import { ToolAggregator, ToolProvider, ToolDef, SepoliaToolProvider } from '@mioagent/tools';
-import { randomUUID } from 'crypto';
 import { eq } from 'drizzle-orm';
-import { db, actions, users } from '@mioagent/db';
+import { db, actions, testFixtureId, users } from '@mioagent/db';
 
 import { McpSendCallsClient, BaseMcpClient } from '@mioagent/mcp';
 
 test('T7.7 E2E on Sepolia: chat -> execute', async () => {
-    const userId = 'e2e-sepolia-user-1';
+    const userId = testFixtureId('e2e-sepolia-user');
     await db.insert(users).values({ id: userId }).onConflictDoNothing();
 
     const llm = new MockLlmProvider((req: LlmRequest) => {
@@ -41,7 +40,7 @@ test('T7.7 E2E on Sepolia: chat -> execute', async () => {
             if (name === 'emit_recommendation') {
                 const message = typeof _args.message === 'string' ? _args.message : 'Recommendation';
                 await db.insert(actions).values({
-                    id: randomUUID(),
+                    id: testFixtureId('e2e-sepolia-action'),
                     userId,
                     kind: 'recommendation',
                     status: 'pending',

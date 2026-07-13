@@ -1,12 +1,15 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert';
-import { db, users, auditLogs } from '@mioagent/db';
+import { closeDb, db, users, auditLogs, testFixtureId } from '@mioagent/db';
 import { ObservabilityService } from './index.js';
 import { eq } from 'drizzle-orm';
-import * as crypto from 'crypto';
+
+after(async () => {
+  await closeDb();
+});
 
 test('ObservabilityService', async () => {
-  const userId = crypto.randomUUID();
+  const userId = testFixtureId('observability-user');
 
   await test('setup', async () => {
     await db.insert(users).values({ id: userId });
@@ -14,7 +17,7 @@ test('ObservabilityService', async () => {
 
   await test('logAction and exportLedger', async () => {
     try {
-      const actionId = crypto.randomUUID();
+      const actionId = testFixtureId('observability-action');
       await ObservabilityService.logAction({
         userId,
         actionId,
