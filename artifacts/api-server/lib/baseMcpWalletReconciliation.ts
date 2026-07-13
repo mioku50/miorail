@@ -11,10 +11,11 @@ import {
   type BaseMcpOAuthProvider,
 } from '@mioagent/mcp';
 import { createBaseMcpOAuthProviderForUser } from './baseMcpOAuthStore.js';
+import { BASE_MCP_DIFFERENT_WALLET_NOTICE } from './walletContext.js';
 
 export const BASE_MCP_WALLET_MISMATCH_ERROR_CODE = 'base_mcp_wallet_mismatch';
 export const BASE_MCP_WALLET_MISMATCH_MESSAGE =
-  'Base MCP connected to a different wallet than your session wallet. Reconnect Base MCP with the same account.';
+  BASE_MCP_DIFFERENT_WALLET_NOTICE;
 export const BASE_MCP_WALLET_UNVERIFIED_ERROR_CODE = 'base_mcp_wallet_unverified';
 export const BASE_MCP_WALLET_UNVERIFIED_MESSAGE =
   'Base MCP wallet could not be verified against your session wallet. Reconnect Base MCP and retry.';

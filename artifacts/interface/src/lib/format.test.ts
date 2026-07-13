@@ -80,7 +80,7 @@ test('Base MCP OAuth result messages are explicit and non-crashing', () => {
   assert.strictEqual(baseMcpOAuthResultMessage('unknown'), null);
   assert.deepStrictEqual(baseMcpOAuthResultMessage('connected', null, 'mismatch'), {
     kind: 'warn',
-    text: 'Base MCP connected to a different wallet than your session wallet. Reconnect Base MCP with the same account to enable send and swap.',
+    text: 'Base MCP is connected to another Coinbase wallet. Miorail will use your current BaseApp wallet for balances and confirmations. Coinbase wallet-specific MCP tools are disabled for this session.',
   });
 });
 

@@ -202,18 +202,35 @@ export class DynamicBaseMcpToolProvider implements ToolProvider {
     this.toolMap = new Map(tools.map((tool) => [tool.name, tool]));
   }
 
+  private walletToolsEnabled = true;
+
+  setWalletToolsEnabled(enabled: boolean): void {
+    this.walletToolsEnabled = enabled;
+  }
+
+  private visibleTools(): DynamicBaseMcpTool[] {
+    return [...this.toolMap.values()].filter((tool) => this.walletToolsEnabled || tool.scope !== 'wallet');
+  }
+
   async listTools(): Promise<ToolDef[]> {
-    return [...this.toolMap.values()].map(toToolDef);
+    return this.visibleTools().map(toToolDef);
   }
 
   findTool(name: string): ToolDef | undefined {
     const tool = this.toolMap.get(name);
+    if (tool?.scope === 'wallet' && !this.walletToolsEnabled) return undefined;
     return tool ? toToolDef(tool) : undefined;
   }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<{ content: string; isError: boolean }> {
     const tool = this.toolMap.get(name);
     if (!tool) return { content: `Unknown tool: ${name}`, isError: true };
+    if (tool.scope === 'wallet' && !this.walletToolsEnabled) {
+      return {
+        content: JSON.stringify({ errorCode: 'base_mcp_wallet_tools_disabled' }),
+        isError: true,
+      };
+    }
 
     if (tool.capability === 'user_confirmed_transaction') {
       const allowedProtectedTool = (this.options.allowUserConfirmedSwap && isSwapTool(tool.name))

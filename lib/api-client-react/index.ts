@@ -8,9 +8,18 @@ import * as apiSpec from '@mioagent/api-spec';
 export const isProductionActionType = apiSpec.isProductionActionType;
 export const PRODUCTION_ACTION_TYPES = apiSpec.PRODUCTION_ACTION_TYPES;
 
+export type WalletEnvironment = 'baseapp' | 'web';
+let walletEnvironment: WalletEnvironment = 'web';
+
+export function setWalletEnvironment(value: WalletEnvironment): void {
+  walletEnvironment = value;
+}
+
 // Simple fetch wrapper
 async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(url, { credentials: 'same-origin', ...options });
+  const headers = new Headers(options?.headers);
+  headers.set('x-miorail-wallet-environment', walletEnvironment);
+  const response = await fetch(url, { credentials: 'same-origin', ...options, headers });
   if (!response.ok) {
     let errorMsg = `API error: ${response.status} ${response.statusText}`;
     try {

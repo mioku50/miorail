@@ -1,6 +1,8 @@
 import type { ToolAggregator, ToolDef } from '@mioagent/tools';
 import { filterTrustedMorphoVaults, formatTrustedMorphoVaults } from './morphoVaultTrust.js';
 import { extractWalletAddresses } from './baseMcpWalletReconciliation.js';
+import type { BaseMcpWalletMatchResult } from './baseMcpWalletReconciliation.js';
+import { BASE_MCP_DIFFERENT_WALLET_NOTICE, type WalletEnvironment } from './walletContext.js';
 
 export type DirectStreamReadKind = 'base_portfolio' | 'morpho_usdc_vaults' | 'partner_provider_unavailable' | 'partner_provider_required';
 
@@ -233,6 +235,9 @@ export async function runDirectStreamRead(input: {
   message: string;
   walletAddress?: string;
   tools: ToolAggregator;
+  walletEnvironment?: WalletEnvironment;
+  walletMatch?: BaseMcpWalletMatchResult;
+  nativePortfolioReader?: (walletAddress: string) => Promise<unknown>;
 }): Promise<DirectStreamReadResult | null> {
   const kind = detectDirectStreamRead(input.message);
   const inventory = await input.tools.listTools();
@@ -300,9 +305,52 @@ export async function runDirectStreamRead(input: {
     };
   }
 
+  const nativePortfolio = async (notice?: string): Promise<DirectStreamReadResult | null> => {
+    if (!input.walletAddress || !input.nativePortfolioReader) return null;
+    try {
+      const portfolio = await input.nativePortfolioReader(input.walletAddress);
+      return {
+        kind,
+        content: [
+          ...(notice ? [notice, ''] : []),
+          `Live portfolio for the authenticated BaseApp wallet:\n${displayPayload(sanitizeStreamToolArgs(portfolio))}`,
+        ].join('\n'),
+        toolCalls: traces,
+      };
+    } catch {
+      return {
+        kind,
+        content: 'The native portfolio provider could not read the authenticated tenant wallet.',
+        toolCalls: traces,
+        errorCode: 'native_portfolio_unavailable',
+      };
+    }
+  };
+
+  // BaseApp is always tenant-wallet first. No OAuth-wallet lookup is needed to
+  // display balances, and no Base MCP address can substitute for the SIWE one.
+  if (input.walletEnvironment === 'baseapp') {
+    const notice = input.walletMatch?.checked && !input.walletMatch.match
+      ? BASE_MCP_DIFFERENT_WALLET_NOTICE
+      : undefined;
+    const native = await nativePortfolio(notice);
+    if (native) return native;
+  }
+
   const portfolioTool = inventory.find((item) => item.name === 'get_portfolio');
   const walletsTool = inventory.find((item) => item.name === 'get_wallets');
   let walletAddress = input.walletAddress;
+
+  if (input.walletMatch?.checked && !input.walletMatch.match) {
+    const native = await nativePortfolio(BASE_MCP_DIFFERENT_WALLET_NOTICE);
+    if (native) return native;
+    return {
+      kind,
+      content: BASE_MCP_DIFFERENT_WALLET_NOTICE,
+      toolCalls: traces,
+      errorCode: 'base_mcp_wallet_mismatch',
+    };
+  }
 
   // The SIWE session remains authoritative, but Base MCP may accept only an
   // address returned by its user-scoped get_wallets tool. Reconcile first and
@@ -313,9 +361,11 @@ export async function runDirectStreamRead(input: {
     if (!wallets.errorCode) {
       const mcpAddresses = extractWalletAddresses(wallets.content);
       if (walletAddress && mcpAddresses.length > 0 && !mcpAddresses.includes(walletAddress.toLowerCase())) {
+        const native = await nativePortfolio(BASE_MCP_DIFFERENT_WALLET_NOTICE);
+        if (native) return native;
         return {
           kind,
-          content: 'Base MCP is connected to a different wallet than the authenticated Base App session. Reconnect Base MCP with the same account.',
+          content: BASE_MCP_DIFFERENT_WALLET_NOTICE,
           toolCalls: traces,
           errorCode: 'base_mcp_wallet_mismatch',
         };
@@ -325,6 +375,8 @@ export async function runDirectStreamRead(input: {
   }
 
   if (!portfolioTool) {
+    const native = await nativePortfolio();
+    if (native) return native;
     return {
       kind,
       content: 'Base MCP get_portfolio is unavailable. No substitute provider data was returned.',

@@ -16,6 +16,7 @@ import type {
   AutonomyPolicy,
   AutonomyPolicyRepository,
 } from './policyRepository';
+import type { UniswapSwapContext } from '@mioagent/security/uniswapGuard';
 
 // T44b: the gateway mirrors the unified guard's typed whitelist —
 // revoke_approval | limited_transfer | moonwell_*. The reservation/settle/
@@ -36,6 +37,7 @@ export interface PrepareAutonomousExecutionInput {
   tokenSecurity?: ExecutionTokenSecurityResult[];
   /** T44b: server-stored Moonwell context (prepared amount) for moonwell_* types. */
   moonwell?: { amountDecimal: string };
+  uniswap?: UniswapSwapContext;
   reservationTtlMs?: number;
 }
 
@@ -124,6 +126,7 @@ export class AutonomousExecutionGateway {
       providerContext: input.providerContext,
       tokenSecurity: input.tokenSecurity,
       ...(input.moonwell ? { moonwell: input.moonwell } : {}),
+      ...(input.uniswap ? { uniswap: input.uniswap } : {}),
     });
     if (!guard.allowed || !guard.semantics) {
       return failure(guard.code, guard.reason || 'Unified execution guard blocked action', {

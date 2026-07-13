@@ -44,6 +44,7 @@ const DEFAULT_BASE_MCP_AUTH = {
   needsReauth: false,
   userScoped: true as const,
 };
+const ORIGINAL_RESOLVE_WALLET_MATCH = statusRouteRuntime.resolveWalletMatch;
 
 function testEcPrivateKey(): string {
   const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
@@ -76,6 +77,7 @@ describe('Status API', () => {
     mock.restoreAll();
     global.fetch = ORIGINAL_FETCH;
     statusRouteRuntime.getBaseMcpAuthStatus = async () => DEFAULT_BASE_MCP_AUTH;
+    statusRouteRuntime.resolveWalletMatch = ORIGINAL_RESOLVE_WALLET_MATCH;
     statusRouteRuntime.probeRpcStatus = async (_chainId, _url, provider) => ({ status: 'connected', provider });
   });
 
@@ -495,6 +497,15 @@ describe('Status API', () => {
       readiness: 'not_configured',
       usable: false,
       auth: DEFAULT_BASE_MCP_AUTH,
+      walletContext: {
+        tenantWallet: '0x0000000000000000000000000000000000000000',
+        baseAppWallet: null,
+        baseMcpWallet: null,
+        walletMatch: null,
+        executionProvider: 'none',
+      },
+      protocolToolsStatus: 'unavailable',
+      walletToolsStatus: 'unavailable',
     });
 
     restoreEnv('BASE_MCP_ENABLED', origEnabled);
@@ -524,6 +535,15 @@ describe('Status API', () => {
       readiness: 'configured',
       usable: false,
       auth: DEFAULT_BASE_MCP_AUTH,
+      walletContext: {
+        tenantWallet: '0x0000000000000000000000000000000000000000',
+        baseAppWallet: null,
+        baseMcpWallet: null,
+        walletMatch: null,
+        executionProvider: 'none',
+      },
+      protocolToolsStatus: 'unavailable',
+      walletToolsStatus: 'unavailable',
     });
     assert.strictEqual(JSON.stringify(response.body.baseMcp).includes('private/path'), false);
 
@@ -632,6 +652,49 @@ describe('Status API', () => {
     assert.strictEqual(JSON.stringify(response.body.baseMcp).includes('private/path'), false);
 
     global.fetch = originalFetch;
+    restoreEnv('BASE_MCP_ENABLED', origEnabled);
+    restoreEnv('BASE_MCP_SERVER_URL', origUrl);
+  });
+
+  test('T47: wallet mismatch disables only wallet tools without degrading Base MCP', async () => {
+    const origEnabled = process.env.BASE_MCP_ENABLED;
+    const origUrl = process.env.BASE_MCP_SERVER_URL;
+    process.env.BASE_MCP_ENABLED = 'true';
+    process.env.BASE_MCP_SERVER_URL = 'https://mcp.example.test';
+    recordBaseMcpToolProbe({
+      endpointHost: 'mcp.example.test',
+      toolsCount: 5,
+      capabilities: { readOnly: 3, userConfirmedTransaction: 2, forbidden: 0, unknown: 0 },
+      checkedAt: new Date().toISOString(),
+    });
+    global.fetch = mock.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ tools: [] }),
+    } as Response)) as unknown as typeof fetch;
+    statusRouteRuntime.getBaseMcpAuthStatus = async () => ({
+      connected: true,
+      needsReauth: false,
+      userScoped: true,
+    });
+    statusRouteRuntime.resolveWalletMatch = async () => ({
+      checked: true,
+      match: false,
+      mcpAddresses: ['0x4de27ead5a3c9aeb58c7f812178ddde282670d70'],
+    });
+
+    const response = await request(app)
+      .get('/api/status')
+      .set('x-miorail-wallet-environment', 'baseapp');
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.baseMcp.status, 'connected');
+    assert.strictEqual(response.body.baseMcp.readiness, 'tools_available');
+    assert.strictEqual(response.body.baseMcp.usable, true);
+    assert.strictEqual(response.body.baseMcp.protocolToolsStatus, 'available');
+    assert.strictEqual(response.body.baseMcp.walletToolsStatus, 'disabled_wallet_mismatch');
+    assert.strictEqual(response.body.baseMcp.walletContext.executionProvider, 'baseapp_native');
+
     restoreEnv('BASE_MCP_ENABLED', origEnabled);
     restoreEnv('BASE_MCP_SERVER_URL', origUrl);
   });

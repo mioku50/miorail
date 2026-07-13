@@ -4,6 +4,7 @@ import { createPublicClient, getAddress, http, isAddress } from 'viem';
 import { base } from 'viem/chains';
 import { db, users } from '@mioagent/db';
 import { BASE_CHAIN_ID, type TenantUser } from '../middleware/tenantAuth';
+import { invalidatePreparedTransactionsForUser } from '../lib/preparedTransactionStore.js';
 
 export const authRouter = Router();
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
@@ -21,6 +22,7 @@ export const authRouteRuntime = {
   ensureUser: async (userId: string) => {
     await db.insert(users).values({ id: userId }).onConflictDoNothing();
   },
+  invalidatePreparedTransactions: invalidatePreparedTransactionsForUser,
 };
 
 export function setWalletSignatureVerifierForTests(verifier?: SignatureVerifier): void {
@@ -134,7 +136,19 @@ authRouter.get('/session', (req, res) => {
   res.json({ user: req.session.user || null });
 });
 
-authRouter.post('/logout', (req, res) => {
+authRouter.post('/logout', async (req, res) => {
+  const userId = req.session.user?.id;
+  if (userId) {
+    try {
+      await authRouteRuntime.invalidatePreparedTransactions(userId);
+    } catch {
+      res.status(503).json({
+        error: 'wallet_session_invalidation_failed',
+        code: 'wallet_session_invalidation_failed',
+      });
+      return;
+    }
+  }
   req.session.destroy(() => {
     res.clearCookie('connect.sid');
     res.json({ success: true });

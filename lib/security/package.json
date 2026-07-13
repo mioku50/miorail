@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./baseGuards": "./src/baseGuards.ts",
     "./httpAllowlist": "./src/httpAllowlist.ts",
-    "./moonwellGuard": "./src/moonwellGuard.ts"
+    "./moonwellGuard": "./src/moonwellGuard.ts",
+    "./uniswapGuard": "./src/uniswapGuard.ts"
   },
   "scripts": {
     "test": "tsx --test src/**/*.test.ts"

@@ -33,6 +33,7 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
   const [input, setInput] = useState('');
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [nativeWalletAcknowledged, setNativeWalletAcknowledged] = useState(false);
   const streamRef = useRef<HTMLDivElement>(null);
   const baseMcpProbeStarted = useRef(false);
   const pendingReconciliationRef = useRef('');
@@ -48,6 +49,8 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
   const messages = chatData?.messages || [];
   const displayMessages = messages;
   const streamReconnectIssue = baseMcpReconnectIssue(messages);
+  const walletMismatch = statusData?.baseMcp?.walletContext?.walletMatch === false
+    && Boolean(statusData.baseMcp.walletContext.baseAppWallet);
   const pendingReconciliationKey = messages
     .filter((message: any) => ['approval_required', 'pending'].includes(message.metadata?.approvalState) && message.metadata?.requestId)
     .map((message: any) => message.metadata.requestId)
@@ -192,6 +195,27 @@ export function AgentStream({ fullWidth }: { fullWidth?: boolean } = {}) {
           >
             {streamReconnectIssue ? 'Reconnect Base MCP' : baseMcpConnectLabel(statusData?.baseMcp)}
           </BaseMcpConnectButton>
+        </div>
+      )}
+
+      {walletMismatch && !nativeWalletAcknowledged && (
+        <div className="border-b border-accent/20 bg-accent-soft px-4 py-3 text-[11px] text-ink-2">
+          <p className="whitespace-pre-line leading-relaxed">Base MCP is connected to another Coinbase wallet.{"\n"}Miorail will use your current BaseApp wallet for balances and confirmations.{"\n"}Coinbase wallet-specific MCP tools are disabled for this session.</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => { setNativeWalletAcknowledged(true); showToast('Using current BaseApp wallet'); }}
+              className="rounded-lg bg-accent px-2.5 py-1 font-bold text-bg"
+            >
+              Use current BaseApp wallet
+            </button>
+            <BaseMcpConnectButton
+              returnTo="/stream"
+              className="rounded-lg border border-line bg-panel px-2.5 py-1 font-bold text-ink-2 hover:bg-bg"
+            >
+              Connect another Coinbase account
+            </BaseMcpConnectButton>
+          </div>
         </div>
       )}
 

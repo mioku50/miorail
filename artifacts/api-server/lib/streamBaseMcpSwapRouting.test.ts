@@ -120,6 +120,32 @@ test('unknown canonical USDC verdict blocks Base MCP swap before the tool call',
   assert.equal(provider.calls.length, 0);
 });
 
+test('T47 mismatched OAuth wallet blocks MCP swap and never returns its approvalUrl', async () => {
+  securityProvider('ok');
+  const tenantWallet = '0x8e525bfce1ef40aa8075ef64e45421b5855c8909';
+  const repository = new InMemoryAutonomyPolicyRepository();
+  await repository.configure({
+    userId: 'tenant-8e52', chainId: 8453, walletAddress: tenantWallet,
+    dailyLimit: 10, maxPerAction: 5, whitelist: ['0x2222222222222222222222222222222222222222'], scope: 'bounded-approval',
+    expiresAt: Date.now() + 60_000, mainnetOptIn: true,
+  });
+  baseMcpSwapRuntime.getRepository = () => repository;
+  const provider = new BaseSwapProvider(); // get_wallets => 0x1111…, not tenantWallet
+  const tools = new ToolAggregator();
+  tools.registerProvider(provider);
+  const result = await runDirectBaseMcpSwap({
+    message: 'swap 0.1 USDC to ETH',
+    walletAddress: tenantWallet,
+    tools,
+    userConfirmedEnabled: true,
+    userId: 'tenant-8e52',
+  });
+  assert.equal(result?.errorCode, 'base_mcp_wallet_mismatch');
+  assert.equal(provider.calls.length, 0);
+  assert.equal(result?.approvalUrl, undefined);
+  assert.doesNotMatch(result?.content || '', /Reconnect Base MCP/);
+});
+
 test('Base MCP swap blocks before reservation when wallet verification is unavailable', async () => {
   securityProvider('ok');
   const repository = await readyPolicy();

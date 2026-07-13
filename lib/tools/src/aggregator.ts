@@ -34,6 +34,14 @@ export class ToolAggregator {
     return inventory;
   }
 
+  /** Disable OAuth-wallet capabilities while leaving protocol/data reads available. */
+  setBaseMcpWalletToolsEnabled(enabled: boolean): void {
+    for (const provider of this.providers.values()) {
+      const scoped = provider as ToolProvider & { setWalletToolsEnabled?: (value: boolean) => void };
+      scoped.setWalletToolsEnabled?.(enabled);
+    }
+  }
+
   findTool(name: string): ToolDef | undefined {
     for (const provider of this.providers.values()) {
       const tool = provider.findTool(name);

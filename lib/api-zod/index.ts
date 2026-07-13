@@ -103,6 +103,7 @@ export const ProductionActionTypeSchema = z.enum([
   'moonwell_withdraw',
   'moonwell_borrow',
   'moonwell_repay',
+  'uniswap_swap',
 ]);
 export type ProductionActionType = z.infer<typeof ProductionActionTypeSchema>;
 export const PRODUCTION_ACTION_TYPES = ProductionActionTypeSchema.options as readonly ProductionActionType[];
@@ -269,11 +270,14 @@ export const BaseMcpToolProbeResponseSchema = z.object({
     name: z.string(),
     description: z.string().optional(),
     capability: z.enum(['read_only', 'user_confirmed_transaction', 'forbidden', 'unknown']),
+    scope: z.enum(['wallet', 'protocol']),
     enabled: z.boolean(),
     reason: z.string(),
   })),
   checkedAt: z.string(),
   errorCode: z.string().optional(),
+  protocolToolsStatus: z.enum(['available', 'unavailable']).optional(),
+  walletToolsStatus: z.enum(['available', 'unavailable']).optional(),
 });
 
 export const DismissActionRequestSchema = z.object({
@@ -554,6 +558,15 @@ export const StatusResponseSchema = z.object({
       expiresAt: z.string().optional(),
       connectedAt: z.string().optional(),
     }).optional(),
+    walletContext: z.object({
+      tenantWallet: z.string(),
+      baseAppWallet: z.string().nullable(),
+      baseMcpWallet: z.string().nullable(),
+      walletMatch: z.boolean().nullable(),
+      executionProvider: z.enum(['baseapp_native', 'base_mcp', 'none']),
+    }).optional(),
+    protocolToolsStatus: z.enum(['available', 'unavailable']).optional(),
+    walletToolsStatus: z.enum(['available', 'disabled_wallet_mismatch', 'unverified', 'unavailable']).optional(),
   }),
   x402: z.object({
     status: z.enum([

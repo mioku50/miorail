@@ -8,11 +8,13 @@ const WALLET_A = '0x1111111111111111111111111111111111111111';
 const WALLET_B = '0x2222222222222222222222222222222222222222';
 const originalNodeEnv = process.env.NODE_ENV;
 const originalEnsureUser = authRouteRuntime.ensureUser;
+const originalInvalidatePreparedTransactions = authRouteRuntime.invalidatePreparedTransactions;
 
 beforeEach(() => {
   // Disable the test-only default tenant for these production-auth regressions.
   process.env.NODE_ENV = 'production';
   authRouteRuntime.ensureUser = async () => undefined;
+  authRouteRuntime.invalidatePreparedTransactions = async () => undefined;
   setWalletSignatureVerifierForTests(async ({ address }) => address === WALLET_A);
 });
 
@@ -20,6 +22,7 @@ afterEach(() => {
   if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
   else process.env.NODE_ENV = originalNodeEnv;
   authRouteRuntime.ensureUser = originalEnsureUser;
+  authRouteRuntime.invalidatePreparedTransactions = originalInvalidatePreparedTransactions;
   setWalletSignatureVerifierForTests();
 });
 
@@ -76,4 +79,31 @@ test('T43: execution policy wallet must equal authenticated wallet', async () =>
   const agent = await authenticatedAgent();
   const response = await agent.post('/api/autonomy/config').send({ walletAddress: WALLET_B }).expect(403);
   assert.equal(response.body.code, 'wallet_mismatch');
+});
+
+test('T47: logout invalidates executable preparations for the current tenant', async () => {
+  const invalidated: string[] = [];
+  authRouteRuntime.invalidatePreparedTransactions = async (userId) => {
+    invalidated.push(userId);
+  };
+  const agent = await authenticatedAgent();
+
+  await agent.post('/api/auth/logout').expect(200);
+
+  assert.deepEqual(invalidated, [`eip155:8453:${WALLET_A}`]);
+  const session = await agent.get('/api/auth/session').expect(200);
+  assert.equal(session.body.user, null);
+});
+
+test('T47: logout keeps the session when prepared-action invalidation fails', async () => {
+  authRouteRuntime.invalidatePreparedTransactions = async () => {
+    throw new Error('database unavailable');
+  };
+  const agent = await authenticatedAgent();
+
+  const response = await agent.post('/api/auth/logout').expect(503);
+
+  assert.equal(response.body.code, 'wallet_session_invalidation_failed');
+  const session = await agent.get('/api/auth/session').expect(200);
+  assert.equal(session.body.user.address, WALLET_A);
 });

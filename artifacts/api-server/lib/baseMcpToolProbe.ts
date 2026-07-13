@@ -37,6 +37,8 @@ export interface BaseMcpToolProbeResult {
   tools: ClassifiedBaseMcpTool[];
   checkedAt: string;
   errorCode?: string;
+  protocolToolsStatus?: 'available' | 'unavailable';
+  walletToolsStatus?: 'available' | 'unavailable';
 }
 
 type MinimalMcpClient = {
@@ -231,6 +233,8 @@ export async function probeBaseMcpTools(input: {
       capabilities: classified.capabilities,
       tools: classified.tools,
       checkedAt,
+      protocolToolsStatus: classified.tools.some((tool) => tool.scope === 'protocol' && tool.enabled) ? 'available' : 'unavailable',
+      walletToolsStatus: classified.tools.some((tool) => tool.scope === 'wallet') ? 'available' : 'unavailable',
       ...(classified.tools.length > 0 ? {} : { errorCode: 'no_tools_available' }),
     };
     if (endpointHost) {

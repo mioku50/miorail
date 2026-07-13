@@ -148,4 +148,32 @@ describe('DynamicBaseMcpToolProvider', () => {
     );
     assert.deepStrictEqual(allDisabled, []);
   });
+
+  test('T47 wallet mismatch disables wallet tools but preserves Moonwell and Morpho reads', async () => {
+    const tools = classifyDynamicBaseMcpTools([
+      { name: 'get_wallets', inputSchema: { type: 'object' } },
+      { name: 'get_portfolio', inputSchema: { type: 'object' } },
+      { name: 'get_transaction_history', inputSchema: { type: 'object' } },
+      { name: 'send', inputSchema: { type: 'object' } },
+      { name: 'swap', inputSchema: { type: 'object' } },
+      { name: 'moonwell_get_markets', inputSchema: { type: 'object' } },
+      { name: 'morpho_query_vaults', inputSchema: { type: 'object' } },
+    ]);
+    const mockClient = createMockClient();
+    const aggregator = new ToolAggregator();
+    aggregator.registerProvider(new DynamicBaseMcpToolProvider(mockClient.client, tools, {
+      allowUserConfirmedSend: true,
+      allowUserConfirmedSwap: true,
+    }));
+    aggregator.setBaseMcpWalletToolsEnabled(false);
+
+    assert.deepStrictEqual((await aggregator.listTools()).map((tool) => tool.name), [
+      'moonwell_get_markets',
+      'morpho_query_vaults',
+    ]);
+    assert.equal((await aggregator.callTool('moonwell_get_markets', {})).isError, false);
+    assert.equal((await aggregator.callTool('morpho_query_vaults', {})).isError, false);
+    await assert.rejects(() => aggregator.callTool('get_portfolio', {}), /not found/);
+    assert.deepStrictEqual(mockClient.calls.map((call) => call.name), ['moonwell_get_markets', 'morpho_query_vaults']);
+  });
 });

@@ -143,7 +143,8 @@ test('runDirectBaseMcpSend blocks on a verified Base MCP wallet mismatch', async
     userId: 'default-user',
   });
   assert.equal(result?.errorCode, 'base_mcp_wallet_mismatch');
-  assert.match(result?.content || '', /Reconnect Base MCP with the same account/);
+  assert.match(result?.content || '', /current BaseApp wallet/);
+  assert.doesNotMatch(result?.content || '', /Reconnect Base MCP/);
   assert.equal((await repository.getByUser('default-user', 8453))?.reservedToday, 0);
 });
 

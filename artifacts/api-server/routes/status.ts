@@ -13,6 +13,10 @@ import {
   type X402RuntimeConfig,
 } from '@mioagent/x402-gateway';
 import { tenantUserId } from '../middleware/tenantAuth';
+import { tenantWalletAddress } from '../middleware/tenantAuth';
+import { createApiToolAggregatorForUser } from '../lib/baseMcpTools.js';
+import { verifyBaseMcpWalletMatch } from '../lib/baseMcpWalletReconciliation.js';
+import { buildWalletContext, walletEnvironmentFromRequest } from '../lib/walletContext.js';
 
 export function getSystemStatus(envOverride?: string) {
   const chainEnv = envOverride || process.env.CHAIN_ENV || 'sepolia';
@@ -186,6 +190,20 @@ export const statusRouter = Router();
 
 export const statusRouteRuntime = {
   getBaseMcpAuthStatus,
+  resolveWalletMatch: async (req: Parameters<typeof createApiToolAggregatorForUser>[0], userId: string, tenantWallet: string) => {
+    if (process.env.NODE_ENV === 'test') return { match: true, mcpAddresses: [], checked: false };
+    const tools = await createApiToolAggregatorForUser(
+      req,
+      userId,
+      process.env.SESSION_SECRET || 'test-secret',
+      { readOnlyOnly: true },
+    );
+    try {
+      return await verifyBaseMcpWalletMatch(tools, tenantWallet);
+    } finally {
+      await tools.close();
+    }
+  },
   probeRpcStatus: async (chainId: number, rpcUrl: string, provider: string) => {
     try {
       const response = await fetch(rpcUrl, {
@@ -226,13 +244,26 @@ statusRouter.get('/', async (req, res, next) => {
     const baseMcp = await probeBaseMcpStatus();
     const auth = await statusRouteRuntime.getBaseMcpAuthStatus(tenantUserId(req));
     const baseStatus = getSystemStatus();
+    const userId = tenantUserId(req);
+    const tenantWallet = tenantWalletAddress(req);
     const rpcUrl = baseStatus.chainId === 84532
       ? process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org'
       : process.env.BASE_MAINNET_RPC_URL || 'https://mainnet.base.org';
+    const finalizedBaseMcp = finalizeBaseMcpReadiness(attachBaseMcpToolProbeStatus(mergeBaseMcpAuthStatus(baseMcp, auth)));
+    let walletMatch = { match: true, mcpAddresses: [] as string[], checked: false };
+    if (auth.connected) {
+      walletMatch = await statusRouteRuntime.resolveWalletMatch(req, userId, tenantWallet);
+    }
+    const scopedStatus = buildWalletContext({
+      tenantWallet,
+      environment: walletEnvironmentFromRequest(req),
+      match: walletMatch,
+      baseMcpUsable: finalizedBaseMcp.usable === true || finalizedBaseMcp.readiness === 'tools_available',
+    });
     const statusData = {
       ...baseStatus,
       rpc: await statusRouteRuntime.probeRpcStatus(baseStatus.chainId, rpcUrl, baseStatus.rpc.provider),
-      baseMcp: finalizeBaseMcpReadiness(attachBaseMcpToolProbeStatus(mergeBaseMcpAuthStatus(baseMcp, auth))),
+      baseMcp: { ...finalizedBaseMcp, ...scopedStatus },
       x402: publicX402Status(await x402StatusFromEnv()),
     };
     res.json(StatusResponseSchema.parse(statusData));

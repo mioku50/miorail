@@ -92,6 +92,35 @@ test('read-only Base MCP portfolio continues when wallet reconciliation is unava
   assert.match(result?.content || '', /USDC/);
 });
 
+test('T47 BaseApp wallet mismatch reads the authenticated tenant through the native provider', async () => {
+  const provider = new ReadProvider();
+  const tools = new ToolAggregator();
+  tools.registerProvider(provider);
+  const tenantWallet = '0x8e525bfce1ef40aa8075ef64e45421b5855c8909';
+  let nativeAddress = '';
+  const result = await runDirectStreamRead({
+    message: 'check my Base balance',
+    walletAddress: tenantWallet,
+    walletEnvironment: 'baseapp',
+    walletMatch: {
+      checked: true,
+      match: false,
+      mcpAddresses: ['0x4de27ead5a3c9aeb58c7f812178ddde282670d70'],
+    },
+    nativePortfolioReader: async (address) => {
+      nativeAddress = address;
+      return { walletAddress: address, tokens: [{ symbol: 'USDC', balance: '8.52' }] };
+    },
+    tools,
+  });
+  assert.equal(nativeAddress, tenantWallet);
+  assert.deepEqual(provider.calls, []);
+  assert.equal(result?.errorCode, undefined);
+  assert.match(result?.content || '', /current BaseApp wallet/);
+  assert.match(result?.content || '', /8\.52/);
+  assert.doesNotMatch(result?.content || '', /Reconnect Base MCP/);
+});
+
 test('Morpho USDC opportunity request uses the dedicated read-only tool', async () => {
   const provider = new ReadProvider();
   const tools = new ToolAggregator();

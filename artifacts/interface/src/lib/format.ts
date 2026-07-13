@@ -67,7 +67,7 @@ export function baseMcpOAuthResultMessage(result?: string | null, code?: string 
   if (result === 'connected' && wallet === 'mismatch') {
     return {
       kind: 'warn',
-      text: 'Base MCP connected to a different wallet than your session wallet. Reconnect Base MCP with the same account to enable send and swap.',
+      text: 'Base MCP is connected to another Coinbase wallet. Miorail will use your current BaseApp wallet for balances and confirmations. Coinbase wallet-specific MCP tools are disabled for this session.',
     };
   }
   if (result === 'connected') {

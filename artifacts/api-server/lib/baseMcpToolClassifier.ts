@@ -24,5 +24,6 @@ export type {
   BaseMcpToolCapabilityCounts,
   BaseMcpToolClassificationResult,
   BaseMcpToolForClassification,
+  BaseMcpToolScope,
   ClassifiedBaseMcpTool,
 } from '@mioagent/mcp';

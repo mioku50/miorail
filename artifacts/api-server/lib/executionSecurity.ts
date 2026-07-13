@@ -30,7 +30,7 @@ export async function loadExecutionSecurityContext(
   calls: BaseCall[],
 ): Promise<ExecutionSecurityContext> {
   const moonwell = isMoonwellActionType(actionType);
-  const required = chainId === 8453 && (actionType === 'limited_transfer' || moonwell);
+  const required = chainId === 8453 && (actionType === 'limited_transfer' || actionType === 'uniswap_swap' || moonwell);
   const configured = executionSecurityRuntime.getProvider();
   if (!required) return contextFrom(configured, [], false);
   if (configured.providerName !== 'goplus') return contextFrom(configured, [], true);
@@ -39,7 +39,7 @@ export async function loadExecutionSecurityContext(
   // T44b: Moonwell batches legitimately target protocol contracts, but the
   // token-security question is always about canonical USDC — a fixed, never
   // attacker-controlled address, so querying it is safe unconditionally.
-  if (moonwell) {
+  if (moonwell || actionType === 'uniswap_swap') {
     return loadTokenSecurityContext(chainId, [canonicalUsdc]);
   }
 

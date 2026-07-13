@@ -6,12 +6,14 @@ import {
   useSession,
   useVerifyWallet,
   useWalletChallenge,
+  setWalletEnvironment,
 } from '@mioagent/api-client-react';
 import { WalletConnect } from '../shell/WalletConnect';
 import { clearTenantClientState } from '../lib/tenantState';
+import { isBaseAppEnvironment } from '../lib/baseAppEnvironment';
 
 export function WalletAuthGate({ children }: { children: ReactNode }) {
-  const { address, isConnected, chainId } = useAccount();
+  const { address, isConnected, chainId, connector } = useAccount();
   const { switchChainAsync } = useSwitchChain();
   const { signMessageAsync } = useSignMessage();
   const queryClient = useQueryClient();
@@ -21,6 +23,29 @@ export function WalletAuthGate({ children }: { children: ReactNode }) {
   const attemptAddress = useRef<string | null>(null);
   const previousAddress = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void connector?.getProvider().then((provider) => {
+      if (cancelled) return;
+      const environment = isBaseAppEnvironment({
+        connectorId: connector.id,
+        connectorName: connector.name,
+        userAgent: typeof navigator === 'undefined' ? '' : navigator.userAgent,
+        provider,
+      }) ? 'baseapp' : 'web';
+      setWalletEnvironment(environment);
+      void queryClient.invalidateQueries({ queryKey: ['status'] });
+    }).catch(() => {
+      setWalletEnvironment('web');
+      void queryClient.invalidateQueries({ queryKey: ['status'] });
+    });
+    if (!connector) {
+      setWalletEnvironment('web');
+      void queryClient.invalidateQueries({ queryKey: ['status'] });
+    }
+    return () => { cancelled = true; };
+  }, [connector, queryClient]);
 
   const authenticate = useCallback(async () => {
     if (!address || chainId !== 8453 || attemptAddress.current === address.toLowerCase()) return;

@@ -1,4 +1,5 @@
 export type BaseMcpToolCapability = 'read_only' | 'user_confirmed_transaction' | 'forbidden' | 'unknown';
+export type BaseMcpToolScope = 'wallet' | 'protocol';
 
 export interface BaseMcpToolForClassification {
   name: string;
@@ -7,6 +8,8 @@ export interface BaseMcpToolForClassification {
 
 export interface ClassifiedBaseMcpTool extends BaseMcpToolForClassification {
   capability: BaseMcpToolCapability;
+  /** Wallet tools operate on the OAuth account; protocol tools are account-independent reads. */
+  scope: BaseMcpToolScope;
   enabled: boolean;
   reason: string;
 }
@@ -83,6 +86,19 @@ const DEFAULT_USER_CONFIRMED_TRANSACTION_TOOLS = new Set([
   'sepoliasendcalls',
   'walletsendcalls',
   'walletsendcall',
+]);
+
+// T47: these capabilities are meaningful only for the wallet authorized by
+// Base MCP OAuth. A protocol-prefixed market/read tool stays protocol-scoped
+// even when its name happens to contain a generic word such as "transaction".
+const WALLET_SCOPED_TOOLS = new Set([
+  'getwallets',
+  'getportfolio',
+  'gettransactionhistory',
+  'send',
+  'swap',
+  'sendcalls',
+  'walletsendcalls',
 ]);
 
 const DEFAULT_FORBIDDEN_DENYLIST = new Set([
@@ -180,12 +196,14 @@ function capabilityCounts(): BaseMcpToolCapabilityCounts {
 
 function classifyTool(tool: BaseMcpToolForClassification): ClassifiedBaseMcpTool {
   const normalized = normalizeToolName(tool.name);
+  const scope: BaseMcpToolScope = WALLET_SCOPED_TOOLS.has(normalized) ? 'wallet' : 'protocol';
   const configuredReadOnly = parseConfiguredNames(process.env.BASE_MCP_READ_ONLY_TOOLS_ALLOWLIST);
   const configuredForbidden = parseConfiguredNames(process.env.BASE_MCP_FORBIDDEN_TOOLS_DENYLIST);
 
   if (configuredForbidden.has(normalized) || DEFAULT_FORBIDDEN_DENYLIST.has(normalized)) {
     return {
       ...tool,
+      scope,
       capability: 'forbidden',
       enabled: false,
       reason: 'forbidden_by_denylist',
@@ -195,6 +213,7 @@ function classifyTool(tool: BaseMcpToolForClassification): ClassifiedBaseMcpTool
   if (FORBIDDEN_MARKERS.some((marker) => normalized.includes(marker))) {
     return {
       ...tool,
+      scope,
       capability: 'forbidden',
       enabled: false,
       reason: 'signature_or_broadcast_tool_forbidden',
@@ -204,6 +223,7 @@ function classifyTool(tool: BaseMcpToolForClassification): ClassifiedBaseMcpTool
   if (SIGNATURE_MARKERS.some((marker) => normalized.includes(marker))) {
     return {
       ...tool,
+      scope,
       capability: 'forbidden',
       enabled: false,
       reason: 'signature_tool_forbidden',
@@ -212,10 +232,11 @@ function classifyTool(tool: BaseMcpToolForClassification): ClassifiedBaseMcpTool
 
   if (
     DEFAULT_USER_CONFIRMED_TRANSACTION_TOOLS.has(normalized) ||
-    TRANSACTION_MARKERS.some((marker) => normalized.includes(marker))
+    (normalized !== 'gettransactionhistory' && TRANSACTION_MARKERS.some((marker) => normalized.includes(marker)))
   ) {
     return {
       ...tool,
+      scope,
       capability: 'user_confirmed_transaction',
       enabled: false,
       reason: 'transaction_tool_user_confirmation_required',
@@ -230,6 +251,7 @@ function classifyTool(tool: BaseMcpToolForClassification): ClassifiedBaseMcpTool
   ) {
     return {
       ...tool,
+      scope,
       capability: 'read_only',
       enabled: true,
       reason: configuredReadOnly.has(normalized) ? 'read_only_env_allowlist' : 'read_only_allowlist',
@@ -238,6 +260,7 @@ function classifyTool(tool: BaseMcpToolForClassification): ClassifiedBaseMcpTool
 
   return {
     ...tool,
+    scope,
     capability: 'unknown',
     enabled: false,
     reason: 'unknown_tool_disabled_by_default',

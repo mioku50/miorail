@@ -9,11 +9,12 @@ import {
 } from './baseGuards.js';
 import { simulateTrade, type SimulationResult } from './simulation.js';
 import { isMoonwellActionType, validateMoonwellAction, type MoonwellActionCall, type MoonwellActionType } from './moonwellGuard.js';
+import { validateUniswapSwap, type UniswapSwapContext } from './uniswapGuard.js';
 
 // T44b: moonwell_* verbs join the typed whitelist with their OWN strict
 // validator (moonwellGuard). revoke_approval/limited_transfer semantics are
 // untouched — they keep the exact path below.
-export type ExecutableActionType = 'revoke_approval' | 'limited_transfer' | MoonwellActionType;
+export type ExecutableActionType = 'revoke_approval' | 'limited_transfer' | 'uniswap_swap' | MoonwellActionType;
 
 export interface ExecutionTokenSecurityResult {
   address: string;
@@ -52,6 +53,8 @@ export interface ExecutionGuardInput {
    * action types; ignored for every other type.
    */
   moonwell?: { amountDecimal: string };
+  /** Server-stored quote/batch context; never accepted from the client body. */
+  uniswap?: UniswapSwapContext;
 }
 
 export interface ExecutionGuardResult {
@@ -91,7 +94,7 @@ export async function evaluateExecutableAction(input: ExecutionGuardInput): Prom
   // canonical-USDC calldata path. Contract security (GoPlus on canonical USDC)
   // is REQUIRED for them on mainnet, same as limited_transfer.
   const requiresContractSecurity = chain.chainId === BASE_MAINNET_CHAIN_ID
-    && (input.actionType === 'limited_transfer' || isMoonwellActionType(input.actionType));
+    && (input.actionType === 'limited_transfer' || input.actionType === 'uniswap_swap' || isMoonwellActionType(input.actionType));
   const screening = screenAction({
     instruction: input.instruction,
     memoryMd: input.memoryMd,
@@ -166,6 +169,58 @@ export async function evaluateExecutableAction(input: ExecutionGuardInput): Prom
       simulation,
       semantics: validated.semantics,
       contractSecurity: moonwellContractSecurity,
+    };
+  }
+
+  if (input.actionType === 'uniswap_swap') {
+    const validated = validateUniswapSwap({ chain: input.chain, calls: input.calls, context: input.uniswap });
+    const simulation: SimulationResult = validated.success
+      ? {
+          success: true,
+          allowed: true,
+          riskLevel: 'medium',
+          method: 'preflight-validation',
+          reason: 'Uniswap 5792 batch passed pinned-router and exact-approval validation',
+          estimatedGas: 'unknown',
+          expectedOutput: 'Wallet-confirmed Uniswap swap prepared by the official API',
+          checks: validated.checks,
+        }
+      : {
+          success: false,
+          allowed: false,
+          riskLevel: 'blocked',
+          method: 'preflight-validation',
+          reason: validated.reason,
+          error: validated.reason,
+          checks: validated.checks,
+        };
+    if (!validated.success) {
+      return blocked(validated.code, validated.reason, {
+        chain,
+        screening,
+        simulation,
+        contractSecurity: contractState(input, true, 'blocked'),
+      });
+    }
+    const contractSecurity = evaluateContractSecurity(input, validated.semantics.tokenAddresses, true);
+    if (contractSecurity.status === 'blocked') {
+      return blocked('contract_security_blocked', contractSecurity.warnings.join('; ') || 'Contract security gate blocked action', {
+        chain,
+        screening,
+        simulation,
+        semantics: validated.semantics,
+        contractSecurity,
+      });
+    }
+    return {
+      success: true,
+      allowed: true,
+      code: 'allowed',
+      chain,
+      screening,
+      simulation,
+      semantics: validated.semantics,
+      contractSecurity,
     };
   }
 

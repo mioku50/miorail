@@ -49,6 +49,9 @@ import {
   type NormalizedSemanticIntent,
 } from '../lib/semanticIntent.js';
 import { storePreparedTransaction, updatePreparedTransactionStatus } from '../lib/preparedTransactionStore.js';
+import { verifyBaseMcpWalletMatch } from '../lib/baseMcpWalletReconciliation.js';
+import { walletEnvironmentFromRequest } from '../lib/walletContext.js';
+import { runDirectBaseAppNativeSend, runDirectBaseAppNativeSwap } from '../lib/streamBaseAppNativeRouting.js';
 
 export const chatRouter = Router();
 
@@ -63,7 +66,7 @@ export const chatRouteRuntime = {
 const EXPLICIT_TRANSACTION_REQUEST = /(?:\b(?:swap|exchange|buy|sell|approve|revoke|send|transfer)\b|(?:обменяй|обменять|свапни|свапнуть|купи|купить|отправь|отправить|переведи|перевести))/iu;
 
 function deterministicPreparedIntent(message: string, kind: string): NormalizedSemanticIntent | null {
-  if (kind === 'base_mcp_send') {
+  if (kind === 'base_mcp_send' || kind === 'baseapp_native_send') {
     const parsed = detectBaseMcpSendIntent(message);
     if (!parsed) return null;
     return {
@@ -74,7 +77,7 @@ function deterministicPreparedIntent(message: string, kind: string): NormalizedS
       clarification: null, errors: [], recipientSource: 'message',
     };
   }
-  if (kind === 'base_mcp_swap') {
+  if (kind === 'base_mcp_swap' || kind === 'baseapp_native_swap') {
     const parsed = detectSwapIntent(message);
     if (!parsed) return null;
     return {
@@ -181,6 +184,7 @@ chatRouter.post('/', async (req, res, next) => {
     const { message } = ChatMessageRequestSchema.parse(req.body);
     const userId = tenantUserId(req);
     const walletAddress = tenantWalletAddress(req);
+    const walletEnvironment = walletEnvironmentFromRequest(req);
     // The client may describe its UI network, but it must never promote the
     // server from read-only to an executable environment.
     const configuredChainEnv = process.env.CHAIN_ENV || 'mainnet-readonly';
@@ -203,6 +207,8 @@ chatRouter.post('/', async (req, res, next) => {
       },
     );
     res.once('finish', () => { void tools.close(); });
+    const walletMatch = await verifyBaseMcpWalletMatch(tools, walletAddress);
+    if (walletMatch.checked && !walletMatch.match) tools.setBaseMcpWalletToolsEnabled(false);
     console.log("TRACE: tools created");
 
     console.log("TRACE: querying chats db");
@@ -252,20 +258,30 @@ chatRouter.post('/', async (req, res, next) => {
           toolCalls: [],
           errorCode: requestsApprovalBypass(message) ? 'approval_bypass_forbidden' : 'prompt_injection_blocked',
         }
-      : await runDirectBaseMcpSend({
+      : (walletEnvironment === 'baseapp' ? await runDirectBaseAppNativeSend({
+      message,
+      walletAddress,
+      userConfirmedEnabled: runtimeExecutionCapabilities.userConfirmedEnabled,
+      userId,
+    }) : await runDirectBaseMcpSend({
       message,
       walletAddress,
       tools,
       userConfirmedEnabled: runtimeExecutionCapabilities.userConfirmedEnabled,
       userId,
-    })
-      || await runDirectBaseMcpSwap({
+    }))
+      || (walletEnvironment === 'baseapp' ? await runDirectBaseAppNativeSwap({
+      message,
+      walletAddress,
+      userConfirmedEnabled: runtimeExecutionCapabilities.userConfirmedEnabled,
+      userId,
+    }) : await runDirectBaseMcpSwap({
       message,
       walletAddress,
       tools,
       userConfirmedEnabled: runtimeExecutionCapabilities.userConfirmedEnabled,
       userId,
-    })
+    }))
       || await runDirectMoonwellWrite({
       message,
       walletAddress,
@@ -274,7 +290,14 @@ chatRouter.post('/', async (req, res, next) => {
       userId,
     })
       || await runDirectQuoteRead({ message, walletAddress, tools })
-      || await runDirectStreamRead({ message, walletAddress, tools });
+      || await runDirectStreamRead({
+        message,
+        walletAddress,
+        tools,
+        walletEnvironment,
+        walletMatch,
+        nativePortfolioReader: (address) => fetchInternalPortfolio(address, runtimeChainEnv),
+      });
     if (!directRead && !explicitRevokeIntent) {
       semanticLlm = chatRouteRuntime.createLlmProvider();
       semanticDecision = await chatRouteRuntime.routeSemanticIntent({
@@ -285,6 +308,9 @@ chatRouter.post('/', async (req, res, next) => {
         tools,
         userConfirmedEnabled: runtimeExecutionCapabilities.userConfirmedEnabled,
         userId,
+        walletEnvironment,
+        walletMatch,
+        nativePortfolioReader: (address) => fetchInternalPortfolio(address, runtimeChainEnv),
       });
       directRead = semanticDecision.result;
     }
@@ -310,10 +336,10 @@ chatRouter.post('/', async (req, res, next) => {
         toolCalls: directRead.toolCalls,
         ...('actionId' in directRead && directRead.actionId ? { actionId: directRead.actionId } : {}),
         metadata: {
-          readOnly: !['base_mcp_send', 'base_mcp_swap', 'moonwell_write'].includes(directRead.kind),
+          readOnly: !['base_mcp_send', 'base_mcp_swap', 'baseapp_native_send', 'baseapp_native_swap', 'moonwell_write'].includes(directRead.kind),
           chainId: runtimeChainId,
           chainMode: runtimeChainEnv,
-          userConfirmed: ['base_mcp_send', 'base_mcp_swap', 'moonwell_write'].includes(directRead.kind)
+          userConfirmed: ['base_mcp_send', 'base_mcp_swap', 'baseapp_native_send', 'baseapp_native_swap', 'moonwell_write'].includes(directRead.kind)
             && runtimeExecutionCapabilities.userConfirmedEnabled,
           directReadKind: directRead.kind,
           ...('actionId' in directRead && directRead.actionId ? { actionId: directRead.actionId } : {}),

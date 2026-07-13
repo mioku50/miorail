@@ -29,6 +29,9 @@ import { buildActionPlan, planHasCalls, parseRevokeApproval, findActiveApproval 
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
 import { evaluateExecutableAction, screenAction, simulateTrade } from '@mioagent/security';
 import { isMoonwellActionType } from '@mioagent/security/moonwellGuard';
+import type { UniswapSwapContext } from '@mioagent/security/uniswapGuard';
+import { stableSemanticHash } from '../lib/semanticIntent.js';
+import { preparedTransactionIntents } from '@mioagent/db';
 import { normalizeBaseChain } from '@mioagent/security/baseGuards';
 import { isProductionActionType, type ProductionActionType } from '@mioagent/api-zod';
 import { MemoryService } from '@mioagent/memory';
@@ -681,6 +684,44 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
     const moonwellContext = isMoonwellActionType(payload.actionType) && meta.moonwell?.amountDecimal
       ? { amountDecimal: String(meta.moonwell.amountDecimal) }
       : undefined;
+    const uniswapContext: UniswapSwapContext | undefined = payload.actionType === 'uniswap_swap' && meta.uniswap
+      ? {
+          amountDecimal: String(meta.uniswap.amountDecimal),
+          inputToken: meta.uniswap.inputToken,
+          outputToken: meta.uniswap.outputToken,
+          swapper: String(meta.uniswap.swapper),
+          routerVersion: meta.uniswap.routerVersion,
+          expiresAt: String(meta.uniswap.expiresAt),
+        }
+      : undefined;
+
+    // T47 typed-intent integrity: native BaseApp actions are bound to the
+    // authenticated tenant, wallet, stored payload hash and expiry. The client
+    // body contributes no transaction fields.
+    const nativePreparedAction = meta.createdBy === 'baseapp-native-routing';
+    const [preparedIntent] = nativePreparedAction
+      ? await db.select().from(preparedTransactionIntents).where(and(
+          eq(preparedTransactionIntents.actionId, actionId),
+          eq(preparedTransactionIntents.userId, userId),
+          eq(preparedTransactionIntents.status, 'pending'),
+        ))
+      : [];
+    if (nativePreparedAction) {
+      if (!preparedIntent) {
+        return res.status(403).json({ success: false, error: 'Prepared native action intent is missing' });
+      }
+      const expectedPayload = {
+        executionPayload: payload,
+        tenantId: userId,
+        walletAddress: userAddress.toLowerCase(),
+        expiresAt: preparedIntent.expiresAt.toISOString(),
+      };
+      if (preparedIntent.walletAddress !== userAddress.toLowerCase()
+        || preparedIntent.expiresAt.getTime() <= Date.now()
+        || stableSemanticHash(expectedPayload) !== preparedIntent.preparedPayloadHash) {
+        return res.status(403).json({ success: false, error: 'Prepared action tenant, wallet, payload or expiry no longer matches' });
+      }
+    }
     const executionSecurity = await actionsRouteRuntime.loadExecutionSecurityContext(
       normalizedChain.chainId,
       payload.actionType,
@@ -695,6 +736,7 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
       providerContext: executionSecurity.providerContext,
       tokenSecurity: executionSecurity.tokenSecurity,
       ...(moonwellContext ? { moonwell: moonwellContext } : {}),
+      ...(uniswapContext ? { uniswap: uniswapContext } : {}),
     });
     const screenRes = guardResult.screening || {
       allowed: false,
@@ -791,6 +833,7 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
         providerContext: executionSecurity.providerContext,
         tokenSecurity: executionSecurity.tokenSecurity,
         ...(moonwellContext ? { moonwell: moonwellContext } : {}),
+        ...(uniswapContext ? { uniswap: uniswapContext } : {}),
       });
       if (!gatewayResult.success || !gatewayResult.reservation || !gatewayResult.policy || !gatewayResult.sendCallsRequest) {
         return res.json(PrepareActionResponseSchema.parse({

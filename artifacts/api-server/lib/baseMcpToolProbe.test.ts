@@ -84,6 +84,7 @@ test('probeBaseMcpTools lists sanitized tools without invoking send_calls or cal
       name: 'get_wallets',
       description: 'Wallet inventory read only',
       capability: 'read_only',
+      scope: 'wallet',
       enabled: true,
       reason: 'read_only_allowlist',
     },
@@ -91,6 +92,7 @@ test('probeBaseMcpTools lists sanitized tools without invoking send_calls or cal
       name: 'send_calls',
       description: 'Write tool is listed but not invoked.',
       capability: 'user_confirmed_transaction',
+      scope: 'wallet',
       enabled: false,
       reason: 'transaction_tool_user_confirmation_required',
     },
@@ -100,6 +102,8 @@ test('probeBaseMcpTools lists sanitized tools without invoking send_calls or cal
   assert.strictEqual(connected, true);
   assert.strictEqual(closed, true);
   assert.strictEqual(callToolInvoked, false);
+  assert.strictEqual(result.protocolToolsStatus, 'unavailable');
+  assert.strictEqual(result.walletToolsStatus, 'available');
 
   const status = attachBaseMcpToolProbeStatus({
     status: 'connected',

@@ -219,6 +219,13 @@ The Configure screen exposes the four independent execution gates: runtime/globa
 
 The legacy Base Sepolia helper is read-only. API routes no longer read `TESTNET_PRIVATE_KEY` or `PRIVATE_KEY`; testnet mutations must be signed by a connected wallet and submitted with transaction proof.
 
+BaseApp and Base MCP OAuth are independent wallet contexts. In an embedded
+BaseApp session, the verified SIWE wallet is always the tenant and execution
+wallet: balances use the native portfolio providers, and send/swap actions are
+prepared for client-side `wallet_sendCalls`. A different Base MCP OAuth wallet
+disables only wallet-scoped MCP tools; protocol and market reads remain
+available. See [`docs/T47_BASEAPP_NATIVE_WALLET.md`](docs/T47_BASEAPP_NATIVE_WALLET.md).
+
 Sepolia to mainnet checklist:
 
 1. Run DB migrations through `0008_autonomy_execution_gateway.sql` so the policy and reservation tables exist.

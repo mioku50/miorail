@@ -28,6 +28,7 @@ test('known safe read-only Base MCP tool is enabled as read_only', () => {
     name: 'get_wallets',
     description: 'Wallet inventory',
     capability: 'read_only',
+    scope: 'wallet',
     enabled: true,
     reason: 'read_only_allowlist',
   });
@@ -89,9 +90,34 @@ test('unknown tools are classified unknown and disabled by default', () => {
   assert.deepStrictEqual(result.tools[0], {
     name: 'mystery_plugin_magic',
     capability: 'unknown',
+    scope: 'protocol',
     enabled: false,
     reason: 'unknown_tool_disabled_by_default',
   });
+});
+
+test('T47 separates OAuth-wallet capabilities from protocol/data tools', () => {
+  const result = classifyBaseMcpTools([
+    { name: 'get_wallets' },
+    { name: 'get_portfolio' },
+    { name: 'get_transaction_history' },
+    { name: 'send' },
+    { name: 'swap' },
+    { name: 'send_calls' },
+    { name: 'moonwell_get_markets' },
+    { name: 'morpho_query_vaults' },
+  ]);
+  assert.deepStrictEqual(result.tools.map((tool) => [tool.name, tool.scope]), [
+    ['get_wallets', 'wallet'],
+    ['get_portfolio', 'wallet'],
+    ['get_transaction_history', 'wallet'],
+    ['send', 'wallet'],
+    ['swap', 'wallet'],
+    ['send_calls', 'wallet'],
+    ['moonwell_get_markets', 'protocol'],
+    ['morpho_query_vaults', 'protocol'],
+  ]);
+  assert.equal(result.tools.find((tool) => tool.name === 'get_transaction_history')?.capability, 'read_only');
 });
 
 test('explicit denylist overrides read-only allowlist', () => {

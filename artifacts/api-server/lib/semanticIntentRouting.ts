@@ -5,6 +5,9 @@ import { loadTokenSecurityContext } from './executionSecurity.js';
 import { runDirectBaseMcpSend } from './streamBaseMcpSendRouting.js';
 import { runDirectBaseMcpSwap } from './streamBaseMcpSwapRouting.js';
 import { runDirectMoonwellWrite, type MoonwellWriteVerb } from './streamMoonwellWriteRouting.js';
+import { runDirectBaseAppNativeSend, runDirectBaseAppNativeSwap } from './streamBaseAppNativeRouting.js';
+import type { WalletEnvironment } from './walletContext.js';
+import type { BaseMcpWalletMatchResult } from './baseMcpWalletReconciliation.js';
 import { runDirectQuoteRead } from './streamQuoteRouting.js';
 import {
   runDirectStreamRead,
@@ -37,6 +40,8 @@ export interface SemanticDirectResult {
   reservationExpiresAt?: string;
   approvalTerminal?: boolean;
   actionId?: string;
+  actionExpiresAt?: string;
+  preparedPayload?: Record<string, unknown>;
 }
 
 export interface SemanticRoutingDecision {
@@ -217,6 +222,9 @@ export async function routeSemanticIntent(input: {
   tools: ToolAggregator;
   userConfirmedEnabled: boolean;
   userId: string;
+  walletEnvironment?: WalletEnvironment;
+  walletMatch?: BaseMcpWalletMatchResult;
+  nativePortfolioReader?: (walletAddress: string) => Promise<unknown>;
 }): Promise<SemanticRoutingDecision> {
   const extraction = await extractSemanticIntent({ llm: input.llm, message: input.message, context: input.context });
   if (!extraction) {
@@ -242,7 +250,14 @@ export async function routeSemanticIntent(input: {
   if (normalized.intent === 'portfolio_review') return decision(undefined, 'portfolio');
   if (normalized.intent === 'confirmation_status') return decision(latestApprovalStatus(input.context));
   if (normalized.intent === 'balance' || normalized.intent === 'portfolio') {
-    const result = await runDirectStreamRead({ message: 'check my Base balance', walletAddress: input.walletAddress, tools: input.tools });
+    const result = await runDirectStreamRead({
+      message: 'check my Base balance',
+      walletAddress: input.walletAddress,
+      tools: input.tools,
+      walletEnvironment: input.walletEnvironment,
+      walletMatch: input.walletMatch,
+      nativePortfolioReader: input.nativePortfolioReader,
+    });
     return decision(result || direct('base_portfolio', 'Base MCP portfolio reads are unavailable.', 'base_mcp_portfolio_tool_unavailable'));
   }
   if (normalized.intent === 'token_security') return decision(await runTokenSecurityRead(normalized));
@@ -274,7 +289,17 @@ export async function routeSemanticIntent(input: {
   }
   if (normalized.intent === 'send') {
     if (normalized.asset?.symbol !== 'USDC') return decision(direct('semantic_clarification', 'Miorail direct sends currently support canonical Base USDC only. Which USDC amount should I send?', 'send_asset_unsupported'));
-    const result = await runDirectBaseMcpSend({
+    const result = input.walletEnvironment === 'baseapp' ? await runDirectBaseAppNativeSend({
+      message: input.message,
+      normalizedIntent: {
+        amount: Number(normalized.amount!.kind === 'exact' ? normalized.amount!.value : Number.NaN),
+        amountText: normalized.amount!.kind === 'exact' ? normalized.amount!.value : '',
+        recipient: normalized.recipient!.toLowerCase(),
+      },
+      walletAddress: input.walletAddress,
+      userConfirmedEnabled: input.userConfirmedEnabled,
+      userId: input.userId,
+    }) : await runDirectBaseMcpSend({
       message: input.message,
       normalizedIntent: {
         amount: Number(normalized.amount!.kind === 'exact' ? normalized.amount!.value : Number.NaN),
@@ -289,7 +314,17 @@ export async function routeSemanticIntent(input: {
     return decision(result || direct('base_mcp_send', 'Base MCP send is unavailable.', 'base_mcp_send_unavailable'));
   }
   if (normalized.intent === 'swap') {
-    const result = await runDirectBaseMcpSwap({
+    const result = input.walletEnvironment === 'baseapp' ? await runDirectBaseAppNativeSwap({
+      message: input.message,
+      normalizedIntent: {
+        amount: normalized.amount!.kind === 'exact' ? normalized.amount!.value : '',
+        tokenIn: normalized.fromAsset!.symbol,
+        tokenOut: normalized.toAsset!.symbol,
+      },
+      walletAddress: input.walletAddress,
+      userConfirmedEnabled: input.userConfirmedEnabled,
+      userId: input.userId,
+    }) : await runDirectBaseMcpSwap({
       message: input.message,
       normalizedIntent: {
         amount: normalized.amount!.kind === 'exact' ? normalized.amount!.value : '',

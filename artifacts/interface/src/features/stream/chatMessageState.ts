@@ -23,7 +23,9 @@ export function baseMcpReconnectIssue(messages: Array<{ metadata?: Record<string
   for (const message of [...messages].reverse()) {
     const code = String(message.metadata?.errorCode || '');
     if (code === 'base_mcp_wallet_mismatch') {
-      return 'Base MCP is connected to a different wallet. Reconnect it with the authenticated Base Account.';
+      // T47: mismatch is a valid dual-wallet state. BaseApp-native portfolio
+      // and confirmation remain available; reconnect is optional, not a fix.
+      return null;
     }
     if (code === 'base_mcp_wallet_unverified') {
       return 'Base MCP could not verify the connected wallet. Reconnect it before preparing a transaction.';

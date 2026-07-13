@@ -459,6 +459,56 @@ test('Actions API', async (t) => {
     process.env.MAINNET_EXECUTION_ENABLED = 'false';
   });
 
+  await t.test('T47: native action preparation is rejected after its typed intent was invalidated', async () => {
+    process.env.CHAIN_ENV = 'mainnet';
+    process.env.MAINNET_EXECUTION_ENABLED = 'true';
+    let selectCount = 0;
+    const mockSelect = mock.fn(() => ({
+      from: mock.fn(() => ({
+        where: mock.fn(async () => {
+          selectCount += 1;
+          if (selectCount > 1) return [];
+          return [{
+            id: 'act-native-invalidated',
+            userId: 'default-user',
+            kind: 'transaction',
+            status: 'pending',
+            suggestedPrompt: 'Transfer 1 USDC',
+            executionPayload: {
+              chain: 'eip155:8453',
+              actionType: 'limited_transfer',
+              calls: [{
+                to: BASE_MAINNET_USDC,
+                value: '0',
+                data: `0xa9059cbb${'1'.padStart(64, '0')}${(1_000_000).toString(16).padStart(64, '0')}`,
+              }],
+            },
+            metadata: {
+              createdBy: 'baseapp-native-routing',
+              instruction: 'Transfer 1 USDC',
+              walletAddress: '0x0000000000000000000000000000000000000000',
+            },
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          }];
+        }),
+      })),
+    }));
+    mock.method(db, 'select', mockSelect);
+    const { MemoryService } = await import('@mioagent/memory');
+    mock.method(MemoryService, 'getUserSettings', async () => null);
+
+    const response = await request(app).post('/api/actions/act-native-invalidated/prepare');
+
+    assert.strictEqual(response.status, 403);
+    assert.match(response.body.error, /intent is missing/);
+    assert.strictEqual(selectCount, 2);
+
+    mock.restoreAll();
+    process.env.CHAIN_ENV = 'sepolia';
+    process.env.MAINNET_EXECUTION_ENABLED = 'false';
+  });
+
   await t.test('unified prepare guard rejects actionType/calldata mismatch before wallet approval', async () => {
     process.env.CHAIN_ENV = 'mainnet';
     process.env.MAINNET_EXECUTION_ENABLED = 'true';
