@@ -9,27 +9,30 @@ test('T48a.1 detects Base App via user-agent regardless of casing', () => {
   assert.equal(detectBaseAppEarly({ userAgent: 'cbwallet/9.0 Android' }), true);
 });
 
-test('T48a.1 detects Base App via primary provider flags', () => {
-  assert.equal(
-    detectBaseAppEarly({ userAgent: 'Mozilla/5.0', ethereum: { isCoinbaseWallet: true } }),
-    true,
-  );
+test('T48a.2 detects Base App via the webview-only isBaseApp flag', () => {
   assert.equal(
     detectBaseAppEarly({ userAgent: 'Mozilla/5.0', ethereum: { isBaseApp: true } }),
     true,
   );
 });
 
-test('T48a.1 detects Base App via EIP-6963 providers[] fan-out', () => {
+test('T48a.2 does NOT treat isCoinbaseWallet as a Base App signal (desktop extension sets it)', () => {
+  // The desktop Coinbase Wallet extension sets isCoinbaseWallet=true; that must
+  // not classify a normal browser as Base App, or baseAccount() sign-in is lost.
+  assert.equal(
+    detectBaseAppEarly({ userAgent: 'Mozilla/5.0', ethereum: { isCoinbaseWallet: true } }),
+    false,
+  );
   assert.equal(
     detectBaseAppEarly({
       userAgent: 'Mozilla/5.0',
-      ethereum: {
-        providers: [{ isMetaMask: true }, { isCoinbaseWallet: true }],
-      },
+      ethereum: { providers: [{ isMetaMask: true }, { isCoinbaseWallet: true }] },
     }),
-    true,
+    false,
   );
+});
+
+test('T48a.2 detects Base App via EIP-6963 providers[] isBaseApp fan-out', () => {
   assert.equal(
     detectBaseAppEarly({
       userAgent: 'Mozilla/5.0',

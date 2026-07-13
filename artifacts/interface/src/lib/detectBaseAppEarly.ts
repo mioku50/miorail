@@ -22,17 +22,22 @@ export interface DetectBaseAppEarlyInput {
 }
 
 interface MaybeProviderFlags {
-  isCoinbaseWallet?: boolean;
   isBaseApp?: boolean;
   providers?: unknown[];
 }
 
 const BASE_APP_UA_PATTERN = /baseapp|coinbasewallet|cbwallet/i;
 
+// T48a.2: `isCoinbaseWallet` is NOT a BaseApp signal. The desktop Coinbase
+// Wallet browser extension sets `window.ethereum.isCoinbaseWallet = true` too,
+// which false-positived here and stripped the baseAccount() connector from
+// normal desktop browsers. Only the embedded webview is authoritative: match
+// it via the user-agent (handled in detectBaseAppEarly) or the webview-only
+// `isBaseApp` flag — never via `isCoinbaseWallet`.
 function hasBaseAppFlags(provider: unknown): provider is MaybeProviderFlags {
   if (!provider || typeof provider !== 'object') return false;
   const flags = provider as MaybeProviderFlags;
-  return flags.isCoinbaseWallet === true || flags.isBaseApp === true;
+  return flags.isBaseApp === true;
 }
 
 export function detectBaseAppEarly(input: DetectBaseAppEarlyInput): boolean {

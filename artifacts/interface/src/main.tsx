@@ -8,6 +8,7 @@ import { ThemeProvider } from '@mioagent/ui';
 import './index.css';
 import App from './app/App';
 import { AuthProvider } from './app/AuthProvider';
+import { AppErrorBoundary } from './app/AppErrorBoundary';
 import { detectBaseAppEarly } from './lib/detectBaseAppEarly';
 
 const queryClient = new QueryClient();
@@ -40,12 +41,14 @@ const config = createConfig({
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ThemeProvider>
-      <WagmiProvider config={config}>
-        <QueryClientProvider client={queryClient}>
-          <AuthProvider><App /></AuthProvider>
-        </QueryClientProvider>
-      </WagmiProvider>
-    </ThemeProvider>
+    <AppErrorBoundary>
+      <ThemeProvider>
+        <WagmiProvider config={config}>
+          <QueryClientProvider client={queryClient}>
+            <AuthProvider><App /></AuthProvider>
+          </QueryClientProvider>
+        </WagmiProvider>
+      </ThemeProvider>
+    </AppErrorBoundary>
   </StrictMode>,
 );

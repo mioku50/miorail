@@ -45,26 +45,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   // T47: detect BaseApp vs normal-web wallet context so the backend can tune
-  // provider-specific behavior. Unrelated to SIWE — left as-is.
+  // provider-specific behavior. Unrelated to SIWE.
+  // T48a.2: hardened against hostile/broken injected providers. When multiple
+  // wallet extensions fight over `window.ethereum`, `connector.getProvider`
+  // can be missing or throw synchronously; the old `connector?.getProvider()`
+  // only guarded a null connector, so it threw "getProvider is not a function"
+  // and — with no error boundary — blanked the whole app. Fall back to 'web'
+  // on any failure instead of crashing.
   useEffect(() => {
     let cancelled = false;
-    void connector?.getProvider().then((provider) => {
+    const applyEnvironment = (environment: 'baseapp' | 'web') => {
       if (cancelled) return;
-      const environment = isBaseAppEnvironment({
-        connectorId: connector.id,
-        connectorName: connector.name,
-        userAgent: typeof navigator === 'undefined' ? '' : navigator.userAgent,
-        provider,
-      }) ? 'baseapp' : 'web';
       setWalletEnvironment(environment);
       void queryClient.invalidateQueries({ queryKey: ['status'] });
-    }).catch(() => {
-      setWalletEnvironment('web');
-      void queryClient.invalidateQueries({ queryKey: ['status'] });
-    });
-    if (!connector) {
-      setWalletEnvironment('web');
-      void queryClient.invalidateQueries({ queryKey: ['status'] });
+    };
+    if (!connector || typeof connector.getProvider !== 'function') {
+      applyEnvironment('web');
+      return () => { cancelled = true; };
+    }
+    try {
+      void Promise.resolve(connector.getProvider())
+        .then((provider) => {
+          applyEnvironment(isBaseAppEnvironment({
+            connectorId: connector.id,
+            connectorName: connector.name,
+            userAgent: typeof navigator === 'undefined' ? '' : navigator.userAgent,
+            provider,
+          }) ? 'baseapp' : 'web');
+        })
+        .catch(() => applyEnvironment('web'));
+    } catch {
+      applyEnvironment('web');
     }
     return () => { cancelled = true; };
   }, [connector, queryClient]);

@@ -62,21 +62,27 @@ function BaseAppDiagnosticsSection() {
 
   useEffect(() => {
     let cancelled = false;
-    if (!connector) {
+    // T48a.2: guard against a broken injected provider (multi-extension
+    // window.ethereum conflicts) where `getProvider` is missing or throws.
+    if (!connector || typeof connector.getProvider !== 'function') {
       setIsBaseApp(false);
       return;
     }
-    void connector.getProvider()
-      .then((provider) => {
-        if (cancelled) return;
-        setIsBaseApp(isBaseAppEnvironment({
-          connectorId: connector.id,
-          connectorName: connector.name,
-          userAgent: typeof navigator === 'undefined' ? '' : navigator.userAgent,
-          provider,
-        }));
-      })
-      .catch(() => { if (!cancelled) setIsBaseApp(false); });
+    try {
+      void Promise.resolve(connector.getProvider())
+        .then((provider) => {
+          if (cancelled) return;
+          setIsBaseApp(isBaseAppEnvironment({
+            connectorId: connector.id,
+            connectorName: connector.name,
+            userAgent: typeof navigator === 'undefined' ? '' : navigator.userAgent,
+            provider,
+          }));
+        })
+        .catch(() => { if (!cancelled) setIsBaseApp(false); });
+    } catch {
+      setIsBaseApp(false);
+    }
     return () => { cancelled = true; };
   }, [connector]);
 
