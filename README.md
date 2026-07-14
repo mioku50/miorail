@@ -1,33 +1,33 @@
-# MioIntent
+# Miorail
 
-> formerly Miorail / MioAgent
+> formerly MioAgent
 
-**Intent in. Best route out.**
+**Say the goal. Miorail builds the route.**
 
-MioIntent is an intent-driven AI transaction operator for Base.
+Miorail is an intent-driven AI transaction operator for Base.
 
-A user describes the result they want in ordinary language. MioIntent understands the goal, discovers suitable free and paid services, compares routes, prepares a clear transaction plan, validates the calls, and asks the user to approve the final onchain action through Base Account.
+A user describes the result they want in ordinary language. Miorail understands the goal, selects from a curated set of trusted skills, compares supported execution routes, prepares a clear transaction plan, validates the calls, and asks the user to approve the final onchain action through Base Account.
 
 The existing logo remains unchanged.
 
-> Current stage: architecture transition from Miorail to MioIntent  
+> Current stage: architecture transition from the legacy Miorail terminal to the new intent-first product  
 > Network focus: Base  
 > Execution model: non-custodial, user-approved transactions  
-> Service payments: free sources first, x402 when paid data or compute adds value  
+> External payments: optional and hidden behind approved skills  
 > Demo: `https://98.86.240.34.sslip.io`
 
-The complete product direction is documented in [`docs/MIOINTENT_VISION.md`](docs/MIOINTENT_VISION.md).
+The complete product direction is documented in [`docs/MIORAIL_VISION.md`](docs/MIORAIL_VISION.md).
 
 ---
 
 ## Product promise
 
-A Base user should not need to know which protocol, aggregator, API, MCP tool, or x402 resource can complete a task.
+A Base user should not need to know which protocol, aggregator, MCP tool, API, or contract call can complete a task.
 
 They should be able to say:
 
 ```text
-Swap 100 USDC to ETH using the best net route.
+Swap 100 USDC to ETH using the best supported route.
 ```
 
 ```text
@@ -35,30 +35,30 @@ Find a low-risk place to earn yield on 500 USDC.
 ```
 
 ```text
-Check this token and prepare a 20 USDC purchase only if the contract looks safe.
+Check this token and prepare a 20 USDC purchase only if the transaction looks reasonable.
 ```
 
 ```text
-Buy a 25 USD Steam gift card with USDC.
+Send 50 USDC to alice.base.eth.
 ```
 
-MioIntent turns the request into a typed intent, finds available capabilities, compares the options, and prepares the final action for review and approval.
+Miorail turns the request into a typed intent, queries approved skills, compares the available options, and prepares the final action for review and approval.
 
 ---
 
-## What makes MioIntent different
+## What makes Miorail different
 
-MioIntent is not a scanner dashboard and not a thin wrapper around Base MCP.
+Miorail is not a scanner dashboard, not a protocol directory, and not a thin chat wrapper around Base MCP.
 
 Its value is the orchestration layer between a user request and an executable transaction:
 
 ```text
 User intent
-  → understand the goal
-  → discover free and paid capabilities
-  → compare routes and services
+  → understand the goal and constraints
+  → call curated protocol and aggregator skills
+  → compare supported routes
   → explain trade-offs
-  → compose the transaction plan
+  → compose one transaction plan
   → validate the calls
   → request Base Account approval
   → record the receipt
@@ -66,106 +66,101 @@ User intent
 
 ### Intent-first interaction
 
-The product begins with the outcome the user wants, not with protocol tabs or tool configuration.
+The product begins with the outcome the user wants, not with protocol tabs, scanner configuration, or provider toggles.
 
-### Open capability routing
+### Curated skills, not open discovery
 
-MioIntent can route across:
+Miorail only routes through capabilities that have been explicitly integrated, typed, tested, and assigned clear trust and execution rules.
 
-- Base MCP native capabilities;
-- internal protocol and aggregator skills;
-- free data providers;
-- x402 Bazaar resources;
-- direct x402 services;
-- user-configured providers.
+There is no user-facing x402 marketplace and no runtime search across unknown services.
 
-### Transparent service economics
+### Useful route comparison
 
-The user does not pay for “x402.” They pay for a clearly defined result such as premium data, inference, simulation, research, or a digital service.
+When several approved routes can satisfy an intent, Miorail compares the results that matter to the user:
 
-Free sources are preferred when they are sufficient. Paid services must show their value and price before use unless they are already covered by an explicit user-created service budget.
+- expected output;
+- network cost;
+- slippage and price impact;
+- liquidity;
+- protocol and execution risk;
+- route complexity;
+- service cost when a skill uses a paid provider.
 
 ### User-controlled asset movement
 
-MioIntent prepares transactions. The user approves swaps, transfers, deposits, purchases, and other asset movements through Base Account.
+Miorail prepares transactions. The user approves swaps, transfers, deposits, purchases, and other movements of wallet assets through Base Account.
 
 ### Invisible safety
 
-Security remains mandatory, but it is implemented as an internal transaction safety kernel rather than a policy dashboard.
+Security remains mandatory, but it is implemented as an internal transaction Safety Kernel rather than a policy dashboard.
 
 ---
 
 ## Core architecture
 
 ```text
-┌─────────────────────────┐
-│ Natural-language intent │
-└────────────┬────────────┘
-             ↓
-┌─────────────────────────┐
-│ Mio Intent              │
-│ typed goal + constraints│
-└────────────┬────────────┘
-             ↓
-┌─────────────────────────┐
-│ Mio Discover            │
-│ tools, skills, x402, API│
-└────────────┬────────────┘
-             ↓
-┌─────────────────────────┐
-│ Mio Route               │
-│ compare price and result│
-└────────────┬────────────┘
-             ↓
-┌─────────────────────────┐
-│ Mio Compose             │
-│ transaction plan + batch│
-└────────────┬────────────┘
-             ↓
-┌─────────────────────────┐
-│ Invisible Safety Kernel │
-│ decode, verify, simulate│
-└────────────┬────────────┘
-             ↓
-┌─────────────────────────┐
-│ Base Account approval   │
-└─────────────────────────┘
-
-Mio Pay operates across discovery and routing for paid data, inference,
-x402 tools, digital services, payment proofs, and user-visible receipts.
+┌──────────────────────────┐
+│ Natural-language request │
+└─────────────┬────────────┘
+              ↓
+┌──────────────────────────┐
+│ Intent Engine            │
+│ typed goal + constraints │
+└─────────────┬────────────┘
+              ↓
+┌──────────────────────────┐
+│ Curated Skill Registry   │
+│ approved capabilities    │
+└─────────────┬────────────┘
+              ↓
+┌──────────────────────────┐
+│ Route Engine             │
+│ compare supported options│
+└─────────────┬────────────┘
+              ↓
+┌──────────────────────────┐
+│ Transaction Composer     │
+│ plan + EIP-5792 calls    │
+└─────────────┬────────────┘
+              ↓
+┌──────────────────────────┐
+│ Safety Kernel            │
+│ decode, verify, simulate │
+└─────────────┬────────────┘
+              ↓
+┌──────────────────────────┐
+│ Base Account approval    │
+└──────────────────────────┘
 ```
 
-### Mio Intent
+An optional Payment Adapter may be used inside an approved skill when paid data, inference, compute, or a digital service materially improves the requested result.
 
-Converts English and Russian natural language into typed goals, resolves tokens and amounts, preserves user constraints, and fails safely when a financial request is ambiguous.
+### Intent Engine
 
-### Mio Discover
+Converts English and Russian natural language into typed goals, resolves tokens, amounts, recipients, and preferences, and fails safely when a financial request is ambiguous.
 
-Finds capabilities from Base MCP, internal skills, protocols, free providers, and x402 services. Every candidate should expose structured inputs, outputs, price, network, freshness, and trust metadata.
+### Curated Skill Registry
 
-### Mio Route
+Contains approved skills for supported user goals. A skill may wrap:
 
-Compares candidates using factors such as expected output, gas, slippage, liquidity, protocol risk, MEV protection, service cost, and user preferences.
+- a Base MCP capability;
+- a protocol adapter;
+- an aggregator;
+- a free data provider;
+- an approved paid API;
+- an approved x402-enabled service.
 
-MioIntent may recommend an option, but it should not silently choose an unknown third-party provider when meaningful alternatives exist.
+Every skill must define its inputs, outputs, network, trust assumptions, transaction behavior, costs, tests, and fallback behavior.
 
-### Mio Compose
+### Route Engine
 
-Builds reviewable approvals, permits, swaps, deposits, purchases, and EIP-5792 batches. The server produces unsigned requests and never stores the user's private key.
+Normalizes the output of compatible skills and compares routes according to the user goal. It may recommend one route, but it must explain the reason and show meaningful alternatives when they differ in trust, cost, or execution behavior.
 
-### Mio Pay
+### Transaction Composer
 
-Handles:
+Builds reviewable approvals, permits, swaps, transfers, deposits, purchases, and EIP-5792 batches. The server produces unsigned requests and never stores the user's private key.
 
-- free services;
-- one-time x402 payments;
-- paid service discovery;
-- outgoing buyer payments;
-- payment proofs;
-- service receipts;
-- an optional Agent Service Budget.
-
-### Invisible Safety Kernel
+### Safety Kernel
 
 Automatically validates:
 
@@ -180,104 +175,125 @@ Automatically validates:
 - wallet and tenant isolation;
 - idempotency and durable receipts.
 
+### Payment Adapter
+
+x402 is not a product surface or discovery layer. It is an optional internal payment rail that an approved skill may use for a known service.
+
+The user should see the result and its cost, not facilitator details, payment headers, marketplace listings, or arbitrary API endpoints.
+
 ---
 
-## x402 and Agent Service Budget
+## The role of Base MCP
 
-x402 allows MioIntent to buy access to paid APIs, compute, inference, tools, research, and digital services without requiring the user to manage an account and API key for every provider.
+Base MCP is a wallet and execution rail, not the brain of Miorail.
 
-Base Spend Permissions may be used for a narrow **Agent Service Budget**.
+Miorail may use it for:
 
-```text
-Spend Permission
-= pay for information, compute, and services within a small limit
+- Base Account integration;
+- wallet-aware reads;
+- supported protocol and aggregator tools;
+- transaction preparation;
+- EIP-5792 call execution;
+- signing and approval flows.
 
-Base Account confirmation
-= approve movement of portfolio assets
-```
+Miorail must add its own intent understanding, route comparison, transaction composition, explanations, and validation before invoking an execution tool.
 
-The service budget may cover:
+A direct `user message → Base MCP tool` passthrough is not the target architecture.
 
-- premium security data;
+---
+
+## The role of x402
+
+x402 remains supported, but it is deliberately de-emphasized.
+
+It may be used when a curated skill requires a paid service such as:
+
+- premium data;
 - AI inference;
 - transaction simulation;
-- paid market or portfolio data;
-- x402 MCP tools;
-- research;
-- explicitly allowed digital services.
+- a digital product;
+- a known commerce endpoint.
 
-It must not be presented as unrestricted permission to move the user's portfolio.
+Miorail does not expose an x402 Bazaar browser, dynamically discover unknown services during normal user requests, or ask users to compare raw API providers.
+
+For the first MVP, one-time payment confirmation is preferred. Base Spend Permissions and recurring service budgets remain optional future infrastructure and should not be part of the primary onboarding until repeated paid usage creates a clear user benefit.
 
 ---
 
 ## Initial MVP intent families
 
-The rebuild focuses on complete journeys rather than broad feature parity.
+The rebuild focuses on a small number of complete journeys rather than broad protocol coverage.
 
 ### Swap
 
-Compare supported swap routes, explain the recommendation, build the complete transaction, and request Base Account approval.
+Compare approved swap routes, explain the recommendation, build the complete transaction, validate it, and request Base Account approval.
 
 ### Earn
 
 Compare supported lending and vault opportunities using APY, liquidity, protocol, and risk context, then prepare approval and deposit calls.
 
-### Buy a service
+### Send
 
-Discover a commerce or x402 service, show the total cost, execute the payment flow, and return a durable receipt or delivery result.
+Resolve an address or Basename, validate the asset, amount, chain, and recipient, then prepare a transparent transfer for approval.
 
-### Research
+### Token action
 
-Use free sources first, offer paid enrichment when useful, combine the result into a structured report, and prepare an onchain action only after explicit user intent.
+Combine trusted market and contract context with route preparation. Miorail may warn or refuse to prepare an action when required inputs are missing or the transaction cannot be validated.
+
+### Curated paid service
+
+A later flow may invoke a specifically integrated paid service. The user sees the exact result, price, and receipt; they do not browse a marketplace of machine endpoints.
 
 ---
 
-## Migration from Miorail
+## Migration from the legacy product
 
-The previous product centered on scanners, recommendations, an Action Inbox, visible policies, and dashboard-style navigation.
+The previous architecture centered on scanners, recommendations, an Action Inbox, visible policies, and dashboard-style navigation.
 
-MioIntent changes that model.
+Those concepts are no longer the main product direction.
 
 ### Removed as primary product concepts
 
 - Scanner framework and schedules;
 - scanner-driven recommendations;
-- Action Inbox as the main execution surface;
+- Action Inbox as the primary execution surface;
 - visible autonomy policy management;
 - read-only mode as a product identity;
 - provider toggle grids as a primary UX;
-- dashboard-first navigation.
+- dashboard-first navigation;
+- user-facing x402 service discovery;
+- dynamic routing to unknown third-party services.
 
 ### Retained or transformed
 
-| Legacy component | MioIntent direction |
+| Legacy component | New Miorail direction |
 | --- | --- |
 | Agent Stream | Primary intent workspace |
-| Base MCP | Execution and capability rail |
-| x402 gateway | Mio Pay and paid service access |
-| Spend Permissions | Optional Agent Service Budget |
-| Action preparation | Mio Compose transaction plans |
+| Base MCP | Wallet and execution rail |
+| Protocol skills | Curated typed skill adapters |
+| Action preparation | Transaction plans |
 | Security checks | Invisible Safety Kernel |
-| Portfolio data | Context for intents |
+| Portfolio data | Context for user intents |
 | Memory | Preferences and routing constraints |
+| x402 gateway | Optional internal Payment Adapter |
+| Spend Permissions | Deferred service-budget infrastructure |
 | Receipts and audit logs | Transaction and service history |
-| Protocol skills | Typed capability adapters |
 
-Legacy code can remain temporarily during the staged migration, but new work should follow the MioIntent architecture.
+Legacy code may remain temporarily during the staged migration, but new work should follow this architecture.
 
 ---
 
 ## Rebuild stages
 
-1. **Brand and architecture freeze** — adopt MioIntent and stop expanding the legacy scanner model.
+1. **Architecture freeze** — keep the Miorail brand and stop expanding the legacy scanner model.
 2. **Legacy surface removal** — remove scanner navigation, recommendation-first UX, and visible policy configuration while preserving backend safety.
-3. **Mio Intent** — typed schemas, English/Russian parsing, ambiguity handling, and tests from real user requests.
-4. **Mio Discover** — capability registry, typed skills, free/paid metadata, and x402 discovery.
-5. **Mio Route** — normalized quotes, ranking, routing preferences, and recommendation explanations.
-6. **Mio Compose** — transaction-plan schema, EIP-5792 batches, Base Account approval, and receipt reconciliation.
-7. **Mio Pay** — real paid product actions, one-time x402 flows, service budgets, and transparent receipts.
-8. **Intent workspace UI** — conversation, comparisons, transaction plans, costs, and history as one coherent surface.
-9. **Production hardening** — simulation, calldata validation, reliability scoring, reconciliation, and failure testing.
+3. **Intent Engine** — typed schemas, English/Russian parsing, ambiguity handling, and tests from real user requests.
+4. **Curated Skill Registry** — convert existing Base MCP tools and internal integrations into explicit typed skills.
+5. **Route Engine** — normalize quotes and opportunities, rank supported options, and explain recommendations.
+6. **Transaction Composer** — transaction-plan schema, EIP-5792 batches, Base Account approval, and receipt reconciliation.
+7. **Intent workspace UI** — conversation, comparisons, transaction plans, and history as one coherent surface.
+8. **Optional paid skills** — connect selected paid services through one-time payments and transparent receipts.
+9. **Production hardening** — simulation, calldata validation, reliability controls, reconciliation, and failure testing.
 
 Each implementation step should be delivered as a small coder task with explicit scope, non-goals, acceptance criteria, tests, and a clear commit message.
 
@@ -285,13 +301,13 @@ Each implementation step should be delivered as a small coder task with explicit
 
 ## Current repository status
 
-The repository contains a working Miorail-era foundation, including:
+The repository contains a working foundation, including:
 
 - a web interface and API server;
 - Postgres persistence;
 - an OpenAI-compatible agent runtime;
 - Base Account and Base MCP integrations;
-- English and Russian intent routing experiments;
+- English and Russian intent-routing experiments;
 - x402 seller and buyer infrastructure;
 - Base Spend Permission support;
 - transaction preparation and safety components;
@@ -299,7 +315,7 @@ The repository contains a working Miorail-era foundation, including:
 
 These components are migration assets, not a requirement to preserve the old product shape.
 
-The product name is now **MioIntent**. The existing repository name `mioagent` and package namespace `@mioagent/*` remain temporarily unchanged to avoid breaking imports, CI, deployment configuration, and external links. Their migration should happen as a dedicated technical task.
+The product name is **Miorail**. The repository name `mioagent` and package namespace `@mioagent/*` remain unchanged for compatibility.
 
 ---
 
@@ -343,7 +359,7 @@ Do not place private keys, CDP secrets, provider keys, or production credentials
 
 ## Safety notice
 
-MioIntent is experimental software undergoing a major architecture transition.
+Miorail is experimental software undergoing a major architecture transition.
 
 Do not use it with funds you cannot afford to lose until transaction preparation, simulation, Base Account approval, paid-service settlement, and receipt reconciliation have been production hardened and independently reviewed.
 
