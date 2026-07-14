@@ -2,18 +2,20 @@
 
 > formerly MioAgent
 
-**Say the goal. Miorail builds the route.**
+**One intent. Multiple routes. One verified plan.**
 
-Miorail is an intent-driven AI transaction operator for Base.
+Miorail is an intent and route-optimization layer for Base.
 
-A user describes the result they want in ordinary language. Miorail understands the goal, selects from a curated set of trusted skills, compares supported execution routes, prepares a clear transaction plan, validates the calls, and asks the user to approve the final onchain action through Base Account.
+A user describes the outcome they want in ordinary language. Miorail converts that request into a typed intent, evaluates several approved ways to complete it, normalizes the results, explains the trade-offs, prepares one reviewable transaction plan, validates the calls, and asks the user to approve the final action through Base Account.
+
+After execution, Miorail compares the expected and actual result and stores a durable **Route Proof**.
 
 The existing logo remains unchanged.
 
-> Current stage: architecture transition from the legacy Miorail terminal to the new intent-first product  
+> Current stage: architecture transition from the legacy Miorail terminal to the route-first product  
 > Network focus: Base  
 > Execution model: non-custodial, user-approved transactions  
-> External payments: optional and hidden behind approved skills  
+> Primary product object: Miorail Route Card  
 > Demo: `https://98.86.240.34.sslip.io`
 
 The complete product direction is documented in [`docs/MIORAIL_VISION.md`](docs/MIORAIL_VISION.md).
@@ -22,12 +24,12 @@ The complete product direction is documented in [`docs/MIORAIL_VISION.md`](docs/
 
 ## Product promise
 
-A Base user should not need to know which protocol, aggregator, MCP tool, API, or contract call can complete a task.
+A Base user should not need to know which aggregator, protocol plugin, MCP tool, approval pattern, or contract call can complete a task.
 
 They should be able to say:
 
 ```text
-Swap 100 USDC to ETH using the best supported route.
+Swap 100 USDC to ETH with the best net result.
 ```
 
 ```text
@@ -35,64 +37,173 @@ Find a low-risk place to earn yield on 500 USDC.
 ```
 
 ```text
-Check this token and prepare a 20 USDC purchase only if the transaction looks reasonable.
+Use MEV protection even if the route returns slightly less.
 ```
 
 ```text
 Send 50 USDC to alice.base.eth.
 ```
 
-Miorail turns the request into a typed intent, queries approved skills, compares the available options, and prepares the final action for review and approval.
+Miorail turns the request into an **Execution Blueprint**:
+
+```text
+Goal
+  → supported route candidates
+  → normalized comparison
+  → recommended route
+  → transaction calls
+  → safety validation
+  → Base Account approval
+  → Route Proof
+```
 
 ---
 
-## What makes Miorail different
+## Why Miorail exists
 
-Miorail is not a scanner dashboard, not a protocol directory, and not a thin chat wrapper around Base MCP.
+Base MCP gives an AI assistant access to wallet and execution capabilities. A general AI host can call tools, list plugins, prepare transactions, and ask the user to approve them.
 
-Its value is the orchestration layer between a user request and an executable transaction:
+That is useful infrastructure, but it is not the complete Miorail product.
+
+Miorail owns the layer between the user's goal and the final wallet request:
+
+- request several approved routes instead of calling the first matching tool;
+- normalize incompatible provider outputs into one comparison model;
+- score routes according to the user's real objective;
+- explain why one route is preferred;
+- compose multi-step actions into one transaction plan;
+- validate the relationship between the intent and the calldata;
+- compare the expected result with the actual onchain result;
+- build a persistent history of route quality and execution evidence.
+
+A direct flow such as:
+
+```text
+User message → Base MCP tool
+```
+
+is explicitly not the target architecture.
+
+The Miorail flow is:
 
 ```text
 User intent
-  → understand the goal and constraints
-  → call curated protocol and aggregator skills
-  → compare supported routes
-  → explain trade-offs
-  → compose one transaction plan
-  → validate the calls
-  → request Base Account approval
-  → record the receipt
+  → multi-route evaluation
+  → normalized scoring
+  → Route Card
+  → Execution Blueprint
+  → Safety Kernel
+  → Base Account approval
+  → Route Proof
 ```
 
-### Intent-first interaction
+---
 
-The product begins with the outcome the user wants, not with protocol tabs, scanner configuration, or provider toggles.
+## The core product object: Miorail Route Card
 
-### Curated skills, not open discovery
+The main user-facing result is not a raw chat response and not a protocol directory.
 
-Miorail only routes through capabilities that have been explicitly integrated, typed, tested, and assigned clear trust and execution rules.
+It is a structured **Route Card**.
 
-There is no user-facing x402 marketplace and no runtime search across unknown services.
+Example:
 
-### Useful route comparison
+```text
+Swap 100 USDC → ETH
 
-When several approved routes can satisfy an intent, Miorail compares the results that matter to the user:
+Recommended route: KyberSwap
+Expected output: 0.03142 ETH
+Minimum output: 0.03110 ETH
+Estimated network cost: $0.02
+Price impact: 0.08%
+Approvals: 1
+Route complexity: 2 calls
 
-- expected output;
-- network cost;
-- slippage and price impact;
+Path Score
+• Net result: 94/100
+• Safety: 84/100
+• Liquidity: 96/100
+• Simplicity: 78/100
+• MEV protection: 62/100
+
+Alternatives
+• Uniswap: 0.03135 ETH, simpler route
+• o1.exchange: 0.03131 ETH, MEV-protected
+
+Why this route
+KyberSwap currently provides the highest expected net output after
+estimated costs. Choose o1.exchange instead when MEV protection matters
+more than the output difference.
+
+[Review transaction]
+```
+
+A Route Card must show understandable outcomes rather than raw APIs or tool names.
+
+---
+
+## Miorail Path Score
+
+Miorail does not claim that one protocol is universally best.
+
+It ranks a route relative to the user's goal and selected optimization mode.
+
+Possible dimensions include:
+
+- net result;
+- safety;
 - liquidity;
-- protocol and execution risk;
-- route complexity;
-- service cost when a skill uses a paid provider.
+- route simplicity;
+- gas cost;
+- slippage and price impact;
+- exit flexibility;
+- MEV protection;
+- quote freshness;
+- provider reliability.
 
-### User-controlled asset movement
+Possible user modes include:
 
-Miorail prepares transactions. The user approves swaps, transfers, deposits, purchases, and other movements of wallet assets through Base Account.
+```text
+Best net result
+Lowest risk
+Lowest fees
+Simplest route
+Fastest execution
+MEV protected
+```
 
-### Invisible safety
+The score must be deterministic, inspectable, versioned, and based on normalized data. The LLM may explain the score, but it must not invent the score.
 
-Security remains mandatory, but it is implemented as an internal transaction Safety Kernel rather than a policy dashboard.
+---
+
+## Route Proof
+
+After a transaction settles, Miorail records the difference between the plan and the result.
+
+Example:
+
+```text
+Expected output: 0.03142 ETH
+Actual output: 0.03139 ETH
+Deviation: -0.10%
+Estimated network cost: $0.020
+Actual network cost: $0.018
+Status: completed
+```
+
+A Route Proof should preserve:
+
+- the original typed intent;
+- all compared route candidates;
+- the scoring version and recommendation reason;
+- the selected route;
+- quote and expiration data;
+- the exact calls approved by the user;
+- simulation evidence where available;
+- transaction hashes and receipts;
+- expected and actual asset changes;
+- partial-failure or reconciliation state.
+
+This gives Miorail its own persistent execution data instead of behaving like a temporary chat session.
 
 ---
 
@@ -110,17 +221,22 @@ Security remains mandatory, but it is implemented as an internal transaction Saf
               ↓
 ┌──────────────────────────┐
 │ Curated Skill Registry   │
-│ approved capabilities    │
+│ approved route sources   │
 └─────────────┬────────────┘
               ↓
 ┌──────────────────────────┐
 │ Route Engine             │
-│ compare supported options│
+│ normalize + score        │
+└─────────────┬────────────┘
+              ↓
+┌──────────────────────────┐
+│ Route Card               │
+│ options + explanation    │
 └─────────────┬────────────┘
               ↓
 ┌──────────────────────────┐
 │ Transaction Composer     │
-│ plan + EIP-5792 calls    │
+│ Execution Blueprint      │
 └─────────────┬────────────┘
               ↓
 ┌──────────────────────────┐
@@ -130,62 +246,73 @@ Security remains mandatory, but it is implemented as an internal transaction Saf
               ↓
 ┌──────────────────────────┐
 │ Base Account approval    │
+└─────────────┬────────────┘
+              ↓
+┌──────────────────────────┐
+│ Route Proof              │
+│ expected vs actual       │
 └──────────────────────────┘
 ```
 
-An optional Payment Adapter may be used inside an approved skill when paid data, inference, compute, or a digital service materially improves the requested result.
-
 ### Intent Engine
 
-Converts English and Russian natural language into typed goals, resolves tokens, amounts, recipients, and preferences, and fails safely when a financial request is ambiguous.
+Converts English and Russian requests into typed goals. It resolves assets, amounts, recipients, Basenames, optimization preferences, and missing constraints. It must fail safely when a financial request is ambiguous.
 
 ### Curated Skill Registry
 
-Contains approved skills for supported user goals. A skill may wrap:
+Contains only explicitly integrated, typed, and tested capabilities.
+
+A skill may wrap:
 
 - a Base MCP capability;
 - a protocol adapter;
 - an aggregator;
-- a free data provider;
+- a transaction builder;
+- a free data source;
 - an approved paid API;
 - an approved x402-enabled service.
 
-Every skill must define its inputs, outputs, network, trust assumptions, transaction behavior, costs, tests, and fallback behavior.
+Unknown services are not dynamically added during a normal user request.
 
 ### Route Engine
 
-Normalizes the output of compatible skills and compares routes according to the user goal. It may recommend one route, but it must explain the reason and show meaningful alternatives when they differ in trust, cost, or execution behavior.
+Requests several compatible candidates, normalizes their outputs, computes Path Scores, applies user preferences, and produces a recommendation with meaningful alternatives.
 
 ### Transaction Composer
 
-Builds reviewable approvals, permits, swaps, transfers, deposits, purchases, and EIP-5792 batches. The server produces unsigned requests and never stores the user's private key.
+Turns the selected route into a reviewable Execution Blueprint containing approvals, permits, swaps, transfers, deposits, withdrawals, purchases, and compatible EIP-5792 batches.
+
+The server produces unsigned requests and never stores the user's private key.
 
 ### Safety Kernel
 
 Automatically validates:
 
 - chain and asset consistency;
+- wallet and tenant binding;
 - recipients and spenders;
 - calldata and amounts;
+- intent-to-calldata semantics;
 - approvals;
 - slippage and deadlines;
 - quote freshness;
 - destination contracts;
 - transaction simulation where available;
-- wallet and tenant isolation;
 - idempotency and durable receipts.
 
-### Payment Adapter
+### Route Proof Engine
 
-x402 is not a product surface or discovery layer. It is an optional internal payment rail that an approved skill may use for a known service.
+Reconciles expected and actual results after execution and stores durable evidence for history, reliability analysis, and future routing improvements.
 
-The user should see the result and its cost, not facilitator details, payment headers, marketplace listings, or arbitrary API endpoints.
+### Optional Payment Adapter
+
+x402 is not a product surface or discovery layer. It is an optional internal payment rail used by a known, approved skill when paid data, compute, inference, or commerce materially improves the requested result.
 
 ---
 
 ## The role of Base MCP
 
-Base MCP is a wallet and execution rail, not the brain of Miorail.
+Base MCP is an important wallet and execution rail, but not the brain or product identity of Miorail.
 
 Miorail may use it for:
 
@@ -196,104 +323,99 @@ Miorail may use it for:
 - EIP-5792 call execution;
 - signing and approval flows.
 
-Miorail must add its own intent understanding, route comparison, transaction composition, explanations, and validation before invoking an execution tool.
+Miorail adds the parts that a generic MCP connection does not guarantee as a persistent product:
 
-A direct `user message → Base MCP tool` passthrough is not the target architecture.
-
----
-
-## The role of x402
-
-x402 remains supported, but it is deliberately de-emphasized.
-
-It may be used when a curated skill requires a paid service such as:
-
-- premium data;
-- AI inference;
-- transaction simulation;
-- a digital product;
-- a known commerce endpoint.
-
-Miorail does not expose an x402 Bazaar browser, dynamically discover unknown services during normal user requests, or ask users to compare raw API providers.
-
-For the first MVP, one-time payment confirmation is preferred. Base Spend Permissions and recurring service budgets remain optional future infrastructure and should not be part of the primary onboarding until repeated paid usage creates a clear user benefit.
+- multi-provider route evaluation;
+- normalized comparison schemas;
+- deterministic Path Scores;
+- user-specific optimization modes;
+- Route Cards;
+- multi-step Execution Blueprints;
+- intent-to-calldata validation;
+- Route Proof and execution history.
 
 ---
 
-## Initial MVP intent families
+## Initial MVP journeys
 
-The rebuild focuses on a small number of complete journeys rather than broad protocol coverage.
+The rebuild focuses on complete journeys rather than broad protocol coverage.
 
-### Swap
+### Swap Route Card
 
-Compare approved swap routes, explain the recommendation, build the complete transaction, validate it, and request Base Account approval.
+- query multiple approved swap routes;
+- normalize output, minimum output, gas, slippage, price impact, calls, and trust metadata;
+- compute Path Scores;
+- show a recommendation and alternatives;
+- prepare the complete unsigned transaction;
+- reconcile expected and actual output.
 
-### Earn
+### Earn Route Card
 
-Compare supported lending and vault opportunities using APY, liquidity, protocol, and risk context, then prepare approval and deposit calls.
+- query approved lending and vault integrations;
+- normalize APY, liquidity, withdrawal mechanics, protocol risk, and transaction complexity;
+- rank according to the user's risk and liquidity preference;
+- prepare approval and deposit calls;
+- preserve the selected route and receipt.
 
-### Send
+### Send Blueprint
 
-Resolve an address or Basename, validate the asset, amount, chain, and recipient, then prepare a transparent transfer for approval.
+- resolve the recipient and Basename;
+- validate chain, asset, amount, and destination;
+- prepare a transparent transfer;
+- require Base Account approval;
+- record the final proof.
 
-### Token action
+---
 
-Combine trusted market and contract context with route preparation. Miorail may warn or refuse to prepare an action when required inputs are missing or the transaction cannot be validated.
+## What Miorail is not
 
-### Curated paid service
+Miorail is not:
 
-A later flow may invoke a specifically integrated paid service. The user sees the exact result, price, and receipt; they do not browse a marketplace of machine endpoints.
+- a background scanner product;
+- an alerts and recommendations feed;
+- an Action Inbox clone;
+- a provider or protocol directory;
+- a policy-management dashboard;
+- an x402 Bazaar browser;
+- an unrestricted autonomous trading bot;
+- a custodial wallet;
+- a thin UI around Base MCP;
+- a system that lets an LLM silently invent transaction routes.
 
 ---
 
 ## Migration from the legacy product
 
-The previous architecture centered on scanners, recommendations, an Action Inbox, visible policies, and dashboard-style navigation.
-
-Those concepts are no longer the main product direction.
-
-### Removed as primary product concepts
-
-- Scanner framework and schedules;
-- scanner-driven recommendations;
-- Action Inbox as the primary execution surface;
-- visible autonomy policy management;
-- read-only mode as a product identity;
-- provider toggle grids as a primary UX;
-- dashboard-first navigation;
-- user-facing x402 service discovery;
-- dynamic routing to unknown third-party services.
-
-### Retained or transformed
-
 | Legacy component | New Miorail direction |
 | --- | --- |
-| Agent Stream | Primary intent workspace |
+| Agent Stream | Intent workspace |
 | Base MCP | Wallet and execution rail |
-| Protocol skills | Curated typed skill adapters |
-| Action preparation | Transaction plans |
+| Protocol skills | Curated route adapters |
+| Action preparation | Execution Blueprints |
+| Action cards | Miorail Route Cards |
 | Security checks | Invisible Safety Kernel |
-| Portfolio data | Context for user intents |
-| Memory | Preferences and routing constraints |
+| Portfolio data | Context for intent and route scoring |
+| Memory | Optimization preferences and constraints |
+| Receipts and audit logs | Route Proof history |
 | x402 gateway | Optional internal Payment Adapter |
-| Spend Permissions | Deferred service-budget infrastructure |
-| Receipts and audit logs | Transaction and service history |
+| Spend Permissions | Deferred infrastructure |
 
-Legacy code may remain temporarily during the staged migration, but new work should follow this architecture.
+Scanner schedules, scanner-driven recommendations, visible autonomy policies, provider toggle grids, and dashboard-first navigation are no longer primary product concepts.
 
 ---
 
 ## Rebuild stages
 
-1. **Architecture freeze** — keep the Miorail brand and stop expanding the legacy scanner model.
-2. **Legacy surface removal** — remove scanner navigation, recommendation-first UX, and visible policy configuration while preserving backend safety.
-3. **Intent Engine** — typed schemas, English/Russian parsing, ambiguity handling, and tests from real user requests.
-4. **Curated Skill Registry** — convert existing Base MCP tools and internal integrations into explicit typed skills.
-5. **Route Engine** — normalize quotes and opportunities, rank supported options, and explain recommendations.
-6. **Transaction Composer** — transaction-plan schema, EIP-5792 batches, Base Account approval, and receipt reconciliation.
-7. **Intent workspace UI** — conversation, comparisons, transaction plans, and history as one coherent surface.
-8. **Optional paid skills** — connect selected paid services through one-time payments and transparent receipts.
-9. **Production hardening** — simulation, calldata validation, reliability controls, reconciliation, and failure testing.
+1. **Architecture freeze** — stop expanding Scanner, Action Inbox, and visible Policy surfaces.
+2. **Legacy inventory** — identify reusable execution, receipt, safety, and provider components.
+3. **Intent Engine** — typed schemas, English/Russian parsing, ambiguity handling, and user preference resolution.
+4. **Route Candidate schema** — normalize quotes and opportunities across approved integrations.
+5. **Path Score** — deterministic, versioned scoring per intent family.
+6. **Route Cards** — comparison and recommendation UI.
+7. **Transaction Composer** — Execution Blueprint and EIP-5792 preparation.
+8. **Safety Kernel** — intent-to-calldata validation and simulation.
+9. **Route Proof** — expected-versus-actual reconciliation and history.
+10. **Production hardening** — provider reliability, retries, failure recovery, observability, and independent review.
 
 Each implementation step should be delivered as a small coder task with explicit scope, non-goals, acceptance criteria, tests, and a clear commit message.
 
@@ -361,7 +483,7 @@ Do not place private keys, CDP secrets, provider keys, or production credentials
 
 Miorail is experimental software undergoing a major architecture transition.
 
-Do not use it with funds you cannot afford to lose until transaction preparation, simulation, Base Account approval, paid-service settlement, and receipt reconciliation have been production hardened and independently reviewed.
+Do not use it with funds you cannot afford to lose until route comparison, transaction preparation, simulation, Base Account approval, settlement reconciliation, and Route Proof have been production hardened and independently reviewed.
 
 ---
 
