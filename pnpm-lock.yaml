@@ -542,6 +542,28 @@ importers:
         specifier: ^5.4.5
         version: 5.9.3
 
+  lib/route-engine:
+    dependencies:
+      '@mioagent/route-domain':
+        specifier: workspace:*
+        version: link:../route-domain
+      '@mioagent/route-storage':
+        specifier: workspace:*
+        version: link:../route-storage
+      '@mioagent/swap-adapters':
+        specifier: workspace:*
+        version: link:../swap-adapters
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+
   lib/route-storage:
     dependencies:
       '@mioagent/route-domain':
