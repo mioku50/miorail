@@ -4,6 +4,13 @@ import { db, workflows, actions } from '@mioagent/db';
 import { eq, isNull, or, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 
+/**
+ * LEGACY / MIGRATION (T49): Scanner scheduling remains temporarily for
+ * compatibility; do not add new product features here. Its replacement follows
+ * docs/MIORAIL_VISION.md. Wallet binding, safety checks, receipts, and execution
+ * invariants must survive removal of the legacy scanner UI and workflow.
+ */
+
 class PseudoToolProvider implements ToolProvider {
   id = 'pseudo';
   constructor(private userId: string) {}

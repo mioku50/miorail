@@ -2,6 +2,12 @@
 
 This document explains the current MioAgent architecture. It is concise and practical for coding agents.
 
+> **Architecture freeze (T49):** The current terminal is a compatibility
+> baseline. New product work must follow the route-intelligence architecture in
+> [`docs/MIORAIL_VISION.md`](MIORAIL_VISION.md) and the staged replacement map in
+> [`docs/MIGRATION_PLAN.md`](MIGRATION_PLAN.md); do not expand Scanner, Action
+> Inbox, Fuel, or visible Policy surfaces.
+
 ## Core Architecture
 
 MioAgent uses a clean-room, pnpm monorepo structure.

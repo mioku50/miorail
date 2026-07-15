@@ -53,6 +53,13 @@ import { verifyBaseMcpWalletMatch } from '../lib/baseMcpWalletReconciliation.js'
 import { walletEnvironmentFromRequest } from '../lib/walletContext.js';
 import { runDirectBaseAppNativeSend, runDirectBaseAppNativeSwap } from '../lib/streamBaseAppNativeRouting.js';
 
+/**
+ * LEGACY / MIGRATION (T49): Agent Stream routing remains temporarily for
+ * compatibility; do not add new product features here. Its replacement follows
+ * docs/MIORAIL_VISION.md. Wallet binding, safety checks, receipts, and execution
+ * invariants must survive removal of the legacy stream UI and routing.
+ */
+
 export const chatRouter = Router();
 
 export const chatRouteRuntime = {

@@ -99,6 +99,31 @@ describe('Status API', () => {
     restoreEnv('TOKEN_SECURITY_PROVIDER', original);
   });
 
+  test('GET /api/status exposes only safe migration booleans with compatibility defaults', async () => {
+    const originalRoute = process.env.MIORAIL_ROUTE_INTELLIGENCE_V1;
+    const originalLegacy = process.env.MIORAIL_LEGACY_TERMINAL;
+    const originalPaid = process.env.MIORAIL_PAID_INTELLIGENCE;
+    delete process.env.MIORAIL_ROUTE_INTELLIGENCE_V1;
+    delete process.env.MIORAIL_LEGACY_TERMINAL;
+    delete process.env.MIORAIL_PAID_INTELLIGENCE;
+
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    assert.deepStrictEqual(response.body.productMigration, {
+      routeIntelligenceV1: false,
+      legacyTerminal: true,
+      paidIntelligence: false,
+    });
+    assert.deepStrictEqual(
+      Object.keys(response.body.productMigration).sort(),
+      ['legacyTerminal', 'paidIntelligence', 'routeIntelligenceV1'],
+    );
+
+    restoreEnv('MIORAIL_ROUTE_INTELLIGENCE_V1', originalRoute);
+    restoreEnv('MIORAIL_LEGACY_TERMINAL', originalLegacy);
+    restoreEnv('MIORAIL_PAID_INTELLIGENCE', originalPaid);
+  });
+
   test('GET /api/status reports GoPlus configured but unverified before a successful scan', async () => {
     clearTokenSecurityCacheForTests();
     const original = process.env.TOKEN_SECURITY_PROVIDER;

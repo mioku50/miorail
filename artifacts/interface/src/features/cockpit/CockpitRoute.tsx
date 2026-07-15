@@ -7,6 +7,13 @@ import { Link } from 'wouter';
 import { capabilityLabel, type CapabilityState } from '../../lib/capabilityStatus';
 import { cockpitAutonomyPresentation } from '../../lib/autonomyUi';
 
+/**
+ * LEGACY / MIGRATION (T49): Cockpit remains temporarily for compatibility; do
+ * not add new product features here. Its replacement follows
+ * docs/MIORAIL_VISION.md. Wallet binding, safety checks, receipts, and execution
+ * invariants must survive removal of this UI.
+ */
+
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="bg-panel-2 border border-line rounded-[var(--radius-md)] p-2.5">

@@ -33,6 +33,13 @@ import { isBaseAppEnvironment } from '../../lib/baseAppEnvironment';
 import { collectBaseAppDiagnostics } from '../../lib/collectBaseAppDiagnostics';
 import { useAuthGate } from '../../app/AuthProvider';
 
+/**
+ * LEGACY / MIGRATION (T49): Visible policy and provider configuration remains
+ * temporarily for compatibility; do not add new product features here. Its
+ * replacement follows docs/MIORAIL_VISION.md. Wallet binding, safety checks,
+ * receipts, and execution invariants must survive removal of this UI.
+ */
+
 function tbState(s?: string): StateKind {
   if (s === 'connected') return 'live';
   if (s === 'stale') return 'stale';

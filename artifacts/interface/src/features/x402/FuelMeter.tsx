@@ -6,6 +6,13 @@ import { StateBadge } from '@mioagent/ui';
 import { capabilityLabel, x402CapabilityState, type CapabilityState } from '../../lib/capabilityStatus';
 import { DIAGNOSTICS_ENABLED } from '../../lib/diagnostics';
 
+/**
+ * LEGACY / MIGRATION (T49): Fuel remains temporarily for compatibility; do not
+ * add new product features here. Its replacement follows docs/MIORAIL_VISION.md.
+ * Wallet binding, safety checks, receipts, and execution invariants must survive
+ * removal of this UI.
+ */
+
 function Metric({ label, amount, sub }: { label: string; amount: string; sub: string }) {
   return (
     <div className="bg-panel-2 border border-line rounded-[var(--radius-md)] p-2.5">

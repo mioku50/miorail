@@ -491,6 +491,11 @@ export const X402BuyerPayerSchema = z.object({
 export const StatusResponseSchema = z.object({
   chainEnv: z.string(),
   chainId: z.number(),
+  productMigration: z.object({
+    routeIntelligenceV1: z.boolean(),
+    legacyTerminal: z.boolean(),
+    paidIntelligence: z.boolean(),
+  }),
   rpc: z.object({
     status: z.enum(["connected", "missing", "failed"]),
     provider: z.string(),

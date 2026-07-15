@@ -17,6 +17,7 @@ import { tenantWalletAddress } from '../middleware/tenantAuth';
 import { createApiToolAggregatorForUser } from '../lib/baseMcpTools.js';
 import { verifyBaseMcpWalletMatch } from '../lib/baseMcpWalletReconciliation.js';
 import { buildWalletContext, walletEnvironmentFromRequest } from '../lib/walletContext.js';
+import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
 
 export function getSystemStatus(envOverride?: string) {
   const chainEnv = envOverride || process.env.CHAIN_ENV || 'sepolia';
@@ -83,6 +84,7 @@ export function getSystemStatus(envOverride?: string) {
   return {
     chainEnv,
     chainId,
+    productMigration: getMiorailProductMigrationFlags(),
     rpc: {
       status: "connected" as const,
       provider: rpcProvider,
