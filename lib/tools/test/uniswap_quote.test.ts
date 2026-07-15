@@ -48,3 +48,22 @@ test('Uniswap quote provider is unavailable without runtime API configuration', 
   assert.equal(result.isError, true);
   assert.deepEqual(JSON.parse(result.content), { errorCode: 'uniswap_quote_not_configured' });
 });
+
+test('Uniswap quote provider preserves the legacy authorization failure code', async () => {
+  const provider = new UniswapQuoteToolProvider(
+    async () => new Response('{}', { status: 401 }),
+    'invalid-api-key',
+  );
+  const result = await provider.callTool('uniswap_quote', {
+    chain: 'base',
+    amountIn: '1',
+    tokenIn: 'USDC',
+    tokenOut: 'ETH',
+    swapper: '0x1111111111111111111111111111111111111111',
+    quoteOnly: true,
+  });
+  assert.equal(result.isError, true);
+  assert.deepEqual(JSON.parse(result.content), {
+    errorCode: 'uniswap_quote_authorization_failed',
+  });
+});

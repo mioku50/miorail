@@ -165,3 +165,5 @@ export function runtimeSkillAvailability(input: {
     ? { available: true, matchingTools }
     : { available: false, code: `${input.skill.namespace}_tools_unavailable`, matchingTools: [] };
 }
+
+export * from './http-executor.js';

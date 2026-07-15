@@ -1,5 +1,9 @@
 import type { ToolDef, ToolProvider } from './provider.js';
-import { partnerFetch } from '@mioagent/security/httpAllowlist';
+import {
+  UniswapQuoteClient,
+  percentageToBasisPoints,
+  type UniswapQuoteClientFailure,
+} from '@mioagent/swap-adapters';
 
 const QUOTE_ENDPOINT = 'https://trade-api.gateway.uniswap.org/v1/quote';
 const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
@@ -36,13 +40,16 @@ function timeoutMs(): number {
   return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 30_000) : 8_000;
 }
 
-function errorCode(error: unknown): string {
-  const message = error instanceof Error ? `${error.name} ${error.message}` : String(error || '');
-  if (/abort|timeout/i.test(message)) return 'uniswap_quote_timeout';
-  if (/401|403|api.?key|unauthor/i.test(message)) return 'uniswap_quote_authorization_failed';
-  if (/429|rate|quota/i.test(message)) return 'uniswap_quote_rate_limited';
-  if (/no quote|404/i.test(message)) return 'uniswap_quote_unavailable';
-  if (/network|fetch|econn|enotfound/i.test(message)) return 'uniswap_quote_unreachable';
+function legacyErrorCode(error: UniswapQuoteClientFailure): string {
+  if (error.errorCode === 'provider_not_configured') return 'uniswap_quote_not_configured';
+  if (error.errorCode === 'provider_timeout') return 'uniswap_quote_timeout';
+  if (error.errorCode === 'provider_rate_limited') return 'uniswap_quote_rate_limited';
+  if (error.errorCode === 'provider_no_route') return 'uniswap_quote_unavailable';
+  if (error.errorCode === 'provider_unreachable') return 'uniswap_quote_unreachable';
+  if (error.errorCode === 'provider_invalid_schema') return 'uniswap_quote_invalid_response';
+  if (error.errorCode === 'provider_http_error' && [401, 403].includes(error.httpStatus ?? 0)) {
+    return 'uniswap_quote_authorization_failed';
+  }
   return 'uniswap_quote_failed';
 }
 
@@ -156,35 +163,39 @@ export class UniswapQuoteToolProvider implements ToolProvider {
       return { content: JSON.stringify({ errorCode: 'uniswap_quote_invalid_slippage' }), isError: true };
     }
 
-    try {
-      const body: Record<string, unknown> = {
-        type: 'EXACT_INPUT',
-        amount: amountInRaw,
-        tokenIn: tokenIn.address,
-        tokenOut: tokenOut.address,
-        tokenInChainId: 8453,
-        tokenOutChainId: 8453,
-        swapper: swapper.toLowerCase(),
-        protocols: ['V4', 'V3', 'V2'],
-        routingPreference: 'BEST_PRICE',
-        ...(requestedSlippage === undefined ? { autoSlippage: 'DEFAULT' } : { slippageTolerance: requestedSlippage }),
-      };
-      const response = await partnerFetch(this.endpoint, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-api-key': this.apiKey,
-          'x-permit2-disabled': 'true',
-        },
-        body: JSON.stringify(body),
-      }, { timeoutMs: timeoutMs(), fetchImpl: this.fetchImpl });
-      if (!response.ok) throw new Error(`uniswap_quote_http_${response.status}`);
-      const payload = await response.json() as Record<string, any>;
-      const normalized = normalizeQuoteResponse({ payload, amountInRaw, tokenIn, tokenOut, requestedSlippage: requestedSlippage ?? undefined });
-      if (!normalized) return { content: JSON.stringify({ errorCode: 'uniswap_quote_invalid_response' }), isError: true };
-      return { content: JSON.stringify(normalized), isError: false };
-    } catch (error) {
-      return { content: JSON.stringify({ errorCode: errorCode(error) }), isError: true };
+    const slippageBps =
+      requestedSlippage === undefined ? null : percentageToBasisPoints(String(requestedSlippage));
+    if (requestedSlippage !== undefined && slippageBps === null) {
+      return { content: JSON.stringify({ errorCode: 'uniswap_quote_invalid_slippage' }), isError: true };
     }
+    const client = new UniswapQuoteClient({
+      fetchImpl: this.fetchImpl,
+      apiKey: this.apiKey,
+      endpoint: this.endpoint,
+      timeoutMs: timeoutMs(),
+    });
+    const response = await client.quote({
+      chainId: 8453,
+      amountInAtomic: amountInRaw,
+      tokenIn: tokenIn.address.toLowerCase() as `0x${string}`,
+      tokenOut: tokenOut.address.toLowerCase() as `0x${string}`,
+      swapper: swapper.toLowerCase() as `0x${string}`,
+      slippageBps,
+    });
+    if (response.outcome !== 'response') {
+      return { content: JSON.stringify({ errorCode: legacyErrorCode(response) }), isError: true };
+    }
+    const payload = response.payload as Record<string, any>;
+    const normalized = normalizeQuoteResponse({
+      payload,
+      amountInRaw,
+      tokenIn,
+      tokenOut,
+      requestedSlippage: requestedSlippage ?? undefined,
+    });
+    if (!normalized) {
+      return { content: JSON.stringify({ errorCode: 'uniswap_quote_invalid_response' }), isError: true };
+    }
+    return { content: JSON.stringify(normalized), isError: false };
   }
 }

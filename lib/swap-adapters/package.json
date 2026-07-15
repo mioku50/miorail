@@ -1,23 +1,23 @@
 {
-  "name": "@mioagent/tools",
+  "name": "@mioagent/swap-adapters",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./testing": "./src/mock_mcp.ts"
+    "./uniswap-client": "./src/uniswap-client.ts"
   },
   "scripts": {
-    "test": "tsx --test test/*.test.ts",
+    "test": "NODE_ENV=test node --import tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mioagent/data-providers": "workspace:*",
-    "@mioagent/mcp": "workspace:*",
+    "@mioagent/intent-engine": "workspace:*",
+    "@mioagent/route-domain": "workspace:*",
+    "@mioagent/runtime-skills": "workspace:*",
     "@mioagent/security": "workspace:*",
-    "@mioagent/settings": "workspace:*",
-    "@mioagent/swap-adapters": "workspace:*"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "tsx": "^4.22.4",

@@ -51,6 +51,11 @@ test('Moonwell manifest matches the vendored plugin allowlist and requires no au
   });
 });
 
+test('T53 does not register KyberSwap in production message detection', () => {
+  assert.equal(getRuntimeSkill('kyberswap'), undefined);
+  assert.equal(detectRuntimeSkill('KyberSwap'), undefined);
+});
+
 test('MCP-only read skills (e.g. Morpho) carry no HTTP manifest', () => {
   assert.equal(getRuntimeSkill('morpho')!.manifest, undefined);
 });

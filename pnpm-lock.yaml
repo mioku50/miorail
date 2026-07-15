@@ -559,6 +559,10 @@ importers:
         version: 5.9.3
 
   lib/runtime-skills:
+    dependencies:
+      '@mioagent/security':
+        specifier: workspace:*
+        version: link:../security
     devDependencies:
       tsx:
         specifier: ^4.22.4
@@ -599,6 +603,31 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
+  lib/swap-adapters:
+    dependencies:
+      '@mioagent/intent-engine':
+        specifier: workspace:*
+        version: link:../intent-engine
+      '@mioagent/route-domain':
+        specifier: workspace:*
+        version: link:../route-domain
+      '@mioagent/runtime-skills':
+        specifier: workspace:*
+        version: link:../runtime-skills
+      '@mioagent/security':
+        specifier: workspace:*
+        version: link:../security
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+
   lib/tools:
     dependencies:
       '@mioagent/data-providers':
@@ -613,6 +642,9 @@ importers:
       '@mioagent/settings':
         specifier: workspace:*
         version: link:../settings
+      '@mioagent/swap-adapters':
+        specifier: workspace:*
+        version: link:../swap-adapters
     devDependencies:
       tsx:
         specifier: ^4.22.4
