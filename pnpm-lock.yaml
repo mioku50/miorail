@@ -507,6 +507,22 @@ importers:
         specifier: ^5.4.5
         version: 5.9.3
 
+  lib/route-storage:
+    dependencies:
+      '@mioagent/route-domain':
+        specifier: workspace:*
+        version: link:../route-domain
+    devDependencies:
+      '@mioagent/db':
+        specifier: workspace:*
+        version: link:../db
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+
   lib/runtime-skills:
     devDependencies:
       tsx:

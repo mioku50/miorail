@@ -284,3 +284,340 @@ export const auditLogs = pgTable('audit_logs', {
   txHash: text('tx_hash'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
+
+const restrictReference = { onDelete: 'restrict', onUpdate: 'restrict' } as const;
+
+export const routeRuns = pgTable(
+  'route_runs',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    walletAddress: text('wallet_address').notNull(),
+    chainId: integer('chain_id').notNull(),
+    schemaVersion: text('schema_version').notNull(),
+    status: text('status').notNull(),
+    intentHash: text('intent_hash').notNull(),
+    intentPayload: jsonb('intent_payload').notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex('route_runs_user_idempotency_unique').on(table.userId, table.idempotencyKey),
+    index('route_runs_user_status_created_idx').on(table.userId, table.status, table.createdAt),
+    index('route_runs_intent_hash_idx').on(table.intentHash),
+    check('route_runs_chain_check', sql`${table.chainId} IN (8453, 84532)`),
+    check(
+      'route_runs_status_check',
+      sql`${table.status} IN ('draft', 'ready', 'needs_clarification', 'collecting_candidates', 'collecting_evidence', 'scoring', 'card_ready', 'blueprint_ready', 'awaiting_approval', 'executing', 'reconciling', 'completed', 'partial_failure', 'failed', 'cancelled', 'rejected')`,
+    ),
+  ],
+);
+
+export const routeCandidates = pgTable(
+  'route_candidates',
+  {
+    id: text('id').primaryKey(),
+    routeRunId: text('route_run_id')
+      .references(() => routeRuns.id, restrictReference)
+      .notNull(),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    providerId: text('provider_id').notNull(),
+    schemaVersion: text('schema_version').notNull(),
+    status: text('status').notNull(),
+    candidateHash: text('candidate_hash').notNull(),
+    payload: jsonb('payload').notNull(),
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('route_candidates_run_hash_unique').on(table.routeRunId, table.candidateHash),
+    index('route_candidates_run_status_idx').on(table.routeRunId, table.status),
+    index('route_candidates_provider_idx').on(table.providerId),
+    check(
+      'route_candidates_status_check',
+      sql`${table.status} IN ('quoted', 'selected', 'expired', 'invalid', 'rejected')`,
+    ),
+  ],
+);
+
+export const routeEvidence = pgTable(
+  'route_evidence',
+  {
+    id: text('id').primaryKey(),
+    routeRunId: text('route_run_id')
+      .references(() => routeRuns.id, restrictReference)
+      .notNull(),
+    candidateId: text('candidate_id').references(() => routeCandidates.id, restrictReference),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    schemaVersion: text('schema_version').notNull(),
+    status: text('status').notNull(),
+    evidenceType: text('evidence_type').notNull(),
+    providerId: text('provider_id').notNull(),
+    evidenceHash: text('evidence_hash').notNull(),
+    payload: jsonb('payload').notNull(),
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    validationStatus: text('validation_status').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('route_evidence_run_hash_unique').on(table.routeRunId, table.evidenceHash),
+    index('route_evidence_candidate_idx').on(table.candidateId),
+    index('route_evidence_provider_idx').on(table.providerId),
+    index('route_evidence_type_idx').on(table.evidenceType),
+    index('route_evidence_expires_idx').on(table.expiresAt),
+    check(
+      'route_evidence_status_check',
+      sql`${table.status} IN ('observed', 'expired', 'rejected', 'unavailable')`,
+    ),
+    check(
+      'route_evidence_validation_status_check',
+      sql`${table.validationStatus} IN ('valid', 'stale', 'invalid', 'unavailable')`,
+    ),
+  ],
+);
+
+export const routeEvidenceSets = pgTable(
+  'route_evidence_sets',
+  {
+    id: text('id').primaryKey(),
+    routeRunId: text('route_run_id')
+      .references(() => routeRuns.id, restrictReference)
+      .notNull(),
+    candidateId: text('candidate_id')
+      .references(() => routeCandidates.id, restrictReference)
+      .notNull(),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    schemaVersion: text('schema_version').notNull(),
+    status: text('status').notNull(),
+    evidenceSetHash: text('evidence_set_hash').notNull(),
+    payload: jsonb('payload').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('route_evidence_sets_run_hash_unique').on(table.routeRunId, table.evidenceSetHash),
+    index('route_evidence_sets_run_status_idx').on(table.routeRunId, table.status),
+    index('route_evidence_sets_candidate_idx').on(table.candidateId),
+    check(
+      'route_evidence_sets_status_check',
+      sql`${table.status} IN ('collecting', 'complete', 'partial', 'stale', 'invalid')`,
+    ),
+  ],
+);
+
+export const routeScoreSnapshots = pgTable(
+  'route_score_snapshots',
+  {
+    id: text('id').primaryKey(),
+    routeRunId: text('route_run_id')
+      .references(() => routeRuns.id, restrictReference)
+      .notNull(),
+    candidateId: text('candidate_id')
+      .references(() => routeCandidates.id, restrictReference)
+      .notNull(),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    schemaVersion: text('schema_version').notNull(),
+    status: text('status').notNull(),
+    scoreHash: text('score_hash').notNull(),
+    scoringVersion: text('scoring_version').notNull(),
+    payload: jsonb('payload').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('route_score_snapshots_candidate_hash_unique').on(
+      table.candidateId,
+      table.scoreHash,
+    ),
+    index('route_score_snapshots_run_candidate_idx').on(table.routeRunId, table.candidateId),
+    check(
+      'route_score_snapshots_status_check',
+      sql`${table.status} IN ('scored', 'partially_scored', 'not_scored')`,
+    ),
+  ],
+);
+
+export const routeCards = pgTable(
+  'route_cards',
+  {
+    id: text('id').primaryKey(),
+    routeRunId: text('route_run_id')
+      .references(() => routeRuns.id, restrictReference)
+      .notNull(),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    schemaVersion: text('schema_version').notNull(),
+    status: text('status').notNull(),
+    routeCardHash: text('route_card_hash').notNull(),
+    selectedCandidateId: text('selected_candidate_id').references(
+      () => routeCandidates.id,
+      restrictReference,
+    ),
+    payload: jsonb('payload').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('route_cards_run_hash_unique').on(table.routeRunId, table.routeCardHash),
+    index('route_cards_run_created_idx').on(table.routeRunId, table.createdAt),
+    check(
+      'route_cards_status_check',
+      sql`${table.status} IN ('ready', 'selected', 'stale', 'invalid')`,
+    ),
+  ],
+);
+
+export const executionBlueprints = pgTable(
+  'execution_blueprints',
+  {
+    id: text('id').primaryKey(),
+    routeRunId: text('route_run_id')
+      .references(() => routeRuns.id, restrictReference)
+      .notNull(),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    walletAddress: text('wallet_address').notNull(),
+    chainId: integer('chain_id').notNull(),
+    schemaVersion: text('schema_version').notNull(),
+    status: text('status').notNull(),
+    blueprintHash: text('blueprint_hash').notNull(),
+    intentHash: text('intent_hash').notNull(),
+    selectedCandidateHash: text('selected_candidate_hash').notNull(),
+    evidenceSetHash: text('evidence_set_hash').notNull(),
+    callsHash: text('calls_hash').notNull(),
+    approvedCallsHash: text('approved_calls_hash'),
+    preparedTransactionActionId: text('prepared_transaction_action_id').references(
+      () => preparedTransactionIntents.actionId,
+      restrictReference,
+    ),
+    payload: jsonb('payload').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('execution_blueprints_run_hash_unique').on(table.routeRunId, table.blueprintHash),
+    index('execution_blueprints_wallet_status_expiry_idx').on(
+      table.walletAddress,
+      table.status,
+      table.expiresAt,
+    ),
+    check('execution_blueprints_chain_check', sql`${table.chainId} IN (8453, 84532)`),
+    check(
+      'execution_blueprints_status_check',
+      sql`${table.status} IN ('draft', 'ready_for_review', 'approved', 'expired', 'invalid')`,
+    ),
+  ],
+);
+
+export const routeProofs = pgTable(
+  'route_proofs',
+  {
+    id: text('id').primaryKey(),
+    routeRunId: text('route_run_id')
+      .references(() => routeRuns.id, restrictReference)
+      .notNull(),
+    blueprintId: text('blueprint_id')
+      .references(() => executionBlueprints.id, restrictReference)
+      .notNull(),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    schemaVersion: text('schema_version').notNull(),
+    status: text('status').notNull(),
+    proofHash: text('proof_hash').notNull(),
+    approvedCallsHash: text('approved_calls_hash').notNull(),
+    payload: jsonb('payload').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    finalizedAt: timestamp('finalized_at', { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex('route_proofs_run_hash_unique').on(table.routeRunId, table.proofHash),
+    index('route_proofs_run_status_idx').on(table.routeRunId, table.status),
+    check(
+      'route_proofs_status_check',
+      sql`${table.status} IN ('pending', 'completed', 'partial_failure', 'failed', 'cancelled', 'reconciliation_required')`,
+    ),
+  ],
+);
+
+export const routeProofEvents = pgTable(
+  'route_proof_events',
+  {
+    id: text('id').primaryKey(),
+    routeProofId: text('route_proof_id')
+      .references(() => routeProofs.id, restrictReference)
+      .notNull(),
+    routeRunId: text('route_run_id')
+      .references(() => routeRuns.id, restrictReference)
+      .notNull(),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    schemaVersion: text('schema_version').notNull(),
+    status: text('status').notNull(),
+    eventType: text('event_type').notNull(),
+    eventHash: text('event_hash').notNull(),
+    sequence: integer('sequence').notNull(),
+    payload: jsonb('payload').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('route_proof_events_proof_sequence_unique').on(table.routeProofId, table.sequence),
+    uniqueIndex('route_proof_events_proof_hash_unique').on(table.routeProofId, table.eventHash),
+    index('route_proof_events_run_created_idx').on(table.routeRunId, table.createdAt),
+    check('route_proof_events_sequence_check', sql`${table.sequence} >= 0`),
+    check('route_proof_events_status_check', sql`${table.status} = 'recorded'`),
+  ],
+);
+
+export const intelligenceCharges = pgTable(
+  'intelligence_charges',
+  {
+    id: text('id').primaryKey(),
+    routeRunId: text('route_run_id')
+      .references(() => routeRuns.id, restrictReference)
+      .notNull(),
+    evidenceId: text('evidence_id').references(() => routeEvidence.id, restrictReference),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    schemaVersion: text('schema_version').notNull(),
+    status: text('status').notNull(),
+    chargeHash: text('charge_hash').notNull(),
+    spendPermissionId: text('spend_permission_id').references(
+      () => spendPermissions.id,
+      restrictReference,
+    ),
+    x402ReceiptId: text('x402_receipt_id').references(() => x402Receipts.id, restrictReference),
+    payload: jsonb('payload').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('intelligence_charges_run_hash_unique').on(table.routeRunId, table.chargeHash),
+    index('intelligence_charges_run_status_idx').on(table.routeRunId, table.status),
+    check(
+      'intelligence_charges_status_check',
+      sql`${table.status} IN ('quoted', 'reserved', 'payment_pending', 'settled', 'failed', 'reconciliation_required', 'released')`,
+    ),
+  ],
+);

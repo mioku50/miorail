@@ -17,6 +17,16 @@ async function main(): Promise<void> {
 
   try {
     await sql.begin(async (tx) => {
+    await tx`delete from route_proof_events where user_id = ${tenantId} or user_id like ${runPrefix}`;
+    await tx`delete from route_proofs where user_id = ${tenantId} or user_id like ${runPrefix}`;
+    await tx`delete from intelligence_charges where user_id = ${tenantId} or user_id like ${runPrefix}`;
+    await tx`delete from execution_blueprints where user_id = ${tenantId} or user_id like ${runPrefix}`;
+    await tx`delete from route_cards where user_id = ${tenantId} or user_id like ${runPrefix}`;
+    await tx`delete from route_score_snapshots where user_id = ${tenantId} or user_id like ${runPrefix}`;
+    await tx`delete from route_evidence_sets where user_id = ${tenantId} or user_id like ${runPrefix}`;
+    await tx`delete from route_evidence where user_id = ${tenantId} or user_id like ${runPrefix}`;
+    await tx`delete from route_candidates where user_id = ${tenantId} or user_id like ${runPrefix}`;
+    await tx`delete from route_runs where user_id = ${tenantId} or user_id like ${runPrefix}`;
     await tx`delete from spend_permission_proofs where permission_id in (
       select id from spend_permissions where user_id = ${tenantId} or user_id like ${runPrefix}
     )`;

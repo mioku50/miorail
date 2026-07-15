@@ -1,22 +1,21 @@
 {
-  "name": "@mioagent/route-domain",
+  "name": "@mioagent/route-storage",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./fixtures": "./test/fixtures.ts"
+    ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "node --import tsx --test test/*.test.ts",
+    "test": "NODE_ENV=test MIOAGENT_TEST_SUITE=unit node --import tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@noble/hashes": "^1.8.0",
-    "zod": "^3.25.76"
+    "@mioagent/route-domain": "workspace:*"
   },
   "devDependencies": {
+    "@mioagent/db": "workspace:*",
     "tsx": "^4.22.4",
     "typescript": "^5.4.5"
   }
