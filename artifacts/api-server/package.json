@@ -14,6 +14,7 @@
     "@mioagent/crypto": "workspace:*",
     "@mioagent/data-providers": "workspace:*",
     "@mioagent/db": "workspace:*",
+    "@mioagent/intent-core": "workspace:*",
     "@mioagent/llm": "workspace:*",
     "@mioagent/memory": "workspace:*",
     "@mioagent/mcp": "workspace:*",

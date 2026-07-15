@@ -65,6 +65,9 @@ importers:
       '@mioagent/db':
         specifier: workspace:*
         version: link:../../lib/db
+      '@mioagent/intent-core':
+        specifier: workspace:*
+        version: link:../../lib/intent-core
       '@mioagent/llm':
         specifier: workspace:*
         version: link:../../lib/llm
@@ -419,6 +422,38 @@ importers:
         version: 4.22.4
       typescript:
         specifier: ^5.6.3
+        version: 5.9.3
+
+  lib/intent-core:
+    dependencies:
+      viem:
+        specifier: ^2.53.1
+        version: 2.53.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.4.3)
+    devDependencies:
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+
+  lib/intent-engine:
+    dependencies:
+      '@mioagent/intent-core':
+        specifier: workspace:*
+        version: link:../intent-core
+      '@mioagent/llm':
+        specifier: workspace:*
+        version: link:../llm
+      '@mioagent/route-domain':
+        specifier: workspace:*
+        version: link:../route-domain
+      '@mioagent/route-storage':
+        specifier: workspace:*
+        version: link:../route-storage
+    devDependencies:
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
+      typescript:
+        specifier: ^5.4.5
         version: 5.9.3
 
   lib/llm:
