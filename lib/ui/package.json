@@ -9,6 +9,9 @@
     ".": "./index.ts",
     "./tokens.css": "./src/tokens.css"
   },
+  "dependencies": {
+    "@mioagent/route-card": "workspace:*"
+  },
   "peerDependencies": {
     "react": ">=19",
     "react-dom": ">=19"

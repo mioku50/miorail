@@ -1,4 +1,5 @@
 import {
+  AddressV1Schema,
   HashV1Schema,
   OptimizationModeV1Schema,
   PathScoreV1Schema,
@@ -63,26 +64,28 @@ export const NetResultMetricV1Schema = z
   .strict();
 export type NetResultMetricV1 = z.infer<typeof NetResultMetricV1Schema>;
 
+export const SwapRouteEvaluationReasonV1Schema = z.enum([
+  'multiple_routes_compared',
+  'user_protocol_constraint',
+  'single_provider_available',
+  'insufficient_rankable_candidates',
+  'unsupported_optimization_evidence',
+  'all_providers_failed',
+  'all_quotes_expired',
+  'invalid_evidence',
+]);
+
 const SwapRouteEvaluationV1ObjectSchema = z
   .object({
     schemaVersion: z.literal('swap-route-evaluation/v1'),
     evaluationHash: HashV1Schema,
     intentHash: HashV1Schema,
     tenantId: z.string().min(1).max(200),
-    walletAddress: z.string().regex(/^0x[0-9a-f]{40}$/),
+    walletAddress: AddressV1Schema,
     chainId: z.union([z.literal(8453), z.literal(84532)]),
     evaluatedAt: z.string().datetime({ offset: true }),
     outcome: z.enum(['ready', 'constrained', 'degraded', 'failed']),
-    reason: z.enum([
-      'multiple_routes_compared',
-      'user_protocol_constraint',
-      'single_provider_available',
-      'insufficient_rankable_candidates',
-      'unsupported_optimization_evidence',
-      'all_providers_failed',
-      'all_quotes_expired',
-      'invalid_evidence',
-    ]),
+    reason: SwapRouteEvaluationReasonV1Schema,
     candidates: z.array(RouteCandidateV1Schema),
     adapterFailures: z.array(SwapAdapterFailureV1Schema),
     evidenceSets: z.array(EvidenceSetV1Schema),

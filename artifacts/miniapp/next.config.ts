@@ -4,8 +4,26 @@ const API_URL = process.env.MIOAGENT_API_URL || "http://localhost:8080";
 
 const nextConfig: NextConfig = {
   // Workspace packages ship TS source; Next.js must transpile them.
-  transpilePackages: ["@mioagent/api-client-react", "@mioagent/api-spec", "@mioagent/ui", "@mioagent/wallet-actions"],
+  transpilePackages: [
+    "@mioagent/api-client-react",
+    "@mioagent/api-spec",
+    "@mioagent/api-zod",
+    "@mioagent/route-card",
+    "@mioagent/route-domain",
+    "@mioagent/route-engine",
+    "@mioagent/ui",
+    "@mioagent/wallet-actions",
+  ],
   webpack: (config) => {
+    // NodeNext workspace sources use runtime `.js` specifiers while the files
+    // checked into the monorepo are TypeScript. Vite resolves this natively;
+    // Next/Webpack needs the equivalent explicit extension mapping.
+    config.resolve.extensionAlias = {
+      ...(config.resolve.extensionAlias ?? {}),
+      ".js": [".ts", ".tsx", ".js"],
+      ".mjs": [".mts", ".mjs"],
+      ".cjs": [".cts", ".cjs"],
+    };
     // pino-pretty / lokijs / encoding are optional server deps of the api-client
     // workspace packages — never needed in the browser. `accounts` is an optional
     // peer of @wagmi/core's `tempo` export (pulled in via wagmi/connectors); it is

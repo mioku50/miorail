@@ -8,13 +8,17 @@ export interface AppRoute {
   label: string;
 }
 
-export const NAV_TABS: AppRoute[] = [
+export const LEGACY_NAV_TABS: AppRoute[] = [
   { path: '/', label: 'cockpit' },
   { path: '/actions', label: 'actions' },
   { path: '/stream', label: 'stream' },
   { path: '/fuel', label: 'fuel' },
   { path: '/configure', label: 'configure' },
 ];
+
+export function navTabsForRouteIntelligence(enabled: boolean): AppRoute[] {
+  return enabled ? [{ path: '/plan', label: 'plan' }, ...LEGACY_NAV_TABS] : LEGACY_NAV_TABS;
+}
 
 export interface AppCommand {
   id: string;
@@ -23,7 +27,7 @@ export interface AppCommand {
   path: string;
 }
 
-export const COMMANDS: AppCommand[] = [
+export const LEGACY_COMMANDS: AppCommand[] = [
   { id: 'cockpit', icon: '⏻', label: 'Autonomy cockpit', path: '/' },
   { id: 'actions', icon: '⚡', label: 'Action inbox · review', path: '/actions' },
   { id: 'stream', icon: '💬', label: 'Agent stream · chat', path: '/stream' },
@@ -35,3 +39,9 @@ export const COMMANDS: AppCommand[] = [
     ? [{ id: 'diagnostics', icon: '🧰', label: 'Operator diagnostics', path: '/diagnostics' }]
     : []),
 ];
+
+export function commandsForRouteIntelligence(enabled: boolean): AppCommand[] {
+  return enabled
+    ? [{ id: 'plan', icon: '⌁', label: 'Plan · compare swap routes', path: '/plan' }, ...LEGACY_COMMANDS]
+    : LEGACY_COMMANDS;
+}

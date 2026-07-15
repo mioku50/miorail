@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { useStatus, useActionsFeed, useChatHistory, useSendMessage } from "@mioagent/api-client-react";
 import { Card, StateBadge, Button } from "@mioagent/ui";
 import { WalletConnect } from "./components/WalletConnect";
+import { RoutePlanHome } from "./components/RoutePlanHome";
 
 // Reduced mobile IA: Autonomy status + kill, Action Inbox, Agent Stream.
 // Shares the data layer (@mioagent/api-client-react) and UI (@mioagent/ui) with
@@ -88,7 +89,7 @@ function GlowDot({ active }: { active: boolean }) {
   );
 }
 
-export default function Home() {
+function LegacyHome() {
   const { data: statusData } = useStatus();
   const { data: actionsData } = useActionsFeed();
   const { data: chatData } = useChatHistory();
@@ -304,4 +305,14 @@ export default function Home() {
       </main>
     </div>
   );
+}
+
+export default function Home() {
+  const { data: statusData, isPending } = useStatus();
+  if (isPending) {
+    return <div className="min-h-screen bg-bg text-ink flex items-center justify-center text-sm text-ink-3">Checking product mode…</div>;
+  }
+  return statusData?.productMigration.routeIntelligenceV1 === true
+    ? <RoutePlanHome />
+    : <LegacyHome />;
 }

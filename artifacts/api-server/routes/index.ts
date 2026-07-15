@@ -12,6 +12,7 @@ import { statusRouter } from './status';
 import { autonomyRouter } from './autonomy';
 import { mcpBaseRouter } from './mcpBase';
 import { authRouter } from './auth';
+import { routeIntelligenceRouter } from './routeIntelligence';
 import { enforceTenantBinding, requireTenant } from '../middleware/tenantAuth';
 
 export const routes = Router();
@@ -30,3 +31,4 @@ routes.use('/protocols', protocolsRouter);
 routes.use('/status', statusRouter);
 routes.use('/autonomy', autonomyRouter);
 routes.use('/mcp/base', mcpBaseRouter);
+routes.use('/route-intelligence', routeIntelligenceRouter);

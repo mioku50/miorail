@@ -20,6 +20,7 @@ import { FuelMeter } from '../features/x402/FuelMeter';
 import { DIAGNOSTICS_ENABLED } from '../lib/diagnostics';
 import { BaseMcpOAuthBridge } from './BaseMcpOAuthBridge';
 import { RequireSession } from './RequireSession';
+import { PlanPage } from '../features/plan/PlanPage';
 
 function ChainEnvMismatchBanner() {
   const { data: sd } = useStatus();
@@ -34,6 +35,8 @@ function ChainEnvMismatchBanner() {
 }
 
 export function App() {
+  const { data: statusData, isPending: statusPending } = useStatus();
+  const routeIntelligenceEnabled = statusData?.productMigration.routeIntelligenceV1 === true;
   const togglePalette = useUiStore((s) => s.togglePalette);
   const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -108,10 +111,17 @@ export function App() {
               {DIAGNOSTICS_ENABLED ? <BaseMcpView /> : <Redirect to="/configure" />}
             </Route>
             <Route path="/autonomy"><CockpitRoute /></Route>
+            <Route path="/plan">
+              {statusPending
+                ? <div className="flex flex-1 items-center justify-center text-sm text-ink-3">Checking route intelligence…</div>
+                : routeIntelligenceEnabled
+                  ? <RequireSession><PlanPage /></RequireSession>
+                  : <Redirect to="/" />}
+            </Route>
             {/* T19.2: /inbox/:actionId is a legacy alias — redirect to the
                 canonical /actions/:actionId deep link (still focuses the card). */}
             <Route path="/inbox/:actionId">{(params) => <Redirect to={`/actions/${params.actionId}`} />}</Route>
-            <Route path="/"><CockpitRoute /></Route>
+            <Route path="/">{routeIntelligenceEnabled ? <Redirect to="/plan" /> : <CockpitRoute />}</Route>
           </Switch>
         </div>
       </div>

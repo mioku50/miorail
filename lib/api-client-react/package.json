@@ -4,13 +4,22 @@
   "private": true,
   "type": "module",
   "main": "index.ts",
+  "scripts": {
+    "test": "NODE_ENV=test node --import tsx --test *.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
     "@mioagent/api-spec": "workspace:*"
   },
   "peerDependencies": {
-    "@tanstack/react-query": ">=5"
+    "@tanstack/react-query": ">=5",
+    "react": ">=19"
   },
   "devDependencies": {
-    "@tanstack/react-query": "^5.101.1"
+    "@tanstack/react-query": "^5.101.1",
+    "@types/react": "^19.2.17",
+    "react": "^19.2.7",
+    "tsx": "^4.22.4",
+    "typescript": "^5.4.5"
   }
 }

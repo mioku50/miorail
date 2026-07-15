@@ -1,5 +1,5 @@
 {
-  "name": "@mioagent/route-engine",
+  "name": "@mioagent/route-card",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -14,8 +14,7 @@
   },
   "dependencies": {
     "@mioagent/route-domain": "workspace:*",
-    "@mioagent/route-storage": "workspace:*",
-    "@mioagent/swap-adapters": "workspace:*",
+    "@mioagent/route-engine": "workspace:*",
     "zod": "^3.25.76"
   },
   "devDependencies": {

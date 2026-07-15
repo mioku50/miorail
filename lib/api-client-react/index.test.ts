@@ -25,6 +25,19 @@ describe('api-client-react', () => {
     assert.ok(apiClient.useLogout, 'useLogout should be exported');
   });
 
+  it('keeps one request ID for a manual retry and rotates it after material changes', () => {
+    const identity = new apiClient.RoutePlanRequestIdentity();
+    const wallet = '0x1111111111111111111111111111111111111111' as const;
+    const first = identity.resolve({ message: 'Swap 100 USDC to ETH', walletAddress: wallet });
+    const retry = identity.resolve({ message: '  Swap 100 USDC to ETH  ', walletAddress: wallet });
+    const changed = identity.resolve({ message: 'Swap 200 USDC to ETH', walletAddress: wallet });
+    const explicit = identity.resolve({ message: 'Swap 200 USDC to ETH', walletAddress: wallet, requestId: 'manual-request-1' });
+
+    assert.strictEqual(retry, first);
+    assert.notStrictEqual(changed, first);
+    assert.strictEqual(explicit, 'manual-request-1');
+  });
+
   it('publishes configured autonomy state synchronously before refetch', async () => {
     const queryClient = new QueryClient();
     queryClient.setQueryData(['autonomy'], {

@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "tsx --test app/**/*.test.ts"
+    "test": "node --import tsx --test app/*.test.ts app/**/*.test.ts app/**/**/*.test.ts"
   },
   "dependencies": {
     "@base-org/account": "2.5.6",

@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useRef } from 'react';
 import type { QueryClient, UseQueryOptions, UseMutationOptions } from '@tanstack/react-query';
 import * as apiSpec from '@mioagent/api-spec';
 
@@ -31,6 +32,54 @@ async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
     throw new Error(errorMsg);
   }
   return response.json();
+}
+
+export interface EvaluateSwapRouteInput {
+  message: string;
+  walletAddress: `0x${string}`;
+  requestId?: string;
+}
+
+export class RoutePlanRequestIdentity {
+  private lastMaterial = '';
+  private lastRequestId = '';
+
+  resolve(input: EvaluateSwapRouteInput): string {
+    if (input.requestId) return input.requestId;
+    const material = `${input.walletAddress.toLowerCase()}\u0000${input.message.trim()}`;
+    if (material !== this.lastMaterial || !this.lastRequestId) {
+      this.lastMaterial = material;
+      this.lastRequestId = globalThis.crypto.randomUUID();
+    }
+    return this.lastRequestId;
+  }
+}
+
+export function useEvaluateSwapRoute(
+  options?: Omit<
+    UseMutationOptions<apiSpec.RoutePlanResponseV1, Error, EvaluateSwapRouteInput>,
+    'mutationFn' | 'retry'
+  >,
+) {
+  const identity = useRef<RoutePlanRequestIdentity | null>(null);
+  identity.current ??= new RoutePlanRequestIdentity();
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const request = apiSpec.RoutePlanRequestV1Schema.parse({
+        message: input.message,
+        walletAddress: input.walletAddress,
+        requestId: identity.current!.resolve(input),
+      });
+      const response = await fetchApi<unknown>('/api/route-intelligence/swap/evaluate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+      return apiSpec.RoutePlanResponseV1Schema.parse(response);
+    },
+  });
 }
 
 // Queries

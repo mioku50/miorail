@@ -2,6 +2,7 @@ import {
   RouteCandidateV1Schema,
   RouteIntentV1Schema,
   ZERO_HASH_V1,
+  stableHashV1,
   type PathScoreV1,
   type RouteCandidateV1,
   type RouteIntentV1,
@@ -50,6 +51,14 @@ export class RouteEnginePersistenceError extends Error {
   constructor(cause: unknown) {
     super('Route Engine persistence failed', { cause });
   }
+}
+
+export function routeEngineV1IdempotencyKey(intent: RouteIntentV1, requestId: string): string {
+  return `route-engine:${stableHashV1('route-engine-request/v1', {
+    tenantId: intent.tenantId,
+    walletAddress: intent.walletAddress,
+    requestId,
+  }).slice(2)}`;
 }
 
 function validateCandidate(
@@ -202,9 +211,10 @@ async function persistEvaluation(
   repository: RouteStorageRepository,
   intent: RouteIntentV1,
   routes: readonly ScoredRouteV1[],
+  requestId: string,
 ): Promise<void> {
   try {
-    await repository.createRouteRun(intent, `route-engine:${intent.intentHash}`);
+    await repository.createRouteRun(intent, routeEngineV1IdempotencyKey(intent, requestId));
     for (const route of routes) {
       await repository.insertCandidate(intent.id, route.candidate);
       for (const evidence of route.evidenceSet.records) {
@@ -339,7 +349,7 @@ export class DeterministicSwapRouteEngine implements SwapRouteEngine {
       evaluationHash: hashSwapRouteEvaluationV1(draft),
     });
     if (input.repository && evaluation.outcome !== 'failed') {
-      await persistEvaluation(input.repository, intent, usable);
+      await persistEvaluation(input.repository, intent, usable, input.requestId);
     }
     return evaluation;
   }

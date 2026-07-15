@@ -1,10 +1,97 @@
 import { z } from 'zod';
+import { AddressV1Schema, RouteCardV1Schema, RouteIntentV1Schema } from '@mioagent/route-domain';
+import { SwapRouteEvaluationV1Schema } from '@mioagent/route-engine/contracts';
+import { RoutePlanProjectionV1Schema } from '@mioagent/route-card/contracts';
 
 // Shared
 export const PaginationParamsSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional().default(20),
   cursor: z.string().optional(),
 });
+
+// Route Intelligence V1 — read-only plan evaluation. These schemas deliberately
+// accept no provider artifacts, candidates, scores, execution calls, or client
+// chain overrides.
+export const RoutePlanRequestV1Schema = z
+  .object({
+    message: z.string().trim().min(1).max(4_000),
+    walletAddress: AddressV1Schema,
+    requestId: z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/, 'Invalid route plan request ID'),
+  })
+  .strict();
+
+export const IntentIssueV1Schema = z
+  .object({
+    code: z.enum([
+      'amount_required', 'exact_amount_required', 'from_asset_required', 'to_asset_required',
+      'asset_pair_invalid', 'asset_unknown', 'chain_unsupported', 'protocol_conflict',
+      'slippage_invalid', 'intent_ambiguous', 'approval_bypass_forbidden',
+      'prompt_injection_detected', 'server_signing_forbidden', 'asset_address_unsafe',
+      'conflicting_amounts', 'conflicting_protocol_constraints', 'unsupported_goal',
+      'extractor_invalid', 'extractor_field_ungrounded', 'context_ambiguous',
+    ]),
+    field: z.string().min(1).max(120),
+    severity: z.enum(['clarification', 'rejection']),
+    message: z.string().min(1).max(500),
+  })
+  .strict();
+
+export const ClarificationV1Schema = z
+  .object({
+    code: z.enum([
+      'amount_required', 'exact_amount_required', 'from_asset_required', 'to_asset_required',
+      'asset_pair_invalid', 'asset_unknown', 'chain_unsupported', 'protocol_conflict',
+      'slippage_invalid', 'intent_ambiguous',
+    ]),
+    message: z.string().min(1).max(500),
+    missingFields: z.array(z.string().min(1).max(120)),
+    locale: z.enum(['en', 'ru']),
+  })
+  .strict();
+
+export const RoutePlanResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      outcome: z.literal('needs_clarification'),
+      clarification: ClarificationV1Schema,
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('rejected'),
+      issues: z.array(IntentIssueV1Schema).min(1),
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('evaluated'),
+      routeRunId: z.string().min(1).max(200),
+      intent: RouteIntentV1Schema,
+      evaluation: SwapRouteEvaluationV1Schema,
+      routeCard: RouteCardV1Schema.nullable(),
+      projection: RoutePlanProjectionV1Schema,
+    })
+    .strict(),
+]);
+
+export const RoutePlanHttpErrorV1Schema = z
+  .object({
+    error: z.enum([
+      'route_intelligence_disabled',
+      'route_storage_unavailable',
+      'base_mainnet_required',
+      'authentication_required',
+      'wallet_mismatch',
+      'invalid_route_plan_request',
+      'route_plan_evaluation_failed',
+    ]),
+    code: z.string().min(1).max(120),
+  })
+  .strict();
 
 // Auth
 export const LoginRequestSchema = z.object({

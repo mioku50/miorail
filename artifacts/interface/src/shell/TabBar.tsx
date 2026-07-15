@@ -1,8 +1,16 @@
 import { Link, useLocation } from 'wouter';
-import { Monitor, Zap, MessageSquare, Fuel, Settings } from 'lucide-react';
-import { NAV_TABS } from '../app/routes';
+import { Monitor, Zap, MessageSquare, Fuel, Settings, Waypoints, Circle, type LucideIcon } from 'lucide-react';
+import { useStatus } from '@mioagent/api-client-react';
+import { navTabsForRouteIntelligence } from '../app/routes';
 
-const TAB_ICONS = [Monitor, Zap, MessageSquare, Fuel, Settings];
+const TAB_ICONS: Record<string, LucideIcon> = {
+  '/plan': Waypoints,
+  '/': Monitor,
+  '/actions': Zap,
+  '/stream': MessageSquare,
+  '/fuel': Fuel,
+  '/configure': Settings,
+};
 
 function isTabActive(tab: { path: string }, location: string): boolean {
   return tab.path === '/'
@@ -15,9 +23,11 @@ function isTabActive(tab: { path: string }, location: string): boolean {
 // Pill-style horizontal tab bar (used in TopBar on md+)
 export function TabBar() {
   const [location] = useLocation();
+  const { data } = useStatus();
+  const tabs = navTabsForRouteIntelligence(data?.productMigration.routeIntelligenceV1 === true);
   return (
     <div className="flex gap-0.5 ml-2">
-      {NAV_TABS.map((tab) => {
+      {tabs.map((tab) => {
         const active = isTabActive(tab, location);
         return (
           <Link
@@ -38,6 +48,8 @@ export function TabBar() {
 // Fixed bottom navigation for <md screens
 export function BottomNav() {
   const [location] = useLocation();
+  const { data } = useStatus();
+  const tabs = navTabsForRouteIntelligence(data?.productMigration.routeIntelligenceV1 === true);
   return (
     <nav
       className="fixed bottom-0 left-0 right-0 z-30 md:hidden flex items-center justify-around px-2 pb-[env(safe-area-inset-bottom,0px)]"
@@ -48,9 +60,9 @@ export function BottomNav() {
         borderTop: '1px solid var(--color-line)',
       }}
     >
-      {NAV_TABS.map((tab, idx) => {
+      {tabs.map((tab) => {
         const active = isTabActive(tab, location);
-        const Icon = TAB_ICONS[idx];
+        const Icon = TAB_ICONS[tab.path] ?? Circle;
         return (
           <Link
             key={tab.path}

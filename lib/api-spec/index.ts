@@ -6,6 +6,11 @@ export * from '@mioagent/api-zod';
 
 // Shared
 export type PaginationParams = z.infer<typeof schemas.PaginationParamsSchema>;
+export type RoutePlanRequestV1 = z.infer<typeof schemas.RoutePlanRequestV1Schema>;
+export type RoutePlanResponseV1 = z.infer<typeof schemas.RoutePlanResponseV1Schema>;
+export type RoutePlanHttpErrorV1 = z.infer<typeof schemas.RoutePlanHttpErrorV1Schema>;
+export type ClarificationV1 = z.infer<typeof schemas.ClarificationV1Schema>;
+export type IntentIssueV1 = z.infer<typeof schemas.IntentIssueV1Schema>;
 
 // Auth
 export type LoginRequest = z.infer<typeof schemas.LoginRequestSchema>;
