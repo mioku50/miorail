@@ -110,6 +110,9 @@ importers:
       '@mioagent/tools':
         specifier: workspace:*
         version: link:../../lib/tools
+      '@mioagent/transaction-composer':
+        specifier: workspace:*
+        version: link:../../lib/transaction-composer
       '@mioagent/utils':
         specifier: workspace:*
         version: link:../../lib/utils
@@ -736,6 +739,40 @@ importers:
         specifier: ^5.4.5
         version: 5.9.3
 
+  lib/transaction-composer:
+    dependencies:
+      '@mioagent/route-card':
+        specifier: workspace:*
+        version: link:../route-card
+      '@mioagent/route-domain':
+        specifier: workspace:*
+        version: link:../route-domain
+      '@mioagent/route-storage':
+        specifier: workspace:*
+        version: link:../route-storage
+      '@mioagent/runtime-skills':
+        specifier: workspace:*
+        version: link:../runtime-skills
+      '@mioagent/security':
+        specifier: workspace:*
+        version: link:../security
+      '@mioagent/swap-adapters':
+        specifier: workspace:*
+        version: link:../swap-adapters
+      viem:
+        specifier: ^2.53.1
+        version: 2.53.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@3.25.76)
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+
   lib/ui:
     dependencies:
       '@mioagent/route-card':
@@ -754,6 +791,9 @@ importers:
       react-dom:
         specifier: ^19.2.7
         version: 19.2.7(react@19.2.7)
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
       typescript:
         specifier: ^5.4.5
         version: 5.9.3

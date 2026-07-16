@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useAccount } from 'wagmi';
 import { RoutePlanView, routePlanSurfaceState } from '@mioagent/ui';
-import { useEvaluateSwapRoute } from '@mioagent/api-client-react';
+import { useEvaluateSwapRoute, usePrepareSwapBlueprint } from '@mioagent/api-client-react';
 
 const EXAMPLES = [
   'Swap 100 USDC to ETH using the best net result.',
@@ -13,11 +13,14 @@ const EXAMPLES = [
 export function PlanPage() {
   const { address } = useAccount();
   const [message, setMessage] = useState('');
+  const [selectedCandidateHash, setSelectedCandidateHash] = useState<string | null>(null);
   const evaluation = useEvaluateSwapRoute();
+  const prepare = usePrepareSwapBlueprint();
 
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
     if (!address || !message.trim() || evaluation.isPending) return;
+    prepare.reset();
     evaluation.mutate({ message, walletAddress: address.toLowerCase() as `0x${string}` });
   };
 
@@ -27,6 +30,16 @@ export function PlanPage() {
     isError: evaluation.isError,
     outcome: result?.outcome,
   });
+
+  const reviewTransaction = (candidateHash: string) => {
+    if (!address || result?.outcome !== 'evaluated' || !result.routeCard) return;
+    prepare.mutate({
+      walletAddress: address.toLowerCase() as `0x${string}`,
+      routeRunId: result.routeRunId,
+      routeCardHash: result.routeCard.routeCardHash,
+      selectedCandidateHash: candidateHash,
+    });
+  };
   return (
     <main className="flex-1 overflow-y-auto bg-bg px-4 pb-24 pt-6 sm:px-7 lg:px-10 lg:pb-10">
       <div className="mx-auto w-full max-w-[1180px]">
@@ -46,6 +59,8 @@ export function PlanPage() {
                 onChange={(event) => {
                   setMessage(event.target.value);
                   if (evaluation.data || evaluation.error) evaluation.reset();
+                  if (prepare.data || prepare.error) prepare.reset();
+                  setSelectedCandidateHash(null);
                 }}
                 rows={3}
                 maxLength={4000}
@@ -70,7 +85,17 @@ export function PlanPage() {
           {surfaceState === 'error' && <div className="rounded-2xl border border-risk/35 bg-risk-soft p-6"><h2 className="font-display text-lg font-semibold text-ink">The comparison could not be completed</h2><p className="mt-2 text-sm text-ink-2">{evaluation.error?.message}</p><button type="button" onClick={() => submit()} className="mt-4 rounded-full border border-risk px-4 py-2 text-sm font-semibold text-risk">Retry comparison</button></div>}
           {surfaceState === 'clarification' && result?.outcome === 'needs_clarification' && <div className="rounded-2xl border border-warn/35 bg-warn-soft p-6"><p className="font-mono text-[10px] uppercase tracking-[0.18em] text-warn">Clarification needed</p><h2 className="mt-2 font-display text-xl font-semibold text-ink">{result.clarification.message}</h2><p className="mt-2 text-sm text-ink-2">Update the goal above with: {result.clarification.missingFields.join(', ')}.</p></div>}
           {surfaceState === 'rejection' && result?.outcome === 'rejected' && <div className="rounded-2xl border border-risk/35 bg-risk-soft p-6"><p className="font-mono text-[10px] uppercase tracking-[0.18em] text-risk">Request rejected</p><ul className="mt-3 space-y-2 text-sm text-ink-2">{result.issues.map((issue) => <li key={`${issue.code}:${issue.field}`}>{issue.message}</li>)}</ul></div>}
-          {surfaceState === 'evaluated' && result?.outcome === 'evaluated' && <RoutePlanView projection={result.projection} onRefresh={() => submit()} />}
+          {surfaceState === 'evaluated' && result?.outcome === 'evaluated' && (
+            <RoutePlanView
+              projection={result.projection}
+              onRefresh={() => submit()}
+              selectedCandidateHash={selectedCandidateHash}
+              onSelectCandidate={setSelectedCandidateHash}
+              onReviewTransaction={reviewTransaction}
+              reviewPending={prepare.isPending}
+              transactionReview={prepare.data ?? null}
+            />
+          )}
         </section>
       </div>
     </main>

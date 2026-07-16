@@ -110,15 +110,15 @@ const ISOLATED_HTTP_SKILLS: readonly RuntimeSkillDefinition[] = [
       chains: [8453],
       allowlist: {
         hosts: ['aggregator-api.kyberswap.com'],
-        methods: ['GET'],
-        pathPrefixes: ['/base/api/v1/routes'],
+        methods: ['GET', 'POST'],
+        pathPrefixes: ['/base/api/v1/routes', '/base/api/v1/route/build'],
       },
       auth: 'none',
       risk: ['slippage', 'aggregated-route'],
     },
     instructions: [
-      'Use only the read-only KyberSwap Base route endpoint in T53.',
-      'Never call token search, route build, calldata preparation, or send_calls from route adapters.',
+      'Use only the read-only KyberSwap Base route endpoint, plus the T56 route/build calldata endpoint for an explicitly selected candidate.',
+      'Never call token search or send_calls from route adapters.',
     ],
   },
 ];

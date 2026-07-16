@@ -6,6 +6,7 @@ import { useAccount, useSignMessage, useSwitchChain } from "wagmi";
 import {
   logoutWalletSession,
   useEvaluateSwapRoute,
+  usePrepareSwapBlueprint,
   useSession,
   useVerifyWallet,
   useWalletChallenge,
@@ -40,8 +41,10 @@ export function RoutePlanHome() {
   const challenge = useWalletChallenge();
   const verify = useVerifyWallet();
   const evaluation = useEvaluateSwapRoute();
+  const prepare = usePrepareSwapBlueprint();
   const [message, setMessage] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
+  const [selectedCandidateHash, setSelectedCandidateHash] = useState<string | null>(null);
 
   const sessionReady = routeSessionMatches(session.data?.user?.address, address, chainId);
   const signing = challenge.isPending || verify.isPending;
@@ -67,6 +70,7 @@ export function RoutePlanHome() {
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
     if (!sessionReady || !address || !message.trim() || evaluation.isPending) return;
+    prepare.reset();
     evaluation.mutate({
       message,
       walletAddress: address.toLowerCase() as `0x${string}`,
@@ -79,6 +83,16 @@ export function RoutePlanHome() {
     isError: evaluation.isError,
     outcome: result?.outcome,
   });
+
+  const reviewTransaction = (candidateHash: string) => {
+    if (!address || result?.outcome !== "evaluated" || !result.routeCard) return;
+    prepare.mutate({
+      walletAddress: address.toLowerCase() as `0x${string}`,
+      routeRunId: result.routeRunId,
+      routeCardHash: result.routeCard.routeCardHash,
+      selectedCandidateHash: candidateHash,
+    });
+  };
   return (
     <div className="min-h-screen bg-bg text-ink">
       <header
@@ -155,6 +169,8 @@ export function RoutePlanHome() {
                   onChange={(event) => {
                     setMessage(event.target.value);
                     if (evaluation.data || evaluation.error) evaluation.reset();
+                    if (prepare.data || prepare.error) prepare.reset();
+                    setSelectedCandidateHash(null);
                   }}
                   placeholder="Swap 100 USDC to ETH using the best net result."
                   className="w-full resize-none rounded-xl border border-line bg-bg/60 px-3 py-3 text-sm leading-relaxed text-ink outline-none placeholder:text-ink-3 focus:border-accent"
@@ -217,7 +233,15 @@ export function RoutePlanHome() {
                 </div>
               )}
               {surfaceState === "evaluated" && result?.outcome === "evaluated" && (
-                <RoutePlanView projection={result.projection} onRefresh={() => submit()} />
+                <RoutePlanView
+                  projection={result.projection}
+                  onRefresh={() => submit()}
+                  selectedCandidateHash={selectedCandidateHash}
+                  onSelectCandidate={setSelectedCandidateHash}
+                  onReviewTransaction={reviewTransaction}
+                  reviewPending={prepare.isPending}
+                  transactionReview={prepare.data ?? null}
+                />
               )}
             </section>
           </>

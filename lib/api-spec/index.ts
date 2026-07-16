@@ -11,6 +11,8 @@ export type RoutePlanResponseV1 = z.infer<typeof schemas.RoutePlanResponseV1Sche
 export type RoutePlanHttpErrorV1 = z.infer<typeof schemas.RoutePlanHttpErrorV1Schema>;
 export type ClarificationV1 = z.infer<typeof schemas.ClarificationV1Schema>;
 export type IntentIssueV1 = z.infer<typeof schemas.IntentIssueV1Schema>;
+export type SwapPrepareRequestV1 = z.infer<typeof schemas.SwapPrepareRequestV1Schema>;
+export type SwapPrepareResponseV1 = z.infer<typeof schemas.SwapPrepareResponseV1Schema>;
 
 // Auth
 export type LoginRequest = z.infer<typeof schemas.LoginRequestSchema>;

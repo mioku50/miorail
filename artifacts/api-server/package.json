@@ -29,6 +29,7 @@
     "@mioagent/tools": "workspace:*",
     "@mioagent/intent-engine": "workspace:*",
     "@mioagent/swap-adapters": "workspace:*",
+    "@mioagent/transaction-composer": "workspace:*",
     "@mioagent/utils": "workspace:*",
     "@mioagent/x402-gateway": "workspace:*",
     "@mioagent/x402-parser": "workspace:*",

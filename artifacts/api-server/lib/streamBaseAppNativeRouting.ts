@@ -11,6 +11,10 @@ import { detectBaseMcpSendIntent, type BaseMcpSendIntent } from './streamBaseMcp
 import { detectSwapIntent } from './streamBaseMcpSwapRouting.js';
 import type { StreamToolTrace } from './streamReadRouting.js';
 import { pluginHttpRequest } from './pluginHttpGateway.js';
+import {
+  UniswapTradeClient,
+  type UniswapTradeTransport,
+} from '@mioagent/swap-adapters/uniswap-trade-client';
 
 type NativeResultKind = 'baseapp_native_send' | 'baseapp_native_swap';
 
@@ -205,30 +209,39 @@ function uniswapToken(symbol: string): { address: string; decimals: number } {
 // T48b: the constrained plugin_http_request gateway (pluginHttpGateway.ts)
 // resolves the Uniswap credential (mcp mode: UNISWAP_MCP_GATEWAY_KEY; direct
 // mode: UNISWAP_API_KEY) and enforces host/method/path/chain against the
-// Uniswap runtime-skill manifest. This function no longer reads
+// Uniswap runtime-skill manifest. This transport no longer reads
 // UNISWAP_API_KEY directly and no longer calls partnerFetch itself.
-async function postUniswap(path: '/quote' | '/swap_5792', body: unknown): Promise<{ payload: Record<string, any>; trace: StreamToolTrace }> {
-  const toolName = `plugin_http_request:POST /v1${path}`;
-  try {
-    const response = await pluginHttpRequest({
-      plugin: 'uniswap',
-      url: `https://trade-api.gateway.uniswap.org/v1${path}`,
-      method: 'POST',
-      body,
-      extraHeaders: { accept: 'application/json', 'x-universal-router-version': '2.0' },
-      timeoutMs: uniswapTimeoutMs(),
-    });
-    if (response.status < 200 || response.status >= 300) throw new Error(`uniswap_http_${response.status}`);
-    return {
-      payload: response.data as Record<string, any>,
-      trace: { toolName, args: { path }, result: { status: 'success' }, isError: false },
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw Object.assign(new Error(message), {
-      trace: { toolName, args: { path }, result: { status: 'error' as const, errorCode: 'uniswap_plugin_http_failed' }, isError: true },
-    });
-  }
+// T56: response-shape validation for both endpoints now lives in the shared
+// @mioagent/swap-adapters UniswapTradeClient; this transport only performs
+// the gated HTTP call and records the post-fact trace for each attempt.
+function pluginHttpTradeTransport(traces: StreamToolTrace[]): UniswapTradeTransport {
+  return {
+    async post(path, body) {
+      const toolName = `plugin_http_request:POST ${path}`;
+      try {
+        const response = await pluginHttpRequest({
+          plugin: 'uniswap',
+          url: `https://trade-api.gateway.uniswap.org${path}`,
+          method: 'POST',
+          body,
+          extraHeaders: { accept: 'application/json', 'x-universal-router-version': '2.0' },
+          timeoutMs: uniswapTimeoutMs(),
+        });
+        if (response.status < 200 || response.status >= 300) throw new Error(`uniswap_http_${response.status}`);
+        traces.push({ toolName, args: { path }, result: { status: 'success' }, isError: false });
+        return { status: response.status, payload: response.data };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const trace: StreamToolTrace = {
+          toolName,
+          args: { path },
+          result: { status: 'error' as const, errorCode: 'uniswap_plugin_http_failed' },
+          isError: true,
+        };
+        throw Object.assign(new Error(message), { trace });
+      }
+    },
+  };
 }
 
 export async function prepareUniswap5792(intent: SwapIntent, walletAddress: string): Promise<UniswapPreparation> {
@@ -237,7 +250,9 @@ export async function prepareUniswap5792(intent: SwapIntent, walletAddress: stri
   const tokenOut = uniswapToken(intent.tokenOut);
   const amount = baseUnits(intent.amount, tokenIn.decimals);
   const traces: StreamToolTrace[] = [];
-  const quoteCall = await postUniswap('/quote', {
+  const client = new UniswapTradeClient(pluginHttpTradeTransport(traces));
+
+  const quoteResult = await client.quote({
     type: 'EXACT_INPUT',
     amount,
     tokenIn: tokenIn.address,
@@ -252,36 +267,24 @@ export async function prepareUniswap5792(intent: SwapIntent, walletAddress: stri
     generatePermitAsTransaction: true,
     permitAmount: 'EXACT',
   });
-  traces.push(quoteCall.trace);
-  const quotePayload = quoteCall.payload;
+  if (quoteResult.outcome !== 'quote') throw new Error('uniswap_quote_invalid');
+  const quotePayload = quoteResult.payload!;
   const quote = quotePayload.quote;
-  const routing = String(quotePayload.routing || quote?.routing || '').toUpperCase();
-  if (!quote || typeof quote !== 'object' || !['CLASSIC', 'WRAP', 'UNWRAP'].includes(routing)) {
-    throw Object.assign(new Error('uniswap_quote_invalid'), { trace: undefined });
-  }
+
   const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
-  const swapCall = await postUniswap('/swap_5792', {
-    quote,
-    ...(quotePayload.permitData ? { permitData: quotePayload.permitData } : {}),
-    deadline: Math.floor(Date.parse(expiresAt) / 1000),
-    urgency: 'normal',
-  });
-  traces.push(swapCall.trace);
-  const prepared = swapCall.payload;
-  if (String(prepared.from || '').toLowerCase() !== walletAddress
-    || Number(prepared.chainId) !== 8453
-    || typeof prepared.requestId !== 'string'
-    || !Array.isArray(prepared.calls)) {
-    throw new Error('uniswap_5792_invalid');
-  }
-  const calls = prepared.calls.map((call: Record<string, unknown>) => ({
-    to: String(call.to || '').toLowerCase(),
-    value: String(call.value || '0'),
-    data: String(call.data || '').toLowerCase(),
-  }));
+  const swapResult = await client.swap5792(
+    {
+      quote,
+      ...(quotePayload.permitData ? { permitData: quotePayload.permitData } : {}),
+      deadline: Math.floor(Date.parse(expiresAt) / 1000),
+      urgency: 'normal',
+    },
+    walletAddress,
+  );
+  if (swapResult.outcome !== 'prepared') throw new Error('uniswap_5792_invalid');
   return {
-    calls,
-    requestId: prepared.requestId.slice(0, 200),
+    calls: swapResult.calls!,
+    requestId: swapResult.requestId!,
     expiresAt,
     context: {
       amountDecimal: intent.amount,

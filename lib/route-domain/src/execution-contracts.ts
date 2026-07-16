@@ -64,6 +64,7 @@ export const RequiredApprovalV1Schema = z
     state: z.enum(['required', 'satisfied', 'not_required']),
   })
   .strict();
+export type RequiredApprovalV1 = z.infer<typeof RequiredApprovalV1Schema>;
 
 export const SimulationStateV1Schema = z
   .object({
@@ -87,6 +88,7 @@ export const SimulationStateV1Schema = z
       });
     }
   });
+export type SimulationStateV1 = z.infer<typeof SimulationStateV1Schema>;
 
 const ExecutionBlueprintV1ObjectSchema = z
   .object({
@@ -170,6 +172,49 @@ export const ExecutionBlueprintV1Schema = ExecutionBlueprintV1ObjectSchema.super
     }
   },
 );
+
+export const SafetyKernelCheckV1Schema = z
+  .object({
+    id: z.string().min(1).max(120),
+    description: z.string().min(1).max(300),
+    status: z.enum(['passed', 'failed', 'skipped']),
+    detail: z.string().min(1).max(500).nullable(),
+  })
+  .strict();
+export type SafetyKernelCheckV1 = z.infer<typeof SafetyKernelCheckV1Schema>;
+
+export const SafetyKernelResultV1Schema = z
+  .object({
+    schemaVersion: z.literal('safety-kernel-result/v1'),
+    verdict: z.enum(['allowed', 'blocked']),
+    checks: z.array(SafetyKernelCheckV1Schema).min(1),
+    blockedReason: z.string().min(1).max(500).nullable(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.verdict === 'blocked' && value.blockedReason === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['blockedReason'],
+        message: 'A blocked Safety Kernel result requires blockedReason',
+      });
+    }
+    if (value.verdict === 'allowed' && value.blockedReason !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['blockedReason'],
+        message: 'An allowed Safety Kernel result must not carry a blockedReason',
+      });
+    }
+    if (value.verdict === 'allowed' && value.checks.some((check) => check.status === 'failed')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['verdict'],
+        message: 'An allowed Safety Kernel result cannot contain a failed check',
+      });
+    }
+  });
+export type SafetyKernelResultV1 = z.infer<typeof SafetyKernelResultV1Schema>;
 
 export const ExecutionResultV1Schema = z
   .object({

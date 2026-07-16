@@ -1,6 +1,16 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { RoutePlanEvidenceSummaryV1, RoutePlanProjectionV1, RoutePlanRouteV1 } from '@mioagent/route-card/contracts';
-import { ROUTE_SCORE_LABELS, formatEvidenceType, isRoutePlanExpired, routeDisplayLabel, routePlanOutcomeCopy } from './routePlanState';
+import {
+  ROUTE_SCORE_LABELS,
+  canReviewTransaction,
+  defaultSelectedCandidateHash,
+  formatEvidenceType,
+  isRoutePlanExpired,
+  routeDisplayLabel,
+  routePlanOutcomeCopy,
+  selectableSwapCandidates,
+} from './routePlanState';
+import { TransactionReviewOutcome, type TransactionPrepareOutcomeV1 } from './TransactionReview';
 
 void React;
 
@@ -107,10 +117,40 @@ export function RouteCandidateSummary({ route, label, muted = false }: { route: 
   );
 }
 
-export function RoutePlanView({ projection, now = new Date(), onRefresh }: { projection: RoutePlanProjectionV1; now?: Date; onRefresh?: () => void }) {
+export interface RoutePlanViewProps {
+  projection: RoutePlanProjectionV1;
+  now?: Date;
+  onRefresh?: () => void;
+  /** Explicit candidate selection is presentational-only here; the server
+   * re-validates the hash independently and never trusts client state. */
+  selectedCandidateHash?: string | null;
+  onSelectCandidate?: (candidateHash: string) => void;
+  onReviewTransaction?: (candidateHash: string) => void;
+  reviewPending?: boolean;
+  transactionReview?: TransactionPrepareOutcomeV1 | null;
+}
+
+export function RoutePlanView({
+  projection,
+  now = new Date(),
+  onRefresh,
+  selectedCandidateHash,
+  onSelectCandidate,
+  onReviewTransaction,
+  reviewPending = false,
+  transactionReview = null,
+}: RoutePlanViewProps) {
   const expired = isRoutePlanExpired(projection, now);
   const copy = routePlanOutcomeCopy(projection);
   const primary = projection.recommendedRoute ?? projection.availableRoutes[0] ?? null;
+  const candidates = selectableSwapCandidates(projection);
+  const [internalSelected, setInternalSelected] = useState<string | null>(() => defaultSelectedCandidateHash(projection));
+  const selected = selectedCandidateHash ?? internalSelected;
+  const selectCandidate = (hash: string) => {
+    setInternalSelected(hash);
+    onSelectCandidate?.(hash);
+  };
+  const reviewable = !expired && canReviewTransaction({ projection, now }) && candidates.length > 0;
   return (
     <div className="space-y-4" data-route-plan-outcome={projection.outcome}>
       <header className="flex flex-wrap items-start justify-between gap-4">
@@ -137,8 +177,45 @@ export function RoutePlanView({ projection, now = new Date(), onRefresh }: { pro
           </section>
         </div>
       </div>
+      {reviewable && (
+        <section aria-label="Candidate selection" className="rounded-xl border border-line bg-panel p-4">
+          <h3 className="font-display text-sm font-semibold text-ink">Select a route to review</h3>
+          <p className="mt-1 text-xs text-ink-2">Choose the recommended route or an alternative, then request a read-only review of the exact unsigned calls.</p>
+          <fieldset className="mt-3 space-y-2">
+            <legend className="sr-only">Swap candidate</legend>
+            {candidates.map((candidate) => (
+              <label key={candidate.candidateHash} className="flex items-center gap-2 text-sm text-ink-2">
+                <input
+                  type="radio"
+                  name="swap-candidate"
+                  value={candidate.candidateHash}
+                  checked={selected === candidate.candidateHash}
+                  onChange={() => selectCandidate(candidate.candidateHash)}
+                />
+                {candidate.providerLabel}
+                {candidate.isRecommended && <span className="font-mono text-[10px] uppercase text-accent-2">recommended</span>}
+              </label>
+            ))}
+          </fieldset>
+          <button
+            type="button"
+            disabled={!selected || reviewPending}
+            onClick={() => selected && onReviewTransaction?.(selected)}
+            className="mt-4 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            {reviewPending ? 'Preparing review…' : 'Review transaction'}
+          </button>
+        </section>
+      )}
+      {!reviewable && !expired && projection.outcome !== 'failed' && (
+        <p className="text-xs text-ink-3">This comparison does not currently have a preparable Route Card.</p>
+      )}
+      {transactionReview && (
+        <div className="mt-2">
+          <TransactionReviewOutcome result={transactionReview} />
+        </div>
+      )}
       {(expired || projection.outcome === 'failed') && onRefresh && <button type="button" onClick={onRefresh} className="rounded-full border border-accent px-4 py-2 text-sm font-semibold text-accent-2 hover:bg-accent-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">{expired ? 'Refresh routes' : 'Retry comparison'}</button>}
-      <p className="text-xs text-ink-3">Transaction preparation arrives in the next stage.</p>
     </div>
   );
 }

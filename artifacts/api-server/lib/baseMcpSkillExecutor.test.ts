@@ -38,10 +38,10 @@ test('the execution plan exposes only the manifest-allowlisted paths for Moonwel
   assert.deepEqual(executor.allowedPaths, ['/v1/markets', '/v1/rates', '/v1/positions', '/v1/health', '/v1/rewards', '/v1/token-balance', '/v1/prepare']);
 });
 
-test('KyberSwap executor exposes only the T53 read route path', () => {
+test('KyberSwap executor exposes only the T53 read route path plus the T56 route/build path', () => {
   const executor = loadSkillExecutor('kyberswap')!;
-  assert.deepEqual(executor.allowedPaths, ['/base/api/v1/routes']);
-  assert.deepEqual(executor.manifest.allowlist.methods, ['GET']);
+  assert.deepEqual(executor.allowedPaths, ['/base/api/v1/routes', '/base/api/v1/route/build']);
+  assert.deepEqual(executor.manifest.allowlist.methods, ['GET', 'POST']);
 });
 
 test('Moonwell markets are reachable through the executor (gateway + manifest allowlist, no auth required)', async () => {

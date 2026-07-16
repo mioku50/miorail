@@ -9,6 +9,9 @@
     ".": "./index.ts",
     "./tokens.css": "./src/tokens.css"
   },
+  "scripts": {
+    "test": "NODE_ENV=test node --import tsx --test test/*.test.ts"
+  },
   "dependencies": {
     "@mioagent/route-card": "workspace:*"
   },
@@ -21,6 +24,7 @@
     "@types/react-dom": "^19.2.3",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "tsx": "^4.22.4",
     "typescript": "^5.4.5"
   }
 }

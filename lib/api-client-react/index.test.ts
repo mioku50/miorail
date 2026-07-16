@@ -23,6 +23,7 @@ describe('api-client-react', () => {
     assert.ok(apiClient.useToggleProtocol, 'useToggleProtocol should be exported');
     assert.ok(apiClient.useLogin, 'useLogin should be exported');
     assert.ok(apiClient.useLogout, 'useLogout should be exported');
+    assert.ok(apiClient.usePrepareSwapBlueprint, 'usePrepareSwapBlueprint should be exported');
   });
 
   it('keeps one request ID for a manual retry and rotates it after material changes', () => {
@@ -36,6 +37,34 @@ describe('api-client-react', () => {
     assert.strictEqual(retry, first);
     assert.notStrictEqual(changed, first);
     assert.strictEqual(explicit, 'manual-request-1');
+  });
+
+  it('keeps one swap-prepare request ID per (wallet, routeRun, card, candidate) and rotates on change', () => {
+    const identity = new apiClient.SwapPrepareRequestIdentity();
+    const wallet = '0x1111111111111111111111111111111111111111' as const;
+    const routeRunId = 'run-1';
+    const routeCardHash = `0x${'1'.repeat(64)}`;
+    const selectedCandidateHash = `0x${'2'.repeat(64)}`;
+
+    const first = identity.resolve({ walletAddress: wallet, routeRunId, routeCardHash, selectedCandidateHash });
+    const retry = identity.resolve({ walletAddress: wallet, routeRunId, routeCardHash, selectedCandidateHash });
+    const changedCandidate = identity.resolve({
+      walletAddress: wallet,
+      routeRunId,
+      routeCardHash,
+      selectedCandidateHash: `0x${'3'.repeat(64)}`,
+    });
+    const explicit = identity.resolve({
+      walletAddress: wallet,
+      routeRunId,
+      routeCardHash,
+      selectedCandidateHash,
+      requestId: 'manual-prepare-1',
+    });
+
+    assert.strictEqual(retry, first);
+    assert.notStrictEqual(changedCandidate, first);
+    assert.strictEqual(explicit, 'manual-prepare-1');
   });
 
   it('publishes configured autonomy state synchronously before refetch', async () => {

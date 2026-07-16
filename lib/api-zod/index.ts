@@ -1,7 +1,15 @@
 import { z } from 'zod';
-import { AddressV1Schema, RouteCardV1Schema, RouteIntentV1Schema } from '@mioagent/route-domain';
+import {
+  AddressV1Schema,
+  ExecutionBlueprintV1Schema,
+  HashV1Schema,
+  RouteCardV1Schema,
+  RouteIntentV1Schema,
+  SafetyKernelResultV1Schema,
+} from '@mioagent/route-domain';
 import { SwapRouteEvaluationV1Schema } from '@mioagent/route-engine/contracts';
 import { RoutePlanProjectionV1Schema } from '@mioagent/route-card/contracts';
+import { TransactionReviewProjectionV1Schema } from '@mioagent/route-card/transactionReview';
 
 // Shared
 export const PaginationParamsSchema = z.object({
@@ -88,10 +96,66 @@ export const RoutePlanHttpErrorV1Schema = z
       'wallet_mismatch',
       'invalid_route_plan_request',
       'route_plan_evaluation_failed',
+      // T56: swap/prepare-specific codes; the flag/auth/wallet/chain/storage
+      // codes above are reused as-is by that route's identical guard sequence.
+      'invalid_swap_prepare_request',
+      'swap_prepare_failed',
     ]),
     code: z.string().min(1).max(120),
   })
   .strict();
+
+// T56 — Transaction Composer. Turns an explicitly selected Route Card
+// candidate into a fresh-quoted, safety-validated, persisted
+// ExecutionBlueprintV1 with unsigned EIP-5792 calls. The server never signs
+// or broadcasts; these schemas deliberately never accept or echo a signed
+// transaction, a wallet_sendCalls payload, or an execution receipt.
+export const SwapPrepareRequestV1Schema = z
+  .object({
+    routeRunId: z.string().min(1).max(200),
+    routeCardHash: HashV1Schema,
+    selectedCandidateHash: HashV1Schema,
+    walletAddress: AddressV1Schema,
+    requestId: z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/, 'Invalid swap prepare request ID'),
+  })
+  .strict();
+
+export const SwapPrepareResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      outcome: z.literal('prepared'),
+      routeRunId: z.string().min(1).max(200),
+      blueprint: ExecutionBlueprintV1Schema,
+      review: TransactionReviewProjectionV1Schema,
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('refresh_required'),
+      routeRunId: z.string().min(1).max(200),
+      reason: z.enum(['card_expired', 'quote_expired', 'blueprint_expired', 'fresh_output_below_minimum']),
+      detail: z.string().min(1).max(500),
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('unsupported'),
+      reason: z.enum(['unsupported_pair', 'unsupported_provider', 'unsupported_card_state']),
+      detail: z.string().min(1).max(500),
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('blocked'),
+      routeRunId: z.string().min(1).max(200),
+      safety: SafetyKernelResultV1Schema,
+    })
+    .strict(),
+]);
 
 // Auth
 export const LoginRequestSchema = z.object({

@@ -5,4 +5,5 @@ export * from './provenance.js';
 export * from './registry.js';
 export * from './types.js';
 export * from './uniswap-client.js';
+export * from './uniswap-trade-client.js';
 export * from './uniswap.js';

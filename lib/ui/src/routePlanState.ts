@@ -67,3 +67,60 @@ export function routeDisplayLabel(input: {
   if (input.projection.outcome === 'constrained') return 'Requested route';
   return 'Available route';
 }
+
+// T56: candidate selection + "Review transaction" gating. Pure presentational
+// logic only — the server re-validates every binding, hash, and safety check
+// independently; this only decides what the UI offers to click.
+
+export interface SelectableSwapCandidateV1 {
+  candidateHash: string;
+  providerId: string;
+  providerLabel: string;
+  isRecommended: boolean;
+}
+
+export function selectableSwapCandidates(
+  projection: Pick<RoutePlanProjectionV1, 'recommendedRoute' | 'alternatives'>,
+): SelectableSwapCandidateV1[] {
+  const candidates: SelectableSwapCandidateV1[] = [];
+  if (projection.recommendedRoute) {
+    candidates.push({
+      candidateHash: projection.recommendedRoute.candidateHash,
+      providerId: projection.recommendedRoute.provider.id,
+      providerLabel: projection.recommendedRoute.provider.displayName,
+      isRecommended: true,
+    });
+  }
+  for (const alternative of projection.alternatives) {
+    candidates.push({
+      candidateHash: alternative.candidateHash,
+      providerId: alternative.provider.id,
+      providerLabel: alternative.provider.displayName,
+      isRecommended: false,
+    });
+  }
+  return candidates;
+}
+
+export function defaultSelectedCandidateHash(
+  projection: Pick<RoutePlanProjectionV1, 'recommendedRoute' | 'alternatives'>,
+): string | null {
+  return projection.recommendedRoute?.candidateHash ?? projection.alternatives[0]?.candidateHash ?? null;
+}
+
+/**
+ * Client-side gating only: the composer independently re-validates card
+ * state, expiry, and every hash server-side and fails closed regardless of
+ * what this returns. `ready`/`constrained` outcomes carry a recommended (or
+ * requested) route the server can still prepare; `degraded`/`failed` never
+ * do.
+ */
+export function canReviewTransaction(input: {
+  projection: Pick<RoutePlanProjectionV1, 'outcome' | 'routeCardHash' | 'expiresAt'>;
+  now?: Date;
+}): boolean {
+  const { projection, now = new Date() } = input;
+  if (projection.routeCardHash === null) return false;
+  if (projection.outcome !== 'ready' && projection.outcome !== 'constrained') return false;
+  return !isRoutePlanExpired(projection, now);
+}
