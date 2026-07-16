@@ -1,6 +1,7 @@
 import { BASE_UNISWAP_UNIVERSAL_ROUTER_2 } from '@mioagent/security/uniswapGuard';
 import {
   atomicToHumanDecimal,
+  basisPointsToPercentage,
   canonicalRequestHash,
   canonicalResponseHash,
   minimumOutputAtomic,
@@ -80,9 +81,10 @@ export class UniswapSwapBuildAdapter implements SwapBuildAdapter {
       recipient: input.walletAddress,
       protocols: ['V2', 'V3', 'V4'],
       routingPreference: 'BEST_PRICE',
-      ...(intent.slippageConstraint.maxBps > 0
-        ? { slippageTolerance: (intent.slippageConstraint.maxBps / 100).toString() }
-        : { autoSlippage: 'DEFAULT' }),
+      // Slippage is ALWAYS the stored intent constraint — including an
+      // explicit 0 — mirroring UniswapQuoteClient's strict handling. Auto
+      // slippage would let the provider pick a value the user never approved.
+      slippageTolerance: basisPointsToPercentage(intent.slippageConstraint.maxBps),
       generatePermitAsTransaction: true,
       permitAmount: 'EXACT',
     };

@@ -66,6 +66,31 @@ test('Uniswap build adapter builds calls for USDC to ETH', async () => {
   }
 });
 
+test('Uniswap build adapter honors an explicit zero slippage constraint (never autoSlippage)', async () => {
+  let capturedQuoteBody: Record<string, unknown> | undefined;
+  const adapter = new UniswapSwapBuildAdapter({
+    transport: transportOf({
+      quote: (body) => {
+        capturedQuoteBody = body as Record<string, unknown>;
+        return {
+          status: 200,
+          payload: { routing: 'CLASSIC', quote: { routing: 'CLASSIC', output: { amount: '38000000000000000' } } },
+        };
+      },
+    }),
+  });
+  const result = await adapter.build(buildInput(makeIntent({ slippageBps: 0 })));
+  assert.equal(result.outcome, 'built');
+  if (result.outcome === 'built') {
+    // 0 bps: minimum output must equal expected output exactly.
+    assert.equal(result.minimumOutput.amountAtomic, result.expectedOutput.amountAtomic);
+  }
+  // The request carries the explicit stored-intent constraint — including 0 —
+  // and never falls back to provider-chosen auto slippage.
+  assert.equal(capturedQuoteBody?.slippageTolerance, '0');
+  assert.equal('autoSlippage' in (capturedQuoteBody ?? {}), false);
+});
+
 test('Uniswap build adapter rejects a quote response without a usable output amount', async () => {
   const adapter = new UniswapSwapBuildAdapter({
     transport: transportOf({
