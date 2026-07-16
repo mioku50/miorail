@@ -9,6 +9,7 @@ import {
   routeDisplayLabel,
   routePlanOutcomeCopy,
   selectableSwapCandidates,
+  swapPrepareErrorMessage,
 } from './routePlanState';
 import { TransactionReviewOutcome, type TransactionPrepareOutcomeV1 } from './TransactionReview';
 
@@ -128,6 +129,10 @@ export interface RoutePlanViewProps {
   onReviewTransaction?: (candidateHash: string) => void;
   reviewPending?: boolean;
   transactionReview?: TransactionPrepareOutcomeV1 | null;
+  /** Failed prepare mutation error (prepare.error). Rendered as an honest
+   * "nothing was prepared" notice via swapPrepareErrorMessage — never
+   * silently swallowed, never auto-retried. */
+  transactionReviewError?: unknown;
 }
 
 export function RoutePlanView({
@@ -139,6 +144,7 @@ export function RoutePlanView({
   onReviewTransaction,
   reviewPending = false,
   transactionReview = null,
+  transactionReviewError = null,
 }: RoutePlanViewProps) {
   const expired = isRoutePlanExpired(projection, now);
   const copy = routePlanOutcomeCopy(projection);
@@ -213,6 +219,12 @@ export function RoutePlanView({
       {transactionReview && (
         <div className="mt-2">
           <TransactionReviewOutcome result={transactionReview} />
+        </div>
+      )}
+      {transactionReviewError != null && (
+        <div className="rounded-2xl border border-risk/35 bg-risk-soft p-6" role="alert">
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-risk">Preparation failed</p>
+          <p className="mt-2 text-sm text-ink-2">{swapPrepareErrorMessage(transactionReviewError)}</p>
         </div>
       )}
       {(expired || projection.outcome === 'failed') && onRefresh && <button type="button" onClick={onRefresh} className="rounded-full border border-accent px-4 py-2 text-sm font-semibold text-accent-2 hover:bg-accent-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">{expired ? 'Refresh routes' : 'Retry comparison'}</button>}

@@ -5,6 +5,7 @@ import {
   defaultSelectedCandidateHash,
   isRoutePlanExpired,
   selectableSwapCandidates,
+  swapPrepareErrorMessage,
 } from '../src/routePlanState.js';
 
 const NOW = new Date('2026-07-16T12:00:00.000Z');
@@ -61,6 +62,36 @@ test('canReviewTransaction requires a ready/constrained outcome, a Route Card ha
     }),
     false,
   );
+});
+
+test('swapPrepareErrorMessage maps mutation errors to an honest, non-silent message', () => {
+  // Server guard codes surfaced by the api-client fetch wrapper.
+  assert.equal(
+    swapPrepareErrorMessage(new Error('wallet_mismatch')),
+    'Transaction preparation failed (wallet_mismatch). No transaction was prepared.',
+  );
+  assert.equal(
+    swapPrepareErrorMessage(new Error('API error: 503 Service Unavailable')),
+    'Transaction preparation failed (API error: 503 Service Unavailable). No transaction was prepared.',
+  );
+  // Plain string and empty/unknown errors still yield an honest failure notice.
+  assert.equal(
+    swapPrepareErrorMessage('swap_prepare_failed'),
+    'Transaction preparation failed (swap_prepare_failed). No transaction was prepared.',
+  );
+  assert.equal(
+    swapPrepareErrorMessage(undefined),
+    'Transaction preparation failed (request_failed). No transaction was prepared.',
+  );
+  assert.equal(
+    swapPrepareErrorMessage(new Error('   ')),
+    'Transaction preparation failed (request_failed). No transaction was prepared.',
+  );
+  // Overlong messages are truncated, never dropped.
+  const long = swapPrepareErrorMessage(new Error('x'.repeat(500)));
+  assert.ok(long.includes('...'));
+  assert.ok(long.startsWith('Transaction preparation failed ('));
+  assert.ok(long.endsWith('No transaction was prepared.'));
 });
 
 test('isRoutePlanExpired stays consistent with canReviewTransaction expiry handling', () => {

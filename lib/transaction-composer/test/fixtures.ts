@@ -26,6 +26,7 @@ import { InMemoryRouteStorageRepository, type RouteStorageRepository } from '@mi
 import {
   KYBERSWAP_PROVIDER_V1,
   UNISWAP_PROVIDER_V1,
+  atomicToHumanDecimal,
   buildQuoteArtifacts,
   humanDecimalToAtomic,
 } from '@mioagent/swap-adapters';
@@ -325,6 +326,19 @@ export function stubBuildAdapter(
 }
 
 export const USDC_ADDRESS = USDC_BASE.address as `0x${string}`;
+
+export function tokenAmount(asset: AssetRefV1, amountAtomic: string) {
+  return { asset, amountAtomic, amountDecimal: atomicToHumanDecimal(amountAtomic, asset.decimals)! };
+}
+
+/** Build-side outputs for stub build adapters: expected + slippage-bound minimum. */
+export function buildSideOutputs(intent: RouteIntentV1, expectedAtomic: string) {
+  const minimumAtomic = ((BigInt(expectedAtomic) * BigInt(10_000 - intent.slippageConstraint.maxBps)) / BigInt(10_000)).toString();
+  return {
+    expectedOutput: tokenAmount(intent.toAsset!, expectedAtomic),
+    minimumOutput: tokenAmount(intent.toAsset!, minimumAtomic),
+  };
+}
 
 export function defaultBuiltCalls(input: { amountAtomic: string; router?: `0x${string}` }) {
   const router = input.router ?? '0x6ff5693b99212da76ad316178a184ab56d299b43';

@@ -109,6 +109,20 @@ export function defaultSelectedCandidateHash(
 }
 
 /**
+ * Maps a failed prepare mutation (HTTP guard errors like 401/403/409/503/500,
+ * network failures, validation errors) to an honest, non-technical message.
+ * The api-client fetch wrapper surfaces the server's stable error code (e.g.
+ * "wallet_mismatch") as Error.message when available, or an "API error: ..."
+ * string otherwise. Never invents success; never suggests a retry happened.
+ */
+export function swapPrepareErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  const trimmed = raw.trim();
+  const code = trimmed ? (trimmed.length > 120 ? `${trimmed.slice(0, 117)}...` : trimmed) : 'request_failed';
+  return `Transaction preparation failed (${code}). No transaction was prepared.`;
+}
+
+/**
  * Client-side gating only: the composer independently re-validates card
  * state, expiry, and every hash server-side and fails closed regardless of
  * what this returns. `ready`/`constrained` outcomes carry a recommended (or

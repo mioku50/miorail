@@ -292,6 +292,17 @@ export class DeterministicTransactionComposer implements TransactionComposer {
     if (Date.parse(buildResult.quoteExpiry) <= now.getTime()) {
       return refreshRequiredResultV1(input.routeRunId, 'quote_expired', 'Freshly built transaction quote is already expired');
     }
+    // The build round trip has its OWN quote (the one the calldata was
+    // generated from). Apply the same refresh rule to it: never review a
+    // build whose expected output regressed below the originally displayed
+    // minimum, even if the earlier quote-adapter re-quote looked fine.
+    if (BigInt(buildResult.expectedOutput.amountAtomic) < BigInt(selected.minimumOutput.amountAtomic)) {
+      return refreshRequiredResultV1(
+        input.routeRunId,
+        'fresh_output_below_minimum',
+        'The build-time quote expected output is below the originally displayed minimum output',
+      );
+    }
 
     const usdcAsset = intent.fromAsset!;
     const calls = buildResult.calls.map((call, index) =>
@@ -361,8 +372,12 @@ export class DeterministicTransactionComposer implements TransactionComposer {
       inputAsset: usdcAsset,
       inputAmountAtomic: intent.amount.amountAtomic,
       outputAsset: intent.toAsset!,
-      outputExpectedAtomic: freshCandidate.expectedOutput.amountAtomic,
-      outputMinimumAtomic: freshCandidate.minimumOutput.amountAtomic,
+      // Build-side outputs: derived from the SAME provider response that
+      // produced the calls, so the reviewed numbers can never diverge from
+      // the calldata. The quote-adapter fresh candidate remains the persisted
+      // hash-linkage artifact (selectedCandidateHash/evidenceSetHash) only.
+      outputExpectedAtomic: buildResult.expectedOutput.amountAtomic,
+      outputMinimumAtomic: buildResult.minimumOutput.amountAtomic,
       simulationState,
     });
     await repository.insertBlueprint(input.routeRunId, blueprint);
@@ -371,8 +386,8 @@ export class DeterministicTransactionComposer implements TransactionComposer {
       routeRunId: input.routeRunId,
       provider: selected.provider,
       input: intent.amount,
-      expectedOutput: freshCandidate.expectedOutput,
-      minimumOutput: freshCandidate.minimumOutput,
+      expectedOutput: buildResult.expectedOutput,
+      minimumOutput: buildResult.minimumOutput,
       cardExpectedOutput: selected.expectedOutput,
       cardMinimumOutput: selected.minimumOutput,
       blueprint,

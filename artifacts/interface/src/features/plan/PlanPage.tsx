@@ -94,6 +94,7 @@ export function PlanPage() {
               onReviewTransaction={reviewTransaction}
               reviewPending={prepare.isPending}
               transactionReview={prepare.data ?? null}
+              transactionReviewError={prepare.isError ? prepare.error : null}
             />
           )}
         </section>

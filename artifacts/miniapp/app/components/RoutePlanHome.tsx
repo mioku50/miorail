@@ -241,6 +241,7 @@ export function RoutePlanHome() {
                   onReviewTransaction={reviewTransaction}
                   reviewPending={prepare.isPending}
                   transactionReview={prepare.data ?? null}
+                  transactionReviewError={prepare.isError ? prepare.error : null}
                 />
               )}
             </section>

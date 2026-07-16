@@ -6,6 +6,7 @@ import {
   type RouteCandidateV1,
   type RouteIntentV1,
   type SafetyKernelResultV1,
+  type TokenAmountV1,
 } from '@mioagent/route-domain';
 import { TransactionReviewProjectionV1Schema, type TransactionReviewProjectionV1 } from '@mioagent/route-card';
 import type { RouteStorageRepository } from '@mioagent/route-storage';
@@ -183,6 +184,15 @@ export interface SwapBuildSuccess {
   requestId: string;
   requestHash: HashV1;
   responseHash: HashV1;
+  /**
+   * Outputs sourced strictly from the SAME provider response that produced
+   * the calls (Uniswap: the quote fed into /swap_5792; Kyber: the routeSummary
+   * actually POSTed to route/build). The review projection and the blueprint's
+   * expectedAssetChanges display these — never the separate quote-adapter
+   * candidate's numbers, which come from a different round trip.
+   */
+  expectedOutput: TokenAmountV1;
+  minimumOutput: TokenAmountV1;
 }
 
 export type SwapBuildResultV1 = SwapBuildSuccess | SwapBuildFailure;

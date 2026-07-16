@@ -14,7 +14,15 @@ function transportOf(handlers: {
   return {
     async post(path, body) {
       if (path === '/v1/quote') {
-        return handlers.quote?.(body) ?? { status: 200, payload: { routing: 'CLASSIC', quote: { routing: 'CLASSIC' } } };
+        return (
+          handlers.quote?.(body) ?? {
+            status: 200,
+            payload: {
+              routing: 'CLASSIC',
+              quote: { routing: 'CLASSIC', output: { amount: '38000000000000000' } },
+            },
+          }
+        );
       }
       return (
         handlers.swap?.(body) ?? {
@@ -51,7 +59,21 @@ test('Uniswap build adapter builds calls for USDC to ETH', async () => {
   if (result.outcome === 'built') {
     assert.equal(result.routerAddress, ROUTER);
     assert.equal(result.calls.length, 2);
+    // Build-side outputs come from the quote object fed into /swap_5792.
+    assert.equal(result.expectedOutput.amountAtomic, '38000000000000000');
+    // 50 bps intent slippage bound: 38e15 * 9950 / 10000.
+    assert.equal(result.minimumOutput.amountAtomic, '37810000000000000');
   }
+});
+
+test('Uniswap build adapter rejects a quote response without a usable output amount', async () => {
+  const adapter = new UniswapSwapBuildAdapter({
+    transport: transportOf({
+      quote: () => ({ status: 200, payload: { routing: 'CLASSIC', quote: { routing: 'CLASSIC' } } }),
+    }),
+  });
+  const result = await adapter.build(buildInput(makeIntent()));
+  assert.equal(result.outcome, 'invalid_response');
 });
 
 test('Uniswap build adapter builds calls for USDC to WETH', async () => {

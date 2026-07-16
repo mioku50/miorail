@@ -3,11 +3,15 @@ import { canonicalUsdcForBaseChain } from '@mioagent/security/baseGuards';
 import { loadSkillExecutor, type BaseMcpSkillExecutor } from '@mioagent/runtime-skills';
 import {
   KYBERSWAP_BASE_ROUTER,
+  atomicToHumanDecimal,
   canonicalRequestHash,
   canonicalResponseHash,
+  minimumOutputAtomic,
   normalizeAddress,
+  parsePositiveAtomic,
   providerTokenAddress,
 } from '@mioagent/swap-adapters';
+import type { TokenAmountV1 } from '@mioagent/route-domain';
 import type {
   SwapBuildAdapter,
   SwapBuildCallV1,
@@ -91,6 +95,30 @@ export class KyberSwapBuildAdapter implements SwapBuildAdapter {
     }
     if (quotedRouter !== KYBERSWAP_BASE_ROUTER) return failure('router_mismatch', 'kyberswap_router_mismatch', false);
 
+    // Build-side outputs come from the exact routeSummary that is POSTed to
+    // route/build below — the same object the calldata is generated from.
+    // Minimum = amountOut bounded by the stored intent's slippage constraint,
+    // matching how the quote adapter already derives candidate outputs.
+    const summaryRecord = routeSummary as Record<string, unknown>;
+    const buildAmountOut = parsePositiveAtomic(summaryRecord.amountOut);
+    if (!buildAmountOut) return failure('invalid_response', 'kyberswap_routes_invalid', false);
+    const buildMinimumAtomic = minimumOutputAtomic(buildAmountOut, intent.slippageConstraint.maxBps);
+    const buildExpectedDecimal = atomicToHumanDecimal(buildAmountOut, intent.toAsset!.decimals);
+    const buildMinimumDecimal = atomicToHumanDecimal(buildMinimumAtomic, intent.toAsset!.decimals);
+    if (buildExpectedDecimal === null || buildMinimumDecimal === null) {
+      return failure('invalid_response', 'kyberswap_routes_invalid', false);
+    }
+    const expectedOutput: TokenAmountV1 = {
+      asset: intent.toAsset!,
+      amountAtomic: buildAmountOut,
+      amountDecimal: buildExpectedDecimal,
+    };
+    const minimumOutput: TokenAmountV1 = {
+      asset: intent.toAsset!,
+      amountAtomic: buildMinimumAtomic,
+      amountDecimal: buildMinimumDecimal,
+    };
+
     const deadline = Math.floor((input.now.getTime() + 10 * 60_000) / 1000);
     const quoteExpiry = new Date(deadline * 1000).toISOString();
     const buildBody = {
@@ -153,6 +181,8 @@ export class KyberSwapBuildAdapter implements SwapBuildAdapter {
       requestId: input.requestId,
       requestHash,
       responseHash,
+      expectedOutput,
+      minimumOutput,
     };
   }
 }

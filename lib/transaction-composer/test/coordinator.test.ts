@@ -16,6 +16,7 @@ import {
   TENANT,
   WALLET,
   buildScenario,
+  buildSideOutputs,
   defaultBuiltCalls,
   makeCandidateAndEvidence,
   makeEvidenceSet,
@@ -29,6 +30,9 @@ import {
 } from './fixtures.js';
 
 const ROUTER = '0x6ff5693b99212da76ad316178a184ab56d299b43' as const;
+// Quote-side fresh candidate expected output is 38e15 wei (fixtures); the
+// build-side quote is slightly worse but still above the card minimum.
+const BUILD_EXPECTED_ATOMIC = '37990000000000000';
 
 function baseDeps(overrides: Partial<TransactionComposerDependencies> = {}): TransactionComposerDependencies {
   return {
@@ -71,6 +75,10 @@ async function defaultScenarioDeps(
     candidate: freshKyber.candidate,
     evidence: [freshKyber.evidence],
   }));
+  // Build-side outputs deliberately differ slightly from the quote-side fresh
+  // candidate (37.99e15 vs 38e15 wei): the blueprint and review must carry the
+  // BUILD numbers — the ones derived from the same provider response as the
+  // calldata — never the quote-adapter candidate's numbers.
   const uniswapBuildAdapter = stubBuildAdapter('uniswap', (input) => ({
     outcome: 'built',
     provider: 'uniswap',
@@ -80,6 +88,7 @@ async function defaultScenarioDeps(
     requestId: input.requestId,
     requestHash: `0x${'a'.repeat(64)}`,
     responseHash: `0x${'b'.repeat(64)}`,
+    ...buildSideOutputs(input.intent, BUILD_EXPECTED_ATOMIC),
   }));
   const deps: TransactionComposerDependencies = {
     repository,
@@ -128,6 +137,15 @@ test('prepares a valid ExecutionBlueprintV1 with a matching read-only review pro
   assert.equal(result.review.blueprintHash, result.blueprint.blueprintHash);
   assert.equal(result.review.safety.verdict, 'allowed');
   assert.ok(result.review.simulationWarning);
+  // The reviewed numbers must be the BUILD-side outputs (same provider
+  // response as the calldata), not the quote-adapter candidate's numbers.
+  const buildOutputs = buildSideOutputs(scenario.intent, BUILD_EXPECTED_ATOMIC);
+  assert.equal(result.review.expectedOutput.amountAtomic, buildOutputs.expectedOutput.amountAtomic);
+  assert.equal(result.review.minimumOutput.amountAtomic, buildOutputs.minimumOutput.amountAtomic);
+  assert.notEqual(result.review.expectedOutput.amountAtomic, scenario.uniswap.candidate.expectedOutput.amountAtomic);
+  const credit = result.blueprint.expectedAssetChanges.find((change) => change.direction === 'credit')!;
+  assert.equal(credit.amountAtomic, buildOutputs.expectedOutput.amountAtomic);
+  assert.equal(credit.minimumAmountAtomic, buildOutputs.minimumOutput.amountAtomic);
 });
 
 // ---------------------------------------------------------------------------
@@ -315,6 +333,39 @@ test('re-quote: fresh expected output below the original minimum triggers refres
   if (result.outcome === 'refresh_required') assert.equal(result.reason, 'fresh_output_below_minimum');
 });
 
+test('build: build-side expected output below the original card minimum triggers refresh_required', async () => {
+  // Quote-adapter re-quote is fine (38e15 >= card min 37.81e15) but the
+  // build round trip's own quote regressed below the original minimum.
+  const { scenario, deps } = await defaultScenarioDeps({}, (current) => ({
+    buildAdapters: [
+      stubBuildAdapter('uniswap', (input) => ({
+        outcome: 'built',
+        provider: 'uniswap',
+        routerAddress: ROUTER,
+        calls: defaultBuiltCalls({ amountAtomic: input.intent.amount.amountAtomic }),
+        quoteExpiry: new Date(NOW.getTime() + 5 * 60_000).toISOString(),
+        requestId: input.requestId,
+        requestHash: `0x${'a'.repeat(64)}`,
+        responseHash: `0x${'b'.repeat(64)}`,
+        ...buildSideOutputs(
+          input.intent,
+          (BigInt(current.uniswap.candidate.minimumOutput.amountAtomic) - BigInt(1)).toString(),
+        ),
+      })),
+    ],
+  }));
+  const composer = createTransactionComposer(deps);
+  const result = await composer.prepare(prepareInput(scenario));
+  assert.equal(result.outcome, 'refresh_required');
+  if (result.outcome === 'refresh_required') {
+    assert.equal(result.reason, 'fresh_output_below_minimum');
+    assert.match(result.detail, /build/i);
+  }
+  // Nothing reviewable was persisted for this request.
+  const stored = await deps.repository.listBlueprints(scenario.intent.id, TENANT);
+  assert.equal(stored.length, 0);
+});
+
 test('re-quote: an asset mismatch on the fresh quote triggers refresh_required', async () => {
   const { scenario, deps } = await defaultScenarioDeps({}, (current) => ({
     quoteAdapters: [
@@ -489,6 +540,7 @@ test('Safety Kernel rejection (unlimited approval from a malicious build) blocks
         requestId: input.requestId,
         requestHash: `0x${'a'.repeat(64)}`,
         responseHash: `0x${'b'.repeat(64)}`,
+        ...buildSideOutputs(input.intent, BUILD_EXPECTED_ATOMIC),
       })),
     ],
   }));

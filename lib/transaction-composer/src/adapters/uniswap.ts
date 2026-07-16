@@ -1,12 +1,17 @@
 import { BASE_UNISWAP_UNIVERSAL_ROUTER_2 } from '@mioagent/security/uniswapGuard';
 import {
+  atomicToHumanDecimal,
   canonicalRequestHash,
   canonicalResponseHash,
+  minimumOutputAtomic,
+  parsePositiveAtomic,
+  parseUnsignedAtomic,
   providerTokenAddress,
   createPartnerFetchTradeTransport,
   UniswapTradeClient,
   type UniswapTradeTransport,
 } from '@mioagent/swap-adapters';
+import type { TokenAmountV1 } from '@mioagent/route-domain';
 import type {
   SwapBuildAdapter,
   SwapBuildFailure,
@@ -85,6 +90,42 @@ export class UniswapSwapBuildAdapter implements SwapBuildAdapter {
     if (quoteResult.outcome === 'http_error') return failure('unavailable', `uniswap_http_${quoteResult.status}`, true);
     if (quoteResult.outcome !== 'quote') return failure('invalid_response', 'uniswap_quote_invalid', false);
 
+    // Build-side outputs come from the exact quote object that is fed into
+    // /swap_5792 below — the same response the calldata is generated from.
+    const quoteRecord = quoteResult.payload!.quote as Record<string, unknown>;
+    const quoteOutput =
+      quoteRecord.output && typeof quoteRecord.output === 'object'
+        ? (quoteRecord.output as Record<string, unknown>)
+        : null;
+    const expectedAtomic = parsePositiveAtomic(quoteOutput?.amount);
+    if (!expectedAtomic) return failure('invalid_response', 'uniswap_quote_output_invalid', false);
+    const providerMinimum = parseUnsignedAtomic(
+      quoteRecord.minimumOutput ?? quoteRecord.amountOutMinimum ?? quoteOutput?.minimumAmount,
+    );
+    if (providerMinimum !== null && BigInt(providerMinimum) > BigInt(expectedAtomic)) {
+      return failure('invalid_response', 'uniswap_quote_output_invalid', false);
+    }
+    const derivedMinimum = minimumOutputAtomic(expectedAtomic, intent.slippageConstraint.maxBps);
+    const minimumAtomic =
+      providerMinimum !== null && BigInt(providerMinimum) > BigInt(derivedMinimum)
+        ? providerMinimum
+        : derivedMinimum;
+    const expectedDecimal = atomicToHumanDecimal(expectedAtomic, intent.toAsset!.decimals);
+    const minimumDecimal = atomicToHumanDecimal(minimumAtomic, intent.toAsset!.decimals);
+    if (expectedDecimal === null || minimumDecimal === null) {
+      return failure('invalid_response', 'uniswap_quote_output_invalid', false);
+    }
+    const expectedOutput: TokenAmountV1 = {
+      asset: intent.toAsset!,
+      amountAtomic: expectedAtomic,
+      amountDecimal: expectedDecimal,
+    };
+    const minimumOutput: TokenAmountV1 = {
+      asset: intent.toAsset!,
+      amountAtomic: minimumAtomic,
+      amountDecimal: minimumDecimal,
+    };
+
     const requestId = input.requestId;
     const quoteExpiry = new Date(input.now.getTime() + 10 * 60_000).toISOString();
     const swapBody = {
@@ -113,6 +154,8 @@ export class UniswapSwapBuildAdapter implements SwapBuildAdapter {
       requestId,
       requestHash,
       responseHash,
+      expectedOutput,
+      minimumOutput,
     };
   }
 }

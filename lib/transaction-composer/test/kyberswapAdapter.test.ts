@@ -23,7 +23,9 @@ function mockExecutor(
   };
 }
 
-function defaultHandler(routeSummary: unknown = { note: 'route' }) {
+const SUMMARY_AMOUNT_OUT = '38100000000000000';
+
+function defaultHandler(routeSummary: unknown = { note: 'route', amountOut: SUMMARY_AMOUNT_OUT }) {
   return async (input: Parameters<BaseMcpSkillExecutor['request']>[0]) => {
     if (input.method === 'GET') {
       return { status: 200, data: { data: { routerAddress: ROUTER, routeSummary } } };
@@ -50,7 +52,17 @@ test('KyberSwap build adapter builds an approval plus swap call for USDC to ETH'
     assert.equal(result.calls.length, 2);
     assert.equal(result.calls[1]!.to, ROUTER);
     assert.equal(result.routerAddress, ROUTER);
+    // Build-side outputs come from the routeSummary actually POSTed to
+    // route/build: amountOut + the intent's 50 bps slippage bound.
+    assert.equal(result.expectedOutput.amountAtomic, SUMMARY_AMOUNT_OUT);
+    assert.equal(result.minimumOutput.amountAtomic, ((BigInt(SUMMARY_AMOUNT_OUT) * BigInt(9_950)) / BigInt(10_000)).toString());
   }
+});
+
+test('KyberSwap build adapter rejects a routeSummary without a usable amountOut', async () => {
+  const adapter = new KyberSwapBuildAdapter({ executorFactory: () => mockExecutor(defaultHandler({ note: 'route' })) });
+  const result = await adapter.build(buildInput());
+  assert.equal(result.outcome, 'invalid_response');
 });
 
 test('KyberSwap build adapter rejects a router mismatch on the GET routes response', async () => {
@@ -71,7 +83,7 @@ test('KyberSwap build adapter rejects a router mismatch on the route/build respo
     executorFactory: () =>
       mockExecutor(async (input) =>
         input.method === 'GET'
-          ? { status: 200, data: { data: { routerAddress: ROUTER, routeSummary: {} } } }
+          ? { status: 200, data: { data: { routerAddress: ROUTER, routeSummary: { amountOut: SUMMARY_AMOUNT_OUT } } } }
           : { status: 200, data: { data: { routerAddress: '0x3333333333333333333333333333333333333333', data: '0xabcdef01', transactionValue: '0' } } },
       ),
   });
@@ -80,7 +92,7 @@ test('KyberSwap build adapter rejects a router mismatch on the route/build respo
 });
 
 test('KyberSwap build adapter passes the routeSummary byte-preserved to route/build', async () => {
-  const routeSummary = { amountIn: '1', nested: { x: 1, y: [1, 2, 3] } };
+  const routeSummary = { amountIn: '1', amountOut: SUMMARY_AMOUNT_OUT, nested: { x: 1, y: [1, 2, 3] } };
   let capturedBody: unknown;
   const adapter = new KyberSwapBuildAdapter({
     executorFactory: () =>
@@ -99,7 +111,7 @@ test('KyberSwap build adapter rejects a nonzero transactionValue', async () => {
     executorFactory: () =>
       mockExecutor(async (input) =>
         input.method === 'GET'
-          ? { status: 200, data: { data: { routerAddress: ROUTER, routeSummary: {} } } }
+          ? { status: 200, data: { data: { routerAddress: ROUTER, routeSummary: { amountOut: SUMMARY_AMOUNT_OUT } } } }
           : { status: 200, data: { data: { routerAddress: ROUTER, data: '0xabcdef01', transactionValue: '1000' } } },
       ),
   });
