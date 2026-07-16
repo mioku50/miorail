@@ -88,3 +88,18 @@ test('T56 KyberSwap guard rejects an expired route', () => {
     false,
   );
 });
+
+test('T56 KyberSwap guard expiry check honors an injected clock deterministically', () => {
+  // Both instants are years in the past relative to real wall time — only the
+  // injected clock can make this pass, proving the check never falls back to
+  // bare Date.now() when a clock is supplied.
+  const frozenNow = new Date('2020-01-01T12:00:00.000Z');
+  const fixedContext = { ...context(), expiresAt: '2020-01-01T12:01:00.000Z' };
+  const calls = [{ to: KYBERSWAP_BASE_ROUTER, value: '0', data: '0x12345678' }];
+  assert.equal(validateKyberSwap({ chain: 8453, context: fixedContext, calls, now: frozenNow }).success, true);
+  // Without the injected clock the same past expiry must still fail (default
+  // wall-time behavior unchanged for existing callers).
+  const withoutClock = validateKyberSwap({ chain: 8453, context: fixedContext, calls });
+  assert.equal(withoutClock.success, false);
+  if (!withoutClock.success) assert.equal(withoutClock.code, 'kyberswap_quote_expired');
+});

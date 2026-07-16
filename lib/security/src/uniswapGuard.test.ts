@@ -37,6 +37,19 @@ test('T47 Uniswap guard accepts exact USDC approval plus pinned router call', ()
   if (result.success) assert.equal(result.semantics.spendAmountUsdc, 1.25);
 });
 
+test('T56 Uniswap guard expiry check honors an injected clock deterministically', () => {
+  // Both instants are years in the past relative to real wall time — only the
+  // injected clock can make this pass; without it the same expiry still fails
+  // (default wall-time behavior unchanged for existing callers).
+  const frozenNow = new Date('2020-01-01T12:00:00.000Z');
+  const fixedContext = { ...context(), expiresAt: '2020-01-01T12:01:00.000Z' };
+  const calls = [{ to: BASE_UNISWAP_UNIVERSAL_ROUTER_2, value: '0', data: '0x12345678' }];
+  assert.equal(validateUniswapSwap({ chain: 8453, context: fixedContext, calls, now: frozenNow }).success, true);
+  const withoutClock = validateUniswapSwap({ chain: 8453, context: fixedContext, calls });
+  assert.equal(withoutClock.success, false);
+  if (!withoutClock.success) assert.equal(withoutClock.code, 'uniswap_quote_expired');
+});
+
 test('T47 Uniswap guard blocks unlimited approvals, foreign targets and native value', () => {
   const cases = [
     [{ to: canonicalUsdcForBaseChain(8453), value: '0', data: approveData(PERMIT2_ADDRESS, (1n << 256n) - 1n) }, { to: BASE_UNISWAP_UNIVERSAL_ROUTER_2, value: '0', data: '0x12345678' }],

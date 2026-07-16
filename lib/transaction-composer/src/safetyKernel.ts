@@ -195,7 +195,7 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
       routerVersion: '2.0',
       expiresAt: input.quoteExpiry,
     };
-    const guard = validateUniswapSwap({ chain: input.chainId, calls: baseCalls, context });
+    const guard = validateUniswapSwap({ chain: input.chainId, calls: baseCalls, context, now: input.now });
     checks.push(
       check(
         'provider_guard_uniswap',
@@ -215,7 +215,7 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
       routerAddress: input.routerAddress,
       expiresAt: input.quoteExpiry,
     };
-    const guard = validateKyberSwap({ chain: input.chainId, calls: baseCalls, context });
+    const guard = validateKyberSwap({ chain: input.chainId, calls: baseCalls, context, now: input.now });
     checks.push(
       check(
         'provider_guard_kyberswap',

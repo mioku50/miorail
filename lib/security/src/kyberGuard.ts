@@ -57,7 +57,10 @@ export function validateKyberSwap(input: {
   chain: string | number;
   calls: BaseCall[];
   context?: KyberSwapContext;
+  /** Injectable clock for deterministic expiry checks; defaults to wall time. */
+  now?: Date;
 }): KyberGuardResult {
+  const nowMs = (input.now ?? new Date()).getTime();
   const checks: string[] = [];
   let chain;
   try {
@@ -87,7 +90,7 @@ export function validateKyberSwap(input: {
     );
   }
   const expiry = Date.parse(context.expiresAt);
-  if (!Number.isFinite(expiry) || expiry <= Date.now()) {
+  if (!Number.isFinite(expiry) || expiry <= nowMs) {
     return fail('kyberswap_quote_expired', 'Prepared KyberSwap route expired', checks);
   }
   const amountRaw = decimalUsdc(context.amountDecimal);

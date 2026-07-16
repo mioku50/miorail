@@ -57,7 +57,10 @@ export function validateUniswapSwap(input: {
   chain: string | number;
   calls: BaseCall[];
   context?: UniswapSwapContext;
+  /** Injectable clock for deterministic expiry checks; defaults to wall time. */
+  now?: Date;
 }): UniswapGuardResult {
+  const nowMs = (input.now ?? new Date()).getTime();
   const checks: string[] = [];
   let chain;
   try { chain = normalizeBaseChain(input.chain); } catch { return fail('uniswap_wrong_chain', 'Uniswap swap must target Base mainnet', checks); }
@@ -71,7 +74,7 @@ export function validateUniswapSwap(input: {
   if (context.routerVersion !== '2.0') return fail('uniswap_router_version_invalid', 'Uniswap router version is not pinned', checks);
   if (!ADDRESS.test(context.swapper.toLowerCase())) return fail('uniswap_swapper_invalid', 'Authenticated swapper is invalid', checks);
   const expiry = Date.parse(context.expiresAt);
-  if (!Number.isFinite(expiry) || expiry <= Date.now()) return fail('uniswap_quote_expired', 'Prepared Uniswap quote expired', checks);
+  if (!Number.isFinite(expiry) || expiry <= nowMs) return fail('uniswap_quote_expired', 'Prepared Uniswap quote expired', checks);
   const amountRaw = decimalUsdc(context.amountDecimal);
   if (!amountRaw) return fail('uniswap_amount_invalid', 'USDC input amount is invalid', checks);
   checks.push('Exact positive USDC input and unexpired quote');
