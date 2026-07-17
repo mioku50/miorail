@@ -3,6 +3,7 @@ import {
   AddressV1Schema,
   ExecutionBlueprintV1Schema,
   HashV1Schema,
+  HexDataV1Schema,
   RouteCardV1Schema,
   RouteIntentV1Schema,
   SafetyKernelResultV1Schema,
@@ -100,6 +101,13 @@ export const RoutePlanHttpErrorV1Schema = z
       // codes above are reused as-is by that route's identical guard sequence.
       'invalid_swap_prepare_request',
       'swap_prepare_failed',
+      // T57: blueprint approve / submission routes (identical guard sequence;
+      // the conflict code maps the composer's submission-conflict rejection).
+      'invalid_blueprint_approve_request',
+      'blueprint_approve_failed',
+      'invalid_blueprint_submission_request',
+      'blueprint_submission_failed',
+      'blueprint_submission_conflict',
     ]),
     code: z.string().min(1).max(120),
   })
@@ -156,6 +164,123 @@ export const SwapPrepareResponseV1Schema = z.discriminatedUnion('outcome', [
     })
     .strict(),
 ]);
+
+// T57 — Blueprint approval + Base Account submission record. The approve
+// route re-validates the STORED blueprint server-side and returns the exact
+// unsigned EIP-5792 batch payload for the client's Base Account wallet; the
+// submission route records what the wallet reported. The server never signs
+// or broadcasts, and neither schema ever accepts calls/calldata from the
+// client.
+export const BlueprintLifecycleStateV1Schema = z.enum([
+  'draft',
+  'ready_for_review',
+  'expired',
+  'invalid',
+  'approved',
+  'submitted',
+  'submitted_unknown',
+  'confirmed',
+  'failed',
+  'cancelled',
+]);
+
+export const SwapBlueprintApproveRequestV1Schema = z
+  .object({
+    routeRunId: z.string().min(1).max(200),
+    blueprintHash: HashV1Schema,
+    walletAddress: AddressV1Schema,
+  })
+  .strict();
+
+export const SwapBlueprintApproveResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      outcome: z.literal('approved'),
+      payload: z
+        .object({
+          blueprintId: z.string().min(1).max(200),
+          blueprintHash: HashV1Schema,
+          approvedCallsHash: HashV1Schema,
+          chainId: z.literal('0x2105'),
+          from: AddressV1Schema,
+          calls: z
+            .array(
+              z
+                .object({
+                  to: AddressV1Schema,
+                  value: z.string().regex(/^0x[0-9a-f]+$/, 'Expected a hex quantity'),
+                  data: HexDataV1Schema,
+                })
+                .strict(),
+            )
+            .min(1)
+            .max(100),
+          atomicRequired: z.literal(true),
+        })
+        .strict(),
+      lifecycle: BlueprintLifecycleStateV1Schema,
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('expired'),
+      reason: z.string().min(1).max(500),
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('blocked'),
+      reason: z.string().min(1).max(500),
+      safety: SafetyKernelResultV1Schema,
+    })
+    .strict(),
+]);
+
+export const SwapBlueprintSubmissionRequestV1Schema = z
+  .object({
+    routeRunId: z.string().min(1).max(200),
+    walletAddress: AddressV1Schema,
+    approvedCallsHash: HashV1Schema,
+    batchId: z.string().min(1).max(500).optional(),
+    status: z.enum(['submitted', 'confirmed', 'failed', 'cancelled', 'submitted_unknown']),
+    transactionHashes: z.array(z.string().regex(/^0x[0-9a-fA-F]{64}$/)).max(100).optional(),
+    receipts: z.array(z.unknown()).max(100).optional(),
+    error: z.string().max(1000).optional(),
+  })
+  .strict()
+  // A record that claims the wallet accepted the batch (submitted / confirmed /
+  // submitted_unknown) MUST carry the batch id the wallet returned. Without it
+  // the server would mutate the pending Route Proof (tx hashes / receipts) with
+  // no corresponding `submitted`/`receipt_observed` event, corrupting the
+  // append-only audit chain. `batchId` may be absent ONLY for a terminal
+  // failed/cancelled record describing a transport failure or wallet refusal
+  // that happened before any batch id was assigned.
+  .superRefine((value, ctx) => {
+    const batchBound = value.status === 'submitted' || value.status === 'confirmed' || value.status === 'submitted_unknown';
+    if (batchBound && (value.batchId === undefined || value.batchId.trim().length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['batchId'],
+        message: `batchId is required for a ${value.status} submission record`,
+      });
+    }
+  });
+
+export const SwapBlueprintSubmissionResponseV1Schema = z
+  .object({
+    outcome: z.literal('recorded'),
+    lifecycle: BlueprintLifecycleStateV1Schema,
+    proofId: z.string().min(1).max(200),
+    finalStatus: z.enum([
+      'pending',
+      'completed',
+      'partial_failure',
+      'failed',
+      'cancelled',
+      'reconciliation_required',
+    ]),
+  })
+  .strict();
 
 // Auth
 export const LoginRequestSchema = z.object({

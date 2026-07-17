@@ -11,13 +11,23 @@ import {
   useVerifyWallet,
   useWalletChallenge,
 } from "@mioagent/api-client-react";
-import { RoutePlanView, routePlanSurfaceState } from "@mioagent/ui";
+import { RoutePlanView, SubmissionStatus, routePlanSurfaceState } from "@mioagent/ui";
+import { BlueprintSubmitButton, type BlueprintSubmitStatus } from "@mioagent/wallet-actions";
 import { WalletConnect } from "./WalletConnect";
+
+const BUILDER_CODE = process.env.NEXT_PUBLIC_BUILDER_CODE;
 
 const EXAMPLES = [
   "Swap 100 USDC to ETH using the best net result.",
   "Обменяй 100 USDC на ETH с минимальными комиссиями.",
 ];
+
+interface BlueprintSubmissionState {
+  status: BlueprintSubmitStatus;
+  batchId: string | null;
+  txHashes: string[];
+  error: string | null;
+}
 
 function routeSessionMatches(
   sessionAddress: string | undefined,
@@ -45,6 +55,7 @@ export function RoutePlanHome() {
   const [message, setMessage] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [selectedCandidateHash, setSelectedCandidateHash] = useState<string | null>(null);
+  const [submission, setSubmission] = useState<BlueprintSubmissionState | null>(null);
 
   const sessionReady = routeSessionMatches(session.data?.user?.address, address, chainId);
   const signing = challenge.isPending || verify.isPending;
@@ -71,6 +82,7 @@ export function RoutePlanHome() {
     event?.preventDefault();
     if (!sessionReady || !address || !message.trim() || evaluation.isPending) return;
     prepare.reset();
+    setSubmission(null);
     evaluation.mutate({
       message,
       walletAddress: address.toLowerCase() as `0x${string}`,
@@ -86,6 +98,7 @@ export function RoutePlanHome() {
 
   const reviewTransaction = (candidateHash: string) => {
     if (!address || result?.outcome !== "evaluated" || !result.routeCard) return;
+    setSubmission(null);
     prepare.mutate({
       walletAddress: address.toLowerCase() as `0x${string}`,
       routeRunId: result.routeRunId,
@@ -93,6 +106,31 @@ export function RoutePlanHome() {
       selectedCandidateHash: candidateHash,
     });
   };
+
+  // T57: submission block for a prepared review — the same hook/components as
+  // the web interface. The server approve response is the only source of the
+  // wallet payload; this only mounts the button and mirrors its state.
+  const transactionSubmission =
+    prepare.data?.outcome === "prepared" ? (
+      <div className="space-y-3">
+        <BlueprintSubmitButton
+          routeRunId={prepare.data.routeRunId}
+          blueprintId={prepare.data.blueprint.id}
+          blueprintHash={prepare.data.blueprint.blueprintHash}
+          quoteExpiry={prepare.data.blueprint.quoteExpiry}
+          builderCode={BUILDER_CODE}
+          onStateChange={setSubmission}
+        />
+        {submission && submission.status !== "idle" && (
+          <SubmissionStatus
+            state={submission.status}
+            batchId={submission.batchId}
+            transactionHashes={submission.txHashes}
+            error={submission.error}
+          />
+        )}
+      </div>
+    ) : null;
   return (
     <div className="min-h-screen bg-bg text-ink">
       <header
@@ -242,6 +280,7 @@ export function RoutePlanHome() {
                   reviewPending={prepare.isPending}
                   transactionReview={prepare.data ?? null}
                   transactionReviewError={prepare.isError ? prepare.error : null}
+                  transactionSubmission={transactionSubmission}
                 />
               )}
             </section>

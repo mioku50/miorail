@@ -24,6 +24,25 @@ describe('api-client-react', () => {
     assert.ok(apiClient.useLogin, 'useLogin should be exported');
     assert.ok(apiClient.useLogout, 'useLogout should be exported');
     assert.ok(apiClient.usePrepareSwapBlueprint, 'usePrepareSwapBlueprint should be exported');
+    assert.ok(apiClient.useApproveSwapBlueprint, 'useApproveSwapBlueprint should be exported');
+    assert.ok(apiClient.useRecordBlueprintSubmission, 'useRecordBlueprintSubmission should be exported');
+  });
+
+  it('T57 blueprint hooks are pure non-retrying mutations without polling or client-supplied calls', () => {
+    for (const hook of [apiClient.useApproveSwapBlueprint, apiClient.useRecordBlueprintSubmission]) {
+      const source = hook.toString();
+      assert.ok(/retry:\s*false/.test(source), 'blueprint hooks must never auto-retry');
+      assert.ok(!source.includes('useCallsStatus'), 'blueprint hooks must not poll wallet status');
+      assert.ok(!source.includes('refetchInterval'), 'blueprint hooks must not poll');
+    }
+    const approveSource = apiClient.useApproveSwapBlueprint.toString();
+    assert.ok(approveSource.includes('SwapBlueprintApproveResponseV1Schema'), 'approve response must be re-validated');
+    const submissionSource = apiClient.useRecordBlueprintSubmission.toString();
+    assert.ok(
+      submissionSource.includes('SwapBlueprintSubmissionResponseV1Schema'),
+      'submission response must be re-validated',
+    );
+    assert.ok(!/calls:/.test(submissionSource), 'the submission hook must never send calls');
   });
 
   it('keeps one request ID for a manual retry and rotates it after material changes', () => {

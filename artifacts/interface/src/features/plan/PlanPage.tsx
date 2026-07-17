@@ -1,7 +1,10 @@
 import { useState, type FormEvent } from 'react';
 import { useAccount } from 'wagmi';
-import { RoutePlanView, routePlanSurfaceState } from '@mioagent/ui';
+import { RoutePlanView, SubmissionStatus, routePlanSurfaceState } from '@mioagent/ui';
 import { useEvaluateSwapRoute, usePrepareSwapBlueprint } from '@mioagent/api-client-react';
+import { BlueprintSubmitButton, type BlueprintSubmitStatus } from '@mioagent/wallet-actions';
+
+const BUILDER_CODE = import.meta.env.VITE_BUILDER_CODE;
 
 const EXAMPLES = [
   'Swap 100 USDC to ETH using the best net result.',
@@ -10,10 +13,18 @@ const EXAMPLES = [
   'Use only Uniswap and verify the quote.',
 ];
 
+interface BlueprintSubmissionState {
+  status: BlueprintSubmitStatus;
+  batchId: string | null;
+  txHashes: string[];
+  error: string | null;
+}
+
 export function PlanPage() {
   const { address } = useAccount();
   const [message, setMessage] = useState('');
   const [selectedCandidateHash, setSelectedCandidateHash] = useState<string | null>(null);
+  const [submission, setSubmission] = useState<BlueprintSubmissionState | null>(null);
   const evaluation = useEvaluateSwapRoute();
   const prepare = usePrepareSwapBlueprint();
 
@@ -21,6 +32,7 @@ export function PlanPage() {
     event?.preventDefault();
     if (!address || !message.trim() || evaluation.isPending) return;
     prepare.reset();
+    setSubmission(null);
     evaluation.mutate({ message, walletAddress: address.toLowerCase() as `0x${string}` });
   };
 
@@ -33,6 +45,7 @@ export function PlanPage() {
 
   const reviewTransaction = (candidateHash: string) => {
     if (!address || result?.outcome !== 'evaluated' || !result.routeCard) return;
+    setSubmission(null);
     prepare.mutate({
       walletAddress: address.toLowerCase() as `0x${string}`,
       routeRunId: result.routeRunId,
@@ -40,6 +53,31 @@ export function PlanPage() {
       selectedCandidateHash: candidateHash,
     });
   };
+
+  // T57: submission block for a prepared review. The server approve response
+  // is the only source of the wallet payload; this only mounts the button and
+  // mirrors its reported state into the read-only status panel.
+  const transactionSubmission =
+    prepare.data?.outcome === 'prepared' ? (
+      <div className="space-y-3">
+        <BlueprintSubmitButton
+          routeRunId={prepare.data.routeRunId}
+          blueprintId={prepare.data.blueprint.id}
+          blueprintHash={prepare.data.blueprint.blueprintHash}
+          quoteExpiry={prepare.data.blueprint.quoteExpiry}
+          builderCode={BUILDER_CODE}
+          onStateChange={setSubmission}
+        />
+        {submission && submission.status !== 'idle' && (
+          <SubmissionStatus
+            state={submission.status}
+            batchId={submission.batchId}
+            transactionHashes={submission.txHashes}
+            error={submission.error}
+          />
+        )}
+      </div>
+    ) : null;
   return (
     <main className="flex-1 overflow-y-auto bg-bg px-4 pb-24 pt-6 sm:px-7 lg:px-10 lg:pb-10">
       <div className="mx-auto w-full max-w-[1180px]">
@@ -95,6 +133,7 @@ export function PlanPage() {
               reviewPending={prepare.isPending}
               transactionReview={prepare.data ?? null}
               transactionReviewError={prepare.isError ? prepare.error : null}
+              transactionSubmission={transactionSubmission}
             />
           )}
         </section>

@@ -6,6 +6,7 @@ import type { RoutePlanResponseV1, SwapPrepareResponseV1 } from '@mioagent/api-s
 import { buildRouteCardV1, buildRoutePlanProjectionV1 } from '@mioagent/route-card';
 import type { SwapRouteEvaluationV1 } from '@mioagent/route-engine';
 import {
+  BlueprintSubmissionConflictError,
   assembleExecutionBlueprintV1,
   blueprintIdV1,
   buildTransactionReviewProjectionV1,
@@ -21,7 +22,12 @@ import {
   routeCardIntentFixture,
   unsupportedOptimizationEvaluation,
 } from '../../../lib/route-card/test/fixtures.js';
-import { routeIntelligenceRouter, routePlanRouteRuntime, swapPrepareRouteRuntime } from './routeIntelligence.js';
+import {
+  routeIntelligenceRouter,
+  routePlanRouteRuntime,
+  swapBlueprintRouteRuntime,
+  swapPrepareRouteRuntime,
+} from './routeIntelligence.js';
 
 const USER = { id: `eip155:8453:${WALLET}`, address: WALLET, chainId: 8453 as const };
 const originalRuntime = { ...routePlanRouteRuntime };
@@ -371,5 +377,276 @@ describe('POST /api/route-intelligence/swap/prepare', () => {
     assert.equal(response.body.blueprint.approvedCallsHash, null);
     const serialized = JSON.stringify(response.body);
     assert.equal(/send_calls|x402Receipt/i.test(serialized), false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T57: blueprint approve + submission routes
+// ---------------------------------------------------------------------------
+
+describe('POST /api/route-intelligence/swap/blueprints/:blueprintId/approve', () => {
+  const originalBlueprintRuntime = { ...swapBlueprintRouteRuntime };
+  const BLUEPRINT_ID = 'blueprint-t57-route-fixture';
+  const APPROVE_BODY = {
+    routeRunId: 'run-t57-fixture',
+    blueprintHash: `0x${'5'.repeat(64)}` as `0x${string}`,
+    walletAddress: WALLET,
+  };
+  const APPROVED_PAYLOAD = {
+    blueprintId: BLUEPRINT_ID,
+    blueprintHash: APPROVE_BODY.blueprintHash,
+    approvedCallsHash: `0x${'6'.repeat(64)}` as `0x${string}`,
+    chainId: '0x2105' as const,
+    from: WALLET,
+    calls: [
+      {
+        to: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' as `0x${string}`,
+        value: '0x0' as `0x${string}`,
+        data: '0x095ea7b3' as `0x${string}`,
+      },
+      {
+        to: '0x6ff5693b99212da76ad316178a184ab56d299b43' as `0x${string}`,
+        value: '0x0' as `0x${string}`,
+        data: '0x12345678' as `0x${string}`,
+      },
+    ],
+    atomicRequired: true as const,
+  };
+
+  beforeEach(() => {
+    swapBlueprintRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false });
+    swapBlueprintRouteRuntime.migrationAvailable = async () => true;
+    swapBlueprintRouteRuntime.now = () => NOW;
+    swapBlueprintRouteRuntime.approve = async () => ({ outcome: 'approved', payload: APPROVED_PAYLOAD, lifecycle: 'approved' });
+    process.env.CHAIN_ENV = 'mainnet-readonly';
+  });
+
+  afterEach(() => {
+    Object.assign(swapBlueprintRouteRuntime, originalBlueprintRuntime);
+    if (originalChainEnv === undefined) delete process.env.CHAIN_ENV;
+    else process.env.CHAIN_ENV = originalChainEnv;
+  });
+
+  const url = `/api/route-intelligence/swap/blueprints/${BLUEPRINT_ID}/approve`;
+
+  test('returns a stable disabled error without approving', async () => {
+    let approved = false;
+    swapBlueprintRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: false });
+    swapBlueprintRouteRuntime.approve = async () => {
+      approved = true;
+      throw new Error('must not run');
+    };
+    const response = await request(routeApp()).post(url).send(APPROVE_BODY);
+    assert.equal(response.status, 404);
+    assert.deepEqual(response.body, { error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    assert.equal(approved, false);
+  });
+
+  test('requires a signed wallet session and exact wallet binding', async () => {
+    assert.equal((await request(routeApp(null)).post(url).send(APPROVE_BODY)).status, 401);
+    const mismatch = await request(routeApp()).post(url).send({
+      ...APPROVE_BODY,
+      walletAddress: '0x2222222222222222222222222222222222222222',
+    });
+    assert.equal(mismatch.status, 403);
+    assert.equal(mismatch.body.code, 'wallet_mismatch');
+  });
+
+  test('strictly rejects an invalid body and a non-mainnet runtime context', async () => {
+    const invalid = await request(routeApp()).post(url).send({ ...APPROVE_BODY, blueprintHash: 'not-a-hash' });
+    assert.equal(invalid.status, 400);
+    assert.equal(invalid.body.code, 'invalid_blueprint_approve_request');
+    const extra = await request(routeApp()).post(url).send({ ...APPROVE_BODY, calls: [] });
+    assert.equal(extra.status, 400);
+
+    delete process.env.CHAIN_ENV;
+    assert.equal((await request(routeApp()).post(url).send(APPROVE_BODY)).status, 409);
+    process.env.CHAIN_ENV = 'sepolia';
+    const sepolia = await request(routeApp()).post(url).send(APPROVE_BODY);
+    assert.equal(sepolia.status, 409);
+    assert.equal(sepolia.body.code, 'base_mainnet_required');
+  });
+
+  test('fails closed on missing storage and on approve errors without leaking details', async () => {
+    swapBlueprintRouteRuntime.migrationAvailable = async () => false;
+    const unavailable = await request(routeApp()).post(url).send(APPROVE_BODY);
+    assert.equal(unavailable.status, 503);
+    assert.equal(unavailable.body.code, 'route_storage_unavailable');
+
+    swapBlueprintRouteRuntime.migrationAvailable = async () => true;
+    swapBlueprintRouteRuntime.approve = async () => { throw new Error('binding violated: secret detail'); };
+    const failed = await request(routeApp()).post(url).send(APPROVE_BODY);
+    assert.equal(failed.status, 500);
+    assert.deepEqual(failed.body, { error: 'blueprint_approve_failed', code: 'blueprint_approve_failed' });
+    assert.equal(JSON.stringify(failed.body).includes('secret detail'), false);
+  });
+
+  test('returns the validated approved payload with lifecycle', async () => {
+    const response = await request(routeApp()).post(url).send(APPROVE_BODY);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.outcome, 'approved');
+    assert.equal(response.body.lifecycle, 'approved');
+    assert.deepEqual(response.body.payload, APPROVED_PAYLOAD);
+    const serialized = JSON.stringify(response.body);
+    assert.equal(/send_calls|x402/i.test(serialized), false);
+  });
+
+  test('returns validated expired and blocked outcomes', async () => {
+    swapBlueprintRouteRuntime.approve = async () => ({ outcome: 'expired', reason: 'Blueprint quote has expired' });
+    const expired = await request(routeApp()).post(url).send(APPROVE_BODY);
+    assert.equal(expired.status, 200);
+    assert.equal(expired.body.outcome, 'expired');
+
+    swapBlueprintRouteRuntime.approve = async () => ({
+      outcome: 'blocked',
+      reason: 'contract_token_security failed',
+      safety: {
+        schemaVersion: 'safety-kernel-result/v1',
+        verdict: 'blocked',
+        checks: [{ id: 'contract_token_security', description: 'GoPlus verdict', status: 'failed', detail: 'No usable verdict' }],
+        blockedReason: 'contract_token_security: No usable verdict',
+      },
+    });
+    const blocked = await request(routeApp()).post(url).send(APPROVE_BODY);
+    assert.equal(blocked.status, 200);
+    assert.equal(blocked.body.outcome, 'blocked');
+    assert.equal(blocked.body.safety.verdict, 'blocked');
+  });
+});
+
+describe('POST /api/route-intelligence/swap/blueprints/:blueprintId/submission', () => {
+  const originalBlueprintRuntime = { ...swapBlueprintRouteRuntime };
+  const BLUEPRINT_ID = 'blueprint-t57-route-fixture';
+  const SUBMISSION_BODY = {
+    routeRunId: 'run-t57-fixture',
+    walletAddress: WALLET,
+    approvedCallsHash: `0x${'6'.repeat(64)}`,
+    batchId: 'batch-1',
+    status: 'submitted',
+  };
+
+  beforeEach(() => {
+    swapBlueprintRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false });
+    swapBlueprintRouteRuntime.migrationAvailable = async () => true;
+    swapBlueprintRouteRuntime.now = () => NOW;
+    swapBlueprintRouteRuntime.recordSubmission = async () => ({
+      outcome: 'recorded',
+      lifecycle: 'submitted',
+      proofId: 'route-proof:abc',
+      finalStatus: 'pending',
+    });
+    process.env.CHAIN_ENV = 'mainnet-readonly';
+  });
+
+  afterEach(() => {
+    Object.assign(swapBlueprintRouteRuntime, originalBlueprintRuntime);
+    if (originalChainEnv === undefined) delete process.env.CHAIN_ENV;
+    else process.env.CHAIN_ENV = originalChainEnv;
+  });
+
+  const url = `/api/route-intelligence/swap/blueprints/${BLUEPRINT_ID}/submission`;
+
+  test('returns a stable disabled error without recording', async () => {
+    let recorded = false;
+    swapBlueprintRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: false });
+    swapBlueprintRouteRuntime.recordSubmission = async () => {
+      recorded = true;
+      throw new Error('must not run');
+    };
+    const response = await request(routeApp()).post(url).send(SUBMISSION_BODY);
+    assert.equal(response.status, 404);
+    assert.deepEqual(response.body, { error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    assert.equal(recorded, false);
+  });
+
+  test('requires a signed wallet session and exact wallet binding', async () => {
+    assert.equal((await request(routeApp(null)).post(url).send(SUBMISSION_BODY)).status, 401);
+    const mismatch = await request(routeApp()).post(url).send({
+      ...SUBMISSION_BODY,
+      walletAddress: '0x2222222222222222222222222222222222222222',
+    });
+    assert.equal(mismatch.status, 403);
+    assert.equal(mismatch.body.code, 'wallet_mismatch');
+  });
+
+  test('strictly rejects an invalid body (calls are never accepted) and non-mainnet context', async () => {
+    const badStatus = await request(routeApp()).post(url).send({ ...SUBMISSION_BODY, status: 'executed' });
+    assert.equal(badStatus.status, 400);
+    assert.equal(badStatus.body.code, 'invalid_blueprint_submission_request');
+    const withCalls = await request(routeApp()).post(url).send({ ...SUBMISSION_BODY, calls: [{ to: '0x1', data: '0x' }] });
+    assert.equal(withCalls.status, 400);
+
+    delete process.env.CHAIN_ENV;
+    assert.equal((await request(routeApp()).post(url).send(SUBMISSION_BODY)).status, 409);
+    process.env.CHAIN_ENV = 'sepolia';
+    const sepolia = await request(routeApp()).post(url).send(SUBMISSION_BODY);
+    assert.equal(sepolia.status, 409);
+    assert.equal(sepolia.body.code, 'base_mainnet_required');
+  });
+
+  test('rejects a batch-claiming status without a batchId and never records it', async () => {
+    let recorded = 0;
+    const okRuntime = swapBlueprintRouteRuntime.recordSubmission;
+    swapBlueprintRouteRuntime.recordSubmission = async (arg) => {
+      recorded += 1;
+      return okRuntime(arg);
+    };
+    for (const status of ['submitted', 'confirmed', 'submitted_unknown']) {
+      const response = await request(routeApp()).post(url).send({
+        routeRunId: 'run-t57-fixture',
+        walletAddress: WALLET,
+        approvedCallsHash: `0x${'6'.repeat(64)}`,
+        status,
+        transactionHashes: [`0x${'ab'.repeat(32)}`],
+      });
+      assert.equal(response.status, 400);
+      assert.equal(response.body.code, 'invalid_blueprint_submission_request');
+    }
+    assert.equal(recorded, 0);
+    // A terminal failed/cancelled WITHOUT a batchId is still valid (transport
+    // failure / refusal before any batch id was assigned).
+    const cancelled = await request(routeApp()).post(url).send({
+      routeRunId: 'run-t57-fixture',
+      walletAddress: WALLET,
+      approvedCallsHash: `0x${'6'.repeat(64)}`,
+      status: 'cancelled',
+    });
+    assert.equal(cancelled.status, 200);
+    assert.equal(recorded, 1);
+  });
+
+  test('fails closed on missing storage and on record errors without leaking details', async () => {
+    swapBlueprintRouteRuntime.migrationAvailable = async () => false;
+    const unavailable = await request(routeApp()).post(url).send(SUBMISSION_BODY);
+    assert.equal(unavailable.status, 503);
+    assert.equal(unavailable.body.code, 'route_storage_unavailable');
+
+    swapBlueprintRouteRuntime.migrationAvailable = async () => true;
+    swapBlueprintRouteRuntime.recordSubmission = async () => { throw new Error('secret submission detail'); };
+    const failed = await request(routeApp()).post(url).send(SUBMISSION_BODY);
+    assert.equal(failed.status, 500);
+    assert.deepEqual(failed.body, { error: 'blueprint_submission_failed', code: 'blueprint_submission_failed' });
+    assert.equal(JSON.stringify(failed.body).includes('secret submission detail'), false);
+  });
+
+  test('maps a submission conflict to a stable 409', async () => {
+    swapBlueprintRouteRuntime.recordSubmission = async () => {
+      throw new BlueprintSubmissionConflictError('a different batch is already recorded');
+    };
+    const response = await request(routeApp()).post(url).send(SUBMISSION_BODY);
+    assert.equal(response.status, 409);
+    assert.deepEqual(response.body, { error: 'blueprint_submission_conflict', code: 'blueprint_submission_conflict' });
+    assert.equal(JSON.stringify(response.body).includes('different batch'), false);
+  });
+
+  test('returns the validated recorded response', async () => {
+    const response = await request(routeApp()).post(url).send(SUBMISSION_BODY);
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, {
+      outcome: 'recorded',
+      lifecycle: 'submitted',
+      proofId: 'route-proof:abc',
+      finalStatus: 'pending',
+    });
   });
 });

@@ -98,7 +98,9 @@ function buildFreshEvidenceSetV1(
   return EvidenceSetV1Schema.parse({ ...draft, evidenceSetHash: hashEvidenceSetV1(draft) });
 }
 
-function simulationHonesty(intent: RouteIntentV1): { acceptable: boolean; detail: string } {
+/** T57: exported so approval.ts can mirror the exact same simulation-honesty
+ * mapping when re-validating an already-persisted Blueprint at approve time. */
+export function simulationHonesty(intent: RouteIntentV1): { acceptable: boolean; detail: string } {
   const acceptable = intent.verificationDepth === 'standard';
   return {
     acceptable,

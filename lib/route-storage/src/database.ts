@@ -783,6 +783,55 @@ export function createDatabaseRouteStorageRepository(
       return rows.map(blueprintFromRow);
     },
 
+    async approveBlueprint(
+      runId: string,
+      blueprintId: string,
+      userId: string,
+      input: ExecutionBlueprintV1,
+    ): Promise<ExecutionBlueprintV1> {
+      const approved = parseExecutionBlueprint(input);
+      if (approved.status !== 'approved') {
+        throw new RouteStorageIntegrityError('approveBlueprint requires an approved Blueprint payload');
+      }
+      if (approved.id !== blueprintId || approved.tenantId !== userId) {
+        throw new RouteStorageIntegrityError('approveBlueprint payload does not match the requested Blueprint');
+      }
+      const rows = await sql`
+        SELECT id, route_run_id, user_id, wallet_address, chain_id, schema_version,
+               status, blueprint_hash, intent_hash, selected_candidate_hash,
+               evidence_set_hash, calls_hash, approved_calls_hash,
+               prepared_transaction_action_id, payload, expires_at, created_at, updated_at
+        FROM execution_blueprints
+        WHERE id = ${blueprintId} AND route_run_id = ${runId} AND user_id = ${userId}
+        LIMIT 1
+      `;
+      if (!rows[0]) {
+        throw new RouteStorageIntegrityError('Blueprint does not exist for this Route Run and tenant');
+      }
+      const current = blueprintFromRow(rows[0]).blueprint;
+      if (current.blueprintHash !== approved.blueprintHash) {
+        throw new RouteStorageIntegrityError(
+          'approveBlueprint payload blueprintHash does not match the stored Blueprint',
+        );
+      }
+      if (current.status === 'approved') {
+        if (current.approvedCallsHash === approved.approvedCallsHash) return current;
+        conflict('Blueprint is already approved with a different approved-calls hash');
+      }
+      if (current.status !== 'ready_for_review') {
+        throw new RouteStorageIntegrityError(`Blueprint status ${current.status} cannot be approved`);
+      }
+      await sql`
+        UPDATE execution_blueprints
+        SET status = ${approved.status},
+            approved_calls_hash = ${approved.approvedCallsHash},
+            payload = CAST(${jsonb(approved)} AS jsonb),
+            updated_at = ${new Date(approved.updatedAt)}
+        WHERE id = ${blueprintId} AND route_run_id = ${runId} AND user_id = ${userId}
+      `;
+      return approved;
+    },
+
     async upsertProofProjection(runId: string, input: RouteProofV1): Promise<void> {
       const proof = parseRouteProof(input);
       const run = await requireOwnedRun(sql, runId, proof.tenantId);

@@ -570,7 +570,12 @@ test('composer source never references send_calls, x402, spend permissions, or A
   const url = await import('node:url');
   const here = path.dirname(url.fileURLToPath(import.meta.url));
   const srcDir = path.join(here, '..', 'src');
-  const forbidden = /send_calls|wallet_sendcalls|x402|actioninbox|spend[-_]?permission|route[-_]?proof/i;
+  // T57 note: `route[-_]?proof` was forbidden under T56, when the composer had
+  // no execution-recording surface. T57 deliberately adds the approve and
+  // submission coordinators, which persist pending RouteProofV1 projections —
+  // proofs are now a legitimate reference, while Base MCP send_calls / x402 /
+  // Action Inbox / Spend Permissions remain banned in every composer source.
+  const forbidden = /send_calls|wallet_sendcalls|x402|actioninbox|spend[-_]?permission/i;
 
   function walk(dir: string): string[] {
     const entries = readdirSync(dir, { withFileTypes: true });

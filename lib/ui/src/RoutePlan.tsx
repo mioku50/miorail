@@ -133,6 +133,11 @@ export interface RoutePlanViewProps {
    * "nothing was prepared" notice via swapPrepareErrorMessage — never
    * silently swallowed, never auto-retried. */
   transactionReviewError?: unknown;
+  /** T57: surface-provided submission block (e.g. BlueprintSubmitButton +
+   * SubmissionStatus wired in the surface). Rendered ONLY under a `prepared`
+   * review, so no submit control can ever appear without a reviewed
+   * blueprint. lib/ui stays wagmi-free — this is an opaque slot. */
+  transactionSubmission?: React.ReactNode;
 }
 
 export function RoutePlanView({
@@ -145,6 +150,7 @@ export function RoutePlanView({
   reviewPending = false,
   transactionReview = null,
   transactionReviewError = null,
+  transactionSubmission = null,
 }: RoutePlanViewProps) {
   const expired = isRoutePlanExpired(projection, now);
   const copy = routePlanOutcomeCopy(projection);
@@ -219,6 +225,11 @@ export function RoutePlanView({
       {transactionReview && (
         <div className="mt-2">
           <TransactionReviewOutcome result={transactionReview} />
+          {transactionReview.outcome === 'prepared' && transactionSubmission && (
+            <div className="mt-4" data-transaction-submission-slot="prepared">
+              {transactionSubmission}
+            </div>
+          )}
         </div>
       )}
       {transactionReviewError != null && (

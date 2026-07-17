@@ -453,6 +453,40 @@ export class InMemoryRouteStorageRepository implements RouteStorageRepository {
     });
   }
 
+  async approveBlueprint(
+    runId: string,
+    blueprintId: string,
+    userId: string,
+    input: ExecutionBlueprintV1,
+  ): Promise<ExecutionBlueprintV1> {
+    const approved = parseExecutionBlueprint(input);
+    if (approved.status !== 'approved') {
+      throw new RouteStorageIntegrityError('approveBlueprint requires an approved Blueprint payload');
+    }
+    if (approved.id !== blueprintId || approved.tenantId !== userId) {
+      throw new RouteStorageIntegrityError('approveBlueprint payload does not match the requested Blueprint');
+    }
+    const stored = this.blueprints.get(blueprintId);
+    if (!stored || stored.runId !== runId || stored.userId !== userId) {
+      throw new RouteStorageIntegrityError('Blueprint does not exist for this Route Run and tenant');
+    }
+    const current = parseExecutionBlueprint(stored.payload);
+    if (current.blueprintHash !== approved.blueprintHash) {
+      throw new RouteStorageIntegrityError(
+        'approveBlueprint payload blueprintHash does not match the stored Blueprint',
+      );
+    }
+    if (current.status === 'approved') {
+      if (current.approvedCallsHash === approved.approvedCallsHash) return current;
+      conflict('Blueprint is already approved with a different approved-calls hash');
+    }
+    if (current.status !== 'ready_for_review') {
+      throw new RouteStorageIntegrityError(`Blueprint status ${current.status} cannot be approved`);
+    }
+    stored.payload = structuredClone(approved);
+    return approved;
+  }
+
   async upsertProofProjection(runId: string, input: RouteProofV1): Promise<void> {
     const proof = parseRouteProof(input);
     const run = this.ownedRun(runId, proof.tenantId);

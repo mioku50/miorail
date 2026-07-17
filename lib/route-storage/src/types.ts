@@ -77,6 +77,23 @@ export interface RouteStorageRepository {
   ): Promise<void>;
   listBlueprints(runId: string, userId: string): Promise<StoredBlueprintV1[]>;
 
+  /**
+   * T57: the only mutation path for an already-inserted Blueprint. Transitions
+   * `ready_for_review` -> `approved` (status, approved_calls_hash, payload,
+   * updated_at only — blueprintHash and every other financial field are
+   * immutable). Idempotent when the current status is already `approved` with
+   * a matching approvedCallsHash (returns the stored Blueprint unchanged);
+   * conflicts if `approved` with a different hash; fails closed with
+   * RouteStorageIntegrityError if the Blueprint is missing or not in
+   * `ready_for_review`.
+   */
+  approveBlueprint(
+    runId: string,
+    blueprintId: string,
+    userId: string,
+    approvedBlueprint: ExecutionBlueprintV1,
+  ): Promise<ExecutionBlueprintV1>;
+
   upsertProofProjection(runId: string, proof: RouteProofV1): Promise<void>;
   getProofProjection(id: string, userId: string): Promise<RouteProofV1 | null>;
 

@@ -8,3 +8,28 @@ export { useWalletConfirmAction, CallsStatusPoller, normalizeCallValue, normaliz
 export type { ConfirmFlowStatus, UseWalletConfirmActionResult, UseWalletConfirmActionArgs, CallsStatusPollerProps } from './src/useWalletConfirmAction';
 export { WalletConfirmButton } from './src/WalletConfirmButton';
 export type { WalletConfirmButtonProps, WalletConfirmAction } from './src/WalletConfirmButton';
+
+// T57: approved-blueprint submission flow (server approve → Base Account
+// wallet → idempotent submission record). Shares CallsStatusPoller,
+// normalizeCall, and builder-code attribution with the T19 flow.
+export {
+  useSubmitApprovedBlueprint,
+  isWalletRejectionError,
+  blueprintSubmitPreflight,
+  transactionHashesFromReceipts,
+  normalizeWalletReceipts,
+  walletQuantityToAtomic,
+} from './src/useSubmitApprovedBlueprint';
+export type {
+  BlueprintSubmitStatus,
+  ApprovedWalletPayload,
+  BlueprintPreflightInput,
+  UseSubmitApprovedBlueprintArgs,
+  UseSubmitApprovedBlueprintResult,
+} from './src/useSubmitApprovedBlueprint';
+export {
+  BlueprintSubmitButton,
+  blueprintSubmitLabel,
+  blueprintSubmitDisabledReason,
+} from './src/BlueprintSubmitButton';
+export type { BlueprintSubmitButtonProps } from './src/BlueprintSubmitButton';
