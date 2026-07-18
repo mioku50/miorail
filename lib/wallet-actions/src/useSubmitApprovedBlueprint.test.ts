@@ -160,6 +160,34 @@ test('button label says the wallet will open and never claims server execution',
   assert.equal(blueprintSubmitLabel('idle', 'Connect a wallet to confirm'), 'Connect a wallet to confirm');
 });
 
+test('T58: recordSafely captures proofId/finalStatus from the record response, and the result exposes them', () => {
+  const source = mod.useSubmitApprovedBlueprint.toString();
+  // The record response is no longer thrown away — proofId/finalStatus are
+  // captured into state from record.mutateAsync's response.
+  assert.ok(/setProofId\(\s*response\.proofId\s*\)/.test(source), 'proofId must be captured from the record response');
+  assert.ok(
+    /setRecordedFinalStatus\(\s*response\.finalStatus\s*\)/.test(source),
+    'recordedFinalStatus must be captured from the record response',
+  );
+  // A failed record must never fabricate a proof id (capture only in the try).
+  assert.ok(/catch\s*(\(\w*\))?\s*\{\s*return\s+(false|!1)/.test(source), 'record failures still return false');
+  // The hook result exposes both fields.
+  assert.ok(/proofId,\s*recordedFinalStatus/.test(source), 'the hook result must expose proofId and recordedFinalStatus');
+  // A fresh submit resets them before any new record.
+  assert.ok(/setProofId\(\s*null\s*\)/.test(source), 'a new submit must reset proofId');
+});
+
+test('T58: the wallet hook still sends exactly one batch and never reconciles itself', () => {
+  const source = mod.useSubmitApprovedBlueprint.toString();
+  const sendCallsInvocations = source.match(/sendCalls\.mutateAsync\(/g) ?? [];
+  assert.equal(sendCallsInvocations.length, 1, 'sendCalls must still be invoked from exactly one call site');
+  assert.ok(!/reconcile/i.test(source), 'the wallet hook must never trigger reconciliation');
+  assert.ok(!source.includes('useBoundedProofReconciliation'), 'reconciliation stays in api-client-react surfaces');
+  const buttonSource = readFileSync(path.join(here, 'BlueprintSubmitButton.tsx'), 'utf8');
+  assert.ok(!/useBoundedProofReconciliation|useReconcileRouteProof/.test(buttonSource), 'the button must not reconcile');
+  assert.ok(/proofId,\s*recordedFinalStatus/.test(buttonSource), 'the button must forward proofId to onStateChange');
+});
+
 test('T57 wallet-actions sources never reference Base MCP send_calls, x402, or Action Inbox', () => {
   // `wallet_sendCalls` (the EIP-5792 wallet RPC via wagmi useSendCalls) is the
   // sanctioned path; the ban is on the Base MCP `send_calls` tool, x402, and

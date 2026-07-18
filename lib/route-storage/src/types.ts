@@ -10,6 +10,7 @@ import type {
   RouteProofEventV1,
   RouteProofV1,
 } from '@mioagent/route-domain';
+import type { RouteRunHistoryParamsV1, RouteRunHistoryPageV1 } from './history.js';
 
 export interface RouteRunRecord {
   id: string;
@@ -99,6 +100,15 @@ export interface RouteStorageRepository {
 
   appendProofEvent(proofId: string, event: RouteProofEventV1): Promise<void>;
   listProofEvents(proofId: string, userId: string): Promise<RouteProofEventV1[]>;
+
+  /**
+   * T58: cursor-paginated Route Run history for one user, newest first
+   * (createdAt DESC, id DESC). Each item is enriched with the run's latest
+   * Blueprint/Proof (if any) — bounded to a small, fixed number of queries
+   * per page (no per-item round trips). Tenant-isolated by construction
+   * (userId is always the filter, never derived from payload alone).
+   */
+  listRouteRunHistory(userId: string, params: RouteRunHistoryParamsV1): Promise<RouteRunHistoryPageV1>;
 
   insertIntelligenceCharge(
     runId: string,

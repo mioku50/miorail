@@ -115,4 +115,58 @@ describe('api-client-react', () => {
     );
     await refresh;
   });
+
+  it('T58 route-proof hooks are exported with their bounded-polling constants', () => {
+    assert.ok(apiClient.useReconcileRouteProof, 'useReconcileRouteProof should be exported');
+    assert.ok(apiClient.useRouteProof, 'useRouteProof should be exported');
+    assert.ok(apiClient.useRouteHistory, 'useRouteHistory should be exported');
+    assert.ok(apiClient.useBoundedProofReconciliation, 'useBoundedProofReconciliation should be exported');
+    assert.strictEqual(apiClient.MAX_PROOF_POLL_ATTEMPTS, 10);
+    assert.strictEqual(apiClient.PROOF_POLL_INTERVAL_MS, 4000);
+    assert.deepStrictEqual([...apiClient.PROOF_RECONCILE_RETRY_ATTEMPTS], [3, 6]);
+    assert.deepStrictEqual(
+      [...apiClient.PROOF_TERMINAL_FINAL_STATUSES],
+      ['completed', 'partial_failure', 'failed', 'cancelled', 'reconciliation_required'],
+    );
+  });
+
+  it('T58 reconcile mutation is pure: retry:false, re-validated response, no polling', () => {
+    const source = apiClient.useReconcileRouteProof.toString();
+    assert.ok(/retry:\s*false/.test(source) || /retry:\s*!1/.test(source), 'reconcile must never auto-retry');
+    assert.ok(source.includes('RouteProofReconcileRequestV1Schema'), 'reconcile request must be schema-parsed');
+    assert.ok(source.includes('RouteProofReconcileResponseV1Schema'), 'reconcile response must be re-validated');
+    assert.ok(!source.includes('refetchInterval'), 'mutations must never poll');
+    assert.ok(!/rpcUrl/i.test(source), 'the client must never supply an RPC URL');
+  });
+
+  it('T58 useRouteProof and useRouteHistory are non-polling, non-retrying reads', () => {
+    for (const hook of [apiClient.useRouteProof, apiClient.useRouteHistory]) {
+      const source = hook.toString();
+      assert.ok(/retry:\s*false|retry:\s*!1/.test(source), 'reads must not auto-retry');
+      assert.ok(/refetchInterval:\s*(false|!1)/.test(source), 'reads must default to no polling');
+    }
+    assert.ok(
+      apiClient.useRouteProof.toString().includes('RouteProofGetResponseV1Schema'),
+      'proof read must re-validate the response',
+    );
+    assert.ok(
+      apiClient.useRouteHistory.toString().includes('RouteHistoryResponseV1Schema'),
+      'history read must re-validate the response',
+    );
+  });
+
+  it('T58 bounded reconciliation stops on terminal statuses and at the attempt cap', () => {
+    const source = apiClient.useBoundedProofReconciliation.toString();
+    assert.ok(source.includes('isTerminalProofFinalStatus'), 'polling must stop on a terminal finalStatus');
+    assert.ok(source.includes('MAX_PROOF_POLL_ATTEMPTS'), 'polling must be capped by MAX_PROOF_POLL_ATTEMPTS');
+    assert.ok(source.includes('PROOF_RECONCILE_RETRY_ATTEMPTS'), 're-reconcile must use the shared attempt list');
+    assert.ok(source.includes('attemptsRef'), 'attempts must be counted through a ref');
+    assert.ok(/return\s+(false|!1)/.test(source), 'the refetchInterval callback must be able to stop polling');
+    assert.strictEqual(
+      apiClient.isTerminalProofFinalStatus('completed') && apiClient.isTerminalProofFinalStatus('reconciliation_required'),
+      true,
+    );
+    assert.strictEqual(apiClient.isTerminalProofFinalStatus('pending'), false);
+    assert.strictEqual(apiClient.isTerminalProofFinalStatus(null), false);
+  });
 });

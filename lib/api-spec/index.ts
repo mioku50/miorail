@@ -18,6 +18,13 @@ export type SwapBlueprintApproveRequestV1 = z.infer<typeof schemas.SwapBlueprint
 export type SwapBlueprintApproveResponseV1 = z.infer<typeof schemas.SwapBlueprintApproveResponseV1Schema>;
 export type SwapBlueprintSubmissionRequestV1 = z.infer<typeof schemas.SwapBlueprintSubmissionRequestV1Schema>;
 export type SwapBlueprintSubmissionResponseV1 = z.infer<typeof schemas.SwapBlueprintSubmissionResponseV1Schema>;
+export type RouteProofReconcileRequestV1 = z.infer<typeof schemas.RouteProofReconcileRequestV1Schema>;
+export type RouteProofProjectionV1 = z.infer<typeof schemas.RouteProofProjectionV1Schema>;
+export type RouteProofReconcileResponseV1 = z.infer<typeof schemas.RouteProofReconcileResponseV1Schema>;
+export type RouteProofGetResponseV1 = z.infer<typeof schemas.RouteProofGetResponseV1Schema>;
+export type RouteHistoryItemV1 = z.infer<typeof schemas.RouteHistoryItemV1Schema>;
+export type RouteHistoryRequestV1 = z.infer<typeof schemas.RouteHistoryRequestV1Schema>;
+export type RouteHistoryResponseV1 = z.infer<typeof schemas.RouteHistoryResponseV1Schema>;
 
 // Auth
 export type LoginRequest = z.infer<typeof schemas.LoginRequestSchema>;

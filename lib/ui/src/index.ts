@@ -17,3 +17,6 @@ export * from './RoutePlan';
 export * from './routePlanState';
 export * from './TransactionReview';
 export * from './SubmissionStatus';
+export * from './formatAtomicAmount';
+export * from './ExecutionProof';
+export * from './RouteHistoryList';

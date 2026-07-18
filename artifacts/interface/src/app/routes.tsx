@@ -17,7 +17,9 @@ export const LEGACY_NAV_TABS: AppRoute[] = [
 ];
 
 export function navTabsForRouteIntelligence(enabled: boolean): AppRoute[] {
-  return enabled ? [{ path: '/plan', label: 'plan' }, ...LEGACY_NAV_TABS] : LEGACY_NAV_TABS;
+  return enabled
+    ? [{ path: '/plan', label: 'plan' }, { path: '/plan/history', label: 'history' }, ...LEGACY_NAV_TABS]
+    : LEGACY_NAV_TABS;
 }
 
 export interface AppCommand {
@@ -42,6 +44,10 @@ export const LEGACY_COMMANDS: AppCommand[] = [
 
 export function commandsForRouteIntelligence(enabled: boolean): AppCommand[] {
   return enabled
-    ? [{ id: 'plan', icon: '⌁', label: 'Plan · compare swap routes', path: '/plan' }, ...LEGACY_COMMANDS]
+    ? [
+        { id: 'plan', icon: '⌁', label: 'Plan · compare swap routes', path: '/plan' },
+        { id: 'plan-history', icon: '🧾', label: 'Route history · execution proofs', path: '/plan/history' },
+        ...LEGACY_COMMANDS,
+      ]
     : LEGACY_COMMANDS;
 }

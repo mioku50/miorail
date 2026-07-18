@@ -2,11 +2,13 @@ import { z } from 'zod';
 import {
   AddressV1Schema,
   ExecutionBlueprintV1Schema,
+  GasEstimateV1Schema,
   HashV1Schema,
   HexDataV1Schema,
   RouteCardV1Schema,
   RouteIntentV1Schema,
   SafetyKernelResultV1Schema,
+  TransactionReceiptV1Schema,
 } from '@mioagent/route-domain';
 import { SwapRouteEvaluationV1Schema } from '@mioagent/route-engine/contracts';
 import { RoutePlanProjectionV1Schema } from '@mioagent/route-card/contracts';
@@ -108,6 +110,13 @@ export const RoutePlanHttpErrorV1Schema = z
       'invalid_blueprint_submission_request',
       'blueprint_submission_failed',
       'blueprint_submission_conflict',
+      // T58: route-proof reconciliation + history routes (same guard chain).
+      'invalid_route_proof_reconcile_request',
+      'route_proof_not_found',
+      'route_proof_conflict',
+      'route_proof_reconcile_failed',
+      'invalid_history_request',
+      'history_failed',
     ]),
     code: z.string().min(1).max(120),
   })
@@ -182,6 +191,10 @@ export const BlueprintLifecycleStateV1Schema = z.enum([
   'confirmed',
   'failed',
   'cancelled',
+  // T58: reconciliation-terminal lifecycle states.
+  'completed',
+  'partial_failure',
+  'reconciliation_required',
 ]);
 
 export const SwapBlueprintApproveRequestV1Schema = z
@@ -279,6 +292,108 @@ export const SwapBlueprintSubmissionResponseV1Schema = z
       'cancelled',
       'reconciliation_required',
     ]),
+  })
+  .strict();
+
+// T58 — Route Proof reconciliation + history. The reconcile route verifies
+// onchain receipts through a server-side, env-configured public client (never
+// request-supplied RPC) and honestly finalizes the proof; GET routes are pure
+// reads. The server never signs or broadcasts; unknown never becomes success.
+export const RouteProofReconcileRequestV1Schema = z
+  .object({
+    routeRunId: z.string().min(1).max(200),
+    walletAddress: AddressV1Schema,
+  })
+  .strict();
+
+export const RouteProofProjectionV1Schema = z
+  .object({
+    proofId: z.string().min(1).max(200),
+    blueprintId: z.string().min(1).max(200),
+    blueprintHash: HashV1Schema,
+    approvedCallsHash: HashV1Schema,
+    intentHash: HashV1Schema,
+    provider: z.string().min(1).max(120).nullable(),
+    expectedOutput: z
+      .object({
+        amountAtomic: z.string(),
+        asset: z
+          .object({
+            symbol: z.string(),
+            decimals: z.number().int(),
+            address: z.string().nullable(),
+            kind: z.enum(['native', 'erc20']),
+          })
+          .strict(),
+      })
+      .strict(),
+    minimumOutput: z.string().nullable(),
+    actualOutput: z.string().nullable(),
+    outputDeviationBps: z.number().int().nullable(),
+    minimumSatisfied: z.boolean().nullable(),
+    estimatedGas: GasEstimateV1Schema,
+    actualGas: GasEstimateV1Schema.nullable(),
+    transactionHashes: z.array(HashV1Schema),
+    receipts: z.array(TransactionReceiptV1Schema),
+    finalStatus: z.enum(['pending', 'completed', 'partial_failure', 'failed', 'cancelled', 'reconciliation_required']),
+    reconciliationState: z.enum(['pending', 'matched', 'deviated', 'partial', 'failed', 'manual_review']),
+    createdAt: z.string().datetime({ offset: true }),
+    updatedAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+
+export const RouteProofReconcileResponseV1Schema = z
+  .object({
+    outcome: z.enum(['pending', 'completed', 'partial_failure', 'failed', 'reconciliation_required', 'already_finalized']),
+    proof: RouteProofProjectionV1Schema,
+    lifecycle: BlueprintLifecycleStateV1Schema,
+  })
+  .strict();
+
+export const RouteProofGetResponseV1Schema = z
+  .object({
+    proof: RouteProofProjectionV1Schema,
+    lifecycle: BlueprintLifecycleStateV1Schema,
+    // User-safe event history: index/type/time only, never payloads.
+    events: z.array(
+      z
+        .object({
+          eventIndex: z.number().int().nonnegative(),
+          eventType: z.string().min(1).max(60),
+          createdAt: z.string().datetime({ offset: true }),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
+export const RouteHistoryItemV1Schema = z
+  .object({
+    routeRunId: z.string().min(1).max(200),
+    createdAt: z.string().datetime({ offset: true }),
+    runStatus: z.string().min(1).max(60),
+    intentHash: HashV1Schema,
+    intentSummary: z.string().min(1).max(300),
+    blueprintId: z.string().min(1).max(200).nullable(),
+    blueprintStatus: z.string().min(1).max(60).nullable(),
+    proofId: z.string().min(1).max(200).nullable(),
+    proofFinalStatus: z.string().min(1).max(60).nullable(),
+    reconciliationState: z.string().min(1).max(60).nullable(),
+    provider: z.string().min(1).max(120).nullable(),
+  })
+  .strict();
+
+export const RouteHistoryRequestV1Schema = z
+  .object({
+    limit: z.coerce.number().int().min(1).max(50).optional().default(20),
+    cursor: z.string().min(1).max(2000).optional(),
+  })
+  .strict();
+
+export const RouteHistoryResponseV1Schema = z
+  .object({
+    items: z.array(RouteHistoryItemV1Schema),
+    nextCursor: z.string().nullable(),
   })
   .strict();
 

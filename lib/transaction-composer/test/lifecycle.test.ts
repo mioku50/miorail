@@ -110,6 +110,40 @@ test('lifecycle: a reverted receipt reads as failed, an unknown-only receipt nev
   );
 });
 
+test('lifecycle: T58 reconciliation-terminal finalStatus wins over the receipt heuristic', () => {
+  const approved = { status: 'approved' } as const;
+  const reverted = { transactionHash: `0x${'cd'.repeat(32)}`, status: 'reverted', blockNumber: null, gasUsed: null } as const;
+
+  // completed even though a sibling receipt reverted onchain — the finalized
+  // status was derived from ALL verified receipts and is the ground truth.
+  assert.equal(
+    deriveBlueprintLifecycleV1({
+      blueprint: approved,
+      proof: { finalStatus: 'completed', receipts: [RECEIPT] },
+      events: [],
+    }),
+    'completed',
+  );
+  assert.equal(
+    deriveBlueprintLifecycleV1({
+      blueprint: approved,
+      proof: { finalStatus: 'partial_failure', receipts: [RECEIPT, reverted] },
+      events: [],
+    }),
+    'partial_failure',
+  );
+  // reconciliation_required outranks the success-receipt heuristic: a success
+  // receipt with an unverifiable actual result must NOT read as confirmed.
+  assert.equal(
+    deriveBlueprintLifecycleV1({
+      blueprint: approved,
+      proof: { finalStatus: 'reconciliation_required', receipts: [RECEIPT] },
+      events: [{ eventType: 'submitted', payload: { batchId: 'batch-1', status: 'submitted' } }],
+    }),
+    'reconciliation_required',
+  );
+});
+
 test('T57 composer sources never reference Base MCP send_calls, x402, or Action Inbox', () => {
   const here = path.dirname(url.fileURLToPath(import.meta.url));
   const forbidden = /send_calls|wallet_sendcalls|x402|actioninbox/i;

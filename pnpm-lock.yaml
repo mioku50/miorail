@@ -95,6 +95,9 @@ importers:
       '@mioagent/route-engine':
         specifier: workspace:*
         version: link:../../lib/route-engine
+      '@mioagent/route-proof':
+        specifier: workspace:*
+        version: link:../../lib/route-proof
       '@mioagent/route-storage':
         specifier: workspace:*
         version: link:../../lib/route-storage
@@ -617,6 +620,28 @@ importers:
       '@mioagent/swap-adapters':
         specifier: workspace:*
         version: link:../swap-adapters
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+
+  lib/route-proof:
+    dependencies:
+      '@mioagent/route-domain':
+        specifier: workspace:*
+        version: link:../route-domain
+      '@mioagent/route-storage':
+        specifier: workspace:*
+        version: link:../route-storage
+      viem:
+        specifier: ^2.53.1
+        version: 2.53.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@3.25.76)
       zod:
         specifier: ^3.25.76
         version: 3.25.76

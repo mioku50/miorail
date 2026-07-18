@@ -23,6 +23,14 @@ import {
   type StoredIntelligenceChargeV1,
 } from './types.js';
 import {
+  decodeRouteHistoryCursorV1,
+  encodeRouteHistoryCursorV1,
+  summarizeRouteIntentV1,
+  type RouteRunHistoryItemV1,
+  type RouteRunHistoryPageV1,
+  type RouteRunHistoryParamsV1,
+} from './history.js';
+import {
   assertLinkedHash,
   assertTenant,
   databaseNullableString,
@@ -971,6 +979,112 @@ export function createDatabaseRouteStorageRepository(
         ORDER BY sequence, id
       `;
       return rows.map(eventFromRow);
+    },
+
+    async listRouteRunHistory(
+      userId: string,
+      params: RouteRunHistoryParamsV1,
+    ): Promise<RouteRunHistoryPageV1> {
+      const cursor = params.cursor ? decodeRouteHistoryCursorV1(params.cursor) : null;
+      // Page query leans on the existing (user_id, status, created_at) index
+      // prefix — NO new DDL. Keyset (created_at, id) cursor, newest first.
+      const runRows = cursor
+        ? await sql`
+            SELECT id, user_id, wallet_address, chain_id, schema_version, status,
+                   intent_hash, intent_payload, idempotency_key, created_at, updated_at, completed_at
+            FROM route_runs
+            WHERE user_id = ${userId}
+              AND (created_at, id) < (${new Date(cursor.createdAt)}, ${cursor.id})
+            ORDER BY created_at DESC, id DESC
+            LIMIT ${params.limit + 1}
+          `
+        : await sql`
+            SELECT id, user_id, wallet_address, chain_id, schema_version, status,
+                   intent_hash, intent_payload, idempotency_key, created_at, updated_at, completed_at
+            FROM route_runs
+            WHERE user_id = ${userId}
+            ORDER BY created_at DESC, id DESC
+            LIMIT ${params.limit + 1}
+          `;
+      const hasMore = runRows.length > params.limit;
+      const pageRows = runRows.slice(0, params.limit);
+      const runs = pageRows.map(routeRunFromRow);
+      const runIds = runs.map((run) => run.id);
+
+      // Two batched joins for the whole page (never N-per-item round trips).
+      const blueprintRows = runIds.length
+        ? await sql`
+            SELECT id, route_run_id, user_id, wallet_address, chain_id, schema_version,
+                   status, blueprint_hash, intent_hash, selected_candidate_hash,
+                   evidence_set_hash, calls_hash, approved_calls_hash,
+                   prepared_transaction_action_id, payload, expires_at, created_at, updated_at
+            FROM execution_blueprints
+            WHERE user_id = ${userId} AND route_run_id = ANY(${runIds})
+            ORDER BY created_at, id
+          `
+        : [];
+      const proofRows = runIds.length
+        ? await sql`
+            SELECT id, route_run_id, blueprint_id, user_id, schema_version, status,
+                   proof_hash, approved_calls_hash, payload, created_at, updated_at, finalized_at
+            FROM route_proofs
+            WHERE user_id = ${userId} AND route_run_id = ANY(${runIds})
+            ORDER BY created_at, id
+          `
+        : [];
+
+      const latestBlueprintByRun = new Map<string, { id: string; status: string }>();
+      const blueprintById = new Map<string, { id: string; status: string; runId: string }>();
+      for (const row of blueprintRows) {
+        const stored = blueprintFromRow(row);
+        const runId = databaseString(row.route_run_id, 'route_run_id');
+        const entry = { id: stored.blueprint.id, status: stored.blueprint.status, runId };
+        blueprintById.set(entry.id, entry);
+        latestBlueprintByRun.set(runId, entry);
+      }
+      const latestProofByRun = new Map<
+        string,
+        { id: string; blueprintId: string; finalStatus: string; reconciliationState: string }
+      >();
+      for (const row of proofRows) {
+        const proof = proofFromRow(row);
+        latestProofByRun.set(databaseString(row.route_run_id, 'route_run_id'), {
+          id: proof.id,
+          blueprintId: databaseString(row.blueprint_id, 'blueprint_id'),
+          finalStatus: proof.finalStatus,
+          reconciliationState: proof.reconciliationState,
+        });
+      }
+
+      const items: RouteRunHistoryItemV1[] = runs.map((run) => {
+        const proof = latestProofByRun.get(run.id) ?? null;
+        const blueprint =
+          (proof ? blueprintById.get(proof.blueprintId) : undefined) ?? latestBlueprintByRun.get(run.id) ?? null;
+        return {
+          routeRunId: run.id,
+          createdAt: run.createdAt,
+          runStatus: run.status,
+          intentHash: run.intentHash,
+          intentSummary: summarizeRouteIntentV1({
+            goal: run.intent.goal,
+            fromAsset: run.intent.fromAsset,
+            toAsset: run.intent.toAsset,
+            amount: run.intent.amount,
+            intentHash: run.intentHash,
+          }),
+          blueprintId: blueprint?.id ?? null,
+          blueprintStatus: blueprint?.status ?? null,
+          proofId: proof?.id ?? null,
+          proofFinalStatus: proof?.finalStatus ?? null,
+          reconciliationState: proof?.reconciliationState ?? null,
+          provider: null,
+        };
+      });
+
+      const last = runs.at(-1);
+      const nextCursor =
+        hasMore && last ? encodeRouteHistoryCursorV1({ createdAt: last.createdAt, id: last.id }) : null;
+      return { items, nextCursor };
     },
 
     async insertIntelligenceCharge(

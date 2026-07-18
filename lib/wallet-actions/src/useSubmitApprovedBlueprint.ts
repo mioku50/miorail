@@ -156,6 +156,13 @@ export interface UseSubmitApprovedBlueprintResult {
   error: string | null;
   batchId: string | null;
   txHashes: string[];
+  /** T58: Route Proof id captured from the LAST successful submission record
+   * — the handle a surface needs to start bounded reconciliation. Null until
+   * a record succeeds. This hook itself NEVER reconciles (wallet-actions =
+   * wallet only; reconciliation lives in api-client-react). */
+  proofId: string | null;
+  /** T58: the proof finalStatus the server reported on that same record. */
+  recordedFinalStatus: string | null;
   /** Mount this to poll wallet batch status once a batchId exists. */
   poller: ReactNode;
 }
@@ -175,14 +182,22 @@ export function useSubmitApprovedBlueprint({
   const [error, setError] = useState<string | null>(null);
   const [batchId, setBatchId] = useState<string | null>(null);
   const [txHashes, setTxHashes] = useState<string[]>([]);
+  const [proofId, setProofId] = useState<string | null>(null);
+  const [recordedFinalStatus, setRecordedFinalStatus] = useState<string | null>(null);
   const inFlightRef = useRef(false);
   const finalizedRef = useRef(false);
   const approvedRef = useRef<ApprovedWalletPayload | null>(null);
 
+  // T58: no longer throws the record response away — proofId/finalStatus from
+  // the last successful record are captured so a surface can hand the proof
+  // to the bounded reconciliation hook. Failures still degrade honestly to
+  // `false` (never a fabricated proof id).
   const recordSafely = useCallback(
     async (input: Parameters<typeof record.mutateAsync>[0]): Promise<boolean> => {
       try {
-        await record.mutateAsync(input);
+        const response = await record.mutateAsync(input);
+        setProofId(response.proofId);
+        setRecordedFinalStatus(response.finalStatus);
         return true;
       } catch {
         return false;
@@ -256,6 +271,8 @@ export function useSubmitApprovedBlueprint({
     setError(null);
     setBatchId(null);
     setTxHashes([]);
+    setProofId(null);
+    setRecordedFinalStatus(null);
     setStatus('approving');
 
     try {
@@ -360,5 +377,5 @@ export function useSubmitApprovedBlueprint({
     }
   };
 
-  return { submit, status, error, batchId, txHashes, poller };
+  return { submit, status, error, batchId, txHashes, proofId, recordedFinalStatus, poller };
 }

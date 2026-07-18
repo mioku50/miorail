@@ -21,6 +21,7 @@ import { DIAGNOSTICS_ENABLED } from '../lib/diagnostics';
 import { BaseMcpOAuthBridge } from './BaseMcpOAuthBridge';
 import { RequireSession } from './RequireSession';
 import { PlanPage } from '../features/plan/PlanPage';
+import { RouteHistoryPage } from '../features/plan/RouteHistoryPage';
 
 function ChainEnvMismatchBanner() {
   const { data: sd } = useStatus();
@@ -111,6 +112,16 @@ export function App() {
               {DIAGNOSTICS_ENABLED ? <BaseMcpView /> : <Redirect to="/configure" />}
             </Route>
             <Route path="/autonomy"><CockpitRoute /></Route>
+            {/* T58: route history lives under /plan/history — the legacy
+                /history page (chat + action inbox) is untouched. Same flag +
+                session gate as /plan. */}
+            <Route path="/plan/history">
+              {statusPending
+                ? <div className="flex flex-1 items-center justify-center text-sm text-ink-3">Checking route intelligence…</div>
+                : routeIntelligenceEnabled
+                  ? <RequireSession><RouteHistoryPage /></RequireSession>
+                  : <Redirect to="/" />}
+            </Route>
             <Route path="/plan">
               {statusPending
                 ? <div className="flex flex-1 items-center justify-center text-sm text-ink-3">Checking route intelligence…</div>

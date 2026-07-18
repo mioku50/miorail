@@ -23,6 +23,7 @@
     "@mioagent/route-card": "workspace:*",
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/route-engine": "workspace:*",
+    "@mioagent/route-proof": "workspace:*",
     "@mioagent/route-storage": "workspace:*",
     "@mioagent/runtime-skills": "workspace:*",
     "@mioagent/security": "workspace:*",

@@ -29,6 +29,10 @@ export interface BlueprintSubmitButtonProps
     batchId: string | null;
     txHashes: string[];
     error: string | null;
+    /** T58: Route Proof handle from the last successful submission record —
+     * lets the surface start bounded reconciliation once terminal. */
+    proofId: string | null;
+    recordedFinalStatus: string | null;
   }) => void;
 }
 
@@ -85,7 +89,7 @@ export function BlueprintSubmitButton({
   ...rest
 }: BlueprintSubmitButtonProps) {
   const { address, chainId } = useAccount();
-  const { submit, status, error, batchId, txHashes, poller } = useSubmitApprovedBlueprint({
+  const { submit, status, error, batchId, txHashes, proofId, recordedFinalStatus, poller } = useSubmitApprovedBlueprint({
     routeRunId,
     blueprintId,
     blueprintHash,
@@ -94,12 +98,12 @@ export function BlueprintSubmitButton({
 
   const lastReported = useRef<string>('');
   useEffect(() => {
-    const snapshot = `${status}:${batchId ?? ''}:${txHashes.join(',')}:${error ?? ''}`;
+    const snapshot = `${status}:${batchId ?? ''}:${txHashes.join(',')}:${error ?? ''}:${proofId ?? ''}:${recordedFinalStatus ?? ''}`;
     if (snapshot !== lastReported.current && onStateChange) {
       lastReported.current = snapshot;
-      onStateChange({ status, batchId, txHashes, error });
+      onStateChange({ status, batchId, txHashes, error, proofId, recordedFinalStatus });
     }
-  }, [status, batchId, txHashes, error, onStateChange]);
+  }, [status, batchId, txHashes, error, proofId, recordedFinalStatus, onStateChange]);
 
   const disabledReason =
     status === 'idle' || status === 'cancelled' || status === 'failed'

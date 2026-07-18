@@ -223,6 +223,7 @@ export const ExecutionResultV1Schema = z
     outputAsset: AssetRefV1Schema.nullable(),
   })
   .strict();
+export type ExecutionResultV1 = z.infer<typeof ExecutionResultV1Schema>;
 
 export const RouteProofDeviationV1Schema = z
   .object({
@@ -240,6 +241,7 @@ export const TransactionReceiptV1Schema = z
     gasUsed: AtomicAmountV1Schema.nullable(),
   })
   .strict();
+export type TransactionReceiptV1 = z.infer<typeof TransactionReceiptV1Schema>;
 
 const ROUTE_PROOF_FINAL_STATUSES_V1 = [
   'pending',

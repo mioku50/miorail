@@ -22,9 +22,12 @@ import {
   routeCardIntentFixture,
   unsupportedOptimizationEvaluation,
 } from '../../../lib/route-card/test/fixtures.js';
+import { RouteProofReconcileBindingError } from '@mioagent/route-proof';
+import { RouteStorageIntegrityError } from '@mioagent/route-storage';
 import {
   routeIntelligenceRouter,
   routePlanRouteRuntime,
+  routeProofRouteRuntime,
   swapBlueprintRouteRuntime,
   swapPrepareRouteRuntime,
 } from './routeIntelligence.js';
@@ -648,5 +651,309 @@ describe('POST /api/route-intelligence/swap/blueprints/:blueprintId/submission',
       proofId: 'route-proof:abc',
       finalStatus: 'pending',
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T58: route-proof reconciliation, read projection, and tenant history.
+// ---------------------------------------------------------------------------
+
+const PROOF_ID = 'route-proof:t58-route-fixture';
+const TX_HASH = `0x${'ab'.repeat(32)}`;
+
+const PROOF_PROJECTION = {
+  proofId: PROOF_ID,
+  blueprintId: 'blueprint-t58-route-fixture',
+  blueprintHash: `0x${'5'.repeat(64)}`,
+  approvedCallsHash: `0x${'6'.repeat(64)}`,
+  intentHash: `0x${'7'.repeat(64)}`,
+  provider: 'uniswap',
+  expectedOutput: {
+    amountAtomic: '38000000000000000',
+    asset: { symbol: 'WETH', decimals: 18, address: '0x4200000000000000000000000000000000000006', kind: 'erc20' as const },
+  },
+  minimumOutput: '37810000000000000',
+  actualOutput: '38000000000000000',
+  outputDeviationBps: 0,
+  minimumSatisfied: true,
+  estimatedGas: { gasUnits: '190000', maxFeePerGasWei: '1500000000', estimatedCostNative: '0.000285', estimatedCostUsd: '0.71' },
+  actualGas: { gasUnits: '185000', maxFeePerGasWei: null, estimatedCostNative: '0.000222', estimatedCostUsd: null },
+  transactionHashes: [TX_HASH],
+  receipts: [{ transactionHash: TX_HASH, status: 'success' as const, blockNumber: '33123499', gasUsed: '185000' }],
+  finalStatus: 'completed' as const,
+  reconciliationState: 'matched' as const,
+  createdAt: '2026-07-18T12:00:00.000Z',
+  updatedAt: '2026-07-18T12:01:00.000Z',
+};
+
+describe('POST /api/route-intelligence/route-proofs/:proofId/reconcile', () => {
+  const originalProofRuntime = { ...routeProofRouteRuntime };
+  const RECONCILE_BODY = { routeRunId: 'run-t58-fixture', walletAddress: WALLET };
+  const url = `/api/route-intelligence/route-proofs/${PROOF_ID}/reconcile`;
+
+  beforeEach(() => {
+    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false });
+    routeProofRouteRuntime.migrationAvailable = async () => true;
+    routeProofRouteRuntime.now = () => NOW;
+    routeProofRouteRuntime.reconcile = async () => ({
+      outcome: 'completed',
+      proof: PROOF_PROJECTION,
+      lifecycle: 'completed',
+    }) as never;
+    process.env.CHAIN_ENV = 'mainnet-readonly';
+  });
+
+  afterEach(() => {
+    Object.assign(routeProofRouteRuntime, originalProofRuntime);
+    if (originalChainEnv === undefined) delete process.env.CHAIN_ENV;
+    else process.env.CHAIN_ENV = originalChainEnv;
+  });
+
+  test('returns a stable disabled error without reconciling', async () => {
+    let reconciled = false;
+    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: false });
+    routeProofRouteRuntime.reconcile = async () => {
+      reconciled = true;
+      throw new Error('must not run');
+    };
+    const response = await request(routeApp()).post(url).send(RECONCILE_BODY);
+    assert.equal(response.status, 404);
+    assert.deepEqual(response.body, { error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    assert.equal(reconciled, false);
+  });
+
+  test('requires a signed wallet session and exact wallet binding', async () => {
+    assert.equal((await request(routeApp(null)).post(url).send(RECONCILE_BODY)).status, 401);
+    const mismatch = await request(routeApp()).post(url).send({
+      ...RECONCILE_BODY,
+      walletAddress: '0x2222222222222222222222222222222222222222',
+    });
+    assert.equal(mismatch.status, 403);
+    assert.equal(mismatch.body.code, 'wallet_mismatch');
+  });
+
+  test('strictly rejects an invalid body and a non-mainnet runtime context', async () => {
+    const missingRun = await request(routeApp()).post(url).send({ walletAddress: WALLET });
+    assert.equal(missingRun.status, 400);
+    assert.equal(missingRun.body.code, 'invalid_route_proof_reconcile_request');
+    const extra = await request(routeApp()).post(url).send({ ...RECONCILE_BODY, rpcUrl: 'https://attacker.example' });
+    assert.equal(extra.status, 400);
+
+    delete process.env.CHAIN_ENV;
+    assert.equal((await request(routeApp()).post(url).send(RECONCILE_BODY)).status, 409);
+    process.env.CHAIN_ENV = 'sepolia';
+    const sepolia = await request(routeApp()).post(url).send(RECONCILE_BODY);
+    assert.equal(sepolia.status, 409);
+    assert.equal(sepolia.body.code, 'base_mainnet_required');
+  });
+
+  test('maps typed binding errors to 404/403/409 and everything else to an opaque 500', async () => {
+    routeProofRouteRuntime.reconcile = async () => {
+      throw new RouteProofReconcileBindingError('route_proof_not_found', 'no such proof');
+    };
+    const notFound = await request(routeApp()).post(url).send(RECONCILE_BODY);
+    assert.equal(notFound.status, 404);
+    assert.deepEqual(notFound.body, { error: 'route_proof_not_found', code: 'route_proof_not_found' });
+
+    routeProofRouteRuntime.reconcile = async () => {
+      throw new RouteProofReconcileBindingError('wallet_mismatch', 'wrong wallet');
+    };
+    assert.equal((await request(routeApp()).post(url).send(RECONCILE_BODY)).status, 403);
+
+    routeProofRouteRuntime.reconcile = async () => {
+      throw new RouteProofReconcileBindingError('route_proof_conflict', 'event chain broken');
+    };
+    const conflict = await request(routeApp()).post(url).send(RECONCILE_BODY);
+    assert.equal(conflict.status, 409);
+    assert.deepEqual(conflict.body, { error: 'route_proof_conflict', code: 'route_proof_conflict' });
+
+    routeProofRouteRuntime.reconcile = async () => { throw new Error('secret reconcile detail'); };
+    const failed = await request(routeApp()).post(url).send(RECONCILE_BODY);
+    assert.equal(failed.status, 500);
+    assert.deepEqual(failed.body, { error: 'route_proof_reconcile_failed', code: 'route_proof_reconcile_failed' });
+    assert.equal(JSON.stringify(failed.body).includes('secret reconcile detail'), false);
+  });
+
+  test('fails closed on missing storage', async () => {
+    routeProofRouteRuntime.migrationAvailable = async () => false;
+    const unavailable = await request(routeApp()).post(url).send(RECONCILE_BODY);
+    assert.equal(unavailable.status, 503);
+    assert.equal(unavailable.body.code, 'route_storage_unavailable');
+  });
+
+  test('propagates the reconciler outcome verbatim through the validated response', async () => {
+    const response = await request(routeApp()).post(url).send(RECONCILE_BODY);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.outcome, 'completed');
+    assert.equal(response.body.lifecycle, 'completed');
+    assert.deepEqual(response.body.proof, PROOF_PROJECTION);
+    assert.equal(/send_calls|x402/i.test(JSON.stringify(response.body)), false);
+
+    routeProofRouteRuntime.reconcile = async () => ({
+      outcome: 'reconciliation_required',
+      proof: { ...PROOF_PROJECTION, actualOutput: null, finalStatus: 'reconciliation_required', reconciliationState: 'manual_review' },
+      lifecycle: 'reconciliation_required',
+    }) as never;
+    const manual = await request(routeApp()).post(url).send(RECONCILE_BODY);
+    assert.equal(manual.status, 200);
+    assert.equal(manual.body.outcome, 'reconciliation_required');
+    assert.equal(manual.body.proof.actualOutput, null);
+  });
+});
+
+describe('GET /api/route-intelligence/route-proofs/:proofId', () => {
+  const originalProofRuntime = { ...routeProofRouteRuntime };
+  const url = `/api/route-intelligence/route-proofs/${PROOF_ID}`;
+
+  beforeEach(() => {
+    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false });
+    routeProofRouteRuntime.migrationAvailable = async () => true;
+    routeProofRouteRuntime.getProof = async () => ({
+      proof: PROOF_PROJECTION,
+      lifecycle: 'completed',
+      events: [
+        { eventIndex: 0, eventType: 'calls_approved', createdAt: '2026-07-18T12:00:00.000Z' },
+        { eventIndex: 1, eventType: 'completed', createdAt: '2026-07-18T12:01:00.000Z' },
+      ],
+    }) as never;
+    process.env.CHAIN_ENV = 'mainnet-readonly';
+  });
+
+  afterEach(() => {
+    Object.assign(routeProofRouteRuntime, originalProofRuntime);
+    if (originalChainEnv === undefined) delete process.env.CHAIN_ENV;
+    else process.env.CHAIN_ENV = originalChainEnv;
+  });
+
+  test('guards: flag 404, session 401, chain 409, storage 503', async () => {
+    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: false });
+    assert.equal((await request(routeApp()).get(url)).status, 404);
+    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false });
+
+    assert.equal((await request(routeApp(null)).get(url)).status, 401);
+
+    process.env.CHAIN_ENV = 'sepolia';
+    const sepolia = await request(routeApp()).get(url);
+    assert.equal(sepolia.status, 409);
+    assert.equal(sepolia.body.code, 'base_mainnet_required');
+    process.env.CHAIN_ENV = 'mainnet-readonly';
+
+    routeProofRouteRuntime.migrationAvailable = async () => false;
+    assert.equal((await request(routeApp()).get(url)).status, 503);
+  });
+
+  test('a foreign or missing proof id is a stable 404 without an existence leak', async () => {
+    let requestedProofId: string | null = null;
+    routeProofRouteRuntime.getProof = async (input) => {
+      requestedProofId = input.proofId;
+      return null;
+    };
+    const response = await request(routeApp()).get(url);
+    assert.equal(response.status, 404);
+    assert.deepEqual(response.body, { error: 'route_proof_not_found', code: 'route_proof_not_found' });
+    assert.equal(requestedProofId, PROOF_ID);
+  });
+
+  test('returns the validated user-safe projection with lifecycle and payload-free events', async () => {
+    const response = await request(routeApp()).get(url);
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body.proof, PROOF_PROJECTION);
+    assert.equal(response.body.lifecycle, 'completed');
+    assert.deepEqual(response.body.events, [
+      { eventIndex: 0, eventType: 'calls_approved', createdAt: '2026-07-18T12:00:00.000Z' },
+      { eventIndex: 1, eventType: 'completed', createdAt: '2026-07-18T12:01:00.000Z' },
+    ]);
+    const serialized = JSON.stringify(response.body);
+    assert.equal(serialized.includes('tenantId'), false);
+    assert.equal(serialized.includes('payload'), false);
+  });
+
+  test('opaque 500 on runtime errors', async () => {
+    routeProofRouteRuntime.getProof = async () => { throw new Error('secret get detail'); };
+    const failed = await request(routeApp()).get(url);
+    assert.equal(failed.status, 500);
+    assert.equal(JSON.stringify(failed.body).includes('secret get detail'), false);
+  });
+});
+
+describe('GET /api/route-intelligence/history', () => {
+  const originalProofRuntime = { ...routeProofRouteRuntime };
+  const url = '/api/route-intelligence/history';
+  const HISTORY_ITEM = {
+    routeRunId: 'run-t58-fixture',
+    createdAt: '2026-07-18T12:00:00.000Z',
+    runStatus: 'ready',
+    intentHash: `0x${'7'.repeat(64)}`,
+    intentSummary: 'swap 100 USDC -> WETH',
+    blueprintId: 'blueprint-t58-route-fixture',
+    blueprintStatus: 'approved',
+    proofId: PROOF_ID,
+    proofFinalStatus: 'completed',
+    reconciliationState: 'matched',
+    provider: null,
+  };
+
+  beforeEach(() => {
+    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false });
+    routeProofRouteRuntime.migrationAvailable = async () => true;
+    routeProofRouteRuntime.listHistory = async () => ({ items: [HISTORY_ITEM], nextCursor: null });
+    process.env.CHAIN_ENV = 'mainnet-readonly';
+  });
+
+  afterEach(() => {
+    Object.assign(routeProofRouteRuntime, originalProofRuntime);
+    if (originalChainEnv === undefined) delete process.env.CHAIN_ENV;
+    else process.env.CHAIN_ENV = originalChainEnv;
+  });
+
+  test('guards: flag 404, session 401, chain 409, storage 503', async () => {
+    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: false });
+    assert.equal((await request(routeApp()).get(url)).status, 404);
+    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false });
+
+    assert.equal((await request(routeApp(null)).get(url)).status, 401);
+
+    process.env.CHAIN_ENV = 'sepolia';
+    assert.equal((await request(routeApp()).get(url)).status, 409);
+    process.env.CHAIN_ENV = 'mainnet-readonly';
+
+    routeProofRouteRuntime.migrationAvailable = async () => false;
+    assert.equal((await request(routeApp()).get(url)).status, 503);
+  });
+
+  test('rejects an invalid limit and an undecodable cursor with 400', async () => {
+    const zero = await request(routeApp()).get(`${url}?limit=0`);
+    assert.equal(zero.status, 400);
+    assert.equal(zero.body.code, 'invalid_history_request');
+    const tooBig = await request(routeApp()).get(`${url}?limit=100`);
+    assert.equal(tooBig.status, 400);
+    const notANumber = await request(routeApp()).get(`${url}?limit=abc`);
+    assert.equal(notANumber.status, 400);
+
+    routeProofRouteRuntime.listHistory = async () => {
+      throw new RouteStorageIntegrityError('cursor is garbage');
+    };
+    const badCursor = await request(routeApp()).get(`${url}?cursor=%21%21not-base64url%21%21`);
+    assert.equal(badCursor.status, 400);
+    assert.deepEqual(badCursor.body, { error: 'invalid_history_request', code: 'invalid_history_request' });
+  });
+
+  test('passes limit/cursor through, is tenant-bound, and returns a validated page', async () => {
+    let received: { tenantId: string; limit: number; cursor?: string } | null = null;
+    routeProofRouteRuntime.listHistory = async (input) => {
+      received = input;
+      return { items: [HISTORY_ITEM], nextCursor: 'bmV4dA' };
+    };
+    const response = await request(routeApp()).get(`${url}?limit=5&cursor=bmV4dA`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, { items: [HISTORY_ITEM], nextCursor: 'bmV4dA' });
+    assert.deepEqual(received, { tenantId: USER.id, limit: 5, cursor: 'bmV4dA' });
+  });
+
+  test('opaque 500 on non-cursor runtime failures', async () => {
+    routeProofRouteRuntime.listHistory = async () => { throw new Error('secret history detail'); };
+    const failed = await request(routeApp()).get(url);
+    assert.equal(failed.status, 500);
+    assert.deepEqual(failed.body, { error: 'history_failed', code: 'history_failed' });
   });
 });

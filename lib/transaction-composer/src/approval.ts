@@ -1,14 +1,13 @@
 import {
   ExecutionBlueprintV1Schema,
-  RouteProofEventV1Schema,
   RouteProofV1Schema,
   SafetyKernelResultV1Schema,
   ZERO_HASH_V1,
+  buildRouteProofEventV1,
   hashApprovedCallsV1,
   hashExecutionBlueprintV1,
-  hashRouteProofEventPayloadV1,
-  hashRouteProofEventV1,
   hashRouteProofV1,
+  nextRouteProofEventV1,
   stableHashV1,
   type ExecutionBlueprintV1,
   type HashV1,
@@ -145,45 +144,12 @@ function buildPendingRouteProofV1(input: {
   return RouteProofV1Schema.parse({ ...draft, proofHash: hashRouteProofV1(draft) });
 }
 
-export function buildProofEventV1(input: {
-  proof: RouteProofV1;
-  eventIndex: number;
-  previousEventHash: HashV1 | null;
-  eventType: RouteProofEventV1['eventType'];
-  payload: Record<string, unknown>;
-  now: Date;
-}): RouteProofEventV1 {
-  const { proof, eventIndex, previousEventHash, eventType, payload, now } = input;
-  const nowIso = now.toISOString();
-  const id = `route-proof-event:${stableHashV1('route-proof-event-id/v1', {
-    routeProofId: proof.id,
-    eventIndex,
-    eventType,
-  }).slice(2)}`;
-  const draft: RouteProofEventV1 = {
-    schemaVersion: 'route-proof-event/v1',
-    id,
-    tenantId: proof.tenantId,
-    walletAddress: proof.walletAddress,
-    chainId: proof.chainId,
-    createdAt: nowIso,
-    updatedAt: nowIso,
-    status: 'recorded',
-    intentHash: proof.intentHash,
-    candidateHash: proof.selectedCandidateHash,
-    evidenceSetHash: proof.evidenceSetHash,
-    blueprintHash: proof.blueprintHash,
-    approvedCallsHash: proof.approvedCallsHash,
-    routeProofId: proof.id,
-    eventIndex,
-    eventType,
-    previousEventHash,
-    payload: payload as RouteProofEventV1['payload'],
-    payloadHash: hashRouteProofEventPayloadV1(payload as RouteProofEventV1['payload']),
-    eventHash: ZERO_HASH_V1,
-  };
-  return RouteProofEventV1Schema.parse({ ...draft, eventHash: hashRouteProofEventV1(draft) });
-}
+// T58: the pure event-construction/duplicate-check core now lives in
+// @mioagent/route-domain (proof-events.ts) so route-proof's reconciler can
+// reuse it without depending on transaction-composer. `buildProofEventV1`
+// stays exported here (part of this package's public surface) as a thin
+// alias; `appendProofEventIfNewV1` stays the repository-aware wrapper.
+export const buildProofEventV1 = buildRouteProofEventV1;
 
 /** Check-before-append: skips writing when an event of the same eventType and
  * payloadHash already exists, so retries never duplicate history. Returns the
@@ -196,20 +162,8 @@ export async function appendProofEventIfNewV1(
   payload: Record<string, unknown>,
   now: Date,
 ): Promise<RouteProofEventV1[]> {
-  const payloadHash = hashRouteProofEventPayloadV1(payload as RouteProofEventV1['payload']);
-  const duplicate = existingEvents.find(
-    (event) => event.eventType === eventType && event.payloadHash === payloadHash,
-  );
-  if (duplicate) return [...existingEvents];
-  const previous = existingEvents.at(-1) ?? null;
-  const event = buildProofEventV1({
-    proof,
-    eventIndex: existingEvents.length,
-    previousEventHash: previous?.eventHash ?? null,
-    eventType,
-    payload,
-    now,
-  });
+  const event = nextRouteProofEventV1({ proof, existingEvents, eventType, payload, now });
+  if (!event) return [...existingEvents];
   await repository.appendProofEvent(proof.id, event);
   return [...existingEvents, event];
 }

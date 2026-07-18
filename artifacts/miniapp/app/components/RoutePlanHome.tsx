@@ -1,17 +1,19 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAccount, useSignMessage, useSwitchChain } from "wagmi";
 import {
   logoutWalletSession,
+  useBoundedProofReconciliation,
   useEvaluateSwapRoute,
   usePrepareSwapBlueprint,
   useSession,
   useVerifyWallet,
   useWalletChallenge,
 } from "@mioagent/api-client-react";
-import { RoutePlanView, SubmissionStatus, routePlanSurfaceState } from "@mioagent/ui";
+import { ExecutionProofPanel, RoutePlanView, SubmissionStatus, routePlanSurfaceState } from "@mioagent/ui";
 import { BlueprintSubmitButton, type BlueprintSubmitStatus } from "@mioagent/wallet-actions";
 import { WalletConnect } from "./WalletConnect";
 
@@ -27,7 +29,13 @@ interface BlueprintSubmissionState {
   batchId: string | null;
   txHashes: string[];
   error: string | null;
+  // T58: Route Proof handle captured from the submission record.
+  proofId: string | null;
+  recordedFinalStatus: string | null;
 }
+
+/** Submission statuses after which bounded reconciliation may start. */
+const RECONCILABLE_SUBMISSION_STATUSES: BlueprintSubmitStatus[] = ["confirmed", "failed", "submitted_unknown"];
 
 function routeSessionMatches(
   sessionAddress: string | undefined,
@@ -107,6 +115,18 @@ export function RoutePlanHome() {
     });
   };
 
+  // T58: bounded reconciliation — starts only once the wallet flow is
+  // terminal AND a Route Proof id was recorded; one reconcile + a strictly
+  // bounded GET poll (same hook as the web interface).
+  const reconciliation = useBoundedProofReconciliation({
+    proofId: submission?.proofId ?? null,
+    routeRunId: prepare.data?.outcome === "prepared" ? prepare.data.routeRunId : null,
+    walletAddress: address ? (address.toLowerCase() as `0x${string}`) : null,
+    enabled: Boolean(
+      submission && submission.proofId && RECONCILABLE_SUBMISSION_STATUSES.includes(submission.status),
+    ),
+  });
+
   // T57: submission block for a prepared review — the same hook/components as
   // the web interface. The server approve response is the only source of the
   // wallet payload; this only mounts the button and mirrors its state.
@@ -129,6 +149,9 @@ export function RoutePlanHome() {
             error={submission.error}
           />
         )}
+        {reconciliation.proof && (
+          <ExecutionProofPanel proof={reconciliation.proof} lifecycle={reconciliation.lifecycle ?? "approved"} />
+        )}
       </div>
     ) : null;
   return (
@@ -145,7 +168,16 @@ export function RoutePlanHome() {
           <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-pop">Miorail · Base</p>
           <p className="font-display text-base font-semibold">Plan</p>
         </div>
-        <WalletConnect />
+        <div className="flex items-center gap-2">
+          <Link
+            href="/history"
+            className="rounded-full border border-line bg-panel-2 px-3 py-1.5 text-xs text-ink-2"
+            style={{ textDecoration: "none" }}
+          >
+            History
+          </Link>
+          <WalletConnect />
+        </div>
       </header>
 
       <main className="mx-auto flex w-full max-w-[640px] flex-col gap-4 px-4 py-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">

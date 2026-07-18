@@ -23,6 +23,14 @@ import {
   type StoredIntelligenceChargeV1,
 } from './types.js';
 import {
+  decodeRouteHistoryCursorV1,
+  encodeRouteHistoryCursorV1,
+  summarizeRouteIntentV1,
+  type RouteRunHistoryItemV1,
+  type RouteRunHistoryPageV1,
+  type RouteRunHistoryParamsV1,
+} from './history.js';
+import {
   assertLinkedHash,
   assertTenant,
   parseEvidenceRecord,
@@ -584,6 +592,67 @@ export class InMemoryRouteStorageRepository implements RouteStorageRepository {
         }
         return event;
       });
+  }
+
+  async listRouteRunHistory(userId: string, params: RouteRunHistoryParamsV1): Promise<RouteRunHistoryPageV1> {
+    const cursor = params.cursor ? decodeRouteHistoryCursorV1(params.cursor) : null;
+    const runs = [...this.runs.values()]
+      .filter((run) => run.userId === userId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id));
+    const afterCursor = cursor
+      ? runs.filter(
+          (run) =>
+            run.createdAt < cursor.createdAt || (run.createdAt === cursor.createdAt && run.id < cursor.id),
+        )
+      : runs;
+    const page = afterCursor.slice(0, params.limit + 1);
+    const hasMore = page.length > params.limit;
+    const pageRuns = page.slice(0, params.limit);
+
+    const items: RouteRunHistoryItemV1[] = pageRuns.map((run) => {
+      const runBlueprints = this.byRun(this.blueprints, run.id)
+        .map((entry) => ({ entry, payload: entry.payload as { createdAt?: unknown; status?: unknown } }))
+        .sort((left, right) => String(left.payload.createdAt ?? '').localeCompare(String(right.payload.createdAt ?? '')));
+      const latestBlueprint = runBlueprints.at(-1)?.entry;
+      const runProofs = [...this.proofs.values()]
+        .filter((proof) => proof.runId === run.id)
+        .map((proof) => ({
+          proof,
+          payload: proof.payload as { createdAt?: unknown; finalStatus?: unknown; reconciliationState?: unknown },
+        }))
+        .sort((left, right) => String(left.payload.createdAt ?? '').localeCompare(String(right.payload.createdAt ?? '')));
+      const latestProof = runProofs.at(-1);
+      const linkedBlueprint = latestProof
+        ? runBlueprints.find((candidate) => candidate.entry.id === latestProof.proof.blueprintId)?.entry
+        : undefined;
+      const blueprintEntry = linkedBlueprint ?? latestBlueprint;
+      const proofPayload = latestProof?.payload;
+      const intent = parseRouteIntent(run.payload);
+
+      return {
+        routeRunId: run.id,
+        createdAt: run.createdAt,
+        runStatus: run.status,
+        intentHash: run.intentHash,
+        intentSummary: summarizeRouteIntentV1({
+          goal: intent.goal,
+          fromAsset: intent.fromAsset,
+          toAsset: intent.toAsset,
+          amount: intent.amount,
+          intentHash: run.intentHash,
+        }),
+        blueprintId: blueprintEntry?.id ?? null,
+        blueprintStatus: blueprintEntry ? parseExecutionBlueprint(blueprintEntry.payload).status : null,
+        proofId: latestProof?.proof.id ?? null,
+        proofFinalStatus: typeof proofPayload?.finalStatus === 'string' ? proofPayload.finalStatus : null,
+        reconciliationState: typeof proofPayload?.reconciliationState === 'string' ? proofPayload.reconciliationState : null,
+        provider: null,
+      };
+    });
+
+    const last = pageRuns.at(-1);
+    const nextCursor = hasMore && last ? encodeRouteHistoryCursorV1({ createdAt: last.createdAt, id: last.id }) : null;
+    return { items, nextCursor };
   }
 
   async insertIntelligenceCharge(

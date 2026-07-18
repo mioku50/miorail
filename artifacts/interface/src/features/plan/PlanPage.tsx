@@ -1,7 +1,12 @@
 import { useState, type FormEvent } from 'react';
+import { Link } from 'wouter';
 import { useAccount } from 'wagmi';
-import { RoutePlanView, SubmissionStatus, routePlanSurfaceState } from '@mioagent/ui';
-import { useEvaluateSwapRoute, usePrepareSwapBlueprint } from '@mioagent/api-client-react';
+import { ExecutionProofPanel, RoutePlanView, SubmissionStatus, routePlanSurfaceState } from '@mioagent/ui';
+import {
+  useBoundedProofReconciliation,
+  useEvaluateSwapRoute,
+  usePrepareSwapBlueprint,
+} from '@mioagent/api-client-react';
 import { BlueprintSubmitButton, type BlueprintSubmitStatus } from '@mioagent/wallet-actions';
 
 const BUILDER_CODE = import.meta.env.VITE_BUILDER_CODE;
@@ -18,7 +23,15 @@ interface BlueprintSubmissionState {
   batchId: string | null;
   txHashes: string[];
   error: string | null;
+  // T58: Route Proof handle captured from the submission record — enables
+  // bounded reconciliation once the wallet flow is terminal.
+  proofId: string | null;
+  recordedFinalStatus: string | null;
 }
+
+/** Submission statuses after which reconciliation may start (the wallet flow
+ * reported an outcome the server can now verify onchain). */
+const RECONCILABLE_SUBMISSION_STATUSES: BlueprintSubmitStatus[] = ['confirmed', 'failed', 'submitted_unknown'];
 
 export function PlanPage() {
   const { address } = useAccount();
@@ -54,6 +67,18 @@ export function PlanPage() {
     });
   };
 
+  // T58: bounded reconciliation starts only once the wallet flow is terminal
+  // AND a Route Proof id was recorded. One reconcile POST + a strictly
+  // bounded GET poll; the wallet hook itself never reconciles.
+  const reconciliation = useBoundedProofReconciliation({
+    proofId: submission?.proofId ?? null,
+    routeRunId: prepare.data?.outcome === 'prepared' ? prepare.data.routeRunId : null,
+    walletAddress: address ? (address.toLowerCase() as `0x${string}`) : null,
+    enabled: Boolean(
+      submission && submission.proofId && RECONCILABLE_SUBMISSION_STATUSES.includes(submission.status),
+    ),
+  });
+
   // T57: submission block for a prepared review. The server approve response
   // is the only source of the wallet payload; this only mounts the button and
   // mirrors its reported state into the read-only status panel.
@@ -76,6 +101,9 @@ export function PlanPage() {
             error={submission.error}
           />
         )}
+        {reconciliation.proof && (
+          <ExecutionProofPanel proof={reconciliation.proof} lifecycle={reconciliation.lifecycle ?? 'approved'} />
+        )}
       </div>
     ) : null;
   return (
@@ -84,7 +112,15 @@ export function PlanPage() {
         <section className="relative overflow-hidden rounded-2xl border border-line bg-panel p-5 sm:p-7">
           <div className="absolute bottom-0 left-7 top-0 w-px bg-accent/35" aria-hidden="true" />
           <div className="relative pl-5">
-            <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-pop">Route intelligence · Base</p>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-pop">Route intelligence · Base</p>
+              <Link
+                href="/plan/history"
+                className="rounded-full border border-line bg-panel-2 px-3 py-1.5 text-xs text-ink-2 transition-colors hover:border-accent/45 hover:text-ink"
+              >
+                History
+              </Link>
+            </div>
             <h1 className="mt-3 max-w-3xl font-display text-3xl font-semibold tracking-[-0.03em] text-ink sm:text-4xl">What do you want to do on Base?</h1>
             <p className="mt-3 max-w-2xl text-sm leading-relaxed text-ink-2">Describe one swap goal. Miorail will compare current Uniswap and KyberSwap routes, then show exactly what the evidence can—and cannot—support.</p>
           </div>

@@ -17,7 +17,12 @@ export type LifecycleStateV1 =
   | 'submitted_unknown'
   | 'confirmed'
   | 'failed'
-  | 'cancelled';
+  | 'cancelled'
+  // T58: reconciliation-terminal states, set ONLY once the proof's
+  // finalStatus was honestly finalized from verified onchain receipts.
+  | 'completed'
+  | 'partial_failure'
+  | 'reconciliation_required';
 
 export interface DeriveBlueprintLifecycleInput {
   blueprint: Pick<ExecutionBlueprintV1, 'status'>;
@@ -43,6 +48,12 @@ export function deriveBlueprintLifecycleV1(input: DeriveBlueprintLifecycleInput)
   const { blueprint, proof, events } = input;
   if (blueprint.status !== 'approved') return blueprint.status;
   if (!proof) return 'approved';
+  // T58 reconciliation-terminal states take priority over the receipt
+  // heuristic below: once the proof was finalized from VERIFIED receipts,
+  // the finalStatus is the ground truth.
+  if (proof.finalStatus === 'completed') return 'completed';
+  if (proof.finalStatus === 'partial_failure') return 'partial_failure';
+  if (proof.finalStatus === 'reconciliation_required') return 'reconciliation_required';
   if (proof.finalStatus === 'cancelled') return 'cancelled';
   if (proof.finalStatus === 'failed') return 'failed';
   // Confirmed requires REAL success evidence — never inferred from a client's

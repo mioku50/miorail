@@ -1,7 +1,12 @@
 import { Router, type Request } from 'express';
 import {
+  RouteHistoryRequestV1Schema,
+  RouteHistoryResponseV1Schema,
   RoutePlanRequestV1Schema,
   RoutePlanResponseV1Schema,
+  RouteProofGetResponseV1Schema,
+  RouteProofReconcileRequestV1Schema,
+  RouteProofReconcileResponseV1Schema,
   SwapBlueprintApproveRequestV1Schema,
   SwapBlueprintApproveResponseV1Schema,
   SwapBlueprintSubmissionRequestV1Schema,
@@ -11,7 +16,17 @@ import {
 } from '@mioagent/api-zod';
 import { createLlmProvider } from '@mioagent/llm';
 import { createSwapRouteEngine } from '@mioagent/route-engine';
-import { createDatabaseRouteStorageRepository } from '@mioagent/route-storage';
+import {
+  RouteStorageIntegrityError,
+  createDatabaseRouteStorageRepository,
+} from '@mioagent/route-storage';
+import {
+  RouteProofReconcileBindingError,
+  createRouteProofReconciler,
+  summarizeRouteProofEventsV1,
+  toRouteProofProjectionV1,
+  type ReconcileRouteProofInput,
+} from '@mioagent/route-proof';
 import { KyberSwapRouteAdapter, UniswapSwapRouteAdapter } from '@mioagent/swap-adapters';
 import {
   BlueprintSubmissionConflictError,
@@ -19,6 +34,7 @@ import {
   UniswapSwapBuildAdapter,
   approveExecutionBlueprintV1,
   createTransactionComposer,
+  deriveBlueprintLifecycleV1,
   recordBlueprintSubmissionV1,
   type ApproveExecutionBlueprintInput,
   type RecordBlueprintSubmissionInput,
@@ -28,6 +44,7 @@ import { client } from '@mioagent/db';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
 import { RoutePlanCoordinator, type RoutePlanCoordinatorInput } from '../lib/routePlanCoordinator.js';
 import { loadTokenSecurityContext } from '../lib/executionSecurity.js';
+import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
 
 function signedRoutePlanUser(req: Request) {
   const user = req.session?.user;
@@ -325,5 +342,221 @@ routeIntelligenceRouter.post('/swap/blueprints/:blueprintId/submission', async (
       return;
     }
     res.status(500).json({ error: 'blueprint_submission_failed', code: 'blueprint_submission_failed' });
+  }
+});
+
+// T58: Route Proof reconciliation + read projections + tenant history. The
+// reconcile route verifies receipts against Base through the env-configured
+// viem public client (injected as a reader; NEVER built from request data),
+// bounded to a single pass — no server-side polling or provider retries.
+// GET routes are pure reads (no reconciliation side effects). The server
+// never signs or broadcasts; a missing/foreign proof is a stable 404 with no
+// existence leak; 500s never leak the underlying error.
+
+export interface RouteProofGetInput {
+  tenantId: string;
+  walletAddress: string;
+  proofId: string;
+}
+
+export interface RouteHistoryListInput {
+  tenantId: string;
+  limit: number;
+  cursor?: string;
+}
+
+async function reconcileRouteProof(input: ReconcileRouteProofInput) {
+  const repository = createDatabaseRouteStorageRepository(client);
+  const reconciler = createRouteProofReconciler({
+    repository,
+    receiptReader: createViemBaseReceiptReader(),
+  });
+  return reconciler.reconcile(input);
+}
+
+async function getRouteProofProjection(input: RouteProofGetInput) {
+  const repository = createDatabaseRouteStorageRepository(client);
+  // The proof row itself carries its run/blueprint lineage columns; the
+  // repository's RouteProofV1 payload does not, so resolve them here with a
+  // single tenant-scoped query before the validated payload reads.
+  const rows = await client`
+    SELECT route_run_id, blueprint_id
+    FROM route_proofs
+    WHERE id = ${input.proofId} AND user_id = ${input.tenantId}
+    LIMIT 1
+  `;
+  const row = rows[0];
+  if (!row) return null;
+  const routeRunId = String(row.route_run_id);
+  const blueprintId = String(row.blueprint_id);
+
+  const proof = await repository.getProofProjection(input.proofId, input.tenantId);
+  if (!proof) return null;
+  if (proof.walletAddress.toLowerCase() !== input.walletAddress.toLowerCase()) return null;
+
+  const events = await repository.listProofEvents(input.proofId, input.tenantId);
+  const blueprints = await repository.listBlueprints(routeRunId, input.tenantId);
+  const stored = blueprints.find((entry) => entry.blueprint.id === blueprintId);
+  if (!stored) return null;
+  const candidates = await repository.listCandidates(routeRunId, input.tenantId);
+  const provider =
+    candidates.find((candidate) => candidate.candidateHash === proof.selectedCandidateHash)?.provider.id ?? null;
+
+  return {
+    proof: toRouteProofProjectionV1(proof, { blueprintId, provider }),
+    lifecycle: deriveBlueprintLifecycleV1({ blueprint: stored.blueprint, proof, events }),
+    events: summarizeRouteProofEventsV1(events),
+  };
+}
+
+async function listRouteHistory(input: RouteHistoryListInput) {
+  const repository = createDatabaseRouteStorageRepository(client);
+  return repository.listRouteRunHistory(input.tenantId, { limit: input.limit, cursor: input.cursor ?? null });
+}
+
+export const routeProofRouteRuntime = {
+  flags: getMiorailProductMigrationFlags,
+  migrationAvailable: blueprintMigrationAvailable,
+  reconcile: reconcileRouteProof,
+  getProof: getRouteProofProjection,
+  listHistory: listRouteHistory,
+  now: () => new Date(),
+};
+
+routeIntelligenceRouter.post('/route-proofs/:proofId/reconcile', async (req, res) => {
+  const flags = routeProofRouteRuntime.flags(process.env);
+  if (!flags.routeIntelligenceV1) {
+    res.status(404).json({ error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    return;
+  }
+  const user = signedRoutePlanUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  const parsed = RouteProofReconcileRequestV1Schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'invalid_route_proof_reconcile_request',
+      code: 'invalid_route_proof_reconcile_request',
+    });
+    return;
+  }
+  if (parsed.data.walletAddress !== user.address) {
+    res.status(403).json({ error: 'wallet_mismatch', code: 'wallet_mismatch' });
+    return;
+  }
+  const chainEnv = (process.env.CHAIN_ENV ?? 'sepolia').trim().toLowerCase();
+  if (chainEnv !== 'mainnet' && chainEnv !== 'mainnet-readonly') {
+    res.status(409).json({ error: 'base_mainnet_required', code: 'base_mainnet_required' });
+    return;
+  }
+  try {
+    if (!(await routeProofRouteRuntime.migrationAvailable())) {
+      res.status(503).json({ error: 'route_storage_unavailable', code: 'route_storage_unavailable' });
+      return;
+    }
+    const result = await routeProofRouteRuntime.reconcile({
+      tenantId: user.id,
+      walletAddress: user.address as `0x${string}`,
+      routeRunId: parsed.data.routeRunId,
+      routeProofId: req.params.proofId,
+      now: routeProofRouteRuntime.now(),
+    });
+    res.json(RouteProofReconcileResponseV1Schema.parse(result));
+  } catch (cause) {
+    if (cause instanceof RouteProofReconcileBindingError) {
+      if (cause.code === 'route_proof_not_found') {
+        res.status(404).json({ error: 'route_proof_not_found', code: 'route_proof_not_found' });
+        return;
+      }
+      if (cause.code === 'wallet_mismatch') {
+        res.status(403).json({ error: 'wallet_mismatch', code: 'wallet_mismatch' });
+        return;
+      }
+      res.status(409).json({ error: 'route_proof_conflict', code: 'route_proof_conflict' });
+      return;
+    }
+    res.status(500).json({ error: 'route_proof_reconcile_failed', code: 'route_proof_reconcile_failed' });
+  }
+});
+
+routeIntelligenceRouter.get('/route-proofs/:proofId', async (req, res) => {
+  const flags = routeProofRouteRuntime.flags(process.env);
+  if (!flags.routeIntelligenceV1) {
+    res.status(404).json({ error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    return;
+  }
+  const user = signedRoutePlanUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  const chainEnv = (process.env.CHAIN_ENV ?? 'sepolia').trim().toLowerCase();
+  if (chainEnv !== 'mainnet' && chainEnv !== 'mainnet-readonly') {
+    res.status(409).json({ error: 'base_mainnet_required', code: 'base_mainnet_required' });
+    return;
+  }
+  try {
+    if (!(await routeProofRouteRuntime.migrationAvailable())) {
+      res.status(503).json({ error: 'route_storage_unavailable', code: 'route_storage_unavailable' });
+      return;
+    }
+    const result = await routeProofRouteRuntime.getProof({
+      tenantId: user.id,
+      walletAddress: user.address,
+      proofId: req.params.proofId,
+    });
+    if (!result) {
+      // Stable, existence-hiding 404 — a foreign proof id looks identical to
+      // a missing one.
+      res.status(404).json({ error: 'route_proof_not_found', code: 'route_proof_not_found' });
+      return;
+    }
+    res.json(RouteProofGetResponseV1Schema.parse(result));
+  } catch {
+    res.status(500).json({ error: 'route_proof_reconcile_failed', code: 'route_proof_reconcile_failed' });
+  }
+});
+
+routeIntelligenceRouter.get('/history', async (req, res) => {
+  const flags = routeProofRouteRuntime.flags(process.env);
+  if (!flags.routeIntelligenceV1) {
+    res.status(404).json({ error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    return;
+  }
+  const user = signedRoutePlanUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  const parsed = RouteHistoryRequestV1Schema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_history_request', code: 'invalid_history_request' });
+    return;
+  }
+  const chainEnv = (process.env.CHAIN_ENV ?? 'sepolia').trim().toLowerCase();
+  if (chainEnv !== 'mainnet' && chainEnv !== 'mainnet-readonly') {
+    res.status(409).json({ error: 'base_mainnet_required', code: 'base_mainnet_required' });
+    return;
+  }
+  try {
+    if (!(await routeProofRouteRuntime.migrationAvailable())) {
+      res.status(503).json({ error: 'route_storage_unavailable', code: 'route_storage_unavailable' });
+      return;
+    }
+    const result = await routeProofRouteRuntime.listHistory({
+      tenantId: user.id,
+      limit: parsed.data.limit,
+      cursor: parsed.data.cursor,
+    });
+    res.json(RouteHistoryResponseV1Schema.parse(result));
+  } catch (cause) {
+    // An undecodable cursor is a client error, not a server fault.
+    if (cause instanceof RouteStorageIntegrityError) {
+      res.status(400).json({ error: 'invalid_history_request', code: 'invalid_history_request' });
+      return;
+    }
+    res.status(500).json({ error: 'history_failed', code: 'history_failed' });
   }
 });
