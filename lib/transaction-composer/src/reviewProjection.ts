@@ -5,7 +5,13 @@ import {
   type ContractSecuritySummaryV1,
   type TransactionReviewProjectionV1,
 } from '@mioagent/route-card';
-import type { ExecutionBlueprintV1, ProviderRefV1, SafetyKernelResultV1, TokenAmountV1 } from '@mioagent/route-domain';
+import type {
+  ExecutionBlueprintV1,
+  ProviderRefV1,
+  SafetyKernelResultV1,
+  SimulationStateV1,
+  TokenAmountV1,
+} from '@mioagent/route-domain';
 
 export interface BuildTransactionReviewProjectionInput {
   routeRunId: string;
@@ -19,6 +25,13 @@ export interface BuildTransactionReviewProjectionInput {
   safety: SafetyKernelResultV1;
   contractSecurity: ContractSecuritySummaryV1;
   simulationWarning: string | null;
+  /**
+   * T59: lets a caller that already re-verified simulation out-of-band (paid
+   * transaction simulation) project an updated SimulationStateV1 without
+   * mutating the stored (immutable) Blueprint. Defaults to
+   * input.blueprint.simulationState — every pre-T59 caller is unaffected.
+   */
+  simulationStateOverride?: SimulationStateV1;
 }
 
 export function buildTransactionReviewProjectionV1(
@@ -50,7 +63,7 @@ export function buildTransactionReviewProjectionV1(
     attachedNativeValueWei,
     safety: input.safety,
     contractSecurity: ContractSecuritySummaryV1Schema.parse(input.contractSecurity),
-    simulationState: input.blueprint.simulationState,
+    simulationState: input.simulationStateOverride ?? input.blueprint.simulationState,
     simulationWarning: input.simulationWarning,
   };
   return TransactionReviewProjectionV1Schema.parse({

@@ -110,6 +110,96 @@ export function simulationHonesty(intent: RouteIntentV1): { acceptable: boolean;
   };
 }
 
+/**
+ * T59: standalone extraction of the composer's idempotent-replay review path
+ * (previously a private method) so a separate, paid endpoint (transaction
+ * simulation) can re-derive the SAME honest review projection over an
+ * ALREADY stored, immutable Blueprint — no re-quote/re-build network call,
+ * only a fresh contract-security lookup and Safety Kernel re-run — while
+ * overriding just the projected simulationState. Behavior for every existing
+ * caller (DeterministicTransactionComposer.prepare's replay branch) is
+ * unchanged: it calls this with simulationStateOverride left undefined,
+ * which falls back to blueprint.simulationState exactly as before this
+ * function existed.
+ */
+export async function reviewStoredBlueprintV1(
+  deps: Pick<TransactionComposerDependencies, 'contractSecurity'>,
+  input: Pick<TransactionComposerPrepareInput, 'routeRunId' | 'walletAddress'>,
+  intent: RouteIntentV1,
+  selected: RouteCandidateV1,
+  blueprint: ExecutionBlueprintV1,
+  now: Date,
+  simulationStateOverride?: SimulationStateV1,
+): Promise<TransactionPreparationResultV1> {
+  const providerId = selected.provider.id as 'uniswap' | 'kyberswap';
+  const usdcAsset = intent.fromAsset!;
+  const routerCall = blueprint.calls.find((call) => call.callType === 'swap');
+  const routerAddress = (routerCall?.to ?? selected.provider.id) as `0x${string}`;
+
+  const simulation = simulationHonesty(intent);
+  const contractSecurityAddresses = [usdcAsset.address].filter((value): value is `0x${string}` => Boolean(value));
+  const contractSecurityResults = await deps.contractSecurity({
+    chainId: intent.chainId,
+    addresses: contractSecurityAddresses,
+  });
+  const contractSecurityProviderName = contractSecurityResults.some((entry) => entry.provider === 'goplus')
+    ? 'goplus'
+    : (contractSecurityResults[0]?.provider ?? 'none');
+
+  const { result: safety, contractSecurity } = runSafetyKernel({
+    provider: providerId,
+    routerAddress,
+    chainId: intent.chainId,
+    walletAddress: input.walletAddress,
+    intent,
+    calls: blueprint.calls,
+    quoteExpiry: blueprint.quoteExpiry,
+    now,
+    contractSecurityRequired: true,
+    contractSecurityProvider: contractSecurityProviderName,
+    contractSecurityResults,
+    contractSecurityAddresses,
+    simulationAcceptable: simulation.acceptable,
+    simulationDetail: simulation.detail,
+    intentHash: blueprint.intentHash,
+    selectedCandidateHash: blueprint.selectedCandidateHash,
+  });
+
+  if (safety.verdict === 'blocked') {
+    return blockedResultV1(input.routeRunId, safety);
+  }
+
+  const outputChange = blueprint.expectedAssetChanges.find((change) => change.direction === 'credit')!;
+  const expectedOutput = {
+    asset: outputChange.asset,
+    amountAtomic: outputChange.amountAtomic,
+    amountDecimal: atomicToHumanDecimal(outputChange.amountAtomic, outputChange.asset.decimals) ?? '0',
+  };
+  const minimumAtomic = outputChange.minimumAmountAtomic ?? outputChange.amountAtomic;
+  const minimumOutput = {
+    asset: outputChange.asset,
+    amountAtomic: minimumAtomic,
+    amountDecimal: atomicToHumanDecimal(minimumAtomic, outputChange.asset.decimals) ?? '0',
+  };
+
+  const review = buildTransactionReviewProjectionV1({
+    routeRunId: input.routeRunId,
+    provider: selected.provider,
+    input: intent.amount,
+    expectedOutput,
+    minimumOutput,
+    cardExpectedOutput: selected.expectedOutput,
+    cardMinimumOutput: selected.minimumOutput,
+    blueprint,
+    safety,
+    contractSecurity,
+    simulationWarning: simulation.acceptable ? simulation.detail : null,
+    simulationStateOverride,
+  });
+
+  return preparedResultV1({ routeRunId: input.routeRunId, blueprint, review });
+}
+
 export class DeterministicTransactionComposer implements TransactionComposer {
   constructor(private readonly deps: TransactionComposerDependencies) {}
 
@@ -411,72 +501,7 @@ export class DeterministicTransactionComposer implements TransactionComposer {
     blueprint: ExecutionBlueprintV1,
     now: Date,
   ): Promise<TransactionPreparationResultV1> {
-    const providerId = selected.provider.id as 'uniswap' | 'kyberswap';
-    const usdcAsset = intent.fromAsset!;
-    const routerCall = blueprint.calls.find((call) => call.callType === 'swap');
-    const routerAddress = (routerCall?.to ?? selected.provider.id) as `0x${string}`;
-
-    const simulation = simulationHonesty(intent);
-    const contractSecurityAddresses = [usdcAsset.address].filter((value): value is `0x${string}` => Boolean(value));
-    const contractSecurityResults = await this.deps.contractSecurity({
-      chainId: intent.chainId,
-      addresses: contractSecurityAddresses,
-    });
-    const contractSecurityProviderName = contractSecurityResults.some((entry) => entry.provider === 'goplus')
-      ? 'goplus'
-      : (contractSecurityResults[0]?.provider ?? 'none');
-
-    const { result: safety, contractSecurity } = runSafetyKernel({
-      provider: providerId,
-      routerAddress,
-      chainId: intent.chainId,
-      walletAddress: input.walletAddress,
-      intent,
-      calls: blueprint.calls,
-      quoteExpiry: blueprint.quoteExpiry,
-      now,
-      contractSecurityRequired: true,
-      contractSecurityProvider: contractSecurityProviderName,
-      contractSecurityResults,
-      contractSecurityAddresses,
-      simulationAcceptable: simulation.acceptable,
-      simulationDetail: simulation.detail,
-      intentHash: blueprint.intentHash,
-      selectedCandidateHash: blueprint.selectedCandidateHash,
-    });
-
-    if (safety.verdict === 'blocked') {
-      return blockedResultV1(input.routeRunId, safety);
-    }
-
-    const outputChange = blueprint.expectedAssetChanges.find((change) => change.direction === 'credit')!;
-    const expectedOutput = {
-      asset: outputChange.asset,
-      amountAtomic: outputChange.amountAtomic,
-      amountDecimal: atomicToHumanDecimal(outputChange.amountAtomic, outputChange.asset.decimals) ?? '0',
-    };
-    const minimumAtomic = outputChange.minimumAmountAtomic ?? outputChange.amountAtomic;
-    const minimumOutput = {
-      asset: outputChange.asset,
-      amountAtomic: minimumAtomic,
-      amountDecimal: atomicToHumanDecimal(minimumAtomic, outputChange.asset.decimals) ?? '0',
-    };
-
-    const review = buildTransactionReviewProjectionV1({
-      routeRunId: input.routeRunId,
-      provider: selected.provider,
-      input: intent.amount,
-      expectedOutput,
-      minimumOutput,
-      cardExpectedOutput: selected.expectedOutput,
-      cardMinimumOutput: selected.minimumOutput,
-      blueprint,
-      safety,
-      contractSecurity,
-      simulationWarning: simulation.acceptable ? simulation.detail : null,
-    });
-
-    return preparedResultV1({ routeRunId: input.routeRunId, blueprint, review });
+    return reviewStoredBlueprintV1(this.deps, input, intent, selected, blueprint, now);
   }
 }
 

@@ -138,6 +138,11 @@ export interface RoutePlanViewProps {
    * review, so no submit control can ever appear without a reviewed
    * blueprint. lib/ui stays wagmi-free — this is an opaque slot. */
   transactionSubmission?: React.ReactNode;
+  /** T59: surface-provided <DeepVerification> + paid SimulateButton,
+   * forwarded straight through to TransactionReviewOutcome/TransactionReview
+   * — rendered inside the Simulation section, only under a `prepared`
+   * review (see TransactionReview's own deepVerification prop). */
+  deepVerification?: React.ReactNode;
 }
 
 export function RoutePlanView({
@@ -151,6 +156,7 @@ export function RoutePlanView({
   transactionReview = null,
   transactionReviewError = null,
   transactionSubmission = null,
+  deepVerification = null,
 }: RoutePlanViewProps) {
   const expired = isRoutePlanExpired(projection, now);
   const copy = routePlanOutcomeCopy(projection);
@@ -224,7 +230,7 @@ export function RoutePlanView({
       )}
       {transactionReview && (
         <div className="mt-2">
-          <TransactionReviewOutcome result={transactionReview} />
+          <TransactionReviewOutcome result={transactionReview} deepVerification={deepVerification} />
           {transactionReview.outcome === 'prepared' && transactionSubmission && (
             <div className="mt-4" data-transaction-submission-slot="prepared">
               {transactionSubmission}

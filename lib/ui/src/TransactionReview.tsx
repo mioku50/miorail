@@ -77,7 +77,17 @@ function CallRow({ call }: { call: ExecutionCall }) {
   );
 }
 
-export function TransactionReview({ projection }: { projection: TransactionReviewProjectionV1 }) {
+export interface TransactionReviewProps {
+  projection: TransactionReviewProjectionV1;
+  /** T59: opaque slot rendered inside the Simulation section — the surface
+   * (interface/miniapp) renders <DeepVerification> + its own paid
+   * SimulateButton here, only for a 'prepared' outcome and only behind the
+   * paidIntelligence flag. Follows the SAME opaque-slot pattern as
+   * RoutePlan.tsx's `transactionSubmission` — lib/ui stays wagmi-free. */
+  deepVerification?: React.ReactNode;
+}
+
+export function TransactionReview({ projection, deepVerification = null }: TransactionReviewProps) {
   return (
     <div className="space-y-4" data-transaction-review-blueprint-status={projection.blueprintStatus}>
       <header className="flex flex-wrap items-start justify-between gap-4">
@@ -138,6 +148,7 @@ export function TransactionReview({ projection }: { projection: TransactionRevie
         <h3 className="font-display text-sm font-semibold text-ink">Simulation</h3>
         <p className="mt-1 font-mono text-xs text-ink">{projection.simulationState.status}</p>
         {projection.simulationWarning && <p className="mt-2 text-xs text-warn">{projection.simulationWarning}</p>}
+        {deepVerification}
       </section>
 
       <section aria-label="Blueprint identifiers" className="rounded-xl border border-line bg-panel p-4 font-mono text-[11px] text-ink-3">
@@ -158,8 +169,16 @@ export type TransactionPrepareOutcomeV1 =
   | { outcome: 'unsupported'; reason: string; detail: string }
   | { outcome: 'blocked'; safety: SafetyResult };
 
-export function TransactionReviewOutcome({ result }: { result: TransactionPrepareOutcomeV1 }) {
-  if (result.outcome === 'prepared') return <TransactionReview projection={result.review} />;
+export function TransactionReviewOutcome({
+  result,
+  deepVerification = null,
+}: {
+  result: TransactionPrepareOutcomeV1;
+  deepVerification?: React.ReactNode;
+}) {
+  if (result.outcome === 'prepared') {
+    return <TransactionReview projection={result.review} deepVerification={deepVerification} />;
+  }
   if (result.outcome === 'refresh_required') {
     return (
       <div className="rounded-2xl border border-warn/35 bg-warn-soft p-6" role="status">

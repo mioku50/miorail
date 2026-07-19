@@ -5,9 +5,11 @@ import {
   GasEstimateV1Schema,
   HashV1Schema,
   HexDataV1Schema,
+  ProviderRefV1Schema,
   RouteCardV1Schema,
   RouteIntentV1Schema,
   SafetyKernelResultV1Schema,
+  SimulationStateV1Schema,
   TransactionReceiptV1Schema,
 } from '@mioagent/route-domain';
 import { SwapRouteEvaluationV1Schema } from '@mioagent/route-engine/contracts';
@@ -117,6 +119,20 @@ export const RoutePlanHttpErrorV1Schema = z
       'route_proof_reconcile_failed',
       'invalid_history_request',
       'history_failed',
+      // T59: paid x402 transaction-simulation route. Money is only ever at
+      // risk from 'charge_conflict' onward — every code above that point in
+      // this list is a pre-payment 4xx/503 (no settlement attempted yet).
+      'paid_intelligence_disabled',
+      'invalid_simulation_request',
+      'blueprint_not_found',
+      'blueprint_not_reviewable',
+      'blueprint_hash_mismatch',
+      'paid_intelligence_unavailable',
+      'charge_conflict',
+      'payment_missing',
+      'payment_replayed',
+      'simulation_provider_unavailable',
+      'simulation_failed',
     ]),
     code: z.string().min(1).max(120),
   })
@@ -148,6 +164,13 @@ export const SwapPrepareResponseV1Schema = z.discriminatedUnion('outcome', [
       routeRunId: z.string().min(1).max(200),
       blueprint: ExecutionBlueprintV1Schema,
       review: TransactionReviewProjectionV1Schema,
+      // T59: the ONLY change this task makes to the prepare response — the
+      // x402 price the client would pay to run a real paid simulation
+      // against this Blueprint, sourced from env (MIORAIL_SIMULATION_PRICE_USDC),
+      // null whenever the paid-simulation feature is unavailable/disabled.
+      // Optional so any caller reading a stale cached response before this
+      // field existed keeps parsing.
+      simulationPriceUsdc: z.string().min(1).max(40).nullable().optional(),
     })
     .strict(),
   z
@@ -396,6 +419,104 @@ export const RouteHistoryResponseV1Schema = z
     nextCursor: z.string().nullable(),
   })
   .strict();
+
+// T59 — First Paid x402 Simulation Enrichment. calldata is NEVER accepted
+// from the client: the server re-fetches the ALREADY-persisted Blueprint's
+// calls and re-derives everything from there. The server never signs or
+// broadcasts, and Safety Score stays "No data — no score" (transactionSafety
+// is always the literal 'not_scored').
+export const SimulateBlueprintRequestV1Schema = z
+  .object({
+    routeRunId: z.string().min(1).max(200),
+    walletAddress: AddressV1Schema,
+    blueprintHash: HashV1Schema,
+    idempotencyKey: z.string().min(8).max(100),
+  })
+  .strict();
+
+const SimulateStateChangeV1Schema = z
+  .object({
+    address: AddressV1Schema,
+    kind: z.enum(['balance', 'storage', 'token']),
+    summary: z.string().min(1).max(500),
+  })
+  .strict();
+
+const SimulateEvidenceSummaryV1Schema = z
+  .object({
+    evidenceHash: HashV1Schema,
+    evidenceSetHash: HashV1Schema,
+    blockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    gasUsed: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    stateChanges: z.array(SimulateStateChangeV1Schema),
+    provider: ProviderRefV1Schema,
+    paidCostUsdc: z.string().min(1).max(40),
+    x402TxHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/).nullable(),
+  })
+  .strict();
+
+const SimulateChargeSummaryV1Schema = z
+  .object({
+    chargeId: z.string().min(1).max(200),
+    status: z.enum(['quoted', 'reserved', 'payment_pending', 'settled', 'failed', 'reconciliation_required', 'released']),
+    paymentState: z.enum(['not_started', 'reserved', 'pending', 'settled', 'failed']),
+    serviceState: z.enum(['not_started', 'pending', 'delivered', 'invalid', 'failed']),
+  })
+  .strict();
+
+// transaction_safety is ALWAYS the literal 'not_scored' — T59 explicitly does
+// not implement a numeric transaction-safety score (that requires a
+// contract-risk provider, out of scope; see the task boundaries).
+const SimulateScoreNoteV1Schema = z
+  .object({
+    transactionSafety: z.literal('not_scored'),
+    missingEvidence: z.array(
+      z.enum(['quote', 'liquidity', 'contract_risk', 'token_risk', 'simulation', 'gas', 'provider_reliability', 'mev_protection']),
+    ),
+  })
+  .strict();
+
+const SimulateSuccessFieldsV1 = {
+  simulation: SimulationStateV1Schema,
+  evidence: SimulateEvidenceSummaryV1Schema,
+  charge: SimulateChargeSummaryV1Schema,
+  review: TransactionReviewProjectionV1Schema,
+  scoreNote: SimulateScoreNoteV1Schema,
+} as const;
+
+export const SimulateBlueprintResponseV1Schema = z.discriminatedUnion('outcome', [
+  z.object({ outcome: z.literal('simulated'), ...SimulateSuccessFieldsV1 }).strict(),
+  z.object({ outcome: z.literal('cached'), ...SimulateSuccessFieldsV1 }).strict(),
+  z
+    .object({
+      outcome: z.literal('paid_service_failed'),
+      charge: SimulateChargeSummaryV1Schema,
+      reason: z.string().min(1).max(200),
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('invalid_response'),
+      charge: SimulateChargeSummaryV1Schema,
+      reason: z.string().min(1).max(200),
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('blueprint_expired'),
+      reason: z.string().min(1).max(500),
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('blocked'),
+      // Matches SafetyKernelResultV1's own blockedReason max (500) — this
+      // reason is frequently derived straight from safety.blockedReason.
+      reason: z.string().min(1).max(500),
+      safety: SafetyKernelResultV1Schema,
+    })
+    .strict(),
+]);
 
 // Auth
 export const LoginRequestSchema = z.object({

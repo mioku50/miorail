@@ -1191,5 +1191,112 @@ export function createDatabaseRouteStorageRepository(
       `;
       return rows.map(chargeFromRow);
     },
+
+    async updateIntelligenceCharge(
+      runId: string,
+      chargeId: string,
+      userId: string,
+      input: IntelligenceChargeV1,
+      links: IntelligenceChargeStorageLinks = {},
+    ): Promise<void> {
+      const updated = parseIntelligenceCharge(input);
+      if (updated.id !== chargeId || updated.tenantId !== userId) {
+        throw new RouteStorageIntegrityError(
+          'updateIntelligenceCharge payload does not match the requested charge',
+        );
+      }
+      const rows = await sql`
+        SELECT id, route_run_id, evidence_id, user_id, schema_version, status,
+               charge_hash, spend_permission_id, x402_receipt_id, payload, created_at, updated_at
+        FROM intelligence_charges
+        WHERE id = ${chargeId} AND route_run_id = ${runId} AND user_id = ${userId}
+        LIMIT 1
+      `;
+      if (!rows[0]) {
+        throw new RouteStorageIntegrityError(
+          'Intelligence Charge does not exist for this Route Run and tenant',
+        );
+      }
+      const stored = chargeFromRow(rows[0]);
+      const current = stored.charge;
+      if (current.idempotencyKey !== updated.idempotencyKey) {
+        throw new RouteStorageIntegrityError(
+          'updateIntelligenceCharge cannot change the idempotency key of an existing charge',
+        );
+      }
+      const nextEvidenceId = links.evidenceId !== undefined ? links.evidenceId : stored.evidenceId;
+      const nextX402ReceiptId =
+        links.x402ReceiptId !== undefined ? links.x402ReceiptId : stored.x402ReceiptId;
+
+      if (
+        current.chargeHash === updated.chargeHash &&
+        stored.evidenceId === nextEvidenceId &&
+        stored.x402ReceiptId === nextX402ReceiptId &&
+        payloadEquals(current, updated)
+      ) {
+        return;
+      }
+
+      if (nextEvidenceId !== null) {
+        const evidenceRows = await sql`
+          SELECT id, route_run_id, candidate_id, user_id, schema_version, status,
+                 evidence_type, provider_id, evidence_hash, payload, observed_at,
+                 expires_at, validation_status, created_at, updated_at
+          FROM route_evidence
+          WHERE id = ${nextEvidenceId} AND route_run_id = ${runId}
+            AND user_id = ${userId}
+          LIMIT 1
+        `;
+        if (!evidenceRows[0]) {
+          throw new RouteStorageIntegrityError('Intelligence Charge evidence link is invalid');
+        }
+        const evidence = evidenceFromRow(evidenceRows[0]);
+        if (updated.evidenceHash !== evidence.evidenceHash) {
+          throw new RouteStorageIntegrityError(
+            'Intelligence Charge evidence hash does not match link',
+          );
+        }
+      }
+
+      if (updated.chargeHash !== current.chargeHash) {
+        const conflictingHash = await sql`
+          SELECT id
+          FROM intelligence_charges
+          WHERE route_run_id = ${runId} AND charge_hash = ${updated.chargeHash} AND id <> ${chargeId}
+          LIMIT 1
+        `;
+        if (conflictingHash[0]) {
+          conflict('Intelligence Charge run-scoped hash is already assigned to another charge');
+        }
+      }
+
+      await sql`
+        UPDATE intelligence_charges
+        SET status = ${updated.status},
+            charge_hash = ${updated.chargeHash},
+            evidence_id = ${nextEvidenceId},
+            x402_receipt_id = ${nextX402ReceiptId},
+            payload = CAST(${jsonb(updated)} AS jsonb),
+            updated_at = ${new Date(updated.updatedAt)}
+        WHERE id = ${chargeId} AND route_run_id = ${runId} AND user_id = ${userId}
+      `;
+    },
+
+    async findIntelligenceChargeByReceiptHash(
+      userId: string,
+      x402ReceiptHash: string,
+    ): Promise<StoredIntelligenceChargeV1 | null> {
+      // T59 rework M2: tenant-wide payload-field scan — deliberately no new
+      // index/DDL (per-tenant charge volumes are small).
+      const rows = await sql`
+        SELECT id, route_run_id, evidence_id, user_id, schema_version, status,
+               charge_hash, spend_permission_id, x402_receipt_id, payload, created_at, updated_at
+        FROM intelligence_charges
+        WHERE user_id = ${userId} AND payload->>'x402ReceiptHash' = ${x402ReceiptHash}
+        ORDER BY created_at, id
+        LIMIT 1
+      `;
+      return rows[0] ? chargeFromRow(rows[0]) : null;
+    },
   };
 }

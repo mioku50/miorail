@@ -16,6 +16,7 @@ export type { ClassValue } from './cn';
 export * from './RoutePlan';
 export * from './routePlanState';
 export * from './TransactionReview';
+export * from './DeepVerification';
 export * from './SubmissionStatus';
 export * from './formatAtomicAmount';
 export * from './ExecutionProof';

@@ -381,6 +381,30 @@ describe('POST /api/route-intelligence/swap/prepare', () => {
     const serialized = JSON.stringify(response.body);
     assert.equal(/send_calls|x402Receipt/i.test(serialized), false);
   });
+
+  // T59: the only change this task makes to /swap/prepare's response.
+  test('surfaces simulationPriceUsdc alongside a prepared outcome, and null when the feature is unavailable', async () => {
+    swapPrepareRouteRuntime.prepare = async () => preparedFixture();
+    delete process.env.MIORAIL_SIMULATION_PRICE_USDC;
+    delete process.env.MIORAIL_SIMULATION_PROVIDER_URL;
+    delete process.env.MIORAIL_SIMULATION_PROVIDER_ALLOWLIST;
+
+    const unavailable = await request(routeApp()).post('/api/route-intelligence/swap/prepare').send(PREPARE_BODY);
+    assert.equal(unavailable.status, 200);
+    assert.equal(unavailable.body.outcome, 'prepared');
+    assert.equal(unavailable.body.simulationPriceUsdc, null);
+
+    process.env.MIORAIL_SIMULATION_PRICE_USDC = '0.02';
+    process.env.MIORAIL_SIMULATION_PROVIDER_URL = 'https://sim.example.test/simulate';
+    process.env.MIORAIL_SIMULATION_PROVIDER_ALLOWLIST = 'sim.example.test';
+    const configured = await request(routeApp()).post('/api/route-intelligence/swap/prepare').send(PREPARE_BODY);
+    assert.equal(configured.status, 200);
+    assert.equal(configured.body.simulationPriceUsdc, '0.02');
+
+    delete process.env.MIORAIL_SIMULATION_PRICE_USDC;
+    delete process.env.MIORAIL_SIMULATION_PROVIDER_URL;
+    delete process.env.MIORAIL_SIMULATION_PROVIDER_ALLOWLIST;
+  });
 });
 
 // ---------------------------------------------------------------------------

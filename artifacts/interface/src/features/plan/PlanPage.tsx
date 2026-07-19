@@ -1,13 +1,49 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'wouter';
 import { useAccount } from 'wagmi';
-import { ExecutionProofPanel, RoutePlanView, SubmissionStatus, routePlanSurfaceState } from '@mioagent/ui';
+import { DeepVerification, ExecutionProofPanel, RoutePlanView, SubmissionStatus, routePlanSurfaceState, type DeepVerificationResultV1 } from '@mioagent/ui';
 import {
   useBoundedProofReconciliation,
   useEvaluateSwapRoute,
   usePrepareSwapBlueprint,
+  useStatus,
 } from '@mioagent/api-client-react';
 import { BlueprintSubmitButton, type BlueprintSubmitStatus } from '@mioagent/wallet-actions';
+import { SimulateButton, type SimulateBlueprintResponseV1 } from '@mioagent/x402-actions';
+
+// T59: adapts the wire SimulateBlueprintResponseV1 into lib/ui's
+// surface-agnostic DeepVerificationResultV1 — lib/ui deliberately never
+// imports api-zod/api-spec, so this mapping lives at the surface layer.
+function toDeepVerificationResult(response: SimulateBlueprintResponseV1): DeepVerificationResultV1 | null {
+  if (response.outcome === 'simulated' || response.outcome === 'cached') {
+    return {
+      outcome: response.outcome,
+      provider: response.evidence.provider,
+      blockNumber: response.evidence.blockNumber,
+      simulationStatus: response.simulation.status === 'passed' || response.simulation.status === 'failed'
+        ? response.simulation.status
+        : 'unavailable',
+      gasUsed: response.evidence.gasUsed,
+      stateChanges: response.evidence.stateChanges,
+      paidCostUsdc: response.evidence.paidCostUsdc,
+      x402TxHash: response.evidence.x402TxHash,
+      evidenceHash: response.evidence.evidenceHash,
+      transactionSafety: 'not_scored',
+      missingEvidence: response.scoreNote.missingEvidence,
+    };
+  }
+  if (response.outcome === 'paid_service_failed' || response.outcome === 'invalid_response') {
+    return {
+      outcome: response.outcome,
+      transactionSafety: 'not_scored',
+      missingEvidence: [],
+      reason: response.reason,
+    };
+  }
+  // blueprint_expired / blocked: not rendered via DeepVerification — the
+  // review projection itself already surfaces a blocked/expired state.
+  return null;
+}
 
 const BUILDER_CODE = import.meta.env.VITE_BUILDER_CODE;
 
@@ -38,14 +74,20 @@ export function PlanPage() {
   const [message, setMessage] = useState('');
   const [selectedCandidateHash, setSelectedCandidateHash] = useState<string | null>(null);
   const [submission, setSubmission] = useState<BlueprintSubmissionState | null>(null);
+  const [simulateResponse, setSimulateResponse] = useState<SimulateBlueprintResponseV1 | null>(null);
   const evaluation = useEvaluateSwapRoute();
   const prepare = usePrepareSwapBlueprint();
+  // T59: paid transaction simulation is gated on BOTH the server flag
+  // (/api/status.productMigration.paidIntelligence) and a configured price
+  // (prepare.data.simulationPriceUsdc) — never assumed available.
+  const status = useStatus();
 
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
     if (!address || !message.trim() || evaluation.isPending) return;
     prepare.reset();
     setSubmission(null);
+    setSimulateResponse(null);
     evaluation.mutate({ message, walletAddress: address.toLowerCase() as `0x${string}` });
   };
 
@@ -59,6 +101,7 @@ export function PlanPage() {
   const reviewTransaction = (candidateHash: string) => {
     if (!address || result?.outcome !== 'evaluated' || !result.routeCard) return;
     setSubmission(null);
+    setSimulateResponse(null);
     prepare.mutate({
       walletAddress: address.toLowerCase() as `0x${string}`,
       routeRunId: result.routeRunId,
@@ -106,6 +149,38 @@ export function PlanPage() {
         )}
       </div>
     ) : null;
+
+  // T59: Deep verification only ever appears under a 'prepared' outcome,
+  // only behind the server flag, and only when the server actually priced
+  // the feature (simulationPriceUsdc non-null) — no client-invented price.
+  const deepVerification =
+    prepare.data?.outcome === 'prepared' && status.data?.productMigration.paidIntelligence && prepare.data.simulationPriceUsdc
+      ? (() => {
+          const priceLabel = `${prepare.data.simulationPriceUsdc} USDC`;
+          return (
+            <DeepVerification
+              pending={
+                simulateResponse
+                  ? null
+                  : {
+                      priceLabel,
+                      payButton: (
+                        <SimulateButton
+                          priceLabel={priceLabel}
+                          routeRunId={prepare.data.routeRunId}
+                          blueprintId={prepare.data.blueprint.id}
+                          blueprintHash={prepare.data.blueprint.blueprintHash}
+                          onSuccess={(response) => setSimulateResponse(response)}
+                          className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                        />
+                      ),
+                    }
+              }
+              result={simulateResponse ? toDeepVerificationResult(simulateResponse) : null}
+            />
+          );
+        })()
+      : null;
   return (
     <main className="flex-1 overflow-y-auto bg-bg px-4 pb-24 pt-6 sm:px-7 lg:px-10 lg:pb-10">
       <div className="mx-auto w-full max-w-[1180px]">
@@ -170,6 +245,7 @@ export function PlanPage() {
               transactionReview={prepare.data ?? null}
               transactionReviewError={prepare.isError ? prepare.error : null}
               transactionSubmission={transactionSubmission}
+              deepVerification={deepVerification}
             />
           )}
         </section>

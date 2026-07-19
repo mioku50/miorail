@@ -721,6 +721,91 @@ export class InMemoryRouteStorageRepository implements RouteStorageRepository {
     });
   }
 
+  async updateIntelligenceCharge(
+    runId: string,
+    chargeId: string,
+    userId: string,
+    input: IntelligenceChargeV1,
+    links: IntelligenceChargeStorageLinks = {},
+  ): Promise<void> {
+    const updated = parseIntelligenceCharge(input);
+    if (updated.id !== chargeId || updated.tenantId !== userId) {
+      throw new RouteStorageIntegrityError(
+        'updateIntelligenceCharge payload does not match the requested charge',
+      );
+    }
+    const stored = this.charges.get(chargeId);
+    if (!stored || stored.runId !== runId || stored.userId !== userId) {
+      throw new RouteStorageIntegrityError(
+        'Intelligence Charge does not exist for this Route Run and tenant',
+      );
+    }
+    const current = parseIntelligenceCharge(stored.payload);
+    if (current.idempotencyKey !== updated.idempotencyKey) {
+      throw new RouteStorageIntegrityError(
+        'updateIntelligenceCharge cannot change the idempotency key of an existing charge',
+      );
+    }
+    const nextEvidenceId = links.evidenceId !== undefined ? links.evidenceId : stored.evidenceId;
+    const nextX402ReceiptId =
+      links.x402ReceiptId !== undefined ? links.x402ReceiptId : stored.x402ReceiptId;
+
+    if (
+      current.chargeHash === updated.chargeHash &&
+      stored.evidenceId === nextEvidenceId &&
+      stored.x402ReceiptId === nextX402ReceiptId &&
+      payloadEquals(current, updated)
+    ) {
+      return;
+    }
+
+    if (nextEvidenceId !== null) {
+      const evidence = this.evidence.get(nextEvidenceId);
+      if (!evidence || evidence.runId !== runId || evidence.userId !== userId) {
+        throw new RouteStorageIntegrityError('Intelligence Charge evidence link is invalid');
+      }
+      const parsedEvidence = parseEvidenceRecord(evidence.payload);
+      if (updated.evidenceHash !== parsedEvidence.evidenceHash) {
+        throw new RouteStorageIntegrityError(
+          'Intelligence Charge evidence hash does not match link',
+        );
+      }
+    }
+
+    if (updated.chargeHash !== current.chargeHash) {
+      const conflictingHash = this.findByRunHash(this.charges, runId, updated.chargeHash);
+      if (conflictingHash && conflictingHash.id !== chargeId) {
+        conflict('Intelligence Charge run-scoped hash is already assigned to another charge');
+      }
+    }
+
+    stored.payload = structuredClone(updated);
+    stored.hash = updated.chargeHash;
+    stored.evidenceId = nextEvidenceId;
+    stored.x402ReceiptId = nextX402ReceiptId;
+  }
+
+  async findIntelligenceChargeByReceiptHash(
+    userId: string,
+    x402ReceiptHash: string,
+  ): Promise<StoredIntelligenceChargeV1 | null> {
+    const owned = [...this.charges.values()]
+      .filter((stored) => stored.userId === userId)
+      .sort((left, right) => left.id.localeCompare(right.id));
+    for (const stored of owned) {
+      const charge = parseIntelligenceCharge(stored.payload);
+      if (charge.x402ReceiptHash !== x402ReceiptHash) continue;
+      this.assertEntityEnvelope(stored, charge.id, charge.tenantId, charge.chargeHash);
+      return {
+        charge,
+        evidenceId: stored.evidenceId,
+        spendPermissionId: stored.spendPermissionId,
+        x402ReceiptId: stored.x402ReceiptId,
+      };
+    }
+    return null;
+  }
+
   /** Test-only fault injection used to prove that repository reads fail closed. */
   unsafeCorruptPayloadForTests(kind: RouteStorageEntityKind, id: string, payload: unknown): void {
     const stores: Record<RouteStorageEntityKind, Map<string, { payload: unknown }>> = {

@@ -206,6 +206,13 @@ export interface CreateX402MiddlewareOptions {
   }) => Promise<void> | void;
   syncFacilitatorOnStart?: boolean;
   runtimeMode?: X402MiddlewareRuntimeMode;
+  /**
+   * Overrides the atomic USDC amount priced for this route only, leaving the
+   * global X402_AMOUNT_ATOMIC_USDC config (and every other route) untouched.
+   * Must be a positive integer string; when omitted the route falls back to
+   * config.amountAtomic exactly as before this option existed.
+   */
+  amountAtomicOverride?: string;
 }
 
 export interface X402MiddlewareDiagnostics {
@@ -703,11 +710,18 @@ export function createX402RoutesConfig(
   config: X402RuntimeConfig,
   routePath = '/paid-resource',
   serviceName = 'Miorail',
-  options: Pick<CreateX402MiddlewareOptions, 'onSettlementFailure'> = {},
+  options: Pick<CreateX402MiddlewareOptions, 'onSettlementFailure' | 'amountAtomicOverride'> = {},
 ): RoutesConfig {
   if (!config.configured || !config.payTo || !config.network || !config.asset) {
     throw new Error(`x402 is not configured: ${config.missingConfig.join(', ')}`);
   }
+
+  const amountAtomic =
+    options.amountAtomicOverride !== undefined ? options.amountAtomicOverride : config.amountAtomic;
+  if (!isPositiveIntegerString(amountAtomic)) {
+    throw new Error('x402 route amount override must be a positive integer string');
+  }
+  const effectiveConfig: X402RuntimeConfig = { ...config, amountAtomic };
 
   const extraDomain = resolveEip712DomainExtra(config.network, config.asset);
   const routeConfig = {
@@ -716,7 +730,7 @@ export function createX402RoutesConfig(
       payTo: config.payTo,
       price: {
         asset: config.asset,
-        amount: config.amountAtomic,
+        amount: amountAtomic,
         extra: extraDomain,
       },
       network: config.network,
@@ -729,7 +743,7 @@ export function createX402RoutesConfig(
     serviceName,
     tags: ['miorail', 'x402'],
     unpaidResponseBody: () => {
-      const paymentRequired = paymentRequiredFromRuntimeConfig(config);
+      const paymentRequired = paymentRequiredFromRuntimeConfig(effectiveConfig);
       return {
         contentType: 'application/json',
         body: {

@@ -7,3 +7,4 @@ dist
 !eslint.config.mjs
 *.tsbuildinfo
 coverage/
+mioku.pem

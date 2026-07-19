@@ -62,3 +62,27 @@ test('route plan surface distinguishes idle, loading, clarification and rejectio
   assert.equal(routePlanSurfaceState({ isPending: false, isError: false, outcome: 'rejected' }), 'rejection');
   assert.equal(routePlanSurfaceState({ isPending: false, isError: false, outcome: 'evaluated' }), 'evaluated');
 });
+
+test('T59: DeepVerification is gated on a prepared outcome, the paidIntelligence flag, and a server-priced simulationPriceUsdc', () => {
+  const planSource = readFileSync(path.join(here, 'PlanPage.tsx'), 'utf8');
+  assert.ok(planSource.includes("prepare.data?.outcome === 'prepared'"), 'deepVerification must be gated on a prepared outcome');
+  assert.ok(
+    planSource.includes('status.data?.productMigration.paidIntelligence'),
+    'deepVerification must be gated on the server paidIntelligence flag from useStatus()',
+  );
+  assert.ok(
+    planSource.includes('prepare.data.simulationPriceUsdc'),
+    'deepVerification must be gated on a server-priced simulationPriceUsdc (never a client-invented price)',
+  );
+  assert.ok(planSource.includes('<DeepVerification'), 'PlanPage must render DeepVerification');
+  assert.ok(planSource.includes('<SimulateButton'), 'PlanPage must render the paid SimulateButton');
+  assert.ok(planSource.includes('deepVerification={deepVerification}'), 'the slot must be threaded into RoutePlanView');
+});
+
+test('T59: PlanPage never accepts calldata into the simulate request and only wires the four whitelisted fields', () => {
+  const planSource = readFileSync(path.join(here, 'PlanPage.tsx'), 'utf8');
+  assert.ok(!/calls\s*:/.test(planSource.split('<SimulateButton')[1]?.split('/>')[0] ?? ''));
+  assert.ok(planSource.includes('routeRunId={prepare.data.routeRunId}'));
+  assert.ok(planSource.includes('blueprintId={prepare.data.blueprint.id}'));
+  assert.ok(planSource.includes('blueprintHash={prepare.data.blueprint.blueprintHash}'));
+});

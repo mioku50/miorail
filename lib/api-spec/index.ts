@@ -25,6 +25,8 @@ export type RouteProofGetResponseV1 = z.infer<typeof schemas.RouteProofGetRespon
 export type RouteHistoryItemV1 = z.infer<typeof schemas.RouteHistoryItemV1Schema>;
 export type RouteHistoryRequestV1 = z.infer<typeof schemas.RouteHistoryRequestV1Schema>;
 export type RouteHistoryResponseV1 = z.infer<typeof schemas.RouteHistoryResponseV1Schema>;
+export type SimulateBlueprintRequestV1 = z.infer<typeof schemas.SimulateBlueprintRequestV1Schema>;
+export type SimulateBlueprintResponseV1 = z.infer<typeof schemas.SimulateBlueprintResponseV1Schema>;
 
 // Auth
 export type LoginRequest = z.infer<typeof schemas.LoginRequestSchema>;

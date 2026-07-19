@@ -484,6 +484,51 @@ describe('x402-gateway', () => {
     assert.strictEqual(route.accepts.price.asset, '0x036CbD53842c5426634e7929541eC2318f3dCF7e');
   });
 
+  it('leaves route price at global config.amountAtomic when no override is given', () => {
+    const config = x402ConfigFromEnv({
+      X402_FACILITATOR_URL: 'https://facilitator.example.test',
+      X402_PAYTO_ADDRESS: '0x1111111111111111111111111111111111111111',
+      X402_NETWORK: 'eip155:84532',
+      X402_AMOUNT_ATOMIC_USDC: '1000',
+    });
+    const routes = createX402RoutesConfig(config);
+    const route = (routes as Record<string, any>)['GET /paid-resource'];
+    assert.strictEqual(route.accepts.price.amount, '1000');
+    const unpaid = route.unpaidResponseBody();
+    assert.strictEqual(unpaid.body.accepts[0].amount, '1000');
+  });
+
+  it('overrides route price via amountAtomicOverride without touching global config', () => {
+    const config = x402ConfigFromEnv({
+      X402_FACILITATOR_URL: 'https://facilitator.example.test',
+      X402_PAYTO_ADDRESS: '0x1111111111111111111111111111111111111111',
+      X402_NETWORK: 'eip155:84532',
+      X402_AMOUNT_ATOMIC_USDC: '1000',
+    });
+    const routes = createX402RoutesConfig(config, '/paid-resource', 'Miorail', {
+      amountAtomicOverride: '10000',
+    });
+    const route = (routes as Record<string, any>)['GET /paid-resource'];
+    assert.strictEqual(route.accepts.price.amount, '10000');
+    const unpaid = route.unpaidResponseBody();
+    assert.strictEqual(unpaid.body.accepts[0].amount, '10000');
+    assert.strictEqual(config.amountAtomic, '1000');
+  });
+
+  it('rejects a non-positive-integer amountAtomicOverride (fail closed)', () => {
+    const config = x402ConfigFromEnv({
+      X402_FACILITATOR_URL: 'https://facilitator.example.test',
+      X402_PAYTO_ADDRESS: '0x1111111111111111111111111111111111111111',
+      X402_NETWORK: 'eip155:84532',
+    });
+    assert.throws(() =>
+      createX402RoutesConfig(config, '/paid-resource', 'Miorail', { amountAtomicOverride: 'not-a-number' }),
+    );
+    assert.throws(() =>
+      createX402RoutesConfig(config, '/paid-resource', 'Miorail', { amountAtomicOverride: '0' }),
+    );
+  });
+
   it('verifies Builder Code suffix roles from calldata', () => {
     const suffix = encodeBuilderCodeSuffix({ a: 'miorail', s: ['buyer_app'] });
     const calldata = `0x1234${suffix.slice(2)}` as const;

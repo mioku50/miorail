@@ -20,6 +20,7 @@
     "@mioagent/memory": "workspace:*",
     "@mioagent/mcp": "workspace:*",
     "@mioagent/observability": "workspace:*",
+    "@mioagent/paid-intelligence": "workspace:*",
     "@mioagent/route-card": "workspace:*",
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/route-engine": "workspace:*",

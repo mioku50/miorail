@@ -35,3 +35,28 @@ test('T58: miniapp history page is a flag+session-gated pure read; RoutePlanHome
   assert.ok(/submission\.proofId/.test(homeSource), 'reconciliation must require a recorded proofId');
   assert.ok(homeSource.includes('href="/history"'), 'RoutePlanHome must link to the history page');
 });
+
+test('T59: RoutePlanHome gates DeepVerification on sessionReady + prepared + paidIntelligence + a server-priced simulationPriceUsdc', () => {
+  const homeSource = readFileSync(path.join(here, 'components', 'RoutePlanHome.tsx'), 'utf8');
+  assert.ok(homeSource.includes('sessionReady && prepare.data?.outcome === "prepared"'), 'deepVerification must require this surface\'s own session gate AND a prepared outcome');
+  assert.ok(
+    homeSource.includes('status.data?.productMigration.paidIntelligence'),
+    'deepVerification must be gated on the server paidIntelligence flag from useStatus()',
+  );
+  assert.ok(
+    homeSource.includes('prepare.data.simulationPriceUsdc'),
+    'deepVerification must be gated on a server-priced simulationPriceUsdc (never a client-invented price)',
+  );
+  assert.ok(homeSource.includes('<DeepVerification'), 'RoutePlanHome must render DeepVerification');
+  assert.ok(homeSource.includes('<SimulateButton'), 'RoutePlanHome must render the paid SimulateButton');
+  assert.ok(homeSource.includes('deepVerification={deepVerification}'), 'the slot must be threaded into RoutePlanView');
+});
+
+test('T59: miniapp SimulateButton wiring never sends calldata and only wires the four whitelisted fields', () => {
+  const homeSource = readFileSync(path.join(here, 'components', 'RoutePlanHome.tsx'), 'utf8');
+  const simulateBlock = homeSource.split('<SimulateButton')[1]?.split('/>')[0] ?? '';
+  assert.ok(!/calls\s*:/.test(simulateBlock));
+  assert.ok(homeSource.includes('routeRunId={prepare.data.routeRunId}'));
+  assert.ok(homeSource.includes('blueprintId={prepare.data.blueprint.id}'));
+  assert.ok(homeSource.includes('blueprintHash={prepare.data.blueprint.blueprintHash}'));
+});

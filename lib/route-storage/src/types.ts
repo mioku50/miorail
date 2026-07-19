@@ -116,6 +116,41 @@ export interface RouteStorageRepository {
     links?: IntelligenceChargeStorageLinks,
   ): Promise<void>;
   listIntelligenceCharges(runId: string, userId: string): Promise<StoredIntelligenceChargeV1[]>;
+
+  /**
+   * T59: the only mutation path for an already-inserted Intelligence Charge —
+   * moves it through its payment/service state machine (see
+   * IntelligenceChargeV1's paymentState/serviceState). `updated` must keep
+   * `id`/`tenantId`/`idempotencyKey` identical to the stored charge; every
+   * other financial field (including chargeHash, which is a full-content hash
+   * covering the mutable state-machine fields) is free to change between
+   * transitions. Idempotent when `updated` is byte-for-byte identical to the
+   * currently stored charge (no-op); fails closed with
+   * RouteStorageIntegrityError if the charge is missing, belongs to another
+   * Route Run/tenant, or the idempotencyKey changed. `links` fields are only
+   * applied when explicitly provided (undefined = leave unchanged).
+   */
+  updateIntelligenceCharge(
+    runId: string,
+    chargeId: string,
+    userId: string,
+    updated: IntelligenceChargeV1,
+    links?: IntelligenceChargeStorageLinks,
+  ): Promise<void>;
+
+  /**
+   * T59 rework M2: tenant-WIDE x402 receipt lookup (across every Route Run
+   * of `userId`), used for settlement replay protection — a receipt hash
+   * already bound to a different charge in ANY run must be rejected, not
+   * just within the current run. Returns the first matching stored charge
+   * or null. Deliberately implemented as a payload-field scan
+   * (payload->>'x402ReceiptHash') without new DDL/indexes — per-tenant
+   * charge volumes are small.
+   */
+  findIntelligenceChargeByReceiptHash(
+    userId: string,
+    x402ReceiptHash: string,
+  ): Promise<StoredIntelligenceChargeV1 | null>;
 }
 
 export type RouteStorageEntityKind =

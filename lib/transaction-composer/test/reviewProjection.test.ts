@@ -58,3 +58,60 @@ test('buildTransactionReviewProjectionV1 produces a valid, hash-consistent read-
   assert.equal(review.readOnly, true);
   assert.equal(review.blueprintHash, blueprint.blueprintHash);
 });
+
+test('buildTransactionReviewProjectionV1 defaults simulationState to the blueprint (no override)', () => {
+  const blueprint = blueprintFixture();
+  const review = buildTransactionReviewProjectionV1({
+    routeRunId: 'run-1',
+    provider: { id: 'uniswap', displayName: 'Uniswap', kind: 'dex', operator: 'Uniswap Labs' },
+    input: { asset: USDC_BASE, amountAtomic: '100000000', amountDecimal: '100' },
+    expectedOutput: { asset: ETH_BASE, amountAtomic: '38000000000000000', amountDecimal: '0.038' },
+    minimumOutput: { asset: ETH_BASE, amountAtomic: '37810000000000000', amountDecimal: '0.03781' },
+    cardExpectedOutput: { asset: ETH_BASE, amountAtomic: '38000000000000000', amountDecimal: '0.038' },
+    cardMinimumOutput: { asset: ETH_BASE, amountAtomic: '37810000000000000', amountDecimal: '0.03781' },
+    blueprint,
+    safety: {
+      schemaVersion: 'safety-kernel-result/v1',
+      verdict: 'allowed',
+      checks: [{ id: 'chain_pinned', description: 'Base mainnet', status: 'passed', detail: null }],
+      blockedReason: null,
+    },
+    contractSecurity: { provider: 'goplus', required: true, status: 'passed', verdicts: [] },
+    simulationWarning: 'No fork-simulation provider is configured.',
+  });
+  assert.deepEqual(review.simulationState, blueprint.simulationState);
+});
+
+test('buildTransactionReviewProjectionV1 applies a simulationStateOverride (T59 paid simulation)', () => {
+  const blueprint = blueprintFixture();
+  const override = {
+    status: 'passed' as const,
+    observedAt: NOW.toISOString(),
+    blockNumber: '12345678',
+    requestHash: `0x${'5'.repeat(64)}` as const,
+    responseHash: `0x${'6'.repeat(64)}` as const,
+    errorCode: null,
+  };
+  const review = buildTransactionReviewProjectionV1({
+    routeRunId: 'run-1',
+    provider: { id: 'uniswap', displayName: 'Uniswap', kind: 'dex', operator: 'Uniswap Labs' },
+    input: { asset: USDC_BASE, amountAtomic: '100000000', amountDecimal: '100' },
+    expectedOutput: { asset: ETH_BASE, amountAtomic: '38000000000000000', amountDecimal: '0.038' },
+    minimumOutput: { asset: ETH_BASE, amountAtomic: '37810000000000000', amountDecimal: '0.03781' },
+    cardExpectedOutput: { asset: ETH_BASE, amountAtomic: '38000000000000000', amountDecimal: '0.038' },
+    cardMinimumOutput: { asset: ETH_BASE, amountAtomic: '37810000000000000', amountDecimal: '0.03781' },
+    blueprint,
+    safety: {
+      schemaVersion: 'safety-kernel-result/v1',
+      verdict: 'allowed',
+      checks: [{ id: 'chain_pinned', description: 'Base mainnet', status: 'passed', detail: null }],
+      blockedReason: null,
+    },
+    contractSecurity: { provider: 'goplus', required: true, status: 'passed', verdicts: [] },
+    simulationWarning: null,
+    simulationStateOverride: override,
+  });
+  assert.equal(TransactionReviewProjectionV1Schema.safeParse(review).success, true);
+  assert.deepEqual(review.simulationState, override);
+  assert.notDeepEqual(review.simulationState, blueprint.simulationState);
+});
