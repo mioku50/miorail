@@ -7,7 +7,9 @@ import type { AssetRefV1, MoneyV1 } from '@mioagent/route-domain';
 
 const DEFAULT_SIMULATION_PRICE_USDC = '0.01';
 
-function usdcAssetRefV1(): AssetRefV1 {
+// T60: exported (was module-private) so the Intelligence Budget routes can
+// build the same canonical USDC AssetRefV1 without re-deriving it.
+export function usdcAssetRefV1(): AssetRefV1 {
   const address = canonicalUsdcForBaseChain(8453).toLowerCase() as `0x${string}`;
   return {
     assetId: `eip155:8453/erc20:${address}`,
@@ -31,6 +33,18 @@ export function decimalUsdcToAtomicV1(decimal: string): string | null {
   const atomic = BigInt(whole) * 1_000_000n + BigInt(padded || '0');
   if (atomic <= 0n) return null;
   return atomic.toString();
+}
+
+/** Inverse of decimalUsdcToAtomicV1 — atomic (base-unit, 6-decimal) string ->
+ * decimal USDC string ("10000" -> "0.01"). BigInt-safe end-to-end (never a
+ * JS number, which would lose precision far below what a real balance can
+ * reach). Used by the T60 Intelligence Budget routes to project stored
+ * atomic amounts back onto the wire as decimal strings. */
+export function atomicUsdcToDecimalV1(atomic: string): string {
+  const value = BigInt(atomic);
+  const whole = value / 1_000_000n;
+  const fraction = (value % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '');
+  return fraction.length > 0 ? `${whole}.${fraction}` : whole.toString();
 }
 
 export interface PaidSimulationPricingV1 {

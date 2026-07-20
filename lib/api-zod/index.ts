@@ -5,6 +5,7 @@ import {
   GasEstimateV1Schema,
   HashV1Schema,
   HexDataV1Schema,
+  IntelligenceCategoryV1Schema,
   ProviderRefV1Schema,
   RouteCardV1Schema,
   RouteIntentV1Schema,
@@ -21,6 +22,13 @@ export const PaginationParamsSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional().default(20),
   cursor: z.string().optional(),
 });
+
+const EthereumAddressSchema = z.string().regex(/^0x[a-fA-F0-9]{40}$/);
+// Canonical USDC-decimal-string regex — money on the wire is ALWAYS a decimal
+// string like "1.5", never an atomic/BigInt amount. Exported (moved up from
+// its original spot near the x402 Fuel schemas below) so the T60
+// Intelligence Budget schemas can reuse it without duplicating the pattern.
+export const UsdcAmountSchema = z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/);
 
 // Route Intelligence V1 — read-only plan evaluation. These schemas deliberately
 // accept no provider artifacts, candidates, scores, execution calls, or client
@@ -133,6 +141,19 @@ export const RoutePlanHttpErrorV1Schema = z
       'payment_replayed',
       'simulation_provider_unavailable',
       'simulation_failed',
+      // T60: Intelligence Budget + Spend Permission payment routes (same
+      // guard chain, gated on routeIntelligenceV1 && paidIntelligence — no
+      // separate flag). 'budget_limit_exceeded'/'budget_simulation_failed'
+      // are the only two reachable AFTER a reservation exists; every other
+      // code here is pre-reservation (no money at risk yet).
+      'intelligence_budget_disabled',
+      'invalid_intelligence_budget_request',
+      'spend_permission_required',
+      'intelligence_budget_exists',
+      'intelligence_budget_not_found',
+      'intelligence_budget_conflict',
+      'budget_limit_exceeded',
+      'budget_simulation_failed',
     ]),
     code: z.string().min(1).max(120),
   })
@@ -514,6 +535,142 @@ export const SimulateBlueprintResponseV1Schema = z.discriminatedUnion('outcome',
       // reason is frequently derived straight from safety.blockedReason.
       reason: z.string().min(1).max(500),
       safety: SafetyKernelResultV1Schema,
+    })
+    .strict(),
+]);
+
+// T60 — Intelligence Budget + Spend Permission payments. A Budget binds an
+// ALREADY-existing, active onchain Spend Permission to monthly + per-call
+// USDC limits; [Use Intelligence Budget] then pays for a simulation WITHOUT
+// a new wallet signature. Every amount on the wire is a decimal USDC string
+// (never atomic/BigInt); the user-safe projection deliberately omits
+// tenantId and every internal hash. The [Pay once] (T59) surface above is
+// untouched and keeps working independently.
+export const IntelligenceBudgetProjectionV1Schema = z
+  .object({
+    budgetId: z.string().min(1).max(200),
+    status: z.enum(['active', 'paused', 'revoked', 'expired']),
+    periodType: z.literal('monthly'),
+    monthlyLimitUsdc: UsdcAmountSchema,
+    spentUsdc: UsdcAmountSchema,
+    reservedUsdc: UsdcAmountSchema,
+    remainingUsdc: UsdcAmountSchema,
+    maxPerRequestUsdc: UsdcAmountSchema,
+    allowedCategories: z.array(IntelligenceCategoryV1Schema).min(1),
+    linkedSpendPermissionId: z.string().min(1).max(300),
+    periodStartedAt: z.string().datetime({ offset: true }).nullable(),
+    periodEndsAt: z.string().datetime({ offset: true }).nullable(),
+    chainId: z.literal(8453),
+    walletAddress: AddressV1Schema,
+  })
+  .strict();
+
+// Create requires the wallet explicitly (matching the guard chain's own
+// wallet-mismatch check on a NEW binding); update/revoke operate on "the
+// caller's own current active budget" and never re-accept a wallet or ID.
+export const CreateIntelligenceBudgetRequestV1Schema = z
+  .object({
+    spendPermissionId: z.string().min(1).max(300),
+    walletAddress: AddressV1Schema,
+    periodLimitUsdc: UsdcAmountSchema,
+    maxPerCallUsdc: UsdcAmountSchema,
+    allowedCategories: z.array(IntelligenceCategoryV1Schema).min(1).max(IntelligenceCategoryV1Schema.options.length),
+  })
+  .strict();
+
+export const UpdateIntelligenceBudgetRequestV1Schema = z
+  .object({
+    periodLimitUsdc: UsdcAmountSchema.optional(),
+    maxPerCallUsdc: UsdcAmountSchema.optional(),
+    allowedCategories: z
+      .array(IntelligenceCategoryV1Schema)
+      .min(1)
+      .max(IntelligenceCategoryV1Schema.options.length)
+      .optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.periodLimitUsdc === undefined && value.maxPerCallUsdc === undefined && value.allowedCategories === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'At least one of periodLimitUsdc, maxPerCallUsdc, or allowedCategories must be provided',
+      });
+    }
+  });
+
+export const RevokeIntelligenceBudgetRequestV1Schema = z.object({}).strict();
+
+// Serves GET (budget is null when the caller has none), and POST/PATCH/revoke
+// (budget is always present on success).
+export const IntelligenceBudgetResponseV1Schema = z
+  .object({
+    budget: IntelligenceBudgetProjectionV1Schema.nullable(),
+  })
+  .strict();
+
+// The client never supplies provider URL/calldata/price/spender/recipient —
+// everything else comes from server config + the already-persisted
+// Blueprint. No x402 challenge is ever issued on this route.
+export const SimulateWithBudgetRequestV1Schema = z
+  .object({
+    routeRunId: z.string().min(1).max(200),
+    walletAddress: AddressV1Schema,
+    blueprintHash: HashV1Schema,
+    requestId: z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/, 'Invalid simulate-with-budget request ID'),
+  })
+  .strict();
+
+const SimulateWithBudgetChargeSummaryV1Schema = z
+  .object({
+    chargeId: z.string().min(1).max(200),
+    status: z.enum(['quoted', 'reserved', 'payment_pending', 'settled', 'failed', 'reconciliation_required', 'released']),
+  })
+  .strict();
+
+export const SimulateWithBudgetResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      outcome: z.literal('charged'),
+      // Full parity with the T59 'simulated' response so the surface can
+      // reuse the SAME DeepVerificationResultV1 mapping — simulation state and
+      // scoreNote (transaction_safety always 'not_scored') included.
+      simulation: SimulationStateV1Schema,
+      review: TransactionReviewProjectionV1Schema,
+      evidence: SimulateEvidenceSummaryV1Schema,
+      charge: SimulateWithBudgetChargeSummaryV1Schema,
+      scoreNote: SimulateScoreNoteV1Schema,
+      budget: IntelligenceBudgetProjectionV1Schema,
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('reconciliation_required'),
+      charge: SimulateWithBudgetChargeSummaryV1Schema,
+      budget: IntelligenceBudgetProjectionV1Schema,
+      reason: z.string().min(1).max(500),
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('provider_failed'),
+      charge: SimulateWithBudgetChargeSummaryV1Schema,
+      reason: z.string().min(1).max(500),
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('limit_exceeded'),
+      reason: z.string().min(1).max(500),
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('blocked'),
+      reason: z.string().min(1).max(500),
     })
     .strict(),
 ]);
@@ -1356,9 +1513,6 @@ export const X402PricingResponseSchema = z.object({
     })
   ),
 });
-
-const EthereumAddressSchema = z.string().regex(/^0x[a-fA-F0-9]{40}$/);
-const UsdcAmountSchema = z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/);
 
 export const X402FuelOwnerResponseSchema = z.object({
   status: z.enum(['ready', 'missing_config', 'unavailable']),

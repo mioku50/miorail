@@ -70,7 +70,10 @@ interface CreateX402RouterOptions {
   dbEnabled?: boolean;
 }
 
-interface SubscriptionOwnerWallet {
+// T60: exported (was module-private) so lib/intelligenceBudgetCharger.ts can
+// reuse the SAME CDP subscription-owner wallet resolution rather than
+// reinventing it — decision 1's "переиспользовать, НЕ переизобретать".
+export interface SubscriptionOwnerWallet {
   address: string;
   walletName: string;
   eoaAddress?: string;
@@ -84,7 +87,7 @@ interface SubscriptionOwnerReadiness {
   errorCode?: 'subscription_owner_gas_unavailable' | 'subscription_owner_deploy_funding_required' | 'subscription_owner_rpc_unavailable';
 }
 
-class SubscriptionOwnerUnavailableError extends Error {
+export class SubscriptionOwnerUnavailableError extends Error {
   constructor(
     message: string,
     readonly errorCode: string,
@@ -132,7 +135,7 @@ function sanitizedUrlHost(value?: string): string | undefined {
   }
 }
 
-function subscriptionWalletName(env: NodeJS.ProcessEnv = process.env): string {
+export function subscriptionWalletName(env: NodeJS.ProcessEnv = process.env): string {
   return env.BASE_SUBSCRIPTION_WALLET_NAME ||
     env.CDP_SUBSCRIPTION_WALLET_NAME ||
     'miorail-fuel-subscription-owner';
@@ -150,7 +153,7 @@ function isAddress(value?: string | null): boolean {
   return typeof value === 'string' && /^0x[a-fA-F0-9]{40}$/.test(value);
 }
 
-async function getSubscriptionOwnerWallet(env: NodeJS.ProcessEnv = process.env): Promise<SubscriptionOwnerWallet> {
+export async function getSubscriptionOwnerWallet(env: NodeJS.ProcessEnv = process.env): Promise<SubscriptionOwnerWallet> {
   const missingConfig = missingSubscriptionOwnerConfig(env);
   if (missingConfig.length > 0) {
     throw new SubscriptionOwnerUnavailableError(
@@ -191,7 +194,7 @@ async function getSubscriptionOwnerWallet(env: NodeJS.ProcessEnv = process.env):
   }
 }
 
-function rpcUrlForNetwork(network?: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
+export function rpcUrlForNetwork(network?: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
   if (network === 'eip155:84532') {
     return env.BASE_SEPOLIA_RPC_URL || env.BASE_RPC_URL || 'https://sepolia.base.org';
   }

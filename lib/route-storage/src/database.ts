@@ -15,12 +15,20 @@ import {
   RouteStorageIntegrityError,
   RouteStorageTenantError,
   type BlueprintStorageLinks,
+  type InsertIntelligenceBudgetInput,
+  type IntelligenceBudgetRecord,
+  type IntelligenceBudgetReservationRecord,
   type IntelligenceChargeStorageLinks,
+  type ReleaseIntelligenceReservationResult,
+  type ReserveIntelligenceBudgetInput,
+  type ReserveIntelligenceBudgetOutcome,
   type RouteRunRecord,
   type RouteStorageRepository,
+  type SettleIntelligenceReservationResult,
   type SqlTemplateExecutor,
   type StoredBlueprintV1,
   type StoredIntelligenceChargeV1,
+  type UpdateIntelligenceBudgetInput,
 } from './types.js';
 import {
   decodeRouteHistoryCursorV1,
@@ -33,10 +41,12 @@ import {
 import {
   assertLinkedHash,
   assertTenant,
+  databaseAtomicAmount,
   databaseNullableString,
   databaseNullableTimestamp,
   databaseNumber,
   databaseString,
+  databaseStringArray,
   databaseTimestamp,
   parseEvidenceRecord,
   parseEvidenceSet,
@@ -51,6 +61,8 @@ import {
   payloadEquals,
   payloadFromDatabase,
 } from './validation.js';
+
+const INTELLIGENCE_BUDGET_RESERVATION_SCHEMA_VERSION = 'intelligence-budget-reservation/v1';
 
 function conflict(message: string): never {
   throw new RouteStorageConflictError(message);
@@ -225,6 +237,45 @@ function chargeFromRow(row: Record<string, unknown>): StoredIntelligenceChargeV1
     evidenceId: databaseNullableString(row.evidence_id, 'evidence_id'),
     spendPermissionId,
     x402ReceiptId: databaseNullableString(row.x402_receipt_id, 'x402_receipt_id'),
+  };
+}
+
+function budgetFromRow(row: Record<string, unknown>): IntelligenceBudgetRecord {
+  return {
+    id: databaseString(row.id, 'id'),
+    schemaVersion: databaseString(row.schema_version, 'schema_version'),
+    userId: databaseString(row.user_id, 'user_id'),
+    walletAddress: databaseString(row.wallet_address, 'wallet_address'),
+    chainId: databaseNumber(row.chain_id, 'chain_id'),
+    spendPermissionId: databaseString(row.spend_permission_id, 'spend_permission_id'),
+    status: databaseString(row.status, 'status') as IntelligenceBudgetRecord['status'],
+    periodType: databaseString(row.period_type, 'period_type') as IntelligenceBudgetRecord['periodType'],
+    periodLimitAtomic: databaseAtomicAmount(row.period_limit_atomic, 'period_limit_atomic'),
+    periodSpentAtomic: databaseAtomicAmount(row.period_spent_atomic, 'period_spent_atomic'),
+    reservedAtomic: databaseAtomicAmount(row.reserved_atomic, 'reserved_atomic'),
+    maxPerCallAtomic: databaseAtomicAmount(row.max_per_call_atomic, 'max_per_call_atomic'),
+    allowedCategories: databaseStringArray(row.allowed_categories, 'allowed_categories'),
+    periodStartedAt: databaseNullableTimestamp(row.period_started_at, 'period_started_at'),
+    periodEndsAt: databaseNullableTimestamp(row.period_ends_at, 'period_ends_at'),
+    revokedAt: databaseNullableTimestamp(row.revoked_at, 'revoked_at'),
+    budgetHash: databaseString(row.budget_hash, 'budget_hash'),
+    createdAt: databaseTimestamp(row.created_at, 'created_at'),
+    updatedAt: databaseTimestamp(row.updated_at, 'updated_at'),
+  };
+}
+
+function reservationFromRow(row: Record<string, unknown>): IntelligenceBudgetReservationRecord {
+  return {
+    id: databaseString(row.id, 'id'),
+    schemaVersion: databaseString(row.schema_version, 'schema_version'),
+    budgetId: databaseString(row.budget_id, 'budget_id'),
+    userId: databaseString(row.user_id, 'user_id'),
+    amountAtomic: databaseAtomicAmount(row.amount_atomic, 'amount_atomic'),
+    status: databaseString(row.status, 'status') as IntelligenceBudgetReservationRecord['status'],
+    idempotencyKey: databaseString(row.idempotency_key, 'idempotency_key'),
+    expiresAt: databaseTimestamp(row.expires_at, 'expires_at'),
+    createdAt: databaseTimestamp(row.created_at, 'created_at'),
+    updatedAt: databaseTimestamp(row.updated_at, 'updated_at'),
   };
 }
 
@@ -1297,6 +1348,320 @@ export function createDatabaseRouteStorageRepository(
         LIMIT 1
       `;
       return rows[0] ? chargeFromRow(rows[0]) : null;
+    },
+
+    // --- T60: Intelligence Budget + reservation CTEs -----------------------
+    // Every mutation below is ONE round trip (a single WITH/CTE statement) —
+    // Neon's HTTP driver has no multi-statement transactions, so the
+    // check-and-mutate step can never be split across two statements. Any
+    // classification/reporting read that follows a mutation is a SEPARATE,
+    // plain, read-only statement (safe: the atomic decision already happened
+    // in the write above; the follow-up read is best-effort freshness only).
+
+    async insertIntelligenceBudget(input: InsertIntelligenceBudgetInput): Promise<IntelligenceBudgetRecord> {
+      const inserted = await sql`
+        INSERT INTO intelligence_budgets (
+          id, schema_version, user_id, wallet_address, chain_id, spend_permission_id,
+          status, period_type, period_limit_atomic, period_spent_atomic, reserved_atomic,
+          max_per_call_atomic, allowed_categories, period_started_at, period_ends_at,
+          revoked_at, budget_hash, created_at, updated_at
+        ) VALUES (
+          ${input.id}, ${input.schemaVersion}, ${input.userId}, ${input.walletAddress}, ${input.chainId},
+          ${input.spendPermissionId}, ${input.status}, ${input.periodType},
+          ${input.periodLimitAtomic}::numeric(78,0), '0'::numeric(78,0), '0'::numeric(78,0),
+          ${input.maxPerCallAtomic}::numeric(78,0), CAST(${jsonb(input.allowedCategories)} AS jsonb),
+          ${input.periodStartedAt ? new Date(input.periodStartedAt) : null},
+          ${input.periodEndsAt ? new Date(input.periodEndsAt) : null},
+          NULL, ${input.budgetHash}, ${new Date(input.now)}, ${new Date(input.now)}
+        )
+        ON CONFLICT DO NOTHING
+        RETURNING id, schema_version, user_id, wallet_address, chain_id, spend_permission_id,
+                  status, period_type, period_limit_atomic, period_spent_atomic, reserved_atomic,
+                  max_per_call_atomic, allowed_categories, period_started_at, period_ends_at,
+                  revoked_at, budget_hash, created_at, updated_at
+      `;
+      if (inserted[0]) return budgetFromRow(inserted[0]);
+      conflict('Intelligence Budget ID already exists');
+    },
+
+    async getActiveIntelligenceBudget(
+      userId: string,
+      walletAddress: string,
+      chainId: number,
+    ): Promise<IntelligenceBudgetRecord | null> {
+      const rows = await sql`
+        SELECT id, schema_version, user_id, wallet_address, chain_id, spend_permission_id,
+               status, period_type, period_limit_atomic, period_spent_atomic, reserved_atomic,
+               max_per_call_atomic, allowed_categories, period_started_at, period_ends_at,
+               revoked_at, budget_hash, created_at, updated_at
+        FROM intelligence_budgets
+        WHERE user_id = ${userId} AND lower(wallet_address) = lower(${walletAddress})
+          AND chain_id = ${chainId} AND status = 'active'
+        LIMIT 1
+      `;
+      return rows[0] ? budgetFromRow(rows[0]) : null;
+    },
+
+    async getIntelligenceBudgetById(id: string, userId: string): Promise<IntelligenceBudgetRecord | null> {
+      const rows = await sql`
+        SELECT id, schema_version, user_id, wallet_address, chain_id, spend_permission_id,
+               status, period_type, period_limit_atomic, period_spent_atomic, reserved_atomic,
+               max_per_call_atomic, allowed_categories, period_started_at, period_ends_at,
+               revoked_at, budget_hash, created_at, updated_at
+        FROM intelligence_budgets
+        WHERE id = ${id} AND user_id = ${userId}
+        LIMIT 1
+      `;
+      return rows[0] ? budgetFromRow(rows[0]) : null;
+    },
+
+    async updateIntelligenceBudget(
+      id: string,
+      userId: string,
+      updated: UpdateIntelligenceBudgetInput,
+    ): Promise<IntelligenceBudgetRecord> {
+      const current = await sql`
+        SELECT id, schema_version, user_id, wallet_address, chain_id, spend_permission_id,
+               status, period_type, period_limit_atomic, period_spent_atomic, reserved_atomic,
+               max_per_call_atomic, allowed_categories, period_started_at, period_ends_at,
+               revoked_at, budget_hash, created_at, updated_at
+        FROM intelligence_budgets WHERE id = ${id} AND user_id = ${userId} LIMIT 1
+      `;
+      const existing = current[0];
+      if (!existing) {
+        throw new RouteStorageIntegrityError('Intelligence Budget does not exist for this tenant');
+      }
+      const next = budgetFromRow(existing);
+      const status = updated.status ?? next.status;
+      const periodLimitAtomic = updated.periodLimitAtomic ?? next.periodLimitAtomic;
+      const maxPerCallAtomic = updated.maxPerCallAtomic ?? next.maxPerCallAtomic;
+      const allowedCategories = updated.allowedCategories ?? next.allowedCategories;
+      const periodStartedAt = updated.periodStartedAt !== undefined ? updated.periodStartedAt : next.periodStartedAt;
+      const periodEndsAt = updated.periodEndsAt !== undefined ? updated.periodEndsAt : next.periodEndsAt;
+      const revokedAt = updated.revokedAt !== undefined ? updated.revokedAt : next.revokedAt;
+      const rows = await sql`
+        UPDATE intelligence_budgets
+        SET status = ${status},
+            period_limit_atomic = ${periodLimitAtomic}::numeric(78,0),
+            max_per_call_atomic = ${maxPerCallAtomic}::numeric(78,0),
+            allowed_categories = CAST(${jsonb(allowedCategories)} AS jsonb),
+            period_started_at = ${periodStartedAt ? new Date(periodStartedAt) : null},
+            period_ends_at = ${periodEndsAt ? new Date(periodEndsAt) : null},
+            revoked_at = ${revokedAt ? new Date(revokedAt) : null},
+            budget_hash = ${updated.budgetHash},
+            updated_at = ${new Date(updated.now)}
+        WHERE id = ${id} AND user_id = ${userId}
+        RETURNING id, schema_version, user_id, wallet_address, chain_id, spend_permission_id,
+                  status, period_type, period_limit_atomic, period_spent_atomic, reserved_atomic,
+                  max_per_call_atomic, allowed_categories, period_started_at, period_ends_at,
+                  revoked_at, budget_hash, created_at, updated_at
+      `;
+      if (!rows[0]) throw new RouteStorageIntegrityError('Intelligence Budget does not exist for this tenant');
+      return budgetFromRow(rows[0]);
+    },
+
+    async listIntelligenceBudgetReservations(
+      budgetId: string,
+      userId: string,
+    ): Promise<IntelligenceBudgetReservationRecord[]> {
+      const owned = await sql`SELECT id FROM intelligence_budgets WHERE id = ${budgetId} AND user_id = ${userId} LIMIT 1`;
+      if (!owned[0]) return [];
+      const rows = await sql`
+        SELECT id, schema_version, budget_id, user_id, amount_atomic, status, idempotency_key, expires_at, created_at, updated_at
+        FROM intelligence_budget_reservations
+        WHERE budget_id = ${budgetId}
+        ORDER BY created_at, id
+      `;
+      return rows.map(reservationFromRow);
+    },
+
+    async reserveIntelligenceBudget(input: ReserveIntelligenceBudgetInput): Promise<ReserveIntelligenceBudgetOutcome> {
+      // Atomic decision — the ONLY part that must be a single statement:
+      // gate on the idempotency key, the budget's active/period/limit
+      // guards, then increment reserved_atomic and insert the reservation.
+      const rows = await sql`
+        WITH existing AS (
+          SELECT id FROM intelligence_budget_reservations WHERE idempotency_key = ${input.idempotencyKey}
+        ), upd AS (
+          UPDATE intelligence_budgets
+          SET reserved_atomic = reserved_atomic + ${input.amountAtomic}::numeric(78,0),
+              updated_at = ${new Date(input.now)}
+          WHERE id = ${input.budgetId}
+            AND user_id = ${input.userId}
+            AND status = 'active'
+            AND revoked_at IS NULL
+            AND (period_ends_at IS NULL OR period_ends_at > ${new Date(input.now)})
+            AND ${input.amountAtomic}::numeric(78,0) <= max_per_call_atomic
+            AND (period_spent_atomic + reserved_atomic + ${input.amountAtomic}::numeric(78,0)) <= period_limit_atomic
+            AND NOT EXISTS (SELECT 1 FROM existing)
+          RETURNING id
+        ), ins AS (
+          INSERT INTO intelligence_budget_reservations (
+            id, schema_version, budget_id, user_id, amount_atomic, status,
+            idempotency_key, expires_at, created_at, updated_at
+          )
+          SELECT ${input.reservationId}, ${INTELLIGENCE_BUDGET_RESERVATION_SCHEMA_VERSION}, upd.id, ${input.userId},
+                 ${input.amountAtomic}::numeric(78,0), 'reserved', ${input.idempotencyKey},
+                 ${new Date(input.expiresAt)}, ${new Date(input.now)}, ${new Date(input.now)}
+          FROM upd
+          ON CONFLICT (idempotency_key) DO NOTHING
+          RETURNING id
+        )
+        SELECT
+          (SELECT count(*) FROM ins)::int AS applied,
+          (SELECT count(*) FROM existing)::int AS existed
+      `;
+      const applied = Number(rows[0]?.applied ?? 0) > 0;
+      const existed = Number(rows[0]?.existed ?? 0) > 0;
+
+      if (applied) {
+        const reservationRows = await sql`
+          SELECT id, schema_version, budget_id, user_id, amount_atomic, status, idempotency_key, expires_at, created_at, updated_at
+          FROM intelligence_budget_reservations WHERE id = ${input.reservationId} LIMIT 1
+        `;
+        const budgetRows = await sql`
+          SELECT id, schema_version, user_id, wallet_address, chain_id, spend_permission_id,
+                 status, period_type, period_limit_atomic, period_spent_atomic, reserved_atomic,
+                 max_per_call_atomic, allowed_categories, period_started_at, period_ends_at,
+                 revoked_at, budget_hash, created_at, updated_at
+          FROM intelligence_budgets WHERE id = ${input.budgetId} LIMIT 1
+        `;
+        if (!reservationRows[0] || !budgetRows[0]) {
+          throw new RouteStorageIntegrityError('Reserved Intelligence Budget reservation vanished after insert');
+        }
+        return { outcome: 'reserved', reservation: reservationFromRow(reservationRows[0]), budget: budgetFromRow(budgetRows[0]) };
+      }
+
+      if (existed) {
+        const reservationRows = await sql`
+          SELECT id, schema_version, budget_id, user_id, amount_atomic, status, idempotency_key, expires_at, created_at, updated_at
+          FROM intelligence_budget_reservations WHERE idempotency_key = ${input.idempotencyKey} LIMIT 1
+        `;
+        const existingReservation = reservationRows[0] ? reservationFromRow(reservationRows[0]) : null;
+        if (!existingReservation) {
+          throw new RouteStorageIntegrityError('Intelligence Budget reservation idempotency key vanished after check');
+        }
+        const budgetRows = await sql`
+          SELECT id, schema_version, user_id, wallet_address, chain_id, spend_permission_id,
+                 status, period_type, period_limit_atomic, period_spent_atomic, reserved_atomic,
+                 max_per_call_atomic, allowed_categories, period_started_at, period_ends_at,
+                 revoked_at, budget_hash, created_at, updated_at
+          FROM intelligence_budgets WHERE id = ${existingReservation.budgetId} LIMIT 1
+        `;
+        if (!budgetRows[0]) {
+          throw new RouteStorageIntegrityError('Reserved Intelligence Budget reservation has no owning budget');
+        }
+        return { outcome: 'idempotent_replay', reservation: existingReservation, budget: budgetFromRow(budgetRows[0]) };
+      }
+
+      const budgetRows = await sql`
+        SELECT id, schema_version, user_id, wallet_address, chain_id, spend_permission_id,
+               status, period_type, period_limit_atomic, period_spent_atomic, reserved_atomic,
+               max_per_call_atomic, allowed_categories, period_started_at, period_ends_at,
+               revoked_at, budget_hash, created_at, updated_at
+        FROM intelligence_budgets WHERE id = ${input.budgetId} AND user_id = ${input.userId} LIMIT 1
+      `;
+      const budget = budgetRows[0] ? budgetFromRow(budgetRows[0]) : null;
+      if (!budget) return { outcome: 'inactive', reservation: null, budget: null };
+      const nowMs = Date.parse(input.now);
+      const periodEndsMs = budget.periodEndsAt === null ? null : Date.parse(budget.periodEndsAt);
+      if (budget.status !== 'active' || budget.revokedAt !== null || (periodEndsMs !== null && periodEndsMs <= nowMs)) {
+        return { outcome: 'inactive', reservation: null, budget };
+      }
+      return { outcome: 'insufficient', reservation: null, budget };
+    },
+
+    async settleIntelligenceReservation(
+      reservationId: string,
+      userId: string,
+      now: string,
+    ): Promise<SettleIntelligenceReservationResult> {
+      await sql`
+        WITH res AS (
+          UPDATE intelligence_budget_reservations
+          SET status = 'settled', updated_at = ${new Date(now)}
+          WHERE id = ${reservationId} AND user_id = ${userId} AND status = 'reserved'
+          RETURNING budget_id, amount_atomic
+        )
+        UPDATE intelligence_budgets AS b
+        SET reserved_atomic = b.reserved_atomic - res.amount_atomic,
+            period_spent_atomic = b.period_spent_atomic + res.amount_atomic,
+            updated_at = ${new Date(now)}
+        FROM res
+        WHERE b.id = res.budget_id
+      `;
+      const reservationRows = await sql`
+        SELECT id, schema_version, budget_id, user_id, amount_atomic, status, idempotency_key, expires_at, created_at, updated_at
+        FROM intelligence_budget_reservations WHERE id = ${reservationId} AND user_id = ${userId} LIMIT 1
+      `;
+      const reservation = reservationRows[0] ? reservationFromRow(reservationRows[0]) : null;
+      if (!reservation) return { reservation: null, budget: null };
+      const budgetRows = await sql`
+        SELECT id, schema_version, user_id, wallet_address, chain_id, spend_permission_id,
+               status, period_type, period_limit_atomic, period_spent_atomic, reserved_atomic,
+               max_per_call_atomic, allowed_categories, period_started_at, period_ends_at,
+               revoked_at, budget_hash, created_at, updated_at
+        FROM intelligence_budgets WHERE id = ${reservation.budgetId} LIMIT 1
+      `;
+      return { reservation, budget: budgetRows[0] ? budgetFromRow(budgetRows[0]) : null };
+    },
+
+    async releaseIntelligenceReservation(
+      reservationId: string,
+      userId: string,
+      now: string,
+      _reason: string,
+    ): Promise<ReleaseIntelligenceReservationResult> {
+      await sql`
+        WITH res AS (
+          UPDATE intelligence_budget_reservations
+          SET status = 'released', updated_at = ${new Date(now)}
+          WHERE id = ${reservationId} AND user_id = ${userId} AND status = 'reserved'
+          RETURNING budget_id, amount_atomic
+        )
+        UPDATE intelligence_budgets AS b
+        SET reserved_atomic = b.reserved_atomic - res.amount_atomic,
+            updated_at = ${new Date(now)}
+        FROM res
+        WHERE b.id = res.budget_id
+      `;
+      const reservationRows = await sql`
+        SELECT id, schema_version, budget_id, user_id, amount_atomic, status, idempotency_key, expires_at, created_at, updated_at
+        FROM intelligence_budget_reservations WHERE id = ${reservationId} AND user_id = ${userId} LIMIT 1
+      `;
+      const reservation = reservationRows[0] ? reservationFromRow(reservationRows[0]) : null;
+      if (!reservation) return { reservation: null, budget: null };
+      const budgetRows = await sql`
+        SELECT id, schema_version, user_id, wallet_address, chain_id, spend_permission_id,
+               status, period_type, period_limit_atomic, period_spent_atomic, reserved_atomic,
+               max_per_call_atomic, allowed_categories, period_started_at, period_ends_at,
+               revoked_at, budget_hash, created_at, updated_at
+        FROM intelligence_budgets WHERE id = ${reservation.budgetId} LIMIT 1
+      `;
+      return { reservation, budget: budgetRows[0] ? budgetFromRow(budgetRows[0]) : null };
+    },
+
+    async expireStaleIntelligenceReservations(budgetId: string, now: string): Promise<IntelligenceBudgetRecord | null> {
+      await sql`
+        WITH stale AS (
+          UPDATE intelligence_budget_reservations
+          SET status = 'expired', updated_at = ${new Date(now)}
+          WHERE budget_id = ${budgetId} AND status = 'reserved' AND expires_at < ${new Date(now)}
+          RETURNING amount_atomic
+        )
+        UPDATE intelligence_budgets AS b
+        SET reserved_atomic = b.reserved_atomic - COALESCE((SELECT SUM(amount_atomic) FROM stale), 0),
+            updated_at = ${new Date(now)}
+        WHERE b.id = ${budgetId} AND EXISTS (SELECT 1 FROM stale)
+      `;
+      const rows = await sql`
+        SELECT id, schema_version, user_id, wallet_address, chain_id, spend_permission_id,
+               status, period_type, period_limit_atomic, period_spent_atomic, reserved_atomic,
+               max_per_call_atomic, allowed_categories, period_started_at, period_ends_at,
+               revoked_at, budget_hash, created_at, updated_at
+        FROM intelligence_budgets WHERE id = ${budgetId} LIMIT 1
+      `;
+      return rows[0] ? budgetFromRow(rows[0]) : null;
     },
   };
 }

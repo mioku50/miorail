@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { base } from '@base-org/account';
 import { useAccount } from 'wagmi';
-import { useCreateX402FuelPermission, useStatus, useX402Fuel, useX402FuelOwner, useX402Ledger, useX402Pricing } from '@mioagent/api-client-react';
-import { StateBadge } from '@mioagent/ui';
+import { useCreateX402FuelPermission, useIntelligenceBudget, useStatus, useX402Fuel, useX402FuelOwner, useX402Ledger, useX402Pricing } from '@mioagent/api-client-react';
+import { IntelligenceBudgetPanel, StateBadge } from '@mioagent/ui';
 import { capabilityLabel, x402CapabilityState, type CapabilityState } from '../../lib/capabilityStatus';
 import { DIAGNOSTICS_ENABLED } from '../../lib/diagnostics';
 
@@ -89,6 +89,13 @@ export function FuelMeter() {
   const { data: fuelOwner, error: fuelOwnerError, isLoading: fuelOwnerLoading } = useX402FuelOwner({ enabled: isConnected });
   const { data: ledger } = useX402Ledger();
   const { data: pricing } = useX402Pricing();
+  // T60: the Intelligence Budget bound to this wallet's active Spend
+  // Permission, gated on the paidIntelligence migration flag (the budget
+  // routes 404 otherwise). Presentational-only here — creating/updating a
+  // budget over an existing Spend Permission is future product surface.
+  const { data: intelligenceBudget } = useIntelligenceBudget({
+    enabled: Boolean(statusData?.productMigration?.paidIntelligence),
+  });
   const createFuelPermission = useCreateX402FuelPermission();
   const [fuelBudget, setFuelBudget] = useState('10');
   const [fuelTtlHours, setFuelTtlHours] = useState('720');
@@ -186,13 +193,17 @@ export function FuelMeter() {
     <main className="flex-1 bg-bg p-5 flex flex-col gap-4 overflow-y-auto select-none pb-16 md:pb-5">
       <div className="flex items-center justify-between border-b border-line pb-4">
         <div>
-          <h1 className="text-[20px] font-display font-bold text-ink tracking-[-0.02em]">Agent Fuel</h1>
+          <h1 className="text-[20px] font-display font-bold text-ink tracking-[-0.02em]">Intelligence Budget</h1>
           <p className="text-xs text-ink-3 mt-0.5 font-sans">
             A wallet allowance for premium inference, data, and tools.
           </p>
         </div>
-        <StateBadge state={badgeState} label={badgeLabel} title="Agent fuel readiness" />
+        <StateBadge state={badgeState} label={badgeLabel} title="Intelligence Budget readiness" />
       </div>
+
+      {statusData?.productMigration?.paidIntelligence && (
+        <IntelligenceBudgetPanel budget={intelligenceBudget?.budget ?? null} />
+      )}
 
       <section className="bg-panel border border-line rounded-[var(--radius-lg)] p-4 shadow-[var(--shadow-card)]">
         <div className="flex items-start justify-between gap-4">
@@ -266,7 +277,7 @@ export function FuelMeter() {
               onClick={handleCreateFuelPermission}
               disabled={createDisabled}
               className="h-[42px] px-4 rounded-[var(--radius-md)] border border-accent/50 bg-accent text-white text-xs font-sans font-bold disabled:opacity-50 disabled:cursor-not-allowed"
-              title={isConnected ? 'Create a Base Account allowance for Agent Fuel' : 'Connect wallet first'}
+              title={isConnected ? 'Create a Base Account allowance for your Intelligence Budget' : 'Connect wallet first'}
             >
               Enable USDC fuel
             </button>

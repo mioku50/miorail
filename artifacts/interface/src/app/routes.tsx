@@ -12,7 +12,7 @@ export const LEGACY_NAV_TABS: AppRoute[] = [
   { path: '/', label: 'cockpit' },
   { path: '/actions', label: 'actions' },
   { path: '/stream', label: 'stream' },
-  { path: '/fuel', label: 'fuel' },
+  { path: '/fuel', label: 'intelligence budget' },
   { path: '/configure', label: 'configure' },
 ];
 
@@ -33,7 +33,7 @@ export const LEGACY_COMMANDS: AppCommand[] = [
   { id: 'cockpit', icon: '⏻', label: 'Autonomy cockpit', path: '/' },
   { id: 'actions', icon: '⚡', label: 'Action inbox · review', path: '/actions' },
   { id: 'stream', icon: '💬', label: 'Agent stream · chat', path: '/stream' },
-  { id: 'fuel', icon: '⛽', label: 'x402 fuel meter', path: '/fuel' },
+  { id: 'fuel', icon: '⛽', label: 'Intelligence Budget', path: '/fuel' },
   { id: 'configure', icon: '🛡️', label: 'Spending limits · safety', path: '/configure' },
   { id: 'scan', icon: '📡', label: 'Actions builder · scan', path: '/build' },
   { id: 'memory', icon: '🧠', label: 'Agent history · memory', path: '/history' },

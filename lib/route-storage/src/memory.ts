@@ -15,12 +15,20 @@ import {
   RouteStorageIntegrityError,
   RouteStorageTenantError,
   type BlueprintStorageLinks,
+  type InsertIntelligenceBudgetInput,
+  type IntelligenceBudgetRecord,
+  type IntelligenceBudgetReservationRecord,
   type IntelligenceChargeStorageLinks,
+  type ReleaseIntelligenceReservationResult,
+  type ReserveIntelligenceBudgetInput,
+  type ReserveIntelligenceBudgetOutcome,
   type RouteRunRecord,
   type RouteStorageEntityKind,
   type RouteStorageRepository,
+  type SettleIntelligenceReservationResult,
   type StoredBlueprintV1,
   type StoredIntelligenceChargeV1,
+  type UpdateIntelligenceBudgetInput,
 } from './types.js';
 import {
   decodeRouteHistoryCursorV1,
@@ -112,6 +120,21 @@ function conflict(message: string): never {
   throw new RouteStorageConflictError(message);
 }
 
+// T60 — schema_version is owned by route-storage (the caller's input list
+// deliberately omits it, decision 4), mirroring how DB DEFAULTs/constants
+// live in the storage layer rather than every call site.
+const INTELLIGENCE_BUDGET_RESERVATION_SCHEMA_VERSION = 'intelligence-budget-reservation/v1';
+
+function cloneBudget(budget: IntelligenceBudgetRecord): IntelligenceBudgetRecord {
+  return { ...budget, allowedCategories: [...budget.allowedCategories] };
+}
+
+function cloneReservation(
+  reservation: IntelligenceBudgetReservationRecord,
+): IntelligenceBudgetReservationRecord {
+  return { ...reservation };
+}
+
 function immutableDuplicate(
   existing: StoredEntity,
   next: StoredEntity,
@@ -139,6 +162,8 @@ export class InMemoryRouteStorageRepository implements RouteStorageRepository {
   private readonly proofs = new Map<string, StoredProof>();
   private readonly proofEvents = new Map<string, StoredProofEvent>();
   private readonly charges = new Map<string, StoredCharge>();
+  private readonly intelligenceBudgets = new Map<string, IntelligenceBudgetRecord>();
+  private readonly intelligenceBudgetReservations = new Map<string, IntelligenceBudgetReservationRecord>();
 
   async createRouteRun(input: RouteIntentV1, idempotencyKey: string): Promise<RouteRunRecord> {
     const intent = parseRouteIntent(input);
@@ -804,6 +829,221 @@ export class InMemoryRouteStorageRepository implements RouteStorageRepository {
       };
     }
     return null;
+  }
+
+  // --- T60: Intelligence Budget + reservation CTE-equivalents ---------------
+  // Single-threaded JS gives these the same atomicity the DB CTEs need Neon
+  // HTTP's lack of multi-statement transactions for: no `await` ever appears
+  // between a guard check and its matching mutation below, so no other call
+  // can interleave mid-decision.
+
+  async insertIntelligenceBudget(input: InsertIntelligenceBudgetInput): Promise<IntelligenceBudgetRecord> {
+    if (this.intelligenceBudgets.has(input.id)) {
+      conflict('Intelligence Budget ID already exists');
+    }
+    if (
+      input.status === 'active' &&
+      [...this.intelligenceBudgets.values()].some(
+        (budget) => budget.spendPermissionId === input.spendPermissionId && budget.status === 'active',
+      )
+    ) {
+      conflict('Spend Permission already has an active Intelligence Budget');
+    }
+    const record: IntelligenceBudgetRecord = {
+      id: input.id,
+      schemaVersion: input.schemaVersion,
+      userId: input.userId,
+      walletAddress: input.walletAddress,
+      chainId: input.chainId,
+      spendPermissionId: input.spendPermissionId,
+      status: input.status,
+      periodType: input.periodType,
+      periodLimitAtomic: input.periodLimitAtomic,
+      periodSpentAtomic: '0',
+      reservedAtomic: '0',
+      maxPerCallAtomic: input.maxPerCallAtomic,
+      allowedCategories: [...input.allowedCategories],
+      periodStartedAt: input.periodStartedAt,
+      periodEndsAt: input.periodEndsAt,
+      revokedAt: null,
+      budgetHash: input.budgetHash,
+      createdAt: input.now,
+      updatedAt: input.now,
+    };
+    this.intelligenceBudgets.set(record.id, record);
+    return cloneBudget(record);
+  }
+
+  async getActiveIntelligenceBudget(
+    userId: string,
+    walletAddress: string,
+    chainId: number,
+  ): Promise<IntelligenceBudgetRecord | null> {
+    const found = [...this.intelligenceBudgets.values()].find(
+      (budget) =>
+        budget.userId === userId &&
+        budget.walletAddress.toLowerCase() === walletAddress.toLowerCase() &&
+        budget.chainId === chainId &&
+        budget.status === 'active',
+    );
+    return found ? cloneBudget(found) : null;
+  }
+
+  async getIntelligenceBudgetById(id: string, userId: string): Promise<IntelligenceBudgetRecord | null> {
+    const found = this.intelligenceBudgets.get(id);
+    if (!found || found.userId !== userId) return null;
+    return cloneBudget(found);
+  }
+
+  async updateIntelligenceBudget(
+    id: string,
+    userId: string,
+    updated: UpdateIntelligenceBudgetInput,
+  ): Promise<IntelligenceBudgetRecord> {
+    const stored = this.intelligenceBudgets.get(id);
+    if (!stored || stored.userId !== userId) {
+      throw new RouteStorageIntegrityError('Intelligence Budget does not exist for this tenant');
+    }
+    if (updated.status !== undefined) stored.status = updated.status;
+    if (updated.periodLimitAtomic !== undefined) stored.periodLimitAtomic = updated.periodLimitAtomic;
+    if (updated.maxPerCallAtomic !== undefined) stored.maxPerCallAtomic = updated.maxPerCallAtomic;
+    if (updated.allowedCategories !== undefined) stored.allowedCategories = [...updated.allowedCategories];
+    if (updated.periodStartedAt !== undefined) stored.periodStartedAt = updated.periodStartedAt;
+    if (updated.periodEndsAt !== undefined) stored.periodEndsAt = updated.periodEndsAt;
+    if (updated.revokedAt !== undefined) stored.revokedAt = updated.revokedAt;
+    stored.budgetHash = updated.budgetHash;
+    stored.updatedAt = updated.now;
+    return cloneBudget(stored);
+  }
+
+  async listIntelligenceBudgetReservations(
+    budgetId: string,
+    userId: string,
+  ): Promise<IntelligenceBudgetReservationRecord[]> {
+    const budget = this.intelligenceBudgets.get(budgetId);
+    if (!budget || budget.userId !== userId) return [];
+    return [...this.intelligenceBudgetReservations.values()]
+      .filter((reservation) => reservation.budgetId === budgetId)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+      .map(cloneReservation);
+  }
+
+  async reserveIntelligenceBudget(input: ReserveIntelligenceBudgetInput): Promise<ReserveIntelligenceBudgetOutcome> {
+    const existingByKey = [...this.intelligenceBudgetReservations.values()].find(
+      (reservation) => reservation.idempotencyKey === input.idempotencyKey,
+    );
+    if (existingByKey) {
+      const owningBudget = this.intelligenceBudgets.get(existingByKey.budgetId);
+      if (!owningBudget) {
+        throw new RouteStorageIntegrityError('Reserved Intelligence Budget reservation has no owning budget');
+      }
+      return { outcome: 'idempotent_replay', reservation: cloneReservation(existingByKey), budget: cloneBudget(owningBudget) };
+    }
+
+    const budget = this.intelligenceBudgets.get(input.budgetId);
+    if (!budget || budget.userId !== input.userId) {
+      return { outcome: 'inactive', reservation: null, budget: null };
+    }
+    const nowMs = Date.parse(input.now);
+    const periodEndsMs = budget.periodEndsAt === null ? null : Date.parse(budget.periodEndsAt);
+    if (
+      budget.status !== 'active' ||
+      budget.revokedAt !== null ||
+      (periodEndsMs !== null && periodEndsMs <= nowMs)
+    ) {
+      return { outcome: 'inactive', reservation: null, budget: cloneBudget(budget) };
+    }
+    const amount = BigInt(input.amountAtomic);
+    if (amount > BigInt(budget.maxPerCallAtomic)) {
+      return { outcome: 'insufficient', reservation: null, budget: cloneBudget(budget) };
+    }
+    const projectedTotal = BigInt(budget.periodSpentAtomic) + BigInt(budget.reservedAtomic) + amount;
+    if (projectedTotal > BigInt(budget.periodLimitAtomic)) {
+      return { outcome: 'insufficient', reservation: null, budget: cloneBudget(budget) };
+    }
+
+    budget.reservedAtomic = (BigInt(budget.reservedAtomic) + amount).toString();
+    budget.updatedAt = input.now;
+    const reservation: IntelligenceBudgetReservationRecord = {
+      id: input.reservationId,
+      schemaVersion: INTELLIGENCE_BUDGET_RESERVATION_SCHEMA_VERSION,
+      budgetId: input.budgetId,
+      userId: input.userId,
+      amountAtomic: input.amountAtomic,
+      status: 'reserved',
+      idempotencyKey: input.idempotencyKey,
+      expiresAt: input.expiresAt,
+      createdAt: input.now,
+      updatedAt: input.now,
+    };
+    this.intelligenceBudgetReservations.set(reservation.id, reservation);
+    return { outcome: 'reserved', reservation: cloneReservation(reservation), budget: cloneBudget(budget) };
+  }
+
+  async settleIntelligenceReservation(
+    reservationId: string,
+    userId: string,
+    now: string,
+  ): Promise<SettleIntelligenceReservationResult> {
+    const reservation = this.intelligenceBudgetReservations.get(reservationId);
+    if (!reservation || reservation.userId !== userId) return { reservation: null, budget: null };
+    const budget = this.intelligenceBudgets.get(reservation.budgetId) ?? null;
+    if (reservation.status !== 'reserved') {
+      // Idempotent no-op: already settled (or released/expired) — report the
+      // current state without a second application.
+      return { reservation: cloneReservation(reservation), budget: budget ? cloneBudget(budget) : null };
+    }
+    if (budget) {
+      budget.reservedAtomic = (BigInt(budget.reservedAtomic) - BigInt(reservation.amountAtomic)).toString();
+      budget.periodSpentAtomic = (BigInt(budget.periodSpentAtomic) + BigInt(reservation.amountAtomic)).toString();
+      budget.updatedAt = now;
+    }
+    reservation.status = 'settled';
+    reservation.updatedAt = now;
+    return { reservation: cloneReservation(reservation), budget: budget ? cloneBudget(budget) : null };
+  }
+
+  async releaseIntelligenceReservation(
+    reservationId: string,
+    userId: string,
+    now: string,
+    _reason: string,
+  ): Promise<ReleaseIntelligenceReservationResult> {
+    const reservation = this.intelligenceBudgetReservations.get(reservationId);
+    if (!reservation || reservation.userId !== userId) return { reservation: null, budget: null };
+    const budget = this.intelligenceBudgets.get(reservation.budgetId) ?? null;
+    if (reservation.status !== 'reserved') {
+      return { reservation: cloneReservation(reservation), budget: budget ? cloneBudget(budget) : null };
+    }
+    if (budget) {
+      budget.reservedAtomic = (BigInt(budget.reservedAtomic) - BigInt(reservation.amountAtomic)).toString();
+      budget.updatedAt = now;
+    }
+    reservation.status = 'released';
+    reservation.updatedAt = now;
+    return { reservation: cloneReservation(reservation), budget: budget ? cloneBudget(budget) : null };
+  }
+
+  async expireStaleIntelligenceReservations(
+    budgetId: string,
+    now: string,
+  ): Promise<IntelligenceBudgetRecord | null> {
+    const budget = this.intelligenceBudgets.get(budgetId);
+    if (!budget) return null;
+    const nowMs = Date.parse(now);
+    let expiredTotal = 0n;
+    for (const reservation of this.intelligenceBudgetReservations.values()) {
+      if (reservation.budgetId !== budgetId || reservation.status !== 'reserved') continue;
+      if (Date.parse(reservation.expiresAt) >= nowMs) continue;
+      expiredTotal += BigInt(reservation.amountAtomic);
+      reservation.status = 'expired';
+      reservation.updatedAt = now;
+    }
+    if (expiredTotal > 0n) {
+      budget.reservedAtomic = (BigInt(budget.reservedAtomic) - expiredTotal).toString();
+      budget.updatedAt = now;
+    }
+    return cloneBudget(budget);
   }
 
   /** Test-only fault injection used to prove that repository reads fail closed. */

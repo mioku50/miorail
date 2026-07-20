@@ -21,3 +21,4 @@ export * from './SubmissionStatus';
 export * from './formatAtomicAmount';
 export * from './ExecutionProof';
 export * from './RouteHistoryList';
+export * from './IntelligenceBudgetPanel';

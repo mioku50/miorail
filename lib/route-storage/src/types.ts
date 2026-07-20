@@ -151,6 +151,158 @@ export interface RouteStorageRepository {
     userId: string,
     x402ReceiptHash: string,
   ): Promise<StoredIntelligenceChargeV1 | null>;
+
+  // --- T60: Intelligence Budget + Spend Permission reservations -------------
+  // Plain records (NOT a route-domain Zod schema) — lib/intelligence-budget
+  // owns the domain schema (IntelligenceBudgetV1) and maps to/from these
+  // atomic-string rows; route-storage stays a leaf dependency (route-domain,
+  // no reverse edge). Amounts are base-unit integer strings (numeric(78,0)
+  // in Postgres) end-to-end — never coerced through a JS number.
+
+  insertIntelligenceBudget(input: InsertIntelligenceBudgetInput): Promise<IntelligenceBudgetRecord>;
+  getActiveIntelligenceBudget(
+    userId: string,
+    walletAddress: string,
+    chainId: number,
+  ): Promise<IntelligenceBudgetRecord | null>;
+  getIntelligenceBudgetById(id: string, userId: string): Promise<IntelligenceBudgetRecord | null>;
+  updateIntelligenceBudget(
+    id: string,
+    userId: string,
+    updated: UpdateIntelligenceBudgetInput,
+  ): Promise<IntelligenceBudgetRecord>;
+  listIntelligenceBudgetReservations(
+    budgetId: string,
+    userId: string,
+  ): Promise<IntelligenceBudgetReservationRecord[]>;
+
+  /**
+   * Single-statement, Neon-safe atomic reservation (decision 4): checks the
+   * idempotency key, the active/not-revoked/not-expired budget state, the
+   * per-call cap, and the monthly limit (period_spent + reserved + amount),
+   * then increments `reserved_atomic` and inserts the reservation row — all
+   * in ONE CTE statement. A retried call with the SAME idempotencyKey never
+   * increments `reserved_atomic` a second time (idempotent_replay).
+   */
+  reserveIntelligenceBudget(input: ReserveIntelligenceBudgetInput): Promise<ReserveIntelligenceBudgetOutcome>;
+  /** Idempotent (gated on status='reserved'): moves a reservation to
+   * 'settled' and, in the SAME statement, moves its amount from
+   * `reserved_atomic` to `period_spent_atomic` on the budget. A repeat call
+   * on an already-settled reservation is a no-op. */
+  settleIntelligenceReservation(
+    reservationId: string,
+    userId: string,
+    now: string,
+  ): Promise<SettleIntelligenceReservationResult>;
+  /** Idempotent (gated on status='reserved'): moves a reservation to
+   * 'released' and decrements `reserved_atomic` by its amount in the same
+   * statement. `reason` is accepted for the caller's own audit trail — this
+   * table has no reason column, so it is not itself persisted here. */
+  releaseIntelligenceReservation(
+    reservationId: string,
+    userId: string,
+    now: string,
+    reason: string,
+  ): Promise<ReleaseIntelligenceReservationResult>;
+  /** Lazily called before `reserveIntelligenceBudget`: expires every
+   * still-'reserved' row past its `expiresAt` for this budget and returns
+   * `reserved_atomic` to the budget in one statement. */
+  expireStaleIntelligenceReservations(budgetId: string, now: string): Promise<IntelligenceBudgetRecord | null>;
+}
+
+export type IntelligenceBudgetStatus = 'active' | 'paused' | 'revoked' | 'expired';
+export type IntelligenceBudgetReservationStatus = 'reserved' | 'settled' | 'released' | 'expired';
+
+export interface IntelligenceBudgetRecord {
+  id: string;
+  schemaVersion: string;
+  userId: string;
+  walletAddress: string;
+  chainId: number;
+  spendPermissionId: string;
+  status: IntelligenceBudgetStatus;
+  periodType: 'monthly';
+  /** Base-unit integer strings — numeric(78,0) columns, never a JS number. */
+  periodLimitAtomic: string;
+  periodSpentAtomic: string;
+  reservedAtomic: string;
+  maxPerCallAtomic: string;
+  allowedCategories: string[];
+  periodStartedAt: string | null;
+  periodEndsAt: string | null;
+  revokedAt: string | null;
+  budgetHash: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IntelligenceBudgetReservationRecord {
+  id: string;
+  schemaVersion: string;
+  budgetId: string;
+  userId: string;
+  amountAtomic: string;
+  status: IntelligenceBudgetReservationStatus;
+  idempotencyKey: string;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InsertIntelligenceBudgetInput {
+  id: string;
+  schemaVersion: string;
+  userId: string;
+  walletAddress: string;
+  chainId: number;
+  spendPermissionId: string;
+  status: IntelligenceBudgetStatus;
+  periodType: 'monthly';
+  periodLimitAtomic: string;
+  maxPerCallAtomic: string;
+  allowedCategories: string[];
+  periodStartedAt: string | null;
+  periodEndsAt: string | null;
+  budgetHash: string;
+  now: string;
+}
+
+export interface UpdateIntelligenceBudgetInput {
+  status?: IntelligenceBudgetStatus;
+  periodLimitAtomic?: string;
+  maxPerCallAtomic?: string;
+  allowedCategories?: string[];
+  periodStartedAt?: string | null;
+  periodEndsAt?: string | null;
+  revokedAt?: string | null;
+  budgetHash: string;
+  now: string;
+}
+
+export interface ReserveIntelligenceBudgetInput {
+  budgetId: string;
+  userId: string;
+  reservationId: string;
+  amountAtomic: string;
+  idempotencyKey: string;
+  now: string;
+  expiresAt: string;
+}
+
+export type ReserveIntelligenceBudgetOutcome =
+  | { outcome: 'reserved'; reservation: IntelligenceBudgetReservationRecord; budget: IntelligenceBudgetRecord }
+  | { outcome: 'idempotent_replay'; reservation: IntelligenceBudgetReservationRecord; budget: IntelligenceBudgetRecord }
+  | { outcome: 'insufficient'; reservation: null; budget: IntelligenceBudgetRecord | null }
+  | { outcome: 'inactive'; reservation: null; budget: IntelligenceBudgetRecord | null };
+
+export interface SettleIntelligenceReservationResult {
+  reservation: IntelligenceBudgetReservationRecord | null;
+  budget: IntelligenceBudgetRecord | null;
+}
+
+export interface ReleaseIntelligenceReservationResult {
+  reservation: IntelligenceBudgetReservationRecord | null;
+  budget: IntelligenceBudgetRecord | null;
 }
 
 export type RouteStorageEntityKind =

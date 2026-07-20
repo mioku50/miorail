@@ -5,8 +5,11 @@ import { DeepVerification, ExecutionProofPanel, RoutePlanView, SubmissionStatus,
 import {
   useBoundedProofReconciliation,
   useEvaluateSwapRoute,
+  useIntelligenceBudget,
   usePrepareSwapBlueprint,
+  useSimulateWithBudget,
   useStatus,
+  type SimulateWithBudgetResponseV1,
 } from '@mioagent/api-client-react';
 import { BlueprintSubmitButton, type BlueprintSubmitStatus } from '@mioagent/wallet-actions';
 import { SimulateButton, type SimulateBlueprintResponseV1 } from '@mioagent/x402-actions';
@@ -45,6 +48,38 @@ function toDeepVerificationResult(response: SimulateBlueprintResponseV1): DeepVe
   return null;
 }
 
+// T60: the [Use Intelligence Budget] path yields SimulateWithBudgetResponseV1
+// (a bounded Spend Permission charge, NO new signature) — mapped into the
+// SAME surface-agnostic DeepVerificationResultV1 the one-time [Pay once] path
+// uses, since the api-server response carries full simulation + scoreNote
+// parity with T59.
+function budgetResponseToDeepVerificationResult(response: SimulateWithBudgetResponseV1): DeepVerificationResultV1 | null {
+  if (response.outcome === 'charged') {
+    return {
+      outcome: 'simulated',
+      provider: response.evidence.provider,
+      blockNumber: response.evidence.blockNumber,
+      simulationStatus:
+        response.simulation.status === 'passed' || response.simulation.status === 'failed'
+          ? response.simulation.status
+          : 'unavailable',
+      gasUsed: response.evidence.gasUsed,
+      stateChanges: response.evidence.stateChanges,
+      paidCostUsdc: response.evidence.paidCostUsdc,
+      x402TxHash: response.evidence.x402TxHash,
+      evidenceHash: response.evidence.evidenceHash,
+      transactionSafety: 'not_scored',
+      missingEvidence: response.scoreNote.missingEvidence,
+    };
+  }
+  if (response.outcome === 'provider_failed' || response.outcome === 'reconciliation_required') {
+    return { outcome: 'paid_service_failed', transactionSafety: 'not_scored', missingEvidence: [], reason: response.reason };
+  }
+  // limit_exceeded / blocked: nothing was charged — not a DeepVerification
+  // result view (the budget panel / disabled button already explain why).
+  return null;
+}
+
 const BUILDER_CODE = import.meta.env.VITE_BUILDER_CODE;
 
 const EXAMPLES = [
@@ -75,12 +110,22 @@ export function PlanPage() {
   const [selectedCandidateHash, setSelectedCandidateHash] = useState<string | null>(null);
   const [submission, setSubmission] = useState<BlueprintSubmissionState | null>(null);
   const [simulateResponse, setSimulateResponse] = useState<SimulateBlueprintResponseV1 | null>(null);
+  // T60: the bounded [Use Intelligence Budget] result lives in its own state —
+  // a different wire type than the one-time [Pay once] SimulateBlueprintResponseV1.
+  const [budgetResponse, setBudgetResponse] = useState<SimulateWithBudgetResponseV1 | null>(null);
   const evaluation = useEvaluateSwapRoute();
   const prepare = usePrepareSwapBlueprint();
   // T59: paid transaction simulation is gated on BOTH the server flag
   // (/api/status.productMigration.paidIntelligence) and a configured price
   // (prepare.data.simulationPriceUsdc) — never assumed available.
   const status = useStatus();
+  // T60: the caller's active Intelligence Budget (null when none / feature
+  // off). Drives whether the second [Use Intelligence Budget] button appears.
+  const intelligenceBudget = useIntelligenceBudget({
+    enabled: Boolean(status.data?.productMigration.paidIntelligence),
+  });
+  // Plain authenticated POST — NO wallet signature (that is the whole point).
+  const budgetSimulate = useSimulateWithBudget({ onSuccess: (response) => setBudgetResponse(response) });
 
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
@@ -88,6 +133,7 @@ export function PlanPage() {
     prepare.reset();
     setSubmission(null);
     setSimulateResponse(null);
+    setBudgetResponse(null);
     evaluation.mutate({ message, walletAddress: address.toLowerCase() as `0x${string}` });
   };
 
@@ -102,6 +148,7 @@ export function PlanPage() {
     if (!address || result?.outcome !== 'evaluated' || !result.routeCard) return;
     setSubmission(null);
     setSimulateResponse(null);
+    setBudgetResponse(null);
     prepare.mutate({
       walletAddress: address.toLowerCase() as `0x${string}`,
       routeRunId: result.routeRunId,
@@ -153,30 +200,71 @@ export function PlanPage() {
   // T59: Deep verification only ever appears under a 'prepared' outcome,
   // only behind the server flag, and only when the server actually priced
   // the feature (simulationPriceUsdc non-null) — no client-invented price.
+  // T60: the [Use Intelligence Budget] button is shown ONLY when the caller
+  // has an ACTIVE budget with enough remaining headroom for this simulation's
+  // price — otherwise the one-time [Pay once] path stands alone. It pays via
+  // the existing Spend Permission with NO new wallet signature.
+  const activeBudget =
+    intelligenceBudget.data?.budget && intelligenceBudget.data.budget.status === 'active'
+      ? intelligenceBudget.data.budget
+      : null;
   const deepVerification =
     prepare.data?.outcome === 'prepared' && status.data?.productMigration.paidIntelligence && prepare.data.simulationPriceUsdc
       ? (() => {
           const priceLabel = `${prepare.data.simulationPriceUsdc} USDC`;
+          // Stable non-null 'prepared' member for the deferred budget onClick
+          // closure (JSX props below narrow fine directly on prepare.data).
+          const preparedData = prepare.data;
+          const priceUsdc = prepare.data.simulationPriceUsdc;
+          const budgetHasHeadroom =
+            activeBudget !== null &&
+            typeof priceUsdc === 'string' &&
+            parseFloat(activeBudget.remainingUsdc) >= parseFloat(priceUsdc);
+          const settled = simulateResponse !== null || budgetResponse !== null;
+          const result = simulateResponse
+            ? toDeepVerificationResult(simulateResponse)
+            : budgetResponse
+              ? budgetResponseToDeepVerificationResult(budgetResponse)
+              : null;
           return (
             <DeepVerification
               pending={
-                simulateResponse
+                settled
                   ? null
                   : {
                       priceLabel,
                       payButton: (
-                        <SimulateButton
-                          priceLabel={priceLabel}
-                          routeRunId={prepare.data.routeRunId}
-                          blueprintId={prepare.data.blueprint.id}
-                          blueprintHash={prepare.data.blueprint.blueprintHash}
-                          onSuccess={(response) => setSimulateResponse(response)}
-                          className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                        />
+                        <div className="flex flex-col gap-2">
+                          <SimulateButton
+                            priceLabel={priceLabel}
+                            routeRunId={prepare.data.routeRunId}
+                            blueprintId={prepare.data.blueprint.id}
+                            blueprintHash={prepare.data.blueprint.blueprintHash}
+                            onSuccess={(response) => setSimulateResponse(response)}
+                            className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                          />
+                          {budgetHasHeadroom && address && (
+                            <button
+                              type="button"
+                              disabled={budgetSimulate.isPending}
+                              onClick={() =>
+                                budgetSimulate.mutate({
+                                  routeRunId: preparedData.routeRunId,
+                                  walletAddress: address.toLowerCase() as `0x${string}`,
+                                  blueprintId: preparedData.blueprint.id,
+                                  blueprintHash: preparedData.blueprint.blueprintHash,
+                                })
+                              }
+                              className="rounded-full border border-accent/50 bg-accent-soft px-4 py-2 text-sm font-semibold text-accent transition-colors hover:bg-accent hover:text-white disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                            >
+                              {budgetSimulate.isPending ? 'Using Intelligence Budget…' : 'Use Intelligence Budget'}
+                            </button>
+                          )}
+                        </div>
                       ),
                     }
               }
-              result={simulateResponse ? toDeepVerificationResult(simulateResponse) : null}
+              result={result}
             />
           );
         })()

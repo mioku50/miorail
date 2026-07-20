@@ -28,6 +28,15 @@ export type RouteHistoryResponseV1 = z.infer<typeof schemas.RouteHistoryResponse
 export type SimulateBlueprintRequestV1 = z.infer<typeof schemas.SimulateBlueprintRequestV1Schema>;
 export type SimulateBlueprintResponseV1 = z.infer<typeof schemas.SimulateBlueprintResponseV1Schema>;
 
+// T60 — Intelligence Budget + Spend Permission payments
+export type IntelligenceBudgetProjectionV1 = z.infer<typeof schemas.IntelligenceBudgetProjectionV1Schema>;
+export type CreateIntelligenceBudgetRequestV1 = z.infer<typeof schemas.CreateIntelligenceBudgetRequestV1Schema>;
+export type UpdateIntelligenceBudgetRequestV1 = z.infer<typeof schemas.UpdateIntelligenceBudgetRequestV1Schema>;
+export type RevokeIntelligenceBudgetRequestV1 = z.infer<typeof schemas.RevokeIntelligenceBudgetRequestV1Schema>;
+export type IntelligenceBudgetResponseV1 = z.infer<typeof schemas.IntelligenceBudgetResponseV1Schema>;
+export type SimulateWithBudgetRequestV1 = z.infer<typeof schemas.SimulateWithBudgetRequestV1Schema>;
+export type SimulateWithBudgetResponseV1 = z.infer<typeof schemas.SimulateWithBudgetResponseV1Schema>;
+
 // Auth
 export type LoginRequest = z.infer<typeof schemas.LoginRequestSchema>;
 export type LoginResponse = z.infer<typeof schemas.LoginResponseSchema>;

@@ -23,7 +23,7 @@ export function FuelCard() {
   return (
     <div className="bg-panel border border-line rounded-xl shadow-sm p-[18px]">
       <div className="flex items-center justify-between mb-3">
-        <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3">x402 fuel</div>
+        <div className="text-[11px] font-bold tracking-[.08em] uppercase text-ink-3">Intelligence Budget</div>
         <span className={`text-[10px] font-bold px-[7px] py-[2px] rounded-[6px] tracking-[.05em] border ${isLive ? 'text-ok bg-ok-soft border-ok/30' : isUnavailable ? 'text-warn bg-warn-soft border-warn/30' : 'text-ink-3 bg-panel-2 border-line'}`}>
           {label}
         </span>
@@ -35,7 +35,7 @@ export function FuelCard() {
         href="/fuel"
         className="block text-center text-[12px] font-semibold text-accent border border-accent/30 bg-accent-soft rounded-[10px] py-[9px] hover:bg-accent hover:text-white transition-colors"
       >
-        Open fuel meter →
+        Open Intelligence Budget →
       </Link>
     </div>
   );

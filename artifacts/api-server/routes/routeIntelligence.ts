@@ -1,6 +1,10 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import {
+  CreateIntelligenceBudgetRequestV1Schema,
+  IntelligenceBudgetProjectionV1Schema,
+  IntelligenceBudgetResponseV1Schema,
+  RevokeIntelligenceBudgetRequestV1Schema,
   RouteHistoryRequestV1Schema,
   RouteHistoryResponseV1Schema,
   RoutePlanRequestV1Schema,
@@ -10,18 +14,23 @@ import {
   RouteProofReconcileResponseV1Schema,
   SimulateBlueprintRequestV1Schema,
   SimulateBlueprintResponseV1Schema,
+  SimulateWithBudgetRequestV1Schema,
+  SimulateWithBudgetResponseV1Schema,
   SwapBlueprintApproveRequestV1Schema,
   SwapBlueprintApproveResponseV1Schema,
   SwapBlueprintSubmissionRequestV1Schema,
   SwapBlueprintSubmissionResponseV1Schema,
   SwapPrepareRequestV1Schema,
   SwapPrepareResponseV1Schema,
+  UpdateIntelligenceBudgetRequestV1Schema,
 } from '@mioagent/api-zod';
 import { createLlmProvider } from '@mioagent/llm';
 import { createSwapRouteEngine } from '@mioagent/route-engine';
 import {
+  RouteStorageConflictError,
   RouteStorageIntegrityError,
   createDatabaseRouteStorageRepository,
+  type IntelligenceBudgetRecord,
   type RouteStorageRepository,
   type StoredBlueprintV1,
 } from '@mioagent/route-storage';
@@ -59,17 +68,35 @@ import {
   createX402MiddlewareFromEnv,
   type X402SettlementRecord,
 } from '@mioagent/x402-gateway';
-import type { ExecutionBlueprintV1, ProviderRefV1 } from '@mioagent/route-domain';
+import {
+  BudgetSimulationBindingError,
+  DEFAULT_INTELLIGENCE_BUDGET_RESERVATION_TTL_MS,
+  hashIntelligenceBudgetV1,
+  intelligenceBudgetV1FromRecord,
+  runBudgetSimulationV1,
+  IntelligenceBudgetV1Schema,
+  type IntelligenceBudgetV1,
+  type RunBudgetSimulationResultV1,
+  type SpendPermissionCharger,
+  type SpendPermissionSourceV1,
+} from '@mioagent/intelligence-budget';
+import { createDatabaseSpendPermissionRepository } from '@mioagent/autonomy';
+import { stableHashV1, ZERO_HASH_V1 } from '@mioagent/route-domain';
+import type { EvidenceRecordV1, ExecutionBlueprintV1, ProviderRefV1, SimulationStateV1 } from '@mioagent/route-domain';
 import { client } from '@mioagent/db';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
 import { RoutePlanCoordinator, type RoutePlanCoordinatorInput } from '../lib/routePlanCoordinator.js';
 import { loadTokenSecurityContext } from '../lib/executionSecurity.js';
 import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
 import {
+  atomicUsdcToDecimalV1,
+  decimalUsdcToAtomicV1,
   resolvePaidSimulationPricingV1,
   resolvePaidSimulationProviderV1,
   simulationPriceUsdcForPrepareResponseV1,
+  usdcAssetRefV1,
 } from '../lib/paidIntelligenceConfig.js';
+import { createIntelligenceBudgetCharger } from '../lib/intelligenceBudgetCharger.js';
 
 function signedRoutePlanUser(req: Request) {
   const user = req.session?.user;
@@ -1174,3 +1201,568 @@ async function respondWithCachedSimulation(
     }),
   );
 }
+
+// ===========================================================================
+// T60 — Intelligence Budget + Spend Permission payments (decisions 5/9/10)
+//
+// Five routes, the SAME guard chain and seam pattern as the T59 simulate
+// route above, gated on the SAME `routeIntelligenceV1 && paidIntelligence`
+// flags (NO new flag). The auto-flow route (`simulate-with-budget`) is a
+// PLAIN authenticated POST — there is NO x402 challenge and NO
+// paymentMiddleware in its chain: the whole point of T60 is that the user
+// pays via their ALREADY-existing Spend Permission WITHOUT signing again.
+// The server never signs/broadcasts; the on-chain charge is executed by the
+// injected `SpendPermissionCharger` (lib/intelligenceBudgetCharger.ts), which
+// only ever spends the user's Spend Permission into the fixed,
+// server-configured recoup recipient — never a client- or blueprint-supplied
+// address, and never a user asset movement.
+//
+// HTTP status convention (matches the rest of this file): every member of
+// SimulateWithBudgetResponseV1Schema's outcome union
+// (charged/reconciliation_required/provider_failed/limit_exceeded/blocked) is
+// a 200 — outcome, not status code, carries the business result. Every guard/
+// binding failure is a real 4xx/5xx with the standard {error, code} envelope.
+// ===========================================================================
+
+async function intelligenceBudgetMigrationAvailable(): Promise<boolean> {
+  // Additive on top of the paid-intelligence set (decision 9): the budget
+  // routes read/write both new T60 tables plus everything the paid flow needs.
+  if (!(await paidIntelligenceMigrationAvailable())) return false;
+  const rows = await client`
+    SELECT
+      to_regclass('public.intelligence_budgets') AS intelligence_budgets,
+      to_regclass('public.intelligence_budget_reservations') AS intelligence_budget_reservations
+  `;
+  const row = rows[0];
+  return Boolean(row && row.intelligence_budgets && row.intelligence_budget_reservations);
+}
+
+/** Reservation TTL from env (decision 4/5) — NEVER client-supplied. Default
+ * 900s; an unset/invalid value falls back to the package default. */
+export function resolveBudgetReservationTtlMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.MIORAIL_BUDGET_RESERVATION_TTL_SECONDS?.trim();
+  if (!raw) return DEFAULT_INTELLIGENCE_BUDGET_RESERVATION_TTL_MS;
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds <= 0) return DEFAULT_INTELLIGENCE_BUDGET_RESERVATION_TTL_MS;
+  return Math.floor(seconds) * 1000;
+}
+
+// Seam object mirroring `simulateRouteRuntime` — every field is overridable so
+// tests inject a stub SimulationProvider / SpendPermissionCharger /
+// SpendPermissionSource / repository and a canned buildReview, WITHOUT any
+// live network, CDP, or base.subscription call (decision 13).
+export const budgetRouteRuntime = {
+  flags: getMiorailProductMigrationFlags,
+  migrationAvailable: intelligenceBudgetMigrationAvailable,
+  now: () => new Date(),
+  pricing: resolvePaidSimulationPricingV1,
+  providerConfig: resolvePaidSimulationProviderV1,
+  repository: (): RouteStorageRepository => createDatabaseRouteStorageRepository(client),
+  // The SAME database SpendPermissionRepository the Agent Fuel flow uses —
+  // wired as the coordinator's SpendPermissionSourceV1 (getById for preflight,
+  // incrementSpent after a real charge). createDatabaseSpendPermissionRepository
+  // returns a structural superset of SpendPermissionSourceV1.
+  spendPermissionRepository: (): SpendPermissionSourceV1 =>
+    createDatabaseSpendPermissionRepository(client) as unknown as SpendPermissionSourceV1,
+  charger: (): SpendPermissionCharger => createIntelligenceBudgetCharger(),
+  createProvider: (config: { url: string; providerId: string }) => createHttpSimulationProvider(config),
+  // Reuses the EXACT same honest review projection the T59 simulate route
+  // builds (fresh Safety Kernel + contract-security re-run); tests override it.
+  buildReview: (
+    repository: RouteStorageRepository,
+    routeRunId: string,
+    blueprint: ExecutionBlueprintV1,
+    walletAddress: `0x${string}`,
+    simulationStateOverride: RunPaidSimulationResultV1['simulation'],
+  ) => buildSimulateReview(repository, routeRunId, blueprint, walletAddress, simulationStateOverride),
+  reservationTtlMs: resolveBudgetReservationTtlMs,
+};
+
+function budgetProjectionFromRecord(record: IntelligenceBudgetRecord) {
+  const remainingAtomic =
+    BigInt(record.periodLimitAtomic) - BigInt(record.periodSpentAtomic) - BigInt(record.reservedAtomic);
+  const remaining = remainingAtomic > 0n ? remainingAtomic.toString() : '0';
+  return IntelligenceBudgetProjectionV1Schema.parse({
+    budgetId: record.id,
+    status: record.status,
+    periodType: 'monthly',
+    monthlyLimitUsdc: atomicUsdcToDecimalV1(record.periodLimitAtomic),
+    spentUsdc: atomicUsdcToDecimalV1(record.periodSpentAtomic),
+    reservedUsdc: atomicUsdcToDecimalV1(record.reservedAtomic),
+    remainingUsdc: atomicUsdcToDecimalV1(remaining),
+    maxPerRequestUsdc: atomicUsdcToDecimalV1(record.maxPerCallAtomic),
+    allowedCategories: record.allowedCategories,
+    linkedSpendPermissionId: record.spendPermissionId,
+    periodStartedAt: record.periodStartedAt,
+    periodEndsAt: record.periodEndsAt,
+    chainId: 8453,
+    walletAddress: record.walletAddress,
+  });
+}
+
+function budgetChargeSummaryV1(charge: { id: string; status: string }) {
+  return { chargeId: charge.id, status: charge.status } as const;
+}
+
+function simulationStateFromBudgetEvidenceV1(evidence: EvidenceRecordV1): SimulationStateV1 {
+  const reverted = evidence.validationErrors.includes('simulation_reverted');
+  return reverted
+    ? {
+        status: 'failed',
+        observedAt: evidence.observedAt,
+        blockNumber: evidence.blockNumber,
+        requestHash: evidence.requestHash,
+        responseHash: evidence.responseHash,
+        errorCode: 'reverted',
+      }
+    : {
+        status: 'passed',
+        observedAt: evidence.observedAt,
+        blockNumber: evidence.blockNumber,
+        requestHash: evidence.requestHash,
+        responseHash: evidence.responseHash,
+        errorCode: null,
+      };
+}
+
+/** flag + session — the common head of all five routes. Responds and returns
+ * null on failure; returns the signed user otherwise. */
+function budgetFlagSessionGuard(req: Request, res: Response): ReturnType<typeof signedRoutePlanUser> {
+  const flags = budgetRouteRuntime.flags(process.env);
+  if (!flags.routeIntelligenceV1 || !flags.paidIntelligence) {
+    res.status(404).json({ error: 'intelligence_budget_disabled', code: 'intelligence_budget_disabled' });
+    return null;
+  }
+  const user = signedRoutePlanUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return null;
+  }
+  return user;
+}
+
+function budgetChainEnvOk(res: Response): boolean {
+  const chainEnv = (process.env.CHAIN_ENV ?? 'sepolia').trim().toLowerCase();
+  if (chainEnv !== 'mainnet' && chainEnv !== 'mainnet-readonly') {
+    res.status(409).json({ error: 'base_mainnet_required', code: 'base_mainnet_required' });
+    return false;
+  }
+  return true;
+}
+
+async function budgetMigrationOk(res: Response): Promise<boolean> {
+  if (!(await budgetRouteRuntime.migrationAvailable())) {
+    // The T60 tables are additive on the paid-intelligence set, so the same
+    // 503 code is honest here (the paid-intelligence surface isn't ready).
+    res.status(503).json({ error: 'paid_intelligence_unavailable', code: 'paid_intelligence_unavailable' });
+    return false;
+  }
+  return true;
+}
+
+// GET /route-intelligence/intelligence-budget — the caller's active budget
+// (projection) or null. No body; wallet comes from the session.
+routeIntelligenceRouter.get('/intelligence-budget', async (req: Request, res: Response): Promise<void> => {
+  const user = budgetFlagSessionGuard(req, res);
+  if (!user) return;
+  if (!budgetChainEnvOk(res)) return;
+  try {
+    if (!(await budgetMigrationOk(res))) return;
+    const repository = budgetRouteRuntime.repository();
+    const record = await repository.getActiveIntelligenceBudget(user.id, user.address, 8453);
+    res.json(
+      IntelligenceBudgetResponseV1Schema.parse({
+        budget: record ? budgetProjectionFromRecord(record) : null,
+      }),
+    );
+  } catch {
+    res.status(500).json({ error: 'budget_simulation_failed', code: 'budget_simulation_failed' });
+  }
+});
+
+// POST /route-intelligence/intelligence-budget — create. Requires an existing
+// active Spend Permission owned by the caller; one active budget per
+// wallet/permission.
+routeIntelligenceRouter.post('/intelligence-budget', async (req: Request, res: Response): Promise<void> => {
+  const user = budgetFlagSessionGuard(req, res);
+  if (!user) return;
+  const parsed = CreateIntelligenceBudgetRequestV1Schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_intelligence_budget_request', code: 'invalid_intelligence_budget_request' });
+    return;
+  }
+  if (parsed.data.walletAddress !== user.address) {
+    res.status(403).json({ error: 'wallet_mismatch', code: 'wallet_mismatch' });
+    return;
+  }
+  if (!budgetChainEnvOk(res)) return;
+  try {
+    if (!(await budgetMigrationOk(res))) return;
+    const repository = budgetRouteRuntime.repository();
+
+    // The Spend Permission MUST already exist, be active, unexpired, and owned
+    // by the caller (decision 9) — T60 never CREATES a permission.
+    const permission = await budgetRouteRuntime.spendPermissionRepository().getById(parsed.data.spendPermissionId);
+    const nowMs = budgetRouteRuntime.now().getTime();
+    if (
+      !permission ||
+      permission.userId !== user.id ||
+      !permission.isActive ||
+      permission.expiresAt <= nowMs ||
+      (permission.chainId !== undefined && permission.chainId !== 8453)
+    ) {
+      res.status(409).json({ error: 'spend_permission_required', code: 'spend_permission_required' });
+      return;
+    }
+
+    // One active budget per wallet (the coordinator resolves the active budget
+    // by wallet, so a second would be ambiguous). The partial unique index on
+    // (spend_permission_id) WHERE status='active' is the authoritative
+    // per-permission guard; this pre-check is the per-wallet half.
+    const existingActive = await repository.getActiveIntelligenceBudget(user.id, user.address, 8453);
+    if (existingActive) {
+      res.status(409).json({ error: 'intelligence_budget_exists', code: 'intelligence_budget_exists' });
+      return;
+    }
+
+    const periodLimitAtomic = decimalUsdcToAtomicV1(parsed.data.periodLimitUsdc);
+    const maxPerCallAtomic = decimalUsdcToAtomicV1(parsed.data.maxPerCallUsdc);
+    if (!periodLimitAtomic || !maxPerCallAtomic) {
+      res.status(400).json({ error: 'invalid_intelligence_budget_request', code: 'invalid_intelligence_budget_request' });
+      return;
+    }
+
+    const now = budgetRouteRuntime.now();
+    const nowIso = now.toISOString();
+    const periodEnds = new Date(now);
+    periodEnds.setUTCMonth(periodEnds.getUTCMonth() + 1);
+    const periodEndsAt = periodEnds.toISOString();
+    const budgetId = `intelligence-budget:${stableHashV1('intelligence-budget-id/v1', {
+      tenantId: user.id,
+      spendPermissionId: parsed.data.spendPermissionId,
+      createdAt: nowIso,
+    }).slice(2)}`;
+
+    const draft: IntelligenceBudgetV1 = {
+      schemaVersion: 'intelligence-budget/v1',
+      id: budgetId,
+      tenantId: user.id,
+      walletAddress: parsed.data.walletAddress,
+      chainId: 8453,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      status: 'active',
+      spendPermissionId: parsed.data.spendPermissionId,
+      periodType: 'monthly',
+      asset: usdcAssetRefV1(),
+      periodLimitAtomic,
+      periodSpentAtomic: '0',
+      reservedAtomic: '0',
+      maxPerCallAtomic,
+      allowedCategories: parsed.data.allowedCategories,
+      periodStartedAt: nowIso,
+      periodEndsAt,
+      revokedAt: null,
+      budgetHash: ZERO_HASH_V1,
+    };
+    let validated: IntelligenceBudgetV1;
+    try {
+      validated = IntelligenceBudgetV1Schema.parse({ ...draft, budgetHash: hashIntelligenceBudgetV1(draft) });
+    } catch {
+      // e.g. maxPerCall > periodLimit — a client policy error, not a 500.
+      res.status(400).json({ error: 'invalid_intelligence_budget_request', code: 'invalid_intelligence_budget_request' });
+      return;
+    }
+
+    try {
+      const record = await repository.insertIntelligenceBudget({
+        id: validated.id,
+        schemaVersion: validated.schemaVersion,
+        userId: user.id,
+        walletAddress: validated.walletAddress,
+        chainId: 8453,
+        spendPermissionId: validated.spendPermissionId,
+        status: 'active',
+        periodType: 'monthly',
+        periodLimitAtomic: validated.periodLimitAtomic,
+        maxPerCallAtomic: validated.maxPerCallAtomic,
+        allowedCategories: validated.allowedCategories,
+        periodStartedAt: validated.periodStartedAt,
+        periodEndsAt: validated.periodEndsAt,
+        budgetHash: validated.budgetHash,
+        now: nowIso,
+      });
+      res.status(201).json(IntelligenceBudgetResponseV1Schema.parse({ budget: budgetProjectionFromRecord(record) }));
+    } catch (cause) {
+      if (cause instanceof RouteStorageConflictError) {
+        res.status(409).json({ error: 'intelligence_budget_exists', code: 'intelligence_budget_exists' });
+        return;
+      }
+      throw cause;
+    }
+  } catch {
+    res.status(500).json({ error: 'budget_simulation_failed', code: 'budget_simulation_failed' });
+  }
+});
+
+// PATCH /route-intelligence/intelligence-budget — update limits/categories on
+// the caller's active budget (NEVER the Spend Permission binding).
+routeIntelligenceRouter.patch('/intelligence-budget', async (req: Request, res: Response): Promise<void> => {
+  const user = budgetFlagSessionGuard(req, res);
+  if (!user) return;
+  const parsed = UpdateIntelligenceBudgetRequestV1Schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_intelligence_budget_request', code: 'invalid_intelligence_budget_request' });
+    return;
+  }
+  if (!budgetChainEnvOk(res)) return;
+  try {
+    if (!(await budgetMigrationOk(res))) return;
+    const repository = budgetRouteRuntime.repository();
+    const record = await repository.getActiveIntelligenceBudget(user.id, user.address, 8453);
+    if (!record) {
+      res.status(404).json({ error: 'intelligence_budget_not_found', code: 'intelligence_budget_not_found' });
+      return;
+    }
+
+    const nextPeriodLimitAtomic =
+      parsed.data.periodLimitUsdc !== undefined ? decimalUsdcToAtomicV1(parsed.data.periodLimitUsdc) : record.periodLimitAtomic;
+    const nextMaxPerCallAtomic =
+      parsed.data.maxPerCallUsdc !== undefined ? decimalUsdcToAtomicV1(parsed.data.maxPerCallUsdc) : record.maxPerCallAtomic;
+    const nextAllowedCategories = parsed.data.allowedCategories ?? record.allowedCategories;
+    if (!nextPeriodLimitAtomic || !nextMaxPerCallAtomic) {
+      res.status(400).json({ error: 'invalid_intelligence_budget_request', code: 'invalid_intelligence_budget_request' });
+      return;
+    }
+
+    const current = intelligenceBudgetV1FromRecord(record, usdcAssetRefV1());
+    const nowIso = budgetRouteRuntime.now().toISOString();
+    const draft: IntelligenceBudgetV1 = {
+      ...current,
+      periodLimitAtomic: nextPeriodLimitAtomic,
+      maxPerCallAtomic: nextMaxPerCallAtomic,
+      allowedCategories: nextAllowedCategories as IntelligenceBudgetV1['allowedCategories'],
+      updatedAt: nowIso,
+      budgetHash: ZERO_HASH_V1,
+    };
+    let validated: IntelligenceBudgetV1;
+    try {
+      validated = IntelligenceBudgetV1Schema.parse({ ...draft, budgetHash: hashIntelligenceBudgetV1(draft) });
+    } catch {
+      res.status(400).json({ error: 'invalid_intelligence_budget_request', code: 'invalid_intelligence_budget_request' });
+      return;
+    }
+
+    const updated = await repository.updateIntelligenceBudget(record.id, user.id, {
+      periodLimitAtomic: validated.periodLimitAtomic,
+      maxPerCallAtomic: validated.maxPerCallAtomic,
+      allowedCategories: validated.allowedCategories,
+      budgetHash: validated.budgetHash,
+      now: nowIso,
+    });
+    res.json(IntelligenceBudgetResponseV1Schema.parse({ budget: budgetProjectionFromRecord(updated) }));
+  } catch {
+    res.status(500).json({ error: 'budget_simulation_failed', code: 'budget_simulation_failed' });
+  }
+});
+
+// POST /route-intelligence/intelligence-budget/revoke — status='revoked'.
+routeIntelligenceRouter.post('/intelligence-budget/revoke', async (req: Request, res: Response): Promise<void> => {
+  const user = budgetFlagSessionGuard(req, res);
+  if (!user) return;
+  const parsed = RevokeIntelligenceBudgetRequestV1Schema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_intelligence_budget_request', code: 'invalid_intelligence_budget_request' });
+    return;
+  }
+  if (!budgetChainEnvOk(res)) return;
+  try {
+    if (!(await budgetMigrationOk(res))) return;
+    const repository = budgetRouteRuntime.repository();
+    const record = await repository.getActiveIntelligenceBudget(user.id, user.address, 8453);
+    if (!record) {
+      res.status(404).json({ error: 'intelligence_budget_not_found', code: 'intelligence_budget_not_found' });
+      return;
+    }
+    const nowIso = budgetRouteRuntime.now().toISOString();
+    const current = intelligenceBudgetV1FromRecord(record, usdcAssetRefV1());
+    const draft: IntelligenceBudgetV1 = {
+      ...current,
+      status: 'revoked',
+      revokedAt: nowIso,
+      updatedAt: nowIso,
+      budgetHash: ZERO_HASH_V1,
+    };
+    const budgetHash = hashIntelligenceBudgetV1(draft);
+    const revoked = await repository.updateIntelligenceBudget(record.id, user.id, {
+      status: 'revoked',
+      revokedAt: nowIso,
+      budgetHash,
+      now: nowIso,
+    });
+    res.json(IntelligenceBudgetResponseV1Schema.parse({ budget: budgetProjectionFromRecord(revoked) }));
+  } catch {
+    res.status(500).json({ error: 'budget_simulation_failed', code: 'budget_simulation_failed' });
+  }
+});
+
+// POST /route-intelligence/blueprints/:blueprintId/simulate-with-budget — the
+// auto-flow (decision 5). A PLAIN authenticated POST: no x402 challenge, no
+// payment middleware, no wallet signature. The client supplies only
+// {routeRunId, walletAddress, blueprintHash, requestId}; provider URL,
+// calldata, price, spender, and recipient all come from server config + the
+// persisted Blueprint.
+routeIntelligenceRouter.post(
+  '/blueprints/:blueprintId/simulate-with-budget',
+  async (req: Request, res: Response): Promise<void> => {
+    const user = budgetFlagSessionGuard(req, res);
+    if (!user) return;
+    const parsed = SimulateWithBudgetRequestV1Schema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'invalid_intelligence_budget_request', code: 'invalid_intelligence_budget_request' });
+      return;
+    }
+    if (parsed.data.walletAddress !== user.address) {
+      res.status(403).json({ error: 'wallet_mismatch', code: 'wallet_mismatch' });
+      return;
+    }
+    if (!budgetChainEnvOk(res)) return;
+    try {
+      if (!(await budgetMigrationOk(res))) return;
+      const pricing = budgetRouteRuntime.pricing(process.env);
+      const providerConfig = budgetRouteRuntime.providerConfig(process.env);
+      if (!pricing || !providerConfig.configured) {
+        res.status(503).json({ error: 'simulation_provider_unavailable', code: 'simulation_provider_unavailable' });
+        return;
+      }
+
+      const repository = budgetRouteRuntime.repository();
+      const walletAddress = user.address as `0x${string}`;
+      const blueprintId = String(req.params.blueprintId);
+      let result: RunBudgetSimulationResultV1;
+      try {
+        result = await runBudgetSimulationV1(
+          {
+            repository,
+            provider: budgetRouteRuntime.createProvider({ url: providerConfig.url!, providerId: providerConfig.providerId }),
+            charger: budgetRouteRuntime.charger(),
+            spendPermissionRepository: budgetRouteRuntime.spendPermissionRepository(),
+            now: budgetRouteRuntime.now,
+            price: pricing.price,
+            providerId: providerConfig.providerId,
+            reservationTtlMs: budgetRouteRuntime.reservationTtlMs(process.env),
+          },
+          {
+            tenantId: user.id,
+            walletAddress,
+            routeRunId: parsed.data.routeRunId,
+            blueprintId,
+            blueprintHash: parsed.data.blueprintHash,
+            category: 'simulation',
+            requestId: parsed.data.requestId,
+          },
+        );
+      } catch (cause) {
+        if (cause instanceof BudgetSimulationBindingError) {
+          if (cause.code === 'blueprint_not_found') {
+            res.status(404).json({ error: 'blueprint_not_found', code: 'blueprint_not_found' });
+            return;
+          }
+          if (cause.code === 'blueprint_not_reviewable') {
+            res.status(409).json({ error: 'blueprint_not_reviewable', code: 'blueprint_not_reviewable' });
+            return;
+          }
+          if (cause.code === 'blueprint_hash_mismatch') {
+            res.status(409).json({ error: 'blueprint_hash_mismatch', code: 'blueprint_hash_mismatch' });
+            return;
+          }
+          // blueprint_expired / changed_calls: nothing was reserved or
+          // charged, so it is an honest pre-charge 'blocked' outcome (the
+          // budget response union has no dedicated blueprint-expired member).
+          res.json(SimulateWithBudgetResponseV1Schema.parse({ outcome: 'blocked', reason: cause.code }));
+          return;
+        }
+        throw cause;
+      }
+
+      if (result.outcome === 'limit_exceeded' || result.outcome === 'blocked') {
+        res.json(SimulateWithBudgetResponseV1Schema.parse({ outcome: result.outcome, reason: result.reason }));
+        return;
+      }
+      if (result.outcome === 'provider_failed') {
+        res.json(
+          SimulateWithBudgetResponseV1Schema.parse({
+            outcome: 'provider_failed',
+            charge: budgetChargeSummaryV1(result.charge),
+            reason: result.reason,
+          }),
+        );
+        return;
+      }
+      if (result.outcome === 'reconciliation_required') {
+        res.json(
+          SimulateWithBudgetResponseV1Schema.parse({
+            outcome: 'reconciliation_required',
+            charge: budgetChargeSummaryV1(result.charge),
+            budget: budgetProjectionFromRecord(result.budget),
+            reason: result.reason,
+          }),
+        );
+        return;
+      }
+
+      // result.outcome === 'charged' — build the SAME honest review the T59
+      // simulate route builds (fresh Safety Kernel re-run), then the response.
+      const blueprints = await repository.listBlueprints(parsed.data.routeRunId, user.id);
+      const storedBlueprint = blueprints.find((entry) => entry.blueprint.id === blueprintId);
+      if (!storedBlueprint) {
+        res.status(500).json({ error: 'budget_simulation_failed', code: 'budget_simulation_failed' });
+        return;
+      }
+      const simulation = simulationStateFromBudgetEvidenceV1(result.evidence);
+      const reviewResult = await budgetRouteRuntime.buildReview(
+        repository,
+        parsed.data.routeRunId,
+        storedBlueprint.blueprint,
+        walletAddress,
+        simulation,
+      );
+      if (reviewResult.outcome === 'blocked') {
+        // A fresh safety re-run blocked an already-delivered+charged result:
+        // surface the real state honestly (the charge stays durably 'settled'
+        // in the DB). The budget 'blocked' member carries only a reason.
+        res.json(
+          SimulateWithBudgetResponseV1Schema.parse({
+            outcome: 'blocked',
+            reason: reviewResult.safety.blockedReason ?? 'Safety Kernel blocked this transaction.',
+          }),
+        );
+        return;
+      }
+
+      res.json(
+        SimulateWithBudgetResponseV1Schema.parse({
+          outcome: 'charged',
+          simulation,
+          review: reviewResult.review,
+          evidence: evidenceSummaryFromResult({
+            evidence: result.evidence,
+            evidenceSetHash: result.evidenceSet.evidenceSetHash,
+            provider: result.evidence.provider,
+            // The Spend-Permission settlement's raw on-chain txHash is not
+            // surfaced in the coordinator result (only a hash of the proof is
+            // stored) — honestly null here, like T59's cached-replay case.
+            x402TxHash: null,
+            gasUsed: null,
+            stateChanges: [],
+          }),
+          charge: budgetChargeSummaryV1(result.charge),
+          scoreNote: { transactionSafety: 'not_scored', missingEvidence: result.evidenceSet.missingEvidence },
+          budget: budgetProjectionFromRecord(result.budget),
+        }),
+      );
+    } catch {
+      res.status(500).json({ error: 'budget_simulation_failed', code: 'budget_simulation_failed' });
+    }
+  },
+);

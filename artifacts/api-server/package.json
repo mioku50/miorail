@@ -15,6 +15,7 @@
     "@mioagent/crypto": "workspace:*",
     "@mioagent/data-providers": "workspace:*",
     "@mioagent/db": "workspace:*",
+    "@mioagent/intelligence-budget": "workspace:*",
     "@mioagent/intent-core": "workspace:*",
     "@mioagent/llm": "workspace:*",
     "@mioagent/memory": "workspace:*",

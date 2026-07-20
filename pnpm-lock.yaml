@@ -68,6 +68,9 @@ importers:
       '@mioagent/db':
         specifier: workspace:*
         version: link:../../lib/db
+      '@mioagent/intelligence-budget':
+        specifier: workspace:*
+        version: link:../../lib/intelligence-budget
       '@mioagent/intent-core':
         specifier: workspace:*
         version: link:../../lib/intent-core
@@ -479,6 +482,31 @@ importers:
         version: 4.22.4
       typescript:
         specifier: ^5.6.3
+        version: 5.9.3
+
+  lib/intelligence-budget:
+    dependencies:
+      '@mioagent/paid-intelligence':
+        specifier: workspace:*
+        version: link:../paid-intelligence
+      '@mioagent/route-domain':
+        specifier: workspace:*
+        version: link:../route-domain
+      '@mioagent/route-storage':
+        specifier: workspace:*
+        version: link:../route-storage
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@mioagent/autonomy':
+        specifier: workspace:*
+        version: link:../autonomy
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
+      typescript:
+        specifier: ^5.4.5
         version: 5.9.3
 
   lib/intent-core:

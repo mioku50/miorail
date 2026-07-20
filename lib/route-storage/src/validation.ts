@@ -130,3 +130,31 @@ export function databaseNumber(value: unknown, label: string): number {
   if (typeof value === 'string' && /^-?[0-9]+$/.test(value)) return Number(value);
   throw new RouteStorageIntegrityError(`Stored ${label} is not a number`);
 }
+
+/**
+ * T60 — a `numeric(78,0)` base-unit amount, kept as a bigint-safe decimal
+ * string end-to-end (never coerced through a JS number, which would lose
+ * precision far below what a token amount can reach). Accepts whatever
+ * shape the driver returns a numeric column as (string is the normal case;
+ * number/bigint are accepted defensively) and always normalizes to the
+ * canonical AtomicAmountV1-style string (no leading zeros, no sign, no
+ * fractional part).
+ */
+export function databaseAtomicAmount(value: unknown, label: string): string {
+  if (typeof value === 'bigint') return value.toString();
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value.toString();
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const whole = trimmed.includes('.') ? trimmed.slice(0, trimmed.indexOf('.')) : trimmed;
+    if (/^(0|[1-9][0-9]*)$/.test(whole)) return whole;
+  }
+  throw new RouteStorageIntegrityError(`Stored ${label} is not a valid atomic amount`);
+}
+
+export function databaseStringArray(value: unknown, label: string): string[] {
+  const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+  if (!Array.isArray(parsed) || !parsed.every((entry) => typeof entry === 'string')) {
+    throw new RouteStorageIntegrityError(`Stored ${label} is not a string array`);
+  }
+  return parsed;
+}

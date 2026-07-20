@@ -589,6 +589,79 @@ export const routeProofEvents = pgTable(
   ],
 );
 
+export const intelligenceBudgets = pgTable(
+  'intelligence_budgets',
+  {
+    id: text('id').primaryKey(),
+    schemaVersion: text('schema_version').notNull(),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    walletAddress: text('wallet_address').notNull(),
+    chainId: integer('chain_id').notNull(),
+    spendPermissionId: text('spend_permission_id')
+      .references(() => spendPermissions.id, restrictReference)
+      .notNull(),
+    status: text('status').notNull(),
+    periodType: text('period_type').notNull(),
+    periodLimitAtomic: numeric('period_limit_atomic', { precision: 78, scale: 0 }).notNull(),
+    periodSpentAtomic: numeric('period_spent_atomic', { precision: 78, scale: 0 }).default('0').notNull(),
+    reservedAtomic: numeric('reserved_atomic', { precision: 78, scale: 0 }).default('0').notNull(),
+    maxPerCallAtomic: numeric('max_per_call_atomic', { precision: 78, scale: 0 }).notNull(),
+    allowedCategories: jsonb('allowed_categories').notNull(),
+    periodStartedAt: timestamp('period_started_at', { withTimezone: true }),
+    periodEndsAt: timestamp('period_ends_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    budgetHash: text('budget_hash').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('intelligence_budgets_active_permission_unique')
+      .on(table.spendPermissionId)
+      .where(sql`${table.status} = 'active'`),
+    index('intelligence_budgets_user_wallet_chain_idx').on(table.userId, table.walletAddress, table.chainId),
+    check(
+      'intelligence_budgets_status_check',
+      sql`${table.status} IN ('active', 'paused', 'revoked', 'expired')`,
+    ),
+    check('intelligence_budgets_period_type_check', sql`${table.periodType} IN ('monthly')`),
+    check(
+      'intelligence_budgets_amounts_check',
+      sql`${table.periodLimitAtomic} >= 0 AND ${table.periodSpentAtomic} >= 0 AND ${table.reservedAtomic} >= 0 AND ${table.maxPerCallAtomic} >= 0 AND ${table.maxPerCallAtomic} <= ${table.periodLimitAtomic}`,
+    ),
+  ],
+);
+
+export const intelligenceBudgetReservations = pgTable(
+  'intelligence_budget_reservations',
+  {
+    id: text('id').primaryKey(),
+    schemaVersion: text('schema_version').notNull(),
+    budgetId: text('budget_id')
+      .references(() => intelligenceBudgets.id, restrictReference)
+      .notNull(),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    amountAtomic: numeric('amount_atomic', { precision: 78, scale: 0 }).notNull(),
+    status: text('status').notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('intelligence_budget_reservations_idempotency_key_unique').on(table.idempotencyKey),
+    index('intelligence_budget_reservations_budget_status_idx').on(table.budgetId, table.status),
+    check(
+      'intelligence_budget_reservations_status_check',
+      sql`${table.status} IN ('reserved', 'settled', 'released', 'expired')`,
+    ),
+    check('intelligence_budget_reservations_amount_check', sql`${table.amountAtomic} >= 0`),
+  ],
+);
+
 export const intelligenceCharges = pgTable(
   'intelligence_charges',
   {

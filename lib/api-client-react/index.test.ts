@@ -169,4 +169,59 @@ describe('api-client-react', () => {
     assert.strictEqual(apiClient.isTerminalProofFinalStatus('pending'), false);
     assert.strictEqual(apiClient.isTerminalProofFinalStatus(null), false);
   });
+
+  it('T60 Intelligence Budget hooks are all exported', () => {
+    assert.ok(apiClient.useIntelligenceBudget, 'useIntelligenceBudget should be exported');
+    assert.ok(apiClient.useCreateIntelligenceBudget, 'useCreateIntelligenceBudget should be exported');
+    assert.ok(apiClient.useUpdateIntelligenceBudget, 'useUpdateIntelligenceBudget should be exported');
+    assert.ok(apiClient.useRevokeIntelligenceBudget, 'useRevokeIntelligenceBudget should be exported');
+    assert.ok(apiClient.useSimulateWithBudget, 'useSimulateWithBudget should be exported');
+    assert.ok(apiClient.deterministicBudgetRequestIdV1, 'deterministicBudgetRequestIdV1 should be exported');
+  });
+
+  it('T60 deterministicBudgetRequestIdV1 is pure and deterministic per (wallet, blueprintHash)', () => {
+    const wallet = '0xAAA1111111111111111111111111111111111111';
+    const blueprintHash = `0x${'2'.repeat(64)}`;
+    const first = apiClient.deterministicBudgetRequestIdV1({ walletAddress: wallet, blueprintHash });
+    const repeat = apiClient.deterministicBudgetRequestIdV1({ walletAddress: wallet.toLowerCase(), blueprintHash });
+    const other = apiClient.deterministicBudgetRequestIdV1({ walletAddress: wallet, blueprintHash: `0x${'3'.repeat(64)}` });
+    assert.strictEqual(first, repeat, 'same (wallet, blueprintHash) must always map to the same requestId');
+    assert.notStrictEqual(first, other, 'a different blueprintHash must produce a different requestId');
+    // Must satisfy SimulateWithBudgetRequestV1Schema's requestId regex + length.
+    assert.ok(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(first));
+    assert.ok(first.length <= 200);
+  });
+
+  it('T60 useSimulateWithBudget is a PLAIN POST — never signs, never x402, never wagmi, retry:false', () => {
+    const source = apiClient.useSimulateWithBudget.toString();
+    assert.ok(/retry:\s*false|retry:\s*!1/.test(source), 'simulate-with-budget must never auto-retry');
+    assert.ok(!source.includes('signTypedData'), 'must never signTypedData');
+    assert.ok(!source.includes('x402'), "must never touch x402");
+    assert.ok(!source.includes('paidFetch'), 'must never use paidFetch');
+    assert.ok(!/wagmi/i.test(source), 'must never touch wagmi');
+    assert.ok(!/useSendCalls|useSignTypedData|walletClient/.test(source), 'must never call a wallet');
+    assert.ok(source.includes('SimulateWithBudgetRequestV1Schema'), 'request must be schema-parsed');
+    assert.ok(source.includes('SimulateWithBudgetResponseV1Schema'), 'response must be re-validated');
+    assert.ok(source.includes('simulate-with-budget'), 'must POST the simulate-with-budget route');
+    assert.ok(source.includes('deterministicBudgetRequestIdV1'), 'must derive a deterministic requestId by default');
+  });
+
+  it('T60 budget CRUD mutations are non-retrying and re-validate their responses', () => {
+    for (const hook of [
+      apiClient.useCreateIntelligenceBudget,
+      apiClient.useUpdateIntelligenceBudget,
+      apiClient.useRevokeIntelligenceBudget,
+    ]) {
+      const source = hook.toString();
+      assert.ok(/retry:\s*false|retry:\s*!1/.test(source), 'budget mutations must never auto-retry');
+      assert.ok(source.includes('IntelligenceBudgetResponseV1Schema'), 'budget response must be re-validated');
+      assert.ok(source.includes("'intelligence-budget'") || source.includes('"intelligence-budget"'), 'must invalidate the budget query');
+      assert.ok(!source.includes('signTypedData') && !source.includes('x402'), 'budget CRUD must never sign or x402');
+    }
+    assert.ok(/retry:\s*false|retry:\s*!1/.test(apiClient.useIntelligenceBudget.toString()), 'budget read must not auto-retry');
+    assert.ok(
+      apiClient.useIntelligenceBudget.toString().includes('IntelligenceBudgetResponseV1Schema'),
+      'budget read must re-validate the response',
+    );
+  });
 });

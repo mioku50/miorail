@@ -289,7 +289,7 @@ export function OpsRail({ onClose }: OpsRailProps) {
 
         {/* Fuel State */}
         <div>
-          <SectionHeader title="Agent Fuel" />
+          <SectionHeader title="Intelligence Budget" />
           <Link href="/fuel" className="block bg-panel border border-line rounded-[var(--radius-md)] p-3 hover:border-accent/40 hover:-translate-y-px transition-all duration-150 shadow-[var(--shadow-card)]">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-ink-2 font-sans">USDC Budget</span>
