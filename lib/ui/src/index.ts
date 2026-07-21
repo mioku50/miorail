@@ -15,6 +15,8 @@ export { cn } from './cn';
 export type { ClassValue } from './cn';
 export * from './RoutePlan';
 export * from './routePlanState';
+export * from './EarnRouteCard';
+export * from './earnRouteCardState';
 export * from './TransactionReview';
 export * from './DeepVerification';
 export * from './SubmissionStatus';

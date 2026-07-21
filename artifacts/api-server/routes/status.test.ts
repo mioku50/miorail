@@ -113,10 +113,11 @@ describe('Status API', () => {
       routeIntelligenceV1: false,
       legacyTerminal: true,
       paidIntelligence: false,
+      earnRouteV1: false,
     });
     assert.deepStrictEqual(
       Object.keys(response.body.productMigration).sort(),
-      ['legacyTerminal', 'paidIntelligence', 'routeIntelligenceV1'],
+      ['earnRouteV1', 'legacyTerminal', 'paidIntelligence', 'routeIntelligenceV1'],
     );
 
     restoreEnv('MIORAIL_ROUTE_INTELLIGENCE_V1', originalRoute);

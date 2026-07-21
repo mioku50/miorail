@@ -2,6 +2,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import {
   CreateIntelligenceBudgetRequestV1Schema,
+  EarnCompareRequestV1Schema,
+  EarnCompareResponseV1Schema,
   IntelligenceBudgetProjectionV1Schema,
   IntelligenceBudgetResponseV1Schema,
   RevokeIntelligenceBudgetRequestV1Schema,
@@ -81,6 +83,12 @@ import {
   type SpendPermissionSourceV1,
 } from '@mioagent/intelligence-budget';
 import { createDatabaseSpendPermissionRepository } from '@mioagent/autonomy';
+import { resolveEarnIntentV1, type ResolveEarnIntentInputV1 } from '@mioagent/intent-engine';
+import {
+  compareEarnRoutesV1,
+  createCuratedEarnDataSourceV1,
+  type CompareEarnRoutesInputV1,
+} from '@mioagent/earn-engine';
 import { stableHashV1, ZERO_HASH_V1 } from '@mioagent/route-domain';
 import type { EvidenceRecordV1, ExecutionBlueprintV1, ProviderRefV1, SimulationStateV1 } from '@mioagent/route-domain';
 import { client } from '@mioagent/db';
@@ -204,6 +212,78 @@ routeIntelligenceRouter.post('/swap/evaluate', async (req, res) => {
     res.json(RoutePlanResponseV1Schema.parse(response));
   } catch {
     res.status(500).json({ error: 'route_plan_evaluation_failed', code: 'route_plan_evaluation_failed' });
+  }
+});
+
+// T61: earn comparison -> Earn Route Card. Same guard prefix as /swap/evaluate
+// (flag, session, body, wallet, chain) but gated on BOTH routeIntelligenceV1 and
+// earnRouteV1, and with NO route-storage/migration dependency: the comparison is
+// pure and offline through the injected curated data source (no live provider or
+// DB calls). The 200 body is a closed 3-outcome union — compared (with the Earn
+// Route Card, which itself may be an honest degraded state), needs_clarification,
+// or unsupported. The server never signs, broadcasts, or invents yield/risk data.
+export const earnCompareRouteRuntime = {
+  flags: getMiorailProductMigrationFlags,
+  resolveIntent: (input: ResolveEarnIntentInputV1) => resolveEarnIntentV1(input),
+  compare: (input: CompareEarnRoutesInputV1) =>
+    compareEarnRoutesV1({ dataSource: createCuratedEarnDataSourceV1() }, input),
+  now: () => new Date(),
+};
+
+routeIntelligenceRouter.post('/earn/compare', async (req, res) => {
+  const flags = earnCompareRouteRuntime.flags(process.env);
+  if (!flags.routeIntelligenceV1 || !flags.earnRouteV1) {
+    res.status(404).json({ error: 'earn_route_disabled', code: 'earn_route_disabled' });
+    return;
+  }
+  const user = signedRoutePlanUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  const parsed = EarnCompareRequestV1Schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_earn_compare_request', code: 'invalid_earn_compare_request' });
+    return;
+  }
+  if (parsed.data.walletAddress !== user.address) {
+    res.status(403).json({ error: 'wallet_mismatch', code: 'wallet_mismatch' });
+    return;
+  }
+  const chainEnv = (process.env.CHAIN_ENV ?? 'sepolia').trim().toLowerCase();
+  if (chainEnv !== 'mainnet' && chainEnv !== 'mainnet-readonly') {
+    res.status(409).json({ error: 'base_mainnet_required', code: 'base_mainnet_required' });
+    return;
+  }
+  try {
+    const now = earnCompareRouteRuntime.now();
+    const resolution = earnCompareRouteRuntime.resolveIntent({
+      message: parsed.data.message,
+      tenantId: user.id,
+      walletAddress: user.address as `0x${string}`,
+      now,
+    });
+    if (resolution.status === 'unsupported') {
+      res.json(
+        EarnCompareResponseV1Schema.parse({
+          outcome: 'unsupported',
+          reason: resolution.issues[0] ?? 'unsupported_earn_request',
+        }),
+      );
+      return;
+    }
+    if (resolution.status === 'needs_clarification') {
+      res.json(EarnCompareResponseV1Schema.parse({ outcome: 'needs_clarification', issues: resolution.issues }));
+      return;
+    }
+    const comparison = await earnCompareRouteRuntime.compare({ intent: resolution.intent, now });
+    if (!comparison.ok) {
+      res.json(EarnCompareResponseV1Schema.parse({ outcome: 'unsupported', reason: comparison.reason }));
+      return;
+    }
+    res.json(EarnCompareResponseV1Schema.parse({ outcome: 'compared', routeCard: comparison.routeCard }));
+  } catch {
+    res.status(500).json({ error: 'earn_compare_failed', code: 'earn_compare_failed' });
   }
 });
 

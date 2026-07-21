@@ -7,6 +7,7 @@ test('migration flags preserve the legacy product when variables are missing', (
     routeIntelligenceV1: false,
     legacyTerminal: true,
     paidIntelligence: false,
+    earnRouteV1: false,
   });
 });
 
@@ -16,11 +17,13 @@ test('migration flags accept only explicit boolean values', () => {
       MIORAIL_ROUTE_INTELLIGENCE_V1: 'true',
       MIORAIL_LEGACY_TERMINAL: 'false',
       MIORAIL_PAID_INTELLIGENCE: 'TRUE',
+      MIORAIL_EARN_ROUTE_V1: 'true',
     }),
     {
       routeIntelligenceV1: true,
       legacyTerminal: false,
       paidIntelligence: true,
+      earnRouteV1: true,
     },
   );
 });
@@ -31,11 +34,13 @@ test('invalid migration flag values fall back to the compatibility baseline', ()
       MIORAIL_ROUTE_INTELLIGENCE_V1: 'yes',
       MIORAIL_LEGACY_TERMINAL: '0',
       MIORAIL_PAID_INTELLIGENCE: 'enabled',
+      MIORAIL_EARN_ROUTE_V1: 'nope',
     }),
     {
       routeIntelligenceV1: false,
       legacyTerminal: true,
       paidIntelligence: false,
+      earnRouteV1: false,
     },
   );
 });

@@ -13,6 +13,7 @@ import {
 } from '@mioagent/api-client-react';
 import { BlueprintSubmitButton, type BlueprintSubmitStatus } from '@mioagent/wallet-actions';
 import { SimulateButton, type SimulateBlueprintResponseV1 } from '@mioagent/x402-actions';
+import { EarnComparePanel } from './EarnComparePanel';
 
 // T59: adapts the wire SimulateBlueprintResponseV1 into lib/ui's
 // surface-agnostic DeepVerificationResultV1 — lib/ui deliberately never
@@ -337,6 +338,10 @@ export function PlanPage() {
             />
           )}
         </section>
+
+        {/* T61: the Earn Route Card surface, rendered only behind the server
+            flag. Off flag = zero change to the swap-only /plan page. */}
+        {status.data?.productMigration.earnRouteV1 && <EarnComparePanel />}
       </div>
     </main>
   );

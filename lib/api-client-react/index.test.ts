@@ -224,4 +224,28 @@ describe('api-client-react', () => {
       'budget read must re-validate the response',
     );
   });
+
+  it('T61 useEarnCompare is exported and is a PLAIN POST — never signs, never x402, never wagmi, retry:false', () => {
+    assert.ok(apiClient.useEarnCompare, 'useEarnCompare should be exported');
+    const source = apiClient.useEarnCompare.toString();
+    assert.ok(/retry:\s*false|retry:\s*!1/.test(source), 'earn compare must never auto-retry');
+    assert.ok(!source.includes('signTypedData'), 'must never signTypedData');
+    assert.ok(!source.includes('x402'), 'must never touch x402');
+    assert.ok(!source.includes('paidFetch'), 'must never use paidFetch');
+    assert.ok(!/wagmi/i.test(source), 'must never touch wagmi');
+    assert.ok(!/useSendCalls|useSignTypedData|walletClient/.test(source), 'must never call a wallet');
+    assert.ok(source.includes('EarnCompareRequestV1Schema'), 'request must be schema-parsed');
+    assert.ok(source.includes('EarnCompareResponseV1Schema'), 'response must be re-validated');
+    assert.ok(source.includes('earn/compare'), 'must POST the earn/compare route');
+  });
+
+  it('T61 useEarnCompare reuses RoutePlanRequestIdentity: stable requestId on manual retry, rotates on message change', () => {
+    const identity = new apiClient.RoutePlanRequestIdentity();
+    const wallet = '0x1111111111111111111111111111111111111111' as const;
+    const first = identity.resolve({ message: 'Deposit 500 USDC for yield', walletAddress: wallet });
+    const retry = identity.resolve({ message: '  Deposit 500 USDC for yield  ', walletAddress: wallet });
+    const changed = identity.resolve({ message: 'Deposit 250 USDC for yield', walletAddress: wallet });
+    assert.strictEqual(retry, first);
+    assert.notStrictEqual(changed, first);
+  });
 });

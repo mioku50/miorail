@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   AddressV1Schema,
+  EarnRouteCardV1Schema,
   ExecutionBlueprintV1Schema,
   GasEstimateV1Schema,
   HashV1Schema,
@@ -29,6 +30,30 @@ const EthereumAddressSchema = z.string().regex(/^0x[a-fA-F0-9]{40}$/);
 // its original spot near the x402 Fuel schemas below) so the T60
 // Intelligence Budget schemas can reuse it without duplicating the pattern.
 export const UsdcAmountSchema = z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/);
+
+// T61 — Earn Route (Moonwell + Morpho). The compare endpoint returns the full
+// EarnRouteCardV1 (APY as integer basis points, amounts atomic — the client
+// formats for display). Gated behind MIORAIL_ROUTE_INTELLIGENCE_V1 AND
+// MIORAIL_EARN_ROUTE_V1.
+export const EarnCompareRequestV1Schema = z
+  .object({
+    message: z.string().trim().min(1).max(4_000),
+    walletAddress: AddressV1Schema,
+    requestId: z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/, 'Invalid earn compare request ID'),
+  })
+  .strict();
+
+export const EarnCompareResponseV1Schema = z.discriminatedUnion('outcome', [
+  z.object({ outcome: z.literal('compared'), routeCard: EarnRouteCardV1Schema }).strict(),
+  z
+    .object({ outcome: z.literal('needs_clarification'), issues: z.array(z.string().min(1).max(120)) })
+    .strict(),
+  z.object({ outcome: z.literal('unsupported'), reason: z.string().min(1).max(200) }).strict(),
+]);
 
 // Route Intelligence V1 — read-only plan evaluation. These schemas deliberately
 // accept no provider artifacts, candidates, scores, execution calls, or client
@@ -1164,6 +1189,7 @@ export const StatusResponseSchema = z.object({
     routeIntelligenceV1: z.boolean(),
     legacyTerminal: z.boolean(),
     paidIntelligence: z.boolean(),
+    earnRouteV1: z.boolean(),
   }),
   rpc: z.object({
     status: z.enum(["connected", "missing", "failed"]),

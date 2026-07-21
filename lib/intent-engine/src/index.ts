@@ -1,3 +1,4 @@
+export * from './earn-extractor.js';
 export * from './extractor.js';
 export * from './normalization.js';
 export * from './resolver.js';

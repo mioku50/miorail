@@ -1,5 +1,5 @@
 {
-  "name": "@mioagent/transaction-composer",
+  "name": "@mioagent/earn-engine",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -12,18 +12,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mioagent/earn-engine": "workspace:*",
-    "@mioagent/route-card": "workspace:*",
     "@mioagent/route-domain": "workspace:*",
-    "@mioagent/route-storage": "workspace:*",
-    "@mioagent/runtime-skills": "workspace:*",
-    "@mioagent/security": "workspace:*",
-    "@mioagent/swap-adapters": "workspace:*",
-    "viem": "^2.53.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@mioagent/intent-engine": "workspace:*",
     "tsx": "^4.22.4",
     "typescript": "^5.4.5"
   }

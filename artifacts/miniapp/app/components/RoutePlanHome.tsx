@@ -21,6 +21,7 @@ import { DeepVerification, ExecutionProofPanel, RoutePlanView, SubmissionStatus,
 import { BlueprintSubmitButton, type BlueprintSubmitStatus } from "@mioagent/wallet-actions";
 import { SimulateButton, type SimulateBlueprintResponseV1 } from "@mioagent/x402-actions";
 import { WalletConnect } from "./WalletConnect";
+import { EarnComparePanel } from "./EarnComparePanel";
 
 // T59: adapts the wire SimulateBlueprintResponseV1 into lib/ui's
 // surface-agnostic DeepVerificationResultV1 (same mapping as the web
@@ -476,6 +477,10 @@ export function RoutePlanHome() {
                 />
               )}
             </section>
+
+            {/* T61: the Earn Route Card surface, behind the server flag. Off
+                flag = zero change to the swap-only miniapp plan. */}
+            {status.data?.productMigration.earnRouteV1 && <EarnComparePanel />}
           </>
         )}
       </main>

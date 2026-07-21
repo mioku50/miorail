@@ -2,6 +2,7 @@ export interface MiorailProductMigrationFlags {
   routeIntelligenceV1: boolean;
   legacyTerminal: boolean;
   paidIntelligence: boolean;
+  earnRouteV1: boolean;
 }
 
 function readBooleanFlag(env: NodeJS.ProcessEnv, name: string, defaultValue: boolean): boolean {
@@ -23,5 +24,6 @@ export function getMiorailProductMigrationFlags(
     routeIntelligenceV1: readBooleanFlag(env, 'MIORAIL_ROUTE_INTELLIGENCE_V1', false),
     legacyTerminal: readBooleanFlag(env, 'MIORAIL_LEGACY_TERMINAL', true),
     paidIntelligence: readBooleanFlag(env, 'MIORAIL_PAID_INTELLIGENCE', false),
+    earnRouteV1: readBooleanFlag(env, 'MIORAIL_EARN_ROUTE_V1', false),
   });
 }
