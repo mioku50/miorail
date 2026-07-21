@@ -51,10 +51,10 @@ test('Drizzle schema declares both additive Intelligence Budget tables', async (
   }
 });
 
-test('_journal.json registers the 0013 migration as the newest entry', async () => {
+test('_journal.json registers the 0013 migration at idx 13', async () => {
   const journalRaw = await readFile(resolve(process.cwd(), '../db/drizzle/meta/_journal.json'), 'utf8');
   const journal = JSON.parse(journalRaw) as { entries: Array<{ idx: number; tag: string }> };
-  const last = journal.entries.at(-1);
-  assert.equal(last?.tag, '0013_t60_intelligence_budget');
-  assert.equal(last?.idx, 13);
+  // Later migrations (T62 → 0014) may follow; assert 0013 is registered, not last.
+  const entry = journal.entries.find((candidate) => candidate.idx === 13);
+  assert.equal(entry?.tag, '0013_t60_intelligence_budget');
 });

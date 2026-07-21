@@ -1,5 +1,10 @@
 import {
   canonicalJsonV1,
+  EarnCandidateV1Schema,
+  EarnEvidenceV1Schema,
+  EarnRouteCardV1Schema,
+  EarnRouteIntentV1Schema,
+  EarnScoreV1Schema,
   EvidenceRecordV1Schema,
   EvidenceSetV1Schema,
   ExecutionBlueprintV1Schema,
@@ -10,6 +15,11 @@ import {
   RouteIntentV1Schema,
   RouteProofEventV1Schema,
   RouteProofV1Schema,
+  type EarnCandidateV1,
+  type EarnEvidenceV1,
+  type EarnRouteCardV1,
+  type EarnRouteIntentV1,
+  type EarnScoreV1,
   type EvidenceRecordV1,
   type EvidenceSetV1,
   type ExecutionBlueprintV1,
@@ -74,6 +84,28 @@ export function parseRouteProofEvent(value: unknown): RouteProofEventV1 {
 
 export function parseIntelligenceCharge(value: unknown): IntelligenceChargeV1 {
   return IntelligenceChargeV1Schema.parse(structuredClone(value));
+}
+
+// --- T62: earn storage parsers (additive; never coerced into swap shapes) ---
+
+export function parseEarnRouteIntent(value: unknown): EarnRouteIntentV1 {
+  return EarnRouteIntentV1Schema.parse(structuredClone(value));
+}
+
+export function parseEarnCandidate(value: unknown): EarnCandidateV1 {
+  return EarnCandidateV1Schema.parse(structuredClone(value));
+}
+
+export function parseEarnEvidence(value: unknown): EarnEvidenceV1 {
+  return EarnEvidenceV1Schema.parse(structuredClone(value));
+}
+
+export function parseEarnScore(value: unknown): EarnScoreV1 {
+  return EarnScoreV1Schema.parse(structuredClone(value));
+}
+
+export function parseEarnRouteCard(value: unknown): EarnRouteCardV1 {
+  return EarnRouteCardV1Schema.parse(structuredClone(value));
 }
 
 export function payloadEquals(left: unknown, right: unknown): boolean {

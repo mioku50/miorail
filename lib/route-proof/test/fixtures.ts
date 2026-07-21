@@ -244,6 +244,7 @@ export function buildApprovedBlueprint(input: {
   const callsHash = hashApprovedCallsV1(calls);
   const draft: ExecutionBlueprintV1 = {
     schemaVersion: 'execution-blueprint/v1',
+    goal: 'swap',
     id,
     tenantId: TENANT,
     walletAddress: WALLET,

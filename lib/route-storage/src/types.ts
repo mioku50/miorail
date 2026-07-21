@@ -1,4 +1,9 @@
 import type {
+  EarnCandidateV1,
+  EarnEvidenceV1,
+  EarnRouteCardV1,
+  EarnRouteIntentV1,
+  EarnScoreV1,
   EvidenceRecordV1,
   EvidenceSetV1,
   ExecutionBlueprintV1,
@@ -12,16 +17,41 @@ import type {
 } from '@mioagent/route-domain';
 import type { RouteRunHistoryParamsV1, RouteRunHistoryPageV1 } from './history.js';
 
+/** T62: swap route runs carry goal 'swap'; earn runs are stored in the SAME
+ * route_runs table with goal 'earn' and an EarnRouteIntentV1 payload (never a
+ * swap-shaped RouteIntentV1). The `goal` column keeps the two isolated. */
+export type RouteRunGoalV1 = 'swap' | 'earn';
+
 export interface RouteRunRecord {
   id: string;
   userId: string;
   walletAddress: string;
   chainId: number;
+  goal: RouteRunGoalV1;
   schemaVersion: RouteIntentV1['schemaVersion'];
   status: string;
   intentHash: string;
   idempotencyKey: string;
   intent: RouteIntentV1;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
+/** T62: earn route run record. The goal-agnostic Blueprint/Proof storage
+ * (execution_blueprints / route_proofs / route_proof_events) is reused for earn;
+ * only run/intent/candidate/evidence/score/card are earn-specific. */
+export interface EarnRouteRunRecord {
+  id: string;
+  userId: string;
+  walletAddress: string;
+  chainId: number;
+  goal: 'earn';
+  schemaVersion: EarnRouteIntentV1['schemaVersion'];
+  status: string;
+  intentHash: string;
+  idempotencyKey: string;
+  intent: EarnRouteIntentV1;
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
@@ -51,6 +81,32 @@ export interface StoredIntelligenceChargeV1 {
 export interface RouteStorageRepository {
   createRouteRun(input: RouteIntentV1, idempotencyKey: string): Promise<RouteRunRecord>;
   getRouteRun(id: string, userId: string): Promise<RouteRunRecord | null>;
+
+  // --- T62: earn persistence (additive) ------------------------------------
+  // Earn runs live in route_runs (goal='earn') so the goal-agnostic Blueprint/
+  // Proof storage is reused; candidates/evidence/scores/cards are earn-shaped
+  // and live in their own tables. Idempotency mirrors swap: (userId,
+  // idempotencyKey), goal-namespaced so an earn and swap key never collide.
+  createEarnRouteRun(input: EarnRouteIntentV1, idempotencyKey: string): Promise<EarnRouteRunRecord>;
+  getEarnRouteRun(id: string, userId: string): Promise<EarnRouteRunRecord | null>;
+
+  insertEarnCandidate(runId: string, candidate: EarnCandidateV1): Promise<void>;
+  listEarnCandidates(runId: string, userId: string): Promise<EarnCandidateV1[]>;
+
+  insertEarnEvidence(runId: string, candidateId: string | null, evidence: EarnEvidenceV1): Promise<void>;
+  listEarnEvidence(runId: string, userId: string): Promise<EarnEvidenceV1[]>;
+
+  insertEarnScore(runId: string, candidateId: string, score: EarnScoreV1): Promise<void>;
+  listEarnScores(runId: string, userId: string): Promise<EarnScoreV1[]>;
+
+  insertEarnRouteCard(runId: string, card: EarnRouteCardV1): Promise<void>;
+  listEarnRouteCards(runId: string, userId: string): Promise<EarnRouteCardV1[]>;
+
+  /** Earn-specific Blueprint insert: validates the earn candidate lineage (the
+   * swap insertBlueprint requires a stored EvidenceSetV1, which earn does not
+   * use). Stored in the SHARED execution_blueprints table (goal='earn' payload),
+   * so approve/submission/proof reuse the T57/T58 machinery unchanged. */
+  insertEarnBlueprint(runId: string, blueprint: ExecutionBlueprintV1, links?: BlueprintStorageLinks): Promise<void>;
 
   insertCandidate(runId: string, candidate: RouteCandidateV1): Promise<void>;
   listCandidates(runId: string, userId: string): Promise<RouteCandidateV1[]>;

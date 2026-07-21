@@ -198,6 +198,7 @@ export function buildEarnDepositBlueprintV1(
 
   const draft: ExecutionBlueprintV1 = {
     schemaVersion: 'execution-blueprint/v1',
+    goal: 'earn',
     id: earnBlueprintIdV1({
       tenantId: input.tenantId,
       walletAddress: input.walletAddress,

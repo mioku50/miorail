@@ -84,7 +84,7 @@ function invalidBlueprintStatusSafetyResult(status: string): SafetyKernelResultV
   });
 }
 
-function buildApprovedPayload(
+export function buildApprovedPayload(
   blueprint: ExecutionBlueprintV1,
   walletAddress: `0x${string}`,
 ): ApprovedBlueprintPayloadV1 {
@@ -191,6 +191,12 @@ export async function approveExecutionBlueprintV1(
     throw new TransactionComposerBindingError('blueprint_not_found', 'Blueprint was not found for this route run');
   }
   const blueprint = stored.blueprint;
+  // T62: the swap approve path re-validates through the Swap Safety Kernel — an
+  // earn Blueprint must go through approveEarnBlueprintV1 instead (goal-aware
+  // dispatch at the route). Fail closed rather than run the wrong kernel.
+  if (blueprint.goal !== 'swap') {
+    throw new TransactionComposerBindingError('goal_mismatch', 'Blueprint goal is not swap');
+  }
   if (blueprint.blueprintHash !== input.blueprintHash) {
     throw new TransactionComposerBindingError(
       'blueprint_hash_mismatch',

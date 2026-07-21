@@ -191,6 +191,7 @@ export function assembleExecutionBlueprintV1(input: AssembleBlueprintInput): Exe
 
   const draft: ExecutionBlueprintV1 = {
     schemaVersion: 'execution-blueprint/v1',
+    goal: 'swap',
     id: input.id,
     tenantId: input.tenantId,
     walletAddress: input.walletAddress,

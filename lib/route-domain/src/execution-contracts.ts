@@ -96,6 +96,14 @@ const ExecutionBlueprintV1ObjectSchema = z
       'execution-blueprint/v1',
       z.enum(['draft', 'ready_for_review', 'approved', 'expired', 'invalid']),
     ),
+    // T62: goal-aware execution. Selects which Safety Kernel re-validates this
+    // Blueprint at approve time (swap → Swap Safety Kernel, earn → Earn Safety
+    // Kernel). Defaults to 'swap' so every pre-T62 Blueprint (persisted or in a
+    // fixture) parses unchanged. Excluded from the content hash (below) to keep
+    // those existing blueprintHashes stable — goal is a routing tag, and the
+    // selected kernel fails closed on the wrong call shape regardless, so it can
+    // never be abused to bypass validation.
+    goal: z.enum(['swap', 'earn']).default('swap'),
     intentHash: HashV1Schema,
     selectedCandidateHash: HashV1Schema,
     evidenceSetHash: HashV1Schema,
@@ -116,7 +124,7 @@ export type ExecutionBlueprintV1 = z.infer<typeof ExecutionBlueprintV1ObjectSche
 export function hashExecutionBlueprintV1(value: ExecutionBlueprintV1): HashV1 {
   return stableHashV1(
     'execution-blueprint/v1',
-    financialContentV1(value, ['blueprintHash', 'approvedCallsHash', 'calls']),
+    financialContentV1(value, ['blueprintHash', 'approvedCallsHash', 'calls', 'goal']),
   );
 }
 

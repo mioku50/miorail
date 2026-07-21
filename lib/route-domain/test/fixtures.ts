@@ -543,6 +543,7 @@ function withBlueprintHash(draft: ExecutionBlueprintV1): ExecutionBlueprintV1 {
 
 export const validBlueprintFixture = withBlueprintHash({
   schemaVersion: 'execution-blueprint/v1',
+  goal: 'swap',
   id: 'blueprint-uniswap-fixture',
   tenantId: FIXTURE_TENANT,
   walletAddress: FIXTURE_WALLET,

@@ -1,4 +1,9 @@
 import type {
+  EarnCandidateV1,
+  EarnEvidenceV1,
+  EarnRouteCardV1,
+  EarnRouteIntentV1,
+  EarnScoreV1,
   EvidenceRecordV1,
   EvidenceSetV1,
   ExecutionBlueprintV1,
@@ -15,6 +20,7 @@ import {
   RouteStorageIntegrityError,
   RouteStorageTenantError,
   type BlueprintStorageLinks,
+  type EarnRouteRunRecord,
   type InsertIntelligenceBudgetInput,
   type IntelligenceBudgetRecord,
   type IntelligenceBudgetReservationRecord,
@@ -48,6 +54,11 @@ import {
   databaseString,
   databaseStringArray,
   databaseTimestamp,
+  parseEarnCandidate,
+  parseEarnEvidence,
+  parseEarnRouteCard,
+  parseEarnRouteIntent,
+  parseEarnScore,
   parseEvidenceRecord,
   parseEvidenceSet,
   parseExecutionBlueprint,
@@ -159,6 +170,66 @@ function cardFromRow(row: Record<string, unknown>): RouteCardV1 {
   ) {
     throw new RouteStorageIntegrityError('Stored Route Card timestamps differ from payload');
   }
+  return card;
+}
+
+// --- T62: earn row mappers (mirror the swap mappers, earn payload shapes) ---
+
+function earnRunFromRow(row: Record<string, unknown>): EarnRouteRunRecord {
+  const intent = parseEarnRouteIntent(payloadFromDatabase(row.intent_payload));
+  const createdAt = databaseTimestamp(row.created_at, 'created_at');
+  const updatedAt = databaseTimestamp(row.updated_at, 'updated_at');
+  const userId = databaseString(row.user_id, 'user_id');
+  assertTenant(intent.tenantId, userId);
+  if (
+    databaseString(row.id, 'id') !== intent.id ||
+    databaseString(row.wallet_address, 'wallet_address') !== intent.walletAddress ||
+    databaseNumber(row.chain_id, 'chain_id') !== intent.chainId ||
+    databaseString(row.intent_hash, 'intent_hash') !== intent.intentHash
+  ) {
+    throw new RouteStorageIntegrityError('Stored earn Route Run envelope differs from its intent');
+  }
+  return {
+    id: intent.id,
+    userId,
+    walletAddress: intent.walletAddress,
+    chainId: intent.chainId,
+    goal: 'earn',
+    schemaVersion: intent.schemaVersion,
+    status: databaseString(row.status, 'status'),
+    intentHash: intent.intentHash,
+    idempotencyKey: databaseString(row.idempotency_key, 'idempotency_key'),
+    intent,
+    createdAt,
+    updatedAt,
+    completedAt:
+      row.completed_at === null || row.completed_at === undefined
+        ? null
+        : databaseTimestamp(row.completed_at, 'completed_at'),
+  };
+}
+
+function earnCandidateFromRow(row: Record<string, unknown>): EarnCandidateV1 {
+  const candidate = parseEarnCandidate(payloadFromDatabase(row.payload));
+  rowCore(row, candidate, 'candidate_hash', candidate.candidateHash);
+  return candidate;
+}
+
+function earnEvidenceFromRow(row: Record<string, unknown>): EarnEvidenceV1 {
+  const evidence = parseEarnEvidence(payloadFromDatabase(row.payload));
+  rowCore(row, evidence, 'evidence_hash', evidence.evidenceHash);
+  return evidence;
+}
+
+function earnScoreFromRow(row: Record<string, unknown>): EarnScoreV1 {
+  const score = parseEarnScore(payloadFromDatabase(row.payload));
+  rowCore(row, score, 'score_hash', score.earnScoreHash);
+  return score;
+}
+
+function earnCardFromRow(row: Record<string, unknown>): EarnRouteCardV1 {
+  const card = parseEarnRouteCard(payloadFromDatabase(row.payload));
+  rowCore(row, card, 'route_card_hash', card.routeCardHash);
   return card;
 }
 
@@ -301,6 +372,9 @@ function routeRunFromRow(row: Record<string, unknown>): RouteRunRecord {
     userId,
     walletAddress: intent.walletAddress,
     chainId: intent.chainId,
+    // T62: the goal column defaults to 'swap' (additive migration), so a row
+    // read before/without the column present still maps to a swap run.
+    goal: row.goal === 'earn' ? 'earn' : 'swap',
     schemaVersion: intent.schemaVersion,
     status: databaseString(row.status, 'status'),
     intentHash: intent.intentHash,
@@ -368,6 +442,59 @@ async function candidateIdByHash(
   return databaseString(rows[0].id, 'candidate.id');
 }
 
+// --- T62: earn ownership/lookup helpers (mirror the swap helpers) -----------
+
+async function requireOwnedEarnRun(
+  sql: SqlTemplateExecutor,
+  runId: string,
+  userId: string,
+): Promise<EarnRouteRunRecord> {
+  const rows = await sql`
+    SELECT id, user_id, wallet_address, chain_id, schema_version, status,
+           intent_hash, intent_payload, idempotency_key, created_at, updated_at, completed_at
+    FROM route_runs
+    WHERE id = ${runId} AND user_id = ${userId} AND goal = 'earn'
+    LIMIT 1
+  `;
+  if (!rows[0]) {
+    throw new RouteStorageTenantError('Earn Route Run is missing or belongs to another tenant');
+  }
+  return earnRunFromRow(rows[0]);
+}
+
+async function earnCandidateById(
+  sql: SqlTemplateExecutor,
+  runId: string,
+  userId: string,
+  candidateId: string,
+): Promise<EarnCandidateV1> {
+  const rows = await sql`
+    SELECT id, route_run_id, user_id, schema_version, status, candidate_hash, payload
+    FROM earn_route_candidates
+    WHERE id = ${candidateId} AND route_run_id = ${runId} AND user_id = ${userId}
+    LIMIT 1
+  `;
+  if (!rows[0]) throw new RouteStorageIntegrityError('Earn candidate link is missing');
+  return earnCandidateFromRow(rows[0]);
+}
+
+async function earnCandidateIdByHash(
+  sql: SqlTemplateExecutor,
+  runId: string,
+  userId: string,
+  candidateHash: string,
+): Promise<string | null> {
+  const rows = await sql`
+    SELECT id, route_run_id, user_id, schema_version, status, candidate_hash, payload
+    FROM earn_route_candidates
+    WHERE route_run_id = ${runId} AND user_id = ${userId} AND candidate_hash = ${candidateHash}
+    LIMIT 1
+  `;
+  if (!rows[0]) return null;
+  earnCandidateFromRow(rows[0]);
+  return databaseString(rows[0].id, 'earnCandidate.id');
+}
+
 export function createDatabaseRouteStorageRepository(
   sql: SqlTemplateExecutor,
 ): RouteStorageRepository {
@@ -422,6 +549,319 @@ export function createDatabaseRouteStorageRepository(
         LIMIT 1
       `;
       return rows[0] ? routeRunFromRow(rows[0]) : null;
+    },
+
+    // --- T62: earn persistence (mirrors the swap methods; earn_* tables) -----
+
+    async createEarnRouteRun(input: EarnRouteIntentV1, idempotencyKey: string): Promise<EarnRouteRunRecord> {
+      const intent = parseEarnRouteIntent(input);
+      if (idempotencyKey.trim().length === 0) {
+        throw new RouteStorageIntegrityError('Earn route run idempotency key must not be empty');
+      }
+      const inserted = await sql`
+        INSERT INTO route_runs (
+          id, user_id, wallet_address, chain_id, goal, schema_version, status,
+          intent_hash, intent_payload, idempotency_key, created_at, updated_at
+        ) VALUES (
+          ${intent.id}, ${intent.tenantId}, ${intent.walletAddress}, ${intent.chainId},
+          'earn', ${intent.schemaVersion}, ${intent.status}, ${intent.intentHash},
+          CAST(${jsonb(intent)} AS jsonb), ${idempotencyKey},
+          ${new Date(intent.createdAt)}, ${new Date(intent.updatedAt)}
+        )
+        ON CONFLICT DO NOTHING
+        RETURNING id, user_id, wallet_address, chain_id, schema_version, status,
+                  intent_hash, intent_payload, idempotency_key, created_at, updated_at, completed_at
+      `;
+      if (inserted[0]) return earnRunFromRow(inserted[0]);
+      const existing = await sql`
+        SELECT id, user_id, wallet_address, chain_id, schema_version, status,
+               intent_hash, intent_payload, idempotency_key, created_at, updated_at, completed_at
+        FROM route_runs
+        WHERE user_id = ${intent.tenantId} AND goal = 'earn'
+          AND (id = ${intent.id} OR idempotency_key = ${idempotencyKey})
+        ORDER BY id
+        LIMIT 1
+      `;
+      if (!existing[0]) conflict('Earn route run ID is already owned by another tenant');
+      const record = earnRunFromRow(existing[0]);
+      if (
+        record.id !== intent.id ||
+        record.idempotencyKey !== idempotencyKey ||
+        !payloadEquals(record.intent, intent)
+      ) {
+        conflict('Earn route run ID or user-scoped idempotency key has different content');
+      }
+      return record;
+    },
+
+    async getEarnRouteRun(id: string, userId: string): Promise<EarnRouteRunRecord | null> {
+      const rows = await sql`
+        SELECT id, user_id, wallet_address, chain_id, schema_version, status,
+               intent_hash, intent_payload, idempotency_key, created_at, updated_at, completed_at
+        FROM route_runs
+        WHERE id = ${id} AND user_id = ${userId} AND goal = 'earn'
+        LIMIT 1
+      `;
+      return rows[0] ? earnRunFromRow(rows[0]) : null;
+    },
+
+    async insertEarnCandidate(runId: string, input: EarnCandidateV1): Promise<void> {
+      const candidate = parseEarnCandidate(input);
+      const run = await requireOwnedEarnRun(sql, runId, candidate.tenantId);
+      assertLinkedHash(candidate.intentHash, run.intentHash, 'earnCandidate.intentHash');
+      const inserted = await sql`
+        INSERT INTO earn_route_candidates (
+          id, route_run_id, user_id, provider_id, schema_version, status,
+          candidate_hash, payload, observed_at, expires_at, created_at, updated_at
+        ) VALUES (
+          ${candidate.id}, ${runId}, ${candidate.tenantId}, ${candidate.provider.id},
+          ${candidate.schemaVersion}, ${candidate.status}, ${candidate.candidateHash},
+          CAST(${jsonb(candidate)} AS jsonb), ${new Date(candidate.observedAt)},
+          ${new Date(candidate.expiresAt)}, ${new Date(candidate.createdAt)},
+          ${new Date(candidate.updatedAt)}
+        )
+        ON CONFLICT DO NOTHING
+        RETURNING id
+      `;
+      if (inserted[0]) return;
+      const existing = await sql`
+        SELECT id, route_run_id, user_id, schema_version, status, candidate_hash, payload
+        FROM earn_route_candidates
+        WHERE user_id = ${candidate.tenantId}
+          AND (id = ${candidate.id} OR (route_run_id = ${runId} AND candidate_hash = ${candidate.candidateHash}))
+        ORDER BY id
+        LIMIT 1
+      `;
+      if (!existing[0]) conflict('Earn candidate ID is already owned by another tenant');
+      const stored = earnCandidateFromRow(existing[0]);
+      if (
+        databaseString(existing[0].route_run_id, 'route_run_id') !== runId ||
+        !payloadEquals(stored, candidate)
+      ) {
+        conflict('Earn candidate ID or run-scoped hash has different content');
+      }
+    },
+
+    async listEarnCandidates(runId: string, userId: string): Promise<EarnCandidateV1[]> {
+      const rows = await sql`
+        SELECT id, route_run_id, user_id, schema_version, status, candidate_hash, payload
+        FROM earn_route_candidates
+        WHERE route_run_id = ${runId} AND user_id = ${userId}
+        ORDER BY created_at, id
+      `;
+      return rows.map(earnCandidateFromRow);
+    },
+
+    async insertEarnEvidence(
+      runId: string,
+      candidateId: string | null,
+      input: EarnEvidenceV1,
+    ): Promise<void> {
+      const evidence = parseEarnEvidence(input);
+      const run = await requireOwnedEarnRun(sql, runId, evidence.tenantId);
+      assertLinkedHash(evidence.intentHash, run.intentHash, 'earnEvidence.intentHash');
+      if (candidateId !== null) {
+        const candidate = await earnCandidateById(sql, runId, evidence.tenantId, candidateId);
+        assertLinkedHash(evidence.candidateHash, candidate.candidateHash, 'earnEvidence.candidateHash');
+      }
+      const inserted = await sql`
+        INSERT INTO earn_route_evidence (
+          id, route_run_id, candidate_id, user_id, schema_version, status,
+          evidence_hash, provider_id, payload, created_at, updated_at
+        ) VALUES (
+          ${evidence.id}, ${runId}, ${candidateId}, ${evidence.tenantId},
+          ${evidence.schemaVersion}, ${evidence.status}, ${evidence.evidenceHash},
+          ${evidence.provider.id}, CAST(${jsonb(evidence)} AS jsonb),
+          ${new Date(evidence.createdAt)}, ${new Date(evidence.updatedAt)}
+        )
+        ON CONFLICT DO NOTHING
+        RETURNING id
+      `;
+      if (inserted[0]) return;
+      const existing = await sql`
+        SELECT id, route_run_id, user_id, schema_version, status, evidence_hash, payload
+        FROM earn_route_evidence
+        WHERE user_id = ${evidence.tenantId}
+          AND (id = ${evidence.id} OR (route_run_id = ${runId} AND evidence_hash = ${evidence.evidenceHash}))
+        ORDER BY id
+        LIMIT 1
+      `;
+      if (!existing[0]) conflict('Earn evidence ID is already owned by another tenant');
+      const stored = earnEvidenceFromRow(existing[0]);
+      if (
+        databaseString(existing[0].route_run_id, 'route_run_id') !== runId ||
+        !payloadEquals(stored, evidence)
+      ) {
+        conflict('Earn evidence ID or run-scoped hash has different content');
+      }
+    },
+
+    async listEarnEvidence(runId: string, userId: string): Promise<EarnEvidenceV1[]> {
+      const rows = await sql`
+        SELECT id, route_run_id, user_id, schema_version, status, evidence_hash, payload
+        FROM earn_route_evidence
+        WHERE route_run_id = ${runId} AND user_id = ${userId}
+        ORDER BY created_at, id
+      `;
+      return rows.map(earnEvidenceFromRow);
+    },
+
+    async insertEarnScore(runId: string, candidateId: string, input: EarnScoreV1): Promise<void> {
+      const score = parseEarnScore(input);
+      const run = await requireOwnedEarnRun(sql, runId, score.tenantId);
+      assertLinkedHash(score.intentHash, run.intentHash, 'earnScore.intentHash');
+      const candidate = await earnCandidateById(sql, runId, score.tenantId, candidateId);
+      assertLinkedHash(score.candidateHash, candidate.candidateHash, 'earnScore.candidateHash');
+      const inserted = await sql`
+        INSERT INTO earn_score_snapshots (
+          id, route_run_id, candidate_id, user_id, schema_version, status,
+          score_hash, scoring_version, payload, created_at
+        ) VALUES (
+          ${score.id}, ${runId}, ${candidateId}, ${score.tenantId},
+          ${score.schemaVersion}, ${score.status}, ${score.earnScoreHash},
+          ${score.scoringVersion}, CAST(${jsonb(score)} AS jsonb), ${new Date(score.createdAt)}
+        )
+        ON CONFLICT DO NOTHING
+        RETURNING id
+      `;
+      if (inserted[0]) return;
+      const existing = await sql`
+        SELECT id, route_run_id, user_id, schema_version, status, score_hash, payload
+        FROM earn_score_snapshots
+        WHERE user_id = ${score.tenantId}
+          AND (id = ${score.id} OR (route_run_id = ${runId} AND score_hash = ${score.earnScoreHash}))
+        ORDER BY id
+        LIMIT 1
+      `;
+      if (!existing[0]) conflict('Earn score ID is already owned by another tenant');
+      const stored = earnScoreFromRow(existing[0]);
+      if (
+        databaseString(existing[0].route_run_id, 'route_run_id') !== runId ||
+        !payloadEquals(stored, score)
+      ) {
+        conflict('Earn score ID or run-scoped hash has different content');
+      }
+    },
+
+    async listEarnScores(runId: string, userId: string): Promise<EarnScoreV1[]> {
+      const rows = await sql`
+        SELECT id, route_run_id, user_id, schema_version, status, score_hash, payload
+        FROM earn_score_snapshots
+        WHERE route_run_id = ${runId} AND user_id = ${userId}
+        ORDER BY created_at, id
+      `;
+      return rows.map(earnScoreFromRow);
+    },
+
+    async insertEarnRouteCard(runId: string, input: EarnRouteCardV1): Promise<void> {
+      const card = parseEarnRouteCard(input);
+      const run = await requireOwnedEarnRun(sql, runId, card.tenantId);
+      assertLinkedHash(card.intentHash, run.intentHash, 'earnRouteCard.intentHash');
+      const selectedCandidateId = card.recommendedCandidateHash
+        ? await earnCandidateIdByHash(sql, runId, card.tenantId, card.recommendedCandidateHash)
+        : null;
+      if (card.recommendedCandidateHash && !selectedCandidateId) {
+        throw new RouteStorageIntegrityError('Earn Route Card recommends an unstored candidate');
+      }
+      const inserted = await sql`
+        INSERT INTO earn_route_cards (
+          id, route_run_id, user_id, schema_version, status, route_card_hash,
+          selected_candidate_id, payload, created_at, updated_at
+        ) VALUES (
+          ${card.id}, ${runId}, ${card.tenantId}, ${card.schemaVersion}, ${card.status},
+          ${card.routeCardHash}, ${selectedCandidateId}, CAST(${jsonb(card)} AS jsonb),
+          ${new Date(card.createdAt)}, ${new Date(card.updatedAt)}
+        )
+        ON CONFLICT DO NOTHING
+        RETURNING id
+      `;
+      if (inserted[0]) return;
+      const existing = await sql`
+        SELECT id, route_run_id, user_id, schema_version, status, route_card_hash, payload
+        FROM earn_route_cards
+        WHERE user_id = ${card.tenantId}
+          AND (id = ${card.id} OR (route_run_id = ${runId} AND route_card_hash = ${card.routeCardHash}))
+        ORDER BY id
+        LIMIT 1
+      `;
+      if (!existing[0]) conflict('Earn route card ID is already owned by another tenant');
+      const stored = earnCardFromRow(existing[0]);
+      if (
+        databaseString(existing[0].route_run_id, 'route_run_id') !== runId ||
+        !payloadEquals(stored, card)
+      ) {
+        conflict('Earn route card ID or run-scoped hash has different content');
+      }
+    },
+
+    async listEarnRouteCards(runId: string, userId: string): Promise<EarnRouteCardV1[]> {
+      const rows = await sql`
+        SELECT id, route_run_id, user_id, schema_version, status, route_card_hash, payload
+        FROM earn_route_cards
+        WHERE route_run_id = ${runId} AND user_id = ${userId}
+        ORDER BY created_at, id
+      `;
+      return rows.map(earnCardFromRow);
+    },
+
+    async insertEarnBlueprint(
+      runId: string,
+      input: ExecutionBlueprintV1,
+      links: BlueprintStorageLinks = {},
+    ): Promise<void> {
+      const blueprint = parseExecutionBlueprint(input);
+      if (blueprint.goal !== 'earn') {
+        throw new RouteStorageIntegrityError('insertEarnBlueprint requires an earn-goal Blueprint');
+      }
+      const run = await requireOwnedEarnRun(sql, runId, blueprint.tenantId);
+      assertLinkedHash(blueprint.intentHash, run.intentHash, 'earnBlueprint.intentHash');
+      const candidateId = await earnCandidateIdByHash(
+        sql,
+        runId,
+        blueprint.tenantId,
+        blueprint.selectedCandidateHash,
+      );
+      if (!candidateId) {
+        throw new RouteStorageIntegrityError('Earn Blueprint references an unstored earn candidate');
+      }
+      const inserted = await sql`
+        INSERT INTO execution_blueprints (
+          id, route_run_id, user_id, wallet_address, chain_id, goal, schema_version,
+          status, blueprint_hash, intent_hash, selected_candidate_hash, evidence_set_hash,
+          calls_hash, approved_calls_hash, prepared_transaction_action_id, payload,
+          expires_at, created_at, updated_at
+        ) VALUES (
+          ${blueprint.id}, ${runId}, ${blueprint.tenantId}, ${blueprint.walletAddress},
+          ${blueprint.chainId}, 'earn', ${blueprint.schemaVersion}, ${blueprint.status},
+          ${blueprint.blueprintHash}, ${blueprint.intentHash}, ${blueprint.selectedCandidateHash},
+          ${blueprint.evidenceSetHash}, ${blueprint.callsHash}, ${blueprint.approvedCallsHash},
+          ${links.preparedTransactionActionId ?? null}, CAST(${jsonb(blueprint)} AS jsonb),
+          ${new Date(blueprint.quoteExpiry)}, ${new Date(blueprint.createdAt)},
+          ${new Date(blueprint.updatedAt)}
+        )
+        ON CONFLICT DO NOTHING
+        RETURNING id
+      `;
+      if (inserted[0]) return;
+      const existing = await sql`
+        SELECT id, route_run_id, user_id, wallet_address, chain_id, schema_version, status,
+               blueprint_hash, intent_hash, selected_candidate_hash, evidence_set_hash,
+               calls_hash, approved_calls_hash, prepared_transaction_action_id, payload,
+               expires_at, created_at, updated_at
+        FROM execution_blueprints
+        WHERE user_id = ${blueprint.tenantId}
+          AND (id = ${blueprint.id} OR (route_run_id = ${runId} AND blueprint_hash = ${blueprint.blueprintHash}))
+        ORDER BY id
+        LIMIT 1
+      `;
+      if (!existing[0]) conflict('Earn Blueprint ID is already owned by another tenant');
+      const stored = blueprintFromRow(existing[0]);
+      if (
+        databaseString(existing[0].route_run_id, 'route_run_id') !== runId ||
+        !payloadEquals(stored.blueprint, blueprint)
+      ) {
+        conflict('Earn Blueprint ID or run-scoped hash has different content');
+      }
     },
 
     async insertCandidate(runId: string, input: RouteCandidateV1): Promise<void> {

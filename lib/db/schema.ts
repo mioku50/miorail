@@ -296,6 +296,9 @@ export const routeRuns = pgTable(
       .notNull(),
     walletAddress: text('wallet_address').notNull(),
     chainId: integer('chain_id').notNull(),
+    // T62: 'swap' (default) or 'earn'. Earn runs store an EarnRouteIntentV1
+    // payload; the goal keeps the two isolated within this shared table.
+    goal: text('goal').default('swap').notNull(),
     schemaVersion: text('schema_version').notNull(),
     status: text('status').notNull(),
     intentHash: text('intent_hash').notNull(),
@@ -310,6 +313,7 @@ export const routeRuns = pgTable(
     index('route_runs_user_status_created_idx').on(table.userId, table.status, table.createdAt),
     index('route_runs_intent_hash_idx').on(table.intentHash),
     check('route_runs_chain_check', sql`${table.chainId} IN (8453, 84532)`),
+    check('route_runs_goal_check', sql`${table.goal} IN ('swap', 'earn')`),
     check(
       'route_runs_status_check',
       sql`${table.status} IN ('draft', 'ready', 'needs_clarification', 'collecting_candidates', 'collecting_evidence', 'scoring', 'card_ready', 'blueprint_ready', 'awaiting_approval', 'executing', 'reconciling', 'completed', 'partial_failure', 'failed', 'cancelled', 'rejected')`,
@@ -495,6 +499,8 @@ export const executionBlueprints = pgTable(
       .notNull(),
     walletAddress: text('wallet_address').notNull(),
     chainId: integer('chain_id').notNull(),
+    // T62: which Safety Kernel re-validates this Blueprint at approve time.
+    goal: text('goal').default('swap').notNull(),
     schemaVersion: text('schema_version').notNull(),
     status: text('status').notNull(),
     blueprintHash: text('blueprint_hash').notNull(),
@@ -520,9 +526,132 @@ export const executionBlueprints = pgTable(
       table.expiresAt,
     ),
     check('execution_blueprints_chain_check', sql`${table.chainId} IN (8453, 84532)`),
+    check('execution_blueprints_goal_check', sql`${table.goal} IN ('swap', 'earn')`),
     check(
       'execution_blueprints_status_check',
       sql`${table.status} IN ('draft', 'ready_for_review', 'approved', 'expired', 'invalid')`,
+    ),
+  ],
+);
+
+// --- T62: earn persistence tables (additive; earn payload shapes) ------------
+
+export const earnRouteCandidates = pgTable(
+  'earn_route_candidates',
+  {
+    id: text('id').primaryKey(),
+    routeRunId: text('route_run_id')
+      .references(() => routeRuns.id, restrictReference)
+      .notNull(),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    providerId: text('provider_id').notNull(),
+    schemaVersion: text('schema_version').notNull(),
+    status: text('status').notNull(),
+    candidateHash: text('candidate_hash').notNull(),
+    payload: jsonb('payload').notNull(),
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('earn_route_candidates_run_hash_unique').on(table.routeRunId, table.candidateHash),
+    index('earn_route_candidates_run_status_idx').on(table.routeRunId, table.status),
+    check(
+      'earn_route_candidates_status_check',
+      sql`${table.status} IN ('quoted', 'selected', 'expired', 'invalid', 'rejected')`,
+    ),
+  ],
+);
+
+export const earnRouteEvidence = pgTable(
+  'earn_route_evidence',
+  {
+    id: text('id').primaryKey(),
+    routeRunId: text('route_run_id')
+      .references(() => routeRuns.id, restrictReference)
+      .notNull(),
+    candidateId: text('candidate_id').references(() => earnRouteCandidates.id, restrictReference),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    schemaVersion: text('schema_version').notNull(),
+    status: text('status').notNull(),
+    evidenceHash: text('evidence_hash').notNull(),
+    providerId: text('provider_id').notNull(),
+    payload: jsonb('payload').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('earn_route_evidence_run_hash_unique').on(table.routeRunId, table.evidenceHash),
+    index('earn_route_evidence_candidate_idx').on(table.candidateId),
+    check(
+      'earn_route_evidence_status_check',
+      sql`${table.status} IN ('fresh', 'stale', 'invalid')`,
+    ),
+  ],
+);
+
+export const earnScoreSnapshots = pgTable(
+  'earn_score_snapshots',
+  {
+    id: text('id').primaryKey(),
+    routeRunId: text('route_run_id')
+      .references(() => routeRuns.id, restrictReference)
+      .notNull(),
+    candidateId: text('candidate_id')
+      .references(() => earnRouteCandidates.id, restrictReference)
+      .notNull(),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    schemaVersion: text('schema_version').notNull(),
+    status: text('status').notNull(),
+    scoreHash: text('score_hash').notNull(),
+    scoringVersion: text('scoring_version').notNull(),
+    payload: jsonb('payload').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('earn_score_snapshots_candidate_hash_unique').on(table.candidateId, table.scoreHash),
+    index('earn_score_snapshots_run_candidate_idx').on(table.routeRunId, table.candidateId),
+    check(
+      'earn_score_snapshots_status_check',
+      sql`${table.status} IN ('scored', 'partially_scored', 'not_scored')`,
+    ),
+  ],
+);
+
+export const earnRouteCards = pgTable(
+  'earn_route_cards',
+  {
+    id: text('id').primaryKey(),
+    routeRunId: text('route_run_id')
+      .references(() => routeRuns.id, restrictReference)
+      .notNull(),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    schemaVersion: text('schema_version').notNull(),
+    status: text('status').notNull(),
+    routeCardHash: text('route_card_hash').notNull(),
+    selectedCandidateId: text('selected_candidate_id').references(
+      () => earnRouteCandidates.id,
+      restrictReference,
+    ),
+    payload: jsonb('payload').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('earn_route_cards_run_hash_unique').on(table.routeRunId, table.routeCardHash),
+    index('earn_route_cards_run_created_idx').on(table.routeRunId, table.createdAt),
+    check(
+      'earn_route_cards_status_check',
+      sql`${table.status} IN ('ready', 'degraded', 'selected', 'stale', 'invalid')`,
     ),
   ],
 );
