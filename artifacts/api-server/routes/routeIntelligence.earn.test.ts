@@ -3,8 +3,18 @@ import test, { afterEach, beforeEach, describe } from 'node:test';
 import express from 'express';
 import request from 'supertest';
 import { resolveEarnIntentV1 } from '@mioagent/intent-engine';
-import { compareEarnRoutesV1, createCuratedEarnDataSourceV1 } from '@mioagent/earn-engine';
-import { earnCompareRouteRuntime, routeIntelligenceRouter } from './routeIntelligence.js';
+import { compareEarnRoutesV1, createCuratedEarnDataSourceV1, PINNED_BASE_USDC_V1 } from '@mioagent/earn-engine';
+import { earnCompareRouteRuntime, earnExecutionGateRuntime, routeIntelligenceRouter } from './routeIntelligence.js';
+
+// A passing pinned-contract preflight fixture — the earn gate consults this, not
+// a live RPC, so the whole suite stays offline.
+const OK_PREFLIGHT = {
+  ok: true as const,
+  usdc: { address: PINNED_BASE_USDC_V1, codePresent: true },
+  venues: [],
+  failures: [] as string[],
+};
+const originalGate = { ...earnExecutionGateRuntime };
 
 // ---------------------------------------------------------------------------
 // T61: POST /api/route-intelligence/earn/compare. The route is gated on BOTH
@@ -77,19 +87,22 @@ describe('POST /api/route-intelligence/earn/compare', () => {
     earnCompareRouteRuntime.now = () => NOW;
     earnCompareRouteRuntime.resolveIntent = () => readyResolution();
     earnCompareRouteRuntime.compare = async () => comparisonFixture();
-    // T62: the compare route now PERSISTS. Stub the storage seams so the suite
-    // stays fully offline (no DB) — the persist stub echoes the freshly compared
-    // Route Card and a deterministic routeRunId the client would prepare against.
-    earnCompareRouteRuntime.migrationAvailable = async () => true;
+    // T62/T62.1: the compare route now PERSISTS behind the earn gate. Stub the
+    // storage + gate seams so the suite stays fully offline (no DB, no RPC) —
+    // the persist stub echoes the freshly compared Route Card and a
+    // deterministic routeRunId the client would prepare against.
     earnCompareRouteRuntime.persist = async ({ comparison }) => ({
       routeRunId: 'earn-run-t62-fixture',
       routeCard: comparison.routeCard,
     });
+    earnExecutionGateRuntime.migrationAvailable = async () => true;
+    earnExecutionGateRuntime.preflight = async () => OK_PREFLIGHT;
     process.env.CHAIN_ENV = 'mainnet-readonly';
   });
 
   afterEach(() => {
     Object.assign(earnCompareRouteRuntime, originalRuntime);
+    Object.assign(earnExecutionGateRuntime, originalGate);
     if (originalChainEnv === undefined) delete process.env.CHAIN_ENV;
     else process.env.CHAIN_ENV = originalChainEnv;
   });
@@ -159,7 +172,7 @@ describe('POST /api/route-intelligence/earn/compare', () => {
 
   test('a ready comparison fails closed with 503 when the earn storage migration is absent (never a card the client cannot prepare)', async () => {
     let persisted = false;
-    earnCompareRouteRuntime.migrationAvailable = async () => false;
+    earnExecutionGateRuntime.migrationAvailable = async () => false;
     earnCompareRouteRuntime.persist = async ({ comparison }) => {
       persisted = true;
       return { routeRunId: 'earn-run-t62-fixture', routeCard: comparison.routeCard };
@@ -167,6 +180,24 @@ describe('POST /api/route-intelligence/earn/compare', () => {
     const response = await request(routeApp()).post('/api/route-intelligence/earn/compare').send(BODY);
     assert.equal(response.status, 503);
     assert.deepEqual(response.body, { error: 'earn_storage_unavailable', code: 'earn_storage_unavailable' });
+    assert.equal(persisted, false);
+  });
+
+  test('a ready comparison fails closed with 503 when the pinned-contract preflight has NOT passed (production gate)', async () => {
+    let persisted = false;
+    earnExecutionGateRuntime.preflight = async () => ({
+      ok: false,
+      usdc: { address: PINNED_BASE_USDC_V1, codePresent: false },
+      venues: [],
+      failures: ['moonwell_target_not_a_contract'],
+    });
+    earnCompareRouteRuntime.persist = async ({ comparison }) => {
+      persisted = true;
+      return { routeRunId: 'earn-run-t62-fixture', routeCard: comparison.routeCard };
+    };
+    const response = await request(routeApp()).post('/api/route-intelligence/earn/compare').send(BODY);
+    assert.equal(response.status, 503);
+    assert.deepEqual(response.body, { error: 'earn_gate_unavailable', code: 'earn_gate_unavailable' });
     assert.equal(persisted, false);
   });
 

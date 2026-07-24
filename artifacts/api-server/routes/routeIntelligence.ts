@@ -96,8 +96,10 @@ import { resolveEarnIntentV1, type ResolveEarnIntentInputV1 } from '@mioagent/in
 import {
   compareEarnRoutesV1,
   createCuratedEarnDataSourceV1,
+  resolveEarnRouteEnablementV1,
   type CompareEarnRoutesInputV1,
   type EarnComparisonResultV1,
+  type PinnedEarnVerificationV1,
 } from '@mioagent/earn-engine';
 import { stableHashV1, ZERO_HASH_V1 } from '@mioagent/route-domain';
 import type {
@@ -113,6 +115,7 @@ import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.j
 import { RoutePlanCoordinator, type RoutePlanCoordinatorInput } from '../lib/routePlanCoordinator.js';
 import { loadTokenSecurityContext } from '../lib/executionSecurity.js';
 import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
+import { resolveEarnContractPreflightV1 } from '../lib/earnPreflight.js';
 import {
   atomicUsdcToDecimalV1,
   decimalUsdcToAtomicV1,
@@ -193,6 +196,39 @@ async function earnStorageMigrationAvailable(): Promise<boolean> {
     row.earn_score_snapshots &&
     row.earn_route_cards,
   );
+}
+
+// T62.1 §1 — the earn production gate. The earn surface is live ONLY when the
+// feature flag is on (the 404 flag guard, checked earlier per route) AND the
+// additive earn storage migration (0014) is present AND the pinned Base
+// contracts pass the on-chain preflight. Any miss is a stable 503 with NO
+// partial execution. The preflight is cached (see lib/earnPreflight.ts) so this
+// consults an in-memory result, not the RPC, per request. Every field is a seam
+// so tests inject a canned migration/preflight result and never touch the DB or
+// a live RPC.
+export const earnExecutionGateRuntime = {
+  migrationAvailable: earnStorageMigrationAvailable,
+  preflight: (): Promise<PinnedEarnVerificationV1> => resolveEarnContractPreflightV1(),
+};
+
+/** migration + preflight gate shared by EVERY earn route (the flag 404 guard
+ * runs before this). Responds with a stable 503 and returns false on any miss;
+ * returns true only when the whole gate is green. */
+async function earnGateReady(res: Response): Promise<boolean> {
+  if (!(await earnExecutionGateRuntime.migrationAvailable())) {
+    res.status(503).json({ error: 'earn_storage_unavailable', code: 'earn_storage_unavailable' });
+    return false;
+  }
+  const verification = await earnExecutionGateRuntime.preflight();
+  // The flag is already enforced by the per-route 404 guard; here the gate only
+  // evaluates the on-chain preflight (flagEnabled:true so a failed preflight is
+  // the sole reason surfaced).
+  const enablement = resolveEarnRouteEnablementV1({ flagEnabled: true, verification });
+  if (!enablement.enabled) {
+    res.status(503).json({ error: 'earn_gate_unavailable', code: 'earn_gate_unavailable' });
+    return false;
+  }
+  return true;
 }
 
 export const routePlanRouteRuntime = {
@@ -302,7 +338,6 @@ async function persistEarnComparisonV1(
 
 export const earnCompareRouteRuntime = {
   flags: getMiorailProductMigrationFlags,
-  migrationAvailable: earnStorageMigrationAvailable,
   resolveIntent: (input: ResolveEarnIntentInputV1) => resolveEarnIntentV1(input),
   compare: (input: CompareEarnRoutesInputV1) =>
     compareEarnRoutesV1({ dataSource: createCuratedEarnDataSourceV1() }, input),
@@ -362,13 +397,11 @@ routeIntelligenceRouter.post('/earn/compare', async (req, res) => {
       return;
     }
     // Persist the comparison so the client can prepare/approve against a durable
-    // run. The earn tables are additive; if the migration isn't present yet the
-    // earn execution surface isn't ready, so fail closed with a 503 rather than
-    // return a card the client can never prepare against.
-    if (!(await earnCompareRouteRuntime.migrationAvailable())) {
-      res.status(503).json({ error: 'earn_storage_unavailable', code: 'earn_storage_unavailable' });
-      return;
-    }
+    // run. Gate on the full earn production gate (migration 0014 + pinned
+    // contract preflight): if the earn execution surface isn't ready, fail
+    // closed with a stable 503 rather than return a card the client can never
+    // prepare against.
+    if (!(await earnGateReady(res))) return;
     const persisted = await earnCompareRouteRuntime.persist({
       intent: resolution.intent,
       comparison,
@@ -436,7 +469,6 @@ function earnRouteGuard<T>(
 // selected candidate and build the exact deposit Blueprint. The client passes
 // only run/card/candidate hashes; the server owns the calldata.
 export const earnPrepareRouteRuntime = {
-  migrationAvailable: earnStorageMigrationAvailable,
   prepare: async (input: PrepareEarnDepositInputV1) =>
     prepareEarnDepositV1({ repository: createDatabaseRouteStorageRepository(client) }, input),
   now: () => new Date(),
@@ -447,10 +479,7 @@ routeIntelligenceRouter.post('/earn/prepare', async (req, res) => {
   if (!guard) return;
   const { user, data } = guard;
   try {
-    if (!(await earnPrepareRouteRuntime.migrationAvailable())) {
-      res.status(503).json({ error: 'earn_storage_unavailable', code: 'earn_storage_unavailable' });
-      return;
-    }
+    if (!(await earnGateReady(res))) return;
     const result = await earnPrepareRouteRuntime.prepare({
       tenantId: user.id,
       walletAddress: user.address as `0x${string}`,
@@ -472,7 +501,6 @@ routeIntelligenceRouter.post('/earn/prepare', async (req, res) => {
 // (the recorder is goal-aware: it binds an earn run and mutates only the
 // goal-agnostic proof tables). Both fail closed and never leak internals.
 export const earnBlueprintRouteRuntime = {
-  migrationAvailable: earnStorageMigrationAvailable,
   approve: async (input: ApproveEarnBlueprintInputV1) =>
     approveEarnBlueprintV1({ repository: createDatabaseRouteStorageRepository(client) }, input),
   recordSubmission: async (input: RecordBlueprintSubmissionInput) =>
@@ -485,10 +513,7 @@ routeIntelligenceRouter.post('/earn/blueprints/:blueprintId/approve', async (req
   if (!guard) return;
   const { user, data } = guard;
   try {
-    if (!(await earnBlueprintRouteRuntime.migrationAvailable())) {
-      res.status(503).json({ error: 'earn_storage_unavailable', code: 'earn_storage_unavailable' });
-      return;
-    }
+    if (!(await earnGateReady(res))) return;
     const result = await earnBlueprintRouteRuntime.approve({
       tenantId: user.id,
       walletAddress: user.address as `0x${string}`,
@@ -508,10 +533,7 @@ routeIntelligenceRouter.post('/earn/blueprints/:blueprintId/submission', async (
   if (!guard) return;
   const { user, data } = guard;
   try {
-    if (!(await earnBlueprintRouteRuntime.migrationAvailable())) {
-      res.status(503).json({ error: 'earn_storage_unavailable', code: 'earn_storage_unavailable' });
-      return;
-    }
+    if (!(await earnGateReady(res))) return;
     const result = await earnBlueprintRouteRuntime.recordSubmission({
       tenantId: user.id,
       walletAddress: user.address as `0x${string}`,
@@ -541,7 +563,6 @@ routeIntelligenceRouter.post('/earn/blueprints/:blueprintId/submission', async (
 // proves the position (USDC debit + position credit) — a success receipt with
 // no observable position routes to reconciliation_required.
 export const earnReconcileRouteRuntime = {
-  migrationAvailable: earnStorageMigrationAvailable,
   reconcile: async (input: ReconcileRouteProofInput) =>
     createEarnRouteProofReconciler({
       repository: createDatabaseRouteStorageRepository(client),
@@ -555,10 +576,7 @@ routeIntelligenceRouter.post('/earn/route-proofs/:proofId/reconcile', async (req
   if (!guard) return;
   const { user, data } = guard;
   try {
-    if (!(await earnReconcileRouteRuntime.migrationAvailable())) {
-      res.status(503).json({ error: 'earn_storage_unavailable', code: 'earn_storage_unavailable' });
-      return;
-    }
+    if (!(await earnGateReady(res))) return;
     const result = await earnReconcileRouteRuntime.reconcile({
       tenantId: user.id,
       walletAddress: user.address as `0x${string}`,

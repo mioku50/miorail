@@ -4,12 +4,15 @@ import { useState, type FormEvent } from "react";
 import { useAccount } from "wagmi";
 import { EarnRouteCardView, deriveEarnRouteCardViewV1 } from "@mioagent/ui";
 import { useEarnCompare } from "@mioagent/api-client-react";
+import { EarnDepositFlow } from "@mioagent/wallet-actions";
 
-// T61 §6: the miniapp Earn Route Card surface, rendered ONLY behind the server
-// flag and only inside the session-ready block of RoutePlanHome. Plain
-// authenticated comparison — NO wallet signature, NO x402. Deliberately a
-// miniapp-local component (the surfaces are not a shared component; see the
-// T60 note in RoutePlanHome.tsx).
+// T61 §6 / T62.1 §2: the miniapp Earn Route Card surface, rendered ONLY behind
+// the server flag and only inside the session-ready block of RoutePlanHome. The
+// comparison is a plain authenticated request (NO wallet signature, NO x402);
+// when the server returns a persisted routeRunId, the SHARED EarnDepositFlow
+// (the same one the web /plan uses) drives select → prepare → review → Base
+// Account submit → Route Proof. The panel chrome stays miniapp-local, the
+// execution flow is shared.
 
 const EARN_EXAMPLES = [
   "Deposit 500 USDC for yield.",
@@ -96,7 +99,11 @@ export function EarnComparePanel() {
           </div>
         )}
         {result?.outcome === "compared" && (
-          <EarnRouteCardView view={deriveEarnRouteCardViewV1(result.routeCard)} onRefresh={() => submit()} />
+          result.routeRunId ? (
+            <EarnDepositFlow routeRunId={result.routeRunId} routeCard={result.routeCard} onRefresh={() => submit()} />
+          ) : (
+            <EarnRouteCardView view={deriveEarnRouteCardViewV1(result.routeCard)} onRefresh={() => submit()} />
+          )
         )}
       </div>
     </section>

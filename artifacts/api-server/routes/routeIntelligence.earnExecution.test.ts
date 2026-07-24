@@ -19,12 +19,23 @@ import {
   type VerifiedReceiptSourceV1,
 } from '@mioagent/route-proof';
 import { stableHashV1, type EarnCandidateV1 } from '@mioagent/route-domain';
+import { PINNED_BASE_USDC_V1 } from '@mioagent/earn-engine';
 import {
   earnBlueprintRouteRuntime,
+  earnExecutionGateRuntime,
   earnPrepareRouteRuntime,
   earnReconcileRouteRuntime,
   routeIntelligenceRouter,
 } from './routeIntelligence.js';
+
+// A passing pinned-contract preflight — the earn gate consults this seam, never
+// a live RPC, so the suite stays offline.
+const OK_PREFLIGHT = {
+  ok: true as const,
+  usdc: { address: PINNED_BASE_USDC_V1, codePresent: true },
+  venues: [],
+  failures: [] as string[],
+};
 
 // ---------------------------------------------------------------------------
 // T62 §2/§3/§4/§5 — the earn execution routes (prepare / approve / submission /
@@ -44,6 +55,7 @@ const TX_HASH = `0x${'ab'.repeat(32)}` as const;
 const originalPrepare = { ...earnPrepareRouteRuntime };
 const originalBlueprint = { ...earnBlueprintRouteRuntime };
 const originalReconcile = { ...earnReconcileRouteRuntime };
+const originalGate = { ...earnExecutionGateRuntime };
 const originalChainEnv = process.env.CHAIN_ENV;
 const originalRouteFlag = process.env.MIORAIL_ROUTE_INTELLIGENCE_V1;
 const originalEarnFlag = process.env.MIORAIL_EARN_ROUTE_V1;
@@ -131,12 +143,17 @@ beforeEach(() => {
   process.env.CHAIN_ENV = 'mainnet-readonly';
   process.env.MIORAIL_ROUTE_INTELLIGENCE_V1 = 'true';
   process.env.MIORAIL_EARN_ROUTE_V1 = 'true';
+  // Earn gate green by default (migration present + preflight passed); tests
+  // that exercise a gate miss override these per-case.
+  earnExecutionGateRuntime.migrationAvailable = async () => true;
+  earnExecutionGateRuntime.preflight = async () => OK_PREFLIGHT;
 });
 
 afterEach(() => {
   Object.assign(earnPrepareRouteRuntime, originalPrepare);
   Object.assign(earnBlueprintRouteRuntime, originalBlueprint);
   Object.assign(earnReconcileRouteRuntime, originalReconcile);
+  Object.assign(earnExecutionGateRuntime, originalGate);
   restore('CHAIN_ENV', originalChainEnv);
   restore('MIORAIL_ROUTE_INTELLIGENCE_V1', originalRouteFlag);
   restore('MIORAIL_EARN_ROUTE_V1', originalEarnFlag);
@@ -151,8 +168,8 @@ describe('POST /api/route-intelligence/earn/prepare', () => {
     requestId: 'earn-prep-req-1',
   };
 
-  test('enforces the guard chain before any storage work (auth / wallet / chain)', async () => {
-    earnPrepareRouteRuntime.migrationAvailable = async () => { throw new Error('must not run'); };
+  test('enforces the guard chain before any storage/gate work (auth / wallet / chain)', async () => {
+    earnExecutionGateRuntime.migrationAvailable = async () => { throw new Error('must not run'); };
     assert.equal((await request(routeApp(null)).post('/api/route-intelligence/earn/prepare').send(BODY)).status, 401);
     assert.equal((await request(routeApp()).post('/api/route-intelligence/earn/prepare').send({ ...BODY, walletAddress: OTHER_WALLET })).status, 403);
     delete process.env.CHAIN_ENV;
@@ -160,15 +177,26 @@ describe('POST /api/route-intelligence/earn/prepare', () => {
   });
 
   test('503 when the earn storage migration is unavailable', async () => {
-    earnPrepareRouteRuntime.migrationAvailable = async () => false;
+    earnExecutionGateRuntime.migrationAvailable = async () => false;
     const response = await request(routeApp()).post('/api/route-intelligence/earn/prepare').send(BODY);
     assert.equal(response.status, 503);
     assert.equal(response.body.code, 'earn_storage_unavailable');
   });
 
+  test('503 earn_gate_unavailable when the pinned-contract preflight has NOT passed', async () => {
+    earnExecutionGateRuntime.preflight = async () => ({
+      ok: false,
+      usdc: { address: PINNED_BASE_USDC_V1, codePresent: true },
+      venues: [],
+      failures: ['morpho_underlying_not_canonical_usdc'],
+    });
+    const response = await request(routeApp()).post('/api/route-intelligence/earn/prepare').send(BODY);
+    assert.equal(response.status, 503);
+    assert.equal(response.body.code, 'earn_gate_unavailable');
+  });
+
   test('prepared: builds the exact earn deposit Blueprint from the persisted card (2 calls, goal=earn)', async () => {
     const seed = await seedPersistedComparison();
-    earnPrepareRouteRuntime.migrationAvailable = async () => true;
     earnPrepareRouteRuntime.prepare = (input) => prepareEarnDepositV1({ repository: seed.repo }, input);
     earnPrepareRouteRuntime.now = () => NOW;
     const response = await request(routeApp())
@@ -185,7 +213,6 @@ describe('POST /api/route-intelligence/earn/prepare', () => {
 
   test('refresh_required: an unknown card hash never builds a Blueprint', async () => {
     const seed = await seedPersistedComparison();
-    earnPrepareRouteRuntime.migrationAvailable = async () => true;
     earnPrepareRouteRuntime.prepare = (input) => prepareEarnDepositV1({ repository: seed.repo }, input);
     earnPrepareRouteRuntime.now = () => NOW;
     const response = await request(routeApp())
@@ -196,7 +223,6 @@ describe('POST /api/route-intelligence/earn/prepare', () => {
   });
 
   test('fails closed with an opaque 500 when prepare throws, without leaking the error', async () => {
-    earnPrepareRouteRuntime.migrationAvailable = async () => true;
     earnPrepareRouteRuntime.prepare = async () => { throw new Error('earn run secret detail'); };
     const response = await request(routeApp()).post('/api/route-intelligence/earn/prepare').send(BODY);
     assert.equal(response.status, 500);
@@ -209,7 +235,6 @@ describe('POST /api/route-intelligence/earn/blueprints/:id/approve', () => {
   test('approved: re-validates through the EARN kernel and returns the exact unsigned batch payload', async () => {
     const seed = await seedPersistedComparison();
     const blueprint = await prepareInSeed(seed);
-    earnBlueprintRouteRuntime.migrationAvailable = async () => true;
     earnBlueprintRouteRuntime.approve = (input) => approveEarnBlueprintV1({ repository: seed.repo }, input);
     earnBlueprintRouteRuntime.now = () => NOW;
     const response = await request(routeApp())
@@ -223,7 +248,6 @@ describe('POST /api/route-intelligence/earn/blueprints/:id/approve', () => {
   });
 
   test('fails closed with an opaque 500 when approve throws', async () => {
-    earnBlueprintRouteRuntime.migrationAvailable = async () => true;
     earnBlueprintRouteRuntime.approve = async () => { throw new Error('kernel secret'); };
     const response = await request(routeApp())
       .post('/api/route-intelligence/earn/blueprints/bp-1/approve')
@@ -239,7 +263,6 @@ describe('POST /api/route-intelligence/earn/blueprints/:id/submission', () => {
     const seed = await seedPersistedComparison();
     const blueprint = await prepareInSeed(seed);
     await approveEarnBlueprintV1({ repository: seed.repo }, { tenantId: USER.id, walletAddress: WALLET, routeRunId: seed.runId, blueprintId: blueprint.id, blueprintHash: blueprint.blueprintHash, now: NOW });
-    earnBlueprintRouteRuntime.migrationAvailable = async () => true;
     earnBlueprintRouteRuntime.recordSubmission = (input) => recordBlueprintSubmissionV1({ repository: seed.repo }, input);
     earnBlueprintRouteRuntime.now = () => NOW;
     const response = await request(routeApp())
@@ -258,7 +281,6 @@ describe('POST /api/route-intelligence/earn/route-proofs/:id/reconcile', () => {
     await approveEarnBlueprintV1({ repository: seed.repo }, { tenantId: USER.id, walletAddress: WALLET, routeRunId: seed.runId, blueprintId: blueprint.id, blueprintHash: blueprint.blueprintHash, now: NOW });
     await recordBlueprintSubmissionV1({ repository: seed.repo }, { tenantId: USER.id, walletAddress: WALLET, routeRunId: seed.runId, blueprintId: blueprint.id, approvedCallsHash: blueprint.callsHash, status: 'submitted', batchId: 'earn-batch-1', transactionHashes: [TX_HASH], now: NOW });
     const reader = mockReader(positionCredit >= 0n ? earnSuccessSource(seed.candidate, positionCredit) : null);
-    earnReconcileRouteRuntime.migrationAvailable = async () => true;
     earnReconcileRouteRuntime.reconcile = (input) => createEarnRouteProofReconciler({ repository: seed.repo, receiptReader: reader }).reconcile(input);
     earnReconcileRouteRuntime.now = () => LATER;
     return { seed, proofId: proofIdFor(blueprint.id) };
@@ -294,7 +316,6 @@ describe('POST /api/route-intelligence/earn/route-proofs/:id/reconcile', () => {
   });
 
   test('a wallet mismatch inside the reconciler maps to 403', async () => {
-    earnReconcileRouteRuntime.migrationAvailable = async () => true;
     earnReconcileRouteRuntime.reconcile = async () => { throw new RouteProofReconcileBindingError('wallet_mismatch', 'nope'); };
     const response = await request(routeApp())
       .post('/api/route-intelligence/earn/route-proofs/route-proof:abc/reconcile')

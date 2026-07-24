@@ -33,3 +33,8 @@ export {
   blueprintSubmitDisabledReason,
 } from './src/BlueprintSubmitButton';
 export type { BlueprintSubmitButtonProps } from './src/BlueprintSubmitButton';
+
+// T62.1: the shared Earn deposit execution flow (select → prepare → review →
+// wallet submit → Route Proof) used identically by web and miniapp.
+export { EarnDepositFlow, formatEarnAmountForDisplayV1, earnProofStatusMessageV1 } from './src/EarnDepositFlow';
+export type { EarnDepositFlowProps, EarnProofState } from './src/EarnDepositFlow';

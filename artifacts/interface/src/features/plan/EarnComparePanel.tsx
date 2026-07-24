@@ -2,13 +2,14 @@ import { useState, type FormEvent } from 'react';
 import { useAccount } from 'wagmi';
 import { EarnRouteCardView, deriveEarnRouteCardViewV1 } from '@mioagent/ui';
 import { useEarnCompare } from '@mioagent/api-client-react';
+import { EarnDepositFlow } from '@mioagent/wallet-actions';
 
-// T61 §6: the Earn Route Card surface for /plan, rendered ONLY behind the
-// server flag (status.productMigration.earnRouteV1). It is a plain authenticated
-// comparison — NO wallet signature, NO x402 — and maps the wire EarnRouteCardV1
-// into lib/ui's surface-agnostic view model (lib/ui never imports api types).
-// The deposit execution flow reuses the existing Blueprint approval + Route
-// Proof surfaces and is wired separately.
+// T61 §6 / T62.1 §2: the Earn Route Card surface for /plan, rendered ONLY behind
+// the server flag (status.productMigration.earnRouteV1). The comparison is a
+// plain authenticated request (NO wallet signature, NO x402); when the server
+// returns a persisted routeRunId, the shared EarnDepositFlow drives the full
+// select → prepare → review → Base Account submit → Route Proof journey (the
+// SAME flow the miniapp uses). The client never supplies calldata.
 
 const EARN_EXAMPLES = [
   'Deposit 500 USDC for yield.',
@@ -102,7 +103,13 @@ export function EarnComparePanel() {
           </div>
         )}
         {result?.outcome === 'compared' && (
-          <EarnRouteCardView view={deriveEarnRouteCardViewV1(result.routeCard)} onRefresh={() => submit()} />
+          result.routeRunId ? (
+            <EarnDepositFlow routeRunId={result.routeRunId} routeCard={result.routeCard} onRefresh={() => submit()} />
+          ) : (
+            // Back-compat: a persisted run id is always present in production;
+            // fall back to the read-only card only for a legacy/cached response.
+            <EarnRouteCardView view={deriveEarnRouteCardViewV1(result.routeCard)} onRefresh={() => submit()} />
+          )
         )}
       </div>
     </section>

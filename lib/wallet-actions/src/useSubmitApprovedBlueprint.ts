@@ -11,10 +11,12 @@ import { useRef, useState, useCallback, createElement, type ReactNode } from 're
 import { useAccount, useSendCalls } from 'wagmi';
 import { base } from 'wagmi/chains';
 import {
+  useApproveEarnBlueprint,
   useApproveSwapBlueprint,
   useRecordBlueprintSubmission,
+  useRecordEarnBlueprintSubmission,
 } from '@mioagent/api-client-react';
-import type { SwapBlueprintApproveResponseV1 } from '@mioagent/api-spec';
+import type { EarnBlueprintApproveResponseV1, SwapBlueprintApproveResponseV1 } from '@mioagent/api-spec';
 import { builderCodeToDataSuffix } from './attribution';
 import { CallsStatusPoller, normalizeCall } from './useWalletConfirmAction';
 
@@ -30,8 +32,12 @@ export type BlueprintSubmitStatus =
   | 'blocked'
   | 'expired';
 
+// The approved wallet payload is goal-agnostic: the swap and earn approve
+// responses carry an identical `approved` payload shape (to/value/data/from/
+// chainId/atomicRequired), so one type + one wallet submission implementation
+// serves both goals.
 export type ApprovedWalletPayload = Extract<
-  SwapBlueprintApproveResponseV1,
+  SwapBlueprintApproveResponseV1 | EarnBlueprintApproveResponseV1,
   { outcome: 'approved' }
 >['payload'];
 
@@ -147,6 +153,11 @@ export interface UseSubmitApprovedBlueprintArgs {
   blueprintHash: string;
   /** Public ERC-8021 builder code; converted to an optional dataSuffix capability. */
   builderCode?: string;
+  /** Which server routes to approve/record against. Defaults to 'swap' so every
+   * existing swap caller is byte-for-byte unchanged; 'earn' targets the /earn
+   * approve + submission routes. The wallet_sendCalls path is identical for both
+   * — there is exactly ONE wallet submission implementation. */
+  goal?: 'swap' | 'earn';
 }
 
 export interface UseSubmitApprovedBlueprintResult {
@@ -172,9 +183,18 @@ export function useSubmitApprovedBlueprint({
   blueprintId,
   blueprintHash,
   builderCode,
+  goal = 'swap',
 }: UseSubmitApprovedBlueprintArgs): UseSubmitApprovedBlueprintResult {
-  const approve = useApproveSwapBlueprint();
-  const record = useRecordBlueprintSubmission();
+  // Both goals' hooks are instantiated unconditionally (rules of hooks); the
+  // goal selects which pair actually drives the flow. The swap and earn
+  // approve/record responses are structurally identical, so everything below
+  // this line is goal-agnostic.
+  const approveSwap = useApproveSwapBlueprint();
+  const approveEarn = useApproveEarnBlueprint();
+  const recordSwap = useRecordBlueprintSubmission();
+  const recordEarn = useRecordEarnBlueprintSubmission();
+  const approveMutateAsync = goal === 'earn' ? approveEarn.mutateAsync : approveSwap.mutateAsync;
+  const recordMutateAsync = goal === 'earn' ? recordEarn.mutateAsync : recordSwap.mutateAsync;
   const sendCalls = useSendCalls();
   const { address, chainId } = useAccount();
 
@@ -193,9 +213,9 @@ export function useSubmitApprovedBlueprint({
   // to the bounded reconciliation hook. Failures still degrade honestly to
   // `false` (never a fabricated proof id).
   const recordSafely = useCallback(
-    async (input: Parameters<typeof record.mutateAsync>[0]): Promise<boolean> => {
+    async (input: Parameters<typeof recordMutateAsync>[0]): Promise<boolean> => {
       try {
-        const response = await record.mutateAsync(input);
+        const response = await recordMutateAsync(input);
         setProofId(response.proofId);
         setRecordedFinalStatus(response.finalStatus);
         return true;
@@ -203,7 +223,7 @@ export function useSubmitApprovedBlueprint({
         return false;
       }
     },
-    [record],
+    [recordMutateAsync],
   );
 
   const handleStatusChange = useCallback(
@@ -276,7 +296,7 @@ export function useSubmitApprovedBlueprint({
     setStatus('approving');
 
     try {
-      const approval = await approve.mutateAsync({
+      const approval = await approveMutateAsync({
         walletAddress: address.toLowerCase() as `0x${string}`,
         routeRunId,
         blueprintId,

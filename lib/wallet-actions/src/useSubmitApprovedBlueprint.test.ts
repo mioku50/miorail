@@ -188,6 +188,34 @@ test('T58: the wallet hook still sends exactly one batch and never reconciles it
   assert.ok(/proofId,\s*recordedFinalStatus/.test(buttonSource), 'the button must forward proofId to onStateChange');
 });
 
+test('T62.1: the wallet submission is goal-aware but keeps ONE wallet implementation', () => {
+  const source = mod.useSubmitApprovedBlueprint.toString();
+  // Both goals' server hooks are wired…
+  assert.ok(/approveEarn/.test(source) && /approveSwap/.test(source), 'both swap and earn approve hooks must be instantiated');
+  assert.ok(/recordEarn/.test(source) && /recordSwap/.test(source), 'both swap and earn record hooks must be instantiated');
+  // …selected by goal…
+  assert.ok(/goal\s*===\s*['"]earn['"]\s*\?\s*approveEarn/.test(source), 'the approve hook is selected by goal');
+  assert.ok(/goal\s*===\s*['"]earn['"]\s*\?\s*recordEarn/.test(source), 'the record hook is selected by goal');
+  // …but the wallet batch is STILL sent from exactly one place (no second impl).
+  const sendCallsInvocations = source.match(/sendCalls\.mutateAsync\(/g) ?? [];
+  assert.equal(sendCallsInvocations.length, 1, 'there must be exactly ONE wallet submission implementation');
+});
+
+test('T62.1: wallet rejection is a single shared code path for both goals', () => {
+  const source = mod.useSubmitApprovedBlueprint.toString();
+  // The catch around sendCalls handles rejection once (isWalletRejectionError),
+  // not per-goal — the earn path reuses the exact same cancelled-record logic.
+  assert.ok(/isWalletRejectionError\(cause\)/.test(source), 'a single rejection detector guards the one sendCalls call');
+  const rejectionBranches = source.match(/isWalletRejectionError\(/g) ?? [];
+  assert.equal(rejectionBranches.length, 1, 'rejection handling must not be duplicated per goal');
+  assert.ok(/status:\s*['"]cancelled['"]/.test(source), 'a rejected batch records a cancelled submission');
+});
+
+test('T62.1: the goal defaults to swap so every existing swap caller is unchanged', () => {
+  const source = mod.useSubmitApprovedBlueprint.toString();
+  assert.ok(/goal\s*=\s*['"]swap['"]/.test(source), "goal must default to 'swap'");
+});
+
 test('T57 wallet-actions sources never reference Base MCP send_calls, x402, or Action Inbox', () => {
   // `wallet_sendCalls` (the EIP-5792 wallet RPC via wagmi useSendCalls) is the
   // sanctioned path; the ban is on the Base MCP `send_calls` tool, x402, and
