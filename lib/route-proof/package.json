@@ -18,6 +18,9 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@mioagent/earn-engine": "workspace:*",
+    "@mioagent/intent-engine": "workspace:*",
+    "@mioagent/transaction-composer": "workspace:*",
     "tsx": "^4.22.4",
     "typescript": "^5.4.5"
   }

@@ -5,3 +5,4 @@ export * from './earnAssetChanges.js';
 export * from './deviation.js';
 export * from './projection.js';
 export * from './reconciler.js';
+export * from './earnReconciler.js';

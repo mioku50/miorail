@@ -724,6 +724,15 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
     devDependencies:
+      '@mioagent/earn-engine':
+        specifier: workspace:*
+        version: link:../earn-engine
+      '@mioagent/intent-engine':
+        specifier: workspace:*
+        version: link:../intent-engine
+      '@mioagent/transaction-composer':
+        specifier: workspace:*
+        version: link:../transaction-composer
       tsx:
         specifier: ^4.22.4
         version: 4.22.4

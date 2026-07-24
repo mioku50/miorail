@@ -2,8 +2,12 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import {
   CreateIntelligenceBudgetRequestV1Schema,
+  EarnBlueprintApproveRequestV1Schema,
+  EarnBlueprintApproveResponseV1Schema,
   EarnCompareRequestV1Schema,
   EarnCompareResponseV1Schema,
+  EarnPrepareRequestV1Schema,
+  EarnPrepareResponseV1Schema,
   IntelligenceBudgetProjectionV1Schema,
   IntelligenceBudgetResponseV1Schema,
   RevokeIntelligenceBudgetRequestV1Schema,
@@ -38,6 +42,7 @@ import {
 } from '@mioagent/route-storage';
 import {
   RouteProofReconcileBindingError,
+  createEarnRouteProofReconciler,
   createRouteProofReconciler,
   summarizeRouteProofEventsV1,
   toRouteProofProjectionV1,
@@ -48,12 +53,16 @@ import {
   BlueprintSubmissionConflictError,
   KyberSwapBuildAdapter,
   UniswapSwapBuildAdapter,
+  approveEarnBlueprintV1,
   approveExecutionBlueprintV1,
   createTransactionComposer,
   deriveBlueprintLifecycleV1,
+  prepareEarnDepositV1,
   recordBlueprintSubmissionV1,
   reviewStoredBlueprintV1,
+  type ApproveEarnBlueprintInputV1,
   type ApproveExecutionBlueprintInput,
+  type PrepareEarnDepositInputV1,
   type RecordBlueprintSubmissionInput,
   type TransactionComposerPrepareInput,
 } from '@mioagent/transaction-composer';
@@ -88,9 +97,17 @@ import {
   compareEarnRoutesV1,
   createCuratedEarnDataSourceV1,
   type CompareEarnRoutesInputV1,
+  type EarnComparisonResultV1,
 } from '@mioagent/earn-engine';
 import { stableHashV1, ZERO_HASH_V1 } from '@mioagent/route-domain';
-import type { EvidenceRecordV1, ExecutionBlueprintV1, ProviderRefV1, SimulationStateV1 } from '@mioagent/route-domain';
+import type {
+  EarnRouteCardV1,
+  EarnRouteIntentV1,
+  EvidenceRecordV1,
+  ExecutionBlueprintV1,
+  ProviderRefV1,
+  SimulationStateV1,
+} from '@mioagent/route-domain';
 import { client } from '@mioagent/db';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
 import { RoutePlanCoordinator, type RoutePlanCoordinatorInput } from '../lib/routePlanCoordinator.js';
@@ -155,6 +172,29 @@ async function blueprintMigrationAvailable(): Promise<boolean> {
   return Boolean(row && row.execution_blueprints && row.route_proofs && row.route_proof_events);
 }
 
+// T62: the earn execution routes reuse the goal-agnostic Blueprint/Proof tables
+// (blueprintMigrationAvailable) AND require the additive T62 earn tables
+// (migration 0014). Kept separate from the swap check so the earn surface is
+// only reported ready when its own storage is present.
+async function earnStorageMigrationAvailable(): Promise<boolean> {
+  if (!(await blueprintMigrationAvailable())) return false;
+  const rows = await client`
+    SELECT
+      to_regclass('public.earn_route_candidates') AS earn_route_candidates,
+      to_regclass('public.earn_route_evidence') AS earn_route_evidence,
+      to_regclass('public.earn_score_snapshots') AS earn_score_snapshots,
+      to_regclass('public.earn_route_cards') AS earn_route_cards
+  `;
+  const row = rows[0];
+  return Boolean(
+    row &&
+    row.earn_route_candidates &&
+    row.earn_route_evidence &&
+    row.earn_score_snapshots &&
+    row.earn_route_cards,
+  );
+}
+
 export const routePlanRouteRuntime = {
   flags: getMiorailProductMigrationFlags,
   migrationAvailable: routeStorageMigrationAvailable,
@@ -215,18 +255,58 @@ routeIntelligenceRouter.post('/swap/evaluate', async (req, res) => {
   }
 });
 
-// T61: earn comparison -> Earn Route Card. Same guard prefix as /swap/evaluate
-// (flag, session, body, wallet, chain) but gated on BOTH routeIntelligenceV1 and
-// earnRouteV1, and with NO route-storage/migration dependency: the comparison is
-// pure and offline through the injected curated data source (no live provider or
-// DB calls). The 200 body is a closed 3-outcome union — compared (with the Earn
-// Route Card, which itself may be an honest degraded state), needs_clarification,
-// or unsupported. The server never signs, broadcasts, or invents yield/risk data.
+// T61/T62: earn comparison -> PERSISTED Earn Route Card. Same guard prefix as
+// /swap/evaluate (flag, session, body, wallet, chain) but gated on BOTH
+// routeIntelligenceV1 and earnRouteV1. T62 adds durable persistence: when the
+// flags are on and the earn storage migration is present, the compared run is
+// persisted (route run + Moonwell/Morpho candidates + evidence + scores + Earn
+// Route Card) and the response carries the routeRunId the client later prepares
+// against. Persistence is idempotent on the deterministic earn intent id
+// (tenant + wallet + amount + optimizationMode + constraint): a repeat returns
+// the SAME run and the ALREADY-persisted card (never a second card, never a
+// silent swap-payload mutation). The 200 body stays a closed 3-outcome union —
+// compared / needs_clarification / unsupported. The server never signs,
+// broadcasts, or invents yield/risk data.
+export interface EarnComparePersistInputV1 {
+  intent: EarnRouteIntentV1;
+  comparison: Extract<EarnComparisonResultV1, { ok: true }>;
+  requestId: string;
+}
+
+/** Get-or-create the persisted earn comparison. Returns the routeRunId and the
+ * authoritative (persisted) Earn Route Card. Idempotent on the deterministic
+ * earn intent id — a retry reads the stored card back rather than writing a
+ * second one. */
+async function persistEarnComparisonV1(
+  input: EarnComparePersistInputV1,
+): Promise<{ routeRunId: string; routeCard: EarnRouteCardV1 }> {
+  const repository = createDatabaseRouteStorageRepository(client);
+  const existing = await repository.getEarnRouteRun(input.intent.id, input.intent.tenantId);
+  if (existing) {
+    const cards = await repository.listEarnRouteCards(existing.id, input.intent.tenantId);
+    const persisted = cards[cards.length - 1];
+    if (persisted) return { routeRunId: existing.id, routeCard: persisted };
+    // A run with no card is anomalous; (re)persist the card idempotently below.
+    await repository.insertEarnRouteCard(existing.id, input.comparison.routeCard);
+    return { routeRunId: existing.id, routeCard: input.comparison.routeCard };
+  }
+  const run = await repository.createEarnRouteRun(input.intent, input.requestId);
+  for (const entry of input.comparison.entries) {
+    await repository.insertEarnCandidate(run.id, entry.candidate);
+    await repository.insertEarnEvidence(run.id, entry.candidate.id, entry.evidence);
+    await repository.insertEarnScore(run.id, entry.candidate.id, entry.score);
+  }
+  await repository.insertEarnRouteCard(run.id, input.comparison.routeCard);
+  return { routeRunId: run.id, routeCard: input.comparison.routeCard };
+}
+
 export const earnCompareRouteRuntime = {
   flags: getMiorailProductMigrationFlags,
+  migrationAvailable: earnStorageMigrationAvailable,
   resolveIntent: (input: ResolveEarnIntentInputV1) => resolveEarnIntentV1(input),
   compare: (input: CompareEarnRoutesInputV1) =>
     compareEarnRoutesV1({ dataSource: createCuratedEarnDataSourceV1() }, input),
+  persist: (input: EarnComparePersistInputV1) => persistEarnComparisonV1(input),
   now: () => new Date(),
 };
 
@@ -281,9 +361,226 @@ routeIntelligenceRouter.post('/earn/compare', async (req, res) => {
       res.json(EarnCompareResponseV1Schema.parse({ outcome: 'unsupported', reason: comparison.reason }));
       return;
     }
-    res.json(EarnCompareResponseV1Schema.parse({ outcome: 'compared', routeCard: comparison.routeCard }));
+    // Persist the comparison so the client can prepare/approve against a durable
+    // run. The earn tables are additive; if the migration isn't present yet the
+    // earn execution surface isn't ready, so fail closed with a 503 rather than
+    // return a card the client can never prepare against.
+    if (!(await earnCompareRouteRuntime.migrationAvailable())) {
+      res.status(503).json({ error: 'earn_storage_unavailable', code: 'earn_storage_unavailable' });
+      return;
+    }
+    const persisted = await earnCompareRouteRuntime.persist({
+      intent: resolution.intent,
+      comparison,
+      requestId: parsed.data.requestId,
+    });
+    res.json(
+      EarnCompareResponseV1Schema.parse({
+        outcome: 'compared',
+        routeRunId: persisted.routeRunId,
+        routeCard: persisted.routeCard,
+      }),
+    );
   } catch {
     res.status(500).json({ error: 'earn_compare_failed', code: 'earn_compare_failed' });
+  }
+});
+
+// ===========================================================================
+// T62 — Persisted Earn Execution routes. Same guard sequence as the swap
+// routes (flag, session, body, wallet, chain, storage) but gated ALSO on
+// earnRouteV1 and using the earn storage migration. The server never signs,
+// broadcasts, or calls send_calls; the client supplies NO calldata. Each 200
+// body is a closed outcome union; non-2xx statuses are the standard
+// flag/auth/wallet/chain/storage/failed codes and never leak internals.
+// ===========================================================================
+
+/** flag(routeIntelligenceV1 && earnRouteV1) + session + body + wallet + chain,
+ * the shared head of every earn execution route. Responds and returns null on
+ * failure; returns {user, data} on success. */
+function earnRouteGuard<T>(
+  req: Request,
+  res: Response,
+  schema: { safeParse: (body: unknown) => { success: true; data: T } | { success: false } },
+  invalidCode: string,
+): { user: NonNullable<ReturnType<typeof signedRoutePlanUser>>; data: T } | null {
+  const flags = getMiorailProductMigrationFlags(process.env);
+  if (!flags.routeIntelligenceV1 || !flags.earnRouteV1) {
+    res.status(404).json({ error: 'earn_route_disabled', code: 'earn_route_disabled' });
+    return null;
+  }
+  const user = signedRoutePlanUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return null;
+  }
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: invalidCode, code: invalidCode });
+    return null;
+  }
+  const data = parsed.data;
+  if ((data as { walletAddress?: string }).walletAddress !== user.address) {
+    res.status(403).json({ error: 'wallet_mismatch', code: 'wallet_mismatch' });
+    return null;
+  }
+  const chainEnv = (process.env.CHAIN_ENV ?? 'sepolia').trim().toLowerCase();
+  if (chainEnv !== 'mainnet' && chainEnv !== 'mainnet-readonly') {
+    res.status(409).json({ error: 'base_mainnet_required', code: 'base_mainnet_required' });
+    return null;
+  }
+  return { user, data };
+}
+
+// POST /route-intelligence/earn/prepare — load the persisted Earn Route Card +
+// selected candidate and build the exact deposit Blueprint. The client passes
+// only run/card/candidate hashes; the server owns the calldata.
+export const earnPrepareRouteRuntime = {
+  migrationAvailable: earnStorageMigrationAvailable,
+  prepare: async (input: PrepareEarnDepositInputV1) =>
+    prepareEarnDepositV1({ repository: createDatabaseRouteStorageRepository(client) }, input),
+  now: () => new Date(),
+};
+
+routeIntelligenceRouter.post('/earn/prepare', async (req, res) => {
+  const guard = earnRouteGuard(req, res, EarnPrepareRequestV1Schema, 'invalid_earn_prepare_request');
+  if (!guard) return;
+  const { user, data } = guard;
+  try {
+    if (!(await earnPrepareRouteRuntime.migrationAvailable())) {
+      res.status(503).json({ error: 'earn_storage_unavailable', code: 'earn_storage_unavailable' });
+      return;
+    }
+    const result = await earnPrepareRouteRuntime.prepare({
+      tenantId: user.id,
+      walletAddress: user.address as `0x${string}`,
+      routeRunId: data.routeRunId,
+      routeCardHash: data.routeCardHash,
+      selectedCandidateHash: data.selectedCandidateHash,
+      requestId: data.requestId,
+      now: earnPrepareRouteRuntime.now(),
+    });
+    res.json(EarnPrepareResponseV1Schema.parse(result));
+  } catch {
+    res.status(500).json({ error: 'earn_prepare_failed', code: 'earn_prepare_failed' });
+  }
+});
+
+// POST /route-intelligence/earn/blueprints/:blueprintId/approve — re-validate
+// the STORED earn Blueprint through the EARN Safety Kernel and return the exact
+// unsigned batch payload. POST .../submission records what the wallet reported
+// (the recorder is goal-aware: it binds an earn run and mutates only the
+// goal-agnostic proof tables). Both fail closed and never leak internals.
+export const earnBlueprintRouteRuntime = {
+  migrationAvailable: earnStorageMigrationAvailable,
+  approve: async (input: ApproveEarnBlueprintInputV1) =>
+    approveEarnBlueprintV1({ repository: createDatabaseRouteStorageRepository(client) }, input),
+  recordSubmission: async (input: RecordBlueprintSubmissionInput) =>
+    recordBlueprintSubmissionV1({ repository: createDatabaseRouteStorageRepository(client) }, input),
+  now: () => new Date(),
+};
+
+routeIntelligenceRouter.post('/earn/blueprints/:blueprintId/approve', async (req, res) => {
+  const guard = earnRouteGuard(req, res, EarnBlueprintApproveRequestV1Schema, 'invalid_blueprint_approve_request');
+  if (!guard) return;
+  const { user, data } = guard;
+  try {
+    if (!(await earnBlueprintRouteRuntime.migrationAvailable())) {
+      res.status(503).json({ error: 'earn_storage_unavailable', code: 'earn_storage_unavailable' });
+      return;
+    }
+    const result = await earnBlueprintRouteRuntime.approve({
+      tenantId: user.id,
+      walletAddress: user.address as `0x${string}`,
+      routeRunId: data.routeRunId,
+      blueprintId: req.params.blueprintId,
+      blueprintHash: data.blueprintHash,
+      now: earnBlueprintRouteRuntime.now(),
+    });
+    res.json(EarnBlueprintApproveResponseV1Schema.parse(result));
+  } catch {
+    res.status(500).json({ error: 'blueprint_approve_failed', code: 'blueprint_approve_failed' });
+  }
+});
+
+routeIntelligenceRouter.post('/earn/blueprints/:blueprintId/submission', async (req, res) => {
+  const guard = earnRouteGuard(req, res, SwapBlueprintSubmissionRequestV1Schema, 'invalid_blueprint_submission_request');
+  if (!guard) return;
+  const { user, data } = guard;
+  try {
+    if (!(await earnBlueprintRouteRuntime.migrationAvailable())) {
+      res.status(503).json({ error: 'earn_storage_unavailable', code: 'earn_storage_unavailable' });
+      return;
+    }
+    const result = await earnBlueprintRouteRuntime.recordSubmission({
+      tenantId: user.id,
+      walletAddress: user.address as `0x${string}`,
+      routeRunId: data.routeRunId,
+      blueprintId: req.params.blueprintId,
+      approvedCallsHash: data.approvedCallsHash,
+      status: data.status,
+      batchId: data.batchId,
+      transactionHashes: data.transactionHashes,
+      receipts: data.receipts,
+      error: data.error,
+      now: earnBlueprintRouteRuntime.now(),
+    });
+    res.json(SwapBlueprintSubmissionResponseV1Schema.parse(result));
+  } catch (cause) {
+    if (cause instanceof BlueprintSubmissionConflictError) {
+      res.status(409).json({ error: 'blueprint_submission_conflict', code: 'blueprint_submission_conflict' });
+      return;
+    }
+    res.status(500).json({ error: 'blueprint_submission_failed', code: 'blueprint_submission_failed' });
+  }
+});
+
+// POST /route-intelligence/earn/route-proofs/:proofId/reconcile — verify the
+// deposit against Base and honestly finalize the earn Route Proof. Reuses the
+// same env-configured receipt reader as the swap reconciler; the earn reconciler
+// proves the position (USDC debit + position credit) — a success receipt with
+// no observable position routes to reconciliation_required.
+export const earnReconcileRouteRuntime = {
+  migrationAvailable: earnStorageMigrationAvailable,
+  reconcile: async (input: ReconcileRouteProofInput) =>
+    createEarnRouteProofReconciler({
+      repository: createDatabaseRouteStorageRepository(client),
+      receiptReader: createViemBaseReceiptReader(),
+    }).reconcile(input),
+  now: () => new Date(),
+};
+
+routeIntelligenceRouter.post('/earn/route-proofs/:proofId/reconcile', async (req, res) => {
+  const guard = earnRouteGuard(req, res, RouteProofReconcileRequestV1Schema, 'invalid_route_proof_reconcile_request');
+  if (!guard) return;
+  const { user, data } = guard;
+  try {
+    if (!(await earnReconcileRouteRuntime.migrationAvailable())) {
+      res.status(503).json({ error: 'earn_storage_unavailable', code: 'earn_storage_unavailable' });
+      return;
+    }
+    const result = await earnReconcileRouteRuntime.reconcile({
+      tenantId: user.id,
+      walletAddress: user.address as `0x${string}`,
+      routeRunId: data.routeRunId,
+      routeProofId: req.params.proofId,
+      now: earnReconcileRouteRuntime.now(),
+    });
+    res.json(RouteProofReconcileResponseV1Schema.parse(result));
+  } catch (cause) {
+    if (cause instanceof RouteProofReconcileBindingError) {
+      if (cause.code === 'route_proof_not_found') {
+        res.status(404).json({ error: 'route_proof_not_found', code: 'route_proof_not_found' });
+        return;
+      }
+      if (cause.code === 'wallet_mismatch') {
+        res.status(403).json({ error: 'wallet_mismatch', code: 'wallet_mismatch' });
+        return;
+      }
+      res.status(409).json({ error: 'route_proof_conflict', code: 'route_proof_conflict' });
+      return;
+    }
+    res.status(500).json({ error: 'route_proof_reconcile_failed', code: 'route_proof_reconcile_failed' });
   }
 });
 

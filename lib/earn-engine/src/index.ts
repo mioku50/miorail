@@ -1,4 +1,5 @@
 export * from './pinned-config.js';
+export * from './pinned-verification.js';
 export * from './types.js';
 export * from './adapters.js';
 export * from './curated-source.js';

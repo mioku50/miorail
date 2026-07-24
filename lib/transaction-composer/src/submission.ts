@@ -91,7 +91,14 @@ export async function recordBlueprintSubmissionV1(
   const { repository } = deps;
 
   // --- Binding validation (fail closed, mirrors approve) --------------------
-  const run = await repository.getRouteRun(input.routeRunId, input.tenantId);
+  // Goal-aware run lookup: swap runs resolve through getRouteRun as before; an
+  // earn run (goal='earn', which getRouteRun never returns) falls back to
+  // getEarnRouteRun. Recording a submission only touches the goal-agnostic
+  // proof/blueprint tables below, so a single path serves both goals — the
+  // stored Blueprint's own status/approvedCallsHash checks still gate it.
+  const run =
+    (await repository.getRouteRun(input.routeRunId, input.tenantId)) ??
+    (await repository.getEarnRouteRun(input.routeRunId, input.tenantId));
   if (!run) {
     throw new TransactionComposerBindingError('route_run_not_found', 'Route run does not exist for this tenant');
   }

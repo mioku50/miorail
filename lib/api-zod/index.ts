@@ -48,11 +48,115 @@ export const EarnCompareRequestV1Schema = z
   .strict();
 
 export const EarnCompareResponseV1Schema = z.discriminatedUnion('outcome', [
-  z.object({ outcome: z.literal('compared'), routeCard: EarnRouteCardV1Schema }).strict(),
+  z
+    .object({
+      outcome: z.literal('compared'),
+      // T62: the persisted earn Route Run the client prepares against. Optional
+      // so a caller reading a pre-T62 cached compared response still parses.
+      routeRunId: z.string().min(1).max(200).optional(),
+      routeCard: EarnRouteCardV1Schema,
+    })
+    .strict(),
   z
     .object({ outcome: z.literal('needs_clarification'), issues: z.array(z.string().min(1).max(120)) })
     .strict(),
   z.object({ outcome: z.literal('unsupported'), reason: z.string().min(1).max(200) }).strict(),
+]);
+
+// T62 — Persisted Earn Execution. `earn/prepare` turns the persisted Earn Route
+// Card + selected candidate into an exact, safety-validated earn deposit
+// Blueprint (USDC approval + Moonwell supply / Morpho ERC-4626 deposit). The
+// client supplies NO calldata; the server never signs or broadcasts. Gated on
+// MIORAIL_ROUTE_INTELLIGENCE_V1 AND MIORAIL_EARN_ROUTE_V1.
+export const EarnPrepareRequestV1Schema = z
+  .object({
+    routeRunId: z.string().min(1).max(200),
+    routeCardHash: HashV1Schema,
+    selectedCandidateHash: HashV1Schema,
+    walletAddress: AddressV1Schema,
+    requestId: z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/, 'Invalid earn prepare request ID'),
+  })
+  .strict();
+
+export const EarnPrepareResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      outcome: z.literal('prepared'),
+      blueprint: ExecutionBlueprintV1Schema,
+      safety: SafetyKernelResultV1Schema,
+    })
+    .strict(),
+  z.object({ outcome: z.literal('refresh_required'), reason: z.string().min(1).max(500) }).strict(),
+  z.object({ outcome: z.literal('expired'), reason: z.string().min(1).max(500) }).strict(),
+  z
+    .object({ outcome: z.literal('blocked'), reason: z.string().min(1).max(500), safety: SafetyKernelResultV1Schema })
+    .strict(),
+]);
+
+// `earn/blueprints/:id/approve` re-validates the STORED earn Blueprint through
+// the EARN Safety Kernel and returns the exact unsigned EIP-5792 batch payload
+// for the client's Base Account wallet. Same request/response shapes as the
+// swap approve route (the approved payload is goal-agnostic), but the route
+// dispatches to the earn kernel by the stored Blueprint's goal.
+export const EarnBlueprintApproveRequestV1Schema = z
+  .object({
+    routeRunId: z.string().min(1).max(200),
+    blueprintHash: HashV1Schema,
+    walletAddress: AddressV1Schema,
+  })
+  .strict();
+
+export const EarnBlueprintApproveResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      outcome: z.literal('approved'),
+      payload: z
+        .object({
+          blueprintId: z.string().min(1).max(200),
+          blueprintHash: HashV1Schema,
+          approvedCallsHash: HashV1Schema,
+          chainId: z.literal('0x2105'),
+          from: AddressV1Schema,
+          calls: z
+            .array(
+              z
+                .object({
+                  to: AddressV1Schema,
+                  value: z.string().regex(/^0x[0-9a-f]+$/, 'Expected a hex quantity'),
+                  data: HexDataV1Schema,
+                })
+                .strict(),
+            )
+            .min(1)
+            .max(100),
+          atomicRequired: z.literal(true),
+        })
+        .strict(),
+      lifecycle: z.enum([
+        'draft',
+        'ready_for_review',
+        'expired',
+        'invalid',
+        'approved',
+        'submitted',
+        'submitted_unknown',
+        'confirmed',
+        'failed',
+        'cancelled',
+        'completed',
+        'partial_failure',
+        'reconciliation_required',
+      ]),
+    })
+    .strict(),
+  z.object({ outcome: z.literal('expired'), reason: z.string().min(1).max(500) }).strict(),
+  z
+    .object({ outcome: z.literal('blocked'), reason: z.string().min(1).max(500), safety: SafetyKernelResultV1Schema })
+    .strict(),
 ]);
 
 // Route Intelligence V1 — read-only plan evaluation. These schemas deliberately

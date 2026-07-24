@@ -77,6 +77,14 @@ describe('POST /api/route-intelligence/earn/compare', () => {
     earnCompareRouteRuntime.now = () => NOW;
     earnCompareRouteRuntime.resolveIntent = () => readyResolution();
     earnCompareRouteRuntime.compare = async () => comparisonFixture();
+    // T62: the compare route now PERSISTS. Stub the storage seams so the suite
+    // stays fully offline (no DB) — the persist stub echoes the freshly compared
+    // Route Card and a deterministic routeRunId the client would prepare against.
+    earnCompareRouteRuntime.migrationAvailable = async () => true;
+    earnCompareRouteRuntime.persist = async ({ comparison }) => ({
+      routeRunId: 'earn-run-t62-fixture',
+      routeCard: comparison.routeCard,
+    });
     process.env.CHAIN_ENV = 'mainnet-readonly';
   });
 
@@ -135,10 +143,11 @@ describe('POST /api/route-intelligence/earn/compare', () => {
     assert.equal(sepolia.body.code, 'base_mainnet_required');
   });
 
-  test('returns a validated compared Earn Route Card without leaking calldata or payment artifacts', async () => {
+  test('returns a validated compared Earn Route Card with the persisted routeRunId, no calldata/payment artifacts', async () => {
     const response = await request(routeApp()).post('/api/route-intelligence/earn/compare').send(BODY);
     assert.equal(response.status, 200);
     assert.equal(response.body.outcome, 'compared');
+    assert.equal(response.body.routeRunId, 'earn-run-t62-fixture');
     assert.equal(response.body.routeCard.optimizationMode, 'best_net_yield');
     assert.equal(response.body.routeCard.comparisons.length, 2);
     // best_net_yield ranks Morpho (net 7.10%) above Moonwell (net 5.80%) and can
@@ -146,6 +155,19 @@ describe('POST /api/route-intelligence/earn/compare', () => {
     assert.notEqual(response.body.routeCard.recommendedCandidateHash, null);
     const serialized = JSON.stringify(response.body);
     assert.equal(/calldata|walletCalls|send_calls|x402|executionBlueprint/i.test(serialized), false);
+  });
+
+  test('a ready comparison fails closed with 503 when the earn storage migration is absent (never a card the client cannot prepare)', async () => {
+    let persisted = false;
+    earnCompareRouteRuntime.migrationAvailable = async () => false;
+    earnCompareRouteRuntime.persist = async ({ comparison }) => {
+      persisted = true;
+      return { routeRunId: 'earn-run-t62-fixture', routeCard: comparison.routeCard };
+    };
+    const response = await request(routeApp()).post('/api/route-intelligence/earn/compare').send(BODY);
+    assert.equal(response.status, 503);
+    assert.deepEqual(response.body, { error: 'earn_storage_unavailable', code: 'earn_storage_unavailable' });
+    assert.equal(persisted, false);
   });
 
   test('maps needs_clarification and unsupported resolutions to honest closed outcomes (no invented card)', async () => {
