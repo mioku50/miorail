@@ -20,11 +20,17 @@ export interface EarnScoreDimensionSourceV1 {
 export interface EarnCandidateSourceV1 {
   candidateHash: string;
   protocol: string;
-  venue: { identifier: string };
+  venue: { identifier: string; address: string };
   withdrawalModel: string;
   estimatedGas: { estimatedCostUsd: string | null; gasUnits: string };
   callCount: number;
   approvalCount: number;
+  /** T63A: the live provider the reading came from, when it was observed, and
+   * the exact withdrawable liquidity in atomic units (null = no datum). */
+  provider: { displayName: string };
+  observedAt: string;
+  availableLiquidityAtomic: string | null;
+  amount: { asset: { symbol: string; decimals: number } };
 }
 
 export interface EarnComparisonSourceV1 {
@@ -68,6 +74,14 @@ export interface EarnCandidateRowViewV1 {
   missingEvidenceLabels: string[];
   dimensions: EarnScoreDimensionViewV1[];
   isRecommended: boolean;
+  /** T63A live-data provenance. */
+  sourceLabel: string;
+  observedAtLabel: string;
+  liquidityAmountLabel: string;
+  contractLabel: string;
+  isStale: boolean;
+  /** Set only when this row's reading cannot be trusted for ranking. */
+  dataWarning: string | null;
 }
 
 export interface EarnRouteCardViewV1 {
@@ -77,6 +91,12 @@ export interface EarnRouteCardViewV1 {
   recommendation: { candidateHash: string; protocolLabel: string; reason: string } | null;
   degradedReason: string | null;
   rows: EarnCandidateRowViewV1[];
+  /** T63A: which live providers the comparison is built on, the newest
+   * observation time across them, and a card-level warning when any reading is
+   * no longer fresh. */
+  dataSourceLabel: string;
+  lastUpdatedLabel: string;
+  staleWarning: string | null;
 }
 
 const OPTIMIZATION_LABELS: Record<string, string> = {
@@ -139,6 +159,62 @@ function evidenceLabel(kind: string): string {
   return EVIDENCE_LABELS[kind] ?? humanizeEarnTokenV1(kind);
 }
 
+/** Atomic base units → a compact human amount, using BigInt only: a liquidity
+ * figure must never round through a float. `null` (no datum) renders as an em
+ * dash, never as 0. */
+export function formatEarnLiquidityAmountV1(
+  atomic: string | null,
+  decimals: number,
+  symbol: string,
+): string {
+  if (atomic === null) return '—';
+  let value: bigint;
+  try {
+    value = BigInt(atomic);
+  } catch {
+    return '—';
+  }
+  // BigInt(...) rather than BigInt literals: lib/ui is consumed by app targets
+  // below ES2020 (see EarnDepositFlow's amount formatter).
+  const ten = BigInt(10);
+  const hundred = BigInt(100);
+  const base = ten ** BigInt(Math.max(0, Math.min(36, decimals)));
+  const whole = value / base;
+  const magnitudes: [bigint, string][] = [
+    [ten ** BigInt(12), 'T'],
+    [ten ** BigInt(9), 'B'],
+    [ten ** BigInt(6), 'M'],
+    [ten ** BigInt(3), 'K'],
+  ];
+  for (const [threshold, suffix] of magnitudes) {
+    if (whole >= threshold) {
+      const scaled = (whole * hundred) / threshold;
+      return `${scaled / hundred}.${String(scaled % hundred).padStart(2, '0')}${suffix} ${symbol}`;
+    }
+  }
+  const fraction = ((value % base) * hundred) / base;
+  return `${whole}.${String(fraction).padStart(2, '0')} ${symbol}`;
+}
+
+/** ISO instant → a stable "YYYY-MM-DD HH:MM UTC" label. Absolute and
+ * clock-free on purpose: a relative "2 min ago" would need a `now` the view
+ * model does not have, and would drift between render and reality. */
+export function formatEarnObservedAtV1(value: string): string {
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return 'Unknown';
+  const iso = new Date(parsed).toISOString();
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+}
+
+function shortContractV1(address: string): string {
+  return address.length > 12 ? `${address.slice(0, 6)}…${address.slice(-4)}` : address;
+}
+
+const STALE_ROW_WARNING_V1 =
+  'Stale reading — shown for reference only and excluded from ranking until the provider refreshes.';
+const UNKNOWN_FRESHNESS_WARNING_V1 =
+  'Freshness could not be established for this reading, so it is not ranked.';
+
 function callsLabelForProtocolV1(protocol: string): string {
   // Moonwell supplies into the mToken market; Morpho deposits into the ERC-4626
   // vault. Both are exactly one approval + one action.
@@ -161,6 +237,7 @@ function dimensionView(dimension: EarnScoreDimensionSourceV1): EarnScoreDimensio
 
 function rowView(comparison: EarnComparisonSourceV1, recommendedHash: string | null): EarnCandidateRowViewV1 {
   const { candidate } = comparison;
+  const isStale = comparison.freshnessState === 'stale';
   return {
     candidateHash: candidate.candidateHash,
     protocolLabel: PROTOCOL_LABELS[candidate.protocol] ?? humanizeEarnTokenV1(candidate.protocol),
@@ -176,6 +253,20 @@ function rowView(comparison: EarnComparisonSourceV1, recommendedHash: string | n
     missingEvidenceLabels: comparison.missingEvidence.map(evidenceLabel),
     dimensions: comparison.score.dimensions.map(dimensionView),
     isRecommended: candidate.candidateHash === recommendedHash,
+    sourceLabel: candidate.provider.displayName,
+    observedAtLabel: formatEarnObservedAtV1(candidate.observedAt),
+    liquidityAmountLabel: formatEarnLiquidityAmountV1(
+      candidate.availableLiquidityAtomic,
+      candidate.amount.asset.decimals,
+      candidate.amount.asset.symbol,
+    ),
+    contractLabel: shortContractV1(candidate.venue.address),
+    isStale,
+    dataWarning: isStale
+      ? STALE_ROW_WARNING_V1
+      : comparison.freshnessState === 'unknown'
+        ? UNKNOWN_FRESHNESS_WARNING_V1
+        : null,
   };
 }
 
@@ -189,6 +280,16 @@ export function deriveEarnRouteCardViewV1(source: EarnRouteCardSourceV1): EarnRo
   const recommendedRow = source.recommendedCandidateHash
     ? rows.find((row) => row.candidateHash === source.recommendedCandidateHash) ?? null
     : null;
+
+  const sources = [...new Set(source.comparisons.map((comparison) => comparison.candidate.provider.displayName))];
+  const observedTimes = source.comparisons
+    .map((comparison) => Date.parse(comparison.candidate.observedAt))
+    .filter((value) => Number.isFinite(value));
+  // The card is only as current as its OLDEST leg: quoting the newest reading
+  // would overstate how fresh the comparison as a whole is.
+  const oldestObservedAt = observedTimes.length > 0 ? Math.min(...observedTimes) : null;
+  const staleRows = rows.filter((row) => row.isStale);
+
   return {
     status: recommendedRow ? 'recommendation' : 'degraded',
     optimizationLabel: OPTIMIZATION_LABELS[source.optimizationMode] ?? humanizeEarnTokenV1(source.optimizationMode),
@@ -202,7 +303,29 @@ export function deriveEarnRouteCardViewV1(source: EarnRouteCardSourceV1): EarnRo
       : null,
     degradedReason: recommendedRow ? null : source.degradedReason,
     rows,
+    dataSourceLabel: sources.length > 0 ? sources.join(' · ') : 'Unknown source',
+    lastUpdatedLabel: oldestObservedAt === null ? 'Unknown' : formatEarnObservedAtV1(new Date(oldestObservedAt).toISOString()),
+    staleWarning:
+      staleRows.length === 0
+        ? null
+        : `${staleRows.map((row) => row.protocolLabel).join(' and ')} ${
+            staleRows.length === 1 ? 'data is' : 'data are'
+          } past the freshness window — shown below, but excluded from ranking.`,
   };
+}
+
+const EARN_UNSUPPORTED_REASON_LABELS_V1: Record<string, string> = {
+  all_providers_unavailable:
+    'Neither Moonwell nor Morpho returned usable live data just now, so there is nothing to compare. No route is shown rather than a guessed one — try again in a moment.',
+  no_candidates: 'No earn venue could be compared for this request.',
+  no_protocols_selected: 'The protocol constraint in this request excludes every supported earn venue.',
+};
+
+/** Maps a server `unsupported` reason code to a sentence. Unknown codes are
+ * humanized rather than hidden — the surface never invents an explanation, and
+ * never shows a bare machine token where a sentence exists. */
+export function earnUnsupportedReasonLabelV1(reason: string): string {
+  return EARN_UNSUPPORTED_REASON_LABELS_V1[reason] ?? humanizeEarnTokenV1(reason);
 }
 
 /** Belt-and-suspenders honesty guard for tests/callers: a recommendation must

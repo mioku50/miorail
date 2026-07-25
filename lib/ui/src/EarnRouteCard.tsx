@@ -86,7 +86,10 @@ function EarnCandidateCard({
       <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-xs sm:grid-cols-4">
         <div>
           <dt className="text-ink-3">Liquidity</dt>
-          <dd className="mt-1 font-mono text-ink">{row.liquidityLabel}</dd>
+          <dd className="mt-1 font-mono text-ink" data-earn-liquidity-amount={row.liquidityAmountLabel}>
+            {row.liquidityAmountLabel}
+          </dd>
+          <dd className="mt-0.5 text-[11px] text-ink-3">Depth: {row.liquidityLabel}</dd>
         </div>
         <div>
           <dt className="text-ink-3">Withdrawal</dt>
@@ -102,7 +105,28 @@ function EarnCandidateCard({
         </div>
       </dl>
 
-      <p className="mt-3 font-mono text-[11px] text-ink-3">Evidence freshness: {row.freshnessLabel}</p>
+      <dl className="mt-3 grid grid-cols-1 gap-x-4 gap-y-2 text-[11px] sm:grid-cols-3" data-earn-provenance="live">
+        <div>
+          <dt className="text-ink-3">Source</dt>
+          <dd className="mt-0.5 font-mono text-ink-2">{row.sourceLabel}</dd>
+        </div>
+        <div>
+          <dt className="text-ink-3">Updated</dt>
+          <dd className="mt-0.5 font-mono text-ink-2">{row.observedAtLabel}</dd>
+        </div>
+        <div>
+          <dt className="text-ink-3">Contract</dt>
+          <dd className="mt-0.5 font-mono text-ink-2">{row.contractLabel}</dd>
+        </div>
+      </dl>
+
+      <p className="mt-2 font-mono text-[11px] text-ink-3">Evidence freshness: {row.freshnessLabel}</p>
+
+      {row.dataWarning && (
+        <p className="mt-2 border-l-2 border-warn pl-3 text-[11px] leading-relaxed text-warn" data-earn-stale={row.isStale ? 'true' : 'false'}>
+          {row.dataWarning}
+        </p>
+      )}
 
       {row.missingEvidenceLabels.length > 0 && (
         <div className="mt-3 border-l-2 border-warn pl-3">
@@ -158,11 +182,21 @@ export function EarnRouteCardView({
             Deposit {view.amountLabel} for yield
           </h2>
           <p className="mt-2 text-sm text-ink-2">Optimization: {view.optimizationLabel}</p>
+          <p className="mt-1 font-mono text-[11px] text-ink-3" data-earn-data-source={view.dataSourceLabel}>
+            Live data: {view.dataSourceLabel} · updated {view.lastUpdatedLabel}
+          </p>
         </div>
         <div className="rounded-full border border-accent/35 bg-accent-soft px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-accent-2">
           Read-only comparison
         </div>
       </header>
+
+      {view.staleWarning && (
+        <aside className="rounded-xl border border-warn/40 bg-warn-soft p-4" role="note" data-earn-stale-warning="true">
+          <p className="text-sm font-semibold text-warn">Some readings are not fresh</p>
+          <p className="mt-1 text-xs leading-relaxed text-ink-2">{view.staleWarning}</p>
+        </aside>
+      )}
 
       {view.status === 'recommendation' && view.recommendation ? (
         <aside className="rounded-xl border border-accent/40 bg-accent-soft p-4" role="note">

@@ -1,6 +1,7 @@
 import type {
   EarnCandidateV1,
   EarnOptimizationModeV1,
+  EarnProtocolV1,
   EarnScoreV1,
 } from '@mioagent/route-domain';
 import { earnDimensionV1 } from './scoring.js';
@@ -115,5 +116,40 @@ export function rankEarnCandidatesV1(
     recommendedCandidateHash: top.candidate.candidateHash,
     recommendationReason: reasonFor(top),
     degradedReason: null,
+  };
+}
+
+const EARN_PROTOCOL_LABELS_V1: Record<EarnProtocolV1, string> = { moonwell: 'Moonwell', morpho: 'Morpho' };
+
+function protocolList(protocols: readonly EarnProtocolV1[]): string {
+  const labels = [...new Set(protocols)].sort().map((protocol) => EARN_PROTOCOL_LABELS_V1[protocol] ?? protocol);
+  if (labels.length <= 1) return labels[0] ?? '';
+  return `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
+}
+
+/**
+ * T63A §4 — a provider that did not answer must never produce a confident
+ * "best route". When some of the requested venues are missing from the
+ * comparison, whatever remains is an incomplete field: it is still SHOWN, but
+ * the recommendation is withdrawn and the reason names the missing provider.
+ * (An intentionally narrowed comparison — "use Moonwell only" — has no failure
+ * and is not degraded by this rule.)
+ */
+export function degradeEarnRankingForUnavailableProvidersV1(
+  ranking: EarnRankingResultV1,
+  unavailableProtocols: readonly EarnProtocolV1[],
+  comparedProtocols: readonly EarnProtocolV1[],
+): EarnRankingResultV1 {
+  if (unavailableProtocols.length === 0) return ranking;
+  const missing = protocolList(unavailableProtocols);
+  const compared = protocolList(comparedProtocols);
+  const detail = compared
+    ? `${missing} returned no usable live data, so only ${compared} could be compared.`
+    : `${missing} returned no usable live data.`;
+  return {
+    orderedCandidateHashes: ranking.orderedCandidateHashes,
+    recommendedCandidateHash: null,
+    recommendationReason: null,
+    degradedReason: `${detail} A partial comparison cannot establish a best route — the reading below is shown for reference only.`,
   };
 }

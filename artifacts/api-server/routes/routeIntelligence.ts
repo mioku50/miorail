@@ -95,7 +95,6 @@ import { createDatabaseSpendPermissionRepository } from '@mioagent/autonomy';
 import { resolveEarnIntentV1, type ResolveEarnIntentInputV1 } from '@mioagent/intent-engine';
 import {
   compareEarnRoutesV1,
-  createCuratedEarnDataSourceV1,
   resolveEarnRouteEnablementV1,
   type CompareEarnRoutesInputV1,
   type EarnComparisonResultV1,
@@ -116,6 +115,7 @@ import { RoutePlanCoordinator, type RoutePlanCoordinatorInput } from '../lib/rou
 import { loadTokenSecurityContext } from '../lib/executionSecurity.js';
 import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
 import { resolveEarnContractPreflightV1 } from '../lib/earnPreflight.js';
+import { resolveEarnDataSourceV1 } from '../lib/earnLiveData.js';
 import {
   atomicUsdcToDecimalV1,
   decimalUsdcToAtomicV1,
@@ -339,8 +339,11 @@ async function persistEarnComparisonV1(
 export const earnCompareRouteRuntime = {
   flags: getMiorailProductMigrationFlags,
   resolveIntent: (input: ResolveEarnIntentInputV1) => resolveEarnIntentV1(input),
+  // T63A: the comparison runs on LIVE Moonwell + Morpho readings. The source is
+  // a process-wide singleton so its short cache and single-flight coalescing are
+  // shared across requests.
   compare: (input: CompareEarnRoutesInputV1) =>
-    compareEarnRoutesV1({ dataSource: createCuratedEarnDataSourceV1() }, input),
+    compareEarnRoutesV1({ dataSource: resolveEarnDataSourceV1() }, input),
   persist: (input: EarnComparePersistInputV1) => persistEarnComparisonV1(input),
   now: () => new Date(),
 };

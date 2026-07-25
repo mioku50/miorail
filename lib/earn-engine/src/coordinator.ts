@@ -8,7 +8,11 @@ import type {
 import { buildEarnCandidateV1, type EarnAdapterResultV1 } from './adapters.js';
 import { EARN_PROTOCOLS_V1 } from './pinned-config.js';
 import { buildEarnScoreV1 } from './scoring.js';
-import { rankEarnCandidatesV1, type EarnRankingResultV1 } from './ranking.js';
+import {
+  degradeEarnRankingForUnavailableProvidersV1,
+  rankEarnCandidatesV1,
+  type EarnRankingResultV1,
+} from './ranking.js';
 import { buildEarnRouteCardV1, type EarnRouteCardEntryV1 } from './routeCard.js';
 import type { EarnDataSourceV1 } from './types.js';
 
@@ -44,10 +48,14 @@ export interface CompareEarnRoutesInputV1 {
 
 /**
  * The end-to-end earn comparison: pinned protocols (filtered by constraint) →
- * curated/injected observations → validated candidates + evidence → per-
- * candidate Earn Score → deterministic ranking → Earn Route Card. No dynamic
- * discovery, no live calls of its own — every I/O goes through the injected
- * data source.
+ * live/injected observations → validated candidates + evidence → per-candidate
+ * Earn Score → deterministic ranking → Earn Route Card. No dynamic discovery,
+ * no live calls of its own — every I/O goes through the injected data source.
+ *
+ * Provider availability (T63A §4) is honest end to end:
+ *   both providers answer  → ranked comparison, possibly with a recommendation;
+ *   one provider answers   → degraded card, candidate shown, NO recommendation;
+ *   neither answers        → failure, no card at all.
  */
 export async function compareEarnRoutesV1(
   deps: { dataSource: EarnDataSourceV1 },
@@ -76,12 +84,19 @@ export async function compareEarnRoutesV1(
   }
 
   if (entries.length === 0) {
-    return { ok: false, reason: 'no_candidates', failures };
+    // Every requested provider failed: no data at all, so no card — an empty
+    // comparison is a failure, never a "nothing beats nothing" recommendation.
+    return { ok: false, reason: failures.length > 0 ? 'all_providers_unavailable' : 'no_candidates', failures };
   }
 
-  const ranking = rankEarnCandidatesV1(
+  const ranked = rankEarnCandidatesV1(
     entries.map((entry) => ({ candidate: entry.candidate, score: entry.score })),
     input.intent.optimizationMode,
+  );
+  const ranking = degradeEarnRankingForUnavailableProvidersV1(
+    ranked,
+    failures.map((failure) => failure.protocol),
+    entries.map((entry) => entry.candidate.protocol),
   );
   const routeCard = buildEarnRouteCardV1({ intent: input.intent, entries, ranking, now: input.now, ttlMs: input.ttlMs });
 

@@ -1,15 +1,17 @@
 // Central host allowlist for outbound partner HTTP calls (Moonwell HTTP API,
-// Uniswap trade/liquidity APIs, Morpho MCP). Before this module there was no
-// single place enforcing which external hosts a provider is allowed to call —
-// each provider hardcoded its own endpoint. `partnerFetch` is the one function
-// that should issue those requests: it fails closed on any host that is not
-// explicitly allowlisted and always applies a bounded timeout.
+// Uniswap trade/liquidity APIs, Morpho MCP + Morpho API). Before this module
+// there was no single place enforcing which external hosts a provider is
+// allowed to call — each provider hardcoded its own endpoint. `partnerFetch` is
+// the one function that should issue those requests: it fails closed on any
+// host that is not explicitly allowlisted and always applies a bounded timeout.
 
 export const ALLOWED_PARTNER_HOSTS = [
   'api.moonwell.fi',
   'trade-api.gateway.uniswap.org',
   'liquidity.api.uniswap.org',
   'mcp.morpho.org',
+  // T63A: the official Morpho GraphQL API, read-only earn vault data.
+  'api.morpho.org',
 ] as const;
 
 export class PartnerHostNotAllowlistedError extends Error {

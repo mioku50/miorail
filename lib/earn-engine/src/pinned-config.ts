@@ -26,12 +26,15 @@ export interface PinnedEarnVenueV1 {
 
 // ┌────────────────────────────────────────────────────────────────────────┐
 // │  ⚠  VERIFY BEFORE THE MAINNET SMOKE TEST  ⚠                              │
-// │  These are the ONLY pinned earn venues. The addresses are the canonical │
-// │  Base-mainnet Moonwell USDC market and a pinned Morpho USDC MetaMorpho  │
-// │  vault; re-confirm each on-chain (Base MCP / basescan) before the real  │
-// │  deposit smoke test. Tests never make live calls, so an incorrect       │
-// │  address here cannot move funds — it only needs to be right before the  │
-// │  first real deposit.                                                    │
+// │  These are the ONLY pinned earn venues: the canonical Base-mainnet      │
+// │  Moonwell USDC market and a pinned Morpho USDC MetaMorpho vault.        │
+// │  T63A (2026-07-25) cross-checked both against the official provider     │
+// │  APIs: Moonwell reports mTokenAddress 0xEdc817…6c22 with assetAddress   │
+// │  == canonical USDC on eip155:8453, and Morpho reports vault             │
+// │  0xc1256Ae5…A2Ca ("Moonwell Flagship USDC") on chain 8453 with asset    │
+// │  == canonical USDC. That is an API-level confirmation, NOT a substitute │
+// │  for the on-chain preflight (verifyPinnedEarnContractsV1), which still  │
+// │  gates every earn route before the first real deposit.                  │
 // └────────────────────────────────────────────────────────────────────────┘
 export const PINNED_EARN_VENUES_V1: Record<EarnProtocolV1, PinnedEarnVenueV1> = {
   moonwell: {

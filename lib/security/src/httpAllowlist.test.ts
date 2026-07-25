@@ -57,6 +57,7 @@ test('ALLOWED_PARTNER_HOSTS covers exactly the sanctioned partner hosts', () => 
     'trade-api.gateway.uniswap.org',
     'liquidity.api.uniswap.org',
     'mcp.morpho.org',
+    'api.morpho.org',
   ]);
 });
 

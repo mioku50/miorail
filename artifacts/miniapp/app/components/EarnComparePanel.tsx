@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useAccount } from "wagmi";
-import { EarnRouteCardView, deriveEarnRouteCardViewV1 } from "@mioagent/ui";
+import { EarnRouteCardView, deriveEarnRouteCardViewV1, earnUnsupportedReasonLabelV1 } from "@mioagent/ui";
 import { useEarnCompare } from "@mioagent/api-client-react";
 import { EarnDepositFlow } from "@mioagent/wallet-actions";
 
@@ -95,7 +95,7 @@ export function EarnComparePanel() {
         {result?.outcome === "unsupported" && (
           <div className="rounded-2xl border border-risk/35 bg-risk-soft p-5">
             <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-risk">Not supported</p>
-            <p className="mt-2 text-sm text-ink-2">{result.reason}</p>
+            <p className="mt-2 text-sm text-ink-2">{earnUnsupportedReasonLabelV1(result.reason)}</p>
           </div>
         )}
         {result?.outcome === "compared" && (

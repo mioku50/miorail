@@ -59,7 +59,12 @@ export async function buildEarnCandidateV1(
     identifier: venue.identifier,
   };
   const contracts = { asset: PINNED_BASE_USDC_V1, target: venue.target, approvalSpender: venue.approvalSpender };
-  const provider = { id: obs.providerId, displayName: obs.providerDisplayName, kind: 'data_provider' as const, operator: 'miorail' };
+  const provider = {
+    id: obs.providerId,
+    displayName: obs.providerDisplayName,
+    kind: obs.providerKind ?? ('data_provider' as const),
+    operator: obs.providerOperator ?? 'miorail',
+  };
 
   const candidateBase = {
     schemaVersion: 'earn-candidate/v1' as const,
@@ -106,7 +111,11 @@ export async function buildEarnCandidateV1(
     chainId: input.intent.chainId,
     createdAt: nowIso,
     updatedAt: nowIso,
-    status: 'fresh' as const,
+    // A live reading can arrive already past its freshness window (a provider
+    // clock behind ours, or a last-known-good reading served while the provider
+    // is failing). The PERSISTED record must say so — a row stamped 'fresh'
+    // whose expiresAt has passed would be a stored lie.
+    status: (input.now.getTime() <= Date.parse(obs.expiresAt) ? 'fresh' : 'stale') as 'fresh' | 'stale',
     intentHash: input.intent.intentHash,
     candidateHash: candidate.candidateHash,
     evidenceHash: ZERO_HASH_V1,

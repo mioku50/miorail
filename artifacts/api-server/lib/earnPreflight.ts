@@ -19,7 +19,9 @@ import {
 // stable 503 with NO partial execution.
 // ---------------------------------------------------------------------------
 
-function baseRpcUrl(env: NodeJS.ProcessEnv): string {
+/** Server-env-only Base mainnet RPC URL (never request data). Shared with the
+ * T63A live earn data reader so both read the same configured endpoint. */
+export function baseRpcUrlV1(env: NodeJS.ProcessEnv): string {
   return env.BASE_MAINNET_RPC_URL || env.BASE_RPC_URL || 'https://mainnet.base.org';
 }
 
@@ -136,7 +138,7 @@ export async function resolveEarnContractPreflightV1(deps: EarnPreflightDepsV1 =
   const env = deps.env ?? process.env;
   const client =
     deps.createClient?.() ??
-    (createPublicClient({ chain: base, transport: http(baseRpcUrl(env)) }) as unknown as EarnRpcClientV1);
+    (createPublicClient({ chain: base, transport: http(baseRpcUrlV1(env)) }) as unknown as EarnRpcClientV1);
   const verification = await runEarnContractPreflightV1(client);
   cache = { at: now(), verification };
   return verification;

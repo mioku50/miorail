@@ -2,10 +2,13 @@ import { stableHashV1, type EarnProtocolV1 } from '@mioagent/route-domain';
 import type { EarnDataSourceObserveInput, EarnDataSourceV1, EarnObservationResultV1 } from './types.js';
 
 // ---------------------------------------------------------------------------
-// Curated earn data source (T61). Deterministic, offline, no network. This is
-// the DEFAULT source until the real Alchemy adapter is wired (the stated T61
-// follow-up); it exists so the whole earn pipeline is exercisable end-to-end
-// without any live provider. Tests inject their own fake sources instead.
+// Curated earn data source (T61). Deterministic, offline, no network.
+//
+// As of T63A this is NO LONGER the default: production compares LIVE Moonwell +
+// Morpho readings (see live-source.ts). It stays as the explicit operator
+// fallback behind MIORAIL_EARN_LIVE_DATA=false and as a fixture for pipeline
+// tests — the numbers below are a fixed table, NOT market data, and must never
+// be presented as a live quote.
 // APY is integer basis points; liquidity is atomic USDC (6 decimals).
 // ---------------------------------------------------------------------------
 
