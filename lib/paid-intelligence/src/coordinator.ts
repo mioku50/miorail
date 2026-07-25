@@ -21,7 +21,7 @@ import {
   chargeWithServiceFailedAfterPaymentV1,
 } from './charges.js';
 import { buildSimulationEvidenceRecordV1, buildUpdatedEvidenceSetV1 } from './evidence.js';
-import { SimulationProviderResponseV1Schema } from './schemas.js';
+import { SimulationProviderResponseV1Schema, type SimulationProviderResponseV1 } from './schemas.js';
 import type { SimulationProvider } from './provider.js';
 
 /** Structurally-compatible subset of @mioagent/x402-gateway's
@@ -85,6 +85,11 @@ export type RunPaidSimulationResultV1 =
       evidence: EvidenceRecordV1;
       evidenceSet: EvidenceSetV1;
       pathScore: PathScoreV1 | null;
+      /** T63B — the VALIDATED provider response the evidence's responseHash was
+       * computed over. Returned (not persisted) so the route can report gas,
+       * per-call results and proven asset changes without re-deriving them; the
+       * hash in the durable evidence is what binds them. */
+      response: SimulationProviderResponseV1;
     }
   | {
       outcome: 'invalid_response';
@@ -377,6 +382,7 @@ export async function runPaidSimulationV1(
       evidence: evidenceRecord,
       evidenceSet: nextSet,
       pathScore,
+      response,
     };
   } catch {
     const failedCharge = chargeWithEvidencePersistFailedV1(charge, nowIso);

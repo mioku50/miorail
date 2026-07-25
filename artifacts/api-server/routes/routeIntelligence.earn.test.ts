@@ -6,6 +6,15 @@ import { resolveEarnIntentV1 } from '@mioagent/intent-engine';
 import { compareEarnRoutesV1, createCuratedEarnDataSourceV1, PINNED_BASE_USDC_V1 } from '@mioagent/earn-engine';
 import { earnCompareRouteRuntime, earnExecutionGateRuntime, routeIntelligenceRouter } from './routeIntelligence.js';
 
+// Guard (T63A follow-up): the compare seam resolves LIVE Moonwell/Morpho
+// readings in production, so any test that restores it must supply an offline
+// data source. A detonator on the global fetch turns a regression here into a
+// loud failure instead of a silent network call. supertest drives the router
+// over a local http server, never through fetch.
+globalThis.fetch = (() => {
+  throw new Error('live network call attempted in a unit test');
+}) as unknown as typeof fetch;
+
 // A passing pinned-contract preflight fixture — the earn gate consults this, not
 // a live RPC, so the whole suite stays offline.
 const OK_PREFLIGHT = {
@@ -245,11 +254,14 @@ describe('POST /api/route-intelligence/earn/compare', () => {
   });
 
   test('end-to-end through the REAL offline seam produces a schema-valid Earn Route Card', async () => {
-    // Restore the production seam (real resolveEarnIntentV1 + compareEarnRoutesV1
-    // over the curated, offline data source) to prove the wiring — still no live
-    // provider or DB calls.
+    // Restore the real resolveEarnIntentV1 + compareEarnRoutesV1 to prove the
+    // wiring. The DATA SOURCE stays the curated offline one on purpose: since
+    // T63A the production seam resolves LIVE Moonwell/Morpho readings, and a
+    // unit test must never open a socket. The live source's own wiring is
+    // covered by lib/earnLiveData.test.ts with an injected fetch/RPC.
     earnCompareRouteRuntime.resolveIntent = originalRuntime.resolveIntent;
-    earnCompareRouteRuntime.compare = originalRuntime.compare;
+    earnCompareRouteRuntime.compare = (input) =>
+      compareEarnRoutesV1({ dataSource: createCuratedEarnDataSourceV1() }, input);
     const response = await request(routeApp()).post('/api/route-intelligence/earn/compare').send(BODY);
     assert.equal(response.status, 200);
     assert.equal(response.body.outcome, 'compared');

@@ -15,6 +15,7 @@
     "smoke:api": "tsx scripts/smoke_api.ts",
     "smoke:sepolia-action": "tsx scripts/seed_sepolia_action.ts && pnpm smoke:api",
     "smoke:approvals": "tsx scripts/smoke_approvals.ts",
+    "smoke:alchemy-sim": "tsx scripts/smoke_alchemy_simulation.ts",
     "db:probe": "tsx scripts/db_probe.ts",
     "env:doctor": "node scripts/env-doctor.mjs"
   },

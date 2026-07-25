@@ -15,6 +15,7 @@ import {
   buildUpdatedEvidenceSetV1,
   SimulationProviderResponseV1Schema,
   type SimulationProvider,
+  type SimulationProviderResponseV1,
 } from '@mioagent/paid-intelligence';
 import type {
   IntelligenceBudgetRecord,
@@ -80,6 +81,12 @@ export type RunBudgetSimulationResultV1 =
       evidenceSet: EvidenceSetV1;
       budget: IntelligenceBudgetRecord;
       reservation: IntelligenceBudgetReservationRecord;
+      /** T63B — the VALIDATED provider response bound by the evidence's
+       * responseHash, returned so the route can report gas / per-call results /
+       * proven asset changes without re-deriving anything. `null` on an
+       * idempotent replay: only the hash is durable, and reconstructing the
+       * body from it would be a fabrication. */
+      response: SimulationProviderResponseV1 | null;
     }
   | {
       outcome: 'reconciliation_required';
@@ -260,7 +267,7 @@ async function reconstructCachedResultV1(
     return { outcome: 'provider_failed', charge, reason: 'evidence_missing' };
   }
 
-  return { outcome: 'charged', charge, evidence, evidenceSet, budget, reservation };
+  return { outcome: 'charged', charge, evidence, evidenceSet, budget, reservation, response: null };
 }
 
 /**
@@ -515,5 +522,6 @@ export async function runBudgetSimulationV1(
     evidenceSet: nextSet,
     budget: settleResult.budget ?? budgetRecord,
     reservation: settleResult.reservation ?? reservation,
+    response,
   };
 }

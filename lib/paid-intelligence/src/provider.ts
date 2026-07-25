@@ -19,9 +19,29 @@ export interface SimulationProviderRequestV1 {
 // running `body` through that schema so that "malformed response" and
 // "provider unreachable" stay two distinct, honestly-reported failure modes
 // (invalid_response vs paid_service_failed).
+/** T63B extends this union additively. The three original codes are exactly
+ * what the T59 generic HTTP provider still emits; the `provider_*` codes are
+ * the normalized taxonomy an RPC-level adapter needs (chain/blueprint binding,
+ * JSON-RPC errors, schema failures, call-count mismatch). Every member is a
+ * TRANSPORT/plumbing failure — a simulated revert is a successful result, not
+ * a member of this union. */
+export type SimulationProviderErrorCodeV1 =
+  | 'timeout'
+  | 'network_error'
+  | 'http_error'
+  | 'provider_not_configured'
+  | 'provider_timeout'
+  | 'provider_rate_limited'
+  | 'provider_http_error'
+  | 'provider_rpc_error'
+  | 'provider_invalid_schema'
+  | 'provider_call_count_mismatch'
+  | 'provider_chain_mismatch'
+  | 'provider_blueprint_mismatch';
+
 export type SimulationProviderResultV1 =
   | { ok: true; body: unknown }
-  | { ok: false; errorCode: 'timeout' | 'network_error' | 'http_error'; detail: string };
+  | { ok: false; errorCode: SimulationProviderErrorCodeV1; detail: string };
 
 export interface SimulationProvider {
   readonly providerId: string;
@@ -96,26 +116,60 @@ export function createHttpSimulationProvider(
 
 export interface SimulationProviderConfigV1 {
   configured: boolean;
+  /** Present ONLY for the generic HTTP provider. An RPC adapter builds its own
+   * endpoint from a server-side secret, which must never travel in config. */
   url?: string;
   providerId: string;
   allowlist: string[];
-  missingReason?: 'not_configured' | 'invalid_url' | 'host_not_allowlisted';
+  /** T63B: which adapter the resolved providerId selects. */
+  kind?: SimulationProviderKindV1;
+  missingReason?:
+    | 'not_configured'
+    | 'invalid_url'
+    | 'host_not_allowlisted'
+    | 'unknown_provider'
+    | 'missing_api_key';
 }
 
-const DEFAULT_SIMULATION_PROVIDER_ID = 'generic-sim-v1';
+export type SimulationProviderKindV1 = 'generic_http' | 'alchemy_rpc';
+
+export const GENERIC_SIMULATION_PROVIDER_ID_V1 = 'generic-sim-v1';
+/** Duplicated from providers/alchemy.ts to keep this module dependency-free in
+ * that direction (the registry imports both). Covered by a test that asserts
+ * the two constants stay identical. */
+const ALCHEMY_PROVIDER_ID = 'alchemy-eth-simulate-v1';
+
+const DEFAULT_SIMULATION_PROVIDER_ID = GENERIC_SIMULATION_PROVIDER_ID_V1;
 
 /**
  * Resolves the simulation provider strictly from env — no per-request
- * override, no discovery. `url`'s host MUST appear in the (comma-separated)
- * allowlist. Empty/missing allowlist or URL means the feature is NOT
- * configured (fail closed: the caller must respond 503
- * simulation_provider_unavailable, never silently fall back to an
- * unlisted host).
+ * override, no discovery, no fallback between providers. The configured
+ * MIORAIL_SIMULATION_PROVIDER_ID selects exactly one adapter:
+ *
+ *   generic-sim-v1          → URL + host allowlist (T59, unchanged)
+ *   alchemy-eth-simulate-v1 → ALCHEMY_BASE_API_KEY, endpoint built server-side
+ *
+ * Anything else is an unknown provider and fails CLOSED — the caller responds
+ * 503 simulation_provider_unavailable rather than quietly using a default.
  */
 export function resolveSimulationProviderConfigV1(
   env: NodeJS.ProcessEnv = process.env,
 ): SimulationProviderConfigV1 {
   const providerId = env.MIORAIL_SIMULATION_PROVIDER_ID?.trim() || DEFAULT_SIMULATION_PROVIDER_ID;
+
+  if (providerId === ALCHEMY_PROVIDER_ID) {
+    const apiKey = env.ALCHEMY_BASE_API_KEY?.trim();
+    if (!apiKey) {
+      return { configured: false, providerId, allowlist: [], kind: 'alchemy_rpc', missingReason: 'missing_api_key' };
+    }
+    // No url: the endpoint embeds the key and is built inside the adapter.
+    return { configured: true, providerId, allowlist: [], kind: 'alchemy_rpc' };
+  }
+
+  if (providerId !== GENERIC_SIMULATION_PROVIDER_ID_V1) {
+    return { configured: false, providerId, allowlist: [], missingReason: 'unknown_provider' };
+  }
+
   const rawUrl = env.MIORAIL_SIMULATION_PROVIDER_URL?.trim();
   const allowlist = (env.MIORAIL_SIMULATION_PROVIDER_ALLOWLIST ?? '')
     .split(',')
@@ -123,27 +177,27 @@ export function resolveSimulationProviderConfigV1(
     .filter((entry) => entry.length > 0);
 
   if (!rawUrl || allowlist.length === 0) {
-    return { configured: false, providerId, allowlist, missingReason: 'not_configured' };
+    return { configured: false, providerId, allowlist, kind: 'generic_http', missingReason: 'not_configured' };
   }
 
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
   } catch {
-    return { configured: false, providerId, allowlist, missingReason: 'invalid_url' };
+    return { configured: false, providerId, allowlist, kind: 'generic_http', missingReason: 'invalid_url' };
   }
 
   // Rework N3: https only — signed EIP-712 payments must never fund a
   // simulation whose request/response ride plaintext HTTP (fail closed,
   // not silently downgraded).
   if (parsed.protocol !== 'https:') {
-    return { configured: false, providerId, allowlist, missingReason: 'invalid_url' };
+    return { configured: false, providerId, allowlist, kind: 'generic_http', missingReason: 'invalid_url' };
   }
 
   const host = parsed.host.toLowerCase();
   if (!allowlist.includes(host)) {
-    return { configured: false, providerId, allowlist, missingReason: 'host_not_allowlisted' };
+    return { configured: false, providerId, allowlist, kind: 'generic_http', missingReason: 'host_not_allowlisted' };
   }
 
-  return { configured: true, url: rawUrl, providerId, allowlist };
+  return { configured: true, url: rawUrl, providerId, allowlist, kind: 'generic_http' };
 }

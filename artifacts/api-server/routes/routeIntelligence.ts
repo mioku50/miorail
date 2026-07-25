@@ -69,7 +69,8 @@ import {
 import {
   PaidSimulationBindingError,
   buildPendingSimulationChargeV1,
-  createHttpSimulationProvider,
+  createSimulationProviderFromConfigV1,
+  type SimulationProviderConfigV1,
   resolvePaidSimulationIdempotencyV1,
   runPaidSimulationV1,
   type PaidSimulationSettlementV1,
@@ -1104,7 +1105,7 @@ export const simulateRouteRuntime = {
   // Overridable so tests inject a stub SimulationProvider instead of hitting
   // a real network URL — mirrors decision 2's "facilitator и provider —
   // ТОЛЬКО стабы" test requirement.
-  createProvider: (config: { url: string; providerId: string }) => createHttpSimulationProvider(config),
+  createProvider: (config: SimulationProviderConfigV1) => createSimulationProviderFromConfigV1(config),
   // Overridable so tests can bypass the REAL Safety Kernel / contract-security
   // re-run (already unit-tested in @mioagent/transaction-composer) and
   // return a canned review — the exact same seam pattern every OTHER route
@@ -1329,13 +1330,17 @@ routeIntelligenceRouter.post(
 
       if (decision.kind === 'retry_service') {
         const retryProviderConfig = simulateRouteRuntime.providerConfig(process.env);
+        // T63B: the configured adapter (generic HTTP or Alchemy RPC) — never a
+        // fallback to another provider once money has moved.
+        const retryProvider = simulateRouteRuntime.createProvider(retryProviderConfig);
+        if (!retryProvider) {
+          res.status(503).json({ error: 'simulation_provider_unavailable', code: 'simulation_provider_unavailable' });
+          return;
+        }
         const result = await runPaidSimulationV1(
           {
             repository,
-            provider: simulateRouteRuntime.createProvider({
-              url: retryProviderConfig.url!,
-              providerId: retryProviderConfig.providerId,
-            }),
+            provider: retryProvider,
             now: simulateRouteRuntime.now,
             price: (res.locals as SimulateLocals).pricing.price,
             chargeProvider: (res.locals as SimulateLocals).chargeProvider,
@@ -1399,13 +1404,15 @@ routeIntelligenceRouter.post(
       const repository = simulateRouteRuntime.repository();
       const settlement = simulateSettlementStorage.getStore()?.settlement ?? null;
       const providerConfig = simulateRouteRuntime.providerConfig(process.env);
+      const provider = simulateRouteRuntime.createProvider(providerConfig);
+      if (!provider) {
+        res.status(503).json({ error: 'simulation_provider_unavailable', code: 'simulation_provider_unavailable' });
+        return;
+      }
       const result = await runPaidSimulationV1(
         {
           repository,
-          provider: simulateRouteRuntime.createProvider({
-            url: providerConfig.url!,
-            providerId: providerConfig.providerId,
-          }),
+          provider,
           now: simulateRouteRuntime.now,
           price: (res.locals as SimulateLocals).pricing.price,
           chargeProvider: (res.locals as SimulateLocals).chargeProvider,
@@ -1485,13 +1492,13 @@ async function respondWithPaidSimulationResult(
         evidenceSetHash: result.evidenceSet.evidenceSetHash,
         provider: result.evidence.provider,
         x402TxHash,
-        // Ephemeral provider-response details (gasUsed/stateChanges) are not
-        // part of EvidenceRecordV1 — only the audit-critical
-        // blockNumber/requestHash/responseHash/evidenceHash are durably
-        // persisted. A fresh outcome always has them; see
+        // T63B: gasUsed and the proven state changes come from the VALIDATED
+        // provider response the evidence's responseHash was computed over.
+        // They stay ephemeral (EvidenceRecordV1 persists only the audit-critical
+        // blockNumber/requestHash/responseHash/evidenceHash) — see
         // respondWithCachedSimulation for the documented replay limitation.
-        gasUsed: null,
-        stateChanges: [],
+        gasUsed: result.response.gasUsed,
+        stateChanges: result.response.stateChanges,
       }),
       charge: chargeSummaryFromChargeV1(result.charge),
       review: reviewResult.review,
@@ -1663,7 +1670,7 @@ export const budgetRouteRuntime = {
   spendPermissionRepository: (): SpendPermissionSourceV1 =>
     createDatabaseSpendPermissionRepository(client) as unknown as SpendPermissionSourceV1,
   charger: (): SpendPermissionCharger => createIntelligenceBudgetCharger(),
-  createProvider: (config: { url: string; providerId: string }) => createHttpSimulationProvider(config),
+  createProvider: (config: SimulationProviderConfigV1) => createSimulationProviderFromConfigV1(config),
   // Reuses the EXACT same honest review projection the T59 simulate route
   // builds (fresh Safety Kernel + contract-security re-run); tests override it.
   buildReview: (
@@ -2034,6 +2041,13 @@ routeIntelligenceRouter.post(
         return;
       }
 
+      // T63B: the configured adapter, resolved from server config only.
+      const budgetProvider = budgetRouteRuntime.createProvider(providerConfig);
+      if (!budgetProvider) {
+        res.status(503).json({ error: 'simulation_provider_unavailable', code: 'simulation_provider_unavailable' });
+        return;
+      }
+
       const repository = budgetRouteRuntime.repository();
       const walletAddress = user.address as `0x${string}`;
       const blueprintId = String(req.params.blueprintId);
@@ -2042,7 +2056,7 @@ routeIntelligenceRouter.post(
         result = await runBudgetSimulationV1(
           {
             repository,
-            provider: budgetRouteRuntime.createProvider({ url: providerConfig.url!, providerId: providerConfig.providerId }),
+            provider: budgetProvider,
             charger: budgetRouteRuntime.charger(),
             spendPermissionRepository: budgetRouteRuntime.spendPermissionRepository(),
             now: budgetRouteRuntime.now,
@@ -2151,8 +2165,10 @@ routeIntelligenceRouter.post(
             // surfaced in the coordinator result (only a hash of the proof is
             // stored) — honestly null here, like T59's cached-replay case.
             x402TxHash: null,
-            gasUsed: null,
-            stateChanges: [],
+            // T63B: from the validated provider response; null/[] only on an
+            // idempotent replay, where the body was never persisted.
+            gasUsed: result.response?.gasUsed ?? null,
+            stateChanges: result.response?.stateChanges ?? [],
           }),
           charge: budgetChargeSummaryV1(result.charge),
           scoreNote: { transactionSafety: 'not_scored', missingEvidence: result.evidenceSet.missingEvidence },

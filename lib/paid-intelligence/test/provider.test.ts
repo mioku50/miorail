@@ -50,11 +50,26 @@ describe('resolveSimulationProviderConfigV1', () => {
     const config = resolveSimulationProviderConfigV1({
       MIORAIL_SIMULATION_PROVIDER_URL: 'https://sim.example.test/simulate',
       MIORAIL_SIMULATION_PROVIDER_ALLOWLIST: 'sim.example.test',
-      MIORAIL_SIMULATION_PROVIDER_ID: 'acme-sim',
+      MIORAIL_SIMULATION_PROVIDER_ID: 'generic-sim-v1',
     });
     assert.equal(config.configured, true);
     assert.equal(config.url, 'https://sim.example.test/simulate');
-    assert.equal(config.providerId, 'acme-sim');
+    assert.equal(config.providerId, 'generic-sim-v1');
+    assert.equal(config.kind, 'generic_http');
+  });
+
+  // T63B §7 — the provider set is CLOSED. Before T63B an arbitrary id rode the
+  // generic URL config; now an id nobody implements resolves to nothing, so the
+  // route 503s before an x402 challenge is ever issued.
+  it('fails closed on an unknown provider id even with a valid allowlisted URL', () => {
+    const config = resolveSimulationProviderConfigV1({
+      MIORAIL_SIMULATION_PROVIDER_URL: 'https://sim.example.test/simulate',
+      MIORAIL_SIMULATION_PROVIDER_ALLOWLIST: 'sim.example.test',
+      MIORAIL_SIMULATION_PROVIDER_ID: 'acme-sim',
+    });
+    assert.equal(config.configured, false);
+    assert.equal(config.missingReason, 'unknown_provider');
+    assert.equal(config.url, undefined);
   });
 
   it('defaults providerId to generic-sim-v1', () => {

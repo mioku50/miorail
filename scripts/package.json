@@ -5,10 +5,11 @@
   "main": "index.ts",
   "dependencies": {
     "@mioagent/db": "workspace:*",
+    "@mioagent/paid-intelligence": "workspace:*",
+    "@mioagent/route-domain": "workspace:*",
     "drizzle-orm": "^0.36.4"
   },
   "devDependencies": {
     "typescript": "^5.6.3"
   }
 }
-
