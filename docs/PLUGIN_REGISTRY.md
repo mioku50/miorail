@@ -105,6 +105,27 @@ Two amounts are kept side by side and never merged: the catalogue's
 `Estimated minimum` and the invoice's `Exact payment required`. The exact
 figure comes from a created invoice and from nowhere else.
 
+## Bitrefill invoice contract (T64.2.1, verified live)
+
+Verified against real created invoices on 2026-07-25. Three facts a controlled
+smoke had to establish, because the documentation does not state them:
+
+| Field | Reality |
+|---|---|
+| `payment.price` | The exact charge, ALREADY in USDC base units (`5640000` = 5.64 USDC). Not `payment.amount`, and not a decimal. A fractional value is refused rather than rescaled. |
+| `payment.address` | A deposit address issued **per invoice**. Two invoices for the same product returned two different addresses, neither equal to the x402 constant `0x480C…846A`. |
+| order line | A FIXED denomination is ordered by `package_id` (`steam-usa<&>5`); `value` is the field for range-priced products. |
+
+Consequence for the recipient guarantee: the x402 rail has one pinned payTo,
+the Personal API does not. `CommerceInvoiceV1.recipientPolicy` records which
+applied — `invoice_scoped` is a genuinely weaker check (form and rail, not a
+constant) and the review panel says so. This is the main reason
+`MIORAIL_COMMERCE_EXECUTION_V1` stays off.
+
+A read failure AFTER a successful `POST /v2/invoices` reports
+`invoice_creation_unknown` with the invoice id, never "nothing was created" —
+the invoice exists, and a retry would create a second one.
+
 ## Bitrefill promotion gate (`scored` → `proven`)
 
 Still outstanding, in order:
@@ -112,9 +133,11 @@ Still outstanding, in order:
 1. ~~durable, tenant-scoped persistence for the order and its proof~~ —
    delivered by T64.2 (migration 0015). A checkout survives a restart, and one
    idempotency key can only ever hold one invoice.
-2. a controlled live payment: an EIP-3009 authorization signed by the user's
-   wallet, settled against a real invoice. T64.2 creates invoices but has NO
-   payment path at all — no signing, no USDC transfer, no wallet call.
+2. a controlled live payment: an exact USDC transfer to the invoice's own
+   deposit address, authorized by the user's wallet. T64.2/T64.2.1 create
+   invoices but have NO payment path at all — no signing, no USDC transfer, no
+   wallet call. The per-invoice recipient (above) must be re-verified against a
+   settled payment before this is enabled.
 3. reconciliation of a `delivered` proof end to end from a real paid order.
 4. an operator runbook for `order_unconfirmed` — the state where money moved
    and no order exists.

@@ -194,6 +194,10 @@ export interface CommerceInvoiceLikeV1 {
   refundAddress: string;
   paymentStatus: string;
   expiresAt: string;
+  /** `pinned` — the recipient equals the constant Miorail pins for this
+   * provider. `invoice_scoped` — the provider issued a per-invoice deposit
+   * address, a weaker guarantee the panel states out loud. */
+  recipientPolicy?: 'pinned' | 'invoice_scoped';
 }
 
 export interface CommerceAmountReviewLikeV1 {
@@ -273,6 +277,12 @@ export function CommerceInvoiceReviewPanel(props: {
           <span className="k">Payment recipient</span>
           <span className="v mono">{invoice.payTo}</span>
         </div>
+        {invoice.recipientPolicy === 'invoice_scoped' && (
+          <p className="note">
+            This address belongs to this invoice only. It is not a fixed Miorail address, so it is checked for form
+            and network rather than against a pinned constant.
+          </p>
+        )}
         <div className="kv">
           <span className="k">Refund wallet</span>
           <span className="v mono">{invoice.refundAddress}</span>

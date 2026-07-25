@@ -122,6 +122,15 @@ export const CommerceProductRefV1Schema = z
     country: CommerceCountryCodeV1Schema,
     currency: CommerceCurrencyCodeV1Schema,
     packageValue: z.string().min(1).max(80),
+    /**
+     * T64.2.1: the provider's fixed-denomination package id (`steam-usa<&>5`).
+     * A FIXED denomination must be ordered by this id — `packageValue` is the
+     * field for range-priced products, and sending it for a fixed one is not
+     * the documented contract. Additive and optional so a pre-T64.2.1
+     * candidate still parses; when it is absent the order falls back to the
+     * value, which is what a range product needs anyway.
+     */
+    packageId: z.string().min(1).max(300).nullable().default(null),
     /** Top-ups need a phone/account identifier; gift cards must not ask for one. */
     recipientRequired: z.boolean(),
   })
@@ -823,6 +832,17 @@ const CommerceInvoiceV1ObjectSchema = z
     providerFeeAtomic: AtomicAmountV1Schema.nullable(),
     /** Where a failed crypto payment returns — the authenticated wallet. */
     refundAddress: AddressV1Schema,
+    /**
+     * T64.2.1: how `payTo` was established.
+     *
+     * `pinned` — it equals the constant Miorail pins for this provider, the
+     *   strongest guarantee: a redirected payment is impossible.
+     * `invoice_scoped` — the provider issued a per-invoice deposit address, so
+     *   it can only be checked for FORM (a valid address on the pinned rail),
+     *   not against a constant. That is a genuinely weaker guarantee and it is
+     *   recorded here so no surface can present it as a pinned one.
+     */
+    recipientPolicy: z.enum(['pinned', 'invoice_scoped']).default('pinned'),
     paymentStatus: CommercePaymentStateV1Schema,
     orderStatus: CommerceProviderStatusV1Schema,
     observedAt: TimestampV1Schema,

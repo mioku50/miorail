@@ -117,3 +117,38 @@ export function validateCommercePaymentTermsV1(input: {
   if (host !== BITREFILL_HOST_V1) return { ok: false, reason: 'pinned_host_mismatch' };
   return validateCommerceSpendV1({ totalAtomic: input.amountAtomic, maxSpendAtomic: input.maxSpendAtomic });
 }
+
+/**
+ * T64.2.1 — terms for an INVOICE-SCOPED recipient.
+ *
+ * The Personal API issues a deposit address per invoice, so `payTo` cannot be
+ * compared against a constant. What is still enforced: the pinned chain, the
+ * pinned settlement asset, a well-formed recipient that is NOT the zero
+ * address, and the amount ceilings. The recipient is deliberately NOT checked
+ * against `BITREFILL_PAY_TO_V1` — substituting that constant would send the
+ * payment to an address the invoice never named.
+ *
+ * This is a genuinely weaker guarantee than the pinned one. It is recorded on
+ * the invoice (`recipientPolicy: 'invoice_scoped'`) so no surface can present
+ * it as pinned, and commerce execution stays gated off until the contract has
+ * been verified against a real settled payment.
+ */
+export function validateCommerceInvoiceScopedTermsV1(input: {
+  network: string;
+  asset: string;
+  payTo: string;
+  amountAtomic: string;
+  maxSpendAtomic: string;
+}): CommerceValidationResultV1 {
+  if (input.network !== `eip155:${BASE_MAINNET_CHAIN_ID_V1}`) {
+    return { ok: false, reason: 'pinned_chain_mismatch' };
+  }
+  if (normalizeAddressV1(input.asset) !== COMMERCE_USDC_ADDRESS_V1) {
+    return { ok: false, reason: 'pinned_asset_mismatch' };
+  }
+  const payTo = normalizeAddressV1(input.payTo);
+  if (payTo === null || payTo === `0x${'0'.repeat(40)}`) {
+    return { ok: false, reason: 'pinned_recipient_mismatch' };
+  }
+  return validateCommerceSpendV1({ totalAtomic: input.amountAtomic, maxSpendAtomic: input.maxSpendAtomic });
+}

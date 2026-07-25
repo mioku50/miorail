@@ -45,6 +45,10 @@ export const CommerceProviderInvoiceV1Schema = z
     orderStatus: z.string().min(1).max(60),
     productId: z.string().min(1).max(200),
     packageValue: z.string().min(1).max(80),
+    /** T64.2.1: `pinned` (the x402 constant) or `invoice_scoped` (a per-invoice
+     * deposit address). Defaults to the stronger claim so an omission cannot
+     * silently downgrade the guarantee. */
+    recipientPolicy: z.enum(['pinned', 'invoice_scoped']).optional(),
   })
   .strict();
 export type CommerceProviderInvoiceV1 = z.infer<typeof CommerceProviderInvoiceV1Schema>;
@@ -141,8 +145,19 @@ export function validateCommerceInvoiceV1(
   }
   const asset = normalizeAddressV1(provider.asset);
   if (asset !== COMMERCE_USDC_ADDRESS_V1) return { ok: false, reason: 'pinned_asset_mismatch' };
+
+  // T64.2.1: the recipient guarantee depends on which rail issued the invoice.
+  // The x402 rail has one constant payTo and it is pinned. The Personal API
+  // issues a deposit address PER INVOICE, so there is no constant to compare
+  // it to — it is checked for form, and the weaker guarantee is recorded.
+  const recipientPolicy = provider.recipientPolicy ?? 'pinned';
   const payTo = normalizeAddressV1(provider.payTo);
-  if (payTo !== BITREFILL_PAY_TO_V1) return { ok: false, reason: 'pinned_recipient_mismatch' };
+  if (payTo === null || payTo === `0x${'0'.repeat(40)}`) {
+    return { ok: false, reason: 'pinned_recipient_mismatch' };
+  }
+  if (recipientPolicy === 'pinned' && payTo !== BITREFILL_PAY_TO_V1) {
+    return { ok: false, reason: 'pinned_recipient_mismatch' };
+  }
 
   const amount = BigInt(provider.amountAtomic);
   if (amount <= BigInt(0)) return { ok: false, reason: 'price_out_of_range' };
@@ -180,6 +195,7 @@ export function validateCommerceInvoiceV1(
     amountAtomic: provider.amountAtomic,
     providerFeeAtomic: provider.providerFeeAtomic ?? null,
     refundAddress,
+    recipientPolicy,
     paymentStatus: mapInvoicePaymentStateV1(provider.paymentStatus),
     orderStatus: mapProviderStatusV1(provider.orderStatus),
     observedAt: input.now.toISOString(),

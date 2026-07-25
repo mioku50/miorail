@@ -260,7 +260,14 @@ test('a Personal API invoice pins payment_method to usdc_base', async () => {
           id: 'inv-1',
           status: 'unpaid',
           expires_time: new Date(NOW.getTime() + 10 * 60_000).toISOString(),
-          payment: { amount: '25', currency: 'USDC', method: 'usdc_base', status: 'unpaid' },
+          // The real shape: `price` in USDC base units and a per-invoice address.
+          payment: {
+            method: 'usdc_base',
+            currency: 'USDC',
+            price: 25000000,
+            status: 'unpaid',
+            address: '0xE9Ee32de59335e4B64dC2C224D7a79fcB43F9fe8',
+          },
           orders: [{ id: 'ord-1', status: 'pending' }],
         },
       }),
@@ -280,8 +287,12 @@ test('a Personal API invoice pins payment_method to usdc_base', async () => {
   assert.ok(result.ok);
   assert.equal(result.order.invoiceId, 'inv-1');
   assert.equal(result.order.totalAtomic, '25000000');
-  // The pinned settlement pair, not whatever the invoice named.
-  assert.equal(result.order.payTo, '0x480cd46e6fade651a0437deadda53d5c8e7d846a');
+  // T64.2.1: the Personal API issues a deposit address PER INVOICE, so the
+  // recipient comes from the invoice — never the x402 constant.
+  assert.equal(result.order.payTo, '0xe9ee32de59335e4b64dc2c224d7a79fcb43f9fe8');
+  assert.notEqual(result.order.payTo, '0x480cd46e6fade651a0437deadda53d5c8e7d846a');
+  assert.equal(result.order.recipientPolicy, 'invoice_scoped');
+  // The ASSET stays pinned; method and currency were both checked.
   assert.equal(result.order.asset, '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913');
 
   const body = bodies[0] as { payment_method: string; auto_pay: boolean; refund_address: string; products: unknown[] };
@@ -309,7 +320,18 @@ test('a Personal API invoice above the ceiling is refused', async () => {
     new Response(
       JSON.stringify({
         meta: {},
-        data: { id: 'inv-1', status: 'unpaid', payment: { amount: '90' }, orders: [] },
+        data: {
+          id: 'inv-1',
+          status: 'unpaid',
+          payment: {
+            method: 'usdc_base',
+            currency: 'USDC',
+            price: 90000000,
+            status: 'unpaid',
+            address: '0xE9Ee32de59335e4B64dC2C224D7a79fcB43F9fe8',
+          },
+          orders: [],
+        },
       }),
       { status: 200, headers: { 'content-type': 'application/json' } },
     )) as typeof fetch;
@@ -322,7 +344,10 @@ test('a Personal API invoice above the ceiling is refused', async () => {
     refundAddress: '0x1111111111111111111111111111111111111111',
     now: NOW,
   });
-  assert.deepEqual(result, { ok: false, reason: 'spend_ceiling_exceeded' });
+  // An over-ceiling invoice still EXISTS at the storefront, so the failure says
+  // so instead of claiming nothing was created.
+  assert.equal(result.ok, false);
+  assert.equal((result as { reason: string }).reason, 'invoice_creation_unknown');
 });
 
 test('delivery is derived from the order lines, and stays unknown when there are none', () => {

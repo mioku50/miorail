@@ -20,7 +20,7 @@ import {
   COMMERCE_USDC_ASSET_V1,
 } from './pinned-config.js';
 import { atomicToDecimalV1, normalizeAddressV1 } from './normalization.js';
-import { validateCommercePaymentTermsV1 } from './validation.js';
+import { validateCommerceInvoiceScopedTermsV1, validateCommercePaymentTermsV1 } from './validation.js';
 import type {
   CommerceCreatedOrderV1,
   CommerceFailureReasonV1,
@@ -79,15 +79,29 @@ export type CommerceOrderResultV1 =
 export function buildCommerceOrderV1(input: BuildCommerceOrderInputV1): CommerceOrderResultV1 {
   const { intent, candidate, created, now } = input;
 
-  const terms = validateCommercePaymentTermsV1({
-    network: `eip155:${intent.chainId}`,
-    asset: created.asset,
-    payTo: created.payTo,
-    amountAtomic: created.totalAtomic,
-    maxSpendAtomic: intent.maxSpendAtomic,
-    // The created checkout is settled on the provider's own pay route.
-    resource: 'https://api.bitrefill.com/x402/invoice/pay',
-  });
+  // T64.2.1: the recipient guarantee differs by surface. The x402 rail has ONE
+  // constant payTo and it is pinned. The Personal API issues a deposit address
+  // per invoice, so there is no constant to compare against — it is checked for
+  // form and rail instead, and the weaker guarantee is recorded on the order.
+  const recipientPolicy = created.recipientPolicy ?? 'pinned';
+  const terms =
+    recipientPolicy === 'pinned'
+      ? validateCommercePaymentTermsV1({
+          network: `eip155:${intent.chainId}`,
+          asset: created.asset,
+          payTo: created.payTo,
+          amountAtomic: created.totalAtomic,
+          maxSpendAtomic: intent.maxSpendAtomic,
+          // The created checkout is settled on the provider's own pay route.
+          resource: 'https://api.bitrefill.com/x402/invoice/pay',
+        })
+      : validateCommerceInvoiceScopedTermsV1({
+          network: `eip155:${intent.chainId}`,
+          asset: created.asset,
+          payTo: created.payTo,
+          amountAtomic: created.totalAtomic,
+          maxSpendAtomic: intent.maxSpendAtomic,
+        });
   if (!terms.ok) return { ok: false, reason: terms.reason };
 
   const expiresAt = new Date(

@@ -2,7 +2,6 @@ import { z } from 'zod';
 import { partnerFetch } from '@mioagent/security/httpAllowlist';
 import type { CommerceDeliveryStateV1 } from '@mioagent/route-domain';
 import {
-  BITREFILL_PAY_TO_V1,
   BITREFILL_PROVIDER_V1,
   BITREFILL_V2_INVOICES_PATH_V1,
   COMMERCE_INVOICE_TTL_MS_V1,
@@ -12,11 +11,7 @@ import {
   resolveCommerceTimeoutMsV1,
 } from './pinned-config.js';
 import { commerceAuthHeadersV1, resolveCommerceCredentialV1, type CommerceCredentialV1 } from './auth.js';
-import {
-  classifyCommerceHttpStatusV1,
-  classifyCommerceTransportErrorV1,
-  decimalToAtomicV1,
-} from './normalization.js';
+import { classifyCommerceHttpStatusV1, classifyCommerceTransportErrorV1 } from './normalization.js';
 import { isSettledInvoiceStatusV1, mapDeliveryStateV1 } from './bitrefill-gateway.js';
 import type {
   CommerceCreateOrderInputV1,
@@ -39,10 +34,23 @@ import type {
 // only invoice ids, order ids, states and counts.
 // ---------------------------------------------------------------------------
 
+/**
+ * The crypto payment block of a `/v2` invoice, verified against a real one:
+ *
+ *   { method: "usdc_base", currency: "USDC", price: 5640000,
+ *     status: "unpaid", address: "0xE9Ee…9fe8", commission: 0 }
+ *
+ * Two things that cost a bug to learn:
+ *   * the exact charge is `price`, and it is already in USDC BASE UNITS
+ *     (5640000 = 5.64 USDC). It is not `amount`, and it is not a decimal.
+ *   * `address` is issued PER INVOICE. It is not the storefront's static x402
+ *     payTo, and substituting that constant would send the payment somewhere
+ *     the invoice never named.
+ */
 const V2InvoicePaymentSchema = z
   .object({
     address: z.string().min(1).max(200).optional(),
-    amount: z.union([z.string(), z.number()]).optional(),
+    price: z.union([z.string(), z.number()]).optional(),
     currency: z.string().min(1).max(20).optional(),
     method: z.string().min(1).max(40).optional(),
     status: z.string().min(1).max(40).optional(),
@@ -77,12 +85,32 @@ const V2InvoiceEnvelopeSchema = z
   })
   .passthrough();
 
-function amountToAtomicV1(value: unknown): string | null {
-  if (typeof value === 'string') return decimalToAtomicV1(value.trim());
-  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
-    return decimalToAtomicV1(String(value));
+/**
+ * `payment.price` → base units.
+ *
+ * The value is ALREADY in base units, so it must be an integer. A fractional
+ * value would mean the contract changed underneath us, and is refused rather
+ * than guessed at — misreading this number by a factor of a million is exactly
+ * the kind of error that must fail closed.
+ */
+export function invoicePriceToAtomicV1(value: unknown): string | null {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value < 0 || !Number.isInteger(value)) return null;
+    return String(value);
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return /^(0|[1-9][0-9]*)$/.test(trimmed) ? trimmed : null;
   }
   return null;
+}
+
+/** The invoice's own deposit address. Checked for form only — it is issued per
+ * invoice, so there is no constant to pin it against. */
+export function invoiceAddressV1(value: unknown): `0x${string}` | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return /^0x[0-9a-fA-F]{40}$/.test(trimmed) ? (trimmed.toLowerCase() as `0x${string}`) : null;
 }
 
 function transactionHashV1(value: unknown): `0x${string}` | null {
@@ -182,12 +210,12 @@ export function createBitrefillPersonalOrderGatewayV1(
       // refused here rather than opened blind.
       if (!input.refundAddress) return { ok: false, reason: 'provider_not_configured' };
 
-      const line: Record<string, unknown> = {
-        product_id: input.productId,
-        // The denomination is sent VERBATIM as the provider stated it.
-        value: input.packageValue,
-        quantity: 1,
-      };
+      // A FIXED denomination is ordered by its package id; `value` is the
+      // field for range-priced products. Sending the wrong one is not the
+      // documented contract, so the id wins whenever the catalogue gave us one.
+      const line: Record<string, unknown> = { product_id: input.productId, quantity: 1 };
+      if (input.packageId) line.package_id = input.packageId;
+      else line.value = input.packageValue;
       if (input.recipientInput !== null) line.phone_number = input.recipientInput;
 
       const result = await call(BITREFILL_V2_INVOICES_PATH_V1, {
@@ -220,10 +248,33 @@ export function createBitrefillPersonalOrderGatewayV1(
       }
       const invoice = parsed.data.data;
 
-      const totalAtomic = amountToAtomicV1(invoice.payment?.amount);
-      if (totalAtomic === null) return { ok: false, reason: 'price_unavailable' };
+      // ---- Past this point an invoice EXISTS at the provider. --------------
+      // The POST returned 200 and the body carries an invoice id, so every
+      // failure below is a READ failure on something already created. Saying
+      // "nothing was created" here would be false, so each one reports
+      // `invoice_creation_unknown` with the id we do know.
+      const created = (detail: string): CommerceCreateOrderResultV1 => ({
+        ok: false,
+        reason: 'invoice_creation_unknown',
+        detail: `${detail} Invoice ${invoice.id} exists at the storefront and will expire unpaid.`,
+      });
+
+      const payment = invoice.payment;
+      if (!payment) return created('The invoice carries no payment block.');
+      if ((payment.method ?? '').trim().toLowerCase() !== COMMERCE_PAYMENT_METHOD_V1) {
+        return created(`The invoice settles on ${payment.method ?? 'an unnamed rail'}, not ${COMMERCE_PAYMENT_METHOD_V1}.`);
+      }
+      if ((payment.currency ?? '').trim().toUpperCase() !== 'USDC') {
+        return created(`The invoice is denominated in ${payment.currency ?? 'an unnamed currency'}, not USDC.`);
+      }
+      const totalAtomic = invoicePriceToAtomicV1(payment.price);
+      if (totalAtomic === null) return created('The invoice price could not be read as USDC base units.');
+      const address = invoiceAddressV1(payment.address);
+      if (address === null) return created('The invoice named no usable payment address.');
       if (BigInt(totalAtomic) > BigInt(input.maxSpendAtomic)) {
-        return { ok: false, reason: 'spend_ceiling_exceeded' };
+        return created(
+          `The invoice requires ${totalAtomic} base units, above the ${input.maxSpendAtomic} you authorized.`,
+        );
       }
 
       const expires = invoice.expires_time ? Date.parse(invoice.expires_time) : Number.NaN;
@@ -236,11 +287,15 @@ export function createBitrefillPersonalOrderGatewayV1(
         order: {
           invoiceId: invoice.id,
           totalAtomic,
-          // The settlement pair stays PINNED. The invoice's own payment
-          // address is deliberately NOT trusted as the recipient: it is
-          // re-validated against the pinned payTo by buildCommerceOrderV1,
-          // which is what refuses a redirected payment.
-          payTo: BITREFILL_PAY_TO_V1,
+          // T64.2.1: the recipient comes from THIS invoice. Verified against a
+          // real one — the Personal API issues a deposit address per invoice
+          // (`payment.address`), and it is NOT the storefront's static x402
+          // payTo. Substituting that constant would send USDC to an address
+          // the invoice never named, and the payment would not settle it.
+          // The ASSET stays pinned: `method: usdc_base` and
+          // `currency: USDC` were both checked above.
+          payTo: address,
+          recipientPolicy: 'invoice_scoped' as const,
           asset: COMMERCE_USDC_ADDRESS_V1,
           expiresAt: expiresAt.toISOString(),
           items: [

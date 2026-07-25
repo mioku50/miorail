@@ -297,6 +297,9 @@ export function createBitrefillCatalogSourceV1(
           country,
           currency,
           packageValue,
+          // The x402 catalogue publishes no package id; that surface orders by
+          // `package_value` verbatim, which is its documented contract.
+          packageId: null,
           recipientRequired,
         };
         packages.push({

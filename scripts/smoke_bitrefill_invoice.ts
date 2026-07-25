@@ -110,13 +110,17 @@ async function main(): Promise<void> {
     .sort((left, right) =>
       BigInt(left.candidate.fees.totalAtomic) < BigInt(right.candidate.fees.totalAtomic) ? -1 : 1,
     )[0].candidate;
-  ok(`selected ${candidate.product.productId} ${candidate.product.packageValue} ${candidate.product.currency}`);
+  ok(
+    `selected ${candidate.product.productId} ${candidate.product.packageValue} ${candidate.product.currency}` +
+      `${candidate.product.packageId ? ` (package ${candidate.product.packageId})` : ''}`,
+  );
 
   console.log('\n2. Creating ONE unpaid invoice');
   const gateway = createBitrefillPersonalOrderGatewayV1({ apiKey: credential.apiKey });
   const created = await gateway.createOrder({
     productId: candidate.product.productId,
     packageValue: candidate.product.packageValue,
+    packageId: candidate.product.packageId,
     recipientInput: null,
     maxSpendAtomic: resolution.intent.maxSpendAtomic,
     refundAddress: WALLET,
@@ -124,13 +128,21 @@ async function main(): Promise<void> {
   });
   if (!created.ok) {
     if (created.reason === 'invoice_creation_unknown') {
+      // An invoice may well EXIST — this branch is reached after a successful
+      // POST whose answer could not be fully read. Saying "nothing was
+      // created" here would be false, and re-running would create a second one.
       console.log(`   ⚠ UNCERTAIN: ${created.detail}`);
-      console.log('     An invoice MAY exist. Do NOT re-run this script — check the Bitrefill');
-      console.log('     dashboard or /commerce/orders/:invoiceId first.\n');
+      console.log('     An invoice MAY EXIST. Do NOT re-run this script.');
+      console.log('     Check it read-only first:');
+      console.log('       GET https://api.bitrefill.com/v2/invoices?limit=5   (Authorization: Bearer …)');
+      console.log('     No payment was signed or sent, and any such invoice expires unpaid.\n');
       process.exitCode = 1;
       return;
     }
-    console.log(`   ⚠ the storefront refused: ${created.reason}. Nothing was created.\n`);
+    // Everything else is refused BEFORE the storefront was asked to create
+    // anything, so this really is the no-side-effect branch.
+    console.log(`   ⚠ the storefront refused before creating anything: ${created.reason}.`);
+    console.log('     No invoice was created.\n');
     process.exitCode = 1;
     return;
   }
@@ -148,6 +160,7 @@ async function main(): Promise<void> {
       orderStatus: created.order.orderStatus ?? 'created',
       productId: candidate.product.productId,
       packageValue: candidate.product.packageValue,
+      recipientPolicy: created.order.recipientPolicy ?? 'pinned',
     },
     intent: resolution.intent,
     candidate,
@@ -156,13 +169,15 @@ async function main(): Promise<void> {
   });
   if (!validated.ok) {
     console.log(`   ⚠ the invoice FAILED validation: ${validated.reason}`);
-    console.log('     It exists at the storefront but Miorail will not present it. It expires unpaid.\n');
+    console.log(`     Invoice ${created.order.invoiceId} EXISTS at the storefront but Miorail will`);
+    console.log('     not present it. Nothing was signed or sent; it expires unpaid.\n');
     process.exitCode = 1;
     return;
   }
 
   const amounts = commerceAmountReviewV1({ candidate, invoice: validated.invoice });
   console.log(`     invoice id      : ${validated.invoice.invoiceId}`);
+  console.log(`     recipient policy: ${validated.invoice.recipientPolicy}`);
   console.log(`     exact amount    : ${validated.invoice.amountAtomic} USDC base units`);
   console.log(`     estimated before: ${amounts.estimatedMinimumAtomic} (${amounts.estimatedBasis})`);
   console.log(`     network         : ${validated.invoice.network}`);

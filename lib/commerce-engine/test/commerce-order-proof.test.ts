@@ -93,6 +93,7 @@ function candidate(parent = intent()): CommerceCandidateV1 {
       country: 'US',
       currency: 'USD',
       packageValue: '25',
+      packageId: 'steam-usa<&>25',
       recipientRequired: false,
     },
     fiatPrice: { amountDecimal: '25', currency: 'USD' },

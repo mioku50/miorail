@@ -237,6 +237,8 @@ export function createBitrefillPersonalCatalogSourceV1(
           country,
           currency,
           packageValue,
+          // `steam-usa<&>5` — what a fixed denomination must be ordered by.
+          packageId: pkg.id,
           recipientRequired,
         };
         packages.push({

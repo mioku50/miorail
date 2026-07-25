@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test, { afterEach, beforeEach, describe } from 'node:test';
 import express from 'express';
 import request from 'supertest';
-import { resolveCommerceIntentV1 } from '@mioagent/intent-engine';
 import {
   compareCommerceRoutesV1,
   createBitrefillCatalogSourceV1,
@@ -443,16 +442,34 @@ describe('T64.2 durable status and reconciliation', () => {
     assert.equal(response.body.outcome, 'provider_unavailable');
   });
 
-  test('no delivery secret is ever stored', async () => {
+  test('no delivery secret or credential is ever stored', async () => {
     const opened = await openCheckout();
     const record = await repository.getCommerceOrder(opened.orderId, USER.id);
-    const serialized = JSON.stringify(record);
-    for (const forbidden of ['redemption', 'pin', 'code', 'Bearer', 'X-Access-Token']) {
-      assert.ok(
-        !serialized.toLowerCase().includes(forbidden.toLowerCase()),
-        `the stored order must not contain "${forbidden}"`,
-      );
+
+    // Field NAMES, not substrings — `recipientPolicy: 'pinned'` legitimately
+    // contains "pin", and a naive substring check would both false-positive on
+    // it and miss a nested key.
+    const keys: string[] = [];
+    const walk = (value: unknown): void => {
+      if (Array.isArray(value)) {
+        value.forEach(walk);
+        return;
+      }
+      if (value && typeof value === 'object') {
+        for (const [key, inner] of Object.entries(value)) {
+          keys.push(key.toLowerCase());
+          walk(inner);
+        }
+      }
+    };
+    walk(record);
+    for (const forbidden of ['redemption', 'redemptioninfo', 'pin', 'code', 'secret', 'apikey', 'accesstoken', 'authorization']) {
+      assert.ok(!keys.includes(forbidden), `no stored field may be named "${forbidden}"`);
     }
+    // And no credential VALUE leaked in either.
+    const serialized = JSON.stringify(record);
+    assert.ok(!serialized.includes('Bearer '));
+    assert.ok(!serialized.includes('X-Access-Token'));
   });
 
   test('history is tenant-scoped', async () => {

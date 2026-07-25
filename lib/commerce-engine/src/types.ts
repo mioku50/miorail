@@ -99,6 +99,10 @@ export interface CommerceCatalogSourceV1 {
 export interface CommerceCreateOrderInputV1 {
   productId: string;
   packageValue: string;
+  /** The provider's fixed-denomination package id, when the catalogue gave
+   * one. A fixed denomination is ordered by id; `packageValue` is for
+   * range-priced products. */
+  packageId?: string | null;
   /** Phone/account identifier for a top-up; null otherwise. */
   recipientInput: string | null;
   /** Ceiling the created invoice must not exceed, in settlement base units. */
@@ -122,6 +126,9 @@ export interface CommerceCreatedOrderV1 {
   items: { productId: string; packageValue: string; orderId: string | null }[];
   /** T64.2: only when the provider states a fee explicitly. */
   providerFeeAtomic?: string | null;
+  /** T64.2.1: `pinned` when payTo equals the provider constant, or
+   * `invoice_scoped` when the invoice issued its own deposit address. */
+  recipientPolicy?: 'pinned' | 'invoice_scoped';
   /** T64.2: the provider's own status words, mapped by the invoice validator
    * rather than by the gateway — the gateway reports, it does not interpret. */
   paymentStatus?: string;

@@ -2499,6 +2499,9 @@ routeIntelligenceRouter.post('/commerce/orders', async (req, res) => {
     const created = await commerceRouteRuntime.createOrder({
       productId: candidate.product.productId,
       packageValue: candidate.product.packageValue,
+      // A fixed denomination is ordered by its package id when the catalogue
+      // published one; `packageValue` is the range-product field.
+      packageId: candidate.product.packageId,
       recipientInput: run.intent.recipientInput,
       maxSpendAtomic: run.intent.maxSpendAtomic,
       // A failed crypto payment returns to the wallet that authorized it.
@@ -2541,6 +2544,7 @@ routeIntelligenceRouter.post('/commerce/orders', async (req, res) => {
         orderStatus: created.order.orderStatus ?? 'created',
         productId: candidate.product.productId,
         packageValue: candidate.product.packageValue,
+        recipientPolicy: created.order.recipientPolicy ?? 'pinned',
       },
       intent: run.intent,
       candidate,
