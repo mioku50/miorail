@@ -3,5 +3,6 @@ export * from './primitives.js';
 export * from './route-contracts.js';
 export * from './score-contracts.js';
 export * from './earn-contracts.js';
+export * from './commerce-contracts.js';
 export * from './execution-contracts.js';
 export * from './proof-events.js';

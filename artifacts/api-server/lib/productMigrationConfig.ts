@@ -3,6 +3,12 @@ export interface MiorailProductMigrationFlags {
   legacyTerminal: boolean;
   paidIntelligence: boolean;
   earnRouteV1: boolean;
+  /** T64: commerce COMPARISON (read-only catalogue reads and scoring). */
+  commerceRouteV1: boolean;
+  /** T64: commerce CHECKOUT. Separate from the comparison gate on purpose —
+   * a digital good is irreversible, so opening a checkout is enabled
+   * independently of being able to compare one. */
+  commerceExecutionV1: boolean;
 }
 
 function readBooleanFlag(env: NodeJS.ProcessEnv, name: string, defaultValue: boolean): boolean {
@@ -25,5 +31,7 @@ export function getMiorailProductMigrationFlags(
     legacyTerminal: readBooleanFlag(env, 'MIORAIL_LEGACY_TERMINAL', true),
     paidIntelligence: readBooleanFlag(env, 'MIORAIL_PAID_INTELLIGENCE', false),
     earnRouteV1: readBooleanFlag(env, 'MIORAIL_EARN_ROUTE_V1', false),
+    commerceRouteV1: readBooleanFlag(env, 'MIORAIL_COMMERCE_ROUTE_V1', false),
+    commerceExecutionV1: readBooleanFlag(env, 'MIORAIL_COMMERCE_EXECUTION_V1', false),
   });
 }

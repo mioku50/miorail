@@ -59,6 +59,9 @@ importers:
       '@mioagent/autonomy':
         specifier: workspace:*
         version: link:../../lib/autonomy
+      '@mioagent/commerce-engine':
+        specifier: workspace:*
+        version: link:../../lib/commerce-engine
       '@mioagent/crypto':
         specifier: workspace:*
         version: link:../../lib/crypto
@@ -443,6 +446,25 @@ importers:
       '@types/node':
         specifier: ^20.12.7
         version: 20.19.43
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+
+  lib/commerce-engine:
+    dependencies:
+      '@mioagent/route-domain':
+        specifier: workspace:*
+        version: link:../route-domain
+      '@mioagent/security':
+        specifier: workspace:*
+        version: link:../security
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
       typescript:
         specifier: ^5.4.5
         version: 5.9.3
@@ -1090,15 +1112,24 @@ importers:
 
   scripts:
     dependencies:
+      '@mioagent/commerce-engine':
+        specifier: workspace:*
+        version: link:../lib/commerce-engine
       '@mioagent/db':
         specifier: workspace:*
         version: link:../lib/db
+      '@mioagent/intent-engine':
+        specifier: workspace:*
+        version: link:../lib/intent-engine
       '@mioagent/paid-intelligence':
         specifier: workspace:*
         version: link:../lib/paid-intelligence
       '@mioagent/route-domain':
         specifier: workspace:*
         version: link:../lib/route-domain
+      '@mioagent/security':
+        specifier: workspace:*
+        version: link:../lib/security
       drizzle-orm:
         specifier: ^0.36.4
         version: 0.36.4(@neondatabase/serverless@0.10.4)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7)

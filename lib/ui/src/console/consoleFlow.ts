@@ -138,18 +138,29 @@ export function routeFamilyForGoalV1(text: string): RouteFamilyV1 {
 export interface RouteFamilyDispatchV1 {
   family: RouteFamilyV1;
   /** Which engine may run. null ⟺ nothing runs and the reason explains why. */
-  engine: 'swap' | 'earn' | null;
+  engine: 'swap' | 'earn' | 'commerce' | null;
   blockedReason: string | null;
+}
+
+export interface ConsoleRouteFlagsV1 {
+  routeIntelligenceV1: boolean;
+  earnRouteV1: boolean;
+  /** T64: commerce COMPARISON. Absent on a pre-T64 server ⟹ off. */
+  commerceRouteV1?: boolean;
+  /** T64: commerce CHECKOUT, gated separately from comparison. */
+  commerceExecutionV1?: boolean;
 }
 
 /**
  * Applies the server's feature flags to the detected family. An Earn goal with
  * the earn gate OFF is NOT "ready" — it is explicitly unavailable, and the
- * console says which switch is off rather than quietly comparing swaps.
+ * console says which switch is off rather than quietly comparing swaps. The
+ * same holds for Commerce, which additionally distinguishes "can compare" from
+ * "can buy": comparing a gift card is repeatable, buying one is not.
  */
 export function dispatchRouteFamilyV1(
   text: string,
-  flags: { routeIntelligenceV1: boolean; earnRouteV1: boolean },
+  flags: ConsoleRouteFlagsV1,
 ): RouteFamilyDispatchV1 {
   const family = routeFamilyForGoalV1(text);
   if (!flags.routeIntelligenceV1) {
@@ -162,15 +173,41 @@ export function dispatchRouteFamilyV1(
   }
   if (family === 'swap') return { family, engine: 'swap', blockedReason: null };
   if (family === 'commerce') {
-    return { family, engine: null, blockedReason: 'Commerce routing has no approved adapter yet. Swap and Earn goals still work.' };
+    return flags.commerceRouteV1 === true
+      ? { family, engine: 'commerce', blockedReason: null }
+      : { family, engine: null, blockedReason: 'Commerce routing is off on this server. Swap and Earn goals still work.' };
   }
   return { family, engine: null, blockedReason: 'Say what you want to do — for example "swap 100 USDC to ETH" or "earn yield on 500 USDC".' };
+}
+
+/** Whether a compared commerce option can actually be ordered on this server.
+ * Comparison being on does NOT imply checkout is on. */
+export function commerceCheckoutAvailableV1(flags: ConsoleRouteFlagsV1): {
+  available: boolean;
+  reason: string | null;
+} {
+  if (!flags.routeIntelligenceV1 || flags.commerceRouteV1 !== true) {
+    return { available: false, reason: 'Commerce routing is off on this server.' };
+  }
+  if (flags.commerceExecutionV1 !== true) {
+    return {
+      available: false,
+      reason: 'Checkout is off on this server. These prices are read-only until it is enabled.',
+    };
+  }
+  return { available: true, reason: null };
 }
 
 // --- Coverage + adapters from the server -------------------------------------
 
 export interface ConsoleServerStatusV1 {
-  productMigration: { routeIntelligenceV1: boolean; paidIntelligence: boolean; earnRouteV1: boolean };
+  productMigration: {
+    routeIntelligenceV1: boolean;
+    paidIntelligence: boolean;
+    earnRouteV1: boolean;
+    commerceRouteV1?: boolean;
+    commerceExecutionV1?: boolean;
+  };
   rpc?: { status: string; provider: string };
   prices?: { status: string; provider: string };
   risk?: { status: string; provider: string };
@@ -196,6 +233,8 @@ export function coverageFromStatusV1(status: ConsoleServerStatusV1 | null): Cove
   const routing = flags?.routeIntelligenceV1 === true;
   const earn = flags?.earnRouteV1 === true;
   const paid = flags?.paidIntelligence === true;
+  const commerce = flags?.commerceRouteV1 === true;
+  const checkout = flags?.commerceExecutionV1 === true;
   return [
     {
       action: 'Swap on Base',
@@ -226,11 +265,17 @@ export function coverageFromStatusV1(status: ConsoleServerStatusV1 | null): Cove
       available: false,
     },
     {
+      // Comparison and checkout are separate gates, so this row states which
+      // one is on rather than collapsing them into a single "commerce" claim.
       action: 'Commerce (gift cards, top-ups)',
-      sources: 'no approved adapter',
-      percent: 0,
-      state: 'off',
-      available: false,
+      sources: commerce
+        ? checkout
+          ? 'Bitrefill — compare and checkout'
+          : 'Bitrefill — compare only, checkout gate is off'
+        : 'commerce gate is off on this server',
+      percent: commerce ? (checkout ? 40 : 25) : 0,
+      state: commerce ? (checkout ? 'ready' : 'building') : 'off',
+      available: commerce,
     },
     {
       action: 'Cross-chain bridge',
@@ -266,6 +311,7 @@ export function adaptersFromStatusV1(
   const routing = status?.productMigration.routeIntelligenceV1 === true;
   const earn = status?.productMigration.earnRouteV1 === true;
   const paid = status?.productMigration.paidIntelligence === true;
+  const commerce = status?.productMigration.commerceRouteV1 === true;
   // Before the first comparison the registry is reported from the gates alone.
   return [
     { name: 'Uniswap', state: routing ? 'live' : 'not_connected' },
@@ -273,6 +319,7 @@ export function adaptersFromStatusV1(
     { name: 'Moonwell', state: earn ? 'live' : 'not_connected' },
     { name: 'Morpho', state: earn ? 'live' : 'not_connected' },
     { name: 'Alchemy simulation', state: paid ? 'live' : 'not_connected' },
+    { name: 'Bitrefill', state: commerce ? 'live' : 'not_connected' },
     { name: 'o1.exchange', state: 'planned' },
   ];
 }

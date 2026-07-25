@@ -45,7 +45,7 @@ const ENABLED_FLAGS = {
   routeIntelligenceV1: true,
   legacyTerminal: true,
   paidIntelligence: false,
-  earnRouteV1: true,
+  earnRouteV1: true, commerceRouteV1: false, commerceExecutionV1: false,
 } as const;
 
 const BODY = { message: 'Deposit 500 USDC for yield.', walletAddress: WALLET, requestId: 'earn-req-1' };
@@ -118,9 +118,9 @@ describe('POST /api/route-intelligence/earn/compare', () => {
 
   test('is disabled (404) unless BOTH routeIntelligenceV1 and earnRouteV1 are on, without resolving or comparing', async () => {
     for (const flags of [
-      { ...ENABLED_FLAGS, earnRouteV1: false },
+      { ...ENABLED_FLAGS, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false },
       { ...ENABLED_FLAGS, routeIntelligenceV1: false },
-      { ...ENABLED_FLAGS, routeIntelligenceV1: false, earnRouteV1: false },
+      { ...ENABLED_FLAGS, routeIntelligenceV1: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false },
     ]) {
       let touched = false;
       earnCompareRouteRuntime.flags = () => flags;

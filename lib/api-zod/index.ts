@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import {
   AddressV1Schema,
+  CommerceOrderV1Schema,
+  CommercePaymentRequirementsV1Schema,
+  CommerceRouteCardV1Schema,
+  CommerceRouteProofV1Schema,
   EarnRouteCardV1Schema,
   ExecutionBlueprintV1Schema,
   GasEstimateV1Schema,
@@ -157,6 +161,86 @@ export const EarnBlueprintApproveResponseV1Schema = z.discriminatedUnion('outcom
   z
     .object({ outcome: z.literal('blocked'), reason: z.string().min(1).max(500), safety: SafetyKernelResultV1Schema })
     .strict(),
+]);
+
+// T64 — Commerce Route (Bitrefill). `commerce/compare` returns the full
+// CommerceRouteCardV1: every denomination that was found, its exact price and
+// fee basis, its stock state and its freshness. Gated behind
+// MIORAIL_ROUTE_INTELLIGENCE_V1 AND MIORAIL_COMMERCE_ROUTE_V1.
+export const CommerceCompareRequestV1Schema = z
+  .object({
+    message: z.string().trim().min(1).max(4_000),
+    walletAddress: AddressV1Schema,
+    requestId: z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/, 'Invalid commerce compare request ID'),
+  })
+  .strict();
+
+export const CommerceCompareResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      outcome: z.literal('compared'),
+      routeCard: CommerceRouteCardV1Schema,
+      /** True when the market was inferred from the currency rather than
+       * stated. The surface must say so — it is a disclosed assumption. */
+      countryInferred: z.boolean(),
+      /** Denominations the comparison deliberately excluded, by reason code. */
+      excluded: z.array(z.string().min(1).max(60)),
+    })
+    .strict(),
+  z
+    .object({ outcome: z.literal('needs_clarification'), issues: z.array(z.string().min(1).max(120)) })
+    .strict(),
+  z.object({ outcome: z.literal('unsupported'), reason: z.string().min(1).max(200) }).strict(),
+]);
+
+// `commerce/orders` opens a price-locked checkout at the storefront and returns
+// the exact payment terms for review. It SIGNS NOTHING and PAYS NOTHING: the
+// wallet authorizes the x402 payment itself, against exactly these terms.
+// Additionally gated behind MIORAIL_COMMERCE_EXECUTION_V1.
+export const CommerceOrderCreateRequestV1Schema = z
+  .object({
+    message: z.string().trim().min(1).max(4_000),
+    routeCardHash: HashV1Schema,
+    selectedCandidateHash: HashV1Schema,
+    walletAddress: AddressV1Schema,
+    requestId: z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/, 'Invalid commerce order request ID'),
+  })
+  .strict();
+
+export const CommerceOrderCreateResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      outcome: z.literal('created'),
+      order: CommerceOrderV1Schema,
+      payment: CommercePaymentRequirementsV1Schema,
+    })
+    .strict(),
+  /** The catalogue moved under the selection — re-compare, do not re-price. */
+  z.object({ outcome: z.literal('refresh_required'), reason: z.string().min(1).max(500) }).strict(),
+  z.object({ outcome: z.literal('blocked'), reason: z.string().min(1).max(500) }).strict(),
+]);
+
+// `commerce/orders/:invoiceId` reports the order and its three-leg proof.
+// A settled payment with no confirmed order is `order_unconfirmed` here — the
+// route never reports it as a completed purchase.
+export const CommerceOrderStatusResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      outcome: z.literal('status'),
+      order: CommerceOrderV1Schema,
+      proof: CommerceRouteProofV1Schema,
+    })
+    .strict(),
+  z.object({ outcome: z.literal('unknown_order'), reason: z.string().min(1).max(500) }).strict(),
+  z.object({ outcome: z.literal('provider_unavailable'), reason: z.string().min(1).max(500) }).strict(),
 ]);
 
 // Route Intelligence V1 — read-only plan evaluation. These schemas deliberately
@@ -1294,6 +1378,10 @@ export const StatusResponseSchema = z.object({
     legacyTerminal: z.boolean(),
     paidIntelligence: z.boolean(),
     earnRouteV1: z.boolean(),
+    // T64: additive and optional so a client reading a pre-T64 server still
+    // parses. Absent is treated as off by every surface that reads them.
+    commerceRouteV1: z.boolean().optional(),
+    commerceExecutionV1: z.boolean().optional(),
   }),
   rpc: z.object({
     status: z.enum(["connected", "missing", "failed"]),

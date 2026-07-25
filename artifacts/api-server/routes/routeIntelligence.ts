@@ -1,6 +1,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import {
+  CommerceCompareRequestV1Schema,
+  CommerceCompareResponseV1Schema,
+  CommerceOrderCreateRequestV1Schema,
+  CommerceOrderCreateResponseV1Schema,
+  CommerceOrderStatusResponseV1Schema,
   CreateIntelligenceBudgetRequestV1Schema,
   EarnBlueprintApproveRequestV1Schema,
   EarnBlueprintApproveResponseV1Schema,
@@ -93,7 +98,30 @@ import {
   type SpendPermissionSourceV1,
 } from '@mioagent/intelligence-budget';
 import { createDatabaseSpendPermissionRepository } from '@mioagent/autonomy';
-import { resolveEarnIntentV1, type ResolveEarnIntentInputV1 } from '@mioagent/intent-engine';
+import {
+  resolveCommerceIntentV1,
+  resolveEarnIntentV1,
+  type ResolveCommerceIntentInputV1,
+  type ResolveEarnIntentInputV1,
+} from '@mioagent/intent-engine';
+import {
+  BITREFILL_HOST_V1,
+  BITREFILL_INVOICE_PAY_PATH_V1,
+  applyCommerceOrderStatusV1,
+  buildCommerceOrderV1,
+  buildCommercePaymentRequirementsV1,
+  buildCommerceRouteProofV1,
+  commerceEvidenceSetHashV1,
+  compareCommerceRoutesV1,
+  type CommerceOrderGatewayV1,
+  type CompareCommerceRoutesInputV1,
+} from '@mioagent/commerce-engine';
+import {
+  recallCommerceOrderV1,
+  rememberCommerceOrderV1,
+  resolveCommerceCatalogSourceV1,
+  resolveCommerceOrderGatewayV1,
+} from '../lib/commerceRouteConfig.js';
 import {
   compareEarnRoutesV1,
   resolveEarnRouteEnablementV1,
@@ -2180,3 +2208,322 @@ routeIntelligenceRouter.post(
     }
   },
 );
+
+// ===========================================================================
+// T64 — Commerce Route (Bitrefill). Two independently gated surfaces:
+//
+//   compare  — read-only catalogue reads and scoring. Safe and repeatable.
+//   orders   — opens a price-locked checkout and returns the exact payment
+//              terms. It signs nothing and pays nothing; the wallet authorizes
+//              the x402 payment itself against exactly those terms.
+//
+// The order routes never trust a client-supplied product, price, or
+// recipient: the comparison is re-run server-side from the same message and
+// the selected candidate hash must still match a candidate that re-derives
+// from the pinned catalogue. A price that moved is `refresh_required`, never a
+// silently re-priced order.
+// ===========================================================================
+
+export const commerceRouteRuntime = {
+  flags: getMiorailProductMigrationFlags,
+  resolveIntent: (input: ResolveCommerceIntentInputV1) => resolveCommerceIntentV1(input),
+  compare: (input: CompareCommerceRoutesInputV1) =>
+    compareCommerceRoutesV1({ catalog: resolveCommerceCatalogSourceV1() }, input),
+  createOrder: (input: Parameters<CommerceOrderGatewayV1['createOrder']>[0]) =>
+    resolveCommerceOrderGatewayV1().createOrder(input),
+  readOrderStatus: (input: { invoiceId: string; now: Date }) =>
+    resolveCommerceOrderGatewayV1().readOrderStatus(input),
+  now: () => new Date(),
+};
+
+/** flag(routeIntelligenceV1 && commerceRouteV1) + session + body + wallet +
+ * chain — the shared head of every commerce route. Responds and returns null
+ * on any miss. */
+function commerceRouteGuard<T>(
+  req: Request,
+  res: Response,
+  schema: { safeParse: (value: unknown) => { success: true; data: T } | { success: false } },
+  invalidCode: string,
+): { user: NonNullable<ReturnType<typeof signedRoutePlanUser>>; body: T } | null {
+  const flags = commerceRouteRuntime.flags(process.env);
+  if (!flags.routeIntelligenceV1 || !flags.commerceRouteV1) {
+    res.status(404).json({ error: 'commerce_route_disabled', code: 'commerce_route_disabled' });
+    return null;
+  }
+  const user = signedRoutePlanUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return null;
+  }
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: invalidCode, code: invalidCode });
+    return null;
+  }
+  const body = parsed.data as T & { walletAddress?: string };
+  if (body.walletAddress !== undefined && body.walletAddress !== user.address) {
+    res.status(403).json({ error: 'wallet_mismatch', code: 'wallet_mismatch' });
+    return null;
+  }
+  const chainEnv = (process.env.CHAIN_ENV ?? 'sepolia').trim().toLowerCase();
+  if (chainEnv !== 'mainnet' && chainEnv !== 'mainnet-readonly') {
+    res.status(409).json({ error: 'base_mainnet_required', code: 'base_mainnet_required' });
+    return null;
+  }
+  return { user, body: parsed.data };
+}
+
+routeIntelligenceRouter.post('/commerce/compare', async (req, res) => {
+  const guard = commerceRouteGuard(req, res, CommerceCompareRequestV1Schema, 'invalid_commerce_compare_request');
+  if (!guard) return;
+  try {
+    const now = commerceRouteRuntime.now();
+    const resolution = commerceRouteRuntime.resolveIntent({
+      message: guard.body.message,
+      tenantId: guard.user.id,
+      walletAddress: guard.user.address as `0x${string}`,
+      now,
+    });
+    if (resolution.status === 'unsupported') {
+      res.json(
+        CommerceCompareResponseV1Schema.parse({
+          outcome: 'unsupported',
+          reason: resolution.issues[0] ?? 'unsupported_commerce_request',
+        }),
+      );
+      return;
+    }
+    if (resolution.status === 'needs_clarification') {
+      res.json(
+        CommerceCompareResponseV1Schema.parse({ outcome: 'needs_clarification', issues: resolution.issues }),
+      );
+      return;
+    }
+    const comparison = await commerceRouteRuntime.compare({ intent: resolution.intent, now });
+    if (!comparison.ok) {
+      res.json(CommerceCompareResponseV1Schema.parse({ outcome: 'unsupported', reason: comparison.reason }));
+      return;
+    }
+    res.json(
+      CommerceCompareResponseV1Schema.parse({
+        outcome: 'compared',
+        routeCard: comparison.routeCard,
+        countryInferred: resolution.extraction.countryInferred,
+        excluded: [...new Set(comparison.skipped)],
+      }),
+    );
+  } catch {
+    res.status(500).json({ error: 'commerce_compare_failed', code: 'commerce_compare_failed' });
+  }
+});
+
+routeIntelligenceRouter.post('/commerce/orders', async (req, res) => {
+  const guard = commerceRouteGuard(req, res, CommerceOrderCreateRequestV1Schema, 'invalid_commerce_order_request');
+  if (!guard) return;
+  // The checkout gate is separate from the comparison gate: comparing a gift
+  // card is repeatable, buying one is not.
+  if (!commerceRouteRuntime.flags(process.env).commerceExecutionV1) {
+    res.status(404).json({ error: 'commerce_execution_disabled', code: 'commerce_execution_disabled' });
+    return;
+  }
+  try {
+    const now = commerceRouteRuntime.now();
+    const resolution = commerceRouteRuntime.resolveIntent({
+      message: guard.body.message,
+      tenantId: guard.user.id,
+      walletAddress: guard.user.address as `0x${string}`,
+      now,
+    });
+    if (resolution.status !== 'ready') {
+      res.json(
+        CommerceOrderCreateResponseV1Schema.parse({
+          outcome: 'blocked',
+          reason: `The request no longer resolves to a commerce intent (${resolution.issues[0] ?? 'unresolved'}).`,
+        }),
+      );
+      return;
+    }
+    // Re-derive the comparison from the pinned catalogue. The client's chosen
+    // hash has to still be there — a moved price produces a new hash and this
+    // check fails, which is exactly the intended outcome.
+    const comparison = await commerceRouteRuntime.compare({ intent: resolution.intent, now });
+    if (!comparison.ok) {
+      res.json(
+        CommerceOrderCreateResponseV1Schema.parse({
+          outcome: 'refresh_required',
+          reason: `The storefront could not be re-read for this order (${comparison.reason}).`,
+        }),
+      );
+      return;
+    }
+    if (comparison.routeCard.routeCardHash !== guard.body.routeCardHash) {
+      res.json(
+        CommerceOrderCreateResponseV1Schema.parse({
+          outcome: 'refresh_required',
+          reason: 'The catalogue changed since this comparison. Compare again before ordering.',
+        }),
+      );
+      return;
+    }
+    const entry = comparison.entries.find(
+      (candidate) => candidate.candidate.candidateHash === guard.body.selectedCandidateHash,
+    );
+    if (!entry) {
+      res.json(
+        CommerceOrderCreateResponseV1Schema.parse({
+          outcome: 'refresh_required',
+          reason: 'The selected option is no longer offered at the price it was compared at.',
+        }),
+      );
+      return;
+    }
+    if (entry.candidate.availability !== 'in_stock') {
+      res.json(
+        CommerceOrderCreateResponseV1Schema.parse({
+          outcome: 'blocked',
+          reason: 'The storefront does not report this option as in stock.',
+        }),
+      );
+      return;
+    }
+
+    const created = await commerceRouteRuntime.createOrder({
+      productId: entry.candidate.product.productId,
+      packageValue: entry.candidate.product.packageValue,
+      recipientInput: resolution.intent.recipientInput,
+      maxSpendAtomic: resolution.intent.maxSpendAtomic,
+      now,
+    });
+    if (!created.ok) {
+      res.json(
+        CommerceOrderCreateResponseV1Schema.parse({
+          outcome: 'blocked',
+          reason: `The storefront did not open a checkout (${created.reason}).`,
+        }),
+      );
+      return;
+    }
+    const order = buildCommerceOrderV1({
+      intent: resolution.intent,
+      candidate: entry.candidate,
+      created: created.order,
+      now,
+    });
+    if (!order.ok) {
+      res.json(
+        CommerceOrderCreateResponseV1Schema.parse({
+          outcome: 'blocked',
+          reason: `The checkout did not match the pinned payment terms (${order.reason}).`,
+        }),
+      );
+      return;
+    }
+    // The payment terms the wallet will authorize, restated from the pinned
+    // settlement pair and this order's own total. Nothing is signed here.
+    const payment = buildCommercePaymentRequirementsV1({
+      accepts: {
+        scheme: 'exact',
+        network: `eip155:${resolution.intent.chainId}`,
+        asset: created.order.asset,
+        payTo: created.order.payTo,
+        maxAmountRequired: created.order.totalAtomic,
+        resource: `https://${BITREFILL_HOST_V1}${BITREFILL_INVOICE_PAY_PATH_V1}`,
+      },
+      order: order.order,
+      intent: resolution.intent,
+      now,
+    });
+    if (!payment.ok) {
+      res.json(
+        CommerceOrderCreateResponseV1Schema.parse({
+          outcome: 'blocked',
+          reason: `The payment terms failed validation (${payment.reason}).`,
+        }),
+      );
+      return;
+    }
+
+    rememberCommerceOrderV1({
+      order: order.order,
+      evidenceSetHash: commerceEvidenceSetHashV1(entry.evidence),
+      tenantId: guard.user.id,
+      walletAddress: guard.user.address,
+      storedAt: Date.now(),
+    });
+    res.json(
+      CommerceOrderCreateResponseV1Schema.parse({
+        outcome: 'created',
+        order: order.order,
+        payment: payment.requirements,
+      }),
+    );
+  } catch {
+    res.status(500).json({ error: 'commerce_order_failed', code: 'commerce_order_failed' });
+  }
+});
+
+routeIntelligenceRouter.get('/commerce/orders/:invoiceId', async (req, res) => {
+  const flags = commerceRouteRuntime.flags(process.env);
+  if (!flags.routeIntelligenceV1 || !flags.commerceRouteV1) {
+    res.status(404).json({ error: 'commerce_route_disabled', code: 'commerce_route_disabled' });
+    return;
+  }
+  const user = signedRoutePlanUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  const invoiceId = String(req.params.invoiceId ?? '');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(invoiceId)) {
+    res.status(400).json({ error: 'invalid_commerce_invoice_id', code: 'invalid_commerce_invoice_id' });
+    return;
+  }
+  const stored = recallCommerceOrderV1(user.id, invoiceId);
+  if (!stored) {
+    res.json(
+      CommerceOrderStatusResponseV1Schema.parse({
+        outcome: 'unknown_order',
+        reason: 'This wallet has no open checkout with that id on this server.',
+      }),
+    );
+    return;
+  }
+  try {
+    const now = commerceRouteRuntime.now();
+    const observed = await commerceRouteRuntime.readOrderStatus({ invoiceId, now });
+    if (!observed.ok) {
+      res.json(
+        CommerceOrderStatusResponseV1Schema.parse({
+          outcome: 'provider_unavailable',
+          reason: `The storefront could not report this order (${observed.reason}).`,
+        }),
+      );
+      return;
+    }
+    const applied = applyCommerceOrderStatusV1({ order: stored.order, observation: observed.status, now });
+    // A reading the state machine refuses is a reconciliation signal, so the
+    // proof is still built — from the STORED order — rather than dropped.
+    const order = applied.ok ? applied.order : stored.order;
+    const proof = buildCommerceRouteProofV1({
+      order,
+      observation: observed.status,
+      evidenceSetHash: stored.evidenceSetHash,
+      now,
+    });
+    if (!proof.ok) {
+      res.json(
+        CommerceOrderStatusResponseV1Schema.parse({
+          outcome: 'provider_unavailable',
+          reason: `The order status could not be reconciled (${proof.reason}).`,
+        }),
+      );
+      return;
+    }
+    if (applied.ok) {
+      rememberCommerceOrderV1({ ...stored, order: applied.order, storedAt: Date.now() });
+    }
+    res.json(CommerceOrderStatusResponseV1Schema.parse({ outcome: 'status', order, proof: proof.proof }));
+  } catch {
+    res.status(500).json({ error: 'commerce_order_status_failed', code: 'commerce_order_status_failed' });
+  }
+});

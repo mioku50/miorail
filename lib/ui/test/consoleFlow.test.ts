@@ -6,6 +6,7 @@ import {
   adaptersFromStatusV1,
   chainLabelV1,
   completeStageV1,
+  commerceCheckoutAvailableV1,
   coverageFromStatusV1,
   deriveStageTimingsV1,
   dispatchRouteFamilyV1,
@@ -130,10 +131,23 @@ describe('route family dispatch', () => {
     assert.match(String(dispatch.blockedReason), /Route intelligence is off/);
   });
 
-  test('commerce is recognised but honestly unrouted', () => {
+  test('commerce is NOT called ready while its gate is off', () => {
     const dispatch = dispatchRouteFamilyV1('Buy a gift card', { routeIntelligenceV1: true, earnRouteV1: true });
     assert.equal(dispatch.engine, null);
-    assert.match(String(dispatch.blockedReason), /no approved adapter yet/);
+    assert.match(String(dispatch.blockedReason), /Commerce routing is off/);
+  });
+
+  test('a commerce goal reaches the commerce engine once its gate is on', () => {
+    const flags = { routeIntelligenceV1: true, earnRouteV1: true, commerceRouteV1: true };
+    assert.equal(dispatchRouteFamilyV1('Buy a Steam gift card for $25', flags).engine, 'commerce');
+    // Comparing is not buying: the checkout gate is separate and stays off.
+    const checkout = commerceCheckoutAvailableV1(flags);
+    assert.equal(checkout.available, false);
+    assert.match(String(checkout.reason), /Checkout is off/);
+    assert.equal(
+      commerceCheckoutAvailableV1({ ...flags, commerceExecutionV1: true }).available,
+      true,
+    );
   });
 });
 
@@ -163,11 +177,31 @@ describe('coverage and adapters come from the server, not the front end', () => 
 
   test('capabilities with no adapter stay off regardless of the flags', () => {
     for (const row of coverageFromStatusV1(allOn)) {
-      if (row.action === 'MEV-protected swap' || row.action.startsWith('Commerce') || row.action.includes('bridge')) {
+      if (row.action === 'MEV-protected swap' || row.action.includes('bridge')) {
         assert.equal(row.state, 'off');
         assert.match(row.sources, /no approved/);
       }
     }
+  });
+
+  test('commerce coverage distinguishes comparing from buying', () => {
+    const compareOnly = coverageFromStatusV1({
+      productMigration: { routeIntelligenceV1: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: true },
+    });
+    const row = compareOnly.find((entry) => entry.action.startsWith('Commerce'));
+    assert.equal(row?.state, 'building');
+    assert.match(String(row?.sources), /compare only/);
+
+    const full = coverageFromStatusV1({
+      productMigration: {
+        routeIntelligenceV1: true,
+        paidIntelligence: false,
+        earnRouteV1: false,
+        commerceRouteV1: true,
+        commerceExecutionV1: true,
+      },
+    });
+    assert.equal(full.find((entry) => entry.action.startsWith('Commerce'))?.state, 'ready');
   });
 
   test('adapters reflect the gates before a run, and the real answers after one', () => {

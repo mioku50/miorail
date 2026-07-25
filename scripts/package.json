@@ -4,9 +4,12 @@
   "private": true,
   "main": "index.ts",
   "dependencies": {
+    "@mioagent/commerce-engine": "workspace:*",
     "@mioagent/db": "workspace:*",
+    "@mioagent/intent-engine": "workspace:*",
     "@mioagent/paid-intelligence": "workspace:*",
     "@mioagent/route-domain": "workspace:*",
+    "@mioagent/security": "workspace:*",
     "drizzle-orm": "^0.36.4"
   },
   "devDependencies": {

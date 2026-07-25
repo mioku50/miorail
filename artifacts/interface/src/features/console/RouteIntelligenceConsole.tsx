@@ -3,7 +3,10 @@ import { useLocation } from 'wouter';
 import { useAccount } from 'wagmi';
 import {
   CONSOLE_BREADCRUMB_V1,
+  CommercePaymentReviewPanel,
+  CommerceRouteCardPanel,
   CONSOLE_COPY_V1,
+  commerceCheckoutAvailableV1,
   ComparingScreen,
   ConsoleRightRail,
   ConsoleShell,
@@ -44,6 +47,8 @@ import {
 } from '@mioagent/ui';
 import {
   useBoundedProofReconciliation,
+  useCommerceCompare,
+  useCreateCommerceOrder,
   useEarnCompare,
   useEvaluateSwapRoute,
   useIntelligenceBudget,
@@ -107,6 +112,8 @@ export function RouteIntelligenceConsole() {
   const portfolio = usePortfolio(address);
   const evaluation = useEvaluateSwapRoute();
   const earnCompare = useEarnCompare();
+  const commerceCompare = useCommerceCompare();
+  const commerceOrder = useCreateCommerceOrder();
   const prepare = usePrepareSwapBlueprint();
   const flags = status.data?.productMigration;
   const paidIntelligenceOn = flags?.paidIntelligence === true;
@@ -132,6 +139,8 @@ export function RouteIntelligenceConsole() {
       dispatchRouteFamilyV1(goal, {
         routeIntelligenceV1: flags?.routeIntelligenceV1 === true,
         earnRouteV1: flags?.earnRouteV1 === true,
+        commerceRouteV1: flags?.commerceRouteV1 === true,
+        commerceExecutionV1: flags?.commerceExecutionV1 === true,
       }),
     [goal, flags],
   );
@@ -143,6 +152,21 @@ export function RouteIntelligenceConsole() {
   // Comparing forever, because the Route screen only knew about swap.
   const earnCard = earnCompare.data?.outcome === 'compared' ? earnCompare.data : null;
 
+  // The commerce result is READ, not just requested — the same dead end the
+  // T63D audit found on the earn path.
+  const commerceCard = commerceCompare.data?.outcome === 'compared' ? commerceCompare.data : null;
+  const commerceCheckout = useMemo(
+    () =>
+      commerceCheckoutAvailableV1({
+        routeIntelligenceV1: flags?.routeIntelligenceV1 === true,
+        earnRouteV1: flags?.earnRouteV1 === true,
+        commerceRouteV1: flags?.commerceRouteV1 === true,
+        commerceExecutionV1: flags?.commerceExecutionV1 === true,
+      }),
+    [flags],
+  );
+  const commerceOrderResult = commerceOrder.data?.outcome === 'created' ? commerceOrder.data : null;
+
   const earnSettled = useRef(false);
   useEffect(() => {
     if (!earnCard || earnSettled.current) return;
@@ -153,6 +177,17 @@ export function RouteIntelligenceConsole() {
     mark('score', 'complete');
     setScreen('route');
   }, [earnCard, mark]);
+
+  const commerceSettled = useRef(false);
+  useEffect(() => {
+    if (!commerceCard || commerceSettled.current) return;
+    commerceSettled.current = true;
+    mark('evidence', 'start');
+    mark('evidence', 'complete');
+    mark('score', 'start');
+    mark('score', 'complete');
+    setScreen('route');
+  }, [commerceCard, mark]);
 
   const evaluationSettled = useRef(false);
   useEffect(() => {
@@ -209,6 +244,8 @@ export function RouteIntelligenceConsole() {
     setBudgetResponse(null);
     evaluationSettled.current = false;
     earnSettled.current = false;
+    commerceSettled.current = false;
+    commerceOrder.reset();
 
     const at = Date.now();
     let next = emptyStageClockV1();
@@ -221,6 +258,13 @@ export function RouteIntelligenceConsole() {
     const wallet = address.toLowerCase() as `0x${string}`;
     // Route-family dispatch: an Earn goal goes to the Earn engine, never to
     // useEvaluateSwapRoute.
+    if (dispatch.engine === 'commerce') {
+      commerceCompare.mutate(
+        { message: goal, walletAddress: wallet },
+        { onSettled: () => mark('candidates', 'complete') },
+      );
+      return;
+    }
     if (dispatch.engine === 'earn') {
       earnCompare.mutate({ message: goal, walletAddress: wallet }, { onSettled: () => mark('candidates', 'complete') });
       return;
@@ -413,10 +457,45 @@ export function RouteIntelligenceConsole() {
               ? earnCompare.data.reason
               : earnCompare.data?.outcome === 'needs_clarification'
                 ? earnCompare.data.issues.join(', ')
-                : dispatch.blockedReason
+                : commerceCompare.data?.outcome === 'unsupported'
+                  ? commerceCompare.data.reason
+                  : commerceCompare.data?.outcome === 'needs_clarification'
+                    ? commerceCompare.data.issues.join(', ')
+                    : dispatch.blockedReason
         }
         onCancel={() => setScreen('plan')}
       />
+    );
+  } else if (screen === 'route' && commerceCard) {
+    // Commerce has its own Route Card, its own payment review, and a proof
+    // made of three legs. Checkout is a separate server gate from comparison.
+    content = (
+      <>
+        <ConsoleStepper steps={steps} />
+        <CommerceRouteCardPanel
+          card={commerceCard.routeCard}
+          countryInferred={commerceCard.countryInferred}
+          excluded={commerceCard.excluded}
+          checkout={commerceCheckout}
+          ordering={commerceOrder.isPending}
+          onOrder={(candidateHash) => {
+            if (!address) return;
+            commerceOrder.mutate({
+              message: goal,
+              walletAddress: address.toLowerCase() as `0x${string}`,
+              routeCardHash: commerceCard.routeCard.routeCardHash,
+              selectedCandidateHash: candidateHash,
+            });
+          }}
+        />
+        {commerceOrderResult && (
+          <CommercePaymentReviewPanel order={commerceOrderResult.order} payment={commerceOrderResult.payment} />
+        )}
+        {commerceOrder.data?.outcome === 'refresh_required' && (
+          <p className="note warn">{commerceOrder.data.reason}</p>
+        )}
+        {commerceOrder.data?.outcome === 'blocked' && <p className="note warn">{commerceOrder.data.reason}</p>}
+      </>
     );
   } else if (screen === 'route' && earnCard) {
     // Earn has its own Route Card and its own persisted execution path (T62);

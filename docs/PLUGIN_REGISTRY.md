@@ -32,7 +32,7 @@ Stages are monotonic only after tests and security gates exist. A broken or stal
 | Avantis | Unassigned | `manifested` | None in Route flow | Legacy read-only compatibility | Not an active route-family commitment. |
 | o1.exchange | Advanced Swap | `documented` | None | Planned | Do not claim route comparison or execution support yet. |
 | YO | Yield Expansion | `documented` | None | Planned | Requires typed APY/liquidity/withdrawal/build/proof adapters. |
-| Bitrefill | Commerce | `documented` | None | Planned | Future Commerce Route family. Documentation alone is not purchase support. |
+| Bitrefill | Commerce | `scored` | User-signed x402 payment (gated off) | **Compare gate + checkout gate, both off by default** | T64: pinned Base 8453 + canonical USDC + pinned payTo, typed catalogue adapter, deterministic Commerce Score with `delivery_certainty` permanently Not scored, and a three-leg Commerce Route Proof. NOT `proven`: the proof path has no durable persistence yet and no delivered order has been reconciled. |
 | OpenSea | NFT | `documented` | None | Planned | Future NFT Route family. Requires listing, approval, purchase, and ownership proof. |
 | Venice | Private AI | `documented` | None | Planned | Future paid inference route; requires cost/privacy evidence and output receipt. |
 | Balancer | Advanced Swap | `documented` | None | Backlog | No Miorail Route adapter. |
@@ -44,6 +44,48 @@ Stages are monotonic only after tests and security gates exist. A broken or stal
 | Clawnch | Unassigned | `documented` | None | Documentation-only | Must not appear as an available capability. |
 | Virtuals | Unassigned | `documented` | None | Frozen legacy reference | A legacy read-only namespace does not constitute Route capability. |
 | Bankr | Unassigned | `documented` | None | Frozen legacy reference | A legacy read-only namespace does not constitute Route capability. |
+
+## Commerce Route Proof (T64)
+
+Commerce is the first family where a settled transaction is **not** a proof. A
+`CommerceRouteProofV1` carries three independent legs and only one terminal
+state means success:
+
+```text
+payment settled  ∧  provider order confirmed  ∧  digital good delivered  →  delivered
+```
+
+| Final status | Meaning | Is it a purchase? |
+|---|---|---|
+| `delivered` | All three legs confirmed, every item delivered. | Yes — the only success. |
+| `partial_delivery` | Paid and confirmed; some items outstanding. | No |
+| `order_unconfirmed` | **Money left the wallet and the storefront has confirmed no order.** | No — reconciliation event |
+| `reconciliation_required` | Paid; the storefront cannot report a delivery state. | No — reconciliation event |
+| `pending` / `payment_failed` / `failed` | Nothing to claim. | No |
+
+The verdict is derived by `deriveCommerceProofFinalStatusV1` and re-checked by
+the contract's own schema, so a hand-written status the legs do not support is
+rejected. `order_unconfirmed` cannot be dressed up as a completed purchase by
+any surface.
+
+Redemption codes, PINs, and eSIM QR URLs are bearer credentials: they appear in
+no contract, no hash, and no persisted record. The proof carries delivery
+**counts and states** only.
+
+## Bitrefill promotion gate (`scored` → `proven`)
+
+Still outstanding, in order:
+
+1. durable, tenant-scoped persistence for the order and its proof (today the
+   order book is process-local, and a restart honestly reports `unknown_order`);
+2. a controlled live smoke that opens ONE real checkout, pays it from a user
+   wallet, and reconciles a `delivered` proof end to end;
+3. an operator runbook for `order_unconfirmed` — the state where money moved
+   and no order exists.
+
+Until all three land, `MIORAIL_COMMERCE_ROUTE_V1` and
+`MIORAIL_COMMERCE_EXECUTION_V1` stay off in production and Bitrefill must not
+be presented as a supported purchase path.
 
 ## Promotion requirements
 
@@ -94,8 +136,9 @@ Stages are monotonic only after tests and security gates exist. A broken or stal
 
 ## Planned route-family order
 
-1. Alchemy Base simulation adapter for paid intelligence;
-2. Commerce — Bitrefill;
+1. Alchemy Base simulation adapter for paid intelligence — delivered (T63B);
+2. Commerce — Bitrefill — adapter and scoring delivered (T64); promotion to
+   `proven` blocked on the gate above;
 3. NFT — OpenSea;
 4. Private AI — Venice;
 5. Advanced Swap — o1.exchange and Aerodrome;

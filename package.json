@@ -17,7 +17,8 @@
     "smoke:approvals": "tsx scripts/smoke_approvals.ts",
     "smoke:alchemy-sim": "tsx scripts/smoke_alchemy_simulation.ts",
     "db:probe": "tsx scripts/db_probe.ts",
-    "env:doctor": "node scripts/env-doctor.mjs"
+    "env:doctor": "node scripts/env-doctor.mjs",
+    "smoke:bitrefill": "tsx scripts/smoke_bitrefill_commerce.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

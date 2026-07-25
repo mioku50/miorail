@@ -5,6 +5,9 @@ import { useAccount } from "wagmi";
 import {
   CONSOLE_COPY_V1,
   CandidateCards,
+  CommercePaymentReviewPanel,
+  CommerceRouteCardPanel,
+  commerceCheckoutAvailableV1,
   ConsoleMiniShell,
   ConsoleRightRail,
   ConsoleStepperCompact,
@@ -46,6 +49,8 @@ import {
 } from "@mioagent/ui";
 import {
   useBoundedProofReconciliation,
+  useCommerceCompare,
+  useCreateCommerceOrder,
   useEarnCompare,
   useEvaluateSwapRoute,
   useIntelligenceBudget,
@@ -107,6 +112,8 @@ export function MiniConsole() {
   const status = useStatus();
   const evaluation = useEvaluateSwapRoute();
   const earnCompare = useEarnCompare();
+  const commerceCompare = useCommerceCompare();
+  const commerceOrder = useCreateCommerceOrder();
   const prepare = usePrepareSwapBlueprint();
   const flags = status.data?.productMigration;
   const paidIntelligenceOn = flags?.paidIntelligence === true;
@@ -132,6 +139,8 @@ export function MiniConsole() {
       dispatchRouteFamilyV1(goal, {
         routeIntelligenceV1: flags?.routeIntelligenceV1 === true,
         earnRouteV1: flags?.earnRouteV1 === true,
+        commerceRouteV1: flags?.commerceRouteV1 === true,
+        commerceExecutionV1: flags?.commerceExecutionV1 === true,
       }),
     [goal, flags],
   );
@@ -139,6 +148,31 @@ export function MiniConsole() {
   // The earn result is READ here too — a dispatched Earn goal must land on a
   // Route Card, not sit on Comparing.
   const earnCard = earnCompare.data?.outcome === "compared" ? earnCompare.data : null;
+
+  // The commerce result is READ, not just requested — the same dead end the
+  // T63D audit found on the earn path.
+  const commerceCard = commerceCompare.data?.outcome === "compared" ? commerceCompare.data : null;
+  const commerceCheckout = useMemo(
+    () =>
+      commerceCheckoutAvailableV1({
+        routeIntelligenceV1: flags?.routeIntelligenceV1 === true,
+        earnRouteV1: flags?.earnRouteV1 === true,
+        commerceRouteV1: flags?.commerceRouteV1 === true,
+        commerceExecutionV1: flags?.commerceExecutionV1 === true,
+      }),
+    [flags],
+  );
+  const commerceOrderResult = commerceOrder.data?.outcome === "created" ? commerceOrder.data : null;
+  const commerceSettled = useRef(false);
+  useEffect(() => {
+    if (!commerceCard || commerceSettled.current) return;
+    commerceSettled.current = true;
+    mark("evidence", "start");
+    mark("evidence", "complete");
+    mark("score", "start");
+    mark("score", "complete");
+    setScreen("route");
+  }, [commerceCard, mark]);
   const earnSettled = useRef(false);
   useEffect(() => {
     if (!earnCard || earnSettled.current) return;
@@ -200,6 +234,8 @@ export function MiniConsole() {
     setBudgetResponse(null);
     settled.current = false;
     earnSettled.current = false;
+    commerceSettled.current = false;
+    commerceOrder.reset();
     const at = Date.now();
     let next = emptyStageClockV1();
     next = startStageV1(next, "intent", at);
@@ -208,6 +244,13 @@ export function MiniConsole() {
     setClock(next);
     setScreen("comparing");
     const wallet = address.toLowerCase() as `0x${string}`;
+    if (dispatch.engine === "commerce") {
+      commerceCompare.mutate(
+        { message: goal, walletAddress: wallet },
+        { onSettled: () => mark("candidates", "complete") },
+      );
+      return;
+    }
     if (dispatch.engine === "earn") {
       earnCompare.mutate({ message: goal, walletAddress: wallet }, { onSettled: () => mark("candidates", "complete") });
       return;
@@ -382,17 +425,48 @@ export function MiniConsole() {
             {projection && shortfallNoticeFromProjectionV1(projection) && (
               <p className="lnote" style={{ marginTop: 10 }}>{shortfallNoticeFromProjectionV1(projection)}</p>
             )}
-            {!projection && !earnCard && (
+            {!projection && !earnCard && !commerceCard && (
               <p className="lnote">
                 {earnCompare.data?.outcome === "unsupported"
                   ? earnCompare.data.reason
                   : earnCompare.data?.outcome === "needs_clarification"
                     ? earnCompare.data.issues.join(", ")
-                    : dispatch.blockedReason}
+                    : commerceCompare.data?.outcome === "unsupported"
+                      ? commerceCompare.data.reason
+                      : commerceCompare.data?.outcome === "needs_clarification"
+                        ? commerceCompare.data.issues.join(", ")
+                        : dispatch.blockedReason}
               </p>
             )}
           </div>
         </div>
+      </>
+    );
+  } else if (screen === "route" && commerceCard) {
+    content = (
+      <>
+        <ConsoleStepperCompact label={stepLabel} steps={steps} expanded={railOpen} onToggle={() => setRailOpen((open) => !open)} />
+        <CommerceRouteCardPanel
+          card={commerceCard.routeCard}
+          countryInferred={commerceCard.countryInferred}
+          excluded={commerceCard.excluded}
+          checkout={commerceCheckout}
+          ordering={commerceOrder.isPending}
+          onOrder={(candidateHash) => {
+            if (!address) return;
+            commerceOrder.mutate({
+              message: goal,
+              walletAddress: address.toLowerCase() as `0x${string}`,
+              routeCardHash: commerceCard.routeCard.routeCardHash,
+              selectedCandidateHash: candidateHash,
+            });
+          }}
+        />
+        {commerceOrderResult && (
+          <CommercePaymentReviewPanel order={commerceOrderResult.order} payment={commerceOrderResult.payment} />
+        )}
+        {commerceOrder.data?.outcome === "refresh_required" && <p className="lnote">{commerceOrder.data.reason}</p>}
+        {commerceOrder.data?.outcome === "blocked" && <p className="lnote">{commerceOrder.data.reason}</p>}
       </>
     );
   } else if (screen === "route" && earnCard) {
