@@ -378,3 +378,47 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   .mio-console main { padding: 14px 14px 24px; }
 }
 @media (prefers-reduced-motion: reduce) { .mio-console aside.left { transition: none; } }
+
+/* ---------------------------------------------------------------------------
+   Miniapp: centre column + status bar only. The left rail is a drawer, the
+   right rail's panels fold to the bottom of the centre column, tables become
+   card rows. Nothing that must survive (unavailable routes, unscored
+   dimensions, the Review simulation gate) is dropped here.
+   --------------------------------------------------------------------------- */
+.mio-console.mini { display: grid; grid-template-columns: minmax(0,1fr); grid-template-rows: 52px minmax(0,1fr) 34px; height: 100vh; }
+.mio-console.mini .drawerbtn { display: block; }
+.mio-console.mini header { gap: 10px; padding: 0 12px; }
+.mio-console.mini .minihead { flex: 1; min-width: 0; }
+.mio-console.mini .goalline { font-size: 13.5px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mio-console.mini .stepline { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mio-console.mini aside.left { position: fixed; top: 52px; bottom: 34px; left: 0; width: 264px; max-width: 84vw; z-index: 50;
+  border-right: 1px solid var(--line); background: var(--rail-bg); overflow-y: auto; padding: 14px 12px;
+  transform: translateX(-100%); transition: transform .2s ease-out; }
+.mio-console.mini.drawer-open aside.left { transform: translateX(0); }
+.mio-console.mini.drawer-open .scrim { display: block; }
+.mio-console.mini main { padding: 14px 12px 24px; }
+.mio-console.mini .minipanels { margin-top: 16px; }
+.mio-console.mini .cols2, .mio-console.mini .scorewrap, .mio-console.mini .herostrip,
+.mio-console.mini .limits, .mio-console.mini .checks { grid-template-columns: 1fr; }
+.mio-console.mini .heroR { border-left: 0; border-top: 1px solid var(--hero-line); }
+.mio-console.mini .kpis { grid-template-columns: 1fr 1fr; }
+.mio-console.mini .amount { font-size: 34px; }
+.mio-console.mini .scorerow .cf { display: none; }
+.mio-console.mini .scorerow .nm { width: 92px; }
+.mio-console.mini footer { gap: 12px; }
+@media (prefers-reduced-motion: reduce) { .mio-console.mini aside.left { transition: none; } }
+
+/* Card rows — the mobile form of every comparison table. */
+.mio-console .cardrows { display: grid; gap: 10px; }
+.mio-console .cardrow { border-radius: var(--r); padding: 12px; background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); }
+.mio-console .cardrow.off { opacity: .72; }
+.mio-console .cardrow.off .cr-name { color: var(--muted); }
+.mio-console .cr-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.mio-console .cr-name { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.mio-console .cr-nums { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 9px 0; }
+.mio-console .cr-k { display: block; font-size: 10.5px; color: var(--faint); }
+.mio-console .cr-v { font-size: 13px; font-weight: 600; color: var(--ink); }
+.mio-console .cr-v.good { color: var(--green); }
+.mio-console .cr-v.warn { color: var(--amber); }
+.mio-console .cr-why { font-size: 11.5px; color: var(--muted); margin: 9px 0 0; }
+.mio-console .cardrow .btn { margin-top: 10px; }

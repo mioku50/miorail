@@ -10,8 +10,8 @@ import {
   type EvidenceSourceRowV1,
   type ScoreDimensionSourceV1,
   type SimulationSourceV1,
-} from '@mioagent/ui';
-import type { RouteGraphModelV1 } from '@mioagent/ui';
+} from './consoleState';
+import type { RouteGraphModelV1 } from './ConsoleCharts';
 
 // Structural mirrors of the route-card projection. The surface layer types the
 // wire STRUCTURALLY (the same rule lib/ui follows) so a UI change never drags a

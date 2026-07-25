@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "@mioagent/ui/tokens.css";
+@import "@mioagent/ui/console.css";
 
 /* Dark-first, matching the web interface (tokens live in @mioagent/ui). */
 :root {

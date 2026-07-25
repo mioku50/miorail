@@ -7,6 +7,7 @@ import {
   ComparingScreen,
   ConsoleRightRail,
   ConsoleShell,
+  ConsoleStepper,
   PlanScreen,
   ProofScreen,
   ReviewScreen,
@@ -30,6 +31,16 @@ import {
   type ConsoleSessionItemV1,
   type ConsoleStageClockV1,
   type ConsoleStageV1,
+  candidateRowsFromProjectionV1,
+  evidenceRowsFromProjectionV1,
+  evidenceSourcesFromProjectionV1,
+  quoteFreshnessFromRouteV1,
+  routeGraphFromRouteV1,
+  scoreRowsFromProjectionV1,
+  scoringVersionLabelV1,
+  shortfallNoticeFromProjectionV1,
+  simulationSourceFromResponseV1,
+  type RoutePlanProjectionV1,
 } from '@mioagent/ui';
 import {
   useBoundedProofReconciliation,
@@ -43,20 +54,8 @@ import {
   useStatus,
   type SimulateWithBudgetResponseV1,
 } from '@mioagent/api-client-react';
-import { BlueprintSubmitButton, type BlueprintSubmitStatus } from '@mioagent/wallet-actions';
+import { BlueprintSubmitButton, EarnDepositFlow, type BlueprintSubmitStatus } from '@mioagent/wallet-actions';
 import { SimulateButton, type SimulateBlueprintResponseV1 } from '@mioagent/x402-actions';
-import {
-  candidateRowsFromProjectionV1,
-  evidenceRowsFromProjectionV1,
-  evidenceSourcesFromProjectionV1,
-  quoteFreshnessFromRouteV1,
-  routeGraphFromRouteV1,
-  scoreRowsFromProjectionV1,
-  scoringVersionLabelV1,
-  shortfallNoticeFromProjectionV1,
-  simulationSourceFromResponseV1,
-  type RoutePlanProjectionV1,
-} from './consoleAdapters';
 
 // ---------------------------------------------------------------------------
 // T63D — the console's complete production flow:
@@ -139,6 +138,22 @@ export function RouteIntelligenceConsole() {
 
   // --- measured stage boundaries ---------------------------------------------
 
+  // AUDIT FIX: the earn result must be READ, not just requested. Without this
+  // an Earn goal dispatched to the Earn engine and then stranded the user on
+  // Comparing forever, because the Route screen only knew about swap.
+  const earnCard = earnCompare.data?.outcome === 'compared' ? earnCompare.data : null;
+
+  const earnSettled = useRef(false);
+  useEffect(() => {
+    if (!earnCard || earnSettled.current) return;
+    earnSettled.current = true;
+    mark('evidence', 'start');
+    mark('evidence', 'complete');
+    mark('score', 'start');
+    mark('score', 'complete');
+    setScreen('route');
+  }, [earnCard, mark]);
+
   const evaluationSettled = useRef(false);
   useEffect(() => {
     if (!projection || evaluationSettled.current) return;
@@ -193,6 +208,7 @@ export function RouteIntelligenceConsole() {
     setSimulateResponse(null);
     setBudgetResponse(null);
     evaluationSettled.current = false;
+    earnSettled.current = false;
 
     const at = Date.now();
     let next = emptyStageClockV1();
@@ -390,9 +406,35 @@ export function RouteIntelligenceConsole() {
         ]}
         candidates={projection ? candidateRowsFromProjectionV1(projection) : []}
         sources={evidenceRows}
-        shortfallNotice={projection ? shortfallNoticeFromProjectionV1(projection) : dispatch.blockedReason}
+        shortfallNotice={
+          projection
+            ? shortfallNoticeFromProjectionV1(projection)
+            : earnCompare.data?.outcome === 'unsupported'
+              ? earnCompare.data.reason
+              : earnCompare.data?.outcome === 'needs_clarification'
+                ? earnCompare.data.issues.join(', ')
+                : dispatch.blockedReason
+        }
         onCancel={() => setScreen('plan')}
       />
+    );
+  } else if (screen === 'route' && earnCard) {
+    // Earn has its own Route Card and its own persisted execution path (T62);
+    // the console hosts it rather than re-implementing it.
+    content = (
+      <>
+        <ConsoleStepper steps={steps} />
+        <div className="panel">
+          <div className="pb">
+            <EarnDepositFlow
+              routeRunId={earnCard.routeRunId ?? ''}
+              routeCard={earnCard.routeCard}
+              builderCode={BUILDER_CODE}
+              onRefresh={() => compare()}
+            />
+          </div>
+        </div>
+      </>
     );
   } else if (screen === 'route' && projection) {
     content = (
