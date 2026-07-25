@@ -64,16 +64,16 @@ async function runApprovalsSmokeTest() {
   console.log('4️⃣ Testing UI formatting and presets across interface components...');
   const approvalViewContent = fs.readFileSync(path.resolve(__dirname, '../artifacts/interface/src/features/inbox/ApprovalAnalysisView.tsx'), 'utf8');
   const actionsBuilderContent = fs.readFileSync(path.resolve(__dirname, '../artifacts/interface/src/features/inbox/ActionsBuilder.tsx'), 'utf8');
-  const configureViewContent = fs.readFileSync(path.resolve(__dirname, '../artifacts/interface/src/features/configure/ConfigureView.tsx'), 'utf8');
   const chipsContent = fs.readFileSync(path.resolve(__dirname, '../artifacts/interface/src/features/portfolio/PortfolioProviderChips.tsx'), 'utf8');
 
   assert.ok(approvalViewContent.includes('Approval Summary'), 'ApprovalAnalysisView must render Approval Summary badge/header');
   assert.ok(approvalViewContent.includes('approvalAnalysis.unlimitedApprovals'), 'ApprovalAnalysisView must display unlimited count');
   assert.ok(approvalViewContent.includes('approvalAnalysis.riskySpenderApprovals'), 'ApprovalAnalysisView must display risky spender count');
   assert.ok(actionsBuilderContent.includes('Scan Token Approvals'), 'ActionsBuilder must include Scan Token Approvals preset');
-  assert.ok(configureViewContent.includes('Approval Scanner'), 'ConfigureView must include Approval Scanner status row');
+  // The separate Configure page was deleted with the scanner-era cockpit; its
+  // approval-status row now lives in the console's left column.
   assert.ok(chipsContent.includes('approvals connected'), 'PortfolioProviderChips must include approvals status badge');
-  console.log('   ✔ UI formatting for approval findings, LeftRail status badge, Configure table, and presets verified');
+  console.log('   ✔ UI formatting for approval findings, provider chips, and presets verified');
 
   // 5. Verify T19.4 defensive protection against invalid builder code and robust ActionCard rendering
   console.log('5️⃣ Testing T19.4 defensive builder code attribution and robust ActionCard rendering...');

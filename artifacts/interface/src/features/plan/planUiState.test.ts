@@ -4,26 +4,22 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
 import { isRoutePlanExpired, routeDisplayLabel, routePlanOutcomeCopy, routePlanSurfaceState } from '@mioagent/ui';
-import { commandsForRouteIntelligence, navTabsForRouteIntelligence } from '../../app/routes.js';
+import { appCommands, navTabs } from '../../app/routes.js';
 
 const here = path.dirname(url.fileURLToPath(import.meta.url));
 
-// The console migration INVERTS the flag: the new interface is the default and
-// the seven legacy tabs collapse into two entries — the flow, and proofs. The
-// legacy table survives one iteration behind VITE_LEGACY_NAV as the rollback.
-test('the console flow is the default navigation; seven tabs collapse into two', () => {
-  const tabs = navTabsForRouteIntelligence(true);
+// The scanner-era cockpit is deleted: seven tabs are now two entries, and there
+// is no legacy table left to fall back to.
+test('navigation is exactly the flow and its proofs', () => {
+  const tabs = navTabs();
   assert.deepEqual(tabs.map((route) => route.path), ['/', '/plan/history']);
   assert.deepEqual(tabs.map((route) => route.label), ['flow', 'proofs']);
-  // Rollback path only: with the flag off the legacy cockpit tabs return.
-  assert.equal(navTabsForRouteIntelligence(false)[0]?.path, '/');
-  assert.equal(navTabsForRouteIntelligence(false).some((route) => route.label === 'cockpit'), true);
 });
 
-test('proofs stay reachable, and no command carries an emoji or retired vocabulary', () => {
-  const commands = commandsForRouteIntelligence(true);
-  assert.equal(commands.some((command) => command.path === '/plan/history'), true);
+test('no command carries an emoji or the retired vocabulary', () => {
+  const commands = appCommands();
   assert.equal(commands.length, 2, 'the console exposes exactly two entries');
+  assert.equal(commands.some((command) => command.path === '/plan/history'), true);
   for (const command of commands) {
     assert.equal(command.icon, '', 'navigation carries no emoji');
     assert.equal(/\b(scan|cockpit|fuel|kill switch)\b/i.test(command.label), false, command.label);

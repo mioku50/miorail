@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -7,18 +7,48 @@ function source(relativePath: string): string {
   return readFileSync(fileURLToPath(new URL(relativePath, import.meta.url)), 'utf8');
 }
 
-test('production navigation hides operator diagnostics unless the build flag is enabled', () => {
+function exists(relativePath: string): boolean {
+  return existsSync(fileURLToPath(new URL(relativePath, import.meta.url)));
+}
+
+// The scanner-era cockpit, the separate configure page and the standalone
+// Intelligence Budget page were DELETED, not hidden — these assertions pin the
+// removal so nothing quietly reintroduces them.
+test('the retired cockpit surfaces are deleted, not merely unlinked', () => {
+  for (const relative of [
+    '../features/cockpit/CockpitRoute.tsx',
+    '../features/cockpit/OpsRail.tsx',
+    '../features/cockpit/RiskQueue.tsx',
+    '../features/cockpit/StatusBar.tsx',
+    '../features/configure/ConfigureView.tsx',
+    '../features/x402/FuelMeter.tsx',
+    '../features/x402/FuelCard.tsx',
+    '../features/autonomy/AutonomyCockpit.tsx',
+    '../shell/TopBar.tsx',
+    '../shell/TabBar.tsx',
+  ]) {
+    assert.equal(exists(relative), false, `${relative} must no longer exist`);
+  }
+});
+
+test('the console is the app root and old entry points redirect into the flow', () => {
   const app = source('../app/App.tsx');
+  assert.match(app, /<RouteIntelligenceConsole \/>/);
+  // Mounted unconditionally: no fallback to a product that no longer exists.
+  assert.equal(/routeIntelligenceEnabled/.test(app), false);
+  for (const retired of ['/configure', '/fuel', '/autonomy', '/diagnostics']) {
+    assert.ok(app.includes(`path="${retired}"`), `${retired} must still resolve`);
+  }
+  assert.equal(/CockpitRoute|OpsRail|FuelMeter|ConfigureView|BottomNav|TopBar/.test(app), false);
+});
+
+test('no surviving surface uses the retired vocabulary in navigation', () => {
   const routes = source('../app/routes.tsx');
-  assert.match(app, /DIAGNOSTICS_ENABLED \? <ConfigureView diagnosticsOnly \/> : <Redirect to="\/configure" \/>/);
-  assert.match(app, /DIAGNOSTICS_ENABLED && <StatusBar \/>/);
-  assert.match(routes, /DIAGNOSTICS_ENABLED/);
-  assert.match(routes, /Operator diagnostics/);
+  assert.equal(/cockpit|kill switch|\bscan\b/i.test(routes.replace(/\/\/.*|\/\*[\s\S]*?\*\//g, '')), false);
 });
 
 test('ordinary user surfaces do not regress to vendor or transport jargon', () => {
   const userCopy = [
-    source('../features/cockpit/CockpitRoute.tsx'),
     source('../features/portfolio/PortfolioCard.tsx'),
     source('../features/portfolio/PortfolioProviderChips.tsx'),
     source('../features/portfolio/ProtocolsCard.tsx'),
@@ -46,12 +76,4 @@ test('Agent Stream exposes the Base MCP reconnect CTA outside diagnostics', () =
   assert.match(stream, /<BaseMcpConnectButton/);
   assert.match(stream, /returnTo="\/stream"/);
   assert.match(stream, /baseMcpConnectLabel\(statusData\?\.baseMcp\)/);
-});
-
-test('injected Base App sessions cannot launch an unsupported Spend Permission flow', () => {
-  const fuel = source('../features/x402/FuelMeter.tsx');
-  assert.match(fuel, /spendPermissionsSupported/);
-  assert.match(fuel, /!spendPermissionsSupported/);
-  assert.match(fuel, /No permission was created/);
-  assert.match(fuel, /No permission was saved/);
 });

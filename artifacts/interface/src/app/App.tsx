@@ -1,29 +1,35 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Route, Switch, Redirect } from 'wouter';
 import { useStatus } from '@mioagent/api-client-react';
 import { useUiStore } from '../lib/state';
 import { CHAIN_ENV } from '../lib/chain';
-import { TopBar } from '../shell/TopBar';
-import { BottomNav } from '../shell/TabBar';
 import { CommandPalette } from '../shell/CommandPalette';
 import { Toaster } from '../shell/Toast';
-import { CockpitRoute } from '../features/cockpit/CockpitRoute';
-import { OpsRail } from '../features/cockpit/OpsRail';
-import { StatusBar } from '../features/cockpit/StatusBar';
 import { ActionsPage } from '../features/actions/ActionsPage';
 import { StreamPage } from '../features/stream/StreamPage';
 import { ActionsBuilder } from '../features/inbox/ActionsBuilder';
 import { HistoryPage } from '../features/history/HistoryPage';
-import { ConfigureView } from '../features/configure/ConfigureView';
-import { BaseMcpView } from '../features/configure/BaseMcpView';
-import { FuelMeter } from '../features/x402/FuelMeter';
-import { DIAGNOSTICS_ENABLED } from '../lib/diagnostics';
 import { BaseMcpOAuthBridge } from './BaseMcpOAuthBridge';
 import { RequireSession } from './RequireSession';
-import { PlanPage } from '../features/plan/PlanPage';
-import { RouteIntelligenceConsole } from '../features/console/RouteIntelligenceConsole';
-import { LEGACY_NAV_ENABLED } from './routes';
 import { RouteHistoryPage } from '../features/plan/RouteHistoryPage';
+import { RouteIntelligenceConsole } from '../features/console/RouteIntelligenceConsole';
+
+// ---------------------------------------------------------------------------
+// The Route Intelligence console IS the app.
+//
+// The scanner-era cockpit is gone, not hidden: the CAPABILITIES toggles, KILL
+// SWITCH, SYSTEM AUTONOMY ENGINE, RISK QUEUE, AUTONOMY BOUNDARIES and LATEST
+// AGENT TRACE blocks, and the separate cockpit / configure / intelligence-budget
+// pages, were deleted with their files. Their content now lives in the console's
+// left and right columns and on the Review screen, and the seven tabs have
+// collapsed into two entries — the flow, and proofs.
+//
+// The console mounts UNCONDITIONALLY. It deliberately does not wait on
+// productMigration.routeIntelligenceV1: that server flag gates the route
+// intelligence API, and when it is off the console states that on the surface,
+// the same way it states every other missing source — rather than falling back
+// to a product that no longer exists.
+// ---------------------------------------------------------------------------
 
 function ChainEnvMismatchBanner() {
   const { data: sd } = useStatus();
@@ -37,12 +43,15 @@ function ChainEnvMismatchBanner() {
   );
 }
 
+/** Deep links that survive the migration but are no longer in the navigation.
+ * They render plainly — the deleted chrome is not coming back. */
+function DeepLink({ children }: { children: React.ReactNode }) {
+  return <div className="min-h-screen w-full bg-bg font-sans">{children}</div>;
+}
+
 export function App() {
-  const { data: statusData, isPending: statusPending } = useStatus();
-  const routeIntelligenceEnabled = statusData?.productMigration.routeIntelligenceV1 === true;
   const togglePalette = useUiStore((s) => s.togglePalette);
   const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
-  const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -50,120 +59,80 @@ export function App() {
         e.preventDefault();
         togglePalette();
       }
-      if (e.key === 'Escape') {
-        setPaletteOpen(false);
-        setDrawerOpen(false);
-      }
+      if (e.key === 'Escape') setPaletteOpen(false);
     };
     document.addEventListener('keydown', down);
     return () => document.removeEventListener('keydown', down);
   }, [togglePalette, setPaletteOpen]);
 
-  // Close drawer when viewport grows to lg
-  useEffect(() => {
-    const mq = window.matchMedia('(min-width: 1024px)');
-    const handler = (e: MediaQueryListEvent) => {
-      if (e.matches) setDrawerOpen(false);
-    };
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
-  }, []);
-
-  // The console is the app's ROOT layout, mounted above the router: it owns the
-  // viewport, its three columns scroll independently, and the legacy chrome
-  // (TopBar / OpsRail / BottomNav) is not rendered around it. The legacy shell
-  // stays reachable for one iteration behind VITE_LEGACY_NAV.
-  if (routeIntelligenceEnabled && !LEGACY_NAV_ENABLED) {
-    return (
-      <>
-        <Switch>
-          <Route path="/plan/history"><RequireSession><RouteHistoryPage /></RequireSession></Route>
-          <Route><RequireSession><RouteIntelligenceConsole /></RequireSession></Route>
-        </Switch>
-        <CommandPalette />
-        <Toaster />
-        <BaseMcpOAuthBridge />
-      </>
-    );
-  }
-
   return (
-    /* Desktop: h-screen overflow-hidden; mobile: natural scroll */
-    <div className="w-full flex flex-col font-sans lg:h-screen lg:overflow-hidden">
-      <TopBar onHamburgerClick={() => setDrawerOpen((v) => !v)} drawerOpen={drawerOpen} />
+    <>
       <ChainEnvMismatchBanner />
+      <Switch>
+        {/* Proofs — the console's second entry. */}
+        <Route path="/plan/history">
+          <RequireSession>
+            <DeepLink>
+              <RouteHistoryPage />
+            </DeepLink>
+          </RequireSession>
+        </Route>
 
-      {/* Mobile drawer overlay */}
-      {drawerOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm lg:hidden"
-          onClick={() => setDrawerOpen(false)}
-        />
-      )}
+        {/* Surviving deep links, off-navigation. */}
+        <Route path="/actions">
+          <RequireSession>
+            <DeepLink>
+              <ActionsPage />
+            </DeepLink>
+          </RequireSession>
+        </Route>
+        <Route path="/actions/:actionId">
+          {(params) => (
+            <RequireSession>
+              <DeepLink>
+                <ActionsPage actionId={params.actionId} />
+              </DeepLink>
+            </RequireSession>
+          )}
+        </Route>
+        <Route path="/stream">
+          <RequireSession>
+            <DeepLink>
+              <StreamPage />
+            </DeepLink>
+          </RequireSession>
+        </Route>
+        <Route path="/build">
+          <DeepLink>
+            <ActionsBuilder />
+          </DeepLink>
+        </Route>
+        <Route path="/history">
+          <DeepLink>
+            <HistoryPage />
+          </DeepLink>
+        </Route>
+        <Route path="/inbox/:actionId">{(params) => <Redirect to={`/actions/${params.actionId}`} />}</Route>
 
-      <div className="flex-1 flex lg:overflow-hidden min-h-0">
-        {/* OpsRail: fixed sidebar on lg; slide-over drawer on <lg */}
-        <div
-          className={[
-            'fixed top-0 left-0 h-full z-50 transition-transform duration-200 ease-out',
-            'lg:static lg:translate-x-0 lg:z-auto lg:h-auto',
-            drawerOpen ? 'translate-x-0' : '-translate-x-full',
-          ].join(' ')}
-        >
-          <OpsRail onClose={() => setDrawerOpen(false)} />
-        </div>
+        {/* Retired surfaces. Old bookmarks land on the flow instead of a 404. */}
+        <Route path="/configure">{() => <Redirect to="/" />}</Route>
+        <Route path="/fuel">{() => <Redirect to="/" />}</Route>
+        <Route path="/autonomy">{() => <Redirect to="/" />}</Route>
+        <Route path="/diagnostics">{() => <Redirect to="/" />}</Route>
+        <Route path="/base-mcp">{() => <Redirect to="/" />}</Route>
+        <Route path="/plan">{() => <Redirect to="/" />}</Route>
 
-        <div className="flex-1 flex overflow-hidden min-h-0">
-          <Switch>
-            {/* Private surfaces: gated behind a wallet session (T48a). Public
-                routes (cockpit, diagnostics, build, history, base-mcp) stay
-                reachable read-only, unauthenticated. */}
-            <Route path="/actions"><RequireSession><ActionsPage /></RequireSession></Route>
-            <Route path="/actions/:actionId">{(params) => <RequireSession><ActionsPage actionId={params.actionId} /></RequireSession>}</Route>
-            <Route path="/stream"><RequireSession><StreamPage /></RequireSession></Route>
-            <Route path="/fuel"><RequireSession><FuelMeter /></RequireSession></Route>
-            <Route path="/configure"><RequireSession><ConfigureView /></RequireSession></Route>
-            <Route path="/diagnostics">
-              {DIAGNOSTICS_ENABLED ? <ConfigureView diagnosticsOnly /> : <Redirect to="/configure" />}
-            </Route>
-            <Route path="/build"><ActionsBuilder /></Route>
-            <Route path="/history"><HistoryPage /></Route>
-            <Route path="/base-mcp">
-              {DIAGNOSTICS_ENABLED ? <BaseMcpView /> : <Redirect to="/configure" />}
-            </Route>
-            <Route path="/autonomy"><CockpitRoute /></Route>
-            {/* T58: route history lives under /plan/history — the legacy
-                /history page (chat + action inbox) is untouched. Same flag +
-                session gate as /plan. */}
-            <Route path="/plan/history">
-              {statusPending
-                ? <div className="flex flex-1 items-center justify-center text-sm text-ink-3">Checking route intelligence…</div>
-                : routeIntelligenceEnabled
-                  ? <RequireSession><RouteHistoryPage /></RequireSession>
-                  : <Redirect to="/" />}
-            </Route>
-            <Route path="/plan">
-              {statusPending
-                ? <div className="flex flex-1 items-center justify-center text-sm text-ink-3">Checking route intelligence…</div>
-                : routeIntelligenceEnabled
-                  ? <RequireSession><PlanPage /></RequireSession>
-                  : <Redirect to="/" />}
-            </Route>
-            {/* T19.2: /inbox/:actionId is a legacy alias — redirect to the
-                canonical /actions/:actionId deep link (still focuses the card). */}
-            <Route path="/inbox/:actionId">{(params) => <Redirect to={`/actions/${params.actionId}`} />}</Route>
-            <Route path="/">{routeIntelligenceEnabled ? <Redirect to="/plan" /> : <CockpitRoute />}</Route>
-          </Switch>
-        </div>
-      </div>
-
-      {DIAGNOSTICS_ENABLED && <StatusBar />}
-      <BottomNav />
-      {/* Add bottom padding on mobile so content isn't hidden under bottom nav */}
+        {/* The flow. */}
+        <Route>
+          <RequireSession>
+            <RouteIntelligenceConsole />
+          </RequireSession>
+        </Route>
+      </Switch>
       <CommandPalette />
       <Toaster />
       <BaseMcpOAuthBridge />
-    </div>
+    </>
   );
 }
 

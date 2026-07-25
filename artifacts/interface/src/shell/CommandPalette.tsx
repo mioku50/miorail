@@ -2,16 +2,14 @@ import { useEffect } from 'react';
 import { Command } from 'cmdk';
 import { useLocation } from 'wouter';
 import { useUiStore } from '../lib/state';
-import { useStatus } from '@mioagent/api-client-react';
-import { commandsForRouteIntelligence } from '../app/routes';
+import { appCommands } from '../app/routes';
 
 // cmdk-powered palette. Commands are generated from the route table (app/routes.tsx).
 export function CommandPalette() {
   const open = useUiStore((s) => s.paletteOpen);
   const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
   const [, navigate] = useLocation();
-  const { data } = useStatus();
-  const commands = commandsForRouteIntelligence(data?.productMigration.routeIntelligenceV1 === true);
+  const commands = appCommands();
 
   useEffect(() => {
     if (!open) return;
