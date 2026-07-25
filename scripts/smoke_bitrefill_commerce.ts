@@ -23,6 +23,7 @@ import {
 } from '@mioagent/commerce-engine';
 import { resolveCommerceIntentV1 } from '@mioagent/intent-engine';
 import { ALLOWED_PARTNER_HOSTS } from '@mioagent/security/httpAllowlist';
+import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 
 // ---------------------------------------------------------------------------
 // T64 — FREE smoke test for the Bitrefill commerce route family.
@@ -78,7 +79,13 @@ function recordedFetch(): typeof fetch {
 async function main(): Promise<void> {
   console.log('\nT64 Bitrefill commerce smoke\n');
 
-  console.log('1. Pinned configuration');
+  console.log('0. Environment');
+  // The repo's convention is `node --env-file=.env`, which is easy to forget
+  // behind a pnpm alias — without this the script reports "anonymous" for a
+  // credential that is actually configured.
+  reportLoadedEnvFileV1(loadRootEnvFileV1());
+
+  console.log('\n1. Pinned configuration');
   assert.ok(
     (ALLOWED_PARTNER_HOSTS as readonly string[]).includes(BITREFILL_HOST_V1),
     'the commerce host must be on the partner allowlist',
@@ -97,6 +104,14 @@ async function main(): Promise<void> {
     accessToken: process.env.BITREFILL_ACCESS_TOKEN,
   });
   ok(`configured credential: ${credential.kind}`);
+  if (credential.kind === 'anonymous') {
+    console.log('     ⚠ neither BITREFILL_API_KEY nor BITREFILL_ACCESS_TOKEN is visible.');
+    console.log('       The live probe cannot read a catalogue without one.');
+  } else if (credential.kind === 'personal_api') {
+    ok('the Personal API surface (/v2, Bearer) is the one this deployment will use');
+  } else {
+    ok('the x402 surface (/x402, X-Access-Token) is the one this deployment will use');
+  }
   assert.deepEqual(
     commerceAuthHeadersV1({ kind: 'personal_api', apiKey: 'k' }, BITREFILL_V2_PRODUCT_SEARCH_PATH_V1),
     { authorization: 'Bearer k' },
@@ -248,6 +263,7 @@ async function main(): Promise<void> {
   ok('payment + confirmed order + delivery is the ONLY successful proof');
 
   if (process.env.SMOKE_BITREFILL_LIVE !== 'true') {
+    // Named explicitly so the reader knows the probe was skipped by choice.
     console.log('\n7. Live probe skipped (set SMOKE_BITREFILL_LIVE=true to run one read-only search).\n');
     console.log('Offline smoke passed.\n');
     return;

@@ -72,6 +72,22 @@ Redemption codes, PINs, and eSIM QR URLs are bearer credentials: they appear in
 no contract, no hash, and no persisted record. The proof carries delivery
 **counts and states** only.
 
+## Bitrefill credentials (T64.1)
+
+Two different Bitrefill APIs, two credentials, and the code refuses to cross
+them (`commerceAuthHeadersV1` throws rather than sending the wrong one):
+
+| Variable | Header | API surface | Notes |
+|---|---|---|---|
+| `BITREFILL_API_KEY` | `Authorization: Bearer` | Personal API `/v2/*` | Account-backed catalogue; invoices settle with `payment_method=usdc_base`. Preferred when set. |
+| `BITREFILL_ACCESS_TOKEN` | `X-Access-Token` | x402 SIWX `/x402/*` | Short-lived (~2 h) session that waives x402 micro-fees. Used only when no API key is set. |
+
+Verified live on 2026-07-25: the `/v2` catalogue publishes **no currency for
+`package.price`** — a $200 Steam card is `{ value: "200", amount: 200,
+price: 347689 }` under `currency: "USD"`. `price` is therefore never used as a
+settlement total; the denomination comes from `amount`/`value` and is carried
+as a `minimum`, with the exact USDC charge fixed by the invoice under review.
+
 ## Bitrefill promotion gate (`scored` → `proven`)
 
 Still outstanding, in order:

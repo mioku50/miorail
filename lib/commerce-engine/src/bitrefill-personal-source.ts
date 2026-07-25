@@ -17,6 +17,7 @@ import {
   decimalToAtomicV1,
   normalizeCountryV1,
   normalizeCurrencyV1,
+  packageValueAsDecimalV1,
   validatePackageValueV1,
 } from './normalization.js';
 import { resolveRecipientRequiredV1 } from './bitrefill-source.js';
@@ -114,29 +115,35 @@ export function v2PriceToDecimalV1(price: number): string | null {
 /**
  * The settlement price for one `/v2` package.
  *
- * The Personal API quotes `price` as a number in the product's own currency
- * and names no USDC figure at all, so the charge is always a MINIMUM here —
- * the exact USDC total is fixed by the invoice the user reviews before
- * signing. A non-USD product is refused rather than converted: there is no FX
- * evidence source, and inventing a rate on an irreversible purchase is not an
- * option.
+ * `package.price` is DELIBERATELY IGNORED. The live catalogue returns
+ * `{ id, value, price, amount }` and publishes no currency for `price`
+ * anywhere in the response: a $200 Steam card carries `value: "200"`,
+ * `amount: 200`, `currency: "USD"` — and `price: 347689`. Whatever unit that
+ * is, it is not the product currency and not USDC, and an unlabelled number is
+ * not evidence. Using it produced a 347,687 USDC "minimum" for a $200 card.
  *
- * (That `price` is denominated in `currency` rather than always-USD is the one
- * assumption in this adapter that recorded payloads cannot settle. It is
- * conservative — it can only refuse a product, never mis-price one — and it is
- * the first thing the live smoke checks.)
+ * What IS verifiable is the denomination: `amount` (number) or `value`
+ * (numeric string), stated in the product's own `currency`. So the settlement
+ * total is the face value, as a MINIMUM — the exact USDC charge is fixed by
+ * the invoice the user reviews before signing, and re-checked against the
+ * authorized ceiling there.
+ *
+ * A non-USD product is refused rather than converted: there is no FX evidence
+ * source, and inventing a rate on an irreversible purchase is not an option.
  */
 export function resolveV2PackagePriceV1(
   pkg: V2Package,
   currency: string,
 ): { fees: CommerceFeeBreakdownV1; fiatAmountDecimal: string } | { failure: CommerceFailureReasonV1 } {
   if (currency !== 'USD') return { failure: 'fx_rate_unavailable' };
-  const priceDecimal = v2PriceToDecimalV1(pkg.price);
-  if (priceDecimal === null) return { failure: 'price_unavailable' };
-  const atomic = decimalToAtomicV1(priceDecimal);
+  const denomination =
+    typeof pkg.amount === 'number' ? v2PriceToDecimalV1(pkg.amount) : packageValueAsDecimalV1(pkg.value);
+  // A descriptive package value ("1GB, 7 Days") is a label, not a price.
+  if (denomination === null) return { failure: 'price_unavailable' };
+  const atomic = decimalToAtomicV1(denomination);
   if (atomic === null) return { failure: 'price_unavailable' };
   return {
-    fiatAmountDecimal: pkg.value,
+    fiatAmountDecimal: denomination,
     fees: {
       productPriceAtomic: atomic,
       providerFeeAtomic: null,

@@ -110,8 +110,8 @@ const V2_SEARCH_BODY = {
       recipient_type: 'none',
       in_stock: true,
       packages: [
-        { id: 'steam-usa<&>25', value: '25', price: 25 },
-        { id: 'steam-usa<&>10', value: '10', price: 10 },
+        { id: 'steam-usa<&>25', value: '25', price: 43460, amount: 25 },
+        { id: 'steam-usa<&>10', value: '10', price: 17520, amount: 10 },
       ],
     },
     {
@@ -123,7 +123,7 @@ const V2_SEARCH_BODY = {
       categories: ['gaming'],
       recipient_type: 'none',
       in_stock: true,
-      packages: [{ id: 'steam-italy<&>25', value: '25', price: 25 }],
+      packages: [{ id: 'steam-italy<&>25', value: '25', price: 45900, amount: 25 }],
     },
   ],
 };
@@ -197,11 +197,48 @@ test('a rejected key is a configuration failure, not an HTTP error', async () =>
 });
 
 test('a /v2 price is a minimum — the exact USDC total comes from the invoice', () => {
-  const priced = resolveV2PackagePriceV1({ id: 'steam-usa<&>25', value: '25', price: 25 }, 'USD');
+  const priced = resolveV2PackagePriceV1({ id: 'steam-usa<&>25', value: '25', price: 25, amount: 25 }, 'USD');
   assert.ok('fees' in priced);
   assert.equal(priced.fees.totalBasis, 'minimum');
   assert.equal(priced.fees.totalAtomic, '25000000');
   assert.equal(priced.fees.providerFeeAtomic, null);
+});
+
+// REGRESSION, from the live catalogue on 2026-07-25. `/v2` publishes no
+// currency for `package.price` anywhere in the response, and it is plainly not
+// the product currency: a $200 Steam card is `{ value: "200", amount: 200,
+// price: 347689 }` under `currency: "USD"`. Deriving the total from `price`
+// produced a 347,687 USDC "minimum" for a $200 card.
+const LIVE_V2_STEAM_PACKAGES = [
+  { id: 'steam-usa<&>200', value: '200', price: 347689, amount: 200 },
+  { id: 'steam-usa<&>50', value: '50', price: 83866, amount: 50 },
+  { id: 'steam-usa<&>20', value: '20', price: 33472, amount: 20 },
+  { id: 'steam-usa<&>10', value: '10', price: 17520, amount: 10 },
+  { id: 'steam-usa<&>5', value: '5', price: 8760, amount: 5 },
+];
+
+test('the unlabelled /v2 `price` field is never used as a settlement total', () => {
+  for (const pkg of LIVE_V2_STEAM_PACKAGES) {
+    const priced = resolveV2PackagePriceV1(pkg, 'USD');
+    assert.ok('fees' in priced, `expected a price for ${pkg.id}`);
+    // The face value, not `price`.
+    assert.equal(priced.fees.totalAtomic, `${pkg.amount}000000`);
+    assert.equal(priced.fiatAmountDecimal, String(pkg.amount));
+    assert.equal(priced.fees.totalBasis, 'minimum');
+  }
+});
+
+test('a $200 card never costs 347,687 USDC', () => {
+  const priced = resolveV2PackagePriceV1(LIVE_V2_STEAM_PACKAGES[0], 'USD');
+  assert.ok('fees' in priced);
+  assert.equal(priced.fees.totalAtomic, '200000000');
+  assert.notEqual(priced.fees.totalAtomic, '347689000000');
+});
+
+test('a descriptive package value is a label, not a price', () => {
+  assert.deepEqual(resolveV2PackagePriceV1({ id: 'esim<&>1gb', value: '1GB, 7 Days', price: 500 }, 'USD'), {
+    failure: 'price_unavailable',
+  });
 });
 
 test('a non-USD /v2 product is refused rather than converted', () => {
