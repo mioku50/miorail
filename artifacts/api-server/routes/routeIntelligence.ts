@@ -2392,6 +2392,9 @@ routeIntelligenceRouter.post('/commerce/orders', async (req, res) => {
       packageValue: entry.candidate.product.packageValue,
       recipientInput: resolution.intent.recipientInput,
       maxSpendAtomic: resolution.intent.maxSpendAtomic,
+      // A failed crypto payment returns to the wallet that authorized it, and
+      // to no other address: this is the authenticated session's own wallet.
+      refundAddress: guard.user.address,
       now,
     });
     if (!created.ok) {

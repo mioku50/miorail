@@ -103,6 +103,10 @@ export interface CommerceCreateOrderInputV1 {
   recipientInput: string | null;
   /** Ceiling the created invoice must not exceed, in settlement base units. */
   maxSpendAtomic: string;
+  /** Where a failed crypto payment is returned — the authenticated wallet.
+   * Required by the Personal API for a crypto-settled invoice; the x402
+   * gateway ignores it. */
+  refundAddress?: string;
   now: Date;
 }
 

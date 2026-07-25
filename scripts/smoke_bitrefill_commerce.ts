@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import {
   BITREFILL_ALLOWED_PATHS_V1,
+  BITREFILL_INVOICE_CREATE_PATH_V1,
+  BITREFILL_V2_INVOICES_PATH_V1,
+  BITREFILL_V2_PRODUCT_SEARCH_PATH_V1,
+  COMMERCE_PAYMENT_METHOD_V1,
+  CommerceCredentialSurfaceError,
+  commerceAuthHeadersV1,
+  createBitrefillPersonalCatalogSourceV1,
+  resolveCommerceCredentialV1,
   BITREFILL_HOST_V1,
   BITREFILL_PAY_TO_V1,
   COMMERCE_MAX_ORDER_ATOMIC_V1,
@@ -28,7 +36,7 @@ import { ALLOWED_PARTNER_HOSTS } from '@mioagent/security/httpAllowlist';
 //   pnpm smoke:bitrefill
 // Add the read-only live probe (one catalogue search, no checkout):
 //   SMOKE_BITREFILL_LIVE=true pnpm smoke:bitrefill
-//   BITREFILL_ACCESS_TOKEN=... SMOKE_BITREFILL_LIVE=true pnpm smoke:bitrefill
+//   BITREFILL_API_KEY=... SMOKE_BITREFILL_LIVE=true pnpm smoke:bitrefill
 //
 // The live probe only SEARCHES. It never creates an invoice, never pays, and
 // never asks for a signature — there is no code path in this script that can
@@ -76,14 +84,42 @@ async function main(): Promise<void> {
     'the commerce host must be on the partner allowlist',
   );
   ok(`host allowlisted: ${BITREFILL_HOST_V1}`);
-  assert.equal(BITREFILL_ALLOWED_PATHS_V1.length, 7);
   ok(`${BITREFILL_ALLOWED_PATHS_V1.length} pinned paths, and no others`);
   assert.throws(() => buildCommerceUrlV1('/x402/anything-else'), /not pinned/);
-  ok('an unpinned path cannot be built into a request');
+  assert.throws(() => buildCommerceUrlV1('/v2/accounts/balance'), /not pinned/);
+  ok('an unpinned path cannot be built into a request, on either surface');
   ok(`settlement pinned to USDC ${COMMERCE_USDC_ADDRESS_V1} → ${BITREFILL_PAY_TO_V1}`);
   ok(`hard order ceiling: ${COMMERCE_MAX_ORDER_ATOMIC_V1} USDC base units`);
 
-  console.log('\n2. Intent grounding (offline, deterministic)');
+  console.log('\n2. Credential routing (T64.1)');
+  const credential = resolveCommerceCredentialV1({
+    apiKey: process.env.BITREFILL_API_KEY,
+    accessToken: process.env.BITREFILL_ACCESS_TOKEN,
+  });
+  ok(`configured credential: ${credential.kind}`);
+  assert.deepEqual(
+    commerceAuthHeadersV1({ kind: 'personal_api', apiKey: 'k' }, BITREFILL_V2_PRODUCT_SEARCH_PATH_V1),
+    { authorization: 'Bearer k' },
+  );
+  ok('Personal API key -> Authorization: Bearer on /v2/*');
+  assert.deepEqual(
+    commerceAuthHeadersV1({ kind: 'x402_session', accessToken: 't' }, BITREFILL_INVOICE_CREATE_PATH_V1),
+    { 'X-Access-Token': 't' },
+  );
+  ok('SIWX session -> X-Access-Token on /x402/*');
+  assert.throws(
+    () => commerceAuthHeadersV1({ kind: 'personal_api', apiKey: 'k' }, BITREFILL_INVOICE_CREATE_PATH_V1),
+    CommerceCredentialSurfaceError,
+  );
+  ok('a Personal API key is REFUSED on an x402 route — never sent as X-Access-Token');
+  assert.throws(
+    () => commerceAuthHeadersV1({ kind: 'x402_session', accessToken: 't' }, BITREFILL_V2_INVOICES_PATH_V1),
+    CommerceCredentialSurfaceError,
+  );
+  ok('a SIWX session is REFUSED on the Personal API');
+  ok(`invoice settlement pinned to payment_method=${COMMERCE_PAYMENT_METHOD_V1}`);
+
+  console.log('\n3. Intent grounding (offline, deterministic)');
   const resolution = resolveCommerceIntentV1({
     message: 'Buy a US Steam gift card for $25',
     tenantId: `eip155:8453:${WALLET.toLowerCase()}`,
@@ -94,7 +130,7 @@ async function main(): Promise<void> {
   if (resolution.status !== 'ready') throw new Error('intent not ready');
   ok(`intent ${resolution.intent.intentHash.slice(0, 18)}… · ceiling ${resolution.intent.maxSpendAtomic}`);
 
-  console.log('\n3. Comparison against recorded catalogue payloads');
+  console.log('\n4. Comparison against recorded catalogue payloads');
   const comparison = await compareCommerceRoutesV1(
     { catalog: createBitrefillCatalogSourceV1({ fetchImpl: recordedFetch() }) },
     { intent: resolution.intent, now: NOW },
@@ -118,7 +154,7 @@ async function main(): Promise<void> {
   assert.equal(delivery?.score, null);
   ok('delivery certainty is visibly unscored — no source publishes it');
 
-  console.log('\n4. Checkout terms (built, never sent)');
+  console.log('\n5. Checkout terms (built, never sent)');
   const candidate = card.comparisons[0].candidate;
   const order = buildCommerceOrderV1({
     intent: resolution.intent,
@@ -168,7 +204,7 @@ async function main(): Promise<void> {
   if (!payment.ok) throw new Error('payment requirements failed');
   ok(`review terms: ${payment.requirements.maxAmountAtomic} base units → ${payment.requirements.payTo}`);
 
-  console.log('\n5. The rule this family exists for');
+  console.log('\n6. The rule this family exists for');
   const paidNoOrder = buildCommerceRouteProofV1({
     order: order.order,
     observation: {
@@ -212,15 +248,19 @@ async function main(): Promise<void> {
   ok('payment + confirmed order + delivery is the ONLY successful proof');
 
   if (process.env.SMOKE_BITREFILL_LIVE !== 'true') {
-    console.log('\n6. Live probe skipped (set SMOKE_BITREFILL_LIVE=true to run one read-only search).\n');
+    console.log('\n7. Live probe skipped (set SMOKE_BITREFILL_LIVE=true to run one read-only search).\n');
     console.log('Offline smoke passed.\n');
     return;
   }
 
-  console.log('\n6. Live probe — ONE catalogue search, read-only');
-  const live = createBitrefillCatalogSourceV1({
-    accessToken: process.env.BITREFILL_ACCESS_TOKEN?.trim() || undefined,
-  });
+  console.log('\n7. Live probe — ONE catalogue search, read-only');
+  // Whichever surface the environment actually configures, exactly as the
+  // server chooses it.
+  const apiKey = process.env.BITREFILL_API_KEY?.trim();
+  const live = apiKey
+    ? createBitrefillPersonalCatalogSourceV1({ apiKey })
+    : createBitrefillCatalogSourceV1({ accessToken: process.env.BITREFILL_ACCESS_TOKEN?.trim() || undefined });
+  console.log(`   surface: ${apiKey ? 'Personal API /v2 (Bearer)' : 'x402 /x402 (session or anonymous)'}`);
   const result = await live.search({
     query: 'Steam',
     kind: 'gift_card',
@@ -231,10 +271,17 @@ async function main(): Promise<void> {
   });
   if (!result.ok) {
     console.log(`   ⚠ the storefront did not answer: ${result.reason}`);
-    console.log('     (402 means the route is gated — set BITREFILL_ACCESS_TOKEN to browse fee-free.)\n');
+    console.log('     provider_payment_required = the x402 route is gated; set BITREFILL_API_KEY to use the Personal API.');
+    console.log('     provider_not_configured   = no key, or the key was rejected (401/403).\n');
     return;
   }
   ok(`${result.observation.packages.length} denomination(s) read from ${result.observation.endpoint}`);
+  for (const entry of result.observation.packages.slice(0, 5)) {
+    console.log(
+      `     ${entry.product.packageValue} ${entry.product.currency} → ` +
+        `${entry.fees.totalAtomic} base units (${entry.fees.totalBasis}) · ${entry.availability}`,
+    );
+  }
   ok(`request ${result.observation.requestHash.slice(0, 18)}… response ${result.observation.responseHash.slice(0, 18)}…`);
   console.log('\nLive probe passed. No order was created and nothing was paid.\n');
 }

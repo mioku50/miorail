@@ -61,12 +61,46 @@ export const BITREFILL_INVOICE_CREATE_PATH_V1 = '/x402/invoice/create';
 export const BITREFILL_INVOICE_PAY_PATH_V1 = '/x402/invoice/pay';
 export const BITREFILL_INVOICE_STATUS_PATH_V1 = '/x402/invoice/status';
 
+// --- Personal API (`/v2/*`, Bearer) ----------------------------------------
+//
+// The account-backed surface reached with a Developers-page API key. It is a
+// DIFFERENT API from the x402 routes above — different paths, different auth
+// header, different response envelope (`{ meta, data }`) — so it gets its own
+// pinned path set rather than being folded into the x402 one.
+
+export const BITREFILL_V2_PATH_PREFIX_V1 = '/v2/';
+export const BITREFILL_X402_PATH_PREFIX_V1 = '/x402/';
+
+export const BITREFILL_V2_PRODUCT_SEARCH_PATH_V1 = '/v2/products/search';
+export const BITREFILL_V2_PRODUCT_BROWSE_PATH_V1 = '/v2/products';
+export const BITREFILL_V2_INVOICES_PATH_V1 = '/v2/invoices';
+export const BITREFILL_V2_ORDERS_PATH_V1 = '/v2/orders';
+export const BITREFILL_V2_PING_PATH_V1 = '/v2/ping';
+
+/** `/v2/products/{id}` and `/v2/invoices/{id}` carry an id in the path, so the
+ * allowlist checks a PREFIX for those two and exact paths for everything else.
+ * The id itself is always URL-encoded by the caller. */
+export const BITREFILL_V2_PATH_PREFIXES_V1: readonly string[] = Object.freeze([
+  '/v2/products/',
+  '/v2/invoices/',
+  '/v2/orders/',
+]);
+
+/** The settlement rail named on a Personal API invoice. Pinned: no other
+ * payment method may ever be requested by this deployment. */
+export const COMMERCE_PAYMENT_METHOD_V1 = 'usdc_base' as const;
+
 export const BITREFILL_ALLOWED_PATHS_V1: readonly string[] = Object.freeze([
   ...Object.values(BITREFILL_SEARCH_PATHS_V1),
   BITREFILL_DETAIL_PATH_V1,
   BITREFILL_INVOICE_CREATE_PATH_V1,
   BITREFILL_INVOICE_PAY_PATH_V1,
   BITREFILL_INVOICE_STATUS_PATH_V1,
+  BITREFILL_V2_PRODUCT_SEARCH_PATH_V1,
+  BITREFILL_V2_PRODUCT_BROWSE_PATH_V1,
+  BITREFILL_V2_INVOICES_PATH_V1,
+  BITREFILL_V2_ORDERS_PATH_V1,
+  BITREFILL_V2_PING_PATH_V1,
 ]);
 
 /**
@@ -126,9 +160,13 @@ export function resolveCommerceTimeoutMsV1(value: number | undefined): number {
   return Math.min(60_000, Math.max(250, Math.floor(value)));
 }
 
-/** True only for a path this adapter is allowed to reach on the pinned host. */
+/** True only for a path this adapter is allowed to reach on the pinned host.
+ * Exact match, plus the three `/v2/` families whose last segment is an id. */
 export function isPinnedCommercePathV1(path: string): boolean {
-  return BITREFILL_ALLOWED_PATHS_V1.includes(path);
+  if (BITREFILL_ALLOWED_PATHS_V1.includes(path)) return true;
+  return BITREFILL_V2_PATH_PREFIXES_V1.some(
+    (prefix) => path.startsWith(prefix) && path.length > prefix.length && !path.slice(prefix.length).includes('?'),
+  );
 }
 
 /** Builds a provider URL from a PINNED path plus explicit query parameters.
