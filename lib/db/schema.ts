@@ -313,7 +313,7 @@ export const routeRuns = pgTable(
     index('route_runs_user_status_created_idx').on(table.userId, table.status, table.createdAt),
     index('route_runs_intent_hash_idx').on(table.intentHash),
     check('route_runs_chain_check', sql`${table.chainId} IN (8453, 84532)`),
-    check('route_runs_goal_check', sql`${table.goal} IN ('swap', 'earn')`),
+    check('route_runs_goal_check', sql`${table.goal} IN ('swap', 'earn', 'commerce')`),
     check(
       'route_runs_status_check',
       sql`${table.status} IN ('draft', 'ready', 'needs_clarification', 'collecting_candidates', 'collecting_evidence', 'scoring', 'card_ready', 'blueprint_ready', 'awaiting_approval', 'executing', 'reconciling', 'completed', 'partial_failure', 'failed', 'cancelled', 'rejected')`,
@@ -820,6 +820,207 @@ export const intelligenceCharges = pgTable(
     check(
       'intelligence_charges_status_check',
       sql`${table.status} IN ('quoted', 'reserved', 'payment_pending', 'settled', 'failed', 'reconciliation_required', 'released')`,
+    ),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// T64.2 — durable Commerce storage.
+//
+// Commerce runs live in route_runs (goal='commerce') so the run/intent shape is
+// shared, but every commerce PAYLOAD gets its own versioned table: the family
+// has no Blueprint and no swap-shaped proof, so reusing the execution tables
+// would misrepresent it.
+//
+// Nothing here stores a redemption code, a PIN, an eSIM URL, or an API key.
+// The order and event rows carry states, counts and provider ids only.
+// ---------------------------------------------------------------------------
+
+export const commerceCandidates = pgTable(
+  'commerce_candidates',
+  {
+    id: text('id').primaryKey(),
+    routeRunId: text('route_run_id')
+      .references(() => routeRuns.id, restrictReference)
+      .notNull(),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    schemaVersion: text('schema_version').notNull(),
+    status: text('status').notNull(),
+    candidateHash: text('candidate_hash').notNull(),
+    productId: text('product_id').notNull(),
+    packageValue: text('package_value').notNull(),
+    payload: jsonb('payload').notNull(),
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('commerce_candidates_run_hash_unique').on(table.routeRunId, table.candidateHash),
+    index('commerce_candidates_run_product_idx').on(table.routeRunId, table.productId),
+    check(
+      'commerce_candidates_status_check',
+      sql`${table.status} IN ('quoted', 'selected', 'expired', 'invalid', 'rejected')`,
+    ),
+  ],
+);
+
+export const commerceEvidence = pgTable(
+  'commerce_evidence',
+  {
+    id: text('id').primaryKey(),
+    routeRunId: text('route_run_id')
+      .references(() => routeRuns.id, restrictReference)
+      .notNull(),
+    candidateId: text('candidate_id').references(() => commerceCandidates.id, restrictReference),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    schemaVersion: text('schema_version').notNull(),
+    status: text('status').notNull(),
+    evidenceHash: text('evidence_hash').notNull(),
+    providerId: text('provider_id').notNull(),
+    payload: jsonb('payload').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('commerce_evidence_run_hash_unique').on(table.routeRunId, table.evidenceHash),
+    index('commerce_evidence_candidate_idx').on(table.candidateId),
+    check('commerce_evidence_status_check', sql`${table.status} IN ('fresh', 'stale', 'invalid')`),
+  ],
+);
+
+export const commerceRouteCards = pgTable(
+  'commerce_route_cards',
+  {
+    id: text('id').primaryKey(),
+    routeRunId: text('route_run_id')
+      .references(() => routeRuns.id, restrictReference)
+      .notNull(),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    schemaVersion: text('schema_version').notNull(),
+    status: text('status').notNull(),
+    routeCardHash: text('route_card_hash').notNull(),
+    payload: jsonb('payload').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('commerce_route_cards_run_hash_unique').on(table.routeRunId, table.routeCardHash),
+    index('commerce_route_cards_user_created_idx').on(table.userId, table.createdAt),
+    check(
+      'commerce_route_cards_status_check',
+      sql`${table.status} IN ('ready', 'degraded', 'selected', 'stale', 'invalid')`,
+    ),
+  ],
+);
+
+export const commerceOrders = pgTable(
+  'commerce_orders',
+  {
+    id: text('id').primaryKey(),
+    routeRunId: text('route_run_id')
+      .references(() => routeRuns.id, restrictReference)
+      .notNull(),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    walletAddress: text('wallet_address').notNull(),
+    routeCardHash: text('route_card_hash').notNull(),
+    candidateHash: text('candidate_hash').notNull(),
+    productId: text('product_id').notNull(),
+    packageValue: text('package_value').notNull(),
+    // tenant + wallet + routeCardHash + packageId + requestId. The unique index
+    // below is what makes a repeated checkout return the SAME invoice instead
+    // of opening a second one.
+    idempotencyKey: text('idempotency_key').notNull(),
+    // 'pending' exists before the provider is called, so an uncertain network
+    // result is a durable fact rather than a lost request.
+    status: text('status').notNull(),
+    providerStatus: text('provider_status').notNull(),
+    // NULL until the provider confirms an invoice.
+    invoiceId: text('invoice_id'),
+    exactAmountAtomic: text('exact_amount_atomic'),
+    estimatedAmountAtomic: text('estimated_amount_atomic'),
+    payTo: text('pay_to'),
+    refundAddress: text('refund_address').notNull(),
+    payload: jsonb('payload'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('commerce_orders_user_idempotency_unique').on(table.userId, table.idempotencyKey),
+    uniqueIndex('commerce_orders_user_invoice_unique').on(table.userId, table.invoiceId),
+    index('commerce_orders_user_created_idx').on(table.userId, table.createdAt),
+    check(
+      'commerce_orders_status_check',
+      sql`${table.status} IN ('pending', 'created', 'payment_pending', 'payment_confirmed', 'fulfilling', 'delivered', 'failed', 'expired', 'creation_unknown')`,
+    ),
+    check(
+      'commerce_orders_provider_status_check',
+      sql`${table.providerStatus} IN ('invoice_created', 'payment_pending', 'payment_settled', 'order_confirmed', 'delivery_pending', 'delivered', 'expired', 'cancelled', 'unknown')`,
+    ),
+  ],
+);
+
+export const commerceOrderEvents = pgTable(
+  'commerce_order_events',
+  {
+    id: text('id').primaryKey(),
+    orderId: text('order_id')
+      .references(() => commerceOrders.id, restrictReference)
+      .notNull(),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    schemaVersion: text('schema_version').notNull(),
+    status: text('status').notNull(),
+    paymentState: text('payment_state').notNull(),
+    deliveryState: text('delivery_state').notNull(),
+    detail: text('detail'),
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('commerce_order_events_order_observed_idx').on(table.orderId, table.observedAt),
+    check(
+      'commerce_order_events_status_check',
+      sql`${table.status} IN ('invoice_created', 'payment_pending', 'payment_settled', 'order_confirmed', 'delivery_pending', 'delivered', 'expired', 'cancelled', 'unknown')`,
+    ),
+  ],
+);
+
+export const commerceProofs = pgTable(
+  'commerce_proofs',
+  {
+    id: text('id').primaryKey(),
+    orderId: text('order_id')
+      .references(() => commerceOrders.id, restrictReference)
+      .notNull(),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    schemaVersion: text('schema_version').notNull(),
+    finalStatus: text('final_status').notNull(),
+    proofHash: text('proof_hash').notNull(),
+    orderHash: text('order_hash').notNull(),
+    payload: jsonb('payload').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('commerce_proofs_order_unique').on(table.orderId),
+    index('commerce_proofs_user_status_idx').on(table.userId, table.finalStatus),
+    check(
+      'commerce_proofs_final_status_check',
+      sql`${table.finalStatus} IN ('pending', 'delivered', 'partial_delivery', 'order_unconfirmed', 'payment_failed', 'failed', 'reconciliation_required')`,
     ),
   ],
 );

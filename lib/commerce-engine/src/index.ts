@@ -13,5 +13,6 @@ export * from './scoring.js';
 export * from './ranking.js';
 export * from './routeCard.js';
 export * from './coordinator.js';
+export * from './invoice.js';
 export * from './order.js';
 export * from './proof.js';

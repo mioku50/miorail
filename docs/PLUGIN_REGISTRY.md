@@ -88,15 +88,35 @@ price: 347689 }` under `currency: "USD"`. `price` is therefore never used as a
 settlement total; the denomination comes from `amount`/`value` and is carried
 as a `minimum`, with the exact USDC charge fixed by the invoice under review.
 
+## Durable commerce orders (T64.2)
+
+An order ROW exists before the provider is called. That single ordering gives
+three properties the family needs:
+
+- **one invoice per idempotency key** (`tenant + wallet + routeCardHash +
+  packageId + requestId`), enforced by a unique index rather than application
+  logic, so a double-submit cannot open a second checkout;
+- **an uncertain provider call is a durable fact** (`creation_unknown`), never
+  a lost request and never an automatic retry — a retry is exactly how a
+  duplicate invoice gets created for money the user may already owe;
+- **a checkout survives a restart**, because the binding lives in Postgres.
+
+Two amounts are kept side by side and never merged: the catalogue's
+`Estimated minimum` and the invoice's `Exact payment required`. The exact
+figure comes from a created invoice and from nowhere else.
+
 ## Bitrefill promotion gate (`scored` → `proven`)
 
 Still outstanding, in order:
 
-1. durable, tenant-scoped persistence for the order and its proof (today the
-   order book is process-local, and a restart honestly reports `unknown_order`);
-2. a controlled live smoke that opens ONE real checkout, pays it from a user
-   wallet, and reconciles a `delivered` proof end to end;
-3. an operator runbook for `order_unconfirmed` — the state where money moved
+1. ~~durable, tenant-scoped persistence for the order and its proof~~ —
+   delivered by T64.2 (migration 0015). A checkout survives a restart, and one
+   idempotency key can only ever hold one invoice.
+2. a controlled live payment: an EIP-3009 authorization signed by the user's
+   wallet, settled against a real invoice. T64.2 creates invoices but has NO
+   payment path at all — no signing, no USDC transfer, no wallet call.
+3. reconciliation of a `delivered` proof end to end from a real paid order.
+4. an operator runbook for `order_unconfirmed` — the state where money moved
    and no order exists.
 
 Until all three land, `MIORAIL_COMMERCE_ROUTE_V1` and

@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import {
   AddressV1Schema,
+  CommerceInvoiceV1Schema,
+  CommerceOrderEventV1Schema,
   CommerceOrderV1Schema,
-  CommercePaymentRequirementsV1Schema,
   CommerceRouteCardV1Schema,
   CommerceRouteProofV1Schema,
   EarnRouteCardV1Schema,
@@ -183,6 +184,8 @@ export const CommerceCompareResponseV1Schema = z.discriminatedUnion('outcome', [
   z
     .object({
       outcome: z.literal('compared'),
+      /** T64.2: the persisted commerce Route Run the client orders against. */
+      routeRunId: z.string().min(1).max(200),
       routeCard: CommerceRouteCardV1Schema,
       /** True when the market was inferred from the currency rather than
        * stated. The surface must say so — it is a disclosed assumption. */
@@ -203,7 +206,10 @@ export const CommerceCompareResponseV1Schema = z.discriminatedUnion('outcome', [
 // Additionally gated behind MIORAIL_COMMERCE_EXECUTION_V1.
 export const CommerceOrderCreateRequestV1Schema = z
   .object({
-    message: z.string().trim().min(1).max(4_000),
+    /** T64.2: the persisted run, not a message. The server loads the stored
+     * Route Card rather than re-deriving one, so the price the user reviewed
+     * is the price the order is checked against. */
+    routeRunId: z.string().min(1).max(200),
     routeCardHash: HashV1Schema,
     selectedCandidateHash: HashV1Schema,
     walletAddress: AddressV1Schema,
@@ -215,17 +221,43 @@ export const CommerceOrderCreateRequestV1Schema = z
   })
   .strict();
 
+/** The two amounts, side by side and never merged: what the catalogue
+ * estimated, and what the invoice actually requires. */
+export const CommerceAmountReviewV1Schema = z
+  .object({
+    estimatedMinimumAtomic: z.string().regex(/^(0|[1-9]\d*)$/),
+    estimatedBasis: z.enum(['exact_quote', 'minimum']),
+    exactAmountAtomic: z.string().regex(/^(0|[1-9]\d*)$/),
+    exceedsEstimate: z.boolean(),
+    differenceAtomic: z.string().regex(/^(0|[1-9]\d*)$/),
+  })
+  .strict();
+
 export const CommerceOrderCreateResponseV1Schema = z.discriminatedUnion('outcome', [
   z
     .object({
       outcome: z.literal('created'),
+      orderId: z.string().min(1).max(200),
       order: CommerceOrderV1Schema,
-      payment: CommercePaymentRequirementsV1Schema,
+      invoice: CommerceInvoiceV1Schema,
+      amounts: CommerceAmountReviewV1Schema,
     })
     .strict(),
   /** The catalogue moved under the selection — re-compare, do not re-price. */
   z.object({ outcome: z.literal('refresh_required'), reason: z.string().min(1).max(500) }).strict(),
   z.object({ outcome: z.literal('blocked'), reason: z.string().min(1).max(500) }).strict(),
+  /**
+   * The provider call did not return a definite answer. An invoice MAY exist,
+   * so this is never retried automatically — the client is told to reconcile,
+   * not to try again.
+   */
+  z
+    .object({
+      outcome: z.literal('invoice_creation_unknown'),
+      orderId: z.string().min(1).max(200),
+      reason: z.string().min(1).max(500),
+    })
+    .strict(),
 ]);
 
 // `commerce/orders/:invoiceId` reports the order and its three-leg proof.
@@ -235,13 +267,44 @@ export const CommerceOrderStatusResponseV1Schema = z.discriminatedUnion('outcome
   z
     .object({
       outcome: z.literal('status'),
+      orderId: z.string().min(1).max(200),
       order: CommerceOrderV1Schema,
       proof: CommerceRouteProofV1Schema,
+      providerStatus: z.string().min(1).max(60),
+      events: z.array(CommerceOrderEventV1Schema).max(100),
+    })
+    .strict(),
+  /** A reserved checkout whose invoice was never confirmed. */
+  z
+    .object({
+      outcome: z.literal('creation_unknown'),
+      orderId: z.string().min(1).max(200),
+      reason: z.string().min(1).max(500),
     })
     .strict(),
   z.object({ outcome: z.literal('unknown_order'), reason: z.string().min(1).max(500) }).strict(),
   z.object({ outcome: z.literal('provider_unavailable'), reason: z.string().min(1).max(500) }).strict(),
 ]);
+
+export const CommerceHistoryItemV1Schema = z
+  .object({
+    orderId: z.string().min(1).max(200),
+    invoiceId: z.string().min(1).max(200).nullable(),
+    productId: z.string().min(1).max(200),
+    packageValue: z.string().min(1).max(80),
+    status: z.string().min(1).max(40),
+    providerStatus: z.string().min(1).max(40),
+    exactAmountAtomic: z.string().regex(/^(0|[1-9]\d*)$/).nullable(),
+    estimatedAmountAtomic: z.string().regex(/^(0|[1-9]\d*)$/).nullable(),
+    proofFinalStatus: z.string().min(1).max(40).nullable(),
+    createdAt: z.string().min(1).max(60),
+    updatedAt: z.string().min(1).max(60),
+  })
+  .strict();
+
+export const CommerceHistoryResponseV1Schema = z
+  .object({ items: z.array(CommerceHistoryItemV1Schema).max(100) })
+  .strict();
 
 // Route Intelligence V1 — read-only plan evaluation. These schemas deliberately
 // accept no provider artifacts, candidates, scores, execution calls, or client

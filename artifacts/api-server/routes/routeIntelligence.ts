@@ -5,6 +5,7 @@ import {
   CommerceCompareResponseV1Schema,
   CommerceOrderCreateRequestV1Schema,
   CommerceOrderCreateResponseV1Schema,
+  CommerceHistoryResponseV1Schema,
   CommerceOrderStatusResponseV1Schema,
   CreateIntelligenceBudgetRequestV1Schema,
   EarnBlueprintApproveRequestV1Schema,
@@ -105,23 +106,22 @@ import {
   type ResolveEarnIntentInputV1,
 } from '@mioagent/intent-engine';
 import {
-  BITREFILL_HOST_V1,
-  BITREFILL_INVOICE_PAY_PATH_V1,
   applyCommerceOrderStatusV1,
   buildCommerceOrderV1,
-  buildCommercePaymentRequirementsV1,
   buildCommerceRouteProofV1,
-  commerceEvidenceSetHashV1,
+  commerceAmountReviewV1,
   compareCommerceRoutesV1,
+  validateCommerceInvoiceV1,
   type CommerceOrderGatewayV1,
   type CompareCommerceRoutesInputV1,
 } from '@mioagent/commerce-engine';
 import {
-  recallCommerceOrderV1,
-  rememberCommerceOrderV1,
-  resolveCommerceCatalogSourceV1,
-  resolveCommerceOrderGatewayV1,
-} from '../lib/commerceRouteConfig.js';
+  commerceIdempotencyKeyV1,
+  createDatabaseCommerceStorageRepository,
+  type CommerceOrderRecordV1,
+  type CommerceStorageRepository,
+} from '@mioagent/route-storage';
+import { resolveCommerceCatalogSourceV1, resolveCommerceOrderGatewayV1 } from '../lib/commerceRouteConfig.js';
 import {
   compareEarnRoutesV1,
   resolveEarnRouteEnablementV1,
@@ -131,6 +131,9 @@ import {
 } from '@mioagent/earn-engine';
 import { stableHashV1, ZERO_HASH_V1 } from '@mioagent/route-domain';
 import type {
+  CommerceOrderV1,
+  CommerceProviderStatusV1,
+  CommerceRouteProofV1,
   EarnRouteCardV1,
   EarnRouteIntentV1,
   EvidenceRecordV1,
@@ -2209,19 +2212,22 @@ routeIntelligenceRouter.post(
   },
 );
 
+
 // ===========================================================================
-// T64 — Commerce Route (Bitrefill). Two independently gated surfaces:
+// T64 / T64.2 — Commerce Route (Bitrefill), durably persisted.
 //
-//   compare  — read-only catalogue reads and scoring. Safe and repeatable.
-//   orders   — opens a price-locked checkout and returns the exact payment
-//              terms. It signs nothing and pays nothing; the wallet authorizes
-//              the x402 payment itself against exactly those terms.
+// Three independently gated surfaces:
 //
-// The order routes never trust a client-supplied product, price, or
-// recipient: the comparison is re-run server-side from the same message and
-// the selected candidate hash must still match a candidate that re-derives
-// from the pinned catalogue. A price that moved is `refresh_required`, never a
-// silently re-priced order.
+//   compare   — read-only catalogue reads, scored and PERSISTED as a run +
+//               candidates + evidence + Route Card.
+//   orders    — opens ONE price-locked invoice per idempotency key and returns
+//               the exact payment review. It signs nothing and pays nothing.
+//   reconcile — folds confirmed provider states into the durable order.
+//
+// The rule that shapes the order route: the order ROW exists before the
+// provider is called. A repeat returns the row that already exists, and a call
+// whose outcome the network did not make clear becomes a durable
+// `creation_unknown` rather than a lost request or a silent second invoice.
 // ===========================================================================
 
 export const commerceRouteRuntime = {
@@ -2233,12 +2239,13 @@ export const commerceRouteRuntime = {
     resolveCommerceOrderGatewayV1().createOrder(input),
   readOrderStatus: (input: { invoiceId: string; now: Date }) =>
     resolveCommerceOrderGatewayV1().readOrderStatus(input),
+  repository: (): CommerceStorageRepository => createDatabaseCommerceStorageRepository(client),
+  migrationAvailable: commerceStorageMigrationAvailable,
   now: () => new Date(),
 };
 
 /** flag(routeIntelligenceV1 && commerceRouteV1) + session + body + wallet +
- * chain — the shared head of every commerce route. Responds and returns null
- * on any miss. */
+ * chain — the shared head of every commerce route. */
 function commerceRouteGuard<T>(
   req: Request,
   res: Response,
@@ -2273,6 +2280,37 @@ function commerceRouteGuard<T>(
   return { user, body: parsed.data };
 }
 
+/** Commerce needs its own additive tables (migration 0015) on top of the base
+ * route-storage set. Missing storage is a stable 503, never a partial write. */
+async function commerceStorageMigrationAvailable(): Promise<boolean> {
+  if (!(await routeStorageMigrationAvailable())) return false;
+  const rows = await client`
+    SELECT
+      to_regclass('public.commerce_candidates') AS commerce_candidates,
+      to_regclass('public.commerce_evidence') AS commerce_evidence,
+      to_regclass('public.commerce_route_cards') AS commerce_route_cards,
+      to_regclass('public.commerce_orders') AS commerce_orders,
+      to_regclass('public.commerce_order_events') AS commerce_order_events,
+      to_regclass('public.commerce_proofs') AS commerce_proofs
+  `;
+  const row = rows[0];
+  return Boolean(
+    row &&
+    row.commerce_candidates &&
+    row.commerce_evidence &&
+    row.commerce_route_cards &&
+    row.commerce_orders &&
+    row.commerce_order_events &&
+    row.commerce_proofs,
+  );
+}
+
+async function commerceStorageReady(res: Response): Promise<boolean> {
+  if (await commerceRouteRuntime.migrationAvailable()) return true;
+  res.status(503).json({ error: 'commerce_storage_unavailable', code: 'commerce_storage_unavailable' });
+  return false;
+}
+
 routeIntelligenceRouter.post('/commerce/compare', async (req, res) => {
   const guard = commerceRouteGuard(req, res, CommerceCompareRequestV1Schema, 'invalid_commerce_compare_request');
   if (!guard) return;
@@ -2304,9 +2342,22 @@ routeIntelligenceRouter.post('/commerce/compare', async (req, res) => {
       res.json(CommerceCompareResponseV1Schema.parse({ outcome: 'unsupported', reason: comparison.reason }));
       return;
     }
+    if (!(await commerceStorageReady(res))) return;
+
+    // Persist the whole comparison so the order route can load the exact card
+    // the user reviewed instead of re-deriving one at a possibly newer price.
+    const repository = commerceRouteRuntime.repository();
+    const run = await repository.createCommerceRouteRun(resolution.intent, guard.body.requestId);
+    for (const entry of comparison.entries) {
+      await repository.insertCommerceCandidate(run.id, entry.candidate);
+      await repository.insertCommerceEvidence(run.id, entry.candidate.candidateHash, entry.evidence);
+    }
+    await repository.insertCommerceRouteCard(run.id, comparison.routeCard);
+
     res.json(
       CommerceCompareResponseV1Schema.parse({
         outcome: 'compared',
+        routeRunId: run.id,
         routeCard: comparison.routeCard,
         countryInferred: resolution.extraction.countryInferred,
         excluded: [...new Set(comparison.skipped)],
@@ -2320,64 +2371,62 @@ routeIntelligenceRouter.post('/commerce/compare', async (req, res) => {
 routeIntelligenceRouter.post('/commerce/orders', async (req, res) => {
   const guard = commerceRouteGuard(req, res, CommerceOrderCreateRequestV1Schema, 'invalid_commerce_order_request');
   if (!guard) return;
-  // The checkout gate is separate from the comparison gate: comparing a gift
-  // card is repeatable, buying one is not.
+  // Comparing a gift card is repeatable; opening a checkout is not, so it has
+  // its own gate.
   if (!commerceRouteRuntime.flags(process.env).commerceExecutionV1) {
     res.status(404).json({ error: 'commerce_execution_disabled', code: 'commerce_execution_disabled' });
     return;
   }
+  if (!(await commerceStorageReady(res))) return;
+
   try {
     const now = commerceRouteRuntime.now();
-    const resolution = commerceRouteRuntime.resolveIntent({
-      message: guard.body.message,
-      tenantId: guard.user.id,
-      walletAddress: guard.user.address as `0x${string}`,
-      now,
-    });
-    if (resolution.status !== 'ready') {
-      res.json(
-        CommerceOrderCreateResponseV1Schema.parse({
-          outcome: 'blocked',
-          reason: `The request no longer resolves to a commerce intent (${resolution.issues[0] ?? 'unresolved'}).`,
-        }),
-      );
-      return;
-    }
-    // Re-derive the comparison from the pinned catalogue. The client's chosen
-    // hash has to still be there — a moved price produces a new hash and this
-    // check fails, which is exactly the intended outcome.
-    const comparison = await commerceRouteRuntime.compare({ intent: resolution.intent, now });
-    if (!comparison.ok) {
+    const repository = commerceRouteRuntime.repository();
+    const run = await repository.getCommerceRouteRun(guard.body.routeRunId, guard.user.id);
+    if (!run) {
       res.json(
         CommerceOrderCreateResponseV1Schema.parse({
           outcome: 'refresh_required',
-          reason: `The storefront could not be re-read for this order (${comparison.reason}).`,
+          reason: 'That comparison is not available for this wallet. Compare again before ordering.',
         }),
       );
       return;
     }
-    if (comparison.routeCard.routeCardHash !== guard.body.routeCardHash) {
+
+    const cards = await repository.listCommerceRouteCards(run.id, guard.user.id);
+    const card = cards.find((entry) => entry.routeCardHash === guard.body.routeCardHash);
+    if (!card) {
       res.json(
         CommerceOrderCreateResponseV1Schema.parse({
           outcome: 'refresh_required',
-          reason: 'The catalogue changed since this comparison. Compare again before ordering.',
+          reason: 'The stored comparison does not contain that Route Card. Compare again before ordering.',
         }),
       );
       return;
     }
-    const entry = comparison.entries.find(
-      (candidate) => candidate.candidate.candidateHash === guard.body.selectedCandidateHash,
-    );
-    if (!entry) {
+    // A price-locked invoice may not be opened against an expired comparison.
+    if (Date.parse(card.expiresAt) <= now.getTime()) {
       res.json(
         CommerceOrderCreateResponseV1Schema.parse({
           outcome: 'refresh_required',
-          reason: 'The selected option is no longer offered at the price it was compared at.',
+          reason: 'That comparison has expired. Compare again to get a current price.',
         }),
       );
       return;
     }
-    if (entry.candidate.availability !== 'in_stock') {
+
+    const candidates = await repository.listCommerceCandidates(run.id, guard.user.id);
+    const candidate = candidates.find((entry) => entry.candidateHash === guard.body.selectedCandidateHash);
+    if (!candidate) {
+      res.json(
+        CommerceOrderCreateResponseV1Schema.parse({
+          outcome: 'refresh_required',
+          reason: 'The selected option is not part of the stored comparison.',
+        }),
+      );
+      return;
+    }
+    if (candidate.availability !== 'in_stock') {
       res.json(
         CommerceOrderCreateResponseV1Schema.parse({
           outcome: 'blocked',
@@ -2386,18 +2435,89 @@ routeIntelligenceRouter.post('/commerce/orders', async (req, res) => {
       );
       return;
     }
+    if (Date.parse(candidate.expiresAt) <= now.getTime()) {
+      res.json(
+        CommerceOrderCreateResponseV1Schema.parse({
+          outcome: 'refresh_required',
+          reason: 'The price for this option is no longer current. Compare again before ordering.',
+        }),
+      );
+      return;
+    }
 
+    // Reserve the ONE row for this idempotency key BEFORE touching the
+    // provider. A repeat lands on `existing` and never opens a second invoice.
+    const idempotencyKey = commerceIdempotencyKeyV1({
+      tenantId: guard.user.id,
+      walletAddress: guard.user.address,
+      routeCardHash: card.routeCardHash,
+      productId: candidate.product.productId,
+      packageValue: candidate.product.packageValue,
+      requestId: guard.body.requestId,
+    });
+    const reservation = await repository.reserveCommerceOrder({
+      routeRunId: run.id,
+      userId: guard.user.id,
+      walletAddress: guard.user.address,
+      routeCardHash: card.routeCardHash,
+      candidateHash: candidate.candidateHash,
+      productId: candidate.product.productId,
+      packageValue: candidate.product.packageValue,
+      idempotencyKey,
+      estimatedAmountAtomic: candidate.fees.totalAtomic,
+      refundAddress: guard.user.address,
+    });
+
+    if (reservation.outcome === 'existing') {
+      const record = reservation.record;
+      if (record.order && record.order.invoice) {
+        res.json(
+          CommerceOrderCreateResponseV1Schema.parse({
+            outcome: 'created',
+            orderId: record.id,
+            order: record.order,
+            invoice: record.order.invoice,
+            amounts: commerceAmountReviewV1({ candidate, invoice: record.order.invoice }),
+          }),
+        );
+        return;
+      }
+      // Reserved but never confirmed. Reconcile — do NOT call the provider
+      // again, because that is exactly how a duplicate invoice is created.
+      res.json(
+        CommerceOrderCreateResponseV1Schema.parse({
+          outcome: 'invoice_creation_unknown',
+          orderId: record.id,
+          reason:
+            'A checkout for this selection was already started and never confirmed. Check its status instead of ordering again.',
+        }),
+      );
+      return;
+    }
+
+    const orderRowId = reservation.record.id;
     const created = await commerceRouteRuntime.createOrder({
-      productId: entry.candidate.product.productId,
-      packageValue: entry.candidate.product.packageValue,
-      recipientInput: resolution.intent.recipientInput,
-      maxSpendAtomic: resolution.intent.maxSpendAtomic,
-      // A failed crypto payment returns to the wallet that authorized it, and
-      // to no other address: this is the authenticated session's own wallet.
+      productId: candidate.product.productId,
+      packageValue: candidate.product.packageValue,
+      recipientInput: run.intent.recipientInput,
+      maxSpendAtomic: run.intent.maxSpendAtomic,
+      // A failed crypto payment returns to the wallet that authorized it.
       refundAddress: guard.user.address,
       now,
     });
+
     if (!created.ok) {
+      if (created.reason === 'invoice_creation_unknown') {
+        const record = await repository.markCommerceOrderUnknown(orderRowId, guard.user.id, created.detail);
+        res.json(
+          CommerceOrderCreateResponseV1Schema.parse({
+            outcome: 'invoice_creation_unknown',
+            orderId: record.id,
+            reason: `${created.detail} An invoice may exist — reconcile before ordering again.`,
+          }),
+        );
+        return;
+      }
       res.json(
         CommerceOrderCreateResponseV1Schema.parse({
           outcome: 'blocked',
@@ -2406,58 +2526,71 @@ routeIntelligenceRouter.post('/commerce/orders', async (req, res) => {
       );
       return;
     }
-    const order = buildCommerceOrderV1({
-      intent: resolution.intent,
-      candidate: entry.candidate,
-      created: created.order,
-      now,
-    });
-    if (!order.ok) {
-      res.json(
-        CommerceOrderCreateResponseV1Schema.parse({
-          outcome: 'blocked',
-          reason: `The checkout did not match the pinned payment terms (${order.reason}).`,
-        }),
-      );
-      return;
-    }
-    // The payment terms the wallet will authorize, restated from the pinned
-    // settlement pair and this order's own total. Nothing is signed here.
-    const payment = buildCommercePaymentRequirementsV1({
-      accepts: {
-        scheme: 'exact',
-        network: `eip155:${resolution.intent.chainId}`,
+
+    // The exact amount comes from the invoice and from nowhere else.
+    const validated = validateCommerceInvoiceV1({
+      provider: {
+        invoiceId: created.order.invoiceId,
+        network: `eip155:${run.intent.chainId}`,
         asset: created.order.asset,
         payTo: created.order.payTo,
-        maxAmountRequired: created.order.totalAtomic,
-        resource: `https://${BITREFILL_HOST_V1}${BITREFILL_INVOICE_PAY_PATH_V1}`,
+        amountAtomic: created.order.totalAtomic,
+        providerFeeAtomic: created.order.providerFeeAtomic ?? null,
+        expiresAt: created.order.expiresAt,
+        paymentStatus: created.order.paymentStatus ?? 'unpaid',
+        orderStatus: created.order.orderStatus ?? 'created',
+        productId: candidate.product.productId,
+        packageValue: candidate.product.packageValue,
       },
-      order: order.order,
-      intent: resolution.intent,
+      intent: run.intent,
+      candidate,
+      authenticatedWallet: guard.user.address,
       now,
     });
-    if (!payment.ok) {
+    if (!validated.ok) {
       res.json(
         CommerceOrderCreateResponseV1Schema.parse({
           outcome: 'blocked',
-          reason: `The payment terms failed validation (${payment.reason}).`,
+          reason: `The invoice failed validation (${validated.reason}).`,
         }),
       );
       return;
     }
 
-    rememberCommerceOrderV1({
-      order: order.order,
-      evidenceSetHash: commerceEvidenceSetHashV1(entry.evidence),
-      tenantId: guard.user.id,
-      walletAddress: guard.user.address,
-      storedAt: Date.now(),
+    const built = buildCommerceOrderV1({ intent: run.intent, candidate, created: created.order, now });
+    if (!built.ok) {
+      res.json(
+        CommerceOrderCreateResponseV1Schema.parse({
+          outcome: 'blocked',
+          reason: `The checkout did not match the pinned payment terms (${built.reason}).`,
+        }),
+      );
+      return;
+    }
+    const order = {
+      ...built.order,
+      providerStatus: validated.invoice.orderStatus,
+      estimate: { totalAtomic: candidate.fees.totalAtomic, totalBasis: candidate.fees.totalBasis },
+      invoice: validated.invoice,
+    };
+    const record = await repository.confirmCommerceOrder(orderRowId, guard.user.id, order);
+    await repository.appendCommerceOrderEvent(orderRowId, guard.user.id, {
+      schemaVersion: 'commerce-order-event/v1',
+      invoiceId: validated.invoice.invoiceId,
+      status: 'invoice_created',
+      paymentState: 'awaiting_signature',
+      deliveryState: 'not_started',
+      detail: 'Price-locked invoice created. Nothing has been signed or sent.',
+      observedAt: now.toISOString(),
     });
+
     res.json(
       CommerceOrderCreateResponseV1Schema.parse({
         outcome: 'created',
-        order: order.order,
-        payment: payment.requirements,
+        orderId: record.id,
+        order,
+        invoice: validated.invoice,
+        amounts: commerceAmountReviewV1({ candidate, invoice: validated.invoice }),
       }),
     );
   } catch {
@@ -2465,33 +2598,131 @@ routeIntelligenceRouter.post('/commerce/orders', async (req, res) => {
   }
 });
 
-routeIntelligenceRouter.get('/commerce/orders/:invoiceId', async (req, res) => {
+/** Loads a durable order by invoice id, tenant-scoped. */
+async function loadCommerceOrderForResponseV1(
+  res: Response,
+  userId: string,
+  invoiceId: string,
+): Promise<{ repository: CommerceStorageRepository; record: CommerceOrderRecordV1 } | null> {
+  const repository = commerceRouteRuntime.repository();
+  const record = await repository.getCommerceOrderByInvoice(invoiceId, userId);
+  if (!record) {
+    res.json(
+      CommerceOrderStatusResponseV1Schema.parse({
+        outcome: 'unknown_order',
+        reason: 'This wallet has no checkout with that invoice id.',
+      }),
+    );
+    return null;
+  }
+  return { repository, record };
+}
+
+function commerceInvoiceIdParamV1(req: Request, res: Response): string | null {
+  const invoiceId = String(req.params.invoiceId ?? '');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(invoiceId)) {
+    res.status(400).json({ error: 'invalid_commerce_invoice_id', code: 'invalid_commerce_invoice_id' });
+    return null;
+  }
+  return invoiceId;
+}
+
+function commerceReadGuardV1(req: Request, res: Response): NonNullable<ReturnType<typeof signedRoutePlanUser>> | null {
   const flags = commerceRouteRuntime.flags(process.env);
   if (!flags.routeIntelligenceV1 || !flags.commerceRouteV1) {
     res.status(404).json({ error: 'commerce_route_disabled', code: 'commerce_route_disabled' });
-    return;
+    return null;
   }
   const user = signedRoutePlanUser(req);
   if (!user) {
     res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
-    return;
+    return null;
   }
-  const invoiceId = String(req.params.invoiceId ?? '');
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(invoiceId)) {
-    res.status(400).json({ error: 'invalid_commerce_invoice_id', code: 'invalid_commerce_invoice_id' });
-    return;
-  }
-  const stored = recallCommerceOrderV1(user.id, invoiceId);
-  if (!stored) {
+  return user;
+}
+
+routeIntelligenceRouter.get('/commerce/orders/:invoiceId', async (req, res) => {
+  const user = commerceReadGuardV1(req, res);
+  if (!user) return;
+  const invoiceId = commerceInvoiceIdParamV1(req, res);
+  if (invoiceId === null) return;
+  if (!(await commerceStorageReady(res))) return;
+  try {
+    const loaded = await loadCommerceOrderForResponseV1(res, user.id, invoiceId);
+    if (!loaded) return;
+    const { repository, record } = loaded;
+    if (!record.order) {
+      res.json(
+        CommerceOrderStatusResponseV1Schema.parse({
+          outcome: 'creation_unknown',
+          orderId: record.id,
+          reason: 'A checkout was reserved but no invoice was ever confirmed for it.',
+        }),
+      );
+      return;
+    }
+    const proof = await repository.getCommerceProof(record.id, user.id);
+    const events = await repository.listCommerceOrderEvents(record.id, user.id);
     res.json(
       CommerceOrderStatusResponseV1Schema.parse({
-        outcome: 'unknown_order',
-        reason: 'This wallet has no open checkout with that id on this server.',
+        outcome: 'status',
+        orderId: record.id,
+        order: record.order,
+        proof:
+          proof ??
+          buildStoredCommerceProofV1(record.order, commerceRouteRuntime.now()),
+        providerStatus: record.providerStatus,
+        events,
       }),
     );
-    return;
+  } catch {
+    res.status(500).json({ error: 'commerce_order_status_failed', code: 'commerce_order_status_failed' });
   }
+});
+
+/** A proof for an order that has never been reconciled: three legs, all at
+ * their starting state, so the response is honest rather than empty. */
+function buildStoredCommerceProofV1(order: CommerceOrderV1, now: Date) {
+  const built = buildCommerceRouteProofV1({
+    order,
+    observation: {
+      invoiceId: order.invoiceId,
+      paymentSettled: false,
+      paymentTransactionHash: null,
+      settledAt: null,
+      orderIds: [],
+      deliveryState: 'not_started',
+      itemCount: order.items.length,
+      deliveredCount: 0,
+      observedAt: now.toISOString(),
+    },
+    evidenceSetHash: ZERO_HASH_V1,
+    now,
+  });
+  if (!built.ok) throw new Error('commerce proof could not be built');
+  return built.proof;
+}
+
+routeIntelligenceRouter.post('/commerce/orders/:invoiceId/reconcile', async (req, res) => {
+  const user = commerceReadGuardV1(req, res);
+  if (!user) return;
+  const invoiceId = commerceInvoiceIdParamV1(req, res);
+  if (invoiceId === null) return;
+  if (!(await commerceStorageReady(res))) return;
   try {
+    const loaded = await loadCommerceOrderForResponseV1(res, user.id, invoiceId);
+    if (!loaded) return;
+    const { repository, record } = loaded;
+    if (!record.order) {
+      res.json(
+        CommerceOrderStatusResponseV1Schema.parse({
+          outcome: 'creation_unknown',
+          orderId: record.id,
+          reason: 'A checkout was reserved but no invoice was ever confirmed for it.',
+        }),
+      );
+      return;
+    }
     const now = commerceRouteRuntime.now();
     const observed = await commerceRouteRuntime.readOrderStatus({ invoiceId, now });
     if (!observed.ok) {
@@ -2503,30 +2734,96 @@ routeIntelligenceRouter.get('/commerce/orders/:invoiceId', async (req, res) => {
       );
       return;
     }
-    const applied = applyCommerceOrderStatusV1({ order: stored.order, observation: observed.status, now });
+
+    const applied = applyCommerceOrderStatusV1({ order: record.order, observation: observed.status, now });
     // A reading the state machine refuses is a reconciliation signal, so the
-    // proof is still built — from the STORED order — rather than dropped.
-    const order = applied.ok ? applied.order : stored.order;
-    const proof = buildCommerceRouteProofV1({
+    // stored order stands and the proof is still built from it.
+    const order = applied.ok ? { ...applied.order, invoice: record.order.invoice, estimate: record.order.estimate } : record.order;
+    const proofResult = buildCommerceRouteProofV1({
       order,
       observation: observed.status,
-      evidenceSetHash: stored.evidenceSetHash,
+      evidenceSetHash: ZERO_HASH_V1,
       now,
     });
-    if (!proof.ok) {
+    if (!proofResult.ok) {
       res.json(
         CommerceOrderStatusResponseV1Schema.parse({
           outcome: 'provider_unavailable',
-          reason: `The order status could not be reconciled (${proof.reason}).`,
+          reason: `The order status could not be reconciled (${proofResult.reason}).`,
         }),
       );
       return;
     }
+
+    const providerStatus = commerceProviderStatusFromProofV1(proofResult.proof);
     if (applied.ok) {
-      rememberCommerceOrderV1({ ...stored, order: applied.order, storedAt: Date.now() });
+      await repository.updateCommerceOrderStatus({
+        orderId: record.id,
+        userId: user.id,
+        status: order.status,
+        providerStatus,
+        order,
+      });
     }
-    res.json(CommerceOrderStatusResponseV1Schema.parse({ outcome: 'status', order, proof: proof.proof }));
+    await repository.appendCommerceOrderEvent(record.id, user.id, {
+      schemaVersion: 'commerce-order-event/v1',
+      invoiceId,
+      status: providerStatus,
+      paymentState: order.paymentState,
+      deliveryState: order.deliveryState,
+      detail: null,
+      observedAt: observed.status.observedAt,
+    });
+    await repository.upsertCommerceProof(record.id, user.id, proofResult.proof);
+
+    const events = await repository.listCommerceOrderEvents(record.id, user.id);
+    res.json(
+      CommerceOrderStatusResponseV1Schema.parse({
+        outcome: 'status',
+        orderId: record.id,
+        order,
+        proof: proofResult.proof,
+        providerStatus,
+        events,
+      }),
+    );
   } catch {
-    res.status(500).json({ error: 'commerce_order_status_failed', code: 'commerce_order_status_failed' });
+    res.status(500).json({ error: 'commerce_reconcile_failed', code: 'commerce_reconcile_failed' });
+  }
+});
+
+/** The provider status implied by a proof. Derived from the legs, so it can
+ * never claim more than the proof does. */
+function commerceProviderStatusFromProofV1(proof: CommerceRouteProofV1): CommerceProviderStatusV1 {
+  switch (proof.finalStatus) {
+    case 'delivered':
+      return 'delivered';
+    case 'partial_delivery':
+      return 'delivery_pending';
+    case 'order_unconfirmed':
+      // Paid, no order. NOT 'order_confirmed' and NOT 'delivered'.
+      return 'payment_settled';
+    case 'payment_failed':
+      return 'expired';
+    case 'failed':
+      return 'cancelled';
+    case 'reconciliation_required':
+      return 'unknown';
+    default:
+      return proof.payment.state === 'settled' ? 'payment_settled' : 'payment_pending';
+  }
+}
+
+routeIntelligenceRouter.get('/commerce/history', async (req, res) => {
+  const user = commerceReadGuardV1(req, res);
+  if (!user) return;
+  if (!(await commerceStorageReady(res))) return;
+  try {
+    const rawLimit = Number.parseInt(String(req.query.limit ?? '20'), 10);
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(rawLimit, 100)) : 20;
+    const items = await commerceRouteRuntime.repository().listCommerceHistory(user.id, limit);
+    res.json(CommerceHistoryResponseV1Schema.parse({ items }));
+  } catch {
+    res.status(500).json({ error: 'commerce_history_failed', code: 'commerce_history_failed' });
   }
 });

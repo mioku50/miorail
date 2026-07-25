@@ -121,7 +121,10 @@ export function createBitrefillPersonalOrderGatewayV1(
   async function call(
     path: string,
     init: { method: 'GET' | 'POST'; body?: unknown },
-  ): Promise<{ ok: true; body: unknown } | { ok: false; reason: CommerceFailureReasonV1 }> {
+  ): Promise<
+    | { ok: true; body: unknown }
+    | { ok: false; reason: CommerceFailureReasonV1; uncertain?: boolean }
+  > {
     if (credential.kind !== 'personal_api') return { ok: false, reason: 'provider_not_configured' };
     let headers: Record<string, string>;
     try {
@@ -143,17 +146,30 @@ export function createBitrefillPersonalOrderGatewayV1(
         { timeoutMs, fetchImpl: options.fetchImpl },
       );
     } catch (error) {
-      return { ok: false, reason: classifyCommerceTransportErrorV1(error) };
+      // T64.2: a POST that never returned may still have created an invoice.
+      // It is reported as UNKNOWN, never as a failure, and never retried.
+      const reason = classifyCommerceTransportErrorV1(error);
+      if (init.method === 'POST') return { ok: false, reason, uncertain: true };
+      return { ok: false, reason };
     }
     if (response.status === 401 || response.status === 403) {
       return { ok: false, reason: 'provider_not_configured' };
     }
     const statusFailure = classifyCommerceHttpStatusV1(response.status);
-    if (statusFailure !== null) return { ok: false, reason: statusFailure };
+    if (statusFailure !== null) {
+      const uncertain = init.method === 'POST' && response.status >= 500;
+      return { ok: false, reason: statusFailure, uncertain };
+    }
     try {
       return { ok: true, body: await response.json() };
     } catch {
-      return { ok: false, reason: 'provider_invalid_response' };
+      // A POST whose body could not be read is also uncertain: the write may
+      // have landed even though the answer did not.
+      return {
+        ok: false,
+        reason: 'provider_invalid_response',
+        uncertain: init.method === 'POST',
+      };
     }
   }
 
@@ -184,9 +200,24 @@ export function createBitrefillPersonalOrderGatewayV1(
           refund_address: input.refundAddress,
         },
       });
-      if (!result.ok) return { ok: false, reason: result.reason };
+      if (!result.ok) {
+        if (result.uncertain === true) {
+          return {
+            ok: false,
+            reason: 'invoice_creation_unknown',
+            detail: `The checkout call did not return a definite answer (${result.reason}).`,
+          };
+        }
+        return { ok: false, reason: result.reason };
+      }
       const parsed = V2InvoiceEnvelopeSchema.safeParse(result.body);
-      if (!parsed.success) return { ok: false, reason: 'provider_invalid_response' };
+      if (!parsed.success) {
+        return {
+          ok: false,
+          reason: 'invoice_creation_unknown',
+          detail: 'The checkout answer could not be read, so an invoice may exist.',
+        };
+      }
       const invoice = parsed.data.data;
 
       const totalAtomic = amountToAtomicV1(invoice.payment?.amount);
@@ -219,6 +250,11 @@ export function createBitrefillPersonalOrderGatewayV1(
               orderId: invoice.orders?.[0]?.id ?? null,
             },
           ],
+          providerFeeAtomic: null,
+          // Reported verbatim. The invoice validator maps these onto the
+          // closed status set — the gateway reports, it does not interpret.
+          paymentStatus: invoice.payment?.status ?? invoice.status,
+          orderStatus: invoice.orders?.[0]?.status ?? invoice.status,
         },
       };
     },

@@ -775,6 +775,110 @@ export const CommerceDeliveryStateV1Schema = z.enum([
 ]);
 export type CommerceDeliveryStateV1 = z.infer<typeof CommerceDeliveryStateV1Schema>;
 
+// --- Provider status + invoice (T64.2) -------------------------------------
+
+/**
+ * The reconciled provider state. A closed set: an unrecognised provider string
+ * becomes `unknown`, which forces reconciliation rather than being read as
+ * progress.
+ *
+ * The ordering of these names is NOT a promise that they happen in sequence.
+ * The family's rule still holds — payment settled ≠ order confirmed ≠ product
+ * delivered — and each is carried by its own proof leg.
+ */
+export const CommerceProviderStatusV1Schema = z.enum([
+  'invoice_created',
+  'payment_pending',
+  'payment_settled',
+  'order_confirmed',
+  'delivery_pending',
+  'delivered',
+  'expired',
+  'cancelled',
+  'unknown',
+]);
+export type CommerceProviderStatusV1 = z.infer<typeof CommerceProviderStatusV1Schema>;
+
+/**
+ * The EXACT payment requirements, taken from a created invoice and nowhere
+ * else.
+ *
+ * This is the only object in the family that may state a precise settlement
+ * amount. The Route Card carries an ESTIMATED MINIMUM derived from the
+ * catalogue; that estimate is never overwritten by this, and this is never
+ * synthesised from that. Both are shown, labelled differently.
+ */
+const CommerceInvoiceV1ObjectSchema = z
+  .object({
+    schemaVersion: z.literal('commerce-invoice/v1'),
+    invoiceHash: HashV1Schema,
+    invoiceId: z.string().min(1).max(200),
+    provider: CommerceProviderV1Schema,
+    network: CommercePaymentNetworkV1Schema,
+    asset: AddressV1Schema,
+    payTo: AddressV1Schema,
+    /** The exact charge. Positive, and never a minimum. */
+    amountAtomic: AtomicAmountV1Schema,
+    /** Only when the provider states it explicitly. null = not reported. */
+    providerFeeAtomic: AtomicAmountV1Schema.nullable(),
+    /** Where a failed crypto payment returns — the authenticated wallet. */
+    refundAddress: AddressV1Schema,
+    paymentStatus: CommercePaymentStateV1Schema,
+    orderStatus: CommerceProviderStatusV1Schema,
+    observedAt: TimestampV1Schema,
+    expiresAt: TimestampV1Schema,
+  })
+  .strict();
+
+export type CommerceInvoiceV1 = z.infer<typeof CommerceInvoiceV1ObjectSchema>;
+
+export function hashCommerceInvoiceV1(value: CommerceInvoiceV1): HashV1 {
+  return stableHashV1('commerce-invoice/v1', financialContentV1(value, ['invoiceHash']));
+}
+
+export const CommerceInvoiceV1Schema = CommerceInvoiceV1ObjectSchema.superRefine((value, ctx) => {
+  if (value.invoiceHash !== hashCommerceInvoiceV1(value)) addHashIssue(ctx, 'invoiceHash', 'invoiceHash');
+  if (atomicCompareV1(value.amountAtomic, '0') <= 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['amountAtomic'],
+      message: 'An invoice must state a positive exact amount',
+    });
+  }
+  if (Date.parse(value.expiresAt) <= Date.parse(value.observedAt)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['expiresAt'],
+      message: 'Invoice expiry must be later than the moment it was observed',
+    });
+  }
+});
+
+/** What the catalogue estimated BEFORE any invoice existed. Kept alongside the
+ * exact amount so the two are never confused for one another. */
+export const CommerceEstimateV1Schema = z
+  .object({
+    totalAtomic: AtomicAmountV1Schema,
+    totalBasis: z.enum(['exact_quote', 'minimum']),
+  })
+  .strict();
+export type CommerceEstimateV1 = z.infer<typeof CommerceEstimateV1Schema>;
+
+/** One durable, append-only step in an order's life. Carries states only —
+ * never a redemption code, a PIN, or an eSIM URL. */
+export const CommerceOrderEventV1Schema = z
+  .object({
+    schemaVersion: z.literal('commerce-order-event/v1'),
+    invoiceId: z.string().min(1).max(200),
+    status: CommerceProviderStatusV1Schema,
+    paymentState: CommercePaymentStateV1Schema,
+    deliveryState: CommerceDeliveryStateV1Schema,
+    detail: z.string().min(1).max(300).nullable(),
+    observedAt: TimestampV1Schema,
+  })
+  .strict();
+export type CommerceOrderEventV1 = z.infer<typeof CommerceOrderEventV1Schema>;
+
 export const CommerceOrderStatusV1Schema = z.enum([
   'created',
   'payment_pending',
@@ -823,13 +927,29 @@ const CommerceOrderV1ObjectSchema = z
     deliveryState: CommerceDeliveryStateV1Schema,
     paymentTransactionHash: HashV1Schema.nullable(),
     expiresAt: TimestampV1Schema,
+    // T64.2, additive and defaulted so a pre-T64.2 order still parses.
+    /** The reconciled provider state, distinct from this order's own status. */
+    providerStatus: CommerceProviderStatusV1Schema.default('invoice_created'),
+    /** What the catalogue estimated before the invoice existed. Never replaced
+     * by the exact amount — both are kept and shown separately. */
+    estimate: CommerceEstimateV1Schema.nullable().default(null),
+    /** The created invoice, once one exists. `null` while a checkout is
+     * pending, which is what makes `invoice_creation_unknown` expressible. */
+    invoice: CommerceInvoiceV1Schema.nullable().default(null),
   })
   .strict();
 
 export type CommerceOrderV1 = z.infer<typeof CommerceOrderV1ObjectSchema>;
 
 export function hashCommerceOrderV1(value: CommerceOrderV1): HashV1 {
-  return stableHashV1('commerce-order/v1', financialContentV1(value, ['orderHash']));
+  // `providerStatus` is a reconciliation tag and `invoice`/`estimate` are
+  // observations that arrive after the order exists; excluding them keeps the
+  // orderHash stable as the order is reconciled, which is what lets the proof
+  // stay bound to it.
+  return stableHashV1(
+    'commerce-order/v1',
+    financialContentV1(value, ['orderHash', 'providerStatus', 'estimate', 'invoice']),
+  );
 }
 
 export const CommerceOrderV1Schema = CommerceOrderV1ObjectSchema.superRefine((value, ctx) => {

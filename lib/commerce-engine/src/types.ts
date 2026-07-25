@@ -120,10 +120,27 @@ export interface CommerceCreatedOrderV1 {
   asset: `0x${string}`;
   expiresAt: string;
   items: { productId: string; packageValue: string; orderId: string | null }[];
+  /** T64.2: only when the provider states a fee explicitly. */
+  providerFeeAtomic?: string | null;
+  /** T64.2: the provider's own status words, mapped by the invoice validator
+   * rather than by the gateway — the gateway reports, it does not interpret. */
+  paymentStatus?: string;
+  orderStatus?: string;
+}
+
+/** T64.2: an attempt whose outcome the network did not make clear. It is NOT a
+ * failure — an invoice may well have been created — so it is never retried
+ * automatically, and the order row stays `creation_unknown` until a human or a
+ * reconcile establishes what happened. */
+export interface CommerceCreateOrderUnknownV1 {
+  ok: false;
+  reason: 'invoice_creation_unknown';
+  detail: string;
 }
 
 export type CommerceCreateOrderResultV1 =
   | { ok: true; order: CommerceCreatedOrderV1 }
+  | CommerceCreateOrderUnknownV1
   | { ok: false; reason: CommerceFailureReasonV1 };
 
 /** Provider-reported order state. Counts and states only — codes, PINs and

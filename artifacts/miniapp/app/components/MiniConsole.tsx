@@ -5,7 +5,7 @@ import { useAccount } from "wagmi";
 import {
   CONSOLE_COPY_V1,
   CandidateCards,
-  CommercePaymentReviewPanel,
+  CommerceInvoiceReviewPanel,
   CommerceRouteCardPanel,
   commerceCheckoutAvailableV1,
   ConsoleMiniShell,
@@ -455,7 +455,7 @@ export function MiniConsole() {
           onOrder={(candidateHash) => {
             if (!address) return;
             commerceOrder.mutate({
-              message: goal,
+              routeRunId: commerceCard.routeRunId,
               walletAddress: address.toLowerCase() as `0x${string}`,
               routeCardHash: commerceCard.routeCard.routeCardHash,
               selectedCandidateHash: candidateHash,
@@ -463,7 +463,19 @@ export function MiniConsole() {
           }}
         />
         {commerceOrderResult && (
-          <CommercePaymentReviewPanel order={commerceOrderResult.order} payment={commerceOrderResult.payment} />
+          <CommerceInvoiceReviewPanel
+            product={{
+              name: commerceOrderResult.order.items[0]?.productId ?? "product",
+              packageValue: commerceOrderResult.order.items[0]?.packageValue ?? "",
+              currency: "USD",
+            }}
+            order={commerceOrderResult.order}
+            invoice={commerceOrderResult.invoice}
+            amounts={commerceOrderResult.amounts}
+          />
+        )}
+        {commerceOrder.data?.outcome === "invoice_creation_unknown" && (
+          <p className="note warn">{commerceOrder.data.reason}</p>
         )}
         {commerceOrder.data?.outcome === "refresh_required" && <p className="lnote">{commerceOrder.data.reason}</p>}
         {commerceOrder.data?.outcome === "blocked" && <p className="lnote">{commerceOrder.data.reason}</p>}

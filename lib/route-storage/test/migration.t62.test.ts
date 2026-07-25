@@ -60,10 +60,11 @@ test('Drizzle schema declares the four additive earn tables and the goal columns
   assert.match(schema, /execution_blueprints_goal_check/);
 });
 
-test('_journal.json registers the 0014 migration as the newest entry', async () => {
+test('_journal.json still registers the 0014 migration at its own index', async () => {
+  // T64.2 appended 0015; 0014 keeps its slot, which is what makes the journal
+  // append-only rather than rewritten.
   const journalRaw = await readFile(resolve(process.cwd(), '../db/drizzle/meta/_journal.json'), 'utf8');
   const journal = JSON.parse(journalRaw) as { entries: Array<{ idx: number; tag: string }> };
-  const last = journal.entries.at(-1);
-  assert.equal(last?.tag, '0014_t62_earn_storage');
-  assert.equal(last?.idx, 14);
+  const entry = journal.entries.find((item) => item.idx === 14);
+  assert.equal(entry?.tag, '0014_t62_earn_storage');
 });

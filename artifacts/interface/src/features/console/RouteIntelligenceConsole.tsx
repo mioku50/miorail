@@ -3,7 +3,7 @@ import { useLocation } from 'wouter';
 import { useAccount } from 'wagmi';
 import {
   CONSOLE_BREADCRUMB_V1,
-  CommercePaymentReviewPanel,
+  CommerceInvoiceReviewPanel,
   CommerceRouteCardPanel,
   CONSOLE_COPY_V1,
   commerceCheckoutAvailableV1,
@@ -481,7 +481,7 @@ export function RouteIntelligenceConsole() {
           onOrder={(candidateHash) => {
             if (!address) return;
             commerceOrder.mutate({
-              message: goal,
+              routeRunId: commerceCard.routeRunId,
               walletAddress: address.toLowerCase() as `0x${string}`,
               routeCardHash: commerceCard.routeCard.routeCardHash,
               selectedCandidateHash: candidateHash,
@@ -489,7 +489,19 @@ export function RouteIntelligenceConsole() {
           }}
         />
         {commerceOrderResult && (
-          <CommercePaymentReviewPanel order={commerceOrderResult.order} payment={commerceOrderResult.payment} />
+          <CommerceInvoiceReviewPanel
+            product={{
+              name: commerceOrderResult.order.items[0]?.productId ?? 'product',
+              packageValue: commerceOrderResult.order.items[0]?.packageValue ?? '',
+              currency: 'USD',
+            }}
+            order={commerceOrderResult.order}
+            invoice={commerceOrderResult.invoice}
+            amounts={commerceOrderResult.amounts}
+          />
+        )}
+        {commerceOrder.data?.outcome === 'invoice_creation_unknown' && (
+          <p className="note warn">{commerceOrder.data.reason}</p>
         )}
         {commerceOrder.data?.outcome === 'refresh_required' && (
           <p className="note warn">{commerceOrder.data.reason}</p>

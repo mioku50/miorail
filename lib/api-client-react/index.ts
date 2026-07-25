@@ -163,7 +163,10 @@ export function useCommerceCompare(
 // review. It does NOT pay: the returned CommercePaymentRequirementsV1 is what
 // the wallet authorizes afterwards, and nothing is signed by this call.
 export interface CommerceOrderInput {
-  message: string;
+  /** T64.2: the persisted run, not a message — the server loads the stored
+   * Route Card so the reviewed price is the price the order is checked
+   * against. */
+  routeRunId: string;
   walletAddress: `0x${string}`;
   routeCardHash: string;
   selectedCandidateHash: string;
@@ -183,7 +186,7 @@ export function useCreateCommerceOrder(
     retry: false,
     mutationFn: async (input) => {
       const request = apiSpec.CommerceOrderCreateRequestV1Schema.parse({
-        message: input.message,
+        routeRunId: input.routeRunId,
         walletAddress: input.walletAddress,
         routeCardHash: input.routeCardHash,
         selectedCandidateHash: input.selectedCandidateHash,
@@ -191,7 +194,7 @@ export function useCreateCommerceOrder(
           input.requestId ??
           identity.current!.resolve({
             walletAddress: input.walletAddress,
-            routeRunId: input.message,
+            routeRunId: input.routeRunId,
             routeCardHash: input.routeCardHash,
             selectedCandidateHash: input.selectedCandidateHash,
           }),
@@ -225,6 +228,41 @@ export function useCommerceOrderStatus(
         `/api/route-intelligence/commerce/orders/${encodeURIComponent(invoiceId ?? '')}`,
       );
       return apiSpec.CommerceOrderStatusResponseV1Schema.parse(response);
+    },
+  });
+}
+
+// T64.2: one reconcile POST against a durable order. Never automatic — an
+// uncertain checkout must be reconciled deliberately, because a blind retry is
+// exactly how a duplicate invoice gets created.
+export function useReconcileCommerceOrder(
+  options?: Omit<
+    UseMutationOptions<apiSpec.CommerceOrderStatusResponseV1, Error, { invoiceId: string }>,
+    'mutationFn' | 'retry'
+  >,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/commerce/orders/${encodeURIComponent(input.invoiceId)}/reconcile`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+      );
+      return apiSpec.CommerceOrderStatusResponseV1Schema.parse(response);
+    },
+  });
+}
+
+export function useCommerceHistory(
+  options?: Omit<UseQueryOptions<apiSpec.CommerceHistoryResponseV1, Error>, 'queryKey' | 'queryFn'>,
+) {
+  return useQuery({
+    ...options,
+    queryKey: ['commerce-history'],
+    queryFn: async () => {
+      const response = await fetchApi<unknown>('/api/route-intelligence/commerce/history');
+      return apiSpec.CommerceHistoryResponseV1Schema.parse(response);
     },
   });
 }

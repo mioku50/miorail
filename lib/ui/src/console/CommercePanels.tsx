@@ -152,7 +152,7 @@ export function CommerceRouteCardPanel(props: CommerceRouteCardPanelProps) {
                     disabled={!props.checkout.available || props.ordering === true}
                     onClick={() => props.onOrder?.(entry.candidate.candidateHash)}
                   >
-                    {props.ordering ? 'Opening checkout…' : 'Open checkout'}
+                    {props.ordering ? 'Creating invoice…' : 'Create price-locked invoice'}
                   </button>
                 )}
               </article>
@@ -171,7 +171,7 @@ export function CommerceRouteCardPanel(props: CommerceRouteCardPanelProps) {
   );
 }
 
-// --- Payment review --------------------------------------------------------
+// --- Invoice review (T64.2) ------------------------------------------------
 
 export interface CommerceOrderLikeV1 {
   invoiceId: string;
@@ -184,54 +184,109 @@ export interface CommerceOrderLikeV1 {
   items: { productId: string; packageValue: string; orderId: string | null; deliveryState: string }[];
 }
 
-export interface CommercePaymentRequirementsLikeV1 {
+export interface CommerceInvoiceLikeV1 {
+  invoiceId: string;
+  network: string;
   asset: string;
   payTo: string;
-  maxAmountAtomic: string;
-  network: string;
-  resource: string;
+  amountAtomic: string;
+  providerFeeAtomic: string | null;
+  refundAddress: string;
+  paymentStatus: string;
   expiresAt: string;
 }
 
-/** Exactly what the wallet will authorize. Nothing here is signed by opening
- * this panel — the user signs in their own wallet, or nothing happens. */
-export function CommercePaymentReviewPanel(props: {
+export interface CommerceAmountReviewLikeV1 {
+  estimatedMinimumAtomic: string;
+  estimatedBasis: 'exact_quote' | 'minimum';
+  exactAmountAtomic: string;
+  exceedsEstimate: boolean;
+  differenceAtomic: string;
+}
+
+/** USDC base units → a decimal string, for display only. */
+export function usdcDecimalV1(atomic: string): string {
+  const padded = atomic.padStart(7, '0');
+  const whole = padded.slice(0, padded.length - 6);
+  const fraction = padded.slice(padded.length - 6).replace(/0+$/, '');
+  return fraction.length > 0 ? `${whole}.${fraction}` : whole;
+}
+
+/**
+ * The invoice review.
+ *
+ * The two amounts are shown SEPARATELY and never merged: the estimate is what
+ * the catalogue said before any invoice existed, and the exact amount is what
+ * the price-locked invoice requires. Replacing one with the other would hide
+ * that the price the user compared is not the price they will pay.
+ *
+ * Nothing on this panel can pay. There is no pay button in T64.2 by design.
+ */
+export function CommerceInvoiceReviewPanel(props: {
+  product: { name: string; packageValue: string; currency: string };
   order: CommerceOrderLikeV1;
-  payment: CommercePaymentRequirementsLikeV1;
+  invoice: CommerceInvoiceLikeV1;
+  amounts: CommerceAmountReviewLikeV1;
   children?: React.ReactNode;
 }) {
+  const { invoice, amounts } = props;
   return (
     <div className="panel">
       <div className="ph">
         <h3>Payment review</h3>
         <span className="rt">
-          <span className="pill n">nothing signed yet</span>
+          <span className="pill a">Unpaid</span>
         </span>
       </div>
       <div className="pb">
         <div className="kv">
-          <span className="k">You pay</span>
-          <span className="v mono">{props.order.amount.amountDecimal} USDC</span>
+          <span className="k">Product</span>
+          <span className="v">
+            {props.product.name} · {props.product.packageValue} {props.product.currency}
+          </span>
         </div>
         <div className="kv">
-          <span className="k">Recipient</span>
-          <span className="v mono">{props.payment.payTo}</span>
+          <span className="k">Estimated minimum</span>
+          <span className="v mono">{usdcDecimalV1(amounts.estimatedMinimumAtomic)} USDC</span>
         </div>
+        <div className="kv">
+          <span className="k">Exact payment required</span>
+          <span className="v mono">{usdcDecimalV1(amounts.exactAmountAtomic)} USDC</span>
+        </div>
+        {amounts.exceedsEstimate && (
+          <p className="note warn">
+            The invoice is {usdcDecimalV1(amounts.differenceAtomic)} USDC above the estimate. The exact amount is
+            what the storefront will charge.
+          </p>
+        )}
+        {invoice.providerFeeAtomic !== null && (
+          <div className="kv">
+            <span className="k">Provider fee</span>
+            <span className="v mono">{usdcDecimalV1(invoice.providerFeeAtomic)} USDC</span>
+          </div>
+        )}
         <div className="kv">
           <span className="k">Network</span>
-          <span className="v mono">{props.payment.network}</span>
+          <span className="v mono">Base · {invoice.network}</span>
         </div>
         <div className="kv">
-          <span className="k">Checkout</span>
-          <span className="v mono">{props.order.invoiceId}</span>
+          <span className="k">Payment recipient</span>
+          <span className="v mono">{invoice.payTo}</span>
+        </div>
+        <div className="kv">
+          <span className="k">Refund wallet</span>
+          <span className="v mono">{invoice.refundAddress}</span>
+        </div>
+        <div className="kv">
+          <span className="k">Invoice</span>
+          <span className="v mono">{invoice.invoiceId}</span>
         </div>
         <div className="kv">
           <span className="k">Price locked until</span>
-          <span className="v mono">{props.order.expiresAt}</span>
+          <span className="v mono">{invoice.expiresAt}</span>
         </div>
-        <p className="note">
-          Miorail prepared this payment. Your wallet authorizes it — the server holds no key and cannot pay for you.
-        </p>
+        <p className="note">No payment has been signed or sent.</p>
+        <p className="note">Creating the invoice does not prove delivery.</p>
         {props.children}
       </div>
     </div>

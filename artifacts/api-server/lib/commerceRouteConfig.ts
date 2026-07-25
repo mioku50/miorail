@@ -8,11 +8,9 @@ import {
   type CommerceCatalogSourceV1,
   type CommerceOrderGatewayV1,
 } from '@mioagent/commerce-engine';
-import type { CommerceOrderV1, HashV1 } from '@mioagent/route-domain';
 
 // ---------------------------------------------------------------------------
-// T64/T64.1 — server-side commerce configuration and the process-local order
-// book.
+// T64/T64.1 — server-side commerce configuration.
 //
 // Two credentials reach two DIFFERENT Bitrefill APIs, and this module is where
 // the surface is chosen:
@@ -105,57 +103,7 @@ export function resetCommerceRuntimeV1(): void {
   orderGateway = null;
 }
 
-// --- Process-local order book ----------------------------------------------
-
-interface StoredCommerceOrderV1 {
-  order: CommerceOrderV1;
-  evidenceSetHash: HashV1;
-  tenantId: string;
-  walletAddress: string;
-  storedAt: number;
-}
-
-const orders = new Map<string, StoredCommerceOrderV1>();
-
-/** Orders are kept for one invoice lifetime plus a reconciliation window. */
-const ORDER_RETENTION_MS_V1 = 60 * 60_000;
-
-/**
- * IN-MEMORY ON PURPOSE, AND A KNOWN LIMIT.
- *
- * Commerce has no durable tables yet, so a restart loses the binding between a
- * wallet and its open checkout. The consequence is deliberate and safe: the
- * status route then reports `unknown_order` rather than reconstructing a proof
- * it cannot bind, and the storefront's own order list remains the fallback.
- * Durable, tenant-scoped persistence is the gate this family has to pass
- * before Bitrefill can be promoted past `scored`.
- */
-export function rememberCommerceOrderV1(input: StoredCommerceOrderV1): void {
-  const cutoff = Date.now() - ORDER_RETENTION_MS_V1;
-  for (const [key, value] of orders) {
-    if (value.storedAt < cutoff) orders.delete(key);
-  }
-  orders.set(commerceOrderKeyV1(input.tenantId, input.order.invoiceId), input);
-}
-
-export function recallCommerceOrderV1(
-  tenantId: string,
-  invoiceId: string,
-): StoredCommerceOrderV1 | null {
-  const stored = orders.get(commerceOrderKeyV1(tenantId, invoiceId));
-  if (!stored) return null;
-  if (stored.storedAt < Date.now() - ORDER_RETENTION_MS_V1) {
-    orders.delete(commerceOrderKeyV1(tenantId, invoiceId));
-    return null;
-  }
-  return stored;
-}
-
-/** Tenant-scoped, so one wallet can never read another wallet's checkout. */
-export function commerceOrderKeyV1(tenantId: string, invoiceId: string): string {
-  return `${tenantId}|${invoiceId}`;
-}
-
-export function clearCommerceOrdersV1(): void {
-  orders.clear();
-}
+// T64.2: the process-local order Map that used to live here is GONE. Orders
+// are durable now (commerce_orders + commerce_order_events + commerce_proofs
+// via createDatabaseCommerceStorageRepository), so a checkout survives a
+// restart and a repeat cannot open a second invoice.
