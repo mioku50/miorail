@@ -278,7 +278,7 @@ export async function routeSemanticIntent(input: {
       walletAddress: input.walletAddress,
       tools: input.tools,
     });
-    return decision(result || direct('uniswap_quote', 'Uniswap quote tools are unavailable.', 'uniswap_tools_unavailable'));
+    return decision(result || direct('uniswap_quote', "Uniswap didn't answer. Comparing 1 of 2 routes.", 'uniswap_tools_unavailable'));
   }
 
   const isWrite = ['send', 'swap', 'protocol_action', 'supply', 'withdraw', 'borrow', 'repay'].includes(normalized.intent);

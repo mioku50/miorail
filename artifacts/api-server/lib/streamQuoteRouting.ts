@@ -132,7 +132,7 @@ export async function runDirectQuoteRead(input: {
   if (!availability.available || !quoteTool) {
     return {
       kind: 'uniswap_quote',
-      content: 'Uniswap quote tools are unavailable.',
+      content: "Uniswap didn't answer. Comparing 1 of 2 routes.",
       toolCalls: traces,
       errorCode: availability.code || 'uniswap_tools_unavailable',
     };

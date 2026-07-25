@@ -236,7 +236,7 @@ export function OpsRail({ onClose }: OpsRailProps) {
               )}
               {isProviderMissingOrDisabled && (
                 <div className="text-[10px] font-sans text-warn bg-warn-soft px-2 py-1.5 rounded border border-warn/20 leading-normal">
-                  Portfolio data is unavailable. Manual wallet actions remain protected.
+                  Balances didn’t load. Route comparison still works.
                 </div>
               )}
               {isPortfolioError && (

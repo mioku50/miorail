@@ -138,7 +138,7 @@ export async function runDirectMoonwellWrite(input: {
   const policy = await repository.getByUser(input.userId, 8453);
   if (!policy || !policy.isActive || policy.killSwitch || !policy.mainnetOptIn
     || policy.expiresAt <= Date.now() || policy.walletAddress !== walletAddress) {
-    return blocked('Moonwell actions are blocked until the active mainnet policy and connected wallet pass readiness checks.', 'mainnet_policy_not_ready');
+    return blocked('Connect your wallet to prepare this deposit. Miorail can compare Earn routes without it.', 'mainnet_policy_not_ready');
   }
   if (intent.asset !== 'USDC') {
     return blocked('Moonwell actions are blocked because the active policy accounts spending in USDC only.', 'moonwell_policy_asset_unsupported');

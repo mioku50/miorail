@@ -21,6 +21,8 @@ import { DIAGNOSTICS_ENABLED } from '../lib/diagnostics';
 import { BaseMcpOAuthBridge } from './BaseMcpOAuthBridge';
 import { RequireSession } from './RequireSession';
 import { PlanPage } from '../features/plan/PlanPage';
+import { RouteIntelligenceConsole } from '../features/console/RouteIntelligenceConsole';
+import { LEGACY_NAV_ENABLED } from './routes';
 import { RouteHistoryPage } from '../features/plan/RouteHistoryPage';
 
 function ChainEnvMismatchBanner() {
@@ -66,6 +68,24 @@ export function App() {
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
   }, []);
+
+  // The console is the app's ROOT layout, mounted above the router: it owns the
+  // viewport, its three columns scroll independently, and the legacy chrome
+  // (TopBar / OpsRail / BottomNav) is not rendered around it. The legacy shell
+  // stays reachable for one iteration behind VITE_LEGACY_NAV.
+  if (routeIntelligenceEnabled && !LEGACY_NAV_ENABLED) {
+    return (
+      <>
+        <Switch>
+          <Route path="/plan/history"><RequireSession><RouteHistoryPage /></RequireSession></Route>
+          <Route><RequireSession><RouteIntelligenceConsole /></RequireSession></Route>
+        </Switch>
+        <CommandPalette />
+        <Toaster />
+        <BaseMcpOAuthBridge />
+      </>
+    );
+  }
 
   return (
     /* Desktop: h-screen overflow-hidden; mobile: natural scroll */

@@ -147,7 +147,7 @@ function userBlockedReason(reason: string): string {
     mainnet_opt_in_required: 'Mainnet permission is required',
     kill_switch: 'Kill switch is active',
     permission_expired: 'Permission has expired',
-    autonomy_policy_missing: 'Spending limits are not saved',
+    autonomy_policy_missing: 'Set a spending limit to continue — it takes one field.',
     autonomy_database_unavailable: 'Saved limits are temporarily unavailable',
   };
   return labels[reason] || 'A safety requirement is not ready';

@@ -1,0 +1,380 @@
+/*
+ * Miorail Console — design tokens + component styles.
+ *
+ * A DIRECT port of docs/prototypes/miorail-console.html. The two variable
+ * blocks below are the finished palette: nothing here is eyeballed, extended,
+ * or "improved". Component styles are scoped under `.mio-console` so the
+ * legacy Tailwind surfaces (which use the unrelated `--color-*` tokens and the
+ * `.light` class) keep rendering unchanged during the rollback window.
+ *
+ * Rule enforced by review: components carry NO hardcoded colours, including
+ * SVG. Charts are painted through the class hooks at the bottom of this file
+ * (.sc-b, .ln-b, .grid-l, .n-a, .n-b, .n-o, .svg-t, .svg-s, .svg-d, .pt,
+ * .donut-bg); CSS fill/stroke beats an SVG presentation attribute, so the same
+ * markup themes itself in both palettes.
+ */
+
+/* ============ DARK (default) ============ */
+:root {
+  --bg: #07070b; --panel: rgba(255,255,255,.032); --panel2: rgba(255,255,255,.055);
+  --ink: #f3f4fa; --muted: rgba(243,244,250,.60); --faint: rgba(243,244,250,.38); --dim: rgba(243,244,250,.26);
+  --line: rgba(255,255,255,.085); --line2: rgba(255,255,255,.15);
+  --blue: #6aa9ff; --violet: #a98bff;
+  --grad: linear-gradient(120deg,#6aa9ff,#8e9bff 48%,#b98bff);
+  --gsoft: linear-gradient(120deg,rgba(106,169,255,.18),rgba(185,139,255,.18));
+  --green: #5fd8a4; --amber: #f2b87c;
+  --on-accent: #0a0a11;
+  --r: 10px;
+
+  --chrome-bg: rgba(10,10,16,.72); --rail-bg: rgba(255,255,255,.012);
+  --shadow-card: none;
+  --btn-shadow: 0 6px 20px rgba(120,150,255,.30);
+  --btn-shadow-lg: 0 8px 24px rgba(120,150,255,.32);
+  --glow-bg: radial-gradient(620px 380px at 22% -6%,rgba(106,169,255,.16),transparent 60%),
+             radial-gradient(640px 400px at 88% 0%,rgba(169,139,255,.14),transparent 60%);
+  --dots: none; --dots-op: 0;
+  --track-bg: rgba(255,255,255,.07);
+  --bar-glow: 0 0 12px rgba(129,155,255,.6);
+  --dot-glow: 0 0 9px rgba(95,216,164,.95);
+
+  --hero-bg: linear-gradient(120deg,rgba(106,169,255,.10),rgba(169,139,255,.08));
+  --hero-line: rgba(139,166,255,.24); --hero-shadow: 0 0 50px rgba(120,150,255,.12);
+  --hero-text: linear-gradient(150deg,#fff 10%,#c3d6ff 50%,#cdb2ff 100%);
+  --hero-drop: drop-shadow(0 0 26px rgba(129,155,255,.38));
+
+  --br-text: #dde7ff; --br-line: rgba(139,166,255,.42);
+  --g-text: #bff3dc; --g-bg: rgba(95,216,164,.13); --g-line: rgba(95,216,164,.36);
+  --a-text: #fbe2c6; --a-bg: rgba(242,184,124,.13); --a-line: rgba(242,184,124,.38);
+  --n-bg: rgba(255,255,255,.05);
+
+  --sim-bg: linear-gradient(180deg,rgba(95,216,164,.11),rgba(95,216,164,.03));
+  --sim-line: rgba(95,216,164,.32); --sim-shadow: 0 0 34px rgba(95,216,164,.10); --sim-head: #cff6e5;
+
+  --accent-line: #8fb6ff; --accent-line2: #c0a2ff; --chart-grid: rgba(255,255,255,.14);
+  --node-n-bg: rgba(255,255,255,.055); --node-n-line: rgba(255,255,255,.14);
+  --node-a-bg: rgba(106,169,255,.13); --node-a-line: rgba(139,166,255,.40);
+  --node-b-bg: rgba(169,139,255,.10); --node-b-line: rgba(169,139,255,.30);
+  --node-o-bg: rgba(95,216,164,.11); --node-o-line: rgba(95,216,164,.34);
+
+  --field: rgba(255,255,255,.04);
+  --font: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --track-radius: 5px;
+}
+
+/* ============ LIGHT · Base ============ */
+[data-theme="light"] {
+  --bg: #f7f8fb; --panel: #ffffff; --panel2: #f0f2f7;
+  --ink: #0a0b0d; --muted: #4a5260; --faint: #6b7280; --dim: #98a0ad;
+  --line: #e4e7ec; --line2: #d2d7e0;
+  --blue: #0000ff; --violet: #7b3fe4;
+  --grad: linear-gradient(120deg,#0000ff,#3b2bff 48%,#7b3fe4);
+  --gsoft: linear-gradient(120deg,rgba(0,0,255,.09),rgba(123,63,228,.09));
+  --green: #00875a; --amber: #b25e00;
+  --on-accent: #ffffff;
+
+  --chrome-bg: rgba(255,255,255,.86); --rail-bg: #fbfcfe;
+  --shadow-card: 0 1px 2px rgba(16,24,40,.05), 0 10px 26px rgba(16,24,40,.045);
+  --btn-shadow: 0 6px 16px rgba(0,0,255,.20);
+  --btn-shadow-lg: 0 8px 22px rgba(0,0,255,.22);
+  --glow-bg: radial-gradient(680px 400px at 20% -8%,rgba(0,0,255,.10),transparent 62%),
+             radial-gradient(700px 420px at 90% -2%,rgba(123,63,228,.09),transparent 62%);
+  --dots: radial-gradient(circle,rgba(0,0,255,.075) 1px,transparent 1px); --dots-op: 1;
+  --track-bg: rgba(10,11,13,.08);
+  --bar-glow: none;
+  --dot-glow: 0 0 0 3px rgba(0,135,90,.14);
+
+  --hero-bg: linear-gradient(120deg,rgba(0,0,255,.055),rgba(123,63,228,.045));
+  --hero-line: rgba(0,0,255,.16); --hero-shadow: 0 10px 30px rgba(0,0,255,.07);
+  --hero-text: linear-gradient(150deg,#0000ff 0%,#3b2bff 46%,#7b3fe4 100%);
+  --hero-drop: none;
+
+  --br-text: #1414d6; --br-line: rgba(0,0,255,.24);
+  --g-text: #00674a; --g-bg: rgba(0,135,90,.09); --g-line: rgba(0,135,90,.25);
+  --a-text: #8a4b00; --a-bg: rgba(178,94,0,.09); --a-line: rgba(178,94,0,.25);
+  --n-bg: rgba(10,11,13,.045);
+
+  --sim-bg: linear-gradient(180deg,rgba(0,135,90,.08),rgba(0,135,90,.02));
+  --sim-line: rgba(0,135,90,.26); --sim-shadow: none; --sim-head: #00674a;
+
+  --accent-line: #0000ff; --accent-line2: #7b3fe4; --chart-grid: rgba(10,11,13,.16);
+  --node-n-bg: #f2f4f8; --node-n-line: #dde1e8;
+  --node-a-bg: rgba(0,0,255,.07); --node-a-line: rgba(0,0,255,.28);
+  --node-b-bg: rgba(123,63,228,.07); --node-b-line: rgba(123,63,228,.26);
+  --node-o-bg: rgba(0,135,90,.08); --node-o-line: rgba(0,135,90,.26);
+
+  --field: #f4f6f9;
+}
+
+/* The console owns the viewport while it is mounted; the class is added and
+   removed by ConsoleShell so legacy pages keep their natural scrolling. */
+html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow: hidden; }
+
+.mio-console, .mio-console * { box-sizing: border-box; }
+.mio-console {
+  background: var(--bg); color: var(--ink); font-size: 14px; line-height: 1.5;
+  font-family: var(--font); -webkit-font-smoothing: antialiased;
+  transition: background .25s, color .25s;
+}
+.mio-console .mono { font-family: "SF Mono",Menlo,Consolas,monospace; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+
+.mio-console.app { display: grid; grid-template-columns: 246px minmax(0,1fr) 330px; grid-template-rows: 52px minmax(0,1fr) 34px; height: 100vh; }
+.mio-glow { position: fixed; inset: 0; pointer-events: none; z-index: 0; background: var(--glow-bg); }
+.mio-glow::after { content: ""; position: absolute; inset: 0; background-image: var(--dots); background-size: 24px 24px; opacity: var(--dots-op); }
+.mio-console.app > * { position: relative; z-index: 1; }
+
+.mio-console header { grid-column: 1/-1; display: flex; align-items: center; gap: 16px; padding: 0 16px;
+  border-bottom: 1px solid var(--line); background: var(--chrome-bg); backdrop-filter: blur(16px); }
+.mio-console .brand { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 15px; width: 214px; letter-spacing: -.01em; }
+.mio-console .logo { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; background: var(--grad); box-shadow: var(--btn-shadow); }
+.mio-console .logo rect { fill: var(--on-accent); }
+.mio-console .crumb { display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--faint); min-width: 0; }
+.mio-console .crumb b { color: var(--ink); font-weight: 600; }
+.mio-console .crumb .sep { color: var(--dim); }
+.mio-console .hspace { flex: 1; }
+.mio-console .hstat { display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--muted); }
+.mio-console .hstat b { color: var(--ink); font-weight: 500; }
+.mio-console .chip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; border-radius: 999px; font-size: 12px;
+  color: var(--muted); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); white-space: nowrap; }
+.mio-console .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: var(--dot-glow); flex: none; }
+.mio-console .dot.off { background: var(--dim); box-shadow: none; }
+
+.mio-console .themetog { display: flex; gap: 2px; padding: 2px; border-radius: 999px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
+.mio-console .themetog button { border: 0; background: transparent; color: var(--faint); font: inherit; font-size: 11.5px; font-weight: 600;
+  padding: 4px 11px; border-radius: 999px; cursor: pointer; }
+.mio-console .themetog button:hover { color: var(--ink); }
+.mio-console .themetog button.on { background: var(--grad); color: var(--on-accent); }
+
+.mio-console aside.left { border-right: 1px solid var(--line); overflow-y: auto; padding: 14px 12px; background: var(--rail-bg); }
+.mio-console .newgoal { width: 100%; border: 0; cursor: pointer; border-radius: 9px; padding: 10px; font: inherit; font-size: 13.5px; font-weight: 600;
+  background: var(--grad); color: var(--on-accent); box-shadow: var(--btn-shadow-lg); }
+.mio-console .sechead { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--dim); margin: 20px 6px 8px; }
+.mio-console .item { display: block; width: 100%; text-align: left; border: 0; background: transparent; cursor: pointer;
+  padding: 9px 10px; border-radius: 8px; color: var(--muted); font: inherit; font-size: 13px; line-height: 1.35; }
+.mio-console .item:hover { background: var(--panel2); color: var(--ink); }
+.mio-console .item.on { background: var(--panel2); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line2); }
+.mio-console .item .t { display: block; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mio-console .item .m { display: flex; gap: 7px; align-items: center; font-size: 11px; color: var(--dim); margin-top: 3px; }
+.mio-console .tag { padding: 1px 6px; border-radius: 5px; font-size: 10.5px; font-weight: 600; }
+.mio-console .tag.g { color: var(--g-text); background: var(--g-bg); }
+.mio-console .tag.b { color: var(--br-text); background: var(--gsoft); }
+.mio-console .tag.n { color: var(--faint); background: var(--n-bg); }
+.mio-console .minipanel { margin-top: 18px; border-radius: var(--r); padding: 11px 12px; background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line), var(--shadow-card); }
+.mio-console .minipanel .row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; padding: 4px 0; color: var(--muted); }
+.mio-console .minipanel .row .v { color: var(--ink); }
+.mio-console .minipanel .row.off span { color: var(--dim); }
+.mio-console .minipanel .row .v.ok { color: var(--green); }
+.mio-console .usebar { height: 4px; border-radius: 4px; background: var(--track-bg); overflow: hidden; margin-top: 7px; }
+.mio-console .usebar span { display: block; height: 100%; background: var(--grad); box-shadow: var(--bar-glow); }
+
+.mio-console main { overflow-y: auto; padding: 18px 22px 28px; }
+
+.mio-console .stepper { display: flex; border-radius: var(--r); overflow: hidden; background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line), var(--shadow-card); margin-bottom: 16px; }
+.mio-console .st { flex: 1; padding: 9px 12px; border-right: 1px solid var(--line); min-width: 0; }
+.mio-console .st:last-child { border-right: 0; }
+.mio-console .st .n { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mio-console .st .b { height: 3px; border-radius: 3px; background: var(--track-bg); margin-top: 7px; }
+.mio-console .st .tm { font-size: 10.5px; color: var(--dim); margin-top: 5px; }
+.mio-console .st.done .n { color: var(--muted); }
+.mio-console .st.done .b { background: var(--grad); opacity: .55; }
+.mio-console .st.now .n { color: var(--ink); font-weight: 600; }
+.mio-console .st.now .b { background: var(--grad); box-shadow: var(--bar-glow); }
+
+.mio-console .panel { border-radius: var(--r); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line), var(--shadow-card); margin-bottom: 14px; }
+.mio-console .ph { display: flex; align-items: center; gap: 10px; padding: 11px 16px; border-bottom: 1px solid var(--line); }
+.mio-console .ph h3 { margin: 0; font-size: 12.5px; font-weight: 600; }
+.mio-console .ph .sub { font-size: 11.5px; color: var(--dim); }
+.mio-console .ph .rt { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.mio-console .pb { padding: 16px; }
+.mio-console .pb.tight { padding: 12px 16px; }
+.mio-console .cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.mio-console .cols2 .panel { margin-bottom: 0; }
+
+.mio-console .herostrip { display: grid; grid-template-columns: minmax(0,1.15fr) minmax(0,1fr); border-radius: var(--r); margin-bottom: 14px;
+  background: var(--hero-bg); box-shadow: inset 0 0 0 1px var(--hero-line), var(--hero-shadow); }
+.mio-console .heroL { padding: 18px 20px; }
+.mio-console .heroR { padding: 18px 20px; border-left: 1px solid var(--hero-line); }
+.mio-console .eyebrow { font-size: 11.5px; color: var(--faint); margin: 0 0 8px; }
+.mio-console .amount { font-size: 44px; line-height: 1; letter-spacing: -.04em; font-weight: 600;
+  background: var(--hero-text); -webkit-background-clip: text; background-clip: text; color: transparent; filter: var(--hero-drop); }
+.mio-console .amtrow { display: flex; align-items: flex-end; gap: 11px; flex-wrap: wrap; }
+.mio-console .unit { font-size: 17px; font-weight: 600; color: var(--muted); padding-bottom: 5px; }
+.mio-console .usd { font-size: 13.5px; color: var(--faint); padding-bottom: 7px; }
+.mio-console .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 600; }
+.mio-console .pill.br { color: var(--br-text); background: var(--gsoft); box-shadow: inset 0 0 0 1px var(--br-line); }
+.mio-console .pill.g { color: var(--g-text); background: var(--g-bg); box-shadow: inset 0 0 0 1px var(--g-line); }
+.mio-console .pill.a { color: var(--a-text); background: var(--a-bg); box-shadow: inset 0 0 0 1px var(--a-line); }
+.mio-console .pill.n { color: var(--muted); background: var(--n-bg); box-shadow: inset 0 0 0 1px var(--line); font-weight: 500; }
+.mio-console .why { font-size: 13px; color: var(--muted); margin: 12px 0 0; max-width: 440px; }
+.mio-console .why b { color: var(--ink); }
+.mio-console .kpis { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px 16px; }
+.mio-console .kpis.two { grid-template-columns: 1fr 1fr; }
+.mio-console .kpi .k { font-size: 10.5px; color: var(--faint); }
+.mio-console .kpi .v { font-size: 15px; font-weight: 600; margin-top: 2px; }
+.mio-console .kpi .v.good { color: var(--green); }
+.mio-console .kpi .v.warn { color: var(--amber); }
+.mio-console .kpi .d { font-size: 10.5px; color: var(--dim); }
+
+.mio-console .graph { width: 100%; height: 150px; display: block; }
+.mio-console .graph.tall { height: 300px; }
+.mio-console .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 11.5px; color: var(--faint); padding: 0 16px 14px; }
+.mio-console .legend i { display: inline-block; width: 16px; height: 2px; border-radius: 2px; vertical-align: middle; margin-right: 6px; background: var(--grad); }
+
+/* SVG theming hooks — CSS beats presentation attributes, so charts follow the theme. */
+.mio-console .sc-b { stop-color: var(--blue); } .mio-console .sc-v { stop-color: var(--violet); }
+.mio-console .ln-b { stroke: var(--accent-line); } .mio-console .ln-v { stroke: var(--accent-line2); }
+.mio-console .grid-l { stroke: var(--chart-grid); }
+.mio-console .svg-t { fill: var(--ink); } .mio-console .svg-s { fill: var(--faint); } .mio-console .svg-d { fill: var(--dim); }
+.mio-console .n-neutral { fill: var(--node-n-bg); stroke: var(--node-n-line); }
+.mio-console .n-a { fill: var(--node-a-bg); stroke: var(--node-a-line); }
+.mio-console .n-b { fill: var(--node-b-bg); stroke: var(--node-b-line); }
+.mio-console .n-o { fill: var(--node-o-bg); stroke: var(--node-o-line); }
+.mio-console .pt { fill: var(--ink); } .mio-console .pt-o { fill: none; stroke: var(--chart-grid); }
+.mio-console .donut-bg { stroke: var(--track-bg); }
+
+.mio-console .scorewrap { display: grid; grid-template-columns: 180px minmax(0,1fr); gap: 18px; align-items: center; }
+.mio-console .scorerow { display: flex; align-items: center; gap: 12px; padding: 7px 0; }
+.mio-console .scorerow + .scorerow { border-top: 1px solid var(--line); }
+.mio-console .scorerow .nm { width: 104px; flex: none; font-size: 12.5px; color: var(--muted); }
+.mio-console .track { flex: 1; height: 5px; border-radius: var(--track-radius); background: var(--track-bg); overflow: hidden; }
+.mio-console .track span { display: block; height: 100%; background: var(--grad); box-shadow: var(--bar-glow); }
+.mio-console .track.na { background: repeating-linear-gradient(115deg,var(--track-bg) 0 4px,transparent 4px 9px); box-shadow: inset 0 0 0 1px var(--line); }
+.mio-console .scorerow .nu { width: 28px; text-align: right; font-size: 13px; font-weight: 600; }
+.mio-console .scorerow .cf { width: 128px; text-align: right; font-size: 10.5px; color: var(--dim); white-space: nowrap; }
+.mio-console .scorerow.na .nm, .mio-console .scorerow.na .nu { color: var(--dim); font-weight: 500; }
+
+.mio-console table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.mio-console th { text-align: left; font-size: 10.5px; color: var(--dim); font-weight: 500; padding: 0 12px 8px 0; border-bottom: 1px solid var(--line); }
+.mio-console td { padding: 9px 12px 9px 0; border-bottom: 1px solid var(--line); color: var(--muted); vertical-align: middle; }
+.mio-console tr:last-child td { border-bottom: 0; }
+.mio-console td.nm { color: var(--ink); font-weight: 500; }
+.mio-console th.r, .mio-console td.r { text-align: right; padding-right: 0; }
+.mio-console td.off, .mio-console td.off * { color: var(--dim); }
+.mio-console td.good { color: var(--green); }
+.mio-console td.warn { color: var(--amber); }
+.mio-console .cmpbar { display: block; height: 4px; border-radius: 4px; background: var(--track-bg); overflow: hidden; min-width: 70px; }
+.mio-console .cmpbar span { display: block; height: 100%; background: var(--grad); }
+.mio-console .cmpbar.dim span { background: var(--line2); }
+
+.mio-console .btn { border: 0; cursor: pointer; border-radius: 8px; padding: 7px 14px; font: inherit; font-size: 12.5px; font-weight: 600;
+  background: var(--grad); color: var(--on-accent); box-shadow: var(--btn-shadow); }
+.mio-console .btn:hover { filter: brightness(1.08); }
+.mio-console .btn.sec { background: var(--panel); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line2); }
+.mio-console .btn.sec:hover { background: var(--panel2); filter: none; }
+.mio-console .btn.lg { padding: 11px 22px; font-size: 14px; border-radius: 10px; }
+.mio-console .btn[disabled] { opacity: .4; cursor: not-allowed; }
+.mio-console .btn[disabled]:hover { filter: none; }
+.mio-console .ctarow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.mio-console .ctarow .nt { font-size: 12px; color: var(--dim); }
+
+.mio-console .lsteps { list-style: none; margin: 0; padding: 0; }
+.mio-console .lsteps li { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.mio-console .lsteps li:last-child { border-bottom: 0; }
+.mio-console .mk { width: 16px; flex: none; display: grid; place-items: center; }
+.mio-console .ok { color: var(--green); font-size: 11px; font-weight: 700; }
+.mio-console .fail { color: var(--amber); font-size: 11px; font-weight: 700; }
+.mio-console .pend { width: 7px; height: 7px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--line2); }
+.mio-console .spin { width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--track-bg); border-top-color: var(--violet); animation: mio-sp .8s linear infinite; }
+@keyframes mio-sp { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .mio-console .spin { animation: none; } }
+.mio-console .lsteps .lb { flex: 1; }
+.mio-console .lsteps .vl { font-size: 11.5px; color: var(--faint); }
+.mio-console .lsteps .lat { width: 64px; flex: none; }
+.mio-console .latbar { height: 3px; border-radius: 3px; background: var(--track-bg); overflow: hidden; }
+.mio-console .latbar span { display: block; height: 100%; background: var(--grad); }
+.mio-console .lsteps li.pending .lb { color: var(--dim); }
+
+.mio-console .call { display: flex; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--line); }
+.mio-console .call:last-child { border-bottom: 0; }
+.mio-console .cidx { width: 21px; height: 21px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 600;
+  color: var(--br-text); background: var(--gsoft); box-shadow: inset 0 0 0 1px var(--br-line); }
+.mio-console .ct { font-size: 13.5px; font-weight: 600; }
+.mio-console .cs { font-size: 11.5px; color: var(--dim); margin-top: 2px; }
+.mio-console .simbox { border-radius: var(--r); padding: 14px 16px; background: var(--sim-bg);
+  box-shadow: inset 0 0 0 1px var(--sim-line), var(--sim-shadow); }
+.mio-console .simbox.na { background: var(--n-bg); box-shadow: inset 0 0 0 1px var(--line); }
+.mio-console .simhead { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; color: var(--sim-head); margin-bottom: 10px; }
+.mio-console .simbox.na .simhead { color: var(--muted); }
+.mio-console .simnote { font-size: 12.5px; color: var(--muted); }
+.mio-console .simnote b { color: var(--ink); }
+.mio-console .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 22px; }
+.mio-console .checks div { display: flex; gap: 9px; align-items: baseline; font-size: 12.5px; color: var(--muted); }
+.mio-console .tick { color: var(--green); font-size: 10px; font-weight: 700; }
+.mio-console .tick.na { color: var(--dim); }
+.mio-console .limits { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+.mio-console .limits label { display: block; font-size: 11px; color: var(--faint); margin-bottom: 6px; }
+.mio-console .limits input { width: 100%; border: 0; border-radius: 8px; padding: 9px 12px; font: inherit; font-size: 13.5px; color: var(--ink);
+  background: var(--field); box-shadow: inset 0 0 0 1px var(--line); outline: 0; }
+.mio-console .limits input:focus { box-shadow: inset 0 0 0 2px var(--blue); }
+.mio-console .limits input:disabled { color: var(--muted); }
+.mio-console .lnote { font-size: 10.5px; color: var(--dim); margin-top: 5px; }
+.mio-console .goalinput { width: 100%; border: 0; outline: 0; resize: none; background: var(--field); color: var(--ink);
+  font: inherit; font-size: 16px; line-height: 1.5; padding: 14px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--line); }
+
+.mio-console .tl { list-style: none; margin: 0; padding: 0 0 0 4px; }
+.mio-console .tl li { position: relative; padding: 0 0 16px 22px; border-left: 1px solid var(--line); }
+.mio-console .tl li:last-child { border-left-color: transparent; padding-bottom: 0; }
+.mio-console .tl li::before { content: ""; position: absolute; left: -4px; top: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--blue); }
+.mio-console .tl li.g::before { background: var(--green); }
+.mio-console .tl .tt { font-size: 12.5px; color: var(--ink); }
+.mio-console .tl .ts { font-size: 11px; color: var(--dim); margin-top: 2px; }
+
+.mio-console aside.right { border-left: 1px solid var(--line); overflow-y: auto; padding: 14px 12px; background: var(--rail-bg); }
+.mio-console .rp { border-radius: var(--r); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line), var(--shadow-card); margin-bottom: 12px; }
+.mio-console .rph { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.mio-console .rph .rt { margin-left: auto; font-size: 10.5px; color: var(--dim); font-weight: 500; }
+.mio-console .rpb { padding: 12px; }
+.mio-console .bigv { font-size: 22px; font-weight: 600; letter-spacing: -.02em; }
+.mio-console .subv { font-size: 11px; color: var(--dim); margin-top: 2px; }
+.mio-console .subv.good { color: var(--green); }
+.mio-console .spark { width: 100%; height: 40px; display: block; margin-top: 8px; }
+.mio-console .feed { list-style: none; margin: 0; padding: 0; }
+.mio-console .feed li { display: flex; gap: 9px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 11.5px; color: var(--muted); }
+.mio-console .feed li:last-child { border-bottom: 0; }
+.mio-console .feed li.off, .mio-console .feed li.off .src { color: var(--dim); }
+.mio-console .feed .tm { color: var(--dim); flex: none; width: 34px; }
+.mio-console .feed .src { color: var(--ink); font-weight: 500; }
+.mio-console .donutwrap { display: flex; align-items: center; gap: 14px; }
+.mio-console .qrow { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); }
+.mio-console .qrow:last-child { border-bottom: 0; }
+.mio-console .qrow .v { color: var(--ink); font-weight: 500; }
+.mio-console .qrow .v.ok { color: var(--green); }
+.mio-console .qrow .v.off { color: var(--dim); }
+.mio-console .empty { font-size: 12px; color: var(--dim); padding: 4px 0; }
+
+.mio-console footer { grid-column: 1/-1; display: flex; align-items: center; gap: 16px; padding: 0 14px; border-top: 1px solid var(--line);
+  background: var(--chrome-bg); backdrop-filter: blur(14px); font-size: 11.5px; color: var(--faint); overflow-x: auto; white-space: nowrap; }
+.mio-console footer .g { display: flex; align-items: center; gap: 7px; }
+.mio-console footer .v { color: var(--muted); }
+.mio-console footer .sp { flex: 1; }
+
+/* Mobile drawer for the left rail (<=900px). */
+.mio-console .drawerbtn { display: none; border: 0; background: var(--panel); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line);
+  border-radius: 8px; width: 30px; height: 30px; cursor: pointer; font-size: 15px; line-height: 1; flex: none; }
+.mio-console .scrim { display: none; position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.5); }
+
+@media (max-width: 1400px) { .mio-console.app { grid-template-columns: 220px minmax(0,1fr) 300px; } }
+@media (max-width: 1180px) {
+  .mio-console.app { grid-template-columns: 210px minmax(0,1fr); }
+  .mio-console aside.right { display: none; }
+  /* The right rail does not vanish — its panels move to the end of the centre
+     column, so no data is lost at narrow widths. */
+  .mio-console .railfold { display: block; }
+}
+@media (min-width: 1181px) { .mio-console .railfold { display: none; } }
+@media (max-width: 900px) {
+  .mio-console.app { grid-template-columns: minmax(0,1fr); }
+  .mio-console aside.left { position: fixed; top: 52px; bottom: 34px; left: 0; width: 246px; z-index: 50;
+    transform: translateX(-100%); transition: transform .2s ease-out; }
+  .mio-console.drawer-open aside.left { transform: translateX(0); }
+  .mio-console.drawer-open .scrim { display: block; }
+  .mio-console .drawerbtn { display: block; }
+  .mio-console .brand { width: auto; }
+  .mio-console .hstat { display: none; }
+  .mio-console .scorewrap, .mio-console .cols2, .mio-console .herostrip { grid-template-columns: 1fr; }
+  .mio-console .heroR { border-left: 0; border-top: 1px solid var(--hero-line); }
+  .mio-console .limits, .mio-console .checks { grid-template-columns: 1fr; }
+  .mio-console main { padding: 14px 14px 24px; }
+}
+@media (prefers-reduced-motion: reduce) { .mio-console aside.left { transition: none; } }

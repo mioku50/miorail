@@ -121,7 +121,7 @@ export async function runDirectBaseMcpSwap(input: {
     || policy.expiresAt <= Date.now() || policy.walletAddress !== input.walletAddress.toLowerCase()) {
     return {
       kind: 'base_mcp_swap',
-      content: 'Base MCP swap is blocked until the active mainnet policy and connected wallet pass readiness checks.',
+      content: 'Connect your wallet to prepare this swap. Miorail can compare routes without it.',
       toolCalls: [],
       errorCode: 'mainnet_policy_not_ready',
     };

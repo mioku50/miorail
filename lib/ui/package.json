@@ -7,7 +7,8 @@
   "types": "index.ts",
   "exports": {
     ".": "./index.ts",
-    "./tokens.css": "./src/tokens.css"
+    "./tokens.css": "./src/tokens.css",
+    "./console.css": "./src/console/console.css"
   },
   "scripts": {
     "test": "NODE_ENV=test node --import tsx --test test/*.test.ts"

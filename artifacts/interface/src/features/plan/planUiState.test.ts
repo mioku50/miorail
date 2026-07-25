@@ -8,20 +8,26 @@ import { commandsForRouteIntelligence, navTabsForRouteIntelligence } from '../..
 
 const here = path.dirname(url.fileURLToPath(import.meta.url));
 
-test('Plan navigation appears first only while route intelligence is enabled', () => {
-  assert.equal(navTabsForRouteIntelligence(true)[0]?.path, '/plan');
-  assert.equal(navTabsForRouteIntelligence(false).some((route) => route.path === '/plan'), false);
+// The console migration INVERTS the flag: the new interface is the default and
+// the seven legacy tabs collapse into two entries — the flow, and proofs. The
+// legacy table survives one iteration behind VITE_LEGACY_NAV as the rollback.
+test('the console flow is the default navigation; seven tabs collapse into two', () => {
+  const tabs = navTabsForRouteIntelligence(true);
+  assert.deepEqual(tabs.map((route) => route.path), ['/', '/plan/history']);
+  assert.deepEqual(tabs.map((route) => route.label), ['flow', 'proofs']);
+  // Rollback path only: with the flag off the legacy cockpit tabs return.
   assert.equal(navTabsForRouteIntelligence(false)[0]?.path, '/');
+  assert.equal(navTabsForRouteIntelligence(false).some((route) => route.label === 'cockpit'), true);
 });
 
-test('T58: /plan/history nav + command exist only behind the flag; legacy /history stays', () => {
-  assert.equal(navTabsForRouteIntelligence(true).some((route) => route.path === '/plan/history'), true);
-  assert.equal(navTabsForRouteIntelligence(false).some((route) => route.path === '/plan/history'), false);
-  assert.equal(commandsForRouteIntelligence(true).some((command) => command.path === '/plan/history'), true);
-  assert.equal(commandsForRouteIntelligence(false).some((command) => command.path === '/plan/history'), false);
-  // Legacy /history (chat + inbox) must remain reachable regardless of flag.
-  assert.equal(commandsForRouteIntelligence(false).some((command) => command.path === '/history'), true);
-  assert.equal(commandsForRouteIntelligence(true).some((command) => command.path === '/history'), true);
+test('proofs stay reachable, and no command carries an emoji or retired vocabulary', () => {
+  const commands = commandsForRouteIntelligence(true);
+  assert.equal(commands.some((command) => command.path === '/plan/history'), true);
+  assert.equal(commands.length, 2, 'the console exposes exactly two entries');
+  for (const command of commands) {
+    assert.equal(command.icon, '', 'navigation carries no emoji');
+    assert.equal(/\b(scan|cockpit|fuel|kill switch)\b/i.test(command.label), false, command.label);
+  }
 });
 
 test('T58: RouteHistoryPage is a pure read (no reconcile), PlanPage gates reconciliation on terminal submit + proofId', () => {

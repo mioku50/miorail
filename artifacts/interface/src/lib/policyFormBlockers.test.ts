@@ -33,7 +33,7 @@ test('a TTL below five minutes is blocked', () => {
 });
 
 test('whitelist must contain only valid addresses', () => {
-  assert.deepEqual(policyFormBlockers({ ...VALID, whitelist: [] }), ['Add at least one allowed recipient address']);
+  assert.deepEqual(policyFormBlockers({ ...VALID, whitelist: [] }), ['Miorail will only send to your own wallet unless you add another address.']);
   assert.deepEqual(
     policyFormBlockers({ ...VALID, whitelist: ['0x1111111111111111111111111111111111111111', 'nope'] }),
     ['Every allowed recipient must be a valid 0x address'],
@@ -63,7 +63,7 @@ test('multiple problems are all listed', () => {
     'Daily limit must be > 0',
     'Per-action limit must be > 0',
     'Session TTL must be at least 5 minutes',
-    'Add at least one allowed recipient address',
+    'Miorail will only send to your own wallet unless you add another address.',
     'Acknowledge the mainnet risk checkbox',
   ]);
 });

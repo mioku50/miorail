@@ -29,7 +29,7 @@ export function policyFormBlockers(input: PolicyFormBlockerInput): string[] {
   if (!(ttlHours >= MIN_TTL_HOURS)) blockers.push('Session TTL must be at least 5 minutes');
 
   if (input.whitelist.length === 0) {
-    blockers.push('Add at least one allowed recipient address');
+    blockers.push('Miorail will only send to your own wallet unless you add another address.');
   } else if (!input.whitelist.every((entry) => /^0x[0-9a-fA-F]{40}$/.test(entry))) {
     blockers.push('Every allowed recipient must be a valid 0x address');
   }
