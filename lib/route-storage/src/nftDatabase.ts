@@ -232,6 +232,22 @@ export function createDatabaseNftStorageRepository(sql: SqlTemplateExecutor): Nf
       if (candidate.intentHash !== run.intentHash) {
         throw new RouteStorageIntegrityError('NFT candidate intentHash does not match its run');
       }
+      // A run holds at most ONE candidate per order — the unique index says so.
+      // This used to be left to `ON CONFLICT DO NOTHING`, which silently kept
+      // the older observation and then let the evidence insert fail on a
+      // candidate hash that was never stored. The collision is named here, and
+      // an identical replay still returns quietly.
+      const claimed = await sql`
+        SELECT candidate_hash FROM nft_candidates
+        WHERE route_run_id = ${runId} AND order_hash = ${candidate.order.orderHash}
+        LIMIT 1
+      `;
+      if (claimed[0]) {
+        if (String(claimed[0].candidate_hash) !== candidate.candidateHash) {
+          throw new RouteStorageConflictError('This listing already has a different candidate in this run');
+        }
+        return;
+      }
       await sql`
         INSERT INTO nft_candidates (
           id, route_run_id, user_id, wallet_address, schema_version, status, candidate_hash,

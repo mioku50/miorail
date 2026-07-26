@@ -1,8 +1,14 @@
-import { describe, it } from 'node:test';
+import { describe, it, test } from 'node:test';
 import assert from 'node:assert';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import url from 'node:url';
 import { QueryClient } from '@tanstack/react-query';
 import type { ConfigureAutonomyResponse } from '@mioagent/api-spec';
 import * as apiClient from './index.js';
+
+const mod = apiClient;
+const here = path.dirname(url.fileURLToPath(import.meta.url));
 
 describe('api-client-react', () => {
   it('should export query and mutation hooks', () => {
@@ -248,4 +254,30 @@ describe('api-client-react', () => {
     assert.strictEqual(retry, first);
     assert.notStrictEqual(changed, first);
   });
+});
+
+// ---------------------------------------------------------------------------
+// T65.2B — each NFT comparison is its own run.
+// ---------------------------------------------------------------------------
+
+test('useNftCompare mints a fresh request id per call, unlike the swap identity', () => {
+  const source = mod.useNftCompare.toString();
+  assert.ok(/crypto\.randomUUID\(\)/.test(source), 'each comparison must get its own request id');
+  assert.ok(
+    !/RoutePlanRequestIdentity/.test(source),
+    'the sticky swap identity would put a second observation into the first run',
+  );
+  assert.ok(/requestId:\s*input\.requestId/.test(source), 'an explicit id from the caller still wins');
+});
+
+test('the swap identity still replays one id for the same goal', () => {
+  // Unchanged on purpose: a swap quote re-asked is the same question.
+  const identity = new mod.RoutePlanRequestIdentity();
+  const input = { message: 'Swap 100 USDC to ETH', walletAddress: '0x1111111111111111111111111111111111111111' as const };
+  assert.equal(identity.resolve(input), identity.resolve(input));
+});
+
+test('a server detail is carried into the thrown error, not dropped for a bare code', () => {
+  const source = readFileSync(path.join(here, 'index.ts'), 'utf8');
+  assert.ok(/errJson\.detail/.test(source), 'the server detail must reach the surface');
 });

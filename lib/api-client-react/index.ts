@@ -25,7 +25,14 @@ async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
     let errorMsg = `API error: ${response.status} ${response.statusText}`;
     try {
       const errJson = await response.json();
-      if (errJson.error) errorMsg = errJson.error;
+      // The `detail` is what makes a stable code actionable. Dropping it put
+      // bare codes like "nft_compare_failed" on the screen while the server
+      // had already said exactly what went wrong.
+      if (errJson.error) {
+        errorMsg = typeof errJson.detail === 'string' && errJson.detail.length > 0
+          ? `${errJson.error}: ${errJson.detail}`
+          : errJson.error;
+      }
     } catch {
       // Preserve the HTTP status message when the error body is not JSON.
     }
@@ -1584,11 +1591,23 @@ export interface NftCompareInput {
   requestId?: string;
 }
 
+/**
+ * Each NFT comparison is its OWN run, so the request id is fresh per call.
+ *
+ * The swap identity deliberately reuses one id for the same (wallet, goal), so
+ * re-asking replays the same run. That is wrong for this family: a listing is
+ * not a stable fact. Re-comparing at 22:24 what was observed at 22:04 is a NEW
+ * observation, with its own price, its own expiry and its own evidence — and
+ * the storage layer says so, since a run may hold only one candidate per order.
+ * Reusing the id put the second observation into the first one's run and the
+ * comparison failed with a 409 that named none of this.
+ *
+ * Double submits are held off by the surface instead: the Compare control is
+ * disabled while the mutation is pending.
+ */
 export function useNftCompare(
   options?: Omit<UseMutationOptions<apiSpec.NftCompareResponseV1, Error, NftCompareInput>, 'mutationFn' | 'retry'>,
 ) {
-  const identity = useRef<RoutePlanRequestIdentity | null>(null);
-  identity.current ??= new RoutePlanRequestIdentity();
   return useMutation({
     ...options,
     retry: false,
@@ -1596,7 +1615,7 @@ export function useNftCompare(
       const request = apiSpec.NftCompareRequestV1Schema.parse({
         message: input.message,
         walletAddress: input.walletAddress,
-        requestId: identity.current!.resolve(input),
+        requestId: input.requestId ?? globalThis.crypto.randomUUID(),
       });
       const response = await fetchApi<unknown>('/api/route-intelligence/nft/compare', {
         method: 'POST',

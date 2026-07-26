@@ -328,6 +328,56 @@ describe('compare persists what it found', () => {
   });
 });
 
+describe('comparing the same NFT twice is two observations', () => {
+  /** What the console actually does: every click is its own comparison. */
+  async function compareAgain(requestId: string, at: Date) {
+    nftRouteRuntime.now = () => at;
+    listing = { ...baseListing(), observedAt: at.toISOString() };
+    return request(routeApp())
+      .post('/api/route-intelligence/nft/compare')
+      .send({ message: GOAL, walletAddress: WALLET, requestId });
+  }
+
+  test('a second look at the same listing succeeds and gets its own run', async () => {
+    // The defect this replaces: the client reused one request id for the same
+    // goal, so the second observation landed in the FIRST run, collided with
+    // its candidate (one per order, by unique index) and failed with a 409 that
+    // explained none of it. A listing is not a stable fact — re-comparing is a
+    // new observation, and it gets a new run.
+    const first = await compareAgain('nft-req-a', NOW);
+    const second = await compareAgain('nft-req-b', new Date(NOW.getTime() + 20_000));
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+    assert.equal(second.body.outcome, 'compared');
+    assert.notEqual(second.body.routeRunId, first.body.routeRunId);
+    // Each run holds its own evidence for its own observation.
+    assert.equal((await repository.listNftCandidates(first.body.routeRunId, USER.id)).length, 1);
+    assert.equal((await repository.listNftCandidates(second.body.routeRunId, USER.id)).length, 1);
+  });
+
+  test('an identical replay of ONE request id returns the same run, not a second', async () => {
+    const first = await compareAgain('nft-req-same', NOW);
+    const replay = await compareAgain('nft-req-same', NOW);
+    assert.equal(replay.status, 200);
+    assert.equal(replay.body.routeRunId, first.body.routeRunId);
+    assert.equal(replay.body.routeCard.routeCardHash, first.body.routeCard.routeCardHash);
+    assert.equal((await repository.listNftCandidates(first.body.routeRunId, USER.id)).length, 1);
+  });
+
+  test('a MOVED listing replayed under one request id is refused with a stated reason', async () => {
+    // Not silently kept at the old price: the run already answered for this
+    // order, and a different answer for the same order is a conflict.
+    await compareAgain('nft-req-moved', NOW);
+    nftRouteRuntime.now = () => new Date(NOW.getTime() + 20_000);
+    listing = { ...baseListing(), totalWei: '9999000000000000' };
+    const moved = await request(routeApp())
+      .post('/api/route-intelligence/nft/compare')
+      .send({ message: GOAL, walletAddress: WALLET, requestId: 'nft-req-moved' });
+    assert.equal(moved.status, 409);
+    assert.match(moved.body.detail, /different candidate in this run/);
+  });
+});
+
 describe('prepare loads the reviewed card, and refuses a moved listing', () => {
   test('a basic order prepares and is signable when every gate passes', async () => {
     const { prepare } = await prepared();
