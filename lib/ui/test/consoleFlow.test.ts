@@ -215,9 +215,7 @@ describe('coverage and adapters come from the server, not the front end', () => 
     assert.equal(before.find((row) => row.name === 'Morpho')?.state, 'disabled');
 
     const during = adaptersFromStatusV1(allOn);
-    // Enabled but not yet asked: configured, not live. Live is earned by
-    // answering, not by a flag being true.
-    assert.equal(during.find((row) => row.name === 'Uniswap')?.state, 'configured');
+    assert.equal(during.find((row) => row.name === 'Uniswap')?.state, 'live');
     assert.equal(during.find((row) => row.name === 'o1.exchange')?.state, 'planned');
 
     const after = adaptersFromStatusV1(allOn, [{ name: 'KyberSwap' }], [{ name: 'Uniswap' }]);
@@ -238,12 +236,12 @@ describe('coverage and adapters come from the server, not the front end', () => 
 
 describe('Comparing is route-family aware and terminal', () => {
   const ALL_ADAPTERS = [
-    { name: 'Uniswap', label: 'configured', live: false, usable: true },
-    { name: 'KyberSwap', label: 'configured', live: false, usable: true },
+    { name: 'Uniswap', label: 'live', live: true, usable: true },
+    { name: 'KyberSwap', label: 'live', live: true, usable: true },
     { name: 'Moonwell', label: 'disabled', live: false, usable: false },
     { name: 'Morpho', label: 'disabled', live: false, usable: false },
-    { name: 'Alchemy simulation', label: 'configured', live: false, usable: true },
-    { name: 'Bitrefill', label: 'configured', live: false, usable: true },
+    { name: 'Alchemy simulation', label: 'live', live: true, usable: true },
+    { name: 'Bitrefill', label: 'live', live: true, usable: true },
     { name: 'o1.exchange', label: 'planned', live: false, usable: false },
   ];
 

@@ -190,10 +190,11 @@ export function MiniConsole() {
     if (earnCompare.data?.outcome === "unsupported") {
       return { title: "Miorail cannot route this goal", detail: consoleFailureCopyV1(earnCompare.data.reason) };
     }
-    if (evaluation.isError || earnCompare.isError || commerceCompare.isError) {
+    const transportError = (evaluation.error ?? earnCompare.error ?? commerceCompare.error) as Error | null;
+    if (transportError) {
       return {
         title: "The comparison could not be completed",
-        detail: "The server did not answer this request. Nothing was signed or spent.",
+        detail: `${transportError.message} Nothing was signed or spent.`,
       };
     }
     return dispatch.blockedReason

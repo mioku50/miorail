@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { logger } from '@mioagent/utils';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import {
   CommerceCompareRequestV1Schema,
@@ -2381,7 +2382,16 @@ routeIntelligenceRouter.post('/commerce/compare', async (req, res) => {
         excluded: [...new Set(comparison.skipped)],
       }),
     );
-  } catch {
+  } catch (error) {
+    // T64.3.1: this used to be a bare `catch {}`. A 500 with no log made the
+    // failure undiagnosable from either side — the console could only say
+    // "the server did not answer", and the server said nothing at all. The
+    // response body stays a stable code; the cause goes to the log.
+    logger.error('Commerce compare failed', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      wallet: guard.user.address,
+    });
     res.status(500).json({ error: 'commerce_compare_failed', code: 'commerce_compare_failed' });
   }
 });

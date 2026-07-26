@@ -331,10 +331,16 @@ export function RouteIntelligenceConsole() {
       : earnCompare.data?.outcome === 'unsupported'
         ? { title: 'Miorail cannot route this goal', detail: consoleFailureCopyV1(earnCompare.data.reason) }
         : null;
-  const transportFailure =
-    evaluation.isError || earnCompare.isError || commerceCompare.isError
-      ? { title: 'The comparison could not be completed', detail: 'The server did not answer this request. Nothing was signed or spent.' }
-      : null;
+  // The server's own message (status line or `error` code) is carried through.
+  // "The server did not answer" told the operator nothing they could act on;
+  // "API error: 500 commerce_compare_failed" points straight at the log.
+  const transportError = (evaluation.error ?? earnCompare.error ?? commerceCompare.error) as Error | null;
+  const transportFailure = transportError
+    ? {
+        title: 'The comparison could not be completed',
+        detail: `${transportError.message} Nothing was signed or spent.`,
+      }
+    : null;
   // A run that produced a route card is not a failure, whatever the current
   // goal text now dispatches to.
   const comparingFailure =

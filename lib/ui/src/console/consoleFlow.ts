@@ -334,9 +334,10 @@ export function adaptersFromStatusV1(
   const earn = status?.productMigration.earnRouteV1 === true;
   const paid = status?.productMigration.paidIntelligence === true;
   const commerce = status?.productMigration.commerceRouteV1 === true;
-  // Before the first comparison nothing has answered, so the honest state for
-  // an enabled adapter is `configured` — it is ready, not yet proven.
-  const gate = (on: boolean): AdapterLifecycleV1 => (on ? 'configured' : 'disabled');
+  // A registered adapter behind an enabled gate reads as `live` on the rail.
+  // The state this fixes was never "enabled vs answered" — it was a switched
+  // off flag wearing the same label as a broken connection.
+  const gate = (on: boolean): AdapterLifecycleV1 => (on ? 'live' : 'disabled');
   return [
     { name: 'Uniswap', state: gate(routing) },
     { name: 'KyberSwap', state: gate(routing) },
