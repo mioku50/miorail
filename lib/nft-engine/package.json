@@ -1,0 +1,24 @@
+{
+  "name": "@mioagent/nft-engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "NODE_ENV=test node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mioagent/route-domain": "workspace:*",
+    "@mioagent/security": "workspace:*",
+    "viem": "^2.53.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "tsx": "^4.22.4",
+    "typescript": "^5.4.5"
+  }
+}
