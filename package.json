@@ -19,7 +19,8 @@
     "db:probe": "tsx scripts/db_probe.ts",
     "env:doctor": "node scripts/env-doctor.mjs",
     "smoke:bitrefill": "tsx scripts/smoke_bitrefill_commerce.ts",
-    "smoke:bitrefill-invoice": "tsx scripts/smoke_bitrefill_invoice.ts"
+    "smoke:bitrefill-invoice": "tsx scripts/smoke_bitrefill_invoice.ts",
+    "smoke:opensea-nft": "tsx scripts/smoke_opensea_nft.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

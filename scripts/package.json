@@ -7,6 +7,7 @@
     "@mioagent/commerce-engine": "workspace:*",
     "@mioagent/db": "workspace:*",
     "@mioagent/intent-engine": "workspace:*",
+    "@mioagent/nft-engine": "workspace:*",
     "@mioagent/paid-intelligence": "workspace:*",
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/security": "workspace:*",

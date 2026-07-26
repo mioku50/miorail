@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "base-docs": {
+      "type": "http",
+      "url": "https://docs.base.org/mcp"
+    }
+  }
+}
