@@ -58,6 +58,8 @@ test('ALLOWED_PARTNER_HOSTS covers exactly the sanctioned partner hosts', () => 
     'liquidity.api.uniswap.org',
     'mcp.morpho.org',
     'api.morpho.org',
+    'api.bitrefill.com',
+    'api.opensea.io',
   ]);
 });
 

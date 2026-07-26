@@ -15,6 +15,10 @@ export const ALLOWED_PARTNER_HOSTS = [
   // T64: the official Bitrefill commerce API (catalogue reads and checkout).
   // Only the pinned /x402/* paths in lib/commerce-engine are ever requested.
   'api.bitrefill.com',
+  // T65: the official OpenSea API v2. Read-only NFT/listing lookups plus the
+  // fulfillment_data call, all under the pinned /api/v2/* paths in
+  // lib/nft-engine. Every request carries a server-side x-api-key.
+  'api.opensea.io',
 ] as const;
 
 export class PartnerHostNotAllowlistedError extends Error {
