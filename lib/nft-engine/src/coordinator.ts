@@ -91,11 +91,28 @@ export async function compareNftRoutesV1(
   const { intent, now } = input;
   const imageAllowed = input.imageAllowed ?? false;
 
-  // The intent always carries a contract by the time it gets here: a slug-only
-  // goal is resolved by the extractor, and identity in this family is
-  // chain + contract + tokenId. Nothing downstream trusts a name.
-  const contractAddress = intent.contractAddress;
-  if (contractAddress === null) return { ok: false, reason: 'asset_mismatch', card: null, asset: null, evidence: [] };
+  // A goal may name the collection by slug instead of by address. The slug is
+  // resolved to a CONTRACT here, through the listing read, and everything
+  // afterwards is bound to that address — identity in this family is
+  // chain + contract + tokenId, and a name is never allowed to stand in for it.
+  let contractAddress = intent.contractAddress;
+  let resolvedListing: NftObservedListingV1 | null = null;
+  if (contractAddress === null) {
+    if (intent.collectionSlug === null) {
+      return { ok: false, reason: 'asset_mismatch', card: null, asset: null, evidence: [] };
+    }
+    const bySlug = await deps.gateway.readBestListing({
+      collectionSlug: intent.collectionSlug,
+      tokenId: intent.tokenId,
+      now,
+    });
+    if (!bySlug.ok) {
+      const reason: NftComparisonReasonV1 = bySlug.reason === 'not_found' ? 'no_active_listing' : bySlug.reason;
+      return { ok: false, reason, card: null, asset: null, evidence: [] };
+    }
+    contractAddress = bySlug.value.contractAddress as `0x${string}`;
+    resolvedListing = bySlug.value;
+  }
 
   const nft = await deps.gateway.readNft({ contractAddress, tokenId: intent.tokenId, now });
   if (!nft.ok) return { ok: false, reason: nft.reason, card: null, asset: null, evidence: [] };
@@ -109,15 +126,20 @@ export async function compareNftRoutesV1(
   }
 
   const slug = observedAsset.collectionSlug;
-  if (slug === null) {
+  if (resolvedListing === null && slug === null) {
     // Without a collection slug there is no listing endpoint to ask. Stated as
     // an incomplete order rather than "not listed" — nobody looked.
     return failedCard({ intent, asset, observedAsset, listing: null, reason: 'order_incomplete', now, ttlMs: input.ttlMs });
   }
 
-  const listing = await deps.gateway.readBestListing({ collectionSlug: slug, tokenId: intent.tokenId, now });
+  // The slug path already read the listing; re-reading it could return a
+  // different one than the contract was resolved from.
+  const listing = resolvedListing
+    ? ({ ok: true, value: resolvedListing } as const)
+    : await deps.gateway.readBestListing({ collectionSlug: slug as string, tokenId: intent.tokenId, now });
   if (!listing.ok) {
-    const reason: NftComparisonReasonV1 = listing.reason === 'not_found' ? 'no_active_listing' : listing.reason;
+    const reason: NftComparisonReasonV1 =
+      listing.reason === 'not_found' ? 'no_active_listing' : listing.reason;
     return failedCard({ intent, asset, observedAsset, listing: null, reason, now, ttlMs: input.ttlMs });
   }
 
