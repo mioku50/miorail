@@ -2088,6 +2088,30 @@ export const NftApproveResponseV1Schema = z
     blueprintId: z.string().min(1).max(200),
     blueprint: NftPurchaseBlueprintV1Schema,
     signable: z.boolean(),
+    /** The wallet payload, in exactly the shape the swap and earn approvals
+     * return — so the ONE wallet submission implementation drives this family
+     * too, rather than a second sendCalls call site existing anywhere. */
+    payload: z
+      .object({
+        blueprintId: z.string().min(1).max(200),
+        blueprintHash: HashV1Schema,
+        approvedCallsHash: HashV1Schema,
+        chainId: z.literal('0x2105'),
+        from: AddressV1Schema,
+        calls: z
+          .array(
+            z
+              .object({
+                to: AddressV1Schema,
+                value: z.string().regex(/^0x[0-9a-f]+$/, 'Expected a hex quantity'),
+                data: HexDataV1Schema,
+              })
+              .strict(),
+          )
+          .length(1),
+        atomicRequired: z.literal(true),
+      })
+      .strict(),
   })
   .strict();
 

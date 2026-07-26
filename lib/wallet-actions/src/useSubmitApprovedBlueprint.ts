@@ -155,9 +155,10 @@ export interface UseSubmitApprovedBlueprintArgs {
   builderCode?: string;
   /** Which server routes to approve/record against. Defaults to 'swap' so every
    * existing swap caller is byte-for-byte unchanged; 'earn' targets the /earn
-   * approve + submission routes. The wallet_sendCalls path is identical for both
-   * — there is exactly ONE wallet submission implementation. */
-  goal?: 'swap' | 'earn';
+   * approve + submission routes, 'nft' the /nft ones. The wallet_sendCalls
+   * path is identical for all three — there is exactly ONE wallet submission
+   * implementation, and adding a family must never add a second. */
+  goal?: 'swap' | 'earn' | 'nft';
 }
 
 export interface UseSubmitApprovedBlueprintResult {

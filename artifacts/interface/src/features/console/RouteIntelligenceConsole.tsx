@@ -5,6 +5,7 @@ import {
   CONSOLE_BREADCRUMB_V1,
   CommerceInvoiceReviewPanel,
   CommerceRouteCardPanel,
+  NftReviewPanel,
   NftRouteCardPanel,
   CONSOLE_COPY_V1,
   commerceCheckoutAvailableV1,
@@ -131,6 +132,9 @@ export function RouteIntelligenceConsole() {
     nftCompare.data?.outcome === 'compared' || nftCompare.data?.outcome === 'unavailable'
       ? nftCompare.data.routeRunId
       : null;
+  const nftPrepared =
+    nftPrepare.data?.outcome === 'prepared' && nftCard ? { response: nftPrepare.data, card: nftCard } : null;
+
   const reviewNft = () => {
     if (!address || !nftCard || !nftRunId) return;
     nftPrepare.mutate({
@@ -640,6 +644,24 @@ export function RouteIntelligenceConsole() {
         onSelectCandidate={reviewCandidate}
         reviewDisabledReason={connected ? null : CONSOLE_COPY_V1.walletDisconnected}
       />
+    );
+  } else if (screen === 'review' && nftPrepared) {
+    // The NFT review is its own screen: the swap review reads a projection
+    // this family does not have, and signing is offered only when every gate
+    // passed rather than failing after the click.
+    content = (
+      <>
+        <ConsoleStepper steps={steps} />
+        <NftReviewPanel
+          card={nftPrepared.card}
+          callsHash={nftPrepared.response.blueprint.callsHash}
+          valueWei={nftPrepared.response.blueprint.calls[0]?.valueWei ?? '0'}
+          simulation={nftPrepared.response.simulation}
+          safety={nftPrepared.response.safety}
+          signable={nftPrepared.response.signable}
+          blockedReason={nftPrepared.response.blockedReason}
+        />
+      </>
     );
   } else if (screen === 'review') {
     const priceLabel = prepared?.simulationPriceUsdc ? `${prepared.simulationPriceUsdc} USDC` : null;

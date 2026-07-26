@@ -421,11 +421,23 @@ nftRouteIntelligenceRouter.post('/nft/blueprints/:blueprintId/approve', async (r
       userId: guard.user.id,
       approvedCallsHash: guard.body.approvedCallsHash,
     });
+    const call = approved.blueprint.calls[0];
     res.json(
       NftApproveResponseV1Schema.parse({
         blueprintId: approved.id,
         blueprint: approved.blueprint,
         signable: approved.blueprint.approvedCallsHash !== null,
+        // The same payload shape swap and earn return. The server hands over
+        // calls; it does not sign them and it does not broadcast them.
+        payload: {
+          blueprintId: approved.id,
+          blueprintHash: approved.blueprint.blueprintHash,
+          approvedCallsHash: approved.blueprint.approvedCallsHash ?? approved.blueprint.callsHash,
+          chainId: '0x2105',
+          from: approved.blueprint.buyer,
+          calls: [{ to: call.to, value: `0x${BigInt(call.valueWei).toString(16)}`, data: call.data }],
+          atomicRequired: true,
+        },
       }),
     );
   } catch (error) {
