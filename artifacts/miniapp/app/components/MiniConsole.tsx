@@ -34,6 +34,7 @@ import {
   evidenceRowsFromProjectionV1,
   evidenceSourcesFromProjectionV1,
   intelligenceSpendLabelV1,
+  marketRailFromSnapshotV1,
   providerUnavailableCopyV1,
   quoteFreshnessFromRouteV1,
   routeGraphFromRouteV1,
@@ -61,6 +62,7 @@ import {
   useEarnCompare,
   useEvaluateSwapRoute,
   useIntelligenceBudget,
+  useMarketSnapshot,
   usePrepareSwapBlueprint,
   usePortfolio,
   useRouteHistory,
@@ -137,9 +139,18 @@ export function MiniConsole() {
     },
   });
   const history = useRouteHistory({ limit: 5 });
+  const market = useMarketSnapshot();
   const portfolio = usePortfolio(address);
 
   const connected = Boolean(address);
+  // Not having the server's flags yet is a different state from having them
+  // and finding a family off. Saying "off" for both sent operators looking for
+  // a flag that was already on.
+  const statusGate = status.data
+    ? null
+    : status.error
+      ? `Server capabilities could not be read: ${(status.error as Error).message}`
+      : "Reading this server’s capabilities…";
   const result = evaluation.data;
   const projection = result?.outcome === "evaluated" ? (result.projection as unknown as RoutePlanProjectionV1) : null;
   const recommended = projection?.recommendedRoute ?? null;
@@ -223,9 +234,13 @@ export function MiniConsole() {
   // not count as pending, and a `needs_clarification` result left this screen
   // waiting on a run that had already finished, with raw issue codes as the
   // only explanation and no way back to the goal.
-  const comparePending = evaluation.isPending || earnCompare.isPending || commerceCompare.isPending;
+  // T65.2A: the NFT comparison was missing from both, so an NFT run read
+  // "done" while OpenSea was still being asked, and a card that arrived was
+  // treated as a failed run.
+  const comparePending =
+    evaluation.isPending || earnCompare.isPending || commerceCompare.isPending || nftCompare.isPending;
   const comparingFailure = (() => {
-    if (comparePending || projection || earnCard || commerceCard) return null;
+    if (comparePending || projection || earnCard || commerceCard || nftCard) return null;
     if (commerceCompare.data?.outcome === "needs_clarification") {
       return {
         title: "This goal needs one more detail",
@@ -244,7 +259,16 @@ export function MiniConsole() {
     if (earnCompare.data?.outcome === "unsupported") {
       return { title: "Miorail cannot route this goal", detail: consoleFailureCopyV1(earnCompare.data.reason) };
     }
-    const transportError = (evaluation.error ?? earnCompare.error ?? commerceCompare.error) as Error | null;
+    if (nftCompare.data?.outcome === "needs_clarification") {
+      return {
+        title: "This goal needs one more detail",
+        detail: nftCompare.data.issues.map((issue) => consoleFailureCopyV1(issue)).join(" "),
+      };
+    }
+    if (nftCompare.data?.outcome === "unsupported") {
+      return { title: "Miorail cannot route this NFT purchase", detail: consoleFailureCopyV1(nftCompare.data.reason) };
+    }
+    const transportError = (evaluation.error ?? earnCompare.error ?? commerceCompare.error ?? nftCompare.error) as Error | null;
     if (transportError) {
       return {
         title: "The comparison could not be completed",
@@ -265,6 +289,18 @@ export function MiniConsole() {
     mark("score", "complete");
     setScreen("route");
   }, [commerceCard, mark]);
+  // Without this the NFT family had no way off Comparing at all.
+  const nftSettled = useRef(false);
+  useEffect(() => {
+    if (!nftCard || nftSettled.current) return;
+    nftSettled.current = true;
+    mark("evidence", "start");
+    mark("evidence", "complete");
+    mark("score", "start");
+    mark("score", "complete");
+    setScreen("route");
+  }, [nftCard, mark]);
+
   const earnSettled = useRef(false);
   useEffect(() => {
     if (!earnCard || earnSettled.current) return;
@@ -326,10 +362,12 @@ export function MiniConsole() {
     setBudgetResponse(null);
     // A new goal clears the NFT flow too. Without this, a finished NFT purchase
     // would keep claiming the Proof screen from whatever family comes next.
+    nftCompare.reset();
     nftPrepare.reset();
     setNftSubmission(null);
     setNftProof(null);
     nftReconciled.current = null;
+    nftSettled.current = false;
     settled.current = false;
     earnSettled.current = false;
     commerceSettled.current = false;
@@ -396,11 +434,16 @@ export function MiniConsole() {
   const simulation = deriveSimulationViewV1(simulationSource);
   const quoteFreshness = quoteFreshnessFromRouteV1(recommended);
   const historyItems = history.data?.items ?? [];
+  // The same pure mapper the web console uses, so both surfaces state a price,
+  // its age and its provider identically — or state why there is none.
+  const marketRail = marketRailFromSnapshotV1(market.data, new Date());
 
   const panels = (
     <ConsoleRightRail
-      price={null}
-      priceUnavailableReason={providerUnavailableCopyV1(status.data?.prices, "price")}
+      price={marketRail.price}
+      priceUnavailableReason={
+        marketRail.unavailableReason ?? providerUnavailableCopyV1(status.data?.prices, "price")
+      }
       depth={null}
       depthUnavailableReason="No depth source is connected — liquidity stays unscored rather than guessed."
       evidenceFeed={evidenceRows.map((row, index) => ({
@@ -490,12 +533,29 @@ export function MiniConsole() {
         onGoalChange={setGoal}
         onCompare={compare}
         comparePending={comparePending}
-        compareDisabledReason={!connected ? CONSOLE_COPY_V1.walletDisconnected : dispatch.blockedReason}
+        compareDisabledReason={
+          !connected ? CONSOLE_COPY_V1.walletDisconnected : (statusGate ?? dispatch.blockedReason)
+        }
         starters={[
           { id: "swap", title: "Swap 100 USDC → ETH", meta: "best net result" },
           { id: "earn", title: "Earn yield on 500 USDC", meta: flags?.earnRouteV1 ? "Moonwell and Morpho" : "earn gate is off on this server" },
+          // A goal known to reach the NFT engine, so the family is reachable
+          // without guessing a phrasing the classifier accepts.
+          {
+            id: "nft",
+            title: "Buy NFT BasePaint #16668",
+            meta: flags?.nftRouteV1 ? "OpenSea listing on Base" : "NFT gate is off on this server",
+          },
         ]}
-        onStarter={(id) => setGoal(id === "swap" ? "Swap 100 USDC to ETH with the best net result" : "Earn yield on 500 USDC with low risk")}
+        onStarter={(id) =>
+          setGoal(
+            id === "swap"
+              ? "Swap 100 USDC to ETH with the best net result"
+              : id === "nft"
+                ? "Buy NFT BasePaint #16668 under 0.02 ETH on Base"
+                : "Earn yield on 500 USDC with low risk",
+          )
+        }
         walletLabel={address ? `${address.slice(0, 6)}…${address.slice(-4)}` : null}
         balances={
           portfolio.data?.tokens?.map((token: { symbol: string; balanceFormatted?: string; balanceUsd?: string }) => ({

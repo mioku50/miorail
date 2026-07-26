@@ -59,4 +59,47 @@ describe('the web console completes the NFT flow', () => {
       }
     }
   });
+
+  test('T65.2A: an NFT comparison counts as a comparison', () => {
+    // Left out, it made the Compare button clickable mid-run and the elapsed
+    // pill read "done" while OpenSea was still being asked.
+    assert.ok(/comparePending =[\s\S]{0,200}nftCompare\.isPending/.test(source), 'nftCompare must be part of comparePending');
+  });
+
+  test('T65.2A: an NFT card ends the Comparing screen', () => {
+    // Without a settled effect the family had no way off Comparing at all.
+    assert.ok(/nftSettled/.test(source), 'an nftSettled effect must exist');
+    assert.ok(/if \(!nftCard \|\| nftSettled\.current\) return/.test(source), 'it must fire once, on a card');
+    // A card is not a failure — `unavailable` still names the token.
+    assert.ok(/comparePending \|\| projection \|\| earnCard \|\| commerceCard \|\| nftCard/.test(source));
+  });
+
+  test('T65.2A: an NFT run that produced no card is terminal, with a reason', () => {
+    assert.ok(/nftCompare\.data\?\.outcome === 'needs_clarification'/.test(source));
+    assert.ok(/nftCompare\.data\?\.outcome === 'unsupported'/.test(source));
+    assert.ok(/nftCompare\.error/.test(source), 'a transport failure must be surfaced too');
+    assert.ok(/nftFailure/.test(source), 'the NFT failure must reach comparingFailure');
+  });
+
+  test('T65.2A: the price rail shows a real snapshot', () => {
+    assert.ok(/useMarketSnapshot\(\)/.test(source), 'the console must read a market snapshot');
+    assert.ok(/price=\{marketRail\.price\}/.test(source), 'the rail must render it');
+    assert.ok(!/price=\{null\}/.test(source), 'the rail must no longer hard-code an absent price');
+    // Depth stays honestly unavailable: no liquidity source is connected.
+    assert.ok(/depth=\{null\}/.test(source), 'depth must stay unavailable rather than be derived from a spot price');
+  });
+
+  test('T65.2A: an unread status is not reported as a disabled flag', () => {
+    // Every gate reads status.data. Before it answers, each flag looks off —
+    // which used to render as "route intelligence is off on this server" and
+    // sent operators hunting for a flag that was already enabled.
+    assert.ok(/statusGate/.test(source), 'a distinct status gate must exist');
+    assert.ok(/status\.error/.test(source), 'a failed status read must be named');
+    assert.ok(/statusGate \?\? dispatch\.blockedReason/.test(source), 'it must take precedence over the family gate');
+  });
+
+  test('T65.2A: an NFT starter makes the family reachable without guessing a phrasing', () => {
+    assert.ok(/id: ["']nft["']/.test(source), 'the plan screen must offer an NFT starter');
+    assert.ok(/NFT gate is off on this server/.test(source), 'and say when the gate is off');
+  });
 });

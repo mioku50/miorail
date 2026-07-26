@@ -691,6 +691,32 @@ export function useStatus(options?: Omit<UseQueryOptions<apiSpec.StatusResponse,
   });
 }
 
+/**
+ * T65.2A — the console's price rail.
+ *
+ * A real read, re-validated against its contract. The refetch interval matches
+ * the server's cache TTL: polling faster would spend CoinGecko's free-tier
+ * allowance without producing a newer number. The response says `live` or
+ * `cached` and always carries `observedAt`, so a surface can show the AGE of a
+ * price rather than implying every answer is current.
+ */
+export function useMarketSnapshot(
+  options?: Omit<
+    UseQueryOptions<apiSpec.MarketSnapshotResponseV1, Error, apiSpec.MarketSnapshotResponseV1, string[]>,
+    'queryKey' | 'queryFn'
+  >,
+) {
+  return useQuery({
+    queryKey: ['market-snapshot'],
+    queryFn: async () => {
+      const response = await fetchApi<unknown>('/api/market/snapshot');
+      return apiSpec.MarketSnapshotResponseV1Schema.parse(response);
+    },
+    refetchInterval: 60_000,
+    ...options,
+  });
+}
+
 export function useBaseMcpToolsProbe(
   options?: Omit<UseMutationOptions<apiSpec.BaseMcpToolProbeResponse, Error, void>, 'mutationFn'>
 ) {
@@ -1354,6 +1380,7 @@ export function useBoundedProofReconciliation({
 export type {
   IntelligenceBudgetProjectionV1,
   IntelligenceBudgetResponseV1,
+  MarketSnapshotResponseV1,
   NftProofResponseV1,
   SimulateWithBudgetResponseV1,
 } from '@mioagent/api-spec';

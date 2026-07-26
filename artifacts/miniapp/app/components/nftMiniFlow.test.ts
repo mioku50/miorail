@@ -52,4 +52,33 @@ describe('the miniapp completes the NFT flow', () => {
     const mutations = source.match(/nftReconcile\.mutate\(/g) ?? [];
     assert.equal(mutations.length, 1, 'reconciliation has exactly one call site');
   });
+
+  test('T65.2A: the same activation fixes are here', () => {
+    assert.ok(/comparePending =[\s\S]{0,200}nftCompare\.isPending/.test(source), 'nftCompare must be part of comparePending');
+    assert.ok(/if \(!nftCard \|\| nftSettled\.current\) return/.test(source), 'an nftSettled effect must fire once, on a card');
+    assert.ok(/earnCard \|\| commerceCard \|\| nftCard/.test(source), 'a card is not a failed run');
+    assert.ok(/nftCompare\.data\?\.outcome === "unsupported"/.test(source), 'an unsupported NFT goal is terminal');
+    assert.ok(/nftCompare\.error/.test(source), 'a transport failure must be surfaced too');
+  });
+
+  test('T65.2A: the price rail shows a real snapshot here too', () => {
+    assert.ok(/useMarketSnapshot\(\)/.test(source));
+    assert.ok(/price=\{marketRail\.price\}/.test(source));
+    assert.ok(!/price=\{null\}/.test(source));
+    assert.ok(/depth=\{null\}/.test(source), 'depth stays unavailable until a liquidity source exists');
+  });
+
+  test('T65.2A: an unread status is not reported as a disabled flag', () => {
+    // Every gate reads status.data. Before it answers, each flag looks off —
+    // which used to render as "route intelligence is off on this server" and
+    // sent operators hunting for a flag that was already enabled.
+    assert.ok(/statusGate/.test(source), 'a distinct status gate must exist');
+    assert.ok(/status\.error/.test(source), 'a failed status read must be named');
+    assert.ok(/statusGate \?\? dispatch\.blockedReason/.test(source), 'it must take precedence over the family gate');
+  });
+
+  test('T65.2A: an NFT starter makes the family reachable without guessing a phrasing', () => {
+    assert.ok(/id: ["']nft["']/.test(source), 'the plan screen must offer an NFT starter');
+    assert.ok(/NFT gate is off on this server/.test(source), 'and say when the gate is off');
+  });
 });

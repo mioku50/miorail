@@ -1552,6 +1552,39 @@ export const X402BuyerPayerSchema = z.object({
   lastCheckedAt: z.string().optional(),
 });
 
+// T65.2A — the console's market rail.
+//
+// A snapshot the server READ, or a stated reason there is none. There is no
+// third state: an absent price is absent on the screen, never a stale number
+// presented as current. `observedAt` always describes the DATA, so a cached
+// answer is visibly old rather than quietly fresh.
+export const MarketSnapshotResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      outcome: z.literal('snapshot'),
+      /** 'cached' means this exact snapshot was read earlier — check observedAt. */
+      status: z.enum(['live', 'cached']),
+      asset: z.literal('ETH'),
+      vsCurrency: z.literal('usd'),
+      /** A decimal string. Money never crosses this boundary as a float. */
+      price: z.string().regex(/^\d+(\.\d+)?$/, 'Expected a decimal price'),
+      changePercent1h: z.string().regex(/^-?\d+(\.\d+)?$/).nullable(),
+      points: z.array(z.number().finite()).max(200),
+      observedAt: z.string().datetime(),
+      provider: z.literal('coingecko'),
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('unavailable'),
+      reason: z.enum(['not_configured', 'provider_unavailable', 'rate_limited', 'provider_invalid_response']),
+      /** The one sentence a surface shows. Fixed per reason, so an outage is
+       * never phrased as a price. */
+      detail: z.string().min(1).max(200),
+    })
+    .strict(),
+]);
+
 export const StatusResponseSchema = z.object({
   chainEnv: z.string(),
   chainId: z.number(),

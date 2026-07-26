@@ -507,3 +507,73 @@ export function providerUnavailableCopyV1(
   if (provider.status === 'connected') return `${provider.provider} is connected but this surface has no ${what} panel yet.`;
   return `${what} unavailable — ${consoleFailureCopyV1(provider.status)} (${provider.provider}).`;
 }
+
+// --- T65.2A: the market rail --------------------------------------------------
+
+/** The market snapshot as it crosses the wire, structurally. */
+export type MarketSnapshotLikeV1 =
+  | {
+      outcome: 'snapshot';
+      status: 'live' | 'cached';
+      price: string;
+      changePercent1h: string | null;
+      points: readonly number[];
+      observedAt: string;
+      provider: string;
+    }
+  | { outcome: 'unavailable'; reason: string; detail: string };
+
+export interface MarketRailV1 {
+  price: { title: string; value: string; change: string; up: boolean; points: number[] } | null;
+  unavailableReason: string | null;
+}
+
+/** How old a reading is, in words. An age is shown for EVERY snapshot, not
+ * only stale ones — a price with no age reads as "now" whether or not it is. */
+export function marketAgeLabelV1(observedAt: string, now: Date): string {
+  const at = Date.parse(observedAt);
+  if (!Number.isFinite(at)) return 'age unknown';
+  const seconds = Math.max(0, Math.round((now.getTime() - at) / 1000));
+  if (seconds < 90) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `${minutes}m ago`;
+  return `${Math.round(minutes / 60)}h ago`;
+}
+
+/**
+ * The right rail's price panel, from a snapshot or from nothing.
+ *
+ * A price is shown only when the server actually read one. There is no
+ * fallback number and no placeholder chart: an unavailable market renders the
+ * server's stated reason, and a snapshot renders its own age and provider so a
+ * cached reading cannot pass for a current one.
+ */
+export function marketRailFromSnapshotV1(
+  snapshot: MarketSnapshotLikeV1 | null | undefined,
+  now: Date,
+  loadingReason = 'Reading the market…',
+): MarketRailV1 {
+  if (!snapshot) return { price: null, unavailableReason: loadingReason };
+  if (snapshot.outcome === 'unavailable') return { price: null, unavailableReason: snapshot.detail };
+
+  const numeric = Number(snapshot.price);
+  const value = Number.isFinite(numeric)
+    ? `$${numeric.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : `$${snapshot.price}`;
+  const change = Number(snapshot.changePercent1h);
+  const hasChange = snapshot.changePercent1h !== null && Number.isFinite(change);
+  const age = marketAgeLabelV1(snapshot.observedAt, now);
+
+  return {
+    price: {
+      title: 'ETH / USD',
+      value,
+      // The change is stated with its window, and its absence is stated too —
+      // a missing 1h change must not read as 0%.
+      change: `${hasChange ? `${change > 0 ? '+' : ''}${change.toFixed(2)}% · 1h` : 'no 1h change reported'} · ${age} · ${snapshot.provider}`,
+      up: hasChange ? change >= 0 : false,
+      points: [...snapshot.points],
+    },
+    unavailableReason: null,
+  };
+}

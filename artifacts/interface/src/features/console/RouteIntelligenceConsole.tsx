@@ -31,6 +31,7 @@ import {
   emptyStageClockV1,
   haltStageRailV1,
   intelligenceSpendLabelV1,
+  marketRailFromSnapshotV1,
   providerUnavailableCopyV1,
   startStageV1,
   stepperFromClockV1,
@@ -61,6 +62,7 @@ import {
   useEarnCompare,
   useEvaluateSwapRoute,
   useIntelligenceBudget,
+  useMarketSnapshot,
   usePortfolio,
   usePrepareSwapBlueprint,
   useRouteHistory,
@@ -180,9 +182,20 @@ export function RouteIntelligenceConsole() {
     },
   });
   const history = useRouteHistory({ limit: 5 });
+  // T65.2A — a REAL price, not a status flag. The rail used to pass null and
+  // explain that the panel did not exist; now it shows what the server read,
+  // with its age and its provider.
+  const market = useMarketSnapshot();
 
   const walletLabel = shortAddress(address);
   const connected = Boolean(address);
+  // The server's flags are what every gate on this screen reads. Not having
+  // them yet is a different state from having them and finding a family off.
+  const statusGate = status.data
+    ? null
+    : status.error
+      ? `Server capabilities could not be read: ${(status.error as Error).message}`
+      : 'Reading this server’s capabilities…';
   const result = evaluation.data;
   const projection = result?.outcome === 'evaluated' ? (result.projection as unknown as RoutePlanProjectionV1) : null;
   const recommended = projection?.recommendedRoute ?? null;
@@ -248,6 +261,20 @@ export function RouteIntelligenceConsole() {
     setScreen('route');
   }, [commerceCard, mark]);
 
+  // T65.2A — the NFT family had no settled effect, so a comparison that
+  // returned a card left the user on Comparing forever. The same dead end the
+  // T63D and T64.3.1 audits found on the earn and commerce paths.
+  const nftSettled = useRef(false);
+  useEffect(() => {
+    if (!nftCard || nftSettled.current) return;
+    nftSettled.current = true;
+    mark('evidence', 'start');
+    mark('evidence', 'complete');
+    mark('score', 'start');
+    mark('score', 'complete');
+    setScreen('route');
+  }, [nftCard, mark]);
+
   const evaluationSettled = useRef(false);
   useEffect(() => {
     if (!projection || evaluationSettled.current) return;
@@ -302,11 +329,14 @@ export function RouteIntelligenceConsole() {
     setSimulateResponse(null);
     setBudgetResponse(null);
     // A new goal clears the NFT flow too. Without this, a finished NFT purchase
-    // would keep claiming the Proof screen from whatever family comes next.
+    // would keep claiming the Proof screen from whatever family comes next, and
+    // a stale card would keep the run from ever leaving Comparing.
+    nftCompare.reset();
     nftPrepare.reset();
     setNftSubmission(null);
     setNftProof(null);
     nftReconciled.current = null;
+    nftSettled.current = false;
     evaluationSettled.current = false;
     earnSettled.current = false;
     commerceSettled.current = false;
@@ -379,8 +409,10 @@ export function RouteIntelligenceConsole() {
 
   // T64.3.1 — a Commerce comparison is a comparison. Leaving it out of these
   // two made the button clickable again mid-run and the elapsed pill read
-  // "done" while Bitrefill was still being read.
-  const comparePending = evaluation.isPending || earnCompare.isPending || commerceCompare.isPending;
+  // "done" while Bitrefill was still being read. T65.2A: the NFT comparison
+  // was missing for exactly the same reason, with exactly the same effect.
+  const comparePending =
+    evaluation.isPending || earnCompare.isPending || commerceCompare.isPending || nftCompare.isPending;
 
   // The run is over and produced no route card. Every one of these leaves the
   // user on Comparing, so every one of them has to be terminal.
@@ -399,10 +431,16 @@ export function RouteIntelligenceConsole() {
       : earnCompare.data?.outcome === 'unsupported'
         ? { title: 'Miorail cannot route this goal', detail: consoleFailureCopyV1(earnCompare.data.reason) }
         : null;
+  const nftFailure =
+    nftCompare.data?.outcome === 'needs_clarification'
+      ? { title: 'This goal needs one more detail', detail: nftCompare.data.issues.map((issue) => consoleFailureCopyV1(issue)).join(' ') }
+      : nftCompare.data?.outcome === 'unsupported'
+        ? { title: 'Miorail cannot route this NFT purchase', detail: consoleFailureCopyV1(nftCompare.data.reason) }
+        : null;
   // The server's own message (status line or `error` code) is carried through.
   // "The server did not answer" told the operator nothing they could act on;
   // "API error: 500 commerce_compare_failed" points straight at the log.
-  const transportError = (evaluation.error ?? earnCompare.error ?? commerceCompare.error) as Error | null;
+  const transportError = (evaluation.error ?? earnCompare.error ?? commerceCompare.error ?? nftCompare.error) as Error | null;
   const transportFailure = transportError
     ? {
         title: 'The comparison could not be completed',
@@ -410,12 +448,14 @@ export function RouteIntelligenceConsole() {
       }
     : null;
   // A run that produced a route card is not a failure, whatever the current
-  // goal text now dispatches to.
+  // goal text now dispatches to. An NFT card counts: `unavailable` still names
+  // the token and says why there is nothing to buy.
   const comparingFailure =
-    comparePending || projection || earnCard || commerceCard
+    comparePending || projection || earnCard || commerceCard || nftCard
       ? null
       : (commerceFailure ??
         earnFailure ??
+        nftFailure ??
         transportFailure ??
         (dispatch.blockedReason ? { title: 'This route family is off on this server', detail: dispatch.blockedReason } : null));
 
@@ -457,10 +497,18 @@ export function RouteIntelligenceConsole() {
       ]
     : [];
 
+  // Both surfaces derive the panel the same way, from the same pure mapper.
+  const marketRail = marketRailFromSnapshotV1(market.data, new Date());
+
   const rightRail = (
     <ConsoleRightRail
-      price={null}
-      priceUnavailableReason={providerUnavailableCopyV1(status.data?.prices, 'price')}
+      price={marketRail.price}
+      priceUnavailableReason={
+        marketRail.unavailableReason ??
+        // Only reached before the first snapshot answers; the provider's own
+        // status is the most useful thing to say until then.
+        providerUnavailableCopyV1(status.data?.prices, 'price')
+      }
       depth={null}
       depthUnavailableReason="No depth source is connected — liquidity stays unscored rather than guessed."
       evidenceFeed={evidenceRows.map((row, index) => ({
@@ -499,7 +547,15 @@ export function RouteIntelligenceConsole() {
         onGoalChange={setGoal}
         onCompare={() => compare()}
         comparePending={comparePending}
-        compareDisabledReason={!connected ? CONSOLE_COPY_V1.walletDisconnected : dispatch.blockedReason}
+        compareDisabledReason={
+          !connected
+            ? CONSOLE_COPY_V1.walletDisconnected
+            : // Until /api/status answers, every flag reads as off — which used
+              // to render as "route intelligence is off on this server" and sent
+              // operators looking for a flag that was already on. A pending or
+              // failed status call now says exactly that instead.
+              (statusGate ?? dispatch.blockedReason)
+        }
         starters={[
           { id: 'swap', title: 'Swap 100 USDC → ETH', meta: 'best net result · every live adapter' },
           {
@@ -507,9 +563,23 @@ export function RouteIntelligenceConsole() {
             title: 'Earn yield on 500 USDC, low risk',
             meta: flags?.earnRouteV1 ? 'Moonwell and Morpho' : 'earn gate is off on this server',
           },
+          // T65.2A — a goal that is KNOWN to dispatch to the NFT engine. The
+          // family being on is not much use if reaching it depends on guessing
+          // a phrasing the classifier accepts.
+          {
+            id: 'nft',
+            title: 'Buy NFT BasePaint #16668 under 0.02 ETH',
+            meta: flags?.nftRouteV1 ? 'OpenSea listing on Base' : 'NFT gate is off on this server',
+          },
         ]}
         onStarter={(id) =>
-          setGoal(id === 'swap' ? 'Swap 100 USDC to ETH with the best net result' : 'Earn yield on 500 USDC with low risk')
+          setGoal(
+            id === 'swap'
+              ? 'Swap 100 USDC to ETH with the best net result'
+              : id === 'nft'
+                ? 'Buy NFT BasePaint #16668 under 0.02 ETH on Base'
+                : 'Earn yield on 500 USDC with low risk',
+          )
         }
         walletLabel={walletLabel}
         balances={
