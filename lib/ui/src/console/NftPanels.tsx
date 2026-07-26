@@ -128,11 +128,28 @@ export function nftOrderFormLabelV1(restrictedByZone: boolean): string {
   return restrictedByZone ? 'Zone-restricted order (advanced fulfilment)' : 'Open order (basic fulfilment)';
 }
 
+/** The chain, in words. The contract carries a CAIP-2 id, which is the right
+ * thing to store and the wrong thing to put in front of a person. An
+ * unrecognised id is shown verbatim rather than guessed at. */
+export function nftChainLabelV1(chain: string): string {
+  if (chain === 'eip155:8453' || chain === 'base') return 'Base mainnet · 8453';
+  if (chain === 'eip155:84532') return 'Base Sepolia · 84532';
+  return chain;
+}
+
+/**
+ * One labelled fact.
+ *
+ * `qrow` is the console's own key/value row — the same one the right rail and
+ * the spend panel use. These panels deliberately own NO layout vocabulary of
+ * their own: an NFT screen that invents its own classes is an NFT screen that
+ * silently renders as unstyled text the first time it ships.
+ */
 function Row({ label, value, title }: { label: string; value: ReactNode; title?: string }) {
   return (
-    <div className="nft-row" title={title}>
-      <span className="nft-row__label">{label}</span>
-      <span className="nft-row__value">{value}</span>
+    <div className="qrow" title={title}>
+      <span>{label}</span>
+      <span className="v mono">{value}</span>
     </div>
   );
 }
@@ -147,15 +164,15 @@ function Row({ label, value, title }: { label: string; value: ReactNode; title?:
 export function NftMedia({ asset }: { asset: NftAssetLikeV1 }) {
   if (asset.display.imageBlocked || asset.display.imageUrl === null) {
     return (
-      <div className="nft-media nft-media--blocked" role="img" aria-label="No image shown">
-        <span className="nft-media__placeholder">No image</span>
-        <span className="nft-media__reason">{asset.display.imageBlockedReason ?? 'This item has no image.'}</span>
+      <div className="nftmedia na" role="img" aria-label="No image shown">
+        <span className="nftmedia-ph">No image</span>
+        <span className="lnote">{asset.display.imageBlockedReason ?? 'This item has no image.'}</span>
       </div>
     );
   }
   return (
     <img
-      className="nft-media"
+      className="nftmedia"
       src={asset.display.imageUrl}
       alt={asset.display.name ?? `Token ${asset.tokenId}`}
       loading="lazy"
@@ -168,12 +185,23 @@ export function NftMedia({ asset }: { asset: NftAssetLikeV1 }) {
  * display, never instead of it. */
 export function NftIdentity({ asset }: { asset: NftAssetLikeV1 }) {
   return (
-    <div className="nft-identity">
-      <div className="nft-identity__name">{asset.display.name ?? 'Unnamed token'}</div>
-      <Row label="Chain" value={asset.chain} />
-      <Row label="Contract" value={<code>{asset.contractAddress}</code>} />
-      <Row label="Token ID" value={<code>{asset.tokenId}</code>} />
-      <Row label="Standard" value={asset.tokenStandard.toUpperCase()} />
+    <div className="cardrow">
+      <div className="cr-top">
+        <span className="cr-name">{asset.display.name ?? 'Unnamed token'}</span>
+        <span className="pill n">{asset.tokenStandard.toUpperCase()}</span>
+      </div>
+      <div className="cr-nums">
+        <div>
+          <span className="cr-k">Chain</span>
+          <span className="cr-v mono">{nftChainLabelV1(asset.chain)}</span>
+        </div>
+        <div>
+          <span className="cr-k">Token ID</span>
+          <span className="cr-v mono">{asset.tokenId}</span>
+        </div>
+      </div>
+      {/* The contract gets its own line: it is the identity, not a detail. */}
+      <p className="cr-why mono">{asset.contractAddress}</p>
     </div>
   );
 }
@@ -192,66 +220,105 @@ export function NftRouteCardPanel({ card, restrictedByZone = false, onReview, re
     // A listing that vanished still gets a card naming the token. Removing it
     // from the screen would leave the user guessing what happened.
     return (
-      <section className="nft-card nft-card--failed" aria-label="NFT route card">
-        <NftMedia asset={asset} />
-        <NftIdentity asset={asset} />
-        <p className="nft-card__failure">{card.failureReason ?? 'There is nothing to buy for this NFT right now.'}</p>
-      </section>
+      <div className="panel" aria-label="NFT route card">
+        <div className="ph">
+          <h3>NFT route</h3>
+          <span className="rt">
+            <span className="pill a">nothing to buy</span>
+          </span>
+        </div>
+        <div className="pb">
+          <div className="nftrow">
+            <NftMedia asset={asset} />
+            <NftIdentity asset={asset} />
+          </div>
+          <p className="why warn">{card.failureReason ?? 'There is nothing to buy for this NFT right now.'}</p>
+        </div>
+      </div>
     );
   }
 
   return (
-    <section className="nft-card" aria-label="NFT route card">
-      <NftMedia asset={asset} />
-      <h3 className="nft-card__recommendation">{NFT_RECOMMENDATION_COPY_V1}</h3>
-      <NftIdentity asset={asset} />
+    <div className="panel" aria-label="NFT route card">
+      <div className="ph">
+        <h3>NFT route</h3>
+        <span className="rt">
+          <span className="pill n">{seaportVersionLabelV1(candidate.order.protocolAddress)}</span>
+          <span className="pill br">{candidate.listingStatus}</span>
+        </span>
+      </div>
+      <div className="pb">
+        <div className="nftrow">
+          <NftMedia asset={asset} />
+          <NftIdentity asset={asset} />
+        </div>
 
-      <Row label="Seller" value={<code>{candidate.order.seller}</code>} />
-      <Row label="Price" value={ethFromWeiV1(candidate.listingPriceWei)} />
-      <Row
-        label="Estimated gas"
-        value={candidate.estimatedGasWei === null ? 'Not estimated' : ethFromWeiV1(candidate.estimatedGasWei)}
-      />
-      <Row
-        label="Total"
-        // A gap is SHOWN, not filled. Without a gas estimate there is no total
-        // — the price wearing the word "total" would be a different claim.
-        value={card.totalCostWei === null ? 'Not available without a gas estimate' : ethFromWeiV1(card.totalCostWei)}
-      />
-      <Row label="Your limit" value={ethFromWeiV1(card.maxSpendWei)} />
-      <Row label="Listing status" value={candidate.listingStatus} />
-      <Row label="Listing expires" value={candidate.listingExpiresAt} />
-      <Row label="Order" value={<code>{shortHashV1(candidate.order.orderHash)}</code>} />
-      <Row label="Order type" value={nftOrderFormLabelV1(restrictedByZone)} />
-      <Row label="Protocol" value={seaportVersionLabelV1(candidate.order.protocolAddress)} />
-      <Row label="Creator fees" value={candidate.creatorFeePolicy.replace(/_/g, ' ')} />
+        {/* One marketplace's listing is not a market, and the sentence says so. */}
+        <p className="why">{NFT_RECOMMENDATION_COPY_V1}</p>
 
-      <ul className="nft-card__dimensions">
-        {card.dimensions.map((dimension) => (
-          <li key={dimension.dimension} className="nft-card__dimension">
-            <span>{dimension.dimension.replace(/_/g, ' ')}</span>
-            <span>
-              {dimension.score === null
-                ? `Not scored · ${dimension.notScoredReason?.replace(/_/g, ' ') ?? 'no source'}`
-                : dimension.score}
-            </span>
-          </li>
-        ))}
-      </ul>
-      {/* No combined number. Averaging four dimensions would read as a market
-          verdict, and one marketplace's listing is not a market. */}
+        <div className="cr-nums" style={{ marginTop: 12 }}>
+          <div>
+            <span className="cr-k">Price</span>
+            <span className="cr-v mono">{ethFromWeiV1(candidate.listingPriceWei)}</span>
+          </div>
+          <div>
+            <span className="cr-k">Your limit</span>
+            <span className="cr-v mono">{ethFromWeiV1(card.maxSpendWei)}</span>
+          </div>
+        </div>
 
-      {card.evidenceGaps.length > 0 && (
-        <p className="nft-card__gaps">Not established: {card.evidenceGaps.join(', ').replace(/_/g, ' ')}</p>
-      )}
+        <Row
+          label="Estimated gas"
+          value={candidate.estimatedGasWei === null ? 'Not estimated' : ethFromWeiV1(candidate.estimatedGasWei)}
+        />
+        <Row
+          label="Total"
+          // A gap is SHOWN, not filled. Without a gas estimate there is no total
+          // — the price wearing the word "total" would be a different claim.
+          value={card.totalCostWei === null ? 'Not available without a gas estimate' : ethFromWeiV1(card.totalCostWei)}
+        />
+        <Row label="Seller" value={shortHashV1(candidate.order.seller)} title={candidate.order.seller} />
+        <Row label="Listing expires" value={candidate.listingExpiresAt} />
+        <Row label="Order" value={shortHashV1(candidate.order.orderHash)} title={candidate.order.orderHash} />
+        <Row label="Order type" value={nftOrderFormLabelV1(restrictedByZone)} />
+        <Row label="Creator fees" value={candidate.creatorFeePolicy.replace(/_/g, ' ')} />
 
-      {onReview && (
-        <button type="button" className="nft-card__review" onClick={onReview} disabled={Boolean(reviewDisabledReason)}>
-          Review purchase
-        </button>
-      )}
-      {reviewDisabledReason && <p className="nft-card__blocked">{reviewDisabledReason}</p>}
-    </section>
+        <div className="sechead">
+          <span>Scoring</span>
+          <span>no combined number</span>
+        </div>
+        {card.dimensions.map((dimension) => {
+          const scored = dimension.score !== null;
+          return (
+            <div key={dimension.dimension} className={`scorerow${scored ? '' : ' na'}`}>
+              <span className="nm">{dimension.dimension.replace(/_/g, ' ')}</span>
+              {/* An unscored dimension keeps its hatched track and says why —
+                  it never renders as a zero. */}
+              <span className={`track${scored ? '' : ' na'}`}>
+                {scored && <span style={{ width: `${Math.max(0, Math.min(100, dimension.score as number))}%` }} />}
+              </span>
+              <span className="nu">{scored ? dimension.score : '—'}</span>
+              <span className="cf">
+                {scored ? '' : `not scored · ${dimension.notScoredReason?.replace(/_/g, ' ') ?? 'no source'}`}
+              </span>
+            </div>
+          );
+        })}
+        {/* No combined number. Averaging four dimensions would read as a market
+            verdict, and one marketplace's listing is not a market. */}
+
+        {card.evidenceGaps.length > 0 && (
+          <p className="lnote">Not established: {card.evidenceGaps.join(', ').replace(/_/g, ' ')}</p>
+        )}
+
+        {onReview && (
+          <button type="button" className="btn sec" onClick={onReview} disabled={Boolean(reviewDisabledReason)}>
+            Review purchase
+          </button>
+        )}
+        {reviewDisabledReason && <p className="lnote">{reviewDisabledReason}</p>}
+      </div>
+    </div>
   );
 }
 
@@ -287,48 +354,62 @@ export function NftReviewPanel({
 }: NftReviewPanelProps) {
   const { asset, candidate } = card;
   return (
-    <section className="nft-review" aria-label="NFT purchase review">
-      <h3>Review this purchase</h3>
-      <NftIdentity asset={asset} />
+    <div className="panel" aria-label="NFT purchase review">
+      <div className="ph">
+        <h3>Review this purchase</h3>
+        <span className="rt">
+          <span className={`pill ${safety.ok ? 'g' : 'a'}`}>{safety.ok ? 'safety checks passed' : 'blocked'}</span>
+        </span>
+      </div>
+      <div className="pb">
+        <div className="nftrow">
+          <NftMedia asset={asset} />
+          <NftIdentity asset={asset} />
+        </div>
 
-      {/* What arrives, named the only way identity is ever named here. */}
-      <Row label="You receive" value={`1 × ${asset.tokenStandard.toUpperCase()} #${asset.tokenId}`} />
-      <Row label="You send" value={ethFromWeiV1(valueWei)} />
-      <Row label="Order type" value={nftOrderFormLabelV1(restrictedByZone)} />
-      <Row
-        label="Fulfilled through"
-        value={candidate ? seaportVersionLabelV1(candidate.order.protocolAddress) : '—'}
-        title={candidate?.order.protocolAddress}
-      />
-      <Row label="Listing expires" value={candidate?.listingExpiresAt ?? '—'} />
+        <div className="cr-nums" style={{ marginTop: 12 }}>
+          <div>
+            <span className="cr-k">You send</span>
+            <span className="cr-v mono">{ethFromWeiV1(valueWei)}</span>
+          </div>
+          <div>
+            {/* What arrives, named the only way identity is ever named here. */}
+            <span className="cr-k">You receive</span>
+            <span className="cr-v mono">{`1 × ${asset.tokenStandard.toUpperCase()} #${asset.tokenId}`}</span>
+          </div>
+        </div>
 
-      <Row
-        label="Simulation"
-        value={
-          simulation === null || simulation.status === 'unavailable'
-            ? `Unavailable${simulation?.errorCode ? ` · ${simulation.errorCode}` : ''}`
-            : simulation.status === 'passed'
-              ? `Passed at block ${simulation.blockNumber ?? '—'}${simulation.gasUsed ? ` · gas ${simulation.gasUsed}` : ''}`
-              : `Reverted at block ${simulation.blockNumber ?? '—'}`
-        }
-      />
+        <Row label="Order type" value={nftOrderFormLabelV1(restrictedByZone)} />
+        <Row
+          label="Fulfilled through"
+          value={candidate ? seaportVersionLabelV1(candidate.order.protocolAddress) : '—'}
+          title={candidate?.order.protocolAddress}
+        />
+        <Row label="Listing expires" value={candidate?.listingExpiresAt ?? '—'} />
+        <Row
+          label="Simulation"
+          value={
+            simulation === null || simulation.status === 'unavailable'
+              ? `Unavailable${simulation?.errorCode ? ` · ${simulation.errorCode}` : ''}`
+              : simulation.status === 'passed'
+                ? `Passed at block ${simulation.blockNumber ?? '—'}${simulation.gasUsed ? ` · gas ${simulation.gasUsed}` : ''}`
+                : `Reverted at block ${simulation.blockNumber ?? '—'}`
+          }
+        />
+        <Row
+          label="Safety checks"
+          value={safety.ok ? 'Passed' : `Blocked: ${safety.violations.join(', ').replace(/_/g, ' ')}`}
+        />
+        <Row label="Blueprint hash" value={shortHashV1(blueprintHash)} title={blueprintHash} />
+        <Row label="Calls hash" value={shortHashV1(callsHash)} title={callsHash} />
 
-      <Row
-        label="Safety checks"
-        value={safety.ok ? 'Passed' : `Blocked: ${safety.violations.join(', ').replace(/_/g, ' ')}`}
-      />
-
-      <Row label="Blueprint hash" value={<code>{shortHashV1(blueprintHash)}</code>} title={blueprintHash} />
-      <Row label="Calls hash" value={<code>{shortHashV1(callsHash)}</code>} title={callsHash} />
-
-      {/* Signing is offered only when every gate passed. A disabled button with
-          a stated reason beats a button that fails after the click. */}
-      {signable ? (
-        submitSlot
-      ) : (
-        <p className="nft-review__blocked">{blockedReason ?? 'This purchase cannot be signed yet.'}</p>
-      )}
-    </section>
+        {/* Signing is offered only when every gate passed. A disabled button with
+            a stated reason beats a button that fails after the click. */}
+        <div className="ctarow" style={{ marginTop: 12 }}>
+          {signable ? submitSlot : <span className="nt">{blockedReason ?? 'This purchase cannot be signed yet.'}</span>}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -349,56 +430,81 @@ export const NFT_PROOF_HEADLINE_V1: Record<NftProofFinalStatusLikeV1, string> = 
 
 export function NftProofPanel({ proof, asset }: { proof: NftProofLikeV1; asset?: NftAssetLikeV1 }) {
   const owned = proof.ownership.status === 'verified';
+  // Only a verified ownership read earns the green pill. Everything else is
+  // amber or neutral, including a receipt that succeeded.
+  const tone = proof.finalStatus === 'completed' ? 'g' : proof.finalStatus === 'pending' ? 'n' : 'a';
   return (
-    <section className="nft-proof" aria-label="NFT ownership proof">
-      <h3 className={`nft-proof__headline nft-proof__headline--${proof.finalStatus}`}>
-        {NFT_PROOF_HEADLINE_V1[proof.finalStatus]}
-      </h3>
-      <p className="nft-proof__detail">{NFT_PROOF_COPY_UI_V1[proof.finalStatus]}</p>
+    <div className="panel" aria-label="NFT ownership proof">
+      <div className="ph">
+        <h3>NFT proof</h3>
+        <span className="rt">
+          <span className={`pill ${tone}`}>{proof.finalStatus.replace(/_/g, ' ')}</span>
+        </span>
+      </div>
+      <div className="pb">
+        <p className="why">
+          <b>{NFT_PROOF_HEADLINE_V1[proof.finalStatus]}</b>
+        </p>
+        <p className="lnote">{NFT_PROOF_COPY_UI_V1[proof.finalStatus]}</p>
 
-      {asset && <NftIdentity asset={asset} />}
+        {asset && (
+          <div className="nftrow" style={{ marginTop: 12 }}>
+            <NftMedia asset={asset} />
+            <NftIdentity asset={asset} />
+          </div>
+        )}
 
-      <Row label="Transaction" value={<code>{shortHashV1(proof.receipt.transactionHash)}</code>} title={proof.receipt.transactionHash ?? undefined} />
-      <Row label="Receipt" value={proof.receipt.status} />
-      <Row label="Block" value={proof.receipt.blockNumber ?? '—'} />
-      <Row label="Gas used" value={proof.receipt.gasUsed ?? '—'} />
-      <Row
-        label="Actually spent"
-        // Read from the transaction, not copied from the card.
-        value={ethFromWeiV1(proof.receipt.actualNativeValueWei)}
-      />
+        <Row
+          label="Transaction"
+          value={shortHashV1(proof.receipt.transactionHash)}
+          title={proof.receipt.transactionHash ?? undefined}
+        />
+        <Row label="Receipt" value={proof.receipt.status} />
+        <Row label="Block" value={proof.receipt.blockNumber ?? '—'} />
+        <Row label="Gas used" value={proof.receipt.gasUsed ?? '—'} />
+        <Row
+          label="Actually spent"
+          // Read from the transaction, not copied from the card.
+          value={ethFromWeiV1(proof.receipt.actualNativeValueWei)}
+        />
 
-      {/* Who held it before, and who holds it now — the two ends of the only
-          question this screen exists to answer. */}
-      <Row label="Previous owner" value={<code>{shortHashV1(proof.transfer.fromAddress ?? proof.seller)}</code>} />
-      <Row
-        label="New owner"
-        value={owned ? <code>{shortHashV1(proof.ownership.owner)}</code> : 'Not independently confirmed'}
-      />
+        {/* Who held it before, and who holds it now — the two ends of the only
+            question this screen exists to answer. */}
+        <Row
+          label="Previous owner"
+          value={shortHashV1(proof.transfer.fromAddress ?? proof.seller)}
+          title={proof.transfer.fromAddress ?? proof.seller}
+        />
+        <Row
+          label="New owner"
+          value={owned ? shortHashV1(proof.ownership.owner) : 'Not independently confirmed'}
+          title={owned ? (proof.ownership.owner ?? undefined) : undefined}
+        />
 
-      <Row
-        label="Transfer"
-        value={
-          proof.transfer.status === 'observed'
-            ? `ERC-721 Transfer → ${shortHashV1(proof.transfer.toAddress)}`
-            : proof.transfer.status === 'wrong_recipient'
-              ? `Transferred to someone else: ${shortHashV1(proof.transfer.toAddress)}`
-              : 'No Transfer of this token observed'
-        }
-      />
+        <Row
+          label="Transfer"
+          value={
+            proof.transfer.status === 'observed'
+              ? `ERC-721 Transfer → ${shortHashV1(proof.transfer.toAddress)}`
+              : proof.transfer.status === 'wrong_recipient'
+                ? `Transferred to someone else: ${shortHashV1(proof.transfer.toAddress)}`
+                : 'No Transfer of this token observed'
+          }
+        />
 
-      <Row
-        label="ownerOf"
-        value={
-          owned
-            ? `${shortHashV1(proof.ownership.owner)} at block ${proof.ownership.blockNumber ?? '—'}`
-            : proof.ownership.status === 'mismatch'
-              ? `Owned by ${shortHashV1(proof.ownership.owner)} — not you`
-              : (proof.ownership.unavailableReason ?? 'Not read yet')
-        }
-      />
+        <Row
+          label="ownerOf"
+          value={
+            owned
+              ? `${shortHashV1(proof.ownership.owner)} at block ${proof.ownership.blockNumber ?? '—'}`
+              : proof.ownership.status === 'mismatch'
+                ? `Owned by ${shortHashV1(proof.ownership.owner)} — not you`
+                : (proof.ownership.unavailableReason ?? 'Not read yet')
+          }
+        />
 
-      <Row label="Proof hash" value={<code>{shortHashV1(proof.proofHash)}</code>} title={proof.proofHash} />
-    </section>
+        <Row label="Proof hash" value={shortHashV1(proof.proofHash)} title={proof.proofHash} />
+      </div>
+    </div>
   );
 }

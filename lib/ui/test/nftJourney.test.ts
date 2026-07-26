@@ -94,11 +94,16 @@ const completed = proofAt({
 describe('the NFT journey renders end to end', () => {
   test('the Route Card names the token by identity, and leads with honest copy', () => {
     const html = renderToStaticMarkup(createElement(NftRouteCardPanel, { card }));
+    // Every panel is built from the console's own vocabulary; consoleStyles
+    // then proves each of those classes has a rule.
+    assert.ok(html.startsWith('<div class="panel"'), 'the card is a console panel');
+    assert.ok(html.includes('class="qrow"'), 'facts render as key/value rows, not run-together text');
     assert.ok(html.includes(NFT_RECOMMENDATION_COPY_V1));
     // Identity is chain + contract + tokenId. The name may appear beside it,
     // never instead of it.
     assert.ok(html.includes(COLLECTION));
     assert.ok(html.includes('16668'));
+    assert.ok(html.includes('Base mainnet · 8453'), 'the chain is named, not shown as a CAIP id');
     // The blocked image renders a placeholder and states why.
     assert.ok(html.includes('No image'));
     assert.ok(!html.includes('<img'));
