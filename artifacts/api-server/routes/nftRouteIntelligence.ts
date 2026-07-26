@@ -19,6 +19,7 @@ import {
   buildNftReceiptLegV1,
   buildNftOwnershipReadV1,
   compareNftRoutesV1,
+  expectedFulfillmentFormV1,
   createOpenSeaGatewayV1,
   findNftTransferV1,
   nftComparisonCopyV1,
@@ -325,6 +326,10 @@ nftRouteIntelligenceRouter.post('/nft/prepare', async (req, res) => {
       payload: fulfillmentPayload.value,
       candidate,
       buyer: guard.user.address as `0x${string}`,
+      // Decided from the order Miorail just re-read, before the fulfilment is
+      // requested. OpenSea is then held to this choice.
+      expectedForm: expectedFulfillmentFormV1({ restrictedByZone: fresh.value.restrictedByZone }),
+      now,
     });
     if (!fulfillment.ok) {
       res.json(NftPrepareResponseV1Schema.parse({ outcome: 'rejected', reason: fulfillment.reason, detail: 'OpenSea returned fulfilment data Miorail will not encode.' }));
