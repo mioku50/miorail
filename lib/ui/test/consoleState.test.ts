@@ -176,11 +176,38 @@ describe('empty is never good', () => {
     const { rows, summary } = deriveAdapterRowsV1([
       { name: 'Uniswap', state: 'live' },
       { name: 'KyberSwap', state: 'live' },
-      { name: 'Aerodrome', state: 'building' },
-      { name: 'o1.exchange', state: 'not_connected' },
+      { name: 'Moonwell', state: 'configured' },
+      { name: 'Aerodrome', state: 'preflight_failed' },
+      { name: 'o1.exchange', state: 'planned' },
     ]);
-    assert.equal(summary, '2 / 4');
-    assert.deepEqual(rows.map((row) => row.label), ['live', 'live', 'building', 'not connected']);
+    // Configured counts toward the summary — it is switched on and can answer.
+    assert.equal(summary, '3 / 5');
+    assert.deepEqual(rows.map((row) => row.label), ['live', 'live', 'configured', 'preflight failed', 'planned']);
+  });
+
+  // T64.3.1 — the distinction the old single `not_connected` bucket destroyed.
+  test('a switched-off flag is disabled, and a failed call is not the same thing', () => {
+    const { rows } = deriveAdapterRowsV1([
+      { name: 'Moonwell', state: 'disabled' },
+      { name: 'Morpho', state: 'preflight_failed' },
+    ]);
+    assert.deepEqual(rows.map((row) => row.label), ['disabled', 'preflight failed']);
+    for (const row of rows) {
+      assert.equal(row.label.includes('not connected'), false, 'a flag is not a broken connection');
+      assert.equal(row.live, false);
+      assert.equal(row.usable, false);
+    }
+  });
+
+  test('only an adapter that answered gets the live tick', () => {
+    const { rows } = deriveAdapterRowsV1([
+      { name: 'Uniswap', state: 'live' },
+      { name: 'Moonwell', state: 'configured' },
+    ]);
+    assert.deepEqual(rows.map((row) => [row.live, row.usable]), [
+      [true, true],
+      [false, true],
+    ]);
   });
 });
 

@@ -1,4 +1,9 @@
-import { CONSOLE_RAIL_V1, consoleFailureCopyV1, type ConsoleStepViewV1 } from './consoleState';
+import {
+  CONSOLE_RAIL_V1,
+  consoleFailureCopyV1,
+  type AdapterLifecycleV1,
+  type ConsoleStepViewV1,
+} from './consoleState';
 
 // ---------------------------------------------------------------------------
 // T63D — the flow's real mechanics: measured stage timings, route-family
@@ -289,13 +294,28 @@ export function coverageFromStatusV1(status: ConsoleServerStatusV1 | null): Cove
 
 export interface AdapterStateSourceV1 {
   name: string;
-  state: 'live' | 'building' | 'planned' | 'not_connected';
+  state: AdapterLifecycleV1;
 }
+
+/** Which route family each adapter belongs to, so a Commerce comparison never
+ * lists a swap adapter it did not and will not call. */
+export const ADAPTER_FAMILY_V1: Record<string, RouteFamilyV1 | 'simulation'> = {
+  Uniswap: 'swap',
+  KyberSwap: 'swap',
+  'o1.exchange': 'swap',
+  Moonwell: 'earn',
+  Morpho: 'earn',
+  Bitrefill: 'commerce',
+  'Alchemy simulation': 'simulation',
+};
 
 /**
  * Adapter states from the plugin/provider statuses the server reports, plus the
  * route adapters that actually answered this run. Nothing is asserted "live"
  * because the front end believes it should be.
+ *
+ * T64.3.1: a flag that is off produces `disabled`, not `not_connected`. The
+ * two look identical to a user and mean opposite things to an operator.
  */
 export function adaptersFromStatusV1(
   status: ConsoleServerStatusV1 | null,
@@ -305,23 +325,131 @@ export function adaptersFromStatusV1(
   if (answered.length > 0 || failed.length > 0) {
     return [
       ...answered.map((entry) => ({ name: entry.name, state: 'live' as const })),
-      ...failed.map((entry) => ({ name: entry.name, state: 'not_connected' as const })),
+      // It was asked on this run and did not answer — a real failure, which is
+      // exactly what `disabled` must never be confused with.
+      ...failed.map((entry) => ({ name: entry.name, state: 'preflight_failed' as const })),
     ];
   }
   const routing = status?.productMigration.routeIntelligenceV1 === true;
   const earn = status?.productMigration.earnRouteV1 === true;
   const paid = status?.productMigration.paidIntelligence === true;
   const commerce = status?.productMigration.commerceRouteV1 === true;
-  // Before the first comparison the registry is reported from the gates alone.
+  // Before the first comparison nothing has answered, so the honest state for
+  // an enabled adapter is `configured` — it is ready, not yet proven.
+  const gate = (on: boolean): AdapterLifecycleV1 => (on ? 'configured' : 'disabled');
   return [
-    { name: 'Uniswap', state: routing ? 'live' : 'not_connected' },
-    { name: 'KyberSwap', state: routing ? 'live' : 'not_connected' },
-    { name: 'Moonwell', state: earn ? 'live' : 'not_connected' },
-    { name: 'Morpho', state: earn ? 'live' : 'not_connected' },
-    { name: 'Alchemy simulation', state: paid ? 'live' : 'not_connected' },
-    { name: 'Bitrefill', state: commerce ? 'live' : 'not_connected' },
+    { name: 'Uniswap', state: gate(routing) },
+    { name: 'KyberSwap', state: gate(routing) },
+    { name: 'Moonwell', state: gate(earn) },
+    { name: 'Morpho', state: gate(earn) },
+    { name: 'Alchemy simulation', state: gate(paid) },
+    { name: 'Bitrefill', state: gate(commerce) },
     { name: 'o1.exchange', state: 'planned' },
   ];
+}
+
+// --- T64.3.1: family-aware, terminal Comparing ------------------------------
+//
+// Two defects this replaces. The first: Comparing listed EVERY adapter for
+// every goal, so a Bitrefill gift-card comparison showed Uniswap, KyberSwap,
+// Moonwell and Morpho spinning — sources that were never called and never
+// would be. The second: when the intent came back `needs_clarification` those
+// spinners never stopped, because nothing in the screen knew the run was over.
+//
+// A terminal reason therefore stops EVERY row here, not in the markup.
+
+export interface ComparingProgressStepV1 {
+  label: string;
+  state: 'done' | 'running' | 'pending' | 'failed';
+  value: string;
+  latencyPercent: number;
+}
+
+interface FamilyStageLabelsV1 {
+  adapter: (name: string) => string;
+  evidence: string;
+  scoring: string;
+}
+
+const FAMILY_STAGE_LABELS_V1: Record<RouteFamilyV1, FamilyStageLabelsV1> = {
+  swap: { adapter: (name) => `${name} quote`, evidence: 'Evidence collected', scoring: 'Scoring against your goal' },
+  earn: { adapter: (name) => `${name} rates`, evidence: 'Evidence collected', scoring: 'Scoring against your goal' },
+  commerce: { adapter: (name) => `${name} catalogue`, evidence: 'Commerce evidence', scoring: 'Commerce scoring' },
+  unknown: { adapter: (name) => `${name} quote`, evidence: 'Evidence collected', scoring: 'Scoring against your goal' },
+};
+
+export interface ComparingProgressInputV1 {
+  family: RouteFamilyV1;
+  adapters: readonly { name: string; label: string; live: boolean; usable: boolean }[];
+  /** Adapter display names that answered on this run. */
+  answered: readonly string[];
+  /** Non-null once the run is over WITHOUT a route card: needs_clarification,
+   * unsupported, a blocked gate, or a transport error. */
+  terminalReason: string | null;
+  /** Null until evidence has actually been collected. */
+  evidenceCount: number | null;
+  scored: boolean;
+}
+
+/**
+ * The Comparing rows for ONE route family.
+ *
+ * Adapters from other families are not listed at all — not greyed out, not
+ * "skipped". They were not part of this comparison, and a row implies they
+ * were. Alchemy is absent for the same reason: simulation runs on Review, and
+ * a row here would suggest the comparison waited for it.
+ */
+export function comparingProgressV1(input: ComparingProgressInputV1): ComparingProgressStepV1[] {
+  const labels = FAMILY_STAGE_LABELS_V1[input.family];
+  const terminal = input.terminalReason !== null;
+  const familyAdapters = input.adapters.filter((adapter) => ADAPTER_FAMILY_V1[adapter.name] === input.family);
+
+  const rows: ComparingProgressStepV1[] = [
+    { label: 'Intent extraction', state: terminal ? 'failed' : 'done', value: input.family, latencyPercent: 8 },
+  ];
+
+  for (const adapter of familyAdapters) {
+    const answered = input.answered.includes(adapter.name);
+    if (answered) {
+      rows.push({ label: labels.adapter(adapter.name), state: 'done', value: 'answered', latencyPercent: 45 });
+      continue;
+    }
+    if (!adapter.usable) {
+      rows.push({ label: labels.adapter(adapter.name), state: 'failed', value: adapter.label, latencyPercent: 0 });
+      continue;
+    }
+    rows.push({
+      label: labels.adapter(adapter.name),
+      // A finished run that produced nothing means this adapter was never
+      // reached. It must not keep spinning.
+      state: terminal ? 'failed' : 'running',
+      value: terminal ? 'not reached' : '',
+      latencyPercent: 0,
+    });
+  }
+
+  rows.push({
+    label: labels.evidence,
+    state: input.evidenceCount !== null ? 'done' : terminal ? 'failed' : 'pending',
+    value: input.evidenceCount !== null ? `${input.evidenceCount} source${input.evidenceCount === 1 ? '' : 's'}` : '',
+    latencyPercent: input.evidenceCount !== null ? 18 : 0,
+  });
+  rows.push({
+    label: labels.scoring,
+    state: input.scored ? 'done' : terminal ? 'failed' : 'pending',
+    value: '',
+    latencyPercent: 0,
+  });
+  return rows;
+}
+
+/**
+ * The stage rail once a run is over without a result. A stage left as `now`
+ * keeps claiming to be in progress — on a terminal Comparing screen the rail
+ * pointed at "Evidence" indefinitely for work that had already stopped.
+ */
+export function haltStageRailV1(steps: readonly ConsoleStepViewV1[]): ConsoleStepViewV1[] {
+  return steps.map((step) => (step.state === 'now' ? { ...step, state: 'todo' as const } : step));
 }
 
 /** Chain label for the header, from the server's own chain id. */

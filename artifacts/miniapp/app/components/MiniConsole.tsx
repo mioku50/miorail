@@ -17,6 +17,7 @@ import {
   ReviewScreen,
   RouteGraph,
   adaptersFromStatusV1,
+  consoleFailureCopyV1,
   ageLabelV1,
   candidateRowsFromProjectionV1,
   chainLabelV1,
@@ -163,6 +164,42 @@ export function MiniConsole() {
     [flags],
   );
   const commerceOrderResult = commerceOrder.data?.outcome === "created" ? commerceOrder.data : null;
+
+  // T64.3.1 — the same two defects the console had: a Commerce comparison did
+  // not count as pending, and a `needs_clarification` result left this screen
+  // waiting on a run that had already finished, with raw issue codes as the
+  // only explanation and no way back to the goal.
+  const comparePending = evaluation.isPending || earnCompare.isPending || commerceCompare.isPending;
+  const comparingFailure = (() => {
+    if (comparePending || projection || earnCard || commerceCard) return null;
+    if (commerceCompare.data?.outcome === "needs_clarification") {
+      return {
+        title: "This goal needs one more detail",
+        detail: commerceCompare.data.issues.map((issue) => consoleFailureCopyV1(issue)).join(" "),
+      };
+    }
+    if (commerceCompare.data?.outcome === "unsupported") {
+      return { title: "Miorail cannot route this purchase", detail: consoleFailureCopyV1(commerceCompare.data.reason) };
+    }
+    if (earnCompare.data?.outcome === "needs_clarification") {
+      return {
+        title: "This goal needs one more detail",
+        detail: earnCompare.data.issues.map((issue) => consoleFailureCopyV1(issue)).join(" "),
+      };
+    }
+    if (earnCompare.data?.outcome === "unsupported") {
+      return { title: "Miorail cannot route this goal", detail: consoleFailureCopyV1(earnCompare.data.reason) };
+    }
+    if (evaluation.isError || earnCompare.isError || commerceCompare.isError) {
+      return {
+        title: "The comparison could not be completed",
+        detail: "The server did not answer this request. Nothing was signed or spent.",
+      };
+    }
+    return dispatch.blockedReason
+      ? { title: "This route family is off on this server", detail: dispatch.blockedReason }
+      : null;
+  })();
   const commerceSettled = useRef(false);
   useEffect(() => {
     if (!commerceCard || commerceSettled.current) return;
@@ -366,7 +403,7 @@ export function MiniConsole() {
           <span className="v mono">{adapterRows.summary}</span>
         </div>
         {adapterRows.rows.map((row) => (
-          <div key={row.name} className={`row${row.live ? "" : " off"}`}>
+          <div key={row.name} className={`row${row.usable ? "" : " off"}`}>
             <span>{row.name}</span>
             <span className={`v${row.live ? " ok" : ""}`}>{row.label}</span>
           </div>
@@ -386,7 +423,7 @@ export function MiniConsole() {
         goal={goal}
         onGoalChange={setGoal}
         onCompare={compare}
-        comparePending={evaluation.isPending || earnCompare.isPending}
+        comparePending={comparePending}
         compareDisabledReason={!connected ? CONSOLE_COPY_V1.walletDisconnected : dispatch.blockedReason}
         starters={[
           { id: "swap", title: "Swap 100 USDC → ETH", meta: "best net result" },
@@ -418,25 +455,21 @@ export function MiniConsole() {
         <div className="panel">
           <div className="ph">
             <h3>{goalLabel}</h3>
-            <span className="sub">{evaluation.isPending || earnCompare.isPending ? "running" : "done"}</span>
+            <span className="sub">{comparePending ? "running" : "done"}</span>
           </div>
           <div className="pb tight">
             <CandidateCards rows={projection ? candidateRowsFromProjectionV1(projection) : []} />
             {projection && shortfallNoticeFromProjectionV1(projection) && (
               <p className="lnote" style={{ marginTop: 10 }}>{shortfallNoticeFromProjectionV1(projection)}</p>
             )}
-            {!projection && !earnCard && !commerceCard && (
-              <p className="lnote">
-                {earnCompare.data?.outcome === "unsupported"
-                  ? earnCompare.data.reason
-                  : earnCompare.data?.outcome === "needs_clarification"
-                    ? earnCompare.data.issues.join(", ")
-                    : commerceCompare.data?.outcome === "unsupported"
-                      ? commerceCompare.data.reason
-                      : commerceCompare.data?.outcome === "needs_clarification"
-                        ? commerceCompare.data.issues.join(", ")
-                        : dispatch.blockedReason}
-              </p>
+            {comparingFailure && (
+              <div className="note warn" role="alert">
+                <b>{comparingFailure.title}</b>
+                <p style={{ margin: "6px 0 10px" }}>{comparingFailure.detail}</p>
+                <button type="button" className="btn" onClick={() => setScreen("plan")}>
+                  Edit goal
+                </button>
+              </div>
             )}
           </div>
         </div>

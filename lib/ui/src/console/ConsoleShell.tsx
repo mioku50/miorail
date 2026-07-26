@@ -82,7 +82,10 @@ export interface ConsoleLeftRailModelV1 {
   proofCount: string;
   limits: ConsoleLimitsV1 | null;
   limitsUnavailableReason: string | null;
-  adapters: { rows: { name: string; label: string; live: boolean }[]; summary: string };
+  // `usable` (present since T64.3.1) means switched on; `live` means it
+  // answered. A configured adapter is not dimmed like a disabled one, and only
+  // one that answered gets the green tick.
+  adapters: { rows: { name: string; label: string; live: boolean; usable?: boolean }[]; summary: string };
 }
 
 export interface ConsoleHeaderModelV1 {
@@ -262,7 +265,7 @@ export function ConsoleShell(props: ConsoleShellProps) {
               <span className="v mono">{left.adapters.summary}</span>
             </div>
             {left.adapters.rows.map((row) => (
-              <div key={row.name} className={`row${row.live ? '' : ' off'}`}>
+              <div key={row.name} className={`row${(row.usable ?? row.live) ? '' : ' off'}`}>
                 <span>{row.name}</span>
                 <span className={`v${row.live ? ' ok' : ''}`}>{row.label}</span>
               </div>

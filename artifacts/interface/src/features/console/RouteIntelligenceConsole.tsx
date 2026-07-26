@@ -18,12 +18,15 @@ import {
   adaptersFromStatusV1,
   ageLabelV1,
   chainLabelV1,
+  comparingProgressV1,
   completeStageV1,
+  consoleFailureCopyV1,
   coverageFromStatusV1,
   deriveAdapterRowsV1,
   deriveSimulationViewV1,
   dispatchRouteFamilyV1,
   emptyStageClockV1,
+  haltStageRailV1,
   intelligenceSpendLabelV1,
   providerUnavailableCopyV1,
   startStageV1,
@@ -306,6 +309,42 @@ export function RouteIntelligenceConsole() {
     [status.data, projection],
   );
 
+  // T64.3.1 — a Commerce comparison is a comparison. Leaving it out of these
+  // two made the button clickable again mid-run and the elapsed pill read
+  // "done" while Bitrefill was still being read.
+  const comparePending = evaluation.isPending || earnCompare.isPending || commerceCompare.isPending;
+
+  // The run is over and produced no route card. Every one of these leaves the
+  // user on Comparing, so every one of them has to be terminal.
+  const commerceFailure =
+    commerceCompare.data?.outcome === 'needs_clarification'
+      ? {
+          title: 'This goal needs one more detail',
+          detail: commerceCompare.data.issues.map((issue) => consoleFailureCopyV1(issue)).join(' '),
+        }
+      : commerceCompare.data?.outcome === 'unsupported'
+        ? { title: 'Miorail cannot route this purchase', detail: consoleFailureCopyV1(commerceCompare.data.reason) }
+        : null;
+  const earnFailure =
+    earnCompare.data?.outcome === 'needs_clarification'
+      ? { title: 'This goal needs one more detail', detail: earnCompare.data.issues.map((issue) => consoleFailureCopyV1(issue)).join(' ') }
+      : earnCompare.data?.outcome === 'unsupported'
+        ? { title: 'Miorail cannot route this goal', detail: consoleFailureCopyV1(earnCompare.data.reason) }
+        : null;
+  const transportFailure =
+    evaluation.isError || earnCompare.isError || commerceCompare.isError
+      ? { title: 'The comparison could not be completed', detail: 'The server did not answer this request. Nothing was signed or spent.' }
+      : null;
+  // A run that produced a route card is not a failure, whatever the current
+  // goal text now dispatches to.
+  const comparingFailure =
+    comparePending || projection || earnCard || commerceCard
+      ? null
+      : (commerceFailure ??
+        earnFailure ??
+        transportFailure ??
+        (dispatch.blockedReason ? { title: 'This route family is off on this server', detail: dispatch.blockedReason } : null));
+
   const budgetRecord = budget.data?.budget ?? null;
   const limits = budgetRecord
     ? {
@@ -385,7 +424,7 @@ export function RouteIntelligenceConsole() {
         goal={goal}
         onGoalChange={setGoal}
         onCompare={() => compare()}
-        comparePending={evaluation.isPending || earnCompare.isPending}
+        comparePending={comparePending}
         compareDisabledReason={!connected ? CONSOLE_COPY_V1.walletDisconnected : dispatch.blockedReason}
         starters={[
           { id: 'swap', title: 'Swap 100 USDC → ETH', meta: 'best net result · every live adapter' },
@@ -410,7 +449,9 @@ export function RouteIntelligenceConsole() {
         coverage={coverageFromStatusV1(status.data ?? null)}
         chainKpis={[
           { k: 'Network', v: chainLabelV1(status.data?.chainId).split(' · ')[0], d: `chain ${status.data?.chainId ?? '—'}` },
-          { k: 'Adapters live', v: adapterRows.summary, d: 'from server flags' },
+          // "ready" — the count includes adapters that are configured but have
+          // not been asked yet. Only one that answered is called live.
+          { k: 'Adapters ready', v: adapterRows.summary, d: 'from server flags' },
           { k: 'Signing', v: 'your wallet', d: 'Miorail never signs' },
         ]}
         gasPoints={[]}
@@ -421,48 +462,24 @@ export function RouteIntelligenceConsole() {
     const answered = (projection?.availableRoutes ?? []).map((route) => route.provider.displayName);
     content = (
       <ComparingScreen
-        steps={steps}
+        steps={comparingFailure ? haltStageRailV1(steps) : steps}
         goalLabel={goalLabel}
         optimisingFor={projection ? `optimising for ${projection.optimizationMode}` : `${dispatch.family} route`}
-        elapsedLabel={evaluation.isPending || earnCompare.isPending ? 'running' : 'done'}
-        progress={[
-          { label: 'Intent extraction', state: 'done', value: dispatch.family, latencyPercent: 8 },
-          // One row per adapter, each with its own outcome and reason.
-          ...adapterRows.rows.map((row) => ({
-            label: `${row.name} quote`,
-            state: (answered.includes(row.name) ? 'done' : row.live ? 'running' : 'failed') as 'done' | 'running' | 'failed',
-            value: answered.includes(row.name) ? 'answered' : row.live ? '' : row.label,
-            latencyPercent: answered.includes(row.name) ? 45 : 0,
-          })),
-          {
-            label: 'Evidence collected',
-            state: projection ? 'done' : 'pending',
-            value: projection ? `${evidenceRows.length} sources` : '',
-            latencyPercent: 18,
-          },
-          {
-            label: 'Alchemy simulation',
-            state: paidIntelligenceOn ? 'pending' : 'failed',
-            value: paidIntelligenceOn ? 'runs on Review' : 'paid intelligence gate is off',
-            latencyPercent: 0,
-          },
-          { label: 'Scoring against your goal', state: projection?.pathScore ? 'done' : 'pending', value: '', latencyPercent: 0 },
-        ]}
+        elapsedLabel={comparePending ? 'running' : 'done'}
+        // Only this family's adapters, and only until the run is terminal.
+        progress={comparingProgressV1({
+          family: dispatch.family,
+          adapters: adapterRows.rows,
+          answered,
+          terminalReason: comparingFailure?.detail ?? null,
+          evidenceCount: projection ? evidenceRows.length : null,
+          scored: Boolean(projection?.pathScore),
+        })}
         candidates={projection ? candidateRowsFromProjectionV1(projection) : []}
         sources={evidenceRows}
-        shortfallNotice={
-          projection
-            ? shortfallNoticeFromProjectionV1(projection)
-            : earnCompare.data?.outcome === 'unsupported'
-              ? earnCompare.data.reason
-              : earnCompare.data?.outcome === 'needs_clarification'
-                ? earnCompare.data.issues.join(', ')
-                : commerceCompare.data?.outcome === 'unsupported'
-                  ? commerceCompare.data.reason
-                  : commerceCompare.data?.outcome === 'needs_clarification'
-                    ? commerceCompare.data.issues.join(', ')
-                    : dispatch.blockedReason
-        }
+        failure={comparingFailure}
+        onEditGoal={() => setScreen('plan')}
+        shortfallNotice={projection ? shortfallNoticeFromProjectionV1(projection) : null}
         onCancel={() => setScreen('plan')}
       />
     );

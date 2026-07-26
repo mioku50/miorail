@@ -236,6 +236,13 @@ export interface ComparingScreenModelV1 {
   candidates: CandidateRowViewV1[];
   sources: EvidenceRowViewV1[];
   shortfallNotice: string | null;
+  /**
+   * T64.3.1 — the run ended without a route card. Set this and the screen
+   * becomes terminal: no spinner survives, Candidates says it is finished
+   * rather than "updating live", and the user gets a way out.
+   */
+  failure: { title: string; detail: string } | null;
+  onEditGoal: () => void;
   onCancel: () => void;
 }
 
@@ -281,6 +288,15 @@ export function ComparingScreen(model: ComparingScreenModelV1) {
               </li>
             ))}
           </ul>
+          {model.failure && (
+            <div className="note warn" role="alert" style={{ marginTop: 14 }}>
+              <b>{model.failure.title}</b>
+              <p style={{ margin: '6px 0 10px' }}>{model.failure.detail}</p>
+              <button type="button" className="btn" onClick={model.onEditGoal}>
+                Edit goal
+              </button>
+            </div>
+          )}
           {model.shortfallNotice && <p className="lnote" style={{ marginTop: 12 }}>{model.shortfallNotice}</p>}
         </div>
       </div>
@@ -288,7 +304,7 @@ export function ComparingScreen(model: ComparingScreenModelV1) {
       <div className="panel">
         <div className="ph">
           <h3>Candidates so far</h3>
-          <span className="sub">updating live</span>
+          <span className="sub">{model.failure ? 'finished — no candidates' : 'updating live'}</span>
         </div>
         <div className="pb tight">
           <CandidateTable rows={model.candidates} withAction={false} />
@@ -702,7 +718,11 @@ export function PlanScreen(model: PlanScreenModelV1) {
               type="button"
               className="btn lg"
               onClick={model.onCompare}
-              disabled={model.comparePending || model.goal.trim().length === 0}
+              // T64.3.1: when there is a reason this goal cannot be compared,
+              // the button is DISABLED. It used to stay bright and simply do
+              // nothing on click, which reads as a broken console rather than
+              // as a route family that is switched off.
+              disabled={model.comparePending || model.goal.trim().length === 0 || model.compareDisabledReason !== null}
             >
               {model.comparePending ? 'Comparing…' : 'Compare routes'}
             </button>

@@ -27,6 +27,9 @@ export type CommerceIntentIssueV1 =
   | 'product_required'
   | 'amount_required'
   | 'conflicting_amounts'
+  | 'conflicting_limits'
+  | 'limit_currency_unsupported'
+  | 'limit_below_denomination'
   | 'currency_ambiguous'
   | 'country_required'
   | 'kind_ambiguous'
@@ -38,8 +41,14 @@ export interface CommerceIntentExtractionV1 {
   kind: CommerceProductKindV1;
   country: string | null;
   countryInferred: boolean;
-  amountDecimal: string | null;
+  /** T64.3.1: the FACE VALUE of the product — "$5 Steam card" → "5". */
+  denominationDecimal: string | null;
   currency: string | null;
+  /** T64.3.1: the SPENDING CEILING the user stated — "never spend more than
+   * 6 USDC" → "6". A separate number with a separate meaning; merging the two
+   * is what made a perfectly clear sentence read as `conflicting_amounts`. */
+  maxSpendDecimal: string | null;
+  maxSpendCurrency: string | null;
   recipientInput: string | null;
   optimizationMode: CommerceOptimizationModeV1;
   executionRequested: boolean;
@@ -63,8 +72,8 @@ export function detectCommerceGoalV1(message: string): boolean {
 
 const KIND_PATTERNS_V1: Array<[CommerceProductKindV1, RegExp]> = [
   ['esim', /\besim\b|\be-sim\b|есим|e-?сим/iu],
-  ['topup', /\btop\s?up\b|\btopup\b|\brefill\b|\bmobile\s+credit\b|пополн\w*\s*(?:счет|баланс|телефон)?/iu],
-  ['gift_card', /\bgift\s?card\b|\bgiftcard\b|\bvoucher\b|подароч\w*\s*карт\w*|подарочн\w*\s*сертификат/iu],
+  ['topup', /\btop\s?up\b|\btopup\b|\brefill\b|\bmobile\s+credit\b|пополн\p{L}*\s*(?:счет|баланс|телефон)?/iu],
+  ['gift_card', /\bgift\s?card\b|\bgiftcard\b|\bvoucher\b|подароч\p{L}*\s*карт\p{L}*|подарочн\p{L}*\s*сертификат/iu],
 ];
 
 export function mapCommerceKindV1(message: string): { value: CommerceProductKindV1; ambiguous: boolean } {
@@ -84,9 +93,9 @@ const CURRENCY_SYMBOLS_V1: Record<string, string> = {
 };
 
 const CURRENCY_WORDS_V1: Array<[string, RegExp]> = [
-  ['USD', /\busd\b|\bdollars?\b|доллар\w*|бакс\w*/iu],
+  ['USD', /\busd\b|\bdollars?\b|доллар\p{L}*|бакс\p{L}*/iu],
   ['EUR', /\beur\b|\beuros?\b|евро/iu],
-  ['GBP', /\bgbp\b|\bpounds?\b|фунт\w*/iu],
+  ['GBP', /\bgbp\b|\bpounds?\b|фунт\p{L}*/iu],
 ];
 
 /** Currencies whose market can be inferred without ambiguity within the
@@ -95,17 +104,83 @@ const CURRENCY_WORDS_V1: Array<[string, RegExp]> = [
 const COUNTRY_BY_CURRENCY_V1: Record<string, string> = { USD: 'US', GBP: 'GB' };
 
 const COUNTRY_PATTERNS_V1: Array<[string, RegExp]> = [
-  ['US', /\b(?:us|usa|united\s+states)\b|сша|америк\w*/iu],
-  ['GB', /\b(?:uk|gb|great\s+britain|united\s+kingdom)\b|британ\w*|англи\w*/iu],
-  ['DE', /\b(?:de|germany)\b|герман\w*|немецк\w*/iu],
-  ['FR', /\b(?:fr|france)\b|франц\w*/iu],
-  ['IT', /\b(?:it|italy)\b|итал\w*/iu],
-  ['ES', /\b(?:es|spain)\b|испан\w*/iu],
-  ['NL', /\b(?:nl|netherlands)\b|нидерланд\w*|голланд\w*/iu],
-  ['PL', /\b(?:pl|poland)\b|польш\w*|польск\w*/iu],
-  ['CA', /\b(?:ca|canada)\b|канад\w*/iu],
-  ['AU', /\b(?:au|australia)\b|австрал\w*/iu],
+  ['US', /\b(?:us|usa|united\s+states)\b|сша|америк\p{L}*/iu],
+  ['GB', /\b(?:uk|gb|great\s+britain|united\s+kingdom)\b|британ\p{L}*|англи\p{L}*/iu],
+  ['DE', /\b(?:de|germany)\b|герман\p{L}*|немецк\p{L}*/iu],
+  ['FR', /\b(?:fr|france)\b|франц\p{L}*/iu],
+  ['IT', /\b(?:it|italy)\b|итал\p{L}*/iu],
+  ['ES', /\b(?:es|spain)\b|испан\p{L}*/iu],
+  ['NL', /\b(?:nl|netherlands)\b|нидерланд\p{L}*|голланд\p{L}*/iu],
+  ['PL', /\b(?:pl|poland)\b|польш\p{L}*|польск\p{L}*/iu],
+  ['CA', /\b(?:ca|canada)\b|канад\p{L}*/iu],
+  ['AU', /\b(?:au|australia)\b|австрал\p{L}*/iu],
 ];
+
+// --- T64.3.1: spending ceilings are not prices ------------------------------
+//
+// "Buy a $5 Steam card. Never spend more than 6 USDC." states TWO numbers with
+// two different jobs: a denomination to order and a ceiling to authorize. The
+// first extractor treated every number in the sentence as a candidate price and
+// refused the whole goal as `conflicting_amounts`. The ceiling clause is now
+// lifted out FIRST, so the amount extractor only ever sees the denomination.
+
+/** Lead-ins that introduce a ceiling. Deliberately does NOT include "up to" —
+ * "top up to 5 USD" would have read a top-up amount as a limit. */
+const SPEND_LIMIT_LEAD_V1 = String.raw`(?:never\s+spend\s+(?:more\s+than|over|above)|do(?:n'?t|\s+not)\s+spend\s+(?:more\s+than|over|above)|spend(?:ing)?\s+limit(?:\s+of)?|no\s+more\s+than|not\s+more\s+than|at\s+most|max(?:imum)?(?:\s+of)?|ceiling(?:\s+of)?|budget(?:\s+of)?|не\s+тратить\s+больше|не\s+больше|не\s+более|не\s+дороже|максимальн\p{L}*|максимум|лимит\p{L}*)`;
+
+/** The lead-in plus the number it governs, and the currency if one was named.
+ * `(?<!\p{L})` replaces `\b`, which never matches before a Cyrillic letter. */
+const SPEND_LIMIT_CLAUSE_V1 = new RegExp(
+  String.raw`(?<!\p{L})${SPEND_LIMIT_LEAD_V1}[\s:=~-]*(?:of\s+)?([$€£])?\s?(\d+(?:[.,]\d{1,2})?)\s*([$€£])?\s*(usdc|usdt|usd|dollars?|eur|euros?|gbp|pounds?|доллар\p{L}*|евро|фунт\p{L}*|бакс\p{L}*)?`,
+  'giu',
+);
+
+function limitCurrencyV1(symbol: string | undefined, word: string | undefined): string | null {
+  if (symbol) return CURRENCY_SYMBOLS_V1[symbol] ?? null;
+  if (!word) return null;
+  const text = word.toLocaleLowerCase('en-US');
+  if (text.startsWith('usdc')) return 'USDC';
+  if (text.startsWith('usdt')) return 'USDT';
+  if (text.startsWith('usd') || text.startsWith('dollar') || text.startsWith('доллар') || text.startsWith('бакс')) {
+    return 'USD';
+  }
+  if (text.startsWith('eur') || text === 'евро') return 'EUR';
+  if (text.startsWith('gbp') || text.startsWith('pound') || text.startsWith('фунт')) return 'GBP';
+  return null;
+}
+
+export interface CommerceSpendLimitV1 {
+  maxSpendDecimal: string | null;
+  currency: string | null;
+  /** The message with every ceiling clause cut out. Everything downstream —
+   * the denomination, the currency, the product query — reads THIS. */
+  remainder: string;
+  /** Two different ceilings were stated; neither is assumed. */
+  conflicting: boolean;
+}
+
+export function extractCommerceSpendLimitV1(message: string): CommerceSpendLimitV1 {
+  const values = new Set<string>();
+  const currencies = new Set<string>();
+  let remainder = '';
+  let cursor = 0;
+  for (const match of message.matchAll(SPEND_LIMIT_CLAUSE_V1)) {
+    values.add(match[2].replace(',', '.'));
+    const currency = limitCurrencyV1(match[1] ?? match[3], match[4]);
+    if (currency) currencies.add(currency);
+    remainder += message.slice(cursor, match.index);
+    cursor = (match.index ?? 0) + match[0].length;
+  }
+  remainder += message.slice(cursor);
+  const values_ = [...values];
+  const currencies_ = [...currencies];
+  return {
+    maxSpendDecimal: values_.length === 1 ? values_[0] : null,
+    currency: currencies_.length === 1 ? currencies_[0] : null,
+    remainder,
+    conflicting: values_.length > 1,
+  };
+}
 
 export function extractCommerceAmountV1(message: string): {
   amountDecimal: string | null;
@@ -157,10 +232,10 @@ export function mapCommerceCountryV1(message: string): string | null {
 
 export function mapCommerceOptimizationModeV1(message: string): CommerceOptimizationModeV1 {
   const text = normalize(message);
-  if (/\bcheapest\b|\blowest\s+(?:total|cost|price)\b|дешевл\w*|минимальн\w*\s+(?:цен|стоим)/iu.test(text)) {
+  if (/\bcheapest\b|\blowest\s+(?:total|cost|price)\b|дешевл\p{L}*|минимальн\p{L}*\s+(?:цен|стоим)/iu.test(text)) {
     return 'lowest_total_cost';
   }
-  if (/\bfastest\b|\bquickest\b|\basap\b|быстр\w*|срочн\w*/iu.test(text)) return 'fastest_delivery';
+  if (/\bfastest\b|\bquickest\b|\basap\b|быстр\p{L}*|срочн\p{L}*/iu.test(text)) return 'fastest_delivery';
   return 'exact_denomination';
 }
 
@@ -176,11 +251,15 @@ const NOISE_PATTERNS_V1: RegExp[] = [
   /\b(?:buy|purchase|get|order|please|for|me|a|an|the|on|with|using|worth|of)\b/giu,
   /(?:купи|куплю|купить|пожалуйста|мне|на|за|для|через)/giu,
   /\bgift\s?card\b|\bgiftcard\b|\bvoucher\b|\besim\b|\btop\s?up\b|\btopup\b|\brefill\b/giu,
-  /подароч\w*|подарк\w*|сертификат\w*|ваучер\w*|пополн\w*|есим/giu,
+  /подароч\p{L}*|подарк\p{L}*|сертификат\p{L}*|ваучер\p{L}*|пополн\p{L}*|есим/giu,
   /[$€£]\s?\d+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?\s?[$€£]|\b\d+(?:[.,]\d{1,2})?\b/giu,
-  /\busd\b|\beur\b|\bgbp\b|\bdollars?\b|\beuros?\b|\bpounds?\b/giu,
-  /доллар\w*|евро|фунт\w*|бакс\w*/giu,
+  /\busdc?\b|\busdt\b|\beur\b|\bgbp\b|\bdollars?\b|\beuros?\b|\bpounds?\b/giu,
+  /доллар\p{L}*|евро|фунт\p{L}*|бакс\p{L}*/giu,
   /\+\d[\d\s-]{6,18}\d/gu,
+  // T64.3.1 — ceiling vocabulary. The clause WITH its number is removed before
+  // this list runs; these catch the leftovers ("no limit", "spend less").
+  /\b(?:never|do\s+not|don'?t|spend|spending|more|less|than|most|max|maximum|minimum|limit|cap|budget|ceiling|total|only|just|card|cards)\b/giu,
+  /(?:не\s+больше|не\s+более|не\s+дороже|максимальн\p{L}*|максимум|лимит\p{L}*|потрат\p{L}*|карт\p{L}*|тольк\p{L}*)/giu,
 ];
 
 /**
@@ -189,7 +268,9 @@ const NOISE_PATTERNS_V1: RegExp[] = [
  * decides whether it matches anything, not this function.
  */
 export function extractCommerceQueryV1(message: string): string | null {
-  let remaining = message;
+  // T64.3.1 — the ceiling clause leaves FIRST. Without this, "never spend more
+  // than 6 USDC" was searched for at the storefront as part of the brand.
+  let remaining = message.replace(SPEND_LIMIT_CLAUSE_V1, ' ');
   for (const [, pattern] of COUNTRY_PATTERNS_V1) {
     remaining = remaining.replace(new RegExp(pattern.source, 'giu'), ' ');
   }
@@ -197,6 +278,9 @@ export function extractCommerceQueryV1(message: string): string | null {
   const words = remaining
     .replace(/[^\p{L}\p{N}\s.+-]/gu, ' ')
     .split(/\s+/u)
+    // A brand may legitimately contain a dot ("Amazon.com"); sentence
+    // punctuation around it may not.
+    .map((word) => word.replace(/^[.+-]+/u, '').replace(/[.+-]+$/u, ''))
     .filter((word) => word.length > 1);
   if (words.length === 0) return null;
   const query = words.slice(0, 4).join(' ').trim();
@@ -211,7 +295,17 @@ export function extractCommerceIntentV1(message: string): CommerceIntentExtracti
   const kind = mapCommerceKindV1(message);
   if (kind.ambiguous) issues.push('kind_ambiguous');
 
-  const amount = extractCommerceAmountV1(message);
+  // The ceiling is lifted out before the denomination is read, so a sentence
+  // that names both is understood instead of refused.
+  const limit = extractCommerceSpendLimitV1(message);
+  if (limit.conflicting) issues.push('conflicting_limits');
+  // The rail settles in USDC. A ceiling stated in EUR or GBP is a currency
+  // conversion this extractor will not perform silently.
+  if (limit.maxSpendDecimal !== null && limit.currency !== null && limit.currency !== 'USD' && limit.currency !== 'USDC') {
+    issues.push('limit_currency_unsupported');
+  }
+
+  const amount = extractCommerceAmountV1(limit.remainder);
   if (amount.conflicting) issues.push('conflicting_amounts');
   if (amount.ambiguousCurrency) issues.push('currency_ambiguous');
 
@@ -231,8 +325,10 @@ export function extractCommerceIntentV1(message: string): CommerceIntentExtracti
     kind: kind.value,
     country,
     countryInferred: explicitCountry === null && inferredCountry !== null,
-    amountDecimal: amount.amountDecimal,
+    denominationDecimal: amount.amountDecimal,
     currency: amount.currency,
+    maxSpendDecimal: limit.maxSpendDecimal,
+    maxSpendCurrency: limit.currency,
     recipientInput,
     optimizationMode: mapCommerceOptimizationModeV1(message),
     executionRequested: false,
@@ -259,6 +355,13 @@ export interface ResolveCommerceIntentInputV1 {
 
 const DEFAULT_SPEND_HEADROOM_BPS_V1 = 1_500;
 
+/** A decimal string → USDC base units (1e-6). The extractor only ever produces
+ * at most two fraction digits, so this is exact rather than rounded. */
+function usdcAtomicFromDecimalV1(value: string): bigint {
+  const [whole, fraction = ''] = value.split('.');
+  return BigInt(`${whole}${fraction.padEnd(6, '0').slice(0, 6)}`);
+}
+
 /**
  * Grounds an EN/RU commerce request into a validated CommerceRouteIntentV1.
  * Returns needs_clarification rather than inventing a product, a price, a
@@ -273,11 +376,17 @@ export function resolveCommerceIntentV1(
   }
 
   const blocking = extraction.issues.filter(
-    (code) => code === 'conflicting_amounts' || code === 'currency_ambiguous' || code === 'kind_ambiguous' || code === 'recipient_required',
+    (code) =>
+      code === 'conflicting_amounts' ||
+      code === 'conflicting_limits' ||
+      code === 'limit_currency_unsupported' ||
+      code === 'currency_ambiguous' ||
+      code === 'kind_ambiguous' ||
+      code === 'recipient_required',
   );
   const missing: CommerceIntentIssueV1[] = [];
   if (extraction.query === null) missing.push('product_required');
-  if (extraction.amountDecimal === null) missing.push('amount_required');
+  if (extraction.denominationDecimal === null) missing.push('amount_required');
   if (extraction.currency === null) missing.push('currency_ambiguous');
   if (extraction.country === null) missing.push('country_required');
   if (blocking.length > 0 || missing.length > 0) {
@@ -294,13 +403,28 @@ export function resolveCommerceIntentV1(
     return { status: 'unsupported', intent: null, extraction, issues: [...extraction.issues] };
   }
 
-  const requestedDecimal = extraction.amountDecimal as string;
-  const [whole, fraction = ''] = requestedDecimal.split('.');
-  const requestedMinor = BigInt(`${whole}${fraction.padEnd(2, '0').slice(0, 2)}`);
+  const requestedDecimal = extraction.denominationDecimal as string;
+  const requestedAtomic = usdcAtomicFromDecimalV1(requestedDecimal);
   const headroomBps = BigInt(input.spendHeadroomBps ?? DEFAULT_SPEND_HEADROOM_BPS_V1);
-  // minor units (1e-2) → USDC base units (1e-6), then the authorized headroom.
-  const requestedAtomic = requestedMinor * BigInt(10_000);
-  const maxSpendAtomic = (requestedAtomic * (BigInt(10_000) + headroomBps)) / BigInt(10_000);
+  const derivedCeiling = (requestedAtomic * (BigInt(10_000) + headroomBps)) / BigInt(10_000);
+  // T64.3.1 — an explicit ceiling REPLACES the derived headroom. The user said
+  // a number; authorizing more than it because a formula produced more would be
+  // the whole point of the sentence, ignored.
+  const statedCeiling = extraction.maxSpendDecimal === null ? null : usdcAtomicFromDecimalV1(extraction.maxSpendDecimal);
+  const maxSpendAtomic = statedCeiling ?? derivedCeiling;
+
+  // A ceiling below the face value cannot buy the card. Only checked when the
+  // denomination is itself USD/USDC — comparing 5 EUR to 6 USDC would be an fx
+  // assumption, and the ceiling still applies as an absolute cap either way.
+  const denominationIsSettlementCurrency = extraction.currency === 'USD';
+  if (statedCeiling !== null && denominationIsSettlementCurrency && statedCeiling < requestedAtomic) {
+    return {
+      status: 'needs_clarification',
+      intent: null,
+      extraction,
+      issues: [...new Set([...extraction.issues, 'limit_below_denomination' as const])],
+    };
+  }
 
   const nowIso = input.now.toISOString();
   const draft = {

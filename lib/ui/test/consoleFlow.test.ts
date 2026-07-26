@@ -7,11 +7,13 @@ import {
   chainLabelV1,
   completeStageV1,
   commerceCheckoutAvailableV1,
+  comparingProgressV1,
   coverageFromStatusV1,
   deriveStageTimingsV1,
   dispatchRouteFamilyV1,
   emptyStageClockV1,
   formatStageDurationV1,
+  haltStageRailV1,
   routeFamilyForGoalV1,
   stageDurationMsV1,
   startStageV1,
@@ -207,15 +209,21 @@ describe('coverage and adapters come from the server, not the front end', () => 
   test('adapters reflect the gates before a run, and the real answers after one', () => {
     const before = adaptersFromStatusV1(allOff);
     assert.equal(before.every((row) => row.state !== 'live'), true, 'nothing is live while the gates are off');
+    // T64.3.1: a gate that is off is DISABLED. Reporting it as "not connected"
+    // sent an operator looking for a broken RPC that was never broken.
+    assert.equal(before.find((row) => row.name === 'Moonwell')?.state, 'disabled');
+    assert.equal(before.find((row) => row.name === 'Morpho')?.state, 'disabled');
 
     const during = adaptersFromStatusV1(allOn);
-    assert.equal(during.find((row) => row.name === 'Uniswap')?.state, 'live');
+    // Enabled but not yet asked: configured, not live. Live is earned by
+    // answering, not by a flag being true.
+    assert.equal(during.find((row) => row.name === 'Uniswap')?.state, 'configured');
     assert.equal(during.find((row) => row.name === 'o1.exchange')?.state, 'planned');
 
     const after = adaptersFromStatusV1(allOn, [{ name: 'KyberSwap' }], [{ name: 'Uniswap' }]);
     assert.deepEqual(after, [
       { name: 'KyberSwap', state: 'live' },
-      { name: 'Uniswap', state: 'not_connected' },
+      { name: 'Uniswap', state: 'preflight_failed' },
     ]);
   });
 
@@ -224,4 +232,131 @@ describe('coverage and adapters come from the server, not the front end', () => 
     assert.equal(chainLabelV1(84532), 'Base Sepolia · 84532');
     assert.equal(chainLabelV1(undefined), 'chain unknown');
   });
+});
+
+// --- T64.3.1 — Comparing shows one family and always ends -------------------
+
+describe('Comparing is route-family aware and terminal', () => {
+  const ALL_ADAPTERS = [
+    { name: 'Uniswap', label: 'configured', live: false, usable: true },
+    { name: 'KyberSwap', label: 'configured', live: false, usable: true },
+    { name: 'Moonwell', label: 'disabled', live: false, usable: false },
+    { name: 'Morpho', label: 'disabled', live: false, usable: false },
+    { name: 'Alchemy simulation', label: 'configured', live: false, usable: true },
+    { name: 'Bitrefill', label: 'configured', live: false, usable: true },
+    { name: 'o1.exchange', label: 'planned', live: false, usable: false },
+  ];
+
+  test('a commerce comparison lists only the commerce sources', () => {
+    const rows = comparingProgressV1({
+      family: 'commerce',
+      adapters: ALL_ADAPTERS,
+      answered: [],
+      terminalReason: null,
+      evidenceCount: null,
+      scored: false,
+    });
+    assert.deepEqual(rows.map((row) => row.label), [
+      'Intent extraction',
+      'Bitrefill catalogue',
+      'Commerce evidence',
+      'Commerce scoring',
+    ]);
+    // A row for a source that was never called claims it was part of this
+    // comparison. None of these were.
+    const text = rows.map((row) => row.label).join(' ');
+    for (const absent of ['Uniswap', 'KyberSwap', 'Moonwell', 'Morpho', 'o1.exchange', 'Alchemy']) {
+      assert.equal(text.includes(absent), false, `${absent} must not appear in a commerce comparison`);
+    }
+  });
+
+  test('Alchemy never appears while comparing — simulation runs on Review', () => {
+    for (const family of ['swap', 'earn', 'commerce', 'unknown'] as const) {
+      const rows = comparingProgressV1({
+        family,
+        adapters: ALL_ADAPTERS,
+        answered: [],
+        terminalReason: null,
+        evidenceCount: null,
+        scored: false,
+      });
+      assert.equal(rows.some((row) => row.label.includes('Alchemy')), false, family);
+    }
+  });
+
+  test('a swap comparison lists only the swap adapters', () => {
+    const rows = comparingProgressV1({
+      family: 'swap',
+      adapters: ALL_ADAPTERS,
+      answered: ['Uniswap'],
+      terminalReason: null,
+      evidenceCount: 3,
+      scored: true,
+    });
+    assert.deepEqual(rows.map((row) => row.label), [
+      'Intent extraction',
+      'Uniswap quote',
+      'KyberSwap quote',
+      'o1.exchange quote',
+      'Evidence collected',
+      'Scoring against your goal',
+    ]);
+    assert.equal(rows.find((row) => row.label === 'Uniswap quote')?.state, 'done');
+    assert.equal(rows.find((row) => row.label === 'KyberSwap quote')?.state, 'running');
+    // Planned, so it is not spinning and says so.
+    assert.equal(rows.find((row) => row.label === 'o1.exchange quote')?.state, 'failed');
+    assert.equal(rows.find((row) => row.label === 'Evidence collected')?.value, '3 sources');
+  });
+
+  test('a terminal reason stops EVERY spinner', () => {
+    const rows = comparingProgressV1({
+      family: 'commerce',
+      adapters: ALL_ADAPTERS,
+      answered: [],
+      terminalReason: 'Say the card value, for example “$5”.',
+      evidenceCount: null,
+      scored: false,
+    });
+    assert.equal(rows.some((row) => row.state === 'running'), false, 'nothing may keep spinning after the run ends');
+    assert.equal(rows.some((row) => row.state === 'pending'), false, 'nothing may stay pending after the run ends');
+    assert.equal(rows.every((row) => row.state === 'failed'), true);
+    assert.equal(rows.find((row) => row.label === 'Bitrefill catalogue')?.value, 'not reached');
+  });
+
+  test('a disabled adapter states the reason instead of spinning', () => {
+    const rows = comparingProgressV1({
+      family: 'earn',
+      adapters: ALL_ADAPTERS,
+      answered: [],
+      terminalReason: null,
+      evidenceCount: null,
+      scored: false,
+    });
+    const moonwell = rows.find((row) => row.label === 'Moonwell rates');
+    assert.equal(moonwell?.state, 'failed');
+    assert.equal(moonwell?.value, 'disabled');
+  });
+
+  test('an unrecognised goal produces no adapter rows at all', () => {
+    const rows = comparingProgressV1({
+      family: 'unknown',
+      adapters: ALL_ADAPTERS,
+      answered: [],
+      terminalReason: 'Say what you want to do.',
+      evidenceCount: null,
+      scored: false,
+    });
+    assert.deepEqual(rows.map((row) => row.label), ['Intent extraction', 'Evidence collected', 'Scoring against your goal']);
+  });
+});
+
+test('a halted rail no longer points at a stage that stopped', () => {
+  const halted = haltStageRailV1([
+    { name: 'Intent', state: 'done', timing: '0.1s' },
+    { name: 'Candidates', state: 'done', timing: '1.2s' },
+    { name: 'Evidence', state: 'now', timing: '—' },
+    { name: 'Score', state: 'todo', timing: '—' },
+  ]);
+  assert.equal(halted.some((step) => step.state === 'now'), false);
+  assert.deepEqual(halted.map((step) => step.state), ['done', 'done', 'todo', 'todo']);
 });

@@ -109,6 +109,19 @@ export function consoleFailureCopyV1(reason: string | null | undefined): string 
     portfolio_unavailable: CONSOLE_COPY_V1.portfolioUnavailable,
     limits_missing: CONSOLE_COPY_V1.limitsMissing,
     recipient_missing: CONSOLE_COPY_V1.recipientMissing,
+    // T64.3.1 — commerce intent issues. These end a comparison, so each one
+    // has to say what to change rather than name a code.
+    not_commerce_goal: 'This does not read as a purchase. Try “buy a $5 Steam gift card”.',
+    product_required: 'Name the product to buy — for example “Steam”, “Amazon” or “Uber”.',
+    amount_required: 'Say the card value, for example “$5”.',
+    conflicting_amounts: 'Two different card values were named. Keep one.',
+    conflicting_limits: 'Two different spending limits were named. Keep one.',
+    limit_currency_unsupported: 'The spending limit has to be in USD or USDC — this rail settles in USDC.',
+    limit_below_denomination: 'The spending limit is below the card value, so nothing could be bought within it.',
+    currency_ambiguous: 'Say the currency, for example “$5” or “5 USD”.',
+    country_required: 'Say the market, for example “a US Steam card”.',
+    kind_ambiguous: 'Say whether this is a gift card, a top-up or an eSIM.',
+    recipient_required: 'A top-up needs the phone number to credit.',
   };
   return known[reason] ?? humanizeConsoleTokenV1(reason);
 }
@@ -454,15 +467,43 @@ export function deriveSimulationViewV1(simulation: SimulationSourceV1 | null): S
 
 // --- Left rail --------------------------------------------------------------
 
+/**
+ * T64.3.1 — the five states an adapter can actually be in. The old model had
+ * one bucket, `not_connected`, and used it for two unrelated situations: a
+ * feature flag the operator deliberately switched off, and a provider that was
+ * asked and could not answer. Calling a disabled Earn gate "not connected"
+ * sent the operator hunting for a broken RPC that was never broken.
+ *
+ *   disabled        — a server flag is off. Nothing was attempted.
+ *   configured      — enabled and ready, but it has not been asked yet.
+ *   live            — it answered on this run.
+ *   preflight_failed— it was asked on this run and could not answer.
+ *   planned         — no adapter exists yet.
+ */
+export type AdapterLifecycleV1 = 'live' | 'configured' | 'preflight_failed' | 'disabled' | 'planned';
+
+export const ADAPTER_LIFECYCLE_LABELS_V1: Record<AdapterLifecycleV1, string> = {
+  live: 'live',
+  configured: 'configured',
+  preflight_failed: 'preflight failed',
+  disabled: 'disabled',
+  planned: 'planned',
+};
+
 export interface AdapterStatusSourceV1 {
   name: string;
-  state: 'live' | 'building' | 'planned' | 'not_connected';
+  state: AdapterLifecycleV1;
 }
 
 export interface AdapterStatusViewV1 {
   name: string;
   label: string;
+  state: AdapterLifecycleV1;
+  /** It answered on this run. Only `live` earns the green tick. */
   live: boolean;
+  /** It is switched on and could answer. Drives the "n / m" summary, so a
+   * configured-but-not-yet-asked adapter is not reported as missing. */
+  usable: boolean;
 }
 
 export function deriveAdapterRowsV1(adapters: readonly AdapterStatusSourceV1[]): {
@@ -471,11 +512,13 @@ export function deriveAdapterRowsV1(adapters: readonly AdapterStatusSourceV1[]):
 } {
   const rows = adapters.map((adapter) => ({
     name: adapter.name,
-    label: adapter.state === 'not_connected' ? 'not connected' : adapter.state,
+    label: ADAPTER_LIFECYCLE_LABELS_V1[adapter.state],
+    state: adapter.state,
     live: adapter.state === 'live',
+    usable: adapter.state === 'live' || adapter.state === 'configured',
   }));
-  const live = rows.filter((row) => row.live).length;
-  return { rows, summary: `${live} / ${rows.length}` };
+  const usable = rows.filter((row) => row.usable).length;
+  return { rows, summary: `${usable} / ${rows.length}` };
 }
 
 export function usagePercentV1(used: number, limit: number): number {
