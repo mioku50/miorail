@@ -392,8 +392,9 @@ export function buildNftPurchaseBlueprintV1(input: {
   const calls = [call];
   const base = {
     schemaVersion: 'nft-purchase-blueprint/v1' as const,
+    // Run-scoped, like the candidate and the card it belongs to.
     id: `nft-blueprint:${stableHashV1('nft-blueprint', {
-      intentHash: input.intent.intentHash,
+      runId: input.intent.id,
       candidateHash: input.candidate.candidateHash,
     }).slice(2, 26)}`,
     tenantId: input.intent.tenantId,

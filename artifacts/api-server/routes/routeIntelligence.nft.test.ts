@@ -355,6 +355,31 @@ describe('comparing the same NFT twice is two observations', () => {
     assert.equal((await repository.listNftCandidates(second.body.routeRunId, USER.id)).length, 1);
   });
 
+  test('the second run stores its OWN candidate, evidence and card', async () => {
+    // The production failure this replaces: candidate, evidence and card ids
+    // were derived from the intent HASH, which is deliberately identical for
+    // the same goal. A second comparison therefore minted rows whose primary
+    // keys already existed in the first run, the inserts were dropped, and the
+    // evidence insert failed with "NFT evidence references an unknown
+    // candidate". Ids are scoped to the run now.
+    const first = await compareAgain('nft-req-a', NOW);
+    const second = await compareAgain('nft-req-b', new Date(NOW.getTime() + 20_000));
+    assert.equal(second.status, 200);
+
+    const [firstCandidate] = await repository.listNftCandidates(first.body.routeRunId, USER.id);
+    const [secondCandidate] = await repository.listNftCandidates(second.body.routeRunId, USER.id);
+    assert.ok(firstCandidate && secondCandidate);
+    assert.notEqual(secondCandidate.id, firstCandidate.id, 'each run owns its candidate row');
+    assert.notEqual(second.body.routeCard.id, first.body.routeCard.id, 'and its card row');
+
+    const firstEvidence = await repository.listNftEvidence(first.body.routeRunId, USER.id);
+    const secondEvidence = await repository.listNftEvidence(second.body.routeRunId, USER.id);
+    assert.ok(firstEvidence.length > 0);
+    assert.equal(secondEvidence.length, firstEvidence.length, 'the second observation kept all of its evidence');
+    const shared = secondEvidence.filter((record) => firstEvidence.some((other) => other.id === record.id));
+    assert.deepEqual(shared, [], 'no evidence row is shared between two observations');
+  });
+
   test('an identical replay of ONE request id returns the same run, not a second', async () => {
     const first = await compareAgain('nft-req-same', NOW);
     const replay = await compareAgain('nft-req-same', NOW);

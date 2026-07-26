@@ -124,8 +124,13 @@ export function buildNftCandidateV1(input: {
   const base = {
     ...stamp({ tenantId: input.intent.tenantId, walletAddress: input.intent.walletAddress, now: input.now }),
     schemaVersion: 'nft-listing-candidate/v1' as const,
+    // Scoped to the RUN, not to the intent CONTENT. intentHash is deliberately
+    // stable across comparisons of the same goal, so keying an id off it made
+    // the second comparison mint a candidate whose primary key already existed
+    // in the first one's run — the insert was dropped and the evidence that
+    // referenced it then had no candidate to point at.
     id: `nft-candidate:${stableHashV1('nft-candidate', {
-      intentHash: input.intent.intentHash,
+      runId: input.intent.id,
       orderHash: input.listing.orderHash,
     }).slice(2, 26)}`,
     status: 'quoted' as const,
@@ -178,8 +183,10 @@ export function buildNftEvidenceV1(input: {
     const base = {
       ...stamp({ tenantId: input.intent.tenantId, walletAddress: input.intent.walletAddress, now: input.now }),
       schemaVersion: 'nft-evidence-record/v1' as const,
+      // Run-scoped for the same reason. Two records of the same kind and the
+      // same provider response WITHIN one comparison still collapse to one.
       id: `nft-evidence:${stableHashV1('nft-evidence', {
-        intentHash: input.intent.intentHash,
+        runId: input.intent.id,
         evidenceKind,
         responseHash: source.responseHash,
       }).slice(2, 26)}`,
@@ -452,7 +459,7 @@ export function buildNftRouteCardV1(input: {
     ...stamp({ tenantId: input.intent.tenantId, walletAddress: input.intent.walletAddress, now: input.now }),
     schemaVersion: 'nft-route-card/v1' as const,
     id: `nft-route-card:${stableHashV1('nft-route-card', {
-      intentHash: input.intent.intentHash,
+      runId: input.intent.id,
       candidateHash: input.candidate?.candidateHash ?? null,
     }).slice(2, 26)}`,
     status: (usable ? 'ready' : 'failed') as 'ready' | 'failed',

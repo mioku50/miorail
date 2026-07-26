@@ -58,10 +58,32 @@ export function createMemoryNftStorageRepository(
   const runsByIdempotency = new Map<string, string>();
   const blueprints = new Map<string, NftPurchaseBlueprintRecordV1>();
   const blueprintsByCard = new Map<string, string>();
+  /**
+   * Row ids that exist ANYWHERE, per table.
+   *
+   * Postgres enforces a primary key across the whole table; this fake used to
+   * key everything per run, so a row whose id already existed in another run
+   * inserted cleanly here and was silently dropped there. That divergence is
+   * what let candidate/evidence/card ids derived from the intent HASH — stable
+   * across comparisons of one goal — reach production and break every second
+   * comparison. The fake refuses what the database refuses.
+   */
+  const candidateIds = new Map<string, string>();
+  const evidenceIds = new Map<string, string>();
+  const cardIds = new Map<string, string>();
   const proofs = new Map<string, NftProofRecordV1>();
   const proofsByBlueprint = new Map<string, string>();
   const proofsByOrder = new Map<string, string>();
   const events = new Map<string, NftProofEventV1[]>();
+
+  /** The primary key check, shared by the three run-scoped tables. */
+  function claimRowId(table: Map<string, string>, id: string, runId: string, what: string): void {
+    const owner = table.get(id);
+    if (owner !== undefined && owner !== runId) {
+      throw new RouteStorageConflictError(`This ${what} id already belongs to another NFT run`);
+    }
+    table.set(id, runId);
+  }
 
   function requireRun(runId: string, userId: string): MemoryNftRun {
     const run = runs.get(runId);
@@ -167,6 +189,7 @@ export function createMemoryNftStorageRepository(
         throw new RouteStorageConflictError('This listing already has a different candidate in this run');
       }
       if (run.candidates.has(candidate.candidateHash)) return;
+      claimRowId(candidateIds, candidate.id, runId, 'candidate');
       run.candidates.set(candidate.candidateHash, candidate);
       run.candidateOrders.set(candidate.order.orderHash, candidate.candidateHash);
     },
@@ -188,6 +211,7 @@ export function createMemoryNftStorageRepository(
         throw new RouteStorageIntegrityError('NFT evidence references an unknown candidate');
       }
       if (run.evidence.has(evidence.evidenceHash)) return;
+      claimRowId(evidenceIds, evidence.id, runId, 'evidence');
       run.evidence.set(evidence.evidenceHash, evidence);
     },
 
@@ -203,6 +227,7 @@ export function createMemoryNftStorageRepository(
         throw new RouteStorageIntegrityError('NFT route card intentHash does not match its run');
       }
       if (run.cards.has(card.routeCardHash)) return;
+      claimRowId(cardIds, card.id, runId, 'route card');
       run.cards.set(card.routeCardHash, card);
       run.cardsById.set(card.id, card);
     },
