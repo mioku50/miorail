@@ -8,6 +8,7 @@ test('migration flags preserve the legacy product when variables are missing', (
     legacyTerminal: true,
     paidIntelligence: false,
     earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false,
+    nftRouteV1: false, nftExecutionV1: false,
   });
 });
 
@@ -24,6 +25,7 @@ test('migration flags accept only explicit boolean values', () => {
       legacyTerminal: false,
       paidIntelligence: true,
       earnRouteV1: true, commerceRouteV1: false, commerceExecutionV1: false,
+      nftRouteV1: false, nftExecutionV1: false,
     },
   );
 });
@@ -41,6 +43,7 @@ test('invalid migration flag values fall back to the compatibility baseline', ()
       legacyTerminal: true,
       paidIntelligence: false,
       earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false,
+    nftRouteV1: false, nftExecutionV1: false,
     },
   );
 });

@@ -9,6 +9,11 @@ export interface MiorailProductMigrationFlags {
    * a digital good is irreversible, so opening a checkout is enabled
    * independently of being able to compare one. */
   commerceExecutionV1: boolean;
+  /** T65: NFT COMPARISON — reading a listing and scoring it. */
+  nftRouteV1: boolean;
+  /** T65: NFT PURCHASE. Separate from the comparison gate: an NFT bought is
+   * an NFT bought, so signing is enabled independently of looking. */
+  nftExecutionV1: boolean;
 }
 
 function readBooleanFlag(env: NodeJS.ProcessEnv, name: string, defaultValue: boolean): boolean {
@@ -33,5 +38,7 @@ export function getMiorailProductMigrationFlags(
     earnRouteV1: readBooleanFlag(env, 'MIORAIL_EARN_ROUTE_V1', false),
     commerceRouteV1: readBooleanFlag(env, 'MIORAIL_COMMERCE_ROUTE_V1', false),
     commerceExecutionV1: readBooleanFlag(env, 'MIORAIL_COMMERCE_EXECUTION_V1', false),
+    nftRouteV1: readBooleanFlag(env, 'MIORAIL_NFT_ROUTE_V1', false),
+    nftExecutionV1: readBooleanFlag(env, 'MIORAIL_NFT_EXECUTION_V1', false),
   });
 }
