@@ -1,5 +1,6 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { encodeFunctionData } from 'viem';
 import {
   hashNftAssetRefV1,
   hashNftListingCandidateV1,
@@ -17,6 +18,7 @@ import {
   verifyNftListingUnchangedV1,
   verifyNftListingV1,
   verifyNftRecipientV1,
+  SEAPORT_FULFILL_BASIC_ORDER_ABI_V1,
 } from '../src/index.js';
 
 // ---------------------------------------------------------------------------
@@ -105,13 +107,45 @@ function candidate(overrides: Partial<NftListingCandidateV1> = {}): NftListingCa
   return { ...base, candidateHash: hashNftListingCandidateV1(base) };
 }
 
+/** Real BasicOrder calldata for the fixture listing. The kernel DECODES the
+ * bytes now, so a placeholder would be refused — correctly. */
+function basicCalldata(overrides: Record<string, unknown> = {}): `0x${string}` {
+  return encodeFunctionData({
+    abi: SEAPORT_FULFILL_BASIC_ORDER_ABI_V1,
+    functionName: 'fulfillBasicOrder_efficient_6GL6yc',
+    args: [
+      {
+        considerationToken: '0x0000000000000000000000000000000000000000',
+        considerationIdentifier: 0n,
+        considerationAmount: 18_810_000_000_000_000n,
+        offerer: SELLER,
+        zone: '0x0000000000000000000000000000000000000000',
+        offerToken: CONTRACT,
+        offerIdentifier: 123n,
+        offerAmount: 1n,
+        basicOrderType: 0,
+        startTime: 1n,
+        endTime: 99_999_999_999n,
+        zoneHash: `0x${'0'.repeat(64)}`,
+        salt: 0n,
+        offererConduitKey: `0x${'0'.repeat(64)}`,
+        fulfillerConduitKey: `0x${'0'.repeat(64)}`,
+        totalOriginalAdditionalRecipients: 1n,
+        additionalRecipients: [{ amount: 190_000_000_000_000n, recipient: SELLER }],
+        signature: '0xdead',
+        ...overrides,
+      } as never,
+    ],
+  });
+}
+
 function call(overrides: Partial<ExecutionCallV1> = {}): ExecutionCallV1 {
   return {
     index: 0,
     callType: 'other',
     to: SEAPORT,
     valueWei: '19000000000000000',
-    data: '0xfb0f3ee1abcdef',
+    data: basicCalldata(),
     asset: null,
     amountAtomic: null,
     recipient: null,

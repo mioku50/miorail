@@ -1,3 +1,4 @@
+import { decodeFunctionData, toFunctionSelector } from 'viem';
 import type {
   ExecutionCallV1,
   NftListingCandidateV1,
@@ -5,6 +6,11 @@ import type {
 } from '@mioagent/route-domain';
 import { isPinnedSeaportTargetV1 } from './pinned-config.js';
 import { verifyNftIdentityV1, type NftVerificationReasonV1 } from './verification.js';
+import {
+  SEAPORT_FULFILL_ADVANCED_ORDER_ABI_V1,
+  SEAPORT_FULFILL_BASIC_ORDER_ABI_V1,
+  type NftFulfillmentFormV1,
+} from './blueprint.js';
 
 // ---------------------------------------------------------------------------
 // T65 §7 — the NFT Safety Kernel.
@@ -25,6 +31,14 @@ import { verifyNftIdentityV1, type NftVerificationReasonV1 } from './verificatio
 export type NftSafetyViolationV1 =
   | NftVerificationReasonV1
   | 'wrong_call_count'
+  | 'calldata_not_pinned_function'
+  | 'calldata_undecodable'
+  | 'decoded_wrong_contract'
+  | 'decoded_wrong_token'
+  | 'decoded_wrong_seller'
+  | 'decoded_price_mismatch'
+  | 'decoded_value_mismatch'
+  | 'decoded_wrong_recipient'
   | 'target_not_seaport'
   | 'target_not_order_protocol'
   | 'value_exceeds_ceiling'
@@ -100,6 +114,24 @@ export function nftPurchaseSafetyKernelV1(input: NftSafetyInputV1): NftSafetyRes
     violations.push('erc20_approval_present');
   }
 
+  // The bytes are DECODED, not merely inspected by selector. Both pinned
+  // Seaport entry points reduce to the same question — is this one specific
+  // token, from this seller, for this exact price — and a batch that cannot
+  // answer it is refused rather than passed along.
+  const decoded = decodeNftFulfillmentCallV1(call.data);
+  if (!decoded.ok) {
+    violations.push(decoded.reason);
+  } else {
+    if (decoded.offerToken !== candidate.asset.contractAddress.toLowerCase()) violations.push('decoded_wrong_contract');
+    if (decoded.tokenId !== candidate.asset.tokenId) violations.push('decoded_wrong_token');
+    if (decoded.offerer !== candidate.order.seller.toLowerCase()) violations.push('decoded_wrong_seller');
+    if (decoded.totalWei !== candidate.listingPriceWei) violations.push('decoded_price_mismatch');
+    if (decoded.totalWei !== call.valueWei) violations.push('decoded_value_mismatch');
+    // Only the advanced form names a recipient. The basic form sends to
+    // msg.sender, which is the buyer by construction.
+    if (decoded.recipient !== null && decoded.recipient !== buyer) violations.push('decoded_wrong_recipient');
+  }
+
   let value: bigint;
   try {
     value = BigInt(call.valueWei);
@@ -164,4 +196,81 @@ export function nftPurchaseSignableV1(input: {
     return { signable: false, reason: 'Simulation has not run yet, so nothing is signed from a guess.' };
   }
   return { signable: true, reason: null };
+}
+
+/** What a decoded fulfillment call actually says, reduced to the four facts
+ * that decide whether it is the reviewed purchase. */
+export type NftDecodedCallV1 =
+  | {
+      ok: true;
+      form: NftFulfillmentFormV1;
+      offerToken: string;
+      tokenId: string;
+      offerer: string;
+      totalWei: string;
+      /** Null for the basic form, which has no recipient field: Seaport sends
+       * the token to msg.sender and no calldata can redirect it. */
+      recipient: string | null;
+    }
+  | { ok: false; reason: NftSafetyViolationV1 };
+
+/**
+ * Decodes a call against the two pinned Seaport ABIs and nothing else.
+ *
+ * A selector outside the pair is not decoded at all — the point of pinning is
+ * that unknown bytes never get interpreted, only refused.
+ */
+export function decodeNftFulfillmentCallV1(data: string): NftDecodedCallV1 {
+  const selector = data.slice(0, 10).toLowerCase();
+  const basicSelector = toFunctionSelector(SEAPORT_FULFILL_BASIC_ORDER_ABI_V1[0]);
+  const advancedSelector = toFunctionSelector(SEAPORT_FULFILL_ADVANCED_ORDER_ABI_V1[0]);
+
+  try {
+    if (selector === basicSelector) {
+      const { args } = decodeFunctionData({ abi: SEAPORT_FULFILL_BASIC_ORDER_ABI_V1, data: data as `0x${string}` });
+      const p = (args as readonly unknown[])[0] as {
+        offerToken: string;
+        offerIdentifier: bigint;
+        offerer: string;
+        considerationAmount: bigint;
+        additionalRecipients: readonly { amount: bigint }[];
+      };
+      const total = p.additionalRecipients.reduce((sum, entry) => sum + entry.amount, p.considerationAmount);
+      return {
+        ok: true,
+        form: 'basic',
+        offerToken: p.offerToken.toLowerCase(),
+        tokenId: p.offerIdentifier.toString(),
+        offerer: p.offerer.toLowerCase(),
+        totalWei: total.toString(),
+        recipient: null,
+      };
+    }
+    if (selector === advancedSelector) {
+      const { args } = decodeFunctionData({ abi: SEAPORT_FULFILL_ADVANCED_ORDER_ABI_V1, data: data as `0x${string}` });
+      const list = args as readonly unknown[];
+      const order = list[0] as {
+        parameters: {
+          offerer: string;
+          offer: readonly { token: string; identifierOrCriteria: bigint }[];
+          consideration: readonly { startAmount: bigint }[];
+        };
+      };
+      const offer = order.parameters.offer[0];
+      if (!offer) return { ok: false, reason: 'provider_invalid_response' };
+      const total = order.parameters.consideration.reduce((sum, item) => sum + item.startAmount, 0n);
+      return {
+        ok: true,
+        form: 'advanced',
+        offerToken: offer.token.toLowerCase(),
+        tokenId: offer.identifierOrCriteria.toString(),
+        offerer: order.parameters.offerer.toLowerCase(),
+        totalWei: total.toString(),
+        recipient: String(list[3]).toLowerCase(),
+      };
+    }
+  } catch {
+    return { ok: false, reason: 'calldata_undecodable' };
+  }
+  return { ok: false, reason: 'calldata_not_pinned_function' };
 }

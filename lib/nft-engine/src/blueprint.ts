@@ -117,6 +117,76 @@ export const SEAPORT_FULFILL_ADVANCED_ORDER_ABI_V1 = [
   },
 ] as const;
 
+/**
+ * The exact signature OpenSea returns for an ordinary listing, verified live
+ * on Base 2026-07-26. Seaport's gas-optimised path: the NFT always goes to
+ * `msg.sender`, so there is no recipient field to get wrong.
+ */
+export const SEAPORT_FULFILL_BASIC_ORDER_SIGNATURE_V1 =
+  'fulfillBasicOrder_efficient_6GL6yc((address,uint256,uint256,address,address,address,uint256,uint256,uint8,uint256,uint256,bytes32,uint256,bytes32,bytes32,uint256,(uint256,address)[],bytes))';
+
+export const SEAPORT_FULFILL_BASIC_ORDER_ABI_V1 = [
+  {
+    type: 'function',
+    name: 'fulfillBasicOrder_efficient_6GL6yc',
+    stateMutability: 'payable',
+    outputs: [{ name: 'fulfilled', type: 'bool' }],
+    inputs: [
+      {
+        name: 'parameters',
+        type: 'tuple',
+        components: [
+          { name: 'considerationToken', type: 'address' },
+          { name: 'considerationIdentifier', type: 'uint256' },
+          { name: 'considerationAmount', type: 'uint256' },
+          { name: 'offerer', type: 'address' },
+          { name: 'zone', type: 'address' },
+          { name: 'offerToken', type: 'address' },
+          { name: 'offerIdentifier', type: 'uint256' },
+          { name: 'offerAmount', type: 'uint256' },
+          { name: 'basicOrderType', type: 'uint8' },
+          { name: 'startTime', type: 'uint256' },
+          { name: 'endTime', type: 'uint256' },
+          { name: 'zoneHash', type: 'bytes32' },
+          { name: 'salt', type: 'uint256' },
+          { name: 'offererConduitKey', type: 'bytes32' },
+          { name: 'fulfillerConduitKey', type: 'bytes32' },
+          { name: 'totalOriginalAdditionalRecipients', type: 'uint256' },
+          {
+            name: 'additionalRecipients',
+            type: 'tuple[]',
+            components: [
+              { name: 'amount', type: 'uint256' },
+              { name: 'recipient', type: 'address' },
+            ],
+          },
+          { name: 'signature', type: 'bytes' },
+        ],
+      },
+    ],
+  },
+] as const;
+
+/**
+ * BasicOrderType 0 — ETH_TO_ERC721_FULL_OPEN.
+ *
+ * The ONLY value V1 encodes. 1..7 cover partial fills and zone-restricted
+ * variants; 8+ move to ERC-1155 or ERC-20 payment. Every one of them is a
+ * different purchase than the one this family verified.
+ */
+export const SEAPORT_BASIC_ORDER_TYPE_ETH_TO_ERC721_FULL_OPEN_V1 = 0;
+
+/** Which encoder this order must use — decided HERE, from the order Miorail
+ * itself read and validated. The provider is then held to it. */
+export type NftFulfillmentFormV1 = 'basic' | 'advanced';
+
+export function expectedFulfillmentFormV1(order: { restrictedByZone: boolean }): NftFulfillmentFormV1 {
+  // A zone-restricted order cannot go through the basic path at all; an
+  // ordinary one must not be routed through the advanced path just because a
+  // response offered it.
+  return order.restrictedByZone ? 'advanced' : 'basic';
+}
+
 export type NftFulfillmentReasonV1 =
   | 'malformed_fulfillment'
   | 'function_not_pinned'
@@ -128,6 +198,16 @@ export type NftFulfillmentReasonV1 =
   | 'order_mismatch'
   | 'criteria_resolvers_present'
   | 'partial_fill_requested'
+  | 'wrong_fulfillment_form'
+  | 'basic_order_type_unsupported'
+  | 'offerer_mismatch'
+  | 'offer_amount_not_one'
+  | 'payment_not_native_eth'
+  | 'consideration_total_mismatch'
+  | 'additional_recipients_mismatch'
+  | 'zone_present'
+  | 'order_expired'
+  | 'signature_missing'
   | 'encode_failed';
 
 export interface NftFulfillmentReadV1 {
@@ -160,15 +240,37 @@ export function readOpenSeaFulfillmentV1(input: {
   payload: unknown;
   candidate: NftListingCandidateV1;
   buyer: string;
+  /**
+   * Which encoder this order must use, decided by Miorail from the order it
+   * read. Defaults to `advanced` only so existing callers keep their old
+   * behaviour; every new caller passes the value it derived.
+   */
+  expectedForm?: NftFulfillmentFormV1;
+  now?: Date;
 }): NftFulfillmentResultV1 {
   const body = input.payload as { fulfillment_data?: { transaction?: Record<string, unknown> } } | null;
   const tx = body?.fulfillment_data?.transaction;
   if (!tx || typeof tx !== 'object') return { ok: false, reason: 'malformed_fulfillment' };
 
-  // The function is pinned. A response naming another one is refused, not
-  // encoded — a provider that picks the function picks the behaviour.
-  if (asString(tx.function) !== SEAPORT_FULFILL_ADVANCED_ORDER_SIGNATURE_V1) {
-    return { ok: false, reason: 'function_not_pinned', detail: asString(tx.function) ?? 'missing' };
+  const expectedForm = input.expectedForm ?? 'advanced';
+  const expectedSignature =
+    expectedForm === 'basic'
+      ? SEAPORT_FULFILL_BASIC_ORDER_SIGNATURE_V1
+      : SEAPORT_FULFILL_ADVANCED_ORDER_SIGNATURE_V1;
+  const named = asString(tx.function);
+
+  // The function is pinned AND the choice is ours. A response offering the
+  // other pinned function is refused too: which encoder an order needs follows
+  // from the order, so a provider proposing the other one is proposing a
+  // different order than the one that was verified.
+  if (named !== expectedSignature) {
+    const otherPinned =
+      named === SEAPORT_FULFILL_BASIC_ORDER_SIGNATURE_V1 || named === SEAPORT_FULFILL_ADVANCED_ORDER_SIGNATURE_V1;
+    return {
+      ok: false,
+      reason: otherPinned ? 'wrong_fulfillment_form' : 'function_not_pinned',
+      detail: named ?? 'missing',
+    };
   }
   if (Number(tx.chain) !== NFT_CHAIN_ID_V1) return { ok: false, reason: 'chain_mismatch' };
 
@@ -186,6 +288,18 @@ export function readOpenSeaFulfillmentV1(input: {
 
   const inputData = tx.input_data as Record<string, unknown> | undefined;
   if (!inputData || typeof inputData !== 'object') return { ok: false, reason: 'malformed_fulfillment' };
+
+  if (expectedForm === 'basic') {
+    return readBasicOrderFulfillmentV1({
+      tx,
+      parameters: inputData.parameters,
+      candidate: input.candidate,
+      buyer: input.buyer,
+      to,
+      value,
+      now: input.now ?? new Date(),
+    });
+  }
 
   const recipient = asString(inputData.recipient);
   if (!recipient || recipient.toLowerCase() !== input.buyer.toLowerCase()) {
@@ -313,4 +427,124 @@ export function buildNftPurchaseBlueprintV1(input: {
     ...base,
     blueprintHash: hashNftPurchaseBlueprintV1(base as unknown as NftPurchaseBlueprintV1),
   });
+}
+
+/**
+ * Reads and encodes a BasicOrder fulfillment.
+ *
+ * Every field is checked against the candidate the user reviewed, and the
+ * provider's own summary is never believed over the order parameters: the
+ * price this validates is the SUM of considerationAmount and every additional
+ * recipient, not the number the response put in `value`.
+ *
+ * One structural difference from the advanced path matters and is a
+ * strengthening, not a gap: `fulfillBasicOrder_efficient_6GL6yc` has no
+ * recipient field. Seaport sends the NFT to `msg.sender`. The buyer is
+ * therefore whoever signs, and no calldata can send the token elsewhere.
+ */
+function readBasicOrderFulfillmentV1(input: {
+  tx: Record<string, unknown>;
+  parameters: unknown;
+  candidate: NftListingCandidateV1;
+  buyer: string;
+  to: string;
+  value: string;
+  now: Date;
+}): NftFulfillmentResultV1 {
+  const p = input.parameters as Record<string, unknown> | undefined;
+  if (!p || typeof p !== 'object') return { ok: false, reason: 'malformed_fulfillment' };
+  const { candidate } = input;
+
+  // Only ETH_TO_ERC721_FULL_OPEN. Every other BasicOrderType is a partial
+  // fill, a zone-restricted variant, an ERC-1155, or ERC-20 payment.
+  if (Number(p.basicOrderType) !== SEAPORT_BASIC_ORDER_TYPE_ETH_TO_ERC721_FULL_OPEN_V1) {
+    return { ok: false, reason: 'basic_order_type_unsupported', detail: String(p.basicOrderType) };
+  }
+  // A basic FULL_OPEN order has no zone. A non-zero one contradicts the type.
+  const zone = asString(p.zone)?.toLowerCase();
+  if (zone && !/^0x0{40}$/.test(zone)) return { ok: false, reason: 'zone_present' };
+
+  const offerer = asString(p.offerer)?.toLowerCase();
+  if (!offerer || offerer !== candidate.order.seller.toLowerCase()) {
+    return { ok: false, reason: 'offerer_mismatch' };
+  }
+  const offerToken = asString(p.offerToken)?.toLowerCase();
+  if (!offerToken || offerToken !== candidate.asset.contractAddress.toLowerCase()) {
+    return { ok: false, reason: 'order_mismatch', detail: 'offerToken' };
+  }
+  if (String(p.offerIdentifier ?? '') !== candidate.asset.tokenId) {
+    return { ok: false, reason: 'order_mismatch', detail: 'offerIdentifier' };
+  }
+  // One ERC-721. A quantity other than 1 is not this purchase.
+  if (String(p.offerAmount ?? '') !== '1') return { ok: false, reason: 'offer_amount_not_one' };
+
+  // Native ETH is the zero consideration token with a zero identifier.
+  const considerationToken = asString(p.considerationToken)?.toLowerCase();
+  if (!considerationToken || !/^0x0{40}$/.test(considerationToken)) {
+    return { ok: false, reason: 'payment_not_native_eth' };
+  }
+  if (String(p.considerationIdentifier ?? '0') !== '0') return { ok: false, reason: 'payment_not_native_eth' };
+
+  const sellerAmount = asString(p.considerationAmount);
+  if (sellerAmount === null || !/^(0|[1-9][0-9]*)$/.test(sellerAmount)) {
+    return { ok: false, reason: 'malformed_fulfillment' };
+  }
+
+  const extras = Array.isArray(p.additionalRecipients) ? p.additionalRecipients : [];
+  if (String(p.totalOriginalAdditionalRecipients ?? extras.length) !== String(extras.length)) {
+    // A truncated recipient list changes what the transaction pays out while
+    // leaving the struct looking well-formed.
+    return { ok: false, reason: 'additional_recipients_mismatch' };
+  }
+  let total = BigInt(sellerAmount);
+  for (const entry of extras) {
+    const item = entry as Record<string, unknown>;
+    const amount = asString(item.amount);
+    const recipient = asString(item.recipient);
+    if (amount === null || !/^(0|[1-9][0-9]*)$/.test(amount) || !recipient) {
+      return { ok: false, reason: 'additional_recipients_mismatch' };
+    }
+    total += BigInt(amount);
+  }
+
+  // THE check the provider summary must not win: the price is the sum of the
+  // order's own payouts. `value` agreeing with it is necessary, not sufficient.
+  if (total.toString() !== candidate.listingPriceWei) {
+    return { ok: false, reason: 'consideration_total_mismatch', detail: total.toString() };
+  }
+  if (input.value !== total.toString()) return { ok: false, reason: 'value_mismatch' };
+
+  const endTime = asString(p.endTime);
+  if (endTime !== null && /^[0-9]+$/.test(endTime)) {
+    if (BigInt(endTime) * 1000n <= BigInt(input.now.getTime())) return { ok: false, reason: 'order_expired' };
+  }
+  const signature = asString(p.signature);
+  if (!signature || !/^0x[0-9a-fA-F]+$/.test(signature) || signature === '0x') {
+    return { ok: false, reason: 'signature_missing' };
+  }
+
+  let data: `0x${string}`;
+  try {
+    data = encodeFunctionData({
+      abi: SEAPORT_FULFILL_BASIC_ORDER_ABI_V1,
+      functionName: 'fulfillBasicOrder_efficient_6GL6yc',
+      args: [p as never],
+    });
+  } catch (error) {
+    return { ok: false, reason: 'encode_failed', detail: error instanceof Error ? error.message : 'unknown' };
+  }
+
+  return {
+    ok: true,
+    fulfillment: {
+      to: input.to.toLowerCase(),
+      valueWei: input.value,
+      data,
+      // Seaport delivers a basic order to msg.sender. Recording the buyer here
+      // states who that must be; it is not read out of the calldata, because
+      // the calldata cannot name anyone else.
+      recipient: input.buyer.toLowerCase(),
+      responseHash: stableHashV1('nft-fulfillment-response/v1', input.tx),
+    },
+  };
 }
