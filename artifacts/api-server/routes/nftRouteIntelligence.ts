@@ -27,6 +27,7 @@ import {
   nftPurchaseSafetyKernelV1,
   nftPurchaseSignableV1,
   readOpenSeaFulfillmentV1,
+  reconcileNftProofV1,
   verifyNftListingUnchangedV1,
 } from '@mioagent/nft-engine';
 import {
@@ -40,6 +41,7 @@ import {
 import { client } from '@mioagent/db';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
 import { simulateNftBlueprintV1 } from '../lib/nftSimulation.js';
+import { createViemNftChainReaderV1 } from '../lib/nftChainReader.js';
 import { resolveNftRouteConfigV1 } from '../lib/nftRouteConfig.js';
 
 // ---------------------------------------------------------------------------
@@ -66,6 +68,7 @@ export const nftRouteRuntime = {
     return createOpenSeaGatewayV1({ apiKey: config.openSeaApiKey, timeoutMs: config.timeoutMs });
   },
   simulate: simulateNftBlueprintV1,
+  chainReader: () => createViemNftChainReaderV1(process.env),
   migrationAvailable: nftStorageMigrationAvailable,
   now: () => new Date(),
 };
@@ -488,6 +491,70 @@ nftRouteIntelligenceRouter.post('/nft/blueprints/:blueprintId/submission', async
     res.json(proofResponse(stored));
   } catch (error) {
     failed(res, error, guard.user.address, 'nft_submission_failed');
+  }
+});
+
+// --- §5 reconcile -----------------------------------------------------------
+
+nftRouteIntelligenceRouter.post('/nft/proofs/:proofId/reconcile', async (req, res) => {
+  const flags = nftRouteRuntime.flags(process.env);
+  if (!flags.routeIntelligenceV1 || !flags.nftRouteV1) {
+    res.status(404).json({ error: 'nft_route_disabled', code: 'nft_route_disabled' });
+    return;
+  }
+  const user = sessionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  if (!(await storageReady(res))) return;
+  try {
+    const now = nftRouteRuntime.now();
+    const repository = nftRouteRuntime.repository();
+    const record = await repository.getNftProof(String(req.params.proofId), user.id);
+    if (!record) {
+      res.status(404).json({ error: 'nft_proof_not_found', code: 'nft_proof_not_found' });
+      return;
+    }
+    const blueprint = await repository.getNftPurchaseBlueprint(record.blueprintId, user.id);
+    if (!blueprint) {
+      res.status(404).json({ error: 'nft_blueprint_not_found', code: 'nft_blueprint_not_found' });
+      return;
+    }
+    const events = await repository.listNftProofEvents(record.id, user.id);
+
+    const result = await reconcileNftProofV1(
+      { chainReader: nftRouteRuntime.chainReader() },
+      {
+        blueprint: blueprint.blueprint,
+        current: record.proof,
+        seller: record.proof.seller,
+        transactionHash: blueprint.submittedTransactionHash,
+        existingEventCount: events.length,
+        now,
+      },
+    );
+
+    if (!result.changed) {
+      // Nothing moved. Recording another identical answer would grow the log
+      // without adding a fact.
+      res.json(proofResponse(record));
+      return;
+    }
+    // The proof is stored BEFORE its events: an event is validated against the
+    // proof hash it describes, so the order is not a preference.
+    const stored = await repository.upsertNftProof({
+      routeRunId: record.routeRunId,
+      blueprintId: record.blueprintId,
+      userId: user.id,
+      proof: result.proof,
+    });
+    for (const event of result.events) {
+      await repository.appendNftProofEvent(stored.id, user.id, event);
+    }
+    res.json(proofResponse(stored));
+  } catch (error) {
+    failed(res, error, user.address, 'nft_reconcile_failed');
   }
 });
 
