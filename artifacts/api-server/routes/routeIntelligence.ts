@@ -431,6 +431,7 @@ routeIntelligenceRouter.post('/earn/compare', async (req, res) => {
       tenantId: user.id,
       walletAddress: user.address as `0x${string}`,
       now,
+      requestId: parsed.data.requestId,
     });
     if (resolution.status === 'unsupported') {
       res.json(
@@ -2340,6 +2341,10 @@ routeIntelligenceRouter.post('/commerce/compare', async (req, res) => {
       tenantId: guard.user.id,
       walletAddress: guard.user.address as `0x${string}`,
       now,
+      // Each comparison is its own run. Without this the run id came from the
+      // goal text alone, so comparing one gift card twice collided with its
+      // own earlier run and failed permanently.
+      requestId: guard.body.requestId,
     });
     if (resolution.status === 'unsupported') {
       res.json(

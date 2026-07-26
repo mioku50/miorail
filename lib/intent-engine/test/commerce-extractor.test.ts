@@ -171,3 +171,35 @@ test('with no ceiling stated the derived headroom still applies', () => {
   assert.ok(resolution.intent);
   assert.equal(resolution.intent.maxSpendAtomic, '28750000');
 });
+
+test('the same goal compared twice produces two distinct runs', () => {
+  // The defect this pins: the run id came from the goal text alone while the
+  // intent hash covered createdAt. The second comparison found its own earlier
+  // run under the same id, saw a different hash, and raised a content
+  // conflict — so every repeat of a Commerce goal 500'd, permanently.
+  const message = 'buy a US Steam gift card for $5';
+  const first = resolveCommerceIntentV1({
+    message, tenantId: 'tenant', walletAddress: WALLET, now: NOW, requestId: 'req-1',
+  });
+  const second = resolveCommerceIntentV1({
+    message, tenantId: 'tenant', walletAddress: WALLET,
+    now: new Date(NOW.getTime() + 60_000), requestId: 'req-2',
+  });
+  assert.ok(first.intent && second.intent);
+  assert.notEqual(first.intent.id, second.intent.id);
+
+  // Same request id replayed → the same run, which is what idempotency means.
+  const replay = resolveCommerceIntentV1({
+    message, tenantId: 'tenant', walletAddress: WALLET, now: NOW, requestId: 'req-1',
+  });
+  assert.ok(replay.intent);
+  assert.equal(replay.intent.id, first.intent.id);
+  assert.equal(replay.intent.intentHash, first.intent.intentHash);
+});
+
+test('omitting the request id leaves the content-addressed id unchanged', () => {
+  const withoutId = resolve('buy a US Steam gift card for $25');
+  const alsoWithout = resolve('buy a US Steam gift card for $25');
+  assert.ok(withoutId.intent && alsoWithout.intent);
+  assert.equal(withoutId.intent.id, alsoWithout.intent.id);
+});

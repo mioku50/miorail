@@ -168,6 +168,9 @@ export interface ResolveEarnIntentInputV1 {
   tenantId: string;
   walletAddress: `0x${string}`;
   now: Date;
+  /** Folded into the intent id, exactly as the swap resolver does, so a
+   * repeated Earn goal is a new run rather than a permanent conflict. */
+  requestId?: string;
 }
 
 /** Grounds an EN/RU earn request into a validated EarnRouteIntentV1 (USDC on
@@ -206,6 +209,11 @@ export function resolveEarnIntentV1(input: ResolveEarnIntentInputV1): EarnIntent
       amountDecimal: extraction.amountDecimal,
       optimizationMode: extraction.optimizationMode,
       protocolConstraint: extraction.protocolConstraint,
+      // See the commerce resolver: without the request id, a repeated Earn
+      // goal finds its own earlier run under the same id and rejects it as a
+      // content conflict, because the intent hash covers `createdAt`.
+      // Omitted when absent so existing content-addressed ids are unchanged.
+      ...(input.requestId ? { requestId: input.requestId } : {}),
     }).slice(2, 26)}`,
     tenantId: input.tenantId,
     walletAddress: input.walletAddress,

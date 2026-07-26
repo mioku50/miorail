@@ -1484,7 +1484,7 @@ export function createDatabaseRouteStorageRepository(
             SELECT id, user_id, wallet_address, chain_id, schema_version, status,
                    intent_hash, intent_payload, idempotency_key, created_at, updated_at, completed_at
             FROM route_runs
-            WHERE user_id = ${userId}
+            WHERE user_id = ${userId} AND goal = 'swap'
               AND (created_at, id) < (${new Date(cursor.createdAt)}, ${cursor.id})
             ORDER BY created_at DESC, id DESC
             LIMIT ${params.limit + 1}
@@ -1493,12 +1493,20 @@ export function createDatabaseRouteStorageRepository(
             SELECT id, user_id, wallet_address, chain_id, schema_version, status,
                    intent_hash, intent_payload, idempotency_key, created_at, updated_at, completed_at
             FROM route_runs
-            WHERE user_id = ${userId}
+            WHERE user_id = ${userId} AND goal = 'swap'
             ORDER BY created_at DESC, id DESC
             LIMIT ${params.limit + 1}
           `;
       const hasMore = runRows.length > params.limit;
       const pageRows = runRows.slice(0, params.limit);
+      // T64.3.1: `goal = 'swap'` above is load-bearing, not an optimisation.
+      // Earn and Commerce runs share this table but store their OWN intent
+      // shape, and routeRunFromRow parses every payload with the swap intent
+      // schema. Without the filter one commerce comparison made the whole
+      // history page throw — the endpoint 500'd and the console showed an
+      // empty "Recent proofs" for every route the wallet had ever run.
+      // Earn and Commerce have their own history surfaces; this response
+      // cannot represent them, so it must not try to read them.
       const runs = pageRows.map(routeRunFromRow);
       const runIds = runs.map((run) => run.id);
 

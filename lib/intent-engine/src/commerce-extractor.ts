@@ -351,6 +351,18 @@ export interface ResolveCommerceIntentInputV1 {
    * The ceiling is what the user is asked to authorize, so it is explicit
    * rather than derived from a quote that does not exist yet. */
   spendHeadroomBps?: number;
+  /**
+   * The caller's request id, folded into the intent id exactly as the swap
+   * resolver does.
+   *
+   * Without it the id was derived from the GOAL TEXT alone while the intent
+   * hash covered `createdAt`. Comparing the same gift card twice then found
+   * its own earlier run under the same id, saw a different hash, and raised a
+   * content conflict — so a repeated Commerce goal failed permanently. Two
+   * comparisons of one goal are two comparisons: catalogues and prices move
+   * between them, and each deserves its own run.
+   */
+  requestId?: string;
 }
 
 const DEFAULT_SPEND_HEADROOM_BPS_V1 = 1_500;
@@ -437,6 +449,8 @@ export function resolveCommerceIntentV1(
       country: extraction.country,
       amountDecimal: requestedDecimal,
       currency: extraction.currency,
+      // Omitted when absent so existing content-addressed ids are unchanged.
+      ...(input.requestId ? { requestId: input.requestId } : {}),
     }).slice(2, 26)}`,
     tenantId: input.tenantId,
     walletAddress: input.walletAddress,
