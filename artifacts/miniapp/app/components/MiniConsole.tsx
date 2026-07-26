@@ -7,6 +7,7 @@ import {
   CandidateCards,
   CommerceInvoiceReviewPanel,
   CommerceRouteCardPanel,
+  NftRouteCardPanel,
   commerceCheckoutAvailableV1,
   ConsoleMiniShell,
   ConsoleRightRail,
@@ -51,6 +52,7 @@ import {
 import {
   useBoundedProofReconciliation,
   useCommerceCompare,
+  useNftCompare,
   useCreateCommerceOrder,
   useEarnCompare,
   useEvaluateSwapRoute,
@@ -114,6 +116,7 @@ export function MiniConsole() {
   const evaluation = useEvaluateSwapRoute();
   const earnCompare = useEarnCompare();
   const commerceCompare = useCommerceCompare();
+  const nftCompare = useNftCompare();
   const commerceOrder = useCreateCommerceOrder();
   const prepare = usePrepareSwapBlueprint();
   const flags = status.data?.productMigration;
@@ -142,6 +145,8 @@ export function MiniConsole() {
         earnRouteV1: flags?.earnRouteV1 === true,
         commerceRouteV1: flags?.commerceRouteV1 === true,
         commerceExecutionV1: flags?.commerceExecutionV1 === true,
+        nftRouteV1: flags?.nftRouteV1 === true,
+        nftExecutionV1: flags?.nftExecutionV1 === true,
       }),
     [goal, flags],
   );
@@ -164,6 +169,13 @@ export function MiniConsole() {
     [flags],
   );
   const commerceOrderResult = commerceOrder.data?.outcome === "created" ? commerceOrder.data : null;
+
+  // Both NFT outcomes carry a card: a listing that vanished still names the
+  // token and says why there is nothing to buy.
+  const nftCard =
+    nftCompare.data?.outcome === "compared" || nftCompare.data?.outcome === "unavailable"
+      ? nftCompare.data.routeCard
+      : null;
 
   // T64.3.1 — the same two defects the console had: a Commerce comparison did
   // not count as pending, and a `needs_clarification` result left this screen
@@ -282,6 +294,11 @@ export function MiniConsole() {
     setClock(next);
     setScreen("comparing");
     const wallet = address.toLowerCase() as `0x${string}`;
+    if (dispatch.engine === "nft") {
+      // NFT before commerce: the two families share the verb "buy".
+      nftCompare.mutate({ message: goal, walletAddress: wallet }, { onSettled: () => mark("candidates", "complete") });
+      return;
+    }
     if (dispatch.engine === "commerce") {
       commerceCompare.mutate(
         { message: goal, walletAddress: wallet },
@@ -474,6 +491,20 @@ export function MiniConsole() {
             )}
           </div>
         </div>
+      </>
+    );
+  } else if (screen === "route" && nftCard) {
+    content = (
+      <>
+        <ConsoleStepperCompact label={stepLabel} steps={steps} expanded={railOpen} onToggle={() => setRailOpen((open) => !open)} />
+        <NftRouteCardPanel
+          card={nftCard}
+          reviewDisabledReason={
+            flags?.nftExecutionV1 === true
+              ? null
+              : "Buying is off on this server. This listing is read-only until it is enabled."
+          }
+        />
       </>
     );
   } else if (screen === "route" && commerceCard) {

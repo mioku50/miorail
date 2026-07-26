@@ -114,7 +114,7 @@ export function stepperFromClockV1(clock: ConsoleStageClockV1, activeStep?: numb
 
 // --- Route family dispatch ---------------------------------------------------
 
-export type RouteFamilyV1 = 'swap' | 'earn' | 'commerce' | 'unknown';
+export type RouteFamilyV1 = 'swap' | 'earn' | 'commerce' | 'nft' | 'unknown';
 
 // Two patterns per family: `\b` is an ASCII word boundary, so it never matches
 // before a Cyrillic letter — the RU alternatives are matched without it.
@@ -124,6 +124,11 @@ const SWAP_PATTERN_V1 = /\b(swap|trade|exchange|convert)/i;
 const SWAP_PATTERN_RU_V1 = /(обмен|своп|поменя)/i;
 const COMMERCE_PATTERN_V1 = /\b(buy|gift ?card|top ?up|voucher|bitrefill)/i;
 const COMMERCE_PATTERN_RU_V1 = /(купить|подар)/i;
+// NFT is checked FIRST because it shares its verb with commerce: "Buy NFT
+// BasePaint #123" and "Купи NFT" both match the commerce pattern, and a gift
+// card engine handed an NFT goal would search a gift-card catalogue for it.
+const NFT_PATTERN_V1 = /\b(nft|opensea|erc-?721|basepaint|collectible)/i;
+const NFT_PATTERN_RU_V1 = /(нфт|нft|опенси|опенсea)/i;
 
 /**
  * Chooses the route family from the goal text so an Earn intent is never sent
@@ -134,6 +139,7 @@ const COMMERCE_PATTERN_RU_V1 = /(купить|подар)/i;
 export function routeFamilyForGoalV1(text: string): RouteFamilyV1 {
   const value = text.trim();
   if (value.length === 0) return 'unknown';
+  if (NFT_PATTERN_V1.test(value) || NFT_PATTERN_RU_V1.test(value)) return 'nft';
   if (COMMERCE_PATTERN_V1.test(value) || COMMERCE_PATTERN_RU_V1.test(value)) return 'commerce';
   if (EARN_PATTERN_V1.test(value) || EARN_PATTERN_RU_V1.test(value)) return 'earn';
   if (SWAP_PATTERN_V1.test(value) || SWAP_PATTERN_RU_V1.test(value)) return 'swap';
@@ -143,7 +149,7 @@ export function routeFamilyForGoalV1(text: string): RouteFamilyV1 {
 export interface RouteFamilyDispatchV1 {
   family: RouteFamilyV1;
   /** Which engine may run. null ⟺ nothing runs and the reason explains why. */
-  engine: 'swap' | 'earn' | 'commerce' | null;
+  engine: 'swap' | 'earn' | 'commerce' | 'nft' | null;
   blockedReason: string | null;
 }
 
@@ -154,6 +160,11 @@ export interface ConsoleRouteFlagsV1 {
   commerceRouteV1?: boolean;
   /** T64: commerce CHECKOUT, gated separately from comparison. */
   commerceExecutionV1?: boolean;
+  /** T65: NFT COMPARISON. Absent on a pre-T65 server ⟹ off. */
+  nftRouteV1?: boolean;
+  /** T65: NFT PURCHASE, gated separately. Looking at a listing is repeatable;
+   * buying the token is not. */
+  nftExecutionV1?: boolean;
 }
 
 /**
@@ -181,6 +192,11 @@ export function dispatchRouteFamilyV1(
     return flags.commerceRouteV1 === true
       ? { family, engine: 'commerce', blockedReason: null }
       : { family, engine: null, blockedReason: 'Commerce routing is off on this server. Swap and Earn goals still work.' };
+  }
+  if (family === 'nft') {
+    return flags.nftRouteV1 === true
+      ? { family, engine: 'nft', blockedReason: null }
+      : { family, engine: null, blockedReason: 'NFT routing is off on this server. Swap, Earn and Commerce goals still work.' };
   }
   return { family, engine: null, blockedReason: 'Say what you want to do — for example "swap 100 USDC to ETH" or "earn yield on 500 USDC".' };
 }
@@ -212,6 +228,8 @@ export interface ConsoleServerStatusV1 {
     earnRouteV1: boolean;
     commerceRouteV1?: boolean;
     commerceExecutionV1?: boolean;
+    nftRouteV1?: boolean;
+    nftExecutionV1?: boolean;
   };
   rpc?: { status: string; provider: string };
   prices?: { status: string; provider: string };
@@ -240,6 +258,8 @@ export function coverageFromStatusV1(status: ConsoleServerStatusV1 | null): Cove
   const paid = flags?.paidIntelligence === true;
   const commerce = flags?.commerceRouteV1 === true;
   const checkout = flags?.commerceExecutionV1 === true;
+  const nft = flags?.nftRouteV1 === true;
+  const nftBuy = flags?.nftExecutionV1 === true;
   return [
     {
       action: 'Swap on Base',
@@ -283,6 +303,19 @@ export function coverageFromStatusV1(status: ConsoleServerStatusV1 | null): Cove
       available: commerce,
     },
     {
+      // Same split as commerce: looking at a listing and buying the token are
+      // different switches, and the row says which one is on.
+      action: 'NFT purchase (Base, ERC-721)',
+      sources: nft
+        ? nftBuy
+          ? 'OpenSea — compare and buy'
+          : 'OpenSea — compare only, purchase gate is off'
+        : 'NFT gate is off on this server',
+      percent: nft ? (nftBuy ? 35 : 20) : 0,
+      state: nft ? (nftBuy ? 'ready' : 'building') : 'off',
+      available: nft,
+    },
+    {
       action: 'Cross-chain bridge',
       sources: 'no approved adapter',
       percent: 0,
@@ -306,6 +339,7 @@ export const ADAPTER_FAMILY_V1: Record<string, RouteFamilyV1 | 'simulation'> = {
   Moonwell: 'earn',
   Morpho: 'earn',
   Bitrefill: 'commerce',
+  OpenSea: 'nft',
   'Alchemy simulation': 'simulation',
 };
 
@@ -334,6 +368,7 @@ export function adaptersFromStatusV1(
   const earn = status?.productMigration.earnRouteV1 === true;
   const paid = status?.productMigration.paidIntelligence === true;
   const commerce = status?.productMigration.commerceRouteV1 === true;
+  const nft = status?.productMigration.nftRouteV1 === true;
   // A registered adapter behind an enabled gate reads as `live` on the rail.
   // The state this fixes was never "enabled vs answered" — it was a switched
   // off flag wearing the same label as a broken connection.
@@ -345,6 +380,7 @@ export function adaptersFromStatusV1(
     { name: 'Morpho', state: gate(earn) },
     { name: 'Alchemy simulation', state: gate(paid) },
     { name: 'Bitrefill', state: gate(commerce) },
+    { name: 'OpenSea', state: gate(nft) },
     { name: 'o1.exchange', state: 'planned' },
   ];
 }
@@ -376,6 +412,7 @@ const FAMILY_STAGE_LABELS_V1: Record<RouteFamilyV1, FamilyStageLabelsV1> = {
   swap: { adapter: (name) => `${name} quote`, evidence: 'Evidence collected', scoring: 'Scoring against your goal' },
   earn: { adapter: (name) => `${name} rates`, evidence: 'Evidence collected', scoring: 'Scoring against your goal' },
   commerce: { adapter: (name) => `${name} catalogue`, evidence: 'Commerce evidence', scoring: 'Commerce scoring' },
+  nft: { adapter: (name) => `${name} listing`, evidence: 'NFT evidence', scoring: 'NFT scoring' },
   unknown: { adapter: (name) => `${name} quote`, evidence: 'Evidence collected', scoring: 'Scoring against your goal' },
 };
 

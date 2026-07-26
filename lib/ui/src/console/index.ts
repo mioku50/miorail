@@ -6,3 +6,4 @@ export * from './ConsoleShell';
 export * from './ConsoleScreens';
 export * from './ConsoleMini';
 export * from './CommercePanels';
+export * from './NftPanels';

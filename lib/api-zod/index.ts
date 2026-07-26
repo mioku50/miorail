@@ -1562,6 +1562,10 @@ export const StatusResponseSchema = z.object({
     // parses. Absent is treated as off by every surface that reads them.
     commerceRouteV1: z.boolean().optional(),
     commerceExecutionV1: z.boolean().optional(),
+    // T65: same additive treatment. A pre-T65 server omits them, and absent
+    // is off on every surface that reads them.
+    nftRouteV1: z.boolean().optional(),
+    nftExecutionV1: z.boolean().optional(),
   }),
   rpc: z.object({
     status: z.enum(["connected", "missing", "failed"]),

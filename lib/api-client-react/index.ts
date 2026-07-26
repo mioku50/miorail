@@ -1540,3 +1540,140 @@ export function useSimulateWithBudget(
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// T65: the NFT purchase rail.
+//
+// The client sends a goal, then a Route Card HASH, then the hash of the calls
+// it reviewed. It never sends calldata, a target, a value or a recipient —
+// every byte a wallet is asked to sign is produced on the server from a pinned
+// ABI.
+// ---------------------------------------------------------------------------
+
+export interface NftCompareInput {
+  message: string;
+  walletAddress: `0x${string}`;
+  requestId?: string;
+}
+
+export function useNftCompare(
+  options?: Omit<UseMutationOptions<apiSpec.NftCompareResponseV1, Error, NftCompareInput>, 'mutationFn' | 'retry'>,
+) {
+  const identity = useRef<RoutePlanRequestIdentity | null>(null);
+  identity.current ??= new RoutePlanRequestIdentity();
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const request = apiSpec.NftCompareRequestV1Schema.parse({
+        message: input.message,
+        walletAddress: input.walletAddress,
+        requestId: identity.current!.resolve(input),
+      });
+      const response = await fetchApi<unknown>('/api/route-intelligence/nft/compare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+      return apiSpec.NftCompareResponseV1Schema.parse(response);
+    },
+  });
+}
+
+export interface NftPrepareInput {
+  routeRunId: string;
+  routeCardHash: string;
+  walletAddress: `0x${string}`;
+}
+
+export function useNftPrepare(
+  options?: Omit<UseMutationOptions<apiSpec.NftPrepareResponseV1, Error, NftPrepareInput>, 'mutationFn' | 'retry'>,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const request = apiSpec.NftPrepareRequestV1Schema.parse(input);
+      const response = await fetchApi<unknown>('/api/route-intelligence/nft/prepare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+      return apiSpec.NftPrepareResponseV1Schema.parse(response);
+    },
+  });
+}
+
+export interface NftApproveInput {
+  blueprintId: string;
+  /** The hash of the calls the user actually reviewed. A mismatch is refused
+   * by the server: approval is of THESE calls or it is nothing. */
+  approvedCallsHash: string;
+  walletAddress: `0x${string}`;
+}
+
+export function useNftApprove(
+  options?: Omit<UseMutationOptions<apiSpec.NftApproveResponseV1, Error, NftApproveInput>, 'mutationFn' | 'retry'>,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const request = apiSpec.NftApproveRequestV1Schema.parse({
+        approvedCallsHash: input.approvedCallsHash,
+        walletAddress: input.walletAddress,
+      });
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/nft/blueprints/${encodeURIComponent(input.blueprintId)}/approve`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) },
+      );
+      return apiSpec.NftApproveResponseV1Schema.parse(response);
+    },
+  });
+}
+
+export interface NftSubmissionInput {
+  blueprintId: string;
+  walletAddress: `0x${string}`;
+  /** What the WALLET returned. Recorded as a claim about a submission, never
+   * as a fact about the chain — reconciliation reads that separately. */
+  submissionBatchId: string | null;
+  transactionHash: string | null;
+}
+
+export function useNftSubmission(
+  options?: Omit<UseMutationOptions<apiSpec.NftProofResponseV1, Error, NftSubmissionInput>, 'mutationFn' | 'retry'>,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const request = apiSpec.NftSubmissionRequestV1Schema.parse({
+        walletAddress: input.walletAddress,
+        submissionBatchId: input.submissionBatchId,
+        transactionHash: input.transactionHash,
+      });
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/nft/blueprints/${encodeURIComponent(input.blueprintId)}/submission`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) },
+      );
+      return apiSpec.NftProofResponseV1Schema.parse(response);
+    },
+  });
+}
+
+export function useNftReconcile(
+  options?: Omit<UseMutationOptions<apiSpec.NftProofResponseV1, Error, { proofId: string }>, 'mutationFn' | 'retry'>,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/nft/proofs/${encodeURIComponent(input.proofId)}/reconcile`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+      );
+      return apiSpec.NftProofResponseV1Schema.parse(response);
+    },
+  });
+}

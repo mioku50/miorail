@@ -5,6 +5,7 @@ import {
   CONSOLE_BREADCRUMB_V1,
   CommerceInvoiceReviewPanel,
   CommerceRouteCardPanel,
+  NftRouteCardPanel,
   CONSOLE_COPY_V1,
   commerceCheckoutAvailableV1,
   ComparingScreen,
@@ -51,6 +52,8 @@ import {
 import {
   useBoundedProofReconciliation,
   useCommerceCompare,
+  useNftCompare,
+  useNftPrepare,
   useCreateCommerceOrder,
   useEarnCompare,
   useEvaluateSwapRoute,
@@ -116,6 +119,27 @@ export function RouteIntelligenceConsole() {
   const evaluation = useEvaluateSwapRoute();
   const earnCompare = useEarnCompare();
   const commerceCompare = useCommerceCompare();
+  const nftCompare = useNftCompare();
+  const nftPrepare = useNftPrepare();
+  // A comparison that found nothing still returns a card, so both outcomes
+  // render the token rather than an empty screen.
+  const nftCard =
+    nftCompare.data?.outcome === 'compared' || nftCompare.data?.outcome === 'unavailable'
+      ? nftCompare.data.routeCard
+      : null;
+  const nftRunId =
+    nftCompare.data?.outcome === 'compared' || nftCompare.data?.outcome === 'unavailable'
+      ? nftCompare.data.routeRunId
+      : null;
+  const reviewNft = () => {
+    if (!address || !nftCard || !nftRunId) return;
+    nftPrepare.mutate({
+      routeRunId: nftRunId,
+      routeCardHash: nftCard.routeCardHash,
+      walletAddress: address.toLowerCase() as `0x${string}`,
+    });
+    setScreen('review');
+  };
   const commerceOrder = useCreateCommerceOrder();
   const prepare = usePrepareSwapBlueprint();
   const flags = status.data?.productMigration;
@@ -144,6 +168,8 @@ export function RouteIntelligenceConsole() {
         earnRouteV1: flags?.earnRouteV1 === true,
         commerceRouteV1: flags?.commerceRouteV1 === true,
         commerceExecutionV1: flags?.commerceExecutionV1 === true,
+        nftRouteV1: flags?.nftRouteV1 === true,
+        nftExecutionV1: flags?.nftExecutionV1 === true,
       }),
     [goal, flags],
   );
@@ -165,6 +191,8 @@ export function RouteIntelligenceConsole() {
         earnRouteV1: flags?.earnRouteV1 === true,
         commerceRouteV1: flags?.commerceRouteV1 === true,
         commerceExecutionV1: flags?.commerceExecutionV1 === true,
+        nftRouteV1: flags?.nftRouteV1 === true,
+        nftExecutionV1: flags?.nftExecutionV1 === true,
       }),
     [flags],
   );
@@ -261,6 +289,12 @@ export function RouteIntelligenceConsole() {
     const wallet = address.toLowerCase() as `0x${string}`;
     // Route-family dispatch: an Earn goal goes to the Earn engine, never to
     // useEvaluateSwapRoute.
+    if (dispatch.engine === 'nft') {
+      // An NFT goal never reaches the gift-card engine: the two share the verb
+      // "buy" and nothing else.
+      nftCompare.mutate({ message: goal, walletAddress: wallet }, { onSettled: () => mark('candidates', 'complete') });
+      return;
+    }
     if (dispatch.engine === 'commerce') {
       commerceCompare.mutate(
         { message: goal, walletAddress: wallet },
@@ -488,6 +522,23 @@ export function RouteIntelligenceConsole() {
         shortfallNotice={projection ? shortfallNoticeFromProjectionV1(projection) : null}
         onCancel={() => setScreen('plan')}
       />
+    );
+  } else if (screen === 'route' && nftCard) {
+    // The NFT card names the token by chain + contract + tokenId, shows the
+    // gaps it could not fill, and offers no combined score.
+    content = (
+      <>
+        <ConsoleStepper steps={steps} />
+        <NftRouteCardPanel
+          card={nftCard}
+          onReview={address ? () => reviewNft() : undefined}
+          reviewDisabledReason={
+            flags?.nftExecutionV1 === true
+              ? null
+              : 'Buying is off on this server. This listing is read-only until it is enabled.'
+          }
+        />
+      </>
     );
   } else if (screen === 'route' && commerceCard) {
     // Commerce has its own Route Card, its own payment review, and a proof
