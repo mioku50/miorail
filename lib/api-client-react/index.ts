@@ -1354,6 +1354,7 @@ export function useBoundedProofReconciliation({
 export type {
   IntelligenceBudgetProjectionV1,
   IntelligenceBudgetResponseV1,
+  NftProofResponseV1,
   SimulateWithBudgetResponseV1,
 } from '@mioagent/api-spec';
 
@@ -1604,13 +1605,9 @@ export function useNftPrepare(
   });
 }
 
-export interface NftApproveInput {
-  blueprintId: string;
-  /** The hash of the calls the user actually reviewed. A mismatch is refused
-   * by the server: approval is of THESE calls or it is nothing. */
-  approvedCallsHash: string;
-  walletAddress: `0x${string}`;
-}
+/** Deliberately the SAME input shape as the swap and earn approvals, so the one
+ * shared submission hook can drive this family without a per-goal call site. */
+export type NftApproveInput = ApproveEarnBlueprintInput;
 
 export function useNftApprove(
   options?: Omit<UseMutationOptions<apiSpec.NftApproveResponseV1, Error, NftApproveInput>, 'mutationFn' | 'retry'>,
@@ -1620,7 +1617,8 @@ export function useNftApprove(
     retry: false,
     mutationFn: async (input) => {
       const request = apiSpec.NftApproveRequestV1Schema.parse({
-        approvedCallsHash: input.approvedCallsHash,
+        routeRunId: input.routeRunId,
+        blueprintHash: input.blueprintHash,
         walletAddress: input.walletAddress,
       });
       const response = await fetchApi<unknown>(
@@ -1632,32 +1630,34 @@ export function useNftApprove(
   });
 }
 
-export interface NftSubmissionInput {
-  blueprintId: string;
-  walletAddress: `0x${string}`;
-  /** What the WALLET returned. Recorded as a claim about a submission, never
-   * as a fact about the chain — reconciliation reads that separately. */
-  submissionBatchId: string | null;
-  transactionHash: string | null;
-}
-
-export function useNftSubmission(
-  options?: Omit<UseMutationOptions<apiSpec.NftProofResponseV1, Error, NftSubmissionInput>, 'mutationFn' | 'retry'>,
+/** What the WALLET returned, in the goal-agnostic submission shape swap and
+ * earn already use. Recorded as a claim about a submission, never as a fact
+ * about the chain — reconciliation reads that separately. */
+export function useRecordNftBlueprintSubmission(
+  options?: Omit<
+    UseMutationOptions<apiSpec.NftSubmissionResponseV1, Error, RecordBlueprintSubmissionInput>,
+    'mutationFn' | 'retry'
+  >,
 ) {
   return useMutation({
     ...options,
     retry: false,
     mutationFn: async (input) => {
       const request = apiSpec.NftSubmissionRequestV1Schema.parse({
+        routeRunId: input.routeRunId,
         walletAddress: input.walletAddress,
-        submissionBatchId: input.submissionBatchId,
-        transactionHash: input.transactionHash,
+        approvedCallsHash: input.approvedCallsHash,
+        status: input.status,
+        ...(input.batchId !== undefined ? { batchId: input.batchId } : {}),
+        ...(input.transactionHashes !== undefined ? { transactionHashes: input.transactionHashes } : {}),
+        ...(input.receipts !== undefined ? { receipts: input.receipts } : {}),
+        ...(input.error !== undefined ? { error: input.error } : {}),
       });
       const response = await fetchApi<unknown>(
         `/api/route-intelligence/nft/blueprints/${encodeURIComponent(input.blueprintId)}/submission`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) },
       );
-      return apiSpec.NftProofResponseV1Schema.parse(response);
+      return apiSpec.NftSubmissionResponseV1Schema.parse(response);
     },
   });
 }

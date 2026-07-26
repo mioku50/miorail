@@ -78,9 +78,25 @@ test('production dependency graph contains no test, fixture, or mock modules', (
   assert.ok(visited.size > 40, `graph traversal was unexpectedly small (${visited.size} modules)`);
 });
 
+/**
+ * Comments are not connectors.
+ *
+ * This guard compares the POSITIONS of two calls in a file, so a comment that
+ * merely names `baseAccount()` used to fail it while the runtime array was
+ * correct — which is what happened to `artifacts/interface/src/main.tsx`, whose
+ * comment explaining the connector order sits above the array that implements
+ * it. Stripping comments first makes the guard read code, which is what it was
+ * always checking for. The runtime connector order is untouched.
+ */
+function codeWithoutComments(source) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
 test('Base App wallet connector precedes popup connectors in both production UIs', () => {
   for (const file of ['artifacts/interface/src/main.tsx', 'artifacts/miniapp/app/wagmi.ts']) {
-    const source = fs.readFileSync(path.join(repo, file), 'utf8');
+    const source = codeWithoutComments(fs.readFileSync(path.join(repo, file), 'utf8'));
+    assert.ok(source.includes('injected()'), `${file}: the injected connector must be present`);
+    assert.ok(source.includes('baseAccount('), `${file}: the baseAccount connector must be present`);
     assert.ok(source.indexOf('injected()') < source.indexOf('baseAccount('), `${file}: injected connector must be first`);
     assert.doesNotMatch(source, /coinbaseWallet\s*\(/, `${file}: redundant popup connector must be absent`);
   }

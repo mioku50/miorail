@@ -13,10 +13,16 @@ import { base } from 'wagmi/chains';
 import {
   useApproveEarnBlueprint,
   useApproveSwapBlueprint,
+  useNftApprove,
   useRecordBlueprintSubmission,
   useRecordEarnBlueprintSubmission,
+  useRecordNftBlueprintSubmission,
 } from '@mioagent/api-client-react';
-import type { EarnBlueprintApproveResponseV1, SwapBlueprintApproveResponseV1 } from '@mioagent/api-spec';
+import type {
+  EarnBlueprintApproveResponseV1,
+  NftApproveResponseV1,
+  SwapBlueprintApproveResponseV1,
+} from '@mioagent/api-spec';
 import { builderCodeToDataSuffix } from './attribution';
 import { CallsStatusPoller, normalizeCall } from './useWalletConfirmAction';
 
@@ -32,12 +38,13 @@ export type BlueprintSubmitStatus =
   | 'blocked'
   | 'expired';
 
-// The approved wallet payload is goal-agnostic: the swap and earn approve
-// responses carry an identical `approved` payload shape (to/value/data/from/
+// The approved wallet payload is goal-agnostic: the swap, earn and NFT approve
+// responses carry the same `approved` payload shape (to/value/data/from/
 // chainId/atomicRequired), so one type + one wallet submission implementation
-// serves both goals.
+// serves all three goals. The NFT payload additionally names its own `goal`;
+// nothing here reads it, which is the point — the wallet path does not branch.
 export type ApprovedWalletPayload = Extract<
-  SwapBlueprintApproveResponseV1 | EarnBlueprintApproveResponseV1,
+  SwapBlueprintApproveResponseV1 | EarnBlueprintApproveResponseV1 | NftApproveResponseV1,
   { outcome: 'approved' }
 >['payload'];
 
@@ -186,16 +193,20 @@ export function useSubmitApprovedBlueprint({
   builderCode,
   goal = 'swap',
 }: UseSubmitApprovedBlueprintArgs): UseSubmitApprovedBlueprintResult {
-  // Both goals' hooks are instantiated unconditionally (rules of hooks); the
-  // goal selects which pair actually drives the flow. The swap and earn
-  // approve/record responses are structurally identical, so everything below
+  // Every goal's hooks are instantiated unconditionally (rules of hooks); the
+  // goal selects which pair actually drives the flow. The swap, earn and NFT
+  // approve/record contracts are structurally identical, so everything below
   // this line is goal-agnostic.
   const approveSwap = useApproveSwapBlueprint();
   const approveEarn = useApproveEarnBlueprint();
+  const approveNft = useNftApprove();
   const recordSwap = useRecordBlueprintSubmission();
   const recordEarn = useRecordEarnBlueprintSubmission();
-  const approveMutateAsync = goal === 'earn' ? approveEarn.mutateAsync : approveSwap.mutateAsync;
-  const recordMutateAsync = goal === 'earn' ? recordEarn.mutateAsync : recordSwap.mutateAsync;
+  const recordNft = useRecordNftBlueprintSubmission();
+  const approveMutateAsync =
+    goal === 'earn' ? approveEarn.mutateAsync : goal === 'nft' ? approveNft.mutateAsync : approveSwap.mutateAsync;
+  const recordMutateAsync =
+    goal === 'earn' ? recordEarn.mutateAsync : goal === 'nft' ? recordNft.mutateAsync : recordSwap.mutateAsync;
   const sendCalls = useSendCalls();
   const { address, chainId } = useAccount();
 

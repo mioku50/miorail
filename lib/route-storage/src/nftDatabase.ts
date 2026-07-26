@@ -12,6 +12,7 @@ import { RouteStorageConflictError, RouteStorageIntegrityError, type SqlTemplate
 import {
   assertNftProofRewriteAllowedV1,
   assertNftTenantV1,
+  nftSubmissionEffectV1,
   nftUpdatedAtV1,
   parseNftBlueprintV1,
   parseNftCandidateV1,
@@ -428,29 +429,55 @@ export function createDatabaseNftStorageRepository(sql: SqlTemplateExecutor): Nf
 
     async recordNftSubmission(input: RecordNftSubmissionInputV1) {
       const record = await ownedBlueprint(input.blueprintId, input.userId);
-      if (record.blueprint.approvedCallsHash === null) {
-        throw new RouteStorageConflictError('An NFT submission requires an approved blueprint');
+      // The same shared decision the in-memory repository runs. Whatever it
+      // permits, the WHERE clauses below still have to agree with — a lost race
+      // returns the row that won, never a second submission.
+      const effect = nftSubmissionEffectV1({
+        existing: {
+          approvedCallsHash: record.blueprint.approvedCallsHash,
+          status: record.blueprint.status,
+          submissionBatchId: record.submissionBatchId,
+          submittedTransactionHash: record.submittedTransactionHash,
+          submittedAt: record.submittedAt,
+        },
+        next: {
+          status: input.status,
+          submissionBatchId: input.submissionBatchId,
+          transactionHash: input.transactionHash,
+        },
+      });
+      if (effect.kind === 'unchanged') return record;
+
+      const blueprint = rewriteBlueprint(record, { status: effect.status });
+      if (effect.kind === 'cancel') {
+        // Nothing was sent. The row records the refusal and stays free of a
+        // batch id, a transaction hash and a submittedAt it does not have.
+        const rows = await sql`
+          UPDATE nft_purchase_blueprints
+          SET status = ${blueprint.status},
+              payload = CAST(${jsonb(blueprint)} AS jsonb),
+              updated_at = now()
+          WHERE id = ${record.id} AND user_id = ${record.userId} AND submitted_at IS NULL
+          RETURNING id, route_run_id, route_card_id, user_id, wallet_address, payload,
+                    submission_batch_id, submitted_transaction_hash, submitted_at, created_at, updated_at
+        `;
+        if (!rows[0]) return ownedBlueprint(input.blueprintId, input.userId);
+        return blueprintFromRow(rows[0]);
       }
-      if (record.submittedAt !== null) {
-        const sameBatch = record.submissionBatchId === input.submissionBatchId;
-        const sameTx = record.submittedTransactionHash === input.transactionHash;
-        if (sameBatch && sameTx) return record;
-        if (record.submittedTransactionHash !== null && input.transactionHash !== null && !sameTx) {
-          throw new RouteStorageConflictError('This NFT blueprint already recorded a different transaction');
-        }
-        if (record.submittedTransactionHash === null && input.transactionHash !== null && sameBatch) {
-          const learned = await sql`
-            UPDATE nft_purchase_blueprints
-            SET submitted_transaction_hash = ${input.transactionHash}, updated_at = now()
-            WHERE id = ${record.id} AND user_id = ${record.userId} AND submitted_transaction_hash IS NULL
-            RETURNING id, route_run_id, route_card_id, user_id, wallet_address, payload,
-                      submission_batch_id, submitted_transaction_hash, submitted_at, created_at, updated_at
-          `;
-          if (learned[0]) return blueprintFromRow(learned[0]);
-        }
-        return record;
+      if (effect.kind === 'advance') {
+        const rows = await sql`
+          UPDATE nft_purchase_blueprints
+          SET status = ${blueprint.status},
+              payload = CAST(${jsonb(blueprint)} AS jsonb),
+              submitted_transaction_hash = COALESCE(submitted_transaction_hash, ${effect.learnTransactionHash}),
+              updated_at = now()
+          WHERE id = ${record.id} AND user_id = ${record.userId} AND submitted_at IS NOT NULL
+          RETURNING id, route_run_id, route_card_id, user_id, wallet_address, payload,
+                    submission_batch_id, submitted_transaction_hash, submitted_at, created_at, updated_at
+        `;
+        if (!rows[0]) return ownedBlueprint(input.blueprintId, input.userId);
+        return blueprintFromRow(rows[0]);
       }
-      const blueprint = rewriteBlueprint(record, { status: 'submitted' });
       const rows = await sql`
         UPDATE nft_purchase_blueprints
         SET status = ${blueprint.status},

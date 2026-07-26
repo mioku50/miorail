@@ -106,12 +106,93 @@ export type ReserveNftBlueprintResultV1 =
    * it rather than prepare a second purchase of the same token. */
   | { outcome: 'existing'; record: NftPurchaseBlueprintRecordV1 };
 
+/** What the CLIENT says happened at the wallet. Not a fact about the chain —
+ * every one of these is a claim, and the proof reads the chain separately. */
+export type NftSubmissionStatusV1 = 'submitted' | 'submitted_unknown' | 'confirmed' | 'failed' | 'cancelled';
+
 export interface RecordNftSubmissionInputV1 {
   blueprintId: string;
   userId: string;
+  status: NftSubmissionStatusV1;
   submissionBatchId: string | null;
   transactionHash: string | null;
   submittedAt: string;
+}
+
+/** What a submission record does to the row it lands on. */
+export type NftSubmissionEffectV1 =
+  /** The user refused in the wallet. Nothing was sent, so nothing is recorded
+   * except the refusal itself. */
+  | { kind: 'cancel'; status: 'cancelled' }
+  /** First submission for this blueprint: batch id, transaction hash and
+   * submittedAt are written together. */
+  | { kind: 'open'; status: NftPurchaseBlueprintV1['status'] }
+  /** The same submission, later. Only the status and a transaction hash the
+   * row did not have yet may change — never the batch, never a second tx. */
+  | { kind: 'advance'; status: NftPurchaseBlueprintV1['status']; learnTransactionHash: string | null }
+  /** Nothing new was said. */
+  | { kind: 'unchanged' };
+
+/** Terminal client-side verdicts. Once one is recorded the row's status stops
+ * moving — a later `submitted` must not walk a confirmed purchase backwards. */
+const NFT_TERMINAL_SUBMISSION_STATUS_V1 = new Set(['confirmed', 'failed']);
+
+/**
+ * The one place that decides what a submission record may do — so the
+ * in-memory repository and Postgres refuse exactly the same things, rather
+ * than the fake being the permissive one.
+ *
+ * Throws the conflict a caller should see as a 409; otherwise returns the
+ * effect to apply.
+ */
+export function nftSubmissionEffectV1(input: {
+  existing: {
+    approvedCallsHash: string | null;
+    status: NftPurchaseBlueprintV1['status'];
+    submissionBatchId: string | null;
+    submittedTransactionHash: string | null;
+    submittedAt: string | null;
+  };
+  next: { status: NftSubmissionStatusV1; submissionBatchId: string | null; transactionHash: string | null };
+}): NftSubmissionEffectV1 {
+  const { existing, next } = input;
+  if (existing.approvedCallsHash === null) {
+    throw new RouteStorageConflictError('An NFT submission requires an approved blueprint');
+  }
+
+  if (next.status === 'cancelled') {
+    // A refusal cannot be recorded against a batch that already went out. The
+    // wallet does not un-send.
+    if (existing.submittedAt !== null) {
+      throw new RouteStorageConflictError('A submitted NFT purchase cannot be recorded as cancelled');
+    }
+    return existing.status === 'cancelled' ? { kind: 'unchanged' } : { kind: 'cancel', status: 'cancelled' };
+  }
+
+  if (existing.submittedAt === null) {
+    // Includes retrying after a refusal: the previous attempt sent nothing, so
+    // this is the first submission, not a second one.
+    return { kind: 'open', status: next.status };
+  }
+
+  const sameBatch = existing.submissionBatchId === next.submissionBatchId;
+  if (existing.submissionBatchId !== null && next.submissionBatchId !== null && !sameBatch) {
+    throw new RouteStorageConflictError('This NFT blueprint already recorded a different submission batch');
+  }
+  const sameTx = existing.submittedTransactionHash === next.transactionHash;
+  if (existing.submittedTransactionHash !== null && next.transactionHash !== null && !sameTx) {
+    throw new RouteStorageConflictError('This NFT blueprint already recorded a different transaction');
+  }
+
+  // The batch is known and the hash arrived later. That is the same submission
+  // learning its own transaction, not a second one.
+  const learnTransactionHash =
+    existing.submittedTransactionHash === null && next.transactionHash !== null && sameBatch
+      ? next.transactionHash
+      : null;
+  const status = NFT_TERMINAL_SUBMISSION_STATUS_V1.has(existing.status) ? existing.status : next.status;
+  if (learnTransactionHash === null && status === existing.status) return { kind: 'unchanged' };
+  return { kind: 'advance', status, learnTransactionHash };
 }
 
 export interface UpsertNftProofInputV1 {

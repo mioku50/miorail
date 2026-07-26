@@ -8,7 +8,9 @@ import {
   CommerceRouteCardV1Schema,
   CommerceRouteProofV1Schema,
   EarnRouteCardV1Schema,
+  NftProofFinalStatusV1Schema,
   NftPurchaseBlueprintV1Schema,
+  NftPurchaseBlueprintStatusV1Schema,
   NftPurchaseProofV1Schema,
   NftRouteCardV1Schema,
   ExecutionBlueprintV1Schema,
@@ -2077,51 +2079,89 @@ export const NftPrepareResponseV1Schema = z.discriminatedUnion('outcome', [
   z.object({ outcome: z.literal('rejected'), reason: z.string().min(1).max(60), detail: z.string().min(1).max(200) }).strict(),
 ]);
 
-/** Approval echoes back the hash of the calls the user reviewed. A mismatch
- * is refused: approval is of THESE calls or it is nothing. */
+/**
+ * Approval names the blueprint by HASH, exactly as the swap and earn approvals
+ * do — the same request the ONE shared submission hook already sends.
+ *
+ * This does not weaken "approval is of THESE calls": `blueprintHash` is
+ * computed over `callsHash`, so a client that echoes the blueprint it reviewed
+ * has, transitively, echoed the calls it reviewed. The server approves the
+ * STORED calls hash; the client never gets to name one.
+ */
 export const NftApproveRequestV1Schema = z
-  .object({ approvedCallsHash: HashV1Schema, walletAddress: AddressV1Schema })
-  .strict();
-
-export const NftApproveResponseV1Schema = z
   .object({
-    blueprintId: z.string().min(1).max(200),
-    blueprint: NftPurchaseBlueprintV1Schema,
-    signable: z.boolean(),
-    /** The wallet payload, in exactly the shape the swap and earn approvals
-     * return — so the ONE wallet submission implementation drives this family
-     * too, rather than a second sendCalls call site existing anywhere. */
-    payload: z
-      .object({
-        blueprintId: z.string().min(1).max(200),
-        blueprintHash: HashV1Schema,
-        approvedCallsHash: HashV1Schema,
-        chainId: z.literal('0x2105'),
-        from: AddressV1Schema,
-        calls: z
-          .array(
-            z
-              .object({
-                to: AddressV1Schema,
-                value: z.string().regex(/^0x[0-9a-f]+$/, 'Expected a hex quantity'),
-                data: HexDataV1Schema,
-              })
-              .strict(),
-          )
-          .length(1),
-        atomicRequired: z.literal(true),
-      })
-      .strict(),
+    routeRunId: z.string().min(1).max(200),
+    blueprintHash: HashV1Schema,
+    walletAddress: AddressV1Schema,
   })
   .strict();
 
-/** What the CLIENT reports after calling the wallet. Recorded as a claim, not
- * as a fact about the chain — the proof reads that separately. */
-export const NftSubmissionRequestV1Schema = z
+/** The same discriminated shape swap and earn return, so the ONE wallet
+ * submission implementation drives this family too rather than a second
+ * sendCalls call site existing anywhere. Nothing NFT-specific rides along:
+ * the Route Card, the blueprint and the proof are read from their own
+ * endpoints, not smuggled through an EIP-5792 payload. */
+export const NftApproveResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      outcome: z.literal('approved'),
+      payload: z
+        .object({
+          /** Which family these calls came from. The wallet path is shared, so
+           * the payload says what it is rather than the caller assuming. */
+          goal: z.literal('nft'),
+          blueprintId: z.string().min(1).max(200),
+          blueprintHash: HashV1Schema,
+          approvedCallsHash: HashV1Schema,
+          chainId: z.literal('0x2105'),
+          from: AddressV1Schema,
+          /** Exactly one call: the Seaport fulfilment. */
+          calls: z
+            .array(
+              z
+                .object({
+                  to: AddressV1Schema,
+                  value: z.string().regex(/^0x[0-9a-f]+$/, 'Expected a hex quantity'),
+                  data: HexDataV1Schema,
+                })
+                .strict(),
+            )
+            .length(1),
+          atomicRequired: z.literal(true),
+        })
+        .strict(),
+      lifecycle: NftPurchaseBlueprintStatusV1Schema,
+    })
+    .strict(),
+  z.object({ outcome: z.literal('expired'), reason: z.string().min(1).max(500) }).strict(),
+  z
+    .object({
+      outcome: z.literal('blocked'),
+      reason: z.string().min(1).max(500),
+      safety: z.object({ ok: z.boolean(), violations: z.array(z.string().min(1).max(60)) }).strict(),
+    })
+    .strict(),
+]);
+
+/**
+ * What the CLIENT reports after calling the wallet. Recorded as a claim, not as
+ * a fact about the chain — the proof reads that separately.
+ *
+ * Deliberately the swap request shape: a submission record is goal-agnostic, so
+ * reusing it is what lets one hook record for three families. `receipts` is
+ * accepted and NOT trusted; ownership is only ever established by the
+ * server-side chain reads in reconciliation.
+ */
+export const NftSubmissionRequestV1Schema = SwapBlueprintSubmissionRequestV1Schema;
+
+export const NftSubmissionResponseV1Schema = z
   .object({
-    walletAddress: AddressV1Schema,
-    submissionBatchId: z.string().min(1).max(200).nullable(),
-    transactionHash: HashV1Schema.nullable(),
+    outcome: z.literal('recorded'),
+    lifecycle: NftPurchaseBlueprintStatusV1Schema,
+    /** Null exactly when nothing reached the chain — a wallet rejection has no
+     * ownership question to answer, so no proof is opened for it. */
+    proofId: z.string().min(1).max(200).nullable(),
+    finalStatus: NftProofFinalStatusV1Schema.nullable(),
   })
   .strict();
 

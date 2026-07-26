@@ -7,6 +7,8 @@ import {
   CandidateCards,
   CommerceInvoiceReviewPanel,
   CommerceRouteCardPanel,
+  NftProofPanel,
+  NftReviewPanel,
   NftRouteCardPanel,
   commerceCheckoutAvailableV1,
   ConsoleMiniShell,
@@ -53,6 +55,8 @@ import {
   useBoundedProofReconciliation,
   useCommerceCompare,
   useNftCompare,
+  useNftPrepare,
+  useNftReconcile,
   useCreateCommerceOrder,
   useEarnCompare,
   useEvaluateSwapRoute,
@@ -62,6 +66,7 @@ import {
   useRouteHistory,
   useSimulateWithBudget,
   useStatus,
+  type NftProofResponseV1,
   type SimulateWithBudgetResponseV1,
 } from "@mioagent/api-client-react";
 import { BlueprintSubmitButton, EarnDepositFlow, type BlueprintSubmitStatus } from "@mioagent/wallet-actions";
@@ -104,6 +109,8 @@ export function MiniConsole() {
   const [clock, setClock] = useState<ConsoleStageClockV1>(emptyStageClockV1);
   const [railOpen, setRailOpen] = useState(false);
   const [submission, setSubmission] = useState<SubmissionState | null>(null);
+  const [nftSubmission, setNftSubmission] = useState<SubmissionState | null>(null);
+  const [nftProof, setNftProof] = useState<NftProofResponseV1 | null>(null);
   const [simulateResponse, setSimulateResponse] = useState<SimulateBlueprintResponseV1 | null>(null);
   const [budgetResponse, setBudgetResponse] = useState<SimulateWithBudgetResponseV1 | null>(null);
 
@@ -117,6 +124,7 @@ export function MiniConsole() {
   const earnCompare = useEarnCompare();
   const commerceCompare = useCommerceCompare();
   const nftCompare = useNftCompare();
+  const nftPrepare = useNftPrepare();
   const commerceOrder = useCreateCommerceOrder();
   const prepare = usePrepareSwapBlueprint();
   const flags = status.data?.productMigration;
@@ -176,6 +184,40 @@ export function MiniConsole() {
     nftCompare.data?.outcome === "compared" || nftCompare.data?.outcome === "unavailable"
       ? nftCompare.data.routeCard
       : null;
+  const nftRunId =
+    nftCompare.data?.outcome === "compared" || nftCompare.data?.outcome === "unavailable"
+      ? nftCompare.data.routeRunId
+      : null;
+  const nftPrepared = nftPrepare.data?.outcome === "prepared" && nftCard ? { response: nftPrepare.data, card: nftCard } : null;
+
+  const reviewNft = () => {
+    if (!address || !nftCard || !nftRunId) return;
+    nftPrepare.mutate({
+      routeRunId: nftRunId,
+      routeCardHash: nftCard.routeCardHash,
+      walletAddress: address.toLowerCase() as `0x${string}`,
+    });
+    setScreen("review");
+  };
+
+  // The same sequence the web console runs, driven by the same shared hook:
+  // one bounded reconcile per terminal wallet result, never a second wallet
+  // prompt and never a claim of ownership this surface made up.
+  const nftReconcile = useNftReconcile({ onSuccess: (response) => setNftProof(response) });
+  const nftReconciled = useRef<string | null>(null);
+  const onNftSubmission = useCallback(
+    (next: SubmissionState) => {
+      setNftSubmission(next);
+      if (next.status !== "idle") mark("signed", "start");
+      const terminal = next.status === "confirmed" || next.status === "failed" || next.status === "submitted_unknown";
+      if (next.proofId) setScreen("proof");
+      if (!next.proofId || !terminal || nftReconciled.current === next.proofId) return;
+      nftReconciled.current = next.proofId;
+      mark("signed", "complete");
+      nftReconcile.mutate({ proofId: next.proofId });
+    },
+    [mark, nftReconcile],
+  );
 
   // T64.3.1 — the same two defects the console had: a Commerce comparison did
   // not count as pending, and a `needs_clarification` result left this screen
@@ -282,6 +324,12 @@ export function MiniConsole() {
     setSubmission(null);
     setSimulateResponse(null);
     setBudgetResponse(null);
+    // A new goal clears the NFT flow too. Without this, a finished NFT purchase
+    // would keep claiming the Proof screen from whatever family comes next.
+    nftPrepare.reset();
+    setNftSubmission(null);
+    setNftProof(null);
+    nftReconciled.current = null;
     settled.current = false;
     earnSettled.current = false;
     commerceSettled.current = false;
@@ -499,12 +547,61 @@ export function MiniConsole() {
         <ConsoleStepperCompact label={stepLabel} steps={steps} expanded={railOpen} onToggle={() => setRailOpen((open) => !open)} />
         <NftRouteCardPanel
           card={nftCard}
+          onReview={address && flags?.nftExecutionV1 === true ? () => reviewNft() : undefined}
           reviewDisabledReason={
             flags?.nftExecutionV1 === true
               ? null
               : "Buying is off on this server. This listing is read-only until it is enabled."
           }
         />
+      </>
+    );
+  } else if (screen === "review" && nftPrepared) {
+    content = (
+      <>
+        <ConsoleStepperCompact label={stepLabel} steps={steps} expanded={railOpen} onToggle={() => setRailOpen((open) => !open)} />
+        <NftReviewPanel
+          card={nftPrepared.card}
+          blueprintHash={nftPrepared.response.blueprint.blueprintHash}
+          callsHash={nftPrepared.response.blueprint.callsHash}
+          valueWei={nftPrepared.response.blueprint.calls[0]?.valueWei ?? "0"}
+          simulation={nftPrepared.response.simulation}
+          safety={nftPrepared.response.safety}
+          signable={nftPrepared.response.signable}
+          blockedReason={nftPrepared.response.blockedReason}
+          submitSlot={
+            nftRunId ? (
+              <BlueprintSubmitButton
+                goal="nft"
+                routeRunId={nftRunId}
+                blueprintId={nftPrepared.response.blueprintId}
+                blueprintHash={nftPrepared.response.blueprint.blueprintHash}
+                quoteExpiry={nftPrepared.response.blueprint.expiresAt}
+                builderCode={BUILDER_CODE}
+                onStateChange={onNftSubmission}
+              />
+            ) : null
+          }
+        />
+      </>
+    );
+  } else if (screen === "proof" && (nftProof || nftSubmission)) {
+    content = (
+      <>
+        <ConsoleStepperCompact label={stepLabel} steps={steps} expanded={railOpen} onToggle={() => setRailOpen((open) => !open)} />
+        {nftProof ? (
+          <NftProofPanel proof={nftProof.proof} asset={nftCard?.asset} />
+        ) : (
+          <section className="nft-proof" aria-label="NFT ownership proof">
+            <h3>Submitted — waiting for the transaction</h3>
+            <p className="lnote">
+              {nftSubmission?.batchId
+                ? `Batch ${nftSubmission.batchId}. Nothing is confirmed until the receipt, the Transfer and the ownership read all agree.`
+                : "Nothing has reached the chain yet."}
+            </p>
+            {nftSubmission?.error && <p className="empty">{nftSubmission.error}</p>}
+          </section>
+        )}
       </>
     );
   } else if (screen === "route" && commerceCard) {

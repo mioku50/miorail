@@ -11,6 +11,7 @@ import { RouteStorageConflictError, RouteStorageIntegrityError } from './types.j
 import {
   assertNftProofRewriteAllowedV1,
   assertNftTenantV1,
+  nftSubmissionEffectV1,
   nftUpdatedAtV1,
   parseNftBlueprintV1,
   parseNftCandidateV1,
@@ -293,37 +294,41 @@ export function createMemoryNftStorageRepository(
 
     async recordNftSubmission(input: RecordNftSubmissionInputV1) {
       const record = requireBlueprint(input.blueprintId, input.userId);
-      if (record.blueprint.approvedCallsHash === null) {
-        throw new RouteStorageConflictError('An NFT submission requires an approved blueprint');
-      }
-      if (record.submittedAt !== null) {
-        const sameBatch = record.submissionBatchId === input.submissionBatchId;
-        const sameTx = record.submittedTransactionHash === input.transactionHash;
-        if (sameBatch && sameTx) return record;
-        if (record.submittedTransactionHash !== null && input.transactionHash !== null && !sameTx) {
-          throw new RouteStorageConflictError('This NFT blueprint already recorded a different transaction');
-        }
-        // The batch is known and the hash arrived later. That is the same
-        // submission learning its own transaction, not a second one.
-        if (record.submittedTransactionHash === null && input.transactionHash !== null && sameBatch) {
-          const learned: NftPurchaseBlueprintRecordV1 = {
-            ...record,
-            submittedTransactionHash: input.transactionHash,
-            updatedAt: nftUpdatedAtV1(record.updatedAt, clock()),
-          };
-          blueprints.set(learned.id, learned);
-          return learned;
-        }
-        return record;
-      }
-      const next: NftPurchaseBlueprintRecordV1 = {
+      // Every refusal lives in one shared decision, so this fake can never be
+      // the permissive one.
+      const effect = nftSubmissionEffectV1({
+        existing: {
+          approvedCallsHash: record.blueprint.approvedCallsHash,
+          status: record.blueprint.status,
+          submissionBatchId: record.submissionBatchId,
+          submittedTransactionHash: record.submittedTransactionHash,
+          submittedAt: record.submittedAt,
+        },
+        next: {
+          status: input.status,
+          submissionBatchId: input.submissionBatchId,
+          transactionHash: input.transactionHash,
+        },
+      });
+      if (effect.kind === 'unchanged') return record;
+
+      const base = {
         ...record,
-        blueprint: rewriteBlueprint(record, { status: 'submitted' }),
-        submissionBatchId: input.submissionBatchId,
-        submittedTransactionHash: input.transactionHash,
-        submittedAt: input.submittedAt,
+        blueprint: rewriteBlueprint(record, { status: effect.status }),
         updatedAt: nftUpdatedAtV1(record.updatedAt, clock()),
       };
+      const next: NftPurchaseBlueprintRecordV1 =
+        effect.kind === 'open'
+          ? {
+              ...base,
+              submissionBatchId: input.submissionBatchId,
+              submittedTransactionHash: input.transactionHash,
+              submittedAt: input.submittedAt,
+            }
+          : effect.kind === 'advance'
+            ? { ...base, submittedTransactionHash: effect.learnTransactionHash ?? record.submittedTransactionHash }
+            : // 'cancel' — nothing went out, so no batch, no hash, no submittedAt.
+              base;
       blueprints.set(next.id, next);
       return next;
     },

@@ -1,0 +1,55 @@
+import test, { describe } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import url from 'node:url';
+
+const here = path.dirname(url.fileURLToPath(import.meta.url));
+const source = readFileSync(path.join(here, 'MiniConsole.tsx'), 'utf8');
+
+// ---------------------------------------------------------------------------
+// T65.1 Final §5/§6 — the miniapp's NFT journey.
+//
+// The same sequence as the web console, through the same panels and the same
+// wallet implementation. The miniapp used to stop at the Route Card; these
+// hold the rest of the flow in place.
+// ---------------------------------------------------------------------------
+
+describe('the miniapp completes the NFT flow', () => {
+  test('every stage of the journey is mounted', () => {
+    for (const stage of ['NftRouteCardPanel', 'NftReviewPanel', 'NftProofPanel']) {
+      assert.ok(source.includes(`<${stage}`), `${stage} must be rendered, not merely imported`);
+    }
+    assert.ok(/screen === "route" && nftCard/.test(source), 'Comparing lands on the NFT Route Card');
+    assert.ok(/screen === "review" && nftPrepared/.test(source), 'the Route Card leads to Review');
+    assert.ok(/screen === "proof" && \(nftProof \|\| nftSubmission\)/.test(source), 'a submission leads to Proof');
+  });
+
+  test('a new goal clears the NFT flow', () => {
+    // Otherwise a finished NFT purchase keeps claiming the Proof screen from
+    // whatever family the user asks for next.
+    for (const reset of ['nftPrepare.reset()', 'setNftSubmission(null)', 'setNftProof(null)', 'nftReconciled.current = null']) {
+      assert.ok(source.includes(reset), `a new comparison must run ${reset}`);
+    }
+  });
+
+  test('the wallet is reached only through the shared submission button', () => {
+    assert.ok(/<BlueprintSubmitButton\s+goal="nft"/.test(source), 'the NFT review uses the shared submit button');
+    assert.ok(!/useSendCalls|sendCalls\.|sendCallsV1/.test(source), 'the miniapp must never call the wallet directly');
+    assert.ok(!/(?<!wallet_)send_calls/.test(source), 'Base MCP send_calls is not a submission path');
+  });
+
+  test('buying stays behind the execution flag', () => {
+    assert.ok(
+      /onReview=\{address && flags\?\.nftExecutionV1 === true/.test(source),
+      'Review is offered only with a connected wallet and the execution flag on',
+    );
+    assert.ok(/read-only until it is enabled/.test(source), 'a disabled gate states why');
+  });
+
+  test('reconciliation runs once, after a proof id exists', () => {
+    assert.ok(/nftReconciled\.current === next\.proofId/.test(source), 'a proof is reconciled at most once per result');
+    const mutations = source.match(/nftReconcile\.mutate\(/g) ?? [];
+    assert.equal(mutations.length, 1, 'reconciliation has exactly one call site');
+  });
+});

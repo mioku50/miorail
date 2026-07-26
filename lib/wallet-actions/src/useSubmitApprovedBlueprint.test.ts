@@ -216,6 +216,66 @@ test('T62.1: the goal defaults to swap so every existing swap caller is unchange
   assert.ok(/goal\s*=\s*['"]swap['"]/.test(source), "goal must default to 'swap'");
 });
 
+// --- T65.1 Final §2/§6 — the NFT family joins WITHOUT a second wallet path ---
+
+test('T65.1: the NFT goal reuses the one wallet implementation', () => {
+  const source = mod.useSubmitApprovedBlueprint.toString();
+  assert.ok(/approveNft/.test(source), 'the NFT approve hook must be instantiated');
+  assert.ok(/recordNft/.test(source), 'the NFT record hook must be instantiated');
+  assert.ok(/goal\s*===\s*['"]nft['"]\s*\?\s*approveNft/.test(source), 'the approve hook is selected by goal');
+  assert.ok(/goal\s*===\s*['"]nft['"]\s*\?\s*recordNft/.test(source), 'the record hook is selected by goal');
+  // Adding a third family must NOT add a third sendCalls.
+  const sendCallsInvocations = source.match(/sendCalls\.mutateAsync\(/g) ?? [];
+  assert.equal(sendCallsInvocations.length, 1, 'there must be exactly ONE wallet submission implementation');
+});
+
+test('T65.1: an NFT approve payload passes the same preflight swap and earn do', () => {
+  // The canonical payload the NFT approve endpoint returns. If its shape ever
+  // drifts from the shared one, this fails before a wallet is ever opened.
+  const nftPayload = {
+    goal: 'nft' as const,
+    blueprintId: 'nft-blueprint:1',
+    blueprintHash: `0x${'a'.repeat(64)}`,
+    approvedCallsHash: `0x${'b'.repeat(64)}`,
+    chainId: '0x2105' as const,
+    from: '0x1111111111111111111111111111111111111111' as const,
+    calls: [{ to: '0x0000000000000068f116a894984e2db1123eb395' as const, value: '0xcb9a4f4a5c000', data: '0xfb0f3ee1' as const }],
+    atomicRequired: true as const,
+  };
+  assert.deepEqual(
+    mod.blueprintSubmitPreflight({
+      payload: nftPayload,
+      connectedAddress: nftPayload.from,
+      connectedChainId: 8453,
+    }),
+    { ok: true },
+  );
+  // …and the same refusals still apply to it.
+  assert.equal(
+    mod.blueprintSubmitPreflight({
+      payload: nftPayload,
+      connectedAddress: '0x2222222222222222222222222222222222222222',
+      connectedChainId: 8453,
+    }).ok,
+    false,
+    'a payload bound to another wallet must not reach the wallet',
+  );
+  assert.equal(
+    mod.blueprintSubmitPreflight({ payload: nftPayload, connectedAddress: nftPayload.from, connectedChainId: 1 }).ok,
+    false,
+    'a wallet off Base mainnet must not reach the wallet',
+  );
+});
+
+test('T65.1: the submit button accepts the NFT goal and forwards it unchanged', () => {
+  const buttonSource = readFileSync(path.join(here, 'BlueprintSubmitButton.tsx'), 'utf8');
+  assert.ok(/goal\?:\s*'swap'\s*\|\s*'earn'\s*\|\s*'nft'/.test(buttonSource), "the button's goal union must include 'nft'");
+  // The button owns no wallet logic of its own — it forwards to the hook.
+  assert.ok(!/useSendCalls|sendCalls\./.test(buttonSource), 'the button must not touch the wallet directly');
+  const passes = buttonSource.match(/goal,/g) ?? [];
+  assert.ok(passes.length >= 1, 'the goal must be handed to useSubmitApprovedBlueprint');
+});
+
 test('T57 wallet-actions sources never reference Base MCP send_calls, x402, or Action Inbox', () => {
   // `wallet_sendCalls` (the EIP-5792 wallet RPC via wagmi useSendCalls) is the
   // sanctioned path; the ban is on the Base MCP `send_calls` tool, x402, and

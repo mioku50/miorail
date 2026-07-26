@@ -36,6 +36,7 @@ export type NftPrepareResponseV1 = z.infer<typeof schemas.NftPrepareResponseV1Sc
 export type NftApproveRequestV1 = z.infer<typeof schemas.NftApproveRequestV1Schema>;
 export type NftApproveResponseV1 = z.infer<typeof schemas.NftApproveResponseV1Schema>;
 export type NftSubmissionRequestV1 = z.infer<typeof schemas.NftSubmissionRequestV1Schema>;
+export type NftSubmissionResponseV1 = z.infer<typeof schemas.NftSubmissionResponseV1Schema>;
 export type NftProofResponseV1 = z.infer<typeof schemas.NftProofResponseV1Schema>;
 export type EarnPrepareRequestV1 = z.infer<typeof schemas.EarnPrepareRequestV1Schema>;
 export type EarnPrepareResponseV1 = z.infer<typeof schemas.EarnPrepareResponseV1Schema>;

@@ -5,6 +5,7 @@ import {
   CONSOLE_BREADCRUMB_V1,
   CommerceInvoiceReviewPanel,
   CommerceRouteCardPanel,
+  NftProofPanel,
   NftReviewPanel,
   NftRouteCardPanel,
   CONSOLE_COPY_V1,
@@ -55,6 +56,7 @@ import {
   useCommerceCompare,
   useNftCompare,
   useNftPrepare,
+  useNftReconcile,
   useCreateCommerceOrder,
   useEarnCompare,
   useEvaluateSwapRoute,
@@ -64,6 +66,7 @@ import {
   useRouteHistory,
   useSimulateWithBudget,
   useStatus,
+  type NftProofResponseV1,
   type SimulateWithBudgetResponseV1,
 } from '@mioagent/api-client-react';
 import { BlueprintSubmitButton, EarnDepositFlow, type BlueprintSubmitStatus } from '@mioagent/wallet-actions';
@@ -107,6 +110,8 @@ export function RouteIntelligenceConsole() {
   const [goal, setGoal] = useState('');
   const [clock, setClock] = useState<ConsoleStageClockV1>(emptyStageClockV1);
   const [submission, setSubmission] = useState<BlueprintSubmissionState | null>(null);
+  const [nftSubmission, setNftSubmission] = useState<BlueprintSubmissionState | null>(null);
+  const [nftProof, setNftProof] = useState<NftProofResponseV1 | null>(null);
   const [simulateResponse, setSimulateResponse] = useState<SimulateBlueprintResponseV1 | null>(null);
   const [budgetResponse, setBudgetResponse] = useState<SimulateWithBudgetResponseV1 | null>(null);
 
@@ -144,6 +149,25 @@ export function RouteIntelligenceConsole() {
     });
     setScreen('review');
   };
+
+  // T65.1 Final §4 — reconciliation runs AFTER the shared submission records a
+  // proof id, and only then. It is bounded: one attempt per terminal wallet
+  // result. The proof it returns is the only thing allowed to say "you own it".
+  const nftReconcile = useNftReconcile({ onSuccess: (response) => setNftProof(response) });
+  const nftReconciled = useRef<string | null>(null);
+  const onNftSubmission = useCallback(
+    (next: BlueprintSubmissionState) => {
+      setNftSubmission(next);
+      if (next.status !== 'idle') mark('signed', 'start');
+      const terminal = next.status === 'confirmed' || next.status === 'failed' || next.status === 'submitted_unknown';
+      if (next.proofId) setScreen('proof');
+      if (!next.proofId || !terminal || nftReconciled.current === next.proofId) return;
+      nftReconciled.current = next.proofId;
+      mark('signed', 'complete');
+      nftReconcile.mutate({ proofId: next.proofId });
+    },
+    [mark, nftReconcile],
+  );
   const commerceOrder = useCreateCommerceOrder();
   const prepare = usePrepareSwapBlueprint();
   const flags = status.data?.productMigration;
@@ -277,6 +301,12 @@ export function RouteIntelligenceConsole() {
     setSubmission(null);
     setSimulateResponse(null);
     setBudgetResponse(null);
+    // A new goal clears the NFT flow too. Without this, a finished NFT purchase
+    // would keep claiming the Proof screen from whatever family comes next.
+    nftPrepare.reset();
+    setNftSubmission(null);
+    setNftProof(null);
+    nftReconciled.current = null;
     evaluationSettled.current = false;
     earnSettled.current = false;
     commerceSettled.current = false;
@@ -654,12 +684,29 @@ export function RouteIntelligenceConsole() {
         <ConsoleStepper steps={steps} />
         <NftReviewPanel
           card={nftPrepared.card}
+          blueprintHash={nftPrepared.response.blueprint.blueprintHash}
           callsHash={nftPrepared.response.blueprint.callsHash}
           valueWei={nftPrepared.response.blueprint.calls[0]?.valueWei ?? '0'}
           simulation={nftPrepared.response.simulation}
           safety={nftPrepared.response.safety}
           signable={nftPrepared.response.signable}
           blockedReason={nftPrepared.response.blockedReason}
+          /* The SAME button swap and earn use. `signable` already required the
+             execution flag, a passed simulation, a fresh listing and a clean
+             Safety Kernel, so this control appears only when all four held. */
+          submitSlot={
+            nftRunId ? (
+              <BlueprintSubmitButton
+                goal="nft"
+                routeRunId={nftRunId}
+                blueprintId={nftPrepared.response.blueprintId}
+                blueprintHash={nftPrepared.response.blueprint.blueprintHash}
+                quoteExpiry={nftPrepared.response.blueprint.expiresAt}
+                builderCode={BUILDER_CODE}
+                onStateChange={onNftSubmission}
+              />
+            ) : null
+          }
         />
       </>
     );
@@ -815,6 +862,29 @@ export function RouteIntelligenceConsole() {
               )}
             </div>
           </div>
+        )}
+      </>
+    );
+  } else if (screen === 'proof' && (nftProof || nftSubmission)) {
+    // The NFT proof is its own screen: this family's proof succeeds or fails on
+    // an ownership READ, which the swap ProofScreen has no room for. Until the
+    // reconcile returns, the screen says what is known — a submitted batch —
+    // and nothing more.
+    content = (
+      <>
+        <ConsoleStepper steps={steps} />
+        {nftProof ? (
+          <NftProofPanel proof={nftProof.proof} asset={nftCard?.asset} />
+        ) : (
+          <section className="nft-proof" aria-label="NFT ownership proof">
+            <h3>Submitted — waiting for the transaction</h3>
+            <p className="lnote">
+              {nftSubmission?.batchId
+                ? `Batch ${nftSubmission.batchId}. Nothing is confirmed until the receipt, the Transfer and the ownership read all agree.`
+                : 'Nothing has reached the chain yet.'}
+            </p>
+            {nftSubmission?.error && <p className="empty">{nftSubmission.error}</p>}
+          </section>
         )}
       </>
     );

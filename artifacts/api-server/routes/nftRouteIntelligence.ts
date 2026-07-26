@@ -9,6 +9,7 @@ import {
   NftPrepareResponseV1Schema,
   NftProofResponseV1Schema,
   NftSubmissionRequestV1Schema,
+  NftSubmissionResponseV1Schema,
 } from '@mioagent/api-zod';
 import { resolveNftIntentV1 } from '@mioagent/intent-engine';
 import {
@@ -406,7 +407,17 @@ nftRouteIntelligenceRouter.post('/nft/blueprints/:blueprintId/approve', async (r
     return;
   }
   if (!(await storageReady(res))) return;
+  const blocked = (reason: string, violation: string): void => {
+    res.json(
+      NftApproveResponseV1Schema.parse({
+        outcome: 'blocked',
+        reason,
+        safety: { ok: false, violations: [violation] },
+      }),
+    );
+  };
   try {
+    const now = nftRouteRuntime.now();
     const repository = nftRouteRuntime.repository();
     const blueprintId = String(req.params.blueprintId);
     const existing = await repository.getNftPurchaseBlueprint(blueprintId, guard.user.id);
@@ -414,22 +425,86 @@ nftRouteIntelligenceRouter.post('/nft/blueprints/:blueprintId/approve', async (r
       res.status(404).json({ error: 'nft_blueprint_not_found', code: 'nft_blueprint_not_found' });
       return;
     }
-    // The storage layer refuses a hash that is not this blueprint's own. The
-    // client approves THESE calls or it approves nothing.
+    if (existing.routeRunId !== guard.body.routeRunId) {
+      res.status(404).json({ error: 'nft_route_run_not_found', code: 'nft_route_run_not_found' });
+      return;
+    }
+    // The blueprint the client says it reviewed must be the blueprint on file.
+    // blueprintHash is computed over callsHash, so this IS the check that the
+    // calls about to open a wallet are the calls that were on the screen.
+    if (existing.blueprint.blueprintHash !== guard.body.blueprintHash) {
+      blocked('The blueprint you reviewed is not the one on file. Prepare it again.', 'blueprint_hash_mismatch');
+      return;
+    }
+    if (existing.blueprint.buyer.toLowerCase() !== guard.user.address) {
+      blocked('This purchase was prepared for a different wallet.', 'buyer_mismatch');
+      return;
+    }
+    if (new Date(existing.blueprint.expiresAt).getTime() <= now.getTime()) {
+      res.json(
+        NftApproveResponseV1Schema.parse({
+          outcome: 'expired',
+          reason: 'This review has expired. Compare again for a current listing.',
+        }),
+      );
+      return;
+    }
+    if (
+      existing.blueprint.status === 'submitted' ||
+      existing.blueprint.status === 'submitted_unknown' ||
+      existing.blueprint.status === 'confirmed'
+    ) {
+      blocked('This purchase has already been sent to a wallet.', 'already_submitted');
+      return;
+    }
+
+    // Re-run the kernel over the STORED calldata. It costs no network call and
+    // it answers the only question that matters here: do the bytes about to be
+    // signed still buy exactly this token, for exactly this price, from exactly
+    // this Seaport?
+    const run = await repository.getNftRouteRun(existing.routeRunId, guard.user.id);
+    const candidate = run
+      ? await repository.getNftCandidate(run.id, existing.blueprint.candidateHash, guard.user.id)
+      : null;
+    if (!run || !candidate) {
+      res.status(404).json({ error: 'nft_candidate_not_found', code: 'nft_candidate_not_found' });
+      return;
+    }
+    const safety = nftPurchaseSafetyKernelV1({
+      intent: run.intent,
+      candidate,
+      calls: existing.blueprint.calls,
+      buyer: guard.user.address as `0x${string}`,
+      fulfillmentResponseHash: existing.blueprint.fulfillmentResponseHash,
+      blueprintFulfillmentResponseHash: existing.blueprint.fulfillmentResponseHash,
+      reviewedCreatorFeePolicy: candidate.creatorFeePolicy,
+      now,
+    });
+    if (!safety.ok) {
+      res.json(
+        NftApproveResponseV1Schema.parse({
+          outcome: 'blocked',
+          reason: 'The Safety Kernel refused these calls.',
+          safety: { ok: false, violations: safety.violations },
+        }),
+      );
+      return;
+    }
+
+    // The server approves the calls hash IT holds. The client never names one.
     const approved = await repository.approveNftPurchaseBlueprint({
       blueprintId,
       userId: guard.user.id,
-      approvedCallsHash: guard.body.approvedCallsHash,
+      approvedCallsHash: existing.blueprint.callsHash,
     });
     const call = approved.blueprint.calls[0];
     res.json(
       NftApproveResponseV1Schema.parse({
-        blueprintId: approved.id,
-        blueprint: approved.blueprint,
-        signable: approved.blueprint.approvedCallsHash !== null,
+        outcome: 'approved',
         // The same payload shape swap and earn return. The server hands over
         // calls; it does not sign them and it does not broadcast them.
         payload: {
+          goal: 'nft',
           blueprintId: approved.id,
           blueprintHash: approved.blueprint.blueprintHash,
           approvedCallsHash: approved.blueprint.approvedCallsHash ?? approved.blueprint.callsHash,
@@ -438,6 +513,7 @@ nftRouteIntelligenceRouter.post('/nft/blueprints/:blueprintId/approve', async (r
           calls: [{ to: call.to, value: `0x${BigInt(call.valueWei).toString(16)}`, data: call.data }],
           atomicRequired: true,
         },
+        lifecycle: approved.blueprint.status,
       }),
     );
   } catch (error) {
@@ -459,13 +535,65 @@ nftRouteIntelligenceRouter.post('/nft/blueprints/:blueprintId/submission', async
     const now = nftRouteRuntime.now();
     const repository = nftRouteRuntime.repository();
     const blueprintId = String(req.params.blueprintId);
+    const existing = await repository.getNftPurchaseBlueprint(blueprintId, guard.user.id);
+    if (!existing) {
+      res.status(404).json({ error: 'nft_blueprint_not_found', code: 'nft_blueprint_not_found' });
+      return;
+    }
+    if (existing.routeRunId !== guard.body.routeRunId) {
+      res.status(404).json({ error: 'nft_route_run_not_found', code: 'nft_route_run_not_found' });
+      return;
+    }
+    // A submission is recorded against the calls that were APPROVED. A record
+    // naming a different hash is describing some other batch.
+    if (existing.blueprint.approvedCallsHash !== guard.body.approvedCallsHash) {
+      res.status(409).json({ error: 'nft_approved_calls_mismatch', code: 'nft_approved_calls_mismatch' });
+      return;
+    }
+
+    // The wallet returns at most one hash here — the blueprint holds exactly
+    // one call. `receipts` is deliberately ignored: a client-reported receipt
+    // is a claim, and ownership is established only by the chain reads in
+    // reconciliation.
+    const transactionHash = guard.body.transactionHashes?.[0] ?? null;
     const record = await repository.recordNftSubmission({
       blueprintId,
       userId: guard.user.id,
-      submissionBatchId: guard.body.submissionBatchId,
-      transactionHash: guard.body.transactionHash,
+      status: guard.body.status,
+      submissionBatchId: guard.body.batchId ?? null,
+      transactionHash,
       submittedAt: now.toISOString(),
     });
+
+    if (guard.body.status === 'cancelled') {
+      // Nothing was sent, so there is no ownership question and no proof to
+      // open. Recording a `pending` proof here would put a purchase on the
+      // screen that never happened.
+      res.json(
+        NftSubmissionResponseV1Schema.parse({
+          outcome: 'recorded',
+          lifecycle: record.blueprint.status,
+          proofId: null,
+          finalStatus: null,
+        }),
+      );
+      return;
+    }
+
+    const openProof = await repository.getNftProofByBlueprint(record.id, guard.user.id);
+    if (openProof && openProof.proof.status === 'finalized') {
+      // Reconciliation already answered. A late submission record does not get
+      // to reopen it.
+      res.json(
+        NftSubmissionResponseV1Schema.parse({
+          outcome: 'recorded',
+          lifecycle: record.blueprint.status,
+          proofId: openProof.id,
+          finalStatus: openProof.proof.finalStatus,
+        }),
+      );
+      return;
+    }
 
     // The proof opens HERE, at pending. Money has left a wallet and the
     // question "what did it buy?" now has a durable place to be answered.
@@ -499,8 +627,19 @@ nftRouteIntelligenceRouter.post('/nft/blueprints/:blueprintId/submission', async
       userId: guard.user.id,
       proof,
     });
-    await appendEvent(repository, stored, guard.user.id, 'submission_recorded', record.submittedTransactionHash, now);
-    res.json(proofResponse(stored));
+    // A repeat of the same submission says nothing new. Appending another
+    // event for it would grow the log without adding a fact.
+    if (openProof?.proof.proofHash !== stored.proof.proofHash) {
+      await appendEvent(repository, stored, guard.user.id, 'submission_recorded', record.submittedTransactionHash, now);
+    }
+    res.json(
+      NftSubmissionResponseV1Schema.parse({
+        outcome: 'recorded',
+        lifecycle: record.blueprint.status,
+        proofId: stored.id,
+        finalStatus: stored.proof.finalStatus,
+      }),
+    );
   } catch (error) {
     failed(res, error, guard.user.address, 'nft_submission_failed');
   }

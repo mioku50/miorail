@@ -210,6 +210,7 @@ describe('approval is of these calls, or it is nothing', () => {
     await assert.rejects(
       () =>
         repository.recordNftSubmission({
+          status: 'submitted',
           blueprintId,
           userId: NFT_TENANT,
           submissionBatchId: 'batch-1',
@@ -230,6 +231,7 @@ describe('a submission is recorded once', () => {
       approvedCallsHash: graph.blueprint.callsHash,
     });
     await repository.recordNftSubmission({
+      status: 'submitted',
       blueprintId,
       userId: NFT_TENANT,
       submissionBatchId: 'batch-1',
@@ -242,6 +244,7 @@ describe('a submission is recorded once', () => {
   test('a duplicate POST returns the recorded submission', async () => {
     const { repository, blueprintId } = await submitted();
     const again = await repository.recordNftSubmission({
+      status: 'submitted',
       blueprintId,
       userId: NFT_TENANT,
       submissionBatchId: 'batch-1',
@@ -257,6 +260,7 @@ describe('a submission is recorded once', () => {
     await assert.rejects(
       () =>
         repository.recordNftSubmission({
+          status: 'submitted',
           blueprintId,
           userId: NFT_TENANT,
           submissionBatchId: 'batch-2',
@@ -275,6 +279,7 @@ describe('a submission is recorded once', () => {
       approvedCallsHash: graph.blueprint.callsHash,
     });
     await repository.recordNftSubmission({
+      status: 'submitted',
       blueprintId,
       userId: NFT_TENANT,
       submissionBatchId: 'batch-1',
@@ -282,6 +287,7 @@ describe('a submission is recorded once', () => {
       submittedAt: NFT_NOW.toISOString(),
     });
     const learned = await repository.recordNftSubmission({
+      status: 'submitted',
       blueprintId,
       userId: NFT_TENANT,
       submissionBatchId: 'batch-1',

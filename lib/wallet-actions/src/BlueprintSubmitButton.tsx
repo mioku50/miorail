@@ -23,9 +23,9 @@ export interface BlueprintSubmitButtonProps
   quoteExpiry: string;
   /** Public ERC-8021 builder code (optional attribution). */
   builderCode?: string;
-  /** 'swap' (default) or 'earn' — selects the server approve/record routes. The
-   * wallet submission path is identical for both. */
-  goal?: 'swap' | 'earn';
+  /** 'swap' (default), 'earn' or 'nft' — selects the server approve/record
+   * routes. The wallet submission path is identical for all three. */
+  goal?: 'swap' | 'earn' | 'nft';
   now?: () => Date;
   onStateChange?: (state: {
     status: BlueprintSubmitStatus;

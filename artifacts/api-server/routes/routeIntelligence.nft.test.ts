@@ -236,6 +236,31 @@ async function prepared(requestId = 'nft-req-1') {
   return { app, routeRunId, routeCard, prepare };
 }
 
+/** Prepare, then approve exactly the way the SHARED submission hook does —
+ * naming the blueprint by hash and never naming a calls hash of its own. */
+async function approvedFlow(requestId = 'nft-req-1') {
+  const { app, routeRunId, prepare } = await prepared(requestId);
+  const approve = await request(app)
+    .post(`/api/route-intelligence/nft/blueprints/${prepare.body.blueprintId}/approve`)
+    .send({ routeRunId, blueprintHash: prepare.body.blueprint.blueprintHash, walletAddress: WALLET });
+  return { app, routeRunId, prepare, approve };
+}
+
+/** The goal-agnostic submission record the shared hook posts. */
+function submissionBody(routeRunId: string, approvedCallsHash: string, over: Record<string, unknown> = {}) {
+  const body: Record<string, unknown> = {
+    routeRunId,
+    walletAddress: WALLET,
+    approvedCallsHash,
+    status: 'submitted',
+    batchId: 'batch-1',
+    transactionHashes: [TX],
+    ...over,
+  };
+  for (const key of Object.keys(body)) if (body[key] === undefined) delete body[key];
+  return body;
+}
+
 describe('compare persists what it found', () => {
   test('a live listing produces a stored run and a ready card', async () => {
     const response = await compare();
@@ -415,44 +440,81 @@ describe('prepare loads the reviewed card, and refuses a moved listing', () => {
 });
 
 describe('approval is of these calls, and submission happens once', () => {
-  async function approvedFlow() {
-    const { app, prepare } = await prepared();
-    const approve = await request(app)
-      .post(`/api/route-intelligence/nft/blueprints/${prepare.body.blueprintId}/approve`)
-      .send({ approvedCallsHash: prepare.body.blueprint.callsHash, walletAddress: WALLET });
-    return { app, prepare, approve };
-  }
-
-  test('approving the stored calls hash works', async () => {
+  test('the approve response IS the canonical wallet payload the shared hook consumes', async () => {
     const { approve, prepare } = await approvedFlow();
     assert.equal(approve.status, 200);
-    assert.equal(approve.body.blueprint.approvedCallsHash, prepare.body.blueprint.callsHash);
-    assert.equal(approve.body.signable, true);
+    assert.equal(approve.body.outcome, 'approved');
+    const payload = approve.body.payload;
+    // Every field useSubmitApprovedBlueprint + blueprintSubmitPreflight read.
+    assert.equal(payload.goal, 'nft');
+    assert.equal(payload.chainId, '0x2105');
+    assert.equal(payload.from, WALLET);
+    assert.equal(payload.atomicRequired, true);
+    assert.equal(payload.calls.length, 1);
+    assert.equal(payload.calls[0].to, SEAPORT);
+    assert.equal(BigInt(payload.calls[0].value).toString(), PRICE);
+    assert.equal(payload.blueprintHash, prepare.body.blueprint.blueprintHash);
+    assert.equal(payload.approvedCallsHash, prepare.body.blueprint.callsHash);
+    // …and NOTHING NFT-specific rides along in the wallet transport.
+    assert.equal(approve.body.blueprint, undefined);
+    assert.equal(approve.body.proofId, undefined);
+    assert.equal(Object.keys(payload).sort().join(','),
+      'approvedCallsHash,atomicRequired,blueprintHash,blueprintId,calls,chainId,from,goal');
   });
 
-  test('approving a different hash is refused', async () => {
-    const { app, prepare } = await prepared();
+  test('approving a blueprint hash that is not the stored one is blocked', async () => {
+    const { app, routeRunId, prepare } = await prepared();
     const response = await request(app)
       .post(`/api/route-intelligence/nft/blueprints/${prepare.body.blueprintId}/approve`)
-      .send({ approvedCallsHash: H('7'), walletAddress: WALLET });
-    assert.equal(response.status, 409);
+      .send({ routeRunId, blueprintHash: H('7'), walletAddress: WALLET });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.outcome, 'blocked');
+    assert.deepEqual(response.body.safety.violations, ['blueprint_hash_mismatch']);
+    // Nothing was approved, so nothing can be submitted.
+    const stored = await repository.getNftPurchaseBlueprint(prepare.body.blueprintId, USER.id);
+    assert.equal(stored?.blueprint.approvedCallsHash, null);
+  });
+
+  test('an expired review cannot be approved', async () => {
+    const { app, routeRunId, prepare } = await prepared();
+    nftRouteRuntime.now = () => new Date(Date.parse(prepare.body.blueprint.expiresAt) + 1_000);
+    const response = await request(app)
+      .post(`/api/route-intelligence/nft/blueprints/${prepare.body.blueprintId}/approve`)
+      .send({ routeRunId, blueprintHash: prepare.body.blueprint.blueprintHash, walletAddress: WALLET });
+    assert.equal(response.body.outcome, 'expired');
+  });
+
+  test('a second approve after submission is blocked, not a second wallet prompt', async () => {
+    const { app, routeRunId, prepare, approve } = await approvedFlow();
+    await request(app)
+      .post(`/api/route-intelligence/nft/blueprints/${prepare.body.blueprintId}/submission`)
+      .send(submissionBody(routeRunId, approve.body.payload.approvedCallsHash));
+    const again = await request(app)
+      .post(`/api/route-intelligence/nft/blueprints/${prepare.body.blueprintId}/approve`)
+      .send({ routeRunId, blueprintHash: prepare.body.blueprint.blueprintHash, walletAddress: WALLET });
+    assert.equal(again.body.outcome, 'blocked');
+    assert.deepEqual(again.body.safety.violations, ['already_submitted']);
   });
 
   test('submission opens a pending proof carrying the hash to watch', async () => {
-    const { app, prepare } = await approvedFlow();
+    const { app, routeRunId, prepare, approve } = await approvedFlow();
     const response = await request(app)
       .post(`/api/route-intelligence/nft/blueprints/${prepare.body.blueprintId}/submission`)
-      .send({ walletAddress: WALLET, submissionBatchId: 'batch-1', transactionHash: TX });
+      .send(submissionBody(routeRunId, approve.body.payload.approvedCallsHash));
     assert.equal(response.status, 200);
-    assert.equal(response.body.proof.finalStatus, 'pending');
-    assert.equal(response.body.proof.receipt.transactionHash, TX);
-    assert.equal(response.body.needsReconciliation, true);
-    assert.match(response.body.copy, /Nothing is confirmed yet/);
+    assert.equal(response.body.outcome, 'recorded');
+    assert.equal(response.body.lifecycle, 'submitted');
+    assert.equal(response.body.finalStatus, 'pending');
+    const proof = await request(app).get(`/api/route-intelligence/nft/proofs/${response.body.proofId}`);
+    assert.equal(proof.body.proof.receipt.transactionHash, TX);
+    assert.equal(proof.body.needsReconciliation, true);
+    assert.match(proof.body.copy, /Nothing is confirmed yet/);
   });
 
-  test('a duplicate submission returns the same proof, not a second one', async () => {
-    const { app, prepare } = await approvedFlow();
-    const body = { walletAddress: WALLET, submissionBatchId: 'batch-1', transactionHash: TX };
+  test('a duplicate submission returns the same proof and appends no second event', async () => {
+    // What a page refresh looks like from here: the same claim, again.
+    const { app, routeRunId, prepare, approve } = await approvedFlow();
+    const body = submissionBody(routeRunId, approve.body.payload.approvedCallsHash);
     const first = await request(app)
       .post(`/api/route-intelligence/nft/blueprints/${prepare.body.blueprintId}/submission`)
       .send(body);
@@ -461,37 +523,107 @@ describe('approval is of these calls, and submission happens once', () => {
       .send(body);
     assert.equal(second.status, 200);
     assert.equal(second.body.proofId, first.body.proofId);
+    const events = await repository.listNftProofEvents(first.body.proofId, USER.id);
+    assert.equal(events.length, 1);
+    const stored = await repository.getNftPurchaseBlueprint(prepare.body.blueprintId, USER.id);
+    assert.equal(stored?.submissionBatchId, 'batch-1');
+  });
+
+  test('a second, DIFFERENT batch for the same blueprint is a 409', async () => {
+    const { app, routeRunId, prepare, approve } = await approvedFlow();
+    const hash = approve.body.payload.approvedCallsHash;
+    await request(app)
+      .post(`/api/route-intelligence/nft/blueprints/${prepare.body.blueprintId}/submission`)
+      .send(submissionBody(routeRunId, hash));
+    const conflicting = await request(app)
+      .post(`/api/route-intelligence/nft/blueprints/${prepare.body.blueprintId}/submission`)
+      .send(submissionBody(routeRunId, hash, { batchId: 'batch-2', transactionHashes: [H('9')] }));
+    assert.equal(conflicting.status, 409);
+  });
+
+  test('a record naming calls that were never approved is refused', async () => {
+    const { app, routeRunId, prepare, approve } = await approvedFlow();
+    assert.equal(approve.body.outcome, 'approved');
+    const response = await request(app)
+      .post(`/api/route-intelligence/nft/blueprints/${prepare.body.blueprintId}/submission`)
+      .send(submissionBody(routeRunId, H('8')));
+    assert.equal(response.status, 409);
+    assert.equal(response.body.code, 'nft_approved_calls_mismatch');
   });
 
   test('a submission without an approval is refused', async () => {
-    const { app, prepare } = await prepared();
+    const { app, routeRunId, prepare } = await prepared();
     const response = await request(app)
       .post(`/api/route-intelligence/nft/blueprints/${prepare.body.blueprintId}/submission`)
-      .send({ walletAddress: WALLET, submissionBatchId: 'batch-1', transactionHash: TX });
+      .send(submissionBody(routeRunId, prepare.body.blueprint.callsHash));
     assert.equal(response.status, 409);
   });
 
-  test('a wallet rejection leaves an approved blueprint and no proof', async () => {
-    // Nothing is submitted, so nothing is recorded. The purchase simply did
-    // not happen, and no proof claims otherwise.
-    const { app, prepare } = await approvedFlow();
-    const proof = await request(app).get(`/api/route-intelligence/nft/proofs/nft-proof:nothing`);
-    assert.equal(proof.status, 404);
+  test('a wallet rejection is recorded as cancelled, and opens no proof', async () => {
+    const { app, routeRunId, prepare, approve } = await approvedFlow();
+    const response = await request(app)
+      .post(`/api/route-intelligence/nft/blueprints/${prepare.body.blueprintId}/submission`)
+      .send(
+        submissionBody(routeRunId, approve.body.payload.approvedCallsHash, {
+          status: 'cancelled',
+          batchId: undefined,
+          transactionHashes: undefined,
+          error: 'User rejected the request in the wallet',
+        }),
+      );
+    assert.equal(response.status, 200);
+    assert.equal(response.body.lifecycle, 'cancelled');
+    // Nothing was sent, so there is no ownership question to answer.
+    assert.equal(response.body.proofId, null);
+    assert.equal(response.body.finalStatus, null);
     const blueprint = await repository.getNftPurchaseBlueprint(prepare.body.blueprintId, USER.id);
     assert.equal(blueprint?.submittedAt, null);
-    assert.equal(blueprint?.blueprint.status, 'approved');
+    assert.equal(blueprint?.submissionBatchId, null);
+    assert.equal(await repository.getNftProofByBlueprint(prepare.body.blueprintId, USER.id), null);
+  });
+
+  test('a batch that went out cannot later be recorded as cancelled', async () => {
+    const { app, routeRunId, prepare, approve } = await approvedFlow();
+    const hash = approve.body.payload.approvedCallsHash;
+    await request(app)
+      .post(`/api/route-intelligence/nft/blueprints/${prepare.body.blueprintId}/submission`)
+      .send(submissionBody(routeRunId, hash));
+    const response = await request(app)
+      .post(`/api/route-intelligence/nft/blueprints/${prepare.body.blueprintId}/submission`)
+      .send(submissionBody(routeRunId, hash, { status: 'cancelled', batchId: undefined, transactionHashes: undefined }));
+    assert.equal(response.status, 409);
+  });
+
+  test('a batch with no readable outcome is recorded as submitted_unknown, not submitted', async () => {
+    const { app, routeRunId, prepare, approve } = await approvedFlow();
+    const response = await request(app)
+      .post(`/api/route-intelligence/nft/blueprints/${prepare.body.blueprintId}/submission`)
+      .send(
+        submissionBody(routeRunId, approve.body.payload.approvedCallsHash, {
+          status: 'submitted_unknown',
+          transactionHashes: undefined,
+        }),
+      );
+    assert.equal(response.body.lifecycle, 'submitted_unknown');
+    // Still pending: an unreadable batch is not a failure and not a purchase.
+    assert.equal(response.body.finalStatus, 'pending');
+  });
+
+  test('another wallet cannot record against this blueprint', async () => {
+    const { routeRunId, prepare, approve } = await approvedFlow();
+    const response = await request(routeApp(OTHER_USER))
+      .post(`/api/route-intelligence/nft/blueprints/${prepare.body.blueprintId}/submission`)
+      .send(submissionBody(routeRunId, approve.body.payload.approvedCallsHash, { walletAddress: OTHER_WALLET }));
+    assert.equal(response.status, 404);
   });
 });
 
 describe('reconciliation decides what happened', () => {
   async function submitted() {
-    const { app, prepare } = await prepared();
-    await request(app)
-      .post(`/api/route-intelligence/nft/blueprints/${prepare.body.blueprintId}/approve`)
-      .send({ approvedCallsHash: prepare.body.blueprint.callsHash, walletAddress: WALLET });
+    const { app, routeRunId, prepare, approve } = await approvedFlow();
     const submission = await request(app)
       .post(`/api/route-intelligence/nft/blueprints/${prepare.body.blueprintId}/submission`)
-      .send({ walletAddress: WALLET, submissionBatchId: 'batch-1', transactionHash: TX });
+      .send(submissionBody(routeRunId, approve.body.payload.approvedCallsHash));
     return { app, proofId: submission.body.proofId as string };
   }
 

@@ -134,6 +134,13 @@
       "when": 1785158061690,
       "tag": "0018_t65_nft_submission",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1785244461690,
+      "tag": "0019_t65_nft_submission_states",
+      "breakpoints": true
     }
   ]
 }

@@ -257,31 +257,50 @@ export function NftRouteCardPanel({ card, restrictedByZone = false, onReview, re
 
 export interface NftReviewPanelProps {
   card: NftRouteCardLikeV1;
+  blueprintHash: string;
   callsHash: string;
   valueWei: string;
-  simulation: { status: string; blockNumber: string | null; errorCode: string | null } | null;
+  /** Zone-restricted orders take the advanced fulfilment path; it decides which
+   * calldata the wallet is asked to sign, so it is on the screen. */
+  restrictedByZone?: boolean;
+  simulation: { status: string; blockNumber: string | null; gasUsed?: string | null; errorCode: string | null } | null;
   safety: { ok: boolean; violations: readonly string[] };
   signable: boolean;
   blockedReason: string | null;
-  onApprove?: () => void;
+  /** The shared "Confirm in Base Account" control. Passed in rather than built
+   * here: there is exactly ONE wallet submission implementation, and this
+   * package is presentational. */
+  submitSlot?: ReactNode;
 }
 
 export function NftReviewPanel({
   card,
+  blueprintHash,
   callsHash,
   valueWei,
+  restrictedByZone = false,
   simulation,
   safety,
   signable,
   blockedReason,
-  onApprove,
+  submitSlot,
 }: NftReviewPanelProps) {
+  const { asset, candidate } = card;
   return (
     <section className="nft-review" aria-label="NFT purchase review">
       <h3>Review this purchase</h3>
-      <NftIdentity asset={card.asset} />
+      <NftIdentity asset={asset} />
+
+      {/* What arrives, named the only way identity is ever named here. */}
+      <Row label="You receive" value={`1 × ${asset.tokenStandard.toUpperCase()} #${asset.tokenId}`} />
       <Row label="You send" value={ethFromWeiV1(valueWei)} />
-      <Row label="Calls hash" value={<code>{shortHashV1(callsHash)}</code>} />
+      <Row label="Order type" value={nftOrderFormLabelV1(restrictedByZone)} />
+      <Row
+        label="Fulfilled through"
+        value={candidate ? seaportVersionLabelV1(candidate.order.protocolAddress) : '—'}
+        title={candidate?.order.protocolAddress}
+      />
+      <Row label="Listing expires" value={candidate?.listingExpiresAt ?? '—'} />
 
       <Row
         label="Simulation"
@@ -289,7 +308,7 @@ export function NftReviewPanel({
           simulation === null || simulation.status === 'unavailable'
             ? `Unavailable${simulation?.errorCode ? ` · ${simulation.errorCode}` : ''}`
             : simulation.status === 'passed'
-              ? `Passed at block ${simulation.blockNumber ?? '—'}`
+              ? `Passed at block ${simulation.blockNumber ?? '—'}${simulation.gasUsed ? ` · gas ${simulation.gasUsed}` : ''}`
               : `Reverted at block ${simulation.blockNumber ?? '—'}`
         }
       />
@@ -299,25 +318,47 @@ export function NftReviewPanel({
         value={safety.ok ? 'Passed' : `Blocked: ${safety.violations.join(', ').replace(/_/g, ' ')}`}
       />
 
-      {/* Signing is offered only when every gate passed. A disabled button
-          with a stated reason beats a button that fails after the click. */}
-      <button type="button" className="nft-review__approve" onClick={onApprove} disabled={!signable}>
-        Approve and sign in wallet
-      </button>
-      {!signable && <p className="nft-review__blocked">{blockedReason ?? 'This purchase cannot be signed yet.'}</p>}
+      <Row label="Blueprint hash" value={<code>{shortHashV1(blueprintHash)}</code>} title={blueprintHash} />
+      <Row label="Calls hash" value={<code>{shortHashV1(callsHash)}</code>} title={callsHash} />
+
+      {/* Signing is offered only when every gate passed. A disabled button with
+          a stated reason beats a button that fails after the click. */}
+      {signable ? (
+        submitSlot
+      ) : (
+        <p className="nft-review__blocked">{blockedReason ?? 'This purchase cannot be signed yet.'}</p>
+      )}
     </section>
   );
 }
 
-export function NftProofPanel({ proof }: { proof: NftProofLikeV1 }) {
+/**
+ * The headline for each outcome — the short sentence, kept separate from the
+ * explanation below it.
+ *
+ * `completed` is the ONLY one that uses the word. Everything else says what is
+ * and is not known, because a receipt is not a purchase.
+ */
+export const NFT_PROOF_HEADLINE_V1: Record<NftProofFinalStatusLikeV1, string> = {
+  pending: 'Submitted — waiting for the transaction',
+  completed: 'Purchase completed and ownership verified',
+  reconciliation_required: 'Receipt confirmed, ownership still being verified',
+  transaction_failed: 'The transaction reverted — nothing was bought',
+  failed: 'Ownership could not be independently proven',
+};
+
+export function NftProofPanel({ proof, asset }: { proof: NftProofLikeV1; asset?: NftAssetLikeV1 }) {
   const owned = proof.ownership.status === 'verified';
   return (
     <section className="nft-proof" aria-label="NFT ownership proof">
       <h3 className={`nft-proof__headline nft-proof__headline--${proof.finalStatus}`}>
-        {NFT_PROOF_COPY_UI_V1[proof.finalStatus]}
+        {NFT_PROOF_HEADLINE_V1[proof.finalStatus]}
       </h3>
+      <p className="nft-proof__detail">{NFT_PROOF_COPY_UI_V1[proof.finalStatus]}</p>
 
-      <Row label="Transaction" value={<code>{shortHashV1(proof.receipt.transactionHash)}</code>} />
+      {asset && <NftIdentity asset={asset} />}
+
+      <Row label="Transaction" value={<code>{shortHashV1(proof.receipt.transactionHash)}</code>} title={proof.receipt.transactionHash ?? undefined} />
       <Row label="Receipt" value={proof.receipt.status} />
       <Row label="Block" value={proof.receipt.blockNumber ?? '—'} />
       <Row label="Gas used" value={proof.receipt.gasUsed ?? '—'} />
@@ -325,6 +366,14 @@ export function NftProofPanel({ proof }: { proof: NftProofLikeV1 }) {
         label="Actually spent"
         // Read from the transaction, not copied from the card.
         value={ethFromWeiV1(proof.receipt.actualNativeValueWei)}
+      />
+
+      {/* Who held it before, and who holds it now — the two ends of the only
+          question this screen exists to answer. */}
+      <Row label="Previous owner" value={<code>{shortHashV1(proof.transfer.fromAddress ?? proof.seller)}</code>} />
+      <Row
+        label="New owner"
+        value={owned ? <code>{shortHashV1(proof.ownership.owner)}</code> : 'Not independently confirmed'}
       />
 
       <Row
@@ -349,7 +398,7 @@ export function NftProofPanel({ proof }: { proof: NftProofLikeV1 }) {
         }
       />
 
-      <Row label="Proof hash" value={<code>{shortHashV1(proof.proofHash)}</code>} />
+      <Row label="Proof hash" value={<code>{shortHashV1(proof.proofHash)}</code>} title={proof.proofHash} />
     </section>
   );
 }

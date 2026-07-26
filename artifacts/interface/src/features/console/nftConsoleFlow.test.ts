@@ -1,0 +1,62 @@
+import test, { describe } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import url from 'node:url';
+
+const here = path.dirname(url.fileURLToPath(import.meta.url));
+const source = readFileSync(path.join(here, 'RouteIntelligenceConsole.tsx'), 'utf8');
+
+// ---------------------------------------------------------------------------
+// T65.1 Final §2/§5/§6 — the web console's NFT journey.
+//
+// What the panels render is covered by @mioagent/ui's rendering tests. What is
+// covered HERE is the wiring those tests cannot see: that this surface mounts
+// every stage, and that it reaches the wallet through the ONE shared
+// implementation rather than around it.
+// ---------------------------------------------------------------------------
+
+describe('the web console completes the NFT flow', () => {
+  test('every stage of the journey is mounted', () => {
+    for (const stage of ['NftRouteCardPanel', 'NftReviewPanel', 'NftProofPanel']) {
+      assert.ok(source.includes(`<${stage}`), `${stage} must be rendered, not merely imported`);
+    }
+    assert.ok(/screen === 'route' && nftCard/.test(source), 'Comparing lands on the NFT Route Card');
+    assert.ok(/screen === 'review' && nftPrepared/.test(source), 'the Route Card leads to Review');
+    assert.ok(/screen === 'proof' && \(nftProof \|\| nftSubmission\)/.test(source), 'a submission leads to Proof');
+  });
+
+  test('a new goal clears the NFT flow', () => {
+    // Otherwise a finished NFT purchase keeps claiming the Proof screen from
+    // whatever family the user asks for next.
+    for (const reset of ['nftPrepare.reset()', 'setNftSubmission(null)', 'setNftProof(null)', 'nftReconciled.current = null']) {
+      assert.ok(source.includes(reset), `a new comparison must run ${reset}`);
+    }
+  });
+
+  test('the wallet is reached only through the shared submission button', () => {
+    assert.ok(/<BlueprintSubmitButton\s+goal="nft"/.test(source), 'the NFT review uses the shared submit button');
+    // No second implementation, no direct wagmi call, no Base MCP.
+    assert.ok(!/useSendCalls|sendCalls\.|sendCallsV1/.test(source), 'the console must never call the wallet directly');
+    assert.ok(!/(?<!wallet_)send_calls/.test(source), 'Base MCP send_calls is not a submission path');
+  });
+
+  test('reconciliation runs after a proof id exists, once, and never signs', () => {
+    assert.ok(/nftReconcile\.mutate\(\{ proofId: next\.proofId \}\)/.test(source), 'reconcile is driven by the recorded proof id');
+    assert.ok(/nftReconciled\.current === next\.proofId/.test(source), 'a proof is reconciled at most once per result');
+    const mutations = source.match(/nftReconcile\.mutate\(/g) ?? [];
+    assert.equal(mutations.length, 1, 'reconciliation has exactly one call site');
+  });
+
+  test('the client sends no calldata, target, value or recipient', () => {
+    // Every NFT request this surface makes, by field. A `data:` or `to:` here
+    // would mean the client had started composing transactions.
+    const nftCalls = source.match(/nft(Compare|Prepare|Reconcile)\.mutate\(\{[^}]*\}/g) ?? [];
+    assert.ok(nftCalls.length >= 2, 'the NFT mutations must be present to be checked');
+    for (const call of nftCalls) {
+      for (const forbidden of ['data:', 'calldata', 'valueWei:', 'recipient:', 'to:']) {
+        assert.ok(!call.includes(forbidden), `an NFT request must not carry ${forbidden}`);
+      }
+    }
+  });
+});

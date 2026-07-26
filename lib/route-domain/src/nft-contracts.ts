@@ -502,8 +502,15 @@ export const NftPurchaseBlueprintStatusV1Schema = z.enum([
   'awaiting_approval',
   'approved',
   'submitted',
+  // The batch left the wallet but we could not establish what became of it.
+  // Kept distinct from `submitted` on purpose: collapsing the two would let a
+  // submission we cannot see be displayed as one we can.
+  'submitted_unknown',
   'confirmed',
   'failed',
+  // The user refused in the wallet. Nothing was sent, so nothing is pending
+  // and no proof is opened — but the refusal itself is a fact worth keeping.
+  'cancelled',
   'expired',
 ]);
 export type NftPurchaseBlueprintStatusV1 = z.infer<typeof NftPurchaseBlueprintStatusV1Schema>;
@@ -591,7 +598,11 @@ export const NftPurchaseBlueprintV1Schema = NftPurchaseBlueprintV1ObjectSchema.s
   if (value.asset.tokenStandard !== 'erc721') {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['asset', 'tokenStandard'], message: 'V1 buys ERC-721 only' });
   }
-  const signable = value.status === 'approved' || value.status === 'submitted' || value.status === 'confirmed';
+  const signable =
+    value.status === 'approved' ||
+    value.status === 'submitted' ||
+    value.status === 'submitted_unknown' ||
+    value.status === 'confirmed';
   if (signable && value.approvedCallsHash === null) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
