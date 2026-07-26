@@ -3,6 +3,7 @@ import {
   AddressV1Schema,
   CommerceInvoiceV1Schema,
   CommerceOrderEventV1Schema,
+  CommercePaymentBlueprintV1Schema,
   CommerceOrderV1Schema,
   CommerceRouteCardV1Schema,
   CommerceRouteProofV1Schema,
@@ -284,6 +285,119 @@ export const CommerceOrderStatusResponseV1Schema = z.discriminatedUnion('outcome
     .strict(),
   z.object({ outcome: z.literal('unknown_order'), reason: z.string().min(1).max(500) }).strict(),
   z.object({ outcome: z.literal('provider_unavailable'), reason: z.string().min(1).max(500) }).strict(),
+]);
+
+// T64.3 — the payment rail. `prepare` builds the exact call and returns it for
+// review; `approve` returns the unsigned wallet payload; `submission` records
+// what the wallet did. The server never signs and never broadcasts.
+export const CommercePaymentPrepareRequestV1Schema = z
+  .object({ requestId: z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/) })
+  .strict();
+
+export const CommercePaymentPrepareResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      outcome: z.literal('prepared'),
+      blueprint: CommercePaymentBlueprintV1Schema,
+      safety: SafetyKernelResultV1Schema,
+      signable: z.boolean(),
+      signableReason: z.string().min(1).max(300).nullable(),
+    })
+    .strict(),
+  /** The invoice moved under the review. No replacement is opened. */
+  z.object({ outcome: z.literal('invoice_changed'), reason: z.string().min(1).max(500) }).strict(),
+  z.object({ outcome: z.literal('invoice_expired'), reason: z.string().min(1).max(500) }).strict(),
+  z
+    .object({ outcome: z.literal('blocked'), reason: z.string().min(1).max(500), safety: SafetyKernelResultV1Schema.nullable() })
+    .strict(),
+]);
+
+export const CommercePaymentApproveRequestV1Schema = z
+  .object({ blueprintHash: HashV1Schema, walletAddress: AddressV1Schema })
+  .strict();
+
+export const CommercePaymentApproveResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      outcome: z.literal('approved'),
+      payload: z
+        .object({
+          blueprintHash: HashV1Schema,
+          approvedCallsHash: HashV1Schema,
+          chainId: z.literal('0x2105'),
+          from: AddressV1Schema,
+          calls: z
+            .array(
+              z
+                .object({
+                  to: AddressV1Schema,
+                  value: z.string().regex(/^0x[0-9a-f]+$/),
+                  data: HexDataV1Schema,
+                })
+                .strict(),
+            )
+            .length(1),
+        })
+        .strict(),
+      safety: SafetyKernelResultV1Schema,
+    })
+    .strict(),
+  z
+    .object({ outcome: z.literal('blocked'), reason: z.string().min(1).max(500), safety: SafetyKernelResultV1Schema.nullable() })
+    .strict(),
+]);
+
+export const CommercePaymentSubmissionRequestV1Schema = z
+  .object({
+    blueprintHash: HashV1Schema,
+    approvedCallsHash: HashV1Schema,
+    walletAddress: AddressV1Schema,
+    /** EIP-5792 batch id, when the wallet returned one. */
+    batchId: z.string().min(1).max(200).nullable(),
+    transactionHash: HashV1Schema.nullable(),
+    /** What the wallet reported. `cancelled` is a first-class outcome. */
+    walletStatus: z.enum(['submitted', 'cancelled', 'unknown']),
+  })
+  .strict();
+
+export const CommercePaymentStatusV1Schema = z
+  .object({
+    blueprintStatus: z.string().min(1).max(60),
+    progress: z.string().min(1).max(60).nullable(),
+    onchain: z.string().min(1).max(60).nullable(),
+    transactionHash: HashV1Schema.nullable(),
+    delivery: z
+      .object({
+        redemptionAvailable: z.boolean(),
+        deliveryObservedAt: z.string().min(1).max(60).nullable(),
+        orderStatus: z.string().min(1).max(60),
+        redactedResponseHash: HashV1Schema.nullable(),
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict();
+
+export const CommercePaymentSubmissionResponseV1Schema = z.discriminatedUnion('outcome', [
+  z.object({ outcome: z.literal('recorded'), status: CommercePaymentStatusV1Schema }).strict(),
+  z.object({ outcome: z.literal('cancelled'), reason: z.string().min(1).max(500) }).strict(),
+  z.object({ outcome: z.literal('conflict'), reason: z.string().min(1).max(500) }).strict(),
+  z.object({ outcome: z.literal('blocked'), reason: z.string().min(1).max(500) }).strict(),
+]);
+
+/** Redemption material. Returned ONCE, over a no-store response, to the wallet
+ * that owns the order. It is never persisted and never hashed. */
+export const CommerceDeliveryResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      outcome: z.literal('delivered'),
+      orderId: z.string().min(1).max(200),
+      deliveryObservedAt: z.string().min(1).max(60),
+      fields: z.record(z.string().min(1).max(4_000)),
+    })
+    .strict(),
+  z.object({ outcome: z.literal('not_delivered'), reason: z.string().min(1).max(500) }).strict(),
+  z.object({ outcome: z.literal('unknown_order'), reason: z.string().min(1).max(500) }).strict(),
 ]);
 
 export const CommerceHistoryItemV1Schema = z

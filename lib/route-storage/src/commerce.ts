@@ -5,8 +5,11 @@ import {
   CommerceOrderV1Schema,
   CommerceRouteCardV1Schema,
   CommerceRouteIntentV1Schema,
+  CommercePaymentBlueprintV1Schema,
   CommerceRouteProofV1Schema,
   type CommerceCandidateV1,
+  type CommerceDeliveryRecordV1,
+  type CommercePaymentBlueprintV1,
   type CommerceEvidenceV1,
   type CommerceOrderEventV1,
   type CommerceOrderV1,
@@ -167,6 +170,42 @@ export interface CommerceStorageRepository {
   getCommerceProof(orderId: string, userId: string): Promise<CommerceRouteProofV1 | null>;
 
   listCommerceHistory(userId: string, limit: number): Promise<CommerceHistoryItemV1[]>;
+
+  // --- T64.3: the payment rail ----------------------------------------------
+  /** One Blueprint per order. A second attempt returns the existing one rather
+   * than minting another — a second Blueprint is a second wallet prompt. */
+  upsertCommercePaymentBlueprint(input: {
+    orderId: string;
+    userId: string;
+    walletAddress: string;
+    blueprint: CommercePaymentBlueprintV1;
+  }): Promise<CommercePaymentBlueprintRecordV1>;
+  getCommercePaymentBlueprint(orderId: string, userId: string): Promise<CommercePaymentBlueprintRecordV1 | null>;
+  updateCommercePaymentBlueprint(input: {
+    orderId: string;
+    userId: string;
+    blueprint: CommercePaymentBlueprintV1;
+    submissionBatchId?: string | null;
+    transactionHash?: string | null;
+    onchainState?: string | null;
+    providerProgress?: string | null;
+    deliveryRecord?: CommerceDeliveryRecordV1 | null;
+  }): Promise<CommercePaymentBlueprintRecordV1>;
+}
+
+export interface CommercePaymentBlueprintRecordV1 {
+  orderId: string;
+  userId: string;
+  walletAddress: string;
+  blueprint: CommercePaymentBlueprintV1;
+  submissionBatchId: string | null;
+  transactionHash: string | null;
+  onchainState: string | null;
+  providerProgress: string | null;
+  /** States and a redacted hash only — never redemption material. */
+  deliveryRecord: CommerceDeliveryRecordV1 | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // --- shared validation ------------------------------------------------------
@@ -204,6 +243,16 @@ export function parseCommerceOrderV1(value: CommerceOrderV1): CommerceOrderV1 {
 export function parseCommerceOrderEventV1(value: CommerceOrderEventV1): CommerceOrderEventV1 {
   const parsed = CommerceOrderEventV1Schema.safeParse(value);
   if (!parsed.success) throw new RouteStorageIntegrityError('Commerce order event failed contract validation');
+  return parsed.data;
+}
+
+export function parseCommercePaymentBlueprintV1(
+  value: CommercePaymentBlueprintV1,
+): CommercePaymentBlueprintV1 {
+  const parsed = CommercePaymentBlueprintV1Schema.safeParse(value);
+  if (!parsed.success) {
+    throw new RouteStorageIntegrityError('Commerce payment blueprint failed contract validation');
+  }
   return parsed.data;
 }
 

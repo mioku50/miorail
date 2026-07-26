@@ -7,6 +7,7 @@ import {
   type CommerceApiSurfaceV1,
   type CommerceCatalogSourceV1,
   type CommerceOrderGatewayV1,
+  type CommerceReceiptReaderV1,
 } from '@mioagent/commerce-engine';
 
 // ---------------------------------------------------------------------------
@@ -107,3 +108,51 @@ export function resetCommerceRuntimeV1(): void {
 // are durable now (commerce_orders + commerce_order_events + commerce_proofs
 // via createDatabaseCommerceStorageRepository), so a checkout survives a
 // restart and a repeat cannot open a second invoice.
+
+// ---------------------------------------------------------------------------
+// T64.3 — the onchain receipt reader.
+//
+// Injected so the engine opens no socket. A missing RPC yields a reader that
+// returns null, which the proof layer treats as `receipt_missing` rather than
+// as a successful payment.
+// ---------------------------------------------------------------------------
+
+let receiptReader: CommerceReceiptReaderV1 | null = null;
+
+export function resolveCommerceReceiptReaderV1(): CommerceReceiptReaderV1 {
+  if (receiptReader) return receiptReader;
+  const rpcUrl = process.env.BASE_MAINNET_RPC_URL?.trim();
+  receiptReader = {
+    async readReceipt(input: { transactionHash: string }) {
+      if (!rpcUrl) return null;
+      const { createPublicClient, http } = await import('viem');
+      const { base } = await import('viem/chains');
+      const client = createPublicClient({ chain: base, transport: http(rpcUrl) });
+      try {
+        const receipt = await client.getTransactionReceipt({
+          hash: input.transactionHash as `0x${string}`,
+        });
+        return {
+          transactionHash: receipt.transactionHash,
+          status: receipt.status === 'success' ? ('success' as const) : ('reverted' as const),
+          blockNumber: receipt.blockNumber.toString(),
+          gasUsed: receipt.gasUsed.toString(),
+          chainId: base.id,
+          logs: receipt.logs.map((log) => ({
+            address: log.address,
+            topics: log.topics as readonly string[],
+            data: log.data,
+          })),
+        };
+      } catch {
+        // A receipt that cannot be read is absent, never a success.
+        return null;
+      }
+    },
+  };
+  return receiptReader;
+}
+
+export function resetCommerceReceiptReaderV1(): void {
+  receiptReader = null;
+}

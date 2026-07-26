@@ -126,6 +126,38 @@ A read failure AFTER a successful `POST /v2/invoices` reports
 `invoice_creation_unknown` with the invoice id, never "nothing was created" —
 the invoice exists, and a retry would create a second one.
 
+## Commerce payment rail (T64.3)
+
+Built and tested end to end on fixtures; **gated off** by default. No real
+payment has been made.
+
+- **Own Blueprint.** `CommercePaymentBlueprintV1`, not the swap-shaped
+  `ExecutionBlueprintV1` — that one carries expectedOutput, slippage and
+  requiredApprovals which are meaningless, or quietly permissive, for a
+  transfer.
+- **One call.** `USDC.transfer(invoice address, exact invoice amount)`, zero
+  native value, no approval, no second call, and **no Builder Code suffix** —
+  appending bytes to ERC-20 calldata changes what the token contract executes.
+- **The kernel reads the CALLDATA**, not the call object's fields, so a call
+  whose fields claim the invoice terms while its calldata pays someone else is
+  blocked.
+- **Signing is gated on simulation.** An unsimulated or reverted call is never
+  offered to a wallet.
+- **Three separate ladders**, and each rung requires the one below it:
+
+```text
+onchain transfer  ≠  provider payment confirmation  ≠  order confirmation  ≠  delivery
+```
+
+  A successful receipt with no matching ERC-20 Transfer log is `unverified` and
+  forces reconciliation — never a completed payment.
+- **Delivery material is never stored.** Codes, PINs and links are fetched on
+  demand, returned once over a `no-store` response to the owning wallet, and
+  written to no table, log, audit event or proof. The proof keeps
+  `redemptionAvailable`, `deliveryObservedAt`, `orderStatus` and a hash over a
+  REDACTED response — two orders with different codes hash identically, which
+  is the point.
+
 ## Bitrefill promotion gate (`scored` → `proven`)
 
 Still outstanding, in order:
@@ -133,11 +165,11 @@ Still outstanding, in order:
 1. ~~durable, tenant-scoped persistence for the order and its proof~~ —
    delivered by T64.2 (migration 0015). A checkout survives a restart, and one
    idempotency key can only ever hold one invoice.
-2. a controlled live payment: an exact USDC transfer to the invoice's own
-   deposit address, authorized by the user's wallet. T64.2/T64.2.1 create
-   invoices but have NO payment path at all — no signing, no USDC transfer, no
-   wallet call. The per-invoice recipient (above) must be re-verified against a
-   settled payment before this is enabled.
+2. a controlled live payment (T64.4): the rail exists as of T64.3 and is
+   exercised only on fixtures. One real invoice, one explicit Base Account
+   signature, a ceiling of a few USDC, watched to delivery or to an honest
+   terminal failure. The per-invoice recipient must be confirmed by a settled
+   payment before this is enabled.
 3. reconciliation of a `delivered` proof end to end from a real paid order.
 4. an operator runbook for `order_unconfirmed` — the state where money moved
    and no order exists.

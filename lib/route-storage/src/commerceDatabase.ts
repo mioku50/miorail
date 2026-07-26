@@ -1,5 +1,7 @@
 import type {
   CommerceCandidateV1,
+  CommerceDeliveryRecordV1,
+  CommercePaymentBlueprintV1,
   CommerceEvidenceV1,
   CommerceOrderEventV1,
   CommerceOrderV1,
@@ -19,6 +21,7 @@ import {
   parseCommerceIntentV1,
   parseCommerceOrderEventV1,
   parseCommerceOrderV1,
+  parseCommercePaymentBlueprintV1,
   parseCommerceProofV1,
   parseCommerceRouteCardV1,
   type CommerceHistoryItemV1,
@@ -460,6 +463,80 @@ export function createDatabaseCommerceStorageRepository(
         LIMIT 1
       `;
       return rows[0] ? parseCommerceProofV1(rows[0].payload as CommerceRouteProofV1) : null;
+    },
+
+    async upsertCommercePaymentBlueprint(input) {
+      await ownedOrder(input.orderId, input.userId);
+      const blueprint = parseCommercePaymentBlueprintV1(input.blueprint);
+      // ON CONFLICT DO NOTHING: one Blueprint per order is a database
+      // guarantee, so a concurrent prepare cannot open a second wallet prompt.
+      await sql`
+        INSERT INTO commerce_payment_blueprints (
+          id, order_id, user_id, wallet_address, schema_version, status, blueprint_hash,
+          calls_hash, approved_calls_hash, invoice_id, exact_amount_atomic, recipient,
+          recipient_policy, payload, invoice_expires_at
+        ) VALUES (
+          ${blueprint.id}, ${input.orderId}, ${input.userId}, ${input.walletAddress.toLowerCase()},
+          ${blueprint.schemaVersion}, ${blueprint.status}, ${blueprint.blueprintHash},
+          ${blueprint.callsHash}, ${blueprint.approvedCallsHash}, ${blueprint.invoiceId},
+          ${blueprint.exactAmountAtomic}, ${blueprint.recipient}, ${blueprint.recipientPolicy},
+          CAST(${jsonb(blueprint)} AS jsonb), ${new Date(blueprint.invoiceExpiresAt)}
+        )
+        ON CONFLICT DO NOTHING
+      `;
+      const record = await this.getCommercePaymentBlueprint(input.orderId, input.userId);
+      if (!record) throw new RouteStorageIntegrityError('Commerce payment blueprint could not be stored');
+      return record;
+    },
+
+    async getCommercePaymentBlueprint(orderId: string, userId: string) {
+      const rows = await sql`
+        SELECT order_id, user_id, wallet_address, payload, submission_batch_id, transaction_hash,
+               onchain_state, provider_progress, delivery_record, created_at, updated_at
+        FROM commerce_payment_blueprints
+        WHERE order_id = ${orderId} AND user_id = ${userId}
+        LIMIT 1
+      `;
+      const row = rows[0];
+      if (!row) return null;
+      return {
+        orderId: String(row.order_id),
+        userId: String(row.user_id),
+        walletAddress: String(row.wallet_address),
+        blueprint: parseCommercePaymentBlueprintV1(row.payload as CommercePaymentBlueprintV1),
+        submissionBatchId: textOrNull(row.submission_batch_id),
+        transactionHash: textOrNull(row.transaction_hash),
+        onchainState: textOrNull(row.onchain_state),
+        providerProgress: textOrNull(row.provider_progress),
+        deliveryRecord: (row.delivery_record as CommerceDeliveryRecordV1 | null) ?? null,
+        createdAt: iso(row.created_at),
+        updatedAt: iso(row.updated_at),
+      };
+    },
+
+    async updateCommercePaymentBlueprint(input) {
+      const existing = await this.getCommercePaymentBlueprint(input.orderId, input.userId);
+      if (!existing) throw new RouteStorageIntegrityError('Commerce payment blueprint not found for this tenant');
+      const blueprint = parseCommercePaymentBlueprintV1(input.blueprint);
+      if (blueprint.invoiceId !== existing.blueprint.invoiceId) {
+        throw new RouteStorageConflictError('Commerce payment blueprint targets another invoice');
+      }
+      await sql`
+        UPDATE commerce_payment_blueprints
+        SET status = ${blueprint.status},
+            approved_calls_hash = ${blueprint.approvedCallsHash},
+            payload = CAST(${jsonb(blueprint)} AS jsonb),
+            submission_batch_id = COALESCE(${input.submissionBatchId ?? null}, submission_batch_id),
+            transaction_hash = COALESCE(${input.transactionHash ?? null}, transaction_hash),
+            onchain_state = COALESCE(${input.onchainState ?? null}, onchain_state),
+            provider_progress = COALESCE(${input.providerProgress ?? null}, provider_progress),
+            delivery_record = COALESCE(CAST(${input.deliveryRecord ? jsonb(input.deliveryRecord) : null} AS jsonb), delivery_record),
+            updated_at = now()
+        WHERE order_id = ${input.orderId} AND user_id = ${input.userId}
+      `;
+      const next = await this.getCommercePaymentBlueprint(input.orderId, input.userId);
+      if (!next) throw new RouteStorageIntegrityError('Commerce payment blueprint disappeared during update');
+      return next;
     },
 
     async listCommerceHistory(userId: string, limit: number) {

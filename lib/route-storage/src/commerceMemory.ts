@@ -15,10 +15,12 @@ import {
   parseCommerceIntentV1,
   parseCommerceOrderEventV1,
   parseCommerceOrderV1,
+  parseCommercePaymentBlueprintV1,
   parseCommerceProofV1,
   parseCommerceRouteCardV1,
   type CommerceHistoryItemV1,
   type CommerceOrderRecordV1,
+  type CommercePaymentBlueprintRecordV1,
   type CommerceRouteRunRecordV1,
   type CommerceStorageRepository,
   type ReserveCommerceOrderInputV1,
@@ -46,6 +48,7 @@ export function createMemoryCommerceStorageRepository(): CommerceStorageReposito
   const ordersByIdempotency = new Map<string, string>();
   const events = new Map<string, CommerceOrderEventV1[]>();
   const proofs = new Map<string, CommerceRouteProofV1>();
+  const payments = new Map<string, CommercePaymentBlueprintRecordV1>();
   let sequence = 0;
 
   function requireRun(runId: string, userId: string): MemoryRun {
@@ -278,6 +281,61 @@ export function createMemoryCommerceStorageRepository(): CommerceStorageReposito
     async getCommerceProof(orderId: string, userId: string) {
       requireOrder(orderId, userId);
       return proofs.get(orderId) ?? null;
+    },
+
+    async upsertCommercePaymentBlueprint(input) {
+      const record = requireOrder(input.orderId, input.userId);
+      const blueprint = parseCommercePaymentBlueprintV1(input.blueprint);
+      const existing = payments.get(input.orderId);
+      // One Blueprint per order: a repeat returns what already exists so a
+      // second wallet prompt cannot be opened for the same money.
+      if (existing) return existing;
+      const now = new Date().toISOString();
+      const next: CommercePaymentBlueprintRecordV1 = {
+        orderId: input.orderId,
+        userId: input.userId,
+        walletAddress: input.walletAddress.toLowerCase(),
+        blueprint,
+        submissionBatchId: null,
+        transactionHash: null,
+        onchainState: null,
+        providerProgress: null,
+        deliveryRecord: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      void record;
+      payments.set(input.orderId, next);
+      return next;
+    },
+
+    async getCommercePaymentBlueprint(orderId: string, userId: string) {
+      const record = payments.get(orderId);
+      if (!record || record.userId !== userId) return null;
+      return record;
+    },
+
+    async updateCommercePaymentBlueprint(input) {
+      const existing = payments.get(input.orderId);
+      if (!existing || existing.userId !== input.userId) {
+        throw new RouteStorageIntegrityError('Commerce payment blueprint not found for this tenant');
+      }
+      const blueprint = parseCommercePaymentBlueprintV1(input.blueprint);
+      if (blueprint.invoiceId !== existing.blueprint.invoiceId) {
+        throw new RouteStorageConflictError('Commerce payment blueprint targets another invoice');
+      }
+      const next: CommercePaymentBlueprintRecordV1 = {
+        ...existing,
+        blueprint,
+        submissionBatchId: input.submissionBatchId ?? existing.submissionBatchId,
+        transactionHash: input.transactionHash ?? existing.transactionHash,
+        onchainState: input.onchainState ?? existing.onchainState,
+        providerProgress: input.providerProgress ?? existing.providerProgress,
+        deliveryRecord: input.deliveryRecord ?? existing.deliveryRecord,
+        updatedAt: new Date().toISOString(),
+      };
+      payments.set(input.orderId, next);
+      return next;
     },
 
     async listCommerceHistory(userId: string, limit: number) {

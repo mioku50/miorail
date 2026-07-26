@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { financialContentV1, stableHashV1, type HashV1 } from './hashing.js';
+import { ExecutionCallV1Schema, hashApprovedCallsV1 } from './execution-contracts.js';
 import {
   AddressV1Schema,
   AssetRefV1Schema,
@@ -1223,3 +1224,204 @@ export const CommerceDomainSchemasV1 = {
   CommerceOrderV1Schema,
   CommerceRouteProofV1Schema,
 } as const;
+
+// ---------------------------------------------------------------------------
+// T64.3 — the Commerce payment rail.
+//
+// A gift card is paid with ONE exact ERC-20 transfer to the address the invoice
+// itself named. That is not a swap and not a deposit, so it gets its own
+// Blueprint rather than reusing the swap-shaped ExecutionBlueprintV1 — which
+// carries expectedOutput, slippage and requiredApprovals that would all be
+// meaningless or, worse, quietly permissive here.
+//
+// What it DOES reuse is ExecutionCallV1 and hashApprovedCallsV1, so the call
+// this Blueprint carries is the same object the T63B Alchemy provider
+// simulates and the same shape the wallet executes. One representation, one
+// hash, no translation layer to disagree with itself.
+// ---------------------------------------------------------------------------
+
+export const COMMERCE_PAYMENT_BLUEPRINT_STATUSES_V1 = [
+  'ready_for_review',
+  'approved',
+  'submitted',
+  'confirmed_onchain',
+  'provider_confirmed',
+  'delivered',
+  'failed',
+  'reconciliation_required',
+] as const;
+export type CommercePaymentBlueprintStatusV1 = (typeof COMMERCE_PAYMENT_BLUEPRINT_STATUSES_V1)[number];
+
+const CommercePaymentBlueprintV1ObjectSchema = z
+  .object({
+    ...financialEntityFieldsV1(
+      'commerce-payment-blueprint/v1',
+      z.enum(COMMERCE_PAYMENT_BLUEPRINT_STATUSES_V1),
+    ),
+    blueprintHash: HashV1Schema,
+    callsHash: HashV1Schema,
+    approvedCallsHash: HashV1Schema.nullable(),
+    orderId: z.string().min(1).max(200),
+    invoiceId: z.string().min(1).max(200),
+    routeCardHash: HashV1Schema,
+    candidateHash: HashV1Schema,
+    /** The exact charge, from the invoice and nowhere else. */
+    exactAmountAtomic: AtomicAmountV1Schema,
+    /** Canonical Base USDC — the token the call targets. */
+    asset: AddressV1Schema,
+    /** The invoice's own deposit address. */
+    recipient: AddressV1Schema,
+    recipientPolicy: z.enum(['pinned', 'invoice_scoped']),
+    /** Beyond this the invoice is dead and the Blueprint is unusable. */
+    invoiceExpiresAt: TimestampV1Schema,
+    /** Exactly one call: USDC.transfer(recipient, exactAmount). */
+    calls: z.array(ExecutionCallV1Schema).length(1),
+    simulationState: z
+      .object({
+        status: z.enum(['not_requested', 'pending', 'passed', 'failed', 'unavailable']),
+        observedAt: TimestampV1Schema.nullable(),
+        blockNumber: AtomicAmountV1Schema.nullable(),
+        requestHash: HashV1Schema.nullable(),
+        responseHash: HashV1Schema.nullable(),
+        errorCode: z.string().min(1).max(120).nullable(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type CommercePaymentBlueprintV1 = z.infer<typeof CommercePaymentBlueprintV1ObjectSchema>;
+
+export function hashCommercePaymentBlueprintV1(value: CommercePaymentBlueprintV1): HashV1 {
+  return stableHashV1(
+    'commerce-payment-blueprint/v1',
+    financialContentV1(value, ['blueprintHash', 'approvedCallsHash', 'calls', 'simulationState']),
+  );
+}
+
+export const CommercePaymentBlueprintV1Schema =
+  CommercePaymentBlueprintV1ObjectSchema.superRefine((value, ctx) => {
+    validateFinancialChronologyV1(value, ctx);
+    if (value.blueprintHash !== hashCommercePaymentBlueprintV1(value)) {
+      addHashIssue(ctx, 'blueprintHash', 'blueprintHash');
+    }
+    const expectedCallsHash = hashApprovedCallsV1(value.calls);
+    if (value.callsHash !== expectedCallsHash) addHashIssue(ctx, 'callsHash', 'callsHash');
+    if (value.approvedCallsHash !== null && value.approvedCallsHash !== expectedCallsHash) {
+      addHashIssue(ctx, 'approvedCallsHash', 'approvedCallsHash');
+    }
+    // Anything past review has been approved, and an approval is a hash.
+    const approvedStatuses: CommercePaymentBlueprintStatusV1[] = [
+      'approved',
+      'submitted',
+      'confirmed_onchain',
+      'provider_confirmed',
+      'delivered',
+    ];
+    if (approvedStatuses.includes(value.status) && value.approvedCallsHash === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['approvedCallsHash'],
+        message: 'An approved payment Blueprint requires approvedCallsHash',
+      });
+    }
+    const call = value.calls[0];
+    if (call) {
+      if (call.to !== value.asset) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['calls', 0, 'to'], message: 'The call must target the settlement asset' });
+      }
+      if (call.recipient !== value.recipient) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['calls', 0, 'recipient'], message: 'The call recipient must equal the invoice recipient' });
+      }
+      if (call.amountAtomic !== value.exactAmountAtomic) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['calls', 0, 'amountAtomic'], message: 'The call amount must equal the exact invoice amount' });
+      }
+      if (call.valueWei !== '0') {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['calls', 0, 'valueWei'], message: 'A token transfer must carry zero native value' });
+      }
+      if (call.callType !== 'transfer') {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['calls', 0, 'callType'], message: 'The only commerce payment call is a transfer' });
+      }
+      if (call.spender !== null) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['calls', 0, 'spender'], message: 'A commerce payment grants no allowance' });
+      }
+    }
+  });
+
+// --- Onchain payment proof (T64.3 §6) --------------------------------------
+
+/** What the chain says, independent of what the provider says. The two are
+ * never merged: an onchain transfer is not a provider confirmation. */
+export const CommerceOnchainPaymentV1Schema = z
+  .object({
+    transactionHash: HashV1Schema,
+    blockNumber: AtomicAmountV1Schema,
+    gasUsed: AtomicAmountV1Schema.nullable(),
+    /** Decoded from the ERC-20 Transfer log, never from the calldata. */
+    actualAmountAtomic: AtomicAmountV1Schema.nullable(),
+    actualRecipient: AddressV1Schema.nullable(),
+    actualSender: AddressV1Schema.nullable(),
+    receiptHash: HashV1Schema,
+    /** `verified` requires a matching Transfer log. A successful receipt with
+     * no such log is `unverified` and forces reconciliation. */
+    state: z.enum(['verified', 'unverified', 'reverted']),
+    observedAt: TimestampV1Schema,
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.state === 'verified' && (value.actualAmountAtomic === null || value.actualRecipient === null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['state'],
+        message: 'A verified payment requires a decoded Transfer amount and recipient',
+      });
+    }
+  });
+export type CommerceOnchainPaymentV1 = z.infer<typeof CommerceOnchainPaymentV1Schema>;
+
+/** The provider's own view, polled after the chain confirms. Deliberately a
+ * SEPARATE ladder from the onchain one. */
+export const CommercePaymentProgressV1Schema = z.enum([
+  'payment_submitted',
+  'payment_detected',
+  'payment_confirmed',
+  'order_processing',
+  'delivery_pending',
+  'delivered',
+  'order_unconfirmed',
+  'refunded',
+  'failed',
+]);
+export type CommercePaymentProgressV1 = z.infer<typeof CommercePaymentProgressV1Schema>;
+
+/**
+ * What the proof may record about delivery.
+ *
+ * Redemption material — codes, PINs, links, instructions — is NEVER here. The
+ * proof states that redemption became available and hashes a REDACTED response;
+ * the material itself is fetched on demand, returned once, and stored nowhere.
+ */
+export const CommerceDeliveryRecordV1Schema = z
+  .object({
+    redemptionAvailable: z.boolean(),
+    deliveryObservedAt: TimestampV1Schema.nullable(),
+    orderStatus: CommercePaymentProgressV1Schema,
+    redactedResponseHash: HashV1Schema.nullable(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.redemptionAvailable && value.deliveryObservedAt === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['deliveryObservedAt'],
+        message: 'Available redemption requires the moment it was observed',
+      });
+    }
+    if (value.redemptionAvailable && value.orderStatus !== 'delivered') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['redemptionAvailable'],
+        message: 'Redemption is only available once the provider reports the order delivered',
+      });
+    }
+  });
+export type CommerceDeliveryRecordV1 = z.infer<typeof CommerceDeliveryRecordV1Schema>;

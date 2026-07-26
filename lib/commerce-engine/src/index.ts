@@ -15,4 +15,7 @@ export * from './routeCard.js';
 export * from './coordinator.js';
 export * from './invoice.js';
 export * from './order.js';
+export * from './payment.js';
+export * from './delivery.js';
+export * from './receipt.js';
 export * from './proof.js';

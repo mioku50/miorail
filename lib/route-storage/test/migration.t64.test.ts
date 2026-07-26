@@ -85,10 +85,25 @@ test('the drizzle schema declares the same commerce tables', async () => {
   }
 });
 
-test('_journal.json registers 0015 as the newest entry', async () => {
+test('_journal.json registers both commerce migrations, append-only', async () => {
   const journalRaw = await readFile(resolve(process.cwd(), '../db/drizzle/meta/_journal.json'), 'utf8');
   const journal = JSON.parse(journalRaw) as { entries: Array<{ idx: number; tag: string }> };
-  const last = journal.entries.at(-1);
-  assert.equal(last?.tag, '0015_t64_commerce_storage');
-  assert.equal(last?.idx, 15);
+  assert.equal(journal.entries.find((item) => item.idx === 15)?.tag, '0015_t64_commerce_storage');
+  assert.equal(journal.entries.find((item) => item.idx === 16)?.tag, '0016_t64_commerce_payment');
+});
+
+test('the payment migration keeps one Blueprint per order', async () => {
+  const sql = await readFile(resolve(process.cwd(), '../db/drizzle/0016_t64_commerce_payment.sql'), 'utf8');
+  assert.match(sql, /CREATE TABLE "commerce_payment_blueprints"/);
+  // A second Blueprint for one order is a second wallet prompt for money that
+  // may already be moving, so the database refuses it.
+  assert.match(
+    sql,
+    /CREATE UNIQUE INDEX "commerce_payment_blueprints_order_unique" ON "commerce_payment_blueprints" USING btree \("order_id"\)/,
+  );
+  assert.ok(!/DROP TABLE/i.test(sql));
+  // No column may hold redemption material.
+  for (const forbidden of ['redemption', 'code', 'pin', 'secret', 'link']) {
+    assert.ok(!new RegExp('"[a-z_]*' + forbidden + '[a-z_]*" text').test(sql), forbidden);
+  }
 });

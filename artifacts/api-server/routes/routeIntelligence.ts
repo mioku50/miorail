@@ -5,8 +5,15 @@ import {
   CommerceCompareResponseV1Schema,
   CommerceOrderCreateRequestV1Schema,
   CommerceOrderCreateResponseV1Schema,
+  CommerceDeliveryResponseV1Schema,
   CommerceHistoryResponseV1Schema,
   CommerceOrderStatusResponseV1Schema,
+  CommercePaymentApproveRequestV1Schema,
+  CommercePaymentApproveResponseV1Schema,
+  CommercePaymentPrepareRequestV1Schema,
+  CommercePaymentPrepareResponseV1Schema,
+  CommercePaymentSubmissionRequestV1Schema,
+  CommercePaymentSubmissionResponseV1Schema,
   CreateIntelligenceBudgetRequestV1Schema,
   EarnBlueprintApproveRequestV1Schema,
   EarnBlueprintApproveResponseV1Schema,
@@ -106,8 +113,15 @@ import {
   type ResolveEarnIntentInputV1,
 } from '@mioagent/intent-engine';
 import {
+  COMMERCE_DELIVERY_HEADERS_V1,
   applyCommerceOrderStatusV1,
   buildCommerceOrderV1,
+  buildCommercePaymentBlueprintV1,
+  commercePaymentSafetyKernelV1,
+  commercePaymentSignableV1,
+  readCommerceDeliveryV1,
+  revalidateCommerceInvoiceV1,
+  type CommerceReceiptReaderV1,
   buildCommerceRouteProofV1,
   commerceAmountReviewV1,
   compareCommerceRoutesV1,
@@ -121,7 +135,11 @@ import {
   type CommerceOrderRecordV1,
   type CommerceStorageRepository,
 } from '@mioagent/route-storage';
-import { resolveCommerceCatalogSourceV1, resolveCommerceOrderGatewayV1 } from '../lib/commerceRouteConfig.js';
+import {
+  resolveCommerceCatalogSourceV1,
+  resolveCommerceOrderGatewayV1,
+  resolveCommerceReceiptReaderV1,
+} from '../lib/commerceRouteConfig.js';
 import {
   compareEarnRoutesV1,
   resolveEarnRouteEnablementV1,
@@ -2829,5 +2847,436 @@ routeIntelligenceRouter.get('/commerce/history', async (req, res) => {
     res.json(CommerceHistoryResponseV1Schema.parse({ items }));
   } catch {
     res.status(500).json({ error: 'commerce_history_failed', code: 'commerce_history_failed' });
+  }
+});
+
+// ===========================================================================
+// T64.3 — the Commerce payment rail.
+//
+// prepare → approve → submission, then an onchain proof and a provider
+// reconciliation that are DELIBERATELY separate ladders. The server builds the
+// call, re-reads the invoice immediately before doing so, and hands back an
+// UNSIGNED payload. It never signs, never broadcasts, never uses a Spend
+// Permission, and never spends the Intelligence Budget on the purchase itself.
+// ===========================================================================
+
+/** The provider order read. A seam so tests never touch the network, and so
+ * redemption material has exactly one entry point into the process. */
+export const commerceDeliveryRuntime = {
+  readOrder: async (_input: { orderId: string }): Promise<unknown> => null,
+};
+
+export const commercePaymentRuntime = {
+  /** Re-reads the invoice from the provider immediately before a Blueprint. */
+  readInvoiceDetail: (input: { invoiceId: string; now: Date }) =>
+    resolveCommerceOrderGatewayV1().readOrderStatus(input),
+  receipts: (): CommerceReceiptReaderV1 => resolveCommerceReceiptReaderV1(),
+  now: () => new Date(),
+};
+
+/** Loads the durable order with its confirmed invoice, tenant-scoped. */
+async function commercePaymentContextV1(
+  res: Response,
+  userId: string,
+  orderId: string,
+): Promise<{ repository: CommerceStorageRepository; record: CommerceOrderRecordV1 } | null> {
+  const repository = commerceRouteRuntime.repository();
+  const record = await repository.getCommerceOrder(orderId, userId);
+  if (!record || !record.order || !record.order.invoice) {
+    res.status(404).json({ error: 'commerce_order_not_found', code: 'commerce_order_not_found' });
+    return null;
+  }
+  return { repository, record };
+}
+
+function commerceExecutionGateV1(res: Response): boolean {
+  if (commerceRouteRuntime.flags(process.env).commerceExecutionV1) return true;
+  res.status(404).json({ error: 'commerce_execution_disabled', code: 'commerce_execution_disabled' });
+  return false;
+}
+
+routeIntelligenceRouter.post('/commerce/orders/:orderId/payment/prepare', async (req, res) => {
+  // The execution gate comes FIRST: a disabled surface must not reveal
+  // anything about whether the body would have been accepted.
+  if (!commerceExecutionGateV1(res)) return;
+  const guard = commerceRouteGuard(req, res, CommercePaymentPrepareRequestV1Schema, 'invalid_commerce_payment_request');
+  if (!guard) return;
+  if (!(await commerceStorageReady(res))) return;
+  try {
+    const orderId = String(req.params.orderId ?? '');
+    const context = await commercePaymentContextV1(res, guard.user.id, orderId);
+    if (!context) return;
+    const { repository, record } = context;
+    const order = record.order as CommerceOrderV1;
+    const invoice = order.invoice as NonNullable<CommerceOrderV1['invoice']>;
+    const now = commercePaymentRuntime.now();
+
+    const run = await repository.getCommerceRouteRun(record.routeRunId, guard.user.id);
+    const candidates = run ? await repository.listCommerceCandidates(run.id, guard.user.id) : [];
+    const candidate = candidates.find((entry) => entry.candidateHash === record.candidateHash);
+    if (!run || !candidate) {
+      res.json(
+        CommercePaymentPrepareResponseV1Schema.parse({
+          outcome: 'blocked',
+          reason: 'The stored comparison for this order is no longer available.',
+          safety: null,
+        }),
+      );
+      return;
+    }
+
+    // §2 — the invoice is re-read from the provider RIGHT BEFORE the Blueprint.
+    const fresh = await commercePaymentRuntime.readInvoiceDetail({ invoiceId: invoice.invoiceId, now });
+    if (!fresh.ok) {
+      res.json(
+        CommercePaymentPrepareResponseV1Schema.parse({
+          outcome: 'blocked',
+          reason: `The storefront could not confirm the invoice (${fresh.reason}).`,
+          safety: null,
+        }),
+      );
+      return;
+    }
+    const revalidated = revalidateCommerceInvoiceV1({
+      fresh: {
+        invoiceId: fresh.status.invoiceId,
+        paymentStatus: fresh.status.paymentSettled ? 'paid' : 'unpaid',
+        method: 'usdc_base',
+        currency: 'USDC',
+        amountAtomic: invoice.amountAtomic,
+        recipient: invoice.payTo,
+        expiresAt: invoice.expiresAt,
+      },
+      persisted: invoice,
+      order,
+      intent: run.intent,
+      candidate,
+      authenticatedWallet: guard.user.address,
+      now,
+    });
+    if (!revalidated.ok) {
+      // A changed invoice STOPS here. No replacement is opened automatically.
+      if (revalidated.reason === 'invoice_changed' || revalidated.reason === 'invoice_expired') {
+        res.json(
+          CommercePaymentPrepareResponseV1Schema.parse({
+            outcome: revalidated.reason,
+            reason: revalidated.detail,
+          }),
+        );
+        return;
+      }
+      res.json(
+        CommercePaymentPrepareResponseV1Schema.parse({
+          outcome: 'blocked',
+          reason: revalidated.detail,
+          safety: null,
+        }),
+      );
+      return;
+    }
+
+    const built = buildCommercePaymentBlueprintV1({
+      order,
+      orderId: record.id,
+      invoice,
+      intent: run.intent,
+      candidate,
+      routeCardHash: record.routeCardHash as `0x${string}`,
+      authenticatedWallet: guard.user.address,
+      now,
+    });
+    if (!built.ok) {
+      res.json(
+        CommercePaymentPrepareResponseV1Schema.parse({
+          outcome: 'blocked',
+          reason: built.reason,
+          safety: built.safety,
+        }),
+      );
+      return;
+    }
+    // One Blueprint per order: a repeat returns the existing one, so a second
+    // wallet prompt cannot be opened for the same money.
+    const stored = await repository.upsertCommercePaymentBlueprint({
+      orderId: record.id,
+      userId: guard.user.id,
+      walletAddress: guard.user.address,
+      blueprint: built.blueprint,
+    });
+    const gate = commercePaymentSignableV1(stored.blueprint, now);
+    res.json(
+      CommercePaymentPrepareResponseV1Schema.parse({
+        outcome: 'prepared',
+        blueprint: stored.blueprint,
+        safety: built.safety,
+        signable: gate.signable,
+        signableReason: gate.reason,
+      }),
+    );
+  } catch {
+    res.status(500).json({ error: 'commerce_payment_prepare_failed', code: 'commerce_payment_prepare_failed' });
+  }
+});
+
+routeIntelligenceRouter.post('/commerce/orders/:orderId/payment/approve', async (req, res) => {
+  // The execution gate comes FIRST: a disabled surface must not reveal
+  // anything about whether the body would have been accepted.
+  if (!commerceExecutionGateV1(res)) return;
+  const guard = commerceRouteGuard(req, res, CommercePaymentApproveRequestV1Schema, 'invalid_commerce_payment_request');
+  if (!guard) return;
+  if (!(await commerceStorageReady(res))) return;
+  try {
+    const orderId = String(req.params.orderId ?? '');
+    const repository = commerceRouteRuntime.repository();
+    const stored = await repository.getCommercePaymentBlueprint(orderId, guard.user.id);
+    if (!stored || stored.blueprint.blueprintHash !== guard.body.blueprintHash) {
+      res.json(
+        CommercePaymentApproveResponseV1Schema.parse({
+          outcome: 'blocked',
+          reason: 'No prepared payment matches that Blueprint for this wallet.',
+          safety: null,
+        }),
+      );
+      return;
+    }
+    const context = await commercePaymentContextV1(res, guard.user.id, orderId);
+    if (!context) return;
+    const now = commercePaymentRuntime.now();
+    const run = await repository.getCommerceRouteRun(context.record.routeRunId, guard.user.id);
+    const invoice = (context.record.order as CommerceOrderV1).invoice;
+    if (!run || !invoice) {
+      res.json(
+        CommercePaymentApproveResponseV1Schema.parse({
+          outcome: 'blocked',
+          reason: 'The stored order for this payment is incomplete.',
+          safety: null,
+        }),
+      );
+      return;
+    }
+
+    // The kernel runs AGAIN at approve time, over the STORED calls.
+    const safety = commercePaymentSafetyKernelV1({
+      calls: stored.blueprint.calls,
+      invoice,
+      authenticatedWallet: guard.user.address,
+      intent: run.intent,
+      now,
+    });
+    if (safety.verdict === 'blocked') {
+      res.json(
+        CommercePaymentApproveResponseV1Schema.parse({
+          outcome: 'blocked',
+          reason: safety.blockedReason ?? 'The payment was blocked at approval.',
+          safety,
+        }),
+      );
+      return;
+    }
+    const gate = commercePaymentSignableV1(stored.blueprint, now);
+    if (!gate.signable) {
+      res.json(
+        CommercePaymentApproveResponseV1Schema.parse({
+          outcome: 'blocked',
+          reason: gate.reason ?? 'This payment is not offered for signing.',
+          safety,
+        }),
+      );
+      return;
+    }
+
+    const approved = {
+      ...stored.blueprint,
+      status: 'approved' as const,
+      approvedCallsHash: stored.blueprint.callsHash,
+      updatedAt: now.toISOString(),
+    };
+    await repository.updateCommercePaymentBlueprint({ orderId, userId: guard.user.id, blueprint: approved });
+    const call = approved.calls[0];
+    res.json(
+      CommercePaymentApproveResponseV1Schema.parse({
+        outcome: 'approved',
+        payload: {
+          blueprintHash: approved.blueprintHash,
+          approvedCallsHash: approved.callsHash,
+          chainId: '0x2105',
+          from: guard.user.address,
+          // UNSIGNED. The wallet executes it; this server cannot.
+          calls: [{ to: call.to, value: '0x0', data: call.data }],
+        },
+        safety,
+      }),
+    );
+  } catch {
+    res.status(500).json({ error: 'commerce_payment_approve_failed', code: 'commerce_payment_approve_failed' });
+  }
+});
+
+routeIntelligenceRouter.post('/commerce/orders/:orderId/payment/submission', async (req, res) => {
+  // The execution gate comes FIRST: a disabled surface must not reveal
+  // anything about whether the body would have been accepted.
+  if (!commerceExecutionGateV1(res)) return;
+  const guard = commerceRouteGuard(
+    req,
+    res,
+    CommercePaymentSubmissionRequestV1Schema,
+    'invalid_commerce_payment_request',
+  );
+  if (!guard) return;
+  if (!(await commerceStorageReady(res))) return;
+  try {
+    const orderId = String(req.params.orderId ?? '');
+    const repository = commerceRouteRuntime.repository();
+    const stored = await repository.getCommercePaymentBlueprint(orderId, guard.user.id);
+    if (!stored) {
+      res.json(
+        CommercePaymentSubmissionResponseV1Schema.parse({
+          outcome: 'blocked',
+          reason: 'No prepared payment exists for this order.',
+        }),
+      );
+      return;
+    }
+    if (
+      stored.blueprint.blueprintHash !== guard.body.blueprintHash ||
+      stored.blueprint.callsHash !== guard.body.approvedCallsHash
+    ) {
+      // A replay against different calls is refused outright.
+      res.json(
+        CommercePaymentSubmissionResponseV1Schema.parse({
+          outcome: 'conflict',
+          reason: 'This submission does not match the approved payment.',
+        }),
+      );
+      return;
+    }
+    if (guard.body.walletStatus === 'cancelled') {
+      res.json(
+        CommercePaymentSubmissionResponseV1Schema.parse({
+          outcome: 'cancelled',
+          reason: 'The wallet cancelled this payment. Nothing was sent.',
+        }),
+      );
+      return;
+    }
+    // A repeat that names a DIFFERENT transaction is a conflict, not a second
+    // payment; a repeat that names the same one is idempotent.
+    if (stored.transactionHash && guard.body.transactionHash && stored.transactionHash !== guard.body.transactionHash) {
+      res.json(
+        CommercePaymentSubmissionResponseV1Schema.parse({
+          outcome: 'conflict',
+          reason: 'A different transaction is already recorded for this payment.',
+        }),
+      );
+      return;
+    }
+
+    const now = commercePaymentRuntime.now();
+    const submitted = {
+      ...stored.blueprint,
+      status: 'submitted' as const,
+      approvedCallsHash: stored.blueprint.callsHash,
+      updatedAt: now.toISOString(),
+    };
+    const record = await repository.updateCommercePaymentBlueprint({
+      orderId,
+      userId: guard.user.id,
+      blueprint: submitted,
+      submissionBatchId: guard.body.batchId,
+      transactionHash: guard.body.transactionHash,
+      providerProgress: 'payment_submitted',
+    });
+    res.json(
+      CommercePaymentSubmissionResponseV1Schema.parse({
+        outcome: 'recorded',
+        status: {
+          blueprintStatus: record.blueprint.status,
+          progress: record.providerProgress,
+          onchain: record.onchainState,
+          transactionHash: record.transactionHash as `0x${string}` | null,
+          delivery: record.deliveryRecord,
+        },
+      }),
+    );
+  } catch {
+    res.status(500).json({ error: 'commerce_payment_submission_failed', code: 'commerce_payment_submission_failed' });
+  }
+});
+
+routeIntelligenceRouter.get('/commerce/orders/:orderId/delivery', async (req, res) => {
+  const user = commerceReadGuardV1(req, res);
+  if (!user) return;
+  if (!(await commerceStorageReady(res))) return;
+  // Redemption material must never be cached by a browser, a proxy, or a CDN.
+  for (const [header, value] of Object.entries(COMMERCE_DELIVERY_HEADERS_V1)) res.setHeader(header, value);
+  try {
+    const orderId = String(req.params.orderId ?? '');
+    const repository = commerceRouteRuntime.repository();
+    const record = await repository.getCommerceOrder(orderId, user.id);
+    // Tenant-scoped: another wallet gets `unknown_order`, not a 403 that would
+    // confirm the order exists.
+    if (!record || !record.order) {
+      res.json(
+        CommerceDeliveryResponseV1Schema.parse({
+          outcome: 'unknown_order',
+          reason: 'This wallet has no delivered order with that id.',
+        }),
+      );
+      return;
+    }
+    const payment = await repository.getCommercePaymentBlueprint(orderId, user.id);
+    // Only after the PROVIDER confirms delivery — an onchain payment is not
+    // enough, and neither is a confirmed order.
+    if (!payment || payment.providerProgress !== 'delivered') {
+      res.json(
+        CommerceDeliveryResponseV1Schema.parse({
+          outcome: 'not_delivered',
+          reason: 'The storefront has not confirmed delivery for this order yet.',
+        }),
+      );
+      return;
+    }
+    const providerOrderId = record.order.items[0]?.orderId;
+    if (!providerOrderId) {
+      res.json(
+        CommerceDeliveryResponseV1Schema.parse({
+          outcome: 'not_delivered',
+          reason: 'The storefront has confirmed no order id for this purchase yet.',
+        }),
+      );
+      return;
+    }
+    const fetched = await commerceDeliveryRuntime.readOrder({ orderId: providerOrderId });
+    const read = readCommerceDeliveryV1({
+      order: fetched,
+      orderStatus: 'delivered',
+      now: commercePaymentRuntime.now(),
+    });
+    if (!read.ok || !read.secret || !read.record.redemptionAvailable) {
+      res.json(
+        CommerceDeliveryResponseV1Schema.parse({
+          outcome: 'not_delivered',
+          reason: 'The storefront returned no redemption material for this order.',
+        }),
+      );
+      return;
+    }
+    // The RECORD is persisted; the secret is returned once and forgotten.
+    await repository.updateCommercePaymentBlueprint({
+      orderId,
+      userId: user.id,
+      blueprint: payment.blueprint,
+      deliveryRecord: read.record,
+    });
+    res.json(
+      CommerceDeliveryResponseV1Schema.parse({
+        outcome: 'delivered',
+        orderId,
+        deliveryObservedAt: read.record.deliveryObservedAt as string,
+        fields: read.secret.fields,
+      }),
+    );
+  } catch {
+    res.status(500).json({ error: 'commerce_delivery_failed', code: 'commerce_delivery_failed' });
   }
 });

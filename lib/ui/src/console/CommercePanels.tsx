@@ -295,6 +295,11 @@ export function CommerceInvoiceReviewPanel(props: {
           <span className="k">Price locked until</span>
           <span className="v mono">{invoice.expiresAt}</span>
         </div>
+        {invoice.recipientPolicy === 'invoice_scoped' && (
+          <p className="note warn">
+            This payment address was issued for this invoice. Miorail rechecked it immediately before approval.
+          </p>
+        )}
         <p className="note">No payment has been signed or sent.</p>
         <p className="note">Creating the invoice does not prove delivery.</p>
         {props.children}
@@ -387,6 +392,96 @@ export function CommerceProofPanel(props: { proof: CommerceProofLikeV1 }) {
           <span className="k">Proof hash</span>
           <span className="v mono">{proof.proofHash}</span>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Payment progress (T64.3) ----------------------------------------------
+
+/**
+ * The five rungs of a commerce payment, each requiring the one below it.
+ *
+ * `Gift card delivered` is reachable ONLY when the provider has confirmed both
+ * the order and that there is something to redeem — an onchain transfer is not
+ * a provider confirmation, and a provider confirmation is not a delivery.
+ */
+export const COMMERCE_PROGRESS_STEPS_V1 = [
+  { id: 'payment_submitted', label: 'Payment sent' },
+  { id: 'payment_detected', label: 'Payment detected by Bitrefill' },
+  { id: 'payment_confirmed', label: 'Payment confirmed' },
+  { id: 'order_processing', label: 'Order processing' },
+  { id: 'delivered', label: 'Gift card delivered' },
+] as const;
+
+const PROGRESS_RANK_V1: Record<string, number> = {
+  payment_submitted: 0,
+  payment_detected: 1,
+  payment_confirmed: 2,
+  order_processing: 3,
+  delivery_pending: 3,
+  delivered: 4,
+};
+
+const TERMINAL_FAILURE_COPY_V1: Record<string, string> = {
+  invoice_changed: 'The invoice changed before approval. Nothing was paid; compare again.',
+  invoice_expired: 'The invoice price lock expired. Nothing was paid.',
+  wallet_cancelled: 'You cancelled in your wallet. Nothing was sent.',
+  submission_unknown: 'The wallet did not report an outcome. Check the transaction before trying again.',
+  onchain_transfer_failed: 'The transaction reverted. No USDC left your wallet.',
+  onchain_payment_confirmed_provider_unconfirmed:
+    'The transfer is confirmed onchain but Bitrefill has not acknowledged it. This is being reconciled — it is not a completed purchase.',
+  order_unconfirmed: 'Payment settled but no order is confirmed. This is being reconciled, not completed.',
+  delivery_pending: 'The order is confirmed and the item has not been delivered yet.',
+  refunded: 'The storefront refunded this payment.',
+  delivery_failed: 'The storefront could not deliver this item.',
+};
+
+export function commerceFailureCopyV1(state: string): string {
+  return TERMINAL_FAILURE_COPY_V1[state] ?? `The payment is in state ${state.replaceAll('_', ' ')}.`;
+}
+
+export function CommercePaymentProgressPanel(props: {
+  progress: string | null;
+  /** A terminal failure state, when there is one. */
+  failure?: string | null;
+  transactionHash?: string | null;
+  redemptionAvailable?: boolean;
+}) {
+  const rank = props.progress ? (PROGRESS_RANK_V1[props.progress] ?? -1) : -1;
+  return (
+    <div className="panel">
+      <div className="ph">
+        <h3>Payment progress</h3>
+        <span className="rt">
+          <span className={`pill ${props.failure ? 'a' : 'n'}`}>{props.progress ?? 'not started'}</span>
+        </span>
+      </div>
+      <div className="pb">
+        <div className="cardrows">
+          {COMMERCE_PROGRESS_STEPS_V1.map((step, index) => {
+            // The last rung additionally needs redemption to actually exist.
+            const reached =
+              index < COMMERCE_PROGRESS_STEPS_V1.length - 1
+                ? index <= rank
+                : rank >= 4 && props.redemptionAvailable === true;
+            return (
+              <article key={step.id} className={`cardrow${reached ? '' : ' off'}`}>
+                <div className="cr-top">
+                  <span className="cr-name">{step.label}</span>
+                  <span className={`pill ${reached ? 'n' : 'a'}`}>{reached ? 'done' : 'waiting'}</span>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+        {props.transactionHash && (
+          <div className="kv">
+            <span className="k">Transaction</span>
+            <span className="v mono">{props.transactionHash}</span>
+          </div>
+        )}
+        {props.failure && <p className="note warn">{commerceFailureCopyV1(props.failure)}</p>}
       </div>
     </div>
   );

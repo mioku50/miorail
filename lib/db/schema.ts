@@ -1024,3 +1024,56 @@ export const commerceProofs = pgTable(
     ),
   ],
 );
+
+/**
+ * T64.3 — the commerce payment Blueprint.
+ *
+ * One row per order (unique index), because a second Blueprint for the same
+ * order is a second wallet prompt for money that may already be moving.
+ * `delivery_record` holds states and a REDACTED response hash only; no
+ * redemption code, PIN or link is ever written here.
+ */
+export const commercePaymentBlueprints = pgTable(
+  'commerce_payment_blueprints',
+  {
+    id: text('id').primaryKey(),
+    orderId: text('order_id')
+      .references(() => commerceOrders.id, restrictReference)
+      .notNull(),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    walletAddress: text('wallet_address').notNull(),
+    schemaVersion: text('schema_version').notNull(),
+    status: text('status').notNull(),
+    blueprintHash: text('blueprint_hash').notNull(),
+    callsHash: text('calls_hash').notNull(),
+    approvedCallsHash: text('approved_calls_hash'),
+    invoiceId: text('invoice_id').notNull(),
+    exactAmountAtomic: text('exact_amount_atomic').notNull(),
+    recipient: text('recipient').notNull(),
+    recipientPolicy: text('recipient_policy').notNull(),
+    payload: jsonb('payload').notNull(),
+    submissionBatchId: text('submission_batch_id'),
+    transactionHash: text('transaction_hash'),
+    onchainState: text('onchain_state'),
+    providerProgress: text('provider_progress'),
+    deliveryRecord: jsonb('delivery_record'),
+    invoiceExpiresAt: timestamp('invoice_expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('commerce_payment_blueprints_order_unique').on(table.orderId),
+    uniqueIndex('commerce_payment_blueprints_user_hash_unique').on(table.userId, table.blueprintHash),
+    index('commerce_payment_blueprints_user_status_idx').on(table.userId, table.status),
+    check(
+      'commerce_payment_blueprints_status_check',
+      sql`${table.status} IN ('ready_for_review', 'approved', 'submitted', 'confirmed_onchain', 'provider_confirmed', 'delivered', 'failed', 'reconciliation_required')`,
+    ),
+    check(
+      'commerce_payment_blueprints_recipient_policy_check',
+      sql`${table.recipientPolicy} IN ('pinned', 'invoice_scoped')`,
+    ),
+  ],
+);
