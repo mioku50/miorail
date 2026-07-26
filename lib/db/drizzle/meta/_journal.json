@@ -127,6 +127,13 @@
       "when": 1785071661690,
       "tag": "0017_t65_nft_storage",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1785158061690,
+      "tag": "0018_t65_nft_submission",
+      "breakpoints": true
     }
   ]
 }

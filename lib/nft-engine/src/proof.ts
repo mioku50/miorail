@@ -1,11 +1,14 @@
 import {
+  NftProofEventV1Schema,
   NftPurchaseProofV1Schema,
   ZERO_HASH_V1,
   deriveNftProofFinalStatusV1,
+  hashNftProofEventV1,
   hashNftPurchaseProofV1,
   stableHashV1,
   type NftAssetRefV1,
   type NftOwnershipReadV1,
+  type NftProofEventV1,
   type NftProofFinalStatusV1,
   type NftPurchaseBlueprintV1,
   type NftPurchaseProofV1,
@@ -113,13 +116,17 @@ export function buildNftReceiptLegV1(input: {
   receipt: NftReceiptV1 | null;
   actualNativeValueWei: string | null;
   unavailable?: boolean;
+  /** The hash the client reported after signing, before any receipt exists.
+   * Knowing which transaction to watch is not knowing what it did — the leg
+   * stays `pending` and the block, gas and spend stay null. */
+  submittedTransactionHash?: string | null;
 }): NftReceiptLegV1 {
   if (input.receipt === null) {
     return {
       // No receipt yet is `pending`; a receipt we could not read is `unknown`.
       // Both keep the proof open, and neither is a failure.
       status: input.unavailable ? 'unknown' : 'pending',
-      transactionHash: null,
+      transactionHash: (input.submittedTransactionHash ?? null) as `0x${string}` | null,
       blockNumber: null,
       gasUsed: null,
       actualNativeValueWei: null,
@@ -225,6 +232,50 @@ export function buildNftPurchaseProofV1(input: NftProofBuildInputV1): NftPurchas
   return NftPurchaseProofV1Schema.parse({
     ...base,
     proofHash: hashNftPurchaseProofV1(base as unknown as NftPurchaseProofV1),
+  });
+}
+
+/**
+ * One entry in the append-only proof log.
+ *
+ * `sequence` is supplied by the caller and claimed once — the storage layer
+ * refuses to rewrite a claimed number. The log is how a purchase that ends in
+ * `reconciliation_required` can still be explained: every read that was made,
+ * in the order it was made, including the ones that answered nothing.
+ */
+export function buildNftProofEventV1(input: {
+  proof: NftPurchaseProofV1;
+  sequence: number;
+  eventKind: NftProofEventV1['eventKind'];
+  detail: string | null;
+  now: Date;
+}): NftProofEventV1 {
+  const iso = input.now.toISOString();
+  const base = {
+    schemaVersion: 'nft-proof-event/v1' as const,
+    id: `nft-proof-event:${stableHashV1('nft-proof-event', {
+      proofHash: input.proof.proofHash,
+      sequence: input.sequence,
+    }).slice(2, 26)}`,
+    tenantId: input.proof.tenantId,
+    walletAddress: input.proof.walletAddress,
+    chainId: 8453 as const,
+    createdAt: iso,
+    updatedAt: iso,
+    status: 'recorded' as const,
+    eventHash: ZERO_HASH_V1,
+    proofHash: input.proof.proofHash,
+    sequence: input.sequence,
+    eventKind: input.eventKind,
+    // The status AT THIS POINT, not the eventual one. An event that recorded
+    // a pending receipt must keep saying pending after the proof completes.
+    finalStatus: input.proof.finalStatus,
+    detail: input.detail,
+    observedAt: iso,
+  };
+  return NftProofEventV1Schema.parse({
+    ...base,
+    eventHash: hashNftProofEventV1(base as unknown as NftProofEventV1),
   });
 }
 
