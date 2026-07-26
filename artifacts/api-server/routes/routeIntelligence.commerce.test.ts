@@ -42,6 +42,8 @@ const COMPARE_ONLY_FLAGS = {
   earnRouteV1: false,
   commerceRouteV1: true,
   commerceExecutionV1: false,
+  nftRouteV1: false,
+  nftExecutionV1: false,
 } as const;
 const CHECKOUT_FLAGS = { ...COMPARE_ONLY_FLAGS, commerceExecutionV1: true } as const;
 

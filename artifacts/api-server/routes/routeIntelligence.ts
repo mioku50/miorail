@@ -161,6 +161,7 @@ import type {
   SimulationStateV1,
 } from '@mioagent/route-domain';
 import { client } from '@mioagent/db';
+import { nftRouteIntelligenceRouter } from './nftRouteIntelligence.js';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
 import { RoutePlanCoordinator, type RoutePlanCoordinatorInput } from '../lib/routePlanCoordinator.js';
 import { loadTokenSecurityContext } from '../lib/executionSecurity.js';
@@ -3295,3 +3296,8 @@ routeIntelligenceRouter.get('/commerce/orders/:orderId/delivery', async (req, re
     res.status(500).json({ error: 'commerce_delivery_failed', code: 'commerce_delivery_failed' });
   }
 });
+
+// T65.1 — the NFT purchase rail lives in its own module and mounts on this
+// router, so it appears under /api/route-intelligence wherever this router is
+// mounted without another 500 lines in this file.
+routeIntelligenceRouter.use(nftRouteIntelligenceRouter);

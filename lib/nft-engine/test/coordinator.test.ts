@@ -97,6 +97,9 @@ function gateway(overrides: Partial<OpenSeaGatewayV1> = {}): OpenSeaGatewayV1 {
     async readOrder() {
       return ok(LISTING);
     },
+    async readFulfillment() {
+      return ok({});
+    },
     ...overrides,
   };
 }

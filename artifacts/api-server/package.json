@@ -13,6 +13,7 @@
     "@mioagent/api-zod": "workspace:*",
     "@mioagent/autonomy": "workspace:*",
     "@mioagent/commerce-engine": "workspace:*",
+    "@mioagent/nft-engine": "workspace:*",
     "@mioagent/crypto": "workspace:*",
     "@mioagent/data-providers": "workspace:*",
     "@mioagent/db": "workspace:*",

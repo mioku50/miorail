@@ -86,6 +86,20 @@ export interface OpenSeaGatewayV1 {
   readBestListing(input: { collectionSlug: string; tokenId: string; now: Date }): Promise<NftGatewayResultV1<NftObservedListingV1>>;
   /** A fresh order read, for the re-check immediately before a signature. */
   readOrder(input: { protocolAddress: string; orderHash: string; now: Date }): Promise<NftGatewayResultV1<NftObservedListingV1>>;
+  /**
+   * The fulfilment payload for one listing.
+   *
+   * Returns the RAW body. The calldata is encoded from it here, in this
+   * repository, through a pinned ABI — this method deliberately does not
+   * interpret it, so there is exactly one place where bytes destined for a
+   * wallet come into existence.
+   */
+  readFulfillment(input: {
+    protocolAddress: string;
+    orderHash: string;
+    buyer: string;
+    now: Date;
+  }): Promise<NftGatewayResultV1<unknown>>;
 }
 
 function hashPayloadV1(domain: string, payload: unknown): HashV1 {
@@ -277,6 +291,44 @@ export function createOpenSeaGatewayV1(config: OpenSeaGatewayConfigV1): OpenSeaG
         return { ok: false, reason: 'provider_invalid_response' };
       }
       return observed;
+    },
+
+    async readFulfillment(input) {
+      if (!isPinnedSeaportTargetV1(input.protocolAddress)) {
+        return { ok: false, reason: 'protocol_not_allowlisted' };
+      }
+      const body = {
+        listing: {
+          hash: input.orderHash.toLowerCase(),
+          chain: NFT_OPENSEA_CHAIN_SLUG_V1,
+          protocol_address: input.protocolAddress.toLowerCase(),
+        },
+        fulfiller: { address: input.buyer.toLowerCase() },
+      };
+      // No hash is computed here on purpose: the fulfilment RESPONSE is hashed
+      // by the encoder that turns it into calldata, so the hash the safety
+      // kernel checks is the hash of the bytes it actually read.
+      const path = NFT_OPENSEA_PATHS_V1.fulfillmentData();
+      let response: Response;
+      try {
+        response = await partnerFetch(
+          `${NFT_OPENSEA_BASE_URL_V1}${path}`,
+          {
+            method: 'POST',
+            headers: { 'x-api-key': config.apiKey, accept: 'application/json', 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+          },
+          { timeoutMs, fetchImpl: config.fetchImpl },
+        );
+      } catch {
+        return { ok: false, reason: 'provider_unavailable' };
+      }
+      if (!response.ok) return { ok: false, reason: reasonForStatusV1(response.status) };
+      try {
+        return { ok: true, value: await response.json() };
+      } catch {
+        return { ok: false, reason: 'provider_invalid_response' };
+      }
     },
   };
 }

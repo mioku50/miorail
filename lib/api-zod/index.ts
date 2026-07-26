@@ -8,6 +8,9 @@ import {
   CommerceRouteCardV1Schema,
   CommerceRouteProofV1Schema,
   EarnRouteCardV1Schema,
+  NftPurchaseBlueprintV1Schema,
+  NftPurchaseProofV1Schema,
+  NftRouteCardV1Schema,
   ExecutionBlueprintV1Schema,
   GasEstimateV1Schema,
   HashV1Schema,
@@ -1993,3 +1996,114 @@ export const SimulateActionResponseSchema = z.object({
   expectedOutput: z.string().optional(),
   checks: z.array(z.string()),
 });
+
+// ---------------------------------------------------------------------------
+// T65.1 §2/§4 — the NFT purchase rail.
+//
+// The client never supplies calldata, a target, a value or a recipient. It
+// sends a goal, then a Route Card hash, then the hash of the calls it
+// reviewed. Everything that ends up in a wallet prompt is produced on the
+// server from a pinned ABI.
+// ---------------------------------------------------------------------------
+
+export const NftCompareRequestV1Schema = z
+  .object({
+    message: z.string().trim().min(1).max(4_000),
+    walletAddress: AddressV1Schema,
+    requestId: z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/, 'Invalid NFT compare request ID'),
+  })
+  .strict();
+
+export const NftCompareResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      outcome: z.literal('compared'),
+      routeRunId: z.string().min(1).max(200),
+      routeCard: NftRouteCardV1Schema,
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('unavailable'),
+      routeRunId: z.string().min(1).max(200),
+      /** A comparison that found nothing to buy still returns the card, so the
+       * surface can name the token and the reason instead of showing nothing. */
+      routeCard: NftRouteCardV1Schema,
+      reason: z.string().min(1).max(60),
+      detail: z.string().min(1).max(200),
+    })
+    .strict(),
+  z
+    .object({ outcome: z.literal('needs_clarification'), issues: z.array(z.string().min(1).max(120)) })
+    .strict(),
+  z.object({ outcome: z.literal('unsupported'), reason: z.string().min(1).max(200) }).strict(),
+]);
+
+/** Prepare names the reviewed card by HASH. A stale or unknown hash is
+ * refused rather than silently re-priced at whatever is current. */
+export const NftPrepareRequestV1Schema = z
+  .object({
+    routeRunId: z.string().min(1).max(200),
+    routeCardHash: HashV1Schema,
+    walletAddress: AddressV1Schema,
+  })
+  .strict();
+
+export const NftPrepareResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      outcome: z.literal('prepared'),
+      blueprintId: z.string().min(1).max(200),
+      blueprint: NftPurchaseBlueprintV1Schema,
+      simulation: SimulationStateV1Schema,
+      /** The NFT Safety Kernel's own shape: EVERY violation, not the first.
+       * A reviewer reading a refusal deserves the whole picture. */
+      safety: z.object({ ok: z.boolean(), violations: z.array(z.string().min(1).max(60)) }).strict(),
+      /** Why it cannot be signed, when it cannot. Null exactly when signable. */
+      blockedReason: z.string().min(1).max(300).nullable(),
+      /** False until every gate passes. A surface must not offer a wallet
+       * prompt for a blueprint that is not signable. */
+      signable: z.boolean(),
+    })
+    .strict(),
+  z.object({ outcome: z.literal('rejected'), reason: z.string().min(1).max(60), detail: z.string().min(1).max(200) }).strict(),
+]);
+
+/** Approval echoes back the hash of the calls the user reviewed. A mismatch
+ * is refused: approval is of THESE calls or it is nothing. */
+export const NftApproveRequestV1Schema = z
+  .object({ approvedCallsHash: HashV1Schema, walletAddress: AddressV1Schema })
+  .strict();
+
+export const NftApproveResponseV1Schema = z
+  .object({
+    blueprintId: z.string().min(1).max(200),
+    blueprint: NftPurchaseBlueprintV1Schema,
+    signable: z.boolean(),
+  })
+  .strict();
+
+/** What the CLIENT reports after calling the wallet. Recorded as a claim, not
+ * as a fact about the chain — the proof reads that separately. */
+export const NftSubmissionRequestV1Schema = z
+  .object({
+    walletAddress: AddressV1Schema,
+    submissionBatchId: z.string().min(1).max(200).nullable(),
+    transactionHash: HashV1Schema.nullable(),
+  })
+  .strict();
+
+export const NftProofResponseV1Schema = z
+  .object({
+    proofId: z.string().min(1).max(200),
+    proof: NftPurchaseProofV1Schema,
+    /** The fixed sentence for this final status. Never assembled per-request,
+     * so a pending reconciliation cannot be phrased as a completed purchase. */
+    copy: z.string().min(1).max(300),
+    needsReconciliation: z.boolean(),
+  })
+  .strict();

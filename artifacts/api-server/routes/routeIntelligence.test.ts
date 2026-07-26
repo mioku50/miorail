@@ -74,6 +74,7 @@ describe('POST /api/route-intelligence/swap/evaluate', () => {
       legacyTerminal: true,
       paidIntelligence: false,
       earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false,
+      nftRouteV1: false, nftExecutionV1: false,
     });
     routePlanRouteRuntime.migrationAvailable = async () => true;
     routePlanRouteRuntime.now = () => NOW;
@@ -97,7 +98,7 @@ describe('POST /api/route-intelligence/swap/evaluate', () => {
 
   test('returns a stable disabled error without coordinating', async () => {
     let coordinated = false;
-    routePlanRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false });
+    routePlanRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false });
     routePlanRouteRuntime.coordinate = async () => {
       coordinated = true;
       throw new Error('must not run');
@@ -277,7 +278,7 @@ describe('POST /api/route-intelligence/swap/prepare', () => {
   }
 
   beforeEach(() => {
-    swapPrepareRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false });
+    swapPrepareRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false });
     swapPrepareRouteRuntime.migrationAvailable = async () => true;
     swapPrepareRouteRuntime.now = () => NOW;
     swapPrepareRouteRuntime.prepare = async () => ({ outcome: 'unsupported', reason: 'unsupported_pair', detail: 'fixture' });
@@ -292,7 +293,7 @@ describe('POST /api/route-intelligence/swap/prepare', () => {
 
   test('returns a stable disabled error without preparing', async () => {
     let prepared = false;
-    swapPrepareRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false });
+    swapPrepareRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false });
     swapPrepareRouteRuntime.prepare = async () => {
       prepared = true;
       throw new Error('must not run');
@@ -442,7 +443,7 @@ describe('POST /api/route-intelligence/swap/blueprints/:blueprintId/approve', ()
   };
 
   beforeEach(() => {
-    swapBlueprintRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false });
+    swapBlueprintRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false });
     swapBlueprintRouteRuntime.migrationAvailable = async () => true;
     swapBlueprintRouteRuntime.now = () => NOW;
     swapBlueprintRouteRuntime.approve = async () => ({ outcome: 'approved', payload: APPROVED_PAYLOAD, lifecycle: 'approved' });
@@ -459,7 +460,7 @@ describe('POST /api/route-intelligence/swap/blueprints/:blueprintId/approve', ()
 
   test('returns a stable disabled error without approving', async () => {
     let approved = false;
-    swapBlueprintRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false });
+    swapBlueprintRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false });
     swapBlueprintRouteRuntime.approve = async () => {
       approved = true;
       throw new Error('must not run');
@@ -554,7 +555,7 @@ describe('POST /api/route-intelligence/swap/blueprints/:blueprintId/submission',
   };
 
   beforeEach(() => {
-    swapBlueprintRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false });
+    swapBlueprintRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false });
     swapBlueprintRouteRuntime.migrationAvailable = async () => true;
     swapBlueprintRouteRuntime.now = () => NOW;
     swapBlueprintRouteRuntime.recordSubmission = async () => ({
@@ -576,7 +577,7 @@ describe('POST /api/route-intelligence/swap/blueprints/:blueprintId/submission',
 
   test('returns a stable disabled error without recording', async () => {
     let recorded = false;
-    swapBlueprintRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false });
+    swapBlueprintRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false });
     swapBlueprintRouteRuntime.recordSubmission = async () => {
       recorded = true;
       throw new Error('must not run');
@@ -717,7 +718,7 @@ describe('POST /api/route-intelligence/route-proofs/:proofId/reconcile', () => {
   const url = `/api/route-intelligence/route-proofs/${PROOF_ID}/reconcile`;
 
   beforeEach(() => {
-    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false });
+    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false });
     routeProofRouteRuntime.migrationAvailable = async () => true;
     routeProofRouteRuntime.now = () => NOW;
     routeProofRouteRuntime.reconcile = async () => ({
@@ -736,7 +737,7 @@ describe('POST /api/route-intelligence/route-proofs/:proofId/reconcile', () => {
 
   test('returns a stable disabled error without reconciling', async () => {
     let reconciled = false;
-    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false });
+    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false });
     routeProofRouteRuntime.reconcile = async () => {
       reconciled = true;
       throw new Error('must not run');
@@ -831,7 +832,7 @@ describe('GET /api/route-intelligence/route-proofs/:proofId', () => {
   const url = `/api/route-intelligence/route-proofs/${PROOF_ID}`;
 
   beforeEach(() => {
-    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false });
+    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false });
     routeProofRouteRuntime.migrationAvailable = async () => true;
     routeProofRouteRuntime.getProof = async () => ({
       proof: PROOF_PROJECTION,
@@ -851,9 +852,9 @@ describe('GET /api/route-intelligence/route-proofs/:proofId', () => {
   });
 
   test('guards: flag 404, session 401, chain 409, storage 503', async () => {
-    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false });
+    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false });
     assert.equal((await request(routeApp()).get(url)).status, 404);
-    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false });
+    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false });
 
     assert.equal((await request(routeApp(null)).get(url)).status, 401);
 
@@ -919,7 +920,7 @@ describe('GET /api/route-intelligence/history', () => {
   };
 
   beforeEach(() => {
-    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false });
+    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false });
     routeProofRouteRuntime.migrationAvailable = async () => true;
     routeProofRouteRuntime.listHistory = async () => ({ items: [HISTORY_ITEM], nextCursor: null });
     process.env.CHAIN_ENV = 'mainnet-readonly';
@@ -932,9 +933,9 @@ describe('GET /api/route-intelligence/history', () => {
   });
 
   test('guards: flag 404, session 401, chain 409, storage 503', async () => {
-    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false });
+    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false });
     assert.equal((await request(routeApp()).get(url)).status, 404);
-    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false });
+    routeProofRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false });
 
     assert.equal((await request(routeApp(null)).get(url)).status, 401);
 
