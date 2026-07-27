@@ -14,6 +14,12 @@ export interface MiorailProductMigrationFlags {
   /** T65: NFT PURCHASE. Separate from the comparison gate: an NFT bought is
    * an NFT bought, so signing is enabled independently of looking. */
   nftExecutionV1: boolean;
+  /** T66: Private AI COMPARISON — reading the Venice catalogue and scoring it. */
+  privateAiRouteV1: boolean;
+  /** T66: Private AI EXECUTION. Separate from the comparison gate: comparing
+   * models sends nothing anywhere, and running one sends the user's prompt to
+   * a third party. Those are not the same decision. */
+  privateAiExecutionV1: boolean;
 }
 
 function readBooleanFlag(env: NodeJS.ProcessEnv, name: string, defaultValue: boolean): boolean {
@@ -40,5 +46,7 @@ export function getMiorailProductMigrationFlags(
     commerceExecutionV1: readBooleanFlag(env, 'MIORAIL_COMMERCE_EXECUTION_V1', false),
     nftRouteV1: readBooleanFlag(env, 'MIORAIL_NFT_ROUTE_V1', false),
     nftExecutionV1: readBooleanFlag(env, 'MIORAIL_NFT_EXECUTION_V1', false),
+    privateAiRouteV1: readBooleanFlag(env, 'MIORAIL_PRIVATE_AI_ROUTE_V1', false),
+    privateAiExecutionV1: readBooleanFlag(env, 'MIORAIL_PRIVATE_AI_EXECUTION_V1', false),
   });
 }

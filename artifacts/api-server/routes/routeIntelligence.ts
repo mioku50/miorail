@@ -162,6 +162,7 @@ import type {
 } from '@mioagent/route-domain';
 import { client } from '@mioagent/db';
 import { nftRouteIntelligenceRouter } from './nftRouteIntelligence.js';
+import { aiRouteIntelligenceRouter } from './aiRouteIntelligence.js';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
 import { RoutePlanCoordinator, type RoutePlanCoordinatorInput } from '../lib/routePlanCoordinator.js';
 import { loadTokenSecurityContext } from '../lib/executionSecurity.js';
@@ -3301,3 +3302,4 @@ routeIntelligenceRouter.get('/commerce/orders/:orderId/delivery', async (req, re
 // router, so it appears under /api/route-intelligence wherever this router is
 // mounted without another 500 lines in this file.
 routeIntelligenceRouter.use(nftRouteIntelligenceRouter);
+routeIntelligenceRouter.use(aiRouteIntelligenceRouter);

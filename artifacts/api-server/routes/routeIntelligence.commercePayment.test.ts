@@ -45,7 +45,7 @@ const FLAGS = {
   commerceRouteV1: true,
   commerceExecutionV1: true,
   nftRouteV1: false,
-  nftExecutionV1: false,
+  nftExecutionV1: false, privateAiRouteV1: false, privateAiExecutionV1: false,
 } as const;
 
 const SEARCH_BODY = {
@@ -233,7 +233,7 @@ describe('T64.3 payment prepare', () => {
 
   test('the execution gate keeps the whole rail closed', async () => {
     const opened = await openCheckout();
-    commerceRouteRuntime.flags = () => ({ ...FLAGS, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false });
+    commerceRouteRuntime.flags = () => ({ ...FLAGS, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false, privateAiRouteV1: false, privateAiExecutionV1: false });
     for (const path of ['payment/prepare', 'payment/approve', 'payment/submission']) {
       const response = await request(routeApp())
         .post(`/api/route-intelligence/commerce/orders/${opened.orderId}/${path}`)

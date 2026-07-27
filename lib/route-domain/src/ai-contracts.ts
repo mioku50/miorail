@@ -629,6 +629,160 @@ export const AiRouteCardV1Schema = AiRouteCardV1ObjectSchema.superRefine((value,
   }
 });
 
+// --- Inference proof --------------------------------------------------------
+
+/**
+ * Why the model stopped.
+ *
+ * `length` is kept distinct from `stop` because a truncated answer is a
+ * DIFFERENT product than a complete one, and a proof that called both
+ * "completed" would hide the fact that the user paid for a cut-off response.
+ */
+export const AiFinishReasonV1Schema = z.enum(['stop', 'length', 'tool_calls', 'content_filter', 'unknown']);
+export type AiFinishReasonV1 = z.infer<typeof AiFinishReasonV1Schema>;
+
+/** The outcome of validating the completion against the requested schema.
+ * `not_requested` when the intent asked for no schema — which is not the same
+ * as passing. */
+export const AiSchemaValidationV1Schema = z.enum(['not_requested', 'passed', 'failed']);
+export type AiSchemaValidationV1 = z.infer<typeof AiSchemaValidationV1Schema>;
+
+export const AiProofFinalStatusV1Schema = z.enum([
+  'pending',
+  'completed',
+  'truncated',
+  'refused',
+  'failed',
+]);
+export type AiProofFinalStatusV1 = z.infer<typeof AiProofFinalStatusV1Schema>;
+
+/**
+ * What was actually spent and counted, from the provider's own response.
+ *
+ * Separate from the candidate's `estimatedCostUsd` on purpose. An estimate
+ * that later gets displayed as a receipt is the failure this family's cost
+ * story is built to avoid — so the estimate lives on the card and the charge
+ * lives here, and a surface showing both shows both.
+ */
+const AiUsageV1Schema = z
+  .object({
+    promptTokens: z.number().int().min(0).max(100_000_000).nullable(),
+    completionTokens: z.number().int().min(0).max(100_000_000).nullable(),
+    totalTokens: z.number().int().min(0).max(100_000_000).nullable(),
+    /** What the provider says it charged. Null is NOT zero — it means the
+     * provider did not report a cost, and the surface must say so. */
+    actualCostUsd: UsdAmountV1Schema.nullable(),
+    latencyMs: z.number().int().min(0).max(86_400_000),
+  })
+  .strict();
+export type AiUsageV1 = z.infer<typeof AiUsageV1Schema>;
+
+/**
+ * Derives the final status from what was observed.
+ *
+ * Re-derived by the schema below, so no caller, migration or surface can
+ * record "completed" for an answer that was truncated or refused.
+ */
+export function deriveAiProofFinalStatusV1(input: {
+  answered: boolean;
+  finishReason: AiFinishReasonV1;
+  schemaValidation: AiSchemaValidationV1;
+}): AiProofFinalStatusV1 {
+  if (!input.answered) return 'failed';
+  if (input.finishReason === 'content_filter') return 'refused';
+  if (input.finishReason === 'length') return 'truncated';
+  // A schema the answer failed is not a completed request: the caller asked
+  // for a shape and did not get it, whatever the model thought it was doing.
+  if (input.schemaValidation === 'failed') return 'failed';
+  if (input.finishReason === 'unknown') return 'pending';
+  return 'completed';
+}
+
+const AiInferenceProofV1ObjectSchema = z
+  .object({
+    ...financialEntityFieldsV1('ai-inference-proof/v1', z.enum(['open', 'finalized'])),
+    proofHash: HashV1Schema,
+    intentHash: HashV1Schema,
+    routeCardHash: HashV1Schema,
+    candidateHash: HashV1Schema,
+    /** The commitment from the intent, carried forward. Opening it needs the
+     * nonce, which this record does not have and never will — the proof states
+     * WHICH request was served without stating what it said. */
+    promptCommitment: HashV1Schema,
+    provider: ProviderRefV1Schema,
+    modelId: AiModelIdV1Schema,
+    modelVersion: z.string().min(1).max(120).nullable(),
+    privacyMode: AiPrivacyModeV1Schema,
+    /** Over response METADATA only. There is deliberately no hash of the
+     * completion text: one would let anyone holding this proof confirm a
+     * guessed answer. */
+    responseHash: HashV1Schema,
+    /** Length of the answer. Shape, not content. */
+    responseChars: z.number().int().min(0).max(100_000_000),
+    finishReason: AiFinishReasonV1Schema,
+    schemaValidation: AiSchemaValidationV1Schema,
+    usage: AiUsageV1Schema,
+    /** True when the call was billed through x402 rather than the server key. */
+    x402Metered: z.boolean(),
+    /** The estimate this run was approved against, kept beside the charge so
+     * the two can be compared without a second lookup. */
+    estimatedCostUsd: UsdAmountV1Schema,
+    finalStatus: AiProofFinalStatusV1Schema,
+    failureReason: z.string().min(1).max(300).nullable(),
+    observedAt: TimestampV1Schema,
+    finalizedAt: TimestampV1Schema.nullable(),
+  })
+  .strict();
+
+export type AiInferenceProofV1 = z.infer<typeof AiInferenceProofV1ObjectSchema>;
+
+export function hashAiInferenceProofV1(value: AiInferenceProofV1): HashV1 {
+  return stableHashV1('ai-inference-proof/v1', financialContentV1(value, ['proofHash']));
+}
+
+export const AiInferenceProofV1Schema = AiInferenceProofV1ObjectSchema.superRefine((value, ctx) => {
+  validateFinancialChronologyV1(value, ctx);
+  if (value.proofHash !== hashAiInferenceProofV1(value)) addHashIssue(ctx, 'proofHash', 'proofHash');
+  const derived = deriveAiProofFinalStatusV1({
+    answered: value.finalStatus !== 'failed' || value.responseChars > 0,
+    finishReason: value.finishReason,
+    schemaValidation: value.schemaValidation,
+  });
+  // `failed` is reachable from two directions — a transport failure with no
+  // answer at all, and an answer that failed its schema — so it is accepted
+  // whenever the derivation also says failed, and checked strictly otherwise.
+  if (value.finalStatus !== derived && !(value.finalStatus === 'failed' && value.responseChars === 0)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['finalStatus'],
+      message: `finalStatus must be the derived ${derived}, not ${value.finalStatus}`,
+    });
+  }
+  if (value.status === 'finalized' && value.finalizedAt === null) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['finalizedAt'], message: 'A finalized proof needs its time' });
+  }
+  if (value.finalStatus === 'failed' && value.failureReason === null) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['failureReason'], message: 'A failed proof must state why' });
+  }
+  if (value.finalStatus === 'pending' && value.status === 'finalized') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['status'],
+      message: 'A pending inference is not finalized',
+    });
+  }
+});
+
+/** The sentence a Proof screen leads with. Fixed strings, so a truncated or
+ * refused answer is never described as a completed one. */
+export const AI_PROOF_HEADLINE_V1: Record<AiProofFinalStatusV1, string> = {
+  pending: 'The model has not finished answering.',
+  completed: 'Answer received and verified against this request.',
+  truncated: 'The answer was cut off at the token limit you set.',
+  refused: 'The model declined to answer this request.',
+  failed: 'This request did not produce a usable answer.',
+};
+
 // --- Shared display helpers -------------------------------------------------
 
 /** Words for one privacy mode. Fixed sentences, so no surface invents a

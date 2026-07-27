@@ -447,3 +447,15 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 @media (max-width: 900px) { .mio-console .nftrow { grid-template-columns: 1fr; } }
 .mio-console.mini .nftrow { grid-template-columns: 96px minmax(0,1fr); }
 .mio-console.mini .nftmedia { width: 96px; height: 96px; }
+
+/* Private AI — the answer block. The only shape this family needed that the
+   console did not already have: everything else on its four screens reuses
+   .panel, .qrow, .cardrow, .scorerow and .pill. A model's answer is the one
+   piece of content here that is free-form, multi-line and must not be
+   reflowed, so it gets a scroll box rather than being allowed to stretch the
+   page. */
+.mio-console .aitext { margin: 10px 0 0; padding: 12px; border-radius: var(--r);
+  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 12.5px; line-height: 1.55; color: var(--ink);
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow-y: auto; }
+.mio-console.mini .aitext { max-height: 300px; font-size: 12px; }

@@ -47,7 +47,8 @@
     "express-session": "^1.19.0",
     "helmet": "^8.2.0",
     "ulidx": "^2.4.1",
-    "viem": "^2.53.1"
+    "viem": "^2.53.1",
+    "@mioagent/ai-engine": "workspace:*"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

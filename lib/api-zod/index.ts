@@ -8,6 +8,8 @@ import {
   CommerceRouteCardV1Schema,
   CommerceRouteProofV1Schema,
   EarnRouteCardV1Schema,
+  AiInferenceProofV1Schema,
+  AiRouteCardV1Schema,
   NftProofFinalStatusV1Schema,
   NftPurchaseBlueprintV1Schema,
   NftPurchaseBlueprintStatusV1Schema,
@@ -1601,6 +1603,10 @@ export const StatusResponseSchema = z.object({
     // is off on every surface that reads them.
     nftRouteV1: z.boolean().optional(),
     nftExecutionV1: z.boolean().optional(),
+    // T66: same additive treatment. A pre-T66 server omits them, and absent
+    // is off on every surface that reads them.
+    privateAiRouteV1: z.boolean().optional(),
+    privateAiExecutionV1: z.boolean().optional(),
   }),
   rpc: z.object({
     status: z.enum(["connected", "missing", "failed"]),
@@ -2206,5 +2212,150 @@ export const NftProofResponseV1Schema = z
      * so a pending reconciliation cannot be phrased as a completed purchase. */
     copy: z.string().min(1).max(300),
     needsReconciliation: z.boolean(),
+  })
+  .strict();
+
+// ---------------------------------------------------------------------------
+// T66C/T66D — the Private AI rail.
+//
+// The transport shape is what enforces the privacy claim, so it is worth
+// stating here rather than only in the engine:
+//
+//   * compare sends the PROMPT and receives back a NONCE. The server keeps
+//     neither. The nonce is the only thing that can ever open the commitment,
+//     and it exists in one place afterwards: the client.
+//   * execute sends the prompt AGAIN, with the nonce. The server recomputes
+//     the commitment and refuses if it differs — that is how a reviewed
+//     request and an executed one are proved to be the same request without
+//     the server storing the request.
+//   * the proof that comes back carries no prompt and no completion. The
+//     answer text is returned beside it, once, and is not part of it.
+// ---------------------------------------------------------------------------
+
+export const AiPromptMessageV1Schema = z
+  .object({
+    role: z.enum(['user', 'assistant']),
+    text: z.string().min(1).max(500_000),
+  })
+  .strict();
+
+export const AiCompareRequestV1Schema = z
+  .object({
+    /** The task, as the user wrote it. This IS the prompt. */
+    messages: z.array(AiPromptMessageV1Schema).min(1).max(50),
+    systemText: z.string().min(1).max(20_000).nullable().optional(),
+    walletAddress: AddressV1Schema,
+    requestId: z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/, 'Invalid AI compare request ID'),
+    privacyRequirement: z.enum(['private_only', 'prefer_private', 'any']).default('private_only'),
+    /** The USD ceiling for this one call. Absent means the surface must ask
+     * before anything runs — an unbounded inference request is never assumed. */
+    maxSpendUsd: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)(\.[0-9]{1,12})?$/)
+      .nullable()
+      .optional(),
+    maxCompletionTokens: z.number().int().min(1).max(1_000_000).default(1_024),
+    preferredModelId: z
+      .string()
+      .min(1)
+      .max(120)
+      .regex(/^[a-zA-Z0-9._-]+$/)
+      .nullable()
+      .optional(),
+    requiresToolCalling: z.boolean().optional(),
+    requiresResponseSchema: z.boolean().optional(),
+    requiresWebSearch: z.boolean().optional(),
+  })
+  .strict();
+
+export const AiCompareResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      outcome: z.literal('compared'),
+      routeRunId: z.string().min(1).max(200),
+      routeCardId: z.string().min(1).max(200),
+      routeCard: AiRouteCardV1Schema,
+      /** Returned ONCE. The server does not store it, and without it the
+       * commitment on the card cannot be opened by anyone — including us. */
+      promptNonce: z.string().min(32).max(200),
+      /** Whether this server would actually run the request. Comparison being
+       * on does not imply execution is. */
+      executionEnabled: z.boolean(),
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('unavailable'),
+      routeRunId: z.string().min(1).max(200),
+      /** A comparison that selected nothing still returns the card, so the
+       * surface can show which models were refused and why. */
+      routeCard: AiRouteCardV1Schema.nullable(),
+      reason: z.string().min(1).max(60),
+      detail: z.string().min(1).max(300),
+    })
+    .strict(),
+  z
+    .object({ outcome: z.literal('needs_clarification'), issues: z.array(z.string().min(1).max(200)) })
+    .strict(),
+  z.object({ outcome: z.literal('unsupported'), reason: z.string().min(1).max(300) }).strict(),
+]);
+
+export const AiExecuteRequestV1Schema = z
+  .object({
+    routeRunId: z.string().min(1).max(200),
+    /** The reviewed card, named by hash. A stale or unknown hash is refused
+     * rather than silently re-run against whatever is current. */
+    routeCardHash: HashV1Schema,
+    walletAddress: AddressV1Schema,
+    /** Re-submitted so the server can prove this is the reviewed request
+     * without ever having stored it. */
+    messages: z.array(AiPromptMessageV1Schema).min(1).max(50),
+    systemText: z.string().min(1).max(20_000).nullable().optional(),
+    promptNonce: z.string().min(32).max(200),
+    temperature: z.number().min(0).max(2).nullable().optional(),
+    responseSchema: z.record(z.unknown()).nullable().optional(),
+  })
+  .strict();
+
+export const AiExecuteResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      outcome: z.literal('completed'),
+      proofId: z.string().min(1).max(200),
+      proof: AiInferenceProofV1Schema,
+      /** The answer. Returned to the caller and stored by nothing. */
+      text: z.string().max(1_000_000),
+      copy: z.string().min(1).max(300),
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('refused'),
+      /** A model that considered the request and declined leaves a proof. */
+      proofId: z.string().min(1).max(200),
+      proof: AiInferenceProofV1Schema,
+      copy: z.string().min(1).max(300),
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('blocked'),
+      reason: z.string().min(1).max(60),
+      detail: z.string().min(1).max(300),
+    })
+    .strict(),
+]);
+
+export const AiProofResponseV1Schema = z
+  .object({
+    proofId: z.string().min(1).max(200),
+    proof: AiInferenceProofV1Schema,
+    /** The fixed sentence for this final status. Never assembled per-request,
+     * so a truncated answer cannot be phrased as a completed one. */
+    copy: z.string().min(1).max(300),
   })
   .strict();

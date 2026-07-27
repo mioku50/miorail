@@ -114,7 +114,7 @@ export function stepperFromClockV1(clock: ConsoleStageClockV1, activeStep?: numb
 
 // --- Route family dispatch ---------------------------------------------------
 
-export type RouteFamilyV1 = 'swap' | 'earn' | 'commerce' | 'nft' | 'unknown';
+export type RouteFamilyV1 = 'swap' | 'earn' | 'commerce' | 'nft' | 'private_ai' | 'unknown';
 
 // Two patterns per family: `\b` is an ASCII word boundary, so it never matches
 // before a Cyrillic letter — the RU alternatives are matched without it.
@@ -129,6 +129,15 @@ const COMMERCE_PATTERN_RU_V1 = /(купить|подар)/i;
 // card engine handed an NFT goal would search a gift-card catalogue for it.
 const NFT_PATTERN_V1 = /\b(nft|opensea|erc-?721|basepaint|collectible)/i;
 const NFT_PATTERN_RU_V1 = /(нфт|нft|опенси|опенсea)/i;
+// T66. Checked BEFORE the others for the same reason NFT is: an AI goal
+// frequently contains another family's verb — "summarise this swap contract",
+// "classify these gift cards" — and a summarisation request handed to the swap
+// engine would look for a token pair in an essay.
+const AI_PATTERN_V1 = /\b(venice|private ai|ask (?:an? )?(?:ai|model|llm)|llm|inference|summari[sz]e|prompt)\b/i;
+// `\w` is [A-Za-z0-9_] without the `u` flag, so it never matches a Cyrillic
+// suffix — the same trap the `\b` note above describes. The stems are matched
+// with an explicit Cyrillic class instead.
+const AI_PATTERN_RU_V1 = /(венис|приватн[а-яё]* ии|спроси[а-яё]* (?:у )?(?:ии|модел)|суммир|промпт)/i;
 
 /**
  * Chooses the route family from the goal text so an Earn intent is never sent
@@ -139,6 +148,7 @@ const NFT_PATTERN_RU_V1 = /(нфт|нft|опенси|опенсea)/i;
 export function routeFamilyForGoalV1(text: string): RouteFamilyV1 {
   const value = text.trim();
   if (value.length === 0) return 'unknown';
+  if (AI_PATTERN_V1.test(value) || AI_PATTERN_RU_V1.test(value)) return 'private_ai';
   if (NFT_PATTERN_V1.test(value) || NFT_PATTERN_RU_V1.test(value)) return 'nft';
   if (COMMERCE_PATTERN_V1.test(value) || COMMERCE_PATTERN_RU_V1.test(value)) return 'commerce';
   if (EARN_PATTERN_V1.test(value) || EARN_PATTERN_RU_V1.test(value)) return 'earn';
@@ -149,7 +159,7 @@ export function routeFamilyForGoalV1(text: string): RouteFamilyV1 {
 export interface RouteFamilyDispatchV1 {
   family: RouteFamilyV1;
   /** Which engine may run. null ⟺ nothing runs and the reason explains why. */
-  engine: 'swap' | 'earn' | 'commerce' | 'nft' | null;
+  engine: 'swap' | 'earn' | 'commerce' | 'nft' | 'private_ai' | null;
   blockedReason: string | null;
 }
 
@@ -165,6 +175,11 @@ export interface ConsoleRouteFlagsV1 {
   /** T65: NFT PURCHASE, gated separately. Looking at a listing is repeatable;
    * buying the token is not. */
   nftExecutionV1?: boolean;
+  /** T66: Private AI COMPARISON. Absent on a pre-T66 server ⟹ off. */
+  privateAiRouteV1?: boolean;
+  /** T66: Private AI EXECUTION, gated separately. Comparing models sends
+   * nothing anywhere; running one sends the prompt to a third party. */
+  privateAiExecutionV1?: boolean;
 }
 
 /**
@@ -198,6 +213,11 @@ export function dispatchRouteFamilyV1(
       ? { family, engine: 'nft', blockedReason: null }
       : { family, engine: null, blockedReason: 'NFT routing is off on this server. Swap, Earn and Commerce goals still work.' };
   }
+  if (family === 'private_ai') {
+    return flags.privateAiRouteV1 === true
+      ? { family, engine: 'private_ai', blockedReason: null }
+      : { family, engine: null, blockedReason: 'Private AI routing is off on this server. Swap, Earn, Commerce and NFT goals still work.' };
+  }
   return { family, engine: null, blockedReason: 'Say what you want to do — for example "swap 100 USDC to ETH" or "earn yield on 500 USDC".' };
 }
 
@@ -230,6 +250,8 @@ export interface ConsoleServerStatusV1 {
     commerceExecutionV1?: boolean;
     nftRouteV1?: boolean;
     nftExecutionV1?: boolean;
+    privateAiRouteV1?: boolean;
+    privateAiExecutionV1?: boolean;
   };
   rpc?: { status: string; provider: string };
   prices?: { status: string; provider: string };
@@ -260,6 +282,8 @@ export function coverageFromStatusV1(status: ConsoleServerStatusV1 | null): Cove
   const checkout = flags?.commerceExecutionV1 === true;
   const nft = flags?.nftRouteV1 === true;
   const nftBuy = flags?.nftExecutionV1 === true;
+  const privateAi = flags?.privateAiRouteV1 === true;
+  const privateAiRun = flags?.privateAiExecutionV1 === true;
   return [
     {
       action: 'Swap on Base',
@@ -316,6 +340,19 @@ export function coverageFromStatusV1(status: ConsoleServerStatusV1 | null): Cove
       available: nft,
     },
     {
+      // Same split again: comparing models and running one are different
+      // switches, and the row says which is on.
+      action: 'Private AI (Venice)',
+      sources: privateAi
+        ? privateAiRun
+          ? 'Venice — compare and run'
+          : 'Venice — compare only, execution gate is off'
+        : 'Private AI gate is off on this server',
+      percent: privateAi ? (privateAiRun ? 30 : 18) : 0,
+      state: privateAi ? (privateAiRun ? 'ready' : 'building') : 'off',
+      available: privateAi,
+    },
+    {
       action: 'Cross-chain bridge',
       sources: 'no approved adapter',
       percent: 0,
@@ -340,6 +377,7 @@ export const ADAPTER_FAMILY_V1: Record<string, RouteFamilyV1 | 'simulation'> = {
   Morpho: 'earn',
   Bitrefill: 'commerce',
   OpenSea: 'nft',
+  Venice: 'private_ai',
   'Alchemy simulation': 'simulation',
 };
 
@@ -381,6 +419,7 @@ export function adaptersFromStatusV1(
     { name: 'Alchemy simulation', state: gate(paid) },
     { name: 'Bitrefill', state: gate(commerce) },
     { name: 'OpenSea', state: gate(nft) },
+    { name: 'Venice', state: gate(status?.productMigration.privateAiRouteV1 === true) },
     { name: 'o1.exchange', state: 'planned' },
   ];
 }
@@ -413,6 +452,7 @@ const FAMILY_STAGE_LABELS_V1: Record<RouteFamilyV1, FamilyStageLabelsV1> = {
   earn: { adapter: (name) => `${name} rates`, evidence: 'Evidence collected', scoring: 'Scoring against your goal' },
   commerce: { adapter: (name) => `${name} catalogue`, evidence: 'Commerce evidence', scoring: 'Commerce scoring' },
   nft: { adapter: (name) => `${name} listing`, evidence: 'NFT evidence', scoring: 'NFT scoring' },
+  private_ai: { adapter: (name) => `${name} model catalogue`, evidence: 'Model evidence', scoring: 'Model scoring' },
   unknown: { adapter: (name) => `${name} quote`, evidence: 'Evidence collected', scoring: 'Scoring against your goal' },
 };
 
