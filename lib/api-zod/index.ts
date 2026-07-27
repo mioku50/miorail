@@ -2399,9 +2399,13 @@ const B20FieldV1Schema = z
   .object({
     key: z.string().min(1).max(60),
     label: z.string().min(1).max(120),
+    // Mirrors B20FieldStatusV1Schema in @mioagent/b20-control, which is the
+    // source of truth. A status missing here is not emitted at all — the
+    // response fails validation rather than shipping an undeclared shape.
     status: z.enum([
       'exact_chain_read',
       'unavailable',
+      'not_enumerable',
       'unsupported_by_variant',
       'planned_not_active',
       'conflicting_evidence',

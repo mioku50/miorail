@@ -136,6 +136,16 @@ export const B20FieldStatusV1Schema = z.enum([
   'exact_chain_read',
   /** The read did not answer. No value is shown. */
   'unavailable',
+  /**
+   * The interface has no method that could answer this, so no read was even
+   * attempted — role holders and policy members cannot be listed, only checked
+   * one address at a time.
+   *
+   * Kept apart from `unavailable` because they are opposite situations: this
+   * one is permanent and expected, the other means something went wrong. Fusing
+   * them would make a fully-read card indistinguishable from a throttled one.
+   */
+  'not_enumerable',
   /** This B20 variant has no such method — the call reverted for that reason. */
   'unsupported_by_variant',
   /** Documented as future work and not readable today. Never shown as active. */
@@ -338,6 +348,10 @@ export const B20ControlSnapshotV1Schema = z
         });
       }
     }
+    // `complete` means every read this token could answer, answered. A row the
+    // interface cannot express (`not_enumerable`) or that this variant does not
+    // have (`unsupported_by_variant`) is not a gap in the reading — only a
+    // failed read is.
     if (value.status === 'complete' && value.fields.some((field) => field.status === 'unavailable')) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

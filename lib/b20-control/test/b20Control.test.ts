@@ -321,10 +321,32 @@ describe('fields', () => {
   test('who holds the admin role is always an explicit gap, never a guess', async () => {
     const { snapshot, card } = await inspect();
     const admin = snapshot.fields.find((f) => f.key === 'admin_role_holder');
-    assert.equal(admin?.status, 'unavailable');
+    // `not_enumerable`, not `unavailable`: no read failed here. The interface
+    // has no method that could answer, so a retry or a faster endpoint would
+    // produce exactly this row again.
+    assert.equal(admin?.status, 'not_enumerable');
     assert.equal(admin?.value, null);
     assert.match(admin?.reason ?? '', /no way to list role holders/);
     assert.ok(card.unavailable.some((line) => /DEFAULT_ADMIN_ROLE/.test(line)));
+  });
+
+  test('a card whose every readable field was read is complete, not partial', async () => {
+    // The two rows above are permanent. If they counted as gaps, `complete`
+    // would be unreachable and the status would say the same thing about a
+    // fully-read card and a throttled one.
+    const { snapshot } = await inspect();
+    assert.equal(snapshot.status, 'complete');
+    assert.ok(snapshot.fields.some((field) => field.status === 'not_enumerable'));
+  });
+
+  test('one failed read is enough to make the same card partial', async () => {
+    const { snapshot } = await inspect(TOKEN, {
+      overrides: { [B20_SELECTORS_V1.pausedFeatures]: { ok: false, reason: 'rate_limited' } },
+    });
+    assert.equal(snapshot.status, 'partial');
+    const paused = snapshot.fields.find((f) => f.key === 'paused_features');
+    assert.equal(paused?.status, 'unavailable');
+    assert.match(paused?.reason ?? '', /rate_limited/);
   });
 
   test('a paused feature ordinal beyond the documented enum stays unknown', async () => {
@@ -436,10 +458,16 @@ describe('the snapshot refuses to be inconsistent', () => {
     const { snapshot } = await inspect();
     const tampered = {
       ...snapshot,
+      // Every status other than an exact read, so the invariant is tested
+      // rather than whichever statuses this fixture happens to produce.
       fields: snapshot.fields.map((field) =>
-        field.status === 'unavailable' ? { ...field, value: 'made up' } : field,
+        field.status === 'exact_chain_read' ? field : { ...field, value: 'made up' },
       ),
     };
+    assert.ok(
+      tampered.fields.some((field) => field.value === 'made up'),
+      'the fixture must contain at least one row without a value',
+    );
     assert.throws(() => B20ControlSnapshotV1Schema.parse(tampered));
   });
 });
@@ -486,12 +514,96 @@ describe('nothing credential-shaped escapes', () => {
   test('a rate-limited endpoint is classified, not read as a verdict', async () => {
     const reader = createB20ReaderV1({
       rpcUrl: 'https://rpc.example/key',
+      maxRetries: 0,
       fetchImpl: async () =>
         new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32016, message: 'over rate limit' } })),
     });
     const result = await reader.readIsB20(TOKEN, '0x1');
     assert.equal(result.ok, false);
     if (!result.ok) assert.equal(result.reason, 'rate_limited');
+  });
+
+  test('a throttled read is repeated, and the repeat asks about the same block', async () => {
+    // Repeating is only safe because the block tag is pinned: the retry asks
+    // the identical question, so a card can never straddle two blocks.
+    const blockTags: unknown[] = [];
+    let attempts = 0;
+    const reader = createB20ReaderV1({
+      rpcUrl: 'https://rpc.example/key',
+      sleepImpl: async () => {},
+      fetchImpl: async (_url, init) => {
+        attempts += 1;
+        const body = JSON.parse(String((init as RequestInit).body)) as { params: unknown[] };
+        blockTags.push(body.params[1]);
+        return attempts < 3
+          ? new Response('', { status: 429 })
+          : new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: `0x${'0'.repeat(63)}1` }));
+      },
+    });
+    const result = await reader.readIsB20(TOKEN, '0x2ee894e');
+    assert.equal(result.ok, true);
+    assert.equal(attempts, 3);
+    assert.deepEqual(new Set(blockTags), new Set(['0x2ee894e']));
+  });
+
+  test('a revert is never repeated, because it is an answer', async () => {
+    let attempts = 0;
+    const reader = createB20ReaderV1({
+      rpcUrl: 'https://rpc.example/key',
+      sleepImpl: async () => {},
+      fetchImpl: async () => {
+        attempts += 1;
+        return new Response(
+          JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: 3, message: 'execution reverted' } }),
+        );
+      },
+    });
+    const result = await reader.call({ to: TOKEN, data: '0x18160ddd', blockTag: '0x1' });
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.reason, 'reverted');
+    assert.equal(attempts, 1, 'a revert must cost exactly one call');
+  });
+
+  test('a throttle that never lifts gives up rather than hanging', async () => {
+    let attempts = 0;
+    const waits: number[] = [];
+    const reader = createB20ReaderV1({
+      rpcUrl: 'https://rpc.example/key',
+      maxRetries: 2,
+      sleepImpl: async (ms) => {
+        waits.push(ms);
+      },
+      fetchImpl: async () => {
+        attempts += 1;
+        return new Response('', { status: 429 });
+      },
+    });
+    const result = await reader.readIsB20(TOKEN, '0x1');
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.reason, 'rate_limited');
+    assert.equal(attempts, 3, 'the first call plus maxRetries repeats');
+    // Backoff grows, and pacing has started spacing the calls out as well.
+    assert.ok(waits.length >= 2, 'each repeat waited first');
+    assert.ok(waits.some((ms) => ms >= 250), `expected a growing wait, got ${waits.join(', ')}`);
+  });
+
+  test('a Retry-After header is honoured, but only up to a few seconds', async () => {
+    const waits: number[] = [];
+    let attempts = 0;
+    const reader = createB20ReaderV1({
+      rpcUrl: 'https://rpc.example/key',
+      maxRetries: 1,
+      sleepImpl: async (ms) => {
+        waits.push(ms);
+      },
+      fetchImpl: async () => {
+        attempts += 1;
+        // An absurd value must not be able to stall the request.
+        return new Response('', { status: 429, headers: { 'retry-after': attempts === 1 ? '2' : '9999' } });
+      },
+    });
+    await reader.readIsB20(TOKEN, '0x1');
+    assert.equal(waits[0], 2_000);
   });
 });
 

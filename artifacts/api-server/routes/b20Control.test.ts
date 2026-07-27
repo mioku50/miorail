@@ -232,6 +232,20 @@ describe('inspect', () => {
   });
 });
 
+describe('the wire contract tracks the domain contract', () => {
+  test('every field status the domain can produce is one the response may carry', async () => {
+    // These two enums are written out twice, so they can drift. When they do,
+    // a card that reads perfectly fails response validation and the caller
+    // gets a 500 — which is how `not_enumerable` first showed up.
+    const { B20FieldStatusV1Schema } = await import('@mioagent/b20-control');
+    const { B20ControlCardResponseV1Schema } = await import('@mioagent/api-zod');
+    const wire = (
+      B20ControlCardResponseV1Schema.shape.fields.element.shape.status as unknown as { options: string[] }
+    ).options;
+    assert.deepEqual([...B20FieldStatusV1Schema.options].sort(), [...wire].sort());
+  });
+});
+
 describe('snapshots', () => {
   test('a stored snapshot is readable by its owner and marked cached', async () => {
     const created = await inspect({ chainId: 8453, tokenAddress: TOKEN });

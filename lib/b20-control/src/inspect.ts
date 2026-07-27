@@ -670,17 +670,21 @@ export async function inspectB20TokenV1(
   }
 
   // The two rows that exist only to say what cannot be read. Leaving them out
-  // would let a reader assume the card had checked.
+  // would let a reader assume the card had checked. They are `not_enumerable`
+  // rather than `unavailable`: no read failed here, the interface simply has no
+  // method that could answer, and a retry or a better endpoint changes nothing.
   fields.push(
     unavailableField(
       'admin_role_holder',
       'Who holds DEFAULT_ADMIN_ROLE',
       'B20 exposes hasRole(role, account) and no way to list role holders. Naming an issuer would require an address to check, and this card has none.',
+      'not_enumerable',
     ),
     unavailableField(
       'freeze_and_seize',
       'Accounts currently blocked',
       'Policy membership is queried per account and cannot be enumerated. Whether a specific account is blocked is answerable; the full list is not.',
+      'not_enumerable',
     ),
   );
 

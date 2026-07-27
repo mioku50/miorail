@@ -17,6 +17,7 @@ import React from 'react';
 export type B20FieldStatusLikeV1 =
   | 'exact_chain_read'
   | 'unavailable'
+  | 'not_enumerable'
   | 'unsupported_by_variant'
   | 'planned_not_active'
   | 'conflicting_evidence';
@@ -57,6 +58,7 @@ export interface B20CardLikeV1 {
 export const B20_FIELD_STATUS_LABEL_V1: Record<B20FieldStatusLikeV1, string> = {
   exact_chain_read: 'read at this block',
   unavailable: 'not available',
+  not_enumerable: 'this interface cannot list it',
   unsupported_by_variant: 'not part of this variant',
   planned_not_active: 'planned, not active',
   conflicting_evidence: 'sources disagree',

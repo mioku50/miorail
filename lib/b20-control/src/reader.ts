@@ -46,7 +46,27 @@ export interface B20ReaderConfigV1 {
   rpcUrl: string;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
+  /** How many times a THROTTLED read is repeated before it is reported as
+   * unavailable. See `RETRYABLE_REASONS_V1` for why this is sound. */
+  maxRetries?: number;
+  /** Injected so tests do not spend real time. */
+  sleepImpl?: (ms: number) => Promise<void>;
 }
+
+/**
+ * The only reasons worth repeating.
+ *
+ * A throttle is a fact about the endpoint, not an answer about the token, and
+ * one card costs ~17 calls — enough for a public endpoint to start refusing
+ * midway and leave half the rows blank. Repeating is safe here for a specific
+ * reason: every read after the anchor is pinned to a fixed block tag, so a
+ * repeat re-asks the same question about the same block and cannot produce a
+ * snapshot that straddles two of them.
+ *
+ * `reverted` and `empty_result` are deliberately absent. Those ARE answers —
+ * repeating them would only turn a determinate result into a slower one.
+ */
+export const RETRYABLE_REASONS_V1: readonly B20RpcReasonV1[] = ['rate_limited', 'rpc_timeout'];
 
 export interface B20BlockAnchorV1 {
   blockNumber: string;
@@ -99,10 +119,31 @@ function classifyRpcErrorV1(code: number | undefined, message: string): B20RpcRe
 export function createB20ReaderV1(config: B20ReaderConfigV1): B20ReaderV1 {
   const timeoutMs = config.timeoutMs ?? 8_000;
   const fetchImpl = config.fetchImpl ?? fetch;
+  const maxRetries = config.maxRetries ?? 3;
+  const sleep = config.sleepImpl ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)));
   let nextId = 1;
+  /** Seconds the endpoint asked us to wait, if it said so on the last 429. */
+  let retryAfterMs: number | null = null;
+  // Adaptive pacing. Retrying alone does not survive a public endpoint, whose
+  // limit is a request COUNT PER WINDOW: repeating a refused call inside the
+  // same window just spends another one of its allowance. So a throttle also
+  // slows every subsequent call, and the gap decays once reads start landing
+  // again. A keyed endpoint never trips this and pays nothing for it.
+  let gapMs = 0;
+  let lastRequestAt = 0;
 
-  async function rpc(method: string, params: unknown[]): Promise<B20RpcResultV1<unknown>> {
+  function noteThrottled(): void {
+    gapMs = Math.min(gapMs === 0 ? 120 : gapMs * 2, 1_000);
+  }
+  function noteServed(): void {
+    gapMs = gapMs <= 120 ? 0 : Math.floor(gapMs / 2);
+  }
+
+  async function rpcOnce(method: string, params: unknown[]): Promise<B20RpcResultV1<unknown>> {
     if (config.rpcUrl.trim().length === 0) return { ok: false, reason: 'not_configured' };
+    const sinceLast = Date.now() - lastRequestAt;
+    if (gapMs > 0 && sinceLast < gapMs) await sleep(gapMs - sinceLast);
+    lastRequestAt = Date.now();
     let response: Response;
     try {
       response = await fetchImpl(config.rpcUrl, {
@@ -117,7 +158,14 @@ export function createB20ReaderV1(config: B20ReaderConfigV1): B20ReaderV1 {
         ? { ok: false, reason: 'rpc_timeout' }
         : { ok: false, reason: 'rpc_unavailable' };
     }
-    if (response.status === 429) return { ok: false, reason: 'rate_limited' };
+    if (response.status === 429) {
+      // If the endpoint said how long to wait, wait that long — but only up to
+      // a few seconds, so a hostile or broken header cannot stall a request.
+      const header = Number(response.headers.get('retry-after'));
+      retryAfterMs = Number.isFinite(header) && header > 0 && header <= 5 ? header * 1_000 : null;
+      noteThrottled();
+      return { ok: false, reason: 'rate_limited' };
+    }
     if (!response.ok) return { ok: false, reason: 'rpc_unavailable', detail: `status ${response.status}` };
 
     let envelope: JsonRpcEnvelope;
@@ -128,14 +176,30 @@ export function createB20ReaderV1(config: B20ReaderConfigV1): B20ReaderV1 {
     }
     if (envelope.error) {
       const message = envelope.error.message ?? '';
+      const reason = classifyRpcErrorV1(envelope.error.code, message);
+      // A throttle can arrive as a 200 with a JSON-RPC error body, so pacing
+      // has to be driven by the classified reason, not by the HTTP status.
+      if (reason === 'rate_limited') noteThrottled();
       return {
         ok: false,
-        reason: classifyRpcErrorV1(envelope.error.code, message),
+        reason,
         detail: redactRpcTextV1(message),
         revertSelector: revertSelectorV1(typeof envelope.error.data === 'string' ? envelope.error.data : null),
       };
     }
+    noteServed();
     return { ok: true, value: envelope.result, raw: '' };
+  }
+
+  async function rpc(method: string, params: unknown[]): Promise<B20RpcResultV1<unknown>> {
+    let result = await rpcOnce(method, params);
+    for (let attempt = 0; attempt < maxRetries; attempt += 1) {
+      if (result.ok || !RETRYABLE_REASONS_V1.includes(result.reason)) return result;
+      await sleep(retryAfterMs ?? 250 * 2 ** attempt);
+      retryAfterMs = null;
+      result = await rpcOnce(method, params);
+    }
+    return result;
   }
 
   async function ethCall(to: string, data: string, blockTag: string): Promise<B20RpcResultV1<string>> {
