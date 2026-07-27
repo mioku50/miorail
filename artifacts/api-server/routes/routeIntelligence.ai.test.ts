@@ -41,6 +41,7 @@ const FLAGS = {
   nftExecutionV1: false,
   privateAiRouteV1: true,
   privateAiExecutionV1: true,
+  aerodromeExecutionV1: false,
 };
 
 const originalRuntime = { ...aiRouteRuntime };
