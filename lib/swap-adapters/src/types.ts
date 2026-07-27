@@ -1,6 +1,6 @@
 import type { EvidenceRecordV1, RouteCandidateV1, RouteIntentV1 } from '@mioagent/route-domain';
 
-export type SwapAdapterId = 'uniswap' | 'kyberswap';
+export type SwapAdapterId = 'uniswap' | 'kyberswap' | 'aerodrome';
 
 export type SwapAdapterFailureOutcome =
   | 'unsupported'

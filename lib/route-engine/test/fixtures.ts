@@ -94,6 +94,7 @@ export function makeIntent(overrides: IntentOverrides = {}): RouteIntentV1 {
 const providers = {
   uniswap: { id: 'uniswap', displayName: 'Uniswap', kind: 'dex', operator: 'Uniswap Labs' },
   kyberswap: { id: 'kyberswap', displayName: 'KyberSwap', kind: 'aggregator', operator: 'Kyber Network' },
+  aerodrome: { id: 'aerodrome', displayName: 'Aerodrome', kind: 'dex', operator: 'Aerodrome Finance' },
 } as const;
 
 interface CandidateOverrides {

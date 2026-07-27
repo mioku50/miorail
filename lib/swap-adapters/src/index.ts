@@ -7,3 +7,6 @@ export * from './types.js';
 export * from './uniswap-client.js';
 export * from './uniswap-trade-client.js';
 export * from './uniswap.js';
+export * from './aerodrome-pinned.js';
+export * from './aerodrome-client.js';
+export * from './aerodrome.js';

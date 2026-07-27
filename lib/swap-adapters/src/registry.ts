@@ -1,4 +1,5 @@
 import type { RouteIntentV1 } from '@mioagent/route-domain';
+import { AerodromeSwapRouteAdapter } from './aerodrome.js';
 import { KyberSwapRouteAdapter } from './kyberswap.js';
 import { UniswapSwapRouteAdapter } from './uniswap.js';
 import type {
@@ -7,10 +8,10 @@ import type {
   SwapRouteAdapter,
 } from './types.js';
 
-const ADAPTER_ORDER: readonly SwapAdapterId[] = ['uniswap', 'kyberswap'];
+const ADAPTER_ORDER: readonly SwapAdapterId[] = ['uniswap', 'kyberswap', 'aerodrome'];
 
 export function createDefaultSwapAdapters(): SwapRouteAdapter[] {
-  return [new UniswapSwapRouteAdapter(), new KyberSwapRouteAdapter()];
+  return [new UniswapSwapRouteAdapter(), new KyberSwapRouteAdapter(), new AerodromeSwapRouteAdapter()];
 }
 
 export function getEligibleSwapAdapters(

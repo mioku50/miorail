@@ -22,7 +22,9 @@ export const SwapAdapterFailureV1Schema = z
       'invalid_response',
       'rejected',
     ]),
-    provider: z.enum(['uniswap', 'kyberswap']),
+    // T67B: Aerodrome quotes over Base RPC rather than a partner API, so it
+    // reports failures through the same shape as the two HTTP adapters.
+    provider: z.enum(['uniswap', 'kyberswap', 'aerodrome']),
     errorCode: z.string().min(1).max(200),
     retryable: z.boolean(),
   })

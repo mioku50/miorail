@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./uniswap-client": "./src/uniswap-client.ts",
-    "./uniswap-trade-client": "./src/uniswap-trade-client.ts"
+    "./uniswap-trade-client": "./src/uniswap-trade-client.ts",
+    "./aerodrome-client": "./src/aerodrome-client.ts"
   },
   "scripts": {
     "test": "NODE_ENV=test node --import tsx --test test/*.test.ts",
@@ -18,7 +19,8 @@
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/runtime-skills": "workspace:*",
     "@mioagent/security": "workspace:*",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "@noble/hashes": "^1.8.0"
   },
   "devDependencies": {
     "tsx": "^4.22.4",

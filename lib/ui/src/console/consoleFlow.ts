@@ -303,7 +303,7 @@ export function coverageFromStatusV1(status: ConsoleServerStatusV1 | null): Cove
   return [
     {
       action: 'Swap on Base',
-      sources: routing ? 'Uniswap, KyberSwap' : 'route intelligence gate is off',
+      sources: routing ? 'Uniswap, KyberSwap, Aerodrome' : 'route intelligence gate is off',
       percent: routing ? 70 : 0,
       state: routing ? 'ready' : 'off',
       available: routing,
@@ -388,6 +388,7 @@ export interface AdapterStateSourceV1 {
 export const ADAPTER_FAMILY_V1: Record<string, RouteFamilyV1 | 'simulation'> = {
   Uniswap: 'swap',
   KyberSwap: 'swap',
+  Aerodrome: 'swap',
   'o1.exchange': 'swap',
   Moonwell: 'earn',
   Morpho: 'earn',
@@ -430,6 +431,10 @@ export function adaptersFromStatusV1(
   return [
     { name: 'Uniswap', state: gate(routing) },
     { name: 'KyberSwap', state: gate(routing) },
+    // T67B: quoted straight from the Aerodrome Router over Base RPC, so it
+    // rides the routing gate like the other swap adapters — there is no
+    // partner key of its own to be missing.
+    { name: 'Aerodrome', state: gate(routing) },
     { name: 'Moonwell', state: gate(earn) },
     { name: 'Morpho', state: gate(earn) },
     { name: 'Alchemy simulation', state: gate(paid) },
