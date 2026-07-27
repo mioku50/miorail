@@ -153,6 +153,9 @@ describe('the NFT journey renders end to end', () => {
       }),
     );
     assert.ok(html.includes('Simulation is unavailable'));
+    // The provider's reason reads as a sentence, not as a raw code.
+    assert.ok(html.includes('No simulation provider is configured on this server.'));
+    assert.ok(!html.includes('· provider_not_configured'), 'a raw code is not the explanation');
     assert.ok(!html.includes('Confirm in Base Account'), 'no wallet control when a gate failed');
   });
 

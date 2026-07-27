@@ -1,3 +1,4 @@
+import { logger } from '@mioagent/utils';
 import { stableHashV1, type NftPurchaseBlueprintV1, type SimulationStateV1 } from '@mioagent/route-domain';
 import {
   SimulationProviderResponseV1Schema,
@@ -68,7 +69,20 @@ export async function simulateNftBlueprintV1(
     callsHash: blueprint.callsHash,
     calls: blueprint.calls,
   });
-  if (!transport.ok) return unavailable(requestHash, nowIso, transport.errorCode);
+  if (!transport.ok) {
+    // The provider's own words, already redacted by the adapter. Without this
+    // an operator saw `provider_rpc_error` on the screen and nothing at all in
+    // the log, which is not a diagnosable state for the one gate that decides
+    // whether a purchase may be signed.
+    logger.warn('NFT simulation did not answer', {
+      errorCode: transport.errorCode,
+      detail: transport.detail,
+      providerMessage: transport.providerMessage,
+      blueprintHash: blueprint.blueprintHash,
+      buyer: blueprint.buyer,
+    });
+    return unavailable(requestHash, nowIso, transport.errorCode);
+  }
 
   const parsed = SimulationProviderResponseV1Schema.safeParse(transport.body);
   if (!parsed.success) return unavailable(requestHash, nowIso, 'invalid_response');

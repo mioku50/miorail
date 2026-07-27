@@ -56,6 +56,12 @@ export type AlchemySimulationFailureCodeV1 =
   | 'provider_http_error'
   | 'network_error'
   | 'provider_rpc_error'
+  /** The sender cannot pay for what it is being asked to send. A real answer
+   * about the transaction, named rather than left as a generic RPC error. */
+  | 'provider_insufficient_funds'
+  /** The endpoint does not offer eth_simulateV1 — a plan or tier problem, not
+   * a transient outage, so it must not read as one. */
+  | 'provider_method_unsupported'
   | 'provider_invalid_schema'
   | 'provider_call_count_mismatch'
   | 'provider_chain_mismatch'
@@ -302,10 +308,43 @@ function isRateLimitRpcErrorV1(error: { code?: number; message?: string } | unde
   return /rate limit|too many requests|throughput/i.test(error.message ?? '');
 }
 
-function failureV1(errorCode: AlchemySimulationFailureCodeV1, detail: string): SimulationProviderResultV1 {
+function failureV1(
+  errorCode: AlchemySimulationFailureCodeV1,
+  detail: string,
+  providerMessage?: string,
+): SimulationProviderResultV1 {
   // `detail` is always a fixed, self-authored string — never the endpoint, the
-  // key, or raw upstream text that could carry either.
-  return { ok: false, errorCode, detail };
+  // key, or raw upstream text that could carry either. `providerMessage` is the
+  // upstream text, and it is REDACTED before it gets here.
+  return providerMessage === undefined ? { ok: false, errorCode, detail } : { ok: false, errorCode, detail, providerMessage };
+}
+
+/**
+ * What Alchemy actually objected to.
+ *
+ * A JSON-RPC error used to collapse into one opaque `provider_rpc_error`, so a
+ * wallet that simply could not afford the purchase and an endpoint without
+ * eth_simulateV1 were indistinguishable — from the screen AND from the log.
+ */
+export function classifyAlchemyRpcErrorV1(error: { code?: number; message?: string } | undefined): AlchemySimulationFailureCodeV1 {
+  const message = error?.message ?? '';
+  if (/insufficient funds|insufficient balance|exceeds balance/i.test(message)) return 'provider_insufficient_funds';
+  if (error?.code === -32601 || /method not found|not supported|unsupported method/i.test(message)) {
+    return 'provider_method_unsupported';
+  }
+  return 'provider_rpc_error';
+}
+
+/**
+ * Upstream text, made safe to log.
+ *
+ * The endpoint embeds the API key in its path, and an upstream message that
+ * echoes the endpoint is exactly how a key reaches a log file. The key is
+ * removed by value and every URL is dropped whether or not it carried one.
+ */
+export function redactAlchemyTextV1(text: string, apiKey: string): string {
+  const withoutKey = apiKey.length > 0 ? text.split(apiKey).join('<redacted>') : text;
+  return withoutKey.replace(/https?:\/\/\S+/gi, '<url>').slice(0, 300);
 }
 
 /**
@@ -414,7 +453,11 @@ export function createAlchemySimulationProviderV1(
         if (isRateLimitRpcErrorV1(envelope.error)) {
           return failureV1('provider_rate_limited', 'Alchemy rate limited the simulation');
         }
-        return failureV1('provider_rpc_error', 'Alchemy returned a JSON-RPC error');
+        return failureV1(
+          classifyAlchemyRpcErrorV1(envelope.error),
+          'Alchemy returned a JSON-RPC error',
+          redactAlchemyTextV1(envelope.error.message ?? `code ${envelope.error.code ?? 'unknown'}`, apiKey),
+        );
       }
       if (!envelope.result || envelope.result.length === 0) {
         return failureV1('provider_invalid_schema', 'Alchemy response carried no simulation result');

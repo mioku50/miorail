@@ -128,6 +128,30 @@ export function nftOrderFormLabelV1(restrictedByZone: boolean): string {
   return restrictedByZone ? 'Zone-restricted order (advanced fulfilment)' : 'Open order (basic fulfilment)';
 }
 
+/**
+ * Why the simulation could not answer, in words.
+ *
+ * A raw provider code told a user nothing and told an operator nothing about
+ * what to do next. Unknown codes are still shown verbatim — inventing a
+ * sentence for a state nobody has seen would be worse than the code.
+ */
+const SIMULATION_UNAVAILABLE_COPY_V1: Record<string, string> = {
+  provider_not_configured: 'No simulation provider is configured on this server.',
+  provider_insufficient_funds: 'This wallet holds less ETH than the purchase costs, so it cannot be simulated.',
+  provider_method_unsupported: 'The configured RPC endpoint does not offer transaction simulation.',
+  provider_rate_limited: 'The simulation provider is rate limiting this server.',
+  provider_timeout: 'The simulation provider did not answer in time.',
+  provider_rpc_error: 'The simulation provider returned an error. The server log names it.',
+  provider_http_error: 'The simulation provider refused the request.',
+  network_error: 'The simulation provider could not be reached.',
+  invalid_response: 'The simulation provider returned a response Miorail could not read.',
+};
+
+export function simulationUnavailableCopyV1(errorCode: string | null): string {
+  if (errorCode === null) return 'Simulation has not run.';
+  return SIMULATION_UNAVAILABLE_COPY_V1[errorCode] ?? errorCode;
+}
+
 /** The chain, in words. The contract carries a CAIP-2 id, which is the right
  * thing to store and the wrong thing to put in front of a person. An
  * unrecognised id is shown verbatim rather than guessed at. */
@@ -390,7 +414,7 @@ export function NftReviewPanel({
           label="Simulation"
           value={
             simulation === null || simulation.status === 'unavailable'
-              ? `Unavailable${simulation?.errorCode ? ` · ${simulation.errorCode}` : ''}`
+              ? `Unavailable — ${simulationUnavailableCopyV1(simulation?.errorCode ?? null)}`
               : simulation.status === 'passed'
                 ? `Passed at block ${simulation.blockNumber ?? '—'}${simulation.gasUsed ? ` · gas ${simulation.gasUsed}` : ''}`
                 : `Reverted at block ${simulation.blockNumber ?? '—'}`

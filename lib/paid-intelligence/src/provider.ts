@@ -34,6 +34,8 @@ export type SimulationProviderErrorCodeV1 =
   | 'provider_rate_limited'
   | 'provider_http_error'
   | 'provider_rpc_error'
+  | 'provider_insufficient_funds'
+  | 'provider_method_unsupported'
   | 'provider_invalid_schema'
   | 'provider_call_count_mismatch'
   | 'provider_chain_mismatch'
@@ -41,7 +43,15 @@ export type SimulationProviderErrorCodeV1 =
 
 export type SimulationProviderResultV1 =
   | { ok: true; body: unknown }
-  | { ok: false; errorCode: SimulationProviderErrorCodeV1; detail: string };
+  | {
+      ok: false;
+      errorCode: SimulationProviderErrorCodeV1;
+      detail: string;
+      /** The upstream provider's own words, REDACTED — the API key removed by
+       * value and every URL dropped. Present only when an adapter captured it.
+       * For diagnosis in a server log; never shown to a user. */
+      providerMessage?: string;
+    };
 
 export interface SimulationProvider {
   readonly providerId: string;

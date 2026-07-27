@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe, it, test } from 'node:test';
 import { hashApprovedCallsV1, type ExecutionCallV1 } from '@mioagent/route-domain';
+import * as alchemy from '../src/providers/alchemy.js';
 import {
   ALCHEMY_BASE_MAINNET_HOST_V1,
   ALCHEMY_SIMULATION_PROVIDER_ID_V1,
@@ -450,4 +451,79 @@ describe('createAlchemySimulationProviderV1 — secret handling', () => {
     assert.equal(ALCHEMY_SIMULATION_PROVIDER_ID_V1, 'alchemy-eth-simulate-v1');
     assert.equal(provider(rpcFetch(okResponse([]))).providerId, 'alchemy-eth-simulate-v1');
   });
+});
+
+// ---------------------------------------------------------------------------
+// T65.2C — a JSON-RPC error used to collapse into one opaque code.
+//
+// `provider_rpc_error` on the screen and NOTHING in the log is not a
+// diagnosable state for the one gate that decides whether a purchase may be
+// signed. These name what can be named, and make the rest safe to log.
+// ---------------------------------------------------------------------------
+
+test('a JSON-RPC error is classified, not collapsed', () => {
+  const { classifyAlchemyRpcErrorV1 } = alchemy;
+  assert.equal(
+    classifyAlchemyRpcErrorV1({ code: -32000, message: 'insufficient funds for gas * price + value' }),
+    'provider_insufficient_funds',
+  );
+  assert.equal(classifyAlchemyRpcErrorV1({ code: -32000, message: 'sender balance exceeds balance' }), 'provider_insufficient_funds');
+  assert.equal(classifyAlchemyRpcErrorV1({ code: -32601, message: 'the method eth_simulateV1 does not exist' }), 'provider_method_unsupported');
+  assert.equal(classifyAlchemyRpcErrorV1({ code: -32000, message: 'unsupported method' }), 'provider_method_unsupported');
+  // Anything unrecognised stays generic rather than being guessed at.
+  assert.equal(classifyAlchemyRpcErrorV1({ code: -32000, message: 'execution aborted' }), 'provider_rpc_error');
+  assert.equal(classifyAlchemyRpcErrorV1(undefined), 'provider_rpc_error');
+});
+
+test('upstream text is redacted before it can reach a log', () => {
+  const { redactAlchemyTextV1 } = alchemy;
+  const key = 'super-secret-alchemy-key';
+  const message = `failed calling https://base-mainnet.g.alchemy.com/v2/${key} for account`;
+  const redacted = redactAlchemyTextV1(message, key);
+  assert.ok(!redacted.includes(key), 'the API key must never survive redaction');
+  assert.ok(!redacted.includes('https://'), 'a URL is dropped whether or not it carried the key');
+  assert.ok(redacted.includes('<url>'));
+  // Ordinary text is preserved — the point is to keep the message usable.
+  assert.ok(redactAlchemyTextV1('insufficient funds', key).includes('insufficient funds'));
+  // Bounded, so a hostile upstream cannot flood a log line.
+  assert.ok(redactAlchemyTextV1('x'.repeat(5_000), key).length <= 300);
+});
+
+test('an insufficient-funds RPC error reaches the caller named, with a redacted message', async () => {
+  const key = 'k-not-real';
+  const provider = alchemy.createAlchemySimulationProviderV1({
+    apiKey: key,
+    // Echo the request's own id back, exactly as a JSON-RPC server does.
+    fetchImpl: (async (_url: string, init: { body: string }) =>
+      new Response(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: (JSON.parse(init.body) as { id: string }).id,
+          error: { code: -32000, message: `insufficient funds: see https://base-mainnet.g.alchemy.com/v2/${key}` },
+        }),
+        { status: 200 },
+      )) as unknown as typeof globalThis.fetch,
+  });
+  const calls = [
+    {
+      callType: 'swap' as const,
+      to: '0x0000000000000068f116a894984e2db1123eb395' as const,
+      valueWei: '649000000000000',
+      data: '0xfb0f3ee1' as const,
+      spender: null,
+      amountAtomic: null,
+    },
+  ] as unknown as ExecutionCallV1[];
+  const result = await provider.simulate({
+    chainId: 8453,
+    walletAddress: '0x1111111111111111111111111111111111111111',
+    blueprintHash: `0x${'a'.repeat(64)}`,
+    callsHash: hashApprovedCallsV1(calls),
+    calls,
+  } as never);
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.errorCode, 'provider_insufficient_funds');
+  assert.ok(result.providerMessage?.includes('insufficient funds'));
+  assert.ok(!result.providerMessage?.includes(key), 'the key must not ride along');
 });
