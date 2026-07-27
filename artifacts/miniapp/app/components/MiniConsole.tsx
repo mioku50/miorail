@@ -7,6 +7,10 @@ import {
   CandidateCards,
   CommerceInvoiceReviewPanel,
   CommerceRouteCardPanel,
+  AiProofPanel,
+  AiResultPanel,
+  AiReviewPanel,
+  AiRouteCardPanel,
   NftProofPanel,
   NftReviewPanel,
   NftRouteCardPanel,
@@ -55,6 +59,8 @@ import {
 import {
   useBoundedProofReconciliation,
   useCommerceCompare,
+  useAiCompare,
+  useAiExecute,
   useNftCompare,
   useNftPrepare,
   useNftReconcile,
@@ -126,6 +132,11 @@ export function MiniConsole() {
   const earnCompare = useEarnCompare();
   const commerceCompare = useCommerceCompare();
   const nftCompare = useNftCompare();
+  const aiCompare = useAiCompare();
+  const aiExecute = useAiExecute();
+  // T66C — the nonce lives HERE and nowhere else. The server returned it once
+  // and kept no copy.
+  const [aiNonce, setAiNonce] = useState<string | null>(null);
   const nftPrepare = useNftPrepare();
   const commerceOrder = useCreateCommerceOrder();
   const prepare = usePrepareSwapBlueprint();
@@ -200,6 +211,37 @@ export function MiniConsole() {
       ? nftCompare.data.routeRunId
       : null;
   const nftPrepared = nftPrepare.data?.outcome === "prepared" && nftCard ? { response: nftPrepare.data, card: nftCard } : null;
+  const aiCard =
+    aiCompare.data?.outcome === "compared" || aiCompare.data?.outcome === "unavailable"
+      ? aiCompare.data.routeCard
+      : null;
+  const aiRunId =
+    aiCompare.data?.outcome === "compared" || aiCompare.data?.outcome === "unavailable"
+      ? aiCompare.data.routeRunId
+      : null;
+  const aiCommitment = aiCompare.data?.outcome === "compared" ? aiCompare.data.promptCommitment : null;
+  const aiExecuted =
+    aiExecute.data?.outcome === "completed" || aiExecute.data?.outcome === "refused" ? aiExecute.data : null;
+
+  const runAi = () => {
+    if (!address || !aiCard || !aiRunId || !aiNonce || !goal.trim()) return;
+    mark("signed", "start");
+    aiExecute.mutate(
+      {
+        routeRunId: aiRunId,
+        routeCardHash: aiCard.routeCardHash,
+        walletAddress: address.toLowerCase() as `0x${string}`,
+        messages: [{ role: "user", text: goal }],
+        promptNonce: aiNonce,
+      },
+      {
+        onSettled: () => mark("signed", "complete"),
+        onSuccess: (response) => {
+          if (response.outcome !== "blocked") setScreen("proof");
+        },
+      },
+    );
+  };
 
   const reviewNft = () => {
     if (!address || !nftCard || !nftRunId) return;
@@ -238,9 +280,13 @@ export function MiniConsole() {
   // "done" while OpenSea was still being asked, and a card that arrived was
   // treated as a failed run.
   const comparePending =
-    evaluation.isPending || earnCompare.isPending || commerceCompare.isPending || nftCompare.isPending;
+    evaluation.isPending ||
+    earnCompare.isPending ||
+    commerceCompare.isPending ||
+    nftCompare.isPending ||
+    aiCompare.isPending;
   const comparingFailure = (() => {
-    if (comparePending || projection || earnCard || commerceCard || nftCard) return null;
+    if (comparePending || projection || earnCard || commerceCard || nftCard || aiCard) return null;
     if (commerceCompare.data?.outcome === "needs_clarification") {
       return {
         title: "This goal needs one more detail",
@@ -268,7 +314,20 @@ export function MiniConsole() {
     if (nftCompare.data?.outcome === "unsupported") {
       return { title: "Miorail cannot route this NFT purchase", detail: consoleFailureCopyV1(nftCompare.data.reason) };
     }
-    const transportError = (evaluation.error ?? earnCompare.error ?? commerceCompare.error ?? nftCompare.error) as Error | null;
+    if (aiCompare.data?.outcome === "needs_clarification") {
+      return {
+        title: "This goal needs one more detail",
+        detail: aiCompare.data.issues.map((issue) => consoleFailureCopyV1(issue)).join(" "),
+      };
+    }
+    if (aiCompare.data?.outcome === "unsupported") {
+      return { title: "Miorail cannot route this AI request", detail: consoleFailureCopyV1(aiCompare.data.reason) };
+    }
+    const transportError = (evaluation.error ??
+      earnCompare.error ??
+      commerceCompare.error ??
+      nftCompare.error ??
+      aiCompare.error) as Error | null;
     if (transportError) {
       return {
         title: "The comparison could not be completed",
@@ -290,6 +349,17 @@ export function MiniConsole() {
     setScreen("route");
   }, [commerceCard, mark]);
   // Without this the NFT family had no way off Comparing at all.
+  const aiSettled = useRef(false);
+  useEffect(() => {
+    if (!aiCard || aiSettled.current) return;
+    aiSettled.current = true;
+    mark("evidence", "start");
+    mark("evidence", "complete");
+    mark("score", "start");
+    mark("score", "complete");
+    setScreen("route");
+  }, [aiCard, mark]);
+
   const nftSettled = useRef(false);
   useEffect(() => {
     if (!nftCard || nftSettled.current) return;
@@ -368,6 +438,10 @@ export function MiniConsole() {
     setNftProof(null);
     nftReconciled.current = null;
     nftSettled.current = false;
+    aiCompare.reset();
+    aiExecute.reset();
+    setAiNonce(null);
+    aiSettled.current = false;
     settled.current = false;
     earnSettled.current = false;
     commerceSettled.current = false;
@@ -380,6 +454,25 @@ export function MiniConsole() {
     setClock(next);
     setScreen("comparing");
     const wallet = address.toLowerCase() as `0x${string}`;
+    if (dispatch.engine === "private_ai") {
+      // The goal text IS the prompt.
+      aiCompare.mutate(
+        {
+          messages: [{ role: "user", text: goal }],
+          walletAddress: wallet,
+          maxSpendUsd: "0.05",
+          maxCompletionTokens: 1_024,
+          privacyRequirement: "private_only",
+        },
+        {
+          onSettled: () => mark("candidates", "complete"),
+          onSuccess: (response) => {
+            if (response.outcome === "compared") setAiNonce(response.promptNonce);
+          },
+        },
+      );
+      return;
+    }
     if (dispatch.engine === "nft") {
       // NFT before commerce: the two families share the verb "buy".
       nftCompare.mutate({ message: goal, walletAddress: wallet }, { onSettled: () => mark("candidates", "complete") });
@@ -599,6 +692,62 @@ export function MiniConsole() {
             )}
           </div>
         </div>
+      </>
+    );
+  } else if (screen === "route" && aiCard) {
+    content = (
+      <>
+        <ConsoleStepperCompact label={stepLabel} steps={steps} expanded={railOpen} onToggle={() => setRailOpen((open) => !open)} />
+        <AiRouteCardPanel
+          card={aiCard}
+          onReview={address && aiCard.selected ? () => setScreen("review") : undefined}
+          reviewDisabledReason={
+            flags?.privateAiExecutionV1 === true
+              ? null
+              : "Running a model is off on this server. This comparison is read-only until it is enabled."
+          }
+        />
+      </>
+    );
+  } else if (screen === "review" && aiCard) {
+    const aiRunnable =
+      flags?.privateAiExecutionV1 === true &&
+      aiCard.status !== "failed" &&
+      aiCard.status !== "constrained" &&
+      aiCard.selected !== null &&
+      aiNonce !== null;
+    content = (
+      <>
+        <ConsoleStepperCompact label={stepLabel} steps={steps} expanded={railOpen} onToggle={() => setRailOpen((open) => !open)} />
+        <AiReviewPanel
+          card={aiCard}
+          promptCommitment={aiCommitment ?? ""}
+          runnable={aiRunnable}
+          blockedReason={
+            flags?.privateAiExecutionV1 !== true
+              ? "Private AI execution is off on this server."
+              : aiNonce === null
+                ? "This request can no longer be proved to be the one you reviewed. Compare it again."
+                : "This request cannot be run yet."
+          }
+          runSlot={
+            <button type="button" className="btn" onClick={runAi} disabled={aiExecute.isPending}>
+              {aiExecute.isPending ? "Running on Venice…" : "Run on Venice"}
+            </button>
+          }
+        />
+        {aiExecute.data?.outcome === "blocked" && <p className="lnote">{aiExecute.data.detail}</p>}
+      </>
+    );
+  } else if (screen === "proof" && aiExecuted) {
+    content = (
+      <>
+        <ConsoleStepperCompact label={stepLabel} steps={steps} expanded={railOpen} onToggle={() => setRailOpen((open) => !open)} />
+        <AiResultPanel
+          text={aiExecuted.outcome === "completed" ? aiExecuted.text : ""}
+          finalStatus={aiExecuted.proof.finalStatus}
+        />
+        <AiProofPanel proof={aiExecuted.proof} />
       </>
     );
   } else if (screen === "route" && nftCard) {

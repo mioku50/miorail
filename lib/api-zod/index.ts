@@ -2279,6 +2279,11 @@ export const AiCompareResponseV1Schema = z.discriminatedUnion('outcome', [
       routeRunId: z.string().min(1).max(200),
       routeCardId: z.string().min(1).max(200),
       routeCard: AiRouteCardV1Schema,
+      /** The commitment this run is pinned to. Safe to show and to store — it
+       * is the card's identity for the request, and it cannot be opened
+       * without the nonce below. The Review screen displays it so a user can
+       * see the request is fixed before anything is sent. */
+      promptCommitment: HashV1Schema,
       /** Returned ONCE. The server does not store it, and without it the
        * commitment on the card cannot be opened by anyone — including us. */
       promptNonce: z.string().min(32).max(200),

@@ -330,6 +330,10 @@ export const AiRouteCandidateV1Schema = AiRouteCandidateV1ObjectSchema.superRefi
   }
 });
 
+/** 10^12, as a bigint. See the note in estimateAiCostUsdV1 on why this is not
+ * written as a literal. */
+const USD_SCALE_V1 = BigInt('1000000000000');
+
 /**
  * Cost of one request at posted rates, in USD, as an exact decimal string.
  *
@@ -342,7 +346,10 @@ export function estimateAiCostUsdV1(input: {
   promptTokens: number;
   completionTokens: number;
 }): string {
-  const scale = 1_000_000_000_000n; // 12 decimal places, matching UsdAmountV1.
+  // 12 decimal places, matching UsdAmountV1. Built with BigInt() rather than a
+  // `n` literal: the miniapp compiles below ES2020, where BigInt literals are a
+  // syntax error, and this module is imported by both surfaces.
+  const scale = USD_SCALE_V1;
   const toScaled = (decimal: string): bigint => {
     const [whole, fraction = ''] = decimal.split('.');
     const padded = (fraction + '000000000000').slice(0, 12);
@@ -351,7 +358,7 @@ export function estimateAiCostUsdV1(input: {
   const total =
     (toScaled(input.pricing.inputUsdPerMillion) * BigInt(Math.max(0, Math.trunc(input.promptTokens))) +
       toScaled(input.pricing.outputUsdPerMillion) * BigInt(Math.max(0, Math.trunc(input.completionTokens)))) /
-    1_000_000n;
+    BigInt(1_000_000);
   const whole = total / scale;
   const fraction = (total % scale).toString().padStart(12, '0').replace(/0+$/, '');
   return fraction.length > 0 ? `${whole}.${fraction}` : whole.toString();
@@ -361,7 +368,7 @@ export function estimateAiCostUsdV1(input: {
 export function compareUsdV1(left: string, right: string): number {
   const scale = (decimal: string): bigint => {
     const [whole, fraction = ''] = decimal.split('.');
-    return BigInt(whole) * 1_000_000_000_000n + BigInt((fraction + '000000000000').slice(0, 12));
+    return BigInt(whole) * USD_SCALE_V1 + BigInt((fraction + '000000000000').slice(0, 12));
   };
   const a = scale(left);
   const b = scale(right);

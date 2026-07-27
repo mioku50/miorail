@@ -51,10 +51,16 @@ import {
   shortfallNoticeFromProjectionV1,
   simulationSourceFromResponseV1,
   type RoutePlanProjectionV1,
+  AiRouteCardPanel,
+  AiReviewPanel,
+  AiResultPanel,
+  AiProofPanel,
 } from '@mioagent/ui';
 import {
   useBoundedProofReconciliation,
   useCommerceCompare,
+  useAiCompare,
+  useAiExecute,
   useNftCompare,
   useNftPrepare,
   useNftReconcile,
@@ -114,6 +120,10 @@ export function RouteIntelligenceConsole() {
   const [submission, setSubmission] = useState<BlueprintSubmissionState | null>(null);
   const [nftSubmission, setNftSubmission] = useState<BlueprintSubmissionState | null>(null);
   const [nftProof, setNftProof] = useState<NftProofResponseV1 | null>(null);
+  // T66C — the nonce lives HERE and nowhere else. The server returned it once
+  // and kept no copy; losing it makes the reviewed request unrunnable, which
+  // is the property that keeps a stored commitment unopenable.
+  const [aiNonce, setAiNonce] = useState<string | null>(null);
   const [simulateResponse, setSimulateResponse] = useState<SimulateBlueprintResponseV1 | null>(null);
   const [budgetResponse, setBudgetResponse] = useState<SimulateWithBudgetResponseV1 | null>(null);
 
@@ -129,6 +139,47 @@ export function RouteIntelligenceConsole() {
   const commerceCompare = useCommerceCompare();
   const nftCompare = useNftCompare();
   const nftPrepare = useNftPrepare();
+  const aiCompare = useAiCompare();
+  const aiExecute = useAiExecute();
+  // A comparison that selected nothing still returns a card naming every model
+  // it refused, so both outcomes render rather than leaving an empty screen.
+  const aiCard =
+    aiCompare.data?.outcome === 'compared'
+      ? aiCompare.data.routeCard
+      : aiCompare.data?.outcome === 'unavailable'
+        ? aiCompare.data.routeCard
+        : null;
+  const aiRunId =
+    aiCompare.data?.outcome === 'compared' || aiCompare.data?.outcome === 'unavailable'
+      ? aiCompare.data.routeRunId
+      : null;
+  const aiExecuted =
+    aiExecute.data?.outcome === 'completed' || aiExecute.data?.outcome === 'refused' ? aiExecute.data : null;
+  const aiCommitment = aiCompare.data?.outcome === 'compared' ? aiCompare.data.promptCommitment : null;
+
+  const runAi = () => {
+    // Every precondition is re-checked here rather than trusted from the
+    // button being enabled: the nonce in particular, because without it the
+    // request cannot be proved to be the reviewed one and the server will
+    // refuse it anyway.
+    if (!address || !aiCard || !aiRunId || !aiNonce || !goal.trim()) return;
+    mark('signed', 'start');
+    aiExecute.mutate(
+      {
+        routeRunId: aiRunId,
+        routeCardHash: aiCard.routeCardHash,
+        walletAddress: address.toLowerCase() as `0x${string}`,
+        messages: [{ role: 'user', text: goal }],
+        promptNonce: aiNonce,
+      },
+      {
+        onSettled: () => mark('signed', 'complete'),
+        onSuccess: (response) => {
+          if (response.outcome !== 'blocked') setScreen('proof');
+        },
+      },
+    );
+  };
   // A comparison that found nothing still returns a card, so both outcomes
   // render the token rather than an empty screen.
   const nftCard =
@@ -275,6 +326,19 @@ export function RouteIntelligenceConsole() {
     setScreen('route');
   }, [nftCard, mark]);
 
+  // T66C — the same settled effect every other family needed. Without it a
+  // comparison that returned a card leaves the user on Comparing forever.
+  const aiSettled = useRef(false);
+  useEffect(() => {
+    if (!aiCard || aiSettled.current) return;
+    aiSettled.current = true;
+    mark('evidence', 'start');
+    mark('evidence', 'complete');
+    mark('score', 'start');
+    mark('score', 'complete');
+    setScreen('route');
+  }, [aiCard, mark]);
+
   const evaluationSettled = useRef(false);
   useEffect(() => {
     if (!projection || evaluationSettled.current) return;
@@ -337,6 +401,12 @@ export function RouteIntelligenceConsole() {
     setNftProof(null);
     nftReconciled.current = null;
     nftSettled.current = false;
+    // A new goal clears the AI flow too, INCLUDING the nonce. A stale nonce
+    // belongs to a request that is no longer on screen.
+    aiCompare.reset();
+    aiExecute.reset();
+    setAiNonce(null);
+    aiSettled.current = false;
     evaluationSettled.current = false;
     earnSettled.current = false;
     commerceSettled.current = false;
@@ -353,6 +423,26 @@ export function RouteIntelligenceConsole() {
     const wallet = address.toLowerCase() as `0x${string}`;
     // Route-family dispatch: an Earn goal goes to the Earn engine, never to
     // useEvaluateSwapRoute.
+    if (dispatch.engine === 'private_ai') {
+      // The goal text IS the prompt. It is sent, and the nonce that comes back
+      // is the only thing that can later prove this exact request ran.
+      aiCompare.mutate(
+        {
+          messages: [{ role: 'user', text: goal }],
+          walletAddress: wallet,
+          maxSpendUsd: '0.05',
+          maxCompletionTokens: 1_024,
+          privacyRequirement: 'private_only',
+        },
+        {
+          onSettled: () => mark('candidates', 'complete'),
+          onSuccess: (response) => {
+            if (response.outcome === 'compared') setAiNonce(response.promptNonce);
+          },
+        },
+      );
+      return;
+    }
     if (dispatch.engine === 'nft') {
       // An NFT goal never reaches the gift-card engine: the two share the verb
       // "buy" and nothing else.
@@ -412,7 +502,11 @@ export function RouteIntelligenceConsole() {
   // "done" while Bitrefill was still being read. T65.2A: the NFT comparison
   // was missing for exactly the same reason, with exactly the same effect.
   const comparePending =
-    evaluation.isPending || earnCompare.isPending || commerceCompare.isPending || nftCompare.isPending;
+    evaluation.isPending ||
+    earnCompare.isPending ||
+    commerceCompare.isPending ||
+    nftCompare.isPending ||
+    aiCompare.isPending;
 
   // The run is over and produced no route card. Every one of these leaves the
   // user on Comparing, so every one of them has to be terminal.
@@ -437,10 +531,20 @@ export function RouteIntelligenceConsole() {
       : nftCompare.data?.outcome === 'unsupported'
         ? { title: 'Miorail cannot route this NFT purchase', detail: consoleFailureCopyV1(nftCompare.data.reason) }
         : null;
+  const aiFailure =
+    aiCompare.data?.outcome === 'needs_clarification'
+      ? { title: 'This goal needs one more detail', detail: aiCompare.data.issues.map((issue) => consoleFailureCopyV1(issue)).join(' ') }
+      : aiCompare.data?.outcome === 'unsupported'
+        ? { title: 'Miorail cannot route this AI request', detail: consoleFailureCopyV1(aiCompare.data.reason) }
+        : null;
   // The server's own message (status line or `error` code) is carried through.
   // "The server did not answer" told the operator nothing they could act on;
   // "API error: 500 commerce_compare_failed" points straight at the log.
-  const transportError = (evaluation.error ?? earnCompare.error ?? commerceCompare.error ?? nftCompare.error) as Error | null;
+  const transportError = (evaluation.error ??
+      earnCompare.error ??
+      commerceCompare.error ??
+      nftCompare.error ??
+      aiCompare.error) as Error | null;
   const transportFailure = transportError
     ? {
         title: 'The comparison could not be completed',
@@ -451,11 +555,12 @@ export function RouteIntelligenceConsole() {
   // goal text now dispatches to. An NFT card counts: `unavailable` still names
   // the token and says why there is nothing to buy.
   const comparingFailure =
-    comparePending || projection || earnCard || commerceCard || nftCard
+    comparePending || projection || earnCard || commerceCard || nftCard || aiCard
       ? null
       : (commerceFailure ??
         earnFailure ??
         nftFailure ??
+        aiFailure ??
         transportFailure ??
         (dispatch.blockedReason ? { title: 'This route family is off on this server', detail: dispatch.blockedReason } : null));
 
@@ -571,6 +676,14 @@ export function RouteIntelligenceConsole() {
             title: 'Buy NFT BasePaint #16668 under 0.02 ETH',
             meta: flags?.nftRouteV1 ? 'OpenSea listing on Base' : 'NFT gate is off on this server',
           },
+          // Same reasoning as the NFT starter: a goal known to dispatch to the
+          // AI engine, so reaching the family does not depend on guessing a
+          // phrasing the classifier accepts.
+          {
+            id: 'private_ai',
+            title: 'Summarise this privately with an AI model',
+            meta: flags?.privateAiRouteV1 ? 'Venice, private inference' : 'Private AI gate is off on this server',
+          },
         ]}
         onStarter={(id) =>
           setGoal(
@@ -578,7 +691,9 @@ export function RouteIntelligenceConsole() {
               ? 'Swap 100 USDC to ETH with the best net result'
               : id === 'nft'
                 ? 'Buy NFT BasePaint #16668 under 0.02 ETH on Base'
-                : 'Earn yield on 500 USDC with low risk',
+                : id === 'private_ai'
+                  ? 'Summarise the following privately with an AI model: '
+                  : 'Earn yield on 500 USDC with low risk',
           )
         }
         walletLabel={walletLabel}
@@ -626,6 +741,68 @@ export function RouteIntelligenceConsole() {
         shortfallNotice={projection ? shortfallNoticeFromProjectionV1(projection) : null}
         onCancel={() => setScreen('plan')}
       />
+    );
+  } else if (screen === 'route' && aiCard) {
+    // The AI card names the model, every alternative it refused and why, what
+    // leaves the machine, and seven dimensions with no combined number.
+    content = (
+      <>
+        <ConsoleStepper steps={steps} />
+        <AiRouteCardPanel
+          card={aiCard}
+          onReview={address && aiCard.selected ? () => setScreen('review') : undefined}
+          reviewDisabledReason={
+            flags?.privateAiExecutionV1 === true
+              ? null
+              : 'Running a model is off on this server. This comparison is read-only until it is enabled.'
+          }
+        />
+      </>
+    );
+  } else if (screen === 'review' && aiCard) {
+    const runnable =
+      flags?.privateAiExecutionV1 === true &&
+      aiCard.status !== 'failed' &&
+      aiCard.status !== 'constrained' &&
+      aiCard.selected !== null &&
+      aiNonce !== null;
+    content = (
+      <>
+        <ConsoleStepper steps={steps} />
+        <AiReviewPanel
+          card={aiCard}
+          promptCommitment={aiCommitment ?? ''}
+          runnable={runnable}
+          blockedReason={
+            flags?.privateAiExecutionV1 !== true
+              ? 'Private AI execution is off on this server.'
+              : aiNonce === null
+                ? 'This request can no longer be proved to be the one you reviewed. Compare it again.'
+                : 'This request cannot be run yet.'
+          }
+          runSlot={
+            <button type="button" className="btn" onClick={runAi} disabled={aiExecute.isPending}>
+              {aiExecute.isPending ? 'Running on Venice…' : 'Run on Venice'}
+            </button>
+          }
+        />
+        {aiExecute.data?.outcome === 'blocked' && (
+          <p className="lnote">{aiExecute.data.detail}</p>
+        )}
+      </>
+    );
+  } else if (screen === 'proof' && aiExecuted) {
+    // The answer and the proof are two panels. The answer was returned once
+    // and stored nowhere; the proof is stored and contains none of it.
+    content = (
+      <>
+        <ConsoleStepper steps={steps} />
+        <AiResultPanel
+          text={aiExecuted.outcome === 'completed' ? aiExecuted.text : ''}
+          finalStatus={aiExecuted.proof.finalStatus}
+        />
+        <AiProofPanel proof={aiExecuted.proof} />
+      </>
     );
   } else if (screen === 'route' && nftCard) {
     // The NFT card names the token by chain + contract + tokenId, shows the

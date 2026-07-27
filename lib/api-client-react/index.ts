@@ -1387,6 +1387,9 @@ export function useBoundedProofReconciliation({
 export type {
   IntelligenceBudgetProjectionV1,
   IntelligenceBudgetResponseV1,
+  AiCompareResponseV1,
+  AiExecuteResponseV1,
+  AiProofResponseV1,
   MarketSnapshotResponseV1,
   NftProofResponseV1,
   SimulateWithBudgetResponseV1,
@@ -1720,6 +1723,128 @@ export function useNftReconcile(
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
       );
       return apiSpec.NftProofResponseV1Schema.parse(response);
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// T66C — the Private AI rail.
+//
+// Two mutations and one read. What makes this rail different from every other
+// one in this file: `useAiCompare` returns a NONCE that the caller must hold
+// on to. The server does not keep it, and without it the commitment on the
+// Route Card can never be opened — including by us. A surface that drops it
+// between compare and execute cannot run the request it just reviewed.
+//
+// The prompt is sent twice on purpose: once to compare, once to execute. That
+// is what lets the server prove the two are the same request without storing
+// either copy.
+// ---------------------------------------------------------------------------
+
+export interface AiPromptMessageInputV1 {
+  role: 'user' | 'assistant';
+  text: string;
+}
+
+export interface AiCompareInput {
+  messages: readonly AiPromptMessageInputV1[];
+  walletAddress: `0x${string}`;
+  systemText?: string | null;
+  maxSpendUsd?: string | null;
+  maxCompletionTokens?: number;
+  privacyRequirement?: 'private_only' | 'prefer_private' | 'any';
+  preferredModelId?: string | null;
+  requiresToolCalling?: boolean;
+  requiresResponseSchema?: boolean;
+  requiresWebSearch?: boolean;
+  /** Each comparison is its OWN run, so the request id is fresh per call
+   * unless a caller pins one. A sticky id put a second observation into the
+   * first run in T65 and collided on a unique index. */
+  requestId?: string;
+}
+
+export function useAiCompare(
+  options?: Omit<UseMutationOptions<apiSpec.AiCompareResponseV1, Error, AiCompareInput>, 'mutationFn' | 'retry'>,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const request = apiSpec.AiCompareRequestV1Schema.parse({
+        messages: input.messages,
+        systemText: input.systemText ?? null,
+        walletAddress: input.walletAddress,
+        requestId: input.requestId ?? globalThis.crypto.randomUUID(),
+        privacyRequirement: input.privacyRequirement ?? 'private_only',
+        maxSpendUsd: input.maxSpendUsd ?? null,
+        maxCompletionTokens: input.maxCompletionTokens ?? 1_024,
+        preferredModelId: input.preferredModelId ?? null,
+        requiresToolCalling: input.requiresToolCalling,
+        requiresResponseSchema: input.requiresResponseSchema,
+        requiresWebSearch: input.requiresWebSearch,
+      });
+      const response = await fetchApi<unknown>('/api/route-intelligence/ai/compare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+      return apiSpec.AiCompareResponseV1Schema.parse(response);
+    },
+  });
+}
+
+export interface AiExecuteInput {
+  routeRunId: string;
+  routeCardHash: string;
+  walletAddress: `0x${string}`;
+  /** The same messages that were compared. The server recomputes the
+   * commitment and refuses anything else. */
+  messages: readonly AiPromptMessageInputV1[];
+  systemText?: string | null;
+  /** From the compare response. Held by the client and nowhere else. */
+  promptNonce: string;
+  temperature?: number | null;
+  responseSchema?: Record<string, unknown> | null;
+}
+
+export function useAiExecute(
+  options?: Omit<UseMutationOptions<apiSpec.AiExecuteResponseV1, Error, AiExecuteInput>, 'mutationFn' | 'retry'>,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const request = apiSpec.AiExecuteRequestV1Schema.parse({
+        routeRunId: input.routeRunId,
+        routeCardHash: input.routeCardHash,
+        walletAddress: input.walletAddress,
+        messages: input.messages,
+        systemText: input.systemText ?? null,
+        promptNonce: input.promptNonce,
+        temperature: input.temperature ?? null,
+        responseSchema: input.responseSchema ?? null,
+      });
+      const response = await fetchApi<unknown>('/api/route-intelligence/ai/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+      return apiSpec.AiExecuteResponseV1Schema.parse(response);
+    },
+  });
+}
+
+export function useAiProof(
+  options?: Omit<UseMutationOptions<apiSpec.AiProofResponseV1, Error, { routeRunId: string }>, 'mutationFn' | 'retry'>,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/ai/proof/${encodeURIComponent(input.routeRunId)}`,
+      );
+      return apiSpec.AiProofResponseV1Schema.parse(response);
     },
   });
 }

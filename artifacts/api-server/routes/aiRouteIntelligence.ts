@@ -280,6 +280,7 @@ aiRouteIntelligenceRouter.post('/ai/compare', async (req: Request, res: Response
         routeRunId: run.id,
         routeCardId: stored?.id ?? cardId,
         routeCard: stored?.card ?? card,
+        promptCommitment: resolution.intent.prompt.commitment,
         // Handed over ONCE. From here the server cannot open its own
         // commitment, which is the property the whole family rests on.
         promptNonce: resolution.promptNonce,
