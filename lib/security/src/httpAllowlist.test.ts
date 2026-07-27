@@ -60,6 +60,7 @@ test('ALLOWED_PARTNER_HOSTS covers exactly the sanctioned partner hosts', () => 
     'api.morpho.org',
     'api.bitrefill.com',
     'api.opensea.io',
+    'api.venice.ai',
   ]);
 });
 

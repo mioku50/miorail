@@ -5,5 +5,6 @@ export * from './score-contracts.js';
 export * from './earn-contracts.js';
 export * from './commerce-contracts.js';
 export * from './nft-contracts.js';
+export * from './ai-contracts.js';
 export * from './execution-contracts.js';
 export * from './proof-events.js';

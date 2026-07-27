@@ -19,6 +19,11 @@ export const ALLOWED_PARTNER_HOSTS = [
   // fulfillment_data call, all under the pinned /api/v2/* paths in
   // lib/nft-engine. Every request carries a server-side x-api-key.
   'api.opensea.io',
+  // T66: the official Venice API. Read-only model catalogue plus the one
+  // chat/completions call, both under the pinned /api/v1/* paths in
+  // lib/ai-engine. There is deliberately no configurable Venice base URL:
+  // a settable provider host is how a private prompt ends up somewhere else.
+  'api.venice.ai',
 ] as const;
 
 export class PartnerHostNotAllowlistedError extends Error {
