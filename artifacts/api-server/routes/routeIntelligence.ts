@@ -62,7 +62,11 @@ import {
   toRouteProofProjectionV1,
   type ReconcileRouteProofInput,
 } from '@mioagent/route-proof';
-import { KyberSwapRouteAdapter, UniswapSwapRouteAdapter } from '@mioagent/swap-adapters';
+import {
+  AerodromeSwapRouteAdapter,
+  KyberSwapRouteAdapter,
+  UniswapSwapRouteAdapter,
+} from '@mioagent/swap-adapters';
 import {
   BlueprintSubmissionConflictError,
   KyberSwapBuildAdapter,
@@ -291,13 +295,29 @@ export const routePlanRouteRuntime = {
     const coordinator = new RoutePlanCoordinator({
       llm: createLlmProvider(),
       engine: createSwapRouteEngine(),
-      adapters: [new UniswapSwapRouteAdapter(), new KyberSwapRouteAdapter()],
+      // T67B: Aerodrome joins the COMPARISON only. It quotes over the Base RPC
+      // this deployment already has, so it needs no key of its own — but with
+      // no RPC URL configured it reports `not_configured` rather than
+      // pretending to have asked. It is deliberately absent from the composer's
+      // quoteAdapters below until the execution slice lands.
+      adapters: [
+        new UniswapSwapRouteAdapter(),
+        new KyberSwapRouteAdapter(),
+        new AerodromeSwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1() }),
+      ],
       repository: createDatabaseRouteStorageRepository(client),
     });
     return coordinator.evaluate(input);
   },
   now: () => new Date(),
 };
+
+/** The Base mainnet endpoint, resolved the same way every other on-chain read
+ * in this server resolves it. Empty means the Aerodrome adapter reports
+ * `not_configured` instead of quoting. */
+function baseMainnetRpcUrlV1(): string {
+  return (process.env.BASE_MAINNET_RPC_URL || process.env.BASE_RPC_URL || '').trim();
+}
 
 export const routeIntelligenceRouter = Router();
 
