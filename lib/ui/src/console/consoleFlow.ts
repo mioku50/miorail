@@ -145,10 +145,21 @@ const AI_PATTERN_RU_V1 = /(венис|приватн[а-яё]* ии|спроси
  * "swap into a yield position" is an earn goal whose swap leg the earn engine
  * owns. Commerce is recognised but not yet routed anywhere.
  */
-export function routeFamilyForGoalV1(text: string): RouteFamilyV1 {
+export function routeFamilyForGoalV1(
+  text: string,
+  options: { includePrivateAi?: boolean } = {},
+): RouteFamilyV1 {
   const value = text.trim();
   if (value.length === 0) return 'unknown';
-  if (AI_PATTERN_V1.test(value) || AI_PATTERN_RU_V1.test(value)) return 'private_ai';
+  // The AI pattern is far greedier than the others — "summarise", "prompt" and
+  // "llm" appear inside goals that belong to other families — and it is checked
+  // first so a genuine AI request is not swallowed by a shared verb. That
+  // ordering is only defensible while the family can actually run. With the
+  // gate off the caller passes includePrivateAi: false, and these goals fall
+  // through to whichever family CAN serve them.
+  if (options.includePrivateAi !== false && (AI_PATTERN_V1.test(value) || AI_PATTERN_RU_V1.test(value))) {
+    return 'private_ai';
+  }
   if (NFT_PATTERN_V1.test(value) || NFT_PATTERN_RU_V1.test(value)) return 'nft';
   if (COMMERCE_PATTERN_V1.test(value) || COMMERCE_PATTERN_RU_V1.test(value)) return 'commerce';
   if (EARN_PATTERN_V1.test(value) || EARN_PATTERN_RU_V1.test(value)) return 'earn';
@@ -193,7 +204,12 @@ export function dispatchRouteFamilyV1(
   text: string,
   flags: ConsoleRouteFlagsV1,
 ): RouteFamilyDispatchV1 {
-  const family = routeFamilyForGoalV1(text);
+  // A disabled family does not get to claim a goal another family can serve.
+  // Earn, Commerce and NFT are named by precise nouns, so claiming their goals
+  // and reporting the switch is useful. Private AI matches ordinary verbs, so
+  // claiming a goal it can never run would turn "summarise how this swap works"
+  // into a dead end advertising a feature this deployment does not offer.
+  const family = routeFamilyForGoalV1(text, { includePrivateAi: flags.privateAiRouteV1 === true });
   if (!flags.routeIntelligenceV1) {
     return { family, engine: null, blockedReason: 'Route intelligence is off on this server, so no route can be compared yet.' };
   }

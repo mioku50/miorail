@@ -45,6 +45,17 @@ describe('an AI goal reaches the AI engine', () => {
     assert.equal(routeFamilyForGoalV1('classify these gift cards for me with an llm'), 'private_ai');
   });
 
+  test('with the family excluded, those goals fall through to one that works', () => {
+    // The AI pattern matches ordinary verbs. A deployment that will never run
+    // Venice must not have "summarise" hijack a goal the swap engine can serve.
+    const off = { includePrivateAi: false };
+    assert.equal(routeFamilyForGoalV1('summarise how this swap contract works', off), 'swap');
+    assert.equal(routeFamilyForGoalV1('classify these gift cards for me with an llm', off), 'commerce');
+    // A goal that is ONLY an AI request has nowhere to fall through to, and
+    // says so rather than being handed to an engine that cannot read prose.
+    assert.equal(routeFamilyForGoalV1('summarise these notes privately', off), 'unknown');
+  });
+
   test('the other families are unaffected', () => {
     assert.equal(routeFamilyForGoalV1('swap 100 USDC to ETH'), 'swap');
     assert.equal(routeFamilyForGoalV1('earn yield on 500 USDC'), 'earn');
@@ -52,15 +63,26 @@ describe('an AI goal reaches the AI engine', () => {
     assert.equal(routeFamilyForGoalV1('buy a gift card'), 'commerce');
   });
 
-  test('the gate off names the switch rather than comparing something else', () => {
-    const blocked = dispatchRouteFamilyV1('summarise this', { ...ON, privateAiRouteV1: false });
-    assert.equal(blocked.family, 'private_ai');
-    assert.equal(blocked.engine, null);
-    assert.ok(blocked.blockedReason?.includes('Private AI routing is off'));
-
+  test('the gate on routes AI goals to the AI engine', () => {
     const open = dispatchRouteFamilyV1('summarise this', ON);
+    assert.equal(open.family, 'private_ai');
     assert.equal(open.engine, 'private_ai');
     assert.equal(open.blockedReason, null);
+  });
+
+  test('the gate off does not claim the goal at all', () => {
+    // Unlike Earn, Commerce and NFT — which are named by precise nouns, so
+    // claiming the goal and reporting the switch is useful — Private AI matches
+    // ordinary verbs. Claiming a goal it can never run turns the console into
+    // an advert for a feature this deployment does not offer.
+    const off = { ...ON, privateAiRouteV1: false };
+    const blocked = dispatchRouteFamilyV1('summarise this', off);
+    assert.notEqual(blocked.family, 'private_ai');
+    assert.equal(blocked.engine, null);
+    assert.ok(!blocked.blockedReason?.includes('Private AI'));
+
+    // And a goal another family can serve still reaches that family.
+    assert.equal(dispatchRouteFamilyV1('summarise how this swap works', off).engine, 'swap');
   });
 
   test('an absent flag on a pre-T66 server reads as off', () => {

@@ -676,14 +676,20 @@ export function RouteIntelligenceConsole() {
             title: 'Buy NFT BasePaint #16668 under 0.02 ETH',
             meta: flags?.nftRouteV1 ? 'OpenSea listing on Base' : 'NFT gate is off on this server',
           },
-          // Same reasoning as the NFT starter: a goal known to dispatch to the
-          // AI engine, so reaching the family does not depend on guessing a
-          // phrasing the classifier accepts.
-          {
-            id: 'private_ai',
-            title: 'Summarise this privately with an AI model',
-            meta: flags?.privateAiRouteV1 ? 'Venice, private inference' : 'Private AI gate is off on this server',
-          },
+          // Present ONLY when the gate is on. The other starters stay listed
+          // with "gate is off" because those families are coming; Private AI is
+          // switched off by choice on this deployment, and a starter is an
+          // invitation to click, not a status line. Venice stays visible in the
+          // adapter rail as `disabled`, which is a fact rather than an offer.
+          ...(flags?.privateAiRouteV1
+            ? [
+                {
+                  id: 'private_ai',
+                  title: 'Summarise this privately with an AI model',
+                  meta: 'Venice, private inference',
+                },
+              ]
+            : []),
         ]}
         onStarter={(id) =>
           setGoal(
