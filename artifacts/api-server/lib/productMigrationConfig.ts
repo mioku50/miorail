@@ -20,6 +20,11 @@ export interface MiorailProductMigrationFlags {
    * models sends nothing anywhere, and running one sends the user's prompt to
    * a third party. Those are not the same decision. */
   privateAiExecutionV1: boolean;
+  /** T67B.1: Aerodrome EXECUTION — selecting the route, building calldata and
+   * signing it. Comparison is not gated by this: quoting Aerodrome alongside
+   * Uniswap and KyberSwap sends nothing and signs nothing, and stays on
+   * whenever route intelligence is on. */
+  aerodromeExecutionV1: boolean;
 }
 
 function readBooleanFlag(env: NodeJS.ProcessEnv, name: string, defaultValue: boolean): boolean {
@@ -48,5 +53,6 @@ export function getMiorailProductMigrationFlags(
     nftExecutionV1: readBooleanFlag(env, 'MIORAIL_NFT_EXECUTION_V1', false),
     privateAiRouteV1: readBooleanFlag(env, 'MIORAIL_PRIVATE_AI_ROUTE_V1', false),
     privateAiExecutionV1: readBooleanFlag(env, 'MIORAIL_PRIVATE_AI_EXECUTION_V1', false),
+    aerodromeExecutionV1: readBooleanFlag(env, 'MIORAIL_AERODROME_EXECUTION_V1', false),
   });
 }

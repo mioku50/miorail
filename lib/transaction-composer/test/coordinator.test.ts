@@ -458,14 +458,14 @@ test('blueprint: an expired stored blueprint is never returned as reviewable aga
       index: 0,
       call: defaultBuiltCalls({ amountAtomic: scenario.intent.amount.amountAtomic })[0]!,
       routerAddress: ROUTER,
-      usdcAsset: scenario.intent.fromAsset!,
+      inputAsset: scenario.intent.fromAsset!,
       walletAddress: WALLET,
     }),
     classifySwapCallV1({
       index: 1,
       call: defaultBuiltCalls({ amountAtomic: scenario.intent.amount.amountAtomic })[1]!,
       routerAddress: ROUTER,
-      usdcAsset: scenario.intent.fromAsset!,
+      inputAsset: scenario.intent.fromAsset!,
       walletAddress: WALLET,
     }),
   ];

@@ -31,8 +31,8 @@ import {
   humanDecimalToAtomic,
 } from '@mioagent/swap-adapters';
 import type { ExecutionTokenSecurityResult } from '@mioagent/security';
-import type { SwapAdapterQuoteInput, SwapAdapterResult, SwapRouteAdapter } from '@mioagent/swap-adapters';
-import type { SwapBuildAdapter, SwapBuildInput, SwapBuildResultV1 } from '../src/types.js';
+import type { SwapAdapterId, SwapAdapterQuoteInput, SwapAdapterResult, SwapRouteAdapter } from '@mioagent/swap-adapters';
+import type { SwapBuildAdapter, SwapBuildInput, SwapBuildProviderId, SwapBuildResultV1 } from '../src/types.js';
 
 export const NOW = new Date('2026-07-16T12:00:00.000Z');
 export const WALLET = '0x1111111111111111111111111111111111111111' as const;
@@ -67,6 +67,7 @@ export const WETH_BASE: AssetRefV1 = {
 export function makeIntent(
   overrides: Partial<{
     id: string;
+    fromAsset: AssetRefV1;
     toAsset: AssetRefV1;
     verificationDepth: RouteIntentV1['verificationDepth'];
     amountDecimal: string;
@@ -76,6 +77,7 @@ export function makeIntent(
   }> = {},
 ): RouteIntentV1 {
   const toAsset = overrides.toAsset ?? ETH_BASE;
+  const fromAsset = overrides.fromAsset ?? USDC_BASE;
   const amountDecimal = overrides.amountDecimal ?? '100';
   const draft: RouteIntentV1 = {
     schemaVersion: 'route-intent/v1',
@@ -88,9 +90,13 @@ export function makeIntent(
     status: overrides.status ?? 'ready',
     intentHash: ZERO_HASH_V1,
     goal: 'swap',
-    fromAsset: USDC_BASE,
+    fromAsset,
     toAsset,
-    amount: { asset: USDC_BASE, amountAtomic: humanDecimalToAtomic(amountDecimal, 6)!, amountDecimal },
+    amount: {
+      asset: fromAsset,
+      amountAtomic: humanDecimalToAtomic(amountDecimal, fromAsset.decimals)!,
+      amountDecimal,
+    },
     optimizationMode: 'best_net_result',
     verificationDepth: overrides.verificationDepth ?? 'standard',
     protocolConstraint: overrides.protocolConstraint ?? { mode: 'any', protocols: [] },
@@ -312,14 +318,14 @@ export function failingContractSecurity(): (input: {
 }
 
 export function stubQuoteAdapter(
-  id: 'uniswap' | 'kyberswap',
+  id: SwapAdapterId,
   handler: (input: SwapAdapterQuoteInput) => Promise<SwapAdapterResult> | SwapAdapterResult,
 ): SwapRouteAdapter {
   return { id, supports: () => true, quote: async (input) => handler(input) };
 }
 
 export function stubBuildAdapter(
-  id: 'uniswap' | 'kyberswap',
+  id: SwapBuildProviderId,
   handler: (input: SwapBuildInput) => Promise<SwapBuildResultV1> | SwapBuildResultV1,
 ): SwapBuildAdapter {
   return { id, build: async (input) => handler(input) };

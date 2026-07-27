@@ -3,6 +3,7 @@ import {
   SafetyKernelResultV1Schema,
   ZERO_HASH_V1,
   findLiquidityOverlapsV1,
+  hashApprovedCallsV1,
   hashEvidenceSetV1,
   stableHashV1,
   type EvidenceRecordV1,
@@ -15,13 +16,16 @@ import {
 } from '@mioagent/route-domain';
 import { atomicToHumanDecimal } from '@mioagent/swap-adapters';
 import { assembleExecutionBlueprintV1, blueprintIdV1, classifySwapCallV1 } from './blueprint.js';
+import { routeFromCandidateV1 } from './adapters/aerodrome.js';
 import { buildTransactionReviewProjectionV1 } from './reviewProjection.js';
-import { runSafetyKernel } from './safetyKernel.js';
+import { runSafetyKernel, type RunSafetyKernelInput } from './safetyKernel.js';
 import {
   blockedResultV1,
   preparedResultV1,
   refreshRequiredResultV1,
   unsupportedResultV1,
+  type RefreshReasonV1,
+  type SwapBuildProviderId,
   type TransactionComposer,
   type TransactionComposerDependencies,
   type TransactionComposerPrepareInput,
@@ -29,6 +33,13 @@ import {
 } from './types.js';
 
 const CANONICAL_USDC_BASE = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+const CANONICAL_WETH_BASE = '0x4200000000000000000000000000000000000006';
+
+/** Providers this composer will prepare for unless the caller narrows it.
+ * Aerodrome is absent on purpose: its execution is flag-gated, and a server
+ * that has not turned the flag on answers `unsupported_provider` rather than
+ * building a batch nobody enabled. */
+export const DEFAULT_SUPPORTED_BUILD_PROVIDERS_V1: readonly SwapBuildProviderId[] = ['uniswap', 'kyberswap'];
 
 /** Every binding failure below represents tampered/inconsistent input rather
  * than a legitimate business state — the caller (API route) converts these
@@ -48,6 +59,32 @@ function isSupportedPair(intent: RouteIntentV1): boolean {
     intent.fromAsset.address?.toLowerCase() === CANONICAL_USDC_BASE &&
     (intent.toAsset?.symbol === 'ETH' || intent.toAsset?.symbol === 'WETH')
   );
+}
+
+/** One canonical Base asset, identified by address — or by being native ETH.
+ * A symbol is a label anyone can reuse; the address is the asset. */
+function canonicalAerodromeSideV1(asset: RouteIntentV1['fromAsset']): 'usdc' | 'weth' | 'eth' | null {
+  if (!asset) return null;
+  if (asset.kind === 'native') return 'eth';
+  const address = asset.address?.toLowerCase();
+  if (address === CANONICAL_USDC_BASE) return 'usdc';
+  if (address === CANONICAL_WETH_BASE) return 'weth';
+  return null;
+}
+
+/**
+ * T67B.1: Aerodrome trades both directions between the canonical Base assets,
+ * so it is not bound by the USDC-in-only rule the partner-built providers
+ * inherited. ETH↔WETH is excluded: that is a wrap, and Aerodrome has no pool
+ * for it.
+ */
+function isSupportedAerodromePair(intent: RouteIntentV1): boolean {
+  if (intent.chainId !== 8453) return false;
+  const from = canonicalAerodromeSideV1(intent.fromAsset);
+  const to = canonicalAerodromeSideV1(intent.toAsset);
+  if (!from || !to) return false;
+  const poolToken = (side: 'usdc' | 'weth' | 'eth') => (side === 'usdc' ? 'usdc' : 'weth');
+  return poolToken(from) !== poolToken(to);
 }
 
 function invalidCardSafetyResult(): SafetyKernelResultV1 {
@@ -111,6 +148,92 @@ export function simulationHonesty(intent: RouteIntentV1): { acceptable: boolean;
 }
 
 /**
+ * T67B.1 — whether the simulation evidence is good enough to sign on.
+ *
+ * Aerodrome is the one provider whose calldata this server writes itself, so
+ * it is the one provider where a fork simulation is a PRECONDITION rather than
+ * a nicety: nothing upstream has already executed these bytes against real
+ * state. `unavailable` is not a pass, and a revert is a refusal, not a
+ * warning. The partner-built providers keep the T57 rule unchanged.
+ */
+export function simulationRequirementV1(
+  provider: SwapBuildProviderId,
+  intent: RouteIntentV1,
+  simulationState: SimulationStateV1,
+): { acceptable: boolean; detail: string } {
+  if (provider !== 'aerodrome') return simulationHonesty(intent);
+  if (simulationState.status === 'passed') {
+    return { acceptable: true, detail: 'Simulated against Base mainnet state and every call succeeded.' };
+  }
+  if (simulationState.status === 'failed') {
+    return {
+      acceptable: false,
+      detail: 'This swap reverts in simulation, so it cannot be signed.',
+    };
+  }
+  return {
+    acceptable: false,
+    detail: `Aerodrome calldata is built by this server and must simulate before it can be signed (${
+      simulationState.errorCode ?? 'simulation unavailable'
+    }).`,
+  };
+}
+
+/** No provider configured, and honest about it. */
+export function unsimulatedStateV1(errorCode = 'no_simulation_provider'): SimulationStateV1 {
+  return {
+    status: 'unavailable',
+    observedAt: null,
+    blockNumber: null,
+    requestHash: null,
+    responseHash: null,
+    errorCode,
+  };
+}
+
+/**
+ * T67B.1 — rebuilds the Aerodrome guard's inputs from ALREADY stored records.
+ *
+ * Prepare has the build adapter's own facts; replay and approve do not, and
+ * they must not re-read the chain to invent them. Everything here comes from
+ * the persisted candidate (which carries the reviewed route and its factory in
+ * its liquidity source keys) and the immutable Blueprint (which carries the
+ * reviewed floor). Nothing is derived from the calldata being checked.
+ *
+ * Returns an empty object for every other provider, and for an Aerodrome
+ * record whose route cannot be recovered — which leaves the guard's facts
+ * missing, and the Safety Kernel blocks on that.
+ */
+export function aerodromeKernelInputV1(
+  providerId: SwapBuildProviderId,
+  candidate: RouteCandidateV1,
+  blueprint: ExecutionBlueprintV1,
+): Pick<RunSafetyKernelInput, 'aerodrome' | 'reviewedMinimumOutputAtomic'> {
+  if (providerId !== 'aerodrome') return {};
+  const route = routeFromCandidateV1(candidate);
+  if (!route) return {};
+  const debit = blueprint.expectedAssetChanges.find((change) => change.direction === 'debit');
+  const credit = blueprint.expectedAssetChanges.find((change) => change.direction === 'credit');
+  if (!debit || !credit) return {};
+  const inputIsNative = debit.asset.kind === 'native';
+  return {
+    aerodrome: {
+      route,
+      factory: route[0]!.factory,
+      // Approve and replay never re-read the chain, and an allowance read
+      // taken now would say nothing about the batch that was already built.
+      observedAllowanceAtomic: null,
+      inputIsNative,
+      outputIsNative: credit.asset.kind === 'native',
+      inputTokenAddress: inputIsNative ? null : (debit.asset.address?.toLowerCase() ?? null),
+    },
+    // The floor stored with the calls, which prepare already checked against
+    // the Route Card the user looked at.
+    reviewedMinimumOutputAtomic: credit.minimumAmountAtomic ?? credit.amountAtomic,
+  };
+}
+
+/**
  * T59: standalone extraction of the composer's idempotent-replay review path
  * (previously a private method) so a separate, paid endpoint (transaction
  * simulation) can re-derive the SAME honest review projection over an
@@ -131,13 +254,16 @@ export async function reviewStoredBlueprintV1(
   now: Date,
   simulationStateOverride?: SimulationStateV1,
 ): Promise<TransactionPreparationResultV1> {
-  const providerId = selected.provider.id as 'uniswap' | 'kyberswap';
-  const usdcAsset = intent.fromAsset!;
+  const providerId = selected.provider.id as SwapBuildProviderId;
+  const inputAsset = intent.fromAsset!;
   const routerCall = blueprint.calls.find((call) => call.callType === 'swap');
   const routerAddress = (routerCall?.to ?? selected.provider.id) as `0x${string}`;
 
-  const simulation = simulationHonesty(intent);
-  const contractSecurityAddresses = [usdcAsset.address].filter((value): value is `0x${string}` => Boolean(value));
+  // Replay re-derives the review over ALREADY stored calls, so the simulation
+  // is the one stored with them. Re-running it would produce a different
+  // result for the same immutable bytes.
+  const simulation = simulationRequirementV1(providerId, intent, blueprint.simulationState);
+  const contractSecurityAddresses = [inputAsset.address].filter((value): value is `0x${string}` => Boolean(value));
   const contractSecurityResults = await deps.contractSecurity({
     chainId: intent.chainId,
     addresses: contractSecurityAddresses,
@@ -163,6 +289,7 @@ export async function reviewStoredBlueprintV1(
     simulationDetail: simulation.detail,
     intentHash: blueprint.intentHash,
     selectedCandidateHash: blueprint.selectedCandidateHash,
+    ...aerodromeKernelInputV1(providerId, selected, blueprint),
   });
 
   if (safety.verdict === 'blocked') {
@@ -251,16 +378,24 @@ export class DeterministicTransactionComposer implements TransactionComposer {
     }
 
     // --- Graceful business outcomes ------------------------------------------
-    if (selected.provider.id !== 'uniswap' && selected.provider.id !== 'kyberswap') {
+    const supportedProviders = this.deps.supportedProviders ?? DEFAULT_SUPPORTED_BUILD_PROVIDERS_V1;
+    if (!supportedProviders.includes(selected.provider.id as SwapBuildProviderId)) {
       return unsupportedResultV1(
         'unsupported_provider',
         `Provider ${selected.provider.id} is not supported for transaction preparation`,
       );
     }
-    const providerId = selected.provider.id;
+    const providerId = selected.provider.id as SwapBuildProviderId;
 
-    if (!isSupportedPair(intent)) {
-      return unsupportedResultV1('unsupported_pair', 'Only canonical Base USDC to ETH or WETH is supported');
+    const pairSupported =
+      providerId === 'aerodrome' ? isSupportedAerodromePair(intent) : isSupportedPair(intent);
+    if (!pairSupported) {
+      return unsupportedResultV1(
+        'unsupported_pair',
+        providerId === 'aerodrome'
+          ? 'Only canonical Base USDC, WETH and ETH pairs are supported'
+          : 'Only canonical Base USDC to ETH or WETH is supported',
+      );
     }
 
     if (card.status === 'invalid') {
@@ -370,14 +505,24 @@ export class DeterministicTransactionComposer implements TransactionComposer {
     const buildResult = await buildAdapter.build({
       intent,
       selectedCandidate: freshCandidate,
+      // T67B.1: the card candidate, so a locally-encoding adapter can hold the
+      // reviewed route and the reviewed floor as constraints.
+      reviewedCandidate: selected,
       walletAddress: input.walletAddress,
       now,
       requestId: input.requestId,
     });
     if (buildResult.outcome !== 'built') {
+      // A moved route is not an expired quote. Saying so lets the client offer
+      // a new comparison instead of a pointless retry of the same selection.
+      const reason: RefreshReasonV1 =
+        buildResult.errorCode === 'aerodrome_route_changed' ||
+        buildResult.errorCode === 'aerodrome_factory_changed'
+          ? 'route_changed'
+          : 'quote_expired';
       return refreshRequiredResultV1(
         input.routeRunId,
-        'quote_expired',
+        reason,
         `${providerId} could not prepare a fresh transaction (${buildResult.errorCode})`,
       );
     }
@@ -396,28 +541,37 @@ export class DeterministicTransactionComposer implements TransactionComposer {
       );
     }
 
-    const usdcAsset = intent.fromAsset!;
+    const inputAsset = intent.fromAsset!;
     const calls = buildResult.calls.map((call, index) =>
       classifySwapCallV1({
         index,
         call,
         routerAddress: buildResult.routerAddress,
-        usdcAsset,
+        inputAsset,
         walletAddress: input.walletAddress,
       }),
     );
 
+    // --- Simulation ---------------------------------------------------------------
+    // Only for the provider whose calldata this server wrote. The partner-built
+    // providers keep the T57 behaviour byte for byte: no request, no charge,
+    // and an honestly `unavailable` state.
+    let simulationState: SimulationStateV1 = unsimulatedStateV1();
+    if (providerId === 'aerodrome') {
+      simulationState = this.deps.simulate
+        ? await this.deps.simulate({
+            chainId: 8453,
+            walletAddress: input.walletAddress,
+            blueprintId,
+            callsHash: hashApprovedCallsV1(calls),
+            calls,
+          })
+        : unsimulatedStateV1('no_simulation_provider');
+    }
+
     // --- Safety Kernel ----------------------------------------------------------
-    const simulation = simulationHonesty(intent);
-    const simulationState: SimulationStateV1 = {
-      status: 'unavailable',
-      observedAt: null,
-      blockNumber: null,
-      requestHash: null,
-      responseHash: null,
-      errorCode: 'no_simulation_provider',
-    };
-    const contractSecurityAddresses = [usdcAsset.address].filter((value): value is `0x${string}` => Boolean(value));
+    const simulation = simulationRequirementV1(providerId, intent, simulationState);
+    const contractSecurityAddresses = [inputAsset.address].filter((value): value is `0x${string}` => Boolean(value));
     const contractSecurityResults = await this.deps.contractSecurity({
       chainId: intent.chainId,
       addresses: contractSecurityAddresses,
@@ -443,6 +597,11 @@ export class DeterministicTransactionComposer implements TransactionComposer {
       simulationDetail: simulation.detail,
       intentHash: intent.intentHash,
       selectedCandidateHash: freshCandidate.candidateHash,
+      // The build adapter's own facts, and the floor from the Route Card the
+      // user looked at — never the build's own minimum, which would only prove
+      // the build agrees with itself.
+      aerodrome: buildResult.aerodrome,
+      reviewedMinimumOutputAtomic: selected.minimumOutput.amountAtomic,
     });
 
     if (safety.verdict === 'blocked') {
@@ -461,7 +620,7 @@ export class DeterministicTransactionComposer implements TransactionComposer {
       evidenceSetHash: evidenceSet.evidenceSetHash,
       quoteExpiry: buildResult.quoteExpiry,
       calls,
-      inputAsset: usdcAsset,
+      inputAsset,
       inputAmountAtomic: intent.amount.amountAtomic,
       outputAsset: intent.toAsset!,
       // Build-side outputs: derived from the SAME provider response that

@@ -11,3 +11,4 @@ export * from './approval.js';
 export * from './submission.js';
 export * from './adapters/uniswap.js';
 export * from './adapters/kyberswap.js';
+export * from './adapters/aerodrome.js';

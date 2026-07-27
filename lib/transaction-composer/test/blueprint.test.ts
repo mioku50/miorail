@@ -14,7 +14,7 @@ test('classifySwapCallV1 decodes an ERC-20 approval and pins the spender/amount'
     index: 0,
     call: { to: USDC_BASE.address as `0x${string}`, value: '0', data },
     routerAddress: ROUTER,
-    usdcAsset: USDC_BASE,
+    inputAsset: USDC_BASE,
     walletAddress: WALLET,
   });
   assert.equal(call.callType, 'approval');
@@ -28,7 +28,7 @@ test('classifySwapCallV1 recognizes the pinned router call as a swap bound to th
     index: 1,
     call: { to: ROUTER, value: '0', data: '0x12345678' },
     routerAddress: ROUTER,
-    usdcAsset: USDC_BASE,
+    inputAsset: USDC_BASE,
     walletAddress: WALLET,
   });
   assert.equal(call.callType, 'swap');
@@ -40,7 +40,7 @@ test('classifySwapCallV1 marks an unrecognized target as other rather than throw
     index: 0,
     call: { to: '0x9999999999999999999999999999999999999999', value: '0', data: '0xdeadbeef' },
     routerAddress: ROUTER,
-    usdcAsset: USDC_BASE,
+    inputAsset: USDC_BASE,
     walletAddress: WALLET,
   });
   assert.equal(call.callType, 'other');
@@ -66,14 +66,14 @@ test('assembleExecutionBlueprintV1 produces a valid, hash-consistent blueprint w
       index: 0,
       call: { to: USDC_BASE.address as `0x${string}`, value: '0', data: approveData },
       routerAddress: ROUTER,
-      usdcAsset: USDC_BASE,
+      inputAsset: USDC_BASE,
       walletAddress: WALLET,
     }),
     classifySwapCallV1({
       index: 1,
       call: { to: ROUTER, value: '0', data: '0x12345678' },
       routerAddress: ROUTER,
-      usdcAsset: USDC_BASE,
+      inputAsset: USDC_BASE,
       walletAddress: WALLET,
     }),
   ];

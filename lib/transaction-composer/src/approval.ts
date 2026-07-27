@@ -17,9 +17,13 @@ import {
   type SafetyKernelResultV1,
 } from '@mioagent/route-domain';
 import type { RouteStorageRepository } from '@mioagent/route-storage';
-import { simulationHonesty, TransactionComposerBindingError } from './coordinator.js';
+import {
+  aerodromeKernelInputV1,
+  simulationRequirementV1,
+  TransactionComposerBindingError,
+} from './coordinator.js';
 import { runSafetyKernel } from './safetyKernel.js';
-import type { ContractSecurityLookup } from './types.js';
+import type { ContractSecurityLookup, SwapBuildProviderId } from './types.js';
 import { deriveBlueprintLifecycleV1, type LifecycleStateV1 } from './lifecycle.js';
 
 // ---------------------------------------------------------------------------
@@ -241,13 +245,16 @@ export async function approveExecutionBlueprintV1(
     if (!candidate) {
       throw new TransactionComposerBindingError('candidate_not_found', 'Selected candidate is missing for this Blueprint');
     }
-    const providerId = candidate.provider.id as 'uniswap' | 'kyberswap';
+    const providerId = candidate.provider.id as SwapBuildProviderId;
     const intent = run.intent;
-    const usdcAsset = intent.fromAsset!;
+    const inputAsset = intent.fromAsset!;
     const routerCall = blueprint.calls.find((call) => call.callType === 'swap');
     const routerAddress = (routerCall?.to ?? candidate.provider.id) as `0x${string}`;
-    const simulation = simulationHonesty(intent);
-    const contractSecurityAddresses = [usdcAsset.address].filter((value): value is `0x${string}` => Boolean(value));
+    // T67B.1: the simulation stored with these exact calls. Approve re-checks
+    // the same immutable batch, so it re-uses the same evidence rather than
+    // asking a provider about bytes it has already been asked about.
+    const simulation = simulationRequirementV1(providerId, intent, blueprint.simulationState);
+    const contractSecurityAddresses = [inputAsset.address].filter((value): value is `0x${string}` => Boolean(value));
     const contractSecurityResults = await deps.contractSecurity({
       chainId: intent.chainId,
       addresses: contractSecurityAddresses,
@@ -273,6 +280,7 @@ export async function approveExecutionBlueprintV1(
       simulationDetail: simulation.detail,
       intentHash: blueprint.intentHash,
       selectedCandidateHash: blueprint.selectedCandidateHash,
+      ...aerodromeKernelInputV1(providerId, candidate, blueprint),
     });
 
     if (safety.verdict === 'blocked') {

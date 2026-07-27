@@ -198,6 +198,19 @@ export function shortfallNoticeFromProjectionV1(projection: RoutePlanProjectionV
   return adapterShortfallCopyV1([...answered, ...missing]);
 }
 
+/**
+ * T67B.1: an Aerodrome hop names its curve in the protocol field, because the
+ * pair alone does not identify the pool — Aerodrome runs a stable and a
+ * volatile pool for the same two tokens and they price completely differently.
+ * Rendered as words rather than as the raw slug; every other protocol is
+ * passed through untouched.
+ */
+export function poolProtocolLabelV1(protocol: string | undefined): string | undefined {
+  if (protocol === 'aerodrome-stable') return 'Aerodrome · stable pool';
+  if (protocol === 'aerodrome-volatile') return 'Aerodrome · volatile pool';
+  return protocol;
+}
+
 /** Route graph from the recommended route's evidence. When the provider gave
  * no pool breakdown the graph is omitted WITH a reason — never faked. */
 export function routeGraphFromRouteV1(
@@ -212,7 +225,7 @@ export function routeGraphFromRouteV1(
     input: { id: 'in', title: input.amountLabel, subtitle: 'your wallet', kind: 'input' },
     pools: pools.slice(0, 2).map((pool, index) => ({
       id: `${pool.name ?? pool.protocol ?? 'pool'}-${index}`,
-      title: pool.name ?? pool.protocol ?? 'Pool',
+      title: pool.name ?? poolProtocolLabelV1(pool.protocol) ?? 'Pool',
       subtitle: [pool.sharePercent ? `${pool.sharePercent}%` : null, pool.depthUsd ? `$${pool.depthUsd} depth` : null].filter(Boolean).join(' · ') || 'share not reported',
       kind: index === 0 ? 'pool-a' : 'pool-b',
     })),

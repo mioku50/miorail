@@ -1,7 +1,9 @@
 import {
   AERODROME_ROUTER_V1,
   decodeAddressV1,
+  decodeUint256V1,
   decodeUintArrayV1,
+  encodeAllowanceV1,
   encodeDefaultFactoryV1,
   encodeGetAmountsOutV1,
   type AerodromeRouteLegV1,
@@ -48,6 +50,14 @@ export interface AerodromeReaderV1 {
     route: readonly AerodromeRouteLegV1[];
   }): Promise<AerodromeRpcResultV1<bigint[]>>;
   readBlockNumber(): Promise<string | null>;
+  /** T67B.1: the CURRENT allowance the wallet has granted the Router.
+   * Read so the approval decision is made from observed state rather than
+   * from the assumption that a previous approval is still standing. */
+  readAllowance(input: {
+    token: `0x${string}`;
+    owner: `0x${string}`;
+    spender: `0x${string}`;
+  }): Promise<AerodromeRpcResultV1<bigint>>;
 }
 
 interface JsonRpcEnvelope {
@@ -133,6 +143,19 @@ export function createAerodromeReaderV1(config: AerodromeRpcConfigV1): Aerodrome
       // route" for a user, not a number to put on a card.
       if ((amounts[amounts.length - 1] ?? 0n) <= 0n) return { ok: false, reason: 'no_route' };
       return { ok: true, value: amounts };
+    },
+
+    async readAllowance(input) {
+      const result = await rpc('eth_call', [
+        { to: input.token, data: encodeAllowanceV1(input.owner, input.spender) },
+        'latest',
+      ]);
+      if (!result.ok) return result;
+      const allowance = decodeUint256V1(String(result.value));
+      // An unreadable allowance is NOT read as zero. Zero would silently
+      // produce an approval that may be unnecessary; worse, a garbage answer
+      // read as a large number would skip an approval that is required.
+      return allowance === null ? { ok: false, reason: 'invalid_response' } : { ok: true, value: allowance };
     },
 
     async readBlockNumber() {

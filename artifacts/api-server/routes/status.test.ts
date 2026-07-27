@@ -119,11 +119,12 @@ describe('Status API', () => {
       nftRouteV1: false,
       nftExecutionV1: false,
       privateAiRouteV1: false,
-      privateAiExecutionV1: false,
+      privateAiExecutionV1: false, aerodromeExecutionV1: false,
     });
     assert.deepStrictEqual(
       Object.keys(response.body.productMigration).sort(),
       [
+        'aerodromeExecutionV1',
         'commerceExecutionV1',
         'commerceRouteV1',
         'earnRouteV1',

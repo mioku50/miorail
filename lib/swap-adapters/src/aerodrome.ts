@@ -6,6 +6,7 @@ import {
   AERODROME_QUOTE_TTL_MS_DEFAULT_V1,
   AERODROME_ROUTER_V1,
   AERODROME_WETH_V1,
+  aerodromeSourceKeyV1,
   candidateRoutesV1,
   type AerodromeRouteLegV1,
 } from './aerodrome-pinned.js';
@@ -113,7 +114,10 @@ function provenanceV1(
         (asset): asset is AssetRefV1 => asset !== null,
       );
       return {
-        sourceKey: `aerodrome:${leg.from}:${leg.to}:${leg.stable ? 'stable' : 'volatile'}`,
+        // Carries the factory as well as the pair and curve: prepare re-derives
+        // the exact legs from this key, and a Router that has since changed its
+        // default factory must not be able to pass as the same route.
+        sourceKey: aerodromeSourceKeyV1(leg),
         chainId,
         protocol: legProtocolV1(leg),
         poolAddress: null,

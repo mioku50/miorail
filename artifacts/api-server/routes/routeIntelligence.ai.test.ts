@@ -184,7 +184,7 @@ describe('the gates', () => {
   });
 
   test('comparing is allowed while executing is not', async () => {
-    aiRouteRuntime.flags = () => ({ ...FLAGS, privateAiExecutionV1: false });
+    aiRouteRuntime.flags = () => ({ ...FLAGS, privateAiExecutionV1: false, aerodromeExecutionV1: false });
     const app = routeApp();
     const body = await compared(app);
     assert.equal(body.executionEnabled, false);

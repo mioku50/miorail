@@ -595,7 +595,14 @@ export const SwapPrepareResponseV1Schema = z.discriminatedUnion('outcome', [
     .object({
       outcome: z.literal('refresh_required'),
       routeRunId: z.string().min(1).max(200),
-      reason: z.enum(['card_expired', 'quote_expired', 'blueprint_expired', 'fresh_output_below_minimum']),
+      reason: z.enum([
+        'card_expired',
+        'quote_expired',
+        'blueprint_expired',
+        'fresh_output_below_minimum',
+        // T67B.1 — the reviewed route moved. See RefreshReasonV1Schema.
+        'route_changed',
+      ]),
       detail: z.string().min(1).max(500),
     })
     .strict(),
@@ -1607,6 +1614,10 @@ export const StatusResponseSchema = z.object({
     // is off on every surface that reads them.
     privateAiRouteV1: z.boolean().optional(),
     privateAiExecutionV1: z.boolean().optional(),
+    // T67B.1: same additive treatment. There is no `aerodromeRouteV1` twin —
+    // Aerodrome COMPARISON has no gate of its own; it rides on route
+    // intelligence, because quoting it neither spends nor signs.
+    aerodromeExecutionV1: z.boolean().optional(),
   }),
   rpc: z.object({
     status: z.enum(["connected", "missing", "failed"]),

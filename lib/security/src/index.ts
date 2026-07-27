@@ -188,3 +188,4 @@ export * from './httpAllowlist.js';
 export * from './moonwellGuard.js';
 export * from './uniswapGuard.js';
 export * from './kyberGuard.js';
+export * from './aerodromeGuard.js';

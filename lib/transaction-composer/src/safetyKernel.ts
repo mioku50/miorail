@@ -7,6 +7,7 @@
 // Subpath imports resolve the target file directly and sidestep this.
 import { validateUniswapSwap, type UniswapSwapContext } from '@mioagent/security/uniswapGuard';
 import { validateKyberSwap, type KyberSwapContext } from '@mioagent/security/kyberGuard';
+import { validateAerodromeSwap, type AerodromeSwapContext } from '@mioagent/security/aerodromeGuard';
 import type { BaseCall } from '@mioagent/security/baseGuards';
 import type { ExecutionTokenSecurityResult } from '@mioagent/security';
 import type { ContractSecuritySummaryV1 } from '@mioagent/route-card';
@@ -18,7 +19,7 @@ import type {
   SafetyKernelResultV1,
 } from '@mioagent/route-domain';
 import { SafetyKernelResultV1Schema } from '@mioagent/route-domain';
-import type { SwapBuildProviderId } from './types.js';
+import type { AerodromeBuildFactsV1, SwapBuildProviderId } from './types.js';
 
 export interface RunSafetyKernelInput {
   provider: SwapBuildProviderId;
@@ -37,6 +38,20 @@ export interface RunSafetyKernelInput {
   simulationDetail: string;
   intentHash: HashV1;
   selectedCandidateHash: HashV1;
+  /**
+   * T67B.1 — required for `aerodrome` and ignored otherwise. Aerodrome
+   * calldata is encoded by this server rather than fetched from a partner, so
+   * the guard needs the route and factory it must find inside those bytes.
+   * Absent facts are a BLOCK, never a skipped check.
+   */
+  aerodrome?: AerodromeBuildFactsV1;
+  /**
+   * T67B.1 — the minimum output the user actually reviewed on the Route Card.
+   * Aerodrome checks decoded calldata against THIS rather than against the
+   * blueprint's own minimum: a build that re-derived a weaker floor from a
+   * decayed fresh quote agrees with itself, and would otherwise pass.
+   */
+  reviewedMinimumOutputAtomic?: string;
 }
 
 export interface RunSafetyKernelOutput {
@@ -185,7 +200,46 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
     ),
   );
 
-  if (input.provider === 'uniswap') {
+  if (input.provider === 'aerodrome') {
+    const facts = input.aerodrome;
+    const reviewedMinimum = input.reviewedMinimumOutputAtomic;
+    if (!facts || !reviewedMinimum) {
+      // No facts means nothing to compare the calldata against. That is a
+      // wiring failure, and it fails closed rather than validating the bytes
+      // against themselves.
+      checks.push(
+        check(
+          'provider_guard_aerodrome',
+          'Aerodrome calldata decoding and route/factory pinning (validateAerodromeSwap)',
+          'failed',
+          'aerodrome_build_facts_missing: no reviewed route, factory or minimum output to check the calldata against',
+        ),
+      );
+    } else {
+      const context: AerodromeSwapContext = {
+        inputTokenAddress: facts.inputTokenAddress,
+        inputIsNative: facts.inputIsNative,
+        outputIsNative: facts.outputIsNative,
+        amountInAtomic: input.intent.amount.amountAtomic,
+        minimumOutputAtomic: reviewedMinimum,
+        swapper: input.walletAddress,
+        recipient: input.walletAddress,
+        routerAddress: input.routerAddress,
+        factory: facts.factory,
+        route: facts.route.map((leg) => ({ ...leg })),
+        expiresAt: input.quoteExpiry,
+      };
+      const guard = validateAerodromeSwap({ chain: input.chainId, calls: baseCalls, context, now: input.now });
+      checks.push(
+        check(
+          'provider_guard_aerodrome',
+          'Aerodrome calldata decoding and route/factory pinning (validateAerodromeSwap)',
+          guard.success ? 'passed' : 'failed',
+          guard.success ? null : `${guard.code}: ${guard.reason}`,
+        ),
+      );
+    }
+  } else if (input.provider === 'uniswap') {
     const toAssetSymbol = input.intent.toAsset?.symbol;
     const context: UniswapSwapContext = {
       amountDecimal: input.intent.amount.amountDecimal,

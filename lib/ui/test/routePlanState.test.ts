@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { poolProtocolLabelV1, routeGraphFromRouteV1 } from '../src/console/consoleAdapters.js';
 import {
   canReviewTransaction,
   defaultSelectedCandidateHash,
@@ -99,4 +100,27 @@ test('isRoutePlanExpired stays consistent with canReviewTransaction expiry handl
   const fresh = { expiresAt: new Date(NOW.getTime() + 1_000).toISOString() };
   assert.equal(isRoutePlanExpired(expired, NOW), true);
   assert.equal(isRoutePlanExpired(fresh, NOW), false);
+});
+
+test('T67B.1 an Aerodrome hop names its curve, because the pair does not identify the pool', () => {
+  const route = {
+    evidence: {
+      liquiditySources: [
+        { protocol: 'aerodrome-volatile' },
+        { protocol: 'aerodrome-stable' },
+      ],
+    },
+    expectedOutput: { amountDecimal: '0.038', asset: { symbol: 'ETH' } },
+  } as never;
+  const graph = routeGraphFromRouteV1(route, { amountLabel: '100 USDC', walletLabel: 'wallet' });
+  assert.deepEqual(
+    graph?.pools.map((pool) => pool.title),
+    ['Aerodrome · volatile pool', 'Aerodrome · stable pool'],
+  );
+  // Aerodrome reports no share or depth, and the graph says so rather than
+  // inventing a split.
+  assert.equal(graph?.pools[0]?.subtitle, 'share not reported');
+  // Every other protocol is passed straight through.
+  assert.equal(poolProtocolLabelV1('uniswap-v3'), 'uniswap-v3');
+  assert.equal(poolProtocolLabelV1(undefined), undefined);
 });

@@ -34,7 +34,10 @@ export interface ClassifySwapCallInput {
   index: number;
   call: SwapBuildCallV1;
   routerAddress: `0x${string}`;
-  usdcAsset: AssetRefV1;
+  /** The asset being SPENT. Named generically because T67B.1 spends WETH and
+   * native ETH as well as USDC; for a native input there is no approval call
+   * to decode and this only labels the debit side. */
+  inputAsset: AssetRefV1;
   walletAddress: `0x${string}`;
 }
 
@@ -50,10 +53,10 @@ export interface ClassifySwapCallInput {
 export function classifySwapCallV1(input: ClassifySwapCallInput): ExecutionCallV1 {
   const { call } = input;
   const toLower = call.to.toLowerCase();
-  const usdcAddress = input.usdcAsset.address?.toLowerCase();
+  const inputAddress = input.inputAsset.address?.toLowerCase();
   const selector = call.data.slice(0, 10).toLowerCase();
 
-  if (usdcAddress && toLower === usdcAddress && selector === '0x095ea7b3') {
+  if (inputAddress && toLower === inputAddress && selector === '0x095ea7b3') {
     try {
       const decoded = decodeFunctionData({ abi: erc20Abi, data: call.data });
       if (decoded.functionName === 'approve') {
@@ -64,7 +67,7 @@ export function classifySwapCallV1(input: ClassifySwapCallInput): ExecutionCallV
           to: call.to,
           valueWei: call.value,
           data: call.data,
-          asset: input.usdcAsset,
+          asset: input.inputAsset,
           amountAtomic: amount.toString(),
           recipient: null,
           spender: spender.toLowerCase() as `0x${string}`,
@@ -86,7 +89,7 @@ export function classifySwapCallV1(input: ClassifySwapCallInput): ExecutionCallV
         to: call.to,
         valueWei: call.value,
         data: call.data,
-        asset: input.usdcAsset,
+        asset: input.inputAsset,
         amountAtomic: amount.toString(),
         recipient: null,
         spender: spender.toLowerCase() as `0x${string}`,

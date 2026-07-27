@@ -22,7 +22,7 @@ export async function seededBlueprint(
       index,
       call,
       routerAddress: T57_ROUTER,
-      usdcAsset: scenario.intent.fromAsset!,
+      inputAsset: scenario.intent.fromAsset!,
       walletAddress: WALLET,
     }),
   );

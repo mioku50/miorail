@@ -13,7 +13,14 @@ import {
   createDefaultSwapAdapters,
   decodeAddressV1,
   decodeUintArrayV1,
+  encodeExactApproveV1,
   encodeGetAmountsOutV1,
+  encodeSwapExactEthForTokensV1,
+  encodeSwapExactTokensForEthV1,
+  encodeSwapExactTokensForTokensV1,
+  aerodromeSourceKeyV1,
+  parseAerodromeSourceKeyV1,
+  sameAerodromeRouteV1,
   getEligibleSwapAdapters,
   redactRpcTextV1,
   selectorV1,
@@ -34,6 +41,9 @@ function reader(overrides: Partial<AerodromeReaderV1> = {}): AerodromeReaderV1 {
     },
     async readBlockNumber() {
       return '30000000';
+    },
+    async readAllowance() {
+      return { ok: true, value: 0n };
     },
     ...overrides,
   };
@@ -406,5 +416,127 @@ describe('execution is out of scope in this slice', () => {
     for (const forbidden of ['build', 'buildSwap', 'execute', 'submit', 'encodeSwap']) {
       assert.equal(adapter[forbidden], undefined, `adapter must not expose ${forbidden} yet`);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T67B.1 — swap encoding
+// ---------------------------------------------------------------------------
+
+describe('T67B.1 the swap encoders refuse what must never be signed', () => {
+  const swapArgs = {
+    amountIn: 1_000_000n,
+    amountOutMin: 1n,
+    routes: [{ from: AERODROME_USDC_V1, to: AERODROME_WETH_V1, stable: false, factory: FACTORY }],
+    to: '0x1111111111111111111111111111111111111111' as const,
+    deadline: 1_800_000_000n,
+  };
+
+  test('the three swap selectors are the keccak of their signatures', () => {
+    assert.equal(
+      AERODROME_SELECTORS_V1.swapExactTokensForTokens,
+      selectorV1('swapExactTokensForTokens(uint256,uint256,(address,address,bool,address)[],address,uint256)'),
+    );
+    assert.equal(
+      AERODROME_SELECTORS_V1.swapExactETHForTokens,
+      selectorV1('swapExactETHForTokens(uint256,(address,address,bool,address)[],address,uint256)'),
+    );
+    assert.equal(
+      AERODROME_SELECTORS_V1.swapExactTokensForETH,
+      selectorV1('swapExactTokensForETH(uint256,uint256,(address,address,bool,address)[],address,uint256)'),
+    );
+    // The one selector whose canonical value is public knowledge, as a check
+    // that nothing above is self-confirming.
+    assert.equal(`0x${AERODROME_SELECTORS_V1.approve}`, '0x095ea7b3');
+  });
+
+  test('a zero minimum output is refused — that is an unbounded-slippage swap', () => {
+    assert.throws(() => encodeSwapExactTokensForTokensV1({ ...swapArgs, amountOutMin: 0n }), TypeError);
+    assert.throws(() => encodeSwapExactEthForTokensV1({ ...swapArgs, amountOutMin: 0n }), TypeError);
+    assert.throws(() => encodeSwapExactTokensForEthV1({ ...swapArgs, amountOutMin: 0n }), TypeError);
+  });
+
+  test('a zero input amount, a missing deadline and a three-hop route are refused', () => {
+    assert.throws(() => encodeSwapExactTokensForTokensV1({ ...swapArgs, amountIn: 0n }), TypeError);
+    assert.throws(() => encodeSwapExactTokensForTokensV1({ ...swapArgs, deadline: 0n }), TypeError);
+    assert.throws(
+      () =>
+        encodeSwapExactTokensForTokensV1({
+          ...swapArgs,
+          routes: [...swapArgs.routes, ...swapArgs.routes, ...swapArgs.routes],
+        }),
+      TypeError,
+    );
+  });
+
+  test('an unlimited approval is not encodable, because there is no such function', () => {
+    // encodeExactApproveV1 takes an amount and writes it. The absence of an
+    // "approve max" helper is the point: nothing in this integration can
+    // produce one by calling the wrong overload.
+    const data = encodeExactApproveV1(AERODROME_ROUTER_V1, 1_000_000n);
+    assert.equal(BigInt(`0x${data.slice(74)}`), 1_000_000n);
+    assert.throws(() => encodeExactApproveV1(AERODROME_ROUTER_V1, 0n), TypeError);
+  });
+
+  test('the ETH entrypoint has one fewer head word than the token entrypoints', () => {
+    // The amount travels as msg.value, so it is not an argument. Getting this
+    // wrong shifts every later word by 32 bytes.
+    const tokens = encodeSwapExactTokensForTokensV1(swapArgs).slice(10);
+    const eth = encodeSwapExactEthForTokensV1(swapArgs).slice(10);
+    assert.equal(tokens.length - eth.length, 64);
+    assert.equal(BigInt(`0x${tokens.slice(128, 192)}`), 160n, 'token head is five words');
+    assert.equal(BigInt(`0x${eth.slice(64, 128)}`), 128n, 'ETH head is four words');
+  });
+});
+
+describe('T67B.1 a route survives the Route Card as a source key', () => {
+  test('a leg round-trips through its source key, factory and all', () => {
+    const leg = { from: AERODROME_USDC_V1, to: AERODROME_WETH_V1, stable: true, factory: FACTORY };
+    assert.deepEqual(parseAerodromeSourceKeyV1(aerodromeSourceKeyV1(leg)), leg);
+  });
+
+  test('a foreign or malformed key parses to null rather than to a guess', () => {
+    assert.equal(parseAerodromeSourceKeyV1('uniswap:v3:0.05%'), null);
+    assert.equal(parseAerodromeSourceKeyV1(`aerodrome:${FACTORY}:${AERODROME_USDC_V1}:${AERODROME_WETH_V1}:curve`), null);
+    assert.equal(parseAerodromeSourceKeyV1(`aerodrome:${AERODROME_USDC_V1}:${AERODROME_WETH_V1}:stable`), null);
+  });
+
+  test('routes that differ only by curve or factory are not the same route', () => {
+    const base = [{ from: AERODROME_USDC_V1, to: AERODROME_WETH_V1, stable: false, factory: FACTORY }];
+    const other = '0x0000000000000000000000000000000000001234' as const;
+    assert.equal(sameAerodromeRouteV1(base, [{ ...base[0]!, stable: true }]), false);
+    assert.equal(sameAerodromeRouteV1(base, [{ ...base[0]!, factory: other }]), false);
+    assert.equal(sameAerodromeRouteV1(base, [...base]), true);
+  });
+});
+
+describe('T67B.1 the allowance read is honest about failure', () => {
+  test('an unreadable allowance is a refusal, never a zero', async () => {
+    const client = createAerodromeReaderV1({
+      rpcUrl: 'https://rpc.example/key',
+      fetchImpl: async () => new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: '0xabc' })),
+    });
+    const result = await client.readAllowance({
+      token: AERODROME_USDC_V1,
+      owner: '0x1111111111111111111111111111111111111111',
+      spender: AERODROME_ROUTER_V1,
+    });
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.reason, 'invalid_response');
+  });
+
+  test('a well-formed allowance decodes', async () => {
+    const client = createAerodromeReaderV1({
+      rpcUrl: 'https://rpc.example/key',
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: `0x${(12345n).toString(16).padStart(64, '0')}` })),
+    });
+    const result = await client.readAllowance({
+      token: AERODROME_USDC_V1,
+      owner: '0x1111111111111111111111111111111111111111',
+      spender: AERODROME_ROUTER_V1,
+    });
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal(result.value, 12345n);
   });
 });

@@ -71,6 +71,7 @@ import {
   BlueprintSubmissionConflictError,
   KyberSwapBuildAdapter,
   UniswapSwapBuildAdapter,
+  AerodromeSwapBuildAdapter,
   approveEarnBlueprintV1,
   approveExecutionBlueprintV1,
   createTransactionComposer,
@@ -181,6 +182,7 @@ import {
   simulationPriceUsdcForPrepareResponseV1,
   usdcAssetRefV1,
 } from '../lib/paidIntelligenceConfig.js';
+import { simulateSwapCallsV1 } from '../lib/swapSimulation.js';
 import { createIntelligenceBudgetCharger } from '../lib/intelligenceBudgetCharger.js';
 
 function signedRoutePlanUser(req: Request) {
@@ -295,11 +297,12 @@ export const routePlanRouteRuntime = {
     const coordinator = new RoutePlanCoordinator({
       llm: createLlmProvider(),
       engine: createSwapRouteEngine(),
-      // T67B: Aerodrome joins the COMPARISON only. It quotes over the Base RPC
-      // this deployment already has, so it needs no key of its own — but with
-      // no RPC URL configured it reports `not_configured` rather than
-      // pretending to have asked. It is deliberately absent from the composer's
-      // quoteAdapters below until the execution slice lands.
+      // T67B: Aerodrome quotes over the Base RPC this deployment already has,
+      // so it needs no key of its own — but with no RPC URL configured it
+      // reports `not_configured` rather than pretending to have asked.
+      // Comparison is ungated: it neither spends nor signs. Whether an
+      // Aerodrome candidate can then be PREPARED is a separate decision, made
+      // by MIORAIL_AERODROME_EXECUTION_V1 at the composer below.
       adapters: [
         new UniswapSwapRouteAdapter(),
         new KyberSwapRouteAdapter(),
@@ -689,10 +692,31 @@ export const swapPrepareRouteRuntime = {
   flags: getMiorailProductMigrationFlags,
   migrationAvailable: routeStorageMigrationAvailable,
   prepare: async (input: TransactionComposerPrepareInput) => {
+    const rpcUrl = baseMainnetRpcUrlV1();
+    // T67B.1: Aerodrome may be PREPARED only behind its own flag. The list is
+    // what the composer checks, so a server with the flag off answers
+    // `unsupported_provider` — a normal outcome the client already renders —
+    // rather than throwing on a missing adapter.
+    const aerodromeEnabled = getMiorailProductMigrationFlags(process.env).aerodromeExecutionV1;
     const composer = createTransactionComposer({
       repository: createDatabaseRouteStorageRepository(client),
-      buildAdapters: [new UniswapSwapBuildAdapter(), new KyberSwapBuildAdapter()],
-      quoteAdapters: [new UniswapSwapRouteAdapter(), new KyberSwapRouteAdapter()],
+      buildAdapters: [
+        new UniswapSwapBuildAdapter(),
+        new KyberSwapBuildAdapter(),
+        new AerodromeSwapBuildAdapter({ rpcUrl }),
+      ],
+      quoteAdapters: [
+        new UniswapSwapRouteAdapter(),
+        new KyberSwapRouteAdapter(),
+        new AerodromeSwapRouteAdapter({ rpcUrl }),
+      ],
+      supportedProviders: aerodromeEnabled
+        ? ['uniswap', 'kyberswap', 'aerodrome']
+        : ['uniswap', 'kyberswap'],
+      // Aerodrome calldata is written by this server, so it is the one
+      // provider that must survive a fork simulation before it can be signed.
+      // No provider configured means BLOCKED, never "signed anyway".
+      simulate: simulateSwapCallsV1,
       contractSecurity: async ({ chainId, addresses }) =>
         (await loadTokenSecurityContext(chainId, addresses)).tokenSecurity,
     });
