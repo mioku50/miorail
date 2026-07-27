@@ -38,3 +38,18 @@ export type { BlueprintSubmitButtonProps } from './src/BlueprintSubmitButton';
 // wallet submit → Route Proof) used identically by web and miniapp.
 export { EarnDepositFlow, formatEarnAmountForDisplayV1, earnProofStatusMessageV1 } from './src/EarnDepositFlow';
 export type { EarnDepositFlowProps, EarnProofState } from './src/EarnDepositFlow';
+
+// T67C.2: submission recovery. The card and the marker helpers live here for
+// the same reason the submit hook does — there is exactly ONE wallet path in
+// this codebase, and recovery reuses it rather than growing a second.
+export { SubmissionRecoveryCard, RECOVERY_NO_BATCH_COPY_V1, RECOVERY_REASON_COPY_V1, RECOVERY_STATUS_LABEL_V1, baseAccountActivityUrlV1 } from './src/SubmissionRecoveryCard';
+export type { SubmissionRecoveryCardProps } from './src/SubmissionRecoveryCard';
+export {
+  browserMarkerStorageV1,
+  writeRecoveryMarkerV1,
+  readRecoveryMarkersV1,
+  clearRecoveryMarkerV1,
+  markerShouldBeClearedV1,
+  MARKER_CLEARING_STATUSES_V1,
+} from './src/recoveryMarker';
+export type { MarkerStorageV1 } from './src/recoveryMarker';

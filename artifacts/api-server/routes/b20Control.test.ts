@@ -34,6 +34,8 @@ const FLAGS = {
   privateAiExecutionV1: false,
   aerodromeExecutionV1: false,
   b20ControlV1: true,
+  submissionRecoveryV1: false,
+  publicProofV1: false,
 };
 
 const original = { ...b20RouteRuntime };

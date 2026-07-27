@@ -35,11 +35,17 @@ import {
   RouteStorageConflictError,
   RouteStorageIntegrityError,
   createDatabaseNftStorageRepository,
+  createDatabaseSubmissionAttemptRepository,
   nftIdempotencyKeyV1,
   type NftProofRecordV1,
   type NftStorageRepository,
+  type SubmissionAttemptRepositoryV1,
 } from '@mioagent/route-storage';
 import { client } from '@mioagent/db';
+import {
+  recordAttemptOutcomeV1,
+  verifySubmissionAttemptV1,
+} from '../lib/submissionAttemptLink.js';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
 import { simulateNftBlueprintV1 } from '../lib/nftSimulation.js';
 import { createViemNftChainReaderV1 } from '../lib/nftChainReader.js';
@@ -71,6 +77,9 @@ export const nftRouteRuntime = {
   simulate: simulateNftBlueprintV1,
   chainReader: () => createViemNftChainReaderV1(process.env),
   migrationAvailable: nftStorageMigrationAvailable,
+  // T67C.2: the SAME attempt store swap and earn use. NFT recovery is not a
+  // second mechanism; it is this one with goal='nft'.
+  attemptRepository: (): SubmissionAttemptRepositoryV1 => createDatabaseSubmissionAttemptRepository(client),
   now: () => new Date(),
 };
 
@@ -534,6 +543,7 @@ nftRouteIntelligenceRouter.post('/nft/blueprints/:blueprintId/submission', async
   try {
     const now = nftRouteRuntime.now();
     const repository = nftRouteRuntime.repository();
+    const attempts = nftRouteRuntime.attemptRepository();
     const blueprintId = String(req.params.blueprintId);
     const existing = await repository.getNftPurchaseBlueprint(blueprintId, guard.user.id);
     if (!existing) {
@@ -548,6 +558,19 @@ nftRouteIntelligenceRouter.post('/nft/blueprints/:blueprintId/submission', async
     // naming a different hash is describing some other batch.
     if (existing.blueprint.approvedCallsHash !== guard.body.approvedCallsHash) {
       res.status(409).json({ error: 'nft_approved_calls_mismatch', code: 'nft_approved_calls_mismatch' });
+      return;
+    }
+    // A recovery attempt id grants nothing on its own: it must be this tenant's
+    // and must name this blueprint and these approved calls, or the whole
+    // record is refused rather than allowed to ride along.
+    const link = await verifySubmissionAttemptV1(attempts, {
+      attemptId: guard.body.submissionAttemptId,
+      tenantId: guard.user.id,
+      blueprintId,
+      approvedCallsHash: guard.body.approvedCallsHash,
+    });
+    if (!link.ok) {
+      res.status(link.code === 'submission_attempt_mismatch' ? 409 : 404).json({ error: link.code, code: link.code });
       return;
     }
 
@@ -569,6 +592,15 @@ nftRouteIntelligenceRouter.post('/nft/blueprints/:blueprintId/submission', async
       // Nothing was sent, so there is no ownership question and no proof to
       // open. Recording a `pending` proof here would put a purchase on the
       // screen that never happened.
+      await recordAttemptOutcomeV1(attempts, {
+        attempt: link.attempt,
+        tenantId: guard.user.id,
+        submissionStatus: guard.body.status,
+        proofId: null,
+        batchId: guard.body.batchId ?? null,
+        errorCode: guard.body.error ? 'wallet_error' : null,
+        now,
+      });
       res.json(
         NftSubmissionResponseV1Schema.parse({
           outcome: 'recorded',
@@ -584,6 +616,15 @@ nftRouteIntelligenceRouter.post('/nft/blueprints/:blueprintId/submission', async
     if (openProof && openProof.proof.status === 'finalized') {
       // Reconciliation already answered. A late submission record does not get
       // to reopen it.
+      await recordAttemptOutcomeV1(attempts, {
+        attempt: link.attempt,
+        tenantId: guard.user.id,
+        submissionStatus: guard.body.status,
+        proofId: openProof.id,
+        batchId: guard.body.batchId ?? null,
+        errorCode: guard.body.error ? 'wallet_error' : null,
+        now,
+      });
       res.json(
         NftSubmissionResponseV1Schema.parse({
           outcome: 'recorded',
@@ -632,6 +673,15 @@ nftRouteIntelligenceRouter.post('/nft/blueprints/:blueprintId/submission', async
     if (openProof?.proof.proofHash !== stored.proof.proofHash) {
       await appendEvent(repository, stored, guard.user.id, 'submission_recorded', record.submittedTransactionHash, now);
     }
+    await recordAttemptOutcomeV1(attempts, {
+      attempt: link.attempt,
+      tenantId: guard.user.id,
+      submissionStatus: guard.body.status,
+      proofId: stored.id,
+      batchId: guard.body.batchId ?? null,
+      errorCode: guard.body.error ? 'wallet_error' : null,
+      now,
+    });
     res.json(
       NftSubmissionResponseV1Schema.parse({
         outcome: 'recorded',

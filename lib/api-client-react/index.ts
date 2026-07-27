@@ -385,6 +385,8 @@ export interface RecordBlueprintSubmissionInput {
   transactionHashes?: string[];
   receipts?: unknown[];
   error?: string;
+  /** T67C.2: the recovery attempt this record belongs to, when one is open. */
+  submissionAttemptId?: string;
 }
 
 export function useRecordBlueprintSubmission(
@@ -406,6 +408,9 @@ export function useRecordBlueprintSubmission(
         ...(input.transactionHashes !== undefined ? { transactionHashes: input.transactionHashes } : {}),
         ...(input.receipts !== undefined ? { receipts: input.receipts } : {}),
         ...(input.error !== undefined ? { error: input.error } : {}),
+        ...(input.submissionAttemptId !== undefined
+          ? { submissionAttemptId: input.submissionAttemptId }
+          : {}),
       });
       const response = await fetchApi<unknown>(
         `/api/route-intelligence/swap/blueprints/${encodeURIComponent(input.blueprintId)}/submission`,
@@ -520,6 +525,9 @@ export function useRecordEarnBlueprintSubmission(
         ...(input.transactionHashes !== undefined ? { transactionHashes: input.transactionHashes } : {}),
         ...(input.receipts !== undefined ? { receipts: input.receipts } : {}),
         ...(input.error !== undefined ? { error: input.error } : {}),
+        ...(input.submissionAttemptId !== undefined
+          ? { submissionAttemptId: input.submissionAttemptId }
+          : {}),
       });
       const response = await fetchApi<unknown>(
         `/api/route-intelligence/earn/blueprints/${encodeURIComponent(input.blueprintId)}/submission`,
@@ -1701,6 +1709,9 @@ export function useRecordNftBlueprintSubmission(
         ...(input.transactionHashes !== undefined ? { transactionHashes: input.transactionHashes } : {}),
         ...(input.receipts !== undefined ? { receipts: input.receipts } : {}),
         ...(input.error !== undefined ? { error: input.error } : {}),
+        ...(input.submissionAttemptId !== undefined
+          ? { submissionAttemptId: input.submissionAttemptId }
+          : {}),
       });
       const response = await fetchApi<unknown>(
         `/api/route-intelligence/nft/blueprints/${encodeURIComponent(input.blueprintId)}/submission`,
@@ -1845,6 +1856,110 @@ export function useAiProof(
         `/api/route-intelligence/ai/proof/${encodeURIComponent(input.routeRunId)}`,
       );
       return apiSpec.AiProofResponseV1Schema.parse(response);
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// T67C.2 — submission recovery.
+//
+// Three mutations and one query, and none of them touches a wallet. Creating
+// an attempt, binding a batch id and abandoning a card are all server writes
+// about a batch the wallet has already dealt with. The only code in this
+// codebase that opens a wallet is still useSubmitApprovedBlueprint.
+// ---------------------------------------------------------------------------
+
+export interface CreateSubmissionAttemptInput {
+  walletAddress: `0x${string}`;
+  goal: 'swap' | 'earn' | 'nft';
+  routeRunId: string;
+  blueprintId: string;
+  approvedCallsHash: string;
+}
+
+export function useCreateSubmissionAttempt(
+  options?: Omit<
+    UseMutationOptions<apiSpec.SubmissionAttemptResponseV1, Error, CreateSubmissionAttemptInput>,
+    'mutationFn' | 'retry'
+  >,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const request = apiSpec.SubmissionAttemptCreateRequestV1Schema.parse(input);
+      const response = await fetchApi<unknown>('/api/route-intelligence/submission-attempts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+      return apiSpec.SubmissionAttemptResponseV1Schema.parse(response);
+    },
+  });
+}
+
+export function useBindSubmissionBatch(
+  options?: Omit<
+    UseMutationOptions<
+      apiSpec.SubmissionAttemptResponseV1,
+      Error,
+      { attemptId: string; batchId: string }
+    >,
+    'mutationFn' | 'retry'
+  >,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const request = apiSpec.SubmissionAttemptBatchRequestV1Schema.parse({ batchId: input.batchId });
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/submission-attempts/${encodeURIComponent(input.attemptId)}/batch`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) },
+      );
+      return apiSpec.SubmissionAttemptResponseV1Schema.parse(response);
+    },
+  });
+}
+
+export function useAbandonSubmissionAttempt(
+  options?: Omit<
+    UseMutationOptions<apiSpec.SubmissionAttemptResponseV1, Error, { attemptId: string }>,
+    'mutationFn' | 'retry'
+  >,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/submission-attempts/${encodeURIComponent(input.attemptId)}/abandon`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+      );
+      return apiSpec.SubmissionAttemptResponseV1Schema.parse(response);
+    },
+  });
+}
+
+export function useRecoverableSubmissionAttempts(
+  options?: Omit<
+    UseQueryOptions<
+      apiSpec.RecoverableSubmissionAttemptsResponseV1,
+      Error,
+      apiSpec.RecoverableSubmissionAttemptsResponseV1,
+      string[]
+    >,
+    'queryKey' | 'queryFn'
+  >,
+) {
+  return useQuery({
+    ...options,
+    queryKey: ['submission-attempts', 'recoverable'],
+    queryFn: async () => {
+      // No wallet parameter: the server reads the wallet from the signed
+      // session, so a caller cannot ask about somebody else's attempts.
+      const response = await fetchApi<unknown>('/api/route-intelligence/submission-attempts/recoverable');
+      return apiSpec.RecoverableSubmissionAttemptsResponseV1Schema.parse(response);
     },
   });
 }

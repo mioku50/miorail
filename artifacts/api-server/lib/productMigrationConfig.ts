@@ -29,6 +29,15 @@ export interface MiorailProductMigrationFlags {
    * nothing — but it is gated until a live smoke run has confirmed the
    * interface against mainnet. */
   b20ControlV1: boolean;
+  /** T67C.2: submission recovery — reading back an already-sent batch after a
+   * reload. It signs nothing and sends nothing; the gate exists so the recovery
+   * card cannot appear before a live smoke run has exercised it. */
+  submissionRecoveryV1: boolean;
+  /** T67C.2: public proof links. Separate from recovery on purpose — one is
+   * about finishing a transaction the user already made, the other publishes a
+   * wallet address and transaction hashes to anyone holding the link. Those are
+   * not the same decision. */
+  publicProofV1: boolean;
 }
 
 function readBooleanFlag(env: NodeJS.ProcessEnv, name: string, defaultValue: boolean): boolean {
@@ -59,5 +68,7 @@ export function getMiorailProductMigrationFlags(
     privateAiExecutionV1: readBooleanFlag(env, 'MIORAIL_PRIVATE_AI_EXECUTION_V1', false),
     aerodromeExecutionV1: readBooleanFlag(env, 'MIORAIL_AERODROME_EXECUTION_V1', false),
     b20ControlV1: readBooleanFlag(env, 'MIORAIL_B20_CONTROL_V1', false),
+    submissionRecoveryV1: readBooleanFlag(env, 'MIORAIL_SUBMISSION_RECOVERY_V1', false),
+    publicProofV1: readBooleanFlag(env, 'MIORAIL_PUBLIC_PROOF_V1', false),
   });
 }

@@ -50,6 +50,7 @@ import {
   RouteStorageConflictError,
   RouteStorageIntegrityError,
   createDatabaseRouteStorageRepository,
+  createDatabaseSubmissionAttemptRepository,
   type IntelligenceBudgetRecord,
   type RouteStorageRepository,
   type StoredBlueprintV1,
@@ -169,6 +170,11 @@ import { client } from '@mioagent/db';
 import { nftRouteIntelligenceRouter } from './nftRouteIntelligence.js';
 import { aiRouteIntelligenceRouter } from './aiRouteIntelligence.js';
 import { b20ControlRouter } from './b20Control.js';
+import { submissionRecoveryRouter } from './submissionRecovery.js';
+import {
+  recordAttemptOutcomeV1,
+  verifySubmissionAttemptV1,
+} from '../lib/submissionAttemptLink.js';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
 import { RoutePlanCoordinator, type RoutePlanCoordinatorInput } from '../lib/routePlanCoordinator.js';
 import { loadTokenSecurityContext } from '../lib/executionSecurity.js';
@@ -586,6 +592,7 @@ export const earnBlueprintRouteRuntime = {
     approveEarnBlueprintV1({ repository: createDatabaseRouteStorageRepository(client) }, input),
   recordSubmission: async (input: RecordBlueprintSubmissionInput) =>
     recordBlueprintSubmissionV1({ repository: createDatabaseRouteStorageRepository(client) }, input),
+  attemptRepository: () => createDatabaseSubmissionAttemptRepository(client),
   now: () => new Date(),
 };
 
@@ -615,6 +622,17 @@ routeIntelligenceRouter.post('/earn/blueprints/:blueprintId/submission', async (
   const { user, data } = guard;
   try {
     if (!(await earnGateReady(res))) return;
+    const attempts = earnBlueprintRouteRuntime.attemptRepository();
+    const link = await verifySubmissionAttemptV1(attempts, {
+      attemptId: data.submissionAttemptId,
+      tenantId: user.id,
+      blueprintId: String(req.params.blueprintId),
+      approvedCallsHash: data.approvedCallsHash,
+    });
+    if (!link.ok) {
+      res.status(link.code === 'submission_attempt_mismatch' ? 409 : 404).json({ error: link.code, code: link.code });
+      return;
+    }
     const result = await earnBlueprintRouteRuntime.recordSubmission({
       tenantId: user.id,
       walletAddress: user.address as `0x${string}`,
@@ -626,6 +644,15 @@ routeIntelligenceRouter.post('/earn/blueprints/:blueprintId/submission', async (
       transactionHashes: data.transactionHashes,
       receipts: data.receipts,
       error: data.error,
+      now: earnBlueprintRouteRuntime.now(),
+    });
+    await recordAttemptOutcomeV1(attempts, {
+      attempt: link.attempt,
+      tenantId: user.id,
+      submissionStatus: data.status,
+      proofId: result.proofId,
+      batchId: data.batchId ?? null,
+      errorCode: data.error ? 'wallet_error' : null,
       now: earnBlueprintRouteRuntime.now(),
     });
     res.json(SwapBlueprintSubmissionResponseV1Schema.parse(result));
@@ -800,6 +827,7 @@ export const swapBlueprintRouteRuntime = {
     ),
   recordSubmission: async (input: RecordBlueprintSubmissionInput) =>
     recordBlueprintSubmissionV1({ repository: createDatabaseRouteStorageRepository(client) }, input),
+  attemptRepository: () => createDatabaseSubmissionAttemptRepository(client),
   now: () => new Date(),
 };
 
@@ -880,6 +908,17 @@ routeIntelligenceRouter.post('/swap/blueprints/:blueprintId/submission', async (
       res.status(503).json({ error: 'route_storage_unavailable', code: 'route_storage_unavailable' });
       return;
     }
+    const attempts = swapBlueprintRouteRuntime.attemptRepository();
+    const link = await verifySubmissionAttemptV1(attempts, {
+      attemptId: parsed.data.submissionAttemptId,
+      tenantId: user.id,
+      blueprintId: String(req.params.blueprintId),
+      approvedCallsHash: parsed.data.approvedCallsHash,
+    });
+    if (!link.ok) {
+      res.status(link.code === 'submission_attempt_mismatch' ? 409 : 404).json({ error: link.code, code: link.code });
+      return;
+    }
     const result = await swapBlueprintRouteRuntime.recordSubmission({
       tenantId: user.id,
       walletAddress: user.address,
@@ -891,6 +930,15 @@ routeIntelligenceRouter.post('/swap/blueprints/:blueprintId/submission', async (
       transactionHashes: parsed.data.transactionHashes,
       receipts: parsed.data.receipts,
       error: parsed.data.error,
+      now: swapBlueprintRouteRuntime.now(),
+    });
+    await recordAttemptOutcomeV1(attempts, {
+      attempt: link.attempt,
+      tenantId: user.id,
+      submissionStatus: parsed.data.status,
+      proofId: result.proofId,
+      batchId: parsed.data.batchId ?? null,
+      errorCode: parsed.data.error ? 'wallet_error' : null,
       now: swapBlueprintRouteRuntime.now(),
     });
     res.json(SwapBlueprintSubmissionResponseV1Schema.parse(result));
@@ -3351,3 +3399,7 @@ routeIntelligenceRouter.use(aiRouteIntelligenceRouter);
 // T67C: the B20 Control rail. Read-only throughout — it mounts no route that
 // prepares, approves or submits anything.
 routeIntelligenceRouter.use(b20ControlRouter);
+// T67C.2: submission recovery. It mounts here so swap, earn and NFT share one
+// recovery rail rather than growing one each — and it sends nothing: the only
+// writes it makes are to the attempt table.
+routeIntelligenceRouter.use(submissionRecoveryRouter);

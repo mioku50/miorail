@@ -13,6 +13,8 @@ import { base } from 'wagmi/chains';
 import {
   useApproveEarnBlueprint,
   useApproveSwapBlueprint,
+  useBindSubmissionBatch,
+  useCreateSubmissionAttempt,
   useNftApprove,
   useRecordBlueprintSubmission,
   useRecordEarnBlueprintSubmission,
@@ -25,6 +27,12 @@ import type {
 } from '@mioagent/api-spec';
 import { builderCodeToDataSuffix } from './attribution';
 import { CallsStatusPoller, normalizeCall } from './useWalletConfirmAction';
+import {
+  browserMarkerStorageV1,
+  clearRecoveryMarkerV1,
+  writeRecoveryMarkerV1,
+  type MarkerStorageV1,
+} from './recoveryMarker';
 
 export type BlueprintSubmitStatus =
   | 'idle'
@@ -166,6 +174,11 @@ export interface UseSubmitApprovedBlueprintArgs {
    * path is identical for all three — there is exactly ONE wallet submission
    * implementation, and adding a family must never add a second. */
   goal?: 'swap' | 'earn' | 'nft';
+  /** T67C.2: opt in to submission recovery. Off by default so every existing
+   * caller behaves exactly as it did before. */
+  recovery?: boolean;
+  /** Injected in tests; production reads localStorage. */
+  markerStorage?: MarkerStorageV1 | null;
 }
 
 export interface UseSubmitApprovedBlueprintResult {
@@ -182,6 +195,11 @@ export interface UseSubmitApprovedBlueprintResult {
   proofId: string | null;
   /** T58: the proof finalStatus the server reported on that same record. */
   recordedFinalStatus: string | null;
+  /** T67C.2: the recovery attempt opened for this submission, if recovery is
+   * available. Null when the attempt could not be created — the submission
+   * still proceeds, because refusing to transact over a bookkeeping failure
+   * would be the worse trade. */
+  attemptId: string | null;
   /** Mount this to poll wallet batch status once a batchId exists. */
   poller: ReactNode;
 }
@@ -192,6 +210,8 @@ export function useSubmitApprovedBlueprint({
   blueprintHash,
   builderCode,
   goal = 'swap',
+  recovery = false,
+  markerStorage,
 }: UseSubmitApprovedBlueprintArgs): UseSubmitApprovedBlueprintResult {
   // Every goal's hooks are instantiated unconditionally (rules of hooks); the
   // goal selects which pair actually drives the flow. The swap, earn and NFT
@@ -207,6 +227,8 @@ export function useSubmitApprovedBlueprint({
     goal === 'earn' ? approveEarn.mutateAsync : goal === 'nft' ? approveNft.mutateAsync : approveSwap.mutateAsync;
   const recordMutateAsync =
     goal === 'earn' ? recordEarn.mutateAsync : goal === 'nft' ? recordNft.mutateAsync : recordSwap.mutateAsync;
+  const createAttempt = useCreateSubmissionAttempt();
+  const bindBatch = useBindSubmissionBatch();
   const sendCalls = useSendCalls();
   const { address, chainId } = useAccount();
 
@@ -216,6 +238,8 @@ export function useSubmitApprovedBlueprint({
   const [txHashes, setTxHashes] = useState<string[]>([]);
   const [proofId, setProofId] = useState<string | null>(null);
   const [recordedFinalStatus, setRecordedFinalStatus] = useState<string | null>(null);
+  const [attemptId, setAttemptId] = useState<string | null>(null);
+  const attemptRef = useRef<string | null>(null);
   const inFlightRef = useRef(false);
   const finalizedRef = useRef(false);
   const approvedRef = useRef<ApprovedWalletPayload | null>(null);
@@ -227,7 +251,9 @@ export function useSubmitApprovedBlueprint({
   const recordSafely = useCallback(
     async (input: Parameters<typeof recordMutateAsync>[0]): Promise<boolean> => {
       try {
-        const response = await recordMutateAsync(input);
+        const response = await recordMutateAsync(
+          attemptRef.current ? { ...input, submissionAttemptId: attemptRef.current } : input,
+        );
         setProofId(response.proofId);
         setRecordedFinalStatus(response.finalStatus);
         return true;
@@ -305,6 +331,8 @@ export function useSubmitApprovedBlueprint({
     setTxHashes([]);
     setProofId(null);
     setRecordedFinalStatus(null);
+    setAttemptId(null);
+    attemptRef.current = null;
     setStatus('approving');
 
     try {
@@ -338,6 +366,43 @@ export function useSubmitApprovedBlueprint({
       }
       approvedRef.current = payload;
 
+      // --- T67C.2: open a recovery attempt BEFORE the wallet -----------------
+      // If this fails the submission still goes ahead. Recovery is a safety
+      // net; refusing to transact because the net could not be hung would be
+      // the worse trade, and the user is not told they are protected when they
+      // are not — `attemptId` stays null.
+      const storage = markerStorage === undefined ? browserMarkerStorageV1() : markerStorage;
+      let attempt: string | null = null;
+      if (recovery) {
+        try {
+          const created = await createAttempt.mutateAsync({
+            walletAddress: payload.from as `0x${string}`,
+            goal,
+            routeRunId,
+            blueprintId,
+            approvedCallsHash: payload.approvedCallsHash,
+          });
+          attempt = created.attempt.id;
+          attemptRef.current = attempt;
+          setAttemptId(attempt);
+          writeRecoveryMarkerV1(storage, {
+            schemaVersion: 'submission-recovery-marker/v1',
+            attemptId: attempt,
+            batchId: null,
+            goal,
+            routeRunId,
+            blueprintId,
+            proofId: created.attempt.proofId,
+            walletAddress: payload.from,
+            chainId: 8453,
+            createdAt: new Date().toISOString(),
+          });
+        } catch {
+          attempt = null;
+          attemptRef.current = null;
+        }
+      }
+
       const suffix = builderCodeToDataSuffix(builderCode);
       setStatus('submitting');
       let result: { id: string };
@@ -352,6 +417,10 @@ export function useSubmitApprovedBlueprint({
         if (isWalletRejectionError(cause)) {
           setStatus('cancelled');
           setError('Cancelled in wallet');
+          // Refused in the wallet means no batch exists. There is nothing to
+          // recover, so the marker goes rather than lingering as a card about
+          // a transaction that never happened.
+          if (attempt) clearRecoveryMarkerV1(storage, payload.from, attempt);
           await recordSafely({
             walletAddress: payload.from,
             routeRunId,
@@ -376,7 +445,35 @@ export function useSubmitApprovedBlueprint({
         return;
       }
 
+      // --- T67C.2: the narrowest window in the flow -------------------------
+      // The batch is out. THIS write happens before any further await, so a
+      // reload one line later still finds the handle. It is synchronous for
+      // that reason and no other; moving it below the bind would reopen the
+      // gap it exists to close.
+      if (attempt) {
+        writeRecoveryMarkerV1(storage, {
+          schemaVersion: 'submission-recovery-marker/v1',
+          attemptId: attempt,
+          batchId: result.id,
+          goal,
+          routeRunId,
+          blueprintId,
+          proofId: null,
+          walletAddress: payload.from,
+          chainId: 8453,
+          createdAt: new Date().toISOString(),
+        });
+      }
       setBatchId(result.id);
+      if (attempt) {
+        // Best-effort: the marker above already holds the handle, so a failure
+        // here costs a round trip at recovery time and nothing else.
+        try {
+          await bindBatch.mutateAsync({ attemptId: attempt, batchId: result.id });
+        } catch {
+          /* the marker is the fallback */
+        }
+      }
       const recorded = await recordSafely({
         walletAddress: payload.from,
         routeRunId,
@@ -409,5 +506,5 @@ export function useSubmitApprovedBlueprint({
     }
   };
 
-  return { submit, status, error, batchId, txHashes, proofId, recordedFinalStatus, poller };
+  return { submit, status, error, batchId, txHashes, proofId, recordedFinalStatus, attemptId, poller };
 }

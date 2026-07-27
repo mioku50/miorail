@@ -707,6 +707,12 @@ export const SwapBlueprintSubmissionRequestV1Schema = z
     transactionHashes: z.array(z.string().regex(/^0x[0-9a-fA-F]{64}$/)).max(100).optional(),
     receipts: z.array(z.unknown()).max(100).optional(),
     error: z.string().max(1000).optional(),
+    /** T67C.2: the recovery attempt this record belongs to, when one was
+     * opened. Optional so every pre-T67C.2 client keeps working unchanged. It
+     * grants nothing on its own — the server re-checks that the attempt is this
+     * tenant's, is bound to this blueprint and names these approved calls, and
+     * refuses the whole record otherwise. */
+    submissionAttemptId: z.string().min(1).max(200).optional(),
   })
   .strict()
   // A record that claims the wallet accepted the batch (submitted / confirmed /
@@ -1620,6 +1626,9 @@ export const StatusResponseSchema = z.object({
     aerodromeExecutionV1: z.boolean().optional(),
     // T67C: same additive treatment.
     b20ControlV1: z.boolean().optional(),
+    // T67C.2: same additive treatment.
+    submissionRecoveryV1: z.boolean().optional(),
+    publicProofV1: z.boolean().optional(),
   }),
   rpc: z.object({
     status: z.enum(["connected", "missing", "failed"]),
@@ -2490,3 +2499,88 @@ export const B20InspectResponseV1Schema = z
   })
   .strict();
 export type B20InspectResponseV1 = z.infer<typeof B20InspectResponseV1Schema>;
+
+// ---------------------------------------------------------------------------
+// T67C.2 — submission recovery and public proof wire contracts.
+//
+// The recovery request carries HANDLES only. There is deliberately no field
+// for calls, calldata, a router, a recipient or a receipt: the server rebuilds
+// every one of those from its own records, so a tampered client cannot widen
+// what a recovery is allowed to touch. The same rule the approve path has
+// followed since T57.
+// ---------------------------------------------------------------------------
+
+export const SubmissionGoalWireV1Schema = z.enum(['swap', 'earn', 'nft']);
+
+export const SubmissionAttemptStatusWireV1Schema = z.enum([
+  'wallet_pending',
+  'batch_observed',
+  'submitted',
+  'submitted_unknown',
+  'confirmed',
+  'failed',
+  'cancelled',
+  'abandoned',
+]);
+
+export const SubmissionAttemptCreateRequestV1Schema = z
+  .object({
+    walletAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+    goal: SubmissionGoalWireV1Schema,
+    routeRunId: z.string().min(1).max(200),
+    blueprintId: z.string().min(1).max(200),
+    approvedCallsHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
+  })
+  .strict();
+export type SubmissionAttemptCreateRequestV1 = z.infer<typeof SubmissionAttemptCreateRequestV1Schema>;
+
+export const SubmissionAttemptWireV1Schema = z
+  .object({
+    id: z.string().min(1).max(200),
+    walletAddress: z.string().regex(/^0x[0-9a-f]{40}$/),
+    chainId: z.literal(8453),
+    goal: SubmissionGoalWireV1Schema,
+    routeRunId: z.string().min(1).max(200),
+    blueprintId: z.string().min(1).max(200),
+    proofId: z.string().min(1).max(200).nullable(),
+    approvedCallsHash: z.string().regex(/^0x[0-9a-f]{64}$/),
+    /** Null is the honest unrecoverable state, and the UI says so rather than
+     * offering a retry that would send a second transaction. */
+    batchId: z.string().min(1).max(200).nullable(),
+    status: SubmissionAttemptStatusWireV1Schema,
+    errorCode: z.string().min(1).max(120).nullable(),
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+    completedAt: z.string().min(1).nullable(),
+  })
+  .strict();
+export type SubmissionAttemptWireV1 = z.infer<typeof SubmissionAttemptWireV1Schema>;
+
+export const SubmissionAttemptResponseV1Schema = z
+  .object({ attempt: SubmissionAttemptWireV1Schema })
+  .strict();
+export type SubmissionAttemptResponseV1 = z.infer<typeof SubmissionAttemptResponseV1Schema>;
+
+/** The bind request. `batchId` and nothing else: transaction hashes and
+ * receipts are recorded through the submission route, which knows how to check
+ * them against a proof. */
+export const SubmissionAttemptBatchRequestV1Schema = z
+  .object({ batchId: z.string().min(1).max(200) })
+  .strict();
+export type SubmissionAttemptBatchRequestV1 = z.infer<typeof SubmissionAttemptBatchRequestV1Schema>;
+
+export const RecoverableSubmissionAttemptsResponseV1Schema = z
+  .object({ attempts: z.array(SubmissionAttemptWireV1Schema).max(20) })
+  .strict();
+export type RecoverableSubmissionAttemptsResponseV1 = z.infer<
+  typeof RecoverableSubmissionAttemptsResponseV1Schema
+>;
+
+export const PublicProofShareResponseV1Schema = z
+  .object({
+    publicId: z.string().regex(/^[0-9a-f]{48,}$/),
+    url: z.string().min(1).max(300),
+    createdAt: z.string().min(1),
+  })
+  .strict();
+export type PublicProofShareResponseV1 = z.infer<typeof PublicProofShareResponseV1Schema>;

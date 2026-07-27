@@ -8,3 +8,4 @@ export * from './nft-contracts.js';
 export * from './ai-contracts.js';
 export * from './execution-contracts.js';
 export * from './proof-events.js';
+export * from './recovery-contracts.js';
