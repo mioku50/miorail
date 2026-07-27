@@ -17,7 +17,6 @@ import {
 // ---------------------------------------------------------------------------
 
 const MOONWELL = PINNED_EARN_VENUES_V1.moonwell.target;
-const MORPHO = PINNED_EARN_VENUES_V1.morpho.target;
 
 /** A reader where everything verifies correctly, with per-check overrides. */
 function fakeReader(overrides: Partial<EarnPinnedContractReaderV1> = {}): EarnPinnedContractReaderV1 {

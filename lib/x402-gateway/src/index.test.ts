@@ -53,7 +53,7 @@ describe('x402-gateway', () => {
   const facilitator = new MockFacilitator();
   const gateway = x402Gateway({ paymentRequired, facilitator });
 
-  app.get('/protected', gateway, (req: Request, res: ExpressResponse) => {
+  app.get('/protected', gateway, (_req: Request, res: ExpressResponse) => {
     res.status(200).json({ data: 'success' });
   });
 

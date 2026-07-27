@@ -3,9 +3,7 @@ import test from 'node:test';
 import { canonicalJsonV1, hashEvidenceRecordV1, ZERO_HASH_V1 } from '@mioagent/route-domain';
 import { createSwapRouteEngine, RouteEngineInputError } from '../src/index.js';
 import {
-  EXPIRES,
   NOW,
-  OBSERVED,
   WALLET,
   failingAdapter,
   makeCandidate,

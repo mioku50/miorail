@@ -1351,9 +1351,9 @@ async function buildSimulateReview(
 
 routeIntelligenceRouter.post(
   '/blueprints/:blueprintId/simulate',
-  (req, res, next) => simulateSettlementStorage.run({}, () => next()),
+  (_req, _res, next) => simulateSettlementStorage.run({}, () => next()),
   simulateGuardMiddleware,
-  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
     const { user, body, blueprint } = res.locals as SimulateLocals;
     try {
       const repository = simulateRouteRuntime.repository();
@@ -1447,7 +1447,7 @@ routeIntelligenceRouter.post(
     }
   },
   (req: Request, res: Response, next: NextFunction) => simulateRouteRuntime.paymentMiddleware(req, res, next),
-  async (req: Request, res: Response): Promise<void> => {
+  async (_req: Request, res: Response): Promise<void> => {
     const { user, body, blueprint, pendingCharge } = res.locals as SimulateLocals;
     if (!pendingCharge) {
       res.status(500).json({ error: 'simulation_failed', code: 'simulation_failed' });

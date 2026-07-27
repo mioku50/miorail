@@ -12,7 +12,7 @@ import {
 } from '@mioagent/route-domain';
 import { resolveEarnIntentV1 } from '@mioagent/intent-engine';
 import { compareEarnRoutesV1, createCuratedEarnDataSourceV1 } from '@mioagent/earn-engine';
-import { InMemoryRouteStorageRepository, RouteStorageIntegrityError, RouteStorageTenantError } from '../src/index.js';
+import { InMemoryRouteStorageRepository, RouteStorageIntegrityError } from '../src/index.js';
 
 // ---------------------------------------------------------------------------
 // T62 §1/§2 — additive earn persistence. Fixtures come from the real OFFLINE

@@ -3,7 +3,6 @@ import {
   RouteIntentV1Schema,
   ZERO_HASH_V1,
   stableHashV1,
-  type PathScoreV1,
   type RouteCandidateV1,
   type RouteIntentV1,
 } from '@mioagent/route-domain';

@@ -11,7 +11,7 @@ test('Rate Limit Middleware', async (t) => {
 
   app.use(rateLimit(limiter));
 
-  app.get('/test', (req, res) => {
+  app.get('/test', (_req, res) => {
     res.status(200).json({ status: 'ok' });
   });
 

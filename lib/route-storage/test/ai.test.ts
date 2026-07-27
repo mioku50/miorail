@@ -345,7 +345,7 @@ describe('the fake refuses exactly what the migration refuses', () => {
   });
 
   test('a proof for a different card is refused', async () => {
-    const { repository, intent: value, card: built } = await seeded();
+    const { repository, intent: value } = await seeded();
     const other = card(value, { expiresAt: '2026-07-27T10:05:00.000Z' });
     await assert.rejects(
       repository.insertAiProof({

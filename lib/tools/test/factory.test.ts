@@ -152,7 +152,7 @@ describe('createToolAggregatorForUser', () => {
         const mockGetSettings = mock.method(settingsAPI, 'getUserSettings', async () => ({
             protocolToggles: { moralis: true }
         }));
-        const mockGetDecryptedKey = mock.method(settingsAPI, 'getDecryptedKey', async (userId: string, keyName: string) => {
+        const mockGetDecryptedKey = mock.method(settingsAPI, 'getDecryptedKey', async (_userId: string, keyName: string) => {
             if (keyName === 'moralis_api_key') return 'fake-moralis-key';
             return null;
         });

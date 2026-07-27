@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { financialContentV1, stableHashV1, type HashV1 } from './hashing.js';
 import {
-  DecimalAmountV1Schema,
   HashV1Schema,
   ProviderRefV1Schema,
   TimestampV1Schema,

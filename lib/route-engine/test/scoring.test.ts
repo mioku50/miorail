@@ -3,7 +3,6 @@ import test from 'node:test';
 import { createSwapRouteEngine } from '../src/index.js';
 import {
   ETH,
-  EXPIRES,
   NOW,
   USDC,
   WALLET,

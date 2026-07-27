@@ -1,4 +1,4 @@
-import { createPublicClient, http, type Address, type PublicClient } from 'viem';
+import { createPublicClient, http, type Address } from 'viem';
 import { base } from 'viem/chains';
 import {
   PINNED_BASE_USDC_V1,

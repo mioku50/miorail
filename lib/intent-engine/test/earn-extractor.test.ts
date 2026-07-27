@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  extractEarnIntentV1,
   mapEarnOptimizationModeV1,
   mapEarnProtocolConstraintV1,
   resolveEarnIntentV1,

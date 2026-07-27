@@ -93,12 +93,12 @@ import { routes } from './routes';
 app.use('/api', routes);
 
 // Health route
-app.get('/health', (req: Request, res: Response) => {
+app.get('/health', (_req: Request, res: Response) => {
   res.status(200).json({ status: 'ok' });
 });
 
 // 404 handler
-app.use((req: Request, res: Response) => {
+app.use((_req: Request, res: Response) => {
   res.status(404).json({ error: 'Not Found' });
 });
 
