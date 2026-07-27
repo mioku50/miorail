@@ -11,6 +11,7 @@
     "@mioagent/agent": "workspace:*",
     "@mioagent/api-spec": "workspace:*",
     "@mioagent/api-zod": "workspace:*",
+    "@mioagent/b20-control": "workspace:*",
     "@mioagent/autonomy": "workspace:*",
     "@mioagent/commerce-engine": "workspace:*",
     "@mioagent/nft-engine": "workspace:*",

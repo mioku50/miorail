@@ -25,6 +25,10 @@ export interface MiorailProductMigrationFlags {
    * Uniswap and KyberSwap sends nothing and signs nothing, and stays on
    * whenever route intelligence is on. */
   aerodromeExecutionV1: boolean;
+  /** T67C: the B20 Control Card. Read-only — it inspects a token and signs
+   * nothing — but it is gated until a live smoke run has confirmed the
+   * interface against mainnet. */
+  b20ControlV1: boolean;
 }
 
 function readBooleanFlag(env: NodeJS.ProcessEnv, name: string, defaultValue: boolean): boolean {
@@ -54,5 +58,6 @@ export function getMiorailProductMigrationFlags(
     privateAiRouteV1: readBooleanFlag(env, 'MIORAIL_PRIVATE_AI_ROUTE_V1', false),
     privateAiExecutionV1: readBooleanFlag(env, 'MIORAIL_PRIVATE_AI_EXECUTION_V1', false),
     aerodromeExecutionV1: readBooleanFlag(env, 'MIORAIL_AERODROME_EXECUTION_V1', false),
+    b20ControlV1: readBooleanFlag(env, 'MIORAIL_B20_CONTROL_V1', false),
   });
 }

@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@mioagent/b20-control": "workspace:*",
     "@mioagent/route-domain": "workspace:*"
   },
   "devDependencies": {

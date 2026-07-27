@@ -1,0 +1,257 @@
+import assert from 'node:assert/strict';
+import test, { afterEach, beforeEach, describe } from 'node:test';
+import express from 'express';
+import request from 'supertest';
+import type { B20ReaderV1, B20RpcResultV1 } from '@mioagent/b20-control';
+import { InMemoryB20StorageRepositoryV1 } from '@mioagent/route-storage';
+import { b20ControlRouter, b20RouteRuntime } from './b20Control.js';
+
+// A detonator on the global fetch: the reader is injected, so a test that
+// forgets to stub it fails loudly rather than calling Base mainnet.
+globalThis.fetch = (() => {
+  throw new Error('live network call attempted in a unit test');
+}) as unknown as typeof fetch;
+
+const WALLET = '0x1111111111111111111111111111111111111111';
+const USER = { id: `eip155:8453:${WALLET}`, address: WALLET, chainId: 8453 as const };
+const OTHER_WALLET = '0x2222222222222222222222222222222222222222';
+const OTHER = { id: `eip155:8453:${OTHER_WALLET}`, address: OTHER_WALLET, chainId: 8453 as const };
+const TOKEN = '0xb2000000000000000000007bf6d5cbb0e24cb301';
+const ERC20 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+const BLOCK_HASH = `0x${'ab'.repeat(32)}` as `0x${string}`;
+const NOW = new Date('2026-07-27T12:00:00.000Z');
+
+const FLAGS = {
+  routeIntelligenceV1: true,
+  legacyTerminal: true,
+  paidIntelligence: false,
+  earnRouteV1: false,
+  commerceRouteV1: false,
+  commerceExecutionV1: false,
+  nftRouteV1: false,
+  nftExecutionV1: false,
+  privateAiRouteV1: false,
+  privateAiExecutionV1: false,
+  aerodromeExecutionV1: false,
+  b20ControlV1: true,
+};
+
+const original = { ...b20RouteRuntime };
+let repository: InMemoryB20StorageRepositoryV1;
+let isB20Value: boolean;
+let blockNumber: string;
+
+function word(value: bigint): string {
+  return value.toString(16).padStart(64, '0');
+}
+function stringWord(text: string): string {
+  const bytes = Buffer.from(text, 'utf8').toString('hex');
+  return `0x${word(32n)}${word(BigInt(text.length))}${bytes.padEnd(64, '0')}`;
+}
+
+function fakeReader(): B20ReaderV1 {
+  const ok = (value: string): B20RpcResultV1<string> => ({ ok: true, value, raw: value });
+  return {
+    async readBlockAnchor() {
+      return { ok: true, value: { blockNumber, blockHash: BLOCK_HASH, blockTag: '0x1' }, raw: '' };
+    },
+    async readIsB20() {
+      return { ok: true, value: isB20Value, raw: `0x${word(isB20Value ? 1n : 0n)}` };
+    },
+    async readIsB20Initialized() {
+      return { ok: true, value: true, raw: `0x${word(1n)}` };
+    },
+    async readVariantActivated() {
+      return { ok: true, value: true, raw: `0x${word(1n)}` };
+    },
+    async call(input) {
+      const selector = input.data.slice(2, 10);
+      if (selector === '06fdde03' || selector === '95d89b41') return ok(stringWord('BRIAN'));
+      if (selector === 'e8a3d485') return ok(stringWord('ipfs://x'));
+      if (selector === '313ce567') return ok(`0x${word(18n)}`);
+      if (selector === '18160ddd' || selector === '8f770ad0') return ok(`0x${word(10n ** 27n)}`);
+      if (selector === 'de9997e3') return ok(`0x${word(32n)}${word(0n)}`);
+      if (selector === '1b3ed722') return ok(`0x${word(10n ** 18n)}`);
+      if (selector === 'e5a6b10f') return { ok: false, reason: 'reverted', revertSelector: null };
+      return ok(`0x${word(0n)}`);
+    },
+  };
+}
+
+function app(user: typeof USER | null = USER) {
+  const server = express();
+  server.use(express.json());
+  server.use((req, _res, next) => {
+    if (user) Object.defineProperty(req, 'session', { configurable: true, value: { user } });
+    next();
+  });
+  server.use('/api/route-intelligence', b20ControlRouter);
+  return server;
+}
+
+beforeEach(() => {
+  repository = new InMemoryB20StorageRepositoryV1(() => NOW);
+  isB20Value = true;
+  blockNumber = '49059662';
+  b20RouteRuntime.flags = () => ({ ...FLAGS });
+  b20RouteRuntime.repository = () => repository;
+  b20RouteRuntime.reader = fakeReader;
+  b20RouteRuntime.rpcConfigured = () => true;
+  b20RouteRuntime.migrationAvailable = async () => true;
+  b20RouteRuntime.ttlMs = () => 0;
+  b20RouteRuntime.now = () => NOW;
+});
+
+afterEach(() => {
+  Object.assign(b20RouteRuntime, original);
+});
+
+function inspect(body: unknown, server = app()) {
+  return request(server).post('/api/route-intelligence/b20/inspect').send(body as object);
+}
+
+describe('the gates', () => {
+  test('the route is 404 while the flag is off', async () => {
+    b20RouteRuntime.flags = () => ({ ...FLAGS, b20ControlV1: false });
+    const response = await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    assert.equal(response.status, 404);
+    assert.equal(response.body.code, 'b20_control_disabled');
+  });
+
+  test('an unauthenticated caller gets 401 and reaches no reader', async () => {
+    let called = false;
+    b20RouteRuntime.reader = () => {
+      called = true;
+      return fakeReader();
+    };
+    const response = await inspect({ chainId: 8453, tokenAddress: TOKEN }, app(null));
+    assert.equal(response.status, 401);
+    assert.equal(called, false);
+  });
+
+  test('a wrong chain and a malformed address are 400, with no chain read', async () => {
+    let called = false;
+    b20RouteRuntime.reader = () => {
+      called = true;
+      return fakeReader();
+    };
+    assert.equal((await inspect({ chainId: 84532, tokenAddress: TOKEN })).status, 400);
+    assert.equal((await inspect({ chainId: 8453, tokenAddress: '0x1234' })).status, 400);
+    assert.equal((await inspect({ chainId: 8453 })).status, 400);
+    assert.equal(called, false, 'a refused request must never open a socket');
+  });
+
+  test('no RPC endpoint is a stable 503, not a guess', async () => {
+    b20RouteRuntime.rpcConfigured = () => false;
+    const response = await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    assert.equal(response.status, 503);
+    assert.equal(response.body.code, 'b20_rpc_unavailable');
+  });
+
+  test('a missing migration is a stable 503, never a partial write', async () => {
+    b20RouteRuntime.migrationAvailable = async () => false;
+    const response = await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    assert.equal(response.status, 503);
+    assert.equal(response.body.code, 'b20_storage_unavailable');
+  });
+});
+
+describe('inspect', () => {
+  test('a B20 token returns a card bound to one block, with evidence', async () => {
+    const response = await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.card.detectionOutcome, 'b20');
+    assert.equal(response.body.card.blockNumber, '49059662');
+    assert.equal(response.body.cached, false);
+    assert.ok(response.body.evidence.length > 0);
+    assert.ok(
+      response.body.evidence.every(
+        (record: { blockNumber: string; blockHash: string }) =>
+          record.blockNumber === '49059662' && record.blockHash === BLOCK_HASH,
+      ),
+    );
+  });
+
+  test('an ordinary ERC-20 is told so, and gets no control claims', async () => {
+    isB20Value = false;
+    const response = await inspect({ chainId: 8453, tokenAddress: ERC20 });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.card.detectionOutcome, 'not_b20');
+    assert.equal(response.body.status, 'not_b20');
+    assert.deepEqual(response.body.card.statements, []);
+  });
+
+  test('nothing in the response prepares, approves or signs anything', async () => {
+    const response = await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    const serialised = JSON.stringify(response.body).toLowerCase();
+    // `methodSignature` is a legitimate evidence field, so the check names the
+    // things that would indicate a signable payload rather than the word
+    // "signature" itself.
+    for (const banned of ['calldata', 'sendcalls', 'blueprint', 'approvedcalls', 'privatekey', 'rawtransaction', 'to sign']) {
+      assert.equal(serialised.includes(banned), false, `a read-only card must not mention ${banned}`);
+    }
+  });
+
+  test('the response carries no score of any kind', async () => {
+    const response = await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    const serialised = JSON.stringify(response.body).toLowerCase();
+    for (const banned of ['safety score', 'overall confidence', 'safe token', 'unsafe token', '/100']) {
+      assert.equal(serialised.includes(banned), false);
+    }
+  });
+
+  test('re-inspecting in the same block re-reads the stored snapshot', async () => {
+    const first = await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    const second = await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    assert.equal(first.body.snapshotId, second.body.snapshotId);
+    assert.equal(first.body.card.cardHash, second.body.card.cardHash);
+  });
+
+  test('inside the TTL the chain is not read again, and the answer says it is cached', async () => {
+    await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    let reads = 0;
+    b20RouteRuntime.ttlMs = () => 30_000;
+    b20RouteRuntime.reader = () => {
+      reads += 1;
+      return fakeReader();
+    };
+    const response = await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.cached, true);
+    assert.equal(reads, 0, 'a cached answer must not re-read the chain');
+  });
+
+  test('a new block produces a new snapshot rather than replacing the old one', async () => {
+    const first = await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    blockNumber = '49060000';
+    const second = await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    assert.notEqual(first.body.snapshotId, second.body.snapshotId);
+    const stored = await request(app()).get(`/api/route-intelligence/b20/snapshots/${first.body.snapshotId}`);
+    assert.equal(stored.status, 200, 'the earlier snapshot is still readable');
+    assert.equal(stored.body.card.blockNumber, '49059662');
+  });
+});
+
+describe('snapshots', () => {
+  test('a stored snapshot is readable by its owner and marked cached', async () => {
+    const created = await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    const response = await request(app()).get(`/api/route-intelligence/b20/snapshots/${created.body.snapshotId}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.cached, true);
+    assert.equal(response.body.card.cardHash, created.body.card.cardHash);
+  });
+
+  test('another tenant gets 404, not a refusal that confirms it exists', async () => {
+    const created = await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    const response = await request(app(OTHER)).get(
+      `/api/route-intelligence/b20/snapshots/${created.body.snapshotId}`,
+    );
+    assert.equal(response.status, 404);
+    assert.equal(response.body.code, 'b20_snapshot_not_found');
+  });
+
+  test('an unknown id is 404', async () => {
+    const response = await request(app()).get('/api/route-intelligence/b20/snapshots/b20-snapshot:nope');
+    assert.equal(response.status, 404);
+  });
+});

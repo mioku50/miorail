@@ -4,6 +4,7 @@
   "private": true,
   "main": "index.ts",
   "dependencies": {
+    "@mioagent/b20-control": "workspace:*",
     "@mioagent/commerce-engine": "workspace:*",
     "@mioagent/db": "workspace:*",
     "@mioagent/intent-engine": "workspace:*",

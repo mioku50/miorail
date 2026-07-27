@@ -168,6 +168,7 @@ import type {
 import { client } from '@mioagent/db';
 import { nftRouteIntelligenceRouter } from './nftRouteIntelligence.js';
 import { aiRouteIntelligenceRouter } from './aiRouteIntelligence.js';
+import { b20ControlRouter } from './b20Control.js';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
 import { RoutePlanCoordinator, type RoutePlanCoordinatorInput } from '../lib/routePlanCoordinator.js';
 import { loadTokenSecurityContext } from '../lib/executionSecurity.js';
@@ -3347,3 +3348,6 @@ routeIntelligenceRouter.get('/commerce/orders/:orderId/delivery', async (req, re
 // mounted without another 500 lines in this file.
 routeIntelligenceRouter.use(nftRouteIntelligenceRouter);
 routeIntelligenceRouter.use(aiRouteIntelligenceRouter);
+// T67C: the B20 Control rail. Read-only throughout — it mounts no route that
+// prepares, approves or submits anything.
+routeIntelligenceRouter.use(b20ControlRouter);

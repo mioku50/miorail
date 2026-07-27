@@ -1,0 +1,208 @@
+import { Router, type Request, type Response } from 'express';
+import { logger } from '@mioagent/utils';
+import {
+  B20InspectRequestV1Schema,
+  B20InspectResponseV1Schema,
+} from '@mioagent/api-zod';
+import {
+  B20RequestError,
+  createB20ReaderV1,
+  inspectB20TokenV1,
+  refusalDetailV1,
+  validateB20InspectRequestV1,
+  type B20ControlSnapshotV1,
+} from '@mioagent/b20-control';
+import {
+  RouteStorageConflictError,
+  RouteStorageIntegrityError,
+  createDatabaseB20StorageRepository,
+  type B20StorageRepositoryV1,
+} from '@mioagent/route-storage';
+import { client } from '@mioagent/db';
+import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
+
+// ---------------------------------------------------------------------------
+// T67C — the B20 Control rail.
+//
+// Two routes, both read-only, and that is a property of the code: nothing in
+// this file builds a call, prepares a transaction, requests an approval or
+// touches a wallet. The only outbound network traffic is `eth_call` and
+// `eth_getBlockByNumber` through the injected reader.
+//
+// Idempotency is per tenant + token + BLOCK. Two inspections in the same block
+// are the same fact, so the second one reads the stored row instead of writing
+// a second. Inside the TTL, a repeat request does not even re-read the chain —
+// and the response says `cached: true`, because a snapshot from four blocks
+// ago is a different claim from a current one and the user should be able to
+// tell which they are looking at.
+// ---------------------------------------------------------------------------
+
+export const b20ControlRouter = Router();
+
+/** The Base mainnet endpoint, resolved the way every other on-chain read in
+ * this server resolves it. Empty means the routes answer 503 rather than
+ * guessing. */
+function baseMainnetRpcUrlV1(): string {
+  return (process.env.BASE_MAINNET_RPC_URL || process.env.BASE_RPC_URL || '').trim();
+}
+
+function ttlMsV1(): number {
+  const raw = Number.parseInt((process.env.MIORAIL_B20_CONTROL_TTL_MS ?? '').trim(), 10);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 30_000;
+}
+
+export const b20RouteRuntime = {
+  flags: getMiorailProductMigrationFlags,
+  repository: (): B20StorageRepositoryV1 => createDatabaseB20StorageRepository(client),
+  reader: () => createB20ReaderV1({ rpcUrl: baseMainnetRpcUrlV1() }),
+  rpcConfigured: () => baseMainnetRpcUrlV1().length > 0,
+  ttlMs: ttlMsV1,
+  migrationAvailable: async (): Promise<boolean> => {
+    const rows = await client`
+      SELECT
+        to_regclass('public.b20_control_snapshots') AS snapshots,
+        to_regclass('public.b20_control_evidence') AS evidence
+    `;
+    const row = rows[0];
+    return Boolean(row && row.snapshots && row.evidence);
+  },
+  now: () => new Date(),
+};
+
+function sessionUser(req: Request) {
+  const user = req.session?.user;
+  if (
+    !user ||
+    user.chainId !== 8453 ||
+    !/^0x[0-9a-f]{40}$/.test(user.address) ||
+    user.id !== `eip155:8453:${user.address}`
+  ) return null;
+  return user;
+}
+
+/** flag + session — the shared head of both routes. */
+function b20Guard(req: Request, res: Response): { user: NonNullable<ReturnType<typeof sessionUser>> } | null {
+  const flags = b20RouteRuntime.flags(process.env);
+  if (!flags.routeIntelligenceV1 || !flags.b20ControlV1) {
+    res.status(404).json({ error: 'b20_control_disabled', code: 'b20_control_disabled' });
+    return null;
+  }
+  const user = sessionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return null;
+  }
+  return { user };
+}
+
+function storageFailure(res: Response, error: unknown, where: string): void {
+  if (error instanceof RouteStorageConflictError) {
+    res.status(409).json({ error: 'b20_snapshot_conflict', code: 'b20_snapshot_conflict', detail: error.message });
+    return;
+  }
+  if (error instanceof RouteStorageIntegrityError) {
+    res.status(500).json({ error: 'storage_integrity', code: 'storage_integrity' });
+    return;
+  }
+  // The message is never echoed: an RPC error can carry the endpoint URL, and
+  // the endpoint URL can carry the key.
+  logger.error('B20 control storage failed', { where, name: error instanceof Error ? error.name : 'unknown' });
+  res.status(500).json({ error: 'storage_unavailable', code: 'storage_unavailable' });
+}
+
+function respondV1(res: Response, snapshot: B20ControlSnapshotV1, card: unknown, cached: boolean): void {
+  res.json(
+    B20InspectResponseV1Schema.parse({
+      snapshotId: snapshot.id,
+      status: snapshot.status,
+      cached,
+      card,
+      evidence: snapshot.evidence,
+    }),
+  );
+}
+
+b20ControlRouter.post('/b20/inspect', async (req: Request, res: Response) => {
+  const guard = b20Guard(req, res);
+  if (!guard) return;
+
+  const parsed = B20InspectRequestV1Schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_b20_inspect_request', code: 'invalid_b20_inspect_request' });
+    return;
+  }
+  // Decided with no network access at all, so a malformed address never
+  // becomes an RPC round trip.
+  const refusal = validateB20InspectRequestV1(parsed.data.chainId, parsed.data.tokenAddress);
+  if (refusal) {
+    res.status(400).json({ error: refusal, code: refusal, detail: refusalDetailV1(refusal) });
+    return;
+  }
+  if (!b20RouteRuntime.rpcConfigured()) {
+    res.status(503).json({ error: 'b20_rpc_unavailable', code: 'b20_rpc_unavailable' });
+    return;
+  }
+
+  try {
+    if (!(await b20RouteRuntime.migrationAvailable())) {
+      res.status(503).json({ error: 'b20_storage_unavailable', code: 'b20_storage_unavailable' });
+      return;
+    }
+    const repository = b20RouteRuntime.repository();
+    const now = b20RouteRuntime.now();
+
+    // Inside the TTL the stored snapshot IS the answer, and it is returned
+    // marked as cached rather than re-read and re-presented as current.
+    const ttl = b20RouteRuntime.ttlMs();
+    const latest = await repository.latestSnapshot(guard.user.id, parsed.data.tokenAddress);
+    if (latest && ttl > 0 && now.getTime() - Date.parse(latest.observedAt) < ttl) {
+      const { buildB20CardV1 } = await import('@mioagent/b20-control');
+      respondV1(res, latest.snapshot, buildB20CardV1(latest.snapshot), true);
+      return;
+    }
+
+    const result = await inspectB20TokenV1(
+      { reader: b20RouteRuntime.reader() },
+      {
+        tenantId: guard.user.id,
+        chainId: parsed.data.chainId,
+        tokenAddress: parsed.data.tokenAddress,
+        now,
+      },
+    );
+    // A failed read is still recorded: "the endpoint did not answer at this
+    // moment" is a fact worth having, and storing it keeps a retry storm from
+    // looking like a series of different tokens.
+    const stored = await repository.insertSnapshot({ userId: guard.user.id, snapshot: result.snapshot });
+    respondV1(res, stored.snapshot, result.card, stored.snapshotHash !== result.snapshot.snapshotHash);
+  } catch (error) {
+    if (error instanceof B20RequestError) {
+      res.status(400).json({ error: error.refusal, code: error.refusal, detail: error.message });
+      return;
+    }
+    storageFailure(res, error, 'inspect');
+  }
+});
+
+b20ControlRouter.get('/b20/snapshots/:id', async (req: Request, res: Response) => {
+  const guard = b20Guard(req, res);
+  if (!guard) return;
+
+  try {
+    if (!(await b20RouteRuntime.migrationAvailable())) {
+      res.status(503).json({ error: 'b20_storage_unavailable', code: 'b20_storage_unavailable' });
+      return;
+    }
+    // Tenant isolation is the QUERY, not a check afterwards: another tenant's
+    // snapshot is not found rather than found and refused.
+    const record = await b20RouteRuntime.repository().getSnapshot(String(req.params.id), guard.user.id);
+    if (!record) {
+      res.status(404).json({ error: 'b20_snapshot_not_found', code: 'b20_snapshot_not_found' });
+      return;
+    }
+    const { buildB20CardV1 } = await import('@mioagent/b20-control');
+    respondV1(res, record.snapshot, buildB20CardV1(record.snapshot), true);
+  } catch (error) {
+    storageFailure(res, error, 'get_snapshot');
+  }
+});

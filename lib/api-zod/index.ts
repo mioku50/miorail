@@ -1618,6 +1618,8 @@ export const StatusResponseSchema = z.object({
     // Aerodrome COMPARISON has no gate of its own; it rides on route
     // intelligence, because quoting it neither spends nor signs.
     aerodromeExecutionV1: z.boolean().optional(),
+    // T67C: same additive treatment.
+    b20ControlV1: z.boolean().optional(),
   }),
   rpc: z.object({
     status: z.enum(["connected", "missing", "failed"]),
@@ -2375,3 +2377,112 @@ export const AiProofResponseV1Schema = z
     copy: z.string().min(1).max(300),
   })
   .strict();
+
+// ---------------------------------------------------------------------------
+// T67C — B20 Control Card. Read-only, and the schemas say so: no request field
+// carries calldata, a recipient, a value or an amount, and no response field
+// carries a transaction, a call or a payload to sign. There is nothing here to
+// approve, because there is nothing here that moves.
+// ---------------------------------------------------------------------------
+
+export const B20InspectRequestV1Schema = z
+  .object({
+    /** Base mainnet only. A literal, so another chain is a 400, not a silent
+     * read of the wrong network. */
+    chainId: z.literal(8453),
+    tokenAddress: AddressV1Schema,
+  })
+  .strict();
+export type B20InspectRequestV1 = z.infer<typeof B20InspectRequestV1Schema>;
+
+const B20FieldV1Schema = z
+  .object({
+    key: z.string().min(1).max(60),
+    label: z.string().min(1).max(120),
+    status: z.enum([
+      'exact_chain_read',
+      'unavailable',
+      'unsupported_by_variant',
+      'planned_not_active',
+      'conflicting_evidence',
+    ]),
+    value: z.string().max(500).nullable(),
+    reason: z.string().max(300).nullable(),
+    evidenceHash: z.string().regex(/^0x[0-9a-f]{64}$/).nullable(),
+  })
+  .strict();
+
+const B20StatementV1Schema = z
+  .object({
+    key: z.string().min(1).max(60),
+    statement: z.string().min(1).max(300),
+    observedState: z.enum(['constrained', 'unconstrained', 'unknown']),
+    evidenceHash: z.string().regex(/^0x[0-9a-f]{64}$/).nullable(),
+  })
+  .strict();
+
+const B20EvidenceV1Schema = z
+  .object({
+    schemaVersion: z.literal('b20-control-evidence/v1'),
+    evidenceHash: z.string().regex(/^0x[0-9a-f]{64}$/),
+    chainId: z.literal(8453),
+    tokenAddress: AddressV1Schema,
+    target: AddressV1Schema,
+    blockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/),
+    blockHash: z.string().regex(/^0x[0-9a-f]{64}$/),
+    methodSignature: z.string().min(3).max(120),
+    selector: z.string().regex(/^0x[0-9a-f]{8}$/),
+    rawResponseHash: z.string().regex(/^0x[0-9a-f]{64}$/),
+    decodedValue: z.string().max(500).nullable(),
+    revertSelector: z.string().regex(/^0x[0-9a-f]{8}$/).nullable(),
+    observedAt: z.string(),
+    verification: z.literal('exact_chain_read'),
+    sourceVersion: z.string().min(1).max(120),
+  })
+  .strict();
+
+export const B20ControlCardResponseV1Schema = z
+  .object({
+    schemaVersion: z.literal('b20-control-card/v1'),
+    cardHash: z.string().regex(/^0x[0-9a-f]{64}$/),
+    snapshotId: z.string().min(1).max(200),
+    snapshotHash: z.string().regex(/^0x[0-9a-f]{64}$/),
+    identityHash: z.string().regex(/^0x[0-9a-f]{64}$/),
+    chainId: z.literal(8453),
+    tokenAddress: AddressV1Schema,
+    displayName: z.string().max(200).nullable(),
+    displaySymbol: z.string().max(60).nullable(),
+    variant: z.enum(['asset', 'stablecoin']).nullable(),
+    detectionOutcome: z.enum([
+      'b20',
+      'not_b20',
+      'b20_uninitialised',
+      'unavailable_at_block',
+      'rpc_failure',
+      'invalid_address',
+      'unsupported_chain',
+    ]),
+    blockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    blockHash: z.string().regex(/^0x[0-9a-f]{64}$/).nullable(),
+    observedAt: z.string(),
+    fields: z.array(B20FieldV1Schema).max(64),
+    statements: z.array(B20StatementV1Schema).max(32),
+    unavailable: z.array(z.string().max(200)).max(32),
+    boundaries: z.array(z.string().max(200)).max(16),
+  })
+  .strict();
+export type B20ControlCardResponseV1 = z.infer<typeof B20ControlCardResponseV1Schema>;
+
+export const B20InspectResponseV1Schema = z
+  .object({
+    snapshotId: z.string().min(1).max(200),
+    status: z.enum(['complete', 'partial', 'not_b20', 'failed']),
+    /** True when the answer came from a stored snapshot inside the TTL rather
+     * than from a fresh read. Shown, not hidden: a cached block is a
+     * different claim from a current one. */
+    cached: z.boolean(),
+    card: B20ControlCardResponseV1Schema,
+    evidence: z.array(B20EvidenceV1Schema).max(64),
+  })
+  .strict();
+export type B20InspectResponseV1 = z.infer<typeof B20InspectResponseV1Schema>;
