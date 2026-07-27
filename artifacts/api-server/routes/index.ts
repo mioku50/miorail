@@ -14,11 +14,16 @@ import { autonomyRouter } from './autonomy';
 import { mcpBaseRouter } from './mcpBase';
 import { authRouter } from './auth';
 import { routeIntelligenceRouter } from './routeIntelligence';
+import { publicProofRouter } from './publicProof';
 import { enforceTenantBinding, requireTenant } from '../middleware/tenantAuth';
 
 export const routes = Router();
 
 routes.use('/auth', authRouter);
+// T67C.2: mounted BEFORE requireTenant on purpose. A public proof opens with
+// no session, no wallet and no SIWE; putting it behind the tenant middleware
+// would make it unreadable by the only people it exists for.
+routes.use('/public', publicProofRouter);
 routes.use(requireTenant, enforceTenantBinding);
 routes.use('/memory', memoryRouter);
 routes.use('/settings', settingsRouter);

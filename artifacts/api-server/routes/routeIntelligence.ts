@@ -171,6 +171,7 @@ import { nftRouteIntelligenceRouter } from './nftRouteIntelligence.js';
 import { aiRouteIntelligenceRouter } from './aiRouteIntelligence.js';
 import { b20ControlRouter } from './b20Control.js';
 import { submissionRecoveryRouter } from './submissionRecovery.js';
+import { publicProofOwnerRouter } from './publicProof.js';
 import {
   recordAttemptOutcomeV1,
   verifySubmissionAttemptV1,
@@ -3403,3 +3404,7 @@ routeIntelligenceRouter.use(b20ControlRouter);
 // recovery rail rather than growing one each — and it sends nothing: the only
 // writes it makes are to the attempt table.
 routeIntelligenceRouter.use(submissionRecoveryRouter);
+// T67C.2: the OWNER half of public proof links. The visitor half is mounted
+// outside the tenant middleware — see routes/index.ts — because a proof only
+// its owner can read is not a proof anybody else can check.
+routeIntelligenceRouter.use(publicProofOwnerRouter);

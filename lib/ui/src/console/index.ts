@@ -9,3 +9,4 @@ export * from './CommercePanels';
 export * from './NftPanels';
 export * from './AiPanels';
 export * from './B20Panels';
+export * from './PublicProofPanels';

@@ -13,6 +13,7 @@ import { BaseMcpOAuthBridge } from './BaseMcpOAuthBridge';
 import { RequireSession } from './RequireSession';
 import { RouteHistoryPage } from '../features/plan/RouteHistoryPage';
 import { RouteIntelligenceConsole } from '../features/console/RouteIntelligenceConsole';
+import { PublicProofPage } from '../features/proof/PublicProofPage';
 
 // ---------------------------------------------------------------------------
 // The Route Intelligence console IS the app.
@@ -69,6 +70,12 @@ export function App() {
     <>
       <ChainEnvMismatchBanner />
       <Switch>
+        {/* T67C.2: a published proof. NOT wrapped in RequireSession — a proof
+            only its owner can open is not a proof anybody else can check. */}
+        <Route path="/proof/:publicId">
+          <PublicProofPage />
+        </Route>
+
         {/* Proofs — the console's second entry. */}
         <Route path="/plan/history">
           <RequireSession>

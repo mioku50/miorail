@@ -9,3 +9,4 @@ export * from './ai-contracts.js';
 export * from './execution-contracts.js';
 export * from './proof-events.js';
 export * from './recovery-contracts.js';
+export * from './public-proof-contracts.js';
