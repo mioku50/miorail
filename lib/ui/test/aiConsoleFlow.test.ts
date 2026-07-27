@@ -75,14 +75,14 @@ describe('an AI goal reaches the AI engine', () => {
 describe('the rails describe the AI run', () => {
   test('Venice is listed as an adapter of the AI family', () => {
     assert.equal(ADAPTER_FAMILY_V1.Venice, 'private_ai');
-    const adapters = adaptersFromStatusV1({ productMigration: { ...ON, paidIntelligence: false, legacyTerminal: true } });
+    const adapters = adaptersFromStatusV1({ productMigration: { ...ON, paidIntelligence: false } });
     const venice = adapters.find((entry) => entry.name === 'Venice');
     assert.equal(venice?.state, 'live');
   });
 
   test('a flag that is off makes Venice disabled, not disconnected', () => {
     const adapters = adaptersFromStatusV1({
-      productMigration: { ...ON, privateAiRouteV1: false, paidIntelligence: false, legacyTerminal: true },
+      productMigration: { ...ON, privateAiRouteV1: false, paidIntelligence: false },
     });
     assert.equal(adapters.find((entry) => entry.name === 'Venice')?.state, 'disabled');
   });
@@ -121,18 +121,18 @@ describe('the rails describe the AI run', () => {
 
   test('coverage separates comparing from running', () => {
     const compareOnly = coverageFromStatusV1({
-      productMigration: { ...ON, privateAiExecutionV1: false, paidIntelligence: false, legacyTerminal: true },
+      productMigration: { ...ON, privateAiExecutionV1: false, paidIntelligence: false },
     }).find((row) => row.action.startsWith('Private AI'));
     assert.equal(compareOnly?.state, 'building');
     assert.ok(compareOnly?.sources.includes('execution gate is off'));
 
     const both = coverageFromStatusV1({
-      productMigration: { ...ON, paidIntelligence: false, legacyTerminal: true },
+      productMigration: { ...ON, paidIntelligence: false },
     }).find((row) => row.action.startsWith('Private AI'));
     assert.equal(both?.state, 'ready');
 
     const off = coverageFromStatusV1({
-      productMigration: { ...ON, privateAiRouteV1: false, paidIntelligence: false, legacyTerminal: true },
+      productMigration: { ...ON, privateAiRouteV1: false, paidIntelligence: false },
     }).find((row) => row.action.startsWith('Private AI'));
     assert.equal(off?.state, 'off');
     assert.equal(off?.available, false);

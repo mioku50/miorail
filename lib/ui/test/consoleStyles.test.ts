@@ -80,3 +80,77 @@ describe('every console class has a stylesheet rule', () => {
     assert.match(css, /\.nftmedia \.nftmedia-ph\s*\{/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Layout rules that a rendering test cannot see.
+//
+// Both of these shipped and were caught only on a real phone, from screenshots:
+// the drawer was see-through, and the header painted its breadcrumb over the
+// network chip. Neither is visible to renderToStaticMarkup, which is why they
+// are asserted against the stylesheet instead.
+// ---------------------------------------------------------------------------
+
+/** The body of every rule whose selector matches, media queries included. */
+function rulesFor(pattern: RegExp): string[] {
+  const bodies: string[] = [];
+  const rule = /([^{}]+)\{([^{}]*)\}/g;
+  for (let match = rule.exec(css); match; match = rule.exec(css)) {
+    if (pattern.test(match[1] ?? '')) bodies.push(match[2] ?? '');
+  }
+  return bodies;
+}
+
+describe('the drawer is an opaque overlay', () => {
+  test('--drawer-bg is defined and fully opaque in both themes', () => {
+    const values = [...css.matchAll(/--drawer-bg:\s*([^;]+);/g)].map((match) => match[1]!.trim());
+    assert.equal(values.length, 2, 'both themes must define a drawer surface');
+    for (const value of values) {
+      // An rgba() or a transparent keyword here is the exact defect: the rail's
+      // own --rail-bg is rgba(255,255,255,.012), which is invisible as a grid
+      // column background and see-through as an overlay.
+      assert.match(value, /^#[0-9a-f]{6}$/i, `drawer background must be opaque, got ${value}`);
+    }
+  });
+
+  test('every fixed drawer paints on that surface, not on the rail colour', () => {
+    const fixed = rulesFor(/aside\.left/).filter((body) => /position:\s*fixed/.test(body));
+    assert.ok(fixed.length >= 2, 'the app and mini shells both turn the rail into a drawer');
+    for (const body of fixed) {
+      assert.match(body, /background:\s*var\(--drawer-bg\)/, 'a fixed drawer must be opaque');
+      assert.match(body, /z-index:\s*50/, 'the drawer must sit above the scrim');
+    }
+  });
+
+  test('the scrim sits under the drawer and over the page', () => {
+    const scrim = rulesFor(/\.scrim\s*$/).join(' ');
+    assert.match(scrim, /position:\s*fixed/);
+    assert.match(scrim, /z-index:\s*40/);
+  });
+});
+
+describe('the phone header cannot overlap or overflow', () => {
+  const phone = css.slice(css.indexOf('@media (max-width: 900px)'));
+
+  test('the breadcrumb is removed rather than left to wrap over the chips', () => {
+    assert.match(phone, /\.crumb\s*\{\s*display:\s*none/);
+  });
+
+  test('the network chip is dropped by its own class, not by "not .mono"', () => {
+    // `:not(.mono)` also matched the "not connected" chip — the one message
+    // that has to survive on a phone.
+    assert.match(phone, /\.netchip\s*\{\s*display:\s*none/);
+    assert.ok(!/chip:not\(\.mono\)/.test(css), 'the not-connected chip must not be hidden by accident');
+  });
+
+  test('the remaining chip may ellipsize instead of pushing the toggle off-screen', () => {
+    assert.match(phone, /header > \.chip\s*\{[^}]*min-width:\s*0/);
+    assert.match(phone, /header > \.chip\s*\{[^}]*text-overflow:\s*ellipsis/);
+    assert.match(phone, /\.themetog\s*\{\s*flex:\s*none/);
+  });
+
+  test('the status bar still scrolls rather than clipping', () => {
+    // Confirmed working on device; asserted so a later header fix does not
+    // "tidy" the overflow away.
+    assert.match(rulesFor(/\.mio-console footer\s*$/).join(' '), /overflow-x:\s*auto/);
+  });
+});

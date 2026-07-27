@@ -187,7 +187,10 @@ export function ConsoleShell(props: ConsoleShellProps) {
               Gas <b className="mono">{header.gasLabel ?? '—'}</b>
             </span>
           </div>
-          <span className="chip">
+          {/* `netchip` so the phone breakpoint can drop THIS chip specifically.
+              Targeting it by "the chip without .mono" also hid the "not
+              connected" chip, which is the one message that must survive. */}
+          <span className="chip netchip">
             <span className={`dot${header.connected ? '' : ' off'}`} />
             {header.networkLabel}
           </span>
