@@ -77,7 +77,7 @@ import {
   type NftProofResponseV1,
   type SimulateWithBudgetResponseV1,
 } from "@mioagent/api-client-react";
-import { BlueprintSubmitButton, EarnDepositFlow, type BlueprintSubmitStatus } from "@mioagent/wallet-actions";
+import { BlueprintSubmitButton, EarnDepositFlow, SubmissionRecoveryRail, type BlueprintSubmitStatus } from "@mioagent/wallet-actions";
 import { SimulateButton, type SimulateBlueprintResponseV1 } from "@mioagent/x402-actions";
 import { WalletConnect } from "./WalletConnect";
 
@@ -109,7 +109,7 @@ interface SubmissionState {
 const RECONCILABLE: BlueprintSubmitStatus[] = ["confirmed", "failed", "submitted_unknown"];
 
 export function MiniConsole() {
-  const { address } = useAccount();
+  const { address, chainId } = useAccount();
   const { theme, setTheme } = useConsoleTheme();
 
   const [screen, setScreen] = useState<ConsoleScreenV1>("plan");
@@ -1120,6 +1120,14 @@ export function MiniConsole() {
       drawer={drawer}
       panels={panels}
     >
+      {/* T67C.2: the SAME rail the web console mounts. Recovery orchestration
+          is written once — two copies would mean two answers to "did we
+          already send this?", and that question must have one. */}
+      <SubmissionRecoveryRail
+        walletAddress={address ?? null}
+        chainId={chainId ?? null}
+        enabled={Boolean(flags?.submissionRecoveryV1)}
+      />
       {content}
     </ConsoleMiniShell>
   );

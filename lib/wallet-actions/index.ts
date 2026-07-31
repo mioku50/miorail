@@ -44,6 +44,8 @@ export type { EarnDepositFlowProps, EarnProofState } from './src/EarnDepositFlow
 // this codebase, and recovery reuses it rather than growing a second.
 export { SubmissionRecoveryCard, RECOVERY_NO_BATCH_COPY_V1, RECOVERY_REASON_COPY_V1, RECOVERY_STATUS_LABEL_V1, baseAccountActivityUrlV1 } from './src/SubmissionRecoveryCard';
 export type { SubmissionRecoveryCardProps } from './src/SubmissionRecoveryCard';
+export { SubmissionRecoveryRail } from './src/SubmissionRecoveryRail';
+export type { SubmissionRecoveryRailProps } from './src/SubmissionRecoveryRail';
 export {
   browserMarkerStorageV1,
   writeRecoveryMarkerV1,

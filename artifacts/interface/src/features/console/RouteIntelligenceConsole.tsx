@@ -77,7 +77,7 @@ import {
   type NftProofResponseV1,
   type SimulateWithBudgetResponseV1,
 } from '@mioagent/api-client-react';
-import { BlueprintSubmitButton, EarnDepositFlow, type BlueprintSubmitStatus } from '@mioagent/wallet-actions';
+import { BlueprintSubmitButton, EarnDepositFlow, SubmissionRecoveryRail, type BlueprintSubmitStatus } from '@mioagent/wallet-actions';
 import { SimulateButton, type SimulateBlueprintResponseV1 } from '@mioagent/x402-actions';
 
 // ---------------------------------------------------------------------------
@@ -111,7 +111,7 @@ function shortAddress(address: string | undefined): string | null {
 
 export function RouteIntelligenceConsole() {
   const [, navigate] = useLocation();
-  const { address } = useAccount();
+  const { address, chainId } = useAccount();
   const { theme, setTheme } = useConsoleTheme();
 
   const [screen, setScreen] = useState<ConsoleScreenV1>('plan');
@@ -1277,6 +1277,16 @@ export function RouteIntelligenceConsole() {
       onSelectSession={() => setScreen(projection ? 'route' : 'plan')}
       onSelectProof={() => navigate('/plan/history')}
     >
+      {/* T67C.2: an unfinished submission surfaces above everything else. A
+          user who reloaded mid-flight needs to finish CHECKING that batch
+          before they start planning another route — offering them a fresh
+          plan first is how one transaction becomes two. */}
+      <SubmissionRecoveryRail
+        walletAddress={address ?? null}
+        chainId={chainId ?? null}
+        enabled={Boolean(flags?.submissionRecoveryV1)}
+        onResolved={() => navigate('/plan/history')}
+      />
       {content}
     </ConsoleShell>
   );
