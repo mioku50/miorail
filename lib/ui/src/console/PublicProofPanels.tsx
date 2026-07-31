@@ -46,19 +46,30 @@ export interface PublicProofViewV1 {
   eventCount: number;
 }
 
-/** One sentence per terminal status. None of them is a tick. */
-export const PUBLIC_PROOF_HEADLINE_COPY_V1: Record<string, string> = {
-  completed: 'Verified execution proof',
-  partial_failure: 'Partial failure — part of this batch did not succeed',
-  failed: 'Failed execution',
-  cancelled: 'Cancelled — this record describes a route that was never executed',
-  reconciliation_required: 'Manual reconciliation — the outcome has not been established',
-  ownership_confirmed: 'Verified execution proof',
-  ownership_not_confirmed: 'Ownership was not confirmed onchain',
+/** One sentence per terminal status. None of them is a tick.
+ *
+ * Keyed by FAMILY as well as status: both families use the word `failed` and
+ * mean different things by it. For a route it is a failed execution; for an NFT
+ * it means the transaction landed without producing ownership, which is a
+ * separate state from the transaction reverting. */
+export const PUBLIC_PROOF_HEADLINE_COPY_V1: Record<'route' | 'nft', Record<string, string>> = {
+  route: {
+    completed: 'Verified execution proof',
+    partial_failure: 'Partial failure — part of this batch did not succeed',
+    failed: 'Failed execution',
+    cancelled: 'Cancelled — this record describes a route that was never executed',
+    reconciliation_required: 'Manual reconciliation — the outcome has not been established',
+  },
+  nft: {
+    completed: 'Verified purchase proof',
+    transaction_failed: 'The transaction reverted — nothing was purchased',
+    failed: 'Failed — the transaction landed but ownership was not established',
+    reconciliation_required: 'Manual reconciliation — the outcome has not been established',
+  },
 };
 
-export function publicProofHeadlineCopyV1(finalStatus: string): string {
-  return PUBLIC_PROOF_HEADLINE_COPY_V1[finalStatus] ?? `Recorded outcome: ${finalStatus}`;
+export function publicProofHeadlineCopyV1(proofFamily: 'route' | 'nft', finalStatus: string): string {
+  return PUBLIC_PROOF_HEADLINE_COPY_V1[proofFamily][finalStatus] ?? `Recorded outcome: ${finalStatus}`;
 }
 
 /** What the local check does and does not establish. Shown verbatim, always —
@@ -82,7 +93,7 @@ export function shortPublicHashV1(hash: string | null): string {
 export function PublicProofHeaderPanel({ view }: { view: PublicProofViewV1 }): React.ReactElement {
   return (
     <section className="panel">
-      <h3>{publicProofHeadlineCopyV1(view.finalStatus)}</h3>
+      <h3>{publicProofHeadlineCopyV1(view.proofFamily, view.finalStatus)}</h3>
       <div className="kv">
         <span>Proof family</span>
         <span>{view.proofFamily}</span>

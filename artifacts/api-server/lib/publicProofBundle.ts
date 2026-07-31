@@ -73,19 +73,29 @@ export function publicProofFilenameV1(publicId: string): string {
  * failed one is not a success with a caveat. Each terminal status gets its own
  * sentence so the page cannot render a green tick over any of them.
  */
-export const PUBLIC_PROOF_HEADLINE_V1: Record<string, string> = {
-  completed: 'Verified execution proof',
-  partial_failure: 'Partial failure — some calls in this batch did not succeed',
-  failed: 'Failed execution',
-  cancelled: 'Cancelled — this process record describes a route that was never executed',
-  reconciliation_required: 'Manual reconciliation record — the outcome has not been established',
-  // NFT proof vocabulary.
-  ownership_confirmed: 'Verified execution proof',
-  ownership_not_confirmed: 'Ownership was not confirmed onchain',
+export const PUBLIC_PROOF_HEADLINE_V1: Record<'route' | 'nft', Record<string, string>> = {
+  route: {
+    completed: 'Verified execution proof',
+    partial_failure: 'Partial failure — some calls in this batch did not succeed',
+    failed: 'Failed execution',
+    cancelled: 'Cancelled — this process record describes a route that was never executed',
+    reconciliation_required: 'Manual reconciliation record — the outcome has not been established',
+  },
+  // The two families share the word `failed` and do not share its meaning, so
+  // the lookup is family-aware rather than one merged table. For an NFT,
+  // `transaction_failed` means the transaction reverted and `failed` means it
+  // landed without producing ownership — a distinction worth keeping, because a
+  // successful receipt is not a purchase.
+  nft: {
+    completed: 'Verified purchase proof',
+    transaction_failed: 'The transaction reverted — nothing was purchased',
+    failed: 'Failed — the transaction landed but ownership was not established',
+    reconciliation_required: 'Manual reconciliation record — the outcome has not been established',
+  },
 };
 
-export function publicProofHeadlineV1(finalStatus: string): string {
-  return PUBLIC_PROOF_HEADLINE_V1[finalStatus] ?? `Recorded outcome: ${finalStatus}`;
+export function publicProofHeadlineV1(proofFamily: 'route' | 'nft', finalStatus: string): string {
+  return PUBLIC_PROOF_HEADLINE_V1[proofFamily][finalStatus] ?? `Recorded outcome: ${finalStatus}`;
 }
 
 /** Whether the page may present this as evidence that something executed. */

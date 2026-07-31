@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRoute } from 'wouter';
+import { verifyPublicProofBundleV1 } from '@mioagent/proof-verifier';
 import {
   PublicProofHeaderPanel,
   PublicProofReceiptsPanel,
@@ -122,10 +123,11 @@ export function PublicProofPage() {
   }, [publicId]);
 
   const view = useMemo(() => (bundle ? publicProofViewV1(bundle) : null), [bundle]);
-  // Local verification arrives with @mioagent/proof-verifier; until then the
-  // page shows the hashes without claiming they were checked. `null` renders
-  // as "Checking…", never as a pass.
-  const checks: PublicProofCheckLikeV1[] = [];
+  // The hashes are recomputed HERE, in the reader's browser, from the bytes
+  // that arrived. Nothing about the server's answer is taken on trust — a
+  // `valid` flag in the response would prove nothing and is not read.
+  const verification = useMemo(() => (bundle ? verifyPublicProofBundleV1(bundle) : null), [bundle]);
+  const checks: PublicProofCheckLikeV1[] = verification?.checks ?? [];
 
   if (state === 'loading') {
     return (
@@ -162,7 +164,7 @@ export function PublicProofPage() {
       <PublicProofHeaderPanel view={view} />
       <PublicProofResultPanel view={view} />
       <PublicProofReceiptsPanel view={view} />
-      <PublicProofVerificationPanel view={view} checks={checks} valid={null} />
+      <PublicProofVerificationPanel view={view} checks={checks} valid={verification?.valid ?? null} />
       <section className="panel">
         <a className="mono" href={`/api/public/proofs/${encodeURIComponent(publicId)}/bundle`}>
           Download the canonical bundle

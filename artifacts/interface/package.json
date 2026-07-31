@@ -15,6 +15,7 @@
     "@coinbase/wallet-sdk": "^4.3.7",
     "@metamask/connect-evm": "^2.1.0",
     "@mioagent/api-client-react": "workspace:*",
+    "@mioagent/proof-verifier": "workspace:*",
     "@mioagent/ui": "workspace:*",
     "@mioagent/wallet-actions": "workspace:*",
     "@mioagent/x402-actions": "workspace:*",

@@ -58,15 +58,23 @@ describe('the public page is honest about what it is showing', () => {
   });
 
   test('partial failure says part of the batch did not succeed', () => {
-    assert.match(publicProofHeadlineCopyV1('partial_failure'), /did not succeed/);
+    assert.match(publicProofHeadlineCopyV1('route', 'partial_failure'), /did not succeed/);
   });
 
   test('a manual reconciliation record does not claim an outcome', () => {
-    assert.match(publicProofHeadlineCopyV1('reconciliation_required'), /has not been established/);
+    assert.match(publicProofHeadlineCopyV1('route', 'reconciliation_required'), /has not been established/);
+  });
+
+  test('the two families do not share the meaning of "failed"', () => {
+    // For a route it is a failed execution; for an NFT the transaction landed
+    // and ownership still did not follow. Merging them would lose that.
+    assert.match(publicProofHeadlineCopyV1('route', 'failed'), /Failed execution/);
+    assert.match(publicProofHeadlineCopyV1('nft', 'failed'), /ownership was not established/);
+    assert.match(publicProofHeadlineCopyV1('nft', 'transaction_failed'), /reverted/);
   });
 
   test('an unknown status is reported rather than guessed', () => {
-    assert.match(publicProofHeadlineCopyV1('something_new'), /Recorded outcome: something_new/);
+    assert.match(publicProofHeadlineCopyV1('route', 'something_new'), /Recorded outcome: something_new/);
   });
 });
 

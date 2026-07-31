@@ -21,7 +21,8 @@
     "smoke:bitrefill": "tsx scripts/smoke_bitrefill_commerce.ts",
     "smoke:bitrefill-invoice": "tsx scripts/smoke_bitrefill_invoice.ts",
     "smoke:opensea-nft": "tsx scripts/smoke_opensea_nft.ts",
-    "smoke:b20-control": "tsx scripts/smoke_b20_control.ts"
+    "smoke:b20-control": "tsx scripts/smoke_b20_control.ts",
+    "proof:verify": "tsx lib/proof-verifier/src/cli.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

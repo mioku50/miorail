@@ -210,6 +210,9 @@ importers:
       '@mioagent/api-client-react':
         specifier: workspace:*
         version: link:../../lib/api-client-react
+      '@mioagent/proof-verifier':
+        specifier: workspace:*
+        version: link:../../lib/proof-verifier
       '@mioagent/ui':
         specifier: workspace:*
         version: link:../../lib/ui
@@ -746,6 +749,22 @@ importers:
         specifier: ^5.4.5
         version: 5.9.3
 
+  lib/proof-verifier:
+    dependencies:
+      '@mioagent/route-domain':
+        specifier: workspace:*
+        version: link:../route-domain
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+
   lib/route-card:
     dependencies:
       '@mioagent/route-domain':
@@ -1045,6 +1064,9 @@ importers:
       '@mioagent/api-spec':
         specifier: workspace:*
         version: link:../api-spec
+      '@mioagent/route-domain':
+        specifier: workspace:*
+        version: link:../route-domain
       '@mioagent/ui':
         specifier: workspace:*
         version: link:../ui
