@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "@mioagent/b20-control": "workspace:*",
-    "@mioagent/route-domain": "workspace:*"
+    "@mioagent/route-domain": "workspace:*",
+    "@mioagent/route-outcomes": "workspace:*"
   },
   "devDependencies": {
     "@mioagent/db": "workspace:*",
