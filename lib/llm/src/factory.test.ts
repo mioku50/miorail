@@ -1,10 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { createLlmProvider } from './factory.js';
+import { createLlmProvider, providerLabelV1 } from './factory.js';
+import { FallbackLlmProvider } from './fallback.js';
 import { OpenAiCompatibleClient } from './openai.js';
+
+/** Clears every fallback variable so one subtest cannot configure another. */
+function clearFallbackEnv(): void {
+  delete process.env.LLM_FALLBACK_BASE_URL;
+  delete process.env.LLM_FALLBACK_API_KEY;
+  delete process.env.LLM_FALLBACK_MODEL;
+  delete process.env.OPENROUTER_API_KEY;
+  delete process.env.OPENROUTER_KEY;
+}
 
 test('createLlmProvider', async (t) => {
   const originalEnv = { ...process.env };
+
+  t.beforeEach(() => {
+    clearFallbackEnv();
+  });
 
   t.afterEach(() => {
     process.env = { ...originalEnv };
@@ -80,4 +94,102 @@ test('createLlmProvider', async (t) => {
     process.env.LLM_PROVIDER = 'mock';
     assert.throws(() => createLlmProvider(), /Unsupported production LLM_PROVIDER/);
   });
+
+  // --- the empty-value case that broke production -------------------------
+
+  await t.test('an EMPTY LLM_BASE_URL counts as unset and names itself', () => {
+    // `.env` carried LLM_BASE_URL twice and the second one was blank. node
+    // --env-file takes the last, so the server built a client against "".
+    process.env.LLM_PROVIDER = 'openai-compatible';
+    process.env.LLM_BASE_URL = '';
+    process.env.LLM_API_KEY = 'test';
+    process.env.LLM_MODEL = 'test-model';
+    assert.throws(() => createLlmProvider(), /LLM_BASE_URL is not set/);
+    assert.throws(() => createLlmProvider(), /duplicate key/);
+  });
+
+  await t.test('the error names every missing variable, not just the first', () => {
+    process.env.LLM_PROVIDER = 'openai-compatible';
+    process.env.LLM_BASE_URL = '   ';
+    delete process.env.LLM_API_KEY;
+    process.env.LLM_MODEL = '';
+    assert.throws(() => createLlmProvider(), /LLM_BASE_URL, LLM_API_KEY, LLM_MODEL is not set/);
+  });
+
+  // --- fallback chain ------------------------------------------------------
+
+  await t.test('no fallback variables means no chain — the fallback is optional', () => {
+    process.env.LLM_PROVIDER = 'openai-compatible';
+    process.env.LLM_BASE_URL = 'https://api.airforce';
+    process.env.LLM_API_KEY = 'test';
+    process.env.LLM_MODEL = 'gpt-4o-mini';
+    assert.ok(createLlmProvider() instanceof OpenAiCompatibleClient);
+  });
+
+  await t.test('a fully configured fallback wraps the primary in a chain', () => {
+    process.env.LLM_PROVIDER = 'openai-compatible';
+    process.env.LLM_BASE_URL = 'https://api.airforce';
+    process.env.LLM_API_KEY = 'test';
+    process.env.LLM_MODEL = 'gpt-4o-mini';
+    process.env.LLM_FALLBACK_BASE_URL = 'https://openrouter.ai/api';
+    process.env.LLM_FALLBACK_API_KEY = 'test-fallback';
+    process.env.LLM_FALLBACK_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
+    assert.ok(createLlmProvider() instanceof FallbackLlmProvider);
+  });
+
+  await t.test('a HALF configured fallback throws instead of silently having none', () => {
+    // Ignoring this would mean the fallback is discovered missing on the one
+    // day it was supposed to matter.
+    process.env.LLM_PROVIDER = 'openai-compatible';
+    process.env.LLM_BASE_URL = 'https://api.airforce';
+    process.env.LLM_API_KEY = 'test';
+    process.env.LLM_MODEL = 'gpt-4o-mini';
+    process.env.LLM_FALLBACK_BASE_URL = 'https://openrouter.ai/api';
+    process.env.LLM_FALLBACK_MODEL = '';
+    assert.throws(
+      () => createLlmProvider(),
+      /LLM fallback is partially configured — missing: LLM_FALLBACK_API_KEY, LLM_FALLBACK_MODEL/,
+    );
+  });
+
+  await t.test('OPENROUTER_KEY is accepted when the fallback IS OpenRouter', () => {
+    process.env.LLM_PROVIDER = 'openai-compatible';
+    process.env.LLM_BASE_URL = 'https://api.airforce';
+    process.env.LLM_API_KEY = 'test';
+    process.env.LLM_MODEL = 'gpt-4o-mini';
+    process.env.LLM_FALLBACK_BASE_URL = 'https://openrouter.ai/api';
+    process.env.LLM_FALLBACK_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
+    process.env.OPENROUTER_KEY = 'sk-or-test';
+    assert.ok(createLlmProvider() instanceof FallbackLlmProvider);
+  });
+
+  await t.test('an OpenRouter key is NEVER sent to a different host', () => {
+    // A bearer token is a credential for one host. Resolving it for an
+    // unrelated base URL would hand it to whoever that host turns out to be.
+    process.env.LLM_PROVIDER = 'openai-compatible';
+    process.env.LLM_BASE_URL = 'https://api.airforce';
+    process.env.LLM_API_KEY = 'test';
+    process.env.LLM_MODEL = 'gpt-4o-mini';
+    process.env.LLM_FALLBACK_BASE_URL = 'https://someone-elses-gateway.example';
+    process.env.LLM_FALLBACK_MODEL = 'some-model';
+    process.env.OPENROUTER_KEY = 'sk-or-test';
+    assert.throws(() => createLlmProvider(), /missing: LLM_FALLBACK_API_KEY/);
+  });
+
+  await t.test('the fallback applies to a direct OpenAI primary too', () => {
+    process.env.LLM_PROVIDER = 'openai';
+    process.env.OPENAI_API_KEY = 'test';
+    process.env.LLM_FALLBACK_BASE_URL = 'https://openrouter.ai/api';
+    process.env.LLM_FALLBACK_API_KEY = 'test-fallback';
+    process.env.LLM_FALLBACK_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
+    assert.ok(createLlmProvider() instanceof FallbackLlmProvider);
+  });
+});
+
+test('providerLabelV1 reports the host and never a path or credential', () => {
+  assert.equal(providerLabelV1('https://api.airforce'), 'api.airforce');
+  assert.equal(providerLabelV1('https://openrouter.ai/api'), 'openrouter.ai');
+  // Some gateways carry a token in the path; the label must not.
+  assert.equal(providerLabelV1('https://gateway.example/v1/sk-secret-token'), 'gateway.example');
+  assert.equal(providerLabelV1(''), 'llm-provider');
 });
