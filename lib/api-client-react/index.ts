@@ -1963,3 +1963,53 @@ export function useRecoverableSubmissionAttempts(
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// T67C.2 — publishing and revoking a proof link.
+//
+// Both are owner actions against a proof that already exists. Neither sends
+// any proof content: the server rebuilds the bundle from its own records on
+// every public read, so a link can never drift from the record it points at.
+// ---------------------------------------------------------------------------
+
+export interface ProofShareInput {
+  proofId: string;
+  /** `route` covers swap and earn; NFT keeps its own proof contract. */
+  proofFamily?: 'route' | 'nft';
+}
+
+function proofSharePathV1(input: ProofShareInput): string {
+  const id = encodeURIComponent(input.proofId);
+  return input.proofFamily === 'nft'
+    ? `/api/route-intelligence/nft/proofs/${id}/share`
+    : `/api/route-intelligence/route-proofs/${id}/share`;
+}
+
+export function useShareProof(
+  options?: Omit<
+    UseMutationOptions<apiSpec.PublicProofShareResponseV1, Error, ProofShareInput>,
+    'mutationFn' | 'retry'
+  >,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const response = await fetchApi<unknown>(proofSharePathV1(input), { method: 'POST' });
+      return apiSpec.PublicProofShareResponseV1Schema.parse(response);
+    },
+  });
+}
+
+export function useRevokeProofShare(
+  options?: Omit<UseMutationOptions<{ revoked: boolean }, Error, ProofShareInput>, 'mutationFn' | 'retry'>,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const response = await fetchApi<{ revoked?: boolean }>(proofSharePathV1(input), { method: 'DELETE' });
+      return { revoked: Boolean(response?.revoked) };
+    },
+  });
+}

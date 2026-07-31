@@ -5,8 +5,14 @@
 
 import { useEffect, useState } from 'react';
 import { Link } from 'wouter';
-import { useRouteHistory, useRouteProof } from '@mioagent/api-client-react';
-import { ExecutionProofPanel, RouteHistoryList, type RouteHistoryItemView } from '@mioagent/ui';
+import {
+  useRevokeProofShare,
+  useRouteHistory,
+  useRouteProof,
+  useShareProof,
+  useStatus,
+} from '@mioagent/api-client-react';
+import { ExecutionProofPanel, RouteHistoryList, ShareProofPanel, type RouteHistoryItemView } from '@mioagent/ui';
 
 export function RouteHistoryPage() {
   const [items, setItems] = useState<RouteHistoryItemView[]>([]);
@@ -14,6 +20,18 @@ export function RouteHistoryPage() {
   const [selected, setSelected] = useState<RouteHistoryItemView | null>(null);
   const history = useRouteHistory({ limit: 20, cursor });
   const proof = useRouteProof(selected?.proofId ?? null);
+  // T67C.2: publishing is an explicit owner action. The link lives in local
+  // state rather than being fetched, because a proof with no share has no
+  // link to fetch — and the absence of one is exactly what "private" means.
+  const status = useStatus();
+  const share = useShareProof();
+  const revoke = useRevokeProofShare();
+  const [publicUrl, setPublicUrl] = useState<string | null>(null);
+
+  // Selecting a different proof drops the link: it belonged to the other one.
+  useEffect(() => {
+    setPublicUrl(null);
+  }, [selected?.proofId]);
 
   useEffect(() => {
     if (!history.data) return;
@@ -77,6 +95,36 @@ export function RouteHistoryPage() {
           {selected?.proofId && proof.data && (
             <ExecutionProofPanel proof={proof.data.proof} lifecycle={proof.data.lifecycle} />
           )}
+          {/* Only for a proof that has finished. A pending proof describes a
+              question Miorail has not answered, and publishing it would put a
+              claim on the internet that Miorail itself is not making. */}
+          {selected?.proofId &&
+            proof.data &&
+            status.data?.productMigration?.publicProofV1 &&
+            proof.data.proof.finalStatus !== 'pending' && (
+              <ShareProofPanel
+                publicUrl={publicUrl}
+                pending={share.isPending || revoke.isPending}
+                onShare={() => {
+                  const proofId = selected.proofId;
+                  if (!proofId) return;
+                  share.mutate({ proofId }, { onSuccess: (result) => setPublicUrl(result.url) });
+                }}
+                onRevoke={() => {
+                  const proofId = selected.proofId;
+                  if (!proofId) return;
+                  revoke.mutate({ proofId }, { onSuccess: () => setPublicUrl(null) });
+                }}
+                onCopy={() => {
+                  if (publicUrl) void navigator.clipboard?.writeText(new URL(publicUrl, location.origin).toString());
+                }}
+                onDownload={() => {
+                  // The public id is in the URL the server returned; the
+                  // download route serves the canonical bundle under it.
+                  if (publicUrl) location.href = `/api/public/proofs/${publicUrl.split('/').pop()}/bundle`;
+                }}
+              />
+            )}
         </section>
       </div>
     </main>
