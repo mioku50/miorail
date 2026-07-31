@@ -18,6 +18,15 @@ import { dirname, resolve } from 'node:path';
 //     EnvironmentFile and `docker --env-file` do NOT — so "fixing" them here
 //     would make a smoke pass against a value the server never sees. They are
 //     reported instead, by KEY only.
+//
+// And one rule that is not a matter of taste: WITHIN the file, the LAST
+// assignment of a key wins, exactly as `node --env-file` resolves it. This
+// loader used to take the first, which is the worst possible answer — a `.env`
+// with a key written twice made the smoke read one value and the server read
+// the other, so the smoke passed on a configuration that was already broken.
+// That is precisely how a blank second `LLM_BASE_URL=` took the LLM router down
+// while `pnpm smoke:llm` kept reporting success. Duplicates are also reported,
+// by KEY only, because a duplicate is nearly always an accident.
 // ---------------------------------------------------------------------------
 
 export interface LoadedEnvFileV1 {
@@ -26,6 +35,9 @@ export interface LoadedEnvFileV1 {
   /** Keys whose value looks like it swallowed an inline comment. */
   suspiciousKeys: string[];
   appliedKeys: string[];
+  /** Keys assigned more than once in the file. The last assignment is the one
+   * that took effect — here and in `node --env-file` alike. */
+  duplicateKeys: string[];
 }
 
 /** Walks up from the working directory to the workspace root. `import.meta` is
@@ -66,9 +78,19 @@ export function classifyEnvValueV1(raw: string): EnvValueVerdictV1 {
 
 export function loadRootEnvFileV1(): LoadedEnvFileV1 {
   const path = resolve(repoRoot(), '.env');
-  const result: LoadedEnvFileV1 = { path, loaded: false, suspiciousKeys: [], appliedKeys: [] };
+  const result: LoadedEnvFileV1 = {
+    path,
+    loaded: false,
+    suspiciousKeys: [],
+    appliedKeys: [],
+    duplicateKeys: [],
+  };
   if (!existsSync(path)) return result;
 
+  // Parse the WHOLE file first. Applying as we go would make the first
+  // assignment win, because the second pass would find the key already set in
+  // `process.env` and skip it — the opposite of what the server does.
+  const parsed = new Map<string, string>();
   const content = readFileSync(path, 'utf8');
   for (const rawLine of content.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -79,12 +101,21 @@ export function loadRootEnvFileV1(): LoadedEnvFileV1 {
     const key = line.slice(0, separator).trim().replace(/^export\s+/, '');
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
     const verdict = classifyEnvValueV1(line.slice(separator + 1));
-    if (verdict.kind !== 'value') result.suspiciousKeys.push(key);
 
-    if (process.env[key] === undefined) {
-      process.env[key] = verdict.value;
-      result.appliedKeys.push(key);
+    if (parsed.has(key)) {
+      if (!result.duplicateKeys.includes(key)) result.duplicateKeys.push(key);
+      // A key reported once for the value that actually wins.
+      const stale = result.suspiciousKeys.lastIndexOf(key);
+      if (stale !== -1) result.suspiciousKeys.splice(stale, 1);
     }
+    if (verdict.kind !== 'value') result.suspiciousKeys.push(key);
+    parsed.set(key, verdict.value);
+  }
+
+  for (const [key, value] of parsed) {
+    if (process.env[key] !== undefined) continue;
+    process.env[key] = value;
+    result.appliedKeys.push(key);
   }
   result.loaded = true;
   return result;
@@ -97,6 +128,14 @@ export function reportLoadedEnvFileV1(loaded: LoadedEnvFileV1): void {
     return;
   }
   console.log(`   · loaded ${loaded.appliedKeys.length} variable(s) from ${loaded.path}`);
+  if (loaded.duplicateKeys.length > 0) {
+    console.log(
+      `   ⚠ assigned more than once: ${loaded.duplicateKeys.join(', ')}\n` +
+        '     The LAST assignment wins, here and in `node --env-file`. If the value\n' +
+        '     you expected is the earlier one, it is not the one running. Run\n' +
+        '     `pnpm env:doctor` and delete the duplicates.',
+    );
+  }
   if (loaded.suspiciousKeys.length > 0) {
     console.log(
       `   ⚠ inline "#" comment in: ${loaded.suspiciousKeys.join(', ')}\n` +
