@@ -489,7 +489,10 @@ export function MiniConsole() {
       earnCompare.mutate({ message: goal, walletAddress: wallet }, { onSettled: () => mark("candidates", "complete") });
       return;
     }
-    evaluation.mutate({ message: goal, walletAddress: wallet }, { onError: () => setScreen("plan") });
+    // No onError here, deliberately — see RouteIntelligenceConsole. Bouncing to
+    // Plan threw away the reason and left the user on the home screen with
+    // nothing to act on.
+    evaluation.mutate({ message: goal, walletAddress: wallet }, { onSettled: () => mark("candidates", "complete") });
   };
 
   const reviewCandidate = (candidateHash: string) => {

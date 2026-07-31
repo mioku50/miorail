@@ -460,7 +460,12 @@ export function RouteIntelligenceConsole() {
       earnCompare.mutate({ message: goal, walletAddress: wallet }, { onSettled: () => mark('candidates', 'complete') });
       return;
     }
-    evaluation.mutate({ message: goal, walletAddress: wallet }, { onError: () => setScreen('plan') });
+    // No onError here, deliberately. Sending the user back to Plan discarded the
+    // reason and left them on the home screen with no explanation — a failed
+    // swap comparison was indistinguishable from a button that did nothing.
+    // Swap now ends where Earn, NFT, Commerce and AI already end: on Comparing,
+    // with the server's own message rendered as a terminal failure.
+    evaluation.mutate({ message: goal, walletAddress: wallet }, { onSettled: () => mark('candidates', 'complete') });
   };
 
   const reviewCandidate = (candidateHash: string) => {

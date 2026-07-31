@@ -370,7 +370,17 @@ routeIntelligenceRouter.post('/swap/evaluate', async (req, res) => {
       now: routePlanRouteRuntime.now(),
     });
     res.json(RoutePlanResponseV1Schema.parse(response));
-  } catch {
+  } catch (error) {
+    // Same reasoning as the Commerce compare below: a bare `catch {}` made an
+    // LLM misconfiguration indistinguishable from an adapter fault. An LLM
+    // router whose key had run out of credits answered 500 here for a week,
+    // and neither side of the wire said why. Provider messages are redacted by
+    // the client that produced them, so a key cannot reach this log.
+    logger.error('Route plan evaluation failed', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      wallet: user.address,
+    });
     res.status(500).json({ error: 'route_plan_evaluation_failed', code: 'route_plan_evaluation_failed' });
   }
 });
