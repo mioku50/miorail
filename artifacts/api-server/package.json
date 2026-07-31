@@ -9,12 +9,12 @@
   "dependencies": {
     "@base-org/account": "2.5.6",
     "@mioagent/agent": "workspace:*",
+    "@mioagent/ai-engine": "workspace:*",
     "@mioagent/api-spec": "workspace:*",
     "@mioagent/api-zod": "workspace:*",
-    "@mioagent/b20-control": "workspace:*",
     "@mioagent/autonomy": "workspace:*",
+    "@mioagent/b20-control": "workspace:*",
     "@mioagent/commerce-engine": "workspace:*",
-    "@mioagent/nft-engine": "workspace:*",
     "@mioagent/crypto": "workspace:*",
     "@mioagent/data-providers": "workspace:*",
     "@mioagent/db": "workspace:*",
@@ -25,11 +25,13 @@
     "@mioagent/llm": "workspace:*",
     "@mioagent/mcp": "workspace:*",
     "@mioagent/memory": "workspace:*",
+    "@mioagent/nft-engine": "workspace:*",
     "@mioagent/observability": "workspace:*",
     "@mioagent/paid-intelligence": "workspace:*",
     "@mioagent/route-card": "workspace:*",
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/route-engine": "workspace:*",
+    "@mioagent/route-outcomes": "workspace:*",
     "@mioagent/route-proof": "workspace:*",
     "@mioagent/route-storage": "workspace:*",
     "@mioagent/runtime-skills": "workspace:*",
@@ -48,8 +50,7 @@
     "express-session": "^1.19.0",
     "helmet": "^8.2.0",
     "ulidx": "^2.4.1",
-    "viem": "^2.53.1",
-    "@mioagent/ai-engine": "workspace:*"
+    "viem": "^2.53.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

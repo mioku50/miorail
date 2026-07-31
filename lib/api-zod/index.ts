@@ -1629,6 +1629,10 @@ export const StatusResponseSchema = z.object({
     // T67C.2: same additive treatment.
     submissionRecoveryV1: z.boolean().optional(),
     publicProofV1: z.boolean().optional(),
+    /** T67C.1: the frontend gets the boolean and NOTHING else — sample
+     * thresholds stay server-side, because a client that could read them could
+     * argue its way into a calibration it has not earned. */
+    routeOutcomeFeedbackV1: z.boolean().optional(),
   }),
   rpc: z.object({
     status: z.enum(["connected", "missing", "failed"]),

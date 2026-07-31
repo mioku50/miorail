@@ -36,6 +36,7 @@ const FLAGS = {
   b20ControlV1: true,
   submissionRecoveryV1: false,
   publicProofV1: false,
+  routeOutcomeFeedbackV1: false,
 };
 
 const original = { ...b20RouteRuntime };

@@ -55,6 +55,7 @@ import {
   type RouteStorageRepository,
   type StoredBlueprintV1,
 } from '@mioagent/route-storage';
+import { createRouteOutcomeProjectorForServerV1 } from '../lib/routeOutcomeProjector.js';
 import {
   RouteProofReconcileBindingError,
   createEarnRouteProofReconciler,
@@ -987,6 +988,14 @@ async function reconcileRouteProof(input: ReconcileRouteProofInput) {
   const reconciler = createRouteProofReconciler({
     repository,
     receiptReader: createViemBaseReceiptReader(),
+    // T67C.1: the loop closes here. `undefined` when the flag is off, so the
+    // reconciler behaves exactly as it did before this task — no outcome is
+    // derived, not one derived and discarded.
+    outcomeProjector: createRouteOutcomeProjectorForServerV1({
+      enabled: getMiorailProductMigrationFlags(process.env).routeOutcomeFeedbackV1,
+      sql: client,
+      repository,
+    }),
   });
   return reconciler.reconcile(input);
 }

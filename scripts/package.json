@@ -11,6 +11,8 @@
     "@mioagent/nft-engine": "workspace:*",
     "@mioagent/paid-intelligence": "workspace:*",
     "@mioagent/route-domain": "workspace:*",
+    "@mioagent/route-outcomes": "workspace:*",
+    "@mioagent/route-storage": "workspace:*",
     "@mioagent/security": "workspace:*",
     "drizzle-orm": "^0.36.4"
   },

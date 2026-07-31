@@ -128,7 +128,7 @@ function stubSettlementPaymentMiddleware(txHash = `0x${'a'.repeat(64)}`) {
 
 function resetSimulateRuntime() {
   Object.assign(simulateRouteRuntime, originalRuntime);
-  simulateRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: true, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false, privateAiRouteV1: false, privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, });
+  simulateRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: true, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false, privateAiRouteV1: false, privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, routeOutcomeFeedbackV1: false, });
   simulateRouteRuntime.migrationAvailable = async () => true;
   simulateRouteRuntime.now = () => NOW;
   simulateRouteRuntime.pricing = () => ({
@@ -179,7 +179,7 @@ describe('POST /api/route-intelligence/blueprints/:blueprintId/simulate', () => 
   }
 
   test('returns a stable disabled error (404) when paidIntelligence is off, even with routeIntelligenceV1 on', async () => {
-    simulateRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false, privateAiRouteV1: false, privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, });
+    simulateRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: false, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false, privateAiRouteV1: false, privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, routeOutcomeFeedbackV1: false, });
     const response = await request(routeApp())
       .post('/api/route-intelligence/blueprints/b1/simulate')
       .send(requestBody());
@@ -188,7 +188,7 @@ describe('POST /api/route-intelligence/blueprints/:blueprintId/simulate', () => 
   });
 
   test('returns 404 when routeIntelligenceV1 is off regardless of paidIntelligence', async () => {
-    simulateRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: true, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false, privateAiRouteV1: false, privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, });
+    simulateRouteRuntime.flags = () => ({ routeIntelligenceV1: false, legacyTerminal: true, paidIntelligence: true, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false, privateAiRouteV1: false, privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, routeOutcomeFeedbackV1: false, });
     const response = await request(routeApp())
       .post('/api/route-intelligence/blueprints/b1/simulate')
       .send(requestBody());

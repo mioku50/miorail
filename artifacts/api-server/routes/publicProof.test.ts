@@ -41,6 +41,7 @@ const FLAGS = {
   b20ControlV1: false,
   submissionRecoveryV1: false,
   publicProofV1: true,
+  routeOutcomeFeedbackV1: false,
 };
 
 const original = { ...publicProofRuntime };

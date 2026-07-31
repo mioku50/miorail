@@ -119,7 +119,7 @@ describe('Status API', () => {
       nftRouteV1: false,
       nftExecutionV1: false,
       privateAiRouteV1: false,
-      privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false,
+      privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, routeOutcomeFeedbackV1: false,
     });
     assert.deepStrictEqual(
       Object.keys(response.body.productMigration).sort(),
@@ -137,6 +137,7 @@ describe('Status API', () => {
         'privateAiRouteV1',
         'publicProofV1',
         'routeIntelligenceV1',
+        'routeOutcomeFeedbackV1',
         'submissionRecoveryV1',
       ],
     );

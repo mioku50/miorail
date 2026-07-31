@@ -38,6 +38,51 @@ export interface MiorailProductMigrationFlags {
    * wallet address and transaction hashes to anyone holding the link. Those are
    * not the same decision. */
   publicProofV1: boolean;
+  /** T67C.1: route outcome feedback — deriving verified provider outcomes and
+   * letting an eligible reliability snapshot calibrate the next ranking. Off
+   * means the projector is never installed, so no outcome is recorded at all
+   * and scoring stays byte-compatible with swap-path-score/v1. */
+  routeOutcomeFeedbackV1: boolean;
+}
+
+/**
+ * T67C.1 §10 — the reliability thresholds.
+ *
+ * Server-side only. The frontend receives the boolean capability and nothing
+ * else: a client that could read (or worse, send) a sample threshold could
+ * argue its way into a calibration it has not earned.
+ *
+ * Changing any of these changes what "eligible" means, so they are folded into
+ * the aggregation version by `aggregationVersionV1` — old snapshots stay
+ * readable as what they were rather than being reinterpreted under new rules.
+ */
+export interface MiorailReliabilityThresholds {
+  windowDays: number;
+  personalMinSamples: number;
+  networkMinSamples: number;
+  networkMinWallets: number;
+}
+
+function readPositiveInt(env: NodeJS.ProcessEnv, name: string, defaultValue: number): number {
+  const raw = env[name]?.trim();
+  if (!raw) return defaultValue;
+  const parsed = Number(raw);
+  // A malformed threshold falls back to the default rather than to zero. Zero
+  // would make every provider instantly "eligible" on no evidence, which is
+  // the exact failure this feature exists to prevent.
+  if (!Number.isInteger(parsed) || parsed <= 0) return defaultValue;
+  return parsed;
+}
+
+export function getMiorailReliabilityThresholds(
+  env: NodeJS.ProcessEnv = process.env,
+): Readonly<MiorailReliabilityThresholds> {
+  return Object.freeze({
+    windowDays: readPositiveInt(env, 'MIORAIL_RELIABILITY_WINDOW_DAYS', 90),
+    personalMinSamples: readPositiveInt(env, 'MIORAIL_RELIABILITY_PERSONAL_MIN_SAMPLES', 10),
+    networkMinSamples: readPositiveInt(env, 'MIORAIL_RELIABILITY_NETWORK_MIN_SAMPLES', 30),
+    networkMinWallets: readPositiveInt(env, 'MIORAIL_RELIABILITY_NETWORK_MIN_WALLETS', 3),
+  });
 }
 
 function readBooleanFlag(env: NodeJS.ProcessEnv, name: string, defaultValue: boolean): boolean {
@@ -70,5 +115,6 @@ export function getMiorailProductMigrationFlags(
     b20ControlV1: readBooleanFlag(env, 'MIORAIL_B20_CONTROL_V1', false),
     submissionRecoveryV1: readBooleanFlag(env, 'MIORAIL_SUBMISSION_RECOVERY_V1', false),
     publicProofV1: readBooleanFlag(env, 'MIORAIL_PUBLIC_PROOF_V1', false),
+    routeOutcomeFeedbackV1: readBooleanFlag(env, 'MIORAIL_ROUTE_OUTCOME_FEEDBACK_V1', false),
   });
 }

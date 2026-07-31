@@ -43,7 +43,7 @@ const COMPARE_ONLY_FLAGS = {
   commerceRouteV1: true,
   commerceExecutionV1: false,
   nftRouteV1: false,
-  nftExecutionV1: false, privateAiRouteV1: false, privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false,
+  nftExecutionV1: false, privateAiRouteV1: false, privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, routeOutcomeFeedbackV1: false,
 } as const;
 const CHECKOUT_FLAGS = { ...COMPARE_ONLY_FLAGS, commerceExecutionV1: true } as const;
 

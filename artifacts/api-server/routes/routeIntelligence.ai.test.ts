@@ -41,7 +41,7 @@ const FLAGS = {
   nftExecutionV1: false,
   privateAiRouteV1: true,
   privateAiExecutionV1: true,
-  aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false,
+  aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, routeOutcomeFeedbackV1: false,
 };
 
 const originalRuntime = { ...aiRouteRuntime };
@@ -185,7 +185,7 @@ describe('the gates', () => {
   });
 
   test('comparing is allowed while executing is not', async () => {
-    aiRouteRuntime.flags = () => ({ ...FLAGS, privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, });
+    aiRouteRuntime.flags = () => ({ ...FLAGS, privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, routeOutcomeFeedbackV1: false, });
     const app = routeApp();
     const body = await compared(app);
     assert.equal(body.executionEnabled, false);

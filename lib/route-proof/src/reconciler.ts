@@ -27,9 +27,33 @@ import { verifyTransactionReceiptsV1, type BaseReceiptReader, type VerifiedRecei
 // becomes success; a native-ETH (or otherwise unsupported) output is never
 // guessed — it routes to `reconciliation_required`.
 
+/**
+ * T67C.1 — the seam the outcome projector arrives through.
+ *
+ * Declared HERE and implemented in `@mioagent/route-outcomes`, so route-proof
+ * gains no dependency on it: the projector needs a persisted candidate and the
+ * scoring vocabulary, and importing that here would drag route-engine into the
+ * package that reconciles receipts.
+ *
+ * It returns rather than throws, and the call site below ignores the result. A
+ * statistic failing to record is not a reason to fail a reconcile response
+ * about somebody's settled trade — `outcomes:backfill` repairs the gap.
+ */
+export interface RouteOutcomeProjectorPortV1 {
+  projectFinalizedProof(input: {
+    proof: RouteProofV1;
+    events: readonly RouteProofEventV1[];
+    routeRunId: string;
+    now: Date;
+  }): Promise<unknown>;
+}
+
 export interface RouteProofReconcilerDependencies {
   repository: RouteStorageRepository;
   receiptReader: BaseReceiptReader;
+  /** Absent means no outcome is recorded at all — which is exactly what the
+   * feature flag being off must look like from in here. */
+  outcomeProjector?: RouteOutcomeProjectorPortV1;
 }
 
 export interface ReconcileRouteProofInput {
@@ -169,7 +193,7 @@ async function appendProofEventV1(
 }
 
 export function createRouteProofReconciler(deps: RouteProofReconcilerDependencies): RouteProofReconciler {
-  const { repository, receiptReader } = deps;
+  const { repository, receiptReader, outcomeProjector } = deps;
 
   return {
     async reconcile(input: ReconcileRouteProofInput): Promise<RouteProofReconciliationResultV1> {
@@ -418,6 +442,35 @@ export function createRouteProofReconciler(deps: RouteProofReconcilerDependencie
           { finalStatus: nextFinalStatus, outputBps: deviation.outputBps, minimumSatisfied: deviation.withinTolerance },
           now,
         );
+      }
+
+      // T67C.1: the proof is written and its events are appended. ONLY now,
+      // and only when THIS pass moved it into a terminal state, is the outcome
+      // projected — so a repeated reconcile of an already-final proof (which
+      // returns early far above) never re-derives, and a proof that is still
+      // pending never contributes a statistic about a trade nobody has seen
+      // finish.
+      //
+      // Wrapped even though the projector already returns its failures: this
+      // call must not be able to fail a reconcile response under ANY
+      // implementation of the port, including a future one that throws.
+      if (
+        outcomeProjector &&
+        finalStatusChanged &&
+        (nextFinalStatus === 'completed' ||
+          nextFinalStatus === 'partial_failure' ||
+          nextFinalStatus === 'failed')
+      ) {
+        try {
+          await outcomeProjector.projectFinalizedProof({
+            proof: updatedProof,
+            events: currentEvents,
+            routeRunId,
+            now,
+          });
+        } catch {
+          // Deliberately swallowed. The proof stays terminal and stored.
+        }
       }
 
       const outcome: RouteProofReconciliationResultV1['outcome'] =

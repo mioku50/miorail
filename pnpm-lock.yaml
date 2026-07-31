@@ -116,6 +116,9 @@ importers:
       '@mioagent/route-engine':
         specifier: workspace:*
         version: link:../../lib/route-engine
+      '@mioagent/route-outcomes':
+        specifier: workspace:*
+        version: link:../../lib/route-outcomes
       '@mioagent/route-proof':
         specifier: workspace:*
         version: link:../../lib/route-proof
@@ -1252,6 +1255,12 @@ importers:
       '@mioagent/route-domain':
         specifier: workspace:*
         version: link:../lib/route-domain
+      '@mioagent/route-outcomes':
+        specifier: workspace:*
+        version: link:../lib/route-outcomes
+      '@mioagent/route-storage':
+        specifier: workspace:*
+        version: link:../lib/route-storage
       '@mioagent/security':
         specifier: workspace:*
         version: link:../lib/security
