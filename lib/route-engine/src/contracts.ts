@@ -62,6 +62,23 @@ export const NetResultMetricV1Schema = z
     intelligenceCostOutputAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
     netOutputAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
     reason: z.string().min(1).max(200).nullable(),
+    // --- T67C.1 Part 2: history calibration ------------------------------
+    // All optional and all ABSENT under swap-path-score/v1, so a v1 evaluation
+    // canonicalises byte-for-byte as it did before this task. `netOutputAtomic`
+    // keeps its v1 meaning — the RAW quoted net result — and the adjusted
+    // figure lives beside it rather than replacing it, because a user comparing
+    // routes is owed both the offer and the expectation.
+    //
+    // Provider fees are not a separate subtraction: a DEX or aggregator quote
+    // is already net of its own fee, so `expectedOutput` includes it. Adding a
+    // second fee term here would charge it twice.
+    calibrationApplied: z.boolean().optional(),
+    historyAdjustedNetOutputAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable().optional(),
+    calibratedExpectedOutputAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable().optional(),
+    appliedShortfallBps: z.number().int().nonnegative().nullable().optional(),
+    reliabilityScope: z.enum(['personal', 'network']).nullable().optional(),
+    reliabilitySnapshotHash: HashV1Schema.nullable().optional(),
+    reliabilityCutoffAt: z.string().datetime({ offset: true }).nullable().optional(),
   })
   .strict();
 export type NetResultMetricV1 = z.infer<typeof NetResultMetricV1Schema>;

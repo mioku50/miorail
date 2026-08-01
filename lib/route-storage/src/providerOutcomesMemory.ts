@@ -86,6 +86,18 @@ export function createMemoryProviderOutcomeRepository(): ProviderOutcomeReposito
         ) {
           return false;
         }
+        if (
+          query.cutoffStrictlyBefore !== undefined &&
+          Date.parse(row.cutoffAt) >= query.cutoffStrictlyBefore.getTime()
+        ) {
+          return false;
+        }
+        if (
+          query.aggregationVersion !== undefined &&
+          row.aggregationVersion !== query.aggregationVersion
+        ) {
+          return false;
+        }
         return true;
       });
       // Newest cutoff wins; the id breaks a tie so the answer is total.
@@ -98,6 +110,10 @@ export function createMemoryProviderOutcomeRepository(): ProviderOutcomeReposito
 
     async listSnapshotMemberIds(snapshotId) {
       return [...(members.get(snapshotId) ?? [])];
+    },
+
+    async countSnapshotMembers(snapshotId) {
+      return (members.get(snapshotId) ?? []).length;
     },
   };
 }

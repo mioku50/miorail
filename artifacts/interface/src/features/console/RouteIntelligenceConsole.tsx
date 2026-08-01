@@ -47,6 +47,7 @@ import {
   quoteFreshnessFromRouteV1,
   routeGraphFromRouteV1,
   scoreRowsFromProjectionV1,
+  providerHistoryViewsV1,
   scoringVersionLabelV1,
   shortfallNoticeFromProjectionV1,
   simulationSourceFromResponseV1,
@@ -926,6 +927,7 @@ export function RouteIntelligenceConsole() {
         simulatedPill={simulation.passed ? { label: 'simulated', tone: 'g' } : { label: 'not simulated yet', tone: 'n' }}
         scoreRows={scoreRowsFromProjectionV1(projection)}
         scoringVersion={scoringVersionLabelV1(projection.pathScore)}
+        providerHistory={providerHistoryViewsV1(projection)}
         candidates={candidateRowsFromProjectionV1(projection)}
         onReview={() => recommended && reviewCandidate(recommended.candidateHash)}
         onChangeGoal={() => setScreen('plan')}

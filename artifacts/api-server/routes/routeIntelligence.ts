@@ -53,9 +53,11 @@ import {
   createDatabaseSubmissionAttemptRepository,
   type IntelligenceBudgetRecord,
   type RouteStorageRepository,
+  createDatabaseProviderOutcomeRepository,
   type StoredBlueprintV1,
 } from '@mioagent/route-storage';
 import { createRouteOutcomeProjectorForServerV1 } from '../lib/routeOutcomeProjector.js';
+import { createReliabilityLookupV1 } from '../lib/reliabilityLookup.js';
 import {
   RouteProofReconcileBindingError,
   createEarnRouteProofReconciler,
@@ -177,7 +179,10 @@ import {
   recordAttemptOutcomeV1,
   verifySubmissionAttemptV1,
 } from '../lib/submissionAttemptLink.js';
-import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
+import {
+  getMiorailProductMigrationFlags,
+  getMiorailReliabilityThresholds,
+} from '../lib/productMigrationConfig.js';
 import { RoutePlanCoordinator, type RoutePlanCoordinatorInput } from '../lib/routePlanCoordinator.js';
 import { loadTokenSecurityContext } from '../lib/executionSecurity.js';
 import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
@@ -303,8 +308,21 @@ export const routePlanRouteRuntime = {
   flags: getMiorailProductMigrationFlags,
   migrationAvailable: routeStorageMigrationAvailable,
   coordinate: async (input: RoutePlanCoordinatorInput) => {
+    const flags = getMiorailProductMigrationFlags(process.env);
+    const repository = createDatabaseRouteStorageRepository(client);
     const coordinator = new RoutePlanCoordinator({
       llm: createLlmProvider(),
+      // T67C.1 Part 2: supplied ONLY when the flag is on. Absent means the
+      // snapshot reader is never called, no reliability evidence is created,
+      // and scoring stays byte-compatible with swap-path-score/v1.
+      reliabilityLoaderFactory: flags.routeOutcomeFeedbackV1
+        ? (context) =>
+            createReliabilityLookupV1({
+              outcomes: createDatabaseProviderOutcomeRepository(client),
+              thresholds: getMiorailReliabilityThresholds(process.env),
+              ...context,
+            })
+        : undefined,
       engine: createSwapRouteEngine(),
       // T67B: Aerodrome quotes over the Base RPC this deployment already has,
       // so it needs no key of its own — but with no RPC URL configured it
@@ -317,7 +335,7 @@ export const routePlanRouteRuntime = {
         new KyberSwapRouteAdapter(),
         new AerodromeSwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1() }),
       ],
-      repository: createDatabaseRouteStorageRepository(client),
+      repository,
     });
     return coordinator.evaluate(input);
   },

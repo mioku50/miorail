@@ -35,6 +35,69 @@ export const RoutePlanEvidenceSummaryV1Schema = z
   .strict();
 export type RoutePlanEvidenceSummaryV1 = z.infer<typeof RoutePlanEvidenceSummaryV1Schema>;
 
+/**
+ * T67C.1 Part 2 §5 — what the card says about a provider's verified history.
+ *
+ * Deliberately a set of separate measurements. There is no composite figure and
+ * no place to put one: a success rate, a median shortfall and a p90
+ * confirmation time answer different questions in different units, and the
+ * single number a reader would remember is the one that would tell them least.
+ *
+ * `requiredSampleSize` travels with `sampleSize` so a Not-scored card can say
+ * "8 verified routes · 10 required" instead of leaving an unexplained absence.
+ */
+export const ProviderHistoryProjectionV1Schema = z
+  .object({
+    status: z.enum(['eligible', 'not_scored']),
+    scope: z.enum(['personal', 'network']).nullable(),
+    notScoredReason: z
+      .enum(['feature_disabled', 'no_verified_history', 'insufficient_history', 'unsupported_provider'])
+      .nullable(),
+    sampleSize: z.number().int().nonnegative(),
+    requiredSampleSize: z.number().int().positive(),
+    uniqueWalletCount: z.number().int().nonnegative().nullable(),
+    completedCount: z.number().int().nonnegative().nullable(),
+    failedCount: z.number().int().nonnegative().nullable(),
+    partialFailureCount: z.number().int().nonnegative().nullable(),
+    successRateBps: z.number().int().min(0).max(10_000).nullable(),
+    medianAdverseShortfallBps: z.number().int().nonnegative().nullable(),
+    p90AdverseShortfallBps: z.number().int().nonnegative().nullable(),
+    floorBreachRateBps: z.number().int().min(0).max(10_000).nullable(),
+    medianGasErrorBps: z.number().int().nullable(),
+    p90ConfirmationMs: z.number().int().nonnegative().nullable(),
+    /** The exact snapshot this card was calibrated against, pinned so the card
+     * remains checkable after newer snapshots exist. */
+    cutoffAt: z.string().datetime({ offset: true }).nullable(),
+    snapshotHash: HashV1Schema.nullable(),
+    aggregationVersion: z.string().min(1).max(120).nullable(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const eligible = value.status === 'eligible';
+    if (eligible === (value.notScoredReason !== null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['notScoredReason'],
+        message: 'Not scored requires a reason; eligible must not carry one',
+      });
+    }
+    if (eligible && (value.snapshotHash === null || value.cutoffAt === null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['snapshotHash'],
+        message: 'An eligible history names the snapshot and cutoff it came from',
+      });
+    }
+    if (!eligible && value.snapshotHash !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['snapshotHash'],
+        message: 'A Not scored history must not claim a snapshot',
+      });
+    }
+  });
+export type ProviderHistoryProjectionV1 = z.infer<typeof ProviderHistoryProjectionV1Schema>;
+
 export const RoutePlanRouteV1Schema = z
   .object({
     candidateHash: HashV1Schema,
@@ -51,6 +114,17 @@ export const RoutePlanRouteV1Schema = z
     approvalCount: z.number().int().nonnegative(),
     pathScore: PathScoreV1Schema,
     evidence: RoutePlanEvidenceSummaryV1Schema,
+    // --- T67C.1 Part 2 -----------------------------------------------------
+    // Additive and OPTIONAL. A projection built under swap-path-score/v1 omits
+    // every field below, so it canonicalises — and therefore hashes — exactly
+    // as it did before this task, and every Route Card already stored keeps
+    // validating unchanged.
+    providerHistory: ProviderHistoryProjectionV1Schema.optional(),
+    /** The quoted net result. Always the raw figure, so the two are comparable
+     * side by side rather than one silently standing in for the other. */
+    rawNetResult: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable().optional(),
+    historyAdjustedNetResult: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable().optional(),
+    calibrationApplied: z.boolean().optional(),
   })
   .strict();
 export type RoutePlanRouteV1 = z.infer<typeof RoutePlanRouteV1Schema>;
@@ -76,6 +150,8 @@ const RoutePlanProjectionV1ObjectSchema = z
     providerFailures: z.array(SwapAdapterFailureV1Schema),
     expiresAt: z.string().datetime({ offset: true }).nullable(),
     readOnly: z.literal(true),
+    /** Absent on a v1 projection — which is what keeps the hash unchanged. */
+    scoringVersion: z.string().min(1).max(120).optional(),
   })
   .strict();
 

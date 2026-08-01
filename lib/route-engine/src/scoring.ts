@@ -15,13 +15,67 @@ import {
   type RouteCandidateV1,
   type RouteIntentV1,
 } from '@mioagent/route-domain';
+import {
+  calibrateNetResultV1,
+  type ProviderReliabilityAssessmentV1,
+} from '@mioagent/route-outcomes';
 import type { NetResultMetricV1 } from './contracts.js';
 import {
   REQUIRED_EVIDENCE_V1,
   SCORE_CONFIDENCE_V1,
   SWAP_PATH_SCORE_VERSION_V1,
   UNCERTAIN_EXECUTION_RISK_FLAGS_V1,
+  type SwapPathScoreVersionV1,
 } from './policy.js';
+
+// T67C.1 Part 2: scoring gained a version and an optional reliability input.
+// Under v1 BOTH are absent and every code path below behaves exactly as it did
+// — the v2 additions are guarded on an assessment existing, so a v1 evaluation
+// canonicalises to the same bytes it always has.
+
+/** Applies the history discount to a computed metric. Returns the metric
+ * untouched when there is nothing eligible to apply, so "no history" and
+ * "feature off" are the same shape: raw figures, `calibrationApplied: false`. */
+export function calibrateMetricV1(
+  metric: NetResultMetricV1,
+  assessment: ProviderReliabilityAssessmentV1 | undefined,
+): NetResultMetricV1 {
+  if (!assessment) return metric;
+  const costOutputAtomic =
+    metric.gasCostOutputAtomic === null || metric.intelligenceCostOutputAtomic === null
+      ? null
+      : (BigInt(metric.gasCostOutputAtomic) + BigInt(metric.intelligenceCostOutputAtomic)).toString();
+  const calibrated = calibrateNetResultV1({
+    candidateHash: metric.candidateHash,
+    rawExpectedOutputAtomic: metric.expectedOutputAtomic,
+    costOutputAtomic,
+    assessment,
+  });
+  return {
+    ...metric,
+    calibrationApplied: calibrated.calibrated,
+    // Under v2 without eligible history these equal the raw figures, which is
+    // what makes "uncalibrated" a state the UI can state plainly rather than a
+    // gap it has to explain.
+    historyAdjustedNetOutputAtomic: calibrated.calibratedNetOutputAtomic,
+    calibratedExpectedOutputAtomic: calibrated.calibratedExpectedOutputAtomic,
+    appliedShortfallBps: calibrated.appliedShortfallBps,
+    reliabilityScope: calibrated.scope,
+    reliabilitySnapshotHash: calibrated.snapshotHash,
+    reliabilityCutoffAt: calibrated.cutoffAt,
+  };
+}
+
+/** What `best_net_result` compares. The adjusted figure when calibration was
+ * applied, the raw one otherwise — and a candidate with no history is ranked on
+ * its quote rather than frozen out, which would permanently exclude every new
+ * provider. */
+export function rankingNetOutputAtomicV1(metric: NetResultMetricV1): bigint | null {
+  const chosen = metric.calibrationApplied
+    ? (metric.historyAdjustedNetOutputAtomic ?? null)
+    : metric.netOutputAtomic;
+  return chosen === null ? null : BigInt(chosen);
+}
 
 const BASE_USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 const BASE_SEPOLIA_USDC = '0x036cbd53842c5426634e7929541ec2318f3dcf7e';
@@ -202,6 +256,7 @@ function dimension(input: {
   reason: NotScoredReason | null;
   sources: EvidenceRecordV1[];
   missingEvidence?: EvidenceTypeV1[];
+  scoringVersion: SwapPathScoreVersionV1;
 }): PathScoreDimensionV1 {
   const scored = input.score !== null;
   const quote = freshQuote(input.set, input.now.getTime());
@@ -237,7 +292,7 @@ function dimension(input: {
     confidence: scored ? scoreConfidence(input.set) : null,
     sources: scored ? input.sources.map(evidenceSource).sort((a, b) => a.evidenceHash.localeCompare(b.evidenceHash)) : [],
     freshness,
-    scoringVersion: SWAP_PATH_SCORE_VERSION_V1,
+    scoringVersion: input.scoringVersion,
     missingEvidence: scored ? [] : (input.missingEvidence ?? []),
   };
   return PathScoreDimensionV1Schema.parse({
@@ -260,6 +315,9 @@ export interface ScoredRouteV1 {
   evidenceSet: EvidenceSetV1;
   pathScore: PathScoreV1;
   netMetric: NetResultMetricV1;
+  /** Present only under v2. Absent means the route was scored without any
+   * reliability input at all — not that its history was empty. */
+  reliability?: ProviderReliabilityAssessmentV1;
 }
 
 export function scoreRoutesV1(input: {
@@ -267,21 +325,34 @@ export function scoreRoutesV1(input: {
   candidates: readonly RouteCandidateV1[];
   evidenceSets: readonly EvidenceSetV1[];
   now: Date;
+  /** Omitted under v1. */
+  scoringVersion?: SwapPathScoreVersionV1;
+  /** Keyed by candidate hash. Under v2 every candidate has an entry, even when
+   * its status is Not scored — the absence of an entry means the feature never
+   * ran, which is a different thing the UI must not confuse with no history. */
+  reliability?: ReadonlyMap<string, ProviderReliabilityAssessmentV1>;
 }): ScoredRouteV1[] {
+  const scoringVersion = input.scoringVersion ?? SWAP_PATH_SCORE_VERSION_V1;
   const sets = new Map(input.evidenceSets.map((set) => [set.candidateHash, EvidenceSetV1Schema.parse(set)]));
   const metrics = new Map<string, NetResultMetricV1>();
   for (const candidate of input.candidates) {
     const set = sets.get(candidate.candidateHash)!;
-    metrics.set(candidate.candidateHash, metricForCandidate(input.intent, candidate, set, input.now.getTime()));
+    const raw = metricForCandidate(input.intent, candidate, set, input.now.getTime());
+    metrics.set(
+      candidate.candidateHash,
+      calibrateMetricV1(raw, input.reliability?.get(candidate.candidateHash)),
+    );
   }
+  // The net_result DIMENSION is scored against whichever figure ranking uses,
+  // so the 0-100 a user sees agrees with the order the routes are shown in.
   const computed = [...metrics.values()].filter(
     (metric): metric is NetResultMetricV1 & { netOutputAtomic: string } =>
-      metric.status === 'computed' && metric.netOutputAtomic !== null,
+      metric.status === 'computed' && rankingNetOutputAtomicV1(metric) !== null,
   );
-  const bestNet = computed.reduce<bigint | null>(
-    (best, metric) => best === null || BigInt(metric.netOutputAtomic) > best ? BigInt(metric.netOutputAtomic) : best,
-    null,
-  );
+  const bestNet = computed.reduce<bigint | null>((best, metric) => {
+    const value = rankingNetOutputAtomicV1(metric)!;
+    return best === null || value > best ? value : best;
+  }, null);
 
   return [...input.candidates]
     .sort((a, b) => a.candidateHash.localeCompare(b.candidateHash))
@@ -292,8 +363,9 @@ export function scoreRoutesV1(input: {
       const gas = freshGas(set, input.now.getTime());
       const stale = set.status === 'stale' || !quote;
       let netScore: number | null = null;
-      if (metric.status === 'computed' && metric.netOutputAtomic && bestNet !== null) {
-        const net = BigInt(metric.netOutputAtomic);
+      const rankingNet = rankingNetOutputAtomicV1(metric);
+      if (metric.status === 'computed' && rankingNet !== null && bestNet !== null && bestNet > 0n) {
+        const net = rankingNet;
         const lossBps = ((bestNet - net) * 10_000n) / bestNet;
         const penalty = Number(ceilDiv(lossBps, 10n));
         netScore = Math.max(0, 100 - penalty);
@@ -301,6 +373,7 @@ export function scoreRoutesV1(input: {
       const netMissing: EvidenceTypeV1[] = !quote ? ['quote'] : !gas ? ['gas'] : ['gas'];
       const net = dimension({
         intent: input.intent,
+        scoringVersion,
         candidate,
         set,
         now: input.now,
@@ -325,6 +398,7 @@ export function scoreRoutesV1(input: {
       });
       const freshness = dimension({
         intent: input.intent,
+        scoringVersion,
         candidate,
         set,
         now: input.now,
@@ -342,6 +416,7 @@ export function scoreRoutesV1(input: {
           : null;
       const simplicity = dimension({
         intent: input.intent,
+        scoringVersion,
         candidate,
         set,
         now: input.now,
@@ -356,6 +431,7 @@ export function scoreRoutesV1(input: {
       );
       const safety = dimension({
         intent: input.intent,
+        scoringVersion,
         candidate,
         set,
         now: input.now,
@@ -372,7 +448,7 @@ export function scoreRoutesV1(input: {
         id: `path-score:${stableHashV1('swap-path-score-id/v1', {
           candidateHash: candidate.candidateHash,
           evidenceSetHash: set.evidenceSetHash,
-          scoringVersion: SWAP_PATH_SCORE_VERSION_V1,
+          scoringVersion,
         }).slice(2)}`,
         tenantId: input.intent.tenantId,
         walletAddress: input.intent.walletAddress,
@@ -384,13 +460,14 @@ export function scoreRoutesV1(input: {
         candidateHash: candidate.candidateHash,
         evidenceSetHash: set.evidenceSetHash,
         pathScoreHash: ZERO_HASH_V1,
-        scoringVersion: SWAP_PATH_SCORE_VERSION_V1,
+        scoringVersion,
         dimensions,
       };
       return {
         candidate,
         evidenceSet: set,
         netMetric: metric,
+        reliability: input.reliability?.get(candidate.candidateHash),
         pathScore: PathScoreV1Schema.parse({
           ...scoreDraft,
           pathScoreHash: hashPathScoreV1(scoreDraft),

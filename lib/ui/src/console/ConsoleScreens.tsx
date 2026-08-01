@@ -10,6 +10,7 @@ import {
   type ScoreDimensionViewV1,
   type SimulationViewV1,
 } from './consoleState';
+import type { ProviderHistoryViewV1 } from './consoleAdapters';
 import { BudgetDonut, ConsoleStepper, DepthCurve, RouteGraph, ScoreRadar, ScoreRows, Sparkline, type RouteGraphModelV1 } from './ConsoleCharts';
 
 void React;
@@ -115,6 +116,10 @@ export interface RouteScreenModelV1 {
   simulatedPill: { label: string; tone: 'g' | 'n' | 'a' };
   scoreRows: ScoreDimensionViewV1[];
   scoringVersion: string;
+  /** T67C.1 Part 2. Empty under swap-path-score/v1 — the section then does not
+   * render at all, rather than rendering an empty history that a reader could
+   * mistake for a measured one. */
+  providerHistory?: ProviderHistoryViewV1[];
   candidates: CandidateRowViewV1[];
   onReview: () => void;
   onChangeGoal: () => void;
@@ -194,6 +199,42 @@ export function RouteScreen(model: RouteScreenModelV1) {
           </div>
         </div>
       </div>
+
+      {(model.providerHistory ?? []).length > 0 && (
+        <div className="panel">
+          <div className="ph">
+            <h3>Provider history</h3>
+            <span className="sub">verified routes only</span>
+          </div>
+          <div className="pb tight">
+            {(model.providerHistory ?? []).map((entry) => (
+              <div key={entry.providerName} className="note" style={{ marginBottom: 10 }}>
+                <b>{entry.providerName}</b>
+                <p className="lnote" style={{ margin: '4px 0 8px' }}>{entry.headline}</p>
+                <div className="kv">
+                  {entry.rows.map((row) => (
+                    <div key={row.label}>
+                      <span>{row.label}</span>
+                      <span className="mono">{row.value}</span>
+                    </div>
+                  ))}
+                  <div>
+                    <span>Provider quote</span>
+                    <span className="mono">{entry.quotedResult ?? 'Not available'}</span>
+                  </div>
+                  <div>
+                    <span>History-adjusted estimate</span>
+                    <span className="mono">{entry.historyAdjustedResult ?? 'Not available'}</span>
+                  </div>
+                </div>
+                {entry.uncalibratedNote && (
+                  <p className="lnote" style={{ marginTop: 8 }}>{entry.uncalibratedNote}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="panel">
         <div className="ph">

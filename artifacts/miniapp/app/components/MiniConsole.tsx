@@ -43,6 +43,8 @@ import {
   quoteFreshnessFromRouteV1,
   routeGraphFromRouteV1,
   scoreRowsFromProjectionV1,
+  providerHistoryViewsV1,
+  scoringVersionLabelV1,
   scoredCountLabelV1,
   shortfallNoticeFromProjectionV1,
   simulationSourceFromResponseV1,
@@ -900,7 +902,49 @@ export function MiniConsole() {
           )}
         </div>
         {/* No radar at this width — the five bars carry the same information. */}
-        <MiniScorePanel rows={scoreRowsFromProjectionV1(projection)} note={scoredCountLabelV1(scoreRowsFromProjectionV1(projection))} />
+        {/* Both facts, same as the web console's header: which policy scored
+            this, and how many dimensions it could actually score. */}
+        <MiniScorePanel
+          rows={scoreRowsFromProjectionV1(projection)}
+          note={`${scoringVersionLabelV1(projection.pathScore)} · ${scoredCountLabelV1(scoreRowsFromProjectionV1(projection))}`}
+        />
+        {/* T67C.1 Part 2: the SAME projection helper the web console uses, so
+            the two surfaces cannot report different numbers for one run. */}
+        {providerHistoryViewsV1(projection).length > 0 && (
+          <div className="panel">
+            <div className="ph">
+              <h3>Provider history</h3>
+              <span className="sub">verified routes only</span>
+            </div>
+            <div className="pb tight">
+              {providerHistoryViewsV1(projection).map((entry) => (
+                <div key={entry.providerName} className="note" style={{ marginBottom: 10 }}>
+                  <b>{entry.providerName}</b>
+                  <p className="lnote" style={{ margin: "4px 0 8px" }}>{entry.headline}</p>
+                  <div className="kv">
+                    {entry.rows.map((row) => (
+                      <div key={row.label}>
+                        <span>{row.label}</span>
+                        <span className="mono">{row.value}</span>
+                      </div>
+                    ))}
+                    <div>
+                      <span>Provider quote</span>
+                      <span className="mono">{entry.quotedResult ?? "Not available"}</span>
+                    </div>
+                    <div>
+                      <span>History-adjusted estimate</span>
+                      <span className="mono">{entry.historyAdjustedResult ?? "Not available"}</span>
+                    </div>
+                  </div>
+                  {entry.uncalibratedNote && (
+                    <p className="lnote" style={{ marginTop: 8 }}>{entry.uncalibratedNote}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="panel">
           <div className="ph">
             <h3>All candidates</h3>

@@ -19,7 +19,10 @@ import {
   type RoutePlanEvidenceSummaryV1,
   type RoutePlanProjectionV1,
   type RoutePlanRouteV1,
+  ProviderHistoryProjectionV1Schema,
+  type ProviderHistoryProjectionV1,
 } from './contracts.js';
+import type { ProviderReliabilityAssessmentV1 } from '@mioagent/route-outcomes';
 
 function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -178,6 +181,7 @@ function evidenceSummary(sets: readonly EvidenceSetV1[]): RoutePlanEvidenceSumma
 function routeProjection(
   evaluation: SwapRouteEvaluationV1,
   candidate: RouteCandidateV1,
+  history?: ReadonlyMap<string, ProviderReliabilityAssessmentV1>,
 ): RoutePlanRouteV1 | null {
   const pathScore = evaluation.pathScores.find(
     (score) => score.candidateHash === candidate.candidateHash,
@@ -186,6 +190,12 @@ function routeProjection(
     (set) => set.candidateHash === candidate.candidateHash,
   );
   if (!pathScore || !evidenceSet) return null;
+  const metric = evaluation.netResultMetrics.find(
+    (entry) => entry.candidateHash === candidate.candidateHash,
+  );
+  // Present exactly when the evaluation ran under v2 — the metric carries the
+  // calibration fields only then, so a v1 projection stays byte-identical.
+  const calibrated = metric?.calibrationApplied !== undefined;
   return {
     candidateHash: candidate.candidateHash,
     provider: candidate.provider,
@@ -203,7 +213,52 @@ function routeProjection(
     approvalCount: candidate.approvalCount,
     pathScore,
     evidence: evidenceSummary([evidenceSet]),
+    ...(calibrated
+      ? {
+          providerHistory: providerHistoryFromMetricV1(metric!, history?.get(candidate.candidateHash)),
+          rawNetResult: metric!.netOutputAtomic,
+          historyAdjustedNetResult: metric!.historyAdjustedNetOutputAtomic ?? metric!.netOutputAtomic,
+          calibrationApplied: metric!.calibrationApplied === true,
+        }
+      : {}),
   };
+}
+
+/**
+ * The history block for one candidate.
+ *
+ * Every statistic is null unless an eligible snapshot supplied it. Nulls here
+ * are the honest shape: rendering 0% shortfall for a provider nobody has
+ * measured would be the most flattering possible lie about it.
+ */
+function providerHistoryFromMetricV1(
+  metric: SwapRouteEvaluationV1['netResultMetrics'][number],
+  assessment: ProviderReliabilityAssessmentV1 | undefined,
+): ProviderHistoryProjectionV1 {
+  const snapshot = assessment?.status === 'eligible' ? assessment.snapshot : null;
+  return ProviderHistoryProjectionV1Schema.parse({
+    status: snapshot ? 'eligible' : 'not_scored',
+    scope: snapshot?.scope ?? null,
+    notScoredReason: snapshot ? null : (assessment?.notScoredReason ?? 'no_verified_history'),
+    sampleSize: assessment?.observedSamples ?? 0,
+    requiredSampleSize: assessment?.requiredSamples ?? 10,
+    uniqueWalletCount: snapshot?.uniqueWalletCount ?? null,
+    completedCount: snapshot?.completedCount ?? null,
+    failedCount: snapshot?.failedCount ?? null,
+    partialFailureCount: snapshot?.partialFailureCount ?? null,
+    successRateBps: snapshot?.successRateBps ?? null,
+    medianAdverseShortfallBps: snapshot?.medianAdverseShortfallBps ?? null,
+    p90AdverseShortfallBps: snapshot?.p90AdverseShortfallBps ?? null,
+    floorBreachRateBps: snapshot?.floorBreachRateBps ?? null,
+    medianGasErrorBps: snapshot?.medianGasErrorBps ?? null,
+    p90ConfirmationMs: snapshot?.p90ConfirmationMs ?? null,
+    // Pinned from the METRIC, not from the assessment: the metric is what the
+    // ranking actually used, and the card must name that snapshot even if a
+    // newer one has since been sealed.
+    cutoffAt: metric.reliabilityCutoffAt ?? null,
+    snapshotHash: metric.reliabilitySnapshotHash ?? null,
+    aggregationVersion: snapshot?.aggregationVersion ?? null,
+  });
 }
 
 function goalSummary(evaluation: SwapRouteEvaluationV1): string {
@@ -214,7 +269,13 @@ function goalSummary(evaluation: SwapRouteEvaluationV1): string {
 
 export function buildRoutePlanProjectionV1(
   input: SwapRouteEvaluationV1,
-  options: { routeCard?: RouteCardV1 | null; routeRunId?: string | null } = {},
+  options: {
+    routeCard?: RouteCardV1 | null;
+    routeRunId?: string | null;
+    /** T67C.1 Part 2, keyed by candidate hash. Supplied only when the
+     * comparison ran under swap-path-score/v2. */
+    providerHistory?: ReadonlyMap<string, ProviderReliabilityAssessmentV1>;
+  } = {},
 ): RoutePlanProjectionV1 {
   const evaluation = SwapRouteEvaluationV1Schema.parse(input);
   const routeCardInput = options.routeCard === undefined ? buildRouteCardV1(evaluation) : options.routeCard;
@@ -229,7 +290,7 @@ export function buildRoutePlanProjectionV1(
     throw new TypeError('Route Card must belong to the projected evaluation');
   }
   const availableRoutes = evaluation.candidates.flatMap((candidate) => {
-    const projected = routeProjection(evaluation, candidate);
+    const projected = routeProjection(evaluation, candidate, options.providerHistory);
     return projected ? [projected] : [];
   });
   const byHash = new Map(availableRoutes.map((route) => [route.candidateHash, route]));
@@ -262,6 +323,11 @@ export function buildRoutePlanProjectionV1(
     providerFailures: evaluation.adapterFailures,
     expiresAt,
     readOnly: true,
+    // Named only under v2, so the UI can swap "weighted to your goal" for the
+    // deterministic-scoring line without guessing which policy produced a card.
+    ...(recommendedRoute?.calibrationApplied === undefined
+      ? {}
+      : { scoringVersion: recommendedRoute.pathScore.scoringVersion }),
   };
   return RoutePlanProjectionV1Schema.parse({
     ...draft,

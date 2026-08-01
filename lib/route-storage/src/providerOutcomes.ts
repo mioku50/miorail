@@ -98,6 +98,15 @@ export interface ReliabilitySnapshotQueryV1 {
   /** Only snapshots cut off at or before this instant are eligible — the rule
    * that stops a run from being informed by its own result. */
   cutoffAtOrBefore?: Date;
+  /** STRICTLY before. The read path uses this rather than the inclusive bound:
+   * a snapshot cut off at the exact instant a run started could contain an
+   * outcome from that same instant, and "before" should mean before. */
+  cutoffStrictlyBefore?: Date;
+  /** Snapshots taken under a different threshold set are a different kind of
+   * claim, so they are filtered in SQL rather than read and then discarded —
+   * otherwise the "latest" snapshot could be one this server cannot use, and
+   * the pair would look uncalibratable while a usable older one sat behind it. */
+  aggregationVersion?: string;
 }
 
 export interface ProviderOutcomeRepositoryV1 {
@@ -115,6 +124,16 @@ export interface ProviderOutcomeRepositoryV1 {
     query: ReliabilitySnapshotQueryV1,
   ): Promise<ProviderReliabilitySnapshotV1 | null>;
   listSnapshotMemberIds(snapshotId: string): Promise<string[]>;
+  /**
+   * How many member rows a snapshot actually has.
+   *
+   * One cheap query, used on the READ path to confirm a snapshot still has the
+   * membership it claims. Recomputing the full outcome-set hash would mean
+   * loading every member on every comparison, which is the aggregation that is
+   * explicitly not allowed to happen inside an HTTP request —
+   * `verifySnapshotMembershipV1` does that, and the rebuild command runs it.
+   */
+  countSnapshotMembers(snapshotId: string): Promise<number>;
 }
 
 /** Shared filter, so the fake and the SQL agree on what a window means. */

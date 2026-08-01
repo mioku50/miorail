@@ -264,9 +264,18 @@ export function createDatabaseProviderOutcomeRepository(
           AND (${query.scope === 'personal' ? (query.tenantId ?? null) : null}::text IS NULL OR user_id = ${query.tenantId ?? null})
           AND (${query.scope === 'personal' ? (query.walletAddress?.toLowerCase() ?? null) : null}::text IS NULL OR wallet_address = ${query.walletAddress?.toLowerCase() ?? null})
           AND (${query.cutoffAtOrBefore?.toISOString() ?? null}::timestamptz IS NULL OR cutoff_at <= ${query.cutoffAtOrBefore?.toISOString() ?? null})
+          AND (${query.cutoffStrictlyBefore?.toISOString() ?? null}::timestamptz IS NULL OR cutoff_at < ${query.cutoffStrictlyBefore?.toISOString() ?? null})
+          AND (${query.aggregationVersion ?? null}::text IS NULL OR aggregation_version = ${query.aggregationVersion ?? null})
         ORDER BY cutoff_at DESC, id DESC
         LIMIT 1`) as Record<string, unknown>[];
       return rows[0] ? rowToSnapshotV1(rows[0]) : null;
+    },
+
+    async countSnapshotMembers(snapshotId) {
+      const rows = (await sql`
+        SELECT count(*)::int AS member_count FROM provider_reliability_snapshot_members
+        WHERE snapshot_id = ${snapshotId}`) as Record<string, unknown>[];
+      return Number(rows[0]?.member_count ?? 0);
     },
 
     async listSnapshotMemberIds(snapshotId) {

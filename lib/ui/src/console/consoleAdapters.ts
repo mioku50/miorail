@@ -29,6 +29,31 @@ export interface RoutePlanRouteV1 {
   approvalCount: number;
   pathScore: PathScoreLikeV1;
   evidence: unknown;
+  // T67C.1 Part 2. Optional, mirroring the projection: a v1 card carries none
+  // of these, and the history block simply does not render for it.
+  providerHistory?: {
+    status: 'eligible' | 'not_scored';
+    scope: 'personal' | 'network' | null;
+    notScoredReason: string | null;
+    sampleSize: number;
+    requiredSampleSize: number;
+    uniqueWalletCount: number | null;
+    completedCount: number | null;
+    failedCount: number | null;
+    partialFailureCount: number | null;
+    successRateBps: number | null;
+    medianAdverseShortfallBps: number | null;
+    p90AdverseShortfallBps: number | null;
+    floorBreachRateBps: number | null;
+    medianGasErrorBps: number | null;
+    p90ConfirmationMs: number | null;
+    cutoffAt: string | null;
+    snapshotHash: string | null;
+    aggregationVersion: string | null;
+  };
+  rawNetResult?: string | null;
+  historyAdjustedNetResult?: string | null;
+  calibrationApplied?: boolean;
 }
 
 export interface RoutePlanProjectionV1 {
@@ -104,11 +129,128 @@ export function scoreDimensionsFromPathScoreV1(pathScore: PathScoreLikeV1 | null
   return [...rows, MEV_DIMENSION_V1];
 }
 
+/**
+ * T67C.1 Part 2 §7.
+ *
+ * v2 drops "weighted to your goal". Nothing in v2 is weighted: the ranking is
+ * one comparison on one figure, or a lexicographic order over separate
+ * measurements. Saying "weighted" would describe a blend the code deliberately
+ * refuses to perform, and would suggest hidden coefficients a user might
+ * reasonably ask to see.
+ *
+ * v1 cards keep the old line, because that IS what v1 did.
+ */
 export function scoringVersionLabelV1(pathScore: PathScoreLikeV1 | null): string {
-  return pathScore?.scoringVersion ? `${pathScore.scoringVersion} · weighted to your goal` : 'scoring unavailable';
+  if (!pathScore?.scoringVersion) return 'scoring unavailable';
+  if (pathScore.scoringVersion === 'swap-path-score/v2') {
+    return 'Deterministic scoring · swap-path-score/v2';
+  }
+  return `${pathScore.scoringVersion} · weighted to your goal`;
 }
 
+// --- provider history -------------------------------------------------------
+
+export interface ProviderHistoryViewV1 {
+  providerName: string;
+  headline: string;
+  /** Label/value pairs. Separate measurements, never combined: a success rate,
+   * a median shortfall and a p90 confirmation time answer different questions
+   * in different units. */
+  rows: Array<{ label: string; value: string }>;
+  /** The quote as offered, and what history says to expect from it. */
+  quotedResult: string | null;
+  historyAdjustedResult: string | null;
+  /** Shown verbatim when there is no calibration, so the absence is stated
+   * rather than left as a blank. */
+  uncalibratedNote: string | null;
+}
+
+export const PROVIDER_HISTORY_UNCALIBRATED_NOTE_V1 =
+  'Ranking uses the current quote without historical calibration.';
+
+function bps(value: number | null): string {
+  return value === null ? '—' : `${value} bps`;
+}
+
+/**
+ * The Provider history block for one candidate, or null when the comparison ran
+ * under v1 and there is nothing to say.
+ *
+ * There is no composite figure here and nowhere to put one. A single
+ * "reliability" number would be the one thing a reader remembers and the one
+ * thing that tells them least.
+ */
+export function providerHistoryViewV1(route: RoutePlanRouteV1): ProviderHistoryViewV1 | null {
+  const history = route.providerHistory;
+  if (!history) return null;
+  const eligible = history.status === 'eligible';
+  const scopeLabel = history.scope === 'personal' ? 'Personal history' : 'Network history';
+
+  const rows: Array<{ label: string; value: string }> = eligible
+    ? [
+        {
+          label: 'Completed',
+          value:
+            history.completedCount === null
+              ? '—'
+              : `${history.completedCount} / ${history.sampleSize}`,
+        },
+        { label: 'Median shortfall', value: bps(history.medianAdverseShortfallBps) },
+        { label: 'P90 shortfall', value: bps(history.p90AdverseShortfallBps) },
+        {
+          label: 'Floor breaches',
+          value:
+            history.floorBreachRateBps === null
+              ? '—'
+              : history.floorBreachRateBps === 0
+                ? '0'
+                : `${history.floorBreachRateBps} bps of routes`,
+        },
+        ...(history.p90ConfirmationMs === null
+          ? []
+          : [{ label: 'P90 confirmation', value: `${Math.round(history.p90ConfirmationMs / 100) / 10}s` }]),
+        { label: 'Cutoff', value: history.cutoffAt ?? '—' },
+      ]
+    : [
+        {
+          label: 'Verified routes',
+          value: `${history.sampleSize} · ${history.requiredSampleSize} required for personal calibration`,
+        },
+      ];
+
+  return {
+    providerName: route.provider.displayName,
+    headline: eligible
+      ? `${scopeLabel} · ${history.sampleSize} verified route${history.sampleSize === 1 ? '' : 's'}`
+      : 'Provider history · Not scored',
+    rows,
+    quotedResult: route.rawNetResult ?? null,
+    historyAdjustedResult: route.calibrationApplied ? (route.historyAdjustedNetResult ?? null) : null,
+    uncalibratedNote: route.calibrationApplied ? null : PROVIDER_HISTORY_UNCALIBRATED_NOTE_V1,
+  };
+}
+
+/** Every candidate's history block, in projection order. Both surfaces call
+ * this, so the web console and the miniapp cannot show different numbers for
+ * the same run. */
+export function providerHistoryViewsV1(projection: RoutePlanProjectionV1): ProviderHistoryViewV1[] {
+  return projection.availableRoutes.flatMap((route) => {
+    const view = providerHistoryViewV1(route);
+    return view ? [view] : [];
+  });
+}
+
+/**
+ * The averaged Route Score, kept for v1 cards only.
+ *
+ * Under v2 it returns null and the column stays empty. Averaging four
+ * dimensions that measure different things produces a number with no unit and
+ * no defensible interpretation, and once history is in the comparison a single
+ * percentage is exactly the summary a user would trust instead of the figures
+ * that actually decided the ranking.
+ */
 function routeScorePercent(route: RoutePlanRouteV1): number | null {
+  if (route.pathScore.scoringVersion === 'swap-path-score/v2') return null;
   const scored = route.pathScore.dimensions.filter((dimension) => dimension.status === 'scored' && dimension.score !== null);
   if (scored.length === 0) return null;
   return Math.round(scored.reduce((total, dimension) => total + (dimension.score ?? 0), 0) / scored.length);

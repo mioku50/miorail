@@ -1,6 +1,7 @@
 import {
   RouteCandidateV1Schema,
   RouteIntentV1Schema,
+  type EvidenceRecordV1,
   ZERO_HASH_V1,
   stableHashV1,
   type RouteCandidateV1,
@@ -22,11 +23,20 @@ import {
 import { buildEvidenceSetV1, RouteEvidenceError } from './evidence.js';
 import { findCrossCandidateOverlapsV1, hasIncompleteProvenanceV1 } from './overlap.js';
 import {
+  buildReliabilityEvidenceV1,
+  compareRiskLexicographicV1,
+  type ProviderReliabilityAssessmentV1,
+} from '@mioagent/route-outcomes';
+import {
   SCORE_CONFIDENCE_V1,
   SUPPORTED_OPTIMIZATION_MODES_V1,
+  SUPPORTED_OPTIMIZATION_MODES_V2,
+  SWAP_PATH_SCORE_VERSION_V1,
+  SWAP_PATH_SCORE_VERSION_V2,
   SWAP_ROUTE_CONFIDENCE_VERSION_V1,
+  type SwapPathScoreVersionV1,
 } from './policy.js';
-import { scoreRoutesV1, type ScoredRouteV1 } from './scoring.js';
+import { rankingNetOutputAtomicV1, scoreRoutesV1, type ScoredRouteV1 } from './scoring.js';
 
 export interface SwapRouteEvaluationInputV1 {
   intent: RouteIntentV1;
@@ -35,6 +45,18 @@ export interface SwapRouteEvaluationInputV1 {
   now: Date;
   adapters?: SwapRouteAdapter[];
   repository?: RouteStorageRepository;
+  /**
+   * T67C.1 Part 2. Absent means swap-path-score/v1 — the snapshot reader was
+   * never called and no reliability entered the comparison at all.
+   *
+   * A LOADER rather than a map, because candidate hashes do not exist until the
+   * adapters have quoted. It is called once, after every quote is validated and
+   * before any evidence set is built, so the reliability record enters the
+   * evidence set as a first-class member rather than being bolted on after.
+   */
+  loadReliability?: (
+    candidates: readonly RouteCandidateV1[],
+  ) => Promise<ReadonlyMap<string, ProviderReliabilityAssessmentV1>>;
 }
 
 export interface SwapRouteEngine {
@@ -128,16 +150,76 @@ function dimensionScore(route: ScoredRouteV1, name: string): number {
   return route.pathScore.dimensions.find((item) => item.dimension === name)?.score ?? -1;
 }
 
+/**
+ * T67C.1 Part 2 — `lowest_risk`.
+ *
+ * Strictly lexicographic (success rate, p90 shortfall, floor breach rate, p90
+ * confirmation, provider id), never a weighted blend: the four measures have no
+ * common unit, and any weighting would be a hidden editorial claim about how
+ * many basis points of shortfall equal a percentage point of failure.
+ *
+ * A candidate with no eligible history sorts AFTER every candidate that has
+ * one. That is a documented choice between two wrong answers: ranking it first
+ * would let an unmeasured provider win on the strength of not having been
+ * measured, and ranking it as zero reliability would treat absence of evidence
+ * as evidence of failure. Last, and shown as Not scored, is the only reading
+ * that claims nothing.
+ */
+function rankByRiskV2(routes: readonly ScoredRouteV1[]): ScoredRouteV1[] | null {
+  if (routes.every((route) => !route.reliability || route.reliability.status !== 'eligible')) {
+    // Nobody has history: there is no risk ordering to give, and inventing one
+    // from quote data would answer a different question than the user asked.
+    return null;
+  }
+  return [...routes].sort((left, right) => {
+    const compared = compareRiskLexicographicV1(
+      { providerId: left.candidate.provider.id, assessment: left.reliability! },
+      { providerId: right.candidate.provider.id, assessment: right.reliability! },
+    );
+    if (compared !== 0) return compared;
+    return left.candidate.candidateHash.localeCompare(right.candidate.candidateHash);
+  });
+}
+
+/** `fastest_execution` only when a measured p90 exists for every route — a
+ * mixture of measured and unmeasured confirmation times is not an ordering. */
+function rankByConfirmationV2(routes: readonly ScoredRouteV1[]): ScoredRouteV1[] | null {
+  const timed = routes.map((route) =>
+    route.reliability?.status === 'eligible' ? route.reliability.snapshot?.p90ConfirmationMs ?? null : null,
+  );
+  if (timed.some((value) => value === null)) return null;
+  return [...routes].sort((left, right) => {
+    const leftMs = left.reliability!.snapshot!.p90ConfirmationMs!;
+    const rightMs = right.reliability!.snapshot!.p90ConfirmationMs!;
+    if (leftMs !== rightMs) return leftMs - rightMs;
+    return left.candidate.provider.id.localeCompare(right.candidate.provider.id) ||
+      left.candidate.candidateHash.localeCompare(right.candidate.candidateHash);
+  });
+}
+
 function rankRoutes(
   mode: RouteIntentV1['optimizationMode'],
   routes: readonly ScoredRouteV1[],
+  scoringVersion: SwapPathScoreVersionV1 = SWAP_PATH_SCORE_VERSION_V1,
 ): ScoredRouteV1[] | null {
-  if (!SUPPORTED_OPTIMIZATION_MODES_V1.has(mode) || routes.length === 0) return null;
+  const supported =
+    scoringVersion === SWAP_PATH_SCORE_VERSION_V2
+      ? SUPPORTED_OPTIMIZATION_MODES_V2
+      : SUPPORTED_OPTIMIZATION_MODES_V1;
+  if (!supported.has(mode) || routes.length === 0) return null;
+  if (scoringVersion === SWAP_PATH_SCORE_VERSION_V2 && mode === 'lowest_risk') {
+    return rankByRiskV2(routes);
+  }
+  if (scoringVersion === SWAP_PATH_SCORE_VERSION_V2 && mode === 'fastest_execution') {
+    return rankByConfirmationV2(routes);
+  }
   if (mode === 'best_net_result') {
-    if (routes.some((route) => route.netMetric.netOutputAtomic === null)) return null;
+    // Under v2 this is the history-adjusted figure; under v1 it is exactly the
+    // raw one `netOutputAtomic` always was.
+    if (routes.some((route) => rankingNetOutputAtomicV1(route.netMetric) === null)) return null;
     return [...routes].sort((left, right) => {
-      const leftNet = BigInt(left.netMetric.netOutputAtomic!);
-      const rightNet = BigInt(right.netMetric.netOutputAtomic!);
+      const leftNet = rankingNetOutputAtomicV1(left.netMetric)!;
+      const rightNet = rankingNetOutputAtomicV1(right.netMetric)!;
       if (leftNet !== rightNet) return leftNet > rightNet ? -1 : 1;
       const freshness = dimensionScore(right, 'quote_freshness') - dimensionScore(left, 'quote_freshness');
       if (freshness !== 0) return freshness;
@@ -250,7 +332,14 @@ export class DeterministicSwapRouteEngine implements SwapRouteEngine {
     );
 
     const failures: SwapAdapterFailure[] = [];
-    const accepted: Array<{ candidate: RouteCandidateV1; evidenceSet: ReturnType<typeof buildEvidenceSetV1>['evidenceSet'] }> = [];
+    // Two passes. The first validates quotes; the second builds evidence sets —
+    // separated so the reliability lookup can happen in between, on candidates
+    // that exist and before any evidence set is sealed.
+    const validated: Array<{
+      adapterId: SwapRouteAdapter['id'];
+      candidate: RouteCandidateV1;
+      providerEvidence: readonly EvidenceRecordV1[];
+    }> = [];
     for (const [index, result] of settled.entries()) {
       const adapter = adapters[index]!;
       if (result.status === 'rejected') {
@@ -263,15 +352,43 @@ export class DeterministicSwapRouteEngine implements SwapRouteEngine {
       }
       try {
         const candidate = validateCandidate(result.value.candidate, intent, input.now, adapter.id);
-        const { evidenceSet } = buildEvidenceSetV1({
-          intent,
-          candidate,
-          providerEvidence: result.value.evidence,
-          now: input.now,
-        });
-        accepted.push({ candidate, evidenceSet });
+        validated.push({ adapterId: adapter.id, candidate, providerEvidence: result.value.evidence });
       } catch (error) {
         failures.push(failureFromThrown(adapter.id, error));
+      }
+    }
+
+    // One call for the whole comparison. Every snapshot it returns is pinned
+    // before a winner is chosen — a later snapshot cannot change this run.
+    const reliability = input.loadReliability
+      ? await input.loadReliability(validated.map((entry) => entry.candidate))
+      : undefined;
+
+    const accepted: Array<{ candidate: RouteCandidateV1; evidenceSet: ReturnType<typeof buildEvidenceSetV1>['evidenceSet'] }> = [];
+    for (const entry of validated) {
+      try {
+        const assessment = reliability?.get(entry.candidate.candidateHash);
+        // A record only for an ELIGIBLE assessment. "No history" is not
+        // evidence, and a record saying so would make every missing-evidence
+        // check downstream wrong about what it has.
+        const reliabilityRecord = assessment
+          ? buildReliabilityEvidenceV1({
+              candidate: entry.candidate,
+              assessment,
+              runStartedAt: input.now,
+            })
+          : null;
+        const { evidenceSet } = buildEvidenceSetV1({
+          intent,
+          candidate: entry.candidate,
+          providerEvidence: reliabilityRecord
+            ? [...entry.providerEvidence, reliabilityRecord]
+            : entry.providerEvidence,
+          now: input.now,
+        });
+        accepted.push({ candidate: entry.candidate, evidenceSet });
+      } catch (error) {
+        failures.push(failureFromThrown(entry.adapterId, error));
       }
     }
 
@@ -279,11 +396,24 @@ export class DeterministicSwapRouteEngine implements SwapRouteEngine {
     for (const item of accepted) if (!unique.has(item.candidate.candidateHash)) unique.set(item.candidate.candidateHash, item);
     const candidates = [...unique.values()].map((item) => item.candidate).sort((a, b) => a.candidateHash.localeCompare(b.candidateHash));
     const evidenceSets = candidates.map((candidate) => unique.get(candidate.candidateHash)!.evidenceSet);
-    const routes = scoreRoutesV1({ intent, candidates, evidenceSets, now: input.now });
+    // v2 exactly when a reliability map was supplied. The coordinator supplies
+    // one only when the feature is on, so "flag off" and "v1" are the same code
+    // path rather than two paths that must be kept in agreement.
+    const scoringVersion: SwapPathScoreVersionV1 = reliability
+      ? SWAP_PATH_SCORE_VERSION_V2
+      : SWAP_PATH_SCORE_VERSION_V1;
+    const routes = scoreRoutesV1({
+      intent,
+      candidates,
+      evidenceSets,
+      now: input.now,
+      scoringVersion,
+      reliability,
+    });
     const usable = routes.filter((route) => route.evidenceSet.status !== 'stale');
     const overlaps = findCrossCandidateOverlapsV1(candidates, evidenceSets);
     const adapterFailures = sortedFailures(failures);
-    const ranked = rankRoutes(intent.optimizationMode, usable);
+    const ranked = rankRoutes(intent.optimizationMode, usable, scoringVersion);
 
     let outcome: SwapRouteEvaluationV1['outcome'];
     let reason: SwapRouteEvaluationV1['reason'];
@@ -296,7 +426,12 @@ export class DeterministicSwapRouteEngine implements SwapRouteEngine {
     } else if (usable.length === 0) {
       outcome = 'failed';
       reason = 'all_quotes_expired';
-    } else if (!SUPPORTED_OPTIMIZATION_MODES_V1.has(intent.optimizationMode)) {
+    } else if (
+      !(scoringVersion === SWAP_PATH_SCORE_VERSION_V2
+        ? SUPPORTED_OPTIMIZATION_MODES_V2
+        : SUPPORTED_OPTIMIZATION_MODES_V1
+      ).has(intent.optimizationMode)
+    ) {
       outcome = 'degraded';
       reason = 'unsupported_optimization_evidence';
     } else if (
