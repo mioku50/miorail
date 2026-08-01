@@ -273,6 +273,56 @@ export interface ConsoleServerStatusV1 {
   prices?: { status: string; provider: string };
   risk?: { status: string; provider: string };
   tokenBalances?: { status: string; provider: string };
+  chain?: {
+    blockNumber: string | null;
+    gasPriceGwei: string | null;
+    observedAt: string | null;
+    gasPoints: Array<{ at: string; gwei: string }>;
+    reason: string;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Chain conditions for the header, footer and sparkline.
+//
+// These were hardcoded `null` and `[]` in both consoles, so "Block —" said the
+// same thing whether the chain was unreachable or the field had never been
+// wired. One helper now, used by both surfaces, so they cannot disagree about
+// what a dash means.
+// ---------------------------------------------------------------------------
+
+/** The block number, or null. Never a stale one: the server refuses to present
+ * a previous reading as current, so null here means "not known right now". */
+export function chainBlockNumberV1(status: ConsoleServerStatusV1 | null): string | null {
+  return status?.chain?.reason === 'ok' ? (status.chain.blockNumber ?? null) : null;
+}
+
+/** `0.004 gwei`, or null. The unit is always shown — a bare number in a header
+ * is a number nobody can act on. */
+export function chainGasLabelV1(status: ConsoleServerStatusV1 | null): string | null {
+  const gwei = status?.chain?.reason === 'ok' ? status.chain.gasPriceGwei : null;
+  return gwei ? `${gwei} gwei` : null;
+}
+
+/** Measured samples for the sparkline, oldest first. Returns [] rather than a
+ * single point: one measurement is not a trend, and the screen already has an
+ * honest empty state for that case. */
+export function chainGasPointsV1(status: ConsoleServerStatusV1 | null): number[] {
+  const points = status?.chain?.gasPoints ?? [];
+  const values = points
+    .map((point) => Number(point.gwei))
+    .filter((value) => Number.isFinite(value));
+  return values.length > 1 ? values : [];
+}
+
+/** Why the chain figures are missing, in words a user can act on. Null when
+ * they are present. */
+export function chainUnavailableReasonV1(status: ConsoleServerStatusV1 | null): string | null {
+  const reason = status?.chain?.reason;
+  if (!reason || reason === 'ok') return reason ? null : 'Chain conditions are not reported by this server.';
+  if (reason === 'not_configured') return 'No Base RPC is configured, so block and gas are unavailable.';
+  if (reason === 'rpc_unreachable') return 'The Base RPC did not answer. Route comparison still works.';
+  return 'The Base RPC returned something unreadable. Route comparison still works.';
 }
 
 export interface CoverageRowSourceV1 {

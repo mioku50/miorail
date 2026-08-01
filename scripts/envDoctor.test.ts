@@ -173,6 +173,48 @@ describe('mainnet execution requires a Builder Code', () => {
   });
 });
 
+describe('boolean flags must be exactly true or false', () => {
+  test('a stray character that reads as true is caught and shown', () => {
+    // The real incident: a Cyrillic `я` from a keyboard layout. The line looked
+    // correct in an editor, `readBooleanFlag` fell back to false, and the
+    // console reported a gate the operator believed was open.
+    const run = runDoctor(mainnetBase({ MIORAIL_PAID_INTELLIGENCE: 'trueя' }));
+    assert.equal(run.code, 1);
+    assert.match(run.output, /neither `true` nor `false`/);
+    // The value is printed, uniquely among all checks: naming only the key
+    // would not have revealed the problem, because the key was never wrong.
+    assert.match(run.output, /MIORAIL_PAID_INTELLIGENCE="trueя"/);
+    assert.match(run.output, /silently fall back to their default/);
+  });
+
+  test('common near-misses are caught too', () => {
+    for (const value of ['True', 'TRUE', '1', 'yes', 'enabled', 'true#comment']) {
+      const run = runDoctor(mainnetBase({ MIORAIL_EARN_ROUTE_V1: value }));
+      assert.equal(run.code, 1, `${JSON.stringify(value)} must not pass as a boolean`);
+    }
+  });
+
+  test('trailing whitespace is NOT flagged, because every loader trims it', () => {
+    // `node --env-file`, dotenv and systemd's EnvironmentFile all trim the
+    // value. Flagging `true ` would be this check disagreeing with the runtime
+    // it exists to describe.
+    assert.equal(runDoctor(mainnetBase({ MIORAIL_EARN_ROUTE_V1: 'true  ' })).code, 0);
+  });
+
+  test('true, false and empty all pass', () => {
+    // Empty is a legitimate "unset"; the required-variable check owns that case.
+    for (const value of ['true', 'false', '']) {
+      const run = runDoctor(mainnetBase({ MIORAIL_EARN_ROUTE_V1: value }));
+      assert.equal(run.code, 0, `${JSON.stringify(value)} must pass`);
+    }
+  });
+
+  test('a non-flag variable is not policed as a boolean', () => {
+    const run = runDoctor(mainnetBase({ PRICE_PROVIDER: 'coingecko' }));
+    assert.equal(run.code, 0);
+  });
+});
+
 describe('the check itself', () => {
   test('the pnpm `--` separator is not an argument', () => {
     assert.equal(runDoctor(mainnetBase(), ['--']).code, 0);

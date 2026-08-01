@@ -30,6 +30,8 @@ import {
   chainLabelV1,
   compactStepLabelV1,
   completeStageV1,
+  chainBlockNumberV1,
+  chainGasPointsV1,
   coverageFromStatusV1,
   deriveAdapterRowsV1,
   deriveSimulationViewV1,
@@ -673,7 +675,7 @@ export function MiniConsole() {
           { k: "Network", v: chainLabelV1(status.data?.chainId).split(" · ")[0], d: `chain ${status.data?.chainId ?? "—"}` },
           { k: "Adapters", v: adapterRows.summary, d: "from server flags" },
         ]}
-        gasPoints={[]}
+        gasPoints={chainGasPointsV1(status.data ?? null)}
         chainNote={CONSOLE_COPY_V1.planHint}
       />
     );
@@ -1166,7 +1168,7 @@ export function MiniConsole() {
       stepLine={`${stepLabel} · ${spendLabel.split(" · ")[0]}`}
       networkLabel={chainLabelV1(status.data?.chainId)}
       connected={connected && status.data?.rpc?.status === "connected"}
-      blockNumber={null}
+      blockNumber={chainBlockNumberV1(status.data ?? null)}
       theme={theme}
       onThemeChange={setTheme}
       drawer={drawer}

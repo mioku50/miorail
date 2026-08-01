@@ -1754,6 +1754,18 @@ export const StatusResponseSchema = z.object({
     missingConfig: z.array(z.string()).optional(),
     warnings: z.array(z.string()).optional(),
   }),
+  // Current block and gas on the configured chain. Every value is nullable and
+  // `reason` says why when it is null — a dash in the header must be able to
+  // mean "the RPC did not answer", not just "nobody wired this".
+  chain: z.object({
+    blockNumber: z.string().nullable(),
+    gasPriceWei: z.string().nullable(),
+    gasPriceGwei: z.string().nullable(),
+    observedAt: z.string().nullable(),
+    // Measured samples only, oldest first. A gap here is a real gap.
+    gasPoints: z.array(z.object({ at: z.string(), gwei: z.string() })),
+    reason: z.enum(['ok', 'rpc_unreachable', 'rpc_invalid_response', 'not_configured']),
+  }).optional(),
   // T67X-A1: MIORAIL_PAID_INTELLIGENCE says an operator wants paid routes.
   // `readiness` says whether the facilitator can settle one. `blocked` means
   // paid features are off while every free capability keeps working.

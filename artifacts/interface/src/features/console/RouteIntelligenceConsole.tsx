@@ -24,6 +24,9 @@ import {
   comparingProgressV1,
   completeStageV1,
   consoleFailureCopyV1,
+  chainBlockNumberV1,
+  chainGasLabelV1,
+  chainGasPointsV1,
   coverageFromStatusV1,
   deriveAdapterRowsV1,
   deriveSimulationViewV1,
@@ -731,7 +734,7 @@ export function RouteIntelligenceConsole() {
           { k: 'Adapters ready', v: adapterRows.summary, d: 'from server flags' },
           { k: 'Signing', v: 'your wallet', d: 'Miorail never signs' },
         ]}
-        gasPoints={[]}
+        gasPoints={chainGasPointsV1(status.data ?? null)}
         chainNote={CONSOLE_COPY_V1.planHint}
       />
     );
@@ -1251,8 +1254,8 @@ export function RouteIntelligenceConsole() {
     <ConsoleShell
       header={{
         crumb: CONSOLE_BREADCRUMB_V1[screen](goalLabel),
-        blockNumber: null,
-        gasLabel: null,
+        blockNumber: chainBlockNumberV1(status.data ?? null),
+        gasLabel: chainGasLabelV1(status.data ?? null),
         networkLabel: chainLabelV1(status.data?.chainId),
         connected: connected && status.data?.rpc?.status === 'connected',
         walletLabel,
@@ -1272,7 +1275,7 @@ export function RouteIntelligenceConsole() {
         adaptersLabel: adapterRows.summary,
         sourcesLabel: String(evidenceRows.length),
         spendLabel: spendLabel.split(' · ')[0],
-        blockNumber: null,
+        blockNumber: chainBlockNumberV1(status.data ?? null),
       }}
       right={rightRail}
       railFold={rightRail}

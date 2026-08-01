@@ -19,6 +19,7 @@ import { verifyBaseMcpWalletMatch } from '../lib/baseMcpWalletReconciliation.js'
 import { buildWalletContext, walletEnvironmentFromRequest } from '../lib/walletContext.js';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
 import { paidIntelligenceReadinessV1 } from '../lib/paidIntelligenceReadiness.js';
+import { readChainConditionsV1 } from '../lib/chainConditions.js';
 
 export function getSystemStatus(envOverride?: string) {
   const chainEnv = envOverride || process.env.CHAIN_ENV || 'sepolia';
@@ -230,6 +231,7 @@ export const statusRouteRuntime = {
       return { status: 'failed' as const, provider };
     }
   },
+  readChainConditions: readChainConditionsV1,
 };
 
 function mergeBaseMcpAuthStatus(base: BaseMcpStatus, auth: StoredBaseMcpAuthStatus): BaseMcpStatus {
@@ -272,6 +274,9 @@ statusRouter.get('/', async (req, res, next) => {
     const statusData = {
       ...baseStatus,
       rpc: await statusRouteRuntime.probeRpcStatus(baseStatus.chainId, rpcUrl, baseStatus.rpc.provider),
+      // Never throws and never serves a stale reading as current — see
+      // lib/chainConditions.ts.
+      chain: await statusRouteRuntime.readChainConditions(rpcUrl),
       baseMcp: { ...finalizedBaseMcp, ...scopedStatus },
       x402: publicX402Status(await x402StatusFromEnv()),
     };

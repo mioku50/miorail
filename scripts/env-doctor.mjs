@@ -210,6 +210,37 @@ if (INTERFACE_ENV_PATH && existsSync(INTERFACE_ENV_PATH)) {
   console.log('INFO: artifacts/interface/.env not found — skipping frontend sync check\n');
 }
 
+// ── (c2) Boolean flags must be exactly true or false ─────────────────────────
+//
+// `readBooleanFlag` accepts 'true'/'false' and falls back to the DEFAULT for
+// anything else. That is the right runtime behaviour — a typo must not enable a
+// feature — but it is silent, and silence is how `MIORAIL_PAID_INTELLIGENCE=trueя`
+// (a stray Cyrillic character from a keyboard layout) ran in production as
+// `false` while the operator read the line as `true`. The file looked correct,
+// the flag was off, and three UI panels reported a gate nobody had closed.
+
+const BOOLEAN_FLAG_PREFIXES = ['MIORAIL_', 'MAINNET_EXECUTION_ENABLED'];
+
+console.log('Checking boolean flag values:');
+const malformedFlags = Object.entries(vars).filter(([key, value]) => {
+  if (!BOOLEAN_FLAG_PREFIXES.some((prefix) => key.startsWith(prefix))) return false;
+  if (value === '') return false;
+  return value !== 'true' && value !== 'false';
+});
+if (malformedFlags.length === 0) {
+  console.log('OK  Every boolean flag is exactly true or false\n');
+} else {
+  hasErrors = true;
+  console.error('ERRORS — boolean flags that are neither `true` nor `false`:');
+  for (const [key, value] of malformedFlags) {
+    // The VALUE is printed here, deliberately and uniquely. A boolean flag
+    // holds no secret, and the whole failure is that the value LOOKS right —
+    // naming the key alone would not have revealed `trueя`.
+    console.error(`  ${key}=${JSON.stringify(value)}`);
+  }
+  console.error('  → These silently fall back to their default (usually false).\n');
+}
+
 // ── (d) T67X-A1: paid intelligence requires a settlement path ────────────────
 //
 // `X402_FACILITATOR_URL` alone is not one. A URL with no working authorization
