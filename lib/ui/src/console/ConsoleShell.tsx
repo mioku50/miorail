@@ -82,6 +82,10 @@ export interface ConsoleLeftRailModelV1 {
   proofCount: string;
   limits: ConsoleLimitsV1 | null;
   limitsUnavailableReason: string | null;
+  /** T67E §2.1 — Budget & payments opens from the panels that already show a
+   * number worth changing. It is not a nav entry: there is no top-level
+   * "x402", "Spend Permission" or "Payments protocol". */
+  onOpenBudget?: () => void;
   // `usable` (present since T64.3.1) means switched on; `live` means it
   // answered. A configured adapter is not dimmed like a disabled one, and only
   // one that answered gets the green tick.
@@ -237,6 +241,14 @@ export function ConsoleShell(props: ConsoleShellProps) {
           )}
 
           <div className="minipanel">
+            {left.onOpenBudget && (
+              <div className="row">
+                <span>Budget &amp; payments</span>
+                <button type="button" className="btn sec" onClick={left.onOpenBudget}>
+                  Open
+                </button>
+              </div>
+            )}
             {left.limits ? (
               <>
                 <div className="row">

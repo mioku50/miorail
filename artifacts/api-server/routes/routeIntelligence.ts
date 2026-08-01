@@ -24,6 +24,7 @@ import {
   EarnPrepareResponseV1Schema,
   IntelligenceBudgetProjectionV1Schema,
   IntelligenceBudgetResponseV1Schema,
+  IntelligenceChargesResponseV1Schema,
   RevokeIntelligenceBudgetRequestV1Schema,
   RouteHistoryRequestV1Schema,
   RouteHistoryResponseV1Schema,
@@ -1966,6 +1967,43 @@ routeIntelligenceRouter.get('/intelligence-budget', async (req: Request, res: Re
     );
   } catch {
     res.status(500).json({ error: 'budget_simulation_failed', code: 'budget_simulation_failed' });
+  }
+});
+
+// GET /route-intelligence/intelligence-charges — the caller's recent charges,
+// newest first. T67E §2.2.
+//
+// Behind the same guard chain as the budget routes, and read-only: it creates
+// no charge, settles nothing and touches no permission. The projection drops
+// every payment artefact — no authorization payload, no facilitator response,
+// no receipt body, no provider answer — so this endpoint cannot become a way to
+// read a payment envelope back out of the server.
+routeIntelligenceRouter.get('/intelligence-charges', async (req: Request, res: Response): Promise<void> => {
+  const user = budgetFlagSessionGuard(req, res);
+  if (!user) return;
+  if (!budgetChainEnvOk(res)) return;
+  const rawLimit = Number.parseInt(String(req.query.limit ?? '20'), 10);
+  const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(50, rawLimit)) : 20;
+  try {
+    if (!(await budgetMigrationOk(res))) return;
+    const stored = await budgetRouteRuntime.repository().listRecentIntelligenceCharges(user.id, limit);
+    res.json(
+      IntelligenceChargesResponseV1Schema.parse({
+        charges: stored.map(({ charge }) => ({
+          chargeId: charge.id,
+          status: charge.status,
+          service: charge.service,
+          providerName: charge.provider.displayName,
+          category: charge.category,
+          quotedUsdc: charge.quotedCost.amountDecimal,
+          chargedUsdc: charge.chargedCost?.amountDecimal ?? null,
+          fundingMode: charge.fundingMode,
+          createdAt: charge.createdAt,
+        })),
+      }),
+    );
+  } catch {
+    res.status(500).json({ error: 'intelligence_charges_failed', code: 'intelligence_charges_failed' });
   }
 });
 

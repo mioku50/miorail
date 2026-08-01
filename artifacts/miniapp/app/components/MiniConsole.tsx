@@ -27,6 +27,7 @@ import {
   consoleFailureCopyV1,
   ageLabelV1,
   B20ControlSection,
+  BudgetPaymentsPanel,
   b20ErrorCodeV1,
   b20TargetForRouteV1,
   b20UnavailableCopyV1,
@@ -81,6 +82,7 @@ import {
   useEarnCompare,
   useEvaluateSwapRoute,
   useB20Inspect,
+  useIntelligenceCharges,
   useIntelligenceBudget,
   useMarketSnapshot,
   usePrepareSwapBlueprint,
@@ -140,6 +142,7 @@ export function MiniConsole() {
   const [nftProof, setNftProof] = useState<NftProofResponseV1 | null>(null);
   const [simulateResponse, setSimulateResponse] = useState<SimulateBlueprintResponseV1 | null>(null);
   const [budgetResponse, setBudgetResponse] = useState<SimulateWithBudgetResponseV1 | null>(null);
+  const [budgetOpen, setBudgetOpen] = useState(false);
 
   const mark = useCallback((stage: ConsoleStageV1, phase: "start" | "complete") => {
     const at = Date.now();
@@ -594,6 +597,19 @@ export function MiniConsole() {
     [status.data, projection, providerFailures],
   );
   const budgetRecord = budget.data?.budget ?? null;
+
+  // T67E §2 — the same drawer as the web console, from the same component.
+  const charges = useIntelligenceCharges({ enabled: paidIntelligenceOn });
+  const budgetPanel = (
+    <BudgetPaymentsPanel
+      featureEnabled={paidIntelligenceOn}
+      settleReady={status.data?.paidIntelligence?.settleReady === true}
+      budget={budgetRecord}
+      charges={charges.data?.charges ?? []}
+      chargesLoading={charges.isPending && paidIntelligenceOn}
+      chargesUnavailableReason={charges.error ? "Your charge history could not be read right now." : null}
+    />
+  );
   const simulationSource = simulationSourceFromResponseV1(simulateResponse ?? budgetResponse);
   const simulation = deriveSimulationViewV1(simulationSource);
   const quoteFreshness = quoteFreshnessFromRouteV1(recommended);
@@ -654,6 +670,16 @@ export function MiniConsole() {
       ) : (
         <p className="empty">No active session yet — start one above.</p>
       )}
+      {/* T67E §2.1 — the drawer opens from the panel that already shows the
+          spend, not from a nav entry called "x402". */}
+      <div className="minipanel">
+        <div className="row">
+          <span>Budget &amp; payments</span>
+          <button type="button" className="btn sec" onClick={() => setBudgetOpen((open) => !open)}>
+            {budgetOpen ? "Close" : "Open"}
+          </button>
+        </div>
+      </div>
       <div className="sechead">
         <span>Recent proofs</span>
         <span className="mono">{historyItems.length}</span>
@@ -1251,6 +1277,7 @@ export function MiniConsole() {
         chainId={chainId ?? null}
         enabled={Boolean(flags?.submissionRecoveryV1)}
       />
+      {budgetOpen && budgetPanel}
       {content}
     </ConsoleMiniShell>
   );

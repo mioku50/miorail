@@ -1691,6 +1691,25 @@ export function createDatabaseRouteStorageRepository(
       return rows.map(chargeFromRow);
     },
 
+    async listRecentIntelligenceCharges(
+      userId: string,
+      limit: number,
+    ): Promise<StoredIntelligenceChargeV1[]> {
+      // Bounded here rather than trusting the caller: this feeds a drawer, and
+      // an unbounded scan of a tenant's whole charge history would be a slow
+      // query nobody asked for.
+      const capped = Math.max(1, Math.min(100, Math.trunc(limit)));
+      const rows = await sql`
+        SELECT id, route_run_id, evidence_id, user_id, schema_version, status,
+               charge_hash, spend_permission_id, x402_receipt_id, payload, created_at, updated_at
+        FROM intelligence_charges
+        WHERE user_id = ${userId}
+        ORDER BY created_at DESC, id DESC
+        LIMIT ${capped}
+      `;
+      return rows.map(chargeFromRow);
+    },
+
     async updateIntelligenceCharge(
       runId: string,
       chargeId: string,

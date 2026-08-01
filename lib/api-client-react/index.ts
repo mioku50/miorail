@@ -768,6 +768,25 @@ export function useB20Inspect(
   });
 }
 
+/**
+ * T67E §2.2 — the caller's recent Intelligence Charges.
+ *
+ * `enabled` is off whenever paid intelligence is off, so a server with the gate
+ * down never gets a request that would 404 on every render.
+ */
+export function useIntelligenceCharges(options?: { enabled?: boolean; limit?: number }) {
+  const limit = options?.limit ?? 20;
+  return useQuery({
+    queryKey: ['intelligence-charges', limit],
+    queryFn: async () => {
+      const response = await fetchApi<unknown>(`/api/route-intelligence/intelligence-charges?limit=${limit}`);
+      return apiSpec.IntelligenceChargesResponseV1Schema.parse(response);
+    },
+    retry: false,
+    enabled: options?.enabled !== false,
+  });
+}
+
 export function useBaseMcpToolsProbe(
   options?: Omit<UseMutationOptions<apiSpec.BaseMcpToolProbeResponse, Error, void>, 'mutationFn'>
 ) {

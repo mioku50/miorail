@@ -19,8 +19,31 @@ const source = readFileSync(path.join(here, 'RouteIntelligenceConsole.tsx'), 'ut
 // and already used by Earn, NFT, Commerce and AI; swap navigated away from it.
 // ---------------------------------------------------------------------------
 
-/** The swap comparison call, as written. */
-const evaluateCall = /evaluation\.mutate\(\{[^}]*\}(?:,\s*\{[\s\S]*?\})?\s*\)/.exec(source)?.[0] ?? '';
+/**
+ * The swap comparison call, as written.
+ *
+ * Scanned by balancing parentheses rather than matched by a regex. The previous
+ * pattern assumed the argument object contained no nested braces, so adding a
+ * conditional spread to it silently truncated the capture and the assertions
+ * below started checking a fragment. A guard that stops seeing what it guards
+ * is worse than no guard.
+ */
+function callSourceV1(text: string, marker: string): string {
+  const start = text.indexOf(marker);
+  if (start === -1) return '';
+  let depth = 0;
+  for (let index = start + marker.length - 1; index < text.length; index += 1) {
+    const character = text[index];
+    if (character === '(') depth += 1;
+    else if (character === ')') {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, index + 1);
+    }
+  }
+  return '';
+}
+
+const evaluateCall = callSourceV1(source, 'evaluation.mutate(');
 
 describe('a failed swap comparison is reported, not navigated away from', () => {
   test('the swap comparison is present to be checked', () => {

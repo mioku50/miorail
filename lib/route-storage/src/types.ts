@@ -174,6 +174,17 @@ export interface RouteStorageRepository {
   listIntelligenceCharges(runId: string, userId: string): Promise<StoredIntelligenceChargeV1[]>;
 
   /**
+   * T67E §2.2 — the caller's most recent charges across every run.
+   *
+   * `listIntelligenceCharges` is run-scoped, which is right for idempotency
+   * checks and useless for "what has Miorail charged me". Newest first, capped
+   * by `limit`, and scoped by user id in the QUERY rather than filtered
+   * afterwards: another tenant's charge is not found rather than found and
+   * dropped.
+   */
+  listRecentIntelligenceCharges(userId: string, limit: number): Promise<StoredIntelligenceChargeV1[]>;
+
+  /**
    * T59: the only mutation path for an already-inserted Intelligence Charge —
    * moves it through its payment/service state machine (see
    * IntelligenceChargeV1's paymentState/serviceState). `updated` must keep

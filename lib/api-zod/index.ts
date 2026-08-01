@@ -551,6 +551,9 @@ export const RoutePlanHttpErrorV1Schema = z
       'intelligence_budget_conflict',
       'budget_limit_exceeded',
       'budget_simulation_failed',
+      // T67E §2.2: the read-only charges list. Its own code, because a failed
+      // ledger read must not read as a failed charge.
+      'intelligence_charges_failed',
     ]),
     code: z.string().min(1).max(120),
   })
@@ -1009,6 +1012,38 @@ export const UpdateIntelligenceBudgetRequestV1Schema = z
   });
 
 export const RevokeIntelligenceBudgetRequestV1Schema = z.object({}).strict();
+
+// T67E §2.2 — the Recent charges list for the Budget & payments drawer.
+//
+// What is deliberately NOT here: the x402 payment authorization payload, the
+// facilitator response, the receipt body, the provider's answer, and any
+// credential. A charge row says what was bought, what it cost, whether it
+// settled and whether it needs reconciliation. Everything a user needs to
+// recognise a line on their own budget, and nothing that would let this
+// endpoint become a way to read a payment envelope back out of the server.
+export const IntelligenceChargeSummaryV1Schema = z
+  .object({
+    chargeId: z.string().min(1).max(200),
+    status: z.enum([
+      'quoted', 'reserved', 'payment_pending', 'settled', 'failed',
+      'reconciliation_required', 'released',
+    ]),
+    /** What was bought, in words: "Alchemy simulation", "Contract evidence". */
+    service: z.string().min(1).max(200),
+    providerName: z.string().min(1).max(200),
+    category: IntelligenceCategoryV1Schema,
+    /** What it was quoted at, and what was actually charged. Both, because a
+     * settled charge for less than its quote is a fact worth seeing. */
+    quotedUsdc: UsdcAmountSchema,
+    chargedUsdc: UsdcAmountSchema.nullable(),
+    fundingMode: z.enum(['one_time', 'spend_permission']),
+    createdAt: z.string().min(1).max(60),
+  })
+  .strict();
+
+export const IntelligenceChargesResponseV1Schema = z
+  .object({ charges: z.array(IntelligenceChargeSummaryV1Schema).max(100) })
+  .strict();
 
 // Serves GET (budget is null when the caller has none), and POST/PATCH/revoke
 // (budget is always present on success).

@@ -9,6 +9,8 @@ export * from './ConsoleMini';
 export * from './CommercePanels';
 export * from './NftPanels';
 export * from './AiPanels';
+export * from './budgetPayments';
+export * from './BudgetPaymentsPanel';
 export * from './b20Context';
 export * from './B20Panels';
 export * from './PublicProofPanels';

@@ -14,7 +14,28 @@ const source = readFileSync(path.join(here, 'MiniConsole.tsx'), 'utf8');
 // the surface the reported failure was seen on — Miorail opened inside Base App.
 // ---------------------------------------------------------------------------
 
-const evaluateCall = /evaluation\.mutate\(\{[^}]*\}(?:,\s*\{[\s\S]*?\})?\s*\)/.exec(source)?.[0] ?? '';
+/**
+ * Scanned by balancing parentheses rather than matched by a regex — the old
+ * pattern assumed no nested braces in the argument object, so a conditional
+ * spread truncated the capture and these assertions started checking a
+ * fragment. Same fix as the web console's swapFailureFlow.test.ts.
+ */
+function callSourceV1(text: string, marker: string): string {
+  const start = text.indexOf(marker);
+  if (start === -1) return '';
+  let depth = 0;
+  for (let index = start + marker.length - 1; index < text.length; index += 1) {
+    const character = text[index];
+    if (character === '(') depth += 1;
+    else if (character === ')') {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, index + 1);
+    }
+  }
+  return '';
+}
+
+const evaluateCall = callSourceV1(source, 'evaluation.mutate(');
 
 describe('a failed swap comparison stays on Comparing in the miniapp', () => {
   test('the swap comparison is present to be checked', () => {

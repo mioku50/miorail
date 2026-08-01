@@ -45,6 +45,9 @@ import {
   type ConsoleStageClockV1,
   type ConsoleStageV1,
   B20ControlSection,
+  BudgetPaymentsPanel,
+  paidIntelligenceStateV1,
+  paidIntelligenceViewV1,
   b20ErrorCodeV1,
   b20TargetForRouteV1,
   b20UnavailableCopyV1,
@@ -80,6 +83,7 @@ import {
   useEarnCompare,
   useEvaluateSwapRoute,
   useB20Inspect,
+  useIntelligenceCharges,
   useIntelligenceBudget,
   useMarketSnapshot,
   usePortfolio,
@@ -145,6 +149,7 @@ export function RouteIntelligenceConsole() {
   const [aiNonce, setAiNonce] = useState<string | null>(null);
   const [simulateResponse, setSimulateResponse] = useState<SimulateBlueprintResponseV1 | null>(null);
   const [budgetResponse, setBudgetResponse] = useState<SimulateWithBudgetResponseV1 | null>(null);
+  const [budgetOpen, setBudgetOpen] = useState(false);
 
   const mark = useCallback((stage: ConsoleStageV1, phase: 'start' | 'complete') => {
     const at = Date.now();
@@ -658,6 +663,31 @@ export function RouteIntelligenceConsole() {
         (dispatch.blockedReason ? { title: 'This route family is off on this server', detail: dispatch.blockedReason } : null));
 
   const budgetRecord = budget.data?.budget ?? null;
+  // --- T67E §2: Budget & payments --------------------------------------------
+  //
+  // A drawer inside the shell, opened from the panels that already show a
+  // number a user might want to change. Not a nav entry and not a page: there
+  // is no top-level "x402", "Spend Permission" or "Payments protocol".
+  const charges = useIntelligenceCharges({ enabled: paidIntelligenceOn });
+  const budgetPanel = (
+    <BudgetPaymentsPanel
+      featureEnabled={paidIntelligenceOn}
+      // T67X-A1: the flag says an operator wants paid routes; this says the
+      // facilitator can actually settle one. They came apart in production.
+      settleReady={status.data?.paidIntelligence?.settleReady === true}
+      budget={budgetRecord}
+      charges={charges.data?.charges ?? []}
+      chargesLoading={charges.isPending && paidIntelligenceOn}
+      chargesUnavailableReason={
+        charges.error ? 'Your charge history could not be read right now.' : null
+      }
+      technicalDetails={[
+        { label: 'Settlement', value: status.data?.x402?.settleReady ? 'x402 · ready' : 'x402 · not ready' },
+        { label: 'Network', value: status.data?.x402?.network ?? 'not reported' },
+      ]}
+    />
+  );
+
   const limits = budgetRecord
     ? {
         dailyLabel: `$${budgetRecord.spentUsdc} / $${budgetRecord.monthlyLimitUsdc}`,
@@ -1359,9 +1389,27 @@ export function RouteIntelligenceConsole() {
         proofs,
         proofCount: String(historyItems.length),
         limits,
-        limitsUnavailableReason: paidIntelligenceOn
-          ? CONSOLE_COPY_V1.limitsMissing
-          : 'Intelligence Budget is off on this server.',
+        onOpenBudget: () => setBudgetOpen((open) => !open),
+        // T67E §2.4 — the merged string is gone. This says which of the eight
+        // situations the deployment is actually in, and only "no permission
+        // yet" is something the user can fix.
+        limitsUnavailableReason: budgetRecord
+          ? null
+          : paidIntelligenceStateV1({
+              featureEnabled: paidIntelligenceOn,
+              settleReady: status.data?.paidIntelligence?.settleReady === true,
+              budget: null,
+              charges: charges.data?.charges ?? [],
+            }) === 'permission_missing'
+            ? CONSOLE_COPY_V1.limitsMissing
+            : paidIntelligenceViewV1(
+                paidIntelligenceStateV1({
+                  featureEnabled: paidIntelligenceOn,
+                  settleReady: status.data?.paidIntelligence?.settleReady === true,
+                  budget: null,
+                  charges: charges.data?.charges ?? [],
+                }),
+              ).detail,
         adapters: adapterRows,
       }}
       footer={{
@@ -1396,6 +1444,10 @@ export function RouteIntelligenceConsole() {
         enabled={Boolean(flags?.submissionRecoveryV1)}
         onResolved={() => navigate('/plan/history')}
       />
+      {/* T67E §2.1 — a drawer inside the shell, above the current screen.
+          Opening it never leaves the flow: the goal, the route and the stage
+          clock are all still there when it closes. */}
+      {budgetOpen && budgetPanel}
       {content}
     </ConsoleShell>
   );
