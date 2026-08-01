@@ -11,6 +11,13 @@ import {
   type ScoreDimensionSourceV1,
   type SimulationSourceV1,
 } from './consoleState';
+import {
+  comparisonClaimV1,
+  providerFailureViewsV1,
+  swapProviderDisplayNameV1,
+  type ComparisonClaimViewV1,
+  type ProviderFailureViewV1,
+} from './providerDiagnostics';
 import type { RouteGraphModelV1 } from './ConsoleCharts';
 
 // Structural mirrors of the route-card projection. The surface layer types the
@@ -66,7 +73,16 @@ export interface RoutePlanProjectionV1 {
   availableRoutes: readonly RoutePlanRouteV1[];
   pathScore: PathScoreLikeV1 | null;
   evidenceSummary: unknown;
-  providerFailures: readonly { adapterId: string; errorCode: string }[];
+  // T67E §3: the wire shape, which is `SwapAdapterFailureV1` and has always
+  // been `{ outcome, provider, errorCode, retryable }`. This was typed with an
+  // `adapterId` field that does not exist on it, so every consumer below read
+  // `undefined` and rendered it.
+  providerFailures: readonly {
+    provider: string;
+    errorCode: string;
+    outcome?: string;
+    retryable?: boolean;
+  }[];
   expiresAt: string | null;
 }
 
@@ -256,48 +272,176 @@ function routeScorePercent(route: RoutePlanRouteV1): number | null {
   return Math.round(scored.reduce((total, dimension) => total + (dimension.score ?? 0), 0) / scored.length);
 }
 
-function routeWhyV1(route: RoutePlanRouteV1, recommended: boolean): string {
+/**
+ * The "why" cell.
+ *
+ * T67E §3.4: the superlative is conditional on there being something to be
+ * superlative ABOUT. With one quotable candidate, "Best net result for your
+ * goal" is a claim over a set of one — true as arithmetic, and read by every
+ * user as "the alternatives were checked and lost".
+ */
+function routeWhyV1(route: RoutePlanRouteV1, recommended: boolean, comparative: boolean): string {
   const parts = [
-    recommended ? 'Best net result for your goal' : 'Alternative route',
+    recommended
+      ? comparative
+        ? 'Best net result for your goal'
+        : 'Only route that produced a quote'
+      : 'Alternative route',
     `${route.callCount} call${route.callCount === 1 ? '' : 's'}, ${route.approvalCount} approval${route.approvalCount === 1 ? '' : 's'}`,
     `price impact ${route.priceImpact.percent}%`,
   ];
   return parts.join(' · ');
 }
 
+/** Display names of the providers that produced a quote on this run. */
+export function answeredProviderNamesV1(projection: RoutePlanProjectionV1): string[] {
+  return projection.availableRoutes.map((route) => route.provider.displayName);
+}
+
+/** Every provider failure as a typed, user-readable view. */
+export function providerFailuresFromProjectionV1(projection: RoutePlanProjectionV1): ProviderFailureViewV1[] {
+  return providerFailureViewsV1(projection.providerFailures, answeredProviderNamesV1(projection));
+}
+
+/** Whether this run may present a comparative recommendation at all. */
+export function comparisonClaimFromProjectionV1(projection: RoutePlanProjectionV1): ComparisonClaimViewV1 {
+  return comparisonClaimV1(projection.availableRoutes.length);
+}
+
 /**
  * Candidate rows. Provider failures from swap-adapters become VISIBLE rows —
  * the table always shows everything that was considered, including what could
  * not answer and why.
+ *
+ * `registeredProviders` closes the third gap: an adapter that was never asked
+ * (a protocol constraint excluded it, or the run ended before it was reached)
+ * appeared in NEITHER list and so vanished from a table headed "everything
+ * considered". Passing the registered set in keeps the row, marked unavailable
+ * with the honest reason that it was not part of this run.
  */
-export function candidatesFromProjectionV1(projection: RoutePlanProjectionV1): CandidateSourceV1[] {
+export function candidatesFromProjectionV1(
+  projection: RoutePlanProjectionV1,
+  registeredProviders: readonly string[] = [],
+): CandidateSourceV1[] {
   const recommendedHash = projection.recommendedRoute?.candidateHash ?? null;
+  const comparative = comparisonClaimFromProjectionV1(projection).claim === 'comparative';
   const quoted: CandidateSourceV1[] = projection.availableRoutes.map((route) => ({
     id: route.candidateHash,
     name: route.provider.displayName,
     output: route.expectedOutput.amountDecimal,
     net: route.minimumOutput.amountDecimal,
     scorePercent: routeScorePercent(route),
-    why: routeWhyV1(route, route.candidateHash === recommendedHash),
+    why: routeWhyV1(route, route.candidateHash === recommendedHash, comparative),
     state: route.candidateHash === recommendedHash ? 'chosen' : 'available',
   }));
 
-  const failed: CandidateSourceV1[] = projection.providerFailures.map((failure) => ({
-    id: `failure:${failure.adapterId}:${failure.errorCode}`,
-    name: failure.adapterId,
+  const failures = providerFailuresFromProjectionV1(projection);
+  const failed: CandidateSourceV1[] = failures.map((failure) => ({
+    id: `failure:${failure.providerId}:${failure.reason}`,
+    name: failure.providerName,
     output: null,
     net: null,
     scorePercent: null,
     why: '',
-    state: failure.errorCode === 'policy_blocked' ? 'blocked' : 'unavailable',
-    reason: consoleFailureCopyV1(failure.errorCode),
+    state: failure.reason === 'provider_not_configured' ? 'blocked' : 'unavailable',
+    reason: failure.message,
   }));
 
-  return [...quoted, ...failed];
+  const accounted = new Set([
+    ...quoted.map((row) => row.name.toLowerCase()),
+    ...failures.map((failure) => failure.providerName.toLowerCase()),
+    ...failures.map((failure) => failure.providerId.toLowerCase()),
+  ]);
+  const silent: CandidateSourceV1[] = registeredProviders
+    .filter((provider) => !accounted.has(provider.toLowerCase()))
+    .map((provider) => ({
+      id: `not-asked:${provider}`,
+      name: swapProviderDisplayNameV1(provider),
+      output: null,
+      net: null,
+      scorePercent: null,
+      why: '',
+      state: 'unavailable' as const,
+      // No cause is invented. The run simply did not include it, and saying so
+      // beats both silence and a guessed error.
+      reason: 'Not part of this comparison — it was not asked for a quote.',
+    }));
+
+  return [...quoted, ...failed, ...silent];
 }
 
-export function candidateRowsFromProjectionV1(projection: RoutePlanProjectionV1) {
-  return deriveCandidateRowsV1(candidatesFromProjectionV1(projection));
+/**
+ * T67E §3.4 — the candidate table, as a diagnostics view.
+ *
+ * One row per registered swap adapter, always. What it says about each one:
+ * whether it quoted, why it did not, and how old its answer is. A provider that
+ * failed keeps its row with a reason instead of vanishing, and a provider that
+ * was never asked says so rather than borrowing another one's error.
+ */
+export interface ProviderDiagnosticRowV1 {
+  provider: string;
+  result: 'quoted' | 'unavailable' | 'not asked';
+  /** Short phrase for the Reason column. */
+  reason: string;
+  /** The full sentence: what happened, what still works, what to do. */
+  detail: string | null;
+  /** Quote age for an answer, '—' for anything else. Never a fabricated 0s. */
+  age: string;
+  output: string | null;
+  retryable: boolean;
+}
+
+export function providerDiagnosticRowsV1(
+  projection: RoutePlanProjectionV1,
+  registeredProviders: readonly string[] = [],
+): ProviderDiagnosticRowV1[] {
+  const quoted: ProviderDiagnosticRowV1[] = projection.availableRoutes.map((route) => ({
+    provider: route.provider.displayName,
+    result: 'quoted',
+    reason: '—',
+    detail: null,
+    age: `${route.quoteAgeSeconds}s`,
+    output: `${route.expectedOutput.amountDecimal} ${route.expectedOutput.asset.symbol}`,
+    retryable: false,
+  }));
+
+  const failures = providerFailuresFromProjectionV1(projection);
+  const failed: ProviderDiagnosticRowV1[] = failures.map((failure) => ({
+    provider: failure.providerName,
+    result: 'unavailable',
+    reason: failure.reasonLabel,
+    detail: failure.message,
+    // No age: nothing was measured, and "0s" would read as an instant answer.
+    age: '—',
+    output: null,
+    retryable: failure.retryable,
+  }));
+
+  const accounted = new Set(
+    [...quoted, ...failed]
+      .map((row) => row.provider.toLowerCase())
+      .concat(failures.map((failure) => failure.providerId.toLowerCase())),
+  );
+  const silent: ProviderDiagnosticRowV1[] = registeredProviders
+    .filter((provider) => !accounted.has(provider.toLowerCase()))
+    .map((provider) => ({
+      provider: swapProviderDisplayNameV1(provider),
+      result: 'not asked',
+      reason: 'not part of this run',
+      detail: 'This adapter was not asked for a quote on this comparison.',
+      age: '—',
+      output: null,
+      retryable: false,
+    }));
+
+  return [...quoted, ...failed, ...silent];
+}
+
+export function candidateRowsFromProjectionV1(
+  projection: RoutePlanProjectionV1,
+  registeredProviders: readonly string[] = [],
+) {
+  return deriveCandidateRowsV1(candidatesFromProjectionV1(projection, registeredProviders));
 }
 
 /** Sources table / evidence stream, straight from the projection's evidence
@@ -315,14 +459,16 @@ export function evidenceSourcesFromProjectionV1(projection: RoutePlanProjectionV
     cost: record.freeOrPaid === 'paid' ? (record.costUsdc ? `$${record.costUsdc}` : 'paid') : 'free',
     result: 'ok',
   }));
-  for (const failure of projection.providerFailures) {
+  for (const failure of providerFailuresFromProjectionV1(projection)) {
     rows.push({
-      name: failure.adapterId,
+      name: failure.providerName,
       kind: 'quote',
       freshness: null,
       cost: null,
       result: 'unavailable',
-      reason: consoleFailureCopyV1(failure.errorCode),
+      // The short label here, not the full sentence: this cell sits in a dense
+      // table. The sentence belongs to the diagnostics panel.
+      reason: failure.reasonLabel,
     });
   }
   // MEV has no approved source — the row stays, with the reason.
@@ -336,7 +482,10 @@ export function evidenceRowsFromProjectionV1(projection: RoutePlanProjectionV1) 
 
 export function shortfallNoticeFromProjectionV1(projection: RoutePlanProjectionV1): string | null {
   const answered = projection.availableRoutes.map((route) => ({ name: route.provider.displayName, answered: true }));
-  const missing = projection.providerFailures.map((failure) => ({ name: failure.adapterId, answered: false }));
+  const missing = providerFailuresFromProjectionV1(projection).map((failure) => ({
+    name: failure.providerName,
+    answered: false,
+  }));
   return adapterShortfallCopyV1([...answered, ...missing]);
 }
 

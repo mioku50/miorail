@@ -484,6 +484,10 @@ export type AdapterLifecycleV1 =
   | 'live'
   | 'configured'
   | 'preflight_failed'
+  // T67E §5: it is switched on and its last request failed. Distinct from
+  // `preflight_failed`, which is a refusal BEFORE any request, and from
+  // `disabled`, which is a switch. A degraded adapter is expected to recover.
+  | 'degraded'
   | 'disabled'
   | 'planned'
   // T67D: a compatibility gate ran and returned incompatible. Distinct from
@@ -497,6 +501,7 @@ export const ADAPTER_LIFECYCLE_LABELS_V1: Record<AdapterLifecycleV1, string> = {
   live: 'live',
   configured: 'configured',
   preflight_failed: 'preflight failed',
+  degraded: 'degraded',
   disabled: 'disabled',
   planned: 'planned',
   blocked: 'blocked',
@@ -505,6 +510,10 @@ export const ADAPTER_LIFECYCLE_LABELS_V1: Record<AdapterLifecycleV1, string> = {
 export interface AdapterStatusSourceV1 {
   name: string;
   state: AdapterLifecycleV1;
+  /** Why it is in this state, when the state alone does not say. Shown beside
+   * `degraded` and `preflight_failed`, where "it failed" without "at what" is
+   * not actionable. */
+  detail?: string | null;
 }
 
 export interface AdapterStatusViewV1 {
@@ -516,6 +525,7 @@ export interface AdapterStatusViewV1 {
   /** It is switched on and could answer. Drives the "n / m" summary, so a
    * configured-but-not-yet-asked adapter is not reported as missing. */
   usable: boolean;
+  detail: string | null;
 }
 
 export function deriveAdapterRowsV1(adapters: readonly AdapterStatusSourceV1[]): {
@@ -524,11 +534,19 @@ export function deriveAdapterRowsV1(adapters: readonly AdapterStatusSourceV1[]):
 } {
   const rows = adapters.map((adapter) => ({
     name: adapter.name,
-    label: ADAPTER_LIFECYCLE_LABELS_V1[adapter.state],
+    // A degraded adapter says what failed on the same line: "degraded · last
+    // request failed" is a state a user can act on; "degraded" alone is not.
+    label: adapter.detail
+      ? `${ADAPTER_LIFECYCLE_LABELS_V1[adapter.state]} · ${adapter.detail}`
+      : ADAPTER_LIFECYCLE_LABELS_V1[adapter.state],
     state: adapter.state,
     live: adapter.state === 'live',
     usable: adapter.state === 'live' || adapter.state === 'configured',
+    detail: adapter.detail ?? null,
   }));
+  // T67E §4: `blocked` is excluded from the NUMERATOR — `usable` already does
+  // that — and stays in the denominator. It is listed on the rail, so hiding it
+  // from the count would make the ratio disagree with the rows underneath it.
   const usable = rows.filter((row) => row.usable).length;
   return { rows, summary: `${usable} / ${rows.length}` };
 }

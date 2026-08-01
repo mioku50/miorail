@@ -10,7 +10,7 @@ import {
   type ScoreDimensionViewV1,
   type SimulationViewV1,
 } from './consoleState';
-import type { ProviderHistoryViewV1 } from './consoleAdapters';
+import type { ProviderDiagnosticRowV1, ProviderHistoryViewV1 } from './consoleAdapters';
 import { BudgetDonut, ConsoleStepper, DepthCurve, RouteGraph, ScoreRadar, ScoreRows, Sparkline, type RouteGraphModelV1 } from './ConsoleCharts';
 
 void React;
@@ -126,6 +126,13 @@ export interface RouteScreenModelV1 {
   onSelectCandidate: (id: string) => void;
   reviewDisabledReason: string | null;
   graphOrientation?: 'horizontal' | 'vertical';
+  /** T67E §3 — the same panel the Comparing screen shows. A user who reaches a
+   * Route Card still needs to know which providers were not in the comparison
+   * behind it, and this is where they look after the fact. */
+  diagnostics?: readonly ProviderDiagnosticRowV1[];
+  claimHeadline?: string | null;
+  onCompareAgain?: () => void;
+  comparePending?: boolean;
 }
 
 export function RouteScreen(model: RouteScreenModelV1) {
@@ -178,6 +185,13 @@ export function RouteScreen(model: RouteScreenModelV1) {
           </div>
         )}
       </div>
+
+      <ProviderDiagnosticsPanel
+        rows={model.diagnostics ?? []}
+        claimHeadline={model.claimHeadline ?? null}
+        onCompareAgain={model.onCompareAgain}
+        comparePending={model.comparePending}
+      />
 
       <div className="panel">
         <div className="ph">
@@ -268,6 +282,96 @@ export interface ComparingStepV1 {
   latencyPercent: number;
 }
 
+// ---------------------------------------------------------------------------
+// T67E §3 — the provider diagnostics panel.
+//
+// Every registered swap adapter gets a row on every run: what it returned, why
+// it did not, and how old its answer is. Three properties it holds:
+//
+//   * A failed provider keeps its row. Removing it turns "we compared these
+//     three" into a claim about a set the user cannot see.
+//   * The reason is the SERVER's typed code translated here — never text
+//     scraped from a provider response, and never a raw body.
+//   * "Compare again" appears only when the failures are actually retryable.
+//     Offering a retry for `not configured` teaches users the button is a lie.
+// ---------------------------------------------------------------------------
+
+export interface ProviderDiagnosticsPanelProps {
+  rows: readonly ProviderDiagnosticRowV1[];
+  /** §3.4: the line that replaces a recommendation when there was no
+   * comparison to make. Null when a comparative claim is legitimate. */
+  claimHeadline: string | null;
+  onCompareAgain?: () => void;
+  comparePending?: boolean;
+}
+
+export function ProviderDiagnosticsPanel({
+  rows,
+  claimHeadline,
+  onCompareAgain,
+  comparePending = false,
+}: ProviderDiagnosticsPanelProps) {
+  if (rows.length === 0) return null;
+  const quoted = rows.filter((row) => row.result === 'quoted').length;
+  const retryable = rows.some((row) => row.retryable);
+  const explained = rows.filter((row) => row.detail !== null && row.result === 'unavailable');
+  return (
+    <div className="panel">
+      <div className="ph">
+        <h3>Providers</h3>
+        <span className="sub">
+          {quoted} of {rows.length} answered
+        </span>
+        {onCompareAgain && retryable && (
+          <span className="rt">
+            <button type="button" className="btn sec" onClick={onCompareAgain} disabled={comparePending}>
+              {comparePending ? 'Comparing…' : 'Compare again'}
+            </button>
+          </span>
+        )}
+      </div>
+      <div className="pb tight">
+        <table>
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Result</th>
+              <th>Reason</th>
+              <th className="r">Age</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const answered = row.result === 'quoted';
+              return (
+                <tr key={`${row.provider}:${row.result}:${row.reason}`}>
+                  <td className={answered ? 'nm' : 'nm off'}>{row.provider}</td>
+                  <td className={answered ? 'good' : 'off'}>{answered ? row.output ?? 'quoted' : row.result}</td>
+                  <td className={answered ? undefined : 'off'}>{row.reason}</td>
+                  <td className={`r mono${answered ? '' : ' off'}`}>{row.age}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {/* The sentences live below the table rather than inside it: a cell
+            wide enough for "what still works and what to do" would squeeze the
+            four columns that make the table scannable. */}
+        {explained.map((row) => (
+          <p className="lnote" key={`why:${row.provider}`}>
+            {row.detail}
+          </p>
+        ))}
+        {claimHeadline && (
+          <p className="note" style={{ marginTop: 12 }}>
+            {claimHeadline}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export interface ComparingScreenModelV1 {
   steps: ConsoleStepViewV1[];
   goalLabel: string;
@@ -285,6 +389,12 @@ export interface ComparingScreenModelV1 {
   failure: { title: string; detail: string } | null;
   onEditGoal: () => void;
   onCancel: () => void;
+  /** T67E §3 — one row per registered adapter, with a typed reason. */
+  diagnostics?: readonly ProviderDiagnosticRowV1[];
+  claimHeadline?: string | null;
+  /** §3.5 — a fresh run for the same goal. Never mutates the previous card. */
+  onCompareAgain?: () => void;
+  comparePending?: boolean;
 }
 
 export function ComparingScreen(model: ComparingScreenModelV1) {
@@ -351,6 +461,13 @@ export function ComparingScreen(model: ComparingScreenModelV1) {
           <CandidateTable rows={model.candidates} withAction={false} />
         </div>
       </div>
+
+      <ProviderDiagnosticsPanel
+        rows={model.diagnostics ?? []}
+        claimHeadline={model.claimHeadline ?? null}
+        onCompareAgain={model.onCompareAgain}
+        comparePending={model.comparePending}
+      />
 
       <div className="panel">
         <div className="ph">

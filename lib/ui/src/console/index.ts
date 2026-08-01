@@ -1,5 +1,6 @@
 export * from './consoleState';
 export * from './consoleFlow';
+export * from './providerDiagnostics';
 export * from './consoleAdapters';
 export * from './ConsoleCharts';
 export * from './ConsoleShell';

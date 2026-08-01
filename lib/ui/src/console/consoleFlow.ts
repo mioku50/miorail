@@ -431,7 +431,12 @@ export function coverageFromStatusV1(status: ConsoleServerStatusV1 | null): Cove
 export interface AdapterStateSourceV1 {
   name: string;
   state: AdapterLifecycleV1;
+  detail?: string | null;
 }
+
+/** The swap adapters this build registers, in rail order. The candidate table
+ * uses this to keep a row for an adapter that was never asked. */
+export const REGISTERED_SWAP_PROVIDERS_V1 = ['uniswap', 'kyberswap', 'aerodrome'] as const;
 
 /** Which route family each adapter belongs to, so a Commerce comparison never
  * lists a swap adapter it did not and will not call. */
@@ -461,14 +466,38 @@ export function adaptersFromStatusV1(
   answered: readonly { name: string }[] = [],
   failed: readonly { name: string; reason?: string }[] = [],
 ): AdapterStateSourceV1[] {
-  if (answered.length > 0 || failed.length > 0) {
-    return [
-      ...answered.map((entry) => ({ name: entry.name, state: 'live' as const })),
-      // It was asked on this run and did not answer — a real failure, which is
-      // exactly what `disabled` must never be confused with.
-      ...failed.map((entry) => ({ name: entry.name, state: 'preflight_failed' as const })),
-    ];
+  const gated = gatedAdaptersV1(status);
+  if (answered.length === 0 && failed.length === 0) return gated;
+
+  // T67E §5 — a run REFINES the rail; it does not replace it.
+  //
+  // This used to return only the adapters that took part in the run, so during
+  // a swap comparison Moonwell, Morpho, Bitrefill, OpenSea, Venice and
+  // o1.exchange disappeared from a panel titled "Route adapters" — the rail
+  // stopped being a source of truth exactly when a user was most likely to
+  // consult it. Run outcomes now override the gate-derived state by name, and
+  // every other adapter keeps the state its gate gives it.
+  const outcome = new Map<string, AdapterStateSourceV1>();
+  for (const entry of answered) outcome.set(entry.name, { name: entry.name, state: 'live' });
+  for (const entry of failed) {
+    outcome.set(entry.name, {
+      name: entry.name,
+      // It was asked on this run and did not answer. `disabled` is a switch and
+      // must never wear this label; `degraded` says it is on and currently
+      // failing, which is what actually happened.
+      state: 'degraded',
+      detail: entry.reason ?? 'last request failed',
+    });
   }
+  const merged = gated.map((adapter) => outcome.get(adapter.name) ?? adapter);
+  const known = new Set(gated.map((adapter) => adapter.name));
+  // An adapter that answered but is not in the gate table still gets a row:
+  // dropping it would hide a source that demonstrably took part.
+  for (const [name, entry] of outcome) if (!known.has(name)) merged.push(entry);
+  return merged;
+}
+
+function gatedAdaptersV1(status: ConsoleServerStatusV1 | null): AdapterStateSourceV1[] {
   const routing = status?.productMigration.routeIntelligenceV1 === true;
   const earn = status?.productMigration.earnRouteV1 === true;
   const paid = status?.productMigration.paidIntelligence === true;

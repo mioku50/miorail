@@ -27,6 +27,11 @@ import {
   consoleFailureCopyV1,
   ageLabelV1,
   candidateRowsFromProjectionV1,
+  comparisonClaimFromProjectionV1,
+  providerDiagnosticRowsV1,
+  providerFailuresFromProjectionV1,
+  ProviderDiagnosticsPanel,
+  REGISTERED_SWAP_PROVIDERS_V1,
   chainLabelV1,
   compactStepLabelV1,
   completeStageV1,
@@ -433,7 +438,9 @@ export function MiniConsole() {
     if (reconciliation.proof) mark("proof", "complete");
   }, [reconciliation.proof, mark]);
 
-  const compare = () => {
+  /** `fresh` forces a NEW route run — see the web console for why the
+   * default is idempotent and these two callers are not. */
+  const compare = (options?: { fresh?: boolean }) => {
     if (!address || !goal.trim() || dispatch.engine === null) return;
     prepare.reset();
     setSubmission(null);
@@ -501,7 +508,14 @@ export function MiniConsole() {
     // No onError here, deliberately — see RouteIntelligenceConsole. Bouncing to
     // Plan threw away the reason and left the user on the home screen with
     // nothing to act on.
-    evaluation.mutate({ message: goal, walletAddress: wallet }, { onSettled: () => mark("candidates", "complete") });
+    evaluation.mutate(
+      {
+        message: goal,
+        walletAddress: wallet,
+        ...(options?.fresh ? { requestId: `retry-${globalThis.crypto.randomUUID()}` } : {}),
+      },
+      { onSettled: () => mark("candidates", "complete") },
+    );
   };
 
   const reviewCandidate = (candidateHash: string) => {
@@ -523,16 +537,35 @@ export function MiniConsole() {
   const stepLabel = compactStepLabelV1(activeStageStepV1(clock));
   const evidenceRows = projection ? evidenceRowsFromProjectionV1(projection) : [];
   const spendLabel = intelligenceSpendLabelV1(projection ? evidenceSourcesFromProjectionV1(projection) : []);
+
+  // T67E §3 — same derivation as the web console, from the same helper, so the
+  // two surfaces cannot report different reasons for the same run.
+  const providerFailures = useMemo(
+    () => (projection ? providerFailuresFromProjectionV1(projection) : []),
+    [projection],
+  );
+  const comparisonClaim = useMemo(
+    () => (projection ? comparisonClaimFromProjectionV1(projection) : null),
+    [projection],
+  );
+  const diagnosticRows = useMemo(
+    () => (projection ? providerDiagnosticRowsV1(projection, REGISTERED_SWAP_PROVIDERS_V1) : []),
+    [projection],
+  );
   const adapterRows = useMemo(
     () =>
       deriveAdapterRowsV1(
         adaptersFromStatusV1(
           status.data ?? null,
           (projection?.availableRoutes ?? []).map((route) => ({ name: route.provider.displayName })),
-          (projection?.providerFailures ?? []).map((failure) => ({ name: failure.adapterId })),
+          // Same defect as the web console: the wire field is `provider`.
+          providerFailures.map((failure) => ({
+            name: failure.providerName,
+            reason: failure.reasonLabel,
+          })),
         ),
       ),
-    [status.data, projection],
+    [status.data, projection, providerFailures],
   );
   const budgetRecord = budget.data?.budget ?? null;
   const simulationSource = simulationSourceFromResponseV1(simulateResponse ?? budgetResponse);
@@ -689,10 +722,18 @@ export function MiniConsole() {
             <span className="sub">{comparePending ? "running" : "done"}</span>
           </div>
           <div className="pb tight">
-            <CandidateCards rows={projection ? candidateRowsFromProjectionV1(projection) : []} />
+            <CandidateCards rows={projection ? candidateRowsFromProjectionV1(projection, REGISTERED_SWAP_PROVIDERS_V1) : []} />
             {projection && shortfallNoticeFromProjectionV1(projection) && (
               <p className="lnote" style={{ marginTop: 10 }}>{shortfallNoticeFromProjectionV1(projection)}</p>
             )}
+            {/* T67E §3 — the same typed diagnostics as the web console, from
+                the same helper, so the two cannot disagree about a run. */}
+            <ProviderDiagnosticsPanel
+              rows={diagnosticRows}
+              claimHeadline={comparisonClaim?.headline ?? null}
+              onCompareAgain={() => compare({ fresh: true })}
+              comparePending={comparePending}
+            />
             {comparingFailure && (
               <div className="note warn" role="alert">
                 <b>{comparingFailure.title}</b>
@@ -870,7 +911,7 @@ export function MiniConsole() {
         <ConsoleStepperCompact label={stepLabel} steps={steps} expanded={railOpen} onToggle={() => setRailOpen((open) => !open)} />
         <div className="panel">
           <div className="pb">
-            <EarnDepositFlow routeRunId={earnCard.routeRunId ?? ""} routeCard={earnCard.routeCard} builderCode={BUILDER_CODE} onRefresh={compare} />
+            <EarnDepositFlow routeRunId={earnCard.routeRunId ?? ""} routeCard={earnCard.routeCard} builderCode={BUILDER_CODE} onRefresh={() => compare({ fresh: true })} />
           </div>
         </div>
       </>
@@ -957,7 +998,7 @@ export function MiniConsole() {
             <h3>All candidates</h3>
           </div>
           <div className="pb tight">
-            <CandidateCards rows={candidateRowsFromProjectionV1(projection)} onSelect={reviewCandidate} />
+            <CandidateCards rows={candidateRowsFromProjectionV1(projection, REGISTERED_SWAP_PROVIDERS_V1)} onSelect={reviewCandidate} />
           </div>
         </div>
         <div className="ctarow">

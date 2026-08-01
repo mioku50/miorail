@@ -45,6 +45,10 @@ import {
   type ConsoleStageClockV1,
   type ConsoleStageV1,
   candidateRowsFromProjectionV1,
+  comparisonClaimFromProjectionV1,
+  providerDiagnosticRowsV1,
+  providerFailuresFromProjectionV1,
+  REGISTERED_SWAP_PROVIDERS_V1,
   evidenceRowsFromProjectionV1,
   evidenceSourcesFromProjectionV1,
   quoteFreshnessFromRouteV1,
@@ -395,8 +399,19 @@ export function RouteIntelligenceConsole() {
 
   // --- actions ---------------------------------------------------------------
 
-  const compare = (event?: FormEvent) => {
-    event?.preventDefault();
+  /**
+   * `fresh` forces a NEW route run.
+   *
+   * T67E §3.5. `RoutePlanRequestIdentity` derives the request id from
+   * (wallet, message) and reuses it, so a second `compare()` for the same goal
+   * replays the idempotent request and the server returns the run it already
+   * has — the same quotes, at the same age. That is exactly right for an
+   * accidental double submit and exactly wrong for "Compare again" and for the
+   * stale-quote "Refresh", both of which exist to obtain fresh terms. Those two
+   * pass a fresh id; every other caller keeps the idempotent behaviour.
+   */
+  const compare = (options?: { fresh?: boolean; event?: FormEvent }) => {
+    options?.event?.preventDefault();
     if (!address || !goal.trim() || dispatch.engine === null) return;
     prepare.reset();
     setSubmission(null);
@@ -475,7 +490,17 @@ export function RouteIntelligenceConsole() {
     // swap comparison was indistinguishable from a button that did nothing.
     // Swap now ends where Earn, NFT, Commerce and AI already end: on Comparing,
     // with the server's own message rendered as a terminal failure.
-    evaluation.mutate({ message: goal, walletAddress: wallet }, { onSettled: () => mark('candidates', 'complete') });
+    evaluation.mutate(
+      {
+        message: goal,
+        walletAddress: wallet,
+        // A new id ⟹ a new route run, new quotes and a new evidence set. The
+        // previous Route Card is untouched in storage; it is simply no longer
+        // the one on screen.
+        ...(options?.fresh ? { requestId: `retry-${globalThis.crypto.randomUUID()}` } : {}),
+      },
+      { onSettled: () => mark('candidates', 'complete') },
+    );
   };
 
   const reviewCandidate = (candidateHash: string) => {
@@ -500,16 +525,38 @@ export function RouteIntelligenceConsole() {
   const evidenceSources = projection ? evidenceSourcesFromProjectionV1(projection) : [];
   const spendLabel = intelligenceSpendLabelV1(evidenceSources);
 
+  // T67E §3 — typed provider diagnostics. Derived once: the adapter rail, the
+  // candidate table and the Comparing screen must not disagree about which
+  // provider failed or why.
+  const providerFailures = useMemo(
+    () => (projection ? providerFailuresFromProjectionV1(projection) : []),
+    [projection],
+  );
+  const comparisonClaim = useMemo(
+    () => (projection ? comparisonClaimFromProjectionV1(projection) : null),
+    [projection],
+  );
+  const diagnosticRows = useMemo(
+    () => (projection ? providerDiagnosticRowsV1(projection, REGISTERED_SWAP_PROVIDERS_V1) : []),
+    [projection],
+  );
+
   const adapterRows = useMemo(
     () =>
       deriveAdapterRowsV1(
         adaptersFromStatusV1(
           status.data ?? null,
           (projection?.availableRoutes ?? []).map((route) => ({ name: route.provider.displayName })),
-          (projection?.providerFailures ?? []).map((failure) => ({ name: failure.adapterId })),
+          // T67E §3: the wire field is `provider`, an adapter id. `adapterId`
+          // never existed on it, so every failed adapter rendered as
+          // `undefined` here.
+          providerFailures.map((failure) => ({
+            name: failure.providerName,
+            reason: failure.reasonLabel,
+          })),
         ),
       ),
-    [status.data, projection],
+    [status.data, projection, providerFailures],
   );
 
   // T64.3.1 — a Commerce comparison is a comparison. Leaving it out of these
@@ -755,9 +802,13 @@ export function RouteIntelligenceConsole() {
           evidenceCount: projection ? evidenceRows.length : null,
           scored: Boolean(projection?.pathScore),
         })}
-        candidates={projection ? candidateRowsFromProjectionV1(projection) : []}
+        candidates={projection ? candidateRowsFromProjectionV1(projection, REGISTERED_SWAP_PROVIDERS_V1) : []}
         sources={evidenceRows}
         failure={comparingFailure}
+        diagnostics={diagnosticRows}
+        claimHeadline={comparisonClaim?.headline ?? null}
+        onCompareAgain={() => compare({ fresh: true })}
+        comparePending={comparePending}
         onEditGoal={() => setScreen('plan')}
         shortfallNotice={projection ? shortfallNoticeFromProjectionV1(projection) : null}
         onCancel={() => setScreen('plan')}
@@ -897,7 +948,7 @@ export function RouteIntelligenceConsole() {
               routeRunId={earnCard.routeRunId ?? ''}
               routeCard={earnCard.routeCard}
               builderCode={BUILDER_CODE}
-              onRefresh={() => compare()}
+              onRefresh={() => compare({ fresh: true })}
             />
           </div>
         </div>
@@ -914,9 +965,14 @@ export function RouteIntelligenceConsole() {
         providerLabel={recommended?.provider.displayName ?? 'no provider'}
         freshness={quoteFreshness}
         why={
-          projection.outcome === 'ready'
-            ? 'Highest expected output after network and intelligence costs.'
-            : 'No comparative recommendation was made — the routes below are shown for comparison only.'
+          // T67E §3.4 — the superlative is gated on there having been a
+          // comparison. One quotable candidate cannot be the "highest" of
+          // anything, and a user reads that phrase as "the alternatives lost".
+          comparisonClaim?.claim !== 'comparative'
+            ? (comparisonClaim?.headline ?? 'No comparative recommendation was made.')
+            : projection.outcome === 'ready'
+              ? 'Highest expected output after network and intelligence costs.'
+              : 'No comparative recommendation was made — the routes below are shown for comparison only.'
         }
         kpis={[
           { k: 'Minimum output', v: recommended?.minimumOutput.amountDecimal ?? '—', d: `slippage ${recommended?.slippage.percent ?? '—'}%` },
@@ -937,8 +993,12 @@ export function RouteIntelligenceConsole() {
         scoreRows={scoreRowsFromProjectionV1(projection)}
         scoringVersion={scoringVersionLabelV1(projection.pathScore)}
         providerHistory={providerHistoryViewsV1(projection)}
-        candidates={candidateRowsFromProjectionV1(projection)}
+        candidates={candidateRowsFromProjectionV1(projection, REGISTERED_SWAP_PROVIDERS_V1)}
         onReview={() => recommended && reviewCandidate(recommended.candidateHash)}
+        diagnostics={diagnosticRows}
+        claimHeadline={comparisonClaim?.headline ?? null}
+        onCompareAgain={() => compare({ fresh: true })}
+        comparePending={comparePending}
         onChangeGoal={() => setScreen('plan')}
         onSelectCandidate={reviewCandidate}
         reviewDisabledReason={connected ? null : CONSOLE_COPY_V1.walletDisconnected}

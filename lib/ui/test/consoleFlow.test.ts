@@ -218,11 +218,20 @@ describe('coverage and adapters come from the server, not the front end', () => 
     assert.equal(during.find((row) => row.name === 'Uniswap')?.state, 'live');
     assert.equal(during.find((row) => row.name === 'o1.exchange')?.state, 'blocked');
 
+    // T67E §5: a run REFINES the rail, it does not replace it. This used to
+    // assert the replacement — `after` was exactly two rows — which meant that
+    // during a swap comparison Moonwell, Morpho, Bitrefill, OpenSea, Venice and
+    // o1.exchange vanished from a panel titled "Route adapters". The rail
+    // stopped being a source of truth precisely when it was being consulted.
     const after = adaptersFromStatusV1(allOn, [{ name: 'KyberSwap' }], [{ name: 'Uniswap' }]);
-    assert.deepEqual(after, [
-      { name: 'KyberSwap', state: 'live' },
-      { name: 'Uniswap', state: 'preflight_failed' },
-    ]);
+    assert.equal(after.find((row) => row.name === 'KyberSwap')?.state, 'live');
+    // Asked on this run and it failed: `degraded`, which says it is switched on
+    // and currently failing. `disabled` is a switch and must never wear it.
+    assert.equal(after.find((row) => row.name === 'Uniswap')?.state, 'degraded');
+    // Everything else keeps the state its gate gives it.
+    assert.equal(after.find((row) => row.name === 'Moonwell')?.state, 'live');
+    assert.equal(after.find((row) => row.name === 'o1.exchange')?.state, 'blocked');
+    assert.equal(after.length, before.length, 'a run must not shorten the rail');
   });
 
   test('the chain label comes from the reported chain id', () => {
