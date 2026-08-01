@@ -441,7 +441,12 @@ export function adaptersFromStatusV1(
     { name: 'Bitrefill', state: gate(commerce) },
     { name: 'OpenSea', state: gate(nft) },
     { name: 'Venice', state: gate(status?.productMigration.privateAiRouteV1 === true) },
-    { name: 'o1.exchange', state: 'planned' },
+    // T67D: the compatibility gate returned `incompatible` on 2026-08-01 — the
+    // Trading API requires a raw private key, signTransaction and provider-side
+    // broadcast. `planned` would promise an integration that cannot happen
+    // without o1 changing its protocol. See
+    // docs/research/O1_TRADING_API_COMPATIBILITY.md.
+    { name: 'o1.exchange', state: 'blocked' },
   ];
 }
 

@@ -178,11 +178,27 @@ describe('empty is never good', () => {
       { name: 'KyberSwap', state: 'live' },
       { name: 'Moonwell', state: 'configured' },
       { name: 'Aerodrome', state: 'preflight_failed' },
-      { name: 'o1.exchange', state: 'planned' },
+      { name: 'o1.exchange', state: 'blocked' },
     ]);
     // Configured counts toward the summary — it is switched on and can answer.
     assert.equal(summary, '3 / 5');
-    assert.deepEqual(rows.map((row) => row.label), ['live', 'live', 'configured', 'preflight failed', 'planned']);
+    assert.deepEqual(rows.map((row) => row.label), ['live', 'live', 'configured', 'preflight failed', 'blocked']);
+  });
+
+  // T67D — `blocked` is its own state and must not be read as any of the
+  // others: not `planned` (which promises the integration is coming), not
+  // `disabled` (a switch someone could flip), not `preflight_failed` (a call
+  // that might succeed next time).
+  test('a gated-incompatible provider is blocked, and never counts as usable', () => {
+    const { rows, summary } = deriveAdapterRowsV1([
+      { name: 'Uniswap', state: 'live' },
+      { name: 'o1.exchange', state: 'blocked' },
+    ]);
+    assert.equal(summary, '1 / 2');
+    const o1 = rows.find((row) => row.name === 'o1.exchange')!;
+    assert.equal(o1.label, 'blocked');
+    assert.equal(o1.live, false);
+    assert.equal(o1.usable, false);
   });
 
   // T64.3.1 — the distinction the old single `not_connected` bucket destroyed.

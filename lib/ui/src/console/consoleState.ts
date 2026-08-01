@@ -480,7 +480,18 @@ export function deriveSimulationViewV1(simulation: SimulationSourceV1 | null): S
  *   preflight_failed— it was asked on this run and could not answer.
  *   planned         — no adapter exists yet.
  */
-export type AdapterLifecycleV1 = 'live' | 'configured' | 'preflight_failed' | 'disabled' | 'planned';
+export type AdapterLifecycleV1 =
+  | 'live'
+  | 'configured'
+  | 'preflight_failed'
+  | 'disabled'
+  | 'planned'
+  // T67D: a compatibility gate ran and returned incompatible. Distinct from
+  // `planned`, which promises the integration is coming, and from `disabled`,
+  // which says a switch is off. This one means the provider's own protocol
+  // cannot be reached from Miorail's execution path — and only the provider can
+  // change that.
+  | 'blocked';
 
 export const ADAPTER_LIFECYCLE_LABELS_V1: Record<AdapterLifecycleV1, string> = {
   live: 'live',
@@ -488,6 +499,7 @@ export const ADAPTER_LIFECYCLE_LABELS_V1: Record<AdapterLifecycleV1, string> = {
   preflight_failed: 'preflight failed',
   disabled: 'disabled',
   planned: 'planned',
+  blocked: 'blocked',
 };
 
 export interface AdapterStatusSourceV1 {

@@ -216,7 +216,7 @@ describe('coverage and adapters come from the server, not the front end', () => 
 
     const during = adaptersFromStatusV1(allOn);
     assert.equal(during.find((row) => row.name === 'Uniswap')?.state, 'live');
-    assert.equal(during.find((row) => row.name === 'o1.exchange')?.state, 'planned');
+    assert.equal(during.find((row) => row.name === 'o1.exchange')?.state, 'blocked');
 
     const after = adaptersFromStatusV1(allOn, [{ name: 'KyberSwap' }], [{ name: 'Uniswap' }]);
     assert.deepEqual(after, [
@@ -242,7 +242,7 @@ describe('Comparing is route-family aware and terminal', () => {
     { name: 'Morpho', label: 'disabled', live: false, usable: false },
     { name: 'Alchemy simulation', label: 'live', live: true, usable: true },
     { name: 'Bitrefill', label: 'live', live: true, usable: true },
-    { name: 'o1.exchange', label: 'planned', live: false, usable: false },
+    { name: 'o1.exchange', label: 'blocked', live: false, usable: false },
   ];
 
   test('a commerce comparison lists only the commerce sources', () => {

@@ -24,7 +24,8 @@
     "smoke:b20-control": "tsx scripts/smoke_b20_control.ts",
     "proof:verify": "tsx lib/proof-verifier/src/cli.ts",
     "outcomes:backfill": "tsx scripts/outcomes_backfill.ts",
-    "reliability:rebuild": "tsx scripts/reliability_rebuild.ts"
+    "reliability:rebuild": "tsx scripts/reliability_rebuild.ts",
+    "o1:compat": "tsx scripts/o1_compat.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
