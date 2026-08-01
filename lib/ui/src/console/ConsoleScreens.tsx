@@ -133,6 +133,10 @@ export interface RouteScreenModelV1 {
   claimHeadline?: string | null;
   onCompareAgain?: () => void;
   comparePending?: boolean;
+  /** T67E §1 — token-level panels for the asset this route acquires. A slot
+   * rather than a B20-shaped prop: the screen has no business knowing what a
+   * B20 control is, and the next token standard will want the same place. */
+  tokenPanels?: React.ReactNode;
 }
 
 export function RouteScreen(model: RouteScreenModelV1) {
@@ -185,6 +189,8 @@ export function RouteScreen(model: RouteScreenModelV1) {
           </div>
         )}
       </div>
+
+      {model.tokenPanels}
 
       <ProviderDiagnosticsPanel
         rows={model.diagnostics ?? []}
@@ -547,6 +553,10 @@ export interface ReviewScreenModelV1 {
   onApprove: () => void;
   onBack: () => void;
   approvePending: boolean;
+  /** T67E §1 — the same token panels as the Route screen, in full detail. This
+   * is the last screen before a signature, so the controls the user is about to
+   * be subject to belong here more than anywhere. */
+  tokenPanels?: React.ReactNode;
 }
 
 export function ReviewScreen(model: ReviewScreenModelV1) {
@@ -639,6 +649,8 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
           </div>
         </div>
       </div>
+
+      {model.tokenPanels}
 
       <div className="panel">
         <div className="ph">

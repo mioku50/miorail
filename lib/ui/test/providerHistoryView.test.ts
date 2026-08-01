@@ -22,7 +22,7 @@ function route(overrides: Partial<RoutePlanRouteV1> = {}): RoutePlanRouteV1 {
   return {
     candidateHash: '0xabc',
     provider: { displayName: 'Uniswap' },
-    expectedOutput: { amountDecimal: '1.0', asset: { symbol: 'WETH' } },
+    expectedOutput: { amountDecimal: '1.0', asset: { symbol: 'WETH', address: '0x4200000000000000000000000000000000000006' } },
     minimumOutput: { amountDecimal: '0.99' },
     estimatedGas: { gasUnits: '200000', estimatedCostUsd: '0.01' },
     priceImpact: { percent: '0.1' },

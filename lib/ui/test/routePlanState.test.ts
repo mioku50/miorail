@@ -110,7 +110,7 @@ test('T67B.1 an Aerodrome hop names its curve, because the pair does not identif
         { protocol: 'aerodrome-stable' },
       ],
     },
-    expectedOutput: { amountDecimal: '0.038', asset: { symbol: 'ETH' } },
+    expectedOutput: { amountDecimal: '0.038', asset: { symbol: 'ETH', address: null } },
   } as never;
   const graph = routeGraphFromRouteV1(route, { amountLabel: '100 USDC', walletLabel: 'wallet' });
   assert.deepEqual(

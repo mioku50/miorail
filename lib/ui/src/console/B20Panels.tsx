@@ -167,6 +167,71 @@ export function B20FieldsPanel({ card }: { card: B20CardLikeV1 }): React.ReactEl
   );
 }
 
+/**
+ * T67E §1 — the contextual B20 Control Card, as one block.
+ *
+ * The panels above existed and were exported and tested from the day T67C
+ * landed; nothing ever imported them, so a user comparing a B20 token saw no
+ * controls at all. This composes them for the Route and Review screens and adds
+ * the two states a mounted card has to survive: the read has not finished, and
+ * the read was refused.
+ *
+ * `cached` is surfaced rather than hidden. A snapshot from four blocks ago is a
+ * different claim from a current one, and the whole card is scoped to a block.
+ */
+export interface B20ControlSectionPropsV1 {
+  card: B20CardLikeV1 | null;
+  /** True while the inspection is in flight. */
+  loading?: boolean;
+  /** Why there is no card. Rendered verbatim; never replaced by a guess. */
+  unavailableReason?: string | null;
+  /** The answer came from a stored snapshot inside its TTL. */
+  cached?: boolean;
+  /** Full detail (fields + evidence). Review shows it; Route stays compact. */
+  detailed?: boolean;
+}
+
+export function B20ControlSection({
+  card,
+  loading = false,
+  unavailableReason = null,
+  cached = false,
+  detailed = false,
+}: B20ControlSectionPropsV1): React.ReactElement | null {
+  if (loading) {
+    return (
+      <section className="panel">
+        <h3>B20 Control</h3>
+        <p className="note">Reading this token’s controls on Base…</p>
+      </section>
+    );
+  }
+  if (!card) {
+    // No card and no stated reason means nothing was attempted — rendering an
+    // empty B20 panel there would imply a check that never ran.
+    if (!unavailableReason) return null;
+    return (
+      <section className="panel">
+        <h3>B20 Control</h3>
+        <p className="note">{unavailableReason}</p>
+      </section>
+    );
+  }
+  return (
+    <>
+      <B20ControlCardPanel card={card} />
+      {cached && (
+        <p className="note">
+          Read from a stored snapshot at block {card.blockNumber ?? 'unknown'}, not re-read just now.
+        </p>
+      )}
+      <B20ControlsPanel card={card} />
+      {detailed && <B20FieldsPanel card={card} />}
+      {detailed && <B20EvidencePanel card={card} />}
+    </>
+  );
+}
+
 export function B20EvidencePanel({ card }: { card: B20CardLikeV1 }): React.ReactElement {
   const read = card.fields.filter((field) => field.status === 'exact_chain_read');
   return (

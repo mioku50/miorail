@@ -26,7 +26,10 @@ import type { RouteGraphModelV1 } from './ConsoleCharts';
 export interface RoutePlanRouteV1 {
   candidateHash: string;
   provider: { displayName: string };
-  expectedOutput: { amountDecimal: string; asset: { symbol: string } };
+  // `address` is on the wire (AssetRefV1) and was simply not mirrored here.
+  // It is null for the chain's native asset, which is why B20 inspection has a
+  // "nothing to inspect" branch rather than treating null as an error.
+  expectedOutput: { amountDecimal: string; asset: { symbol: string; address: string | null } };
   minimumOutput: { amountDecimal: string };
   estimatedGas: { gasUnits: string; estimatedCostUsd: string | null };
   priceImpact: { percent: string };

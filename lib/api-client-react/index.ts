@@ -732,6 +732,42 @@ export function useMarketSnapshot(
   });
 }
 
+/**
+ * T67E §1 — B20 Control for one token, read-only.
+ *
+ * A POST behind `useQuery` on purpose. `/b20/inspect` is idempotent per
+ * (tenant, token, block) and returns the STORED snapshot inside its TTL, so it
+ * reads like a query even though it writes one row the first time. Modelling it
+ * as a mutation would mean the card only appears after something clicks it, and
+ * the whole point is that a route shows the token's controls before a user acts.
+ *
+ * `enabled` is off for a null address: the native asset has no contract to
+ * inspect, and asking about one would be a guaranteed 400.
+ */
+export function useB20Inspect(
+  tokenAddress: string | null | undefined,
+  options?: { enabled?: boolean },
+) {
+  const address = typeof tokenAddress === 'string' ? tokenAddress.toLowerCase() : null;
+  return useQuery({
+    queryKey: ['b20-inspect', address ?? 'none'],
+    queryFn: async () => {
+      const response = await fetchApi<unknown>('/api/route-intelligence/b20/inspect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chainId: 8453, tokenAddress: address }),
+      });
+      return apiSpec.B20InspectResponseV1Schema.parse(response);
+    },
+    // A B20 read is an on-chain call against a metered endpoint, and the server
+    // already caches by block. Retrying a refusal (flag off, not a B20, no RPC)
+    // would multiply that cost for an answer that will not change.
+    retry: false,
+    enabled: options?.enabled !== false && address !== null,
+    staleTime: 30_000,
+  });
+}
+
 export function useBaseMcpToolsProbe(
   options?: Omit<UseMutationOptions<apiSpec.BaseMcpToolProbeResponse, Error, void>, 'mutationFn'>
 ) {

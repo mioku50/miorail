@@ -32,7 +32,7 @@ function route(provider: string, output: string, ageSeconds = 4) {
   return {
     candidateHash: `0x${provider}`,
     provider: { displayName: provider },
-    expectedOutput: { amountDecimal: output, asset: { symbol: 'ETH' } },
+    expectedOutput: { amountDecimal: output, asset: { symbol: 'ETH', address: null } },
     minimumOutput: { amountDecimal: output },
     estimatedGas: { gasUnits: '150000', estimatedCostUsd: '0.01' },
     priceImpact: { percent: '0.10' },

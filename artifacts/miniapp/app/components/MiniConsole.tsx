@@ -26,6 +26,10 @@ import {
   adaptersFromStatusV1,
   consoleFailureCopyV1,
   ageLabelV1,
+  B20ControlSection,
+  b20ErrorCodeV1,
+  b20TargetForRouteV1,
+  b20UnavailableCopyV1,
   candidateRowsFromProjectionV1,
   comparisonClaimFromProjectionV1,
   providerDiagnosticRowsV1,
@@ -76,6 +80,7 @@ import {
   useCreateCommerceOrder,
   useEarnCompare,
   useEvaluateSwapRoute,
+  useB20Inspect,
   useIntelligenceBudget,
   useMarketSnapshot,
   usePrepareSwapBlueprint,
@@ -552,6 +557,27 @@ export function MiniConsole() {
     () => (projection ? providerDiagnosticRowsV1(projection, REGISTERED_SWAP_PROVIDERS_V1) : []),
     [projection],
   );
+
+  // T67E §1 — same target rule and same copy as the web console: the card is
+  // about the token the route ACQUIRES.
+  const b20GateOn = flags?.b20ControlV1 === true;
+  const b20Target = b20TargetForRouteV1(recommended?.expectedOutput.asset ?? null);
+  const b20 = useB20Inspect(b20Target.address, { enabled: b20GateOn });
+  const b20Card = b20.data?.card ?? null;
+  const b20Unavailable = b20UnavailableCopyV1({
+    gateEnabled: b20GateOn,
+    skipReason: b20Target.skipReason,
+    errorCode: b20ErrorCodeV1(b20.error),
+  });
+  const b20Panels = (detailed: boolean) => (
+    <B20ControlSection
+      card={b20Card}
+      loading={b20.isPending && b20GateOn && b20Target.address !== null}
+      unavailableReason={b20Card ? null : b20Unavailable}
+      cached={b20.data?.cached === true}
+      detailed={detailed}
+    />
+  );
   const adapterRows = useMemo(
     () =>
       deriveAdapterRowsV1(
@@ -993,6 +1019,7 @@ export function MiniConsole() {
             </div>
           </div>
         )}
+        {b20Panels(false)}
         <div className="panel">
           <div className="ph">
             <h3>All candidates</h3>
@@ -1057,6 +1084,7 @@ export function MiniConsole() {
           ]}
           onLimitChange={() => undefined}
           onApprove={() => undefined}
+          tokenPanels={b20Panels(true)}
           onBack={() => setScreen("route")}
           approvePending={prepare.isPending}
         />

@@ -44,6 +44,10 @@ import {
   type ConsoleSessionItemV1,
   type ConsoleStageClockV1,
   type ConsoleStageV1,
+  B20ControlSection,
+  b20ErrorCodeV1,
+  b20TargetForRouteV1,
+  b20UnavailableCopyV1,
   candidateRowsFromProjectionV1,
   comparisonClaimFromProjectionV1,
   providerDiagnosticRowsV1,
@@ -75,6 +79,7 @@ import {
   useCreateCommerceOrder,
   useEarnCompare,
   useEvaluateSwapRoute,
+  useB20Inspect,
   useIntelligenceBudget,
   useMarketSnapshot,
   usePortfolio,
@@ -541,6 +546,32 @@ export function RouteIntelligenceConsole() {
     [projection],
   );
 
+  // --- T67E §1: the contextual B20 Control Card ------------------------------
+  //
+  // The card is about the token the route ACQUIRES. Selling a token whose
+  // transfers are paused reverts immediately and costs only gas; acquiring one
+  // succeeds, and the constraint is discovered later by the holder.
+  const b20GateOn = flags?.b20ControlV1 === true;
+  const b20Target = b20TargetForRouteV1(recommended?.expectedOutput.asset ?? null);
+  const b20 = useB20Inspect(b20Target.address, { enabled: b20GateOn });
+  const b20Card = b20.data?.card ?? null;
+  const b20Unavailable = b20UnavailableCopyV1({
+    gateEnabled: b20GateOn,
+    skipReason: b20Target.skipReason,
+    errorCode: b20ErrorCodeV1(b20.error),
+  });
+  // `detailed` is false on Route and true on Review: Review is the last
+  // screen before a signature, so the fields and evidence hashes belong there.
+  const b20Panels = (detailed: boolean) => (
+    <B20ControlSection
+      card={b20Card}
+      loading={b20.isPending && b20GateOn && b20Target.address !== null}
+      unavailableReason={b20Card ? null : b20Unavailable}
+      cached={b20.data?.cached === true}
+      detailed={detailed}
+    />
+  );
+
   const adapterRows = useMemo(
     () =>
       deriveAdapterRowsV1(
@@ -995,6 +1026,7 @@ export function RouteIntelligenceConsole() {
         providerHistory={providerHistoryViewsV1(projection)}
         candidates={candidateRowsFromProjectionV1(projection, REGISTERED_SWAP_PROVIDERS_V1)}
         onReview={() => recommended && reviewCandidate(recommended.candidateHash)}
+        tokenPanels={b20Panels(false)}
         diagnostics={diagnosticRows}
         claimHeadline={comparisonClaim?.headline ?? null}
         onCompareAgain={() => compare({ fresh: true })}
@@ -1106,6 +1138,7 @@ export function RouteIntelligenceConsole() {
           /* Signing is NOT a screen switch: the real Base Account submission
              below owns it, so this CTA never advances the flow by itself. */
           onApprove={() => undefined}
+          tokenPanels={b20Panels(true)}
           onBack={() => setScreen('route')}
           approvePending={prepare.isPending}
         />

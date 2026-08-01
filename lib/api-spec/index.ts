@@ -148,3 +148,7 @@ export type X402FuelResponse = z.infer<typeof schemas.X402FuelResponseSchema>;
 export type X402FuelOwnerResponse = z.infer<typeof schemas.X402FuelOwnerResponseSchema>;
 export type X402FuelPermissionRequest = z.infer<typeof schemas.X402FuelPermissionRequestSchema>;
 export type X402FuelPermissionResponse = z.infer<typeof schemas.X402FuelPermissionResponseSchema>;
+
+// T67E §1 — B20 Control, read-only inspection.
+export type B20InspectRequestV1 = z.infer<typeof schemas.B20InspectRequestV1Schema>;
+export type B20InspectResponseV1 = z.infer<typeof schemas.B20InspectResponseV1Schema>;
