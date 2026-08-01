@@ -3,7 +3,22 @@
 // (Base Account wallet_sendCalls + getCallsStatus polling + builder-code
 // attribution) for both the web interface and the miniapp.
 
-export { builderCodeToDataSuffix } from './src/attribution';
+export {
+  BUILDER_ATTRIBUTION_LABELS_V1,
+  builderAttributionOutcomeV1,
+  builderCodeAdviceV1,
+  builderCodeForSurfaceV1,
+  builderCodeFromEnvV1,
+  builderCodeToDataSuffix,
+  dataSuffixSupportV1,
+  resolveBuilderCodeV1,
+} from './src/attribution';
+export type {
+  BuilderAttributionOutcomeV1,
+  BuilderAttributionStatusV1,
+  BuilderCodeEnvV1,
+  BuilderCodeResolutionV1,
+} from './src/attribution';
 export { useWalletConfirmAction, CallsStatusPoller, normalizeCallValue, normalizeCall, sanitizeBigInts } from './src/useWalletConfirmAction';
 export type { ConfirmFlowStatus, UseWalletConfirmActionResult, UseWalletConfirmActionArgs, CallsStatusPollerProps } from './src/useWalletConfirmAction';
 export { WalletConfirmButton } from './src/WalletConfirmButton';

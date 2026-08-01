@@ -18,7 +18,7 @@ import {
   type SimulateWithBudgetResponseV1,
 } from "@mioagent/api-client-react";
 import { DeepVerification, ExecutionProofPanel, RoutePlanView, SubmissionStatus, routePlanSurfaceState, type DeepVerificationResultV1 } from "@mioagent/ui";
-import { BlueprintSubmitButton, type BlueprintSubmitStatus } from "@mioagent/wallet-actions";
+import { BlueprintSubmitButton, builderCodeForSurfaceV1, type BlueprintSubmitStatus } from "@mioagent/wallet-actions";
 import { SimulateButton, type SimulateBlueprintResponseV1 } from "@mioagent/x402-actions";
 import { WalletConnect } from "./WalletConnect";
 import { EarnComparePanel } from "./EarnComparePanel";
@@ -85,7 +85,11 @@ function budgetResponseToDeepVerificationResult(response: SimulateWithBudgetResp
   return null;
 }
 
-const BUILDER_CODE = process.env.NEXT_PUBLIC_BUILDER_CODE;
+// T67X-B1: see MiniConsole — one rule, both keys read as literals.
+const BUILDER_CODE = builderCodeForSurfaceV1({
+  NEXT_PUBLIC_BASE_BUILDER_CODE: process.env.NEXT_PUBLIC_BASE_BUILDER_CODE,
+  NEXT_PUBLIC_BUILDER_CODE: process.env.NEXT_PUBLIC_BUILDER_CODE,
+});
 
 const EXAMPLES = [
   "Swap 100 USDC to ETH using the best net result.",

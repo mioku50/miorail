@@ -6,21 +6,40 @@
  *   (a) Duplicate keys
  *   (b) Missing required variables for the current CHAIN_ENV
  *   (c) CHAIN_ENV vs VITE_CHAIN_ENV desync (if artifacts/interface/.env exists)
+ *   (d) T67X-A1: paid intelligence enabled without a settlement path
+ *   (e) T67X-B2: mainnet execution enabled without a Builder Code
  *
- * Prints variable names and status only — values are NEVER printed.
- * Exit code: 1 if duplicates or missing required vars found; 0 on warnings only.
+ * Prints variable names and status only — values are NEVER printed, with one
+ * exception: a Builder Code is a PUBLIC base.dev identifier, and naming which
+ * key it came from is how an operator resolves a conflict.
  *
- * Usage: node scripts/env-doctor.mjs
+ * Exit code: 1 on duplicates, missing required vars, or a failed production
+ * gate; 0 on warnings only.
+ *
+ * Usage: pnpm env:doctor [-- --probe]
+ *   --probe  additionally calls the facilitator's /supported endpoint. Off by
+ *            default: a deployment check that fails because CI has no egress is
+ *            worse than no check at all.
  */
 
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { builderCodeAdviceV1, resolveBuilderCodeV1 } from '../lib/route-domain/src/builder-code.ts';
+import { x402ConfigFromEnv, x402StatusFromEnv } from '../lib/x402-gateway/src/index.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
-const ENV_PATH = resolve(ROOT, '.env');
-const INTERFACE_ENV_PATH = resolve(ROOT, 'artifacts', 'interface', '.env');
+// ENV_DOCTOR_ENV_PATH checks a CANDIDATE .env — the one about to be deployed —
+// without installing it first. The tests use it for the same reason: the
+// contract this script has with a deploy is its exit code, and the only way to
+// pin an exit code is to run the real script against a real file.
+const ENV_PATH = process.env.ENV_DOCTOR_ENV_PATH
+  ? resolve(process.env.ENV_DOCTOR_ENV_PATH)
+  : resolve(ROOT, '.env');
+const INTERFACE_ENV_PATH = process.env.ENV_DOCTOR_ENV_PATH
+  ? ''
+  : resolve(ROOT, 'artifacts', 'interface', '.env');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -101,6 +120,16 @@ const REQUIRED_BY_MODE = {
 
 let hasErrors = false;
 const warnings = [];
+// `pnpm env:doctor -- --probe` forwards the separator; skip it rather than
+// making the documented invocation fail on its own documentation.
+const cliArgs = process.argv.slice(2).filter((argument) => argument !== '--');
+const probeRequested = cliArgs.includes('--probe');
+for (const argument of cliArgs) {
+  if (argument !== '--probe') {
+    console.error(`env-doctor: unrecognised argument: ${argument}`);
+    process.exit(2);
+  }
+}
 
 console.log('=== env-doctor: MioAgent environment check ===\n');
 
@@ -161,7 +190,7 @@ if (chainEnv === 'mainnet-readonly' && vars['MAINNET_EXECUTION_ENABLED'] === 'tr
 }
 
 // (c) CHAIN_ENV vs VITE_CHAIN_ENV desync
-if (existsSync(INTERFACE_ENV_PATH)) {
+if (INTERFACE_ENV_PATH && existsSync(INTERFACE_ENV_PATH)) {
   const { vars: frontendVars } = parseEnvFile(INTERFACE_ENV_PATH);
   const viteChainEnv = frontendVars['VITE_CHAIN_ENV'];
 
@@ -179,6 +208,81 @@ if (existsSync(INTERFACE_ENV_PATH)) {
 } else {
   warnings.push('artifacts/interface/.env not found — VITE_CHAIN_ENV not checked. Run: cp artifacts/interface/.env.example artifacts/interface/.env');
   console.log('INFO: artifacts/interface/.env not found — skipping frontend sync check\n');
+}
+
+// ── (d) T67X-A1: paid intelligence requires a settlement path ────────────────
+//
+// `X402_FACILITATOR_URL` alone is not one. A URL with no working authorization
+// produces a 402 the user signs and a settlement that then fails — the worst
+// possible ordering, because the signature is already out of their wallet.
+//
+// The static check runs always; it needs no network and is the actual gate.
+// `--probe` adds the live call for an operator who wants confirmation.
+
+const paidIntelligenceOn = String(vars['MIORAIL_PAID_INTELLIGENCE'] || '').trim().toLowerCase() === 'true';
+const x402 = x402ConfigFromEnv(vars);
+
+console.log('Checking paid intelligence settlement readiness:');
+if (!paidIntelligenceOn) {
+  console.log('OK  MIORAIL_PAID_INTELLIGENCE is off — settlement is not required\n');
+} else if (x402.settleReady) {
+  console.log(`OK  settlement path configured (auth via ${x402.authSource})\n`);
+} else {
+  hasErrors = true;
+  console.error('ERROR: MIORAIL_PAID_INTELLIGENCE=true but x402 settlement is not ready.');
+  console.error(`  reason: ${x402.settleBlockedReason || 'unknown'}`);
+  if (x402.missingConfig.length > 0) {
+    console.error(`  missing: ${x402.missingConfig.join(', ')}`);
+  }
+  console.error('  → Set X402_FACILITATOR_AUTH_TOKEN, or a complete CDP_API_KEY_ID + CDP_API_KEY_SECRET pair.');
+  console.error('  → The API will still start and free route comparison still works;');
+  console.error('    paid intelligence readiness reports "blocked" until this is fixed.\n');
+}
+
+if (probeRequested && paidIntelligenceOn) {
+  console.log('Probing the facilitator (--probe):');
+  try {
+    const probed = await x402StatusFromEnv(vars);
+    if (probed.settleReady) {
+      console.log(`OK  facilitator reachable — ${probed.supportedKindsCount ?? 0} supported kind(s)\n`);
+    } else {
+      hasErrors = true;
+      console.error(`ERROR: facilitator probe failed — status=${probed.status} reason=${probed.settleBlockedReason || probed.errorCode || 'unknown'}\n`);
+    }
+  } catch (error) {
+    // A probe that could not run is not a configuration verdict.
+    warnings.push(`facilitator probe could not complete: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn('  WARN: probe could not complete; the static check above still applies\n');
+  }
+}
+
+// ── (e) T67X-B2: mainnet execution requires a Builder Code ───────────────────
+//
+// Attribution failure is silent — no error, no revert, just activity credited
+// to nobody. Before the first batch goes out is the only moment it is visible.
+// Read-only capabilities are never gated on this.
+
+const executionEnabled =
+  (chainEnv === 'mainnet' && vars['MAINNET_EXECUTION_ENABLED'] === 'true') ||
+  chainEnv === 'sepolia';
+const builderCode = resolveBuilderCodeV1(vars);
+const builderAdvice = builderCodeAdviceV1(builderCode);
+
+console.log('Checking Builder Code attribution:');
+if (builderCode.status === 'resolved') {
+  console.log(`OK  Builder Code resolved from ${builderCode.key}`);
+  if (builderAdvice) console.log(`  NOTE: ${builderAdvice}`);
+  console.log();
+} else if (chainEnv === 'mainnet' && executionEnabled) {
+  hasErrors = true;
+  console.error('ERROR: mainnet execution is enabled but no usable Builder Code is configured.');
+  console.error(`  → ${builderAdvice}`);
+  console.error('  → Execution readiness is blocked; quotes, comparison, evidence, scoring,');
+  console.error('    B20 inspection, history and public proofs are unaffected.\n');
+} else {
+  // Testnet and read-only deployments have no attribution to lose.
+  warnings.push(builderAdvice);
+  console.warn(`  WARN: ${builderAdvice}\n`);
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────────

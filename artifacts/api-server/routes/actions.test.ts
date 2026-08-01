@@ -3,6 +3,10 @@ import assert from 'node:assert';
 import request from 'supertest';
 import { app } from '../app';
 process.env.CHAIN_ENV = 'sepolia';
+// T67X-B2: the mainnet cases below activate execution, which now also requires
+// a usable ERC-8021 Builder Code. Set once here rather than in each case — the
+// gate is a property of the environment, not of any individual test.
+process.env.BASE_BUILDER_CODE ||= 'bc_a1b2c3d4';
 import { mock } from 'node:test';
 import { db } from '@mioagent/db';
 import * as toolsModule from '@mioagent/tools';

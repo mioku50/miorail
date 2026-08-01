@@ -13,6 +13,7 @@ import {
   useSubmitApprovedBlueprint,
   type BlueprintSubmitStatus,
 } from './useSubmitApprovedBlueprint';
+import { BUILDER_ATTRIBUTION_LABELS_V1, type BuilderAttributionOutcomeV1 } from './attribution';
 
 export interface BlueprintSubmitButtonProps
   extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'> {
@@ -36,6 +37,10 @@ export interface BlueprintSubmitButtonProps
      * lets the surface start bounded reconciliation once terminal. */
     proofId: string | null;
     recordedFinalStatus: string | null;
+    /** T67X-B5: what happened to the Builder Code on this batch. Null until a
+     * batch exists. Carried alongside the submission, never inside it — see the
+     * note in useSubmitApprovedBlueprint. */
+    builderAttribution: BuilderAttributionOutcomeV1 | null;
   }) => void;
 }
 
@@ -93,22 +98,23 @@ export function BlueprintSubmitButton({
   ...rest
 }: BlueprintSubmitButtonProps) {
   const { address, chainId } = useAccount();
-  const { submit, status, error, batchId, txHashes, proofId, recordedFinalStatus, poller } = useSubmitApprovedBlueprint({
-    routeRunId,
-    blueprintId,
-    blueprintHash,
-    builderCode,
-    goal,
-  });
+  const { submit, status, error, batchId, txHashes, proofId, recordedFinalStatus, builderAttribution, poller } =
+    useSubmitApprovedBlueprint({
+      routeRunId,
+      blueprintId,
+      blueprintHash,
+      builderCode,
+      goal,
+    });
 
   const lastReported = useRef<string>('');
   useEffect(() => {
-    const snapshot = `${status}:${batchId ?? ''}:${txHashes.join(',')}:${error ?? ''}:${proofId ?? ''}:${recordedFinalStatus ?? ''}`;
+    const snapshot = `${status}:${batchId ?? ''}:${txHashes.join(',')}:${error ?? ''}:${proofId ?? ''}:${recordedFinalStatus ?? ''}:${builderAttribution?.status ?? ''}`;
     if (snapshot !== lastReported.current && onStateChange) {
       lastReported.current = snapshot;
-      onStateChange({ status, batchId, txHashes, error, proofId, recordedFinalStatus });
+      onStateChange({ status, batchId, txHashes, error, proofId, recordedFinalStatus, builderAttribution });
     }
-  }, [status, batchId, txHashes, error, proofId, recordedFinalStatus, onStateChange]);
+  }, [status, batchId, txHashes, error, proofId, recordedFinalStatus, builderAttribution, onStateChange]);
 
   const disabledReason =
     status === 'idle' || status === 'cancelled' || status === 'failed'
@@ -140,6 +146,16 @@ export function BlueprintSubmitButton({
       {status === 'idle' && !disabledReason && (
         <p className="mt-2 text-xs text-ink-3">
           This opens your Base Account wallet with the exact reviewed calls. Nothing is sent until you sign there.
+        </p>
+      )}
+      {/* T67X-B5: stated only once a batch exists, and only when it is not the
+          plain success. An "included" line on every confirmation would be
+          noise; the two other outcomes are the ones nobody would otherwise
+          discover, because unattributed activity looks exactly like attributed
+          activity everywhere else. */}
+      {builderAttribution && builderAttribution.status !== 'included' && (
+        <p className="mt-2 text-xs text-ink-3">
+          {BUILDER_ATTRIBUTION_LABELS_V1[builderAttribution.status]}. The transaction itself is unaffected.
         </p>
       )}
     </>

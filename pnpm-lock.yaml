@@ -216,6 +216,9 @@ importers:
       '@mioagent/proof-verifier':
         specifier: workspace:*
         version: link:../../lib/proof-verifier
+      '@mioagent/route-domain':
+        specifier: workspace:*
+        version: link:../../lib/route-domain
       '@mioagent/ui':
         specifier: workspace:*
         version: link:../../lib/ui
@@ -310,6 +313,9 @@ importers:
       '@mioagent/api-client-react':
         specifier: workspace:*
         version: link:../../lib/api-client-react
+      '@mioagent/route-domain':
+        specifier: workspace:*
+        version: link:../../lib/route-domain
       '@mioagent/ui':
         specifier: workspace:*
         version: link:../../lib/ui
@@ -1181,6 +1187,9 @@ importers:
       '@coinbase/cdp-sdk':
         specifier: 1.51.2
         version: 1.51.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
+      '@mioagent/route-domain':
+        specifier: workspace:*
+        version: link:../route-domain
       '@mioagent/security':
         specifier: workspace:*
         version: link:../security

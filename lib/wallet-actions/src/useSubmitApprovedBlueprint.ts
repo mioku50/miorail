@@ -8,7 +8,7 @@
 //   → poll wallet status via CallsStatusPoller → record 'confirmed'/'failed'.
 
 import { useRef, useState, useCallback, createElement, type ReactNode } from 'react';
-import { useAccount, useSendCalls } from 'wagmi';
+import { useAccount, useCapabilities, useSendCalls } from 'wagmi';
 import { base } from 'wagmi/chains';
 import {
   useApproveEarnBlueprint,
@@ -25,7 +25,11 @@ import type {
   NftApproveResponseV1,
   SwapBlueprintApproveResponseV1,
 } from '@mioagent/api-spec';
-import { builderCodeToDataSuffix } from './attribution';
+import {
+  builderAttributionOutcomeV1,
+  builderCodeToDataSuffix,
+  type BuilderAttributionOutcomeV1,
+} from './attribution';
 import { CallsStatusPoller, normalizeCall } from './useWalletConfirmAction';
 import {
   browserMarkerStorageV1,
@@ -200,6 +204,12 @@ export interface UseSubmitApprovedBlueprintResult {
    * still proceeds, because refusing to transact over a bookkeeping failure
    * would be the worse trade. */
   attemptId: string | null;
+  /** T67X-B5: what happened to the ERC-8021 Builder Code on THIS batch. Null
+   * until a batch is sent — before that there is nothing to report, and an
+   * "unavailable" shown at rest would read as a failure that has not happened.
+   * Never says `included` on the strength of having passed the capability;
+   * only the wallet's own dataSuffix support can raise it that far. */
+  builderAttribution: BuilderAttributionOutcomeV1 | null;
   /** Mount this to poll wallet batch status once a batchId exists. */
   poller: ReactNode;
 }
@@ -231,6 +241,11 @@ export function useSubmitApprovedBlueprint({
   const bindBatch = useBindSubmissionBatch();
   const sendCalls = useSendCalls();
   const { address, chainId } = useAccount();
+  // T67X-B5: read once, alongside the account, so classifying the attribution
+  // costs no extra round trip at submit time. A wallet that does not implement
+  // wallet_getCapabilities leaves this undefined, which stays "not established"
+  // rather than becoming either claim.
+  const { data: walletCapabilities } = useCapabilities({ account: address });
 
   const [status, setStatus] = useState<BlueprintSubmitStatus>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -239,6 +254,7 @@ export function useSubmitApprovedBlueprint({
   const [proofId, setProofId] = useState<string | null>(null);
   const [recordedFinalStatus, setRecordedFinalStatus] = useState<string | null>(null);
   const [attemptId, setAttemptId] = useState<string | null>(null);
+  const [builderAttribution, setBuilderAttribution] = useState<BuilderAttributionOutcomeV1 | null>(null);
   const attemptRef = useRef<string | null>(null);
   const inFlightRef = useRef(false);
   const finalizedRef = useRef(false);
@@ -332,6 +348,7 @@ export function useSubmitApprovedBlueprint({
     setProofId(null);
     setRecordedFinalStatus(null);
     setAttemptId(null);
+    setBuilderAttribution(null);
     attemptRef.current = null;
     setStatus('approving');
 
@@ -410,7 +427,13 @@ export function useSubmitApprovedBlueprint({
         result = await sendCalls.mutateAsync({
           calls: payload.calls.map(normalizeCall) as unknown as Parameters<typeof sendCalls.mutateAsync>[0]['calls'],
           chainId: base.id,
+          // EIP-5792 `atomicRequired`, which wagmi spells `forceAtomic`. NOT a
+          // capability: `atomic` is what wallet_getCapabilities REPORTS, and
+          // sending it back as a request capability would be a field the wallet
+          // has no contract to honour.
           forceAtomic: true,
+          // `optional: true` so a wallet without dataSuffix support still sends
+          // the batch. The user asked for the transaction, not for attribution.
           capabilities: suffix ? { dataSuffix: { value: suffix, optional: true } } : undefined,
         });
       } catch (cause) {
@@ -444,6 +467,14 @@ export function useSubmitApprovedBlueprint({
         }
         return;
       }
+
+      // The batch is out, so the attribution question is now answerable, and
+      // only now. Recorded whatever it says — a `unsupported_by_wallet` that
+      // nobody wrote down is how an app discovers months later that none of its
+      // volume was ever credited.
+      setBuilderAttribution(
+        builderAttributionOutcomeV1({ suffix, capabilities: walletCapabilities, chainId: base.id }),
+      );
 
       // --- T67C.2: the narrowest window in the flow -------------------------
       // The batch is out. THIS write happens before any further await, so a
@@ -506,5 +537,16 @@ export function useSubmitApprovedBlueprint({
     }
   };
 
-  return { submit, status, error, batchId, txHashes, proofId, recordedFinalStatus, attemptId, poller };
+  return {
+    submit,
+    status,
+    error,
+    batchId,
+    txHashes,
+    proofId,
+    recordedFinalStatus,
+    attemptId,
+    builderAttribution,
+    poller,
+  };
 }

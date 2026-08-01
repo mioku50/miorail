@@ -18,6 +18,7 @@ import { createApiToolAggregatorForUser } from '../lib/baseMcpTools.js';
 import { verifyBaseMcpWalletMatch } from '../lib/baseMcpWalletReconciliation.js';
 import { buildWalletContext, walletEnvironmentFromRequest } from '../lib/walletContext.js';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
+import { paidIntelligenceReadinessV1 } from '../lib/paidIntelligenceReadiness.js';
 
 export function getSystemStatus(envOverride?: string) {
   const chainEnv = envOverride || process.env.CHAIN_ENV || 'sepolia';
@@ -141,6 +142,12 @@ export function getSystemStatus(envOverride?: string) {
       missingConfig: x402Config.missingConfig,
       warnings: x402Config.warnings,
     },
+    // T67X-A1: the flag says an operator wants paid routes; this says whether
+    // the facilitator can actually settle one. They came apart in production.
+    paidIntelligence: paidIntelligenceReadinessV1(
+      getMiorailProductMigrationFlags().paidIntelligence,
+      x402Config,
+    ),
     autonomy: {
       spendPermissionsPersistence: 'database' as const,
       databaseConfigured: !!process.env.DATABASE_URL,

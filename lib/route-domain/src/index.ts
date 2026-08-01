@@ -1,3 +1,4 @@
+export * from './builder-code.js';
 export * from './hashing.js';
 export * from './primitives.js';
 export * from './route-contracts.js';

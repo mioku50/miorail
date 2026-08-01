@@ -9,6 +9,7 @@ import {
   x402ConfigFromEnv,
   x402StatusFromEnv,
   classifyX402SettleFailureReason,
+  getBuilderCodeFromEnv,
   getDefaultX402BuyerPayerRuntime,
   type X402BuyerPayerRuntime,
   type SupportedX402Network,
@@ -658,7 +659,9 @@ async function persistBuyerReceipt(input: {
     payTo: input.payTo || '',
     payer: input.payer,
     status: input.status,
-    attribution: { source: 'buyer_fuel', expectedBuilderCode: process.env.BUILDER_CODE },
+    // T67X-B1: the resolved code, not one env key — a receipt that names a code
+    // the gateway never sent would be a false attribution claim in the ledger.
+    attribution: { source: 'buyer_fuel', expectedBuilderCode: getBuilderCodeFromEnv(process.env, { warn: false }) },
     checkedAt: new Date().toISOString(),
     source: 'x402-facilitator',
     details: input.details || {},

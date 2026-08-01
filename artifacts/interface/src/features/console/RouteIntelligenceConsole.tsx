@@ -78,7 +78,7 @@ import {
   type NftProofResponseV1,
   type SimulateWithBudgetResponseV1,
 } from '@mioagent/api-client-react';
-import { BlueprintSubmitButton, EarnDepositFlow, SubmissionRecoveryRail, type BlueprintSubmitStatus } from '@mioagent/wallet-actions';
+import { BlueprintSubmitButton, EarnDepositFlow, SubmissionRecoveryRail, builderCodeForSurfaceV1, type BlueprintSubmitStatus } from '@mioagent/wallet-actions';
 import { SimulateButton, type SimulateBlueprintResponseV1 } from '@mioagent/x402-actions';
 
 // ---------------------------------------------------------------------------
@@ -93,7 +93,13 @@ import { SimulateButton, type SimulateBlueprintResponseV1 } from '@mioagent/x402
 // instead of being re-implemented or mocked.
 // ---------------------------------------------------------------------------
 
-const BUILDER_CODE = import.meta.env?.VITE_BUILDER_CODE as string | undefined;
+// T67X-B1: BASE_BUILDER_CODE is canonical, VITE_BUILDER_CODE a deprecated
+// alias, and two different values resolve to no attribution at all. Both keys
+// are read as literals because that is the only form Vite inlines.
+const BUILDER_CODE = builderCodeForSurfaceV1({
+  VITE_BASE_BUILDER_CODE: import.meta.env?.VITE_BASE_BUILDER_CODE as string | undefined,
+  VITE_BUILDER_CODE: import.meta.env?.VITE_BUILDER_CODE as string | undefined,
+});
 
 interface BlueprintSubmissionState {
   status: BlueprintSubmitStatus;

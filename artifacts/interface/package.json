@@ -16,6 +16,7 @@
     "@metamask/connect-evm": "^2.1.0",
     "@mioagent/api-client-react": "workspace:*",
     "@mioagent/proof-verifier": "workspace:*",
+    "@mioagent/route-domain": "workspace:*",
     "@mioagent/ui": "workspace:*",
     "@mioagent/wallet-actions": "workspace:*",
     "@mioagent/x402-actions": "workspace:*",

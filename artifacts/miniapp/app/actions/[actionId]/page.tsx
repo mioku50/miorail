@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useActionsFeed } from "@mioagent/api-client-react";
 import { Card, StateBadge } from "@mioagent/ui";
 import { getPreflightBadge, getRevokeExecutionNotice, getRiskVariant, getStatusState, shouldShowConfirmButton } from "../actionUi";
+import { builderCodeFromEnvV1 } from "@mioagent/route-domain/builder-code";
 
 // T19.1: code-split the wallet/crypto deps — load WalletConfirmButton
 // client-side only, so `ox`/wagmi confirm-flow code isn't in the initial
@@ -14,7 +15,12 @@ const WalletConfirmButton = dynamic(
   () => import("@mioagent/wallet-actions").then((m) => m.WalletConfirmButton),
   { ssr: false },
 );
-const BUILDER_CODE = process.env.NEXT_PUBLIC_BUILDER_CODE;
+// T67X-B1: resolved through the zero-dependency subpath, so this module stays
+// clear of `ox` and the confirm button above stays lazy.
+const BUILDER_CODE = builderCodeFromEnvV1({
+  NEXT_PUBLIC_BASE_BUILDER_CODE: process.env.NEXT_PUBLIC_BASE_BUILDER_CODE,
+  NEXT_PUBLIC_BUILDER_CODE: process.env.NEXT_PUBLIC_BUILDER_CODE,
+});
 
 // T19.2: canonical Action Inbox deep-link target — /actions/:actionId. Opens a
 // specific action (e.g. from a scanner notification or the Action Inbox card).

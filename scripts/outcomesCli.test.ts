@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, describe } from 'node:test';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { OutcomeCliArgError, parseOutcomeCliArgsV1 } from './outcomesCli.js';
 
@@ -10,7 +9,21 @@ import { OutcomeCliArgError, parseOutcomeCliArgsV1 } from './outcomesCli.js';
 // reachable from any existing test: one on the argument separator the usage
 // line itself prints, the other on a column name. Both are pinned here.
 
-const here = dirname(fileURLToPath(import.meta.url));
+/** This package compiles to CommonJS, so `import.meta` is unavailable — the
+ * same constraint `loadEnvFile.ts` documents. Walk up to the workspace root
+ * instead, which is stable whether the runner starts here or at the root. */
+function repoRoot(): string {
+  let current = resolve(process.cwd());
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (existsSync(resolve(current, 'pnpm-workspace.yaml'))) return current;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return resolve(process.cwd());
+}
+
+const here = resolve(repoRoot(), 'scripts');
 
 describe('outcome CLI arguments', () => {
   test('the separator pnpm forwards is not an argument', () => {

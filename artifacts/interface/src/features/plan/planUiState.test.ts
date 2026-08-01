@@ -26,7 +26,13 @@ test('no command carries an emoji or the retired vocabulary', () => {
   }
 });
 
-test('T58: RouteHistoryPage is a pure read (no reconcile), PlanPage gates reconciliation on terminal submit + proofId', () => {
+// T67X-A4: PlanPage is deleted. Its route already redirected into the flow, so
+// these properties were being pinned on a file nobody could reach — they now
+// point at the console, which is where they actually have to hold.
+const consoleSource = () =>
+  readFileSync(path.join(here, '../console/RouteIntelligenceConsole.tsx'), 'utf8');
+
+test('T58: RouteHistoryPage is a pure read (no reconcile), the console gates reconciliation on terminal submit + proofId', () => {
   const historySource = readFileSync(path.join(here, 'RouteHistoryPage.tsx'), 'utf8');
   assert.equal(
     /useReconcileRouteProof|useBoundedProofReconciliation/.test(historySource),
@@ -36,12 +42,11 @@ test('T58: RouteHistoryPage is a pure read (no reconcile), PlanPage gates reconc
   assert.ok(historySource.includes('useRouteHistory'), 'history page must use the shared history hook');
   assert.ok(historySource.includes('ExecutionProofPanel'), 'history page must show the proof panel on selection');
 
-  const planSource = readFileSync(path.join(here, 'PlanPage.tsx'), 'utf8');
-  assert.ok(planSource.includes('useBoundedProofReconciliation'), 'PlanPage must use the bounded reconciliation hook');
-  assert.ok(/RECONCILABLE_SUBMISSION_STATUSES/.test(planSource), 'reconciliation must be gated on terminal submit statuses');
-  assert.ok(/'confirmed', 'failed', 'submitted_unknown'/.test(planSource), 'the terminal statuses must be explicit');
-  assert.ok(/submission\.proofId/.test(planSource), 'reconciliation must require a recorded proofId');
-  assert.ok(planSource.includes('ExecutionProofPanel'), 'PlanPage must render the proof panel');
+  const source = consoleSource();
+  assert.ok(source.includes('useBoundedProofReconciliation'), 'the console must use the bounded reconciliation hook');
+  assert.ok(/RECONCILABLE_SUBMISSION_STATUSES/.test(source), 'reconciliation must be gated on terminal submit statuses');
+  assert.ok(/'confirmed', 'failed', 'submitted_unknown'/.test(source), 'the terminal statuses must be explicit');
+  assert.ok(/submission\.proofId|submission && submission\.proofId/.test(source), 'reconciliation must require a recorded proofId');
 });
 
 test('degraded state has no Recommended label and uses honest copy', () => {
@@ -65,26 +70,31 @@ test('route plan surface distinguishes idle, loading, clarification and rejectio
   assert.equal(routePlanSurfaceState({ isPending: false, isError: false, outcome: 'evaluated' }), 'evaluated');
 });
 
-test('T59: DeepVerification is gated on a prepared outcome, the paidIntelligence flag, and a server-priced simulationPriceUsdc', () => {
-  const planSource = readFileSync(path.join(here, 'PlanPage.tsx'), 'utf8');
-  assert.ok(planSource.includes("prepare.data?.outcome === 'prepared'"), 'deepVerification must be gated on a prepared outcome');
+test('T59: paid simulation is gated on the paidIntelligence flag and a server-priced simulationPriceUsdc', () => {
+  const source = consoleSource();
   assert.ok(
-    planSource.includes('status.data?.productMigration.paidIntelligence'),
-    'deepVerification must be gated on the server paidIntelligence flag from useStatus()',
+    /flags\?\.paidIntelligence === true/.test(source),
+    'paid simulation must be gated on the server paidIntelligence flag',
   );
   assert.ok(
-    planSource.includes('prepare.data.simulationPriceUsdc'),
-    'deepVerification must be gated on a server-priced simulationPriceUsdc (never a client-invented price)',
+    /prepared\?\.simulationPriceUsdc/.test(source),
+    'the price must come from the server, never from a client-invented default',
   );
-  assert.ok(planSource.includes('<DeepVerification'), 'PlanPage must render DeepVerification');
-  assert.ok(planSource.includes('<SimulateButton'), 'PlanPage must render the paid SimulateButton');
-  assert.ok(planSource.includes('deepVerification={deepVerification}'), 'the slot must be threaded into RoutePlanView');
+  assert.ok(source.includes('<SimulateButton'), 'the console must render the paid SimulateButton');
+  // No price means no button: an unpriced paid action would be a charge the
+  // user was never quoted.
+  assert.ok(
+    /Paid simulation is not configured on this server/.test(source),
+    'an unpriced server must say so rather than offering the action',
+  );
 });
 
-test('T59: PlanPage never accepts calldata into the simulate request and only wires the four whitelisted fields', () => {
-  const planSource = readFileSync(path.join(here, 'PlanPage.tsx'), 'utf8');
-  assert.ok(!/calls\s*:/.test(planSource.split('<SimulateButton')[1]?.split('/>')[0] ?? ''));
-  assert.ok(planSource.includes('routeRunId={prepare.data.routeRunId}'));
-  assert.ok(planSource.includes('blueprintId={prepare.data.blueprint.id}'));
-  assert.ok(planSource.includes('blueprintHash={prepare.data.blueprint.blueprintHash}'));
+test('T59: the simulate request never accepts calldata and wires only the whitelisted fields', () => {
+  const source = consoleSource();
+  const props = source.split('<SimulateButton')[1]?.split('/>')[0] ?? '';
+  assert.notEqual(props, '', 'the SimulateButton call site must be findable');
+  assert.ok(!/calls\s*:/.test(props), 'calldata must never travel in the simulate request');
+  assert.ok(props.includes('routeRunId={prepared.routeRunId}'));
+  assert.ok(props.includes('blueprintId={prepared.blueprint.id}'));
+  assert.ok(props.includes('blueprintHash={prepared.blueprint.blueprintHash}'));
 });

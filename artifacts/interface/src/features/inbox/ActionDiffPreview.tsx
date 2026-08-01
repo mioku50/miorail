@@ -5,8 +5,17 @@ import { useAccount } from 'wagmi';
 import { useUiStore } from '../../lib/state';
 import { LazyWalletConfirmButton } from './LazyWalletConfirmButton';
 import { getRevokeExecutionNotice, parseExecutionPayload, shouldShowConfirmCta } from './actionDisplay';
+// The zero-dependency subpath, not the @mioagent/wallet-actions barrel: this
+// module is deliberately kept clear of `ox`, which is why the confirm button
+// below is lazy.
+import { builderCodeFromEnvV1 } from '@mioagent/route-domain/builder-code';
 
-const BUILDER_CODE = import.meta.env.VITE_BUILDER_CODE;
+// T67X-B1: the same resolver the console uses, so the two wallet paths cannot
+// end up attributing to different codes.
+const BUILDER_CODE = builderCodeFromEnvV1({
+  VITE_BASE_BUILDER_CODE: import.meta.env.VITE_BASE_BUILDER_CODE,
+  VITE_BUILDER_CODE: import.meta.env.VITE_BUILDER_CODE,
+});
 
 // The Inbox card as a risk-control center. Shows what would change before any
 // confirmation: planned calls, security-screening verdicts, preflight-validation

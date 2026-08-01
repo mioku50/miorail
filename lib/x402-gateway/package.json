@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@coinbase/cdp-sdk": "1.51.2",
+    "@mioagent/route-domain": "workspace:*",
     "@mioagent/security": "workspace:*",
     "@mioagent/x402-parser": "workspace:*",
     "@x402/core": "2.17.0",

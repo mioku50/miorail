@@ -1754,6 +1754,15 @@ export const StatusResponseSchema = z.object({
     missingConfig: z.array(z.string()).optional(),
     warnings: z.array(z.string()).optional(),
   }),
+  // T67X-A1: MIORAIL_PAID_INTELLIGENCE says an operator wants paid routes.
+  // `readiness` says whether the facilitator can settle one. `blocked` means
+  // paid features are off while every free capability keeps working.
+  paidIntelligence: z.object({
+    flagEnabled: z.boolean(),
+    settleReady: z.boolean(),
+    readiness: z.enum(['ready', 'blocked', 'disabled']),
+    blockedReason: z.string().optional(),
+  }).optional(),
   autonomy: z.object({
     spendPermissionsPersistence: z.enum(['database']),
     databaseConfigured: z.boolean(),
@@ -1775,6 +1784,14 @@ export const StatusResponseSchema = z.object({
     mainnetExecutionEnabled: z.boolean(),
     // Back-compat alias === serverBroadcastEnabled.
     broadcastEnabled: z.boolean().optional(),
+    // T67X-B2: a usable ERC-8021 Builder Code resolves. When false on mainnet,
+    // userConfirmedEnabled is forced false and `attributionBlockedReason` says
+    // which way the configuration is wrong. Read-only capabilities are
+    // unaffected — this never means the server is down.
+    attributionReady: z.boolean().optional(),
+    attributionBlockedReason: z
+      .enum(['builder_code_missing', 'builder_code_invalid', 'builder_code_conflict'])
+      .optional(),
     reason: z.string(),
   }),
 });

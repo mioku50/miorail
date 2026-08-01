@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { encodePaymentRequiredHeader } from '@x402/core/http';
 import {
   decodeX402PaymentResponseHeader,
   hasSupportedWalletClient,
@@ -11,19 +12,36 @@ import {
   runX402PaidFetch,
 } from '../src/paidFetch.js';
 
+// T67X-A3: these mocks now answer the way the real resource server answers —
+// a PAYMENT-REQUIRED header carrying the full v2 envelope, `scheme` and
+// `resource` included. They used to omit both, which passed only because the
+// client repaired the response before reading it. A mock that is easier to
+// satisfy than the server is a mock that hides the bug.
 const paymentRequired = {
   x402Version: 2,
+  resource: { url: 'http://localhost/api/x402/smoke-paid', description: 'x402 protected resource' },
   accepts: [{
+    scheme: 'exact',
     amount: '1000',
     payTo: '0x8e525BfCe1eF40Aa8075ef64E45421b5855C8909',
     asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     network: 'eip155:8453',
-    version: '2',
     maxTimeoutSeconds: 300,
     extra: { name: 'USD Coin', version: '2' },
   }],
   error: 'Payment Required',
 };
+
+/** A 402 shaped exactly like the one `createX402MiddlewareFromEnv` emits. */
+function paymentRequiredResponse(): Response {
+  return new Response(JSON.stringify(paymentRequired), {
+    status: 402,
+    headers: {
+      'content-type': 'application/json',
+      'PAYMENT-REQUIRED': encodePaymentRequiredHeader(paymentRequired as never),
+    },
+  });
+}
 
 function paymentResponseHeader() {
   return Buffer.from(JSON.stringify({
@@ -52,10 +70,7 @@ test('runX402PaidFetch handles 402 -> wallet signature -> retry -> 200', async (
     const request = input instanceof Request ? input : new Request(input);
     seenHeaders.push(Array.from(request.headers.keys()).join(','));
     if (calls === 1) {
-      return new Response(JSON.stringify(paymentRequired), {
-        status: 402,
-        headers: { 'content-type': 'application/json' },
-      });
+      return paymentRequiredResponse();
     }
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
@@ -87,10 +102,7 @@ test('runX402PaidFetch handles 402 -> wallet signature -> retry -> 200', async (
 });
 
 test('runX402PaidFetch maps wallet rejection to rejected state', async () => {
-  const fetchImpl: typeof fetch = async () => new Response(JSON.stringify(paymentRequired), {
-    status: 402,
-    headers: { 'content-type': 'application/json' },
-  });
+  const fetchImpl: typeof fetch = async () => paymentRequiredResponse();
 
   await assert.rejects(
     runX402PaidFetch({
@@ -162,7 +174,7 @@ test('runX402PaidFetch treats HTTP 200 with settled body as paid even if header 
   const mockFetch = async () => {
     step++;
     if (step === 1) {
-      return new Response(JSON.stringify(paymentRequired), { status: 402 });
+      return paymentRequiredResponse();
     }
     return new Response(
       JSON.stringify({
@@ -201,10 +213,7 @@ test('runX402PaidFetch forwards init (method/body) through both the 402 probe an
       hasIdempotencyHeader: request.headers.has('x-idempotency-key'),
     });
     if (calls === 1) {
-      return new Response(JSON.stringify(paymentRequired), {
-        status: 402,
-        headers: { 'content-type': 'application/json' },
-      });
+      return paymentRequiredResponse();
     }
     return new Response(JSON.stringify({ ok: true, outcome: 'simulated' }), {
       status: 200,
@@ -228,4 +237,30 @@ test('runX402PaidFetch forwards init (method/body) through both the 402 probe an
   assert.strictEqual(result.paid, true);
   assert.strictEqual(seenRequests.every((entry) => entry.method === 'POST'), true);
   assert.strictEqual(seenRequests[1]?.hasIdempotencyHeader, true);
+});
+
+// T67X-A3: the compatibility shim is gone, and this is what keeps it gone.
+// It used to intercept every 402, add `resource` and `scheme: 'exact'` to the
+// body, and re-encode the PAYMENT-REQUIRED header from the patched result — so
+// the client was paying against requirements the CLIENT had assembled.
+//
+// It was also never needed: the v2 client reads the header, which the resource
+// server has always set correctly. `lib/x402-gateway/src/conformance.test.ts`
+// drives the real middleware with the unmodified official client and asserts
+// the envelope directly. If Miorail ever emits a 402 the client cannot consume,
+// that test is the one that fails — and the fix belongs in the server response,
+// not here.
+test('the client never repairs a 402', () => {
+  const source = readFileSync(resolve(process.cwd(), 'src/paidFetch.ts'), 'utf8');
+  for (const banned of [
+    'encodePaymentRequiredHeader',
+    'normalizeX402PaymentRequired',
+    'createX402CompatibilityFetch',
+  ]) {
+    assert.strictEqual(
+      source.includes(banned),
+      false,
+      `the x402 client must not reconstruct the payment envelope (${banned})`,
+    );
+  }
 });

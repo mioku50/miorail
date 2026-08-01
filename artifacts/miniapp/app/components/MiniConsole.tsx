@@ -79,7 +79,7 @@ import {
   type NftProofResponseV1,
   type SimulateWithBudgetResponseV1,
 } from "@mioagent/api-client-react";
-import { BlueprintSubmitButton, EarnDepositFlow, SubmissionRecoveryRail, type BlueprintSubmitStatus } from "@mioagent/wallet-actions";
+import { BlueprintSubmitButton, EarnDepositFlow, SubmissionRecoveryRail, builderCodeForSurfaceV1, type BlueprintSubmitStatus } from "@mioagent/wallet-actions";
 import { SimulateButton, type SimulateBlueprintResponseV1 } from "@mioagent/x402-actions";
 import { WalletConnect } from "./WalletConnect";
 
@@ -97,7 +97,12 @@ import { WalletConnect } from "./WalletConnect";
 // It starts at the goal now.
 // ---------------------------------------------------------------------------
 
-const BUILDER_CODE = process.env.NEXT_PUBLIC_BUILDER_CODE;
+// T67X-B1: canonical key first, deprecated alias second, conflict → no
+// attribution. Literal member access is the only form Next inlines.
+const BUILDER_CODE = builderCodeForSurfaceV1({
+  NEXT_PUBLIC_BASE_BUILDER_CODE: process.env.NEXT_PUBLIC_BASE_BUILDER_CODE,
+  NEXT_PUBLIC_BUILDER_CODE: process.env.NEXT_PUBLIC_BUILDER_CODE,
+});
 
 interface SubmissionState {
   status: BlueprintSubmitStatus;

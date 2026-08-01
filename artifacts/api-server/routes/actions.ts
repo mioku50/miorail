@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { db, actions } from '@mioagent/db';
+import { builderCodeFromEnvV1 } from '@mioagent/route-domain';
 import { desc, eq, and, inArray } from 'drizzle-orm';
 import {
   ActionsFeedResponseSchema,
@@ -785,8 +786,11 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
     }
 
     // Builder Code attribution is applied client-side (public env); the server
-    // only reports whether a code is configured so the UI can show it.
-    const builderCodeAttached = !!(process.env.BUILDER_CODE || process.env.VITE_BUILDER_CODE || process.env.NEXT_PUBLIC_BUILDER_CODE);
+    // only reports whether a USABLE code is configured so the UI can show it.
+    // T67X-B1: resolved, not merely present — a placeholder, a malformed value
+    // or a canonical/alias conflict all attribute nothing, and reporting them
+    // as "attached" would be the server telling the UI a comfortable lie.
+    const builderCodeAttached = builderCodeFromEnvV1(process.env) !== undefined;
 
     if (runtimeChainEnv === 'mainnet' && normalizedChain.chainId === 8453) {
       if (

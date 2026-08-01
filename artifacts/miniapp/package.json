@@ -13,6 +13,7 @@
     "@base-org/account": "2.5.6",
     "@coinbase/wallet-sdk": "4.3.7",
     "@mioagent/api-client-react": "workspace:*",
+    "@mioagent/route-domain": "workspace:*",
     "@mioagent/ui": "workspace:*",
     "@mioagent/wallet-actions": "workspace:*",
     "@mioagent/x402-actions": "workspace:*",

@@ -23,6 +23,13 @@ test('the retired cockpit surfaces are deleted, not merely unlinked', () => {
     '../features/configure/ConfigureView.tsx',
     '../features/x402/FuelMeter.tsx',
     '../features/x402/FuelCard.tsx',
+    // T67X-A4: the pre-console payment surfaces. PaidActionButton had no
+    // importer, PlanPage's route already redirected into the flow, and
+    // x402PaidFetch was a re-export kept alive only by the two of them.
+    '../features/x402/PaidActionButton.tsx',
+    '../features/plan/PlanPage.tsx',
+    '../features/plan/EarnComparePanel.tsx',
+    '../lib/x402PaidFetch.ts',
     '../features/autonomy/AutonomyCockpit.tsx',
     '../shell/TopBar.tsx',
     '../shell/TabBar.tsx',

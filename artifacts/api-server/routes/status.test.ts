@@ -491,8 +491,12 @@ describe('Status API', () => {
   test('GET /api/status activates mainnet only as user-confirmed and never server-broadcast', async () => {
     const origChain = process.env.CHAIN_ENV;
     const origMainnetExec = process.env.MAINNET_EXECUTION_ENABLED;
+    const origBuilder = process.env.BASE_BUILDER_CODE;
     process.env.CHAIN_ENV = 'mainnet';
     process.env.MAINNET_EXECUTION_ENABLED = 'true';
+    // T67X-B2: mainnet execution now additionally requires a usable Builder
+    // Code, so activation has to supply one.
+    process.env.BASE_BUILDER_CODE = 'bc_a1b2c3d4';
 
     const response = await request(app).get('/api/status');
     assert.strictEqual(response.status, 200);
@@ -502,9 +506,62 @@ describe('Status API', () => {
     assert.strictEqual(exec.serverBroadcastEnabled, false);
     assert.strictEqual(exec.mainnetExecutionEnabled, true);
     assert.strictEqual(exec.broadcastEnabled, false);
+    assert.strictEqual(exec.attributionReady, true);
+    assert.strictEqual(exec.attributionBlockedReason, undefined);
 
     restoreEnv('CHAIN_ENV', origChain);
     restoreEnv('MAINNET_EXECUTION_ENABLED', origMainnetExec);
+    restoreEnv('BASE_BUILDER_CODE', origBuilder);
+  });
+
+  test('T67X-B2: mainnet execution without a Builder Code is blocked, and read-only is untouched', async () => {
+    const origChain = process.env.CHAIN_ENV;
+    const origMainnetExec = process.env.MAINNET_EXECUTION_ENABLED;
+    const origBuilder = process.env.BASE_BUILDER_CODE;
+    const origLegacy = process.env.BUILDER_CODE;
+    process.env.CHAIN_ENV = 'mainnet';
+    process.env.MAINNET_EXECUTION_ENABLED = 'true';
+    delete process.env.BASE_BUILDER_CODE;
+    delete process.env.BUILDER_CODE;
+
+    const response = await request(app).get('/api/status');
+    // The server is fine. Only execution is withheld — attribution failure is
+    // silent onchain, so the last place to catch it is before the first batch.
+    assert.strictEqual(response.status, 200);
+    const exec = response.body.execution;
+    assert.strictEqual(exec.mode, 'read-only');
+    assert.strictEqual(exec.userConfirmedEnabled, false);
+    assert.strictEqual(exec.attributionReady, false);
+    assert.strictEqual(exec.attributionBlockedReason, 'builder_code_missing');
+    // Read-only capabilities keep reporting normally.
+    assert.strictEqual(response.body.chainEnv, 'mainnet');
+    assert.ok(response.body.rpc);
+
+    restoreEnv('CHAIN_ENV', origChain);
+    restoreEnv('MAINNET_EXECUTION_ENABLED', origMainnetExec);
+    restoreEnv('BASE_BUILDER_CODE', origBuilder);
+    restoreEnv('BUILDER_CODE', origLegacy);
+  });
+
+  test('T67X-B2: two disagreeing Builder Code keys block execution rather than picking one', async () => {
+    const origChain = process.env.CHAIN_ENV;
+    const origMainnetExec = process.env.MAINNET_EXECUTION_ENABLED;
+    const origBuilder = process.env.BASE_BUILDER_CODE;
+    const origLegacy = process.env.BUILDER_CODE;
+    process.env.CHAIN_ENV = 'mainnet';
+    process.env.MAINNET_EXECUTION_ENABLED = 'true';
+    process.env.BASE_BUILDER_CODE = 'bc_a1b2c3d4';
+    process.env.BUILDER_CODE = 'bc_deadbeef';
+
+    const response = await request(app).get('/api/status');
+    const exec = response.body.execution;
+    assert.strictEqual(exec.attributionBlockedReason, 'builder_code_conflict');
+    assert.strictEqual(exec.userConfirmedEnabled, false);
+
+    restoreEnv('CHAIN_ENV', origChain);
+    restoreEnv('MAINNET_EXECUTION_ENABLED', origMainnetExec);
+    restoreEnv('BASE_BUILDER_CODE', origBuilder);
+    restoreEnv('BUILDER_CODE', origLegacy);
   });
 
   test('GET /api/status reports server-execution mode + broadcast enabled on sepolia', async () => {

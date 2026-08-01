@@ -8,7 +8,6 @@
 // caller (PaidActionButton, Fuel actions) is unaffected: `init` defaults to
 // undefined, which reproduces the exact prior request shape.
 import { wrapFetchWithPayment, x402Client, decodePaymentResponseHeader } from '@x402/fetch';
-import { encodePaymentRequiredHeader } from '@x402/core/http';
 import { registerExactEvmScheme } from '@x402/evm/exact/client';
 
 /**
@@ -247,65 +246,25 @@ export function resolvePaidRoute(route: string): string {
   return new URL(route, origin).toString();
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
-}
-
-function normalizeX402PaymentRequired(body: unknown, resourceUrl: string): unknown {
-  if (!isRecord(body) || body.x402Version !== 2 || !Array.isArray(body.accepts)) {
-    return body;
-  }
-
-  const resource = isRecord(body.resource) && typeof body.resource.url === 'string'
-    ? body.resource
-    : {
-        url: resourceUrl,
-        description: typeof body.error === 'string' ? body.error : 'x402 protected resource',
-      };
-
-  return {
-    ...body,
-    resource,
-    accepts: body.accepts.map((accept) => {
-      if (!isRecord(accept)) return accept;
-      return {
-        scheme: 'exact',
-        ...accept,
-      };
-    }),
-  };
-}
-
-function createX402CompatibilityFetch(fetchImpl: typeof fetch): typeof fetch {
-  return async (input, init) => {
-    const response = await fetchImpl(input, init);
-    if (response.status !== 402) return response;
-
-    let body: unknown;
-    try {
-      body = await response.clone().json();
-    } catch {
-      return response;
-    }
-
-    const resourceUrl = input instanceof Request
-      ? input.url
-      : input instanceof URL
-        ? input.toString()
-        : String(input);
-    const normalized = normalizeX402PaymentRequired(body, resourceUrl);
-    if (normalized === body) return response;
-
-    const headers = new Headers(response.headers);
-    headers.set('content-type', 'application/json');
-    headers.set('PAYMENT-REQUIRED', encodePaymentRequiredHeader(normalized as never));
-    return new Response(JSON.stringify(normalized), {
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-    });
-  };
-}
+// ---------------------------------------------------------------------------
+// T67X-A3 — there used to be a compatibility fetch here.
+//
+// It intercepted every 402, added a `resource` object and `scheme: 'exact'` to
+// the body, re-encoded the PAYMENT-REQUIRED header from that patched body, and
+// handed the result to the official client.
+//
+// It was both unnecessary and wrong. Unnecessary because the v2 client reads
+// the PAYMENT-REQUIRED HEADER, which the resource server has always set
+// correctly — the patched body was never consulted. Wrong because a client that
+// supplies `scheme` is asserting which settlement scheme it is about to be
+// charged under; that assertion belongs to the server, and a server whose 402
+// the official client cannot read is a server bug, not a client concern.
+//
+// `lib/x402-gateway/src/conformance.test.ts` drives the real middleware with
+// the unmodified official client and asserts the envelope directly. If Miorail
+// ever emits a 402 the client cannot consume, that test fails — which is the
+// signal to fix the response, not to re-add a repair here.
+// ---------------------------------------------------------------------------
 
 export async function runX402PaidFetch<TBody = unknown>({
   route,
@@ -353,7 +312,7 @@ export async function runX402PaidFetch<TBody = unknown>({
   const targetRoute = runId
     ? `${route}${route.includes('?') ? '&' : '?'}runId=${encodeURIComponent(runId)}`
     : route;
-  const paidFetch = wrapFetchWithPayment(createX402CompatibilityFetch(fetchImpl), client);
+  const paidFetch = wrapFetchWithPayment(fetchImpl, client);
   let response: Response;
   try {
     response = await paidFetch(resolvePaidRoute(targetRoute), {

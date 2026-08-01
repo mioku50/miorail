@@ -4,6 +4,11 @@ import type { EvmServerAccount } from '@coinbase/cdp-sdk';
 import { generateJwt } from '@coinbase/cdp-sdk/auth';
 import { X402PaymentRequired } from '@mioagent/x402-parser';
 import {
+  builderCodeAdviceV1,
+  resolveBuilderCodeV1,
+  type BuilderCodeEnvV1,
+} from '@mioagent/route-domain';
+import {
   canonicalUsdcForBaseChain,
   normalizeBaseChain,
   type SupportedBaseChainId,
@@ -271,16 +276,8 @@ interface X402FacilitatorAuthResolution {
 }
 
 export const DEFAULT_X402_AMOUNT_ATOMIC_USDC = '1000';
-const BUILDER_CODE_PLACEHOLDERS = new Set([
-  'builder_code',
-  'change_me',
-  'changeme',
-  'example',
-  'placeholder',
-  'replace_me',
-  'todo',
-  'your_builder_code',
-]);
+// The placeholder list moved to @mioagent/route-domain/builder-code — one list,
+// so a value rejected for the wallet suffix cannot still reach the facilitator.
 
 const warningsEmitted = new Set<string>();
 
@@ -573,31 +570,36 @@ export function createX402FacilitatorAuthHeaders(
   };
 }
 
+// T67X-B1: the x402 seller/buyer attribution code and the ERC-8021 wallet
+// attribution code are the SAME public base.dev identifier, so they resolve
+// through the same rule — including the fail-closed conflict. This wrapper
+// exists only to keep the warn-once behaviour x402 callers already rely on.
 export function getBuilderCodeFromEnv(
   env: NodeJS.ProcessEnv = process.env,
   options: { warn?: boolean } = {},
 ): string | undefined {
   const shouldWarn = options.warn ?? true;
-  const raw = normalizeOptional(env.BUILDER_CODE || env.VITE_BUILDER_CODE || env.NEXT_PUBLIC_BUILDER_CODE);
-  if (!raw || BUILDER_CODE_PLACEHOLDERS.has(raw.toLowerCase())) {
+  const resolution = resolveBuilderCodeV1(env as BuilderCodeEnvV1);
+  if (resolution.status === 'resolved') {
+    // Sanity-check against the extension's own pattern rather than assuming the
+    // two agree: if @x402/extensions ever tightens it, an unattributable code
+    // must not reach the facilitator claiming to be attributed.
+    if (BUILDER_CODE_PATTERN.test(resolution.code)) return resolution.code;
     if (shouldWarn) {
       warnOnce(
-        'x402-builder-code-missing',
-        '[x402] BUILDER_CODE is missing or placeholder; x402 payments will be unattributed.',
+        'x402-builder-code-extension-mismatch',
+        '[x402] Builder Code is valid for ERC-8021 but not for the x402 builder-code extension; x402 payments will be unattributed.',
       );
     }
     return undefined;
   }
-  if (!BUILDER_CODE_PATTERN.test(raw)) {
-    if (shouldWarn) {
-      warnOnce(
-        'x402-builder-code-invalid',
-        '[x402] BUILDER_CODE must match ^[a-z0-9_]{1,32}$; x402 payments will be unattributed.',
-      );
-    }
-    return undefined;
+  if (shouldWarn) {
+    warnOnce(
+      `x402-builder-code-${resolution.status}`,
+      `[x402] ${builderCodeAdviceV1(resolution)} x402 payments will be unattributed.`,
+    );
   }
-  return raw;
+  return undefined;
 }
 
 export function x402ConfigFromEnv(env: NodeJS.ProcessEnv = process.env): X402RuntimeConfig {
@@ -1457,7 +1459,10 @@ function defaultBuyerPayerRuntimeKey(env: NodeJS.ProcessEnv): string {
     config.configured ? 'configured' : 'missing',
     config.walletName,
     config.missingConfig.join(','),
-    normalizeOptional(env.BUILDER_CODE) || '',
+    // The RESOLVED code, not one env key: caching on `BUILDER_CODE` alone
+    // handed a stale runtime to a deployment that had switched to
+    // BASE_BUILDER_CODE, and the buyer kept paying under the old attribution.
+    getBuilderCodeFromEnv(env, { warn: false }) || '',
     normalizeOptional(env.X402_NETWORK) || '',
   ].join('|');
 }
