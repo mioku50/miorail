@@ -33,6 +33,11 @@ export function parseOutcomeCliArgsV1(argv: readonly string[]): OutcomeCliArgsV1
     help: false,
   };
   for (const argument of argv) {
+    // `pnpm outcomes:backfill -- --dry-run` forwards the separator itself, so
+    // the documented invocation died on its own documentation. Skipped rather
+    // than stripped by the caller: every launcher spells this differently and
+    // the script is the one place that sees the result.
+    if (argument === '--') continue;
     if (argument === '--dry-run') {
       args.dryRun = true;
       continue;

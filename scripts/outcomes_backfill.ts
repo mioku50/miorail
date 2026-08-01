@@ -61,8 +61,11 @@ async function main(): Promise<void> {
   // statuses are the same set the contract accepts — cancelled and every
   // unresolved state are excluded here as well as there, so a backfill can
   // never record something a live projection would have refused.
+  // `route_run_id` is the column's real name (migration 0012). Aliased rather
+  // than renamed below so the SQL names what Postgres has and the loop names
+  // what it means.
   const rows = (await client`
-    SELECT p.id AS proof_id, p.run_id, p.user_id
+    SELECT p.id AS proof_id, p.route_run_id AS run_id, p.user_id
     FROM route_proofs p
     WHERE p.status IN ('completed', 'partial_failure', 'failed')
       AND (${args.from?.toISOString() ?? null}::timestamptz IS NULL OR p.updated_at >= ${args.from?.toISOString() ?? null})
