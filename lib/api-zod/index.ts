@@ -2554,6 +2554,50 @@ export const B20ControlCardResponseV1Schema = z
   .strict();
 export type B20ControlCardResponseV1 = z.infer<typeof B20ControlCardResponseV1Schema>;
 
+// T67F — B20 Control Watch: what moved between the last reading and this one.
+//
+// Every change names both evidence hashes and both blocks, so the claim is
+// checkable at each end. `gaps` is deliberately separate from `changes`: a
+// field that stopped being readable says something about Miorail's view, not
+// about the token, and reporting it as a change would attach an evidence hash
+// to a fabrication.
+export const B20ControlChangeV1Schema = z
+  .object({
+    kind: z.string().min(1).max(60),
+    fieldKey: z.string().min(1).max(60),
+    label: z.string().min(1).max(120),
+    severity: z.enum(['acute', 'material', 'informational']),
+    before: z.string().max(500),
+    after: z.string().max(500),
+    detail: z.string().min(1).max(600),
+    evidenceBefore: HashV1Schema.nullable(),
+    evidenceAfter: HashV1Schema.nullable(),
+  })
+  .strict();
+
+export const B20ObservationGapV1Schema = z
+  .object({
+    fieldKey: z.string().min(1).max(60),
+    label: z.string().min(1).max(120),
+    direction: z.enum(['became_unreadable', 'became_readable']),
+    reason: z.string().max(300).nullable(),
+  })
+  .strict();
+
+export const B20ControlWatchV1Schema = z
+  .object({
+    tokenAddress: AddressV1Schema,
+    fromBlock: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    toBlock: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    fromObservedAt: z.string().min(1).max(60).nullable(),
+    toObservedAt: z.string().min(1).max(60),
+    changes: z.array(B20ControlChangeV1Schema).max(64),
+    gaps: z.array(B20ObservationGapV1Schema).max(64),
+    status: z.enum(['compared', 'first_observation', 'not_comparable']),
+    notComparableReason: z.string().max(300).nullable(),
+  })
+  .strict();
+
 export const B20InspectResponseV1Schema = z
   .object({
     snapshotId: z.string().min(1).max(200),
@@ -2564,6 +2608,10 @@ export const B20InspectResponseV1Schema = z
     cached: z.boolean(),
     card: B20ControlCardResponseV1Schema,
     evidence: z.array(B20EvidenceV1Schema).max(64),
+    /** Absent on a cache hit and on a first observation. Absent, not empty:
+     * an empty change list reads as "nothing changed", which is a different
+     * claim from "there was nothing to compare against". */
+    watch: B20ControlWatchV1Schema.optional(),
   })
   .strict();
 export type B20InspectResponseV1 = z.infer<typeof B20InspectResponseV1Schema>;

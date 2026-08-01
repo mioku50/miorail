@@ -575,6 +575,7 @@ export function MiniConsole() {
   const b20Panels = (detailed: boolean) => (
     <B20ControlSection
       card={b20Card}
+      watch={b20.data?.watch ?? null}
       loading={b20.isPending && b20GateOn && b20Target.address !== null}
       unavailableReason={b20Card ? null : b20Unavailable}
       cached={b20.data?.cached === true}

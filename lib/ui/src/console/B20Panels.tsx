@@ -167,6 +167,111 @@ export function B20FieldsPanel({ card }: { card: B20CardLikeV1 }): React.ReactEl
   );
 }
 
+// ---------------------------------------------------------------------------
+// T67F — B20 Control Watch.
+//
+// What a token's controls did between the last reading and this one. This is
+// the panel the whole B20 rail is for: a launch is a fact about a stranger's
+// token, but a control change is a fact about something the reader is holding.
+//
+// `gaps` renders separately and never as a change, because a field that stopped
+// being readable says something about Miorail's view rather than about the
+// token.
+// ---------------------------------------------------------------------------
+
+export interface B20ChangeLikeV1 {
+  kind: string;
+  fieldKey: string;
+  label: string;
+  severity: 'acute' | 'material' | 'informational';
+  before: string;
+  after: string;
+  detail: string;
+  evidenceBefore: string | null;
+  evidenceAfter: string | null;
+}
+
+export interface B20WatchLikeV1 {
+  tokenAddress: string;
+  fromBlock: string | null;
+  toBlock: string | null;
+  changes: readonly B20ChangeLikeV1[];
+  gaps: readonly { fieldKey: string; label: string; direction: string; reason: string | null }[];
+  status: 'compared' | 'first_observation' | 'not_comparable';
+  notComparableReason: string | null;
+}
+
+/** The word beside a change. Severity, never a grade: `acute` says a holder is
+ * exposed to it now, not that the token is bad. */
+export const B20_SEVERITY_LABEL_V1: Record<B20ChangeLikeV1['severity'], string> = {
+  acute: 'affects holders now',
+  material: 'changed what it permits',
+  informational: 'changed',
+};
+
+export function B20ControlWatchPanel({ watch }: { watch: B20WatchLikeV1 | null }): React.ReactElement | null {
+  // Nothing to compare against is not a finding. Rendering an empty panel here
+  // would read as "we checked and nothing changed".
+  if (!watch || watch.status !== 'compared') return null;
+  if (watch.changes.length === 0 && watch.gaps.length === 0) {
+    return (
+      <section className="panel">
+        <h3>Control watch</h3>
+        <p className="note">
+          No control changed between block {watch.fromBlock ?? 'unknown'} and block {watch.toBlock ?? 'unknown'}.
+        </p>
+      </section>
+    );
+  }
+  return (
+    <section className="panel">
+      <h3>Control watch</h3>
+      <p className="note">
+        Between block {watch.fromBlock ?? 'unknown'} and block {watch.toBlock ?? 'unknown'}.
+      </p>
+      {watch.changes.map((change) => (
+        <div key={change.fieldKey} className={change.severity === 'acute' ? 'note warn' : 'note'}>
+          <b>
+            {change.label} · {B20_SEVERITY_LABEL_V1[change.severity]}
+          </b>
+          <div className="kv">
+            <div>
+              <span>Was</span>
+              <span className="mono">{change.before}</span>
+            </div>
+            <div>
+              <span>Now</span>
+              <span className="mono">{change.after}</span>
+            </div>
+            {/* Both hashes: the claim is checkable at each end, not just the
+                one that happens to be current. */}
+            <div>
+              <span>Evidence</span>
+              <span className="mono">
+                {shortB20HashV1(change.evidenceBefore)} → {shortB20HashV1(change.evidenceAfter)}
+              </span>
+            </div>
+          </div>
+          <p className="lnote">{change.detail}</p>
+        </div>
+      ))}
+      {watch.gaps.length > 0 && (
+        <>
+          <h3>Not compared</h3>
+          {watch.gaps.map((gap) => (
+            <p className="note" key={gap.fieldKey}>
+              {gap.label} —{' '}
+              {gap.direction === 'became_unreadable'
+                ? `could not be read this time${gap.reason ? `: ${gap.reason}` : ''}. This is not a change in the token.`
+                : 'was not readable at the earlier block, so there is nothing to compare it against.'}
+            </p>
+          ))}
+        </>
+      )}
+    </section>
+  );
+}
+
 /**
  * T67E §1 — the contextual B20 Control Card, as one block.
  *
@@ -181,6 +286,9 @@ export function B20FieldsPanel({ card }: { card: B20CardLikeV1 }): React.ReactEl
  */
 export interface B20ControlSectionPropsV1 {
   card: B20CardLikeV1 | null;
+  /** T67F — what moved since the previous reading. Null when there is nothing
+   * to compare against, which is not the same as nothing having changed. */
+  watch?: B20WatchLikeV1 | null;
   /** True while the inspection is in flight. */
   loading?: boolean;
   /** Why there is no card. Rendered verbatim; never replaced by a guess. */
@@ -193,6 +301,7 @@ export interface B20ControlSectionPropsV1 {
 
 export function B20ControlSection({
   card,
+  watch = null,
   loading = false,
   unavailableReason = null,
   cached = false,
@@ -225,6 +334,9 @@ export function B20ControlSection({
           Read from a stored snapshot at block {card.blockNumber ?? 'unknown'}, not re-read just now.
         </p>
       )}
+      {/* Above the controls, deliberately: what CHANGED outranks what is,
+          because the reader has already seen what is. */}
+      <B20ControlWatchPanel watch={watch} />
       <B20ControlsPanel card={card} />
       {detailed && <B20FieldsPanel card={card} />}
       {detailed && <B20EvidencePanel card={card} />}

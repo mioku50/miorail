@@ -235,6 +235,52 @@ describe('inspect', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// T67F — Control Watch. The route's job is to capture the PREVIOUS snapshot
+// before it writes the new one; the diff itself is covered by b20Watch.test.ts.
+// ---------------------------------------------------------------------------
+
+describe('the control watch compares against the previous reading', () => {
+  test('a first inspection has nothing to compare against', async () => {
+    const response = await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.watch.status, 'first_observation');
+    assert.deepEqual(response.body.watch.changes, []);
+  });
+
+  test('a later block is compared against the earlier one', async () => {
+    await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    blockNumber = '49060000';
+    const second = await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    // The previous snapshot must be read BEFORE the insert. Reading it after
+    // would compare the new snapshot against itself and report no change,
+    // forever — a watch that is always silent and always looks healthy.
+    assert.equal(second.body.watch.status, 'compared');
+    assert.equal(second.body.watch.fromBlock, '49059662');
+    assert.equal(second.body.watch.toBlock, '49060000');
+  });
+
+  test('a cache hit carries no watch at all', async () => {
+    await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    b20RouteRuntime.ttlMs = () => 30_000;
+    const cached = await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    assert.equal(cached.body.cached, true);
+    // Absent, not an empty change list: the answer IS the stored snapshot, so
+    // there is no newer reading. An empty list would say "nothing changed" on
+    // the strength of not having looked.
+    assert.equal(cached.body.watch, undefined);
+  });
+
+  test('another tenant\u2019s earlier reading is never the baseline', async () => {
+    // latestSnapshot is scoped by tenant, so one wallet's history cannot
+    // become another wallet's "was".
+    await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    blockNumber = '49060000';
+    const other = await inspect({ chainId: 8453, tokenAddress: TOKEN }, app(OTHER));
+    assert.equal(other.body.watch.status, 'first_observation');
+  });
+});
+
 describe('the wire contract tracks the domain contract', () => {
   test('every field status the domain can produce is one the response may carry', async () => {
     // These two enums are written out twice, so they can drift. When they do,

@@ -7,10 +7,12 @@ import {
 import {
   B20RequestError,
   createB20ReaderV1,
+  diffB20SnapshotsV1,
   inspectB20TokenV1,
   refusalDetailV1,
   validateB20InspectRequestV1,
   type B20ControlSnapshotV1,
+  type B20ControlWatchV1,
 } from '@mioagent/b20-control';
 import {
   RouteStorageConflictError,
@@ -110,7 +112,13 @@ function storageFailure(res: Response, error: unknown, where: string): void {
   res.status(500).json({ error: 'storage_unavailable', code: 'storage_unavailable' });
 }
 
-function respondV1(res: Response, snapshot: B20ControlSnapshotV1, card: unknown, cached: boolean): void {
+function respondV1(
+  res: Response,
+  snapshot: B20ControlSnapshotV1,
+  card: unknown,
+  cached: boolean,
+  watch: B20ControlWatchV1 | null = null,
+): void {
   res.json(
     B20InspectResponseV1Schema.parse({
       snapshotId: snapshot.id,
@@ -118,6 +126,11 @@ function respondV1(res: Response, snapshot: B20ControlSnapshotV1, card: unknown,
       cached,
       card,
       evidence: snapshot.evidence,
+      // T67F — what moved since Miorail last read this token. Absent rather
+      // than empty when there is nothing to compare against: an empty change
+      // list reads as "nothing changed", which is a different claim from
+      // "this is the first time we looked".
+      ...(watch ? { watch } : {}),
     }),
   );
 }
@@ -157,6 +170,9 @@ b20ControlRouter.post('/b20/inspect', async (req: Request, res: Response) => {
     const latest = await repository.latestSnapshot(guard.user.id, parsed.data.tokenAddress);
     if (latest && ttl > 0 && now.getTime() - Date.parse(latest.observedAt) < ttl) {
       const { buildB20CardV1 } = await import('@mioagent/b20-control');
+      // No watch on a cache hit: the answer IS the stored snapshot, so there is
+      // no newer reading to compare it against. Returning an empty change list
+      // here would say "nothing changed" on the strength of not having looked.
       respondV1(res, latest.snapshot, buildB20CardV1(latest.snapshot), true);
       return;
     }
@@ -174,7 +190,17 @@ b20ControlRouter.post('/b20/inspect', async (req: Request, res: Response) => {
     // moment" is a fact worth having, and storing it keeps a retry storm from
     // looking like a series of different tokens.
     const stored = await repository.insertSnapshot({ userId: guard.user.id, snapshot: result.snapshot });
-    respondV1(res, stored.snapshot, result.card, stored.snapshotHash !== result.snapshot.snapshotHash);
+    // T67F — `latest` was read above, before this insert. Reading it afterwards
+    // would compare the new snapshot against itself and report no change,
+    // forever.
+    const watch = diffB20SnapshotsV1(latest?.snapshot ?? null, stored.snapshot);
+    respondV1(
+      res,
+      stored.snapshot,
+      result.card,
+      stored.snapshotHash !== result.snapshot.snapshotHash,
+      watch,
+    );
   } catch (error) {
     if (error instanceof B20RequestError) {
       res.status(400).json({ error: error.refusal, code: error.refusal, detail: error.message });
