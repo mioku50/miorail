@@ -155,3 +155,6 @@ export type B20InspectResponseV1 = z.infer<typeof schemas.B20InspectResponseV1Sc
 export type IntelligenceChargeSummaryV1 = z.infer<typeof schemas.IntelligenceChargeSummaryV1Schema>;
 export type IntelligenceChargesResponseV1 = z.infer<typeof schemas.IntelligenceChargesResponseV1Schema>;
 export type B20ControlWatchV1 = z.infer<typeof schemas.B20ControlWatchV1Schema>;
+export type B20WatchRequestV1 = z.infer<typeof schemas.B20WatchRequestV1Schema>;
+export type B20WatchResponseV1 = z.infer<typeof schemas.B20WatchResponseV1Schema>;
+export type B20WatchedTokenV1 = z.infer<typeof schemas.B20WatchedTokenV1Schema>;

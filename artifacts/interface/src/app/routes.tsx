@@ -11,9 +11,12 @@ export interface AppRoute {
   label: string;
 }
 
+// T67E — three surfaces. Budget & payments is deliberately absent: it is a
+// drawer inside a flow, not a place you navigate to.
 export const CONSOLE_NAV_TABS: AppRoute[] = [
-  { path: '/', label: 'flow' },
-  { path: '/plan/history', label: 'proofs' },
+  { path: '/', label: 'Routes' },
+  { path: '/b20', label: 'B20' },
+  { path: '/plan/history', label: 'Proofs' },
 ];
 
 export function navTabs(): AppRoute[] {
@@ -29,6 +32,7 @@ export interface AppCommand {
 
 export const CONSOLE_COMMANDS: AppCommand[] = [
   { id: 'flow', icon: '', label: 'New goal · compare routes', path: '/' },
+  { id: 'b20', icon: '', label: 'B20 control watch · what your tokens changed', path: '/b20' },
   { id: 'proofs', icon: '', label: 'Route proofs · execution history', path: '/plan/history' },
 ];
 

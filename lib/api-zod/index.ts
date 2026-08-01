@@ -2598,6 +2598,42 @@ export const B20ControlWatchV1Schema = z
   })
   .strict();
 
+// T67F — the portfolio sweep. The client sends the tokens it holds; the server
+// never guesses a holdings list, because a wrong one would produce a watch page
+// about somebody else's position.
+export const B20WatchRequestV1Schema = z
+  .object({
+    chainId: z.literal(8453),
+    // Bounded on the wire, not only in the handler: each entry is an on-chain
+    // read against a metered endpoint.
+    tokens: z.array(AddressV1Schema).min(1).max(25),
+  })
+  .strict();
+
+export const B20WatchedTokenV1Schema = z
+  .object({
+    tokenAddress: AddressV1Schema,
+    displayName: z.string().max(200).nullable(),
+    displaySymbol: z.string().max(60).nullable(),
+    /** `not_b20` is an ordinary, expected answer — most tokens are not B20. */
+    outcome: z.enum(['watched', 'not_b20', 'unreadable']),
+    /** Present only when the token was actually compared. */
+    watch: B20ControlWatchV1Schema.optional(),
+    /** Why nothing was compared. Never a claim about the token. */
+    reason: z.string().max(300).nullable(),
+  })
+  .strict();
+
+export const B20WatchResponseV1Schema = z
+  .object({
+    tokens: z.array(B20WatchedTokenV1Schema).max(25),
+    /** Tokens the request named that were not reached before the budget ran
+     * out. Named, so the page never implies it checked everything. */
+    notChecked: z.array(AddressV1Schema).max(25),
+    checkedAt: z.string().min(1).max(60),
+  })
+  .strict();
+
 export const B20InspectResponseV1Schema = z
   .object({
     snapshotId: z.string().min(1).max(200),

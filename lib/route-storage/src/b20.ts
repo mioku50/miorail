@@ -45,6 +45,16 @@ export interface B20StorageRepositoryV1 {
   getSnapshot(id: string, userId: string): Promise<B20SnapshotRecordV1 | null>;
   /** The most recent snapshot for a token, for the TTL short-circuit. */
   latestSnapshot(userId: string, tokenAddress: string): Promise<B20SnapshotRecordV1 | null>;
+
+  /**
+   * T67F — the most recent snapshots for a token, newest first.
+   *
+   * The Control Watch sweep needs TWO: the current reading and the one before
+   * it. `latestSnapshot` alone cannot serve a cache hit, because on a cache hit
+   * the latest row IS the answer and diffing it against itself reports nothing
+   * forever.
+   */
+  recentSnapshots(userId: string, tokenAddress: string, limit: number): Promise<B20SnapshotRecordV1[]>;
 }
 
 export type B20WriteEffectV1 =

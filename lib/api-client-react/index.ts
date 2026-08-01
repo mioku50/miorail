@@ -787,6 +787,34 @@ export function useIntelligenceCharges(options?: { enabled?: boolean; limit?: nu
   });
 }
 
+/**
+ * T67F — the Control Watch sweep over the tokens the caller holds.
+ *
+ * A mutation, not a query, and deliberately so: each run is up to 25 on-chain
+ * reads against a metered endpoint, and a query would re-run it on every
+ * remount, refocus and reconnect. The user asks for the sweep; it does not
+ * happen to them.
+ */
+export function useB20Watch(
+  options?: Omit<
+    UseMutationOptions<apiSpec.B20WatchResponseV1, Error, { tokens: string[] }>,
+    'mutationFn' | 'retry'
+  >,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const response = await fetchApi<unknown>('/api/route-intelligence/b20/watch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chainId: 8453, tokens: input.tokens }),
+      });
+      return apiSpec.B20WatchResponseV1Schema.parse(response);
+    },
+  });
+}
+
 export function useBaseMcpToolsProbe(
   options?: Omit<UseMutationOptions<apiSpec.BaseMcpToolProbeResponse, Error, void>, 'mutationFn'>
 ) {

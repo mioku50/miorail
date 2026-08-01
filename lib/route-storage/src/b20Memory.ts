@@ -60,4 +60,38 @@ export class InMemoryB20StorageRepositoryV1 implements B20StorageRepositoryV1 {
     assertB20SnapshotV1(row.snapshot, 'read');
     return row;
   }
+
+  async recentSnapshots(
+    userId: string,
+    tokenAddress: string,
+    limit: number,
+  ): Promise<B20SnapshotRecordV1[]> {
+    // Same cap and same ordering as Postgres. A fake that is more permissive
+    // than the database is how three T65 production bugs got in.
+    const capped = Math.max(1, Math.min(20, Math.trunc(limit)));
+    const address = tokenAddress.toLowerCase();
+    const matches = [...this.rows.values()]
+      .filter((row) => row.userId === userId && row.tokenAddress === address)
+      .sort(
+        (left, right) =>
+          Date.parse(right.observedAt) - Date.parse(left.observedAt) ||
+          compareBlockNumbersV1(right.blockNumber, left.blockNumber) ||
+          right.id.localeCompare(left.id),
+      )
+      .slice(0, capped);
+    for (const row of matches) assertB20SnapshotV1(row.snapshot, 'read');
+    return matches;
+  }
+}
+
+/** Block numbers are decimal strings that outgrow Number's safe range, so they
+ * are compared as BigInt. A null block (a failed read reached no block) sorts
+ * last, matching NULLS LAST in the query this mirrors. */
+function compareBlockNumbersV1(left: string | null, right: string | null): number {
+  if (left === right) return 0;
+  if (left === null) return 1;
+  if (right === null) return -1;
+  const a = BigInt(left);
+  const b = BigInt(right);
+  return a === b ? 0 : a > b ? 1 : -1;
 }

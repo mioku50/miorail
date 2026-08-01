@@ -240,6 +240,73 @@ describe('inspect', () => {
 // before it writes the new one; the diff itself is covered by b20Watch.test.ts.
 // ---------------------------------------------------------------------------
 
+describe('the portfolio sweep', () => {
+  function sweep(body: unknown, server = app()) {
+    return request(server).post('/api/route-intelligence/b20/watch').send(body as object);
+  }
+
+  test('every requested token gets a row, and none is invented', async () => {
+    const response = await sweep({ chainId: 8453, tokens: [TOKEN, ERC20] });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.tokens.length, 2);
+    assert.deepEqual(response.body.notChecked, []);
+  });
+
+  test('a non-B20 token is an ordinary answer, not a finding', async () => {
+    isB20Value = false;
+    const response = await sweep({ chainId: 8453, tokens: [ERC20] });
+    assert.equal(response.body.tokens[0].outcome, 'not_b20');
+  });
+
+  test('a duplicate address is read once', async () => {
+    // A portfolio can list the same address twice, and each duplicate would be
+    // a second paid read of the same fact.
+    const response = await sweep({ chainId: 8453, tokens: [TOKEN, TOKEN] });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.tokens.length, 1);
+  });
+
+  test('inside the TTL the two most recent STORED snapshots are compared', async () => {
+    await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    blockNumber = '49060000';
+    await inspect({ chainId: 8453, tokenAddress: TOKEN });
+
+    let reads = 0;
+    b20RouteRuntime.watchTtlMs = () => 600_000;
+    b20RouteRuntime.reader = () => {
+      reads += 1;
+      return fakeReader();
+    };
+    const response = await sweep({ chainId: 8453, tokens: [TOKEN] });
+    assert.equal(reads, 0, 'a fresh sweep must not re-read the chain');
+    // The point of recentSnapshots: latestSnapshot alone would diff the cached
+    // row against itself and report nothing, forever.
+    assert.equal(response.body.tokens[0].watch.status, 'compared');
+    assert.equal(response.body.tokens[0].watch.fromBlock, '49059662');
+    assert.equal(response.body.tokens[0].watch.toBlock, '49060000');
+  });
+
+  test('the wire refuses more tokens than the sweep budget allows', async () => {
+    const many = Array.from({ length: 26 }, (_value, index) =>
+      `0x${(index + 1).toString(16).padStart(40, '0')}`,
+    );
+    const response = await sweep({ chainId: 8453, tokens: many });
+    assert.equal(response.status, 400);
+    assert.equal(response.body.code, 'invalid_b20_watch_request');
+  });
+
+  test('the sweep is behind the same gate as inspection', async () => {
+    b20RouteRuntime.flags = () => ({ ...FLAGS, b20ControlV1: false });
+    const response = await sweep({ chainId: 8453, tokens: [TOKEN] });
+    assert.equal(response.status, 404);
+  });
+
+  test('an unauthenticated sweep is refused', async () => {
+    const response = await sweep({ chainId: 8453, tokens: [TOKEN] }, app(null));
+    assert.equal(response.status, 401);
+  });
+});
+
 describe('the control watch compares against the previous reading', () => {
   test('a first inspection has nothing to compare against', async () => {
     const response = await inspect({ chainId: 8453, tokenAddress: TOKEN });

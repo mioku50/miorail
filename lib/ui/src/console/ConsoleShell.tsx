@@ -92,8 +92,25 @@ export interface ConsoleLeftRailModelV1 {
   adapters: { rows: { name: string; label: string; live: boolean; usable?: boolean }[]; summary: string };
 }
 
+/**
+ * T67E — the three top-level surfaces.
+ *
+ * Routes is the flow, B20 is what the tokens you hold have done, Proofs is the
+ * public history. Budget & payments is deliberately NOT here: it is a drawer,
+ * because it is something you adjust in the middle of a flow rather than a
+ * place you go.
+ */
+export interface ConsoleTabV1 {
+  id: string;
+  label: string;
+  active: boolean;
+  onSelect: () => void;
+}
+
 export interface ConsoleHeaderModelV1 {
   crumb: string[];
+  /** Absent on surfaces that are not one of the three tabs. */
+  tabs?: readonly ConsoleTabV1[];
   blockNumber: string | null;
   gasLabel: string | null;
   networkLabel: string;
@@ -174,6 +191,21 @@ export function ConsoleShell(props: ConsoleShellProps) {
             </span>
             Miorail
           </div>
+          {(header.tabs ?? []).length > 0 && (
+            <nav className="crumb" aria-label="Sections">
+              {(header.tabs ?? []).map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={`btn sec${tab.active ? ' on' : ''}`}
+                  aria-current={tab.active ? 'page' : undefined}
+                  onClick={tab.onSelect}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
+          )}
           <nav className="crumb" aria-label="Breadcrumb">
             {header.crumb.map((entry, index) => (
               <React.Fragment key={entry}>

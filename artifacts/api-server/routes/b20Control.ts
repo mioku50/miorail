@@ -3,12 +3,15 @@ import { logger } from '@mioagent/utils';
 import {
   B20InspectRequestV1Schema,
   B20InspectResponseV1Schema,
+  B20WatchRequestV1Schema,
+  B20WatchResponseV1Schema,
 } from '@mioagent/api-zod';
 import {
   B20RequestError,
   createB20ReaderV1,
   diffB20SnapshotsV1,
   inspectB20TokenV1,
+  buildB20CardV1,
   refusalDetailV1,
   validateB20InspectRequestV1,
   type B20ControlSnapshotV1,
@@ -53,12 +56,28 @@ function ttlMsV1(): number {
   return Number.isFinite(raw) && raw >= 0 ? raw : 30_000;
 }
 
+/**
+ * T67F — the sweep's own TTL, deliberately much longer than a single
+ * inspection's.
+ *
+ * A sweep is up to 25 tokens, each several `eth_call`s, and it runs whenever
+ * someone opens a page. Reusing the 30-second inspection TTL would turn a page
+ * refresh into 250 metered calls. A control change does not need
+ * thirty-second resolution: the thing being watched changes on the order of
+ * hours, and the page states the age of what it read.
+ */
+function watchTtlMsV1(): number {
+  const raw = Number.parseInt((process.env.MIORAIL_B20_WATCH_TTL_MS ?? '').trim(), 10);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 300_000;
+}
+
 export const b20RouteRuntime = {
   flags: getMiorailProductMigrationFlags,
   repository: (): B20StorageRepositoryV1 => createDatabaseB20StorageRepository(client),
   reader: () => createB20ReaderV1({ rpcUrl: baseMainnetRpcUrlV1() }),
   rpcConfigured: () => baseMainnetRpcUrlV1().length > 0,
   ttlMs: ttlMsV1,
+  watchTtlMs: watchTtlMsV1,
   migrationAvailable: async (): Promise<boolean> => {
     const rows = await client`
       SELECT
@@ -169,7 +188,6 @@ b20ControlRouter.post('/b20/inspect', async (req: Request, res: Response) => {
     const ttl = b20RouteRuntime.ttlMs();
     const latest = await repository.latestSnapshot(guard.user.id, parsed.data.tokenAddress);
     if (latest && ttl > 0 && now.getTime() - Date.parse(latest.observedAt) < ttl) {
-      const { buildB20CardV1 } = await import('@mioagent/b20-control');
       // No watch on a cache hit: the answer IS the stored snapshot, so there is
       // no newer reading to compare it against. Returning an empty change list
       // here would say "nothing changed" on the strength of not having looked.
@@ -210,6 +228,140 @@ b20ControlRouter.post('/b20/inspect', async (req: Request, res: Response) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// POST /b20/watch — the Control Watch sweep over the tokens a caller holds.
+//
+// The client sends the addresses; the server never guesses a holdings list,
+// because a wrong one would produce a watch page about somebody else's
+// position. Read-only, like every route in this file.
+//
+// Three properties:
+//
+//   * Bounded. At most 25 tokens per request, each capped by the sweep TTL, and
+//     the first RPC failure ends the sweep rather than retrying 24 more times
+//     against an endpoint that is already failing. Whatever was not reached is
+//     NAMED, so the page never implies it checked everything.
+//   * A cache hit still produces a diff. Inside the TTL the two most recent
+//     STORED snapshots are compared, so the page keeps showing the last real
+//     change instead of going blank between reads.
+//   * `not_b20` is an ordinary answer. Most tokens in a wallet are not B20, and
+//     saying so is not a finding about them.
+// ---------------------------------------------------------------------------
+b20ControlRouter.post('/b20/watch', async (req: Request, res: Response) => {
+  const guard = b20Guard(req, res);
+  if (!guard) return;
+
+  const parsed = B20WatchRequestV1Schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_b20_watch_request', code: 'invalid_b20_watch_request' });
+    return;
+  }
+  if (!b20RouteRuntime.rpcConfigured()) {
+    res.status(503).json({ error: 'b20_rpc_unavailable', code: 'b20_rpc_unavailable' });
+    return;
+  }
+
+  try {
+    if (!(await b20RouteRuntime.migrationAvailable())) {
+      res.status(503).json({ error: 'b20_storage_unavailable', code: 'b20_storage_unavailable' });
+      return;
+    }
+    const repository = b20RouteRuntime.repository();
+    const now = b20RouteRuntime.now();
+    const ttl = b20RouteRuntime.watchTtlMs();
+    // De-duplicated, because a portfolio can list the same address twice and
+    // each duplicate would be a second paid read of the same fact.
+    const tokens = [...new Set(parsed.data.tokens.map((token) => token.toLowerCase()))];
+
+    const results: unknown[] = [];
+    const notChecked: string[] = [];
+    let sweepStopped = false;
+
+    for (const token of tokens) {
+      if (sweepStopped) {
+        notChecked.push(token);
+        continue;
+      }
+      const refusal = validateB20InspectRequestV1(parsed.data.chainId, token);
+      if (refusal) {
+        results.push({
+          tokenAddress: token,
+          displayName: null,
+          displaySymbol: null,
+          outcome: 'unreadable',
+          reason: refusalDetailV1(refusal),
+        });
+        continue;
+      }
+
+      const recent = await repository.recentSnapshots(guard.user.id, token, 2);
+      const fresh =
+        recent[0] && ttl > 0 && now.getTime() - Date.parse(recent[0].observedAt) < ttl
+          ? recent[0]
+          : null;
+
+      if (fresh) {
+        // Inside the TTL: compare the two most recent STORED snapshots. This is
+        // why `recentSnapshots` exists — `latestSnapshot` alone would diff the
+        // cached row against itself and report nothing, forever.
+        const card = buildB20CardV1(fresh.snapshot);
+        results.push({
+          tokenAddress: token,
+          displayName: card.displayName,
+          displaySymbol: card.displaySymbol,
+          outcome: fresh.snapshot.detection.outcome === 'not_b20' ? 'not_b20' : 'watched',
+          watch: diffB20SnapshotsV1(recent[1]?.snapshot ?? null, fresh.snapshot),
+          reason: null,
+        });
+        continue;
+      }
+
+      const result = await inspectB20TokenV1(
+        { reader: b20RouteRuntime.reader() },
+        { tenantId: guard.user.id, chainId: parsed.data.chainId, tokenAddress: token, now },
+      );
+      if (result.snapshot.detection.outcome === 'rpc_failure') {
+        // The endpoint is failing. Trying the remaining tokens would be 24 more
+        // failures against it, so the sweep stops and says what it did not
+        // reach rather than reporting them all as unreadable tokens.
+        sweepStopped = true;
+        results.push({
+          tokenAddress: token,
+          displayName: null,
+          displaySymbol: null,
+          outcome: 'unreadable',
+          reason: 'The Base endpoint did not answer. This says nothing about the token.',
+        });
+        continue;
+      }
+      const previous = recent[0] ?? null;
+      const stored = await repository.insertSnapshot({ userId: guard.user.id, snapshot: result.snapshot });
+      results.push({
+        tokenAddress: token,
+        displayName: result.card.displayName,
+        displaySymbol: result.card.displaySymbol,
+        outcome: stored.snapshot.detection.outcome === 'not_b20' ? 'not_b20' : 'watched',
+        watch: diffB20SnapshotsV1(previous?.snapshot ?? null, stored.snapshot),
+        reason: null,
+      });
+    }
+
+    res.json(
+      B20WatchResponseV1Schema.parse({
+        tokens: results,
+        notChecked,
+        checkedAt: now.toISOString(),
+      }),
+    );
+  } catch (error) {
+    if (error instanceof B20RequestError) {
+      res.status(400).json({ error: error.refusal, code: error.refusal, detail: error.message });
+      return;
+    }
+    storageFailure(res, error, 'watch');
+  }
+});
+
 b20ControlRouter.get('/b20/snapshots/:id', async (req: Request, res: Response) => {
   const guard = b20Guard(req, res);
   if (!guard) return;
@@ -226,7 +378,6 @@ b20ControlRouter.get('/b20/snapshots/:id', async (req: Request, res: Response) =
       res.status(404).json({ error: 'b20_snapshot_not_found', code: 'b20_snapshot_not_found' });
       return;
     }
-    const { buildB20CardV1 } = await import('@mioagent/b20-control');
     respondV1(res, record.snapshot, buildB20CardV1(record.snapshot), true);
   } catch (error) {
     storageFailure(res, error, 'get_snapshot');

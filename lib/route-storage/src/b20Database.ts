@@ -138,5 +138,25 @@ export function createDatabaseB20StorageRepository(sql: SqlTemplateExecutor): B2
       const row = rows[0];
       return row ? rowToRecordV1(row as Record<string, unknown>) : null;
     },
+
+    async recentSnapshots(
+      userId: string,
+      tokenAddress: string,
+      limit: number,
+    ): Promise<B20SnapshotRecordV1[]> {
+      // Bounded here rather than trusting the caller: this backs a per-token
+      // sweep, and an unbounded read would scale with a token's whole history.
+      const capped = Math.max(1, Math.min(20, Math.trunc(limit)));
+      const rows = await sql`
+        SELECT id, user_id, chain_id, token_address, snapshot_hash, identity_hash,
+          block_number, block_hash, observed_at, payload, created_at FROM b20_control_snapshots
+        WHERE user_id = ${userId} AND token_address = ${tokenAddress.toLowerCase()}
+        -- A snapshot is scoped to a block, so the block is the true ordering
+        -- key; observed_at alone leaves ties undefined, and a tie here silently
+        -- swaps "before" and "after" in a control diff.
+        ORDER BY observed_at DESC, block_number DESC NULLS LAST, id DESC
+        LIMIT ${capped}`;
+      return rows.map((row) => rowToRecordV1(row as Record<string, unknown>));
+    },
   };
 }

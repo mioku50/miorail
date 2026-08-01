@@ -1,0 +1,214 @@
+import React from 'react';
+import { B20ControlWatchPanel, type B20WatchLikeV1 } from './B20Panels';
+
+void React;
+
+// ---------------------------------------------------------------------------
+// T67F — the B20 tab.
+//
+// The screen answers one question: did anything change about the tokens I hold?
+//
+// Three things it will not do:
+//
+//   * Rank. There is no score, no "risk level" and no ordering by anything but
+//     severity of an observed change. A token with no changes is not "safe" —
+//     it is a token whose controls have not moved since Miorail last looked.
+//   * Fill silence. A token that could not be read says so and does not appear
+//     as clean. Tokens the sweep never reached are listed by address.
+//   * Imply freshness it does not have. Every group states the block range it
+//     compared, and the page states when the sweep ran.
+// ---------------------------------------------------------------------------
+
+export interface B20WatchedTokenLikeV1 {
+  tokenAddress: string;
+  displayName: string | null;
+  displaySymbol: string | null;
+  outcome: 'watched' | 'not_b20' | 'unreadable';
+  watch?: B20WatchLikeV1;
+  reason: string | null;
+}
+
+export interface B20WatchScreenModelV1 {
+  tokens: readonly B20WatchedTokenLikeV1[];
+  notChecked: readonly string[];
+  checkedAt: string | null;
+  loading: boolean;
+  /** Why no sweep is possible. Rendered instead of the list. */
+  unavailableReason: string | null;
+  onSweep: () => void;
+  /** How many tokens the wallet holds, so "watching 0 of 12" is impossible to
+   * confuse with "you hold nothing". */
+  heldCount: number;
+}
+
+function tokenLabelV1(token: B20WatchedTokenLikeV1): string {
+  if (token.displaySymbol && token.displayName) return `${token.displayName} (${token.displaySymbol})`;
+  return token.displaySymbol ?? token.displayName ?? shortAddressV1(token.tokenAddress);
+}
+
+export function shortAddressV1(address: string): string {
+  return address.length > 12 ? `${address.slice(0, 8)}…${address.slice(-4)}` : address;
+}
+
+/** Tokens that actually changed, most severe first. The ordering is over
+ * OBSERVED changes and nothing else — there is no ranking of tokens. */
+export function changedTokensV1(
+  tokens: readonly B20WatchedTokenLikeV1[],
+): B20WatchedTokenLikeV1[] {
+  const withChanges = tokens.filter(
+    (token) => token.watch?.status === 'compared' && token.watch.changes.length > 0,
+  );
+  const acute = (token: B20WatchedTokenLikeV1) =>
+    token.watch?.changes.some((change) => change.severity === 'acute') ? 0 : 1;
+  return withChanges.sort(
+    (left, right) =>
+      acute(left) - acute(right) ||
+      (right.watch?.changes.length ?? 0) - (left.watch?.changes.length ?? 0),
+  );
+}
+
+export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement {
+  const changed = changedTokensV1(model.tokens);
+  const steady = model.tokens.filter(
+    (token) => token.watch?.status === 'compared' && token.watch.changes.length === 0,
+  );
+  const baseline = model.tokens.filter((token) => token.watch?.status === 'first_observation');
+  const unreadable = model.tokens.filter((token) => token.outcome === 'unreadable');
+  const notB20 = model.tokens.filter((token) => token.outcome === 'not_b20');
+
+  return (
+    <section aria-label="B20 control watch">
+      <div className="panel">
+        <div className="ph">
+          <h3>B20 control watch</h3>
+          <span className="sub">
+            {model.tokens.length === 0
+              ? `${model.heldCount} token${model.heldCount === 1 ? '' : 's'} held`
+              : `${model.tokens.length} of ${model.heldCount} checked`}
+          </span>
+          <span className="rt">
+            <button type="button" className="btn" onClick={model.onSweep} disabled={model.loading}>
+              {model.loading ? 'Reading the chain…' : 'Check now'}
+            </button>
+          </span>
+        </div>
+        <div className="pb">
+          <p className="note">
+            What a token’s controls did since Miorail last read them. Miorail cannot see who holds a
+            role — B20 offers no way to list role holders — so this reports what changed, never who
+            changed it.
+          </p>
+          {model.unavailableReason ? (
+            <p className="note">{model.unavailableReason}</p>
+          ) : model.checkedAt ? (
+            <p className="lnote">Last checked {model.checkedAt}.</p>
+          ) : (
+            <p className="empty">Nothing has been checked yet.</p>
+          )}
+          {model.notChecked.length > 0 && (
+            <p className="note warn">
+              {model.notChecked.length} token{model.notChecked.length === 1 ? ' was' : 's were'} not
+              reached: {model.notChecked.map(shortAddressV1).join(', ')}. They were not checked, which
+              is not the same as unchanged.
+            </p>
+          )}
+        </div>
+      </div>
+
+      {changed.length > 0 && (
+        <div className="panel">
+          <div className="ph">
+            <h3>Changed</h3>
+            <span className="sub">most exposed first</span>
+          </div>
+          <div className="pb tight">
+            {changed.map((token) => (
+              <div key={token.tokenAddress}>
+                <p className="nm">{tokenLabelV1(token)}</p>
+                <p className="lnote mono">{token.tokenAddress}</p>
+                <B20ControlWatchPanel watch={token.watch ?? null} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {steady.length > 0 && (
+        <div className="panel">
+          <div className="ph">
+            <h3>No change</h3>
+            <span className="sub">{steady.length} compared</span>
+          </div>
+          <div className="pb tight">
+            {/* Not "safe". These are tokens whose controls have not moved since
+                the previous reading, and the block range says between when. */}
+            {steady.map((token) => (
+              <div className="kv" key={token.tokenAddress}>
+                <span>{tokenLabelV1(token)}</span>
+                <span className="mono">
+                  {token.watch?.fromBlock ?? '—'} → {token.watch?.toBlock ?? '—'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {baseline.length > 0 && (
+        <div className="panel">
+          <div className="ph">
+            <h3>First reading</h3>
+            <span className="sub">{baseline.length} recorded</span>
+          </div>
+          <div className="pb tight">
+            <p className="note">
+              These were read for the first time, so there is nothing to compare them against yet.
+              The next check will compare against this reading.
+            </p>
+            {baseline.map((token) => (
+              <div className="kv" key={token.tokenAddress}>
+                <span>{tokenLabelV1(token)}</span>
+                <span className="mono">block {token.watch?.toBlock ?? '—'}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {unreadable.length > 0 && (
+        <div className="panel">
+          <div className="ph">
+            <h3>Could not be read</h3>
+            <span className="sub">{unreadable.length}</span>
+          </div>
+          <div className="pb tight">
+            {unreadable.map((token) => (
+              <div className="kv" key={token.tokenAddress}>
+                <span className="mono">{shortAddressV1(token.tokenAddress)}</span>
+                <span>{token.reason ?? 'no reason reported'}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {notB20.length > 0 && (
+        <div className="panel">
+          <div className="ph">
+            <h3>Not B20</h3>
+            <span className="sub">{notB20.length}</span>
+          </div>
+          <div className="pb tight">
+            {/* An ordinary answer, not a finding. Most tokens in a wallet are
+                not B20, and this card makes no claim about them either way. */}
+            <p className="note">
+              These are not B20 tokens, so they have no B20 controls to watch. Ordinary ERC-20
+              analysis is not part of this page.
+            </p>
+            <p className="lnote">{notB20.map((token) => tokenLabelV1(token)).join(', ')}</p>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}

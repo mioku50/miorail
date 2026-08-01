@@ -13,4 +13,5 @@ export * from './budgetPayments';
 export * from './BudgetPaymentsPanel';
 export * from './b20Context';
 export * from './B20Panels';
+export * from './B20WatchScreen';
 export * from './PublicProofPanels';

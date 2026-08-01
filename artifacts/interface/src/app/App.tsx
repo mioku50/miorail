@@ -14,6 +14,7 @@ import { RequireSession } from './RequireSession';
 import { RouteHistoryPage } from '../features/plan/RouteHistoryPage';
 import { RouteIntelligenceConsole } from '../features/console/RouteIntelligenceConsole';
 import { PublicProofPage } from '../features/proof/PublicProofPage';
+import { B20WatchPage } from '../features/b20/B20WatchPage';
 
 // ---------------------------------------------------------------------------
 // The Route Intelligence console IS the app.
@@ -76,7 +77,15 @@ export function App() {
           <PublicProofPage />
         </Route>
 
-        {/* Proofs — the console's second entry. */}
+        {/* B20 — what the tokens you hold have done since Miorail last read
+            them. Its own surface because it is not part of a route's flow. */}
+        <Route path="/b20">
+          <RequireSession>
+            <B20WatchPage />
+          </RequireSession>
+        </Route>
+
+        {/* Proofs — the console's third entry. */}
         <Route path="/plan/history">
           <RequireSession>
             <DeepLink>

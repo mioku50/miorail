@@ -10,16 +10,31 @@ const here = path.dirname(url.fileURLToPath(import.meta.url));
 
 // The scanner-era cockpit is deleted: seven tabs are now two entries, and there
 // is no legacy table left to fall back to.
-test('navigation is exactly the flow and its proofs', () => {
+// T67E — three surfaces now, not two. B20 earned its own place because what a
+// held token's controls did is not part of any route's flow. Budget & payments
+// deliberately did NOT: it is a drawer you open mid-flow, not a place you go.
+test('navigation is exactly Routes, B20 and Proofs', () => {
   const tabs = navTabs();
-  assert.deepEqual(tabs.map((route) => route.path), ['/', '/plan/history']);
-  assert.deepEqual(tabs.map((route) => route.label), ['flow', 'proofs']);
+  assert.deepEqual(tabs.map((route) => route.path), ['/', '/b20', '/plan/history']);
+  assert.deepEqual(tabs.map((route) => route.label), ['Routes', 'B20', 'Proofs']);
+});
+
+test('no payment surface became a tab', () => {
+  // The whole point of §2.1: a user has a budget, not a settlement protocol.
+  for (const route of navTabs()) {
+    assert.equal(
+      /x402|spend permission|fuel|payments|budget/i.test(route.label),
+      false,
+      route.label,
+    );
+  }
 });
 
 test('no command carries an emoji or the retired vocabulary', () => {
   const commands = appCommands();
-  assert.equal(commands.length, 2, 'the console exposes exactly two entries');
+  assert.equal(commands.length, 3, 'the console exposes exactly three entries');
   assert.equal(commands.some((command) => command.path === '/plan/history'), true);
+  assert.equal(commands.some((command) => command.path === '/b20'), true);
   for (const command of commands) {
     assert.equal(command.icon, '', 'navigation carries no emoji');
     assert.equal(/\b(scan|cockpit|fuel|kill switch)\b/i.test(command.label), false, command.label);

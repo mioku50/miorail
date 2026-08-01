@@ -1378,6 +1378,11 @@ export function RouteIntelligenceConsole() {
     <ConsoleShell
       header={{
         crumb: CONSOLE_BREADCRUMB_V1[screen](goalLabel),
+        tabs: [
+          { id: 'routes', label: 'Routes', active: true, onSelect: () => navigate('/') },
+          { id: 'b20', label: 'B20', active: false, onSelect: () => navigate('/b20') },
+          { id: 'proofs', label: 'Proofs', active: false, onSelect: () => navigate('/plan/history') },
+        ],
         blockNumber: chainBlockNumberV1(status.data ?? null),
         gasLabel: chainGasLabelV1(status.data ?? null),
         networkLabel: chainLabelV1(status.data?.chainId),
