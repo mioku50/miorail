@@ -31,6 +31,7 @@ import {
   b20ErrorCodeV1,
   b20TargetForRouteV1,
   b20UnavailableCopyV1,
+  swapTerminalFailureV1,
   candidateRowsFromProjectionV1,
   comparisonClaimFromProjectionV1,
   providerDiagnosticRowsV1,
@@ -309,6 +310,11 @@ export function MiniConsole() {
     aiCompare.isPending;
   const comparingFailure = (() => {
     if (comparePending || projection || earnCard || commerceCard || nftCard || aiCard) return null;
+    // Swap was missing from this chain in BOTH consoles — the one family that
+    // is always on. Without it a goal the server asked a question about left
+    // this screen waiting on a run that had already finished.
+    const swapFailure = swapTerminalFailureV1(evaluation.data as never);
+    if (swapFailure) return swapFailure;
     if (commerceCompare.data?.outcome === "needs_clarification") {
       return {
         title: "This goal needs one more detail",

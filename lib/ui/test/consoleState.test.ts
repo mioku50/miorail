@@ -273,7 +273,11 @@ describe('microcopy', () => {
   test('the replaced strings are exactly the approved wording', () => {
     assert.equal(CONSOLE_COPY_V1.oneAdapterQuoted, "Uniswap didn't answer. Comparing 1 of 2 routes.");
     assert.equal(CONSOLE_COPY_V1.walletDisconnected, 'Connect your wallet to prepare this swap. Miorail can compare routes without it.');
-    assert.equal(CONSOLE_COPY_V1.limitsMissing, 'Set a spending limit to continue — it takes one field.');
+    // It must not promise a control. The old copy said "it takes one field"
+    // while the Budget drawer had no field anywhere in it.
+    assert.match(CONSOLE_COPY_V1.limitsMissing, /No spending permission yet/);
+    assert.match(CONSOLE_COPY_V1.limitsMissing, /Free route comparison is unaffected/);
+    assert.ok(!/takes one field/.test(CONSOLE_COPY_V1.limitsMissing));
     assert.equal(CONSOLE_COPY_V1.recipientMissing, 'Miorail will only send to your own wallet unless you add another address.');
     assert.equal(CONSOLE_COPY_V1.portfolioUnavailable, 'Balances didn’t load. Route comparison still works.');
     assert.equal(CONSOLE_COPY_V1.readOnly, 'Read-only until you approve');

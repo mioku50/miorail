@@ -1,5 +1,8 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   CONSOLE_STAGES_V1,
   activeStageStepV1,
@@ -17,6 +20,7 @@ import {
   routeFamilyForGoalV1,
   stageDurationMsV1,
   startStageV1,
+  swapTerminalFailureV1,
   stepperFromClockV1,
 } from '../src/console/consoleFlow';
 
@@ -25,6 +29,8 @@ import {
 // timing; a family is dispatched to its own engine; coverage comes from the
 // server's flags, never from a front-end constant.
 // ---------------------------------------------------------------------------
+
+const here = path.dirname(fileURLToPath(import.meta.url));
 
 describe('stage timings are measured, never asserted', () => {
   test('a completed stage reports its real duration', () => {
@@ -366,4 +372,68 @@ test('a halted rail no longer points at a stage that stopped', () => {
   ]);
   assert.equal(halted.some((step) => step.state === 'now'), false);
   assert.deepEqual(halted.map((step) => step.state), ['done', 'done', 'todo', 'todo']);
+});
+
+describe('a swap that the server answered with a question is terminal', () => {
+  // The bug: swap was the only family with no terminal branch, in BOTH
+  // consoles. "swap my $mio token" came back `needs_clarification`, the
+  // mutation finished, no projection existed and nothing had thrown — so the
+  // Comparing screen kept its adapter rows spinning, forever.
+  test('needs_clarification carries the server’s own sentence', () => {
+    const failure = swapTerminalFailureV1({
+      outcome: 'needs_clarification',
+      clarification: { message: 'How much MIO do you want to swap?' },
+    });
+    assert.ok(failure);
+    assert.equal(failure!.title, 'This goal needs one more detail');
+    // Not a generic "could not route this": the server named the missing
+    // field, and that is the user's next move.
+    assert.equal(failure!.detail, 'How much MIO do you want to swap?');
+  });
+
+  test('a rejection lists every issue, not just the first', () => {
+    // A goal can be short an amount AND name an asset Miorail will not route.
+    // Fixing one leaves the other, and a user told only about the first would
+    // fix it and hit the same wall.
+    const failure = swapTerminalFailureV1({
+      outcome: 'rejected',
+      issues: [{ message: 'An amount is required.' }, { message: 'MIO is not a routable asset.' }],
+    });
+    assert.ok(failure);
+    assert.match(failure!.detail, /An amount is required\./);
+    assert.match(failure!.detail, /MIO is not a routable asset\./);
+  });
+
+  test('an evaluated run is not a failure', () => {
+    assert.equal(swapTerminalFailureV1({ outcome: 'evaluated' }), null);
+    assert.equal(swapTerminalFailureV1(null), null);
+    assert.equal(swapTerminalFailureV1(undefined), null);
+  });
+
+  test('both consoles consult it, so neither can lose the branch again', () => {
+    for (const file of [
+      '../../../artifacts/interface/src/features/console/RouteIntelligenceConsole.tsx',
+      '../../../artifacts/miniapp/app/components/MiniConsole.tsx',
+    ]) {
+      const source = readFileSync(path.join(here, file), 'utf8');
+      assert.match(source, /swapTerminalFailureV1/, file);
+    }
+  });
+
+  test('a terminal run stops the adapter rows rather than spinning', () => {
+    const rows = comparingProgressV1({
+      family: 'swap',
+      adapters: [
+        { name: 'Uniswap', label: 'live', live: true, usable: true },
+        { name: 'KyberSwap', label: 'live', live: true, usable: true },
+      ],
+      answered: [],
+      terminalReason: 'How much MIO do you want to swap?',
+      evidenceCount: null,
+      scored: false,
+    });
+    // Every row is resolved. Not one of them may still read as running.
+    assert.equal(rows.some((row) => row.state === 'running'), false, JSON.stringify(rows));
+    assert.ok(rows.every((row) => row.state === 'failed' || row.state === 'done'));
+  });
 });

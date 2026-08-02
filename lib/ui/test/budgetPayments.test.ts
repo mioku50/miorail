@@ -5,6 +5,9 @@ import path from 'node:path';
 import url from 'node:url';
 
 import {
+  isUsdcAmountV1,
+} from '../src/console/BudgetPaymentsPanel';
+import {
   budgetPaymentsViewV1,
   paidIntelligenceStateV1,
   paidIntelligenceViewV1,
@@ -254,5 +257,52 @@ describe('the console vocabulary', () => {
       return stripped.includes('Intelligence Budget is off');
     });
     assert.deepEqual(offenders, []);
+  });
+});
+
+describe('the drawer offers controls, not just a status', () => {
+  const panelDir = path.dirname(url.fileURLToPath(import.meta.url));
+  const panel = readFileSync(path.join(panelDir, '../src/console/BudgetPaymentsPanel.tsx'), 'utf8');
+  const console_ = readFileSync(
+    path.join(panelDir, '../../../artifacts/interface/src/features/console/RouteIntelligenceConsole.tsx'),
+    'utf8',
+  );
+
+  test('the limits are an actual field, not a promise of one', () => {
+    // The bug: the drawer rendered a status and no control at all, while the
+    // left rail told the user to "set a spending limit — it takes one field".
+    assert.match(panel, /name="monthly"/);
+    assert.match(panel, /name="per-request"/);
+    assert.match(panel, /Save limits/);
+  });
+
+  test('an amount the wire would refuse is refused before it is sent', () => {
+    assert.equal(isUsdcAmountV1('3.00'), true);
+    assert.equal(isUsdcAmountV1('0.02'), true);
+    assert.equal(isUsdcAmountV1('0'), false);
+    assert.equal(isUsdcAmountV1('-1'), false);
+    assert.equal(isUsdcAmountV1('abc'), false);
+    assert.equal(isUsdcAmountV1(''), false);
+  });
+
+  test('the console actually calls the writes T60 shipped', () => {
+    // All three existed and no surface had ever called one.
+    assert.match(console_, /useUpdateIntelligenceBudget/);
+    assert.match(console_, /useRevokeIntelligenceBudget/);
+    assert.match(console_, /onUpdateLimit=/);
+    assert.match(console_, /onRevoke=/);
+  });
+
+  test('a permission is never recorded without the wallet that grants it', () => {
+    // Wiring the create button to the bookkeeping endpoint alone would record
+    // a permission the user's Base Account never signed.
+    assert.match(console_, /createUnavailableReason=/);
+    assert.ok(!/onCreatePermission=/.test(console_), 'no create flow exists to wire yet');
+    assert.match(panel, /createUnavailableReason/);
+  });
+
+  test('a failed change never echoes the server message', () => {
+    // A server error can carry an endpoint, and an endpoint can carry a key.
+    assert.match(console_, /That change could not be saved/);
   });
 });

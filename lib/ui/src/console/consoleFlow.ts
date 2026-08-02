@@ -626,6 +626,49 @@ export function comparingProgressV1(input: ComparingProgressInputV1): ComparingP
   return rows;
 }
 
+/** What a finished run says when it produced no route card. */
+export interface ConsoleTerminalFailureV1 {
+  title: string;
+  detail: string;
+}
+
+/** The swap evaluation as it crosses the wire, structurally. */
+export type SwapEvaluationLikeV1 =
+  | { outcome: 'evaluated' }
+  | { outcome: 'needs_clarification'; clarification: { message: string } }
+  | { outcome: 'rejected'; issues: readonly { message: string }[] };
+
+/**
+ * The swap family's terminal outcomes.
+ *
+ * This existed for commerce, earn, NFT and private AI and NOT for swap — the
+ * one family that is always on. A `needs_clarification` or `rejected` swap
+ * finished with no projection, nothing thrown and no failure to show, so the
+ * Comparing screen kept its adapter rows spinning forever. Observed with
+ * "swap my $mio token", which has no amount in it.
+ *
+ * The server's own sentence is carried through rather than replaced. It names
+ * the missing field; a generic "could not route this" names nothing and leaves
+ * the user with no next move.
+ */
+export function swapTerminalFailureV1(
+  data: SwapEvaluationLikeV1 | null | undefined,
+): ConsoleTerminalFailureV1 | null {
+  if (!data) return null;
+  if (data.outcome === 'needs_clarification') {
+    return { title: 'This goal needs one more detail', detail: data.clarification.message };
+  }
+  if (data.outcome === 'rejected') {
+    return {
+      title: 'Miorail cannot route this swap',
+      // Every issue, not just the first: a goal can be short an amount AND name
+      // an asset Miorail will not route, and fixing one leaves the other.
+      detail: data.issues.map((issue) => issue.message).join(' '),
+    };
+  }
+  return null;
+}
+
 /**
  * The stage rail once a run is over without a result. A stage left as `now`
  * keeps claiming to be in progress — on a terminal Comparing screen the rail

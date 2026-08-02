@@ -51,6 +51,7 @@ import {
   b20ErrorCodeV1,
   b20TargetForRouteV1,
   b20UnavailableCopyV1,
+  swapTerminalFailureV1,
   candidateRowsFromProjectionV1,
   comparisonClaimFromProjectionV1,
   providerDiagnosticRowsV1,
@@ -84,6 +85,8 @@ import {
   useEvaluateSwapRoute,
   useB20Inspect,
   useIntelligenceCharges,
+  useUpdateIntelligenceBudget,
+  useRevokeIntelligenceBudget,
   useIntelligenceBudget,
   useMarketSnapshot,
   usePortfolio,
@@ -609,6 +612,10 @@ export function RouteIntelligenceConsole() {
 
   // The run is over and produced no route card. Every one of these leaves the
   // user on Comparing, so every one of them has to be terminal.
+  //
+  // Swap was missing from this list entirely — the one family that is always
+  // on. See `swapTerminalFailureV1` for what that cost.
+  const swapFailure = swapTerminalFailureV1(evaluation.data as never);
   const commerceFailure =
     commerceCompare.data?.outcome === 'needs_clarification'
       ? {
@@ -656,7 +663,8 @@ export function RouteIntelligenceConsole() {
   const comparingFailure =
     comparePending || projection || earnCard || commerceCard || nftCard || aiCard
       ? null
-      : (commerceFailure ??
+      : (swapFailure ??
+        commerceFailure ??
         earnFailure ??
         nftFailure ??
         aiFailure ??
@@ -670,6 +678,18 @@ export function RouteIntelligenceConsole() {
   // number a user might want to change. Not a nav entry and not a page: there
   // is no top-level "x402", "Spend Permission" or "Payments protocol".
   const charges = useIntelligenceCharges({ enabled: paidIntelligenceOn });
+  // The three writes T60 shipped and no surface ever called. The panel used to
+  // render its status and offer nothing at all — the drawer opened onto a
+  // read-only page while the left rail promised a field that did not exist.
+  const updateBudget = useUpdateIntelligenceBudget();
+  const revokeBudget = useRevokeIntelligenceBudget();
+  const budgetChangeError = (() => {
+    const error = updateBudget.error ?? revokeBudget.error;
+    if (!error) return null;
+    // Never the raw message: a server error can carry an endpoint, and an
+    // endpoint can carry a key.
+    return 'That change could not be saved. Nothing was charged and your permission is unchanged.';
+  })();
   const budgetPanel = (
     <BudgetPaymentsPanel
       featureEnabled={paidIntelligenceOn}
@@ -686,6 +706,23 @@ export function RouteIntelligenceConsole() {
         { label: 'Settlement', value: status.data?.x402?.settleReady ? 'x402 · ready' : 'x402 · not ready' },
         { label: 'Network', value: status.data?.x402?.network ?? 'not reported' },
       ]}
+      changePending={updateBudget.isPending || revokeBudget.isPending}
+      changeError={budgetChangeError}
+      onUpdateLimit={(limits) =>
+        updateBudget.mutate({
+          periodLimitUsdc: limits.monthlyLimitUsdc,
+          maxPerCallUsdc: limits.maxPerRequestUsdc,
+        })
+      }
+      onRevoke={() => revokeBudget.mutate()}
+      // Deliberately no `onCreatePermission`. Granting a Base Account spend
+      // permission is a WALLET action and no client flow for it exists yet;
+      // wiring a button to the bookkeeping endpoint alone would record a
+      // permission the wallet never granted, which is the one thing this
+      // surface must never do.
+      createUnavailableReason={
+        'Granting a spending permission is a wallet action your Base Account signs, and that flow is not built yet. Free route comparison is unaffected.'
+      }
     />
   );
 

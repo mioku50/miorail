@@ -24,7 +24,9 @@ void React;
 
 export interface BudgetPaymentsPanelProps extends PaidIntelligenceInputV1 {
   onCreatePermission?: () => void;
-  onUpdateLimit?: () => void;
+  /** Both limits, as decimal USDC strings. The panel collects them; only the
+   * wallet can authorise them. */
+  onUpdateLimit?: (limits: { monthlyLimitUsdc: string; maxPerRequestUsdc: string }) => void;
   onPause?: () => void;
   onResume?: () => void;
   onRevoke?: () => void;
@@ -32,6 +34,26 @@ export interface BudgetPaymentsPanelProps extends PaidIntelligenceInputV1 {
   technicalDetails?: readonly { label: string; value: string }[];
   chargesLoading?: boolean;
   chargesUnavailableReason?: string | null;
+  /** True while a change is in flight, so the form cannot be submitted twice. */
+  changePending?: boolean;
+  /** Why the last change did not take. Never a raw server message. */
+  changeError?: string | null;
+  /**
+   * Why no permission can be created here yet.
+   *
+   * Granting one is a WALLET action — the user's Base Account signs it and
+   * Miorail never does. Until that flow exists, the honest thing is to name
+   * what is missing rather than show a button that cannot work. A dead button
+   * is worse than no button: it reads as a broken product rather than an
+   * unfinished one.
+   */
+  createUnavailableReason?: string | null;
+}
+
+/** A decimal USDC amount the wire will accept. Rejected here rather than
+ * server-side so the user is told before anything is sent. */
+export function isUsdcAmountV1(value: string): boolean {
+  return /^\d{1,7}(\.\d{1,6})?$/.test(value.trim()) && Number(value) > 0;
 }
 
 export function BudgetPaymentsPanel(props: BudgetPaymentsPanelProps): React.ReactElement {
@@ -84,20 +106,67 @@ export function BudgetPaymentsPanel(props: BudgetPaymentsPanelProps): React.Reac
           </div>
         )}
 
+        {/* The limits, as an actual form. This panel used to state a number and
+            offer no way to change it, while the left rail said "set a spending
+            limit — it takes one field". There was no field. */}
+        {props.onUpdateLimit && props.budget && (
+          <form
+            className="kv"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const form = event.currentTarget;
+              const monthly = String(new FormData(form).get('monthly') ?? '').trim();
+              const perRequest = String(new FormData(form).get('per-request') ?? '').trim();
+              if (!isUsdcAmountV1(monthly) || !isUsdcAmountV1(perRequest)) return;
+              props.onUpdateLimit?.({ monthlyLimitUsdc: monthly, maxPerRequestUsdc: perRequest });
+            }}
+          >
+            <div>
+              <span>Monthly limit (USDC)</span>
+              <input
+                className="goalinput"
+                name="monthly"
+                aria-label="Monthly limit in USDC"
+                defaultValue={props.budget.monthlyLimitUsdc}
+                inputMode="decimal"
+              />
+            </div>
+            <div>
+              <span>Max per request (USDC)</span>
+              <input
+                className="goalinput"
+                name="per-request"
+                aria-label="Maximum per request in USDC"
+                defaultValue={props.budget.maxPerRequestUsdc}
+                inputMode="decimal"
+              />
+            </div>
+            <div>
+              <button type="submit" className="btn" disabled={props.changePending === true}>
+                {props.changePending ? 'Saving…' : 'Save limits'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {props.changeError && <p className="note warn">{props.changeError}</p>}
+
         <div className="ctarow">
-          {status.action === 'create_permission' && props.onCreatePermission && (
-            <button type="button" className="btn" onClick={props.onCreatePermission}>
-              Create permission
-            </button>
-          )}
+          {status.action === 'create_permission' &&
+            (props.onCreatePermission ? (
+              <button type="button" className="btn" onClick={props.onCreatePermission}>
+                Create permission
+              </button>
+            ) : (
+              // Named, not hidden and not faked. See `createUnavailableReason`.
+              <span className="nt warn">
+                {props.createUnavailableReason ??
+                  'Granting a spending permission is a wallet action, and that flow is not built yet.'}
+              </span>
+            ))}
           {status.action === 'resume' && props.onResume && (
             <button type="button" className="btn" onClick={props.onResume}>
               Resume paid services
-            </button>
-          )}
-          {(status.action === 'raise_limit' || status.action === 'raise_max_per_call') && props.onUpdateLimit && (
-            <button type="button" className="btn" onClick={props.onUpdateLimit}>
-              Update limit
             </button>
           )}
           {view.rows && props.onPause && status.action !== 'resume' && (
@@ -106,7 +175,12 @@ export function BudgetPaymentsPanel(props: BudgetPaymentsPanelProps): React.Reac
             </button>
           )}
           {view.rows && props.onRevoke && (
-            <button type="button" className="btn sec" onClick={props.onRevoke}>
+            <button
+              type="button"
+              className="btn sec"
+              disabled={props.changePending === true}
+              onClick={props.onRevoke}
+            >
               Revoke permission
             </button>
           )}

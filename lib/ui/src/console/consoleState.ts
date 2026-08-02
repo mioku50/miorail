@@ -88,7 +88,11 @@ export const CONSOLE_COPY_V1 = {
   /** One adapter answered out of two. */
   oneAdapterQuoted: "Uniswap didn't answer. Comparing 1 of 2 routes.",
   walletDisconnected: 'Connect your wallet to prepare this swap. Miorail can compare routes without it.',
-  limitsMissing: 'Set a spending limit to continue — it takes one field.',
+  // Says what is true and what still works. The old wording — "it takes one
+  // field" — promised a field that existed nowhere: the Budget drawer rendered
+  // a status and no control at all, so anyone who followed the instruction
+  // found a dead end and no explanation.
+  limitsMissing: 'No spending permission yet, so paid checks are off. Free route comparison is unaffected.',
   recipientMissing: 'Miorail will only send to your own wallet unless you add another address.',
   portfolioUnavailable: 'Balances didn’t load. Route comparison still works.',
   notScored: 'not scored · no source',
