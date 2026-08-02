@@ -7,6 +7,8 @@ import {
   B20WatchResponseV1Schema,
   B20WatchlistAddRequestV1Schema,
   B20WatchlistResponseV1Schema,
+  B20ExitCheckRequestV1Schema,
+  B20ExitCheckResponseV1Schema,
 } from '@mioagent/api-zod';
 import {
   B20RequestError,
@@ -38,7 +40,9 @@ import {
   type B20WatchlistRepositoryV1,
 } from '@mioagent/route-storage';
 import { client } from '@mioagent/db';
+import { createAerodromeReaderV1 } from '@mioagent/swap-adapters';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
+import { analyseExitV1 } from '../lib/exitAnalysis.js';
 
 // ---------------------------------------------------------------------------
 // T67C — the B20 Control rail.
@@ -107,6 +111,10 @@ export const b20RouteRuntime = {
   repository: (): B20StorageRepositoryV1 => createDatabaseB20StorageRepository(client),
   watchlist: (): B20WatchlistRepositoryV1 => createDatabaseB20WatchlistRepository(client),
   reader: () => createB20ReaderV1({ rpcUrl: baseMainnetRpcUrlV1() }),
+  /** The Aerodrome Router, read-only. A separate reader from the B20 one
+   * because they speak to different contracts with different decoders — sharing
+   * one would mean a change to either could quietly alter the other. */
+  aerodromeReader: () => createAerodromeReaderV1({ rpcUrl: baseMainnetRpcUrlV1() }),
   rpcConfigured: () => baseMainnetRpcUrlV1().length > 0,
   ttlMs: ttlMsV1,
   watchTtlMs: watchTtlMsV1,
@@ -600,6 +608,101 @@ b20ControlRouter.delete('/b20/watchlist/:tokenAddress', async (req: Request, res
     res.json(B20WatchlistResponseV1Schema.parse(watchlistBodyV1(await guard.repository.listForUser(guard.user.id))));
   } catch (error) {
     storageFailure(res, error, 'watchlist');
+  }
+});
+
+// ---------------------------------------------------------------------------
+// T68C — the exit check.
+//
+// "Can I get back out, and at what cost." A read, entirely: `getAmountsOut` is
+// a view function, and this route's whole output is numbers and a verdict. It
+// prepares nothing, approves nothing and hands no route to an execution path.
+//
+// That distinction is what lets it quote an ARBITRARY token. The swap
+// allowlist exists to stop Miorail routing into anything; quoting is not
+// routing, and refusing to quote would mean refusing to answer the one
+// question a holder of a B20 token actually has.
+//
+// The controls come from the STORED snapshot, not a fresh read. Two reasons:
+// a control card is ~15 metered calls on top of the ~18 this route already
+// spends, and the answer says which block the controls came from so the two
+// halves can be dated independently rather than implied to be simultaneous.
+// ---------------------------------------------------------------------------
+
+b20ControlRouter.post('/b20/exit-check', async (req: Request, res: Response) => {
+  const guard = b20Guard(req, res);
+  if (!guard) return;
+
+  const parsed = B20ExitCheckRequestV1Schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_b20_exit_check_request', code: 'invalid_b20_exit_check_request' });
+    return;
+  }
+  const refusal = validateB20InspectRequestV1(parsed.data.chainId, parsed.data.tokenAddress);
+  if (refusal) {
+    res.status(400).json({ error: refusal, code: refusal, detail: refusalDetailV1(refusal) });
+    return;
+  }
+  if (!b20RouteRuntime.rpcConfigured()) {
+    res.status(503).json({ error: 'b20_rpc_unavailable', code: 'b20_rpc_unavailable' });
+    return;
+  }
+
+  try {
+    if (!(await b20RouteRuntime.migrationAvailable())) {
+      res.status(503).json({ error: 'b20_storage_unavailable', code: 'b20_storage_unavailable' });
+      return;
+    }
+    const recent = await b20RouteRuntime
+      .repository()
+      .recentSnapshots(guard.user.id, parsed.data.tokenAddress, 1);
+    const snapshot = recent[0]?.snapshot ?? null;
+    if (!snapshot) {
+      // Refused rather than assumed open. An exit check that skipped the
+      // controls would clear a token whose transfers are paused, which is the
+      // exact failure this whole rail exists to prevent.
+      res.status(409).json({
+        error: 'b20_controls_unread',
+        code: 'b20_controls_unread',
+        detail: 'This token’s controls have not been read yet. Check it once before asking whether you can exit.',
+      });
+      return;
+    }
+
+    const controls = exitControlsFromSnapshotV1(snapshot);
+    const analysis = await analyseExitV1({
+      reader: b20RouteRuntime.aerodromeReader(),
+      tokenAddress: parsed.data.tokenAddress as `0x${string}`,
+      profile: {
+        positionAtomic: parsed.data.positionAtomic,
+        maxRoundTripBps: parsed.data.maxRoundTripBps,
+        maxSlippageBps: parsed.data.maxSlippageBps,
+      },
+      controls,
+    });
+
+    res.json(
+      B20ExitCheckResponseV1Schema.parse({
+        tokenAddress: parsed.data.tokenAddress,
+        status: analysis.verdict.status,
+        // An `unmeasured` outcome carries no reason about the token, because
+        // there is none: the endpoint is what stopped the check.
+        reason: analysis.verdict.status === 'rejected' ? analysis.verdict.reason : null,
+        measurement: analysis.verdict.status === 'qualifies' ? analysis.verdict.measurement : null,
+        optimistic: analysis.verdict.status === 'qualifies' ? analysis.verdict.optimistic : false,
+        roundTripCostBps: analysis.roundTrip?.costBps ?? null,
+        exitCapacityAtomic: analysis.exitCapacity.capacityAtomic,
+        firstFailingAtomic: analysis.exitCapacity.firstFailingAtomic,
+        probeCount: analysis.exitCapacity.probeCount,
+        capacityInformative: analysis.capacityInformative,
+        referenceSizeAtomic: analysis.referenceSizeAtomic,
+        endpointDegraded: analysis.endpointDegraded,
+        controlsBlockNumber: snapshot.blockNumber,
+        checkedAt: b20RouteRuntime.now().toISOString(),
+      }),
+    );
+  } catch (error) {
+    storageFailure(res, error, 'exit-check');
   }
 });
 

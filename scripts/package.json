@@ -10,11 +10,13 @@
     "@mioagent/intent-engine": "workspace:*",
     "@mioagent/nft-engine": "workspace:*",
     "@mioagent/o1-compat": "workspace:*",
+    "@mioagent/opportunity-rail": "workspace:*",
     "@mioagent/paid-intelligence": "workspace:*",
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/route-outcomes": "workspace:*",
     "@mioagent/route-storage": "workspace:*",
     "@mioagent/security": "workspace:*",
+    "@mioagent/swap-adapters": "workspace:*",
     "drizzle-orm": "^0.36.4"
   },
   "devDependencies": {

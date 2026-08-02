@@ -394,6 +394,105 @@ describe('the portfolio sweep', () => {
   });
 });
 
+describe('the exit check', () => {
+  const check = (body: unknown, server = app()) =>
+    request(server).post('/api/route-intelligence/b20/exit-check').send(body as object);
+  const PROFILE = { chainId: 8453, positionAtomic: '100000000', maxRoundTripBps: 300, maxSlippageBps: 300 };
+
+  test('a token whose controls were never read is refused, not assumed open', async () => {
+    // An exit check that skipped the controls would clear a token whose
+    // transfers are paused — the exact failure this rail exists to prevent.
+    let quoted = false;
+    b20RouteRuntime.aerodromeReader = () => {
+      quoted = true;
+      return original.aerodromeReader();
+    };
+    const response = await check({ ...PROFILE, tokenAddress: TOKEN });
+    assert.equal(response.status, 409);
+    assert.equal(response.body.code, 'b20_controls_unread');
+    assert.equal(quoted, false, 'a refused check must not quote anything');
+  });
+
+  test('a malformed request is refused before any read', async () => {
+    assert.equal((await check({ ...PROFILE, tokenAddress: '0x1234' })).status, 400);
+    assert.equal((await check({ ...PROFILE, tokenAddress: TOKEN, maxSlippageBps: 0 })).status, 400);
+    // No position at all is a request that cannot be answered, not one that
+    // gets a default someone did not choose.
+    assert.equal((await check({ ...PROFILE, tokenAddress: TOKEN, positionAtomic: '0' })).status, 400);
+  });
+
+  test('a stored snapshot supplies the controls, and the answer dates them', async () => {
+    await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    b20RouteRuntime.aerodromeReader = () => ({
+      async readDefaultFactory() {
+        return { ok: true, value: '0x420dd381b31aef6683db6b902084cb0ffece40da' as const };
+      },
+      async readAmountsOut() {
+        // No pool anywhere. An ordinary answer about this pair.
+        return { ok: false, reason: 'no_route' };
+      },
+      async readBlockNumber() {
+        return blockNumber;
+      },
+      async readAllowance() {
+        return { ok: true, value: 0n };
+      },
+    });
+    const response = await check({ ...PROFILE, tokenAddress: TOKEN });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.status, 'rejected');
+    assert.equal(response.body.reason, 'no_entry_route');
+    // The two halves are dated independently rather than implied simultaneous.
+    assert.equal(response.body.controlsBlockNumber, blockNumber);
+    assert.equal(response.body.endpointDegraded, false);
+  });
+
+  test('nothing in the response prepares, approves or signs anything', async () => {
+    await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    b20RouteRuntime.aerodromeReader = () => ({
+      async readDefaultFactory() {
+        return { ok: true, value: '0x420dd381b31aef6683db6b902084cb0ffece40da' as const };
+      },
+      async readAmountsOut() {
+        return { ok: false, reason: 'no_route' };
+      },
+      async readBlockNumber() {
+        return blockNumber;
+      },
+      async readAllowance() {
+        return { ok: true, value: 0n };
+      },
+    });
+    const response = await check({ ...PROFILE, tokenAddress: TOKEN });
+    const body = JSON.stringify(response.body);
+    for (const forbidden of ['calls', 'calldata', 'to', 'router', 'approval', 'blueprint', 'signature']) {
+      assert.ok(!new RegExp(`"${forbidden}"`).test(body), `an exit check must not return ${forbidden}`);
+    }
+  });
+
+  test('the exit check is behind the same gate as inspection', async () => {
+    b20RouteRuntime.flags = () => ({ ...FLAGS, b20ControlV1: false });
+    assert.equal((await check({ ...PROFILE, tokenAddress: TOKEN })).status, 404);
+  });
+
+  test('an unauthenticated caller reaches no router', async () => {
+    let quoted = false;
+    b20RouteRuntime.aerodromeReader = () => {
+      quoted = true;
+      return original.aerodromeReader();
+    };
+    assert.equal((await check({ ...PROFILE, tokenAddress: TOKEN }, app(null))).status, 401);
+    assert.equal(quoted, false);
+  });
+
+  test('no RPC endpoint is a stable 503, not a guess', async () => {
+    b20RouteRuntime.rpcConfigured = () => false;
+    const response = await check({ ...PROFILE, tokenAddress: TOKEN });
+    assert.equal(response.status, 503);
+    assert.equal(response.body.code, 'b20_rpc_unavailable');
+  });
+});
+
 describe('the watchlist a background sweep reads', () => {
   const list = (server = app()) => request(server).get('/api/route-intelligence/b20/watchlist');
   const add = (body: unknown, server = app()) =>

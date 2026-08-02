@@ -27,6 +27,7 @@
     "@mioagent/memory": "workspace:*",
     "@mioagent/nft-engine": "workspace:*",
     "@mioagent/observability": "workspace:*",
+    "@mioagent/opportunity-rail": "workspace:*",
     "@mioagent/paid-intelligence": "workspace:*",
     "@mioagent/route-card": "workspace:*",
     "@mioagent/route-domain": "workspace:*",

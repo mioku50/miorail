@@ -2686,6 +2686,75 @@ export const B20WatchlistAddRequestV1Schema = z
   })
   .strict();
 
+// T68C — the exit check. "Can I get back out, and at what cost."
+//
+// The request carries a PROFILE, not a route: a position size and two
+// tolerances. There is deliberately no field for a router, a pool, a path or a
+// recipient — this is a read, and the server decides what to ask by quoting
+// every allowed candidate rather than being told which one to trust.
+export const B20ExitCheckRequestV1Schema = z
+  .object({
+    chainId: z.literal(8453),
+    tokenAddress: AddressV1Schema,
+    /** Atomic units of USDC the user would put in. Bounded on the wire: each
+     * check is a dozen-odd metered router calls. */
+    positionAtomic: z.string().regex(/^[1-9][0-9]{0,17}$/),
+    /** Round-trip cost the user will accept, in basis points. */
+    maxRoundTripBps: z.number().int().min(1).max(10_000),
+    /** Slippage tolerance the exit capacity is measured against. */
+    maxSlippageBps: z.number().int().min(1).max(10_000),
+  })
+  .strict();
+
+export const B20ExitCheckResponseV1Schema = z
+  .object({
+    tokenAddress: AddressV1Schema,
+    /** `unmeasured` is not a hedge. Once a route search has been throttled, a
+     * missing route says nothing about the token — this code once reported AERO,
+     * one of the deepest pools on Base, as impossible to sell out of. */
+    status: z.enum(['qualifies', 'rejected', 'unmeasured']),
+    /** Present on a rejection. One of the fixed reasons — never free text, so a
+     * surface cannot be handed a sentence it did not write. */
+    reason: z
+      .enum([
+        'not_b20',
+        'controls_unreadable',
+        'transfers_paused',
+        'transfer_policy_may_block',
+        'no_entry_route',
+        'no_exit_route',
+        'round_trip_above_tolerance',
+        'exit_capacity_below_position',
+      ])
+      .nullable(),
+    /** `quoted_pre_entry` means the exit was priced against the pool BEFORE the
+     * entry moved it, so the round trip is a bound rather than a result. Sent
+     * so the screen can say so rather than the server deciding it does not
+     * matter. */
+    measurement: z.enum(['simulated', 'quoted_pre_entry']).nullable(),
+    optimistic: z.boolean(),
+    roundTripCostBps: z.number().int().min(0).max(100_000).nullable(),
+    /** Atomic units of the TOKEN, not of USDC: capacity is measured in what is
+     * being sold. */
+    exitCapacityAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    firstFailingAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    probeCount: z.number().int().min(0).max(16),
+    /** False when the ladder measured a single point. A pass on one probe is
+     * not a depth finding and must not be shown as one. */
+    capacityInformative: z.boolean(),
+    /** What every impact figure is relative to. Impact is measured against the
+     * smallest probe that priced, never against a mid price. */
+    referenceSizeAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    /** True when a read failed for a reason that is not "no such pool". An
+     * all-empty result from a failing endpoint is not "no liquidity". */
+    endpointDegraded: z.boolean(),
+    /** The block the controls were read at, so the two halves of this answer
+     * can be dated independently. */
+    controlsBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    checkedAt: z.string().min(1).max(60),
+  })
+  .strict();
+
 export const B20InspectResponseV1Schema = z
   .object({
     snapshotId: z.string().min(1).max(200),

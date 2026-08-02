@@ -884,6 +884,38 @@ export function useRemoveB20Watch(
   });
 }
 
+/**
+ * T68C — "can I get back out, and at what cost."
+ *
+ * A mutation, deliberately. Each check is a dozen-odd metered router calls, so
+ * it happens when a user asks for it and never on a remount, a refocus or a
+ * reconnect. The one question this page exists to answer is also the one that
+ * costs money to ask.
+ */
+export function useB20ExitCheck(
+  options?: Omit<
+    UseMutationOptions<
+      apiSpec.B20ExitCheckResponseV1,
+      Error,
+      { tokenAddress: string; positionAtomic: string; maxRoundTripBps: number; maxSlippageBps: number }
+    >,
+    'mutationFn' | 'retry'
+  >,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const response = await fetchApi<unknown>('/api/route-intelligence/b20/exit-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chainId: 8453, ...input, tokenAddress: input.tokenAddress.toLowerCase() }),
+      });
+      return apiSpec.B20ExitCheckResponseV1Schema.parse(response);
+    },
+  });
+}
+
 export function useBaseMcpToolsProbe(
   options?: Omit<UseMutationOptions<apiSpec.BaseMcpToolProbeResponse, Error, void>, 'mutationFn'>
 ) {

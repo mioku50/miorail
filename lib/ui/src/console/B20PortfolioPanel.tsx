@@ -91,6 +91,11 @@ export interface B20PortfolioPanelProps {
   /** Null when a sweep has run. Otherwise says why there is nothing yet. */
   emptyReason: string | null;
   onOpenToken?: (tokenAddress: string) => void;
+  /** T68C — asks the exit question for one holding. */
+  onCheckExit?: (tokenAddress: string) => void;
+  /** The token the exit card below is currently about, so a holding does not
+   * offer to re-run a check whose answer is already on screen. */
+  exitCheckedToken?: string | null;
 }
 
 export function B20PortfolioPanel({
@@ -98,6 +103,8 @@ export function B20PortfolioPanel({
   otherTokenCount,
   emptyReason,
   onOpenToken,
+  onCheckExit,
+  exitCheckedToken,
 }: B20PortfolioPanelProps): React.ReactElement {
   return (
     <div className="panel">
@@ -160,6 +167,17 @@ export function B20PortfolioPanel({
                         </div>
                       ))}
                     </div>
+                  )}
+                  {onCheckExit && (
+                    // Before "swap this token", because whether you can get
+                    // back out is prior to deciding to go in.
+                    <button
+                      type="button"
+                      className="btn sec"
+                      onClick={() => onCheckExit(holding.tokenAddress)}
+                    >
+                      {exitCheckedToken === holding.tokenAddress ? 'Re-check exit' : 'Can I get out?'}
+                    </button>
                   )}
                   {onOpenToken && (
                     <button

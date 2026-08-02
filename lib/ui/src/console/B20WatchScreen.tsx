@@ -1,5 +1,6 @@
 import React from 'react';
 import { B20ControlWatchPanel, type B20WatchLikeV1 } from './B20Panels';
+import { B20ExitCard, type ExitCheckLikeV1 } from './B20ExitCard';
 import { B20PortfolioPanel, type B20HoldingV1 } from './B20PortfolioPanel';
 
 void React;
@@ -84,6 +85,20 @@ export interface B20WatchScreenModelV1 {
   /** Non-B20 tokens in the wallet, counted rather than listed. */
   otherTokenCount: number;
   onOpenToken?: (tokenAddress: string) => void;
+  /** T68C — the exit check, for the one token it was last run on. One at a
+   * time on purpose: each check is a dozen-odd metered router calls, and a
+   * page that ran one per holding on mount would be a page nobody could
+   * afford to open. */
+  exit: {
+    tokenAddress: string | null;
+    check: ExitCheckLikeV1 | null;
+    positionLabel: string;
+    slippagePercentLabel: string;
+    formatTokenAmount: (atomic: string) => string;
+    loading: boolean;
+    unavailableReason: string | null;
+    onCheck: (tokenAddress: string) => void;
+  };
   notChecked: readonly string[];
   checkedAt: string | null;
   loading: boolean;
@@ -143,6 +158,23 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
             : model.unavailableReason
         }
         onOpenToken={model.onOpenToken}
+        onCheckExit={model.exit.onCheck}
+        exitCheckedToken={model.exit.tokenAddress}
+      />
+
+      {/* Second, because it answers a question you only have once you hold
+          something — and because it is the only card here that costs money to
+          fill in. */}
+      <B20ExitCard
+        check={model.exit.check}
+        positionLabel={model.exit.positionLabel}
+        slippagePercentLabel={model.exit.slippagePercentLabel}
+        formatTokenAmount={model.exit.formatTokenAmount}
+        loading={model.exit.loading}
+        unavailableReason={model.exit.unavailableReason}
+        onCheck={() => {
+          if (model.exit.tokenAddress) model.exit.onCheck(model.exit.tokenAddress);
+        }}
       />
 
       <div className="panel">
