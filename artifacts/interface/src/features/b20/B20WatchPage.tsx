@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useLocation } from 'wouter';
 import { useAccount } from 'wagmi';
 import {
@@ -12,7 +12,14 @@ import {
   chainLabelV1,
   useConsoleTheme,
 } from '@mioagent/ui';
-import { useB20Watch, usePortfolio, useStatus } from '@mioagent/api-client-react';
+import {
+  useAddB20Watch,
+  useB20Watch,
+  useB20Watchlist,
+  usePortfolio,
+  useRemoveB20Watch,
+  useStatus,
+} from '@mioagent/api-client-react';
 
 // ---------------------------------------------------------------------------
 // T67F — the B20 tab.
@@ -59,31 +66,49 @@ export function B20WatchPage() {
   const portfolio = usePortfolio(address);
   const sweep = useB20Watch();
 
-  // Tracked tokens live in localStorage rather than in a table. They are a
-  // per-browser list of addresses, they carry nothing private, and a migration
-  // for them would be schema churn for a preference. When they need to survive
-  // a device change, they become a watchlist row — not before.
-  const [tracked, setTracked] = useState<string[]>(() => {
+  const gateOn = status.data?.productMigration?.b20ControlV1 === true;
+
+  // T68B — the watchlist moved from localStorage to a table, because a sweep
+  // that runs on a timer has no browser to ask. A list in localStorage is a
+  // list nothing can watch.
+  const watchlist = useB20Watchlist({ enabled: gateOn && Boolean(address) });
+  const addWatch = useAddB20Watch();
+  const removeWatch = useRemoveB20Watch();
+  const tracked = useMemo(
+    () => (watchlist.data?.tokens ?? []).map((entry) => entry.tokenAddress),
+    [watchlist.data],
+  );
+
+  // Whatever the browser was already tracking is pushed up ONCE and then
+  // forgotten locally. Dropping it silently would delete a list a user built by
+  // hand, which is the one thing a storage change must not do.
+  const seeded = useRef(false);
+  useEffect(() => {
+    if (seeded.current || !watchlist.isSuccess) return;
+    seeded.current = true;
+    let local: string[];
     try {
       const raw = globalThis.localStorage?.getItem(TRACKED_KEY_V1);
       const parsed: unknown = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed.filter((entry): entry is string => ADDRESS_V1.test(String(entry))) : [];
+      local = Array.isArray(parsed) ? parsed.filter((entry): entry is string => ADDRESS_V1.test(String(entry))) : [];
     } catch {
       // A corrupt entry must not take the page down with it.
-      return [];
+      local = [];
     }
-  });
-
-  const persistTracked = useCallback((next: string[]) => {
-    setTracked(next);
-    try {
-      globalThis.localStorage?.setItem(TRACKED_KEY_V1, JSON.stringify(next));
-    } catch {
-      // Storage can be full or blocked. The list still works for this session.
+    const known = new Set<string>(tracked);
+    const missing = local.map((entry) => entry.toLowerCase()).filter((entry) => !known.has(entry));
+    // Cleared only after the adds are issued, so a failed migration leaves the
+    // local list where it was rather than losing it to a network error.
+    for (const token of missing) addWatch.mutate({ tokenAddress: token });
+    if (local.length > 0 && missing.length === 0) {
+      try {
+        globalThis.localStorage?.removeItem(TRACKED_KEY_V1);
+      } catch {
+        // Blocked storage keeps a stale copy. It is re-seeded and de-duplicated
+        // by the server next time, so this is harmless.
+      }
     }
-  }, []);
-
-  const gateOn = status.data?.productMigration?.b20ControlV1 === true;
+  }, [watchlist.isSuccess, tracked, addWatch]);
 
   const held = useMemo(
     () =>
@@ -130,6 +155,24 @@ export function B20WatchPage() {
   }, [sweep.data, held]);
 
   const otherTokenCount = Math.max(0, held.length - holdings.length);
+
+  // Watchlist failures are stated on the watchlist card, not in the sweep's
+  // banner. A full list and an unreadable chain are different problems and only
+  // one of them is fixed by pressing Check now again.
+  const trackError = (() => {
+    const error = addWatch.error ?? removeWatch.error ?? watchlist.error;
+    if (!error) return null;
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('b20_watchlist_full')) {
+      return `This account already watches ${SWEEP_LIMIT_V1} tokens. Remove one to add another.`;
+    }
+    if (message.includes('b20_watchlist_unavailable')) {
+      return 'Background watching is not set up on this server yet, so this list cannot be saved.';
+    }
+    // Never the message: a server error can carry an endpoint, and an endpoint
+    // can carry a key.
+    return 'The watchlist could not be reached. Nothing here is a statement about your tokens.';
+  })();
 
   const unavailableReason = !address
     ? 'Connect your wallet to see what the tokens you hold have done.'
@@ -230,9 +273,11 @@ export function B20WatchPage() {
         tokens={sweep.data?.tokens ?? []}
         holdings={holdings}
         otherTokenCount={otherTokenCount}
-        trackedTokens={tracked}
-        onTrackToken={(token) => persistTracked([...new Set([...tracked, token])])}
-        onUntrackToken={(token) => persistTracked(tracked.filter((entry) => entry !== token))}
+        trackedTokens={watchlist.data?.tokens ?? []}
+        trackRemaining={watchlist.data?.remaining ?? null}
+        trackError={trackError}
+        onTrackToken={(token) => addWatch.mutate({ tokenAddress: token })}
+        onUntrackToken={(token) => removeWatch.mutate({ tokenAddress: token })}
         // Swapping a held B20 token is the Routes flow's job, not a second
         // execution path. The tab hands the goal over rather than growing one.
         onOpenToken={(token) => navigate(`/?goal=${encodeURIComponent(`swap ${token} to USDC`)}`)}

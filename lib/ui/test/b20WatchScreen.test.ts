@@ -4,7 +4,12 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
 
-import { changedTokensV1, shortAddressV1, type B20WatchedTokenLikeV1 } from '../src/console/B20WatchScreen';
+import {
+  changedTokensV1,
+  shortAddressV1,
+  trackedStatusLineV1,
+  type B20WatchedTokenLikeV1,
+} from '../src/console/B20WatchScreen';
 
 // ---------------------------------------------------------------------------
 // T67F — the B20 tab.
@@ -237,6 +242,36 @@ describe('a B20 token can be tracked by hand', () => {
     assert.match(page, /TRACKED_KEY_V1/);
   });
 
+  test('the watchlist lives on the server, because a timer has no browser to ask', () => {
+    // T68B. A list in localStorage is a list nothing can watch.
+    assert.match(page, /useB20Watchlist/);
+    assert.match(page, /list in localStorage is a\s*\n?\s*\/\/ list nothing can watch/);
+  });
+
+  test('what the browser already tracked is pushed up, not dropped', () => {
+    // Deleting a list a user built by hand is the one thing a storage change
+    // must not do.
+    assert.match(page, /seeded/);
+    assert.match(page, /addWatch\.mutate\(\{ tokenAddress: token \}\)/);
+  });
+
+  test('the page claims background watching, and each row makes the claim checkable', () => {
+    assert.match(screen, /Miorail reads these on its own/);
+    assert.match(screen, /Opening this page is not what\s*\n?\s*makes that happen/);
+    assert.match(screen, /trackedStatusLineV1/);
+  });
+
+  test('never read is not the same sentence as nothing changed', () => {
+    assert.match(screen, /return 'not read yet'/);
+  });
+
+  test('a full watchlist is its own message, not the sweep\u2019s banner', () => {
+    // A full list and an unreadable chain are different problems, and only one
+    // of them is fixed by pressing Check now again.
+    assert.match(page, /b20_watchlist_full/);
+    assert.match(page, /trackError/);
+  });
+
   test('the balance comes from the token, not from the balance provider', () => {
     assert.match(page, /formatBalanceV1\(token\.balanceAtomic/);
     // "not read" — never a zero, which would repeat the provider's own error
@@ -248,6 +283,47 @@ describe('a B20 token can be tracked by hand', () => {
     // A float turns 18 decimals into scientific notation.
     assert.match(page, /BigInt\(atomic\)/);
     assert.ok(!/Number\(atomic\)/.test(page));
+  });
+});
+
+describe('a watched token says when Miorail last looked', () => {
+  test('never read says so, rather than borrowing the blank a steady token uses', () => {
+    assert.equal(
+      trackedStatusLineV1({ tokenAddress: '0xabc', lastSweptAt: null, lastOutcome: null }),
+      'not read yet',
+    );
+  });
+
+  test('a failed reading is not a reading', () => {
+    const line = trackedStatusLineV1({
+      tokenAddress: '0xabc',
+      lastSweptAt: '2026-08-02T09:30:00.000Z',
+      lastOutcome: 'unreadable',
+    });
+    assert.match(line, /could not be read/);
+    // "tried", not "read": nothing was learned about the token.
+    assert.match(line, /tried 2026-08-02 09:30/);
+  });
+
+  test('not a B20 token is an ordinary answer, and dated', () => {
+    const line = trackedStatusLineV1({
+      tokenAddress: '0xabc',
+      lastSweptAt: '2026-08-02T09:30:00.000Z',
+      lastOutcome: 'not_b20',
+    });
+    assert.match(line, /not a B20 token/);
+    assert.ok(!/could not|fail/i.test(line));
+  });
+
+  test('a successful reading carries its date, so freshness is never implied', () => {
+    assert.equal(
+      trackedStatusLineV1({
+        tokenAddress: '0xabc',
+        lastSweptAt: '2026-08-02T09:30:00.000Z',
+        lastOutcome: 'read',
+      }),
+      'read 2026-08-02 09:30',
+    );
   });
 });
 

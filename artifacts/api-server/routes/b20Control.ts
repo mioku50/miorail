@@ -5,6 +5,8 @@ import {
   B20InspectResponseV1Schema,
   B20WatchRequestV1Schema,
   B20WatchResponseV1Schema,
+  B20WatchlistAddRequestV1Schema,
+  B20WatchlistResponseV1Schema,
 } from '@mioagent/api-zod';
 import {
   B20RequestError,
@@ -16,6 +18,7 @@ import {
   decodeB20BalanceV1,
   inspectB20TokenV1,
   buildB20CardV1,
+  isWellFormedAddressV1,
   refusalDetailV1,
   validateB20InspectRequestV1,
   type B20ControlSnapshotV1,
@@ -26,7 +29,13 @@ import {
   RouteStorageConflictError,
   RouteStorageIntegrityError,
   createDatabaseB20StorageRepository,
+  createDatabaseB20WatchlistRepository,
+  b20SweepOutcomeFromDetectionV1,
+  b20WatchlistIdV1,
+  B20_WATCHLIST_CAPACITY_V1,
   type B20StorageRepositoryV1,
+  type B20WatchlistEntryV1,
+  type B20WatchlistRepositoryV1,
 } from '@mioagent/route-storage';
 import { client } from '@mioagent/db';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
@@ -96,6 +105,7 @@ function watchDeadlineMsV1(): number {
 export const b20RouteRuntime = {
   flags: getMiorailProductMigrationFlags,
   repository: (): B20StorageRepositoryV1 => createDatabaseB20StorageRepository(client),
+  watchlist: (): B20WatchlistRepositoryV1 => createDatabaseB20WatchlistRepository(client),
   reader: () => createB20ReaderV1({ rpcUrl: baseMainnetRpcUrlV1() }),
   rpcConfigured: () => baseMainnetRpcUrlV1().length > 0,
   ttlMs: ttlMsV1,
@@ -112,6 +122,12 @@ export const b20RouteRuntime = {
     `;
     const row = rows[0];
     return Boolean(row && row.snapshots && row.evidence);
+  },
+  /** Checked separately from the snapshot tables: a server that can inspect
+   * but has not run 0024 must keep inspecting rather than 503 the whole tab. */
+  watchlistAvailable: async (): Promise<boolean> => {
+    const rows = await client`SELECT to_regclass('public.b20_watchlist') AS watchlist`;
+    return Boolean(rows[0]?.watchlist);
   },
   now: () => new Date(),
 };
@@ -346,6 +362,12 @@ b20ControlRouter.post('/b20/watch', async (req: Request, res: Response) => {
       return;
     }
 
+    // Resolved once, not per token: a server that has not run migration 0024
+    // still sweeps, it just has no watchlist clock to update.
+    const watchlist = (await b20RouteRuntime.watchlistAvailable())
+      ? b20RouteRuntime.watchlist()
+      : null;
+
     const results: unknown[] = [];
     const notChecked: string[] = [];
     let sweepStopped = false;
@@ -427,6 +449,16 @@ b20ControlRouter.post('/b20/watch', async (req: Request, res: Response) => {
       }
       const previous = recent[0] ?? null;
       const stored = await repository.insertSnapshot({ userId: guard.user.id, snapshot: result.snapshot });
+      // An interactive read counts as a read. Without this the background sweep
+      // would re-read, minutes later, a token the user just paid to read — and
+      // the page would still say "never checked by Miorail" beside it.
+      if (watchlist) {
+        await watchlist.recordSweep({
+          id: b20WatchlistIdV1(guard.user.id, token),
+          at: now,
+          outcome: b20SweepOutcomeFromDetectionV1(stored.snapshot.detection.outcome),
+        });
+      }
       const balance =
         stored.snapshot.detection.outcome === 'not_b20'
           ? { balanceAtomic: null, decimals: null }
@@ -456,6 +488,118 @@ b20ControlRouter.post('/b20/watch', async (req: Request, res: Response) => {
       return;
     }
     storageFailure(res, error, 'watch');
+  }
+});
+
+// ---------------------------------------------------------------------------
+// T68B — the watchlist.
+//
+// The list a background sweep reads. It lives on the server for one reason: a
+// sweep that runs on a timer has no browser to ask, so a watchlist in
+// localStorage is a watchlist nothing can watch.
+//
+// Only addresses a user typed in go here. Miorail does not decide on anyone's
+// behalf what is worth watching, and a list seeded from a portfolio feed would
+// miss every B20 token anyway — none of them are indexed by a balance provider.
+// ---------------------------------------------------------------------------
+
+/** The shared head of the three watchlist routes: flag, session, migration. */
+async function watchlistGuard(
+  req: Request,
+  res: Response,
+): Promise<{ user: NonNullable<ReturnType<typeof sessionUser>>; repository: B20WatchlistRepositoryV1 } | null> {
+  const guard = b20Guard(req, res);
+  if (!guard) return null;
+  if (!(await b20RouteRuntime.watchlistAvailable())) {
+    res.status(503).json({ error: 'b20_watchlist_unavailable', code: 'b20_watchlist_unavailable' });
+    return null;
+  }
+  return { user: guard.user, repository: b20RouteRuntime.watchlist() };
+}
+
+function watchlistBodyV1(entries: readonly B20WatchlistEntryV1[]) {
+  return {
+    tokens: entries.map((entry) => ({
+      tokenAddress: entry.tokenAddress,
+      addedAt: entry.createdAt,
+      lastSweptAt: entry.lastSweptAt,
+      lastOutcome: entry.lastOutcome,
+    })),
+    remaining: Math.max(0, B20_WATCHLIST_CAPACITY_V1 - entries.length),
+  };
+}
+
+b20ControlRouter.get('/b20/watchlist', async (req: Request, res: Response) => {
+  const guard = await watchlistGuard(req, res);
+  if (!guard) return;
+  try {
+    const entries = await guard.repository.listForUser(guard.user.id);
+    res.json(B20WatchlistResponseV1Schema.parse(watchlistBodyV1(entries)));
+  } catch (error) {
+    storageFailure(res, error, 'watchlist');
+  }
+});
+
+b20ControlRouter.post('/b20/watchlist', async (req: Request, res: Response) => {
+  const guard = await watchlistGuard(req, res);
+  if (!guard) return;
+
+  const parsed = B20WatchlistAddRequestV1Schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_b20_watchlist_request', code: 'invalid_b20_watchlist_request' });
+    return;
+  }
+  // Refused before any write, for the same reason inspection refuses it: a
+  // malformed address is a caller error, not a fact about a token.
+  const refusal = validateB20InspectRequestV1(parsed.data.chainId, parsed.data.tokenAddress);
+  if (refusal) {
+    res.status(400).json({ error: refusal, code: refusal, detail: refusalDetailV1(refusal) });
+    return;
+  }
+
+  try {
+    await guard.repository.addToken({
+      userId: guard.user.id,
+      tokenAddress: parsed.data.tokenAddress,
+      now: b20RouteRuntime.now(),
+    });
+    // The whole list comes back, not just the new row: the cap and the sweep
+    // clock belong to the list, and a surface that patched one entry in would
+    // have to recompute both from a state it does not own.
+    res.status(201).json(
+      B20WatchlistResponseV1Schema.parse(watchlistBodyV1(await guard.repository.listForUser(guard.user.id))),
+    );
+  } catch (error) {
+    if (error instanceof RouteStorageConflictError) {
+      // 409, not 400: the request was well formed and the account is simply
+      // full. The detail names the cap so the user knows what to do about it.
+      res.status(409).json({
+        error: 'b20_watchlist_full',
+        code: 'b20_watchlist_full',
+        detail: error.message,
+      });
+      return;
+    }
+    storageFailure(res, error, 'watchlist');
+  }
+});
+
+b20ControlRouter.delete('/b20/watchlist/:tokenAddress', async (req: Request, res: Response) => {
+  const guard = await watchlistGuard(req, res);
+  if (!guard) return;
+
+  const address = String(req.params.tokenAddress ?? '');
+  if (!isWellFormedAddressV1(address)) {
+    res.status(400).json({ error: 'b20_address_invalid', code: 'b20_address_invalid' });
+    return;
+  }
+  try {
+    // Removing something that is not there is not an error: the caller wanted
+    // it gone, and it is gone. Two tabs must not turn one removal into a 404.
+    await guard.repository.removeToken(guard.user.id, address);
+    res.json(B20WatchlistResponseV1Schema.parse(watchlistBodyV1(await guard.repository.listForUser(guard.user.id))));
+  } catch (error) {
+    storageFailure(res, error, 'watchlist');
   }
 });
 

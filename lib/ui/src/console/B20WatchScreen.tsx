@@ -37,6 +37,29 @@ export interface B20WatchedTokenLikeV1 {
   reason: string | null;
 }
 
+export interface B20TrackedTokenLikeV1 {
+  tokenAddress: string;
+  /** When a sweep last read this token — including one that ran with nobody
+   * watching. Null means never read, which is not the same as unchanged. */
+  lastSweptAt: string | null;
+  lastOutcome: 'read' | 'not_b20' | 'unreadable' | null;
+}
+
+/**
+ * What a watched token's last reading says, in one line.
+ *
+ * The distinction this exists to keep: a token nobody has read yet says so,
+ * rather than borrowing the blank space that a token with no changes occupies.
+ * "Never read" and "nothing has moved" look identical if you let them.
+ */
+export function trackedStatusLineV1(entry: B20TrackedTokenLikeV1): string {
+  if (entry.lastSweptAt === null) return 'not read yet';
+  const when = entry.lastSweptAt.slice(0, 16).replace('T', ' ');
+  if (entry.lastOutcome === 'not_b20') return `not a B20 token · read ${when}`;
+  if (entry.lastOutcome === 'unreadable') return `could not be read · tried ${when}`;
+  return `read ${when}`;
+}
+
 export interface B20WatchScreenModelV1 {
   tokens: readonly B20WatchedTokenLikeV1[];
   /** T68 — addresses the user added by hand, persisted between visits.
@@ -44,8 +67,16 @@ export interface B20WatchScreenModelV1 {
    * This is not a convenience. No balance provider indexes B20 — the tokens are
    * precompiles whose `eth_getCode` returns one byte — so a wallet holding one
    * is reported as holding nothing, and a portfolio-driven sweep never learns
-   * the address exists. Typing it in is the only complete path. */
-  trackedTokens: readonly string[];
+   * the address exists. Typing it in is the only complete path.
+   *
+   * T68B — each entry now carries when MIORAIL last read it, which is a
+   * different fact from when this browser last asked. */
+  trackedTokens: readonly B20TrackedTokenLikeV1[];
+  /** How many more the account may add. Stated before a user types an address
+   * and is refused. */
+  trackRemaining: number | null;
+  /** Why the list could not be loaded or changed. Never a claim about a token. */
+  trackError: string | null;
   onTrackToken: (tokenAddress: string) => void;
   onUntrackToken: (tokenAddress: string) => void;
   /** T68 — the B20 tokens this wallet holds, joined with their balances. */
@@ -116,11 +147,13 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
 
       <div className="panel">
         <div className="ph">
-          <h3>Track a token</h3>
+          <h3>Watched tokens</h3>
           <span className="sub">
             {model.trackedTokens.length === 0
               ? 'none added'
-              : `${model.trackedTokens.length} added by hand`}
+              : `${model.trackedTokens.length} watched${
+                  model.trackRemaining === null ? '' : ` · ${model.trackRemaining} slot${model.trackRemaining === 1 ? '' : 's'} left`
+                }`}
           </span>
         </div>
         <div className="pb">
@@ -128,6 +161,14 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
             Balance providers do not index B20 — the tokens are precompiles, and a wallet holding one
             is reported as holding nothing. Paste a token address to watch it regardless.
           </p>
+          {/* The retention claim, and the only one this page is allowed to
+              make: Miorail reads these when nobody is here. Each row says when
+              it last did, so the claim is checkable rather than reassuring. */}
+          <p className="lnote">
+            Miorail reads these on its own and records what changed. Opening this page is not what
+            makes that happen.
+          </p>
+          {model.trackError && <p className="note warn">{model.trackError}</p>}
           <form
             className="goalline"
             onSubmit={(event) => {
@@ -152,10 +193,17 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
           </form>
           {model.trackedTokens.length > 0 && (
             <div className="kv">
-              {model.trackedTokens.map((token) => (
-                <div key={token}>
-                  <span className="mono">{shortAddressV1(token)}</span>
-                  <button type="button" className="btn sec" onClick={() => model.onUntrackToken(token)}>
+              {model.trackedTokens.map((entry) => (
+                <div key={entry.tokenAddress}>
+                  <span className="mono">{shortAddressV1(entry.tokenAddress)}</span>
+                  <span className={entry.lastOutcome === 'unreadable' ? 'warn' : undefined}>
+                    {trackedStatusLineV1(entry)}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn sec"
+                    onClick={() => model.onUntrackToken(entry.tokenAddress)}
+                  >
                     Remove
                   </button>
                 </div>

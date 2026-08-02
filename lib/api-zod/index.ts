@@ -2652,6 +2652,40 @@ export const B20WatchResponseV1Schema = z
   })
   .strict();
 
+// T68B — the watchlist a background sweep reads.
+//
+// The wire carries no sweep schedule, no interval and no "next run" field. When
+// Miorail will next read a token is an operator's concern; what a holder needs
+// is when it LAST read one, which is `lastSweptAt` and is a fact rather than a
+// promise.
+export const B20WatchlistEntryV1Schema = z
+  .object({
+    tokenAddress: AddressV1Schema,
+    addedAt: z.string().min(1).max(60),
+    /** When a sweep last reached this token, background or interactive. Null
+     * means never read — which is not the same as unchanged, and the two must
+     * not render alike. */
+    lastSweptAt: z.string().min(1).max(60).nullable(),
+    lastOutcome: z.enum(['read', 'not_b20', 'unreadable']).nullable(),
+  })
+  .strict();
+
+export const B20WatchlistResponseV1Schema = z
+  .object({
+    tokens: z.array(B20WatchlistEntryV1Schema).max(25),
+    /** How many more this account may add, so a surface can say so before a
+     * user types an address and is refused. */
+    remaining: z.number().int().min(0).max(25),
+  })
+  .strict();
+
+export const B20WatchlistAddRequestV1Schema = z
+  .object({
+    chainId: z.literal(8453),
+    tokenAddress: AddressV1Schema,
+  })
+  .strict();
+
 export const B20InspectResponseV1Schema = z
   .object({
     snapshotId: z.string().min(1).max(200),

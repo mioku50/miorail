@@ -169,6 +169,13 @@
       "when": 1785600000000,
       "tag": "0023_t67c1_route_outcome_feedback",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1785686400000,
+      "tag": "0024_t68_b20_watchlist",
+      "breakpoints": true
     }
   ]
 }

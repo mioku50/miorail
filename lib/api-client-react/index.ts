@@ -815,6 +815,75 @@ export function useB20Watch(
   });
 }
 
+/**
+ * T68B — the watchlist a background sweep reads.
+ *
+ * A query, unlike `useB20Watch`: reading the list costs one row lookup and no
+ * chain access at all, so it can refresh freely. What it returns includes
+ * `lastSweptAt` per token, which is the only honest way for a page to say when
+ * Miorail last looked — as opposed to when this browser last asked it to.
+ */
+export function useB20Watchlist(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['b20-watchlist'],
+    queryFn: async () => {
+      const response = await fetchApi<unknown>('/api/route-intelligence/b20/watchlist');
+      return apiSpec.B20WatchlistResponseV1Schema.parse(response);
+    },
+    // A server without migration 0024, or with the flag off, answers the same
+    // way every time. Retrying multiplies a refusal that will not change.
+    retry: false,
+    enabled: options?.enabled !== false,
+  });
+}
+
+export function useAddB20Watch(
+  options?: Omit<UseMutationOptions<apiSpec.B20WatchlistResponseV1, Error, { tokenAddress: string }>, 'mutationFn'>,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    retry: false,
+    mutationFn: async (input) => {
+      const response = await fetchApi<unknown>('/api/route-intelligence/b20/watchlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chainId: 8453, tokenAddress: input.tokenAddress.toLowerCase() }),
+      });
+      return apiSpec.B20WatchlistResponseV1Schema.parse(response);
+    },
+    ...options,
+    onSuccess: (data, variables, onMutateResult, context) => {
+      // The response IS the new list, so it is written straight into the cache
+      // rather than invalidated: a refetch would show the old list for a beat,
+      // and a watchlist that flickers back to its previous state reads as a
+      // failed add.
+      queryClient.setQueryData(['b20-watchlist'], data);
+      options?.onSuccess?.(data, variables, onMutateResult, context);
+    },
+  });
+}
+
+export function useRemoveB20Watch(
+  options?: Omit<UseMutationOptions<apiSpec.B20WatchlistResponseV1, Error, { tokenAddress: string }>, 'mutationFn'>,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    retry: false,
+    mutationFn: async (input) => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/b20/watchlist/${encodeURIComponent(input.tokenAddress.toLowerCase())}`,
+        { method: 'DELETE' },
+      );
+      return apiSpec.B20WatchlistResponseV1Schema.parse(response);
+    },
+    ...options,
+    onSuccess: (data, variables, onMutateResult, context) => {
+      queryClient.setQueryData(['b20-watchlist'], data);
+      options?.onSuccess?.(data, variables, onMutateResult, context);
+    },
+  });
+}
+
 export function useBaseMcpToolsProbe(
   options?: Omit<UseMutationOptions<apiSpec.BaseMcpToolProbeResponse, Error, void>, 'mutationFn'>
 ) {

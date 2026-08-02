@@ -3,7 +3,7 @@ import test, { afterEach, beforeEach, describe } from 'node:test';
 import express from 'express';
 import request from 'supertest';
 import type { B20ReaderV1, B20RpcResultV1 } from '@mioagent/b20-control';
-import { InMemoryB20StorageRepositoryV1 } from '@mioagent/route-storage';
+import { InMemoryB20StorageRepositoryV1, InMemoryB20WatchlistRepositoryV1 } from '@mioagent/route-storage';
 import { b20ControlRouter, b20RouteRuntime } from './b20Control.js';
 
 // A detonator on the global fetch: the reader is injected, so a test that
@@ -43,6 +43,7 @@ const FLAGS = {
 
 const original = { ...b20RouteRuntime };
 let repository: InMemoryB20StorageRepositoryV1;
+let watchlist: InMemoryB20WatchlistRepositoryV1;
 let isB20Value: boolean;
 let blockNumber: string;
 
@@ -105,6 +106,9 @@ beforeEach(() => {
   b20RouteRuntime.migrationAvailable = async () => true;
   b20RouteRuntime.ttlMs = () => 0;
   b20RouteRuntime.now = () => NOW;
+  watchlist = new InMemoryB20WatchlistRepositoryV1();
+  b20RouteRuntime.watchlist = () => watchlist;
+  b20RouteRuntime.watchlistAvailable = async () => true;
 });
 
 afterEach(() => {
@@ -387,6 +391,112 @@ describe('the portfolio sweep', () => {
   test('an unauthenticated sweep is refused', async () => {
     const response = await sweep({ chainId: 8453, tokens: [TOKEN] }, app(null));
     assert.equal(response.status, 401);
+  });
+});
+
+describe('the watchlist a background sweep reads', () => {
+  const list = (server = app()) => request(server).get('/api/route-intelligence/b20/watchlist');
+  const add = (body: unknown, server = app()) =>
+    request(server).post('/api/route-intelligence/b20/watchlist').send(body as object);
+  const drop = (address: string, server = app()) =>
+    request(server).delete(`/api/route-intelligence/b20/watchlist/${address}`);
+
+  test('an empty list is an empty list, and says how many slots remain', async () => {
+    const response = await list();
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body.tokens, []);
+    assert.equal(response.body.remaining, 25);
+  });
+
+  test('an added token comes back with no reading, not with a blank one', async () => {
+    // "Never read" and "nothing changed" must not render alike, so the wire
+    // carries null rather than a timestamp nobody earned.
+    const response = await add({ chainId: 8453, tokenAddress: TOKEN });
+    assert.equal(response.status, 201);
+    assert.equal(response.body.tokens.length, 1);
+    assert.equal(response.body.tokens[0].lastSweptAt, null);
+    assert.equal(response.body.tokens[0].lastOutcome, null);
+    assert.equal(response.body.remaining, 24);
+  });
+
+  test('adding the same token twice is one row', async () => {
+    await add({ chainId: 8453, tokenAddress: TOKEN });
+    // Checksummed, the way a wallet shows it. The wire lowercases; the list
+    // must not gain a second row for the same token spelled differently.
+    const response = await add({ chainId: 8453, tokenAddress: `0x${TOKEN.slice(2).toUpperCase()}` });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.tokens.length, 1);
+    assert.equal(response.body.tokens[0].tokenAddress, TOKEN);
+  });
+
+  test('a full list is 409 and names the cap, not 400', async () => {
+    for (let index = 1; index <= 25; index += 1) {
+      await add({ chainId: 8453, tokenAddress: `0x${index.toString(16).padStart(40, '0')}` });
+    }
+    const response = await add({ chainId: 8453, tokenAddress: TOKEN });
+    assert.equal(response.status, 409);
+    assert.equal(response.body.code, 'b20_watchlist_full');
+    assert.match(response.body.detail, /25/);
+  });
+
+  test('a malformed address is refused before any write', async () => {
+    assert.equal((await add({ chainId: 8453, tokenAddress: '0x1234' })).status, 400);
+    assert.equal((await add({ chainId: 84532, tokenAddress: TOKEN })).status, 400);
+    assert.equal((await list()).body.tokens.length, 0);
+  });
+
+  test('removing something that is not there is not an error', async () => {
+    // Two tabs must not turn one removal into a 404.
+    const response = await drop(TOKEN);
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body.tokens, []);
+  });
+
+  test('one account never sees another’s watchlist', async () => {
+    await add({ chainId: 8453, tokenAddress: TOKEN });
+    const response = await list(app(OTHER));
+    assert.deepEqual(response.body.tokens, []);
+  });
+
+  test('a server without the migration says so instead of pretending the list is empty', async () => {
+    b20RouteRuntime.watchlistAvailable = async () => false;
+    const response = await list();
+    assert.equal(response.status, 503);
+    assert.equal(response.body.code, 'b20_watchlist_unavailable');
+  });
+
+  test('an interactive sweep counts as a reading', async () => {
+    // Otherwise the background sweep would re-read, minutes later, a token the
+    // user just paid to read — and the page would still say "not read yet".
+    await add({ chainId: 8453, tokenAddress: TOKEN });
+    await request(app())
+      .post('/api/route-intelligence/b20/watch')
+      .send({ chainId: 8453, tokens: [TOKEN] });
+    const response = await list();
+    assert.equal(response.body.tokens[0].lastSweptAt, NOW.toISOString());
+    assert.equal(response.body.tokens[0].lastOutcome, 'read');
+  });
+
+  test('a sweep on a server without the watchlist still sweeps', async () => {
+    // Migration 0024 is not a precondition for inspection. A server that has
+    // not run it must keep answering, without a watchlist clock to update.
+    b20RouteRuntime.watchlistAvailable = async () => false;
+    const response = await request(app())
+      .post('/api/route-intelligence/b20/watch')
+      .send({ chainId: 8453, tokens: [TOKEN] });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.tokens.length, 1);
+  });
+
+  test('the watchlist is behind the same gate as inspection', async () => {
+    b20RouteRuntime.flags = () => ({ ...FLAGS, b20ControlV1: false });
+    assert.equal((await list()).status, 404);
+    assert.equal((await add({ chainId: 8453, tokenAddress: TOKEN })).status, 404);
+  });
+
+  test('an unauthenticated caller reaches no list', async () => {
+    assert.equal((await list(app(null))).status, 401);
+    assert.equal((await add({ chainId: 8453, tokenAddress: TOKEN }, app(null))).status, 401);
   });
 });
 
