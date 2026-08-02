@@ -2709,10 +2709,36 @@ export const B20ExitCheckRequestV1Schema = z
 export const B20ExitCheckResponseV1Schema = z
   .object({
     tokenAddress: AddressV1Schema,
-    /** `unmeasured` is not a hedge. Once a route search has been throttled, a
+    /**
+     * T68D — four states, and this endpoint can only ever produce three of
+     * them.
+     *
+     * `qualified` is absent by construction: the exit check quotes, and a quote
+     * taken before the entry moves the pool may soundly REJECT but can never
+     * certify. Only `/b20/opportunity/simulate` returns `qualified`, and only
+     * after both legs executed sequentially against one state.
+     *
+     * `unmeasured` is not a hedge. Once a route search has been throttled, a
      * missing route says nothing about the token — this code once reported AERO,
-     * one of the deepest pools on Base, as impossible to sell out of. */
-    status: z.enum(['qualifies', 'rejected', 'unmeasured']),
+     * one of the deepest pools on Base, as impossible to sell out of.
+     */
+    status: z.enum(['provisional', 'rejected', 'unmeasured']),
+    /** Why nothing could be concluded. Null unless `status` is `unmeasured`. */
+    unmeasuredReason: z
+      .enum([
+        'endpoint_degraded',
+        'simulation_unavailable',
+        'insufficient_probe_balance',
+        'simulation_undecodable',
+        'controls_unread',
+      ])
+      .nullable()
+      .optional(),
+    /** How complete the route search was. A route that was PROVEN to work is a
+     * different fact from a search that saw every candidate. */
+    coverage: z.enum(['complete', 'partial']).optional(),
+    viableRouteConfirmed: z.boolean().optional(),
+    bestRouteConfirmed: z.boolean().optional(),
     /** Present on a rejection. One of the fixed reasons — never free text, so a
      * surface cannot be handed a sentence it did not write. */
     reason: z
@@ -2750,6 +2776,66 @@ export const B20ExitCheckResponseV1Schema = z
     endpointDegraded: z.boolean(),
     /** The block the controls were read at, so the two halves of this answer
      * can be dated independently. */
+    controlsBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    checkedAt: z.string().min(1).max(60),
+  })
+  .strict();
+
+// T68D §4/§5 — the only endpoint that can certify.
+//
+// The request carries a PROFILE and a token. There is deliberately no field for
+// calls, calldata, a router, a route, a recipient or a deadline: the server
+// builds every byte from the pinned Aerodrome surface and the authenticated
+// wallet, so a client cannot widen what gets simulated.
+export const B20OpportunitySimulateRequestV1Schema = z
+  .object({
+    chainId: z.literal(8453),
+    tokenAddress: AddressV1Schema,
+    positionAtomic: z.string().regex(/^[1-9][0-9]{0,17}$/),
+    maxRoundTripBps: z.number().int().min(1).max(10_000),
+    maxExitSlippageBps: z.number().int().min(1).max(10_000),
+  })
+  .strict();
+
+export const B20OpportunitySimulateResponseV1Schema = z
+  .object({
+    tokenAddress: AddressV1Schema,
+    viability: z.enum(['qualified', 'rejected', 'provisional', 'unmeasured']),
+    rejectionReason: z
+      .enum([
+        'not_b20',
+        'controls_unreadable',
+        'transfers_paused',
+        'transfer_policy_may_block',
+        'no_entry_route',
+        'no_exit_route',
+        'round_trip_above_tolerance',
+        'exit_capacity_below_position',
+        'simulation_reverted',
+        'simulated_round_trip_above_tolerance',
+      ])
+      .nullable(),
+    unmeasuredReason: z
+      .enum([
+        'endpoint_degraded',
+        'simulation_unavailable',
+        'insufficient_probe_balance',
+        'simulation_undecodable',
+        'controls_unread',
+      ])
+      .nullable(),
+    coverage: z.enum(['complete', 'partial']),
+    viableRouteConfirmed: z.boolean(),
+    bestRouteConfirmed: z.boolean(),
+    /** Present only on `qualified`. The handle a preparation must carry, and
+     * the ONLY thing that opens the entry route for this token. */
+    clearanceId: z.string().min(1).max(200).nullable(),
+    expiresAt: z.string().min(1).max(60).nullable(),
+    /** What the simulation OBSERVED, not what a quote predicted. */
+    simulatedRoundTripBps: z.number().int().min(0).max(100_000).nullable(),
+    simulatedReturnedAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    simulatedAcquiredAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    simulationBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
     controlsBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
     checkedAt: z.string().min(1).max(60),
   })

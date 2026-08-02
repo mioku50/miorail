@@ -5,8 +5,12 @@ import {
   B20WatchScreen,
   ConsoleRightRail,
   ConsoleShell,
+  EXIT_PROFILE_DEFAULTS_V1,
   b20ErrorCodeV1,
   b20UnavailableCopyV1,
+  percentToBpsV1,
+  usdcToAtomicV1,
+  type ExitProfileV1,
   chainBlockNumberV1,
   chainGasLabelV1,
   chainLabelV1,
@@ -15,6 +19,7 @@ import {
 import {
   useAddB20Watch,
   useB20ExitCheck,
+  useB20OpportunitySimulate,
   useB20Watch,
   useB20Watchlist,
   usePortfolio,
@@ -43,17 +48,6 @@ import {
 const SWEEP_LIMIT_V1 = 25;
 const TRACKED_KEY_V1 = 'miorail.b20.tracked.v1';
 
-/** The profile the exit check is run against.
- *
- * Fixed for now, and stated on the card rather than hidden: 100 USDC at 3% is
- * a size a real person might actually take, and a card that answered for an
- * unstated size would be answering a question nobody asked. Making it an input
- * is the obvious next step; making it invisible is not. */
-const EXIT_POSITION_ATOMIC_V1 = '100000000';
-const EXIT_POSITION_LABEL_V1 = '100 USDC';
-const EXIT_MAX_ROUND_TRIP_BPS_V1 = 300;
-const EXIT_MAX_SLIPPAGE_BPS_V1 = 300;
-const EXIT_SLIPPAGE_LABEL_V1 = '3%';
 const ADDRESS_V1 = /^0x[0-9a-fA-F]{40}$/;
 
 /** Atomic units to a readable balance. Integer arithmetic: a float turns a
@@ -175,26 +169,90 @@ export function B20WatchPage() {
   // T68C — the exit check, for one token at a time. Each run is a dozen-odd
   // metered router calls, so it happens when a user asks and never on mount.
   const [exitToken, setExitToken] = useState<string | null>(null);
+  // T68D — the profile is the user's. The defaults live here, in the UI, and
+  // are not a server constant wearing a label.
+  const [exitProfile, setExitProfile] = useState<ExitProfileV1>(EXIT_PROFILE_DEFAULTS_V1);
   const exitCheck = useB20ExitCheck();
+  const exitSimulate = useB20OpportunitySimulate();
+  const profileAtomic = useMemo(() => {
+    const positionAtomic = usdcToAtomicV1(exitProfile.position);
+    const maxRoundTripBps = percentToBpsV1(exitProfile.maxRoundTrip);
+    const maxExitSlippageBps = percentToBpsV1(exitProfile.maxSlippage);
+    return positionAtomic && maxRoundTripBps && maxExitSlippageBps
+      ? { positionAtomic, maxRoundTripBps, maxExitSlippageBps }
+      : null;
+  }, [exitProfile]);
   const exitDecimals = useMemo(
     () => holdings.find((holding) => holding.tokenAddress === exitToken)?.decimals ?? null,
     [holdings, exitToken],
   );
   const runExitCheck = useCallback(
     (token: string) => {
+      if (!profileAtomic) return;
       setExitToken(token);
       exitCheck.mutate({
         tokenAddress: token,
-        positionAtomic: EXIT_POSITION_ATOMIC_V1,
-        maxRoundTripBps: EXIT_MAX_ROUND_TRIP_BPS_V1,
-        maxSlippageBps: EXIT_MAX_SLIPPAGE_BPS_V1,
+        positionAtomic: profileAtomic.positionAtomic,
+        maxRoundTripBps: profileAtomic.maxRoundTripBps,
+        maxSlippageBps: profileAtomic.maxExitSlippageBps,
       });
     },
-    [exitCheck],
+    [exitCheck, profileAtomic],
   );
+  const runSimulation = useCallback(
+    (token: string) => {
+      if (!profileAtomic) return;
+      setExitToken(token);
+      exitSimulate.mutate({
+        tokenAddress: token,
+        positionAtomic: profileAtomic.positionAtomic,
+        maxRoundTripBps: profileAtomic.maxRoundTripBps,
+        maxExitSlippageBps: profileAtomic.maxExitSlippageBps,
+      });
+    },
+    [exitSimulate, profileAtomic],
+  );
+  // The simulation's answer wins when there is one: it is the only measurement
+  // that can confirm, and a stale provisional beside a fresh confirmation would
+  // be two answers to one question.
+  const exitResult = useMemo(() => {
+    if (exitSimulate.data) {
+      return {
+        status: exitSimulate.data.viability,
+        reason: exitSimulate.data.rejectionReason,
+        unmeasuredReason: exitSimulate.data.unmeasuredReason,
+        coverage: exitSimulate.data.coverage,
+        viableRouteConfirmed: exitSimulate.data.viableRouteConfirmed,
+        bestRouteConfirmed: exitSimulate.data.bestRouteConfirmed,
+        clearanceId: exitSimulate.data.clearanceId,
+        expiresAt: exitSimulate.data.expiresAt,
+        simulatedRoundTripBps: exitSimulate.data.simulatedRoundTripBps,
+        simulationBlockNumber: exitSimulate.data.simulationBlockNumber,
+        controlsBlockNumber: exitSimulate.data.controlsBlockNumber,
+        checkedAt: exitSimulate.data.checkedAt,
+        measurement: null,
+        optimistic: false,
+        roundTripCostBps: exitSimulate.data.simulatedRoundTripBps,
+        exitCapacityAtomic: null,
+        firstFailingAtomic: null,
+        probeCount: 0,
+        capacityInformative: false,
+        referenceSizeAtomic: null,
+        endpointDegraded: false,
+      };
+    }
+    return exitCheck.data ?? null;
+  }, [exitSimulate.data, exitCheck.data]);
   const exitUnavailable = (() => {
-    if (!exitCheck.error) return null;
-    const message = exitCheck.error instanceof Error ? exitCheck.error.message : String(exitCheck.error);
+    if (!profileAtomic) {
+      return 'That profile is not a size and two tolerances Miorail can act on. Whole USDC and a percent, please.';
+    }
+    const failure = exitSimulate.error ?? exitCheck.error;
+    if (!failure) return null;
+    const message = failure instanceof Error ? failure.message : String(failure);
+    if (message.includes('position_below_minimum') || message.includes('position_above_maximum')) {
+      return 'That position is outside the range this server will probe. A simulation spends the wallet’s real balance, so the ceiling is an operator’s choice.';
+    }
     if (message.includes('b20_controls_unread')) {
       // Refused rather than assumed open: an exit check that skipped the
       // controls would clear a token whose transfers are paused.
@@ -335,16 +393,24 @@ export function B20WatchPage() {
         onOpenToken={(token) => navigate(`/?goal=${encodeURIComponent(`swap ${token} to USDC`)}`)}
         exit={{
           tokenAddress: exitToken,
-          check: exitCheck.data ?? null,
-          positionLabel: EXIT_POSITION_LABEL_V1,
-          slippagePercentLabel: EXIT_SLIPPAGE_LABEL_V1,
+          check: exitResult as never,
+          profile: exitProfile,
+          onProfileChange: setExitProfile,
+          positionLabel: `${exitProfile.position} USDC`,
+          slippagePercentLabel: `${exitProfile.maxSlippage}%`,
           // Atomic units of the TOKEN being sold, so the decimals are the
           // token's — not USDC's. Unknown decimals render the raw amount
           // rather than a number scaled by a guess.
           formatTokenAmount: (atomic) => formatBalanceV1(atomic, exitDecimals),
           loading: exitCheck.isPending,
+          simulating: exitSimulate.isPending,
           unavailableReason: exitUnavailable,
           onCheck: runExitCheck,
+          onSimulate: runSimulation,
+          // Deliberately absent. The Aerodrome entry-plan handoff behind a
+          // clearance is not built yet, and a button that cannot work is worse
+          // than no button: it reads as broken rather than unfinished.
+          onBuildEntryPlan: undefined,
         }}
         notChecked={sweep.data?.notChecked ?? []}
         checkedAt={sweep.data?.checkedAt ?? null}

@@ -31,10 +31,65 @@ export type ExitRejectionReasonV1 =
   | 'no_entry_route'
   | 'no_exit_route'
   | 'round_trip_above_tolerance'
-  | 'exit_capacity_below_position';
+  | 'exit_capacity_below_position'
+  | 'simulation_reverted'
+  | 'simulated_round_trip_above_tolerance';
+
+export type ExitViabilityV1 = 'rejected' | 'provisional' | 'qualified' | 'unmeasured';
+
+export type ExitUnmeasuredReasonV1 =
+  | 'endpoint_degraded'
+  | 'simulation_unavailable'
+  | 'insufficient_probe_balance'
+  | 'simulation_undecodable'
+  | 'controls_unread';
+
+/** The profile the user chose. Editable, and stated beside every number it
+ * produced: a card that answered for an unstated size would be answering a
+ * question nobody asked. */
+export interface ExitProfileV1 {
+  /** Whole USDC, as typed. */
+  position: string;
+  /** Percent, as typed. */
+  maxRoundTrip: string;
+  maxSlippage: string;
+}
+
+export const EXIT_PROFILE_DEFAULTS_V1: ExitProfileV1 = {
+  position: '100',
+  maxRoundTrip: '3',
+  maxSlippage: '3',
+};
+
+/**
+ * Whole USDC to atomic units, as TEXT.
+ *
+ * No numeric type is involved: six zeroes are appended to the digits. A float
+ * cannot hold a cent at this scale, and even BigInt is unavailable here — this
+ * module is shared with the miniapp, which targets below ES2020.
+ *
+ * `"1.5"` is refused rather than silently truncated. A position is money, and a
+ * rounding nobody asked for is not a convenience.
+ */
+export function usdcToAtomicV1(value: string): string | null {
+  const trimmed = value.trim();
+  if (!/^\d{1,7}$/.test(trimmed)) return null;
+  const whole = trimmed.replace(/^0+(?=\d)/, '');
+  if (whole === '0') return null;
+  return `${whole}000000`;
+}
+
+/** Percent to basis points, integer only. `"3"` → 300, `"3.5"` → 350. */
+export function percentToBpsV1(value: string): number | null {
+  const trimmed = value.trim();
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(trimmed)) return null;
+  const [whole, fraction = ''] = trimmed.split('.');
+  const bps = Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
+  return bps > 0 && bps <= 10_000 ? bps : null;
+}
 
 export interface ExitCheckLikeV1 {
-  status: 'qualifies' | 'rejected' | 'unmeasured';
+  status: ExitViabilityV1;
   reason: ExitRejectionReasonV1 | null;
   measurement: 'simulated' | 'quoted_pre_entry' | null;
   optimistic: boolean;
@@ -47,11 +102,26 @@ export interface ExitCheckLikeV1 {
   endpointDegraded: boolean;
   controlsBlockNumber: string | null;
   checkedAt: string;
+  /** T68D — separate from viability. A route PROVEN to work is a different
+   * fact from a search that heard every candidate. */
+  coverage?: 'complete' | 'partial';
+  viableRouteConfirmed?: boolean;
+  bestRouteConfirmed?: boolean;
+  unmeasuredReason?: ExitUnmeasuredReasonV1 | null;
+  /** Present only on `qualified`. The handle that opens the entry route. */
+  clearanceId?: string | null;
+  expiresAt?: string | null;
+  simulatedRoundTripBps?: number | null;
+  simulationBlockNumber?: string | null;
+  simulatedReturnedAtomic?: string | null;
 }
 
 export interface B20ExitCardProps {
   /** Null before anything has been asked. */
   check: ExitCheckLikeV1 | null;
+  /** The profile as the user has it typed. */
+  profile: ExitProfileV1;
+  onProfileChange: (profile: ExitProfileV1) => void;
   /** What the user said they would put in, already formatted. */
   positionLabel: string;
   slippagePercentLabel: string;
@@ -62,6 +132,17 @@ export interface B20ExitCardProps {
   /** Why no check is possible. Rendered instead of the result. */
   unavailableReason: string | null;
   onCheck: () => void;
+  /** Runs the sequential simulation. The only path to a confirmed exit. */
+  onSimulate: () => void;
+  simulating: boolean;
+  /**
+   * Hands a CONFIRMED opportunity to the existing execution path.
+   *
+   * Absent on every state but `qualified`, and the card renders no such control
+   * without it — a provisional result must not have an entry plan behind it,
+   * and the way to guarantee that is for the button not to exist.
+   */
+  onBuildEntryPlan?: (clearanceId: string) => void;
 }
 
 /** Basis points as a percentage. Integer arithmetic: a float renders 6.3% as
@@ -78,6 +159,17 @@ export function bpsLabelV1(bps: number): string {
  * Every one names what was measured and what it means for a position. None of
  * them says what the token will do next, because nothing here measured that.
  */
+export const EXIT_UNMEASURED_COPY_V1: Record<ExitUnmeasuredReasonV1, string> = {
+  endpoint_degraded:
+    'Too many router quotes went unanswered to conclude anything. Try again in a moment.',
+  simulation_unavailable: 'The simulation provider did not answer, so nothing could be certified.',
+  insufficient_probe_balance:
+    'This wallet does not hold enough USDC to simulate the position you asked about. That is about the wallet, not the token.',
+  simulation_undecodable:
+    'The simulation ran but its asset movements could not be decoded, so the round trip could not be proven.',
+  controls_unread: 'This token’s controls have not been read yet, and nothing clears without them.',
+};
+
 export const EXIT_REJECTION_COPY_V1: Record<ExitRejectionReasonV1, string> = {
   not_b20: 'The B20 factory does not recognise this address, so none of the control checks apply to it.',
   controls_unreadable:
@@ -87,7 +179,12 @@ export const EXIT_REJECTION_COPY_V1: Record<ExitRejectionReasonV1, string> = {
     'A transfer policy is active on this token, so it can refuse specific addresses. B20 offers no way to list who is on it, so an exit cannot be confirmed.',
   no_entry_route: 'No route into this token exists at this size.',
   no_exit_route: 'No route out of this token exists. A position could be bought and not sold.',
-  round_trip_above_tolerance: 'Going in and straight back out costs more than your tolerance allows.',
+  round_trip_above_tolerance:
+    'Even quoted before the entry moves the pool — the flattering direction — the round trip costs more than your limit allows.',
+  simulation_reverted:
+    'One of the four steps reverted when simulated against the live chain. The round trip does not execute as quoted.',
+  simulated_round_trip_above_tolerance:
+    'Simulated end to end, the round trip costs more than your limit allows.',
   exit_capacity_below_position:
     'The position you asked for is larger than what can be exited within your slippage tolerance.',
 };
@@ -104,38 +201,51 @@ export function exitHeadlineV1(
   profile: { positionLabel: string; slippagePercentLabel: string },
 ): string {
   if (check.status === 'unmeasured') {
-    // Deliberately not a rejection. A throttled route search that found nothing
-    // is the endpoint, not the token — reported as a refusal it would read as
+    // Deliberately not a rejection. A throttled search that found nothing is
+    // the endpoint, not the token — reported as a refusal it would read as
     // "you cannot sell this", which is a claim nothing here measured.
-    return 'Not measured — too many quotes went unanswered to say anything about this token. Try again in a moment.';
+    return check.unmeasuredReason
+      ? EXIT_UNMEASURED_COPY_V1[check.unmeasuredReason]
+      : 'Not measured — a check this needs did not answer. Nothing here is a statement about the token.';
   }
   if (check.status === 'rejected') {
     return check.reason ? EXIT_REJECTION_COPY_V1[check.reason] : 'This position was not cleared.';
   }
-  const base = `Qualifies for your ${profile.positionLabel} / ${profile.slippagePercentLabel} profile`;
-  return check.optimistic
-    ? `${base} — measured on an exit quote taken before the entry moves the pool, so the real round trip is worse`
-    : base;
+  if (check.status === 'provisional') {
+    // T68D. The exit was priced against a pool the entry had not touched, so
+    // this is a bound and not a result. There is no entry plan behind it.
+    return `Provisional exit for your ${profile.positionLabel} / ${profile.slippagePercentLabel} profile — the exit was quoted before the entry moved the pool, so the real round trip is worse. Nothing has been simulated yet.`;
+  }
+  const base = `Exit confirmed for your ${profile.positionLabel} / ${profile.slippagePercentLabel} profile`;
+  if (check.viableRouteConfirmed && check.bestRouteConfirmed === false) {
+    // Never collapsed into "no exit exists" or into "best route". Both would be
+    // claims nothing measured.
+    return `${base}. Viable route confirmed · best route not confirmed — some route candidates did not answer.`;
+  }
+  return base;
 }
 
 export function B20ExitCard({
   check,
+  profile,
+  onProfileChange,
   positionLabel,
   slippagePercentLabel,
   formatTokenAmount,
   loading,
   unavailableReason,
   onCheck,
+  onSimulate,
+  simulating,
+  onBuildEntryPlan,
 }: B20ExitCardProps): React.ReactElement {
   return (
     <div className="panel">
       <div className="ph">
         <h3>Can I get back out?</h3>
-        <span className="sub">
-          {check === null ? 'not checked' : check.status}
-        </span>
+        <span className="sub">{check === null ? 'not checked' : check.status}</span>
         <span className="rt">
-          <button type="button" className="btn" onClick={onCheck} disabled={loading}>
+          <button type="button" className="btn" onClick={onCheck} disabled={loading || simulating}>
             {loading ? 'Quoting the router…' : 'Check exit'}
           </button>
         </span>
@@ -146,15 +256,100 @@ export function B20ExitCard({
           route out exist, and what does the round trip cost.
         </p>
 
+        {/* T68D — the profile is the user's. Every number below is an answer to
+            exactly these three, and changing any of them is a new question. */}
+        <div className="kv">
+          <div>
+            <span>Position (USDC)</span>
+            <input
+              className="goalinput"
+              aria-label="Position size in USDC"
+              inputMode="numeric"
+              value={profile.position}
+              onChange={(event) => onProfileChange({ ...profile, position: event.target.value })}
+            />
+          </div>
+          <div>
+            <span>Max round trip (%)</span>
+            <input
+              className="goalinput"
+              aria-label="Maximum round-trip cost in percent"
+              inputMode="decimal"
+              value={profile.maxRoundTrip}
+              onChange={(event) => onProfileChange({ ...profile, maxRoundTrip: event.target.value })}
+            />
+          </div>
+          <div>
+            <span>Max exit slippage (%)</span>
+            <input
+              className="goalinput"
+              aria-label="Maximum exit slippage in percent"
+              inputMode="decimal"
+              value={profile.maxSlippage}
+              onChange={(event) => onProfileChange({ ...profile, maxSlippage: event.target.value })}
+            />
+          </div>
+        </div>
+
         {unavailableReason ? (
           <p className="note warn">{unavailableReason}</p>
         ) : check === null ? (
           <p className="empty">Nothing has been checked yet.</p>
         ) : (
           <>
-            <p className={check.status === 'qualifies' ? 'nm' : 'nm warn'}>
+            <p className={check.status === 'qualified' ? 'nm' : 'nm warn'}>
               {exitHeadlineV1(check, { positionLabel, slippagePercentLabel })}
             </p>
+
+            <div className="ctarow">
+              {check.status === 'provisional' && (
+                // The only action a provisional result offers. There is no
+                // "build entry plan" here, and there is no prop to render one.
+                <button type="button" className="btn" onClick={onSimulate} disabled={simulating}>
+                  {simulating ? 'Simulating both legs…' : 'Run full simulation'}
+                </button>
+              )}
+              {check.status === 'unmeasured' && (
+                <button type="button" className="btn sec" onClick={onCheck} disabled={loading}>
+                  Try again
+                </button>
+              )}
+              {check.status === 'qualified' && check.clearanceId && onBuildEntryPlan && (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => onBuildEntryPlan(check.clearanceId!)}
+                >
+                  Build entry plan
+                </button>
+              )}
+            </div>
+
+            {check.status === 'qualified' && (
+              <div className="kv">
+                <div>
+                  <span>Simulated round trip</span>
+                  <span className="mono">
+                    {check.simulatedRoundTripBps === null || check.simulatedRoundTripBps === undefined
+                      ? 'not measured'
+                      : bpsLabelV1(check.simulatedRoundTripBps)}
+                  </span>
+                </div>
+                <div>
+                  <span>Simulated at</span>
+                  <span className="mono">
+                    {check.simulationBlockNumber ? `block ${check.simulationBlockNumber}` : 'no block'}
+                  </span>
+                </div>
+                <div>
+                  <span>Clearance expires</span>
+                  {/* Short-lived by design: pools move, and a clearance that
+                      outlived the state it certified would authorise a trade
+                      against numbers nobody measured. */}
+                  <span className="mono">{check.expiresAt ?? 'not issued'}</span>
+                </div>
+              </div>
+            )}
 
             <div className="kv">
               <div>

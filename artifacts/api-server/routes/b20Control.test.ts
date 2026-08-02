@@ -3,7 +3,11 @@ import test, { afterEach, beforeEach, describe } from 'node:test';
 import express from 'express';
 import request from 'supertest';
 import type { B20ReaderV1, B20RpcResultV1 } from '@mioagent/b20-control';
-import { InMemoryB20StorageRepositoryV1, InMemoryB20WatchlistRepositoryV1 } from '@mioagent/route-storage';
+import {
+  InMemoryB20StorageRepositoryV1,
+  InMemoryB20WatchlistRepositoryV1,
+  InMemoryB20ClearanceRepositoryV1,
+} from '@mioagent/route-storage';
 import { b20ControlRouter, b20RouteRuntime } from './b20Control.js';
 
 // A detonator on the global fetch: the reader is injected, so a test that
@@ -44,6 +48,7 @@ const FLAGS = {
 const original = { ...b20RouteRuntime };
 let repository: InMemoryB20StorageRepositoryV1;
 let watchlist: InMemoryB20WatchlistRepositoryV1;
+let clearances: InMemoryB20ClearanceRepositoryV1;
 let isB20Value: boolean;
 let blockNumber: string;
 
@@ -109,6 +114,9 @@ beforeEach(() => {
   watchlist = new InMemoryB20WatchlistRepositoryV1();
   b20RouteRuntime.watchlist = () => watchlist;
   b20RouteRuntime.watchlistAvailable = async () => true;
+  clearances = new InMemoryB20ClearanceRepositoryV1();
+  b20RouteRuntime.clearances = () => clearances;
+  b20RouteRuntime.clearanceAvailable = async () => true;
 });
 
 afterEach(() => {
@@ -490,6 +498,178 @@ describe('the exit check', () => {
     const response = await check({ ...PROFILE, tokenAddress: TOKEN });
     assert.equal(response.status, 503);
     assert.equal(response.body.code, 'b20_rpc_unavailable');
+  });
+});
+
+describe('only a sequential simulation opens the entry route', () => {
+  const PROFILE = { chainId: 8453, positionAtomic: '100000000', maxRoundTripBps: 300, maxExitSlippageBps: 300 };
+  const simulate = (body: unknown, server = app()) =>
+    request(server).post('/api/route-intelligence/b20/opportunity/simulate').send(body as object);
+
+  /** A run that certifies. Injected, so the route is tested without a chain. */
+  function certifiedRun() {
+    const route = [{ from: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', to: TOKEN, stable: false, factory: '0x420dd381b31aef6683db6b902084cb0ffece40da' }];
+    return async () => ({
+      certified: {
+        outcome: { viability: 'qualified' as const },
+        coverage: { coverage: 'partial' as const, viableRouteConfirmed: true, bestRouteConfirmed: false },
+        simulatedRoundTripBps: 120,
+        simulatedReturnedAtomic: '98800000',
+        simulatedAcquiredAtomic: '4200000000000000000000',
+        simulationBlockNumber: '49450001',
+      },
+      entryRoute: route,
+      exitRoute: route,
+      calls: [],
+      simulationEvidenceHash: `0x${'e'.repeat(64)}`,
+    });
+  }
+
+  test('a token whose controls were never read is refused before any simulation', async () => {
+    let ran = false;
+    b20RouteRuntime.runOpportunity = (async () => {
+      ran = true;
+      throw new Error('unreachable');
+    }) as never;
+    const response = await simulate({ ...PROFILE, tokenAddress: TOKEN });
+    assert.equal(response.status, 409);
+    assert.equal(response.body.code, 'b20_controls_unread');
+    assert.equal(ran, false);
+  });
+
+  test('a control refusal is decided before any simulation is spent', async () => {
+    // Controls are prior to price and prior to simulation. A token the factory
+    // does not recognise has no round trip worth computing, and computing one
+    // would put a number where a refusal belongs.
+    isB20Value = false;
+    await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    let ran = false;
+    b20RouteRuntime.runOpportunity = (async () => {
+      ran = true;
+      throw new Error('unreachable');
+    }) as never;
+    const response = await simulate({ ...PROFILE, tokenAddress: TOKEN });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.viability, 'rejected');
+    assert.equal(response.body.rejectionReason, 'not_b20');
+    assert.equal(response.body.clearanceId, null, 'a rejection never issues a clearance');
+    assert.equal(ran, false);
+  });
+
+  test('a profile outside the server bounds is refused with the field named', async () => {
+    await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    // 0.5 USDC — below the probe floor.
+    const small = await simulate({ ...PROFILE, tokenAddress: TOKEN, positionAtomic: '500000' });
+    assert.equal(small.status, 400);
+    assert.equal(small.body.code, 'position_below_minimum');
+    const wide = await simulate({ ...PROFILE, tokenAddress: TOKEN, maxRoundTripBps: 9_000 });
+    assert.equal(wide.status, 400);
+    assert.equal(wide.body.code, 'round_trip_tolerance_too_wide');
+  });
+
+  test('a certified round trip issues a clearance bound to wallet, token and profile', async () => {
+    await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    b20RouteRuntime.runOpportunity = certifiedRun() as never;
+    const response = await simulate({ ...PROFILE, tokenAddress: TOKEN });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.viability, 'qualified');
+    assert.ok(response.body.clearanceId);
+    assert.ok(response.body.expiresAt, 'a clearance without an expiry is an allowlist entry');
+    // Viable, but not best — some candidates did not answer.
+    assert.equal(response.body.viableRouteConfirmed, true);
+    assert.equal(response.body.bestRouteConfirmed, false);
+    assert.equal(response.body.coverage, 'partial');
+
+    const stored = await clearances.getClearance(response.body.clearanceId, USER.id);
+    assert.ok(stored);
+    assert.equal(stored!.walletAddress, WALLET);
+    assert.equal(stored!.tokenAddress, TOKEN);
+    assert.equal(stored!.positionAtomic, '100000000');
+  });
+
+  test('another wallet cannot read the clearance', async () => {
+    await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    b20RouteRuntime.runOpportunity = certifiedRun() as never;
+    const response = await simulate({ ...PROFILE, tokenAddress: TOKEN });
+    assert.equal(await clearances.getClearance(response.body.clearanceId, OTHER.id), null);
+  });
+
+  test('a degraded run is unmeasured and issues nothing', async () => {
+    await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    b20RouteRuntime.runOpportunity = (async () => ({
+      certified: {
+        outcome: { viability: 'unmeasured' as const, reason: 'insufficient_probe_balance' as const },
+        coverage: { coverage: 'partial' as const, viableRouteConfirmed: false, bestRouteConfirmed: false },
+        simulatedRoundTripBps: null,
+        simulatedReturnedAtomic: null,
+        simulatedAcquiredAtomic: null,
+        simulationBlockNumber: null,
+      },
+      entryRoute: null,
+      exitRoute: null,
+      calls: null,
+      simulationEvidenceHash: null,
+    })) as never;
+    const response = await simulate({ ...PROFILE, tokenAddress: TOKEN });
+    assert.equal(response.body.viability, 'unmeasured');
+    // A wallet's balance is not a property of the token.
+    assert.equal(response.body.unmeasuredReason, 'insufficient_probe_balance');
+    assert.equal(response.body.rejectionReason, null);
+    assert.equal(response.body.clearanceId, null);
+  });
+
+  test('a server without migration 0025 still simulates, and certifies nothing', async () => {
+    await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    b20RouteRuntime.clearanceAvailable = async () => false;
+    b20RouteRuntime.runOpportunity = certifiedRun() as never;
+    const response = await simulate({ ...PROFILE, tokenAddress: TOKEN });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.viability, 'qualified');
+    assert.equal(response.body.clearanceId, null, 'no store, no clearance, no entry');
+  });
+
+  test('nothing in the response prepares, approves or signs anything', async () => {
+    await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    b20RouteRuntime.runOpportunity = certifiedRun() as never;
+    const body = JSON.stringify((await simulate({ ...PROFILE, tokenAddress: TOKEN })).body);
+    for (const forbidden of ['calls', 'calldata', 'router', 'signature', 'blueprint']) {
+      assert.ok(!new RegExp(`"${forbidden}"`).test(body), `must not return ${forbidden}`);
+    }
+  });
+
+  test('the free exit check can never say qualified', async () => {
+    // The promotion rule, at the wire. A quote may reject; only a simulation
+    // may certify.
+    await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    b20RouteRuntime.aerodromeReader = () => ({
+      async readDefaultFactory() {
+        return { ok: true as const, value: '0x420dd381b31aef6683db6b902084cb0ffece40da' as const };
+      },
+      async readAmountsOut() {
+        return { ok: false as const, reason: 'no_route' as const };
+      },
+      async readBlockNumber() {
+        return blockNumber;
+      },
+      async readAllowance() {
+        return { ok: true as const, value: 0n };
+      },
+    });
+    const response = await request(app())
+      .post('/api/route-intelligence/b20/exit-check')
+      .send({ chainId: 8453, tokenAddress: TOKEN, positionAtomic: '100000000', maxRoundTripBps: 300, maxSlippageBps: 300 });
+    assert.equal(response.status, 200);
+    assert.notEqual(response.body.status, 'qualified');
+    assert.notEqual(response.body.status, 'qualifies');
+    // And a quote proves no route executes.
+    assert.equal(response.body.viableRouteConfirmed, false);
+  });
+
+  test('the simulate route is behind the same gate and needs a session', async () => {
+    b20RouteRuntime.flags = () => ({ ...FLAGS, b20ControlV1: false });
+    assert.equal((await simulate({ ...PROFILE, tokenAddress: TOKEN })).status, 404);
+    b20RouteRuntime.flags = () => ({ ...FLAGS });
+    assert.equal((await simulate({ ...PROFILE, tokenAddress: TOKEN }, app(null))).status, 401);
   });
 });
 

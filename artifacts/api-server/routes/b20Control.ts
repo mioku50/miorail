@@ -9,6 +9,8 @@ import {
   B20WatchlistResponseV1Schema,
   B20ExitCheckRequestV1Schema,
   B20ExitCheckResponseV1Schema,
+  B20OpportunitySimulateRequestV1Schema,
+  B20OpportunitySimulateResponseV1Schema,
 } from '@mioagent/api-zod';
 import {
   B20RequestError,
@@ -32,6 +34,8 @@ import {
   RouteStorageIntegrityError,
   createDatabaseB20StorageRepository,
   createDatabaseB20WatchlistRepository,
+  createDatabaseB20ClearanceRepository,
+  type B20ClearanceRepositoryV1,
   b20SweepOutcomeFromDetectionV1,
   b20WatchlistIdV1,
   B20_WATCHLIST_CAPACITY_V1,
@@ -40,9 +44,13 @@ import {
   type B20WatchlistRepositoryV1,
 } from '@mioagent/route-storage';
 import { client } from '@mioagent/db';
+import { stableHashV1 } from '@mioagent/route-domain';
+import { OPPORTUNITY_QUOTE_ASSET_V1, profileRefusalV1 } from '@mioagent/opportunity-rail';
 import { createAerodromeReaderV1 } from '@mioagent/swap-adapters';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
 import { analyseExitV1 } from '../lib/exitAnalysis.js';
+import { runOpportunityV1 } from '../lib/opportunityRunner.js';
+import { buildClearanceV1 } from '../lib/opportunityClearance.js';
 
 // ---------------------------------------------------------------------------
 // T67C — the B20 Control rail.
@@ -110,6 +118,7 @@ export const b20RouteRuntime = {
   flags: getMiorailProductMigrationFlags,
   repository: (): B20StorageRepositoryV1 => createDatabaseB20StorageRepository(client),
   watchlist: (): B20WatchlistRepositoryV1 => createDatabaseB20WatchlistRepository(client),
+  clearances: (): B20ClearanceRepositoryV1 => createDatabaseB20ClearanceRepository(client),
   reader: () => createB20ReaderV1({ rpcUrl: baseMainnetRpcUrlV1() }),
   /** The Aerodrome Router, read-only. A separate reader from the B20 one
    * because they speak to different contracts with different decoders — sharing
@@ -131,6 +140,14 @@ export const b20RouteRuntime = {
     const row = rows[0];
     return Boolean(row && row.snapshots && row.evidence);
   },
+  /** Checked separately again: a server without migration 0025 can still quote
+   * and still watch — it simply cannot certify anything. */
+  clearanceAvailable: async (): Promise<boolean> => {
+    const rows = await client`SELECT to_regclass('public.b20_opportunity_clearances') AS clearances`;
+    return Boolean(rows[0]?.clearances);
+  },
+  /** Injected so a test can run the whole route without a chain or a provider. */
+  runOpportunity: runOpportunityV1,
   /** Checked separately from the snapshot tables: a server that can inspect
    * but has not run 0024 must keep inspecting rather than 503 the whole tab. */
   watchlistAvailable: async (): Promise<boolean> => {
@@ -537,6 +554,178 @@ function watchlistBodyV1(entries: readonly B20WatchlistEntryV1[]) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// T68D — the only endpoint that can certify a B20 entry.
+//
+// It quotes, simulates the entry, re-quotes the exit at the size the entry
+// actually produced, simulates all four calls in one state, and stores a
+// clearance only when the wallet's own decoded movements prove the round trip.
+//
+// The clearance is NOT an allowlist entry. It authorises one preparation for
+// the wallet, token, profile and route it names, and expires. Ordinary
+// arbitrary-ERC-20 routing stays unsupported either way.
+// ---------------------------------------------------------------------------
+
+b20ControlRouter.post('/b20/opportunity/simulate', async (req: Request, res: Response) => {
+  const guard = b20Guard(req, res);
+  if (!guard) return;
+
+  const parsed = B20OpportunitySimulateRequestV1Schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_b20_opportunity_request', code: 'invalid_b20_opportunity_request' });
+    return;
+  }
+  const refusal = validateB20InspectRequestV1(parsed.data.chainId, parsed.data.tokenAddress);
+  if (refusal) {
+    res.status(400).json({ error: refusal, code: refusal, detail: refusalDetailV1(refusal) });
+    return;
+  }
+
+  const profile = {
+    quoteAsset: OPPORTUNITY_QUOTE_ASSET_V1,
+    positionAtomic: parsed.data.positionAtomic,
+    maxRoundTripBps: parsed.data.maxRoundTripBps,
+    maxExitSlippageBps: parsed.data.maxExitSlippageBps,
+  } as const;
+  // The user's numbers, bounded by the server's. A profile outside the bounds
+  // is refused with the field named, not clamped into something they did not
+  // choose and then answered as if they had.
+  const outOfBounds = profileRefusalV1(profile);
+  if (outOfBounds) {
+    res.status(400).json({ error: outOfBounds, code: outOfBounds });
+    return;
+  }
+  if (!b20RouteRuntime.rpcConfigured()) {
+    res.status(503).json({ error: 'b20_rpc_unavailable', code: 'b20_rpc_unavailable' });
+    return;
+  }
+
+  try {
+    if (!(await b20RouteRuntime.migrationAvailable())) {
+      res.status(503).json({ error: 'b20_storage_unavailable', code: 'b20_storage_unavailable' });
+      return;
+    }
+    const recent = await b20RouteRuntime
+      .repository()
+      .recentSnapshots(guard.user.id, parsed.data.tokenAddress, 1);
+    const snapshot = recent[0]?.snapshot ?? null;
+    if (!snapshot) {
+      // Controls are prior to price, and prior to simulation. Certifying a
+      // token whose controls were never read would clear one whose transfers
+      // are paused.
+      res.status(409).json({
+        error: 'b20_controls_unread',
+        code: 'b20_controls_unread',
+        detail: 'This token’s controls have not been read yet. Check it once before simulating an entry.',
+      });
+      return;
+    }
+    const controls = exitControlsFromSnapshotV1(snapshot);
+    const now = b20RouteRuntime.now();
+
+    const controlRefusal = !controls.factoryConfirmed
+      ? ('not_b20' as const)
+      : !controls.controlsFullyRead
+        ? ('controls_unreadable' as const)
+        : controls.transfersPaused
+          ? ('transfers_paused' as const)
+          : controls.transferPolicyActive
+            ? ('transfer_policy_may_block' as const)
+            : null;
+    if (controlRefusal) {
+      // Refused before a single quote or simulation is spent.
+      res.json(
+        B20OpportunitySimulateResponseV1Schema.parse({
+          tokenAddress: parsed.data.tokenAddress,
+          viability: 'rejected',
+          rejectionReason: controlRefusal,
+          unmeasuredReason: null,
+          coverage: 'complete',
+          viableRouteConfirmed: false,
+          bestRouteConfirmed: false,
+          clearanceId: null,
+          expiresAt: null,
+          simulatedRoundTripBps: null,
+          simulatedReturnedAtomic: null,
+          simulatedAcquiredAtomic: null,
+          simulationBlockNumber: null,
+          controlsBlockNumber: snapshot.blockNumber,
+          checkedAt: now.toISOString(),
+        }),
+      );
+      return;
+    }
+
+    const run = await b20RouteRuntime.runOpportunity(
+      { reader: b20RouteRuntime.aerodromeReader(), now: () => now },
+      {
+        wallet: guard.user.address as `0x${string}`,
+        tokenAddress: parsed.data.tokenAddress as `0x${string}`,
+        profile,
+      },
+    );
+
+    let clearanceId: string | null = null;
+    let expiresAt: string | null = null;
+    if (
+      run.certified.outcome.viability === 'qualified' &&
+      run.entryRoute &&
+      run.exitRoute &&
+      run.calls &&
+      run.simulationEvidenceHash &&
+      snapshot.blockNumber
+    ) {
+      if (await b20RouteRuntime.clearanceAvailable()) {
+        const clearance = buildClearanceV1({
+          id: `b20-clearance:${stableHashV1('b20-clearance-id/v1', {
+            tenantId: guard.user.id,
+            token: parsed.data.tokenAddress,
+            evidence: run.simulationEvidenceHash,
+          }).slice(2, 34)}`,
+          tenantId: guard.user.id,
+          walletAddress: guard.user.address,
+          tokenAddress: parsed.data.tokenAddress,
+          profile,
+          controlSnapshotHash: snapshot.snapshotHash,
+          controlBlockNumber: snapshot.blockNumber,
+          entryRoute: run.entryRoute,
+          exitRoute: run.exitRoute,
+          calls: run.calls,
+          simulationEvidenceHash: run.simulationEvidenceHash,
+          certified: run.certified,
+          now,
+        });
+        const stored = await b20RouteRuntime.clearances().insertClearance(clearance);
+        clearanceId = stored.id;
+        expiresAt = stored.expiresAt;
+      }
+    }
+
+    const outcome = run.certified.outcome;
+    res.json(
+      B20OpportunitySimulateResponseV1Schema.parse({
+        tokenAddress: parsed.data.tokenAddress,
+        viability: outcome.viability,
+        rejectionReason: outcome.viability === 'rejected' ? outcome.reason : null,
+        unmeasuredReason: outcome.viability === 'unmeasured' ? outcome.reason : null,
+        coverage: run.certified.coverage.coverage,
+        viableRouteConfirmed: run.certified.coverage.viableRouteConfirmed,
+        bestRouteConfirmed: run.certified.coverage.bestRouteConfirmed,
+        clearanceId,
+        expiresAt,
+        simulatedRoundTripBps: run.certified.simulatedRoundTripBps,
+        simulatedReturnedAtomic: run.certified.simulatedReturnedAtomic,
+        simulatedAcquiredAtomic: run.certified.simulatedAcquiredAtomic,
+        simulationBlockNumber: run.certified.simulationBlockNumber,
+        controlsBlockNumber: snapshot.blockNumber,
+        checkedAt: now.toISOString(),
+      }),
+    );
+  } catch (error) {
+    storageFailure(res, error, 'opportunity-simulate');
+  }
+});
+
 b20ControlRouter.get('/b20/watchlist', async (req: Request, res: Response) => {
   const guard = await watchlistGuard(req, res);
   if (!guard) return;
@@ -681,13 +870,24 @@ b20ControlRouter.post('/b20/exit-check', async (req: Request, res: Response) => 
       controls,
     });
 
+    // T68D — the quote path may reject and may never certify. A pass here is
+    // PROVISIONAL: the exit was priced against the pool before the entry moved
+    // it, and only `/b20/opportunity/simulate` can promote that to qualified.
+    const status =
+      analysis.verdict.status === 'qualifies' ? ('provisional' as const) : analysis.verdict.status;
     res.json(
       B20ExitCheckResponseV1Schema.parse({
         tokenAddress: parsed.data.tokenAddress,
-        status: analysis.verdict.status,
+        status,
         // An `unmeasured` outcome carries no reason about the token, because
         // there is none: the endpoint is what stopped the check.
         reason: analysis.verdict.status === 'rejected' ? analysis.verdict.reason : null,
+        unmeasuredReason: analysis.verdict.status === 'unmeasured' ? analysis.verdict.reason : null,
+        coverage: analysis.endpointDegraded ? ('partial' as const) : ('complete' as const),
+        // A quote proves nothing executes. Only a simulation can confirm a
+        // route, so both of these are false on this endpoint, always.
+        viableRouteConfirmed: false,
+        bestRouteConfirmed: false,
         measurement: analysis.verdict.status === 'qualifies' ? analysis.verdict.measurement : null,
         optimistic: analysis.verdict.status === 'qualifies' ? analysis.verdict.optimistic : false,
         roundTripCostBps: analysis.roundTrip?.costBps ?? null,

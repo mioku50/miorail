@@ -1,6 +1,6 @@
 import React from 'react';
 import { B20ControlWatchPanel, type B20WatchLikeV1 } from './B20Panels';
-import { B20ExitCard, type ExitCheckLikeV1 } from './B20ExitCard';
+import { B20ExitCard, type ExitCheckLikeV1, type ExitProfileV1 } from './B20ExitCard';
 import { B20PortfolioPanel, type B20HoldingV1 } from './B20PortfolioPanel';
 
 void React;
@@ -92,12 +92,19 @@ export interface B20WatchScreenModelV1 {
   exit: {
     tokenAddress: string | null;
     check: ExitCheckLikeV1 | null;
+    profile: ExitProfileV1;
+    onProfileChange: (profile: ExitProfileV1) => void;
     positionLabel: string;
     slippagePercentLabel: string;
     formatTokenAmount: (atomic: string) => string;
     loading: boolean;
+    simulating: boolean;
     unavailableReason: string | null;
     onCheck: (tokenAddress: string) => void;
+    onSimulate: (tokenAddress: string) => void;
+    /** Absent unless this build has an execution path to hand a confirmed
+     * opportunity to. The card renders no entry control without it. */
+    onBuildEntryPlan?: (input: { tokenAddress: string; clearanceId: string }) => void;
   };
   notChecked: readonly string[];
   checkedAt: string | null;
@@ -167,14 +174,29 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
           fill in. */}
       <B20ExitCard
         check={model.exit.check}
+        profile={model.exit.profile}
+        onProfileChange={model.exit.onProfileChange}
         positionLabel={model.exit.positionLabel}
         slippagePercentLabel={model.exit.slippagePercentLabel}
         formatTokenAmount={model.exit.formatTokenAmount}
         loading={model.exit.loading}
         unavailableReason={model.exit.unavailableReason}
+        simulating={model.exit.simulating}
         onCheck={() => {
           if (model.exit.tokenAddress) model.exit.onCheck(model.exit.tokenAddress);
         }}
+        onSimulate={() => {
+          if (model.exit.tokenAddress) model.exit.onSimulate(model.exit.tokenAddress);
+        }}
+        onBuildEntryPlan={
+          model.exit.onBuildEntryPlan && model.exit.tokenAddress
+            ? (clearanceId) =>
+                model.exit.onBuildEntryPlan?.({
+                  tokenAddress: model.exit.tokenAddress!,
+                  clearanceId,
+                })
+            : undefined
+        }
       />
 
       <div className="panel">

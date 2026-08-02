@@ -5,6 +5,12 @@ import path from 'node:path';
 import url from 'node:url';
 
 import {
+  EXIT_PROFILE_DEFAULTS_V1,
+  exitHeadlineV1,
+  percentToBpsV1,
+  usdcToAtomicV1,
+} from '../src/console/B20ExitCard';
+import {
   changedTokensV1,
   shortAddressV1,
   trackedStatusLineV1,
@@ -396,5 +402,107 @@ describe('addresses are shortened, never truncated into ambiguity', () => {
 
   test('something already short is left alone', () => {
     assert.equal(shortAddressV1('0xabc'), '0xabc');
+  });
+});
+
+describe('T68D — an optimistic quote never opens the entry route', () => {
+  const card = readFileSync(path.join(here, '../src/console/B20ExitCard.tsx'), 'utf8');
+  const page = readFileSync(
+    path.join(here, '../../../artifacts/interface/src/features/b20/B20WatchPage.tsx'),
+    'utf8',
+  );
+  const base = {
+    reason: null,
+    measurement: null,
+    optimistic: false,
+    roundTripCostBps: 120,
+    exitCapacityAtomic: null,
+    firstFailingAtomic: null,
+    probeCount: 0,
+    capacityInformative: false,
+    referenceSizeAtomic: null,
+    endpointDegraded: false,
+    controlsBlockNumber: '49450000',
+    checkedAt: '2026-08-03T12:00:00.000Z',
+  } as const;
+  const profile = { positionLabel: '100 USDC', slippagePercentLabel: '3%' };
+
+  test('provisional says the exit was quoted before the entry moved the pool', () => {
+    const line = exitHeadlineV1({ ...base, status: 'provisional' }, profile);
+    assert.match(line, /Provisional exit/);
+    assert.match(line, /before the entry moved the pool/);
+    assert.match(line, /Nothing has been simulated yet/);
+  });
+
+  test('a provisional result has no Build entry plan control at all', () => {
+    // Not disabled — absent. A button that exists and is greyed out is one
+    // refactor away from being enabled by accident.
+    assert.match(card, /check\.status === 'qualified' && check\.clearanceId && onBuildEntryPlan/);
+    assert.match(card, /check\.status === 'provisional' && \(/);
+    assert.match(card, /Run full simulation/);
+  });
+
+  test('the entry control needs a clearance id, not merely a pass', () => {
+    assert.match(card, /onBuildEntryPlan\(check\.clearanceId!\)/);
+  });
+
+  test('qualified shows the simulation block and the clearance expiry', () => {
+    assert.match(card, /Simulated round trip/);
+    assert.match(card, /Simulated at/);
+    assert.match(card, /Clearance expires/);
+  });
+
+  test('viable-but-not-best is never collapsed into either extreme', () => {
+    const line = exitHeadlineV1(
+      { ...base, status: 'qualified', viableRouteConfirmed: true, bestRouteConfirmed: false },
+      profile,
+    );
+    assert.match(line, /Viable route confirmed/);
+    assert.match(line, /best route not confirmed/);
+  });
+
+  test('an unmeasured reason names the dependency that did not answer', () => {
+    const line = exitHeadlineV1(
+      { ...base, status: 'unmeasured', unmeasuredReason: 'insufficient_probe_balance' },
+      profile,
+    );
+    // A wallet's balance is not a property of the token, and the copy says so.
+    assert.match(line, /does not hold enough USDC/);
+    assert.match(line, /about the wallet, not the token/);
+  });
+
+  test('no state may say safe, score, rating or guaranteed', () => {
+    const states = ['rejected', 'provisional', 'qualified', 'unmeasured'] as const;
+    for (const status of states) {
+      const line = exitHeadlineV1({ ...base, status, reason: 'transfers_paused' }, profile);
+      assert.ok(!/\b(safe|score|rating|promising|guaranteed)\b/i.test(line), line);
+    }
+  });
+
+  test('the profile is the user’s, and the defaults live in the UI', () => {
+    assert.deepEqual(EXIT_PROFILE_DEFAULTS_V1, { position: '100', maxRoundTrip: '3', maxSlippage: '3' });
+    assert.match(page, /EXIT_PROFILE_DEFAULTS_V1/);
+    assert.match(card, /Position \(USDC\)/);
+    assert.match(card, /Max round trip/);
+    assert.match(card, /Max exit slippage/);
+  });
+
+  test('money never goes through a float', () => {
+    assert.equal(usdcToAtomicV1('100'), '100000000');
+    assert.equal(usdcToAtomicV1('1'), '1000000');
+    // A fractional position is refused rather than silently truncated.
+    assert.equal(usdcToAtomicV1('1.5'), null);
+    assert.equal(usdcToAtomicV1('0'), null);
+    assert.equal(usdcToAtomicV1(''), null);
+    assert.equal(percentToBpsV1('3'), 300);
+    assert.equal(percentToBpsV1('3.5'), 350);
+    assert.equal(percentToBpsV1('0'), null);
+    assert.equal(percentToBpsV1('abc'), null);
+  });
+
+  test('the page does not offer an entry plan it cannot build', () => {
+    // The handoff behind a clearance is not built yet, and the page says so by
+    // passing nothing rather than by rendering a dead control.
+    assert.match(page, /onBuildEntryPlan: undefined/);
   });
 });

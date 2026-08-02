@@ -7,10 +7,17 @@ import type { AerodromeReaderV1, AerodromeRouteLegV1 } from '@mioagent/swap-adap
 import type { ExitControlsV1, OpportunityProfileV1 } from '@mioagent/opportunity-rail';
 import { analyseExitV1 } from './exitAnalysis.js';
 
-// Resolved from the repo root, which is where the test harness runs. This
-// package compiles to CommonJS, so `import.meta` is not available here the way
-// it is in the ESM libraries.
-const SOURCE_V1 = path.join(process.cwd(), 'artifacts/api-server/lib/exitAnalysis.ts');
+/** The harness runs this package's tests from the package directory; running
+ * one file by hand happens from the repo root. Resolved for both rather than
+ * assuming either. */
+function packageFileV1(relative: string): string {
+  const cwd = process.cwd();
+  return cwd.endsWith(`${path.sep}artifacts${path.sep}api-server`)
+    ? path.join(cwd, relative)
+    : path.join(cwd, 'artifacts/api-server', relative);
+}
+
+const SOURCE_V1 = packageFileV1('lib/exitAnalysis.ts');
 const TOKEN = '0xb200000000000000000000578f3ae29d9e6e0101' as const;
 const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' as const;
 const FACTORY = '0x420dd381b31aef6683db6b902084cb0ffece40da' as const;

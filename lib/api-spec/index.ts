@@ -163,3 +163,5 @@ export type B20WatchlistResponseV1 = z.infer<typeof schemas.B20WatchlistResponse
 export type B20WatchlistAddRequestV1 = z.infer<typeof schemas.B20WatchlistAddRequestV1Schema>;
 export type B20ExitCheckRequestV1 = z.infer<typeof schemas.B20ExitCheckRequestV1Schema>;
 export type B20ExitCheckResponseV1 = z.infer<typeof schemas.B20ExitCheckResponseV1Schema>;
+export type B20OpportunitySimulateRequestV1 = z.infer<typeof schemas.B20OpportunitySimulateRequestV1Schema>;
+export type B20OpportunitySimulateResponseV1 = z.infer<typeof schemas.B20OpportunitySimulateResponseV1Schema>;

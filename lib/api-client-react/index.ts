@@ -916,6 +916,37 @@ export function useB20ExitCheck(
   });
 }
 
+/**
+ * T68D — the only call that can confirm an exit.
+ *
+ * It runs two simulations against the connected wallet's real balance, so it
+ * happens when a user asks and never on a remount. A pass here is what issues
+ * the clearance that opens the entry route; nothing on the quote path can.
+ */
+export function useB20OpportunitySimulate(
+  options?: Omit<
+    UseMutationOptions<
+      apiSpec.B20OpportunitySimulateResponseV1,
+      Error,
+      { tokenAddress: string; positionAtomic: string; maxRoundTripBps: number; maxExitSlippageBps: number }
+    >,
+    'mutationFn' | 'retry'
+  >,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const response = await fetchApi<unknown>('/api/route-intelligence/b20/opportunity/simulate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chainId: 8453, ...input, tokenAddress: input.tokenAddress.toLowerCase() }),
+      });
+      return apiSpec.B20OpportunitySimulateResponseV1Schema.parse(response);
+    },
+  });
+}
+
 export function useBaseMcpToolsProbe(
   options?: Omit<UseMutationOptions<apiSpec.BaseMcpToolProbeResponse, Error, void>, 'mutationFn'>
 ) {

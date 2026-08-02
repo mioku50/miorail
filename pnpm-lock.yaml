@@ -930,6 +930,9 @@ importers:
       '@mioagent/route-outcomes':
         specifier: workspace:*
         version: link:../route-outcomes
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
     devDependencies:
       '@mioagent/db':
         specifier: workspace:*
