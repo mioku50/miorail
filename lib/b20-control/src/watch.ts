@@ -426,3 +426,71 @@ export function b20WatchSummaryV1(watch: B20ControlWatchV1): string {
 export function b20WatchNeedsAttentionV1(watch: B20ControlWatchV1): boolean {
   return watch.changes.some((change) => change.severity === 'acute');
 }
+
+// ---------------------------------------------------------------------------
+// T68 — the exit-relevant controls, extracted from a snapshot.
+//
+// Lives here rather than in the route because it is knowledge about what the
+// field VALUES mean, and those strings are produced two files away. A route
+// that re-derived "does `TRANSFER` in paused_features mean I cannot sell" would
+// be a second, silently diverging definition of the only question that matters.
+// ---------------------------------------------------------------------------
+
+export interface B20ExitControlsV1 {
+  factoryConfirmed: boolean;
+  /** Transfers are paused right now — nothing can be sold. */
+  transfersPaused: boolean;
+  /** A transfer policy is active, so specific addresses can be refused. B20
+   * offers no way to enumerate one, so this is "a gate exists", never "you are
+   * on it". */
+  transferPolicyActive: boolean;
+  /** Every field that this variant supports was read from the chain. A partial
+   * read never clears a token. */
+  controlsFullyRead: boolean;
+  /** A cap exists. `false` means supply is unbounded on chain. */
+  supplyCapped: boolean;
+  /** The block all of the above was read at. */
+  blockNumber: string | null;
+}
+
+/** Open policies are reported as `ALWAYS_ALLOW…`; anything else is a gate. */
+const OPEN_POLICY_PREFIX_V1 = 'ALWAYS_ALLOW';
+const NO_CAP_MARKER_V1 = 'no cap';
+const NONE_PAUSED_V1 = 'none paused';
+
+const TRANSFER_POLICY_KEYS_V1 = [
+  'transfer_sender_policy',
+  'transfer_receiver_policy',
+  'transfer_executor_policy',
+] as const;
+
+export function exitControlsFromSnapshotV1(snapshot: B20ControlSnapshotV1): B20ExitControlsV1 {
+  const value = (key: string): string | null => {
+    const field = snapshot.fields.find((entry) => entry.key === key);
+    return field?.status === 'exact_chain_read' ? field.value : null;
+  };
+
+  const paused = value('paused_features');
+  const cap = value('supply_cap');
+
+  // `unavailable` is the only status that means a read FAILED. A field that is
+  // `unsupported_by_variant` or `not_enumerable` was never going to answer, and
+  // treating those as failures would make every stablecoin permanently
+  // unreadable.
+  const controlsFullyRead = !snapshot.fields.some((field) => field.status === 'unavailable');
+
+  return {
+    factoryConfirmed:
+      snapshot.detection.outcome === 'b20' || snapshot.detection.outcome === 'b20_uninitialised',
+    // Only a TRANSFER pause stops a sale. A mint or burn pause does not, and
+    // conflating them would refuse tokens that can be exited perfectly well.
+    transfersPaused: paused !== null && paused !== NONE_PAUSED_V1 && paused.includes('TRANSFER'),
+    transferPolicyActive: TRANSFER_POLICY_KEYS_V1.some((key) => {
+      const policy = value(key);
+      return policy !== null && !policy.startsWith(OPEN_POLICY_PREFIX_V1);
+    }),
+    controlsFullyRead,
+    supplyCapped: cap !== null && !cap.includes(NO_CAP_MARKER_V1),
+    blockNumber: snapshot.blockNumber,
+  };
+}

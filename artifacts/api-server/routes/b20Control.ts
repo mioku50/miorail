@@ -10,6 +10,7 @@ import {
   B20RequestError,
   createB20ReaderV1,
   diffB20SnapshotsV1,
+  exitControlsFromSnapshotV1,
   inspectB20TokenV1,
   buildB20CardV1,
   refusalDetailV1,
@@ -311,6 +312,7 @@ b20ControlRouter.post('/b20/watch', async (req: Request, res: Response) => {
           displaySymbol: card.displaySymbol,
           outcome: fresh.snapshot.detection.outcome === 'not_b20' ? 'not_b20' : 'watched',
           watch: diffB20SnapshotsV1(recent[1]?.snapshot ?? null, fresh.snapshot),
+          controls: exitControlsFromSnapshotV1(fresh.snapshot),
           reason: null,
         });
         continue;
@@ -342,6 +344,7 @@ b20ControlRouter.post('/b20/watch', async (req: Request, res: Response) => {
         displaySymbol: result.card.displaySymbol,
         outcome: stored.snapshot.detection.outcome === 'not_b20' ? 'not_b20' : 'watched',
         watch: diffB20SnapshotsV1(previous?.snapshot ?? null, stored.snapshot),
+        controls: exitControlsFromSnapshotV1(stored.snapshot),
         reason: null,
       });
     }

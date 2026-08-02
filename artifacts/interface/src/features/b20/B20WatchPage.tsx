@@ -3,6 +3,7 @@ import { useLocation } from 'wouter';
 import { useAccount } from 'wagmi';
 import {
   B20WatchScreen,
+  ConsoleRightRail,
   ConsoleShell,
   chainBlockNumberV1,
   chainGasLabelV1,
@@ -57,6 +58,34 @@ export function B20WatchPage() {
     [held],
   );
 
+  // T68 — the B20 holdings: the sweep says which tokens ARE B20, the portfolio
+  // says how much of each is held. Joined here rather than server-side, because
+  // the server never receives a balance and should not start.
+  const holdings = useMemo(() => {
+    const balances = new Map(held.map((token) => [token.address.toLowerCase(), token]));
+    return (sweep.data?.tokens ?? [])
+      .filter((token) => token.outcome === 'watched')
+      .map((token) => {
+        const balance = balances.get(token.tokenAddress.toLowerCase());
+        const changes = token.watch?.status === 'compared' ? token.watch.changes : [];
+        return {
+          tokenAddress: token.tokenAddress,
+          name: token.displayName,
+          symbol: token.displaySymbol ?? balance?.symbol ?? null,
+          balanceLabel: balance?.balanceFormatted ?? 'not reported',
+          // A missing price stays null all the way to the card, which renders
+          // "no price source". A 0 here would reach a user as "worthless".
+          usdLabel: balance?.usdValue ? `$${balance.usdValue}` : null,
+          controls: token.controls ?? null,
+          changeCount: changes.length,
+          hasAcuteChange: changes.some((change) => change.severity === 'acute'),
+          lastReadBlock: token.controls?.blockNumber ?? token.watch?.toBlock ?? null,
+        };
+      });
+  }, [sweep.data, held]);
+
+  const otherTokenCount = Math.max(0, held.length - holdings.length);
+
   const unavailableReason = !address
     ? 'Connect your wallet to see what the tokens you hold have done.'
     : !gateOn
@@ -99,7 +128,42 @@ export function B20WatchPage() {
         spendLabel: '$0',
         blockNumber: chainBlockNumberV1(status.data ?? null),
       }}
-      right={null}
+      right={
+        <ConsoleRightRail
+          // No price and no depth panel here: this tab is about controls, and
+          // a price chart beside a control card invites the reading the whole
+          // surface refuses — that a control state predicts a price.
+          price={null}
+          priceUnavailableReason="Price is on the Routes tab. This rail reports what was read, not what it is worth."
+          depth={null}
+          depthUnavailableReason="Depth belongs to a route comparison, not to a control read."
+          evidenceFeed={(sweep.data?.tokens ?? []).slice(0, 8).map((token, index) => ({
+            id: `${token.tokenAddress}-${index}`,
+            time: token.controls?.blockNumber ? `block ${token.controls.blockNumber}` : '—',
+            source: token.displaySymbol ?? token.tokenAddress.slice(0, 10),
+            text:
+              token.outcome === 'watched'
+                ? `${token.watch?.status === 'compared' ? token.watch.changes.length : 0} change(s)`
+                : token.outcome,
+            available: token.outcome === 'watched',
+          }))}
+          spend={null}
+          freshness={[
+            { label: 'B20 tokens held', value: String(holdings.length) },
+            { label: 'Other tokens', value: String(otherTokenCount) },
+            {
+              label: 'Last checked',
+              value: sweep.data?.checkedAt ? sweep.data.checkedAt.slice(11, 19) : 'never',
+              tone: sweep.data ? undefined : 'off',
+            },
+            {
+              label: 'Not reached',
+              value: String(sweep.data?.notChecked.length ?? 0),
+              tone: (sweep.data?.notChecked.length ?? 0) > 0 ? 'off' : undefined,
+            },
+          ]}
+        />
+      }
       railFold={null}
       theme={theme}
       onThemeChange={setTheme}
@@ -112,6 +176,11 @@ export function B20WatchPage() {
     >
       <B20WatchScreen
         tokens={sweep.data?.tokens ?? []}
+        holdings={holdings}
+        otherTokenCount={otherTokenCount}
+        // Swapping a held B20 token is the Routes flow's job, not a second
+        // execution path. The tab hands the goal over rather than growing one.
+        onOpenToken={(token) => navigate(`/?goal=${encodeURIComponent(`swap ${token} to USDC`)}`)}
         notChecked={sweep.data?.notChecked ?? []}
         checkedAt={sweep.data?.checkedAt ?? null}
         loading={sweep.isPending}

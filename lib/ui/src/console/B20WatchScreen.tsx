@@ -1,5 +1,6 @@
 import React from 'react';
 import { B20ControlWatchPanel, type B20WatchLikeV1 } from './B20Panels';
+import { B20PortfolioPanel, type B20HoldingV1 } from './B20PortfolioPanel';
 
 void React;
 
@@ -25,11 +26,24 @@ export interface B20WatchedTokenLikeV1 {
   displaySymbol: string | null;
   outcome: 'watched' | 'not_b20' | 'unreadable';
   watch?: B20WatchLikeV1;
+  controls?: {
+    factoryConfirmed: boolean;
+    transfersPaused: boolean;
+    transferPolicyActive: boolean;
+    controlsFullyRead: boolean;
+    supplyCapped: boolean;
+    blockNumber: string | null;
+  };
   reason: string | null;
 }
 
 export interface B20WatchScreenModelV1 {
   tokens: readonly B20WatchedTokenLikeV1[];
+  /** T68 — the B20 tokens this wallet holds, joined with their balances. */
+  holdings: readonly B20HoldingV1[];
+  /** Non-B20 tokens in the wallet, counted rather than listed. */
+  otherTokenCount: number;
+  onOpenToken?: (tokenAddress: string) => void;
   notChecked: readonly string[];
   checkedAt: string | null;
   loading: boolean;
@@ -78,6 +92,19 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
 
   return (
     <section aria-label="B20 control watch">
+      {/* The portfolio comes first: what you hold outranks what you could
+          check. A user opens this tab because of a position, not a sweep. */}
+      <B20PortfolioPanel
+        holdings={model.holdings}
+        otherTokenCount={model.otherTokenCount}
+        emptyReason={
+          model.checkedAt === null
+            ? 'Nothing has been checked yet — press Check now to read this wallet’s tokens.'
+            : model.unavailableReason
+        }
+        onOpenToken={model.onOpenToken}
+      />
+
       <div className="panel">
         <div className="ph">
           <h3>B20 control watch</h3>

@@ -2619,6 +2619,19 @@ export const B20WatchedTokenV1Schema = z
     outcome: z.enum(['watched', 'not_b20', 'unreadable']),
     /** Present only when the token was actually compared. */
     watch: B20ControlWatchV1Schema.optional(),
+    /** The exit-relevant controls, read at `controls.blockNumber`. Present
+     * whenever a snapshot exists — this is what a holder's card is about. */
+    controls: z
+      .object({
+        factoryConfirmed: z.boolean(),
+        transfersPaused: z.boolean(),
+        transferPolicyActive: z.boolean(),
+        controlsFullyRead: z.boolean(),
+        supplyCapped: z.boolean(),
+        blockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+      })
+      .strict()
+      .optional(),
     /** Why nothing was compared. Never a claim about the token. */
     reason: z.string().max(300).nullable(),
   })

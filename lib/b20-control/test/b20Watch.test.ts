@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   b20WatchNeedsAttentionV1,
+  exitControlsFromSnapshotV1,
   b20WatchSummaryV1,
   diffB20SnapshotsV1,
 } from '../src/watch.js';
@@ -292,5 +293,75 @@ describe('the report is checkable', () => {
     assert.equal(watch.changes.length, 1);
     assert.equal(watch.changes[0]!.before, 'USD');
     assert.equal(watch.changes[0]!.after, 'EUR');
+  });
+});
+
+describe('the exit-relevant controls, extracted from a snapshot', () => {
+  function withDetection(outcome: string, fields: FieldInput[]) {
+    return { ...snapshot({ block: '100', fields }), detection: { outcome } } as unknown as B20ControlSnapshotV1;
+  }
+
+  test('only a TRANSFER pause stops a sale', () => {
+    // A mint or burn pause does not, and conflating them would refuse tokens
+    // that can be exited perfectly well.
+    assert.equal(
+      exitControlsFromSnapshotV1(withDetection('b20', [PAUSED('MINT')])).transfersPaused,
+      false,
+    );
+    assert.equal(
+      exitControlsFromSnapshotV1(withDetection('b20', [PAUSED('TRANSFER')])).transfersPaused,
+      true,
+    );
+    assert.equal(
+      exitControlsFromSnapshotV1(withDetection('b20', [PAUSED('none paused')])).transfersPaused,
+      false,
+    );
+  });
+
+  test('an ALWAYS_ALLOW policy is not a gate', () => {
+    const open = exitControlsFromSnapshotV1(
+      withDetection('b20', [{ key: 'transfer_receiver_policy', value: 'ALWAYS_ALLOW (0)' }]),
+    );
+    assert.equal(open.transferPolicyActive, false);
+
+    const gated = exitControlsFromSnapshotV1(
+      withDetection('b20', [{ key: 'transfer_receiver_policy', value: 'policy 14' }]),
+    );
+    assert.equal(gated.transferPolicyActive, true);
+  });
+
+  test('the uint128-max sentinel means no cap', () => {
+    const uncapped = exitControlsFromSnapshotV1(
+      withDetection('b20', [CAP('340282366920938463463374607431768211455 (uint128 max — no cap)')]),
+    );
+    assert.equal(uncapped.supplyCapped, false);
+    assert.equal(exitControlsFromSnapshotV1(withDetection('b20', [CAP('1000000')])).supplyCapped, true);
+  });
+
+  test('only a FAILED read makes the controls incomplete', () => {
+    // `unsupported_by_variant` and `not_enumerable` were never going to answer.
+    // Treating them as failures would make every stablecoin permanently
+    // unreadable and therefore permanently refused.
+    const variant = exitControlsFromSnapshotV1(
+      withDetection('b20', [
+        { key: 'rebase_multiplier', value: null, status: 'unsupported_by_variant' },
+      ]),
+    );
+    assert.equal(variant.controlsFullyRead, true);
+
+    const failed = exitControlsFromSnapshotV1(
+      withDetection('b20', [{ key: 'supply_cap', value: null, status: 'unavailable' }]),
+    );
+    assert.equal(failed.controlsFullyRead, false);
+  });
+
+  test('a non-B20 address is not factory confirmed', () => {
+    assert.equal(exitControlsFromSnapshotV1(withDetection('not_b20', [])).factoryConfirmed, false);
+    assert.equal(exitControlsFromSnapshotV1(withDetection('b20', [])).factoryConfirmed, true);
+    // An uninitialised B20 IS a B20 — the factory recognises it.
+    assert.equal(
+      exitControlsFromSnapshotV1(withDetection('b20_uninitialised', [])).factoryConfirmed,
+      true,
+    );
   });
 });

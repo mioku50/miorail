@@ -116,6 +116,97 @@ describe('the screen never says a token is safe', () => {
   });
 });
 
+describe('the B20 portfolio card', () => {
+  test('a missing price is stated, never rendered as zero', async () => {
+    // "$0.00" reaches a user as "worthless", which is a claim about the token.
+    const { controlLinesV1 } = await import('../src/console/B20PortfolioPanel');
+    const source = readFileSync(path.join(here, '../src/console/B20PortfolioPanel.tsx'), 'utf8');
+    assert.ok(source.includes("usdLabel ?? 'no price source'"));
+    assert.equal(typeof controlLinesV1, 'function');
+  });
+
+  test('an unread token shows no control lines rather than clean ones', async () => {
+    const { controlLinesV1 } = await import('../src/console/B20PortfolioPanel');
+    assert.deepEqual(controlLinesV1(null), []);
+  });
+
+  test('a transfer policy is reported as a gate, never as "you are blocked"', async () => {
+    const { controlLinesV1 } = await import('../src/console/B20PortfolioPanel');
+    const lines = controlLinesV1({
+      factoryConfirmed: true,
+      transfersPaused: false,
+      transferPolicyActive: true,
+      controlsFullyRead: true,
+      supplyCapped: true,
+      blockNumber: '49412880',
+    });
+    const policy = lines.find((line) => line.label === 'Transfer policy')!;
+    // B20 offers no way to enumerate a policy, so the only honest statement is
+    // that the gate exists.
+    assert.match(policy.state, /specific addresses can be refused/);
+    assert.ok(!/you are|your address is/i.test(policy.state));
+    assert.equal(policy.alarming, true);
+  });
+
+  test('an uncapped supply is alarming and a capped one is not', async () => {
+    const { controlLinesV1 } = await import('../src/console/B20PortfolioPanel');
+    const base = {
+      factoryConfirmed: true,
+      transfersPaused: false,
+      transferPolicyActive: false,
+      controlsFullyRead: true,
+      blockNumber: '1',
+    };
+    assert.equal(controlLinesV1({ ...base, supplyCapped: false }).find((l) => l.label === 'Supply')!.alarming, true);
+    assert.equal(controlLinesV1({ ...base, supplyCapped: true }).find((l) => l.label === 'Supply')!.alarming, false);
+  });
+
+  test('a paused token says it cannot be sold', async () => {
+    const { controlLinesV1 } = await import('../src/console/B20PortfolioPanel');
+    const lines = controlLinesV1({
+      factoryConfirmed: true,
+      transfersPaused: true,
+      transferPolicyActive: false,
+      controlsFullyRead: true,
+      supplyCapped: true,
+      blockNumber: '1',
+    });
+    assert.match(lines[0]!.state, /cannot be sold/);
+  });
+
+  test('an incomplete read is never presented as a complete one', async () => {
+    const { controlLinesV1 } = await import('../src/console/B20PortfolioPanel');
+    const lines = controlLinesV1({
+      factoryConfirmed: true,
+      transfersPaused: false,
+      transferPolicyActive: false,
+      controlsFullyRead: false,
+      supplyCapped: true,
+      blockNumber: '1',
+    });
+    const read = lines.find((line) => line.label === 'Read')!;
+    assert.match(read.state, /incomplete/);
+    assert.equal(read.alarming, true);
+  });
+
+  test('the card carries no score, badge or grade', () => {
+    const source = readFileSync(path.join(here, '../src/console/B20PortfolioPanel.tsx'), 'utf8');
+    const visible = source.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    for (const word of ['/100', 'score', 'rating', 'grade', 'safe', 'risk level']) {
+      assert.ok(!visible.toLowerCase().includes(word.toLowerCase()), `the card mentions "${word}"`);
+    }
+  });
+
+  test('swapping a held token hands over to the Routes flow', () => {
+    // Not a second execution path. The tab passes the goal along.
+    const page = readFileSync(
+      path.join(here, '../../../artifacts/interface/src/features/b20/B20WatchPage.tsx'),
+      'utf8',
+    );
+    assert.ok(page.includes("navigate(`/?goal="));
+  });
+});
+
 describe('the sweep is explicit, not automatic', () => {
   const page = readFileSync(
     path.join(here, '../../../artifacts/interface/src/features/b20/B20WatchPage.tsx'),
