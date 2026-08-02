@@ -67,6 +67,12 @@ export function b20UnavailableCopyV1(input: {
   if (code === 'b20_rpc_unavailable') {
     return 'No Base RPC is configured for control reads, so this token’s controls were not read. Route comparison still works.';
   }
+  if (code === 'b20_rpc_no_answer') {
+    // Separate from the line above on purpose: "nothing is configured" is an
+    // operator's problem to fix, "the endpoint went quiet" is worth retrying.
+    // Collapsing them would send a user to the wrong one every other time.
+    return 'The Base endpoint did not answer, so nothing was read. This says nothing about the token — try again in a moment.';
+  }
   if (code === 'b20_storage_unavailable') {
     return 'Control snapshots cannot be stored on this server right now, so nothing was read. Route comparison still works.';
   }
@@ -90,6 +96,7 @@ export function b20ErrorCodeV1(error: unknown): string | null {
   const known = [
     'b20_control_disabled',
     'b20_rpc_unavailable',
+    'b20_rpc_no_answer',
     'b20_storage_unavailable',
     'b20_snapshot_conflict',
     'invalid_b20_inspect_request',

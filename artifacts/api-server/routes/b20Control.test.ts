@@ -17,6 +17,8 @@ const USER = { id: `eip155:8453:${WALLET}`, address: WALLET, chainId: 8453 as co
 const OTHER_WALLET = '0x2222222222222222222222222222222222222222';
 const OTHER = { id: `eip155:8453:${OTHER_WALLET}`, address: OTHER_WALLET, chainId: 8453 as const };
 const TOKEN = '0xb2000000000000000000007bf6d5cbb0e24cb301';
+/** A second B20 Asset, so a sweep has more than one token to hold to one block. */
+const TOKEN_TWO = '0xb2000000000000000000007bf6d5cbb0e24cb302';
 const ERC20 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 const BLOCK_HASH = `0x${'ab'.repeat(32)}` as `0x${string}`;
 const NOW = new Date('2026-07-27T12:00:00.000Z');
@@ -272,7 +274,8 @@ describe('the portfolio sweep', () => {
     await inspect({ chainId: 8453, tokenAddress: TOKEN });
 
     // The guarantee is about the EXPENSIVE read: a full control card is 17
-    // sequential eth_calls and must not repeat inside the TTL. The balance is
+    // eth_calls, batched into a handful of requests, and must not repeat inside
+    // the TTL however few round trips it now takes. The balance is
     // one call and is not stored on the snapshot, so it is read every sweep —
     // otherwise a cached token would show no balance at all, which is most of
     // them and the whole reason the portfolio exists.
@@ -295,6 +298,75 @@ describe('the portfolio sweep', () => {
     assert.equal(response.body.tokens[0].watch.status, 'compared');
     assert.equal(response.body.tokens[0].watch.fromBlock, '49059662');
     assert.equal(response.body.tokens[0].watch.toBlock, '49060000');
+  });
+
+  test('the whole sweep is read at one block, so its rows can be compared', async () => {
+    // Tokens shown side by side must be read at the same block. A per-token
+    // anchor would produce a page of snapshots straddling several blocks with
+    // nothing to say which — and it would cost two extra calls per token.
+    let anchors = 0;
+    const blocks = new Set<string>();
+    b20RouteRuntime.reader = () => {
+      const reader = fakeReader();
+      return {
+        ...reader,
+        async readBlockAnchor() {
+          anchors += 1;
+          // A moving chain: if inspection took its own anchor, the tokens would
+          // land on different blocks and this test would see them.
+          blockNumber = String(Number(blockNumber) + 1);
+          return reader.readBlockAnchor();
+        },
+      };
+    };
+    const response = await sweep({ chainId: 8453, tokens: [TOKEN, TOKEN_TWO] });
+    assert.equal(response.status, 200);
+    assert.equal(anchors, 1, 'one block for the sweep, not one per token');
+    for (const token of response.body.tokens) blocks.add(token.watch.toBlock);
+    assert.equal(blocks.size, 1, `every row must share a block, got ${[...blocks].join(', ')}`);
+  });
+
+  test('one reader serves the sweep, so what it learns about the endpoint survives', async () => {
+    // The reader carries the backoff it learned from a throttle, the endpoint's
+    // retry-after and whether batches are accepted. Building one per token threw
+    // all of that away and re-provoked the same rate limit on every token.
+    let readers = 0;
+    b20RouteRuntime.reader = () => {
+      readers += 1;
+      return fakeReader();
+    };
+    const response = await sweep({ chainId: 8453, tokens: [TOKEN, TOKEN_TWO, ERC20] });
+    assert.equal(response.status, 200);
+    assert.equal(readers, 1);
+  });
+
+  test('a sweep that runs out of time answers with what it read and names the rest', async () => {
+    // A throttled endpoint does not fail, it answers slowly. Without a deadline
+    // the caller waits for a request that outlives the browser and sees nothing
+    // — including the tokens that WERE read.
+    let clock = 0;
+    b20RouteRuntime.monotonicMs = () => (clock += 15_000);
+    b20RouteRuntime.watchDeadlineMs = () => 20_000;
+    const response = await sweep({ chainId: 8453, tokens: [TOKEN, TOKEN_TWO, ERC20] });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.tokens.length, 1, 'the first token was read before time ran out');
+    // Named, not silently dropped: "not reached" and "unchanged" are different
+    // claims and the page has to be able to tell them apart.
+    assert.deepEqual(response.body.notChecked, [TOKEN_TWO, ERC20]);
+  });
+
+  test('an endpoint that goes quiet is not a verdict about anyone’s tokens', async () => {
+    b20RouteRuntime.reader = () => ({
+      ...fakeReader(),
+      async readBlockAnchor() {
+        return { ok: false, reason: 'rpc_timeout' };
+      },
+    });
+    const response = await sweep({ chainId: 8453, tokens: [TOKEN] });
+    assert.equal(response.status, 503);
+    // Distinct from `b20_rpc_unavailable`, which means nothing is configured.
+    // An operator reading the two lines has to be able to tell them apart.
+    assert.equal(response.body.code, 'b20_rpc_no_answer');
   });
 
   test('the wire refuses more tokens than the sweep budget allows', async () => {

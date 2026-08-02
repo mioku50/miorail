@@ -51,6 +51,38 @@ export interface B20ReaderConfigV1 {
   maxRetries?: number;
   /** Injected so tests do not spend real time. */
   sleepImpl?: (ms: number) => Promise<void>;
+  /** Calls per JSON-RPC batch. See `B20_MAX_BATCH_SIZE_V1` for the default and
+   * why it is what it is. */
+  maxBatchSize?: number;
+}
+
+/**
+ * Calls per batch.
+ *
+ * Measured against `mainnet.base.org` on 2026-08-02: eleven or more calls in
+ * one batch are refused with HTTP 200 and a single JSON-RPC error object —
+ * `maximum 10 calls in 1 batch` — rather than an array. Ten is the endpoint's
+ * own number, not a guess, and a keyed endpoint that allows more loses nothing
+ * by sending two requests instead of one.
+ */
+export const B20_MAX_BATCH_SIZE_V1 = 10;
+
+/**
+ * The gap a throttled reader starts at, per call.
+ *
+ * Measured against `mainnet.base.org` on 2026-08-02: it serves roughly two and
+ * a half calls per second, so ~400ms is one call's share. The old value crept
+ * up from 120ms, which is three times faster than the endpoint will answer —
+ * the first reads of a card were spent discovering that, and the rows they
+ * belonged to came back empty. Starting at the measured rate is not
+ * pessimism; it is the number.
+ */
+export const B20_THROTTLED_GAP_MS_V1 = 400;
+
+export interface B20BatchCallV1 {
+  to: string;
+  data: string;
+  blockTag: string;
 }
 
 /**
@@ -86,7 +118,34 @@ export interface B20ReaderV1 {
   readVariantActivated(variant: 'asset' | 'stablecoin', blockTag: string): Promise<B20RpcResultV1<boolean>>;
   /** A raw `eth_call` against an arbitrary pinned target. Decoding is the
    * caller's job, so this seam never guesses at a shape. */
-  call(input: { to: string; data: string; blockTag: string }): Promise<B20RpcResultV1<string>>;
+  call(input: B20BatchCallV1): Promise<B20RpcResultV1<string>>;
+  /**
+   * Several pinned calls in as few round trips as the endpoint allows.
+   *
+   * Optional. A reader that does not implement it — a table-backed fake, say —
+   * is read one call at a time by `callManyV1`, which is the same set of
+   * questions and the same set of answers, only slower. Callers use the helper
+   * rather than this method so that stays true.
+   */
+  callMany?(inputs: readonly B20BatchCallV1[]): Promise<B20RpcResultV1<string>[]>;
+}
+
+/**
+ * Reads a list of pinned calls, batching where the reader can.
+ *
+ * Results come back positionally: `result[i]` answers `inputs[i]`, always, with
+ * a failure in place of an answer rather than a gap. Batching must not change
+ * WHICH question a row on the card came from.
+ */
+export async function callManyV1(
+  reader: B20ReaderV1,
+  inputs: readonly B20BatchCallV1[],
+): Promise<B20RpcResultV1<string>[]> {
+  if (inputs.length === 0) return [];
+  if (reader.callMany) return reader.callMany(inputs);
+  const results: B20RpcResultV1<string>[] = [];
+  for (const input of inputs) results.push(await reader.call(input));
+  return results;
 }
 
 interface JsonRpcEnvelope {
@@ -116,11 +175,48 @@ function classifyRpcErrorV1(code: number | undefined, message: string): B20RpcRe
   return 'rpc_error';
 }
 
+/**
+ * One JSON-RPC envelope, classified.
+ *
+ * Shared by the single-call and batch paths on purpose: a throttled call must
+ * be the same outcome whether it arrived alone or as the seventh entry of a
+ * batch. `mainnet.base.org` refuses individual entries inside an accepted batch
+ * with `over rate limit`, so this is not a hypothetical path.
+ */
+function envelopeResultV1(envelope: JsonRpcEnvelope): B20RpcResultV1<unknown> {
+  if (envelope.error) {
+    const message = envelope.error.message ?? '';
+    return {
+      ok: false,
+      reason: classifyRpcErrorV1(envelope.error.code, message),
+      detail: redactRpcTextV1(message),
+      revertSelector: revertSelectorV1(typeof envelope.error.data === 'string' ? envelope.error.data : null),
+    };
+  }
+  return { ok: true, value: envelope.result, raw: '' };
+}
+
+/** An `eth_call` result, decoded no further than its type. */
+function callResultV1(result: B20RpcResultV1<unknown>): B20RpcResultV1<string> {
+  if (!result.ok) return result;
+  if (typeof result.value !== 'string') return { ok: false, reason: 'invalid_response' };
+  // `0x` is an ANSWER, and its meaning is "there was nothing here at this
+  // block" — never `false`, never zero. See the research note: a B20 read
+  // before activation returns exactly this.
+  if (result.value === '0x') return { ok: false, reason: 'empty_result', detail: 'the call returned no data' };
+  return { ok: true, value: result.value, raw: result.value };
+}
+
 export function createB20ReaderV1(config: B20ReaderConfigV1): B20ReaderV1 {
   const timeoutMs = config.timeoutMs ?? 8_000;
   const fetchImpl = config.fetchImpl ?? fetch;
   const maxRetries = config.maxRetries ?? 3;
   const sleep = config.sleepImpl ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)));
+  const maxBatchSize = Math.max(1, config.maxBatchSize ?? B20_MAX_BATCH_SIZE_V1);
+  // Sticky. An endpoint that refuses the FORM of a batch will refuse every
+  // later one too, so the fallback is decided once rather than paid for on
+  // every read.
+  let batchSupported = true;
   let nextId = 1;
   /** Seconds the endpoint asked us to wait, if it said so on the last 429. */
   let retryAfterMs: number | null = null;
@@ -133,16 +229,34 @@ export function createB20ReaderV1(config: B20ReaderConfigV1): B20ReaderV1 {
   let lastRequestAt = 0;
 
   function noteThrottled(): void {
-    gapMs = Math.min(gapMs === 0 ? 120 : gapMs * 2, 1_000);
+    gapMs = Math.min(gapMs === 0 ? B20_THROTTLED_GAP_MS_V1 : gapMs * 2, 1_000);
   }
   function noteServed(): void {
     gapMs = gapMs <= 120 ? 0 : Math.floor(gapMs / 2);
   }
 
+  /**
+   * Waits for this request's share of the endpoint's allowance.
+   *
+   * The gap is multiplied by the number of CALLS, not paid once per request.
+   * Public Base meters per call — a ten-call batch spends ten of its allowance
+   * — so pacing a batch like a single call asks for ten times the quota after
+   * one call's worth of patience. Measured on 2026-08-02: without this, a card
+   * on mainnet.base.org filled 4 of 16 rows; with it, 16 of 16.
+   *
+   * Batching is therefore a round-trip saving, never a quota saving. On a
+   * healthy endpoint the gap is zero and this costs nothing at all.
+   */
+  async function paceForV1(callCount: number): Promise<void> {
+    if (gapMs <= 0) return;
+    const owed = gapMs * callCount;
+    const sinceLast = Date.now() - lastRequestAt;
+    if (sinceLast < owed) await sleep(owed - sinceLast);
+  }
+
   async function rpcOnce(method: string, params: unknown[]): Promise<B20RpcResultV1<unknown>> {
     if (config.rpcUrl.trim().length === 0) return { ok: false, reason: 'not_configured' };
-    const sinceLast = Date.now() - lastRequestAt;
-    if (gapMs > 0 && sinceLast < gapMs) await sleep(gapMs - sinceLast);
+    await paceForV1(1);
     lastRequestAt = Date.now();
     let response: Response;
     try {
@@ -174,21 +288,12 @@ export function createB20ReaderV1(config: B20ReaderConfigV1): B20ReaderV1 {
     } catch {
       return { ok: false, reason: 'invalid_response' };
     }
-    if (envelope.error) {
-      const message = envelope.error.message ?? '';
-      const reason = classifyRpcErrorV1(envelope.error.code, message);
-      // A throttle can arrive as a 200 with a JSON-RPC error body, so pacing
-      // has to be driven by the classified reason, not by the HTTP status.
-      if (reason === 'rate_limited') noteThrottled();
-      return {
-        ok: false,
-        reason,
-        detail: redactRpcTextV1(message),
-        revertSelector: revertSelectorV1(typeof envelope.error.data === 'string' ? envelope.error.data : null),
-      };
-    }
-    noteServed();
-    return { ok: true, value: envelope.result, raw: '' };
+    const result = envelopeResultV1(envelope);
+    // A throttle can arrive as a 200 with a JSON-RPC error body, so pacing has
+    // to be driven by the classified reason, not by the HTTP status.
+    if (!result.ok && result.reason === 'rate_limited') noteThrottled();
+    else if (result.ok) noteServed();
+    return result;
   }
 
   async function rpc(method: string, params: unknown[]): Promise<B20RpcResultV1<unknown>> {
@@ -203,14 +308,158 @@ export function createB20ReaderV1(config: B20ReaderConfigV1): B20ReaderV1 {
   }
 
   async function ethCall(to: string, data: string, blockTag: string): Promise<B20RpcResultV1<string>> {
-    const result = await rpc('eth_call', [{ to, data }, blockTag]);
-    if (!result.ok) return result;
-    if (typeof result.value !== 'string') return { ok: false, reason: 'invalid_response' };
-    // `0x` is an ANSWER, and its meaning is "there was nothing here at this
-    // block" — never `false`, never zero. See the research note: a B20 read
-    // before activation returns exactly this.
-    if (result.value === '0x') return { ok: false, reason: 'empty_result', detail: 'the call returned no data' };
-    return { ok: true, value: result.value, raw: result.value };
+    return callResultV1(await rpc('eth_call', [{ to, data }, blockTag]));
+  }
+
+  /** One attempt, no retry. The batch loop owns retrying so a call cannot be
+   * repeated by two layers at once. */
+  async function ethCallOnce(input: B20BatchCallV1): Promise<B20RpcResultV1<string>> {
+    return callResultV1(await rpcOnce('eth_call', [{ to: input.to, data: input.data }, input.blockTag]));
+  }
+
+  type BatchOutcomeV1 =
+    /** The endpoint answered as a batch. Entries are keyed by input index; an
+     * index that is absent was not answered at all. */
+    | { kind: 'answered'; results: Map<number, B20RpcResultV1<string>> }
+    /** The request itself failed, so nothing in it was answered. */
+    | { kind: 'transport'; reason: B20RpcReasonV1; detail?: string }
+    /** The endpoint does not take batches of this size, or at all. */
+    | { kind: 'unsupported' };
+
+  async function rpcBatchOnce(
+    entries: readonly { index: number; call: B20BatchCallV1 }[],
+  ): Promise<BatchOutcomeV1> {
+    if (config.rpcUrl.trim().length === 0) return { kind: 'transport', reason: 'not_configured' };
+    await paceForV1(entries.length);
+    lastRequestAt = Date.now();
+
+    // The id is what ties an answer back to a question. Batched responses may
+    // arrive in any order, so position is never used for that.
+    const byId = new Map<number, number>();
+    const body = entries.map((entry) => {
+      const id = nextId++;
+      byId.set(id, entry.index);
+      return {
+        jsonrpc: '2.0',
+        id,
+        method: 'eth_call',
+        params: [{ to: entry.call.to, data: entry.call.data }, entry.call.blockTag],
+      };
+    });
+
+    let response: Response;
+    try {
+      response = await fetchImpl(config.rpcUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (error) {
+      const name = error instanceof Error ? error.name : '';
+      return name === 'TimeoutError' || name === 'AbortError'
+        ? { kind: 'transport', reason: 'rpc_timeout' }
+        : { kind: 'transport', reason: 'rpc_unavailable' };
+    }
+    if (response.status === 429) {
+      const header = Number(response.headers.get('retry-after'));
+      retryAfterMs = Number.isFinite(header) && header > 0 && header <= 5 ? header * 1_000 : null;
+      noteThrottled();
+      return { kind: 'transport', reason: 'rate_limited' };
+    }
+    if (!response.ok) return { kind: 'transport', reason: 'rpc_unavailable', detail: `status ${response.status}` };
+
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      return { kind: 'transport', reason: 'invalid_response' };
+    }
+    // A batch answered with a single object is the endpoint refusing the SHAPE
+    // of the request — `mainnet.base.org` answers an over-size batch with
+    // exactly one `maximum 10 calls in 1 batch` error. That is a fact about the
+    // endpoint, not about any one call in it, so it must not be recorded as a
+    // failed read of a token.
+    if (!Array.isArray(payload)) return { kind: 'unsupported' };
+
+    const results = new Map<number, B20RpcResultV1<string>>();
+    let served = false;
+    let throttled = false;
+    for (const raw of payload) {
+      if (!raw || typeof raw !== 'object' || !('id' in raw)) continue;
+      const index = byId.get(Number((raw as { id: unknown }).id));
+      if (index === undefined) continue;
+      const result = callResultV1(envelopeResultV1(raw as JsonRpcEnvelope));
+      results.set(index, result);
+      if (result.ok) served = true;
+      else if (result.reason === 'rate_limited') throttled = true;
+    }
+    // A batch where some entries were throttled paces the next one, even though
+    // the request as a whole succeeded. Without this the reader would read a
+    // half-served batch as healthy and keep the same rate.
+    if (throttled) noteThrottled();
+    else if (served) noteServed();
+    return { kind: 'answered', results };
+  }
+
+  /**
+   * Reads many pinned calls, retrying only what is worth retrying.
+   *
+   * The rounds shrink: a round re-issues just the entries that came back
+   * throttled or unanswered, so a partially served batch costs one more request
+   * for the remainder rather than a full repeat. That matters on the public
+   * endpoint, which serves roughly the first five calls of a batch and refuses
+   * the rest with `over rate limit`.
+   */
+  async function ethCallMany(inputs: readonly B20BatchCallV1[]): Promise<B20RpcResultV1<string>[]> {
+    const results: (B20RpcResultV1<string> | undefined)[] = inputs.map(() => undefined);
+    let pending = inputs.map((_, index) => index);
+
+    for (let attempt = 0; attempt <= maxRetries && pending.length > 0; attempt += 1) {
+      if (attempt > 0) {
+        await sleep(retryAfterMs ?? 250 * 2 ** (attempt - 1));
+        retryAfterMs = null;
+      }
+      const chunkSize = batchSupported ? maxBatchSize : 1;
+      for (let start = 0; start < pending.length; start += chunkSize) {
+        const slice = pending.slice(start, start + chunkSize);
+        // A batch of one is a plain call: the envelope array would cost bytes
+        // and buy nothing, and some endpoints reject it.
+        if (slice.length === 1) {
+          const index = slice[0]!;
+          results[index] = await ethCallOnce(inputs[index]!);
+          continue;
+        }
+        const outcome = await rpcBatchOnce(slice.map((index) => ({ index, call: inputs[index]! })));
+        if (outcome.kind === 'unsupported') {
+          batchSupported = false;
+          for (const index of slice) results[index] = await ethCallOnce(inputs[index]!);
+          continue;
+        }
+        if (outcome.kind === 'transport') {
+          for (const index of slice) results[index] = { ok: false, reason: outcome.reason, detail: outcome.detail };
+          continue;
+        }
+        for (const index of slice) {
+          // An index the batch did not answer is left undefined rather than
+          // invented, which re-queues it for the next round.
+          results[index] = outcome.results.get(index);
+        }
+      }
+      pending = pending.filter((index) => {
+        const result = results[index];
+        return result === undefined || (!result.ok && RETRYABLE_REASONS_V1.includes(result.reason));
+      });
+    }
+
+    return inputs.map(
+      (_, index) =>
+        results[index] ?? {
+          ok: false,
+          reason: 'invalid_response',
+          detail: 'the batch returned no entry for this call',
+        },
+    );
   }
 
   function decodeBoolResult(result: B20RpcResultV1<string>): B20RpcResultV1<boolean> {
@@ -272,6 +521,10 @@ export function createB20ReaderV1(config: B20ReaderConfigV1): B20ReaderV1 {
 
     async call(input) {
       return ethCall(input.to, input.data, input.blockTag);
+    },
+
+    async callMany(inputs) {
+      return ethCallMany(inputs);
     },
   };
 }

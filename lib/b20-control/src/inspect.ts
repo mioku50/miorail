@@ -34,9 +34,11 @@ import {
   variantFromAddressV1,
 } from './pinned.js';
 import {
+  callManyV1,
   isSupportedB20ChainV1,
   isWellFormedAddressV1,
   rawResponseHashV1,
+  type B20BlockAnchorV1,
   type B20ReaderV1,
   type B20RpcResultV1,
 } from './reader.js';
@@ -63,6 +65,16 @@ export interface B20InspectInputV1 {
   now: Date;
   /** Deterministic id, so the same token at the same block is the same row. */
   snapshotId?: string;
+  /**
+   * A block already read by the caller, reused instead of read again.
+   *
+   * A sweep over many tokens passes one anchor for all of them. That is two
+   * fewer calls per token, but the reason to do it is correctness: tokens
+   * compared against each other should be read at the same block, and a sweep
+   * that anchored each token separately would produce a set of snapshots
+   * straddling several blocks and no way to tell which.
+   */
+  anchor?: B20BlockAnchorV1;
 }
 
 export interface B20InspectDepsV1 {
@@ -551,11 +563,17 @@ export async function inspectB20TokenV1(
 
   // The block comes FIRST. Every read below is pinned to it, so the snapshot
   // describes one state of the chain rather than a smear across several.
-  const anchor = await deps.reader.readBlockAnchor();
-  if (!anchor.ok) {
-    return bail(failedDetection('rpc_failure', observedAt, `The endpoint did not answer (${anchor.reason}).`, token));
+  let pinned: B20BlockAnchorV1;
+  if (input.anchor) {
+    pinned = input.anchor;
+  } else {
+    const anchor = await deps.reader.readBlockAnchor();
+    if (!anchor.ok) {
+      return bail(failedDetection('rpc_failure', observedAt, `The endpoint did not answer (${anchor.reason}).`, token));
+    }
+    pinned = anchor.value;
   }
-  const { blockNumber, blockHash, blockTag } = anchor.value;
+  const { blockNumber, blockHash, blockTag } = pinned;
 
   const isB20 = await deps.reader.readIsB20(address, blockTag);
   if (!isB20.ok) {
@@ -620,11 +638,17 @@ export async function inspectB20TokenV1(
     ['transferExecutor', 'TRANSFER_EXECUTOR_POLICY()', B20_SELECTORS_V1.transferExecutorPolicy],
     ['mintReceiver', 'MINT_RECEIVER_POLICY()', B20_SELECTORS_V1.mintReceiverPolicy],
   ];
+  // One round trip for all four. They are independent of each other, and the
+  // field reads below cannot start until every one of them has answered.
+  const scopeResults = await callManyV1(
+    deps.reader,
+    scopeReads.map(([, , selector]) => ({ to: address, data: encodeNoArgsV1(selector), blockTag })),
+  );
   const scopes: Record<string, HashV1 | null> = {};
-  for (const [name, , selector] of scopeReads) {
-    const result = await deps.reader.call({ to: address, data: encodeNoArgsV1(selector), blockTag });
-    scopes[name] = result.ok ? decodeBytes32V1(result.value) : null;
-  }
+  scopeReads.forEach(([name], index) => {
+    const result = scopeResults[index];
+    scopes[name] = result?.ok ? decodeBytes32V1(result.value) : null;
+  });
 
   const fields: B20ControlFieldV1[] = [];
   const evidence: B20ControlEvidenceV1[] = [];
@@ -638,19 +662,31 @@ export async function inspectB20TokenV1(
     evidenceHash: null,
   });
 
-  for (const plan of readPlansV1(address, scopes)) {
-    if (plan.variants && !plan.variants.includes(variant)) {
+  // A plan that does not apply to this variant is answered without asking the
+  // chain, so it never enters the batch. The rest are read in one list and put
+  // back in PLAN order: which row a value lands on is decided here, never by
+  // the order the endpoint happened to answer in.
+  const plans = readPlansV1(address, scopes);
+  const applicable = plans.filter((plan) => !plan.variants || plan.variants.includes(variant));
+  const planResults = await callManyV1(
+    deps.reader,
+    applicable.map((plan) => ({ to: plan.target, data: plan.data, blockTag })),
+  );
+  const resultByPlan = new Map<ReadPlanV1, B20RpcResultV1<string>>(
+    applicable.map((plan, index) => [
+      plan,
+      planResults[index] ?? { ok: false as const, reason: 'invalid_response' as const },
+    ]),
+  );
+
+  for (const plan of plans) {
+    const result = resultByPlan.get(plan);
+    if (!result) {
       fields.push(
-        unavailableField(
-          plan.key,
-          plan.label,
-          `Not part of the ${variant} variant.`,
-          'unsupported_by_variant',
-        ),
+        unavailableField(plan.key, plan.label, `Not part of the ${variant} variant.`, 'unsupported_by_variant'),
       );
       continue;
     }
-    const result = await deps.reader.call({ to: plan.target, data: plan.data, blockTag });
     let record: B20ControlEvidenceV1 | null = null;
     if (result.ok) {
       const decoded = plan.decode(result.value);

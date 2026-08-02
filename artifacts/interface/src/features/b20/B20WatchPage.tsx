@@ -5,6 +5,8 @@ import {
   B20WatchScreen,
   ConsoleRightRail,
   ConsoleShell,
+  b20ErrorCodeV1,
+  b20UnavailableCopyV1,
   chainBlockNumberV1,
   chainGasLabelV1,
   chainLabelV1,
@@ -136,7 +138,14 @@ export function B20WatchPage() {
       : portfolio.error
         ? 'Your balances could not be read, so there is no list of tokens to check.'
         : sweep.error
-          ? 'The sweep could not complete. Nothing here is a statement about your tokens.'
+          ? // The server distinguishes "nothing is configured" from "the endpoint
+            // went quiet", and this is where that distinction reaches a user —
+            // one of them is worth retrying and the other never will be.
+            (b20UnavailableCopyV1({
+              gateEnabled: true,
+              skipReason: null,
+              errorCode: b20ErrorCodeV1(sweep.error),
+            }) ?? 'The sweep could not complete. Nothing here is a statement about your tokens.')
           : held.length === 0 && portfolio.data
             ? 'No ERC-20 balances were found for this wallet.'
             : null;

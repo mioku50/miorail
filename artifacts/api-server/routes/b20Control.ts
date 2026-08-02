@@ -20,6 +20,7 @@ import {
   validateB20InspectRequestV1,
   type B20ControlSnapshotV1,
   type B20ControlWatchV1,
+  type B20ReaderV1,
 } from '@mioagent/b20-control';
 import {
   RouteStorageConflictError,
@@ -75,6 +76,23 @@ function watchTtlMsV1(): number {
   return Number.isFinite(raw) && raw >= 0 ? raw : 300_000;
 }
 
+/**
+ * How long a sweep may spend before it answers with what it has.
+ *
+ * A throttled endpoint does not fail — it answers slowly. Measured on
+ * 2026-08-02, one full card on `mainnet.base.org` takes ~27 seconds of paced
+ * reads, so twenty-five of them would outlive any browser and the caller would
+ * see a dead request instead of the tokens that were read.
+ *
+ * The deadline turns that into a partial answer. Tokens past it are NAMED in
+ * `notChecked`, which already means "not reached, which is not the same as
+ * unchanged" — the page has said that since the sweep existed.
+ */
+function watchDeadlineMsV1(): number {
+  const raw = Number.parseInt((process.env.MIORAIL_B20_WATCH_DEADLINE_MS ?? '').trim(), 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 20_000;
+}
+
 export const b20RouteRuntime = {
   flags: getMiorailProductMigrationFlags,
   repository: (): B20StorageRepositoryV1 => createDatabaseB20StorageRepository(client),
@@ -82,6 +100,10 @@ export const b20RouteRuntime = {
   rpcConfigured: () => baseMainnetRpcUrlV1().length > 0,
   ttlMs: ttlMsV1,
   watchTtlMs: watchTtlMsV1,
+  watchDeadlineMs: watchDeadlineMsV1,
+  /** Wall clock for the sweep deadline, separate from `now` so a test can make
+   * a sweep run long without also moving the timestamps on its snapshots. */
+  monotonicMs: () => Date.now(),
   migrationAvailable: async (): Promise<boolean> => {
     const rows = await client`
       SELECT
@@ -260,13 +282,14 @@ b20ControlRouter.post('/b20/inspect', async (req: Request, res: Response) => {
  * zero would be a claim about a position that was never measured.
  */
 async function b20BalanceV1(
+  reader: B20ReaderV1,
   snapshot: B20ControlSnapshotV1,
   holder: string,
 ): Promise<{ balanceAtomic: string | null; decimals: number | null }> {
   const decimals = b20DecimalsFromSnapshotV1(snapshot);
   if (snapshot.blockNumber === null) return { balanceAtomic: null, decimals };
   try {
-    const result = await b20RouteRuntime.reader().call({
+    const result = await reader.call({
       to: snapshot.tokenAddress,
       data: b20BalanceOfCalldataV1(holder),
       // The SAME block as the controls. A balance from a later block beside
@@ -305,11 +328,35 @@ b20ControlRouter.post('/b20/watch', async (req: Request, res: Response) => {
     // each duplicate would be a second paid read of the same fact.
     const tokens = [...new Set(parsed.data.tokens.map((token) => token.toLowerCase()))];
 
+    // ONE reader for the whole sweep. Each token used to build its own, which
+    // threw away the reader's pacing between tokens: the endpoint would throttle
+    // token 1, the reader would learn to slow down, and token 2 would start
+    // over at full speed and be throttled again. The state that survives here is
+    // the backoff, the retry-after and whether the endpoint takes batches.
+    const reader = b20RouteRuntime.reader();
+
+    // ONE block for the whole sweep. Two fewer calls per token, but the reason
+    // is that these snapshots are shown side by side: tokens read at different
+    // blocks are not comparable, and nothing on the page could say so.
+    const anchor = await reader.readBlockAnchor();
+    if (!anchor.ok) {
+      // A configured endpoint that did not answer is a different sentence from
+      // no endpoint at all, and it is not a statement about any token.
+      res.status(503).json({ error: 'b20_rpc_no_answer', code: 'b20_rpc_no_answer' });
+      return;
+    }
+
     const results: unknown[] = [];
     const notChecked: string[] = [];
     let sweepStopped = false;
+    const deadlineMs = b20RouteRuntime.watchDeadlineMs();
+    const startedAt = b20RouteRuntime.monotonicMs();
 
     for (const token of tokens) {
+      // Checked before each token rather than mid-token: a half-read card would
+      // be stored as a snapshot and diffed against later, so the deadline may
+      // only ever fall between tokens.
+      if (!sweepStopped && b20RouteRuntime.monotonicMs() - startedAt >= deadlineMs) sweepStopped = true;
       if (sweepStopped) {
         notChecked.push(token);
         continue;
@@ -340,7 +387,7 @@ b20ControlRouter.post('/b20/watch', async (req: Request, res: Response) => {
         const balance =
           fresh.snapshot.detection.outcome === 'not_b20'
             ? { balanceAtomic: null, decimals: null }
-            : await b20BalanceV1(fresh.snapshot, guard.user.address);
+            : await b20BalanceV1(reader, fresh.snapshot, guard.user.address);
         results.push({
           tokenAddress: token,
           displayName: card.displayName,
@@ -355,8 +402,14 @@ b20ControlRouter.post('/b20/watch', async (req: Request, res: Response) => {
       }
 
       const result = await inspectB20TokenV1(
-        { reader: b20RouteRuntime.reader() },
-        { tenantId: guard.user.id, chainId: parsed.data.chainId, tokenAddress: token, now },
+        { reader },
+        {
+          tenantId: guard.user.id,
+          chainId: parsed.data.chainId,
+          tokenAddress: token,
+          now,
+          anchor: anchor.value,
+        },
       );
       if (result.snapshot.detection.outcome === 'rpc_failure') {
         // The endpoint is failing. Trying the remaining tokens would be 24 more
@@ -377,7 +430,7 @@ b20ControlRouter.post('/b20/watch', async (req: Request, res: Response) => {
       const balance =
         stored.snapshot.detection.outcome === 'not_b20'
           ? { balanceAtomic: null, decimals: null }
-          : await b20BalanceV1(stored.snapshot, guard.user.address);
+          : await b20BalanceV1(reader, stored.snapshot, guard.user.address);
       results.push({
         tokenAddress: token,
         displayName: result.card.displayName,

@@ -52,6 +52,7 @@ describe('why there is no card', () => {
     const seen = new Set<string>();
     for (const errorCode of [
       'b20_rpc_unavailable',
+      'b20_rpc_no_answer',
       'b20_storage_unavailable',
       'invalid_b20_inspect_request',
       'authentication_required',
@@ -97,6 +98,12 @@ describe('an error never carries an endpoint', () => {
 
   test('a known code is recognised', () => {
     assert.equal(b20ErrorCodeV1(new Error('503: b20_rpc_unavailable')), 'b20_rpc_unavailable');
+  });
+
+  test('a configured endpoint that went quiet is not the same code as no endpoint', () => {
+    // One is an operator's problem, the other is worth retrying. A user sent to
+    // the wrong one gives up on a working install, or waits on a broken one.
+    assert.equal(b20ErrorCodeV1(new Error('503: b20_rpc_no_answer')), 'b20_rpc_no_answer');
   });
 
   test('no error is no code', () => {

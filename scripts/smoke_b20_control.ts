@@ -119,7 +119,9 @@ async function main(): Promise<void> {
   if (failedReads.length > 0) {
     console.log(
       `⚠ ${failedReads.length} row(s) could not be read at this block. One card costs ~17 eth_calls,\n` +
-        '  which the public endpoint (mainnet.base.org) throttles. Point BASE_MAINNET_RPC_URL at a\n' +
+        '  now sent as a handful of batched requests. Batching cuts round trips, NOT quota:\n' +
+        '  mainnet.base.org meters per call, serves roughly the first five of a batch and refuses\n' +
+        '  the rest with `over rate limit` (measured 2026-08-02). Point BASE_MAINNET_RPC_URL at a\n' +
         '  keyed endpoint for a complete card.\n',
     );
   }

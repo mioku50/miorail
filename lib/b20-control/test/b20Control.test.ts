@@ -9,9 +9,12 @@ import {
   B20_ERROR_SELECTORS_V1,
   B20_FACTORY_V1,
   B20_FEATURE_KEYS_V1,
+  B20_MAX_BATCH_SIZE_V1,
+  B20_THROTTLED_GAP_MS_V1,
   B20_SELECTORS_V1,
   b20TokenIdentityHashV1,
   buildB20CardV1,
+  callManyV1,
   createB20ReaderV1,
   decodeBoolV1,
   decodeStringV1,
@@ -604,6 +607,273 @@ describe('nothing credential-shaped escapes', () => {
     });
     await reader.readIsB20(TOKEN, '0x1');
     assert.equal(waits[0], 2_000);
+  });
+});
+
+describe('many reads cost few round trips, and none of them changes an answer', () => {
+  /** A fetch that answers batches from a per-entry rule, and records what was
+   * asked. Nothing here opens a socket. */
+  function batchingFetch(options: {
+    /** Returns the envelope for one entry, or null to answer nothing for it. */
+    answer: (entry: { id: number; data: string }, round: number) => unknown | null;
+    /** Reverses the response array, to prove ids and not positions carry the
+     * mapping. */
+    shuffle?: boolean;
+    notArray?: (round: number) => unknown | null;
+  }) {
+    const requestSizes: number[] = [];
+    const requestedData: string[][] = [];
+    let round = 0;
+    const fetchImpl = async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const body = JSON.parse(String(init?.body)) as
+        | { id: number; params: [{ data: string }, string] }
+        | { id: number; params: [{ data: string }, string] }[];
+      const entries = Array.isArray(body) ? body : [body];
+      round += 1;
+      requestSizes.push(entries.length);
+      requestedData.push(entries.map((entry) => entry.params[0].data));
+      const refusal = options.notArray?.(round);
+      if (refusal !== undefined && refusal !== null) return new Response(JSON.stringify(refusal));
+      const answers = entries
+        .map((entry) => options.answer({ id: entry.id, data: entry.params[0].data }, round))
+        .filter((entry) => entry !== null);
+      if (options.shuffle) answers.reverse();
+      return new Response(JSON.stringify(Array.isArray(body) ? answers : (answers[0] ?? {})));
+    };
+    return { fetchImpl, requestSizes, requestedData };
+  }
+
+  const calls = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      to: TOKEN,
+      data: `0x${index.toString(16).padStart(8, '0')}`,
+      blockTag: '0x2ee894e',
+    }));
+
+  test('the batch size is the endpoint’s own limit, not a guess', () => {
+    // Measured against mainnet.base.org on 2026-08-02: an eleven-call batch is
+    // refused with `maximum 10 calls in 1 batch`.
+    assert.equal(B20_MAX_BATCH_SIZE_V1, 10);
+  });
+
+  test('thirteen reads go out as two requests, of ten and three', async () => {
+    const { fetchImpl, requestSizes } = batchingFetch({
+      answer: (entry) => ({ jsonrpc: '2.0', id: entry.id, result: `0x${word(1n)}` }),
+    });
+    const reader = createB20ReaderV1({ rpcUrl: 'https://rpc.example/key', fetchImpl, sleepImpl: async () => {} });
+    const results = await callManyV1(reader, calls(13));
+    assert.deepEqual(requestSizes, [10, 3]);
+    assert.equal(results.length, 13);
+    assert.ok(results.every((result) => result.ok));
+  });
+
+  test('answers are matched by id, so a reordered response still lands on the right row', async () => {
+    const { fetchImpl } = batchingFetch({
+      shuffle: true,
+      // The value encodes which call it answers, so a mismatch is visible.
+      answer: (entry) => ({ jsonrpc: '2.0', id: entry.id, result: `0x${word(BigInt(entry.data))}` }),
+    });
+    const reader = createB20ReaderV1({ rpcUrl: 'https://rpc.example/key', fetchImpl, sleepImpl: async () => {} });
+    const inputs = calls(6);
+    const results = await callManyV1(reader, inputs);
+    results.forEach((result, index) => {
+      assert.equal(result.ok, true);
+      if (result.ok) assert.equal(BigInt(result.value), BigInt(inputs[index]!.data));
+    });
+  });
+
+  test('only the entries the endpoint refused are asked again', async () => {
+    // This is what mainnet.base.org actually does: it accepts the batch and
+    // then serves roughly the first five calls, refusing the rest per entry.
+    const { fetchImpl, requestSizes, requestedData } = batchingFetch({
+      answer: (entry, round) => {
+        const index = Number(BigInt(entry.data));
+        const refused = round === 1 && index >= 5;
+        return refused
+          ? { jsonrpc: '2.0', id: entry.id, error: { code: -32016, message: 'over rate limit' } }
+          : { jsonrpc: '2.0', id: entry.id, result: `0x${word(BigInt(index))}` };
+      },
+    });
+    const reader = createB20ReaderV1({ rpcUrl: 'https://rpc.example/key', fetchImpl, sleepImpl: async () => {} });
+    const results = await callManyV1(reader, calls(10));
+    assert.deepEqual(requestSizes, [10, 5], 'the second request carries only the refused five');
+    assert.deepEqual(
+      requestedData[1],
+      calls(10).slice(5).map((call) => call.data),
+      'a call the endpoint already served must not be paid for twice',
+    );
+    assert.ok(results.every((result) => result.ok));
+  });
+
+  test('an endpoint that refuses the shape of a batch is read one call at a time, once', async () => {
+    // An over-size batch comes back as a single error OBJECT, not an array.
+    // That is a fact about the endpoint, and recording it against a token would
+    // report ten tokens as unreadable for a reason that has nothing to do with
+    // them.
+    let refusals = 0;
+    const { fetchImpl, requestSizes } = batchingFetch({
+      notArray: () => {
+        refusals += 1;
+        return refusals === 1
+          ? { jsonrpc: '2.0', id: 1, error: { code: -32600, message: 'maximum 10 calls in 1 batch' } }
+          : null;
+      },
+      answer: (entry) => ({ jsonrpc: '2.0', id: entry.id, result: `0x${word(7n)}` }),
+    });
+    const reader = createB20ReaderV1({ rpcUrl: 'https://rpc.example/key', fetchImpl, sleepImpl: async () => {} });
+    const first = await callManyV1(reader, calls(4));
+    assert.ok(first.every((result) => result.ok));
+    // One refused batch, then the four calls singly.
+    assert.deepEqual(requestSizes, [4, 1, 1, 1, 1]);
+
+    // The fallback is remembered: a second read does not re-test the endpoint.
+    requestSizes.length = 0;
+    const second = await callManyV1(reader, calls(3));
+    assert.ok(second.every((result) => result.ok));
+    assert.deepEqual(requestSizes, [1, 1, 1]);
+  });
+
+  test('a batch entry that was never answered is a failure, not someone else’s value', async () => {
+    const { fetchImpl } = batchingFetch({
+      answer: (entry) => {
+        const index = Number(BigInt(entry.data));
+        return index === 1 || index === 2
+          ? null
+          : { jsonrpc: '2.0', id: entry.id, result: `0x${word(BigInt(index))}` };
+      },
+    });
+    const reader = createB20ReaderV1({
+      rpcUrl: 'https://rpc.example/key',
+      fetchImpl,
+      maxRetries: 1,
+      sleepImpl: async () => {},
+    });
+    const results = await callManyV1(reader, calls(5));
+    for (const index of [1, 2]) {
+      const result = results[index]!;
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.equal(result.reason, 'invalid_response');
+        assert.match(result.detail ?? '', /no entry for this call/);
+      }
+    }
+    for (const index of [0, 3, 4]) {
+      const result = results[index]!;
+      assert.equal(result.ok, true, `call ${index} was served and must keep its value`);
+      if (result.ok) assert.equal(BigInt(result.value), BigInt(index));
+    }
+  });
+
+  test('a revert inside a batch is an answer, so it is not asked again', async () => {
+    const { fetchImpl, requestSizes } = batchingFetch({
+      answer: (entry) => {
+        const index = Number(BigInt(entry.data));
+        return index === 1
+          ? { jsonrpc: '2.0', id: entry.id, error: { code: 3, message: 'execution reverted' } }
+          : { jsonrpc: '2.0', id: entry.id, result: `0x${word(1n)}` };
+      },
+    });
+    const reader = createB20ReaderV1({ rpcUrl: 'https://rpc.example/key', fetchImpl, sleepImpl: async () => {} });
+    const results = await callManyV1(reader, calls(4));
+    assert.deepEqual(requestSizes, [4], 'a revert must cost exactly one request');
+    assert.equal(results[1]!.ok, false);
+    if (!results[1]!.ok) assert.equal((results[1] as { reason: string }).reason, 'reverted');
+  });
+
+  test('a throttled batch waits for its share of the allowance, not for one call’s', async () => {
+    // The bug this pins: the endpoint meters per CALL, so pacing a ten-call
+    // batch like a single request asks for ten times the quota after one call's
+    // worth of patience. Measured live on 2026-08-02 — without the scaling a
+    // card filled 4 of 16 rows, with it 16 of 16.
+    const waits: number[] = [];
+    let round = 0;
+    const { fetchImpl } = batchingFetch({
+      answer: (entry) => {
+        // The first batch is refused outright, which teaches the reader a gap.
+        return round <= 1
+          ? { jsonrpc: '2.0', id: entry.id, error: { code: -32016, message: 'over rate limit' } }
+          : { jsonrpc: '2.0', id: entry.id, result: `0x${word(1n)}` };
+      },
+      notArray: (currentRound) => {
+        round = currentRound;
+        return null;
+      },
+    });
+    const reader = createB20ReaderV1({
+      rpcUrl: 'https://rpc.example/key',
+      fetchImpl,
+      sleepImpl: async (ms) => {
+        waits.push(ms);
+      },
+    });
+    await callManyV1(reader, calls(8));
+    // Eight calls refused sets the gap to the measured floor; the next request
+    // carries eight calls, so it owes eight times that — not one.
+    assert.ok(
+      waits.some((ms) => ms >= B20_THROTTLED_GAP_MS_V1 * 8 * 0.9),
+      `expected a wait scaled by the call count, got ${waits.join(', ')}`,
+    );
+  });
+
+  test('a healthy endpoint is never paced, so batching costs it nothing', async () => {
+    const waits: number[] = [];
+    const { fetchImpl } = batchingFetch({
+      answer: (entry) => ({ jsonrpc: '2.0', id: entry.id, result: `0x${word(1n)}` }),
+    });
+    const reader = createB20ReaderV1({
+      rpcUrl: 'https://rpc.example/key',
+      fetchImpl,
+      sleepImpl: async (ms) => {
+        waits.push(ms);
+      },
+    });
+    await callManyV1(reader, calls(10));
+    assert.deepEqual(waits, [], 'an endpoint that answers is not slowed down');
+  });
+
+  test('a reader with no batching is read one call at a time, in order', async () => {
+    const asked: string[] = [];
+    const sequential: B20ReaderV1 = {
+      ...fakeReader(),
+      async call(input) {
+        asked.push(input.data);
+        return { ok: true, value: `0x${word(BigInt(input.data))}`, raw: '' };
+      },
+    };
+    assert.equal(sequential.callMany, undefined, 'this fake deliberately has no batching');
+    const inputs = calls(3);
+    const results = await callManyV1(sequential, inputs);
+    assert.deepEqual(asked, inputs.map((call) => call.data));
+    results.forEach((result, index) => {
+      assert.equal(result.ok, true);
+      if (result.ok) assert.equal(BigInt(result.value), BigInt(index));
+    });
+  });
+
+  test('a caller-supplied block is used as given, and the chain is not asked for another', async () => {
+    // A sweep reads one block for every token it compares. If inspection took
+    // its own anchor per token, the snapshots would straddle blocks and nothing
+    // would say which.
+    const base = fakeReader();
+    const reader: B20ReaderV1 = {
+      ...base,
+      async readBlockAnchor() {
+        throw new Error('the anchor was supplied and must not be read again');
+      },
+    };
+    const { snapshot } = await inspectB20TokenV1(
+      { reader },
+      {
+        tenantId: 'tenant-1',
+        chainId: 8453,
+        tokenAddress: TOKEN,
+        now: NOW,
+        anchor: { blockNumber: '49059662', blockHash: BLOCK_HASH, blockTag: '0x2ee894e' },
+      },
+    );
+    assert.equal(snapshot.blockNumber, '49059662');
+    assert.equal(snapshot.blockHash, BLOCK_HASH);
+    assert.ok(snapshot.evidence.every((record) => record.blockNumber === '49059662'));
   });
 });
 
