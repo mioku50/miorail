@@ -207,6 +207,50 @@ describe('the B20 portfolio card', () => {
   });
 });
 
+describe('a B20 token can be tracked by hand', () => {
+  const screen = readFileSync(path.join(here, '../src/console/B20WatchScreen.tsx'), 'utf8');
+  const page = readFileSync(
+    path.join(here, '../../../artifacts/interface/src/features/b20/B20WatchPage.tsx'),
+    'utf8',
+  );
+
+  test('the page explains why the portfolio alone cannot find B20 tokens', () => {
+    // Observed: a wallet holding $MIO (a real B20 at 0xB2000000000000000000
+    // 00578F3Ae29d9e6e0101) had it reported by no balance provider, so the
+    // sweep never received the address.
+    assert.match(screen, /Balance providers do not index B20/);
+    assert.match(screen, /reported as holding nothing/);
+  });
+
+  test('a tracked address must be a real address', () => {
+    assert.match(screen, /\^0x\[0-9a-fA-F\]\{40\}\$/);
+  });
+
+  test('tracked addresses take the sweep budget before provider-reported ones', () => {
+    // They were added deliberately; a provider balance was not. If the cap has
+    // to bite, it must bite the list the user did not curate.
+    assert.match(page, /\[\.\.\.tracked, \.\.\.held/);
+  });
+
+  test('a corrupt stored list does not take the page down', () => {
+    assert.match(page, /catch \{/);
+    assert.match(page, /TRACKED_KEY_V1/);
+  });
+
+  test('the balance comes from the token, not from the balance provider', () => {
+    assert.match(page, /formatBalanceV1\(token\.balanceAtomic/);
+    // "not read" — never a zero, which would repeat the provider's own error
+    // with Miorail's name on it.
+    assert.match(page, /return 'not read'/);
+  });
+
+  test('balance formatting is integer arithmetic', () => {
+    // A float turns 18 decimals into scientific notation.
+    assert.match(page, /BigInt\(atomic\)/);
+    assert.ok(!/Number\(atomic\)/.test(page));
+  });
+});
+
 describe('the sweep is explicit, not automatic', () => {
   const page = readFileSync(
     path.join(here, '../../../artifacts/interface/src/features/b20/B20WatchPage.tsx'),

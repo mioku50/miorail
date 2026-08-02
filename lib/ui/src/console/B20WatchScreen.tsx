@@ -39,6 +39,15 @@ export interface B20WatchedTokenLikeV1 {
 
 export interface B20WatchScreenModelV1 {
   tokens: readonly B20WatchedTokenLikeV1[];
+  /** T68 — addresses the user added by hand, persisted between visits.
+   *
+   * This is not a convenience. No balance provider indexes B20 — the tokens are
+   * precompiles whose `eth_getCode` returns one byte — so a wallet holding one
+   * is reported as holding nothing, and a portfolio-driven sweep never learns
+   * the address exists. Typing it in is the only complete path. */
+  trackedTokens: readonly string[];
+  onTrackToken: (tokenAddress: string) => void;
+  onUntrackToken: (tokenAddress: string) => void;
   /** T68 — the B20 tokens this wallet holds, joined with their balances. */
   holdings: readonly B20HoldingV1[];
   /** Non-B20 tokens in the wallet, counted rather than listed. */
@@ -104,6 +113,57 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
         }
         onOpenToken={model.onOpenToken}
       />
+
+      <div className="panel">
+        <div className="ph">
+          <h3>Track a token</h3>
+          <span className="sub">
+            {model.trackedTokens.length === 0
+              ? 'none added'
+              : `${model.trackedTokens.length} added by hand`}
+          </span>
+        </div>
+        <div className="pb">
+          <p className="note">
+            Balance providers do not index B20 — the tokens are precompiles, and a wallet holding one
+            is reported as holding nothing. Paste a token address to watch it regardless.
+          </p>
+          <form
+            className="goalline"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const field = event.currentTarget.elements.namedItem('b20-address');
+              const value = field instanceof HTMLInputElement ? field.value.trim() : '';
+              if (!/^0x[0-9a-fA-F]{40}$/.test(value)) return;
+              model.onTrackToken(value.toLowerCase());
+              if (field instanceof HTMLInputElement) field.value = '';
+            }}
+          >
+            <input
+              className="goalinput"
+              name="b20-address"
+              aria-label="B20 token address"
+              placeholder="0xB200…"
+              pattern="^0x[0-9a-fA-F]{40}$"
+            />
+            <button type="submit" className="btn">
+              Track
+            </button>
+          </form>
+          {model.trackedTokens.length > 0 && (
+            <div className="kv">
+              {model.trackedTokens.map((token) => (
+                <div key={token}>
+                  <span className="mono">{shortAddressV1(token)}</span>
+                  <button type="button" className="btn sec" onClick={() => model.onUntrackToken(token)}>
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
 
       <div className="panel">
         <div className="ph">

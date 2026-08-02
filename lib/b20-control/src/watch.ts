@@ -494,3 +494,40 @@ export function exitControlsFromSnapshotV1(snapshot: B20ControlSnapshotV1): B20E
     blockNumber: snapshot.blockNumber,
   };
 }
+
+// ---------------------------------------------------------------------------
+// T68 — the holder's own balance, read from the token.
+//
+// This exists because a third-party balance indexer does not see B20 tokens.
+// They are precompiles at `0xB200…` addresses whose `eth_getCode` returns a
+// single byte, so a provider that discovers tokens by scanning deployments
+// never lists one — a wallet holding a B20 token is reported as holding
+// nothing. The B20 surface therefore reads the balance itself, from the token,
+// at the same block as the controls, and does not ask anyone else.
+// ---------------------------------------------------------------------------
+
+/** `balanceOf(address)`. */
+export const B20_BALANCE_OF_SELECTOR_V1 = '0x70a08231';
+
+export function b20BalanceOfCalldataV1(holder: string): string {
+  return `${B20_BALANCE_OF_SELECTOR_V1}${holder.toLowerCase().replace('0x', '').padStart(64, '0')}`;
+}
+
+/** Decodes a 32-byte uint. Null when the read failed or was not 32 bytes —
+ * never 0, because "the read failed" and "you hold none" are different facts
+ * and a wallet showing 0 for the first is a lie about a position. */
+export function decodeB20BalanceV1(raw: string | null | undefined): string | null {
+  if (typeof raw !== 'string') return null;
+  const body = raw.startsWith('0x') ? raw.slice(2) : raw;
+  if (body.length !== 64 || !/^[0-9a-fA-F]+$/.test(body)) return null;
+  return BigInt(`0x${body}`).toString();
+}
+
+/** The decimals this snapshot read, so a balance can be formatted without a
+ * second source. Null when the field did not answer. */
+export function b20DecimalsFromSnapshotV1(snapshot: B20ControlSnapshotV1): number | null {
+  const field = snapshot.fields.find((entry) => entry.key === 'token_decimals');
+  if (field?.status !== 'exact_chain_read' || field.value === null) return null;
+  const parsed = Number.parseInt(field.value, 10);
+  return Number.isInteger(parsed) && parsed >= 0 && parsed <= 36 ? parsed : null;
+}

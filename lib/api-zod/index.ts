@@ -2632,6 +2632,11 @@ export const B20WatchedTokenV1Schema = z
       })
       .strict()
       .optional(),
+    /** The holder's balance, read FROM THE TOKEN at the control block — not
+     * from a balance provider, because none of them index B20. Null means the
+     * read failed, never that the balance is zero. */
+    balanceAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable().optional(),
+    decimals: z.number().int().min(0).max(36).nullable().optional(),
     /** Why nothing was compared. Never a claim about the token. */
     reason: z.string().max(300).nullable(),
   })

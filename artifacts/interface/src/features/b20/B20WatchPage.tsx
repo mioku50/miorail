@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useLocation } from 'wouter';
 import { useAccount } from 'wagmi';
 import {
@@ -31,6 +31,19 @@ import { useB20Watch, usePortfolio, useStatus } from '@mioagent/api-client-react
  * excluded because sweeping 25 airdropped tickers would spend the whole budget
  * before reaching anything the user holds on purpose. */
 const SWEEP_LIMIT_V1 = 25;
+const TRACKED_KEY_V1 = 'miorail.b20.tracked.v1';
+const ADDRESS_V1 = /^0x[0-9a-fA-F]{40}$/;
+
+/** Atomic units to a readable balance. Integer arithmetic: a float turns a
+ * token with 18 decimals into scientific notation. */
+function formatBalanceV1(atomic: string | null, decimals: number | null): string {
+  if (atomic === null || decimals === null) return 'not read';
+  const value = BigInt(atomic);
+  const scale = 10n ** BigInt(decimals);
+  const whole = value / scale;
+  const fraction = (value % scale).toString().padStart(decimals, '0').slice(0, 4).replace(/0+$/, '');
+  return fraction ? `${whole}.${fraction}` : whole.toString();
+}
 
 function shortAddress(address: string | undefined): string | null {
   return address ? `${address.slice(0, 6)}…${address.slice(-4)}` : null;
@@ -44,6 +57,30 @@ export function B20WatchPage() {
   const portfolio = usePortfolio(address);
   const sweep = useB20Watch();
 
+  // Tracked tokens live in localStorage rather than in a table. They are a
+  // per-browser list of addresses, they carry nothing private, and a migration
+  // for them would be schema churn for a preference. When they need to survive
+  // a device change, they become a watchlist row — not before.
+  const [tracked, setTracked] = useState<string[]>(() => {
+    try {
+      const raw = globalThis.localStorage?.getItem(TRACKED_KEY_V1);
+      const parsed: unknown = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((entry): entry is string => ADDRESS_V1.test(String(entry))) : [];
+    } catch {
+      // A corrupt entry must not take the page down with it.
+      return [];
+    }
+  });
+
+  const persistTracked = useCallback((next: string[]) => {
+    setTracked(next);
+    try {
+      globalThis.localStorage?.setItem(TRACKED_KEY_V1, JSON.stringify(next));
+    } catch {
+      // Storage can be full or blocked. The list still works for this session.
+    }
+  }, []);
+
   const gateOn = status.data?.productMigration?.b20ControlV1 === true;
 
   const held = useMemo(
@@ -53,10 +90,13 @@ export function B20WatchPage() {
       ),
     [portfolio.data],
   );
-  const sweepTokens = useMemo(
-    () => held.slice(0, SWEEP_LIMIT_V1).map((token) => token.address.toLowerCase()),
-    [held],
-  );
+  const sweepTokens = useMemo(() => {
+    // Tracked addresses come first in the budget. They were added deliberately;
+    // a provider-reported balance was not, and if the cap has to bite it must
+    // bite the list the user did not curate.
+    const ordered = [...tracked, ...held.map((token) => token.address.toLowerCase())];
+    return [...new Set(ordered)].slice(0, SWEEP_LIMIT_V1);
+  }, [tracked, held]);
 
   // T68 — the B20 holdings: the sweep says which tokens ARE B20, the portfolio
   // says how much of each is held. Joined here rather than server-side, because
@@ -72,7 +112,10 @@ export function B20WatchPage() {
           tokenAddress: token.tokenAddress,
           name: token.displayName,
           symbol: token.displaySymbol ?? balance?.symbol ?? null,
-          balanceLabel: balance?.balanceFormatted ?? 'not reported',
+          // From the TOKEN, at the control block — not from a balance provider,
+          // because none of them index B20. `null` means the read failed and
+          // stays "not read"; it never becomes a zero.
+          balanceLabel: formatBalanceV1(token.balanceAtomic ?? null, token.decimals ?? null),
           // A missing price stays null all the way to the card, which renders
           // "no price source". A 0 here would reach a user as "worthless".
           usdLabel: balance?.usdValue ? `$${balance.usdValue}` : null,
@@ -178,6 +221,9 @@ export function B20WatchPage() {
         tokens={sweep.data?.tokens ?? []}
         holdings={holdings}
         otherTokenCount={otherTokenCount}
+        trackedTokens={tracked}
+        onTrackToken={(token) => persistTracked([...new Set([...tracked, token])])}
+        onUntrackToken={(token) => persistTracked(tracked.filter((entry) => entry !== token))}
         // Swapping a held B20 token is the Routes flow's job, not a second
         // execution path. The tab hands the goal over rather than growing one.
         onOpenToken={(token) => navigate(`/?goal=${encodeURIComponent(`swap ${token} to USDC`)}`)}

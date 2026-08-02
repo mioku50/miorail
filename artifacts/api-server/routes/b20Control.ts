@@ -11,6 +11,9 @@ import {
   createB20ReaderV1,
   diffB20SnapshotsV1,
   exitControlsFromSnapshotV1,
+  b20BalanceOfCalldataV1,
+  b20DecimalsFromSnapshotV1,
+  decodeB20BalanceV1,
   inspectB20TokenV1,
   buildB20CardV1,
   refusalDetailV1,
@@ -248,6 +251,34 @@ b20ControlRouter.post('/b20/inspect', async (req: Request, res: Response) => {
 //   * `not_b20` is an ordinary answer. Most tokens in a wallet are not B20, and
 //     saying so is not a finding about them.
 // ---------------------------------------------------------------------------
+/**
+ * The caller's balance of one B20 token, read from the token itself.
+ *
+ * One extra `eth_call` per watched token, and the reason it is worth it: no
+ * balance provider indexes B20, so without this a wallet holding a B20 token is
+ * reported as holding nothing. A failed read returns null and stays null — a
+ * zero would be a claim about a position that was never measured.
+ */
+async function b20BalanceV1(
+  snapshot: B20ControlSnapshotV1,
+  holder: string,
+): Promise<{ balanceAtomic: string | null; decimals: number | null }> {
+  const decimals = b20DecimalsFromSnapshotV1(snapshot);
+  if (snapshot.blockNumber === null) return { balanceAtomic: null, decimals };
+  try {
+    const result = await b20RouteRuntime.reader().call({
+      to: snapshot.tokenAddress,
+      data: b20BalanceOfCalldataV1(holder),
+      // The SAME block as the controls. A balance from a later block beside
+      // controls from an earlier one is two facts pretending to be one.
+      blockTag: `0x${BigInt(snapshot.blockNumber).toString(16)}`,
+    });
+    return { balanceAtomic: result.ok ? decodeB20BalanceV1(result.value) : null, decimals };
+  } catch {
+    return { balanceAtomic: null, decimals };
+  }
+}
+
 b20ControlRouter.post('/b20/watch', async (req: Request, res: Response) => {
   const guard = b20Guard(req, res);
   if (!guard) return;
@@ -306,6 +337,10 @@ b20ControlRouter.post('/b20/watch', async (req: Request, res: Response) => {
         // why `recentSnapshots` exists — `latestSnapshot` alone would diff the
         // cached row against itself and report nothing, forever.
         const card = buildB20CardV1(fresh.snapshot);
+        const balance =
+          fresh.snapshot.detection.outcome === 'not_b20'
+            ? { balanceAtomic: null, decimals: null }
+            : await b20BalanceV1(fresh.snapshot, guard.user.address);
         results.push({
           tokenAddress: token,
           displayName: card.displayName,
@@ -313,6 +348,7 @@ b20ControlRouter.post('/b20/watch', async (req: Request, res: Response) => {
           outcome: fresh.snapshot.detection.outcome === 'not_b20' ? 'not_b20' : 'watched',
           watch: diffB20SnapshotsV1(recent[1]?.snapshot ?? null, fresh.snapshot),
           controls: exitControlsFromSnapshotV1(fresh.snapshot),
+          ...balance,
           reason: null,
         });
         continue;
@@ -338,6 +374,10 @@ b20ControlRouter.post('/b20/watch', async (req: Request, res: Response) => {
       }
       const previous = recent[0] ?? null;
       const stored = await repository.insertSnapshot({ userId: guard.user.id, snapshot: result.snapshot });
+      const balance =
+        stored.snapshot.detection.outcome === 'not_b20'
+          ? { balanceAtomic: null, decimals: null }
+          : await b20BalanceV1(stored.snapshot, guard.user.address);
       results.push({
         tokenAddress: token,
         displayName: result.card.displayName,
@@ -345,6 +385,7 @@ b20ControlRouter.post('/b20/watch', async (req: Request, res: Response) => {
         outcome: stored.snapshot.detection.outcome === 'not_b20' ? 'not_b20' : 'watched',
         watch: diffB20SnapshotsV1(previous?.snapshot ?? null, stored.snapshot),
         controls: exitControlsFromSnapshotV1(stored.snapshot),
+        ...balance,
         reason: null,
       });
     }

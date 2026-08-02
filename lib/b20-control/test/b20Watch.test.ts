@@ -4,6 +4,9 @@ import assert from 'node:assert/strict';
 import {
   b20WatchNeedsAttentionV1,
   exitControlsFromSnapshotV1,
+  b20BalanceOfCalldataV1,
+  b20DecimalsFromSnapshotV1,
+  decodeB20BalanceV1,
   b20WatchSummaryV1,
   diffB20SnapshotsV1,
 } from '../src/watch.js';
@@ -363,5 +366,48 @@ describe('the exit-relevant controls, extracted from a snapshot', () => {
       exitControlsFromSnapshotV1(withDetection('b20_uninitialised', [])).factoryConfirmed,
       true,
     );
+  });
+});
+
+describe('the balance is read from the token, not from a provider', () => {
+  test('a failed read is null, never zero', () => {
+    // The whole reason this exists: no balance provider indexes B20, so a
+    // wallet holding one is reported as holding nothing. A zero here would
+    // repeat that lie with Miorail's name on it.
+    assert.equal(decodeB20BalanceV1(null), null);
+    assert.equal(decodeB20BalanceV1('0x'), null);
+    assert.equal(decodeB20BalanceV1('not hex'), null);
+    assert.equal(decodeB20BalanceV1(undefined), null);
+  });
+
+  test('a real zero balance is zero', () => {
+    assert.equal(decodeB20BalanceV1(`0x${'0'.repeat(64)}`), '0');
+  });
+
+  test('a large balance survives as an exact decimal string', () => {
+    // 18 decimals overflows Number long before it overflows a user's holding.
+    const raw = `0x${(123456789012345678901234n).toString(16).padStart(64, '0')}`;
+    assert.equal(decodeB20BalanceV1(raw), '123456789012345678901234');
+  });
+
+  test('the calldata is balanceOf with a left-padded holder', () => {
+    const data = b20BalanceOfCalldataV1('0x4de2000000000000000000000000000000000d70');
+    assert.equal(data.slice(0, 10), '0x70a08231');
+    assert.equal(data.length, 10 + 64);
+    assert.ok(data.endsWith('4de2000000000000000000000000000000000d70'));
+  });
+
+  test('decimals come from the same snapshot as the controls', () => {
+    const withDecimals = {
+      ...snapshot({ block: '1', fields: [{ key: 'token_decimals', value: '18' }] }),
+    } as unknown as B20ControlSnapshotV1;
+    assert.equal(b20DecimalsFromSnapshotV1(withDecimals), 18);
+
+    const unread = {
+      ...snapshot({ block: '1', fields: [{ key: 'token_decimals', value: null }] }),
+    } as unknown as B20ControlSnapshotV1;
+    // Without decimals a balance cannot be formatted, and guessing 18 would
+    // misstate every token that is not 18.
+    assert.equal(b20DecimalsFromSnapshotV1(unread), null);
   });
 });

@@ -271,14 +271,25 @@ describe('the portfolio sweep', () => {
     blockNumber = '49060000';
     await inspect({ chainId: 8453, tokenAddress: TOKEN });
 
-    let reads = 0;
+    // The guarantee is about the EXPENSIVE read: a full control card is 17
+    // sequential eth_calls and must not repeat inside the TTL. The balance is
+    // one call and is not stored on the snapshot, so it is read every sweep —
+    // otherwise a cached token would show no balance at all, which is most of
+    // them and the whole reason the portfolio exists.
+    let inspections = 0;
     b20RouteRuntime.watchTtlMs = () => 600_000;
     b20RouteRuntime.reader = () => {
-      reads += 1;
-      return fakeReader();
+      const reader = fakeReader();
+      return {
+        ...reader,
+        async readIsB20(...args: Parameters<typeof reader.readIsB20>) {
+          inspections += 1;
+          return reader.readIsB20(...args);
+        },
+      };
     };
     const response = await sweep({ chainId: 8453, tokens: [TOKEN] });
-    assert.equal(reads, 0, 'a fresh sweep must not re-read the chain');
+    assert.equal(inspections, 0, 'a fresh sweep must not re-inspect the controls');
     // The point of recentSnapshots: latestSnapshot alone would diff the cached
     // row against itself and report nothing, forever.
     assert.equal(response.body.tokens[0].watch.status, 'compared');
