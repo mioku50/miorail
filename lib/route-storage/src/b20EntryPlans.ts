@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import { stableHashV1 } from '@mioagent/route-domain';
 import { RouteStorageConflictError } from './types.js';
+import {
+  B20_ENTRY_EXECUTION_UNAVAILABLE_V1,
+  entryExecutionAvailableV1,
+  type B20EntryExecutionCapabilitiesV1,
+} from './b20EntryProjection.js';
 
 // ---------------------------------------------------------------------------
 // T68F-A §3/§4 — the prepared B20 Entry Plan as a stored execution subject.
@@ -329,10 +334,12 @@ export interface B20EntryReviewV1 {
   exitNotice: string;
   lifecycle: B20EntryLifecycleV1;
   expiresAt: string;
-  /** False for the whole of T68F-A. Not a provider failure and not a token
-   * rejection — the plan is sound and the wiring does not exist yet. */
-  executionAvailable: false;
-  executionUnavailableReason: 'submission_not_wired';
+  /** True only when the WHOLE submission path exists in the calling surface.
+   * Never inferred from the plan holding unsigned calls: that inference is how
+   * a button appears for a path that does not exist. When false it is not a
+   * provider failure and not a token rejection — the plan is sound. */
+  executionAvailable: boolean;
+  executionUnavailableReason: 'submission_not_wired' | null;
 }
 
 export const B20_ENTRY_EXIT_NOTICE_V1 =
@@ -340,7 +347,11 @@ export const B20_ENTRY_EXIT_NOTICE_V1 =
 
 const PROVIDER_NAMES_V1: Record<string, string> = { aerodrome: 'Aerodrome' };
 
-export function b20EntryReviewV1(plan: B20PreparedEntryPlanV1): B20EntryReviewV1 {
+export function b20EntryReviewV1(
+  plan: B20PreparedEntryPlanV1,
+  capabilities?: B20EntryExecutionCapabilitiesV1 | null,
+): B20EntryReviewV1 {
+  const executionAvailable = entryExecutionAvailableV1(capabilities);
   const approval = plan.calls.find((call) => call.callType === 'approval') ?? null;
   return {
     planId: plan.id,
@@ -376,8 +387,8 @@ export function b20EntryReviewV1(plan: B20PreparedEntryPlanV1): B20EntryReviewV1
     exitNotice: B20_ENTRY_EXIT_NOTICE_V1,
     lifecycle: plan.lifecycle,
     expiresAt: plan.expiresAt,
-    executionAvailable: false,
-    executionUnavailableReason: 'submission_not_wired',
+    executionAvailable,
+    executionUnavailableReason: executionAvailable ? null : B20_ENTRY_EXECUTION_UNAVAILABLE_V1,
   };
 }
 

@@ -2907,8 +2907,140 @@ export const B20EntryReviewV1Schema = z
     exitNotice: z.string().min(1).max(200),
     lifecycle: z.enum(['prepared', 'awaiting_wallet_approval', 'submitted', 'terminal']),
     expiresAt: z.string().min(1).max(60),
-    executionAvailable: z.literal(false),
-    executionUnavailableReason: z.literal('submission_not_wired'),
+    /** True only when the whole submission path exists in this surface. Never
+     * inferred from the plan holding unsigned calls. */
+    executionAvailable: z.boolean(),
+    executionUnavailableReason: z.literal('submission_not_wired').nullable(),
+  })
+  .strict();
+
+/** T68F-B §13 — the one state both surfaces switch on. Derived on the server
+ * from the stored plan and the stored attempt, so the interface and the miniapp
+ * cannot disagree about whether a second submit button is allowed. */
+export const B20EntryUiStateV1Schema = z.enum([
+  'preparing',
+  'review',
+  'expired',
+  'awaiting_wallet_approval',
+  'user_rejected',
+  'submitted',
+  'reconciling',
+  'entry_succeeded',
+  'entry_reverted',
+  'submitted_unknown',
+  'reconciliation_required',
+]);
+
+/** What actually happened on chain, once checked against the plan. */
+export const B20EntryOutcomeV1Schema = z
+  .object({
+    state: B20EntryUiStateV1Schema,
+    terminalOutcome: z
+      .enum([
+        'entry_succeeded',
+        'entry_reverted',
+        'submitted_unknown',
+        'reconciliation_required',
+        'user_rejected',
+        'cancelled_before_submission',
+      ])
+      .nullable(),
+    attemptId: z.string().min(1).max(200).nullable(),
+    /** The wallet's own batch handle. Present once the wallet returned one. */
+    batchId: z.string().min(1).max(200).nullable(),
+    submittedAt: z.string().min(1).max(60).nullable(),
+    /** A short code, never a provider message: those carry endpoints, and
+     * endpoints carry keys. */
+    errorCode: z.string().min(1).max(80).nullable(),
+    actualSpentAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    actualReceivedAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    confirmedBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    transactionHashes: z.array(z.string().regex(/^0x[0-9a-f]{64}$/)).max(16),
+    reconciliationEvidenceHash: z.string().regex(/^0x[0-9a-f]{64}$/).nullable(),
+    /** Whether this state may show a button that opens a wallet, and whether
+     * it may offer a status refresh. Server-decided so neither surface has to
+     * re-derive it. */
+    canSubmit: z.boolean(),
+    canRefresh: z.boolean(),
+  })
+  .strict();
+
+/** The wallet request, in the shape the existing Base Account integration
+ * already speaks. The ONLY place executable bytes leave the server, and they
+ * are always the stored ones. */
+export const B20EntryWalletPayloadV1Schema = z
+  .object({
+    planId: z.string().min(1).max(200),
+    blueprintHash: HashV1Schema,
+    approvedCallsHash: HashV1Schema,
+    chainId: z.literal('0x2105'),
+    from: AddressV1Schema,
+    calls: z
+      .array(
+        z
+          .object({
+            to: AddressV1Schema,
+            value: z.string().regex(/^0x[0-9a-f]+$/, 'Expected a hex quantity'),
+            data: HexDataV1Schema,
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(2),
+    /** Approval and swap land together or not at all: an approval that
+     * executed without its swap is a standing allowance nobody asked for. */
+    atomicRequired: z.literal(true),
+  })
+  .strict();
+
+/** POST begin-submission. Carries NO calls, no calldata, no router, no
+ * recipient and no amount — the server recovers all of that by plan id. */
+export const B20EntryBeginSubmissionRequestV1Schema = z
+  .object({
+    chainId: z.literal(8453),
+    profileIdentity: z.string().min(1).max(200),
+    /** Idempotency handle for the attempt, so a double click reaches one. */
+    attemptRequestId: z.string().min(1).max(200),
+  })
+  .strict();
+
+export const B20EntryBeginSubmissionResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      outcome: z.literal('ready'),
+      attemptId: z.string().min(1).max(200),
+      payload: B20EntryWalletPayloadV1Schema,
+      review: B20EntryReviewV1Schema,
+      status: B20EntryOutcomeV1Schema,
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('refused'),
+      reason: z.string().min(1).max(80),
+      detail: z.string().max(400),
+      status: B20EntryOutcomeV1Schema.nullable(),
+    })
+    .strict(),
+]);
+
+/** POST record-submission. The client reports what the WALLET did — a batch id,
+ * a rejection, or a failure. It may never report a result. */
+export const B20EntryRecordSubmissionRequestV1Schema = z
+  .object({
+    attemptId: z.string().min(1).max(200),
+    result: z.enum(['submitted', 'user_rejected', 'wallet_failed', 'cancelled']),
+    /** Present only for `submitted`. Everything else must not name a batch. */
+    batchId: z.string().min(1).max(200).nullable(),
+  })
+  .strict();
+
+export const B20EntryStatusResponseV1Schema = z
+  .object({
+    review: B20EntryReviewV1Schema,
+    status: B20EntryOutcomeV1Schema,
+    expiresAt: z.string().min(1).max(60),
+    expired: z.boolean(),
   })
   .strict();
 
@@ -2922,8 +3054,9 @@ export const B20EntryPlanResponseV1Schema = z
      * rewriting immutable evidence to record the passage of time would destroy
      * the evidence. */
     expired: z.boolean(),
-    executionAvailable: z.literal(false),
-    executionUnavailableReason: z.literal('submission_not_wired'),
+    executionAvailable: z.boolean(),
+    executionUnavailableReason: z.literal('submission_not_wired').nullable(),
+    status: B20EntryOutcomeV1Schema,
   })
   .strict();
 
@@ -2979,7 +3112,7 @@ export const B20EntryPrepareResponseV1Schema = z
     /** False for the whole of T68F-A. Stated as its own field so a surface
      * cannot mistake missing wiring for a provider failure or a token
      * rejection — the plan is sound, the submission path does not exist yet. */
-    executionAvailable: z.literal(false),
+    executionAvailable: z.boolean(),
     executionUnavailableReason: z.literal('submission_not_wired').nullable(),
   })
   .strict();

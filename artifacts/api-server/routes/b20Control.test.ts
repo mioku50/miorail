@@ -8,6 +8,7 @@ import {
   InMemoryB20WatchlistRepositoryV1,
   InMemoryB20ClearanceRepositoryV1,
   InMemoryB20EntryPlanRepositoryV1,
+  InMemoryB20EntrySubmissionRepositoryV1,
 } from '@mioagent/route-storage';
 import { b20ControlRouter, b20RouteRuntime } from './b20Control.js';
 
@@ -51,6 +52,7 @@ let repository: InMemoryB20StorageRepositoryV1;
 let watchlist: InMemoryB20WatchlistRepositoryV1;
 let clearances: InMemoryB20ClearanceRepositoryV1;
 let entryPlans: InMemoryB20EntryPlanRepositoryV1;
+let entrySubmissions: InMemoryB20EntrySubmissionRepositoryV1;
 let isB20Value: boolean;
 let blockNumber: string;
 
@@ -193,6 +195,13 @@ beforeEach(() => {
   entryPlans = new InMemoryB20EntryPlanRepositoryV1();
   b20RouteRuntime.entryPlans = () => entryPlans;
   b20RouteRuntime.entryPlanAvailable = async () => true;
+  entrySubmissions = new InMemoryB20EntrySubmissionRepositoryV1();
+  b20RouteRuntime.entrySubmissions = () => entrySubmissions;
+  b20RouteRuntime.executionCapabilities = async () => ({
+    submissionRouteWired: true,
+    walletIntegrationWired: true,
+    reconciliationWired: true,
+  });
 });
 
 afterEach(() => {
@@ -798,13 +807,14 @@ describe('a clearance is consumed, never trusted', () => {
     return clearance;
   }
 
-  test('a prepared plan returns unsigned calls and nothing else', async () => {
+  test('a prepared plan is described, never handed over, and signs nothing', async () => {
     await seedClearance();
     b20RouteRuntime.prepareEntry = preparedRun();
     const response = await prepare('clearance-1', REQUEST);
     assert.equal(response.status, 200, JSON.stringify(response.body));
     assert.equal(response.body.outcome, 'prepared');
-    assert.equal(response.body.calls.length, 2);
+    // T68F-B moved the executable bytes behind the wallet-action contract.
+    assert.equal(response.body.calls, null);
     // Unsigned: no signature, no hash of a broadcast, nothing to send.
     const body = JSON.stringify(response.body);
     for (const forbidden of ['signature', 'rawTransaction', 'privateKey', 'txHash']) {
@@ -995,19 +1005,40 @@ describe('a clearance is consumed, never trusted', () => {
     assert.notEqual(second.body.planId, first.body.planId);
   });
 
-  test('the response offers no wallet action, and says why', async () => {
+  test('preparation describes a plan and never hands out a transaction', async () => {
+    // T68F-B §12 — executable bytes leave through ONE contract, the wallet
+    // action. A card that could submit straight from a prepare response would
+    // be a second execution path.
     await seedClearance();
     b20RouteRuntime.prepareEntry = preparedRun();
     const response = await prepare('clearance-1', REQUEST);
-    assert.equal(response.body.executionAvailable, false);
-    assert.equal(response.body.executionUnavailableReason, 'submission_not_wired');
-    // Not a provider failure and not a token rejection: the plan is sound.
     assert.equal(response.body.outcome, 'prepared');
     assert.equal(response.body.refusalReason, null);
+    assert.equal(response.body.calls, null, 'preparation must not return calldata');
     const body = JSON.stringify(response.body);
-    for (const forbidden of ['wallet_sendCalls', 'sendCalls', 'submitUrl', 'approveUrl']) {
+    for (const forbidden of ['0x095ea7b3', '0x38ed1739', 'wallet_sendCalls', 'sendCalls']) {
       assert.ok(!new RegExp(forbidden, 'i').test(body), `must not offer ${forbidden}`);
     }
+  });
+
+  test('availability is a fact about the surface, not about the plan', async () => {
+    await seedClearance();
+    b20RouteRuntime.prepareEntry = preparedRun();
+    const wired = await prepare('clearance-1', REQUEST);
+    assert.equal(wired.body.executionAvailable, true);
+    assert.equal(wired.body.executionUnavailableReason, null);
+
+    // The same plan, on a server whose submission storage is missing. Nothing
+    // about the plan changed; the surface cannot send it, and says so.
+    b20RouteRuntime.executionCapabilities = async () => ({
+      submissionRouteWired: false,
+      walletIntegrationWired: true,
+      reconciliationWired: true,
+    });
+    const unwired = await prepare('clearance-1', { ...REQUEST, requestId: 'req-unwired' });
+    assert.equal(unwired.body.executionAvailable, false);
+    assert.equal(unwired.body.executionUnavailableReason, 'submission_not_wired');
+    assert.equal(unwired.body.outcome, 'prepared', 'still a sound plan, not a refusal');
   });
 
   test('the Review projection says the exit was simulated, not executed', async () => {
@@ -1016,7 +1047,6 @@ describe('a clearance is consumed, never trusted', () => {
     const review = (await prepare('clearance-1', REQUEST)).body.review;
     assert.ok(review, 'a prepared plan must come with its projection');
     assert.match(review.exitNotice, /exit was simulated and will not be executed/i);
-    assert.equal(review.executionAvailable, false);
     assert.equal(review.provider.providerName, 'Aerodrome');
     // No executable byte in the projection.
     assert.equal(JSON.stringify(review).includes('0x095ea7b3'), false);
@@ -1112,9 +1142,12 @@ describe('a prepared plan can be read back, by exactly one wallet', () => {
     const response = await read(planId);
     assert.equal(response.status, 200);
     assert.equal(response.body.review.planId, planId);
-    assert.equal(response.body.executionAvailable, false);
-    assert.equal(response.body.executionUnavailableReason, 'submission_not_wired');
     assert.equal(response.body.expired, false);
+    // A freshly prepared plan is at Review, and Review is the only place a
+    // wallet may be opened from.
+    assert.equal(response.body.status.state, 'review');
+    assert.equal(response.body.status.canSubmit, true);
+    assert.equal(response.body.status.batchId, null);
     const body = JSON.stringify(response.body);
     for (const forbidden of ['0x095ea7b3', '0x38ed1739', '"calls"', '"data"', 'http']) {
       assert.ok(!body.includes(forbidden), `must not expose ${forbidden}`);
@@ -1155,6 +1188,213 @@ describe('a prepared plan can be read back, by exactly one wallet', () => {
     assert.equal((await read(planId)).status, 404);
     b20RouteRuntime.flags = () => ({ ...FLAGS });
     assert.equal((await read(planId, app(null))).status, 401);
+  });
+
+  // --- T68F-B: Review -> wallet -> submission -> reconciliation -----------
+
+  const begin = (planId: string, body: unknown = BEGIN, server = app()) =>
+    request(server)
+      .post(`/api/route-intelligence/opportunities/entry-plans/${planId}/begin-submission`)
+      .send(body as object);
+  const record = (planId: string, body: unknown, server = app()) =>
+    request(server)
+      .post(`/api/route-intelligence/opportunities/entry-plans/${planId}/record-submission`)
+      .send(body as object);
+  const status = (planId: string, server = app()) =>
+    request(server).get(`/api/route-intelligence/opportunities/entry-plans/${planId}/status`);
+  const BEGIN = {
+    chainId: 8453,
+    profileIdentity: `${USDC}:100000000:300:300`,
+    attemptRequestId: 'attempt-req-1',
+  };
+
+  test('a prepared plan can enter awaiting_wallet_approval and get its wallet request', async () => {
+    const planId = await seedPlan();
+    const response = await begin(planId);
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.outcome, 'ready');
+    assert.ok(response.body.attemptId);
+    assert.equal(response.body.status.state, 'awaiting_wallet_approval');
+    // No second submit button while a wallet is open.
+    assert.equal(response.body.status.canSubmit, false);
+  });
+
+  test('the wallet request byte-matches the persisted plan', async () => {
+    const planId = await seedPlan();
+    const payload = (await begin(planId)).body.payload;
+    const stored = await entryPlans.getPreparedPlan({
+      planId,
+      tenantId: USER.id,
+      walletAddress: WALLET,
+    });
+    assert.equal(payload.calls.length, stored!.calls.length);
+    for (const [index, call] of payload.calls.entries()) {
+      assert.equal(call.to, stored!.calls[index]!.to);
+      assert.equal(call.data, stored!.calls[index]!.data);
+      assert.equal(call.value, '0x0');
+    }
+    assert.equal(payload.approvedCallsHash, stored!.callsHash);
+    assert.equal(payload.from, WALLET);
+    assert.equal(payload.chainId, '0x2105');
+    assert.equal(payload.atomicRequired, true);
+  });
+
+  test('the browser cannot supply replacement calldata', async () => {
+    const planId = await seedPlan();
+    // A strict schema: anything executable in the body is a 400, never a field
+    // that gets quietly ignored.
+    for (const extra of [
+      { calls: [{ to: ERC20, data: '0xdeadbeef', value: '0' }] },
+      { to: ERC20 },
+      { data: '0xdeadbeef' },
+      { router: ERC20 },
+      { recipient: OTHER_WALLET },
+      { minimumOutputAtomic: '1' },
+    ]) {
+      assert.equal((await begin(planId, { ...BEGIN, ...extra })).status, 400, JSON.stringify(extra));
+    }
+  });
+
+  test('a duplicate click reaches one attempt, never two batches', async () => {
+    const planId = await seedPlan();
+    const first = await begin(planId);
+    const second = await begin(planId);
+    assert.equal(second.body.attemptId, first.body.attemptId);
+  });
+
+  test('another wallet cannot submit the plan, and another tenant sees nothing', async () => {
+    const planId = await seedPlan();
+    const other = await begin(planId, BEGIN, app(OTHER));
+    const missing = await begin('does-not-exist', BEGIN, app(OTHER));
+    assert.equal(other.status, 404);
+    assert.deepEqual(other.body, missing.body);
+  });
+
+  test('an expired plan cannot expose wallet calls', async () => {
+    const planId = await seedPlan();
+    b20RouteRuntime.now = () => new Date(NOW.getTime() + 3_600_000);
+    const response = await begin(planId);
+    assert.equal(response.body.outcome, 'refused');
+    assert.equal(response.body.reason, 'entry_plan_expired');
+    assert.equal(response.body.payload, undefined);
+    // Not silently rebuilt, re-quoted or re-certified.
+    assert.match(response.body.detail, /run the opportunity check again/i);
+  });
+
+  test('a wallet rejection creates no submitted transaction, and is not a revert', async () => {
+    const planId = await seedPlan();
+    const attemptId = (await begin(planId)).body.attemptId;
+    const rejected = await record(planId, { attemptId, result: 'user_rejected', batchId: null });
+    assert.equal(rejected.status, 200);
+    assert.equal(rejected.body.status.state, 'user_rejected');
+    assert.notEqual(rejected.body.status.state, 'entry_reverted');
+    assert.equal(rejected.body.status.batchId, null);
+    // Nothing was sent, so Review is still a legitimate place to return to.
+    assert.equal(rejected.body.status.canSubmit, true);
+  });
+
+  test('a rejection may not claim a batch, and a submission must name one', async () => {
+    const planId = await seedPlan();
+    const attemptId = (await begin(planId)).body.attemptId;
+    assert.equal(
+      (await record(planId, { attemptId, result: 'user_rejected', batchId: 'batch-1' })).status,
+      400,
+    );
+    assert.equal((await record(planId, { attemptId, result: 'submitted', batchId: null })).status, 400);
+  });
+
+  test('a submission is recorded, and a refresh recovers it', async () => {
+    const planId = await seedPlan();
+    const attemptId = (await begin(planId)).body.attemptId;
+    const submitted = await record(planId, { attemptId, result: 'submitted', batchId: 'batch-1' });
+    assert.equal(submitted.body.status.state, 'submitted');
+    assert.equal(submitted.body.status.batchId, 'batch-1');
+    assert.ok(submitted.body.status.submittedAt);
+
+    // The refresh reads storage, so the plan never looks prepared again.
+    const refreshed = await status(planId);
+    assert.equal(refreshed.body.status.state, 'submitted');
+    assert.equal(refreshed.body.status.canSubmit, false);
+    assert.equal(refreshed.body.status.canRefresh, true);
+  });
+
+  test('a repeated record of the same batch is idempotent, not a second send', async () => {
+    const planId = await seedPlan();
+    const attemptId = (await begin(planId)).body.attemptId;
+    await record(planId, { attemptId, result: 'submitted', batchId: 'batch-1' });
+    const again = await record(planId, { attemptId, result: 'submitted', batchId: 'batch-1' });
+    assert.equal(again.status, 200);
+    assert.equal(again.body.status.batchId, 'batch-1');
+  });
+
+  test('a different batch id for one attempt is refused', async () => {
+    const planId = await seedPlan();
+    const attemptId = (await begin(planId)).body.attemptId;
+    await record(planId, { attemptId, result: 'submitted', batchId: 'batch-1' });
+    // Replacing it would silently repoint the record at another transaction.
+    assert.equal(
+      (await record(planId, { attemptId, result: 'submitted', batchId: 'batch-2' })).status,
+      409,
+    );
+  });
+
+  test('an uncertain wallet response never permits another send', async () => {
+    const planId = await seedPlan();
+    const attemptId = (await begin(planId)).body.attemptId;
+    await record(planId, { attemptId, result: 'submitted', batchId: 'batch-1' });
+    // A batch may be in flight that nobody can see yet.
+    const retry = await begin(planId, { ...BEGIN, attemptRequestId: 'attempt-req-2' });
+    assert.equal(retry.body.outcome, 'refused');
+    assert.equal(retry.body.reason, 'entry_plan_already_submitted');
+    assert.equal(retry.body.status.canSubmit, false);
+  });
+
+  test('a server without the submission table offers no wallet action', async () => {
+    const planId = await seedPlan();
+    b20RouteRuntime.executionCapabilities = async () => ({
+      submissionRouteWired: false,
+      walletIntegrationWired: false,
+      reconciliationWired: false,
+    });
+    const response = await begin(planId);
+    assert.equal(response.status, 503);
+    assert.equal(response.body.reason, 'submission_not_wired');
+    const read = await status(planId);
+    assert.equal(read.body.review.executionAvailable, false);
+  });
+
+  test('no Route Proof is created by any of this', async () => {
+    const planId = await seedPlan();
+    const attemptId = (await begin(planId)).body.attemptId;
+    const submitted = await record(planId, { attemptId, result: 'submitted', batchId: 'batch-1' });
+    const bodies = JSON.stringify([submitted.body, (await status(planId)).body]);
+    for (const forbidden of ['proofId', 'routeProof', 'proofHash', 'shareToken']) {
+      assert.ok(!new RegExp(forbidden, 'i').test(bodies), `must not create ${forbidden}`);
+    }
+  });
+
+  test('nothing in the submission path leaks a credential or an endpoint', async () => {
+    const planId = await seedPlan();
+    const attemptId = (await begin(planId)).body.attemptId;
+    const bodies = JSON.stringify([
+      (await begin(planId)).body,
+      (await record(planId, { attemptId, result: 'submitted', batchId: 'batch-1' })).body,
+      (await status(planId)).body,
+    ]);
+    assert.equal(/https?:\/\//.test(bodies), false);
+    for (const forbidden of ['apiKey', 'authorization', 'privateKey', 'rawTransaction', 'signature']) {
+      assert.ok(!new RegExp(forbidden, 'i').test(bodies), `must not expose ${forbidden}`);
+    }
+  });
+
+  test('the submission routes need the flag and a session', async () => {
+    const planId = await seedPlan();
+    b20RouteRuntime.flags = () => ({ ...FLAGS, b20ControlV1: false });
+    assert.equal((await begin(planId)).status, 404);
+    assert.equal((await status(planId)).status, 404);
+    b20RouteRuntime.flags = () => ({ ...FLAGS });
+    assert.equal((await begin(planId, BEGIN, app(null))).status, 401);
+    assert.equal((await status(planId, app(null))).status, 401);
   });
 });
 
