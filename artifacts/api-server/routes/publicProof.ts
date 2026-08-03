@@ -4,6 +4,7 @@ import { PublicProofShareResponseV1Schema } from '@mioagent/api-zod';
 import type { ProofFamilyV1, PublicProofShareV1 } from '@mioagent/route-domain';
 import {
   createDatabaseNftStorageRepository,
+  createDatabaseProviderOutcomeRepository,
   createDatabasePublicProofShareRepository,
   createDatabaseRouteStorageRepository,
   proofIsPublishableV1,
@@ -13,6 +14,16 @@ import {
 } from '@mioagent/route-storage';
 import { client } from '@mioagent/db';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
+import { publicProofProviderV1 } from '../lib/publicProofProvider.js';
+
+/** Just enough of the outcome store to name a provider. Narrow on purpose: this
+ * route reads one record and must not be able to reach for more. */
+export interface ProviderOutcomeReaderV1 {
+  getProviderOutcomeByProofId(input: {
+    tenantId: string;
+    proofId: string;
+  }): Promise<{ providerId: string } | null>;
+}
 import {
   buildPublicNftProofBundleV1,
   buildPublicRouteProofBundleV1,
@@ -51,6 +62,7 @@ export const publicProofRuntime = {
   shares: (): PublicProofShareRepositoryV1 => createDatabasePublicProofShareRepository(client),
   routeRepository: (): RouteStorageRepository => createDatabaseRouteStorageRepository(client),
   nftRepository: (): NftStorageRepository => createDatabaseNftStorageRepository(client),
+  outcomeRepository: (): ProviderOutcomeReaderV1 => createDatabaseProviderOutcomeRepository(client),
   migrationAvailable: async (): Promise<boolean> => {
     const rows = await client`SELECT to_regclass('public.public_proof_shares') AS shares`;
     const row = rows[0];
@@ -89,14 +101,34 @@ function notFound(res: Response): void {
  * the caller renders as the same 404 as an unknown id.
  */
 export async function bundleForShareV1(
-  deps: { route: RouteStorageRepository; nft: NftStorageRepository },
+  deps: {
+    route: RouteStorageRepository;
+    nft: NftStorageRepository;
+    /** T68F §9 — the server's own record of who executed this proof. Optional
+     * so a caller without an outcome store still builds a readable bundle. */
+    outcomes?: ProviderOutcomeReaderV1;
+  },
   share: PublicProofShareV1,
 ): Promise<PublicProofBundleV1 | null> {
   if (share.proofFamily === 'route') {
     const proof = await deps.route.getProofProjection(share.proofId, share.tenantId);
     if (!proof || !proofIsPublishableV1(proof.finalStatus)) return null;
     const events = await deps.route.listProofEvents(share.proofId, share.tenantId);
-    return buildPublicRouteProofBundleV1({ share, provider: null, proof, events });
+    // The provider comes from the DERIVED outcome, keyed by proof id — never
+    // from a client, and never from a name that travelled in a request. A proof
+    // with no outcome row stays null, which is what a legacy record looks like
+    // and must keep looking like.
+    const outcome = deps.outcomes
+      ? await deps.outcomes
+          .getProviderOutcomeByProofId({ tenantId: share.tenantId, proofId: share.proofId })
+          .catch(() => null)
+      : null;
+    return buildPublicRouteProofBundleV1({
+      share,
+      provider: publicProofProviderV1({ outcome }),
+      proof,
+      events,
+    });
   }
   const record = await deps.nft.getNftProof(share.proofId, share.tenantId);
   if (!record) return null;
@@ -104,6 +136,8 @@ export async function bundleForShareV1(
   // so there is nothing to publish yet.
   if (record.proof.status !== 'finalized') return null;
   const events = await deps.nft.listNftProofEvents(share.proofId, share.tenantId);
+  // NFT proofs have no derived provider outcome, so this stays null — an
+  // honest "we do not record that for this family" rather than a guess.
   return buildPublicNftProofBundleV1({ share, provider: null, proof: record.proof, events });
 }
 
@@ -201,7 +235,11 @@ async function loadPublicBundleV1(publicId: string): Promise<PublicProofBundleV1
   const share = await publicProofRuntime.shares().getLiveShare(publicId);
   if (!share) return null;
   return bundleForShareV1(
-    { route: publicProofRuntime.routeRepository(), nft: publicProofRuntime.nftRepository() },
+    {
+      route: publicProofRuntime.routeRepository(),
+      nft: publicProofRuntime.nftRepository(),
+      outcomes: publicProofRuntime.outcomeRepository(),
+    },
     share,
   );
 }
