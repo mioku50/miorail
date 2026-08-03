@@ -62,6 +62,15 @@ export interface PrepareEntryInputV1 {
   profileIdentity: string;
 }
 
+/** What the prepare-time simulation observed. Hashes and a block number — never
+ * the provider's body, which can carry an endpoint and an endpoint can carry a
+ * key. Present only when the simulation actually passed. */
+export interface PrepareSimulationEvidenceV1 {
+  requestHash: string;
+  evidenceHash: string;
+  blockNumber: string;
+}
+
 export interface PrepareEntryResultV1 {
   blueprint: B20EntryBlueprintV1 | null;
   refusal: string | null;
@@ -69,6 +78,13 @@ export interface PrepareEntryResultV1 {
   /** Present even on a refusal, so a surface can name the token it refused
    * about without reaching into a clearance that may be null. */
   tokenAddress: string;
+  /** T68F-A — carried out so the plan can be persisted with the evidence that
+   * justified it, rather than a later reader taking the simulation on trust. */
+  simulation: PrepareSimulationEvidenceV1 | null;
+  /** From this server's own fresh control read, for the Review screen. Never
+   * from a client and never from token metadata treated as identity. */
+  tokenName: string | null;
+  tokenSymbol: string | null;
 }
 
 const REFUSED_TOKEN_V1 = '0x0000000000000000000000000000000000000000';
@@ -79,11 +95,16 @@ export async function prepareB20EntryV1(
 ): Promise<PrepareEntryResultV1> {
   const now = deps.now();
   const clearance = input.clearance;
+  let tokenName: string | null = null;
+  let tokenSymbol: string | null = null;
   const refuse = (refusal: string, detail: string, token = clearance?.tokenAddress ?? REFUSED_TOKEN_V1): PrepareEntryResultV1 => ({
     blueprint: null,
     refusal,
     detail,
     tokenAddress: token,
+    simulation: null,
+    tokenName,
+    tokenSymbol,
   });
 
   // 1. The clearance bindings, through the SHARED taxonomy. A parallel set of
@@ -117,7 +138,11 @@ export async function prepareB20EntryV1(
     { reader: deps.b20Reader },
     { tenantId: input.tenantId, chainId: 8453, tokenAddress: clearance.tokenAddress, now },
   );
-  void buildB20CardV1;
+  // The display identity comes from THIS read, not from a client and not from
+  // metadata treated as identity — the address remains the only identity.
+  const card = buildB20CardV1(inspection.snapshot);
+  tokenName = card.displayName;
+  tokenSymbol = card.displaySymbol;
   const freshControls = {
     ...exitControlsFromSnapshotV1(inspection.snapshot),
     snapshotHash: inspection.snapshot.snapshotHash,
@@ -213,18 +238,19 @@ export async function prepareB20EntryV1(
   const parsedResponse = transport.ok
     ? SimulationProviderResponseV1Schema.safeParse(transport.body)
     : null;
+  const observed = parsedResponse?.success === true ? parsedResponse.data : null;
   const simulationRefusal = verifyEntrySimulationV1({
     blueprint,
     simulation:
-      parsedResponse?.success === true
+      observed
         ? {
             ok: true,
-            calls: (parsedResponse.data.callResults ?? []).map((call) => ({
+            calls: (observed.callResults ?? []).map((call) => ({
               index: call.index,
               status: call.status,
             })),
-            assetChangesAvailable: parsedResponse.data.assetChanges?.status === 'available',
-            assetChanges: (parsedResponse.data.assetChanges?.changes ?? []).map((change) => ({
+            assetChangesAvailable: observed.assetChanges?.status === 'available',
+            assetChanges: (observed.assetChanges?.changes ?? []).map((change) => ({
               token: change.token,
               direction: change.direction,
               amountAtomic: change.amountAtomic,
@@ -233,9 +259,34 @@ export async function prepareB20EntryV1(
           }
         : { ok: false },
   });
-  if (simulationRefusal) {
-    return refuse(simulationRefusal, ENTRY_PLAN_REFUSAL_COPY_V1[simulationRefusal]);
+  if (simulationRefusal || !observed) {
+    const reason = simulationRefusal ?? 'entry_simulation_unavailable';
+    return refuse(reason, ENTRY_PLAN_REFUSAL_COPY_V1[reason]);
   }
 
-  return { blueprint, refusal: null, detail: null, tokenAddress: clearance.tokenAddress };
+  return {
+    blueprint,
+    refusal: null,
+    detail: null,
+    tokenAddress: clearance.tokenAddress,
+    // Derived here, from the response THIS server parsed — never the provider's
+    // body, which can carry an endpoint, and an endpoint can carry a key.
+    simulation: {
+      requestHash: callsHash,
+      evidenceHash: stableHashV1('b20-entry-simulation/v1', {
+        blueprintHash: blueprint.blueprintHash,
+        callsHash,
+        status: observed.status,
+        blockNumber: observed.blockNumber,
+        gasUsed: observed.gasUsed,
+        callResults: (observed.callResults ?? []).map((call) => ({
+          index: call.index,
+          status: call.status,
+        })),
+      }),
+      blockNumber: String(observed.blockNumber),
+    },
+    tokenName,
+    tokenSymbol,
+  };
 }

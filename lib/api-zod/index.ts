@@ -2848,6 +2848,85 @@ export const B20OpportunitySimulateResponseV1Schema = z
 // an amount, a slippage or a factory: every one of those is recovered from the
 // stored clearance and rebuilt server-side, so a client cannot widen what gets
 // prepared by editing a request body.
+/**
+ * T68F-A §8 — the Review projection.
+ *
+ * What a Review screen may show, and deliberately nothing more. There is no
+ * calldata, no raw simulation body, no credential, no RPC endpoint and no
+ * session identifier in this shape: the executable bytes stay server-side until
+ * a submission path exists to use them.
+ */
+export const B20EntryReviewV1Schema = z
+  .object({
+    planId: z.string().min(1).max(200),
+    executionFamily: z.literal('b20_opportunity_entry'),
+    spend: z
+      .object({
+        asset: AddressV1Schema,
+        amountAtomic: z.string().regex(/^[1-9][0-9]{0,17}$/),
+        decimals: z.literal(6),
+      })
+      .strict(),
+    receive: z
+      .object({
+        tokenAddress: AddressV1Schema,
+        tokenName: z.string().max(120).nullable(),
+        tokenSymbol: z.string().max(60).nullable(),
+        expectedOutputAtomic: z.string().regex(/^[1-9][0-9]*$/),
+        minimumOutputAtomic: z.string().regex(/^[1-9][0-9]*$/),
+      })
+      .strict(),
+    provider: z
+      .object({
+        providerId: z.string().min(1).max(60),
+        providerName: z.string().min(1).max(60),
+        sourceKey: z.string().min(1).max(300),
+      })
+      .strict(),
+    entryRouteHash: z.string().regex(/^0x[0-9a-f]{64}$/),
+    /** Either the exact approval this plan asks for, or the standing allowance
+     * it found sufficient. A Review showing neither would leave the user unable
+     * to tell whether they are about to grant one. */
+    approval: z
+      .object({
+        required: z.boolean(),
+        amountAtomic: z.string().regex(/^[1-9][0-9]*$/).nullable(),
+      })
+      .strict(),
+    clearanceId: z.string().min(1).max(200),
+    clearanceCreatedAt: z.string().min(1).max(60),
+    clearanceExpiresAt: z.string().min(1).max(60),
+    certificationBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/),
+    prepareControlBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    prepareSimulationBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/),
+    certificationRoundTripBps: z.number().int().min(0).max(100_000),
+    coverage: z.enum(['complete', 'partial']),
+    viableRouteConfirmed: z.boolean(),
+    bestRouteConfirmed: z.boolean(),
+    /** The sentence that stops a user believing this round-trips their money. */
+    exitNotice: z.string().min(1).max(200),
+    lifecycle: z.enum(['prepared', 'awaiting_wallet_approval', 'submitted', 'terminal']),
+    expiresAt: z.string().min(1).max(60),
+    executionAvailable: z.literal(false),
+    executionUnavailableReason: z.literal('submission_not_wired'),
+  })
+  .strict();
+
+/** The authenticated read. Tenant- AND wallet-scoped; another wallet gets the
+ * not-found answer a nonexistent plan gets. */
+export const B20EntryPlanResponseV1Schema = z
+  .object({
+    review: B20EntryReviewV1Schema,
+    expiresAt: z.string().min(1).max(60),
+    /** Derived, never stored as state: expiry is a fact about a clock, and
+     * rewriting immutable evidence to record the passage of time would destroy
+     * the evidence. */
+    expired: z.boolean(),
+    executionAvailable: z.literal(false),
+    executionUnavailableReason: z.literal('submission_not_wired'),
+  })
+  .strict();
+
 export const B20EntryPrepareRequestV1Schema = z
   .object({
     chainId: z.literal(8453),
@@ -2894,6 +2973,14 @@ export const B20EntryPrepareResponseV1Schema = z
       .max(2)
       .nullable(),
     preparedAt: z.string().min(1).max(60),
+    // T68F-A — the stored plan. Present only when preparation persisted one.
+    planId: z.string().min(1).max(200).nullable(),
+    review: B20EntryReviewV1Schema.nullable(),
+    /** False for the whole of T68F-A. Stated as its own field so a surface
+     * cannot mistake missing wiring for a provider failure or a token
+     * rejection — the plan is sound, the submission path does not exist yet. */
+    executionAvailable: z.literal(false),
+    executionUnavailableReason: z.literal('submission_not_wired').nullable(),
   })
   .strict();
 

@@ -13,6 +13,7 @@ import {
   B20OpportunitySimulateResponseV1Schema,
   B20EntryPrepareRequestV1Schema,
   B20EntryPrepareResponseV1Schema,
+  B20EntryPlanResponseV1Schema,
 } from '@mioagent/api-zod';
 import {
   B20RequestError,
@@ -37,7 +38,10 @@ import {
   createDatabaseB20StorageRepository,
   createDatabaseB20WatchlistRepository,
   createDatabaseB20ClearanceRepository,
+  createDatabaseB20EntryPlanRepository,
+  b20EntryReviewV1,
   type B20ClearanceRepositoryV1,
+  type B20EntryPlanRepositoryV1,
   b20SweepOutcomeFromDetectionV1,
   b20WatchlistIdV1,
   B20_WATCHLIST_CAPACITY_V1,
@@ -54,6 +58,7 @@ import { analyseExitV1 } from '../lib/exitAnalysis.js';
 import { runOpportunityV1 } from '../lib/opportunityRunner.js';
 import { buildClearanceV1 } from '../lib/opportunityClearance.js';
 import { prepareB20EntryV1 } from '../lib/b20EntryRunner.js';
+import { buildPreparedPlanV1 } from '../lib/b20EntryPlanStore.js';
 
 // ---------------------------------------------------------------------------
 // T67C — the B20 Control rail.
@@ -122,6 +127,7 @@ export const b20RouteRuntime = {
   repository: (): B20StorageRepositoryV1 => createDatabaseB20StorageRepository(client),
   watchlist: (): B20WatchlistRepositoryV1 => createDatabaseB20WatchlistRepository(client),
   clearances: (): B20ClearanceRepositoryV1 => createDatabaseB20ClearanceRepository(client),
+  entryPlans: (): B20EntryPlanRepositoryV1 => createDatabaseB20EntryPlanRepository(client),
   reader: () => createB20ReaderV1({ rpcUrl: baseMainnetRpcUrlV1() }),
   /** The Aerodrome Router, read-only. A separate reader from the B20 one
    * because they speak to different contracts with different decoders — sharing
@@ -148,6 +154,17 @@ export const b20RouteRuntime = {
   clearanceAvailable: async (): Promise<boolean> => {
     const rows = await client`SELECT to_regclass('public.b20_opportunity_clearances') AS clearances`;
     return Boolean(rows[0]?.clearances);
+  },
+  /** Checked separately again: a server without migration 0026 can still
+   * certify and still prepare — it simply cannot store what it prepared, and
+   * says so rather than handing back an unstored plan. */
+  entryPlanAvailable: async (): Promise<boolean> => {
+    const rows = await client`
+      SELECT
+        to_regclass('public.b20_entry_plans') AS plans,
+        to_regclass('public.b20_entry_executions') AS executions`;
+    const row = rows[0];
+    return Boolean(row && row.plans && row.executions);
   },
   /** Injected so a test can run the whole route without a chain or a provider. */
   runOpportunity: runOpportunityV1,
@@ -763,10 +780,59 @@ b20ControlRouter.post('/opportunities/:clearanceId/prepare-entry', async (req: R
       res.status(503).json({ error: 'b20_clearance_unavailable', code: 'b20_clearance_unavailable' });
       return;
     }
+    if (!(await b20RouteRuntime.entryPlanAvailable())) {
+      res.status(503).json({ error: 'b20_entry_plan_unavailable', code: 'b20_entry_plan_unavailable' });
+      return;
+    }
     const now = b20RouteRuntime.now();
+    const clearanceId = String(req.params.clearanceId ?? '');
+    const plans = b20RouteRuntime.entryPlans();
+
+    // §2 — the idempotency lookup runs BEFORE any quoting. A retry must return
+    // the stored plan, not re-quote the pool and offer different numbers to a
+    // user who only refreshed.
+    const replay = await plans.findByIdempotency({
+      tenantId: guard.user.id,
+      walletAddress: guard.user.address,
+      clearanceId,
+      requestId: parsed.data.requestId,
+    });
+    if (replay) {
+      res.json(
+        B20EntryPrepareResponseV1Schema.parse({
+          outcome: 'prepared',
+          refusalReason: null,
+          refusalDetail: null,
+          clearanceId,
+          blueprintHash: replay.blueprintHash,
+          tokenAddress: replay.tokenAddress,
+          positionAtomic: replay.positionAtomic,
+          expectedOutputAtomic: replay.expectedOutputAtomic,
+          minimumOutputAtomic: replay.minimumOutputAtomic,
+          entrySourceKey: replay.entrySourceKey,
+          coverage: replay.coverage,
+          viableRouteConfirmed: replay.viableRouteConfirmed,
+          bestRouteConfirmed: replay.bestRouteConfirmed,
+          certifiedControlBlockNumber: replay.certificationBlockNumber,
+          prepareControlBlockNumber: replay.prepareControlBlockNumber,
+          clearanceExpiresAt: replay.clearanceExpiresAt,
+          // The executable bytes are NOT replayed. They live server-side until
+          // a submission path exists to use them; a Review reads the
+          // projection.
+          calls: null,
+          preparedAt: replay.createdAt,
+          planId: replay.id,
+          review: b20EntryReviewV1(replay),
+          executionAvailable: false,
+          executionUnavailableReason: 'submission_not_wired',
+        }),
+      );
+      return;
+    }
+
     const clearance = await b20RouteRuntime
       .clearances()
-      .getClearance(String(req.params.clearanceId ?? ''), guard.user.id);
+      .getClearance(clearanceId, guard.user.id);
 
     const prepared = await b20RouteRuntime.prepareEntry(
       {
@@ -783,12 +849,39 @@ b20ControlRouter.post('/opportunities/:clearanceId/prepare-entry', async (req: R
       },
     );
 
+    // §1/§7 — a successful preparation becomes a stored immutable entity
+    // before it is described to anyone. Persisting from the SERVER's own
+    // blueprint, clearance, controls and simulation: the request contributed a
+    // clearance id, a profile identity and a request id, and nothing else.
+    let stored: Awaited<ReturnType<typeof plans.insertPreparedPlan>> | null = null;
+    if (prepared.blueprint && (!clearance || !prepared.simulation)) {
+      // Unreachable through the runner, which refuses a plan it could not
+      // simulate. Stated anyway: a blueprint that cannot be stored with the
+      // evidence that justified it is never described as prepared, because
+      // "prepared" is about to mean "there is a row a wallet can be asked to
+      // sign against".
+      res.status(500).json({ error: 'storage_integrity', code: 'storage_integrity' });
+      return;
+    }
+    if (prepared.blueprint && clearance && prepared.simulation) {
+      const draft = buildPreparedPlanV1({
+        clearance,
+        blueprint: prepared.blueprint,
+        simulation: prepared.simulation,
+        tokenName: prepared.tokenName,
+        tokenSymbol: prepared.tokenSymbol,
+        requestId: parsed.data.requestId,
+        now,
+      });
+      stored = await plans.insertPreparedPlan(draft);
+    }
+
     res.json(
       B20EntryPrepareResponseV1Schema.parse({
         outcome: prepared.blueprint ? 'prepared' : 'refused',
         refusalReason: prepared.refusal,
         refusalDetail: prepared.detail,
-        clearanceId: String(req.params.clearanceId ?? ''),
+        clearanceId,
         blueprintHash: prepared.blueprint?.blueprintHash ?? null,
         tokenAddress: clearance?.tokenAddress ?? prepared.tokenAddress,
         positionAtomic: clearance?.positionAtomic ?? '1',
@@ -809,10 +902,61 @@ b20ControlRouter.post('/opportunities/:clearanceId/prepare-entry', async (req: R
             value: call.valueWei,
           })) ?? null,
         preparedAt: now.toISOString(),
+        planId: stored?.plan.id ?? null,
+        review: stored ? b20EntryReviewV1(stored.plan) : null,
+        // The plan is sound; the submission path does not exist yet. Stated as
+        // its own field so no surface can read missing wiring as a provider
+        // failure or a token rejection.
+        executionAvailable: false,
+        executionUnavailableReason: stored ? 'submission_not_wired' : null,
       }),
     );
   } catch (error) {
     storageFailure(res, error, 'prepare-entry');
+  }
+});
+
+/**
+ * §9 — the authenticated read.
+ *
+ * Tenant- AND wallet-scoped by the repository, not by a check here: another
+ * wallet receives exactly what a nonexistent plan receives, because the
+ * difference between "not yours" and "not there" is itself information.
+ *
+ * It returns the projection, never the unsigned calldata. The executable bytes
+ * stay server-side while no submission path exists to use them.
+ */
+b20ControlRouter.get('/opportunities/entry-plans/:planId', async (req: Request, res: Response) => {
+  const guard = b20Guard(req, res);
+  if (!guard) return;
+
+  try {
+    if (!(await b20RouteRuntime.entryPlanAvailable())) {
+      res.status(503).json({ error: 'b20_entry_plan_unavailable', code: 'b20_entry_plan_unavailable' });
+      return;
+    }
+    const plan = await b20RouteRuntime.entryPlans().getPreparedPlan({
+      planId: String(req.params.planId ?? ''),
+      tenantId: guard.user.id,
+      walletAddress: guard.user.address,
+    });
+    if (!plan) {
+      res.status(404).json({ error: 'b20_entry_plan_not_found', code: 'b20_entry_plan_not_found' });
+      return;
+    }
+    res.json(
+      B20EntryPlanResponseV1Schema.parse({
+        review: b20EntryReviewV1(plan),
+        expiresAt: plan.expiresAt,
+        // Derived from the clock, never stored: recording the passage of time
+        // by rewriting immutable evidence would destroy the evidence.
+        expired: Date.parse(plan.expiresAt) <= b20RouteRuntime.now().getTime(),
+        executionAvailable: false,
+        executionUnavailableReason: 'submission_not_wired',
+      }),
+    );
+  } catch (error) {
+    storageFailure(res, error, 'entry-plan-read');
   }
 });
 

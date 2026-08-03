@@ -7,6 +7,7 @@ import {
   InMemoryB20StorageRepositoryV1,
   InMemoryB20WatchlistRepositoryV1,
   InMemoryB20ClearanceRepositoryV1,
+  InMemoryB20EntryPlanRepositoryV1,
 } from '@mioagent/route-storage';
 import { b20ControlRouter, b20RouteRuntime } from './b20Control.js';
 
@@ -49,6 +50,7 @@ const original = { ...b20RouteRuntime };
 let repository: InMemoryB20StorageRepositoryV1;
 let watchlist: InMemoryB20WatchlistRepositoryV1;
 let clearances: InMemoryB20ClearanceRepositoryV1;
+let entryPlans: InMemoryB20EntryPlanRepositoryV1;
 let isB20Value: boolean;
 let blockNumber: string;
 
@@ -100,6 +102,77 @@ function app(user: typeof USER | null = USER) {
   return server;
 }
 
+const QUOTE_ASSET = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+const ROUTER = '0xcf77a3ba9a5ca399b7c97c74d54e5b1beb874e43';
+const DEADLINE = String(Math.floor(NOW.getTime() / 1000) + 300);
+
+/** A prepared plan, injected — the runner has its own unit tests. The shape
+ * is the real one, because the route now PERSISTS it and a fake looser than
+ * the schema would hide exactly the write the storage layer must refuse. */
+const preparedRun = (calls = 2, overrides: Record<string, unknown> = {}) =>
+  (async () => ({
+    blueprint: {
+      schemaVersion: 'b20-entry-blueprint/v1' as const,
+      blueprintHash: `0x${'b'.repeat(64)}`,
+      clearanceId: 'clearance-1',
+      profileIdentity: `${QUOTE_ASSET}:100000000:300:300`,
+      walletAddress: WALLET,
+      chainId: 8453 as const,
+      tokenAddress: TOKEN,
+      quoteAsset: QUOTE_ASSET,
+      positionAtomic: '100000000',
+      expectedOutputAtomic: '4200000000000000000000',
+      minimumOutputAtomic: '4074000000000000000000',
+      deadlineSeconds: DEADLINE,
+      certifiedControlSnapshotHash: `0x${'a'.repeat(64)}`,
+      prepareControlSnapshotHash: `0x${'a'.repeat(64)}`,
+      prepareControlBlockNumber: '49450050',
+      entryRouteHash: `0x${'b'.repeat(64)}`,
+      entrySourceKey: `aerodrome:0xfac:${QUOTE_ASSET}:${TOKEN}:volatile`,
+      freshQuoteHash: `0x${'9'.repeat(64)}`,
+      certificationEvidenceHash: `0x${'e'.repeat(64)}`,
+      coverage: 'partial' as const,
+      viableRouteConfirmed: true,
+      bestRouteConfirmed: false,
+      calls: [
+        {
+          index: 0,
+          callType: 'approval' as const,
+          to: QUOTE_ASSET,
+          valueWei: '0',
+          data: '0x095ea7b3',
+          asset: null,
+          amountAtomic: '100000000',
+          recipient: null,
+          spender: ROUTER,
+        },
+        {
+          index: 1,
+          callType: 'swap' as const,
+          to: ROUTER,
+          valueWei: '0',
+          data: '0x38ed1739',
+          asset: null,
+          amountAtomic: '100000000',
+          recipient: WALLET,
+          spender: null,
+        },
+      ].slice(2 - calls).map((call, index) => ({ ...call, index })),
+      ...overrides,
+    },
+    refusal: null,
+    detail: null,
+    tokenAddress: TOKEN,
+    simulation: {
+      requestHash: `0x${'1'.repeat(64)}`,
+      evidenceHash: `0x${'2'.repeat(64)}`,
+      blockNumber: '49450051',
+    },
+    tokenName: 'Example',
+    tokenSymbol: 'EXA',
+  })) as never;
+
+
 beforeEach(() => {
   repository = new InMemoryB20StorageRepositoryV1(() => NOW);
   isB20Value = true;
@@ -117,6 +190,9 @@ beforeEach(() => {
   clearances = new InMemoryB20ClearanceRepositoryV1();
   b20RouteRuntime.clearances = () => clearances;
   b20RouteRuntime.clearanceAvailable = async () => true;
+  entryPlans = new InMemoryB20EntryPlanRepositoryV1();
+  b20RouteRuntime.entryPlans = () => entryPlans;
+  b20RouteRuntime.entryPlanAvailable = async () => true;
 });
 
 afterEach(() => {
@@ -681,27 +757,6 @@ describe('a clearance is consumed, never trusted', () => {
       .send(body as object);
   const REQUEST = { chainId: 8453, profileIdentity: `${USDC}:100000000:300:300`, requestId: 'req-1' };
 
-  /** A prepared plan, injected — the runner has its own unit tests. */
-  const preparedRun = (calls = 2) =>
-    (async () => ({
-      blueprint: {
-        blueprintHash: `0x${'b'.repeat(64)}`,
-        expectedOutputAtomic: '4200000000000000000000',
-        minimumOutputAtomic: '4074000000000000000000',
-        entrySourceKey: `aerodrome:0xfac:${USDC}:${TOKEN}:volatile`,
-        coverage: 'partial' as const,
-        prepareControlBlockNumber: '49450050',
-        calls: Array.from({ length: calls }, (_value, index) => ({
-          to: index === 0 ? USDC : '0xcf77a3ba9a5ca399b7c97c74d54e5b1beb874e43',
-          data: '0x095ea7b3',
-          valueWei: '0',
-        })),
-      },
-      refusal: null,
-      detail: null,
-      tokenAddress: TOKEN,
-    })) as never;
-
   async function seedClearance(overrides: Record<string, unknown> = {}) {
     const { B20OpportunityClearanceV1Schema, B20_CLEARANCE_TTL_MS_V1 } = await import(
       '@mioagent/route-storage'
@@ -819,6 +874,9 @@ describe('a clearance is consumed, never trusted', () => {
       refusal: 'entry_transfers_paused',
       detail: 'Transfers of this token are paused now.',
       tokenAddress: TOKEN,
+      simulation: null,
+      tokenName: null,
+      tokenSymbol: null,
     })) as never;
     const response = await prepare('clearance-1', REQUEST);
     assert.equal(response.body.outcome, 'refused');
@@ -848,6 +906,255 @@ describe('a clearance is consumed, never trusted', () => {
     const response = await prepare('clearance-1', REQUEST);
     assert.equal(response.status, 503);
     assert.equal(response.body.code, 'b20_clearance_unavailable');
+  });
+
+  // --- T68F-A: the prepared plan becomes a stored execution subject --------
+
+  test('a successful preparation persists exactly one plan', async () => {
+    await seedClearance();
+    b20RouteRuntime.prepareEntry = preparedRun();
+    const response = await prepare('clearance-1', REQUEST);
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.ok(response.body.planId, 'the response must name the stored plan');
+    const stored = await entryPlans.getPreparedPlan({
+      planId: response.body.planId,
+      tenantId: USER.id,
+      walletAddress: WALLET,
+    });
+    assert.ok(stored);
+    assert.equal(stored.executionFamily, 'b20_opportunity_entry');
+    assert.equal(stored.lifecycle, 'prepared');
+    assert.equal(stored.walletAddress, WALLET, 'the stored wallet is the authenticated one');
+    assert.equal(stored.tokenAddress, TOKEN);
+    assert.equal(stored.clearanceId, 'clearance-1');
+    assert.equal(stored.profileIdentity, `${USDC}:100000000:300:300`);
+  });
+
+  test('an identical retry returns the same plan id and re-quotes nothing', async () => {
+    await seedClearance();
+    let runs = 0;
+    const inner = preparedRun();
+    b20RouteRuntime.prepareEntry = (async (...args: unknown[]) => {
+      runs += 1;
+      return (inner as unknown as (...a: unknown[]) => unknown)(...args);
+    }) as never;
+    const first = await prepare('clearance-1', REQUEST);
+    const second = await prepare('clearance-1', REQUEST);
+    assert.equal(second.body.planId, first.body.planId);
+    assert.equal(second.body.blueprintHash, first.body.blueprintHash);
+    // The second call never reached the runner: a refresh must not cost the
+    // user a fresh quote, a fresh simulation, or different numbers.
+    assert.equal(runs, 1);
+  });
+
+  test('the same request id with different content is an integrity conflict', async () => {
+    await seedClearance();
+    b20RouteRuntime.prepareEntry = preparedRun();
+    const first = await prepare('clearance-1', REQUEST);
+    // A concurrent preparation that produced a different blueprint. The stored
+    // one is not overwritten and the new one is not silently returned.
+    await assert.rejects(
+      entryPlans.insertPreparedPlan({
+        plan: {
+          ...(await entryPlans.getPreparedPlan({
+            planId: first.body.planId,
+            tenantId: USER.id,
+            walletAddress: WALLET,
+          }))!,
+          id: 'other-plan',
+          blueprintHash: `0x${'7'.repeat(64)}`,
+        },
+        run: {
+          schemaVersion: 'b20-entry-execution-run/v1',
+          id: 'other-run',
+          tenantId: USER.id,
+          walletAddress: WALLET,
+          chainId: 8453,
+          executionFamily: 'b20_opportunity_entry',
+          preparedPlanId: 'other-plan',
+          clearanceId: 'clearance-1',
+          state: 'prepared',
+          submissionId: null,
+          createdAt: NOW.toISOString(),
+        },
+      }),
+    );
+    const survivor = await entryPlans.getPreparedPlan({
+      planId: first.body.planId,
+      tenantId: USER.id,
+      walletAddress: WALLET,
+    });
+    assert.equal(survivor?.blueprintHash, first.body.blueprintHash);
+  });
+
+  test('a new request id prepares again, and gets its own plan', async () => {
+    await seedClearance();
+    b20RouteRuntime.prepareEntry = preparedRun();
+    const first = await prepare('clearance-1', REQUEST);
+    const second = await prepare('clearance-1', { ...REQUEST, requestId: 'req-2' });
+    assert.notEqual(second.body.planId, first.body.planId);
+  });
+
+  test('the response offers no wallet action, and says why', async () => {
+    await seedClearance();
+    b20RouteRuntime.prepareEntry = preparedRun();
+    const response = await prepare('clearance-1', REQUEST);
+    assert.equal(response.body.executionAvailable, false);
+    assert.equal(response.body.executionUnavailableReason, 'submission_not_wired');
+    // Not a provider failure and not a token rejection: the plan is sound.
+    assert.equal(response.body.outcome, 'prepared');
+    assert.equal(response.body.refusalReason, null);
+    const body = JSON.stringify(response.body);
+    for (const forbidden of ['wallet_sendCalls', 'sendCalls', 'submitUrl', 'approveUrl']) {
+      assert.ok(!new RegExp(forbidden, 'i').test(body), `must not offer ${forbidden}`);
+    }
+  });
+
+  test('the Review projection says the exit was simulated, not executed', async () => {
+    await seedClearance();
+    b20RouteRuntime.prepareEntry = preparedRun();
+    const review = (await prepare('clearance-1', REQUEST)).body.review;
+    assert.ok(review, 'a prepared plan must come with its projection');
+    assert.match(review.exitNotice, /exit was simulated and will not be executed/i);
+    assert.equal(review.executionAvailable, false);
+    assert.equal(review.provider.providerName, 'Aerodrome');
+    // No executable byte in the projection.
+    assert.equal(JSON.stringify(review).includes('0x095ea7b3'), false);
+  });
+
+  test('a refusal persists nothing at all', async () => {
+    await seedClearance();
+    b20RouteRuntime.prepareEntry = (async () => ({
+      blueprint: null,
+      refusal: 'entry_transfers_paused',
+      detail: 'Transfers of this token are paused now.',
+      tokenAddress: TOKEN,
+      simulation: null,
+      tokenName: null,
+      tokenSymbol: null,
+    })) as never;
+    const response = await prepare('clearance-1', REQUEST);
+    assert.equal(response.body.planId, null);
+    assert.equal(response.body.review, null);
+    assert.equal(response.body.executionUnavailableReason, null);
+    assert.equal(
+      await entryPlans.findByIdempotency({
+        tenantId: USER.id,
+        walletAddress: WALLET,
+        clearanceId: 'clearance-1',
+        requestId: 'req-1',
+      }),
+      null,
+    );
+  });
+
+  test('a server without migration 0026 prepares nothing rather than losing it', async () => {
+    b20RouteRuntime.entryPlanAvailable = async () => false;
+    const response = await prepare('clearance-1', REQUEST);
+    assert.equal(response.status, 503);
+    assert.equal(response.body.code, 'b20_entry_plan_unavailable');
+  });
+});
+
+describe('a prepared plan can be read back, by exactly one wallet', () => {
+  const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+  const read = (planId: string, server = app()) =>
+    request(server).get(`/api/route-intelligence/opportunities/entry-plans/${planId}`);
+
+  async function seedPlan(): Promise<string> {
+    const { B20OpportunityClearanceV1Schema, B20_CLEARANCE_TTL_MS_V1 } = await import(
+      '@mioagent/route-storage'
+    );
+    await clearances.insertClearance(
+      B20OpportunityClearanceV1Schema.parse({
+        schemaVersion: 'b20-opportunity-clearance/v1',
+        id: 'clearance-1',
+        tenantId: USER.id,
+        walletAddress: WALLET,
+        chainId: 8453,
+        tokenAddress: TOKEN,
+        quoteAsset: USDC,
+        positionAtomic: '100000000',
+        maxRoundTripBps: 300,
+        maxExitSlippageBps: 300,
+        profileIdentity: `${USDC}:100000000:300:300`,
+        controlSnapshotHash: `0x${'a'.repeat(64)}`,
+        controlBlockNumber: '49450000',
+        entryRouteHash: `0x${'b'.repeat(64)}`,
+        exitRouteHash: `0x${'c'.repeat(64)}`,
+        entrySourceKey: `aerodrome:0xfac:${USDC}:${TOKEN}:volatile`,
+        exitSourceKey: `aerodrome:0xfac:${TOKEN}:${USDC}:volatile`,
+        simulationRequestHash: `0x${'d'.repeat(64)}`,
+        simulationEvidenceHash: `0x${'e'.repeat(64)}`,
+        simulationBlockNumber: '49450001',
+        entryProvider: 'aerodrome',
+        viability: 'qualified',
+        coverage: 'partial',
+        viableRouteConfirmed: true,
+        bestRouteConfirmed: false,
+        simulatedReturnedAtomic: '99000000',
+        simulatedAcquiredAtomic: '4200000000000000000000',
+        simulatedRoundTripBps: 100,
+        createdAt: NOW.toISOString(),
+        expiresAt: new Date(NOW.getTime() + B20_CLEARANCE_TTL_MS_V1).toISOString(),
+      }),
+    );
+    b20RouteRuntime.prepareEntry = preparedRun();
+    const response = await request(app())
+      .post('/api/route-intelligence/opportunities/clearance-1/prepare-entry')
+      .send({ chainId: 8453, profileIdentity: `${USDC}:100000000:300:300`, requestId: 'req-1' });
+    assert.ok(response.body.planId, JSON.stringify(response.body));
+    return response.body.planId as string;
+  }
+
+  test('the owner reads the projection, and never the calldata', async () => {
+    const planId = await seedPlan();
+    const response = await read(planId);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.review.planId, planId);
+    assert.equal(response.body.executionAvailable, false);
+    assert.equal(response.body.executionUnavailableReason, 'submission_not_wired');
+    assert.equal(response.body.expired, false);
+    const body = JSON.stringify(response.body);
+    for (const forbidden of ['0x095ea7b3', '0x38ed1739', '"calls"', '"data"', 'http']) {
+      assert.ok(!body.includes(forbidden), `must not expose ${forbidden}`);
+    }
+  });
+
+  test('another wallet gets exactly what a nonexistent plan gets', async () => {
+    const planId = await seedPlan();
+    const mine = await read(planId, app(OTHER));
+    const nothing = await read('does-not-exist', app(OTHER));
+    assert.equal(mine.status, 404);
+    assert.deepEqual(mine.body, nothing.body);
+  });
+
+  test('expiry is derived from the clock, not written into the evidence', async () => {
+    const planId = await seedPlan();
+    const before = await entryPlans.getPreparedPlan({
+      planId,
+      tenantId: USER.id,
+      walletAddress: WALLET,
+    });
+    b20RouteRuntime.now = () => new Date(NOW.getTime() + 3_600_000);
+    const response = await read(planId);
+    assert.equal(response.body.expired, true);
+    const after = await entryPlans.getPreparedPlan({
+      planId,
+      tenantId: USER.id,
+      walletAddress: WALLET,
+    });
+    // The row did not change because time passed.
+    assert.deepEqual(after, before);
+    assert.equal(after?.lifecycle, 'prepared');
+  });
+
+  test('the read needs the flag and a session', async () => {
+    const planId = await seedPlan();
+    b20RouteRuntime.flags = () => ({ ...FLAGS, b20ControlV1: false });
+    assert.equal((await read(planId)).status, 404);
+    b20RouteRuntime.flags = () => ({ ...FLAGS });
+    assert.equal((await read(planId, app(null))).status, 401);
   });
 });
 
