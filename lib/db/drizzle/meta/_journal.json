@@ -183,6 +183,13 @@
       "when": 1785772800000,
       "tag": "0025_t68d_b20_opportunity_clearance",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1785859200000,
+      "tag": "0026_t68fa_b20_entry_plans",
+      "breakpoints": true
     }
   ]
 }
