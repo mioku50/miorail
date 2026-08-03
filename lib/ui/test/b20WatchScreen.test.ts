@@ -505,10 +505,14 @@ describe('T68D — an optimistic quote never opens the entry route', () => {
     assert.equal(percentToBpsV1('abc'), null);
   });
 
-  test('the page does not offer an entry plan it cannot build', () => {
-    // The handoff behind a clearance is not built yet, and the page says so by
-    // passing nothing rather than by rendering a dead control.
-    assert.match(page, /onBuildEntryPlan: undefined/);
+  test('the page offers an entry plan only through the clearance gate', () => {
+    // T68F-B wired the handoff. The invariant did not change: the control still
+    // cannot appear without a live, qualified clearance — that gate simply
+    // moved from "pass no handler" to `entryPlanAvailableV1` inside the card,
+    // which is checked by its own tests below.
+    assert.match(page, /onBuildEntryPlan: buildEntryPlan/);
+    // And the handler refuses to do anything without a clearance id.
+    assert.match(page, /if \(!clearanceId\) return;/);
   });
 });
 

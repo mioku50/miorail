@@ -947,6 +947,162 @@ export function useB20OpportunitySimulate(
   });
 }
 
+// ---------------------------------------------------------------------------
+// T68F — preparing, reviewing and submitting a cleared B20 entry.
+//
+// Every one of these is a MUTATION except the status read, and none of them
+// ever sends a call, a router, an amount or a recipient. The server recovers
+// every executable byte from the stored plan by id; the client's whole
+// contribution is "this plan, this profile, this idempotency handle".
+// ---------------------------------------------------------------------------
+
+/** Prepare and persist a plan from a qualified clearance. */
+export function useB20PrepareEntry(
+  options?: Omit<
+    UseMutationOptions<
+      apiSpec.B20EntryPrepareResponseV1,
+      Error,
+      { clearanceId: string; profileIdentity: string; requestId: string }
+    >,
+    'mutationFn' | 'retry'
+  >,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/opportunities/${encodeURIComponent(input.clearanceId)}/prepare-entry`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chainId: 8453,
+            profileIdentity: input.profileIdentity,
+            requestId: input.requestId,
+          }),
+        },
+      );
+      return apiSpec.B20EntryPrepareResponseV1Schema.parse(response);
+    },
+  });
+}
+
+/**
+ * Open a submission and receive the wallet request.
+ *
+ * The response's `payload` is the ONLY place executable bytes reach the
+ * browser, and they are always the stored ones. Nothing here builds calldata.
+ */
+export function useB20BeginEntrySubmission(
+  options?: Omit<
+    UseMutationOptions<
+      apiSpec.B20EntryBeginSubmissionResponseV1,
+      Error,
+      { planId: string; profileIdentity: string; attemptRequestId: string }
+    >,
+    'mutationFn' | 'retry'
+  >,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/opportunities/entry-plans/${encodeURIComponent(input.planId)}/begin-submission`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chainId: 8453,
+            profileIdentity: input.profileIdentity,
+            attemptRequestId: input.attemptRequestId,
+          }),
+        },
+      );
+      return apiSpec.B20EntryBeginSubmissionResponseV1Schema.parse(response);
+    },
+  });
+}
+
+/**
+ * Report what the WALLET did.
+ *
+ * A browser cannot tell the server that a transaction succeeded, and this
+ * contract does not let it try: the only result values are things the wallet
+ * itself did, and only `submitted` may name a batch.
+ */
+export function useB20RecordEntrySubmission(
+  options?: Omit<
+    UseMutationOptions<
+      apiSpec.B20EntryStatusResponseV1,
+      Error,
+      {
+        planId: string;
+        attemptId: string;
+        result: 'submitted' | 'user_rejected' | 'wallet_failed' | 'cancelled';
+        batchId: string | null;
+      }
+    >,
+    'mutationFn' | 'retry'
+  >,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/opportunities/entry-plans/${encodeURIComponent(input.planId)}/record-submission`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            attemptId: input.attemptId,
+            result: input.result,
+            batchId: input.batchId,
+          }),
+        },
+      );
+      return apiSpec.B20EntryStatusResponseV1Schema.parse(response);
+    },
+    onSuccess: (data, variables, onMutateResult, context) => {
+      // Written straight into the cache rather than invalidated: a refetch
+      // would show the previous state for a beat, and a submitted entry
+      // flickering back to `review` reads as a second Buy button.
+      queryClient.setQueryData(['b20-entry-status', variables.planId], data);
+      options?.onSuccess?.(data, variables, onMutateResult, context);
+    },
+  });
+}
+
+/**
+ * Where did it get to.
+ *
+ * A poll, because an in-flight batch resolves without anybody clicking. It
+ * stops as soon as the server says the state is terminal — the server decides
+ * that, not this hook.
+ */
+export function useB20EntryStatus(
+  planId: string | null,
+  options?: { enabled?: boolean; pollMs?: number },
+) {
+  return useQuery({
+    queryKey: ['b20-entry-status', planId],
+    enabled: Boolean(planId) && (options?.enabled ?? true),
+    refetchInterval: (query) => {
+      const data = query.state.data as apiSpec.B20EntryStatusResponseV1 | undefined;
+      return data && !data.status.canRefresh ? false : (options?.pollMs ?? 4000);
+    },
+    queryFn: async () => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/opportunities/entry-plans/${encodeURIComponent(planId!)}/status`,
+      );
+      return apiSpec.B20EntryStatusResponseV1Schema.parse(response);
+    },
+  });
+}
+
 export function useBaseMcpToolsProbe(
   options?: Omit<UseMutationOptions<apiSpec.BaseMcpToolProbeResponse, Error, void>, 'mutationFn'>
 ) {

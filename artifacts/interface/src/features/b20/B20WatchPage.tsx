@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'wouter';
 import { useAccount } from 'wagmi';
 import {
+  B20EntryReviewCard,
   B20WatchScreen,
   ConsoleRightRail,
   ConsoleShell,
@@ -18,14 +19,25 @@ import {
 } from '@mioagent/ui';
 import {
   useAddB20Watch,
+  useB20BeginEntrySubmission,
+  useB20EntryStatus,
   useB20ExitCheck,
   useB20OpportunitySimulate,
+  useB20PrepareEntry,
+  useB20RecordEntrySubmission,
   useB20Watch,
   useB20Watchlist,
   usePortfolio,
   useRemoveB20Watch,
   useStatus,
 } from '@mioagent/api-client-react';
+import { useSendCalls } from 'wagmi';
+
+/** Canonical Base USDC — the one asset this family quotes in. The profile
+ * identity the server computed is restated from it, so a mismatch is caught
+ * rather than assumed. */
+const B20_QUOTE_ASSET_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+import { isWalletRejectionError } from '@mioagent/wallet-actions';
 
 // ---------------------------------------------------------------------------
 // T67F — the B20 tab.
@@ -243,6 +255,104 @@ export function B20WatchPage() {
     }
     return exitCheck.data ?? null;
   }, [exitSimulate.data, exitCheck.data]);
+
+  // --- T68F-B: the entry flow ------------------------------------------------
+  //
+  // Everything below is driven by the SERVER's projection. This component never
+  // decides whether a wallet may be opened, never builds calldata and never
+  // reports a result the wallet did not give it.
+  const [planId, setPlanId] = useState<string | null>(null);
+  const [walletError, setWalletError] = useState<string | null>(null);
+  const prepareEntry = useB20PrepareEntry();
+  const beginSubmission = useB20BeginEntrySubmission();
+  const recordSubmission = useB20RecordEntrySubmission();
+  const sendCalls = useSendCalls();
+  const entryStatus = useB20EntryStatus(planId, { enabled: Boolean(planId) });
+
+  const entryReview = entryStatus.data?.review ?? prepareEntry.data?.review ?? null;
+  const entryState = entryStatus.data?.status ?? prepareEntry.data?.review
+    ? (entryStatus.data?.status ?? null)
+    : null;
+
+  const profileIdentityV1 = useCallback(
+    () =>
+      [
+        B20_QUOTE_ASSET_V1,
+        usdcToAtomicV1(exitProfile.position),
+        percentToBpsV1(exitProfile.maxRoundTrip),
+        percentToBpsV1(exitProfile.maxSlippage),
+      ].join(':'),
+    [exitProfile],
+  );
+
+  /** Qualified -> prepare -> Review. Nothing here opens a wallet. */
+  const buildEntryPlan = useCallback(() => {
+    const clearanceId = (exitResult as { clearanceId?: string | null } | null)?.clearanceId;
+    if (!clearanceId) return;
+    setWalletError(null);
+    prepareEntry.mutate(
+      {
+        clearanceId,
+        profileIdentity: profileIdentityV1(),
+        // Stable for this clearance and profile, so a double click prepares
+        // once rather than quoting the pool twice.
+        requestId: `entry:${clearanceId}`,
+      },
+      { onSuccess: (data) => setPlanId(data.planId) },
+    );
+  }, [exitResult, prepareEntry, profileIdentityV1]);
+
+  /**
+   * The explicit user action. Opens the wallet, then reports what the WALLET
+   * did — never a result, because a browser cannot know one.
+   */
+  const confirmInWallet = useCallback(async () => {
+    if (!planId) return;
+    setWalletError(null);
+    const begun = await beginSubmission.mutateAsync({
+      planId,
+      profileIdentity: profileIdentityV1(),
+      attemptRequestId: `attempt:${planId}`,
+    });
+    if (begun.outcome !== 'ready') {
+      setWalletError(begun.detail);
+      return;
+    }
+    try {
+      // The payload comes from the server and is passed through untouched. No
+      // calldata is built, rewritten or reordered in this browser.
+      const result = await sendCalls.mutateAsync({
+        calls: begun.payload.calls as never,
+      });
+      const batchId = typeof result === 'string' ? result : (result as { id?: string })?.id ?? null;
+      if (!batchId) {
+        // The wallet accepted it but named nothing we can ask about later.
+        // Recorded as a failed request, never as a success.
+        await recordSubmission.mutateAsync({
+          planId,
+          attemptId: begun.attemptId,
+          result: 'wallet_failed',
+          batchId: null,
+        });
+        return;
+      }
+      await recordSubmission.mutateAsync({
+        planId,
+        attemptId: begun.attemptId,
+        result: 'submitted',
+        batchId,
+      });
+    } catch (error) {
+      // A rejected prompt is not a reverted transaction, and the two never
+      // share a branch.
+      await recordSubmission.mutateAsync({
+        planId,
+        attemptId: begun.attemptId,
+        result: isWalletRejectionError(error) ? 'user_rejected' : 'wallet_failed',
+        batchId: null,
+      });
+    }
+  }, [planId, beginSubmission, profileIdentityV1, sendCalls, recordSubmission]);
   const exitUnavailable = (() => {
     if (!profileAtomic) {
       return 'That profile is not a size and two tolerances Miorail can act on. Whole USDC and a percent, please.';
@@ -379,6 +489,22 @@ export function B20WatchPage() {
       onSelectSession={() => navigate('/')}
       onSelectProof={() => navigate('/plan/history')}
     >
+      {entryReview && entryState && (
+        <B20EntryReviewCard
+          review={entryReview}
+          status={entryState}
+          now={new Date()}
+          busy={beginSubmission.isPending || sendCalls.isPending || recordSubmission.isPending}
+          // Passed only when the whole path exists. The card renders NO control
+          // when this is absent, rather than a disabled one.
+          onConfirm={entryReview.executionAvailable ? confirmInWallet : undefined}
+          onRefresh={() => entryStatus.refetch()}
+          onBack={() => {
+            setPlanId(null);
+          }}
+        />
+      )}
+      {walletError && <p className="note warn">{walletError}</p>}
       <B20WatchScreen
         tokens={sweep.data?.tokens ?? []}
         holdings={holdings}
@@ -407,10 +533,9 @@ export function B20WatchPage() {
           unavailableReason: exitUnavailable,
           onCheck: runExitCheck,
           onSimulate: runSimulation,
-          // Deliberately absent. The Aerodrome entry-plan handoff behind a
-          // clearance is not built yet, and a button that cannot work is worse
-          // than no button: it reads as broken rather than unfinished.
-          onBuildEntryPlan: undefined,
+          // T68F-B — wired. The card only offers this when the clearance is
+          // live and qualified; the gate lives in `entryPlanAvailableV1`.
+          onBuildEntryPlan: buildEntryPlan,
         }}
         notChecked={sweep.data?.notChecked ?? []}
         checkedAt={sweep.data?.checkedAt ?? null}
