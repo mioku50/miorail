@@ -27,6 +27,7 @@
     "reliability:rebuild": "tsx scripts/reliability_rebuild.ts",
     "o1:compat": "tsx scripts/o1_compat.ts",
     "b20:sweep": "tsx scripts/b20_sweep.ts",
+    "b20:discover": "tsx scripts/b20_discover.ts",
     "smoke:b20-exit": "tsx scripts/smoke_b20_exit.ts"
   },
   "devDependencies": {

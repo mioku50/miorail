@@ -3,6 +3,7 @@ import test, { describe } from 'node:test';
 
 import {
   LAUNCH_CONFIRMATIONS_V1,
+  LAUNCH_REWIND_DEPTH_V1,
   detectReorgV1,
   readB20LaunchesV1,
   rewindCursorV1,
@@ -12,11 +13,17 @@ import { B20_CREATED_TOPIC_V1, type RawLogV1 } from '../src/launches.js';
 import { B20_FACTORY_V1, keccakWordV1 } from '../src/pinned.js';
 
 // ---------------------------------------------------------------------------
-// T69 §1/§3 — the cursor is the thing that must never lie.
+// T69 §0/§1/§3 — the cursor is the thing that must never lie.
 //
-// Every test below is about one failure: a cursor that moved past blocks
-// nobody read. That gap is permanent and invisible — nothing re-reads an old
-// range, and a missing launch looks exactly like a quiet hour.
+// Every test below is about one of two failures:
+//
+//   * a cursor that moved past blocks nobody read. That gap is permanent and
+//     invisible — nothing re-reads an old range, and a missing launch looks
+//     exactly like a quiet hour.
+//
+//   * a cursor whose hash belongs to a different block than its number. That
+//     one is worse, because the reorg check then compares a real hash against
+//     the wrong block and answers confidently either way.
 // ---------------------------------------------------------------------------
 
 const TOKEN = '0xb200000000000000000000d6f666fe8b27595c01';
@@ -32,6 +39,10 @@ const DATA =
   '44494e6f31000000000000000000000000000000000000000000000000000000' +
   '0000000000000000000000000000000000000000000000000000000000000000';
 
+/** The chain's hash for a block, so the fixture and the anchor read agree the
+ * way a real endpoint would. */
+const hashOf = (block: number): string => `0x${block.toString(16).padStart(64, '0')}`;
+
 function launchLog(block: number, logIndex = 0, overrides: Partial<RawLogV1> = {}): RawLogV1 {
   return {
     address: B20_FACTORY_V1,
@@ -42,14 +53,18 @@ function launchLog(block: number, logIndex = 0, overrides: Partial<RawLogV1> = {
     ],
     data: DATA,
     blockNumber: `0x${block.toString(16)}`,
-    blockHash: `0x${block.toString(16).padStart(64, '0')}`,
+    blockHash: hashOf(block),
     transactionHash: `0x${(block * 1000 + logIndex).toString(16).padStart(64, '0')}`,
     logIndex: `0x${logIndex.toString(16)}`,
     ...overrides,
   };
 }
 
-function source(logs: RawLogV1[] | null, head: number | null = 10_000): LaunchLogSourceV1 {
+function source(
+  logs: RawLogV1[] | null,
+  head: number | null = 10_000,
+  anchors: (block: number) => string | null = hashOf,
+): LaunchLogSourceV1 {
   return {
     async getLogs({ fromBlock, toBlock }) {
       if (logs === null) return null;
@@ -60,6 +75,9 @@ function source(logs: RawLogV1[] | null, head: number | null = 10_000): LaunchLo
     },
     async headBlock() {
       return head;
+    },
+    async blockHash(block) {
+      return anchors(block);
     },
   };
 }
@@ -90,6 +108,22 @@ describe('the cursor never passes a range that was not fully read', () => {
     assert.equal(result.state.status === 'decoder_mismatch' && result.state.refusal, 'topic_count_mismatch');
   });
 
+  test('a decoder mismatch beyond the launch budget still stops the run', async () => {
+    // The budget decides what is COMMITTED, never what is inspected. A bad log
+    // in the tail of the window would otherwise be silently deferred to a run
+    // that starts after it.
+    const broken = launchLog(1050);
+    broken.data = '0x';
+    const result = await readB20LaunchesV1({
+      source: source([launchLog(1005), launchLog(1006), broken]),
+      cursor: CURSOR,
+      maxRange: 100,
+      maxLaunches: 1,
+    });
+    assert.equal(result.state.status, 'decoder_mismatch');
+    assert.deepEqual(result.nextCursor, CURSOR);
+  });
+
   test('the mismatch is an operator state, not a fact about a token', async () => {
     const broken = launchLog(1005, 0, { data: '0x' });
     const result = await readB20LaunchesV1({ source: source([broken]), cursor: CURSOR });
@@ -102,13 +136,24 @@ describe('the cursor never passes a range that was not fully read', () => {
   test('an unavailable endpoint is not an empty range', async () => {
     const result = await readB20LaunchesV1({ source: source(null), cursor: CURSOR });
     assert.equal(result.state.status, 'endpoint_unavailable');
+    assert.equal(result.state.status === 'endpoint_unavailable' && result.state.call, 'logs');
     assert.deepEqual(result.nextCursor, CURSOR);
   });
 
   test('an unavailable head does not advance anything', async () => {
     const result = await readB20LaunchesV1({ source: source([], null), cursor: CURSOR });
     assert.equal(result.state.status, 'endpoint_unavailable');
+    assert.equal(result.state.status === 'endpoint_unavailable' && result.state.call, 'head');
     assert.deepEqual(result.nextCursor, CURSOR);
+  });
+
+  test('no failure state ever names the endpoint', async () => {
+    // The category, never the URL. `BASE_MAINNET_RPC_URL` carries a key.
+    const result = await readB20LaunchesV1({ source: source(null), cursor: CURSOR });
+    const text = JSON.stringify(result.state).toLowerCase();
+    for (const forbidden of ['http', 'rpc', 'key', '://']) {
+      assert.ok(!text.includes(forbidden), `the state must not contain "${forbidden}"`);
+    }
   });
 
   test('the cursor resumes exactly where the last run stopped', async () => {
@@ -125,6 +170,76 @@ describe('the cursor never passes a range that was not fully read', () => {
   });
 });
 
+describe('the cursor hash belongs to the cursor block, always', () => {
+  test('a range with no launches at all still advances with a real anchor', async () => {
+    // §12.1. The case the old reader got wrong: no launch in the window means
+    // no log to take a hash from, and the previous cursor's hash belongs to a
+    // block hundreds behind.
+    const result = await readB20LaunchesV1({
+      source: source([], 2_000),
+      cursor: { lastProcessedBlock: 1000, lastProcessedBlockHash: hashOf(1000) },
+      maxRange: 100,
+    });
+    assert.equal(result.state.status, 'ok');
+    assert.equal(result.launches.length, 0);
+    assert.equal(result.nextCursor.lastProcessedBlock, 1100);
+    assert.equal(result.nextCursor.lastProcessedBlockHash, hashOf(1100));
+    assert.notEqual(result.nextCursor.lastProcessedBlockHash, hashOf(1000), 'the old hash must not be reused');
+  });
+
+  test('the anchor is the final block of the range, not the block of the last launch', async () => {
+    // §12.2. A launch at 1005 and a window ending at 1100: taking the launch's
+    // block hash would anchor block 1100 to block 1005's hash.
+    const result = await readB20LaunchesV1({
+      source: source([launchLog(1005)]),
+      cursor: CURSOR,
+      maxRange: 100,
+    });
+    assert.equal(result.nextCursor.lastProcessedBlock, 1100);
+    assert.equal(result.nextCursor.lastProcessedBlockHash, hashOf(1100));
+  });
+
+  test('a truncated run anchors the block it actually finished', async () => {
+    const result = await readB20LaunchesV1({
+      source: source([launchLog(1005), launchLog(1006), launchLog(1007)]),
+      cursor: CURSOR,
+      maxRange: 500,
+      maxLaunches: 2,
+    });
+    assert.equal(result.nextCursor.lastProcessedBlock, 1006);
+    assert.equal(result.nextCursor.lastProcessedBlockHash, hashOf(1006));
+  });
+
+  test('an unreadable anchor prevents the cursor from advancing at all', async () => {
+    // §12.3. The launches are dropped with it. They cost nothing to re-read;
+    // an unverifiable cursor costs a reorg nobody can detect.
+    const result = await readB20LaunchesV1({
+      source: source([launchLog(1005)], 10_000, () => null),
+      cursor: CURSOR,
+      maxRange: 100,
+    });
+    assert.equal(result.state.status, 'endpoint_unavailable');
+    assert.equal(result.state.status === 'endpoint_unavailable' && result.state.call, 'anchor');
+    assert.deepEqual(result.nextCursor, CURSOR);
+    assert.equal(result.launches.length, 0);
+  });
+
+  test('a cursor that does not move needs no anchor read', async () => {
+    let asked = 0;
+    const counting: LaunchLogSourceV1 = {
+      ...source([], 500),
+      async blockHash(block) {
+        asked += 1;
+        return hashOf(block);
+      },
+    };
+    const result = await readB20LaunchesV1({ source: counting, cursor: CURSOR });
+    assert.equal(result.state.status, 'ok');
+    assert.deepEqual(result.nextCursor, CURSOR);
+    assert.equal(asked, 0, 'a call that cannot change anything must not be paid for');
+  });
+});
+
 describe('budgets bound a run without losing what they did not reach', () => {
   test('a capped range reports that more remains, and never calls it empty', async () => {
     const result = await readB20LaunchesV1({
@@ -134,9 +249,40 @@ describe('budgets bound a run without losing what they did not reach', () => {
     });
     assert.equal(result.budgetExhausted, true, 'the rest is not_checked, not empty');
     assert.equal(result.nextCursor.lastProcessedBlock, 1050);
+    assert.equal(result.confirmedHead, 10_000 - LAUNCH_CONFIRMATIONS_V1);
   });
 
-  test('a launch cap stops mid-range and the cursor stops with it', async () => {
+  test('the launch cap never cuts a block in half', async () => {
+    // §12.4. Block 1005 carries three launches and the budget is two. Stopping
+    // inside it would either lose the third forever or return the block again
+    // on every run.
+    const result = await readB20LaunchesV1({
+      source: source([launchLog(1004), launchLog(1005, 0), launchLog(1005, 1), launchLog(1005, 2)]),
+      cursor: CURSOR,
+      maxRange: 500,
+      maxLaunches: 2,
+    });
+    assert.deepEqual(result.launches.map((l) => l.blockNumber), ['1004']);
+    assert.equal(result.nextCursor.lastProcessedBlock, 1004);
+    assert.equal(result.budgetExhausted, true);
+  });
+
+  test('a single block bigger than the whole budget is still taken, whole', async () => {
+    // §12.5. The alternative is a cursor that returns this block forever and a
+    // feed that never moves past it.
+    const result = await readB20LaunchesV1({
+      source: source([launchLog(1005, 0), launchLog(1005, 1), launchLog(1005, 2), launchLog(1009)]),
+      cursor: CURSOR,
+      maxRange: 500,
+      maxLaunches: 2,
+    });
+    assert.equal(result.launches.length, 3, 'the over-budget block is committed complete');
+    assert.ok(result.launches.every((l) => l.blockNumber === '1005'));
+    assert.equal(result.nextCursor.lastProcessedBlock, 1005, 'and the run progresses past it');
+    assert.equal(result.budgetExhausted, true);
+  });
+
+  test('a launch cap stops between blocks and the cursor stops with it', async () => {
     const result = await readB20LaunchesV1({
       source: source([launchLog(1005), launchLog(1006), launchLog(1007)]),
       cursor: CURSOR,
@@ -144,9 +290,24 @@ describe('budgets bound a run without losing what they did not reach', () => {
       maxLaunches: 2,
     });
     assert.equal(result.budgetExhausted, true);
-    // It may not claim to have processed block 1500 having stopped at 1006.
-    assert.ok(result.nextCursor.lastProcessedBlock < 1500);
+    assert.equal(result.nextCursor.lastProcessedBlock, 1006);
     assert.ok(result.launches.every((l) => Number(l.blockNumber) <= result.nextCursor.lastProcessedBlock));
+  });
+
+  test('a budget reached on the last block with launches leaves nothing behind', async () => {
+    // Every remaining block in the window is empty, so the window IS finished
+    // and claiming otherwise would re-read it for nothing.
+    const result = await readB20LaunchesV1({
+      // A head that puts the confirmed head exactly at the end of the window,
+      // so nothing is left over for the range cap to report either.
+      source: source([launchLog(1005, 0), launchLog(1005, 1)], 1100 + LAUNCH_CONFIRMATIONS_V1),
+      cursor: CURSOR,
+      maxRange: 100,
+      maxLaunches: 2,
+    });
+    assert.equal(result.launches.length, 2);
+    assert.equal(result.nextCursor.lastProcessedBlock, 1100);
+    assert.equal(result.budgetExhausted, false);
   });
 
   test('nothing within the confirmation window is read at all', async () => {
@@ -165,6 +326,7 @@ describe('budgets bound a run without losing what they did not reach', () => {
     const result = await readB20LaunchesV1({ source: source([], 500), cursor: CURSOR });
     assert.equal(result.state.status, 'ok');
     assert.deepEqual(result.nextCursor, CURSOR);
+    assert.equal(result.scannedTo, null);
   });
 });
 
@@ -201,6 +363,7 @@ describe('reorgs are detected by stored hashes, never assumed away', () => {
 
   test('a rewind goes back past the confirmation window and drops the hash', () => {
     const rewound = rewindCursorV1({ lastProcessedBlock: 1000, lastProcessedBlockHash: `0x${'a'.repeat(64)}` });
+    assert.equal(rewound.lastProcessedBlock, 1000 - LAUNCH_REWIND_DEPTH_V1);
     assert.ok(rewound.lastProcessedBlock < 1000 - LAUNCH_CONFIRMATIONS_V1);
     // The block that hash named may not exist any more.
     assert.equal(rewound.lastProcessedBlockHash, null);
@@ -250,6 +413,15 @@ describe('only the pinned factory and the pinned topic are read', () => {
     // would silently return nothing.
     for (const forbidden of ['moralis', 'alchemy', 'covalent', 'zerion', 'portfolio', 'balanceOf']) {
       assert.ok(!source.toLowerCase().includes(forbidden.toLowerCase()), `must not use ${forbidden}`);
+    }
+  });
+
+  test('the reader has no signer and no transaction path', async () => {
+    const source = await import('node:fs').then((fs) =>
+      fs.readFileSync(new URL('../src/launchReader.ts', import.meta.url), 'utf8'),
+    );
+    for (const forbidden of ['sendCalls', 'signTransaction', 'privateKey', 'eth_sendRawTransaction', 'wallet_']) {
+      assert.ok(!source.includes(forbidden), `a read-only reader must not mention ${forbidden}`);
     }
   });
 });

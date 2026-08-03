@@ -22,6 +22,7 @@
     "@mioagent/earn-engine": "workspace:*",
     "@mioagent/intent-engine": "workspace:*",
     "@mioagent/nft-engine": "workspace:*",
+    "postgres": "^3.4.9",
     "tsx": "^4.22.4",
     "typescript": "^5.4.5"
   }

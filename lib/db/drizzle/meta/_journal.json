@@ -197,6 +197,13 @@
       "when": 1785945600000,
       "tag": "0027_t68fb_b20_entry_submissions",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1786032000000,
+      "tag": "0028_t69a_b20_discover_ingestion",
+      "breakpoints": true
     }
   ]
 }
