@@ -11,6 +11,8 @@ import {
   B20ExitCheckResponseV1Schema,
   B20OpportunitySimulateRequestV1Schema,
   B20OpportunitySimulateResponseV1Schema,
+  B20EntryPrepareRequestV1Schema,
+  B20EntryPrepareResponseV1Schema,
 } from '@mioagent/api-zod';
 import {
   B20RequestError,
@@ -51,6 +53,7 @@ import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.j
 import { analyseExitV1 } from '../lib/exitAnalysis.js';
 import { runOpportunityV1 } from '../lib/opportunityRunner.js';
 import { buildClearanceV1 } from '../lib/opportunityClearance.js';
+import { prepareB20EntryV1 } from '../lib/b20EntryRunner.js';
 
 // ---------------------------------------------------------------------------
 // T67C — the B20 Control rail.
@@ -148,6 +151,7 @@ export const b20RouteRuntime = {
   },
   /** Injected so a test can run the whole route without a chain or a provider. */
   runOpportunity: runOpportunityV1,
+  prepareEntry: prepareB20EntryV1,
   /** Checked separately from the snapshot tables: a server that can inspect
    * but has not run 0024 must keep inspecting rather than 503 the whole tab. */
   watchlistAvailable: async (): Promise<boolean> => {
@@ -723,6 +727,92 @@ b20ControlRouter.post('/b20/opportunity/simulate', async (req: Request, res: Res
     );
   } catch (error) {
     storageFailure(res, error, 'opportunity-simulate');
+  }
+});
+
+// ---------------------------------------------------------------------------
+// T68E — consuming a clearance in a verified entry plan.
+//
+// A clearance is permission to ATTEMPT a preparation, never permission to reuse
+// the numbers that earned it. Before anything reaches a wallet this route
+// re-reads the token's controls, re-quotes the exact cleared route, rebuilds
+// every byte server-side, runs a strict kernel over the result and simulates
+// the precise calls on offer. Any one of those failing returns a refusal that
+// NAMES the binding rather than a plan.
+//
+// Nothing here signs or broadcasts. The response is unsigned calls for the
+// user's own Base Account to approve, or nothing at all.
+// ---------------------------------------------------------------------------
+
+b20ControlRouter.post('/opportunities/:clearanceId/prepare-entry', async (req: Request, res: Response) => {
+  const guard = b20Guard(req, res);
+  if (!guard) return;
+
+  const parsed = B20EntryPrepareRequestV1Schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_b20_entry_request', code: 'invalid_b20_entry_request' });
+    return;
+  }
+  if (!b20RouteRuntime.rpcConfigured()) {
+    res.status(503).json({ error: 'b20_rpc_unavailable', code: 'b20_rpc_unavailable' });
+    return;
+  }
+
+  try {
+    if (!(await b20RouteRuntime.clearanceAvailable())) {
+      res.status(503).json({ error: 'b20_clearance_unavailable', code: 'b20_clearance_unavailable' });
+      return;
+    }
+    const now = b20RouteRuntime.now();
+    const clearance = await b20RouteRuntime
+      .clearances()
+      .getClearance(String(req.params.clearanceId ?? ''), guard.user.id);
+
+    const prepared = await b20RouteRuntime.prepareEntry(
+      {
+        b20Reader: b20RouteRuntime.reader(),
+        aerodromeReader: b20RouteRuntime.aerodromeReader(),
+        now: () => now,
+      },
+      {
+        clearance,
+        tenantId: guard.user.id,
+        walletAddress: guard.user.address,
+        chainId: parsed.data.chainId,
+        profileIdentity: parsed.data.profileIdentity,
+      },
+    );
+
+    res.json(
+      B20EntryPrepareResponseV1Schema.parse({
+        outcome: prepared.blueprint ? 'prepared' : 'refused',
+        refusalReason: prepared.refusal,
+        refusalDetail: prepared.detail,
+        clearanceId: String(req.params.clearanceId ?? ''),
+        blueprintHash: prepared.blueprint?.blueprintHash ?? null,
+        tokenAddress: clearance?.tokenAddress ?? prepared.tokenAddress,
+        positionAtomic: clearance?.positionAtomic ?? '1',
+        expectedOutputAtomic: prepared.blueprint?.expectedOutputAtomic ?? null,
+        minimumOutputAtomic: prepared.blueprint?.minimumOutputAtomic ?? null,
+        entrySourceKey: prepared.blueprint?.entrySourceKey ?? null,
+        coverage: prepared.blueprint?.coverage ?? clearance?.coverage ?? null,
+        viableRouteConfirmed: clearance?.viableRouteConfirmed ?? false,
+        bestRouteConfirmed: clearance?.bestRouteConfirmed ?? false,
+        certifiedControlBlockNumber: clearance?.controlBlockNumber ?? null,
+        prepareControlBlockNumber: prepared.blueprint?.prepareControlBlockNumber ?? null,
+        clearanceExpiresAt: clearance?.expiresAt ?? now.toISOString(),
+        // Present only when every gate, the kernel AND the simulation passed.
+        calls:
+          prepared.blueprint?.calls.map((call) => ({
+            to: call.to,
+            data: call.data,
+            value: call.valueWei,
+          })) ?? null,
+        preparedAt: now.toISOString(),
+      }),
+    );
+  } catch (error) {
+    storageFailure(res, error, 'prepare-entry');
   }
 });
 

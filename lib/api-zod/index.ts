@@ -2841,6 +2841,62 @@ export const B20OpportunitySimulateResponseV1Schema = z
   })
   .strict();
 
+// T68E — consuming a clearance.
+//
+// The request identifies a clearance and nothing executable. There is
+// deliberately no field for calldata, a token, a route, a recipient, a spender,
+// an amount, a slippage or a factory: every one of those is recovered from the
+// stored clearance and rebuilt server-side, so a client cannot widen what gets
+// prepared by editing a request body.
+export const B20EntryPrepareRequestV1Schema = z
+  .object({
+    chainId: z.literal(8453),
+    /** Restated by the client so a mismatch is caught rather than assumed. */
+    profileIdentity: z.string().min(1).max(200),
+    /** Idempotency handle. The same one returns the same plan. */
+    requestId: z.string().min(1).max(200),
+  })
+  .strict();
+
+export const B20EntryPrepareResponseV1Schema = z
+  .object({
+    outcome: z.enum(['prepared', 'refused']),
+    /** Named exactly, so a user knows which binding failed. Never a provider
+     * body, an endpoint or a key. */
+    refusalReason: z.string().min(1).max(80).nullable(),
+    refusalDetail: z.string().max(400).nullable(),
+    clearanceId: z.string().min(1).max(200),
+    blueprintHash: z.string().regex(/^0x[0-9a-f]{64}$/).nullable(),
+    tokenAddress: AddressV1Schema,
+    /** What the user spends, and what the plan expects back. */
+    positionAtomic: z.string().regex(/^[1-9][0-9]{0,17}$/),
+    expectedOutputAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    minimumOutputAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    entrySourceKey: z.string().max(300).nullable(),
+    coverage: z.enum(['complete', 'partial']).nullable(),
+    viableRouteConfirmed: z.boolean(),
+    bestRouteConfirmed: z.boolean(),
+    certifiedControlBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    prepareControlBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    clearanceExpiresAt: z.string().min(1).max(60),
+    /** Unsigned calls for the user's own wallet to approve. Present only when
+     * every gate, the kernel AND the simulation passed. */
+    calls: z
+      .array(
+        z
+          .object({
+            to: AddressV1Schema,
+            data: z.string().regex(/^0x[0-9a-fA-F]*$/).max(20_000),
+            value: z.string().regex(/^(0|[1-9][0-9]*)$/),
+          })
+          .strict(),
+      )
+      .max(2)
+      .nullable(),
+    preparedAt: z.string().min(1).max(60),
+  })
+  .strict();
+
 export const B20InspectResponseV1Schema = z
   .object({
     snapshotId: z.string().min(1).max(200),

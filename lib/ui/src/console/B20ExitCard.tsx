@@ -143,6 +143,9 @@ export interface B20ExitCardProps {
    * and the way to guarantee that is for the button not to exist.
    */
   onBuildEntryPlan?: (clearanceId: string) => void;
+  /** Threaded in rather than read from the clock so a stale clearance renders
+   * identically in a test and in a browser. */
+  now?: Date;
 }
 
 /** Basis points as a percentage. Integer arithmetic: a float renders 6.3% as
@@ -188,6 +191,38 @@ export const EXIT_REJECTION_COPY_V1: Record<ExitRejectionReasonV1, string> = {
   exit_capacity_below_position:
     'The position you asked for is larger than what can be exited within your slippage tolerance.',
 };
+
+/**
+ * Whether the entry control may exist at all.
+ *
+ * Five conditions, and all of them are necessary. The last one is the reason
+ * this is a function rather than an inline `&&`: a build with no execution path
+ * wired must render NO control, not a disabled one. A greyed-out button is one
+ * refactor away from being enabled by accident, and this is the button that
+ * spends money.
+ */
+export function entryPlanAvailableV1(input: {
+  check: ExitCheckLikeV1 | null;
+  now: Date;
+  handlerWired: boolean;
+}): boolean {
+  const check = input.check;
+  if (!check || check.status !== 'qualified') return false;
+  if (!check.clearanceId) return false;
+  if (!input.handlerWired) return false;
+  if (!check.expiresAt) return false;
+  return Date.parse(check.expiresAt) > input.now.getTime();
+}
+
+/** A qualified result whose clearance has run out. Distinct from "not
+ * qualified": the answer was earned and then went stale, and re-running is a
+ * different instruction from re-checking. */
+export function clearanceExpiredV1(input: { check: ExitCheckLikeV1 | null; now: Date }): boolean {
+  const check = input.check;
+  if (!check || check.status !== 'qualified') return false;
+  if (!check.expiresAt) return false;
+  return Date.parse(check.expiresAt) <= input.now.getTime();
+}
 
 /**
  * The headline.
@@ -238,7 +273,15 @@ export function B20ExitCard({
   onSimulate,
   simulating,
   onBuildEntryPlan,
+  now,
 }: B20ExitCardProps): React.ReactElement {
+  const at = now ?? new Date();
+  const entryAvailable = entryPlanAvailableV1({
+    check,
+    now: at,
+    handlerWired: Boolean(onBuildEntryPlan),
+  });
+  const expired = clearanceExpiredV1({ check, now: at });
   return (
     <div className="panel">
       <div className="ph">
@@ -314,13 +357,20 @@ export function B20ExitCard({
                   Try again
                 </button>
               )}
-              {check.status === 'qualified' && check.clearanceId && onBuildEntryPlan && (
+              {entryAvailable && (
                 <button
                   type="button"
                   className="btn"
-                  onClick={() => onBuildEntryPlan(check.clearanceId!)}
+                  onClick={() => onBuildEntryPlan?.(check.clearanceId!)}
                 >
                   Build entry plan
+                </button>
+              )}
+              {expired && (
+                // Earned, then went stale. Re-running is a different
+                // instruction from re-checking, and the copy says which.
+                <button type="button" className="btn" onClick={onSimulate} disabled={simulating}>
+                  Qualification expired — run again
                 </button>
               )}
             </div>

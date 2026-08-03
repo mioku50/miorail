@@ -6,6 +6,8 @@ import url from 'node:url';
 
 import {
   EXIT_PROFILE_DEFAULTS_V1,
+  clearanceExpiredV1,
+  entryPlanAvailableV1,
   exitHeadlineV1,
   percentToBpsV1,
   usdcToAtomicV1,
@@ -437,13 +439,16 @@ describe('T68D — an optimistic quote never opens the entry route', () => {
   test('a provisional result has no Build entry plan control at all', () => {
     // Not disabled — absent. A button that exists and is greyed out is one
     // refactor away from being enabled by accident.
-    assert.match(card, /check\.status === 'qualified' && check\.clearanceId && onBuildEntryPlan/);
+    assert.match(card, /\{entryAvailable && \(/);
     assert.match(card, /check\.status === 'provisional' && \(/);
     assert.match(card, /Run full simulation/);
   });
 
   test('the entry control needs a clearance id, not merely a pass', () => {
-    assert.match(card, /onBuildEntryPlan\(check\.clearanceId!\)/);
+    // T68E moved the five conditions into one gate. The click still cannot
+    // happen without a clearance id.
+    assert.match(card, /onBuildEntryPlan\?\.\(check\.clearanceId!\)/);
+    assert.match(card, /if \(!check\.clearanceId\) return false;/);
   });
 
   test('qualified shows the simulation block and the clearance expiry', () => {
@@ -504,5 +509,75 @@ describe('T68D — an optimistic quote never opens the entry route', () => {
     // The handoff behind a clearance is not built yet, and the page says so by
     // passing nothing rather than by rendering a dead control.
     assert.match(page, /onBuildEntryPlan: undefined/);
+  });
+});
+
+describe('T68E — the entry control exists only when everything is true', () => {
+  const card = readFileSync(path.join(here, '../src/console/B20ExitCard.tsx'), 'utf8');
+  const NOW = new Date('2026-08-03T12:00:00.000Z');
+  const qualified = {
+    status: 'qualified' as const,
+    reason: null,
+    measurement: null,
+    optimistic: false,
+    roundTripCostBps: 120,
+    exitCapacityAtomic: null,
+    firstFailingAtomic: null,
+    probeCount: 0,
+    capacityInformative: false,
+    referenceSizeAtomic: null,
+    endpointDegraded: false,
+    controlsBlockNumber: '49450000',
+    checkedAt: NOW.toISOString(),
+    clearanceId: 'clearance-1',
+    expiresAt: new Date(NOW.getTime() + 600_000).toISOString(),
+  };
+
+  test('qualified with a live clearance and a wired handler shows it', () => {
+    assert.equal(entryPlanAvailableV1({ check: qualified, now: NOW, handlerWired: true }), true);
+  });
+
+  test('a provisional result never shows it', () => {
+    assert.equal(
+      entryPlanAvailableV1({
+        check: { ...qualified, status: 'provisional' },
+        now: NOW,
+        handlerWired: true,
+      }),
+      false,
+    );
+  });
+
+  test('no wired handler shows no control at all, not a dead one', () => {
+    // A greyed-out button is one refactor from being enabled by accident, and
+    // this is the button that spends money.
+    assert.equal(entryPlanAvailableV1({ check: qualified, now: NOW, handlerWired: false }), false);
+  });
+
+  test('a qualified result with no clearance shows nothing', () => {
+    assert.equal(
+      entryPlanAvailableV1({ check: { ...qualified, clearanceId: null }, now: NOW, handlerWired: true }),
+      false,
+    );
+  });
+
+  test('an expired clearance shows no entry control, and says re-run', () => {
+    const later = new Date(NOW.getTime() + 900_000);
+    assert.equal(entryPlanAvailableV1({ check: qualified, now: later, handlerWired: true }), false);
+    // Earned then went stale — a different instruction from "not qualified".
+    assert.equal(clearanceExpiredV1({ check: qualified, now: later }), true);
+    assert.match(card, /Qualification expired — run again/);
+  });
+
+  test('a provisional result is never "expired"', () => {
+    assert.equal(
+      clearanceExpiredV1({ check: { ...qualified, status: 'provisional' }, now: NOW }),
+      false,
+    );
+  });
+
+  test('the card consults the gate rather than inlining the conditions', () => {
+    assert.match(card, /entryPlanAvailableV1/);
+    assert.match(card, /\{entryAvailable && \(/);
   });
 });

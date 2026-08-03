@@ -165,3 +165,5 @@ export type B20ExitCheckRequestV1 = z.infer<typeof schemas.B20ExitCheckRequestV1
 export type B20ExitCheckResponseV1 = z.infer<typeof schemas.B20ExitCheckResponseV1Schema>;
 export type B20OpportunitySimulateRequestV1 = z.infer<typeof schemas.B20OpportunitySimulateRequestV1Schema>;
 export type B20OpportunitySimulateResponseV1 = z.infer<typeof schemas.B20OpportunitySimulateResponseV1Schema>;
+export type B20EntryPrepareRequestV1 = z.infer<typeof schemas.B20EntryPrepareRequestV1Schema>;
+export type B20EntryPrepareResponseV1 = z.infer<typeof schemas.B20EntryPrepareResponseV1Schema>;

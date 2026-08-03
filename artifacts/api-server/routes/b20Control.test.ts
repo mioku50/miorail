@@ -673,6 +673,184 @@ describe('only a sequential simulation opens the entry route', () => {
   });
 });
 
+describe('a clearance is consumed, never trusted', () => {
+  const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+  const prepare = (clearanceId: string, body: unknown, server = app()) =>
+    request(server)
+      .post(`/api/route-intelligence/opportunities/${clearanceId}/prepare-entry`)
+      .send(body as object);
+  const REQUEST = { chainId: 8453, profileIdentity: `${USDC}:100000000:300:300`, requestId: 'req-1' };
+
+  /** A prepared plan, injected — the runner has its own unit tests. */
+  const preparedRun = (calls = 2) =>
+    (async () => ({
+      blueprint: {
+        blueprintHash: `0x${'b'.repeat(64)}`,
+        expectedOutputAtomic: '4200000000000000000000',
+        minimumOutputAtomic: '4074000000000000000000',
+        entrySourceKey: `aerodrome:0xfac:${USDC}:${TOKEN}:volatile`,
+        coverage: 'partial' as const,
+        prepareControlBlockNumber: '49450050',
+        calls: Array.from({ length: calls }, (_value, index) => ({
+          to: index === 0 ? USDC : '0xcf77a3ba9a5ca399b7c97c74d54e5b1beb874e43',
+          data: '0x095ea7b3',
+          valueWei: '0',
+        })),
+      },
+      refusal: null,
+      detail: null,
+      tokenAddress: TOKEN,
+    })) as never;
+
+  async function seedClearance(overrides: Record<string, unknown> = {}) {
+    const { B20OpportunityClearanceV1Schema, B20_CLEARANCE_TTL_MS_V1 } = await import(
+      '@mioagent/route-storage'
+    );
+    const clearance = B20OpportunityClearanceV1Schema.parse({
+      schemaVersion: 'b20-opportunity-clearance/v1',
+      id: 'clearance-1',
+      tenantId: USER.id,
+      walletAddress: WALLET,
+      chainId: 8453,
+      tokenAddress: TOKEN,
+      quoteAsset: USDC,
+      positionAtomic: '100000000',
+      maxRoundTripBps: 300,
+      maxExitSlippageBps: 300,
+      profileIdentity: `${USDC}:100000000:300:300`,
+      controlSnapshotHash: `0x${'a'.repeat(64)}`,
+      controlBlockNumber: '49450000',
+      entryRouteHash: `0x${'b'.repeat(64)}`,
+      exitRouteHash: `0x${'c'.repeat(64)}`,
+      entrySourceKey: `aerodrome:0xfac:${USDC}:${TOKEN}:volatile`,
+      exitSourceKey: `aerodrome:0xfac:${TOKEN}:${USDC}:volatile`,
+      simulationRequestHash: `0x${'d'.repeat(64)}`,
+      simulationEvidenceHash: `0x${'e'.repeat(64)}`,
+      simulationBlockNumber: '49450001',
+      entryProvider: 'aerodrome',
+      viability: 'qualified',
+      coverage: 'partial',
+      viableRouteConfirmed: true,
+      bestRouteConfirmed: false,
+      simulatedReturnedAtomic: '99000000',
+      simulatedAcquiredAtomic: '4200000000000000000000',
+      simulatedRoundTripBps: 100,
+      createdAt: NOW.toISOString(),
+      expiresAt: new Date(NOW.getTime() + B20_CLEARANCE_TTL_MS_V1).toISOString(),
+      ...overrides,
+    });
+    await clearances.insertClearance(clearance);
+    return clearance;
+  }
+
+  test('a prepared plan returns unsigned calls and nothing else', async () => {
+    await seedClearance();
+    b20RouteRuntime.prepareEntry = preparedRun();
+    const response = await prepare('clearance-1', REQUEST);
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.outcome, 'prepared');
+    assert.equal(response.body.calls.length, 2);
+    // Unsigned: no signature, no hash of a broadcast, nothing to send.
+    const body = JSON.stringify(response.body);
+    for (const forbidden of ['signature', 'rawTransaction', 'privateKey', 'txHash']) {
+      assert.ok(!new RegExp(forbidden, 'i').test(body), `must not return ${forbidden}`);
+    }
+    // Viable, but not best — and the response says both.
+    assert.equal(response.body.viableRouteConfirmed, true);
+    assert.equal(response.body.bestRouteConfirmed, false);
+    assert.equal(response.body.coverage, 'partial');
+  });
+
+  test('the request may not name a token, a route, an amount or calldata', async () => {
+    await seedClearance();
+    b20RouteRuntime.prepareEntry = preparedRun();
+    // A strict schema: anything executable in the body is a 400, not a field
+    // that gets quietly ignored.
+    for (const extra of [
+      { tokenAddress: ERC20 },
+      { calls: [{ to: ERC20, data: '0xdeadbeef', value: '0' }] },
+      { positionAtomic: '999000000' },
+      { route: [{ from: USDC, to: ERC20 }] },
+      { recipient: OTHER_WALLET },
+    ]) {
+      const response = await prepare('clearance-1', { ...REQUEST, ...extra });
+      assert.equal(response.status, 400, JSON.stringify(extra));
+    }
+  });
+
+  test('a missing clearance is a refusal with no plan', async () => {
+    const response = await prepare('nope', REQUEST);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.outcome, 'refused');
+    assert.equal(response.body.refusalReason, 'clearance_missing');
+    assert.equal(response.body.calls, null);
+  });
+
+  test('another wallet’s clearance is not even found', async () => {
+    await seedClearance();
+    const response = await prepare('clearance-1', REQUEST, app(OTHER));
+    assert.equal(response.body.outcome, 'refused');
+    assert.equal(response.body.calls, null);
+  });
+
+  test('a profile the caller restates differently is refused', async () => {
+    await seedClearance();
+    const response = await prepare('clearance-1', {
+      ...REQUEST,
+      profileIdentity: `${USDC}:500000000:300:300`,
+    });
+    assert.equal(response.body.outcome, 'refused');
+    assert.equal(response.body.refusalReason, 'clearance_profile_mismatch');
+  });
+
+  test('an expired clearance is refused', async () => {
+    const { B20_CLEARANCE_TTL_MS_V1 } = await import('@mioagent/route-storage');
+    await seedClearance();
+    b20RouteRuntime.now = () => new Date(NOW.getTime() + B20_CLEARANCE_TTL_MS_V1 + 1_000);
+    const response = await prepare('clearance-1', REQUEST);
+    assert.equal(response.body.outcome, 'refused');
+    assert.equal(response.body.refusalReason, 'clearance_expired');
+  });
+
+  test('a runner refusal exposes no calls, and names the binding', async () => {
+    await seedClearance();
+    b20RouteRuntime.prepareEntry = (async () => ({
+      blueprint: null,
+      refusal: 'entry_transfers_paused',
+      detail: 'Transfers of this token are paused now.',
+      tokenAddress: TOKEN,
+    })) as never;
+    const response = await prepare('clearance-1', REQUEST);
+    assert.equal(response.body.outcome, 'refused');
+    assert.equal(response.body.refusalReason, 'entry_transfers_paused');
+    assert.equal(response.body.calls, null);
+    // Never a provider body, an endpoint or a key.
+    assert.equal(/https?:\/\//.test(JSON.stringify(response.body)), false);
+  });
+
+  test('preparation is idempotent for one request', async () => {
+    await seedClearance();
+    b20RouteRuntime.prepareEntry = preparedRun();
+    const first = await prepare('clearance-1', REQUEST);
+    const second = await prepare('clearance-1', REQUEST);
+    assert.equal(first.body.blueprintHash, second.body.blueprintHash);
+  });
+
+  test('the route needs the flag and a session', async () => {
+    b20RouteRuntime.flags = () => ({ ...FLAGS, b20ControlV1: false });
+    assert.equal((await prepare('clearance-1', REQUEST)).status, 404);
+    b20RouteRuntime.flags = () => ({ ...FLAGS });
+    assert.equal((await prepare('clearance-1', REQUEST, app(null))).status, 401);
+  });
+
+  test('a server without the clearance table prepares nothing', async () => {
+    b20RouteRuntime.clearanceAvailable = async () => false;
+    const response = await prepare('clearance-1', REQUEST);
+    assert.equal(response.status, 503);
+    assert.equal(response.body.code, 'b20_clearance_unavailable');
+  });
+});
+
 describe('the watchlist a background sweep reads', () => {
   const list = (server = app()) => request(server).get('/api/route-intelligence/b20/watchlist');
   const add = (body: unknown, server = app()) =>
