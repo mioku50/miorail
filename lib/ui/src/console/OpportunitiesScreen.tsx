@@ -183,9 +183,14 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
         <div className="panel">
           <div className="ph">
             <h3>Discover</h3>
-            <span className="rt">
-              <span className="pill n">{model.pipelineState ?? 'unknown'}</span>
-            </span>
+            {/* No pill when there is no state. "unknown" told the user nothing
+                the sentence below does not say better, and read as a fault in
+                the token rather than in the connection. */}
+            {model.pipelineState && (
+              <span className="rt">
+                <span className="pill n">{model.pipelineState.replaceAll('_', ' ')}</span>
+              </span>
+            )}
           </div>
           <div className="pb tight">
             {/* The pipeline's sentence, verbatim from the shared copy table.

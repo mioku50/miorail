@@ -10,6 +10,7 @@ import {
   chainLabelV1,
   consoleHomeSectionV1,
   consoleSectionPathV1,
+  discoverFailureCopyV1,
   opportunityCardViewV1,
   useConsoleTheme,
   type ConsolePipelineStateV1,
@@ -80,7 +81,11 @@ export function OpportunitiesPage() {
     ? 'B20 Discover is off on this server, so no launches are being read. Route comparison and your portfolio are unaffected.'
     : feed.isPending
       ? null
-      : home.notice;
+      : // A failed request and a quiet pipeline are different problems, and
+        // only one of them is worth pressing "Check again" for.
+        feed.error
+        ? discoverFailureCopyV1(feed.error)
+        : home.notice;
 
   return (
     <ConsoleShell
