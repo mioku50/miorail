@@ -25,6 +25,33 @@ export interface LaunchSourceConfigV1 {
   rpcUrl: string;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
+  /** How many times a RETRYABLE failure is repeated. See `retryableV1`. */
+  maxRetries?: number;
+  /** Injected so tests do not spend real time. */
+  sleepImpl?: (ms: number) => Promise<void>;
+}
+
+/**
+ * Whether a failure is worth repeating.
+ *
+ * Only three things are: a 429, a 5xx, and a transport failure that never
+ * reached the endpoint. Those are facts about the connection and may differ a
+ * second later.
+ *
+ * A JSON-RPC error is NOT retried. `-32600` is how Alchemy says "that block
+ * range is too wide" — repeating the identical request would produce the
+ * identical refusal, three times as slowly, and burn quota to learn nothing.
+ * The fix for that error is a narrower window, which is the caller's decision.
+ */
+export function retryableV1(input: {
+  httpStatus: number | null;
+  transportFailed: boolean;
+  jsonRpcError: boolean;
+}): boolean {
+  if (input.jsonRpcError) return false;
+  if (input.transportFailed) return true;
+  if (input.httpStatus === null) return false;
+  return input.httpStatus === 429 || input.httpStatus >= 500;
 }
 
 const hexV1 = (value: number): string => `0x${value.toString(16)}`;
@@ -41,6 +68,7 @@ function asRawLogV1(value: unknown): RawLogV1 | null {
     blockHash: typeof log.blockHash === 'string' ? log.blockHash : null,
     transactionHash: typeof log.transactionHash === 'string' ? log.transactionHash : null,
     logIndex: typeof log.logIndex === 'string' ? log.logIndex : null,
+    transactionIndex: typeof log.transactionIndex === 'string' ? log.transactionIndex : null,
     removed: log.removed === true,
   };
 }
@@ -48,10 +76,16 @@ function asRawLogV1(value: unknown): RawLogV1 | null {
 export function createLaunchLogSourceV1(config: LaunchSourceConfigV1): LaunchLogSourceV1 {
   const timeoutMs = config.timeoutMs ?? 15_000;
   const fetchImpl = config.fetchImpl ?? fetch;
+  const maxRetries = config.maxRetries ?? 2;
+  const sleep = config.sleepImpl ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)));
   let nextId = 1;
 
-  async function rpcV1(method: string, params: unknown[]): Promise<unknown | null> {
-    if (config.rpcUrl.trim().length === 0) return null;
+  /** One attempt, classified. The classification is all that leaves this
+   * function — never the status text, never the body, never the URL. */
+  async function attemptV1(
+    method: string,
+    params: unknown[],
+  ): Promise<{ value: unknown | null; retryable: boolean }> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -61,17 +95,45 @@ export function createLaunchLogSourceV1(config: LaunchSourceConfigV1): LaunchLog
         body: JSON.stringify({ jsonrpc: '2.0', id: nextId++, method, params }),
         signal: controller.signal,
       });
-      if (!response.ok) return null;
+      if (!response.ok) {
+        return {
+          value: null,
+          retryable: retryableV1({ httpStatus: response.status, transportFailed: false, jsonRpcError: false }),
+        };
+      }
       const envelope = (await response.json()) as { result?: unknown; error?: unknown };
-      // An RPC error is an unavailable endpoint as far as this worker is
-      // concerned. The message is dropped rather than classified: there is no
-      // action it would change, and it may contain the URL.
-      if (envelope.error) return null;
-      return envelope.result ?? null;
+      // A JSON-RPC error is an unavailable endpoint as far as this worker is
+      // concerned, and it is NOT retried: `-32600` ("block range too wide")
+      // would refuse the identical request identically. The message is dropped
+      // rather than reported — there is no action it would change, and it may
+      // contain the URL.
+      if (envelope.error) {
+        return {
+          value: null,
+          retryable: retryableV1({ httpStatus: null, transportFailed: false, jsonRpcError: true }),
+        };
+      }
+      return { value: envelope.result ?? null, retryable: false };
     } catch {
-      return null;
+      // Never reached the endpoint, or the timeout fired. A fact about the
+      // connection, and it may differ a second later.
+      return {
+        value: null,
+        retryable: retryableV1({ httpStatus: null, transportFailed: true, jsonRpcError: false }),
+      };
     } finally {
       clearTimeout(timer);
+    }
+  }
+
+  async function rpcV1(method: string, params: unknown[]): Promise<unknown | null> {
+    if (config.rpcUrl.trim().length === 0) return null;
+    for (let attempt = 0; ; attempt += 1) {
+      const result = await attemptV1(method, params);
+      if (result.value !== null) return result.value;
+      if (!result.retryable || attempt >= maxRetries) return null;
+      // Linear backoff. A throttled endpoint wants time, not cleverness.
+      await sleep(250 * (attempt + 1));
     }
   }
 

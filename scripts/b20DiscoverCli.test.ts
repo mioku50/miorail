@@ -23,6 +23,12 @@ import { runB20DiscoverPassV1, type DiscoverPassConfigV1 } from './b20DiscoverRu
 
 const here = path.dirname(url.fileURLToPath(import.meta.url));
 
+/** Source with comments removed, so a guard against CALLING something is not
+ * also a guard against explaining why it matters. */
+function codeOnlyV1(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+}
+
 // ---------------------------------------------------------------------------
 // T69-A §7/§10/§12 — the worker, with no network and no database.
 //
@@ -98,6 +104,9 @@ const CONFIG: DiscoverPassConfigV1 = {
   // Wide enough that a head of 1112 puts the confirmed head (1100) inside the
   // window, so these tests exercise the launch budget rather than the range cap.
   maxRange: 200,
+  // Wide enough that most tests here make one request; the pagination tests
+  // set their own.
+  logWindow: 1000,
   maxLaunches: 200,
   confirmations: 12,
   maxRuntimeMs: 60_000,
@@ -449,20 +458,38 @@ describe('what a run prints says what happened, including what did not', () => {
 describe('the worker is read-only against Base', () => {
   test('no signer, no submission path, no balance provider', () => {
     // §12.21/§12.22. A property of the code, not a promise in a comment.
+    //
+    // Scanned with COMMENTS STRIPPED, and the provider check targets CALL and
+    // IMPORT shapes rather than the bare vendor name. The risk is
+    // `alchemy_getTokenBalances` or an SDK import; a help line telling an
+    // operator that Alchemy's free tier caps `eth_getLogs` at ten blocks is the
+    // opposite of a risk — it is the reason the pagination exists.
     for (const file of ['b20_discover.ts', 'b20DiscoverRun.ts', 'b20DiscoverCli.ts']) {
-      const source = readFileSync(path.join(here, file), 'utf8');
+      const source = codeOnlyV1(readFileSync(path.join(here, file), 'utf8'));
       for (const forbidden of [
         'signTransaction',
         'privateKey',
         'sendCalls',
         'eth_sendRawTransaction',
         'wallet_sendCalls',
+        // Balance providers do not index B20 precompiles; a feed built on one
+        // would silently return nothing.
+        'alchemy_',
+        'alchemy-sdk',
         'moralis',
-        'alchemy',
         'covalent',
         'zerion',
+        'getTokenBalances',
+        'getWalletTokenBalances',
       ]) {
-        assert.ok(!source.toLowerCase().includes(forbidden.toLowerCase()), `${file} must not mention ${forbidden}`);
+        assert.ok(!source.toLowerCase().includes(forbidden.toLowerCase()), `${file} must not use ${forbidden}`);
+      }
+      // And no import from any of them, whatever it is called.
+      for (const match of source.matchAll(/from ['"]([^'"]+)['"]/g)) {
+        const specifier = match[1]!.toLowerCase();
+        for (const vendor of ['alchemy', 'moralis', 'covalent', 'zerion']) {
+          assert.ok(!specifier.includes(vendor), `${file} must not import from ${match[1]}`);
+        }
       }
     }
   });

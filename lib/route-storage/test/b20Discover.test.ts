@@ -190,6 +190,7 @@ describe('a launch is chain evidence and nothing else', () => {
         blockNumber: '49401482',
         blockHash: hashV1('a'),
         transactionHash: hashV1('1'),
+        transactionIndex: null,
         logIndex: 3,
         decoderVersion: B20_DISCOVER_LANE_V1.decoderVersion,
       },

@@ -1,5 +1,6 @@
 import {
   LAUNCH_CONFIRMATIONS_V1,
+  LAUNCH_LOG_WINDOW_V1,
   LAUNCH_MAX_LAUNCHES_V1,
   LAUNCH_MAX_RANGE_V1,
   LAUNCH_REWIND_DEPTH_V1,
@@ -25,6 +26,9 @@ export class B20DiscoverArgError extends Error {}
 
 export const B20_DISCOVER_DEFAULTS_V1 = {
   maxRange: LAUNCH_MAX_RANGE_V1,
+  /** Blocks per REQUEST. Ten is the safe floor: Alchemy's free tier refuses
+   * anything wider, and a narrow window is valid everywhere. */
+  logWindow: LAUNCH_LOG_WINDOW_V1,
   maxLaunches: LAUNCH_MAX_LAUNCHES_V1,
   confirmations: LAUNCH_CONFIRMATIONS_V1,
   rewindDepth: LAUNCH_REWIND_DEPTH_V1,
@@ -68,6 +72,7 @@ export const B20_DISCOVER_REFUSALS_V1: readonly B20DiscoverRunResultV1[] = [
 export function parseB20DiscoverArgsV1(argv: readonly string[], env: NodeJS.ProcessEnv = {}): B20DiscoverArgsV1 {
   const args: B20DiscoverArgsV1 = {
     maxRange: B20_DISCOVER_DEFAULTS_V1.maxRange,
+    logWindow: logWindowFromEnvV1(env.B20_DISCOVER_LOG_WINDOW),
     maxLaunches: B20_DISCOVER_DEFAULTS_V1.maxLaunches,
     confirmations: B20_DISCOVER_DEFAULTS_V1.confirmations,
     maxRuntimeMs: B20_DISCOVER_DEFAULTS_V1.maxRuntimeMs,
@@ -94,6 +99,9 @@ export function parseB20DiscoverArgsV1(argv: readonly string[], env: NodeJS.Proc
     switch (name) {
       case 'max-range':
         args.maxRange = positiveIntV1('--max-range', value);
+        break;
+      case 'log-window':
+        args.logWindow = positiveIntV1('--log-window', value);
         break;
       case 'max-launches':
         args.maxLaunches = positiveIntV1('--max-launches', value);
@@ -133,6 +141,18 @@ export function parseStartBlockV1(raw: string | undefined): number | null {
     throw new B20DiscoverArgError('B20_DISCOVER_START_BLOCK is not a usable block number');
   }
   return block;
+}
+
+/** §1 — `B20_DISCOVER_LOG_WINDOW`. An unreadable value is refused rather than
+ * silently falling back: a window wider than the endpoint allows fails every
+ * pass, and one narrower than intended quietly multiplies the request count. */
+export function logWindowFromEnvV1(raw: string | undefined): number {
+  const value = raw?.trim();
+  if (!value) return B20_DISCOVER_DEFAULTS_V1.logWindow;
+  if (!/^[1-9]\d{0,4}$/.test(value)) {
+    throw new B20DiscoverArgError('B20_DISCOVER_LOG_WINDOW must be a positive number of blocks');
+  }
+  return Number(value);
 }
 
 function positiveIntV1(name: string, raw: string): number {
@@ -176,6 +196,13 @@ export function formatB20DiscoverSummaryV1(outcome: DiscoverPassOutcomeV1): stri
       `Cursor unchanged: ${number(outcome.startCursorBlock)}`,
     ];
     if (outcome.refusal) lines.push(`Decoder refusal: ${outcome.refusal}`);
+    if (outcome.logWindowsAttempted > 0) {
+      // Which window failed is the first thing an operator needs: a window that
+      // never completed points at the endpoint's range limit, not at the chain.
+      lines.push(
+        `Log windows: ${outcome.logWindowsCompleted}/${outcome.logWindowsAttempted} completed before the refusal`,
+      );
+    }
     lines.push('No launches from the refused range were stored.');
     if (outcome.result === 'configuration_required') {
       lines.push('Set B20_DISCOVER_START_BLOCK to the first block this feed should read.');
@@ -206,6 +233,7 @@ export function formatB20DiscoverSummaryV1(outcome: DiscoverPassOutcomeV1): stri
     `New launches stored: ${outcome.launchesInserted}`,
     `Duplicates: ${outcome.duplicates}`,
     `End cursor: ${number(outcome.endCursorBlock)}`,
+    `Log windows: ${outcome.logWindowsCompleted}/${outcome.logWindowsAttempted} completed · ${outcome.logsReceived} log(s) received`,
     `Budget exhausted: ${outcome.budgetExhausted ? 'yes — the remainder is not_checked' : 'no'}`,
   ].join('\n');
 }
@@ -223,7 +251,8 @@ Two overlapping runs do not both advance the cursor — the second exits
 run_already_active.
 
 Options:
-  --max-range=<n>       Widest eth_getLogs window (default ${B20_DISCOVER_DEFAULTS_V1.maxRange})
+  --max-range=<n>       Chain covered by ONE PASS (default ${B20_DISCOVER_DEFAULTS_V1.maxRange})
+  --log-window=<n>      Blocks per eth_getLogs REQUEST (default ${B20_DISCOVER_DEFAULTS_V1.logWindow})
   --max-launches=<n>    Soft cap per pass, applied at block boundaries (default ${B20_DISCOVER_DEFAULTS_V1.maxLaunches})
   --confirmations=<n>   Blocks left below the head (default ${B20_DISCOVER_DEFAULTS_V1.confirmations})
   --rewind-depth=<n>    How far a reorg sends the cursor back (default ${B20_DISCOVER_DEFAULTS_V1.rewindDepth})
@@ -232,6 +261,11 @@ Options:
   --start-block=<n>     Bootstrap block, used ONLY when no cursor exists
   --dry-run             Report what would be read. Nothing is written.
   --help                This message.
+
+The pass range is read as several bounded requests, because some endpoints
+refuse a wide eth_getLogs window — Alchemy's free tier caps it at ten blocks.
+Set B20_DISCOVER_LOG_WINDOW to match your endpoint; a narrower window is always
+valid, it just costs more round trips.
 
 Requires BASE_MAINNET_RPC_URL and, on a cold start, B20_DISCOVER_START_BLOCK —
 there is no "recent enough" default, because a guess would silently define away

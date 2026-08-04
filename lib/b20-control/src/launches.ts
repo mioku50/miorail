@@ -73,6 +73,12 @@ export interface RawLogV1 {
   blockHash: string | null;
   transactionHash: string | null;
   logIndex: string | null;
+  /** Position of the transaction within its block. Optional because a log is
+   * fully identified without it — `logIndex` is already unique inside a block.
+   * Carried when the endpoint provides it so the stored record matches the
+   * chain, and used as a secondary sort key when logs arrive from several
+   * separate requests. */
+  transactionIndex?: string | null;
   removed?: boolean;
 }
 
@@ -89,6 +95,9 @@ export interface B20LaunchV1 {
   blockNumber: string;
   blockHash: string;
   transactionHash: string;
+  /** Null when the endpoint did not report one. Never defaulted to 0, which
+   * is a real position in a block. */
+  transactionIndex: number | null;
   logIndex: number;
   decoderVersion: string;
 }
@@ -212,6 +221,13 @@ export function decodeB20CreatedV1(log: RawLogV1): B20LaunchDecodeResultV1 {
   const blockNumber = BigInt(log.blockNumber).toString();
   const logIndex = Number(BigInt(log.logIndex));
   if (!Number.isSafeInteger(logIndex) || logIndex < 0) return refuse('missing_block_identity');
+  // Optional metadata, not identity. An unreadable value is recorded as absent
+  // rather than refusing a log that is otherwise complete.
+  let transactionIndex: number | null = null;
+  if (typeof log.transactionIndex === 'string' && /^0x[0-9a-fA-F]+$/.test(log.transactionIndex)) {
+    const parsed = Number(BigInt(log.transactionIndex));
+    if (Number.isSafeInteger(parsed) && parsed >= 0) transactionIndex = parsed;
+  }
 
   return {
     ok: true,
@@ -226,6 +242,7 @@ export function decodeB20CreatedV1(log: RawLogV1): B20LaunchDecodeResultV1 {
       blockNumber,
       blockHash: log.blockHash.toLowerCase(),
       transactionHash: log.transactionHash.toLowerCase(),
+      transactionIndex,
       logIndex,
       decoderVersion: B20_LAUNCH_DECODER_VERSION_V1,
     },

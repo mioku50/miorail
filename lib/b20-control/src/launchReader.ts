@@ -35,14 +35,15 @@ import { B20_FACTORY_V1 } from './pinned.js';
 //     rest of that block forever or return it again on every run.
 //
 // Quota is counted in CALLS, not requests — the measured behaviour of
-// mainnet.base.org, recorded in T67F. `eth_getLogs` over a wide range is one
-// request and an unbounded amount of work, which is why the range is capped
-// here rather than trusted to the endpoint.
+// mainnet.base.org, recorded in T67F. And the range a PASS covers is not the
+// range a REQUEST may ask for: Alchemy's free tier refuses anything wider than
+// ten blocks, so one pass is read as many bounded windows and kept only if
+// every one of them answers.
 // ---------------------------------------------------------------------------
 
-/** Default ceiling on a single `eth_getLogs` window. Wide enough to catch up
- * after an outage in a few runs, narrow enough that one call cannot ask the
- * endpoint for hours of history. */
+/** Default ceiling on how much chain ONE PASS covers. Wide enough to catch up
+ * after an outage in a few runs, narrow enough that a single pass cannot ask
+ * the endpoint for hours of history. Split into `logWindow`-sized requests. */
 export const LAUNCH_MAX_RANGE_V1 = 800;
 
 /** Blocks left between the chain head and anything this reader will accept.
@@ -52,6 +53,26 @@ export const LAUNCH_CONFIRMATIONS_V1 = 12;
 /** Default soft ceiling on launches committed by one run, applied at block
  * boundaries. */
 export const LAUNCH_MAX_LAUNCHES_V1 = 200;
+
+/**
+ * Blocks per `eth_getLogs` REQUEST, as opposed to per pass.
+ *
+ * Alchemy's free tier refuses any window wider than ten blocks with JSON-RPC
+ * -32600, which turned every pass into `endpoint_unavailable` — the feed could
+ * not run at all. So the pass range and the request range are now two different
+ * numbers: `maxRange` is how much chain one pass covers, this is how much one
+ * request may ask for.
+ *
+ * Ten is the safe floor across the endpoints Miorail is run against. A
+ * permissive endpoint can raise it and spend fewer round trips; nothing breaks
+ * if it is left alone, because a narrow window is always valid.
+ */
+export const LAUNCH_LOG_WINDOW_V1 = 10;
+
+/** Gap between consecutive `eth_getLogs` requests. Eighty requests in a burst
+ * is exactly the shape that trips a rate limiter, and being throttled mid-pass
+ * throws away every window already paid for. */
+export const LAUNCH_LOG_PACE_MS_V1 = 60;
 
 /** How far back a reorg sends the cursor. Deeper than the confirmation window
  * by a wide margin: a reorg that reached confirmed blocks was already deeper
@@ -105,6 +126,21 @@ export interface ReadLaunchesInputV1 {
   /** Soft ceiling, applied between blocks. See `readB20LaunchesV1`. */
   maxLaunches?: number;
   confirmations?: number;
+  /** Blocks per `eth_getLogs` REQUEST. Independent of `maxRange`, which is the
+   * total chain covered by the pass. */
+  logWindow?: number;
+  /** Gap between consecutive log requests. */
+  logPaceMs?: number;
+  /** Injected so tests do not spend real time. */
+  sleepImpl?: (ms: number) => Promise<void>;
+}
+
+/** §7 — what one pass spent reading logs. Safe counters only: no URL, no
+ * response body, no error text. */
+export interface LaunchReadMetricsV1 {
+  logWindowsAttempted: number;
+  logWindowsCompleted: number;
+  logsReceived: number;
 }
 
 export interface ReadLaunchesResultV1 {
@@ -123,6 +159,38 @@ export interface ReadLaunchesResultV1 {
   /** The window actually requested from the endpoint, or null when none was. */
   scannedFrom: number | null;
   scannedTo: number | null;
+  metrics: LaunchReadMetricsV1;
+}
+
+/** Orders two optional hex quantities. A missing value sorts last, so a log the
+ * endpoint gave no position for cannot displace one it did. */
+function compareHexV1(left: string | null | undefined, right: string | null | undefined): number {
+  if (left == null && right == null) return 0;
+  if (left == null) return 1;
+  if (right == null) return -1;
+  const a = BigInt(left);
+  const b = BigInt(right);
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * The inclusive `eth_getLogs` windows covering one pass range.
+ *
+ * Every window is at most `logWindow` blocks and none overlaps the next, so a
+ * log cannot arrive twice through the boundary — and the last window is short
+ * rather than overshooting the range the pass was allowed to read.
+ */
+export function logWindowsV1(input: {
+  fromBlock: number;
+  toBlock: number;
+  logWindow: number;
+}): { fromBlock: number; toBlock: number }[] {
+  const width = Math.max(1, Math.trunc(input.logWindow));
+  const windows: { fromBlock: number; toBlock: number }[] = [];
+  for (let start = input.fromBlock; start <= input.toBlock; start += width) {
+    windows.push({ fromBlock: start, toBlock: Math.min(start + width - 1, input.toBlock) });
+  }
+  return windows;
 }
 
 /**
@@ -141,6 +209,14 @@ export async function readB20LaunchesV1(input: ReadLaunchesInputV1): Promise<Rea
   const maxRange = input.maxRange ?? LAUNCH_MAX_RANGE_V1;
   const maxLaunches = input.maxLaunches ?? LAUNCH_MAX_LAUNCHES_V1;
   const confirmations = input.confirmations ?? LAUNCH_CONFIRMATIONS_V1;
+  const logWindow = Math.max(1, Math.trunc(input.logWindow ?? LAUNCH_LOG_WINDOW_V1));
+  const logPaceMs = input.logPaceMs ?? LAUNCH_LOG_PACE_MS_V1;
+  const sleep = input.sleepImpl ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)));
+  const metrics: LaunchReadMetricsV1 = {
+    logWindowsAttempted: 0,
+    logWindowsCompleted: 0,
+    logsReceived: 0,
+  };
   const unchanged = (
     state: LaunchReaderStateV1,
     confirmedHead: number | null = null,
@@ -152,6 +228,7 @@ export async function readB20LaunchesV1(input: ReadLaunchesInputV1): Promise<Rea
     confirmedHead,
     scannedFrom: null,
     scannedTo: null,
+    metrics,
   });
 
   const head = await input.source.headBlock();
@@ -170,18 +247,52 @@ export async function readB20LaunchesV1(input: ReadLaunchesInputV1): Promise<Rea
       confirmedHead,
       scannedFrom: null,
       scannedTo: null,
+      metrics,
     };
   }
 
   const toBlock = Math.min(confirmedHead, fromBlock + maxRange - 1);
   const rangeCapped = toBlock < confirmedHead;
 
-  const logs = await input.source.getLogs({ fromBlock, toBlock });
-  if (logs === null) return unchanged({ status: 'endpoint_unavailable', call: 'logs' }, confirmedHead);
-  if (!Array.isArray(logs)) {
-    // A non-array response is the endpoint changing shape, not an empty range.
-    return unchanged({ status: 'endpoint_shape', detail: 'getLogs did not return an array' }, confirmedHead);
+  // The pass range is read as several provider-bounded requests. ALL of them
+  // must succeed before anything is kept: a pass that committed the windows it
+  // managed and stopped would advance the cursor past the ones it did not, and
+  // that gap is permanent and invisible.
+  const logs: RawLogV1[] = [];
+  for (const window of logWindowsV1({ fromBlock, toBlock, logWindow })) {
+    if (metrics.logWindowsAttempted > 0 && logPaceMs > 0) {
+      // Eighty requests in a burst is exactly the shape that trips a rate
+      // limiter, and being throttled mid-pass throws away every window already
+      // paid for.
+      await sleep(logPaceMs);
+    }
+    metrics.logWindowsAttempted += 1;
+    const page = await input.source.getLogs(window);
+    if (page === null) {
+      // One failed window fails the whole pass. Nothing from the windows that
+      // did answer is kept, because a partial range is not the range the
+      // cursor is about to claim.
+      return unchanged({ status: 'endpoint_unavailable', call: 'logs' }, confirmedHead);
+    }
+    if (!Array.isArray(page)) {
+      // A non-array response is the endpoint changing shape, not an empty range.
+      return unchanged({ status: 'endpoint_shape', detail: 'getLogs did not return an array' }, confirmedHead);
+    }
+    metrics.logWindowsCompleted += 1;
+    metrics.logsReceived += page.length;
+    logs.push(...page);
   }
+
+  // Deterministic order, because the logs arrived from separate requests and
+  // nothing guarantees the endpoint returned the windows in order — or that a
+  // window returned its own logs sorted.
+  logs.sort((left, right) => {
+    const byBlock = compareHexV1(left.blockNumber, right.blockNumber);
+    if (byBlock !== 0) return byBlock;
+    const byTransaction = compareHexV1(left.transactionIndex ?? null, right.transactionIndex ?? null);
+    if (byTransaction !== 0) return byTransaction;
+    return compareHexV1(left.logIndex, right.logIndex);
+  });
 
   // Decode EVERYTHING matching in the window before deciding what to keep. The
   // endpoint has already been paid for these logs, and a decoder failure
@@ -256,6 +367,7 @@ export async function readB20LaunchesV1(input: ReadLaunchesInputV1): Promise<Rea
       confirmedHead,
       scannedFrom: fromBlock,
       scannedTo: toBlock,
+      metrics,
     };
   }
 
@@ -282,6 +394,7 @@ export async function readB20LaunchesV1(input: ReadLaunchesInputV1): Promise<Rea
     confirmedHead,
     scannedFrom: fromBlock,
     scannedTo: lastComplete,
+    metrics,
   };
 }
 

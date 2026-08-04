@@ -35,6 +35,10 @@ export interface DiscoverPassConfigV1 {
   maxRange: number;
   maxLaunches: number;
   confirmations: number;
+  /** Blocks per `eth_getLogs` REQUEST. Separate from `maxRange`, which is how
+   * much chain the whole pass covers — some endpoints refuse anything wider
+   * than ten blocks per request. */
+  logWindow: number;
   /** Wall clock for one pass. Past it the run commits what it already has and
    * reports the rest as not_checked. */
   maxRuntimeMs: number;
@@ -60,6 +64,10 @@ export interface DiscoverPassOutcomeV1 {
    * category — never a token, never an endpoint. */
   refusal: string | null;
   markedNonCanonical: number;
+  /** §7 — safe counters for what the pass spent reading logs. */
+  logWindowsAttempted: number;
+  logWindowsCompleted: number;
+  logsReceived: number;
 }
 
 export interface DiscoverPassInputV1 {
@@ -91,6 +99,9 @@ export async function runB20DiscoverPassV1(input: DiscoverPassInputV1): Promise<
     operatorState: null as B20DiscoverOperatorStateV1 | null,
     refusal: null as string | null,
     markedNonCanonical: 0,
+    logWindowsAttempted: 0,
+    logWindowsCompleted: 0,
+    logsReceived: 0,
   };
 
   /** A run row that, by construction, cannot claim to have moved anything. */
@@ -204,9 +215,15 @@ export async function runB20DiscoverPassV1(input: DiscoverPassInputV1): Promise<
       maxRange: input.config.maxRange,
       maxLaunches: input.config.maxLaunches,
       confirmations: input.config.confirmations,
+      logWindow: input.config.logWindow,
     });
     const confirmedHead = read.confirmedHead === null ? null : String(read.confirmedHead);
     base.confirmedHead = confirmedHead;
+    // Safe counters, whatever the pass concluded — an operator needs to see a
+    // window that never completed just as much as one that did.
+    base.logWindowsAttempted = read.metrics.logWindowsAttempted;
+    base.logWindowsCompleted = read.metrics.logWindowsCompleted;
+    base.logsReceived = read.metrics.logsReceived;
 
     if (read.state.status === 'decoder_mismatch') {
       // §10. The event shape changed. Nothing from the refused range is stored,
@@ -257,6 +274,7 @@ export async function runB20DiscoverPassV1(input: DiscoverPassInputV1): Promise<
       storedLaunchFromDecodedV1({
         launch,
         detectedAt,
+        transactionIndex: launch.transactionIndex,
         // How far behind the head this actually was, so a shallow read is
         // visible in the row rather than inferred from a deploy date.
         confirmationCount: Math.max(
