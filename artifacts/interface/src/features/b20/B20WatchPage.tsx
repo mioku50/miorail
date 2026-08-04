@@ -38,6 +38,7 @@ import { useSendCalls } from 'wagmi';
  * rather than assumed. */
 const B20_QUOTE_ASSET_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 import { isWalletRejectionError } from '@mioagent/wallet-actions';
+import { useConsoleNav } from '../console/useConsoleNav';
 
 // ---------------------------------------------------------------------------
 // T67F — the B20 tab.
@@ -81,6 +82,9 @@ export function B20WatchPage() {
   const [, navigate] = useLocation();
   const { address } = useAccount();
   const { theme, setTheme } = useConsoleTheme();
+  // T70 §8 — the shared section table. Portfolio is a primary surface now, not
+  // a technical tab called "B20" hidden beside Routes.
+  const consoleNav = useConsoleNav('portfolio');
   const status = useStatus();
   const portfolio = usePortfolio(address);
   const sweep = useB20Watch();
@@ -416,12 +420,9 @@ export function B20WatchPage() {
   return (
     <ConsoleShell
       header={{
-        crumb: ['B20', 'Control watch'],
-        tabs: [
-          { id: 'routes', label: 'Routes', active: false, onSelect: () => navigate('/') },
-          { id: 'b20', label: 'B20', active: true, onSelect: () => navigate('/b20') },
-          { id: 'proofs', label: 'Proofs', active: false, onSelect: () => navigate('/plan/history') },
-        ],
+        crumb: ['Portfolio', 'Control watch'],
+        nav: consoleNav.header,
+        onNavigate: consoleNav.navigate,
         blockNumber: chainBlockNumberV1(status.data ?? null),
         gasLabel: chainGasLabelV1(status.data ?? null),
         networkLabel: chainLabelV1(status.data?.chainId),
@@ -429,13 +430,13 @@ export function B20WatchPage() {
         walletLabel: shortAddress(address),
       }}
       left={{
+        nav: consoleNav.rail,
         sessions: [],
         sessionCount: '0',
         proofs: [],
         proofCount: '0',
-        limits: null,
-        limitsUnavailableReason: 'Budget & payments lives on the Routes tab.',
-        adapters: { rows: [], summary: '—' },
+        // T70 §2 — Budget & payments is on Settings now, for every surface.
+        onOpenSettings: () => consoleNav.navigate('settings'),
       }}
       footer={{
         adaptersLabel: '—',
@@ -485,9 +486,9 @@ export function B20WatchPage() {
       // The B20 tab has no sessions and no proof list of its own: starting a
       // goal or opening a proof belongs to the surfaces that own them, so those
       // handlers navigate there rather than doing nothing here.
-      onNewGoal={() => navigate('/')}
-      onSelectSession={() => navigate('/')}
-      onSelectProof={() => navigate('/plan/history')}
+      onNewGoal={() => consoleNav.navigate('routes')}
+      onSelectSession={() => consoleNav.navigate('routes')}
+      onSelectProof={() => consoleNav.navigate('proofs')}
     >
       {entryReview && entryState && (
         <B20EntryReviewCard

@@ -11,6 +11,11 @@ import {
   type SimulationViewV1,
 } from './consoleState';
 import type { ProviderDiagnosticRowV1, ProviderHistoryViewV1 } from './consoleAdapters';
+import {
+  CONSOLE_NO_ANALYSIS_COPY_V1,
+  CONSOLE_NO_ANALYSIS_TITLE_V1,
+  rightRailHasContentV1,
+} from './navigation';
 import { BudgetDonut, ConsoleStepper, DepthCurve, RouteGraph, ScoreRadar, ScoreRows, Sparkline, type RouteGraphModelV1 } from './ConsoleCharts';
 
 void React;
@@ -1016,6 +1021,21 @@ export interface RightRailModelV1 {
 }
 
 export function ConsoleRightRail(model: RightRailModelV1) {
+  // T70 §7 — before a goal runs, all five panels are empty. Stacked down a
+  // 330px column that reads as five separate failures ("Pool depth
+  // unavailable", "No evidence", "No spend", "Freshness unknown"), when it is
+  // one fact: nothing has been asked yet. Said once, and the panels come back
+  // the moment there is anything in them.
+  if (!rightRailHasContentV1(model)) {
+    return (
+      <div className="rp">
+        <div className="rph">{CONSOLE_NO_ANALYSIS_TITLE_V1}</div>
+        <div className="rpb">
+          <p className="empty">{CONSOLE_NO_ANALYSIS_COPY_V1}</p>
+        </div>
+      </div>
+    );
+  }
   return (
     <>
       <div className="rp">

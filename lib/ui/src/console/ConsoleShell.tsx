@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { CONSOLE_COPY_V1 } from './consoleState';
+import type { ConsoleNavItemV1, ConsoleSectionV1, PaidEvidenceStripV1 } from './navigation';
 
 void React;
 
@@ -68,49 +69,41 @@ export interface ConsoleSessionItemV1 {
   active?: boolean;
 }
 
-export interface ConsoleLimitsV1 {
-  dailyLabel: string;
-  dailyPercent: number;
-  intelligenceLabel: string;
-  intelligencePercent: number;
-}
-
 export interface ConsoleLeftRailModelV1 {
   sessions: ConsoleSessionItemV1[];
   sessionCount: string;
   proofs: ConsoleSessionItemV1[];
   proofCount: string;
-  limits: ConsoleLimitsV1 | null;
-  limitsUnavailableReason: string | null;
-  /** T67E §2.1 — Budget & payments opens from the panels that already show a
-   * number worth changing. It is not a nav entry: there is no top-level
-   * "x402", "Spend Permission" or "Payments protocol". */
-  onOpenBudget?: () => void;
-  // `usable` (present since T64.3.1) means switched on; `live` means it
-  // answered. A configured adapter is not dimmed like a disabled one, and only
-  // one that answered gets the green tick.
-  adapters: { rows: { name: string; label: string; live: boolean; usable?: boolean }[]; summary: string };
+  /**
+   * T70 §2 — the one-line form of Budget & payments. The full panel lives on
+   * Settings; what stays here is a status and a way to reach it.
+   *
+   * `limits`, the usage bars and the adapter list are gone from this rail
+   * entirely — they moved to Settings under §3. They were the two largest
+   * blocks in the mobile drawer and neither is something a user acts on.
+   */
+  paidEvidence?: PaidEvidenceStripV1 | null;
+  onOpenSettings?: () => void;
+  /**
+   * T70 §3 — the rail's navigation. Five entries: the four in the header plus
+   * Settings, which the header has no room for. On a phone this rail IS the
+   * drawer, so it is the only place Settings can be reached.
+   */
+  nav?: readonly ConsoleNavItemV1[];
 }
 
 /**
- * T67E — the three top-level surfaces.
+ * T70 §8 — the primary navigation, from the shared section table.
  *
- * Routes is the flow, B20 is what the tokens you hold have done, Proofs is the
- * public history. Budget & payments is deliberately NOT here: it is a drawer,
- * because it is something you adjust in the middle of a flow rather than a
- * place you go.
+ * The shell no longer accepts a hand-written tab list. Both surfaces build this
+ * with `consoleNavModelV1`, which is the only way the web console and Base App
+ * can be guaranteed to use the same words in the same order.
  */
-export interface ConsoleTabV1 {
-  id: string;
-  label: string;
-  active: boolean;
-  onSelect: () => void;
-}
-
 export interface ConsoleHeaderModelV1 {
   crumb: string[];
-  /** Absent on surfaces that are not one of the three tabs. */
-  tabs?: readonly ConsoleTabV1[];
+  /** Absent on surfaces outside the primary navigation. */
+  nav?: readonly ConsoleNavItemV1[];
+  onNavigate?: (section: ConsoleSectionV1) => void;
   blockNumber: string | null;
   gasLabel: string | null;
   networkLabel: string;
@@ -155,6 +148,7 @@ function RailItem({ item, onSelect }: { item: ConsoleSessionItemV1; onSelect: (i
 export function ConsoleShell(props: ConsoleShellProps) {
   const { header, left, footer } = props;
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const railNav = left.nav ?? header.nav ?? [];
   useConsoleHostClass();
 
   useEffect(() => {
@@ -191,19 +185,27 @@ export function ConsoleShell(props: ConsoleShellProps) {
             </span>
             Miorail
           </div>
-          {(header.tabs ?? []).length > 0 && (
+          {(header.nav ?? []).length > 0 && (
             <nav className="crumb" aria-label="Sections">
-              {(header.tabs ?? []).map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  className={`btn sec${tab.active ? ' on' : ''}`}
-                  aria-current={tab.active ? 'page' : undefined}
-                  onClick={tab.onSelect}
-                >
-                  {tab.label}
-                </button>
-              ))}
+              {(header.nav ?? []).map((item) =>
+                // T70 §4/§9.8 — a section that cannot be reached gets no
+                // button. It states why, in words, and is not clickable.
+                item.available ? (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`btn sec${item.active ? ' on' : ''}`}
+                    aria-current={item.active ? 'page' : undefined}
+                    onClick={() => header.onNavigate?.(item.id)}
+                  >
+                    {item.label}
+                  </button>
+                ) : (
+                  <span key={item.id} className="chip" title={item.unavailableReason ?? undefined}>
+                    {item.label}
+                  </span>
+                ),
+              )}
             </nav>
           )}
           <nav className="crumb" aria-label="Breadcrumb">
@@ -247,7 +249,37 @@ export function ConsoleShell(props: ConsoleShellProps) {
 
         <div className="scrim" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
 
-        <aside className="left" aria-label="Sessions and limits">
+        <aside className="left" aria-label="Navigation and sessions">
+          {/* T70 §3 — the drawer's navigation IS the product's five sections.
+              On a phone this rail is the only place they appear, so it carries
+              Settings too; the header bar has room for four. */}
+          {railNav.length > 0 && (
+            <nav className="railnav" aria-label="Sections">
+              {railNav.map((item) =>
+                item.available ? (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`item${item.active ? ' on' : ''}`}
+                    aria-current={item.active ? 'page' : undefined}
+                    onClick={() => {
+                      header.onNavigate?.(item.id);
+                      setDrawerOpen(false);
+                    }}
+                  >
+                    <span className="t">{item.label}</span>
+                  </button>
+                ) : (
+                  <div key={item.id} className="item off">
+                    <span className="t">{item.label}</span>
+                    {/* Explained, not merely dimmed. */}
+                    <span className="m">{item.unavailableReason}</span>
+                  </div>
+                ),
+              )}
+            </nav>
+          )}
+
           <button type="button" className="newgoal" onClick={props.onNewGoal}>
             + New goal
           </button>
@@ -272,52 +304,29 @@ export function ConsoleShell(props: ConsoleShellProps) {
             left.proofs.map((item) => <RailItem key={item.id} item={item} onSelect={props.onSelectProof} />)
           )}
 
-          <div className="minipanel">
-            {left.onOpenBudget && (
+          {/* T70 §2 — what is left of Budget & payments outside Settings: a
+              status, what still works, and a way through. The panel itself, the
+              usage bars and the adapter list are on Settings now. */}
+          {left.paidEvidence && (
+            <div className="minipanel">
               <div className="row">
-                <span>Budget &amp; payments</span>
-                <button type="button" className="btn sec" onClick={left.onOpenBudget}>
-                  Open
-                </button>
+                <span>{left.paidEvidence.label}</span>
+                {left.paidEvidence.settingsAvailable && left.onOpenSettings && (
+                  <button type="button" className="btn sec" onClick={left.onOpenSettings}>
+                    Settings
+                  </button>
+                )}
               </div>
-            )}
-            {left.limits ? (
-              <>
-                <div className="row">
-                  <span>Daily limit</span>
-                  <span className="v mono">{left.limits.dailyLabel}</span>
-                </div>
-                <div className="usebar">
-                  <span style={{ width: `${left.limits.dailyPercent}%` }} />
-                </div>
-                <div className="row" style={{ marginTop: 9 }}>
-                  <span>Intelligence</span>
-                  <span className="v mono">{left.limits.intelligenceLabel}</span>
-                </div>
-                <div className="usebar">
-                  <span style={{ width: `${left.limits.intelligencePercent}%` }} />
-                </div>
-              </>
-            ) : (
               <div className="row">
-                <span>Limits</span>
-                <span className="v">{left.limitsUnavailableReason ?? CONSOLE_COPY_V1.limitsMissing}</span>
+                <span className="v">{left.paidEvidence.detail}</span>
               </div>
-            )}
-          </div>
-
-          <div className="minipanel">
-            <div className="row">
-              <span>Route adapters</span>
-              <span className="v mono">{left.adapters.summary}</span>
+              {/* No fake configure button while the permission flow does not
+                  exist — the sentence is the honest control. */}
+              {left.paidEvidence.permissionNotice && (
+                <p className="lnote">{left.paidEvidence.permissionNotice}</p>
+              )}
             </div>
-            {left.adapters.rows.map((row) => (
-              <div key={row.name} className={`row${(row.usable ?? row.live) ? '' : ' off'}`}>
-                <span>{row.name}</span>
-                <span className={`v${row.live ? ' ok' : ''}`}>{row.label}</span>
-              </div>
-            ))}
-          </div>
+          )}
         </aside>
 
         <main>

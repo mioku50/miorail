@@ -358,30 +358,41 @@ describe('the sweep is explicit, not automatic', () => {
   });
 });
 
-describe('the three tabs', () => {
+describe('the four sections', () => {
   const routes = readFileSync(path.join(here, '../../../artifacts/interface/src/app/routes.tsx'), 'utf8');
 
-  test('Routes, B20 and Proofs — and nothing else', () => {
-    const labels = [...routes.matchAll(/label: '([^']+)' \}/g)].map((match) => match[1]);
-    assert.deepEqual(labels.slice(0, 3), ['Routes', 'B20', 'Proofs']);
+  test('the web tab table is derived, not typed out', () => {
+    // T70 §8 — the words live in ONE place. A literal `label:` string in this
+    // file is a second vocabulary, which is how the two surfaces drifted apart
+    // before this task.
+    assert.ok(!/label:\s*'/.test(routes), 'routes.tsx must not carry its own labels');
+    assert.ok(routes.includes('CONSOLE_SECTION_TABLE_V1'), 'routes.tsx must read the shared table');
   });
 
   test('Budget & payments is not a tab', () => {
-    // It is something you adjust in the middle of a flow, not a place you go.
+    // It is something you adjust occasionally, not a place you go. It lives on
+    // Settings, which the header does not carry.
     for (const banned of ['Budget', 'x402', 'Spend Permission', 'Payments']) {
       assert.ok(!routes.includes(`label: '${banned}'`), `"${banned}" became a tab`);
     }
   });
 
-  test('both console surfaces can reach every tab', () => {
+  test('every console surface navigates through the shared hook', () => {
+    // Not through hand-written paths: a page that calls navigate('/b20')
+    // directly is a page that will keep working after the section is renamed
+    // and quietly stop highlighting the right tab.
     for (const [surface, file] of [
       ['routes console', '../../../artifacts/interface/src/features/console/RouteIntelligenceConsole.tsx'],
-      ['B20 page', '../../../artifacts/interface/src/features/b20/B20WatchPage.tsx'],
+      ['portfolio page', '../../../artifacts/interface/src/features/b20/B20WatchPage.tsx'],
+      ['opportunities page', '../../../artifacts/interface/src/features/opportunities/OpportunitiesPage.tsx'],
+      ['settings page', '../../../artifacts/interface/src/features/settings/SettingsPage.tsx'],
     ] as const) {
       const source = readFileSync(path.join(here, file), 'utf8');
-      for (const target of ["'/'", "'/b20'", "'/plan/history'"]) {
-        assert.ok(source.includes(`navigate(${target})`), `${surface} cannot reach ${target}`);
-      }
+      assert.ok(
+        source.includes('useConsoleNav') || source.includes('consoleSectionPathV1'),
+        `${surface} builds navigation of its own`,
+      );
+      assert.ok(!/navigate\('\/b20'\)/.test(source), `${surface} still hard-codes the old B20 path`);
     }
   });
 

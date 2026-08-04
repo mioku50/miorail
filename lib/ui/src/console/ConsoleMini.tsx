@@ -1,6 +1,7 @@
 import React, { useEffect, useState, type ReactNode } from 'react';
 import { CONSOLE_COPY_V1, type CandidateRowViewV1, type ScoreDimensionViewV1 } from './consoleState';
 import { ScoreRows } from './ConsoleCharts';
+import type { ConsoleNavItemV1, ConsoleSectionV1 } from './navigation';
 
 void React;
 
@@ -29,15 +30,24 @@ export interface ConsoleMiniShellProps {
   blockNumber: string | null;
   theme: 'dark' | 'light';
   onThemeChange: (theme: 'dark' | 'light') => void;
-  /** Contents of the drawer: sessions, proofs, limits, adapters. */
+  /** Contents of the drawer: sessions and proofs. */
   drawer: ReactNode;
   children: ReactNode;
   /** Right-rail panels, folded to the bottom of the centre column. */
   panels: ReactNode;
+  /**
+   * T70 §4/§8 — Base App's bottom bar, built from the SAME section table the
+   * web header reads. A section with no handler is not in this list at all: a
+   * fourth tab that navigates nowhere reads as a broken app rather than an
+   * unfinished one.
+   */
+  nav?: readonly ConsoleNavItemV1[];
+  onNavigate?: (section: ConsoleSectionV1) => void;
 }
 
 export function ConsoleMiniShell(props: ConsoleMiniShellProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const nav = props.nav ?? [];
 
   useEffect(() => {
     document.documentElement.classList.add('mio-console-host');
@@ -60,7 +70,7 @@ export function ConsoleMiniShell(props: ConsoleMiniShellProps) {
   return (
     <>
       <div className="mio-glow" />
-      <div className={`mio-console mini${drawerOpen ? ' drawer-open' : ''}`}>
+      <div className={`mio-console mini${nav.length > 0 ? ' hasnav' : ''}${drawerOpen ? ' drawer-open' : ''}`}>
         <header>
           <button
             type="button"
@@ -94,6 +104,22 @@ export function ConsoleMiniShell(props: ConsoleMiniShellProps) {
           {props.children}
           <div className="minipanels">{props.panels}</div>
         </main>
+
+        {nav.length > 0 && (
+          <nav className="tabbar" aria-label="Sections">
+            {nav.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={item.active ? 'on' : undefined}
+                aria-current={item.active ? 'page' : undefined}
+                onClick={() => props.onNavigate?.(item.id)}
+              >
+                {item.compactLabel}
+              </button>
+            ))}
+          </nav>
+        )}
 
         <footer>
           <span className="g">

@@ -1,0 +1,363 @@
+// ---------------------------------------------------------------------------
+// T70 §8 — one section vocabulary, shared by the web console and Base App.
+//
+// Before this file the two surfaces each held their own tab list. They had
+// already drifted: web said "B20", the miniapp said nothing at all, and the
+// order was decided independently in three places. A user who learns the
+// product on a phone and opens it on a laptop should not have to re-learn where
+// things are, so the sections, their order and their words live here and both
+// shells read them.
+//
+// The other half of this file is what an EMPTY Opportunities feed is allowed to
+// mean. Discover has seven ways of being empty and only one of them is "the
+// chain was quiet" — see `consoleHomeSectionV1`.
+// ---------------------------------------------------------------------------
+
+/** Every place a user can be. `settings` is deliberately last: it is where you
+ * go to change something, not a surface you work in. */
+export const CONSOLE_SECTIONS_V1 = ['opportunities', 'portfolio', 'routes', 'proofs', 'settings'] as const;
+
+export type ConsoleSectionV1 = (typeof CONSOLE_SECTIONS_V1)[number];
+
+export interface ConsoleSectionDefinitionV1 {
+  readonly id: ConsoleSectionV1;
+  /** The word on the web console's header. */
+  readonly label: string;
+  /**
+   * The word in Base App's four-up bar. Different only where the full label
+   * does not survive a 390px screen split four ways — and still drawn from this
+   * table rather than typed into the miniapp, which is what §8 is protecting.
+   */
+  readonly compactLabel: string;
+  /** The web path. Static: no address, no goal, no wallet state (§8). */
+  readonly path: string;
+  /** One sentence. Used by the command palette and by a disabled entry. */
+  readonly blurb: string;
+}
+
+export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, ConsoleSectionDefinitionV1>> = {
+  opportunities: {
+    id: 'opportunities',
+    label: 'Opportunities',
+    compactLabel: 'Opportunities',
+    path: '/opportunities',
+    blurb: 'Measured B20 launches, and what getting back out would cost.',
+  },
+  portfolio: {
+    id: 'portfolio',
+    label: 'Portfolio',
+    // "Portfolio" and "Opportunities" side by side in a 390px bar leaves each
+    // about 90px. B20 is what the tab actually contains and it fits.
+    compactLabel: 'B20',
+    path: '/portfolio',
+    blurb: 'The B20 tokens you hold, and what their controls have done since.',
+  },
+  routes: {
+    id: 'routes',
+    label: 'Routes',
+    compactLabel: 'Routes',
+    path: '/routes',
+    blurb: 'State a goal and compare the ways to reach it.',
+  },
+  proofs: {
+    id: 'proofs',
+    label: 'Proofs',
+    compactLabel: 'Proofs',
+    path: '/plan/history',
+    blurb: 'What was signed, what it cost, and how it can be checked.',
+  },
+  settings: {
+    id: 'settings',
+    label: 'Settings',
+    compactLabel: 'Settings',
+    path: '/settings',
+    blurb: 'Budget & payments, route adapters, providers and network status.',
+  },
+};
+
+/**
+ * The primary navigation, in order. Opportunities first because it is the only
+ * surface that answers "what should I look at?" — Routes answers "how do I do
+ * this thing I already decided on", which is a later question.
+ */
+export const CONSOLE_PRIMARY_SECTIONS_V1 = ['opportunities', 'portfolio', 'routes', 'proofs'] as const;
+
+/** T70 §3 — the mobile drawer is exactly these five and nothing else. */
+export const CONSOLE_DRAWER_SECTIONS_V1 = [...CONSOLE_PRIMARY_SECTIONS_V1, 'settings'] as const;
+
+export function consoleSectionLabelV1(section: ConsoleSectionV1): string {
+  return CONSOLE_SECTION_TABLE_V1[section].label;
+}
+
+export function consoleSectionPathV1(section: ConsoleSectionV1): string {
+  return CONSOLE_SECTION_TABLE_V1[section].path;
+}
+
+/**
+ * Which section a path belongs to.
+ *
+ * Prefix-matched so `/portfolio/0xabc…` still highlights Portfolio, and the
+ * legacy paths keep resolving — a bookmark from before this file existed is not
+ * a reason to show no active tab.
+ */
+export function consoleSectionFromPathV1(path: string): ConsoleSectionV1 | null {
+  const clean = (path.split('?')[0] ?? '').replace(/\/+$/, '') || '/';
+  const LEGACY_V1: Record<string, ConsoleSectionV1> = {
+    '/': 'routes',
+    '/b20': 'portfolio',
+  };
+  if (LEGACY_V1[clean]) return LEGACY_V1[clean];
+  for (const section of CONSOLE_SECTIONS_V1) {
+    const base = CONSOLE_SECTION_TABLE_V1[section].path;
+    if (clean === base || clean.startsWith(`${base}/`)) return section;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Availability
+// ---------------------------------------------------------------------------
+
+export interface ConsoleNavItemV1 {
+  id: ConsoleSectionV1;
+  label: string;
+  compactLabel: string;
+  path: string;
+  active: boolean;
+  /** False when the surface is mounted but cannot be used right now. */
+  available: boolean;
+  /**
+   * T70 §6 — present exactly when `available` is false. A greyed-out control
+   * with no words is a dead end: the user cannot tell "not yet" from "broken"
+   * from "you did something wrong", and low contrast is not an explanation.
+   */
+  unavailableReason: string | null;
+}
+
+export interface ConsoleNavInputV1 {
+  /**
+   * The sections this surface actually mounts. T70 §4: a tab whose handler is
+   * not wired is not rendered at all — a button that navigates nowhere is worse
+   * than an absent one, because it looks like a broken product rather than an
+   * unfinished one.
+   */
+  mounted: readonly ConsoleSectionV1[];
+  active: ConsoleSectionV1 | null;
+  /** Sections that are mounted but temporarily unusable, with the reason. */
+  unavailable?: Partial<Record<ConsoleSectionV1, string>>;
+}
+
+export function consoleNavModelV1(input: ConsoleNavInputV1): ConsoleNavItemV1[] {
+  const mounted = new Set(input.mounted);
+  return CONSOLE_SECTIONS_V1.filter((section) => mounted.has(section)).map((section) => {
+    const definition = CONSOLE_SECTION_TABLE_V1[section];
+    const reason = input.unavailable?.[section] ?? null;
+    return {
+      id: section,
+      label: definition.label,
+      compactLabel: definition.compactLabel,
+      path: definition.path,
+      // An unusable section is never the active one: navigating to a surface
+      // that cannot answer is how a user ends up staring at a blank column.
+      active: input.active === section && reason === null,
+      available: reason === null,
+      unavailableReason: reason,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Where the product opens
+// ---------------------------------------------------------------------------
+
+/**
+ * Mirrors `B20_PIPELINE_STATES_V1` in lib/opportunity-rail.
+ *
+ * Mirrored rather than imported: lib/ui is compiled by the miniapp at ES2017,
+ * and opportunity-rail's barrel reaches modules with BigInt literals, which are
+ * a compile error at that target. `navigation.test.ts` reads the other file
+ * from disk and fails if the two lists ever diverge, so this is a copy that
+ * cannot rot silently.
+ */
+export const CONSOLE_PIPELINE_STATES_V1 = [
+  'configuration_required',
+  'ingestion_not_started',
+  'ingestion_catching_up',
+  'measurement_pending',
+  'healthy',
+  'degraded',
+  'decoder_mismatch',
+  'storage_unavailable',
+] as const;
+
+export type ConsolePipelineStateV1 = (typeof CONSOLE_PIPELINE_STATES_V1)[number];
+
+export interface ConsoleHomeInputV1 {
+  /** Null when the feed endpoint itself could not be reached. */
+  pipeline: { state: ConsolePipelineStateV1; message: string } | null;
+  /** How many measured opportunities the feed returned. */
+  observationCount: number;
+  /** Portfolio needs a wallet; Routes does not. */
+  walletConnected: boolean;
+}
+
+export interface ConsoleHomeV1 {
+  section: ConsoleSectionV1;
+  /**
+   * Why the user is here rather than on Opportunities, or what Opportunities is
+   * currently doing. Null only when the feed is healthy AND has something in
+   * it — the one case that needs no explanation.
+   */
+  notice: string | null;
+  /**
+   * Whether the Opportunities surface may draw a card list. False means the
+   * pipeline has something to say first, and an empty list underneath it would
+   * read as "nothing is out there" (§1, §9.2).
+   */
+  feedRenderable: boolean;
+}
+
+/** States where Discover cannot produce a feed at all and the user belongs
+ * somewhere that works. */
+const DISCOVER_UNAVAILABLE_V1: ReadonlySet<ConsolePipelineStateV1> = new Set([
+  'configuration_required',
+  'storage_unavailable',
+  'decoder_mismatch',
+]);
+
+export const CONSOLE_DISCOVER_UNREACHABLE_COPY_V1 =
+  'Discover could not be reached on this server, so there is no launch feed. This says nothing about what is launching.';
+
+/**
+ * T70 §1 — the home screen.
+ *
+ * The rule that matters is the negative one: Opportunities may render an empty
+ * card list ONLY when the pipeline is healthy. Every other state routes the
+ * user somewhere useful or shows the pipeline's own sentence, because "no
+ * opportunities" and "nothing is running" look identical from an empty array
+ * and mean opposite things.
+ */
+export function consoleHomeSectionV1(input: ConsoleHomeInputV1): ConsoleHomeV1 {
+  const { pipeline } = input;
+
+  if (pipeline === null) {
+    return {
+      section: input.walletConnected ? 'portfolio' : 'routes',
+      notice: CONSOLE_DISCOVER_UNREACHABLE_COPY_V1,
+      feedRenderable: false,
+    };
+  }
+
+  if (DISCOVER_UNAVAILABLE_V1.has(pipeline.state)) {
+    // Portfolio still works without Discover — it reads the chain directly for
+    // tokens the user already holds. Routes works without a wallet.
+    return {
+      section: input.walletConnected ? 'portfolio' : 'routes',
+      notice: pipeline.message,
+      feedRenderable: false,
+    };
+  }
+
+  if (pipeline.state === 'healthy') {
+    return {
+      section: 'opportunities',
+      notice: input.observationCount > 0 ? null : pipeline.message,
+      feedRenderable: true,
+    };
+  }
+
+  // Catching up, waiting on measurement, never started, or degraded: the
+  // surface is the right one, but the pipeline speaks first and any cards it
+  // does have are shown underneath.
+  return {
+    section: 'opportunities',
+    notice: pipeline.message,
+    feedRenderable: input.observationCount > 0,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// T70 §2 — the compact paid-evidence status
+// ---------------------------------------------------------------------------
+
+export interface PaidEvidenceStripV1 {
+  /** "Paid evidence: Off" / "Paid evidence: Active". */
+  label: string;
+  /** What still works. Never blank: the point of the strip is reassurance. */
+  detail: string;
+  /**
+   * Whether to offer the Settings link. False when there is no Settings surface
+   * mounted — the strip then states the situation and stops.
+   */
+  settingsAvailable: boolean;
+  /**
+   * Present when the user might otherwise expect a control here and there is
+   * none. §2: no fake configure button while the permission flow does not
+   * exist.
+   */
+  permissionNotice: string | null;
+}
+
+export const CONSOLE_PERMISSION_UNAVAILABLE_COPY_V1 =
+  'Granting a wallet spending permission is not available yet, so paid evidence cannot be switched on from here.';
+
+export interface PaidEvidenceStripInputV1 {
+  /** From `paidIntelligenceViewV1`. */
+  label: string;
+  moneyAtRisk: boolean;
+  /** True when the state's remedy is `create_permission`. */
+  needsPermission: boolean;
+  /** Whether that flow is actually built. */
+  permissionFlowAvailable: boolean;
+  settingsAvailable: boolean;
+}
+
+/**
+ * The one-line form of Budget & payments.
+ *
+ * T70 §2 takes the full panel off the top of Home and Routes. It is not
+ * deleted — it is a thing you adjust occasionally and read never, and it was
+ * occupying the first screen of a product whose first screen should be an
+ * opportunity or an action.
+ */
+export function paidEvidenceStripV1(input: PaidEvidenceStripInputV1): PaidEvidenceStripV1 {
+  return {
+    label: `Paid evidence: ${input.label}`,
+    detail: input.moneyAtRisk
+      ? 'A charge needs reconciliation. Open Settings — free comparison is unaffected.'
+      : 'Free comparison available',
+    settingsAvailable: input.settingsAvailable,
+    permissionNotice:
+      input.needsPermission && !input.permissionFlowAvailable ? CONSOLE_PERMISSION_UNAVAILABLE_COPY_V1 : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// T70 §7 — the empty right rail
+// ---------------------------------------------------------------------------
+
+export const CONSOLE_NO_ANALYSIS_TITLE_V1 = 'No active analysis';
+export const CONSOLE_NO_ANALYSIS_COPY_V1 =
+  'Price, pool depth, evidence, spend and freshness appear here once a goal is running. Nothing has been measured yet.';
+
+/**
+ * Whether the right rail has anything to say.
+ *
+ * Four empty panels stacked down a 330px column read as four separate failures.
+ * They are one fact — nothing has been asked yet — and it is stated once.
+ */
+export function rightRailHasContentV1(model: {
+  price: unknown;
+  depth: unknown;
+  spend: unknown;
+  evidenceFeed: readonly unknown[];
+  freshness: readonly unknown[];
+}): boolean {
+  return Boolean(
+    model.price ||
+      model.depth ||
+      model.spend ||
+      model.evidenceFeed.length > 0 ||
+      model.freshness.length > 0,
+  );
+}

@@ -837,6 +837,37 @@ export function useB20Watchlist(options?: { enabled?: boolean }) {
   });
 }
 
+/**
+ * T70 §1 — the Discover feed behind the Opportunities home screen.
+ *
+ * Read-only. It cannot create a clearance, prepare a plan or reach a wallet;
+ * the response is display context over evidence the workers already stored.
+ *
+ * `retry: false` on purpose: every failure mode this endpoint has — the flag
+ * off, no migration, no start block, storage down — answers identically on the
+ * second attempt, and the pipeline status in the body already explains which
+ * one it is. Retrying just delays that sentence reaching the screen.
+ */
+export function useB20Opportunities(
+  input?: { state?: 'all' | 'candidate' | 'provisional' | 'rejected' | 'unmeasured'; freshness?: 'all' | 'fresh' | 'stale'; limit?: number },
+  options?: { enabled?: boolean; refetchInterval?: number | false },
+) {
+  const state = input?.state ?? 'all';
+  const freshness = input?.freshness ?? 'all';
+  const limit = input?.limit ?? 25;
+  return useQuery({
+    queryKey: ['b20-opportunities', state, freshness, limit],
+    queryFn: async () => {
+      const query = new URLSearchParams({ state, freshness, limit: String(limit) });
+      const response = await fetchApi<unknown>(`/api/route-intelligence/opportunities/b20?${query.toString()}`);
+      return apiSpec.B20OpportunityFeedResponseV1Schema.parse(response);
+    },
+    retry: false,
+    enabled: options?.enabled !== false,
+    refetchInterval: options?.refetchInterval ?? false,
+  });
+}
+
 export function useAddB20Watch(
   options?: Omit<UseMutationOptions<apiSpec.B20WatchlistResponseV1, Error, { tokenAddress: string }>, 'mutationFn'>,
 ) {

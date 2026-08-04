@@ -31,7 +31,9 @@ async function testFiles(directory: string): Promise<string[]> {
       if (!ignoredDirectories.has(entry.name)) files.push(...await testFiles(join(directory, entry.name)));
       continue;
     }
-    if (/\.test\.(?:ts|js|mjs)$/.test(entry.name)) {
+    // `.tsx` included since T70: lib/ui's rendering tests are written in JSX,
+    // and three of them had never been executed by this runner at all.
+    if (/\.test\.(?:tsx|ts|js|mjs)$/.test(entry.name)) {
       files.push(relative(root, join(directory, entry.name)).replaceAll('\\', '/'));
     }
   }
