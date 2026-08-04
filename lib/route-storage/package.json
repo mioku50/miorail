@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@mioagent/b20-control": "workspace:*",
+    "@mioagent/opportunity-rail": "workspace:*",
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/route-outcomes": "workspace:*",
     "zod": "^3.25.76"

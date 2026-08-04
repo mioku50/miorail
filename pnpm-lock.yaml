@@ -924,6 +924,9 @@ importers:
       '@mioagent/b20-control':
         specifier: workspace:*
         version: link:../b20-control
+      '@mioagent/opportunity-rail':
+        specifier: workspace:*
+        version: link:../opportunity-rail
       '@mioagent/route-domain':
         specifier: workspace:*
         version: link:../route-domain

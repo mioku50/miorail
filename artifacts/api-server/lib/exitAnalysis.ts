@@ -100,6 +100,34 @@ export interface ExitAnalysisV1 {
    * all-empty result from a failing endpoint must never render as "no
    * liquidity". */
   endpointDegraded: boolean;
+
+  // --- T69-B additions --------------------------------------------------
+  // Additive only: every field below is new, and no existing caller's
+  // behaviour changes. They exist so the background feed can record HOW
+  // COMPLETE its search was and WHICH route it priced, rather than growing a
+  // second route search beside this one.
+
+  /** How many route candidates were offered, and how many actually answered.
+   * A `no_route` IS an answer — the pool does not exist — so only a transport
+   * failure leaves a candidate unanswered. */
+  candidatesTotal: number;
+  candidatesAnswered: number;
+  /** The legs actually priced, so a caller can hash or name them without
+   * re-deriving the search. Null when no route was found. */
+  entryRoute: AerodromeRouteLegV1[] | null;
+  exitRoute: AerodromeRouteLegV1[] | null;
+  /** The priced ladder samples behind `exitCapacity`, so a caller can store a
+   * deterministic hash over what was measured. */
+  probes: { sizeAtomic: string; slippageBps: number | null }[];
+}
+
+/** A readable, deterministic name for one route. Used as a stored source key,
+ * so a later reader can see which pools a measurement went through. */
+export function aerodromeRouteKeyV1(route: readonly AerodromeRouteLegV1[]): string {
+  return [
+    'aerodrome',
+    ...route.map((leg) => `${leg.from.toLowerCase()}>${leg.to.toLowerCase()}:${leg.stable ? 'stable' : 'volatile'}`),
+  ].join('|');
 }
 
 interface BestRouteV1 {
@@ -119,9 +147,9 @@ interface BestRouteV1 {
 async function bestRouteV1(
   reader: AerodromeReaderV1,
   input: { from: `0x${string}`; to: `0x${string}`; factory: `0x${string}`; amountIn: bigint },
-): Promise<{ best: BestRouteV1 | null; degraded: boolean; calls: number }> {
+): Promise<{ best: BestRouteV1 | null; degraded: boolean; calls: number; total: number; answered: number }> {
   const routes = candidateRoutesV1({ from: input.from, to: input.to, factory: input.factory });
-  if (routes.length === 0) return { best: null, degraded: false, calls: 0 };
+  if (routes.length === 0) return { best: null, degraded: false, calls: 0, total: 0, answered: 0 };
 
   const results = await readAmountsOutManyV1(
     reader,
@@ -129,18 +157,24 @@ async function bestRouteV1(
   );
   let best: BestRouteV1 | null = null;
   let degraded = false;
+  // A `no_route` counts as ANSWERED: the endpoint told us the pool does not
+  // exist. Only a transport failure leaves a candidate unheard from, and that
+  // is what makes coverage partial.
+  let answered = 0;
   results.forEach((result, index) => {
     if (!result.ok) {
+      if (result.reason === 'no_route') answered += 1;
       if (result.reason !== 'no_route' && result.reason !== 'invalid_response') degraded = true;
       return;
     }
+    answered += 1;
     const output = result.value[result.value.length - 1] ?? 0n;
     // Strictly greater, so the FIRST route wins a tie — and candidateRoutesV1
     // lists direct pools first. Fewer pools at equal output is the better
     // trade: less gas, less to go wrong.
     if (output > (best?.outputAtomic ?? 0n)) best = { route: routes[index]!, outputAtomic: output };
   });
-  return { best, degraded, calls: routes.length };
+  return { best, degraded, calls: routes.length, total: routes.length, answered };
 }
 
 /**
@@ -156,6 +190,13 @@ export async function analyseExitV1(input: ExitAnalysisInputV1): Promise<ExitAna
   const position = BigInt(input.profile.positionAtomic);
   let calls = 0;
   let degraded = false;
+  // T69-B: coverage is accumulated across BOTH searches, so a partial answer in
+  // either direction makes the whole measurement partial.
+  let candidatesTotal = 0;
+  let candidatesAnswered = 0;
+  let entryRoute: AerodromeRouteLegV1[] | null = null;
+  let exitRoute: AerodromeRouteLegV1[] | null = null;
+  let probes: { sizeAtomic: string; slippageBps: number | null }[] = [];
 
   /**
    * The verdict, unless the endpoint made it meaningless.
@@ -193,6 +234,11 @@ export async function analyseExitV1(input: ExitAnalysisInputV1): Promise<ExitAna
       exitRouteFound: false,
       quotesUsed: calls,
       endpointDegraded: degraded,
+      candidatesTotal,
+      candidatesAnswered,
+      entryRoute,
+      exitRoute,
+      probes,
       ...overrides,
     };
     return {
@@ -248,8 +294,11 @@ export async function analyseExitV1(input: ExitAnalysisInputV1): Promise<ExitAna
   });
   calls += entry.calls;
   degraded ||= entry.degraded;
+  candidatesTotal += entry.total;
+  candidatesAnswered += entry.answered;
   if (!entry.best) return empty();
   const acquired = entry.best.outputAtomic;
+  entryRoute = entry.best.route;
 
   // 2. The exit route, searched at the size actually acquired.
   const exit = await bestRouteV1(input.reader, {
@@ -260,7 +309,10 @@ export async function analyseExitV1(input: ExitAnalysisInputV1): Promise<ExitAna
   });
   calls += exit.calls;
   degraded ||= exit.degraded;
+  candidatesTotal += exit.total;
+  candidatesAnswered += exit.answered;
   if (!exit.best) return empty({ entryRouteFound: true });
+  exitRoute = exit.best.route;
 
   const roundTrip = roundTripV1({
     entry: {
@@ -297,6 +349,7 @@ export async function analyseExitV1(input: ExitAnalysisInputV1): Promise<ExitAna
   });
 
   const ladder = priceImpactLadderV1(quoted);
+  probes = ladder.probes;
   const capacity = exitCapacityV1(ladder.probes, input.profile.maxSlippageBps);
   const capacityInformative = exitLadderIsInformativeV1({
     referenceSizeAtomic: ladder.referenceSizeAtomic,
@@ -329,5 +382,10 @@ export async function analyseExitV1(input: ExitAnalysisInputV1): Promise<ExitAna
     exitRouteFound: true,
     quotesUsed: calls,
     endpointDegraded: degraded,
+    candidatesTotal,
+    candidatesAnswered,
+    entryRoute,
+    exitRoute,
+    probes,
   };
 }

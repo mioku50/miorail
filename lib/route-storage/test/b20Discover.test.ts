@@ -272,7 +272,7 @@ describe('a commit may not claim more than it read', () => {
   test('a launch from another decoder version cannot ride along', () => {
     const refusal = discoverCommitRefusalV1({
       cursor,
-      launches: [{ ...launchFixtureV1({ blockNumber: '1050' }), decoderVersion: 'b20-created/v9' }],
+      launches: [{ ...launchFixtureV1({ blockNumber: '1050' }), decoderVersion: 'b20-created/v9' as never }],
       nextBlock: '1100',
       nextBlockHash: hashV1('b'),
     });

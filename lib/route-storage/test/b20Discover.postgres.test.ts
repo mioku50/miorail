@@ -357,7 +357,10 @@ if (throwaway) {
   describeB20DiscoverRepositoryV1('postgres', async () => {
     await reset();
     const executor: SqlTemplateExecutor = (strings, ...values) =>
-      sql!(strings, ...values) as unknown as Promise<Record<string, unknown>[]>;
+      (sql as unknown as (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) => Promise<Record<string, unknown>[]>)(strings, ...values);
     return {
       repository: createDatabaseB20DiscoverRepository(executor),
       async breakWrites() {
