@@ -229,6 +229,46 @@ export const CONSOLE_DISCOVER_UNREACHABLE_COPY_V1 =
   'Discover could not be reached on this server, so there is no launch feed. This says nothing about what is launching.';
 
 /**
+ * Why the feed request failed, in the user's terms.
+ *
+ * The generic sentence above was the only thing this surface said, and it made
+ * four unrelated problems look identical: a server without the routes deployed,
+ * an expired session, unreachable storage, and a frontend newer than the API.
+ * Exactly one of those is fixed by pressing "Check again", so saying which is
+ * the difference between a useful screen and a shrug.
+ *
+ * Matched on stable codes and status numbers only — a server error can carry an
+ * endpoint, and an endpoint can carry a key, so the raw message is never shown.
+ */
+export function discoverFailureCopyV1(error: unknown): string {
+  if (!error) return CONSOLE_DISCOVER_UNREACHABLE_COPY_V1;
+  const message = error instanceof Error ? error.message : String(error);
+  const name = error instanceof Error ? error.name : '';
+
+  if (/\b404\b/.test(message) || message.includes('Cannot GET')) {
+    return 'This server does not serve the Discover feed yet. The opportunity API is part of a newer build than the one deployed here — nothing is wrong with the chain or your wallet.';
+  }
+  if (message.includes('authentication_required') || /\b401\b/.test(message)) {
+    return 'Your session is not valid for this server, so the launch feed was not read. Signing in again is the fix.';
+  }
+  if (message.includes('b20_control_disabled')) {
+    return 'B20 Discover is switched off on this server, so no launches are being read. This is not a statement about what is launching.';
+  }
+  if (message.includes('storage_unavailable')) {
+    return 'Discover storage did not answer on this server, so no stored launches could be read. Nothing here is a statement about what is launching.';
+  }
+  if (name === 'ZodError' || message.includes('invalid_type') || message.includes('unrecognized_keys')) {
+    // The specific failure a half-deployed stack produces, and the one that
+    // looks most like "there is nothing out there" if it is not named.
+    return 'This server answered with a launch feed this build does not understand. The API and this interface are on different versions.';
+  }
+  if (/\b5\d\d\b/.test(message)) {
+    return 'The server failed while reading the launch feed. Nothing here is a statement about what is launching.';
+  }
+  return CONSOLE_DISCOVER_UNREACHABLE_COPY_V1;
+}
+
+/**
  * T70 §1 — the home screen.
  *
  * The rule that matters is the negative one: Opportunities may render an empty

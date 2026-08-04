@@ -16,6 +16,8 @@ import {
   consoleHomeSectionV1,
   consoleNavModelV1,
   consoleSectionFromPathV1,
+  discoverFailureCopyV1,
+  CONSOLE_DISCOVER_UNREACHABLE_COPY_V1,
   paidEvidenceStripV1,
   rightRailHasContentV1,
   type ConsolePipelineStateV1,
@@ -588,5 +590,39 @@ describe('a card never turns a missing measurement into a number', () => {
         );
       }
     }
+  });
+});
+
+describe('a failed feed request names its own cause', () => {
+  test('four unrelated problems get four different sentences', () => {
+    // They all rendered as "Discover could not be reached", which is true of
+    // every one of them and useful for none.
+    const seen = new Set<string>();
+    for (const error of [
+      new Error('API error: 404 Not Found'),
+      new Error('authentication_required'),
+      new Error('b20_control_disabled'),
+      new Error('storage_unavailable'),
+      Object.assign(new Error('invalid_type at cards[0]'), { name: 'ZodError' }),
+      new Error('API error: 502 Bad Gateway'),
+    ]) {
+      const copy = discoverFailureCopyV1(error);
+      assert.ok(copy.length > 0);
+      assert.equal(seen.has(copy), false, `two causes share a sentence: ${copy}`);
+      seen.add(copy);
+    }
+  });
+
+  test('a server missing the routes says so, rather than blaming the chain', () => {
+    const copy = discoverFailureCopyV1(new Error('API error: 404 Not Found'));
+    assert.match(copy, /newer build/);
+    assert.match(copy, /nothing is wrong with the chain/i);
+  });
+
+  test('an unrecognised failure falls back rather than echoing the server', () => {
+    // A server error can carry an endpoint, and an endpoint can carry a key.
+    const copy = discoverFailureCopyV1(new Error('connect ECONNREFUSED 10.0.0.4:8080'));
+    assert.equal(copy, CONSOLE_DISCOVER_UNREACHABLE_COPY_V1);
+    assert.ok(!copy.includes('10.0.0.4'));
   });
 });
