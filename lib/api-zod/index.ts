@@ -3035,6 +3035,178 @@ export const B20EntryRecordSubmissionRequestV1Schema = z
   })
   .strict();
 
+// ---------------------------------------------------------------------------
+// T69-C — the public Discover feed.
+//
+// Everything below is a DISPLAY projection. There is no calldata in it, no
+// internal row id the client has no use for, no provider body and no
+// credential — a public feed is the surface with the widest audience and the
+// least context, so it carries only typed facts and the sentences that explain
+// them.
+//
+// Numeric measurements are nullable and are NEVER defaulted to zero: "not
+// measured" and "zero" are different answers, and a card showing 0.00% cost for
+// an unmeasured token is a lie with a decimal point in it.
+// ---------------------------------------------------------------------------
+
+export const B20PipelineStateV1Schema = z.enum([
+  'configuration_required',
+  'ingestion_not_started',
+  'ingestion_catching_up',
+  'measurement_pending',
+  'healthy',
+  'degraded',
+  'decoder_mismatch',
+  'storage_unavailable',
+]);
+
+/** §1 — why the feed looks the way it does. Public-safe facts only: no URL, no
+ * credential, no raw worker error. */
+export const B20PipelineStatusV1Schema = z
+  .object({
+    state: B20PipelineStateV1Schema,
+    /** The sentence a surface shows INSTEAD of "No opportunities". */
+    message: z.string().min(1),
+    blocksBehind: z.number().int().min(0).nullable(),
+    facts: z
+      .object({
+        ingestionCursorBlock: z.string().regex(/^\d+$/).nullable(),
+        confirmedHead: z.string().regex(/^\d+$/).nullable(),
+        lastIngestionRunAt: z.string().datetime().nullable(),
+        lastIngestionResult: z.string().max(64).nullable(),
+        lastMeasurementRunAt: z.string().datetime().nullable(),
+        canonicalLaunchCount: z.number().int().min(0),
+        launchesAwaitingMeasurement: z.number().int().min(0),
+        observationCount: z.number().int().min(0),
+        budgetExhausted: z.boolean(),
+        operatorState: z.string().max(64).nullable(),
+      })
+      .strict(),
+  })
+  .strict();
+
+const B20CardLaunchV1Schema = z
+  .object({
+    tokenAddress: z.string().regex(/^0x[0-9a-f]{40}$/),
+    name: z.string(),
+    symbol: z.string(),
+    variant: z.enum(['asset', 'stablecoin']),
+    decimals: z.number().int().min(0).max(255).nullable(),
+    blockNumber: z.string().regex(/^\d+$/),
+    transactionHash: z.string().regex(/^0x[0-9a-f]{64}$/),
+    logIndex: z.number().int().min(0),
+    detectedAt: z.string().datetime(),
+    ageSeconds: z.number().int().min(0),
+    canonical: z.boolean(),
+  })
+  .strict();
+
+const B20CardObservationV1Schema = z
+  .object({
+    state: z.enum(['candidate', 'provisional', 'rejected', 'unmeasured']),
+    reasonCode: z.string().max(64).nullable(),
+    headline: z.string().min(1),
+    detail: z.string().min(1),
+    referencePositionAtomic: z.string().regex(/^\d+$/),
+    referenceQuoteAsset: z.string().regex(/^0x[0-9a-f]{40}$/),
+    maxRoundTripBps: z.number().int(),
+    maxExitSlippageBps: z.number().int(),
+    entryRouteFound: z.boolean(),
+    exitRouteFound: z.boolean(),
+    entrySourceKey: z.string().max(200).nullable(),
+    exitSourceKey: z.string().max(200).nullable(),
+    optimisticReturnAtomic: z.string().regex(/^\d+$/).nullable(),
+    optimisticRoundTripBps: z.number().int().min(0).nullable(),
+    routeCoverage: z.enum(['complete', 'partial']),
+    viableRouteConfirmed: z.boolean(),
+    bestRouteConfirmed: z.boolean(),
+    largestPassingSizeAtomic: z.string().regex(/^\d+$/).nullable(),
+    firstFailingSizeAtomic: z.string().regex(/^\d+$/).nullable(),
+    capacityToleranceBps: z.number().int().min(0),
+    capacityProbeCount: z.number().int().min(0),
+    capacityStable: z.boolean().nullable(),
+    transfersPaused: z.boolean().nullable(),
+    transferPolicyState: z.enum(['open', 'restricted', 'unavailable', 'unsupported_by_variant']).nullable(),
+    transferPolicyNotice: z.string().nullable(),
+    controlsComplete: z.boolean().nullable(),
+    controlsBlockNumber: z.string().regex(/^\d+$/).nullable(),
+    observationBlockNumber: z.string().regex(/^\d+$/),
+    quoteAlignment: z.enum(['anchored', 'latest_not_anchored']),
+    quoteAlignmentNotice: z.string().nullable(),
+    preEntryNotice: z.string().nullable(),
+    measuredAt: z.string().datetime(),
+    staleAfter: z.string().datetime(),
+    freshness: z.enum(['fresh', 'stale']),
+  })
+  .strict()
+  .superRefine((observation, ctx) => {
+    if (observation.state === 'provisional' && !observation.preEntryNotice) {
+      // §6 — the number beside it is a bound, and the sentence saying so is not
+      // optional.
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'a provisional card must carry the pre-entry notice' });
+    }
+    if ((observation.state === 'rejected' || observation.state === 'unmeasured') && !observation.reasonCode) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'a negative card must name its reason' });
+    }
+    if (observation.quoteAlignment === 'latest_not_anchored' && !observation.quoteAlignmentNotice) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'unanchored quotes must be stated on the card' });
+    }
+    if (observation.bestRouteConfirmed && observation.routeCoverage !== 'complete') {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'a best-route claim needs complete coverage' });
+    }
+  });
+
+export const B20OpportunityCardV1Schema = z
+  .object({
+    schemaVersion: z.literal('b20-opportunity-card/v1'),
+    launch: B20CardLaunchV1Schema,
+    observation: B20CardObservationV1Schema.nullable(),
+    canCheckProfile: z.boolean(),
+    notMeasured: z.array(z.string()).max(20),
+  })
+  .strict();
+
+export const B20OpportunityFeedResponseV1Schema = z
+  .object({
+    pipeline: B20PipelineStatusV1Schema,
+    cards: z.array(B20OpportunityCardV1Schema).max(100),
+    nextCursor: z.string().max(500).nullable(),
+    /** Server time, so a client computes staleness against the same clock the
+     * observations were stamped with. */
+    serverTime: z.string().datetime(),
+  })
+  .strict();
+
+export const B20OpportunityDetailResponseV1Schema = z
+  .object({
+    card: B20OpportunityCardV1Schema,
+    /** Bounded history, newest first. Kept visible when stale — it is what was
+     * true when somebody looked. */
+    history: z
+      .array(
+        z
+          .object({
+            state: z.enum(['candidate', 'provisional', 'rejected', 'unmeasured']),
+            reasonCode: z.string().max(64).nullable(),
+            observationBlockNumber: z.string().regex(/^\d+$/),
+            optimisticRoundTripBps: z.number().int().min(0).nullable(),
+            largestPassingSizeAtomic: z.string().regex(/^\d+$/).nullable(),
+            measuredAt: z.string().datetime(),
+            staleAfter: z.string().datetime(),
+          })
+          .strict(),
+      )
+      .max(50),
+    pipeline: B20PipelineStatusV1Schema,
+    serverTime: z.string().datetime(),
+  })
+  .strict();
+
+export type B20PipelineStatusV1Wire = z.infer<typeof B20PipelineStatusV1Schema>;
+export type B20OpportunityCardV1Wire = z.infer<typeof B20OpportunityCardV1Schema>;
+export type B20OpportunityFeedResponseV1 = z.infer<typeof B20OpportunityFeedResponseV1Schema>;
+export type B20OpportunityDetailResponseV1 = z.infer<typeof B20OpportunityDetailResponseV1Schema>;
+
 export const B20EntryStatusResponseV1Schema = z
   .object({
     review: B20EntryReviewV1Schema,

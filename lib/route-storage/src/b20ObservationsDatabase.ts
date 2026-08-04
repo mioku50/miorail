@@ -1,7 +1,11 @@
 import {
+  B20_MEASUREMENT_VERSION_V1,
   B20_MEASURE_LANE_V1,
   assertObservationV1,
+  decodeFeedCursorV1,
+  encodeFeedCursorV1,
   observationConflictV1,
+  type B20FeedRowV1,
   type B20MeasurableLaunchV1,
   type B20MeasureLeaseV1,
   type B20ObservationRepositoryV1,
@@ -253,5 +257,170 @@ export function createDatabaseB20ObservationRepository(
         SET lease_owner = NULL, lease_expires_at = NULL, updated_at = ${input.now}::timestamptz
         WHERE id = ${B20_MEASURE_LANE_V1} AND lease_owner = ${input.owner}`;
     },
+
+    async listFeed(input) {
+      const versions = [...(input.measurementVersions ?? [B20_MEASUREMENT_VERSION_V1])];
+      const limit = Math.max(1, Math.min(100, input.limit));
+      const states = [...(input.states ?? [])];
+      const after = input.cursor ? decodeFeedCursorV1(input.cursor) : null;
+      if (input.cursor && !after) {
+        // A malformed cursor is refused rather than silently restarting the
+        // feed, which would look to a caller like duplicated results.
+        throw observationConflictV1('The pagination cursor is not readable');
+      }
+      const oldest =
+        input.maxLaunchAgeMs == null ? null : new Date(Date.parse(input.now) - input.maxLaunchAgeMs);
+
+      // ONE query. The latest observation per launch is a LATERAL, so the feed
+      // costs one round trip whatever the page size — an observation read per
+      // launch would be N+1 against a list that grows with every B20 launch.
+      //
+      // `l.canonical` is in the WHERE clause, not filtered afterwards: a launch
+      // the chain took back is not something a user should be offered.
+      const rows = await sql`
+        SELECT
+          l.id AS launch_id, l.token_address, l.name, l.symbol, l.variant, l.decimals,
+          l.block_number AS launch_block, l.transaction_hash, l.log_index, l.detected_at, l.canonical,
+          o.*
+        FROM b20_launches l
+        LEFT JOIN LATERAL (
+          SELECT *
+          FROM b20_opportunity_observations obs
+          WHERE obs.launch_id = l.id
+            AND obs.measurement_version = ANY(${versions}::text[])
+          -- A total order, so "the latest" never depends on the planner.
+          ORDER BY obs.measured_at DESC, obs.observation_block_number DESC, obs.id DESC
+          LIMIT 1
+        ) o ON true
+        WHERE l.canonical
+          AND l.chain_id = 8453
+          AND (${oldest}::timestamptz IS NULL OR l.detected_at >= ${oldest}::timestamptz)
+          AND (${states.length} = 0 OR o.state = ANY(${states}::text[]))
+          AND (
+            ${after === null}
+            OR (l.block_number, coalesce(o.measured_at, '-infinity'::timestamptz), l.id)
+               < (
+                 ${after?.launchBlockNumber ?? '0'}::numeric(78,0),
+                 coalesce(${after?.measuredAt ?? null}::timestamptz, '-infinity'::timestamptz),
+                 ${after?.launchId ?? ''}
+               )
+          )
+        ORDER BY l.block_number DESC, coalesce(o.measured_at, '-infinity'::timestamptz) DESC, l.id DESC
+        LIMIT ${limit + 1}`;
+
+      // One extra row is read purely to know whether a next page exists,
+      // without a second count query that could disagree with this one.
+      const page = rows.slice(0, limit).map((row) => feedRowV1(row as Record<string, unknown>));
+      const last = page[page.length - 1];
+      return {
+        rows: page,
+        nextCursor:
+          rows.length > limit && last
+            ? encodeFeedCursorV1({
+                launchBlockNumber: last.launch.blockNumber,
+                measuredAt: last.observation?.measuredAt ?? null,
+                launchId: last.launch.id,
+              })
+            : null,
+      };
+    },
+
+    async getFeedRowForToken(input) {
+      const versions = [...(input.measurementVersions ?? [B20_MEASUREMENT_VERSION_V1])];
+      const rows = await sql`
+        SELECT
+          l.id AS launch_id, l.token_address, l.name, l.symbol, l.variant, l.decimals,
+          l.block_number AS launch_block, l.transaction_hash, l.log_index, l.detected_at, l.canonical,
+          o.*
+        FROM b20_launches l
+        LEFT JOIN LATERAL (
+          SELECT * FROM b20_opportunity_observations obs
+          WHERE obs.launch_id = l.id AND obs.measurement_version = ANY(${versions}::text[])
+          ORDER BY obs.measured_at DESC, obs.observation_block_number DESC, obs.id DESC
+          LIMIT 1
+        ) o ON true
+        WHERE l.canonical AND l.chain_id = 8453 AND l.token_address = ${input.tokenAddress.toLowerCase()}
+        -- The most recent canonical launch of this address. A token relaunched
+        -- by a second event is a second launch, and the newest one is the live
+        -- subject.
+        ORDER BY l.block_number DESC, l.log_index DESC
+        LIMIT 1`;
+      const row = rows[0] as Record<string, unknown> | undefined;
+      if (!row) return null;
+      const mapped = feedRowV1(row);
+      const history = await sql`
+        SELECT * FROM b20_opportunity_observations
+        WHERE launch_id = ${mapped.launch.id}
+        ORDER BY measured_at DESC, id DESC
+        LIMIT ${Math.max(1, Math.min(50, input.historyLimit))}`;
+      return {
+        row: mapped,
+        history: history.map((entry) => rowToObservationV1(entry as Record<string, unknown>)),
+      };
+    },
+
+    async pipelineCounts(input) {
+      const oldest = new Date(Date.parse(input.now) - input.maxLaunchAgeMs);
+      // One round trip for every count the pipeline status needs. A status
+      // assembled from several queries could describe a pipeline that never
+      // existed at any single moment.
+      const rows = await sql`
+        SELECT
+          (SELECT count(*)::int FROM b20_launches WHERE canonical) AS canonical_launches,
+          (SELECT count(*)::int FROM b20_launches l
+             WHERE l.canonical AND l.detected_at >= ${oldest}::timestamptz
+               AND NOT EXISTS (
+                 SELECT 1 FROM b20_opportunity_observations o
+                 WHERE o.launch_id = l.id AND o.measurement_version = ${B20_MEASUREMENT_VERSION_V1}
+               )) AS awaiting_measurement,
+          (SELECT count(*)::int FROM b20_opportunity_observations) AS observations,
+          (SELECT max(measured_at) FROM b20_opportunity_observations) AS last_measurement_at,
+          c.last_processed_block, c.operator_state,
+          r.finished_at AS last_run_at, r.result AS last_result,
+          r.confirmed_head, r.budget_exhausted
+        FROM (SELECT 1) AS one
+        LEFT JOIN b20_discover_cursors c ON true
+        LEFT JOIN LATERAL (
+          SELECT finished_at, result, confirmed_head, budget_exhausted
+          FROM b20_discover_runs
+          ORDER BY started_at DESC, id DESC
+          LIMIT 1
+        ) r ON true
+        LIMIT 1`;
+      const row = (rows[0] ?? {}) as Record<string, unknown>;
+      return {
+        canonicalLaunchCount: Number(row.canonical_launches ?? 0),
+        launchesAwaitingMeasurement: Number(row.awaiting_measurement ?? 0),
+        observationCount: Number(row.observations ?? 0),
+        ingestionCursorBlock: digitsOrNullV1(row.last_processed_block),
+        ingestionOperatorState: (row.operator_state as string | null) ?? null,
+        lastIngestionRunAt: isoOrNullV1(row.last_run_at),
+        lastIngestionResult: (row.last_result as string | null) ?? null,
+        lastIngestionConfirmedHead: digitsOrNullV1(row.confirmed_head),
+        lastIngestionBudgetExhausted: Boolean(row.budget_exhausted),
+        lastMeasurementRunAt: isoOrNullV1(row.last_measurement_at),
+      };
+    },
+  };
+}
+
+/** A joined launch + latest-observation row. The observation half is null
+ * whenever the LATERAL matched nothing, which is a real state. */
+function feedRowV1(row: Record<string, unknown>): B20FeedRowV1 {
+  return {
+    launch: {
+      id: String(row.launch_id),
+      tokenAddress: String(row.token_address),
+      name: String(row.name),
+      symbol: String(row.symbol),
+      variant: row.variant as 'asset' | 'stablecoin',
+      decimals: row.decimals === null || row.decimals === undefined ? null : Number(row.decimals),
+      blockNumber: String(row.launch_block),
+      transactionHash: String(row.transaction_hash),
+      logIndex: Number(row.log_index),
+      detectedAt: isoV1(row.detected_at),
+      canonical: Boolean(row.canonical),
+    },
+    observation: row.state ? rowToObservationV1(row) : null,
   };
 }

@@ -227,7 +227,9 @@ describeB20ObservationRepositoryV1('in-memory', async () => {
   return {
     repository,
     async seedLaunch(input) {
-      await launches.initialiseCursor({ key: LANE, startBlock: '1000', now: '2026-08-04T00:00:00.000Z' });
+      // Just below the first launch block the contract seeds, so every commit
+      // moves the cursor forward exactly as a real pass would.
+      await launches.initialiseCursor({ key: LANE, startBlock: '999', now: '2026-08-04T00:00:00.000Z' });
       await launches.acquireWorkerLease({
         key: LANE,
         owner: 'seed',
@@ -240,7 +242,7 @@ describeB20ObservationRepositoryV1('in-memory', async () => {
         owner: 'seed',
         launches: [
           launchFixtureV1({
-            blockNumber: '1050',
+            blockNumber: input.blockNumber ?? '1050',
             transactionHash: transactionHash!,
             logIndex: 0,
             tokenAddress: input.tokenAddress,
@@ -248,9 +250,16 @@ describeB20ObservationRepositoryV1('in-memory', async () => {
             createdAt: input.detectedAt,
           }),
         ],
-        nextBlock: '1100',
+        // Each seed is its own commit, so the cursor moves to exactly the block
+        // it just took — the repository refuses a commit that does not advance,
+        // and one that claims blocks past the launch it carries.
+        nextBlock: input.blockNumber ?? '1050',
         nextBlockHash: observationHashV1('b'),
-        run: runFixtureV1(),
+        run: runFixtureV1({
+          id: `seed-${input.id}`,
+          startCursorBlock: '999',
+          endCursorBlock: input.blockNumber ?? '1050',
+        }),
         now: '2026-08-04T00:00:00.000Z',
       });
       await launches.releaseWorkerLease({ key: LANE, owner: 'seed', now: '2026-08-04T00:00:00.000Z' });

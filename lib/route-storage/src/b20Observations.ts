@@ -279,6 +279,53 @@ export interface B20ObservationInsertResultV1 {
   inserted: boolean;
 }
 
+/**
+ * §2 — one canonical launch with its LATEST observation, if it has one.
+ *
+ * The join is done in the database, once, for the whole page. A feed that read
+ * observations per launch would be N+1 queries against a list that grows with
+ * every launch on Base.
+ */
+export interface B20FeedRowV1 {
+  launch: {
+    id: string;
+    tokenAddress: string;
+    name: string;
+    symbol: string;
+    variant: 'asset' | 'stablecoin';
+    decimals: number | null;
+    blockNumber: string;
+    transactionHash: string;
+    logIndex: number;
+    detectedAt: string;
+    canonical: boolean;
+  };
+  /** Null when this launch has never been measured. A real state, and not the
+   * same as a measurement that found nothing. */
+  observation: B20OpportunityObservationV1 | null;
+}
+
+export interface B20FeedPageV1 {
+  rows: B20FeedRowV1[];
+  /** Opaque. Encodes the deterministic ordering key of the last row, so a page
+   * boundary cannot shift when newer launches arrive above it. */
+  nextCursor: string | null;
+}
+
+/** §1 — the counts the pipeline status is computed from. */
+export interface B20PipelineCountsV1 {
+  canonicalLaunchCount: number;
+  launchesAwaitingMeasurement: number;
+  observationCount: number;
+  ingestionCursorBlock: string | null;
+  ingestionOperatorState: string | null;
+  lastIngestionRunAt: string | null;
+  lastIngestionResult: string | null;
+  lastIngestionConfirmedHead: string | null;
+  lastIngestionBudgetExhausted: boolean;
+  lastMeasurementRunAt: string | null;
+}
+
 export interface B20MeasureLeaseV1 {
   id: string;
   leaseOwner: string | null;
@@ -289,6 +336,44 @@ export interface B20MeasureLeaseV1 {
 
 /** The one measurement lane this build runs. */
 export const B20_MEASURE_LANE_V1 = 'b20-opportunity-measure/v1';
+
+/**
+ * §3 — the opaque page cursor.
+ *
+ * It encodes the full ordering key, not an offset. A feed that grows at the top
+ * would make offset pagination repeat or skip rows as launches arrive; a
+ * key-based cursor asks for "everything strictly after this exact row" and is
+ * therefore stable whatever appears above it.
+ *
+ * Opaque on purpose: it is a position in an ordering this build defines, not a
+ * public identifier, and a client that parsed it would be depending on an
+ * ordering that is free to change.
+ */
+export function encodeFeedCursorV1(input: {
+  launchBlockNumber: string;
+  measuredAt: string | null;
+  launchId: string;
+}): string {
+  const payload = [input.launchBlockNumber, input.measuredAt ?? '', input.launchId].join(' ');
+  return Buffer.from(payload, 'utf8').toString('base64url');
+}
+
+export function decodeFeedCursorV1(
+  cursor: string,
+): { launchBlockNumber: string; measuredAt: string | null; launchId: string } | null {
+  try {
+    const parts = Buffer.from(cursor, 'base64url').toString('utf8').split(' ');
+    if (parts.length !== 3) return null;
+    const [launchBlockNumber, measuredAt, launchId] = parts as [string, string, string];
+    if (!/^\d+$/.test(launchBlockNumber) || launchId.length === 0) return null;
+    if (measuredAt !== '' && Number.isNaN(Date.parse(measuredAt))) return null;
+    return { launchBlockNumber, measuredAt: measuredAt === '' ? null : measuredAt, launchId };
+  } catch {
+    // A malformed cursor is refused rather than treated as "start from the
+    // top": silently restarting a paginated feed looks like duplicated results.
+    return null;
+  }
+}
 
 /**
  * §9 — the contract both repositories implement.
@@ -331,4 +416,39 @@ export interface B20ObservationRepositoryV1 {
 
   acquireMeasureLease(input: { owner: string; now: string; ttlMs: number }): Promise<B20MeasureLeaseV1 | null>;
   releaseMeasureLease(input: { owner: string; now: string }): Promise<void>;
+
+  /**
+   * §2/§3 — one page of the feed, newest launch first.
+   *
+   * ONLY CANONICAL LAUNCHES. A launch the chain took back is not something a
+   * user should be offered, whatever was measured about it before.
+   *
+   * Ordering is (launch block DESC, measuredAt DESC, launch id DESC) — the last
+   * key is a stable tie-break so a page boundary is a total order rather than
+   * "whatever the planner returned". `cursor` is that key, opaque to the
+   * client: offset pagination over a feed that grows at the top would silently
+   * repeat or skip rows as launches arrive.
+   */
+  listFeed(input: {
+    limit: number;
+    cursor?: string | null;
+    states?: readonly B20OpportunityObservationV1['state'][];
+    /** Only launches detected within this window. */
+    maxLaunchAgeMs?: number | null;
+    now: string;
+    /** Supported measurement versions. An observation written by a version this
+     * build does not understand is not shown as a current measurement. */
+    measurementVersions?: readonly string[];
+  }): Promise<B20FeedPageV1>;
+
+  /** §4 — one launch, its latest observation and a bounded history. Null when
+   * no canonical launch exists for the address. */
+  getFeedRowForToken(input: {
+    tokenAddress: string;
+    historyLimit: number;
+    measurementVersions?: readonly string[];
+  }): Promise<{ row: B20FeedRowV1; history: B20OpportunityObservationV1[] } | null>;
+
+  /** §1 — the counts behind the pipeline status, in one round trip. */
+  pipelineCounts(input: { now: string; maxLaunchAgeMs: number }): Promise<B20PipelineCountsV1>;
 }

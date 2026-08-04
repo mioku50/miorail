@@ -23,7 +23,12 @@ export interface B20ObservationHarnessV1 {
   repository: B20ObservationRepositoryV1;
   /** Insert a canonical launch the observations can hang off, returning its id.
    * Postgres has a foreign key; the fake must need one too. */
-  seedLaunch(input: { id: string; tokenAddress: string; detectedAt: string }): Promise<void>;
+  seedLaunch(input: {
+    id: string;
+    tokenAddress: string;
+    detectedAt: string;
+    blockNumber?: string;
+  }): Promise<void>;
 }
 
 const T0 = '2026-08-04T00:00:00.000Z';
@@ -269,4 +274,161 @@ export function describeB20ObservationRepositoryV1(
       assert.ok(await repository.acquireMeasureLease({ owner: 'c', now: T0, ttlMs: 600_000 }));
     });
   });
+
+  describe(`${name}: the feed is a stable, canonical-only page`, () => {
+    /** Three launches at ascending blocks, each with one observation. */
+    async function threeLaunches(): Promise<B20ObservationHarnessV1> {
+      const harness = await createHarness();
+      for (const [index, seed] of ['1', '2', '3'].entries()) {
+        await harness.seedLaunch({
+          id: `${observationHashV1(seed)}:0`,
+          tokenAddress: TOKEN,
+          detectedAt: T0,
+          blockNumber: String(1000 + index),
+        });
+        await harness.repository.insertObservation(
+          observationFixtureV1({
+            launchId: `${observationHashV1(seed)}:0`,
+            observationBlockNumber: String(49_500_000 + index),
+            measuredAt: new Date(Date.parse(T0) + index * 1000).toISOString(),
+            staleAfter: new Date(Date.parse(T0) + index * 1000 + 1_800_000).toISOString(),
+          }),
+        );
+      }
+      return harness;
+    }
+
+    test('the newest launch block comes first', async () => {
+      const { repository } = await threeLaunches();
+      const page = await repository.listFeed({ limit: 10, now: T0 });
+      assert.deepEqual(
+        page.rows.map((row) => row.launch.blockNumber),
+        ['1002', '1001', '1000'],
+      );
+      assert.ok(page.rows.every((row) => row.observation !== null));
+    });
+
+    test('a launch with no observation still appears, with none', async () => {
+      // §21.4 — the launch is real evidence. "Never measured" is a state, not
+      // a reason to hide it.
+      const harness = await createHarness();
+      await harness.seedLaunch({ id: `${observationHashV1('9')}:0`, tokenAddress: TOKEN, detectedAt: T0 });
+      const page = await harness.repository.listFeed({ limit: 10, now: T0 });
+      assert.equal(page.rows.length, 1);
+      assert.equal(page.rows[0]?.observation, null);
+    });
+
+    test('pagination stays stable while newer launches arrive', async () => {
+      // §21.8. The cursor encodes the ordering KEY, not an offset — a feed that
+      // grows at the top would make offset pagination repeat or skip rows.
+      const harness = await threeLaunches();
+      const first = await harness.repository.listFeed({ limit: 2, now: T0 });
+      assert.equal(first.rows.length, 2);
+      assert.ok(first.nextCursor);
+
+      // A newer launch arrives ABOVE the page boundary.
+      await harness.seedLaunch({
+        id: `${observationHashV1('4')}:0`,
+        tokenAddress: TOKEN,
+        detectedAt: T0,
+        blockNumber: '1009',
+      });
+
+      const second = await harness.repository.listFeed({
+        limit: 2,
+        cursor: first.nextCursor,
+        now: T0,
+      });
+      const seen = [...first.rows, ...second.rows].map((row) => row.launch.id);
+      assert.equal(new Set(seen).size, seen.length, 'no row is returned twice');
+      assert.ok(
+        !second.rows.some((row) => row.launch.blockNumber === '1009'),
+        'the newly arrived launch does not appear below the boundary',
+      );
+    });
+
+    test('the latest observation is chosen deterministically', async () => {
+      // §21.5. Two observations for one launch: the newest by measuredAt, and
+      // the tie broken to a total order rather than left to the planner.
+      const harness = await createHarness();
+      const launchId = `${observationHashV1('1')}:0`;
+      await harness.seedLaunch({ id: launchId, tokenAddress: TOKEN, detectedAt: T0 });
+      await harness.repository.insertObservation(observationFixtureV1());
+      await harness.repository.insertObservation(
+        observationFixtureV1({
+          observationBlockNumber: '49500100',
+          state: 'rejected',
+          reasonCode: 'transfers_paused',
+          transfersPaused: true,
+          measuredAt: '2026-08-04T00:10:00.000Z',
+          staleAfter: '2026-08-04T00:40:00.000Z',
+        }),
+      );
+      const page = await harness.repository.listFeed({ limit: 10, now: T0 });
+      assert.equal(page.rows[0]?.observation?.state, 'rejected', 'the newer measurement wins');
+      assert.equal(page.rows[0]?.observation?.observationBlockNumber, '49500100');
+      // Repeated reads agree.
+      const again = await harness.repository.listFeed({ limit: 10, now: T0 });
+      assert.equal(again.rows[0]?.observation?.id, page.rows[0]?.observation?.id);
+    });
+
+    test('a state filter selects only that state', async () => {
+      const harness = await threeLaunches();
+      const provisional = await harness.repository.listFeed({ limit: 10, now: T0, states: ['provisional'] });
+      assert.equal(provisional.rows.length, 3);
+      const rejected = await harness.repository.listFeed({ limit: 10, now: T0, states: ['rejected'] });
+      assert.equal(rejected.rows.length, 0);
+    });
+
+    test('an observation from an unsupported measurement version is not current', async () => {
+      // A row this build cannot interpret is not shown as the live measurement.
+      const harness = await createHarness();
+      await harness.seedLaunch({ id: `${observationHashV1('1')}:0`, tokenAddress: TOKEN, detectedAt: T0 });
+      await harness.repository.insertObservation(observationFixtureV1());
+      const page = await harness.repository.listFeed({
+        limit: 10,
+        now: T0,
+        measurementVersions: ['b20-observation/v99'],
+      });
+      assert.equal(page.rows.length, 1);
+      assert.equal(page.rows[0]?.observation, null);
+    });
+
+    test('one token resolves to its own launch and history', async () => {
+      // §4 — and never another token's observation, whatever it is called.
+      const harness = await createHarness();
+      await harness.seedLaunch({ id: `${observationHashV1('1')}:0`, tokenAddress: TOKEN, detectedAt: T0 });
+      await harness.repository.insertObservation(observationFixtureV1());
+      const found = await harness.repository.getFeedRowForToken({ tokenAddress: TOKEN, historyLimit: 10 });
+      assert.ok(found);
+      assert.equal(found.row.launch.tokenAddress, TOKEN);
+      assert.equal(found.history.length, 1);
+      assert.equal(
+        await harness.repository.getFeedRowForToken({
+          tokenAddress: '0xb200000000000000000000ffffffffffffffffff',
+          historyLimit: 10,
+        }),
+        null,
+        'an unknown address is not another token’s card',
+      );
+    });
+
+    test('the pipeline counts describe one moment', async () => {
+      const harness = await threeLaunches();
+      const counts = await harness.repository.pipelineCounts({ now: T0, maxLaunchAgeMs: 48 * 3_600_000 });
+      assert.equal(counts.canonicalLaunchCount, 3);
+      assert.equal(counts.observationCount, 3);
+      assert.equal(counts.launchesAwaitingMeasurement, 0);
+    });
+
+    test('a launch awaiting measurement is counted as such', async () => {
+      const harness = await createHarness();
+      await harness.seedLaunch({ id: `${observationHashV1('7')}:0`, tokenAddress: TOKEN, detectedAt: T0 });
+      const counts = await harness.repository.pipelineCounts({ now: T0, maxLaunchAgeMs: 48 * 3_600_000 });
+      assert.equal(counts.canonicalLaunchCount, 1);
+      assert.equal(counts.launchesAwaitingMeasurement, 1);
+      assert.equal(counts.observationCount, 0);
+    });
+  });
+
 }

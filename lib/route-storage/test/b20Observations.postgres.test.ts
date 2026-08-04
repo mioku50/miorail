@@ -115,9 +115,11 @@ async function reset(): Promise<void> {
 }
 
 /** A launch for the foreign key to point at. */
-async function seedLaunchRow(): Promise<void> {
+async function seedLaunchRow(overrides: { id?: string; blockNumber?: string } = {}): Promise<void> {
+  const id = overrides.id ?? LAUNCH_ID;
+  const [transactionHash] = id.split(':') as [string, string];
   await sql!`INSERT INTO b20_launches ${sql!({
-    id: LAUNCH_ID,
+    id,
     chain_id: 8453,
     factory_address: FACTORY,
     token_address: TOKEN,
@@ -125,9 +127,9 @@ async function seedLaunchRow(): Promise<void> {
     name: 'o1 mascot',
     symbol: 'DINo1',
     decimals: 18,
-    block_number: '1050',
+    block_number: overrides.blockNumber ?? '1050',
     block_hash: observationHashV1('a'),
-    transaction_hash: observationHashV1('1'),
+    transaction_hash: transactionHash,
     log_index: 0,
     detected_at: T0,
     confirmation_count: 12,
@@ -292,8 +294,8 @@ if (throwaway) {
       ) => Promise<Record<string, unknown>[]>)(strings, ...values);
     return {
       repository: createDatabaseB20ObservationRepository(executor),
-      async seedLaunch() {
-        await seedLaunchRow();
+      async seedLaunch(input) {
+        await seedLaunchRow({ id: input.id, blockNumber: input.blockNumber });
       },
     };
   });

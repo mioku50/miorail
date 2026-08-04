@@ -1,12 +1,18 @@
 import {
+  B20_MEASUREMENT_VERSION_V1,
   B20_MEASURE_LANE_V1,
   assertObservationV1,
+  decodeFeedCursorV1,
+  encodeFeedCursorV1,
   observationConflictV1,
   type B20MeasurableLaunchV1,
   type B20MeasureLeaseV1,
+  type B20FeedPageV1,
+  type B20FeedRowV1,
   type B20ObservationInsertResultV1,
   type B20ObservationRepositoryV1,
   type B20OpportunityObservationV1,
+  type B20PipelineCountsV1,
 } from './b20Observations.js';
 import type { InMemoryB20DiscoverRepositoryV1 } from './b20DiscoverMemory.js';
 
@@ -145,4 +151,193 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
     if (this.lease.leaseOwner !== input.owner) return;
     this.lease = { ...this.lease, leaseOwner: null, leaseExpiresAt: null, updatedAt: input.now };
   }
+
+  /** The latest supported observation for a launch, under the same
+   * deterministic ordering Postgres uses. */
+  private latestFor(launchId: string, versions: readonly string[]): B20OpportunityObservationV1 | null {
+    const candidates = [...this.observations.values()].filter(
+      (row) => row.launchId === launchId && versions.includes(row.measurementVersion),
+    );
+    if (candidates.length === 0) return null;
+    return candidates.sort((left, right) => {
+      const byTime = Date.parse(right.measuredAt) - Date.parse(left.measuredAt);
+      if (byTime !== 0) return byTime;
+      const byBlock = Number(BigInt(right.observationBlockNumber) - BigInt(left.observationBlockNumber));
+      if (byBlock !== 0) return byBlock;
+      // A total order, so "the latest" is never planner-dependent.
+      return right.id.localeCompare(left.id);
+    })[0]!;
+  }
+
+  private async canonicalLaunches(): Promise<
+    Awaited<ReturnType<InMemoryB20DiscoverRepositoryV1['listLaunches']>>
+  > {
+    return this.launches.listLaunches({
+      key: {
+        chainId: 8453,
+        factoryAddress: '0xb20f000000000000000000000000000000000000',
+        decoderVersion: 'b20-created/v1',
+      },
+      limit: 500,
+    });
+  }
+
+  private rowFor(
+    launch: Awaited<ReturnType<InMemoryB20DiscoverRepositoryV1['listLaunches']>>[number],
+    versions: readonly string[],
+  ): B20FeedRowV1 {
+    return {
+      launch: {
+        id: launch.id,
+        tokenAddress: launch.tokenAddress,
+        name: launch.name,
+        symbol: launch.symbol,
+        variant: launch.variant,
+        decimals: launch.decimals,
+        blockNumber: launch.blockNumber,
+        transactionHash: launch.transactionHash,
+        logIndex: launch.logIndex,
+        detectedAt: launch.detectedAt,
+        canonical: launch.canonical,
+      },
+      observation: this.latestFor(launch.id, versions),
+    };
+  }
+
+  async listFeed(input: {
+    limit: number;
+    cursor?: string | null;
+    states?: readonly B20OpportunityObservationV1['state'][];
+    maxLaunchAgeMs?: number | null;
+    now: string;
+    measurementVersions?: readonly string[];
+  }): Promise<B20FeedPageV1> {
+    const versions = input.measurementVersions ?? [B20_MEASUREMENT_VERSION_V1];
+    const limit = Math.max(1, Math.min(100, input.limit));
+    const now = Date.parse(input.now);
+    // `listLaunches` already excludes non-canonical rows.
+    const rows = (await this.canonicalLaunches())
+      .filter((launch) => {
+        if (input.maxLaunchAgeMs == null) return true;
+        return now - Date.parse(launch.detectedAt) <= input.maxLaunchAgeMs;
+      })
+      .map((launch) => this.rowFor(launch, versions))
+      .filter((row) => {
+        if (!input.states || input.states.length === 0) return true;
+        return row.observation !== null && input.states.includes(row.observation.state);
+      })
+      .sort((left, right) => compareFeedRowsV1(left, right));
+
+    const after = input.cursor ? decodeFeedCursorV1(input.cursor) : null;
+    const start = after
+      ? rows.findIndex(
+          (row) =>
+            compareFeedKeysV1(
+              {
+                launchBlockNumber: row.launch.blockNumber,
+                measuredAt: row.observation?.measuredAt ?? null,
+                launchId: row.launch.id,
+              },
+              after,
+            ) > 0,
+        )
+      : 0;
+    const page = start < 0 ? [] : rows.slice(start, start + limit);
+    const last = page[page.length - 1];
+    return {
+      rows: page,
+      nextCursor:
+        last && start >= 0 && start + limit < rows.length
+          ? encodeFeedCursorV1({
+              launchBlockNumber: last.launch.blockNumber,
+              measuredAt: last.observation?.measuredAt ?? null,
+              launchId: last.launch.id,
+            })
+          : null,
+    };
+  }
+
+  async getFeedRowForToken(input: {
+    tokenAddress: string;
+    historyLimit: number;
+    measurementVersions?: readonly string[];
+  }): Promise<{ row: B20FeedRowV1; history: B20OpportunityObservationV1[] } | null> {
+    const versions = input.measurementVersions ?? [B20_MEASUREMENT_VERSION_V1];
+    const matches = (await this.canonicalLaunches())
+      .filter((launch) => launch.tokenAddress === input.tokenAddress.toLowerCase())
+      .sort((left, right) => Number(BigInt(right.blockNumber) - BigInt(left.blockNumber)));
+    const launch = matches[0];
+    if (!launch) return null;
+    return {
+      row: this.rowFor(launch, versions),
+      history: await this.listObservationsForLaunch({ launchId: launch.id, limit: input.historyLimit }),
+    };
+  }
+
+  async pipelineCounts(input: { now: string; maxLaunchAgeMs: number }): Promise<B20PipelineCountsV1> {
+    const launches = await this.canonicalLaunches();
+    const now = Date.parse(input.now);
+    const inWindow = launches.filter((launch) => now - Date.parse(launch.detectedAt) <= input.maxLaunchAgeMs);
+    const awaiting = inWindow.filter(
+      (launch) => this.latestFor(launch.id, [B20_MEASUREMENT_VERSION_V1]) === null,
+    ).length;
+    const cursor = await this.launches.getCursor({
+      chainId: 8453,
+      factoryAddress: '0xb20f000000000000000000000000000000000000',
+      decoderVersion: 'b20-created/v1',
+    });
+    const runs = await this.launches.listRecentRuns({
+      key: {
+        chainId: 8453,
+        factoryAddress: '0xb20f000000000000000000000000000000000000',
+        decoderVersion: 'b20-created/v1',
+      },
+      limit: 1,
+    });
+    const run = runs[0] ?? null;
+    return {
+      canonicalLaunchCount: launches.length,
+      launchesAwaitingMeasurement: awaiting,
+      observationCount: this.observations.size,
+      ingestionCursorBlock: cursor?.lastProcessedBlock ?? null,
+      ingestionOperatorState: cursor?.operatorState ?? null,
+      lastIngestionRunAt: run?.finishedAt ?? null,
+      lastIngestionResult: run?.result ?? null,
+      lastIngestionConfirmedHead: run?.confirmedHead ?? null,
+      lastIngestionBudgetExhausted: run?.budgetExhausted ?? false,
+      lastMeasurementRunAt:
+        [...this.observations.values()]
+          .map((row) => row.measuredAt)
+          .sort((left, right) => Date.parse(right) - Date.parse(left))[0] ?? null,
+    };
+  }
+}
+
+/** The feed's ordering key, as a comparable tuple. Newest launch block first,
+ * then newest measurement, then a stable id tie-break so the order is total. */
+function compareFeedKeysV1(
+  left: { launchBlockNumber: string; measuredAt: string | null; launchId: string },
+  right: { launchBlockNumber: string; measuredAt: string | null; launchId: string },
+): number {
+  const byBlock = BigInt(right.launchBlockNumber) - BigInt(left.launchBlockNumber);
+  if (byBlock !== 0n) return byBlock > 0n ? 1 : -1;
+  const leftAt = left.measuredAt ? Date.parse(left.measuredAt) : -1;
+  const rightAt = right.measuredAt ? Date.parse(right.measuredAt) : -1;
+  if (leftAt !== rightAt) return rightAt - leftAt;
+  return right.launchId.localeCompare(left.launchId);
+}
+
+function compareFeedRowsV1(left: B20FeedRowV1, right: B20FeedRowV1): number {
+  return compareFeedKeysV1(
+    {
+      launchBlockNumber: left.launch.blockNumber,
+      measuredAt: left.observation?.measuredAt ?? null,
+      launchId: left.launch.id,
+    },
+    {
+      launchBlockNumber: right.launch.blockNumber,
+      measuredAt: right.observation?.measuredAt ?? null,
+      launchId: right.launch.id,
+    },
+  );
 }

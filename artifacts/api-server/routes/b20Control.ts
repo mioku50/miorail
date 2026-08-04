@@ -18,6 +18,8 @@ import {
   B20EntryBeginSubmissionResponseV1Schema,
   B20EntryRecordSubmissionRequestV1Schema,
   B20EntryStatusResponseV1Schema,
+  B20OpportunityFeedResponseV1Schema,
+  B20OpportunityDetailResponseV1Schema,
 } from '@mioagent/api-zod';
 import {
   B20RequestError,
@@ -56,10 +58,20 @@ import {
   type B20StorageRepositoryV1,
   type B20WatchlistEntryV1,
   type B20WatchlistRepositoryV1,
+  createDatabaseB20ObservationRepository,
+  decodeFeedCursorV1,
+  type B20ObservationRepositoryV1,
 } from '@mioagent/route-storage';
 import { client } from '@mioagent/db';
 import { stableHashV1 } from '@mioagent/route-domain';
-import { OPPORTUNITY_QUOTE_ASSET_V1, profileRefusalV1 } from '@mioagent/opportunity-rail';
+import {
+  OPPORTUNITY_QUOTE_ASSET_V1,
+  type B20PipelineStatusV1,
+  b20OpportunityCardV1,
+  b20PipelineCopyV1,
+  b20PipelineStatusV1,
+  profileRefusalV1,
+} from '@mioagent/opportunity-rail';
 import { createAerodromeReaderV1 } from '@mioagent/swap-adapters';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
 import { analyseExitV1 } from '../lib/exitAnalysis.js';
@@ -148,6 +160,19 @@ export const b20RouteRuntime = {
   entryPlans: (): B20EntryPlanRepositoryV1 => createDatabaseB20EntryPlanRepository(client),
   entrySubmissions: (): B20EntrySubmissionRepositoryV1 =>
     createDatabaseB20EntrySubmissionRepository(client),
+  observations: (): B20ObservationRepositoryV1 => createDatabaseB20ObservationRepository(client),
+  /** Checked separately again: a server without 0028/0029 can still inspect,
+   * watch and certify — it simply has no Discover feed, and says so rather
+   * than answering with an empty one. */
+  discoverAvailable: async (): Promise<boolean> => {
+    const rows = await client`
+      SELECT
+        to_regclass('public.b20_launches') AS launches,
+        to_regclass('public.b20_opportunity_observations') AS observations,
+        to_regclass('public.b20_discover_cursors') AS cursors`;
+    const row = rows[0];
+    return Boolean(row && row.launches && row.observations && row.cursors);
+  },
   reader: () => createB20ReaderV1({ rpcUrl: baseMainnetRpcUrlV1() }),
   /** The Aerodrome Router, read-only. A separate reader from the B20 one
    * because they speak to different contracts with different decoders — sharing
@@ -272,6 +297,229 @@ function respondV1(
     }),
   );
 }
+
+// ---------------------------------------------------------------------------
+// T69-C §1/§3/§4 — the Discover feed.
+//
+// Read-only over stored evidence: these two routes touch no endpoint, sign
+// nothing, and cannot create a clearance or an entry plan. A background
+// observation is DISPLAY CONTEXT. The only path to a qualified clearance runs
+// through the wallet-bound simulation that already exists, and nothing here
+// shortens it.
+//
+// The pipeline status is the part that earns its keep. An empty feed has seven
+// causes and only one of them is "the chain was quiet"; answering all seven
+// with an empty array tells a user the product is working when it is not.
+// ---------------------------------------------------------------------------
+
+/** How long a launch stays in the active feed window. Matches the measurement
+ * worker's own window, so "awaiting measurement" counts the same launches the
+ * worker would actually pick up. */
+const DISCOVER_FEED_WINDOW_MS_V1 = 48 * 60 * 60 * 1000;
+
+const FEED_STATES_V1 = ['candidate', 'provisional', 'rejected', 'unmeasured'] as const;
+
+/** §1 — the status, assembled from counts the server actually has. */
+async function pipelineStatusV1(
+  observations: B20ObservationRepositoryV1,
+  now: Date,
+  storageAvailable: boolean,
+): Promise<B20PipelineStatusV1 & { message: string }> {
+  if (!storageAvailable) {
+    const status = b20PipelineStatusV1({
+      storageAvailable: false,
+      ingestionCursorBlock: null,
+      confirmedHead: null,
+      lastIngestionRunAt: null,
+      lastIngestionResult: null,
+      lastMeasurementRunAt: null,
+      canonicalLaunchCount: 0,
+      launchesAwaitingMeasurement: 0,
+      observationCount: 0,
+      budgetExhausted: false,
+      operatorState: null,
+    });
+    return { ...status, message: b20PipelineCopyV1(status) };
+  }
+  const counts = await observations.pipelineCounts({
+    now: now.toISOString(),
+    maxLaunchAgeMs: DISCOVER_FEED_WINDOW_MS_V1,
+  });
+  const status = b20PipelineStatusV1({
+    storageAvailable: true,
+    ingestionCursorBlock: counts.ingestionCursorBlock,
+    confirmedHead: counts.lastIngestionConfirmedHead,
+    lastIngestionRunAt: counts.lastIngestionRunAt,
+    lastIngestionResult: counts.lastIngestionResult,
+    lastMeasurementRunAt: counts.lastMeasurementRunAt,
+    canonicalLaunchCount: counts.canonicalLaunchCount,
+    launchesAwaitingMeasurement: counts.launchesAwaitingMeasurement,
+    observationCount: counts.observationCount,
+    budgetExhausted: counts.lastIngestionBudgetExhausted,
+    operatorState: counts.ingestionOperatorState,
+  });
+  return { ...status, message: b20PipelineCopyV1(status) };
+}
+
+b20ControlRouter.get('/opportunities/b20', async (req: Request, res: Response) => {
+  const guard = b20Guard(req, res);
+  if (!guard) return;
+
+  const limitRaw = Number.parseInt(String(req.query.limit ?? '25'), 10);
+  const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(50, limitRaw)) : 25;
+  const stateParam = String(req.query.state ?? 'all');
+  if (stateParam !== 'all' && !(FEED_STATES_V1 as readonly string[]).includes(stateParam)) {
+    res.status(400).json({ error: 'unknown_state_filter', code: 'unknown_state_filter' });
+    return;
+  }
+  const freshness = String(req.query.freshness ?? 'all');
+  if (!['fresh', 'stale', 'all'].includes(freshness)) {
+    res.status(400).json({ error: 'unknown_freshness_filter', code: 'unknown_freshness_filter' });
+    return;
+  }
+  const cursor = typeof req.query.cursor === 'string' && req.query.cursor.length > 0 ? req.query.cursor : null;
+  if (cursor && !decodeFeedCursorV1(cursor)) {
+    // Refused rather than treated as "start from the top": silently restarting
+    // a paginated feed looks to a caller like duplicated results.
+    res.status(400).json({ error: 'invalid_cursor', code: 'invalid_cursor' });
+    return;
+  }
+  const launchAgeRaw = Number.parseInt(String(req.query.launchAge ?? ''), 10);
+  const maxLaunchAgeMs = Number.isFinite(launchAgeRaw) && launchAgeRaw > 0 ? launchAgeRaw : DISCOVER_FEED_WINDOW_MS_V1;
+
+  try {
+    const available = await b20RouteRuntime.discoverAvailable();
+    const observations = b20RouteRuntime.observations();
+    const now = b20RouteRuntime.now();
+    const pipeline = await pipelineStatusV1(observations, now, available);
+
+    if (!available) {
+      // An honest empty feed WITH a reason. Never a bare `[]`.
+      res.json(
+        B20OpportunityFeedResponseV1Schema.parse({
+          pipeline,
+          cards: [],
+          nextCursor: null,
+          serverTime: now.toISOString(),
+        }),
+      );
+      return;
+    }
+
+    const page = await observations.listFeed({
+      limit,
+      cursor,
+      states: stateParam === 'all' ? undefined : [stateParam as (typeof FEED_STATES_V1)[number]],
+      maxLaunchAgeMs,
+      now: now.toISOString(),
+    });
+
+    const cards = page.rows
+      .map((row) =>
+        b20OpportunityCardV1({
+          launch: {
+            tokenAddress: row.launch.tokenAddress,
+            name: row.launch.name,
+            symbol: row.launch.symbol,
+            variant: row.launch.variant,
+            decimals: row.launch.decimals,
+            blockNumber: row.launch.blockNumber,
+            transactionHash: row.launch.transactionHash,
+            logIndex: row.launch.logIndex,
+            detectedAt: row.launch.detectedAt,
+            canonical: row.launch.canonical,
+          },
+          observation: row.observation,
+          now,
+        }),
+      )
+      // Freshness is computed against SERVER time, so a client with a skewed
+      // clock cannot promote a stale observation into an actionable one.
+      .filter((card) => {
+        if (freshness === 'all') return true;
+        if (!card.observation) return false;
+        return card.observation.freshness === freshness;
+      });
+
+    res.json(
+      B20OpportunityFeedResponseV1Schema.parse({
+        pipeline,
+        cards,
+        nextCursor: page.nextCursor,
+        serverTime: now.toISOString(),
+      }),
+    );
+  } catch (error) {
+    storageFailure(res, error, 'b20-opportunity-feed');
+  }
+});
+
+b20ControlRouter.get('/opportunities/b20/:tokenAddress', async (req: Request, res: Response) => {
+  const guard = b20Guard(req, res);
+  if (!guard) return;
+
+  const tokenAddress = String(req.params.tokenAddress ?? '').toLowerCase();
+  // Malformed and unknown stay DISTINCT: one is a client mistake, the other is
+  // a fact about the feed, and collapsing them hides both.
+  if (!/^0x[0-9a-f]{40}$/.test(tokenAddress)) {
+    res.status(400).json({ error: 'invalid_token_address', code: 'invalid_token_address' });
+    return;
+  }
+
+  try {
+    const available = await b20RouteRuntime.discoverAvailable();
+    const observations = b20RouteRuntime.observations();
+    const now = b20RouteRuntime.now();
+    if (!available) {
+      res.status(503).json({ error: 'discover_unavailable', code: 'discover_unavailable' });
+      return;
+    }
+    const found = await observations.getFeedRowForToken({ tokenAddress, historyLimit: 20 });
+    if (!found) {
+      // No CANONICAL launch for this address. Not "not a B20 token" — this
+      // feed only knows what it ingested, and saying more would be a claim
+      // nothing measured.
+      res.status(404).json({ error: 'launch_not_found', code: 'launch_not_found' });
+      return;
+    }
+    const pipeline = await pipelineStatusV1(observations, now, true);
+    const card = b20OpportunityCardV1({
+      launch: {
+        tokenAddress: found.row.launch.tokenAddress,
+        name: found.row.launch.name,
+        symbol: found.row.launch.symbol,
+        variant: found.row.launch.variant,
+        decimals: found.row.launch.decimals,
+        blockNumber: found.row.launch.blockNumber,
+        transactionHash: found.row.launch.transactionHash,
+        logIndex: found.row.launch.logIndex,
+        detectedAt: found.row.launch.detectedAt,
+        canonical: found.row.launch.canonical,
+      },
+      observation: found.row.observation,
+      now,
+    });
+
+    res.json(
+      B20OpportunityDetailResponseV1Schema.parse({
+        card,
+        history: found.history.map((entry) => ({
+          state: entry.state,
+          reasonCode: entry.reasonCode,
+          observationBlockNumber: entry.observationBlockNumber,
+          optimisticRoundTripBps: entry.optimisticRoundTripBps,
+          largestPassingSizeAtomic: entry.largestPassingSizeAtomic,
+          measuredAt: entry.measuredAt,
+          staleAfter: entry.staleAfter,
+        })),
+        pipeline,
+        serverTime: now.toISOString(),
+      }),
+    );
+  } catch (error) {
+    storageFailure(res, error, 'b20-opportunity-detail');
+  }
+});
 
 b20ControlRouter.post('/b20/inspect', async (req: Request, res: Response) => {
   const guard = b20Guard(req, res);
