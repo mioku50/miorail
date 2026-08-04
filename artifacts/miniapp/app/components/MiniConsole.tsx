@@ -15,8 +15,18 @@ import {
   NftReviewPanel,
   NftRouteCardPanel,
   commerceCheckoutAvailableV1,
+  CONSOLE_PRIMARY_SECTIONS_V1,
   ConsoleMiniShell,
   ConsoleRightRail,
+  B20PortfolioPanel,
+  OpportunitiesScreen,
+  RouteHistoryList,
+  consoleHomeSectionV1,
+  consoleNavModelV1,
+  opportunityCardViewV1,
+  type ConsolePipelineStateV1,
+  type ConsoleSectionV1,
+  type OpportunityFilterV1,
   ConsoleStepperCompact,
   MiniScorePanel,
   PlanScreen,
@@ -82,7 +92,11 @@ import {
   useCreateCommerceOrder,
   useEarnCompare,
   useEvaluateSwapRoute,
+  useAddB20Watch,
   useB20Inspect,
+  useB20Opportunities,
+  useB20Watch,
+  useB20Watchlist,
   useIntelligenceCharges,
   useIntelligenceBudget,
   useMarketSnapshot,
@@ -130,9 +144,42 @@ interface SubmissionState {
 
 const RECONCILABLE: BlueprintSubmitStatus[] = ["confirmed", "failed", "submitted_unknown"];
 
+const SECTION_STORAGE_KEY_V1 = "miorail.section.v1";
+
+function readStoredSectionV1(): ConsoleSectionV1 {
+  try {
+    const stored = globalThis.sessionStorage?.getItem(SECTION_STORAGE_KEY_V1);
+    if (stored && (MINIAPP_SECTIONS_V1 as readonly string[]).includes(stored)) {
+      return stored as ConsoleSectionV1;
+    }
+  } catch {
+    /* storage can be blocked; Opportunities is the default either way */
+  }
+  return "opportunities";
+}
+
+/** T70 §4 — every one of these has a real handler below. A section with none
+ * would be absent from this list, not present and inert. */
+const MINIAPP_SECTIONS_V1 = CONSOLE_PRIMARY_SECTIONS_V1;
+
+
 export function MiniConsole() {
   const { address, chainId } = useAccount();
   const { theme, setTheme } = useConsoleTheme();
+
+  // T70 §4/§8 — the Base App section, from the SAME table the web header reads.
+  //
+  // Persisted in sessionStorage rather than a URL: the miniapp is one page, and
+  // a Mini App host can remount it on resume. What is stored is the section
+  // name and nothing else — no address, no balance, no goal.
+  const [section, setSection] = useState<ConsoleSectionV1>(readStoredSectionV1);
+  useEffect(() => {
+    try {
+      globalThis.sessionStorage?.setItem(SECTION_STORAGE_KEY_V1, section);
+    } catch {
+      /* a blocked store costs the section on resume and nothing else */
+    }
+  }, [section]);
 
   const [screen, setScreen] = useState<ConsoleScreenV1>("plan");
   const [goal, setGoal] = useState("");
@@ -721,6 +768,67 @@ export function MiniConsole() {
     </>
   );
 
+  // --- T70 §4: the three sections beside Routes ------------------------------
+  //
+  // All three reuse existing hooks and existing shared projections. Base App
+  // gets no Discover logic, no card projection and no qualification path of its
+  // own — the whole point of §4 is that there is one of each.
+
+  const [feedFilter, setFeedFilter] = useState<OpportunityFilterV1>("all");
+  const [feedFresh, setFeedFresh] = useState(false);
+  const opportunities = useB20Opportunities(
+    { state: feedFilter, freshness: feedFresh ? "fresh" : "all" },
+    { enabled: b20GateOn && section === "opportunities" },
+  );
+  const feedPipeline = opportunities.data?.pipeline ?? null;
+  const feedHome = consoleHomeSectionV1({
+    pipeline: feedPipeline
+      ? { state: feedPipeline.state as ConsolePipelineStateV1, message: feedPipeline.message }
+      : null,
+    observationCount: opportunities.data?.cards.length ?? 0,
+    walletConnected: Boolean(address),
+  });
+
+  // The B20 tab: what is held, plus adding one by address. The same server-side
+  // watchlist the web console writes to — not a second list in this browser.
+  const watchlist = useB20Watchlist({ enabled: b20GateOn && Boolean(address) && section === "portfolio" });
+  const addWatch = useAddB20Watch();
+  const sweep = useB20Watch();
+  const [tokenInput, setTokenInput] = useState("");
+  const heldTokens = useMemo(
+    () =>
+      (portfolio.data?.tokens ?? []).filter(
+        (token) => /^0x[0-9a-fA-F]{40}$/.test(token.address) && token.possibleSpam !== true,
+      ),
+    [portfolio.data],
+  );
+  const sweepTokens = useMemo(() => {
+    const tracked = (watchlist.data?.tokens ?? []).map((entry) => entry.tokenAddress);
+    return [...new Set([...tracked, ...heldTokens.map((token) => token.address.toLowerCase())])].slice(0, 25);
+  }, [watchlist.data, heldTokens]);
+  const holdings = useMemo(() => {
+    const balances = new Map(heldTokens.map((token) => [token.address.toLowerCase(), token]));
+    return (sweep.data?.tokens ?? [])
+      .filter((token) => token.outcome === "watched")
+      .map((token) => {
+        const balance = balances.get(token.tokenAddress.toLowerCase());
+        const changes = token.watch?.status === "compared" ? token.watch.changes : [];
+        return {
+          tokenAddress: token.tokenAddress,
+          name: token.displayName,
+          symbol: token.displaySymbol ?? balance?.symbol ?? null,
+          balanceLabel: token.balanceAtomic ?? "not read",
+          // A missing price stays null all the way to the card. A 0 here would
+          // reach a user as "worthless".
+          usdLabel: balance?.usdValue ? `$${balance.usdValue}` : null,
+          controls: token.controls ?? null,
+          changeCount: changes.length,
+          hasAcuteChange: changes.some((change) => change.severity === "acute"),
+          lastReadBlock: token.controls?.blockNumber ?? token.watch?.toBlock ?? null,
+        };
+      });
+  }, [sweep.data, heldTokens]);
+
   let content: ReactNode;
 
   if (screen === "plan") {
@@ -1264,6 +1372,124 @@ export function MiniConsole() {
     );
   }
 
+  // T70 §4 — Opportunities, B20, Routes, Proofs. Built from the shared table,
+  // so the bar cannot drift from the web header's words or order. Opportunities
+  // is marked unavailable rather than hidden when the server flag is off: the
+  // section exists, the data does not, and the user is told which.
+  const nav = consoleNavModelV1({
+    mounted: MINIAPP_SECTIONS_V1,
+    active: section,
+    unavailable: b20GateOn
+      ? undefined
+      : {
+          opportunities:
+            "B20 Discover is off on this server, so there is no launch feed. This is not a statement about what is launching.",
+          portfolio: "B20 inspection is off on this server, so your tokens were not read.",
+        },
+  });
+
+  let sectionContent: ReactNode = content;
+  if (section === "opportunities") {
+    sectionContent = (
+      <OpportunitiesScreen
+        pipelineNotice={
+          b20GateOn
+            ? opportunities.isPending
+              ? null
+              : feedHome.notice
+            : "B20 Discover is off on this server, so no launches are being read."
+        }
+        pipelineState={(feedPipeline?.state as ConsolePipelineStateV1 | undefined) ?? null}
+        feedRenderable={b20GateOn && (opportunities.isPending || feedHome.feedRenderable)}
+        cards={(opportunities.data?.cards ?? []).map((card) => opportunityCardViewV1(card))}
+        filter={feedFilter}
+        freshOnly={feedFresh}
+        loading={opportunities.isPending && b20GateOn}
+        onFilterChange={setFeedFilter}
+        onFreshOnlyChange={setFeedFresh}
+        // Hands the token to the B20 tab, which owns the wallet-bound checks.
+        // Discover creates no clearance here either.
+        onOpenToken={(token) => {
+          setTokenInput(token);
+          setSection("portfolio");
+        }}
+        onRefresh={() => void opportunities.refetch()}
+      />
+    );
+  } else if (section === "portfolio") {
+    sectionContent = (
+      <>
+        <div className="panel">
+          <div className="ph">
+            <h3>Watch a token</h3>
+          </div>
+          <div className="pb">
+            <input
+              className="goalinput"
+              value={tokenInput}
+              placeholder="0x…"
+              aria-label="Token address"
+              onChange={(event) => setTokenInput(event.target.value)}
+            />
+            <button
+              type="button"
+              className="btn sec"
+              disabled={!/^0x[0-9a-fA-F]{40}$/.test(tokenInput.trim()) || addWatch.isPending}
+              onClick={() => {
+                addWatch.mutate({ tokenAddress: tokenInput.trim().toLowerCase() });
+                setTokenInput("");
+              }}
+            >
+              Add to watchlist
+            </button>
+            {addWatch.error && (
+              // Never the raw message: a server error can carry an endpoint.
+              <p className="note warn">That token could not be added to your watchlist.</p>
+            )}
+            <button
+              type="button"
+              className="btn sec"
+              disabled={sweepTokens.length === 0 || sweep.isPending}
+              onClick={() => sweep.mutate({ tokens: sweepTokens })}
+            >
+              {sweep.isPending ? "Checking…" : "Check now"}
+            </button>
+            {/* The sweep is explicit here for the same reason as on the web:
+                each run is up to 25 metered on-chain reads. */}
+            <p className="lnote">Each check reads the controls of up to 25 tokens on Base.</p>
+          </div>
+        </div>
+        <B20PortfolioPanel
+          holdings={holdings}
+          otherTokenCount={Math.max(0, heldTokens.length - holdings.length)}
+          emptyReason={
+            !address
+              ? "Connect your wallet to see what the tokens you hold have done."
+              : !b20GateOn
+                ? "B20 control inspection is off on this server, so nothing was read."
+                : sweep.data
+                  ? null
+                  : "Press Check now to read what your tokens' controls have done."
+          }
+        />
+      </>
+    );
+  } else if (section === "proofs") {
+    sectionContent = (
+      <div className="panel">
+        <div className="ph">
+          <h3>Route proofs</h3>
+          <span className="rt">
+            <span className="sub mono">{historyItems.length}</span>
+          </span>
+        </div>
+        <div className="pb">
+          <RouteHistoryList items={historyItems} nextCursor={null} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <ConsoleMiniShell
       goalLine={goalLabel}
@@ -1274,18 +1500,23 @@ export function MiniConsole() {
       theme={theme}
       onThemeChange={setTheme}
       drawer={drawer}
-      panels={panels}
+      panels={section === "routes" ? panels : null}
+      nav={nav}
+      onNavigate={setSection}
     >
       {/* T67C.2: the SAME rail the web console mounts. Recovery orchestration
           is written once — two copies would mean two answers to "did we
-          already send this?", and that question must have one. */}
+          already send this?", and that question must have one.
+
+          Not scoped to a section: an unfinished submission has to be visible
+          wherever the user happens to be. */}
       <SubmissionRecoveryRail
         walletAddress={address ?? null}
         chainId={chainId ?? null}
         enabled={Boolean(flags?.submissionRecoveryV1)}
       />
       {budgetOpen && budgetPanel}
-      {content}
+      {sectionContent}
     </ConsoleMiniShell>
   );
 }

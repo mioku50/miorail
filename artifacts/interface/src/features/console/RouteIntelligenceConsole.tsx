@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { useLocation } from 'wouter';
 import { useAccount } from 'wagmi';
 import {
   CONSOLE_BREADCRUMB_V1,
@@ -45,7 +44,7 @@ import {
   type ConsoleStageClockV1,
   type ConsoleStageV1,
   B20ControlSection,
-  BudgetPaymentsPanel,
+  paidEvidenceStripV1,
   paidIntelligenceStateV1,
   paidIntelligenceViewV1,
   b20ErrorCodeV1,
@@ -85,8 +84,6 @@ import {
   useEvaluateSwapRoute,
   useB20Inspect,
   useIntelligenceCharges,
-  useUpdateIntelligenceBudget,
-  useRevokeIntelligenceBudget,
   useIntelligenceBudget,
   useMarketSnapshot,
   usePortfolio,
@@ -98,6 +95,7 @@ import {
   type SimulateWithBudgetResponseV1,
 } from '@mioagent/api-client-react';
 import { BlueprintSubmitButton, EarnDepositFlow, SubmissionRecoveryRail, builderCodeForSurfaceV1, type BlueprintSubmitStatus } from '@mioagent/wallet-actions';
+import { useConsoleNav } from './useConsoleNav';
 import { SimulateButton, type SimulateBlueprintResponseV1 } from '@mioagent/x402-actions';
 
 // ---------------------------------------------------------------------------
@@ -136,9 +134,10 @@ function shortAddress(address: string | undefined): string | null {
 }
 
 export function RouteIntelligenceConsole() {
-  const [, navigate] = useLocation();
   const { address, chainId } = useAccount();
   const { theme, setTheme } = useConsoleTheme();
+  // T70 §8 — the shared section table, not a tab array typed out here.
+  const consoleNav = useConsoleNav('routes');
 
   const [screen, setScreen] = useState<ConsoleScreenV1>('plan');
   const [goal, setGoal] = useState('');
@@ -152,7 +151,6 @@ export function RouteIntelligenceConsole() {
   const [aiNonce, setAiNonce] = useState<string | null>(null);
   const [simulateResponse, setSimulateResponse] = useState<SimulateBlueprintResponseV1 | null>(null);
   const [budgetResponse, setBudgetResponse] = useState<SimulateWithBudgetResponseV1 | null>(null);
-  const [budgetOpen, setBudgetOpen] = useState(false);
 
   const mark = useCallback((stage: ConsoleStageV1, phase: 'start' | 'complete') => {
     const at = Date.now();
@@ -672,60 +670,34 @@ export function RouteIntelligenceConsole() {
         (dispatch.blockedReason ? { title: 'This route family is off on this server', detail: dispatch.blockedReason } : null));
 
   const budgetRecord = budget.data?.budget ?? null;
-  // --- T67E §2: Budget & payments --------------------------------------------
+  // --- T70 §2: Budget & payments moved to Settings ---------------------------
   //
-  // A drawer inside the shell, opened from the panels that already show a
-  // number a user might want to change. Not a nav entry and not a page: there
-  // is no top-level "x402", "Spend Permission" or "Payments protocol".
+  // The full panel, the two usage bars and the adapter list are on the Settings
+  // page now. What stays on the flow is one line: whether paid evidence is on,
+  // that free comparison works regardless, and a way through. Nothing about the
+  // spending contract changed — this surface still cannot create, raise or
+  // revoke a permission.
   const charges = useIntelligenceCharges({ enabled: paidIntelligenceOn });
-  // The three writes T60 shipped and no surface ever called. The panel used to
-  // render its status and offer nothing at all — the drawer opened onto a
-  // read-only page while the left rail promised a field that did not exist.
-  const updateBudget = useUpdateIntelligenceBudget();
-  const revokeBudget = useRevokeIntelligenceBudget();
-  const budgetChangeError = (() => {
-    const error = updateBudget.error ?? revokeBudget.error;
-    if (!error) return null;
-    // Never the raw message: a server error can carry an endpoint, and an
-    // endpoint can carry a key.
-    return 'That change could not be saved. Nothing was charged and your permission is unchanged.';
-  })();
-  const budgetPanel = (
-    <BudgetPaymentsPanel
-      featureEnabled={paidIntelligenceOn}
-      // T67X-A1: the flag says an operator wants paid routes; this says the
-      // facilitator can actually settle one. They came apart in production.
-      settleReady={status.data?.paidIntelligence?.settleReady === true}
-      budget={budgetRecord}
-      charges={charges.data?.charges ?? []}
-      chargesLoading={charges.isPending && paidIntelligenceOn}
-      chargesUnavailableReason={
-        charges.error ? 'Your charge history could not be read right now.' : null
-      }
-      technicalDetails={[
-        { label: 'Settlement', value: status.data?.x402?.settleReady ? 'x402 · ready' : 'x402 · not ready' },
-        { label: 'Network', value: status.data?.x402?.network ?? 'not reported' },
-      ]}
-      changePending={updateBudget.isPending || revokeBudget.isPending}
-      changeError={budgetChangeError}
-      onUpdateLimit={(limits) =>
-        updateBudget.mutate({
-          periodLimitUsdc: limits.monthlyLimitUsdc,
-          maxPerCallUsdc: limits.maxPerRequestUsdc,
-        })
-      }
-      onRevoke={() => revokeBudget.mutate()}
-      // Deliberately no `onCreatePermission`. Granting a Base Account spend
-      // permission is a WALLET action and no client flow for it exists yet;
-      // wiring a button to the bookkeeping endpoint alone would record a
-      // permission the wallet never granted, which is the one thing this
-      // surface must never do.
-      createUnavailableReason={
-        'Granting a spending permission is a wallet action your Base Account signs, and that flow is not built yet. Free route comparison is unaffected.'
-      }
-    />
-  );
+  const paidState = paidIntelligenceStateV1({
+    featureEnabled: paidIntelligenceOn,
+    settleReady: status.data?.paidIntelligence?.settleReady === true,
+    budget: budgetRecord,
+    charges: charges.data?.charges ?? [],
+  });
+  const paidStateView = paidIntelligenceViewV1(paidState);
+  const paidEvidenceStrip = paidEvidenceStripV1({
+    label: paidStateView.label,
+    moneyAtRisk: paidStateView.moneyAtRisk,
+    needsPermission: paidStateView.action === 'create_permission',
+    // No wallet flow for granting a Base Account spend permission exists yet,
+    // so the strip says so rather than offering a button that cannot grant one.
+    permissionFlowAvailable: false,
+    settingsAvailable: true,
+  });
 
+  // Still computed: the REVIEW screen shows "within your limits" and the
+  // monthly bar, and T70 does not touch the Review flow. What moved to Settings
+  // is the left rail's copy of it, not this.
   const limits = budgetRecord
     ? {
         dailyLabel: `$${budgetRecord.spentUsdc} / $${budgetRecord.monthlyLimitUsdc}`,
@@ -1392,7 +1364,7 @@ export function RouteIntelligenceConsole() {
                 },
               ]
         }
-        onExport={() => navigate('/plan/history')}
+        onExport={() => consoleNav.navigate('proofs')}
         onNewGoal={() => {
           setScreen('plan');
           setGoal('');
@@ -1415,11 +1387,8 @@ export function RouteIntelligenceConsole() {
     <ConsoleShell
       header={{
         crumb: CONSOLE_BREADCRUMB_V1[screen](goalLabel),
-        tabs: [
-          { id: 'routes', label: 'Routes', active: true, onSelect: () => navigate('/') },
-          { id: 'b20', label: 'B20', active: false, onSelect: () => navigate('/b20') },
-          { id: 'proofs', label: 'Proofs', active: false, onSelect: () => navigate('/plan/history') },
-        ],
+        nav: consoleNav.header,
+        onNavigate: consoleNav.navigate,
         blockNumber: chainBlockNumberV1(status.data ?? null),
         gasLabel: chainGasLabelV1(status.data ?? null),
         networkLabel: chainLabelV1(status.data?.chainId),
@@ -1427,33 +1396,16 @@ export function RouteIntelligenceConsole() {
         walletLabel,
       }}
       left={{
+        nav: consoleNav.rail,
         sessions,
         sessionCount: String(sessions.length),
         proofs,
         proofCount: String(historyItems.length),
-        limits,
-        onOpenBudget: () => setBudgetOpen((open) => !open),
-        // T67E §2.4 — the merged string is gone. This says which of the eight
-        // situations the deployment is actually in, and only "no permission
-        // yet" is something the user can fix.
-        limitsUnavailableReason: budgetRecord
-          ? null
-          : paidIntelligenceStateV1({
-              featureEnabled: paidIntelligenceOn,
-              settleReady: status.data?.paidIntelligence?.settleReady === true,
-              budget: null,
-              charges: charges.data?.charges ?? [],
-            }) === 'permission_missing'
-            ? CONSOLE_COPY_V1.limitsMissing
-            : paidIntelligenceViewV1(
-                paidIntelligenceStateV1({
-                  featureEnabled: paidIntelligenceOn,
-                  settleReady: status.data?.paidIntelligence?.settleReady === true,
-                  budget: null,
-                  charges: charges.data?.charges ?? [],
-                }),
-              ).detail,
-        adapters: adapterRows,
+        // T70 §2 — one line, not a panel. The usage bars, the limits row and
+        // the adapter list moved to Settings; what a user needs while planning
+        // a route is whether paid evidence is on, and a way through.
+        paidEvidence: paidEvidenceStrip,
+        onOpenSettings: () => consoleNav.navigate('settings'),
       }}
       footer={{
         adaptersLabel: adapterRows.summary,
@@ -1475,7 +1427,7 @@ export function RouteIntelligenceConsole() {
         evaluationSettled.current = false;
       }}
       onSelectSession={() => setScreen(projection ? 'route' : 'plan')}
-      onSelectProof={() => navigate('/plan/history')}
+      onSelectProof={() => consoleNav.navigate('proofs')}
     >
       {/* T67C.2: an unfinished submission surfaces above everything else. A
           user who reloaded mid-flight needs to finish CHECKING that batch
@@ -1485,12 +1437,8 @@ export function RouteIntelligenceConsole() {
         walletAddress={address ?? null}
         chainId={chainId ?? null}
         enabled={Boolean(flags?.submissionRecoveryV1)}
-        onResolved={() => navigate('/plan/history')}
+        onResolved={() => consoleNav.navigate('proofs')}
       />
-      {/* T67E §2.1 — a drawer inside the shell, above the current screen.
-          Opening it never leaves the flow: the goal, the route and the stage
-          clock are all still there when it closes. */}
-      {budgetOpen && budgetPanel}
       {content}
     </ConsoleShell>
   );

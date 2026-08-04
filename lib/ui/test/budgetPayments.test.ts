@@ -232,15 +232,30 @@ describe('§2.1 — this is not a technical menu', () => {
     assert.ok(!/>[^<]*x402/i.test(visible), 'x402 appears in the panel’s primary copy');
   });
 
-  test('both consoles mount the drawer from an existing panel', () => {
+  test('the full panel is reachable on every surface', () => {
+    // T70 §2 — on the web it moved from a mid-flow drawer to Settings, because
+    // it was the first card on Routes and the largest block in the drawer, and
+    // it is a thing you read once when something is wrong. Base App has no
+    // Settings section in its four-up bar, so there it is still the drawer.
+    const web = readFileSync(path.join(here, '../../../artifacts/interface/src/features/settings/SettingsPage.tsx'), 'utf8');
+    assert.ok(web.includes('BudgetPaymentsPanel'), 'Settings does not mount the panel');
+    const mini = readFileSync(path.join(here, '../../../artifacts/miniapp/app/components/MiniConsole.tsx'), 'utf8');
+    assert.ok(mini.includes('BudgetPaymentsPanel'), 'the miniapp does not mount the panel');
+    assert.ok(mini.includes('budgetOpen'), 'the miniapp has no way to open it');
+  });
+
+  test('the flow surfaces carry a status line and no panel', () => {
+    // §9.3 — Budget is off the top of Home and Routes. What is left is one
+    // line: the state, that free comparison still works, and a way through.
     for (const [surface, file] of [
-      ['web', '../../../artifacts/interface/src/features/console/RouteIntelligenceConsole.tsx'],
-      ['miniapp', '../../../artifacts/miniapp/app/components/MiniConsole.tsx'],
+      ['routes', '../../../artifacts/interface/src/features/console/RouteIntelligenceConsole.tsx'],
+      ['opportunities', '../../../artifacts/interface/src/features/opportunities/OpportunitiesPage.tsx'],
     ] as const) {
       const source = readFileSync(path.join(here, file), 'utf8');
-      assert.ok(source.includes('BudgetPaymentsPanel'), `${surface} does not mount the drawer`);
-      assert.ok(source.includes('budgetOpen'), `${surface} has no way to open it`);
+      assert.ok(!source.includes('<BudgetPaymentsPanel'), `${surface} still renders the full panel`);
     }
+    const routes = readFileSync(path.join(here, '../../../artifacts/interface/src/features/console/RouteIntelligenceConsole.tsx'), 'utf8');
+    assert.ok(routes.includes('paidEvidenceStripV1'), 'Routes lost the compact status entirely');
   });
 });
 
@@ -263,8 +278,9 @@ describe('the console vocabulary', () => {
 describe('the drawer offers controls, not just a status', () => {
   const panelDir = path.dirname(url.fileURLToPath(import.meta.url));
   const panel = readFileSync(path.join(panelDir, '../src/console/BudgetPaymentsPanel.tsx'), 'utf8');
+  // The writes live where the panel lives: Settings.
   const console_ = readFileSync(
-    path.join(panelDir, '../../../artifacts/interface/src/features/console/RouteIntelligenceConsole.tsx'),
+    path.join(panelDir, '../../../artifacts/interface/src/features/settings/SettingsPage.tsx'),
     'utf8',
   );
 

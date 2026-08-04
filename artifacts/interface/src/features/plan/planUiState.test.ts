@@ -4,23 +4,46 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
 import { isRoutePlanExpired, routeDisplayLabel, routePlanOutcomeCopy, routePlanSurfaceState } from '@mioagent/ui';
+import { CONSOLE_PRIMARY_SECTIONS_V1, CONSOLE_SECTION_TABLE_V1 } from '@mioagent/ui';
 import { appCommands, navTabs } from '../../app/routes.js';
 
 const here = path.dirname(url.fileURLToPath(import.meta.url));
 
-// The scanner-era cockpit is deleted: seven tabs are now two entries, and there
-// is no legacy table left to fall back to.
-// T67E — three surfaces now, not two. B20 earned its own place because what a
-// held token's controls did is not part of any route's flow. Budget & payments
-// deliberately did NOT: it is a drawer you open mid-flow, not a place you go.
-test('navigation is exactly Routes, B20 and Proofs', () => {
+// T70 §1/§8 — four surfaces, and Opportunities leads.
+//
+// The order is the claim. Routes answers "how do I do the thing I already
+// decided on"; Opportunities answers "what should I look at", which is the
+// earlier question and the one a user arrives with. Portfolio came out from
+// behind a technical tab called B20 at the same time.
+//
+// Both tables are DERIVED from the shared section table in lib/ui, so this test
+// also pins that the web app has no navigation vocabulary of its own.
+test('navigation is exactly Opportunities, Portfolio, Routes and Proofs', () => {
   const tabs = navTabs();
-  assert.deepEqual(tabs.map((route) => route.path), ['/', '/b20', '/plan/history']);
-  assert.deepEqual(tabs.map((route) => route.label), ['Routes', 'B20', 'Proofs']);
+  assert.deepEqual(tabs.map((route) => route.path), [
+    '/opportunities',
+    '/portfolio',
+    '/routes',
+    '/plan/history',
+  ]);
+  assert.deepEqual(tabs.map((route) => route.label), ['Opportunities', 'Portfolio', 'Routes', 'Proofs']);
+});
+
+test('the web tabs come from the shared table, not from a list typed here', () => {
+  // §9.9 — the mechanism, not just the current output. If somebody adds a fifth
+  // label by hand, this fails even if the four above still match.
+  for (const route of navTabs()) {
+    const section = CONSOLE_PRIMARY_SECTIONS_V1.find(
+      (id) => CONSOLE_SECTION_TABLE_V1[id].label === route.label,
+    );
+    assert.ok(section, `${route.label} is not a shared section label`);
+    assert.equal(route.path, CONSOLE_SECTION_TABLE_V1[section].path);
+  }
 });
 
 test('no payment surface became a tab', () => {
-  // The whole point of §2.1: a user has a budget, not a settlement protocol.
+  // A user has a budget, not a settlement protocol. Budget & payments is on
+  // Settings, which is in the drawer and the palette — never the header.
   for (const route of navTabs()) {
     assert.equal(
       /x402|spend permission|fuel|payments|budget/i.test(route.label),
@@ -32,9 +55,13 @@ test('no payment surface became a tab', () => {
 
 test('no command carries an emoji or the retired vocabulary', () => {
   const commands = appCommands();
-  assert.equal(commands.length, 3, 'the console exposes exactly three entries');
+  // Five: the four primary sections plus Settings, which the palette reaches
+  // and the header deliberately does not.
+  assert.equal(commands.length, 5, 'the console exposes exactly five entries');
   assert.equal(commands.some((command) => command.path === '/plan/history'), true);
-  assert.equal(commands.some((command) => command.path === '/b20'), true);
+  assert.equal(commands.some((command) => command.path === '/portfolio'), true);
+  assert.equal(commands.some((command) => command.path === '/opportunities'), true);
+  assert.equal(commands.some((command) => command.path === '/settings'), true);
   for (const command of commands) {
     assert.equal(command.icon, '', 'navigation carries no emoji');
     assert.equal(/\b(scan|cockpit|fuel|kill switch)\b/i.test(command.label), false, command.label);

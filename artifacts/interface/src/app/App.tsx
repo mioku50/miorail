@@ -15,6 +15,9 @@ import { RouteHistoryPage } from '../features/plan/RouteHistoryPage';
 import { RouteIntelligenceConsole } from '../features/console/RouteIntelligenceConsole';
 import { PublicProofPage } from '../features/proof/PublicProofPage';
 import { B20WatchPage } from '../features/b20/B20WatchPage';
+import { OpportunitiesPage } from '../features/opportunities/OpportunitiesPage';
+import { SettingsPage } from '../features/settings/SettingsPage';
+import { HomeRoute } from '../features/console/HomeRoute';
 
 // ---------------------------------------------------------------------------
 // The Route Intelligence console IS the app.
@@ -77,13 +80,42 @@ export function App() {
           <PublicProofPage />
         </Route>
 
-        {/* B20 — what the tokens you hold have done since Miorail last read
-            them. Its own surface because it is not part of a route's flow. */}
-        <Route path="/b20">
+        {/* T70 §1 — Opportunities is the product's home: measured B20 launches
+            and what getting back out of one would cost. */}
+        <Route path="/opportunities">
+          <RequireSession>
+            <OpportunitiesPage />
+          </RequireSession>
+        </Route>
+
+        {/* Portfolio — the B20 tokens you hold and what their controls have
+            done since. No longer buried inside a technical tab called B20. */}
+        <Route path="/portfolio">
           <RequireSession>
             <B20WatchPage />
           </RequireSession>
         </Route>
+
+        {/* Routes — the goal flow. It kept "/" for two releases; the section
+            now has a name of its own so home can be decided rather than
+            assumed. */}
+        <Route path="/routes">
+          <RequireSession>
+            <RouteIntelligenceConsole />
+          </RequireSession>
+        </Route>
+
+        {/* T70 §2/§3 — Budget & payments, adapters, providers, network and the
+            technical block. Off the flow, in the place people look for things
+            they configure. */}
+        <Route path="/settings">
+          <RequireSession>
+            <SettingsPage />
+          </RequireSession>
+        </Route>
+
+        {/* The old B20 path. Bookmarked by anyone who used the tab. */}
+        <Route path="/b20">{() => <Redirect to="/portfolio" replace />}</Route>
 
         {/* Proofs — the console's third entry. */}
         <Route path="/plan/history">
@@ -131,14 +163,21 @@ export function App() {
         <Route path="/inbox/:actionId">{(params) => <Redirect to={`/actions/${params.actionId}`} />}</Route>
 
         {/* Retired surfaces. Old bookmarks land on the flow instead of a 404. */}
-        <Route path="/configure">{() => <Redirect to="/" />}</Route>
-        <Route path="/fuel">{() => <Redirect to="/" />}</Route>
-        <Route path="/autonomy">{() => <Redirect to="/" />}</Route>
-        <Route path="/diagnostics">{() => <Redirect to="/" />}</Route>
-        <Route path="/base-mcp">{() => <Redirect to="/" />}</Route>
-        <Route path="/plan">{() => <Redirect to="/" />}</Route>
+        <Route path="/configure">{() => <Redirect to="/routes" replace />}</Route>
+        <Route path="/fuel">{() => <Redirect to="/routes" replace />}</Route>
+        <Route path="/autonomy">{() => <Redirect to="/routes" replace />}</Route>
+        <Route path="/diagnostics">{() => <Redirect to="/settings" replace />}</Route>
+        <Route path="/base-mcp">{() => <Redirect to="/settings" replace />}</Route>
+        <Route path="/plan">{() => <Redirect to="/routes" replace />}</Route>
 
-        {/* The flow. */}
+        {/* "/" resolves to a section rather than BEING one. Everything else
+            falls through to the flow, which is the safe surface: it needs no
+            wallet, no Discover and no stored evidence to be useful. */}
+        <Route path="/">
+          <RequireSession>
+            <HomeRoute />
+          </RequireSession>
+        </Route>
         <Route>
           <RequireSession>
             <RouteIntelligenceConsole />
