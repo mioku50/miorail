@@ -23,7 +23,10 @@ export interface OpportunityCardWireV1 {
     symbol: string;
     variant: 'asset' | 'stablecoin';
     decimals: number | null;
-    ageSeconds: number;
+    blockNumber: string;
+    /** Null when no block timestamp was reported. Not a launch time. */
+    ageSeconds: number | null;
+    launchTimeSource: 'onchain_block' | 'discovered';
     canonical: boolean;
   };
   observation: {
@@ -42,6 +45,14 @@ export interface OpportunityCardWireV1 {
     freshness: 'fresh' | 'stale';
   } | null;
   canCheckProfile: boolean;
+  /** T69-C.1 §2 — the server decided this from the rejection reason. The view
+   * renders it; it does not re-derive it, because two implementations of "may
+   * a wallet overturn this?" is one too many. */
+  action: {
+    action: 'check_wallet' | 'try_profile' | 'refresh_measurement' | 'none';
+    label: string | null;
+    reason: string;
+  };
   notMeasured: readonly string[];
 }
 
@@ -58,6 +69,26 @@ export function launchAgeLabelV1(ageSeconds: number): string {
   if (ageSeconds < 3600) return `${Math.floor(ageSeconds / 60)} min ago`;
   if (ageSeconds < 86_400) return `${Math.floor(ageSeconds / 3600)} h ago`;
   return `${Math.floor(ageSeconds / 86_400)} d ago`;
+}
+
+/**
+ * T69-C.1 §1 — the row a card shows for time.
+ *
+ * When the chain told us when the token was created, that is a launch time and
+ * it is labelled as one. When it did not, the honest thing to show is what
+ * Miorail actually knows: that it found this launch, and at which block. The
+ * previous behaviour — detection time under a "Launched" label — made every
+ * stored launch look minutes old while the worker was days behind.
+ */
+export function launchTimeRowV1(launch: {
+  ageSeconds: number | null;
+  launchTimeSource: 'onchain_block' | 'discovered';
+  blockNumber: string;
+}): { label: string; value: string } {
+  if (launch.launchTimeSource === 'onchain_block' && launch.ageSeconds !== null) {
+    return { label: 'Launched', value: launchAgeLabelV1(launch.ageSeconds) };
+  }
+  return { label: 'Discovered by Miorail', value: `block ${launch.blockNumber}` };
 }
 
 function amountLabelV1(atomic: string, decimals: number | null, symbol: string): string {
@@ -112,20 +143,20 @@ export function opportunityCardViewV1(card: OpportunityCardWireV1): OpportunityC
   if (observation?.quoteAlignmentNotice) notices.push(observation.quoteAlignmentNotice);
   if (observation?.transferPolicyNotice) notices.push(observation.transferPolicyNotice);
 
-  const actionUnavailableReason = !launch.canonical
-    ? OPPORTUNITY_SUPERSEDED_ACTION_COPY_V1
-    : observation === null
-      ? OPPORTUNITY_UNMEASURED_ACTION_COPY_V1
-      : card.canCheckProfile
-        ? null
-        : OPPORTUNITY_STALE_ACTION_COPY_V1;
+  // §2 — the server chose the action from the rejection reason. A stale card
+  // whose action is `none` because the evidence is wallet-independent must not
+  // be quietly upgraded here into "refresh and try again".
+  const serverAction = card.action;
+  const actionLabel = serverAction.action === 'none' ? null : serverAction.label;
+  const timeRow = launchTimeRowV1(launch);
 
   return {
     tokenAddress: launch.tokenAddress,
     symbol,
     name: launch.name,
     variantLabel: launch.variant,
-    ageLabel: launchAgeLabelV1(launch.ageSeconds),
+    timeLabel: timeRow.label,
+    timeValue: timeRow.value,
     state: observation?.state ?? 'unmeasured',
     headline: observation?.headline ?? OPPORTUNITY_UNMEASURED_COPY_V1.headline,
     detail: observation?.detail ?? OPPORTUNITY_UNMEASURED_COPY_V1.detail,
@@ -149,7 +180,11 @@ export function opportunityCardViewV1(card: OpportunityCardWireV1): OpportunityC
         )} round trip`
       : 'not measured',
     fresh: observation?.freshness === 'fresh',
-    actionUnavailableReason,
+    actionLabel,
+    // Always shown, whether or not there is a button: a card that offers
+    // nothing has to say why, and a card that offers something has to say what
+    // that something would actually establish.
+    actionReason: serverAction.reason,
     notices,
     notMeasured: card.notMeasured,
   };

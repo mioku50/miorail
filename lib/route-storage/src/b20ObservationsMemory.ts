@@ -198,6 +198,7 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
         transactionHash: launch.transactionHash,
         logIndex: launch.logIndex,
         detectedAt: launch.detectedAt,
+        blockTimestamp: launch.blockTimestamp ?? null,
         canonical: launch.canonical,
       },
       observation: this.latestFor(launch.id, versions),

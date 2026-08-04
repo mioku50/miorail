@@ -72,6 +72,7 @@ function launchRow(overrides: Record<string, unknown> = {}): Record<string, unkn
     log_index,
     detected_at: T0,
     confirmation_count: 12,
+    block_timestamp: null,
     decoder_version: DECODER,
     ...overrides,
   };
@@ -101,8 +102,14 @@ before(async () => {
   sql = postgres(url!, { max: 1, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS b20_launches, b20_discover_cursors, b20_discover_runs CASCADE');
   await sql.unsafe('DROP FUNCTION IF EXISTS b20_launches_immutable_identity() CASCADE');
-  const migration = await readFile(resolve(drizzleDir(), '0028_t69a_b20_discover_ingestion.sql'), 'utf8');
-  await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));
+  for (const file of [
+    '0028_t69a_b20_discover_ingestion.sql',
+    // T69-C.1 — adds the nullable block_timestamp the launch rows now carry.
+    '0030_t69c1_b20_launch_block_timestamp.sql',
+  ]) {
+    const step = await readFile(resolve(drizzleDir(), file), 'utf8');
+    await sql.unsafe(step.replaceAll('--> statement-breakpoint', ''));
+  }
 });
 
 after(async () => {

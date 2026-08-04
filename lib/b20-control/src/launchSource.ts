@@ -69,6 +69,10 @@ function asRawLogV1(value: unknown): RawLogV1 | null {
     transactionHash: typeof log.transactionHash === 'string' ? log.transactionHash : null,
     logIndex: typeof log.logIndex === 'string' ? log.logIndex : null,
     transactionIndex: typeof log.transactionIndex === 'string' ? log.transactionIndex : null,
+    // T69-C.1 §1 — carried when the endpoint offers it. Never requested
+    // separately: one extra metered call per launch block is not worth a
+    // display field, and its absence has an honest rendering.
+    blockTimestamp: typeof log.blockTimestamp === 'string' ? log.blockTimestamp : null,
     removed: log.removed === true,
   };
 }

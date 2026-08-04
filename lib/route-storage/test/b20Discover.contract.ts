@@ -42,6 +42,7 @@ export function launchFixtureV1(overrides: Partial<B20StoredLaunchV1> = {}): B20
   return {
     id: `${transactionHash}:${logIndex}`,
     chainId: 8453,
+    blockTimestamp: null,
     factoryAddress: LANE.factoryAddress,
     tokenAddress: '0xb200000000000000000000d6f666fe8b27595c01',
     variant: 'asset',

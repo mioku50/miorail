@@ -79,6 +79,14 @@ export interface RawLogV1 {
    * chain, and used as a secondary sort key when logs arrive from several
    * separate requests. */
   transactionIndex?: string | null;
+  /**
+   * T69-C.1 §1 — the block's own timestamp, as hex seconds. Some endpoints
+   * return this on `eth_getLogs` and some do not; it is read when offered and
+   * never fetched separately, because one extra call per launch block against
+   * a metered endpoint is not worth a display field. Absent means a surface
+   * says "discovered" rather than inventing a launch time.
+   */
+  blockTimestamp?: string | null;
   removed?: boolean;
 }
 
@@ -99,6 +107,9 @@ export interface B20LaunchV1 {
    * is a real position in a block. */
   transactionIndex: number | null;
   logIndex: number;
+  /** ISO timestamp of the block, when the endpoint reported one. Null is a
+   * real answer: it means the launch time is unknown, not that it is now. */
+  blockTimestamp: string | null;
   decoderVersion: string;
 }
 
@@ -228,6 +239,17 @@ export function decodeB20CreatedV1(log: RawLogV1): B20LaunchDecodeResultV1 {
     const parsed = Number(BigInt(log.transactionIndex));
     if (Number.isSafeInteger(parsed) && parsed >= 0) transactionIndex = parsed;
   }
+  // Same treatment: read when offered, absent when not. Never `now` — a
+  // fabricated launch time is worse than none, because it looks like data.
+  let blockTimestamp: string | null = null;
+  if (typeof log.blockTimestamp === 'string' && /^0x[0-9a-fA-F]+$/.test(log.blockTimestamp)) {
+    const seconds = Number(BigInt(log.blockTimestamp));
+    // Sanity-bounded: a garbage word must not become a launch dated in 1970 or
+    // in the year 50000, both of which render as plausible-looking text.
+    if (Number.isSafeInteger(seconds) && seconds > 1_600_000_000 && seconds < 4_102_444_800) {
+      blockTimestamp = new Date(seconds * 1000).toISOString();
+    }
+  }
 
   return {
     ok: true,
@@ -244,6 +266,7 @@ export function decodeB20CreatedV1(log: RawLogV1): B20LaunchDecodeResultV1 {
       transactionHash: log.transactionHash.toLowerCase(),
       transactionIndex,
       logIndex,
+      blockTimestamp,
       decoderVersion: B20_LAUNCH_DECODER_VERSION_V1,
     },
   };

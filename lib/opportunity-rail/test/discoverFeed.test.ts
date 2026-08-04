@@ -2,12 +2,15 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
 import {
+  B20_CARD_ACTIONS_V1,
   B20_CATCHING_UP_BLOCKS_V1,
   B20_NOT_MEASURED_DIMENSIONS_V1,
   B20_PIPELINE_STATES_V1,
   B20_PRE_ENTRY_NOTICE_V1,
+  B20_PROFILE_REJECTIONS_V1,
   B20_QUOTE_ALIGNMENT_NOTICE_V1,
   B20_TRANSFER_POLICY_NOTICE_V1,
+  B20_WALLET_INDEPENDENT_REJECTIONS_V1,
   b20OpportunityCardV1,
   b20PipelineCopyV1,
   b20PipelineStatusV1,
@@ -296,7 +299,7 @@ describe('a card states what was measured and what it means', () => {
     // "nobody measured this".
     const sample = card();
     assert.deepEqual(sample.notMeasured, B20_NOT_MEASURED_DIMENSIONS_V1);
-    for (const dimension of ['unique buyers', 'trading volume', 'holder concentration']) {
+    for (const dimension of ['unique buyers', 'trading volume', 'holder concentration'] as const) {
       assert.ok(sample.notMeasured.includes(dimension));
     }
     assert.ok(!JSON.stringify(sample).includes('"uniqueBuyers":0'));
@@ -346,8 +349,30 @@ describe('freshness gates the action, not the facts', () => {
     assert.equal(reorged.canCheckProfile, false);
   });
 
-  test('launch age is reported in seconds from server time', () => {
-    assert.equal(card().launch.ageSeconds, 18 * 60);
+  test('T69-C.1 §1 — detection time is never presented as launch time', () => {
+    // The worker can be days behind the head. `detectedAt` is a fact about
+    // Miorail's backlog; using it as an age made every stored launch look
+    // minutes old, which is the one thing a launch feed must not get wrong.
+    const withoutTimestamp = card();
+    assert.equal(withoutTimestamp.launch.ageSeconds, null);
+    assert.equal(withoutTimestamp.launch.launchedAt, null);
+    assert.equal(withoutTimestamp.launch.launchTimeSource, 'discovered');
+    // The block is still there, so a surface can say WHERE it was found.
+    assert.equal(withoutTimestamp.launch.blockNumber, '49531000');
+  });
+
+  test('a block timestamp, when the endpoint reports one, is the launch time', () => {
+    const withTimestamp = card({}, { blockTimestamp: '2026-08-04T09:00:00.000Z' });
+    assert.equal(withTimestamp.launch.launchTimeSource, 'onchain_block');
+    assert.equal(withTimestamp.launch.launchedAt, '2026-08-04T09:00:00.000Z');
+    // Three hours before the 12:00 server time the fixture uses.
+    assert.equal(withTimestamp.launch.ageSeconds, 3 * 60 * 60);
+  });
+
+  test('an unreadable block timestamp falls back rather than guessing', () => {
+    const broken = card({}, { blockTimestamp: 'not-a-time' });
+    assert.equal(broken.launch.launchTimeSource, 'discovered');
+    assert.equal(broken.launch.ageSeconds, null);
   });
 });
 
@@ -361,5 +386,116 @@ describe('the card carries nothing executable', () => {
     // Source KEYS are display strings naming pools; they are not routes a
     // client could execute.
     assert.equal(card().observation?.entrySourceKey, 'aerodrome|in');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T69-C.1 §2/§3 — the action a card offers follows the REASON.
+// ---------------------------------------------------------------------------
+
+describe('a wallet check is offered only where a wallet could change the answer', () => {
+  test('§3 — a fresh, wallet-independent rejection offers nothing at all', () => {
+    // The defect: every fresh canonical card offered "Check against my wallet",
+    // including one rejected because no exit route exists. That invites a user
+    // to spend a simulation disproving something already proven, and quietly
+    // suggests their wallet might be exempt from a fact about the token.
+    for (const reasonCode of B20_WALLET_INDEPENDENT_REJECTIONS_V1) {
+      const result = card({ state: 'rejected', reasonCode });
+      assert.equal(result.action.action, 'none', `${reasonCode} offered ${result.action.action}`);
+      assert.equal(result.action.label, null, `${reasonCode} rendered a button`);
+      assert.match(result.action.reason, /not about any particular wallet/);
+    }
+  });
+
+  test('a profile rejection points at the profile, not at the wallet', () => {
+    for (const reasonCode of B20_PROFILE_REJECTIONS_V1) {
+      const result = card({ state: 'rejected', reasonCode });
+      assert.equal(result.action.action, 'try_profile');
+      assert.equal(result.action.label, 'Try another profile');
+      assert.match(result.action.reason, /smaller position or a wider tolerance/);
+    }
+  });
+
+  test('a stale card asks to be re-measured, whatever its reason', () => {
+    // Stale numbers support nothing — including a rejection, which the chain
+    // may since have overturned by adding a route or unpausing transfers.
+    const stale = { measuredAt: '2026-08-04T10:00:00.000Z', staleAfter: '2026-08-04T10:30:00.000Z' };
+    for (const reasonCode of ['no_exit_route', 'round_trip_above_tolerance'] as const) {
+      const result = card({ state: 'rejected', reasonCode, ...stale });
+      assert.equal(result.action.action, 'refresh_measurement');
+      assert.equal(result.action.label, 'Refresh measurement');
+    }
+    const staleProvisional = card(stale);
+    assert.equal(staleProvisional.action.action, 'refresh_measurement');
+  });
+
+  test('a fresh sound rejection outranks staleness handling, and is final', () => {
+    // Ordering matters: the wallet-independent check runs BEFORE the stale
+    // check, so a fresh no-exit-route is final rather than merely refreshable.
+    const result = card({ state: 'rejected', reasonCode: 'no_exit_route' });
+    assert.equal(result.action.action, 'none');
+  });
+
+  test('a provisional card offers the wallet check it has always offered', () => {
+    const result = card();
+    assert.equal(result.action.action, 'check_wallet');
+    assert.equal(result.action.label, 'Check against my wallet');
+    assert.match(result.action.reason, /entry and exit in sequence/);
+  });
+
+  test('an active transfer policy is THE wallet-dependent case', () => {
+    // The one thing a wallet-specific check can genuinely resolve: B20 offers
+    // no way to enumerate who a policy admits.
+    const result = card({ transferPolicyState: 'restricted' });
+    assert.equal(result.action.action, 'check_wallet');
+    assert.match(result.action.reason, /admits YOUR wallet/);
+  });
+
+  test('an unmeasured or queued card asks for a measurement, not a wallet', () => {
+    assert.equal(card({ state: 'unmeasured', reasonCode: 'quote_unavailable' }).action.action, 'refresh_measurement');
+    assert.equal(card({ state: 'candidate', reasonCode: null }).action.action, 'refresh_measurement');
+  });
+
+  test('a launch with no observation, and one taken back by a reorg, offer nothing', () => {
+    const never = b20OpportunityCardV1({
+      launch: {
+        tokenAddress: '0xb200000000000000000000d6f666fe8b27595c01',
+        name: 'o1 mascot',
+        symbol: 'DINo1',
+        variant: 'asset',
+        decimals: 18,
+        blockNumber: '49531000',
+        transactionHash: `0x${'cd'.repeat(32)}`,
+        logIndex: 3,
+        detectedAt: '2026-08-04T11:42:00.000Z',
+        canonical: true,
+      },
+      observation: null,
+      now: new Date('2026-08-04T12:00:00.000Z'),
+    });
+    assert.equal(never.action.action, 'none');
+    assert.equal(card({}, { canonical: false }).action.action, 'none');
+  });
+
+  test('an unknown rejection reason fails closed', () => {
+    // A reason this build has never seen must not fall through to a wallet
+    // check on the assumption that it might be wallet-dependent.
+    const result = card({ state: 'rejected', reasonCode: 'something_new' as never });
+    assert.equal(result.action.action, 'none');
+    assert.equal(result.action.label, null);
+  });
+
+  test('every action carries a reason, and no card offers two things', () => {
+    for (const sample of [
+      card(),
+      card({ state: 'rejected', reasonCode: 'no_entry_route' }),
+      card({ state: 'rejected', reasonCode: 'exit_capacity_below_position' }),
+      card({ state: 'unmeasured', reasonCode: 'controls_unread' }),
+    ]) {
+      assert.ok(sample.action.reason.length > 20, 'an action with no explanation');
+      assert.ok((B20_CARD_ACTIONS_V1 as readonly string[]).includes(sample.action.action));
+      // `label` is present exactly when there is something to press.
+      assert.equal(sample.action.label === null, sample.action.action === 'none');
+    }
   });
 });

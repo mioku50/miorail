@@ -211,6 +211,13 @@
       "when": 1786118400000,
       "tag": "0029_t69b_b20_opportunity_observations",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1786118400001,
+      "tag": "0030_t69c1_b20_launch_block_timestamp",
+      "breakpoints": true
     }
   ]
 }
