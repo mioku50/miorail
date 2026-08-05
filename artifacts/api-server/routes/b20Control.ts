@@ -315,12 +315,12 @@ function respondV1(
 /** How long a launch stays in the active feed window. Matches the measurement
  * worker's own window, so "awaiting measurement" counts the same launches the
  * worker would actually pick up. */
-const DISCOVER_FEED_WINDOW_MS_V1 = 48 * 60 * 60 * 1000;
+export const DISCOVER_FEED_WINDOW_MS_V1 = 48 * 60 * 60 * 1000;
 
-const FEED_STATES_V1 = ['candidate', 'provisional', 'rejected', 'unmeasured'] as const;
+export const FEED_STATES_V1 = ['candidate', 'provisional', 'rejected', 'unmeasured'] as const;
 
 /** §1 — the status, assembled from counts the server actually has. */
-async function pipelineStatusV1(
+export async function pipelineStatusV1(
   observations: B20ObservationRepositoryV1,
   now: Date,
   storageAvailable: boolean,
@@ -361,6 +361,78 @@ async function pipelineStatusV1(
   return { ...status, message: b20PipelineCopyV1(status) };
 }
 
+/**
+ * T72 §3 — the ONE Discover read.
+ *
+ * Extracted from the HTTP handler below so the MCP server calls exactly this,
+ * rather than assembling its own page from the repository. A second reader
+ * would be a second set of filters, a second freshness convention, and
+ * eventually a second answer to "is this token worth looking at".
+ *
+ * Returns the same body the HTTP feed returns, already schema-parsed.
+ */
+export async function readDiscoverFeedV1(input: {
+  limit: number;
+  cursor: string | null;
+  state: (typeof FEED_STATES_V1)[number] | 'all';
+  freshness: 'fresh' | 'stale' | 'all';
+  maxLaunchAgeMs?: number;
+}): Promise<{
+  pipeline: B20PipelineStatusV1 & { message: string };
+  cards: ReturnType<typeof b20OpportunityCardV1>[];
+  nextCursor: string | null;
+  serverTime: string;
+}> {
+  const available = await b20RouteRuntime.discoverAvailable();
+  const observations = b20RouteRuntime.observations();
+  const now = b20RouteRuntime.now();
+  const pipeline = await pipelineStatusV1(observations, now, available);
+  const maxLaunchAgeMs = input.maxLaunchAgeMs ?? DISCOVER_FEED_WINDOW_MS_V1;
+
+  if (!available) {
+    // An honest empty feed WITH a reason. Never a bare list.
+    return { pipeline, cards: [], nextCursor: null, serverTime: now.toISOString() };
+  }
+
+  const page = await observations.listFeed({
+    limit: input.limit,
+    cursor: input.cursor,
+    states: input.state === 'all' ? undefined : [input.state],
+    maxLaunchAgeMs,
+    now: now.toISOString(),
+  });
+
+  const cards = page.rows
+    .map((row) =>
+      b20OpportunityCardV1({
+        launch: {
+          tokenAddress: row.launch.tokenAddress,
+          name: row.launch.name,
+          symbol: row.launch.symbol,
+          variant: row.launch.variant,
+          decimals: row.launch.decimals,
+          blockNumber: row.launch.blockNumber,
+          transactionHash: row.launch.transactionHash,
+          logIndex: row.launch.logIndex,
+          detectedAt: row.launch.detectedAt,
+          blockTimestamp: row.launch.blockTimestamp,
+          canonical: row.launch.canonical,
+        },
+        observation: row.observation,
+        now,
+      }),
+    )
+    // Freshness is computed against SERVER time, so a client with a skewed
+    // clock cannot promote a stale observation into an actionable one.
+    .filter((card) => {
+      if (input.freshness === 'all') return true;
+      if (!card.observation) return false;
+      return card.observation.freshness === input.freshness;
+    });
+
+  return { pipeline, cards, nextCursor: page.nextCursor, serverTime: now.toISOString() };
+}
+
 b20ControlRouter.get('/opportunities/b20', async (req: Request, res: Response) => {
   const guard = b20Guard(req, res);
   if (!guard) return;
@@ -388,68 +460,14 @@ b20ControlRouter.get('/opportunities/b20', async (req: Request, res: Response) =
   const maxLaunchAgeMs = Number.isFinite(launchAgeRaw) && launchAgeRaw > 0 ? launchAgeRaw : DISCOVER_FEED_WINDOW_MS_V1;
 
   try {
-    const available = await b20RouteRuntime.discoverAvailable();
-    const observations = b20RouteRuntime.observations();
-    const now = b20RouteRuntime.now();
-    const pipeline = await pipelineStatusV1(observations, now, available);
-
-    if (!available) {
-      // An honest empty feed WITH a reason. Never a bare `[]`.
-      res.json(
-        B20OpportunityFeedResponseV1Schema.parse({
-          pipeline,
-          cards: [],
-          nextCursor: null,
-          serverTime: now.toISOString(),
-        }),
-      );
-      return;
-    }
-
-    const page = await observations.listFeed({
+    const feed = await readDiscoverFeedV1({
       limit,
       cursor,
-      states: stateParam === 'all' ? undefined : [stateParam as (typeof FEED_STATES_V1)[number]],
+      state: stateParam as (typeof FEED_STATES_V1)[number] | 'all',
+      freshness: freshness as 'fresh' | 'stale' | 'all',
       maxLaunchAgeMs,
-      now: now.toISOString(),
     });
-
-    const cards = page.rows
-      .map((row) =>
-        b20OpportunityCardV1({
-          launch: {
-            tokenAddress: row.launch.tokenAddress,
-            name: row.launch.name,
-            symbol: row.launch.symbol,
-            variant: row.launch.variant,
-            decimals: row.launch.decimals,
-            blockNumber: row.launch.blockNumber,
-            transactionHash: row.launch.transactionHash,
-            logIndex: row.launch.logIndex,
-            detectedAt: row.launch.detectedAt,
-            blockTimestamp: row.launch.blockTimestamp,
-            canonical: row.launch.canonical,
-          },
-          observation: row.observation,
-          now,
-        }),
-      )
-      // Freshness is computed against SERVER time, so a client with a skewed
-      // clock cannot promote a stale observation into an actionable one.
-      .filter((card) => {
-        if (freshness === 'all') return true;
-        if (!card.observation) return false;
-        return card.observation.freshness === freshness;
-      });
-
-    res.json(
-      B20OpportunityFeedResponseV1Schema.parse({
-        pipeline,
-        cards,
-        nextCursor: page.nextCursor,
-        serverTime: now.toISOString(),
-      }),
-    );
+    res.json(B20OpportunityFeedResponseV1Schema.parse(feed));
   } catch (error) {
     storageFailure(res, error, 'b20-opportunity-feed');
   }

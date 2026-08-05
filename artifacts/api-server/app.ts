@@ -88,6 +88,15 @@ app.use((req: Request, res: Response, _next: NextFunction) => {
 app.use(observability);
 
 import { routes } from './routes';
+import { mcpServerRouter } from './routes/mcp/index.js';
+
+// T72 §1 — the read-only MCP endpoint, at the root and NOT under /api.
+//
+// Mounted before the API router because everything under /api/ past
+// `requireTenant` needs a Miorail session, and an MCP client has none. This
+// surface is public by design: it reports what the background workers measured
+// and can neither sign, trade, quote a wallet nor prepare a transaction.
+app.use('/mcp', mcpServerRouter);
 
 // API Routes
 app.use('/api', routes);
