@@ -308,6 +308,32 @@ export interface B20FeedRowV1 {
   observation: B20OpportunityObservationV1 | null;
 }
 
+/**
+ * T73 §3 — one launch, its latest observation, and the one closest to a target
+ * age before it.
+ *
+ * A separate shape from the feed row because a mover needs TWO observations and
+ * the feed deliberately returns one. Both are read in a single query: a
+ * baseline fetched per launch would be N+1 against a list that grows with every
+ * B20 launch, which is the reason `listFeed` is shaped the way it is.
+ */
+export interface B20MoverPairRowV1 {
+  launch: {
+    id: string;
+    tokenAddress: string;
+    name: string;
+    symbol: string;
+    variant: 'asset' | 'stablecoin';
+    decimals: number | null;
+    blockNumber: string;
+    canonical: boolean;
+  };
+  latest: B20OpportunityObservationV1;
+  /** Null when nothing compatible sits near the target age. A real answer:
+   * Miorail has not been measuring this token long enough. */
+  baseline: B20OpportunityObservationV1 | null;
+}
+
 export interface B20FeedPageV1 {
   rows: B20FeedRowV1[];
   /** Opaque. Encodes the deterministic ordering key of the last row, so a page
@@ -453,5 +479,25 @@ export interface B20ObservationRepositoryV1 {
   }): Promise<{ row: B20FeedRowV1; history: B20OpportunityObservationV1[] } | null>;
 
   /** §1 — the counts behind the pipeline status, in one round trip. */
+  /**
+   * §3 — latest and ~24h-old observation pairs, for the movers rail.
+   *
+   * Only canonical launches, only the requested measurement version, and the
+   * baseline is chosen as the observation NEAREST the target age rather than
+   * the newest one older than it: "closest to 24 hours" is the comparison the
+   * label promises, and picking the newest older row silently shortens the
+   * interval whenever measurement is dense.
+   */
+  listMoverPairs(input: {
+    limit: number;
+    now: string;
+    /** How far back the baseline should sit. */
+    baselineAgeMs: number;
+    /** How far from that a baseline may be and still be used. */
+    baselineToleranceMs: number;
+    maxLaunchAgeMs: number;
+    measurementVersions?: readonly string[];
+  }): Promise<B20MoverPairRowV1[]>;
+
   pipelineCounts(input: { now: string; maxLaunchAgeMs: number }): Promise<B20PipelineCountsV1>;
 }

@@ -44,6 +44,27 @@ function boolOrNullV1(value: unknown): boolean | null {
   return value === null || value === undefined ? null : Boolean(value);
 }
 
+/**
+ * T73 — `to_jsonb(row.*)` renders a `numeric` column as a JSON NUMBER, and a
+ * 78-digit atomic amount does not survive that: it comes back as a float and
+ * the evidence hash stops matching. Every numeric column is re-added as text.
+ *
+ * The list is exported so a test can assert the query re-casts every one of
+ * them: a column added to the table and forgotten here comes back as a float
+ * and fails only on amounts large enough to matter.
+ */
+const OBSERVATION_JSONB_NUMERICS_V1 = [
+  'reference_position_atomic',
+  'entry_output_atomic',
+  'optimistic_exit_return_atomic',
+  'largest_passing_size_atomic',
+  'first_failing_size_atomic',
+  'observation_block_number',
+  'controls_block_number',
+] as const;
+
+export { OBSERVATION_JSONB_NUMERICS_V1 };
+
 function rowToObservationV1(row: Record<string, unknown>): B20OpportunityObservationV1 {
   return assertObservationV1({
     id: row.id,
@@ -256,6 +277,88 @@ export function createDatabaseB20ObservationRepository(
         UPDATE b20_measure_leases
         SET lease_owner = NULL, lease_expires_at = NULL, updated_at = ${input.now}::timestamptz
         WHERE id = ${B20_MEASURE_LANE_V1} AND lease_owner = ${input.owner}`;
+    },
+
+    async listMoverPairs(input) {
+      const versions = [...(input.measurementVersions ?? [B20_MEASUREMENT_VERSION_V1])];
+      const limit = Math.max(1, Math.min(100, input.limit));
+      const oldest = new Date(Date.parse(input.now) - input.maxLaunchAgeMs);
+      const ageSeconds = Math.round(input.baselineAgeMs / 1000);
+      const toleranceSeconds = Math.round(input.baselineToleranceMs / 1000);
+
+      // ONE query, two LATERALs. The baseline is chosen NEAREST the target age
+      // rather than "newest older than it": with dense measurement the latter
+      // silently shortens the interval, and the rail's label promises 24 hours.
+      //
+      // `to_jsonb` rather than 35 aliased columns — the keys are the same
+      // snake_case the row mapper already reads, so one mapper serves both.
+      const rows = await sql`
+        SELECT
+          l.id AS launch_id, l.token_address, l.name, l.symbol, l.variant, l.decimals,
+          l.block_number AS launch_block, l.canonical,
+          to_jsonb(o.*) || jsonb_build_object(
+            'reference_position_atomic', o.reference_position_atomic::text,
+            'entry_output_atomic', o.entry_output_atomic::text,
+            'optimistic_exit_return_atomic', o.optimistic_exit_return_atomic::text,
+            'largest_passing_size_atomic', o.largest_passing_size_atomic::text,
+            'first_failing_size_atomic', o.first_failing_size_atomic::text,
+            'observation_block_number', o.observation_block_number::text,
+            'controls_block_number', o.controls_block_number::text
+          ) AS latest_json,
+          CASE WHEN b.id IS NULL THEN NULL ELSE to_jsonb(b.*) || jsonb_build_object(
+            'reference_position_atomic', b.reference_position_atomic::text,
+            'entry_output_atomic', b.entry_output_atomic::text,
+            'optimistic_exit_return_atomic', b.optimistic_exit_return_atomic::text,
+            'largest_passing_size_atomic', b.largest_passing_size_atomic::text,
+            'first_failing_size_atomic', b.first_failing_size_atomic::text,
+            'observation_block_number', b.observation_block_number::text,
+            'controls_block_number', b.controls_block_number::text
+          ) END AS baseline_json
+        FROM b20_launches l
+        JOIN LATERAL (
+          SELECT *
+          FROM b20_opportunity_observations obs
+          WHERE obs.launch_id = l.id
+            AND obs.measurement_version = ANY(${versions}::text[])
+          ORDER BY obs.measured_at DESC, obs.observation_block_number DESC, obs.id DESC
+          LIMIT 1
+        ) o ON true
+        LEFT JOIN LATERAL (
+          SELECT *
+          FROM b20_opportunity_observations prev
+          WHERE prev.launch_id = l.id
+            AND prev.measurement_version = o.measurement_version
+            AND prev.id <> o.id
+            AND prev.measured_at <= o.measured_at - make_interval(secs => ${ageSeconds - toleranceSeconds})
+            AND prev.measured_at >= o.measured_at - make_interval(secs => ${ageSeconds + toleranceSeconds})
+          ORDER BY abs(extract(epoch FROM (
+            prev.measured_at - (o.measured_at - make_interval(secs => ${ageSeconds}))
+          ))) ASC, prev.id ASC
+          LIMIT 1
+        ) b ON true
+        WHERE l.canonical
+          AND l.chain_id = 8453
+          AND l.detected_at >= ${oldest}::timestamptz
+        ORDER BY l.block_number DESC, l.id DESC
+        LIMIT ${limit}`;
+
+      return rows.map((row) => ({
+        launch: {
+          id: String(row.launch_id),
+          tokenAddress: String(row.token_address),
+          name: String(row.name),
+          symbol: String(row.symbol),
+          variant: row.variant as 'asset' | 'stablecoin',
+          decimals: row.decimals === null || row.decimals === undefined ? null : Number(row.decimals),
+          blockNumber: String(row.launch_block),
+          canonical: Boolean(row.canonical),
+        },
+        latest: rowToObservationV1(row.latest_json as Record<string, unknown>),
+        baseline:
+          row.baseline_json === null || row.baseline_json === undefined
+            ? null
+            : rowToObservationV1(row.baseline_json as Record<string, unknown>),
+      }));
     },
 
     async listFeed(input) {

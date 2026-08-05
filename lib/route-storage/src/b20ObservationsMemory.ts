@@ -8,6 +8,7 @@ import {
   type B20MeasurableLaunchV1,
   type B20MeasureLeaseV1,
   type B20FeedPageV1,
+  type B20MoverPairRowV1,
   type B20FeedRowV1,
   type B20ObservationInsertResultV1,
   type B20ObservationRepositoryV1,
@@ -203,6 +204,73 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
       },
       observation: this.latestFor(launch.id, versions),
     };
+  }
+
+  /**
+   * T73 §3 — the same pairing rule the database applies.
+   *
+   * The in-memory store must not be kinder than Postgres: the baseline is the
+   * observation NEAREST the target age within tolerance, not merely the newest
+   * one older than it, and a launch with no compatible baseline returns null
+   * rather than being dropped.
+   */
+  async listMoverPairs(input: {
+    limit: number;
+    now: string;
+    baselineAgeMs: number;
+    baselineToleranceMs: number;
+    maxLaunchAgeMs: number;
+    measurementVersions?: readonly string[];
+  }): Promise<B20MoverPairRowV1[]> {
+    const versions = input.measurementVersions ?? [B20_MEASUREMENT_VERSION_V1];
+    const limit = Math.max(1, Math.min(100, input.limit));
+    const now = Date.parse(input.now);
+    const pairs: B20MoverPairRowV1[] = [];
+
+    for (const launch of await this.canonicalLaunches()) {
+      if (now - Date.parse(launch.detectedAt) > input.maxLaunchAgeMs) continue;
+      const latest = this.latestFor(launch.id, versions);
+      if (!latest) continue;
+
+      const latestAt = Date.parse(latest.measuredAt);
+      const target = latestAt - input.baselineAgeMs;
+      const candidates = [...this.observations.values()]
+        .filter(
+          (entry) =>
+            entry.launchId === launch.id &&
+            entry.id !== latest.id &&
+            entry.measurementVersion === latest.measurementVersion &&
+            Math.abs(Date.parse(entry.measuredAt) - target) <= input.baselineToleranceMs,
+        )
+        .sort((left, right) => {
+          const a = Math.abs(Date.parse(left.measuredAt) - target);
+          const b = Math.abs(Date.parse(right.measuredAt) - target);
+          return a === b ? left.id.localeCompare(right.id) : a - b;
+        });
+
+      pairs.push({
+        launch: {
+          id: launch.id,
+          tokenAddress: launch.tokenAddress,
+          name: launch.name,
+          symbol: launch.symbol,
+          variant: launch.variant,
+          decimals: launch.decimals,
+          blockNumber: launch.blockNumber,
+          canonical: launch.canonical,
+        },
+        latest,
+        baseline: candidates[0] ?? null,
+      });
+    }
+
+    pairs.sort((left, right) => {
+      const a = BigInt(left.launch.blockNumber);
+      const b = BigInt(right.launch.blockNumber);
+      if (a !== b) return a > b ? -1 : 1;
+      return right.launch.id.localeCompare(left.launch.id);
+    });
+    return pairs.slice(0, limit);
   }
 
   async listFeed(input: {

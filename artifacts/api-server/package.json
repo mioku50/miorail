@@ -51,7 +51,8 @@
     "express-session": "^1.19.0",
     "helmet": "^8.2.0",
     "ulidx": "^2.4.1",
-    "viem": "^2.53.1"
+    "viem": "^2.53.1",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

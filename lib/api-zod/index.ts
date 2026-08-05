@@ -3223,6 +3223,71 @@ export const B20OpportunityCardV1Schema = z
     }
   });
 
+/** T73 §2 — a leader carries the BOUND, never a single capacity figure. */
+const B20CapacityLeaderV1Schema = z
+  .object({
+    tokenAddress: z.string().regex(/^0x[0-9a-f]{40}$/),
+    symbol: z.string(),
+    name: z.string(),
+    decimals: z.number().int().min(0).max(255).nullable(),
+    largestPassingSizeAtomic: z.string().regex(/^\d+$/),
+    firstFailingSizeAtomic: z.string().regex(/^\d+$/).nullable(),
+    toleranceBps: z.number().int().min(1).max(10_000),
+    state: z.enum(['candidate', 'provisional', 'rejected', 'unmeasured']),
+    reasonCode: z.string().max(64).nullable(),
+    measuredAt: z.string().datetime(),
+    observationBlockNumber: z.string().regex(/^\d+$/),
+    freshness: z.literal('fresh'),
+  })
+  .strict();
+
+/** §3 — a mover carries both quotes and the REAL interval, so "24h" can be
+ * checked rather than taken on trust. */
+const B20MeasuredMoverV1Schema = z
+  .object({
+    tokenAddress: z.string().regex(/^0x[0-9a-f]{40}$/),
+    symbol: z.string(),
+    name: z.string(),
+    decimals: z.number().int().min(0).max(255),
+    changeBps: z.number().int(),
+    label: z.literal('24h change from Miorail measured quotes'),
+    entryOutputThenAtomic: z.string().regex(/^\d+$/),
+    entryOutputNowAtomic: z.string().regex(/^\d+$/),
+    referencePositionAtomic: z.string().regex(/^\d+$/),
+    intervalSeconds: z.number().int().min(0),
+    baselineMeasuredAt: z.string().datetime(),
+    measuredAt: z.string().datetime(),
+    largestPassingSizeAtomic: z.string().regex(/^\d+$/),
+    // Only a measured observation can be a mover.
+    state: z.literal('provisional'),
+  })
+  .strict();
+
+export const B20MarketRailsResponseV1Schema = z
+  .object({
+    pipeline: B20PipelineStatusV1Schema,
+    capacityLeaders: z.array(B20CapacityLeaderV1Schema).max(10),
+    movers: z.array(B20MeasuredMoverV1Schema).max(10),
+    collectingHistory: z.boolean(),
+    toleranceBps: z.number().int().min(1).max(10_000),
+    moveLabel: z.literal('24h change from Miorail measured quotes'),
+    moveNote: z.string().min(20),
+    serverTime: z.string().datetime(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    // §5 — "Collecting 24h history" is only true when there is nothing to show
+    // AND time is the reason. Saying it beside a populated list would tell a
+    // user the numbers in front of them are provisional in a way they are not.
+    if (value.collectingHistory && value.movers.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['collectingHistory'],
+        message: 'a populated movers list is not still collecting history',
+      });
+    }
+  });
+
 export const B20OpportunityFeedResponseV1Schema = z
   .object({
     pipeline: B20PipelineStatusV1Schema,

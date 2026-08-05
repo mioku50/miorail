@@ -8,6 +8,7 @@ import {
   B20_MEASUREMENT_VERSION_V1,
   InMemoryB20DiscoverRepositoryV1,
   InMemoryB20ObservationRepositoryV1,
+  OBSERVATION_JSONB_NUMERICS_V1 as B20_OBSERVATION_JSONB_NUMERICS_V1,
   RouteStorageIntegrityError,
   assertObservationV1,
   capacitySamplesHashV1,
@@ -265,4 +266,40 @@ describeB20ObservationRepositoryV1('in-memory', async () => {
       await launches.releaseWorkerLease({ key: LANE, owner: 'seed', now: '2026-08-04T00:00:00.000Z' });
     },
   };
+});
+
+describe('the mover query cannot lose precision on a large amount', () => {
+  const database = readFileSync(path.join(here, '..', 'src', 'b20ObservationsDatabase.ts'), 'utf8');
+  const migration = readFileSync(
+    path.join(here, '..', '..', 'db', 'drizzle', '0029_t69b_b20_opportunity_observations.sql'),
+    'utf8',
+  );
+
+  test('every numeric column is re-cast to text inside the jsonb', () => {
+    // `to_jsonb(row.*)` renders a numeric as a JSON NUMBER, and a 78-digit
+    // atomic amount comes back as a float — the evidence hash then stops
+    // matching, but only for amounts large enough to matter, which is exactly
+    // the case nobody has a fixture for.
+    for (const column of B20_OBSERVATION_JSONB_NUMERICS_V1) {
+      assert.ok(
+        database.includes(`'${column}', o.${column}::text`),
+        `the latest observation does not re-cast ${column}`,
+      );
+      assert.ok(
+        database.includes(`'${column}', b.${column}::text`),
+        `the baseline observation does not re-cast ${column}`,
+      );
+    }
+  });
+
+  test('the list covers every numeric column the table actually has', () => {
+    // The half that keeps working when somebody adds a column: read the
+    // migration, not the code that is supposed to match it.
+    const declared = [...migration.matchAll(/"([a-z_]+)"\s+numeric\b/g)].map((match) => match[1]!);
+    assert.ok(declared.length > 0, 'no numeric columns were found in migration 0029');
+    const missing = declared.filter(
+      (column) => !(B20_OBSERVATION_JSONB_NUMERICS_V1 as readonly string[]).includes(column),
+    );
+    assert.deepEqual(missing, [], `these numeric columns would be returned as floats: ${missing.join(', ')}`);
+  });
 });

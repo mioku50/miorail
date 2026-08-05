@@ -431,4 +431,92 @@ export function describeB20ObservationRepositoryV1(
     });
   });
 
+  // -------------------------------------------------------------------------
+  // T73 §3 — the mover pairing, identical in both stores.
+  //
+  // The in-memory store must not be kinder than Postgres: same baseline
+  // choice, same tolerance, same null when nothing compatible exists.
+  // -------------------------------------------------------------------------
+  describe(`${name}: a mover pair is a latest observation and its nearest baseline`, () => {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const pairsOf = (repository: B20ObservationRepositoryV1, now: string, toleranceMs = 4 * 60 * 60 * 1000) =>
+      repository.listMoverPairs({
+        limit: 10,
+        now,
+        baselineAgeMs: DAY_MS,
+        baselineToleranceMs: toleranceMs,
+        maxLaunchAgeMs: 30 * 24 * 60 * 60 * 1000,
+      });
+
+    test('a launch with one observation has no baseline, and is not dropped', async () => {
+      // "No baseline" is a real answer — Miorail has not been measuring long
+      // enough. Dropping the launch would make the rail look shorter than the
+      // feed for no stated reason.
+      const { repository } = await seeded();
+      await repository.insertObservation(
+        observationFixtureV1({ observationBlockNumber: '49531075', measuredAt: T0, staleAfter: '2026-08-04T00:30:00.000Z' }),
+      );
+      const pairs = await pairsOf(repository, '2026-08-04T00:10:00.000Z');
+      assert.equal(pairs.length, 1);
+      assert.equal(pairs[0]!.latest.measuredAt, T0);
+      assert.equal(pairs[0]!.baseline, null);
+    });
+
+    test('the baseline is the observation NEAREST 24h back, not merely the newest older one', async () => {
+      // With dense measurement, "newest older than 24h" silently shortens the
+      // interval — and the rail's label promises 24 hours.
+      const { repository } = await seeded();
+      const latestAt = '2026-08-05T12:00:00.000Z';
+      for (const [block, measuredAt] of [
+        ['49531000', '2026-08-04T09:00:00.000Z'], // 27h back
+        ['49531010', '2026-08-04T11:30:00.000Z'], // 24.5h back — nearest
+        ['49531020', '2026-08-04T14:00:00.000Z'], // 22h back
+        ['49531099', latestAt],
+      ] as const) {
+        await repository.insertObservation(
+          observationFixtureV1({
+            observationBlockNumber: block,
+            measuredAt,
+            staleAfter: new Date(Date.parse(measuredAt) + 30 * 60 * 1000).toISOString(),
+          }),
+        );
+      }
+      const pairs = await pairsOf(repository, '2026-08-05T12:10:00.000Z');
+      assert.equal(pairs.length, 1);
+      assert.equal(pairs[0]!.latest.measuredAt, latestAt);
+      assert.equal(pairs[0]!.baseline?.measuredAt, '2026-08-04T11:30:00.000Z');
+    });
+
+    test('a baseline outside the tolerance is not used', async () => {
+      const { repository } = await seeded();
+      await repository.insertObservation(
+        observationFixtureV1({ observationBlockNumber: '49530000', measuredAt: '2026-08-01T12:00:00.000Z', staleAfter: '2026-08-01T12:30:00.000Z' }),
+      );
+      await repository.insertObservation(
+        observationFixtureV1({ observationBlockNumber: '49531099', measuredAt: '2026-08-05T12:00:00.000Z', staleAfter: '2026-08-05T12:30:00.000Z' }),
+      );
+      const pairs = await pairsOf(repository, '2026-08-05T12:10:00.000Z', 60 * 60 * 1000);
+      assert.equal(pairs[0]!.baseline, null);
+    });
+
+    test('the latest observation is never also its own baseline', async () => {
+      const { repository } = await seeded();
+      await repository.insertObservation(
+        observationFixtureV1({ observationBlockNumber: '49531099', measuredAt: '2026-08-05T12:00:00.000Z', staleAfter: '2026-08-05T12:30:00.000Z' }),
+      );
+      // A zero-length interval would render as a 0% change with full confidence.
+      const pairs = await pairsOf(repository, '2026-08-05T12:10:00.000Z', DAY_MS);
+      assert.notEqual(pairs[0]!.baseline?.id, pairs[0]!.latest.id);
+    });
+
+    test('the launch identity travels with the pair', async () => {
+      const { repository } = await seeded();
+      await repository.insertObservation(observationFixtureV1({ measuredAt: T0, staleAfter: '2026-08-04T00:30:00.000Z' }));
+      const pairs = await pairsOf(repository, '2026-08-04T00:10:00.000Z');
+      assert.equal(pairs[0]!.launch.tokenAddress, TOKEN);
+      assert.equal(pairs[0]!.launch.canonical, true);
+      assert.ok(pairs[0]!.launch.decimals !== undefined);
+    });
+  });
+
 }
