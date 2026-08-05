@@ -20,6 +20,7 @@ import {
   B20EntryStatusResponseV1Schema,
   B20OpportunityFeedResponseV1Schema,
   B20OpportunityDetailResponseV1Schema,
+  B20MarketRailsResponseV1Schema,
 } from '@mioagent/api-zod';
 import {
   B20RequestError,
@@ -39,6 +40,7 @@ import {
   type B20ReaderV1,
 } from '@mioagent/b20-control';
 import {
+  B20_MEASUREMENT_VERSION_V1,
   RouteStorageConflictError,
   RouteStorageIntegrityError,
   createDatabaseB20StorageRepository,
@@ -69,6 +71,12 @@ import {
   type B20PipelineStatusV1,
   b20OpportunityCardV1,
   b20PipelineCopyV1,
+  exitCapacityLeadersV1,
+  measuredMoversV1,
+  moversCollectingHistoryV1,
+  MEASURED_MOVE_LABEL_V1,
+  MEASURED_MOVE_NOTE_V1,
+  type MarketObservationV1,
   b20PipelineStatusV1,
   profileRefusalV1,
 } from '@mioagent/opportunity-rail';
@@ -432,6 +440,158 @@ export async function readDiscoverFeedV1(input: {
 
   return { pipeline, cards, nextCursor: page.nextCursor, serverTime: now.toISOString() };
 }
+
+/** T73 — the card's observation, in the shape the market projections read.
+ * Built from the SAME card the feed serves, so a rail can never disagree with
+ * the Discover surface about what was measured. */
+function marketObservationFromCardV1(card: ReturnType<typeof b20OpportunityCardV1>): MarketObservationV1 {
+  const observation = card.observation!;
+  return {
+    tokenAddress: card.launch.tokenAddress,
+    state: observation.state,
+    reasonCode: observation.reasonCode,
+    referenceQuoteAsset: observation.referenceQuoteAsset,
+    referencePositionAtomic: observation.referencePositionAtomic,
+    // Not on the card projection — the rails only compare it between two
+    // observations, and both come from the repository for movers.
+    profileIdentity: `${observation.referenceQuoteAsset}:${observation.referencePositionAtomic}:${observation.maxRoundTripBps}:${observation.maxExitSlippageBps}`,
+    measurementVersion: B20_MEASUREMENT_VERSION_V1,
+    entryOutputAtomic: null,
+    optimisticRoundTripBps: observation.optimisticRoundTripBps,
+    largestPassingSizeAtomic: observation.largestPassingSizeAtomic,
+    firstFailingSizeAtomic: observation.firstFailingSizeAtomic,
+    capacityToleranceBps: observation.capacityToleranceBps,
+    capacityStable: observation.capacityStable,
+    exitRouteFound: observation.exitRouteFound,
+    transfersPaused: observation.transfersPaused,
+    transferPolicyState: observation.transferPolicyState,
+    controlsComplete: observation.controlsComplete,
+    controlsBlockNumber: observation.controlsBlockNumber,
+    observationBlockNumber: observation.observationBlockNumber,
+    measuredAt: observation.measuredAt,
+    staleAfter: observation.staleAfter,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// T73 — the two market rails.
+//
+// Read-only projections over stored observations, composed from the SAME feed
+// read the Discover surface uses and the same mover pairing both repositories
+// implement. No new measurement and no new ranking: the ordering key is named
+// in the response, and it is one measured dimension.
+// ---------------------------------------------------------------------------
+
+/** §2 — ONE configured tolerance. A ladder probed against a different one
+ * produces a larger passing size for the same pool and is excluded, not
+ * ranked beside these. Matches the measurement worker's reference profile. */
+export const MARKET_RAIL_TOLERANCE_BPS_V1 = 300;
+export const MARKET_RAIL_BASELINE_AGE_MS_V1 = 24 * 60 * 60 * 1000;
+/** A measurement pass is not on a precise timer, so "about 24 hours" needs a
+ * window. Four hours either side: wide enough to survive a slow pass, narrow
+ * enough that the label is not a fiction. */
+export const MARKET_RAIL_BASELINE_TOLERANCE_MS_V1 = 4 * 60 * 60 * 1000;
+/** §3 — below this measured exit capacity a token is excluded from movers. A
+ * pool this thin swings hundreds of percent on quotes nobody could act on. */
+export const MARKET_RAIL_MIN_CAPACITY_ATOMIC_V1 = '1000000000000000000';
+
+b20ControlRouter.get('/opportunities/b20/market/rails', async (req: Request, res: Response) => {
+  const guard = b20Guard(req, res);
+  if (!guard) return;
+
+  const limitRaw = Number.parseInt(String(req.query.limit ?? '5'), 10);
+  const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(10, limitRaw)) : 5;
+
+  try {
+    const available = await b20RouteRuntime.discoverAvailable();
+    const observations = b20RouteRuntime.observations();
+    const now = b20RouteRuntime.now();
+    const pipeline = await pipelineStatusV1(observations, now, available);
+
+    if (!available) {
+      res.json(
+        B20MarketRailsResponseV1Schema.parse({
+          pipeline,
+          capacityLeaders: [],
+          movers: [],
+          collectingHistory: false,
+          toleranceBps: MARKET_RAIL_TOLERANCE_BPS_V1,
+          moveLabel: MEASURED_MOVE_LABEL_V1,
+          moveNote: MEASURED_MOVE_NOTE_V1,
+          serverTime: now.toISOString(),
+        }),
+      );
+      return;
+    }
+
+    // The leaders read the same page the Discover feed serves.
+    const feed = await readDiscoverFeedV1({
+      limit: 50,
+      cursor: null,
+      state: 'all',
+      freshness: 'all',
+    });
+    const leaders = exitCapacityLeadersV1({
+      rows: feed.cards
+        .filter((card) => card.observation !== null)
+        .map((card) => ({
+          launch: {
+            tokenAddress: card.launch.tokenAddress,
+            symbol: card.launch.symbol,
+            name: card.launch.name,
+            decimals: card.launch.decimals,
+            canonical: card.launch.canonical,
+          },
+          observation: marketObservationFromCardV1(card),
+        })),
+      toleranceBps: MARKET_RAIL_TOLERANCE_BPS_V1,
+      now,
+      limit,
+    });
+
+    const pairs = await observations.listMoverPairs({
+      limit: 50,
+      now: now.toISOString(),
+      baselineAgeMs: MARKET_RAIL_BASELINE_AGE_MS_V1,
+      baselineToleranceMs: MARKET_RAIL_BASELINE_TOLERANCE_MS_V1,
+      maxLaunchAgeMs: DISCOVER_FEED_WINDOW_MS_V1,
+    });
+    const movers = measuredMoversV1({
+      pairs: pairs.map((pair) => ({
+        launch: {
+          tokenAddress: pair.launch.tokenAddress,
+          symbol: pair.launch.symbol,
+          name: pair.launch.name,
+          decimals: pair.launch.decimals,
+          canonical: pair.launch.canonical,
+        },
+        latest: pair.latest,
+        baseline: pair.baseline,
+      })),
+      now,
+      baselineAgeMs: MARKET_RAIL_BASELINE_AGE_MS_V1,
+      baselineToleranceMs: MARKET_RAIL_BASELINE_TOLERANCE_MS_V1,
+      minExitCapacityAtomic: MARKET_RAIL_MIN_CAPACITY_ATOMIC_V1,
+      limit,
+    });
+
+    res.json(
+      B20MarketRailsResponseV1Schema.parse({
+        pipeline,
+        capacityLeaders: leaders.leaders,
+        movers: movers.movers,
+        // §5 — only when time is the ONLY thing missing.
+        collectingHistory: moversCollectingHistoryV1(movers),
+        toleranceBps: MARKET_RAIL_TOLERANCE_BPS_V1,
+        moveLabel: MEASURED_MOVE_LABEL_V1,
+        moveNote: MEASURED_MOVE_NOTE_V1,
+        serverTime: now.toISOString(),
+      }),
+    );
+  } catch (error) {
+    storageFailure(res, error, 'b20-market-rails');
+  }
+});
 
 b20ControlRouter.get('/opportunities/b20', async (req: Request, res: Response) => {
   const guard = b20Guard(req, res);
