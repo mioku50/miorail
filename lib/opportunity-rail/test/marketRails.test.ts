@@ -428,3 +428,27 @@ describe('§6 — no dimension Miorail did not measure', () => {
     }
   });
 });
+
+describe('the mirrored state unions cannot drift from the real ones', () => {
+  test('every state and transfer-policy value matches observation.ts', () => {
+    // marketRails.ts declares these locally so lib/ui can import it at ES2017.
+    // That copy is only safe while it stays a copy.
+    const source = readFileSync(new URL('../src/observation.ts', import.meta.url), 'utf8');
+    const listOf = (name: string): string[] => {
+      const block = source.slice(source.indexOf(`export const ${name} = [`));
+      return [...block.slice(0, block.indexOf('] as const')).matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!);
+    };
+    assert.deepEqual(listOf('B20_OBSERVATION_STATES_V1'), [
+      'candidate',
+      'provisional',
+      'rejected',
+      'unmeasured',
+    ]);
+    assert.deepEqual(listOf('B20_TRANSFER_POLICY_STATES_V1'), [
+      'open',
+      'restricted',
+      'unavailable',
+      'unsupported_by_variant',
+    ]);
+  });
+});

@@ -219,6 +219,9 @@ importers:
       '@mioagent/api-client-react':
         specifier: workspace:*
         version: link:../../lib/api-client-react
+      '@mioagent/opportunity-rail':
+        specifier: workspace:*
+        version: link:../../lib/opportunity-rail
       '@mioagent/proof-verifier':
         specifier: workspace:*
         version: link:../../lib/proof-verifier
@@ -1102,6 +1105,9 @@ importers:
 
   lib/ui:
     dependencies:
+      '@mioagent/opportunity-rail':
+        specifier: workspace:*
+        version: link:../opportunity-rail
       '@mioagent/route-card':
         specifier: workspace:*
         version: link:../route-card

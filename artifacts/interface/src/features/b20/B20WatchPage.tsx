@@ -3,8 +3,10 @@ import { useLocation } from 'wouter';
 import { useAccount } from 'wagmi';
 import {
   B20EntryReviewCard,
+  B20ExitCapacityLeadersCard,
+  B20ExitCoverageCard,
+  B20MeasuredMoversCard,
   B20WatchScreen,
-  ConsoleRightRail,
   ConsoleShell,
   EXIT_PROFILE_DEFAULTS_V1,
   b20ErrorCodeV1,
@@ -22,6 +24,7 @@ import {
   useB20BeginEntrySubmission,
   useB20EntryStatus,
   useB20ExitCheck,
+  useB20MarketRails,
   useB20OpportunitySimulate,
   useB20PrepareEntry,
   useB20RecordEntrySubmission,
@@ -39,6 +42,7 @@ import { useSendCalls } from 'wagmi';
 const B20_QUOTE_ASSET_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 import { isWalletRejectionError } from '@mioagent/wallet-actions';
 import { useConsoleNav } from '../console/useConsoleNav';
+import type { MarketObservationV1 } from '@mioagent/opportunity-rail/marketRails';
 
 // ---------------------------------------------------------------------------
 // T67F — the B20 tab.
@@ -63,6 +67,10 @@ const TRACKED_KEY_V1 = 'miorail.b20.tracked.v1';
 
 const ADDRESS_V1 = /^0x[0-9a-fA-F]{40}$/;
 
+/** The tolerance the exit check probes with. Stated so the coverage card can
+ * name it rather than implying a capacity measured against nothing. */
+const EXIT_CHECK_TOLERANCE_BPS_V1 = 300;
+
 /** Atomic units to a readable balance. Integer arithmetic: a float turns a
  * token with 18 decimals into scientific notation. */
 function formatBalanceV1(atomic: string | null, decimals: number | null): string {
@@ -78,6 +86,62 @@ function shortAddress(address: string | undefined): string | null {
   return address ? `${address.slice(0, 6)}…${address.slice(-4)}` : null;
 }
 
+/**
+ * The exit check, in the shape the shared coverage projection reads.
+ *
+ * Deliberately an adapter and not a second computation: `exitCoverageV1` in
+ * lib/opportunity-rail decides what coverage means, here and on the server.
+ * Only the fields it actually reads are filled; the rest are the honest nulls
+ * an exit check genuinely does not produce.
+ */
+function exitObservationForCoverageV1(
+  tokenAddress: string,
+  check: {
+    exitCapacityAtomic: string | null;
+    firstFailingAtomic: string | null;
+    controlsBlockNumber?: string | null;
+    checkedAt?: string | null;
+  },
+): MarketObservationV1 {
+  const measuredAt = check.checkedAt ?? new Date().toISOString();
+  return {
+    tokenAddress,
+    state: 'provisional',
+    reasonCode: 'quoted_pre_entry',
+    referenceQuoteAsset: B20_QUOTE_ASSET_V1,
+    referencePositionAtomic: '0',
+    profileIdentity: '',
+    measurementVersion: 'b20-exit-check/v1',
+    entryOutputAtomic: null,
+    optimisticRoundTripBps: null,
+    largestPassingSizeAtomic: check.exitCapacityAtomic,
+    firstFailingSizeAtomic: check.firstFailingAtomic,
+    capacityToleranceBps: EXIT_CHECK_TOLERANCE_BPS_V1,
+    capacityStable: true,
+    exitRouteFound: check.exitCapacityAtomic !== null,
+    transfersPaused: null,
+    transferPolicyState: null,
+    controlsComplete: null,
+    controlsBlockNumber: check.controlsBlockNumber ?? null,
+    observationBlockNumber: check.controlsBlockNumber ?? '0',
+    measuredAt,
+    // An exit check is a live read; it is fresh for the same window a stored
+    // observation gets, so a card cannot present a minutes-old check as
+    // permanently current.
+    staleAfter: new Date(Date.parse(measuredAt) + 30 * 60 * 1000).toISOString(),
+  };
+}
+
+/** The balance the SWEEP read from the token itself, in atomic units. The
+ * portfolio provider does not index B20, so this is the only honest source. */
+function sweepBalanceAtomicV1(
+  tokens: readonly { tokenAddress: string; balanceAtomic?: string | null }[],
+  tokenAddress: string,
+): string {
+  const match = tokens.find((token) => token.tokenAddress.toLowerCase() === tokenAddress.toLowerCase());
+  return match?.balanceAtomic ?? '0';
+}
+
 export function B20WatchPage() {
   const [, navigate] = useLocation();
   const { address } = useAccount();
@@ -86,6 +150,12 @@ export function B20WatchPage() {
   // a technical tab called "B20" hidden beside Routes.
   const consoleNav = useConsoleNav('portfolio');
   const status = useStatus();
+  // T73-UI — the rails come from the server already ranked. Nothing below
+  // re-sorts or re-derives them.
+  const [railExpanded, setRailExpanded] = useState(false);
+  const marketRails = useB20MarketRails({
+    enabled: status.data?.productMigration?.b20ControlV1 === true,
+  });
   const portfolio = usePortfolio(address);
   const sweep = useB20Watch();
 
@@ -417,6 +487,54 @@ export function B20WatchPage() {
             ? 'No ERC-20 balances were found for this wallet.'
             : null;
 
+  // T73-UI §1/§3 — the same node in both slots: `right` is the desktop column
+  // and `railFold` is where the shell moves it below the main content under
+  // 1180px, which is §3's mobile placement with no second layout.
+  const railModel = {
+    loading: marketRails.isPending && gateOn,
+    unavailableReason: !gateOn
+      ? 'B20 Discover is off on this server, so no market measurements were read.'
+      : marketRails.error
+        ? 'The measured market rails could not be read. Nothing here is a statement about any token.'
+        : null,
+    leaders: marketRails.data?.capacityLeaders ?? [],
+    movers: marketRails.data?.movers ?? [],
+    collectingHistory: marketRails.data?.collectingHistory === true,
+    toleranceBps: marketRails.data?.toleranceBps ?? 300,
+    moveLabel: marketRails.data?.moveLabel ?? '',
+    moveNote: marketRails.data?.moveNote ?? '',
+    now: new Date(),
+    expanded: railExpanded,
+    onToggleExpanded: () => setRailExpanded((open) => !open),
+    onOpenToken: (token: string) => runExitCheck(token),
+  };
+
+  // §5 — the wallet's own coverage, for the token whose exit was just checked.
+  // It is computed in this browser because the server never receives a balance:
+  // position size is the one input Miorail deliberately never holds.
+  const coverageHolding = holdings.find((holding) => holding.tokenAddress === exitToken) ?? null;
+  const coverageObservation =
+    exitToken && exitResult && (exitResult as { exitCapacityAtomic?: string | null }).exitCapacityAtomic
+      ? exitObservationForCoverageV1(exitToken, exitResult as never)
+      : null;
+
+  const marketRail = (
+    <>
+      {coverageHolding && coverageObservation && (
+        <B20ExitCoverageCard
+          tokenAddress={coverageHolding.tokenAddress}
+          symbol={coverageHolding.symbol ?? coverageHolding.tokenAddress.slice(0, 8)}
+          decimals={coverageHolding.decimals}
+          positionAtomic={sweepBalanceAtomicV1(sweep.data?.tokens ?? [], coverageHolding.tokenAddress)}
+          observation={coverageObservation}
+          now={new Date()}
+        />
+      )}
+      <B20ExitCapacityLeadersCard {...railModel} />
+      <B20MeasuredMoversCard {...railModel} />
+    </>
+  );
+
   return (
     <ConsoleShell
       header={{
@@ -444,43 +562,8 @@ export function B20WatchPage() {
         spendLabel: '$0',
         blockNumber: chainBlockNumberV1(status.data ?? null),
       }}
-      right={
-        <ConsoleRightRail
-          // No price and no depth panel here: this tab is about controls, and
-          // a price chart beside a control card invites the reading the whole
-          // surface refuses — that a control state predicts a price.
-          price={null}
-          priceUnavailableReason="Price is on the Routes tab. This rail reports what was read, not what it is worth."
-          depth={null}
-          depthUnavailableReason="Depth belongs to a route comparison, not to a control read."
-          evidenceFeed={(sweep.data?.tokens ?? []).slice(0, 8).map((token, index) => ({
-            id: `${token.tokenAddress}-${index}`,
-            time: token.controls?.blockNumber ? `block ${token.controls.blockNumber}` : '—',
-            source: token.displaySymbol ?? token.tokenAddress.slice(0, 10),
-            text:
-              token.outcome === 'watched'
-                ? `${token.watch?.status === 'compared' ? token.watch.changes.length : 0} change(s)`
-                : token.outcome,
-            available: token.outcome === 'watched',
-          }))}
-          spend={null}
-          freshness={[
-            { label: 'B20 tokens held', value: String(holdings.length) },
-            { label: 'Other tokens', value: String(otherTokenCount) },
-            {
-              label: 'Last checked',
-              value: sweep.data?.checkedAt ? sweep.data.checkedAt.slice(11, 19) : 'never',
-              tone: sweep.data ? undefined : 'off',
-            },
-            {
-              label: 'Not reached',
-              value: String(sweep.data?.notChecked.length ?? 0),
-              tone: (sweep.data?.notChecked.length ?? 0) > 0 ? 'off' : undefined,
-            },
-          ]}
-        />
-      }
-      railFold={null}
+      right={marketRail}
+      railFold={marketRail}
       theme={theme}
       onThemeChange={setTheme}
       // The B20 tab has no sessions and no proof list of its own: starting a

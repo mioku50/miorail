@@ -15,7 +15,22 @@
 // pool reads. It is labelled accordingly and the label is not optional.
 // ---------------------------------------------------------------------------
 
-import type { B20ObservationStateV1, B20TransferPolicyStateV1 } from './observation.js';
+/**
+ * Mirrored from `observation.ts` rather than imported.
+ *
+ * That module type-imports `exitFirst.ts`, which uses bigint literals — a
+ * compile error at the ES2017 target the miniapp builds lib/ui with. Importing
+ * it here would make this module unusable by the surface that has to render it.
+ * `marketRails.test.ts` reads observation.ts from disk and fails if the two
+ * lists ever diverge, so these are copies that cannot rot silently.
+ */
+type B20ObservationStateV1 = 'candidate' | 'provisional' | 'rejected' | 'unmeasured';
+type B20TransferPolicyStateV1 = 'open' | 'restricted' | 'unavailable' | 'unsupported_by_variant';
+
+/** Re-exported under rail-local names so a consumer importing only this module
+ * still has the vocabulary, without colliding with the barrel's own exports. */
+export type MarketObservationStateV1 = B20ObservationStateV1;
+export type MarketTransferPolicyStateV1 = B20TransferPolicyStateV1;
 
 /** Basis-point denominator. Integer arithmetic throughout — a float turns an
  * 18-decimal token amount into scientific notation and a 1.18% into 1.1799999. */

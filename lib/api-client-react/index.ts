@@ -868,6 +868,29 @@ export function useB20Opportunities(
   });
 }
 
+/**
+ * T73-UI — the two market rails.
+ *
+ * Read-only over stored observations. The server does the ranking; this hook
+ * exists to fetch it, and the client sorts nothing.
+ */
+export function useB20MarketRails(options?: { enabled?: boolean; limit?: number }) {
+  const limit = options?.limit ?? 10;
+  return useQuery({
+    queryKey: ['b20-market-rails', limit],
+    queryFn: async () => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/opportunities/b20/market/rails?limit=${limit}`,
+      );
+      return apiSpec.B20MarketRailsResponseV1Schema.parse(response);
+    },
+    // Every failure mode here answers the same way twice; the pipeline status
+    // in the body already says which one it is.
+    retry: false,
+    enabled: options?.enabled !== false,
+  });
+}
+
 export function useAddB20Watch(
   options?: Omit<UseMutationOptions<apiSpec.B20WatchlistResponseV1, Error, { tokenAddress: string }>, 'mutationFn'>,
 ) {

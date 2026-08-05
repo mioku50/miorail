@@ -14,6 +14,7 @@
     "test": "NODE_ENV=test node --import tsx --test test/*.test.ts test/*.test.tsx"
   },
   "dependencies": {
+    "@mioagent/opportunity-rail": "workspace:*",
     "@mioagent/route-card": "workspace:*"
   },
   "peerDependencies": {
