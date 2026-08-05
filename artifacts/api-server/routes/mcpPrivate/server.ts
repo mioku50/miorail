@@ -1,0 +1,256 @@
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
+import {
+  MCP_SUBMISSION_RESULTS_V1,
+  MIORAIL_PRIVATE_CAVEATS_V1,
+  McpPrivateError,
+  miorailCheckExitProfileV1,
+  miorailGetBaseMcpActionV1,
+  miorailGetExecutionStatusV1,
+  miorailPrepareB20EntryV1,
+  miorailRecordBaseMcpSubmissionV1,
+  privateFailureV1,
+} from './tools.js';
+import type { McpPrivateIdentityV1 } from './session.js';
+
+// ---------------------------------------------------------------------------
+// T72-B §2 — the authenticated MCP server.
+//
+// One server instance per request, constructed around ONE already-authenticated
+// identity. The wallet is closed over, not passed in: no tool on this surface
+// accepts a wallet, an owner, an account or a tenant, so there is no argument an
+// assistant could fill in to act as somebody else (§10).
+//
+// The descriptions are load-bearing. An assistant decides from them whether to
+// call a tool, in what order, and what to say about the result — and the
+// failure mode is not a crash, it is a model resending a batch it could not
+// find the status of.
+// ---------------------------------------------------------------------------
+
+export const MIORAIL_PRIVATE_MCP_NAME_V1 = 'miorail-private';
+export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.0.0';
+
+export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail's authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
+
+Miorail never signs and never broadcasts. It holds no private key. What it can do is prove a route is executable, persist the exact calls it simulated, and hand those calls to you so the USER can approve them in their own Base Account through Base MCP.
+
+The order is fixed and every step exists for a reason:
+
+1. miorail_check_exit_profile — the live wallet-bound simulation. ${MIORAIL_PRIVATE_CAVEATS_V1.qualification}
+2. miorail_prepare_b20_entry — turns a clearance into a persisted, simulated plan. Returns a review, deliberately no calls.
+3. Show the review to the user and get an explicit yes.
+4. miorail_get_base_mcp_action — the exact stored calls.
+5. Base MCP send_calls — unchanged. ${MIORAIL_PRIVATE_CAVEATS_V1.approval}
+6. miorail_record_base_mcp_submission — exactly once.
+7. miorail_get_execution_status — a wallet approval is not an entry.
+
+${MIORAIL_PRIVATE_CAVEATS_V1.onePlanOneSubmission}
+
+${MIORAIL_PRIVATE_CAVEATS_V1.entryOnly}
+
+This surface buys B20 tokens through a route Miorail certified. It is not a general swap tool: there is no path here to an arbitrary token, an arbitrary router or calldata of your own.`;
+
+const ADDRESS_ARG_V1 = z
+  .string()
+  .regex(/^0x[0-9a-fA-F]{40}$/)
+  .describe('The B20 token contract address on Base mainnet.');
+
+const POSITION_ARG_V1 = z
+  .string()
+  .regex(/^[0-9]{1,30}$/)
+  .describe(
+    'The USDC position size in atomic units (6 decimals, so 25 USDC is "25000000"). This is the user’s money — never guess it, and state it back to them before preparing anything.',
+  );
+
+const ROUND_TRIP_ARG_V1 = z
+  .number()
+  .int()
+  .min(1)
+  .max(10_000)
+  .optional()
+  .describe('Maximum acceptable measured round-trip cost, in basis points. Defaults to 300 (3%).');
+
+const SLIPPAGE_ARG_V1 = z
+  .number()
+  .int()
+  .min(1)
+  .max(10_000)
+  .optional()
+  .describe('Maximum acceptable exit slippage, in basis points. Defaults to 300 (3%).');
+
+export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1): McpServer {
+  const server = new McpServer(
+    { name: MIORAIL_PRIVATE_MCP_NAME_V1, version: MIORAIL_PRIVATE_MCP_VERSION_V1 },
+    { instructions: MIORAIL_PRIVATE_INSTRUCTIONS_V1 },
+  );
+
+  const reply = (payload: Record<string, unknown>) => ({
+    content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
+    structuredContent: payload,
+  });
+
+  const refuse = (error: unknown) => {
+    const failure = error instanceof McpPrivateError ? error : privateFailureV1(error);
+    return {
+      isError: true as const,
+      content: [{ type: 'text' as const, text: `${failure.code}: ${failure.message}` }],
+    };
+  };
+
+  server.registerTool(
+    'miorail_check_exit_profile',
+    {
+      title: 'Live wallet-bound exit check and sequential simulation',
+      description: `Runs Miorail's live check for the signed-in wallet: it quotes the entry, simulates it, re-quotes the exit at the size the entry actually produced, and simulates all four calls in one state. This is the ONLY thing that can qualify a token for execution.
+
+${MIORAIL_PRIVATE_CAVEATS_V1.qualification}
+
+A "provisional" result from the public Discover feed is not a substitute and cannot be promoted. If this returns anything other than qualified, there is no clearance and nothing can be prepared — say so plainly rather than describing the token as tradeable.
+
+The token's controls must have been read on this server first; if they have not, this refuses with b20_controls_unread rather than pricing a token whose transfer controls were never checked.`,
+      inputSchema: {
+        tokenAddress: ADDRESS_ARG_V1,
+        positionAtomic: POSITION_ARG_V1,
+        maxRoundTripBps: ROUND_TRIP_ARG_V1,
+        maxExitSlippageBps: SLIPPAGE_ARG_V1,
+      },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailCheckExitProfileV1(identity, args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'miorail_prepare_b20_entry',
+    {
+      title: 'Turn a clearance into a persisted, simulated entry plan',
+      description: `Consumes a clearance from miorail_check_exit_profile and produces a stored Entry Plan: Miorail re-reads the token's controls, re-quotes the cleared route, rebuilds every byte server-side, runs its safety kernel over the result and simulates the exact calls on offer.
+
+Returns a REVIEW and no executable calls. That is deliberate — show the review to the user and get an explicit yes before calling miorail_get_base_mcp_action.
+
+Pass the SAME position and tolerances you used for the check. Different numbers describe a different plan and the clearance will be refused.
+
+requestId is an idempotency handle you choose. Reusing it returns the stored plan instead of re-quoting the pool, so a retry never offers the user different numbers.`,
+      inputSchema: {
+        clearanceId: z.string().min(1).max(200).describe('From miorail_check_exit_profile.'),
+        positionAtomic: POSITION_ARG_V1,
+        maxRoundTripBps: ROUND_TRIP_ARG_V1,
+        maxExitSlippageBps: SLIPPAGE_ARG_V1,
+        requestId: z
+          .string()
+          .min(1)
+          .max(200)
+          .describe('Your idempotency handle. Reuse it on a retry; never generate a new one for the same intent.'),
+      },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailPrepareB20EntryV1(identity, args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'miorail_get_base_mcp_action',
+    {
+      title: 'The exact persisted calls, for Base MCP send_calls',
+      description: `Returns the exact calls Miorail simulated, in the shape Base MCP's send_calls takes. Call this only AFTER the user has seen the review and said yes.
+
+${MIORAIL_PRIVATE_CAVEATS_V1.approval}
+
+Pass the calls through UNCHANGED. Do not reorder, merge, re-encode, add or drop a call, and do not substitute a recipient, amount or router of your own: the returned callsHash covers these exact bytes, and a modified batch is one Miorail never simulated and will refuse to record.
+
+This opens the plan's ONE submission slot. ${MIORAIL_PRIVATE_CAVEATS_V1.onePlanOneSubmission}`,
+      inputSchema: {
+        planId: z.string().min(1).max(200).describe('From miorail_prepare_b20_entry.'),
+        positionAtomic: POSITION_ARG_V1,
+        maxRoundTripBps: ROUND_TRIP_ARG_V1,
+        maxExitSlippageBps: SLIPPAGE_ARG_V1,
+        attemptRequestId: z
+          .string()
+          .min(1)
+          .max(200)
+          .describe('Idempotency handle for this submission attempt. Reuse it on a retry.'),
+      },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailGetBaseMcpActionV1(identity, args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'miorail_record_base_mcp_submission',
+    {
+      title: 'Record what Base MCP reported',
+      description: `Tells Miorail what happened when you passed the calls to Base MCP. Call it exactly once per action.
+
+You are reporting the WALLET'S BEHAVIOUR, not a result. You cannot tell Miorail that an entry succeeded; only on-chain reconciliation establishes that.
+
+- "submitted": Base MCP returned a batch id. Pass it.
+- "user_rejected": the user declined. Nothing reached the chain.
+- "unknown": you could not establish what happened. Pass the batch id if you have one. If you do not, Miorail records nothing and permanently locks this plan — that is the safe outcome, and you must NOT prepare, fetch or send again. Tell the user to check their wallet activity.
+
+submittedCallsHash must be the callsHash you were given. A mismatch means what was sent is not what Miorail prepared, and nothing will be recorded.`,
+      inputSchema: {
+        planId: z.string().min(1).max(200),
+        attemptId: z.string().min(1).max(200).describe('From miorail_get_base_mcp_action.'),
+        submittedCallsHash: z
+          .string()
+          .regex(/^0x[0-9a-fA-F]{64}$/)
+          .describe('The callsHash you were given. Do not compute your own.'),
+        result: z.enum(MCP_SUBMISSION_RESULTS_V1),
+        batchId: z
+          .string()
+          .min(1)
+          .max(200)
+          .nullish()
+          .describe('The Base MCP request/batch id. Required for "submitted".'),
+      },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailRecordBaseMcpSubmissionV1(identity, args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'miorail_get_execution_status',
+    {
+      title: 'What the submitted batch actually did',
+      description: `Reads Miorail's reconciliation for one plan and returns a named outcome: awaiting_wallet_approval, submitted, reconciling, entry_succeeded, entry_reverted, submitted_unknown, reconciliation_required or user_rejected.
+
+Report the state you are given; do not upgrade it. In particular:
+
+- "submitted" means a batch exists, NOT that the entry happened.
+- "reconciliation_required" means the batch was confirmed but the expected token receipt was not found in it. A confirmed approval is not an entry.
+- "submitted_unknown" is neither success nor failure, and is never a reason to send again.
+
+Only "entry_succeeded" means the wallet's own decoded movements show USDC spent and the token received.`,
+      inputSchema: {
+        planId: z.string().min(1).max(200),
+      },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailGetExecutionStatusV1(identity, args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
+
+  return server;
+}

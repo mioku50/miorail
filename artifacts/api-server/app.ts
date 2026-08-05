@@ -89,6 +89,18 @@ app.use(observability);
 
 import { routes } from './routes';
 import { mcpServerRouter } from './routes/mcp/index.js';
+import { mcpPrivateRouter } from './routes/mcpPrivate/index.js';
+
+// T72-B §1 — the AUTHENTICATED MCP endpoint, mounted before the public one.
+//
+// Order matters for reading, not for routing: the public router only handles an
+// empty remainder, so `/mcp/private` would fall through to here anyway. Putting
+// it first makes it impossible to read `app.use('/mcp', …)` as covering both.
+//
+// It is deliberately outside /api for the same reason the public one is — an
+// MCP client has no Miorail cookie — but unlike the public one, it refuses
+// every caller who cannot prove a wallet.
+app.use('/mcp/private', mcpPrivateRouter);
 
 // T72 §1 — the read-only MCP endpoint, at the root and NOT under /api.
 //

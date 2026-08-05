@@ -45,7 +45,7 @@ const FLAGS = {
   commerceRouteV1: false,
   commerceExecutionV1: false,
   nftRouteV1: true,
-  nftExecutionV1: true, privateAiRouteV1: false, privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, routeOutcomeFeedbackV1: false,
+  nftExecutionV1: true, privateAiRouteV1: false, privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, mcpPrivateV1: false, mcpPrivateExecutionV1: false, routeOutcomeFeedbackV1: false,
 };
 
 const originalRuntime = { ...nftRouteRuntime };
@@ -507,7 +507,7 @@ describe('prepare loads the reviewed card, and refuses a moved listing', () => {
   });
 
   test('the purchase gate being off makes nothing signable', async () => {
-    nftRouteRuntime.flags = () => ({ ...FLAGS, nftExecutionV1: false, privateAiRouteV1: false, privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, routeOutcomeFeedbackV1: false, });
+    nftRouteRuntime.flags = () => ({ ...FLAGS, nftExecutionV1: false, privateAiRouteV1: false, privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, mcpPrivateV1: false, mcpPrivateExecutionV1: false, routeOutcomeFeedbackV1: false, });
     const { prepare } = await prepared();
     assert.equal(prepare.body.signable, false);
     assert.match(prepare.body.blockedReason, /execution is off/i);

@@ -1,6 +1,7 @@
 import {
   B20_ENTRY_EXECUTION_FAMILY_V1,
   entryPlanCallsHashV1,
+  type B20EntrySubmissionAttemptV1,
   type B20OpportunityClearanceV1,
   type B20PreparedEntryPlanV1,
 } from '@mioagent/route-storage';
@@ -57,6 +58,40 @@ export const SUBMIT_REFUSAL_COPY_V1: Record<SubmitRefusalV1, string> = {
   entry_plan_controls_stale:
     'This token’s controls have not been re-read recently enough to sign against. Run the check again.',
 };
+
+/**
+ * The two terminal outcomes that mean NOTHING reached the chain.
+ *
+ * Everything else — succeeded, reverted, unknown, needs-reconciliation — is a
+ * statement about a batch that exists, and a plan whose batch exists must never
+ * be offered to a wallet again.
+ */
+export const B20_RETRYABLE_TERMINAL_OUTCOMES_V1 = [
+  'user_rejected',
+  'cancelled_before_submission',
+] as const;
+
+/**
+ * T72-B §7/§11 — whether an attempt still holds this plan's only submission
+ * slot.
+ *
+ * The callers used to ask only whether an attempt was non-terminal, which meant
+ * a plan whose entry had already SUCCEEDED could be handed to a wallet a second
+ * time. Nothing did, because both surfaces hide the button — but a hidden
+ * button is not a guard, and the caller on the other side of this gate may now
+ * be an assistant calling the endpoint directly.
+ *
+ * `submitted_unknown` is the case that matters most: it means a batch was sent
+ * and its result could not be established. Retrying that is precisely how
+ * somebody buys the same token twice.
+ */
+export function attemptHoldsPlanSlotV1(attempt: B20EntrySubmissionAttemptV1 | null): boolean {
+  if (!attempt) return false;
+  if (attempt.status !== 'terminal') return true;
+  return !(B20_RETRYABLE_TERMINAL_OUTCOMES_V1 as readonly string[]).includes(
+    attempt.terminalOutcome ?? '',
+  );
+}
 
 /** How old the prepare-time control read may be when a wallet is opened.
  * Shorter than the plan's own life on purpose: the deadline governs whether the

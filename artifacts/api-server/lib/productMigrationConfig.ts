@@ -38,6 +38,15 @@ export interface MiorailProductMigrationFlags {
    * wallet address and transaction hashes to anyone holding the link. Those are
    * not the same decision. */
   publicProofV1: boolean;
+  /** T72-B §1: the authenticated MCP surface at /mcp/private. Off means the
+   * endpoint refuses every caller and no handoff token can be issued, so the
+   * public read-only /mcp is the only MCP Miorail answers on. */
+  mcpPrivateV1: boolean;
+  /** T72-B §5: handing the persisted calls to an MCP client for Base MCP to
+   * submit. Separate from the surface gate on purpose — reading your own plans
+   * through an assistant and letting that assistant fetch executable bytes are
+   * not the same decision, and only the second one can cost money. */
+  mcpPrivateExecutionV1: boolean;
   /** T67C.1: route outcome feedback — deriving verified provider outcomes and
    * letting an eligible reliability snapshot calibrate the next ranking. Off
    * means the projector is never installed, so no outcome is recorded at all
@@ -115,6 +124,8 @@ export function getMiorailProductMigrationFlags(
     b20ControlV1: readBooleanFlag(env, 'MIORAIL_B20_CONTROL_V1', false),
     submissionRecoveryV1: readBooleanFlag(env, 'MIORAIL_SUBMISSION_RECOVERY_V1', false),
     publicProofV1: readBooleanFlag(env, 'MIORAIL_PUBLIC_PROOF_V1', false),
+    mcpPrivateV1: readBooleanFlag(env, 'MIORAIL_MCP_PRIVATE_V1', false),
+    mcpPrivateExecutionV1: readBooleanFlag(env, 'MIORAIL_MCP_PRIVATE_EXECUTION_V1', false),
     routeOutcomeFeedbackV1: readBooleanFlag(env, 'MIORAIL_ROUTE_OUTCOME_FEEDBACK_V1', false),
   });
 }

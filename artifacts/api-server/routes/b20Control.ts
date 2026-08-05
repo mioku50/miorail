@@ -54,6 +54,7 @@ import {
   type B20EntrySubmissionRepositoryV1,
   type B20ClearanceRepositoryV1,
   type B20EntryPlanRepositoryV1,
+  type B20PreparedEntryPlanV1,
   b20SweepOutcomeFromDetectionV1,
   b20WatchlistIdV1,
   B20_WATCHLIST_CAPACITY_V1,
@@ -89,13 +90,16 @@ import { prepareB20EntryV1 } from '../lib/b20EntryRunner.js';
 import { buildPreparedPlanV1 } from '../lib/b20EntryPlanStore.js';
 import {
   SUBMIT_REFUSAL_COPY_V1,
+  attemptHoldsPlanSlotV1,
   entryWalletPayloadV1,
   submitGateRefusalV1,
+  type EntryWalletPayloadV1,
 } from '../lib/b20EntrySubmitGate.js';
 import {
   entryStatusViewV1,
   openAttemptV1,
   recordWalletReportV1,
+  type WalletReportV1,
 } from '../lib/b20EntrySubmitRunner.js';
 
 // ---------------------------------------------------------------------------
@@ -1046,6 +1050,190 @@ function watchlistBodyV1(entries: readonly B20WatchlistEntryV1[]) {
 // arbitrary-ERC-20 routing stays unsupported either way.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// T72-B §3 — the execution facades.
+//
+// Everything below the HTTP layer used to live inside these handlers. It was
+// lifted out unchanged so a second surface (the authenticated MCP server) can
+// run the SAME code rather than a second implementation of it.
+//
+// That is not tidiness. A second qualification path drifts, and it drifts in
+// one direction: towards being more permissive, because the surface that
+// reimplements it is the one that wanted an easier answer. So the private MCP
+// tools do not get their own runner, their own gate, or their own view of what
+// `qualified` means — they call these functions and render what comes back.
+//
+// A refusal carries the HTTP status the web route already used, so both
+// surfaces agree on the difference between "not yours" (404) and "not allowed"
+// (403), and neither invents a code the other has never seen.
+// ---------------------------------------------------------------------------
+
+export type B20FacadeRefusalV1 = { ok: false; status: number; code: string; detail?: string };
+export type B20FacadeResultV1<T> = { ok: true; body: T } | B20FacadeRefusalV1;
+
+/**
+ * The ONE path that can produce a qualified clearance (§3).
+ *
+ * It quotes, simulates the entry, re-quotes the exit at the size the entry
+ * actually produced, and simulates all four calls in one state — against the
+ * asking wallet. A background Discover observation reaches none of this:
+ * `provisional` was measured against a pool nobody had entered, and nothing
+ * short of this function promotes it.
+ */
+export async function runOpportunitySimulationV1(input: {
+  tenantId: string;
+  walletAddress: string;
+  chainId: number;
+  tokenAddress: string;
+  positionAtomic: string;
+  maxRoundTripBps: number;
+  maxExitSlippageBps: number;
+}): Promise<B20FacadeResultV1<Record<string, unknown>>> {
+  const refusal = validateB20InspectRequestV1(input.chainId, input.tokenAddress);
+  if (refusal) return { ok: false, status: 400, code: refusal, detail: refusalDetailV1(refusal) };
+
+  const profile = {
+    quoteAsset: OPPORTUNITY_QUOTE_ASSET_V1,
+    positionAtomic: input.positionAtomic,
+    maxRoundTripBps: input.maxRoundTripBps,
+    maxExitSlippageBps: input.maxExitSlippageBps,
+  } as const;
+  // The user's numbers, bounded by the server's. A profile outside the bounds
+  // is refused with the field named, not clamped into something they did not
+  // choose and then answered as if they had.
+  const outOfBounds = profileRefusalV1(profile);
+  if (outOfBounds) return { ok: false, status: 400, code: outOfBounds };
+  if (!b20RouteRuntime.rpcConfigured()) return { ok: false, status: 503, code: 'b20_rpc_unavailable' };
+  if (!(await b20RouteRuntime.migrationAvailable())) {
+    return { ok: false, status: 503, code: 'b20_storage_unavailable' };
+  }
+
+  const recent = await b20RouteRuntime.repository().recentSnapshots(input.tenantId, input.tokenAddress, 1);
+  const snapshot = recent[0]?.snapshot ?? null;
+  if (!snapshot) {
+    // Controls are prior to price, and prior to simulation. Certifying a
+    // token whose controls were never read would clear one whose transfers
+    // are paused.
+    return {
+      ok: false,
+      status: 409,
+      code: 'b20_controls_unread',
+      detail: 'This token’s controls have not been read yet. Check it once before simulating an entry.',
+    };
+  }
+  const controls = exitControlsFromSnapshotV1(snapshot);
+  const now = b20RouteRuntime.now();
+
+  const controlRefusal = !controls.factoryConfirmed
+    ? ('not_b20' as const)
+    : !controls.controlsFullyRead
+      ? ('controls_unreadable' as const)
+      : controls.transfersPaused
+        ? ('transfers_paused' as const)
+        : controls.transferPolicyActive
+          ? ('transfer_policy_may_block' as const)
+          : null;
+  if (controlRefusal) {
+    // Refused before a single quote or simulation is spent.
+    return {
+      ok: true,
+      body: B20OpportunitySimulateResponseV1Schema.parse({
+        tokenAddress: input.tokenAddress,
+        viability: 'rejected',
+        rejectionReason: controlRefusal,
+        unmeasuredReason: null,
+        coverage: 'complete',
+        viableRouteConfirmed: false,
+        bestRouteConfirmed: false,
+        clearanceId: null,
+        expiresAt: null,
+        simulatedRoundTripBps: null,
+        simulatedReturnedAtomic: null,
+        simulatedAcquiredAtomic: null,
+        simulationBlockNumber: null,
+        controlsBlockNumber: snapshot.blockNumber,
+        checkedAt: now.toISOString(),
+      }),
+    };
+  }
+
+  const run = await b20RouteRuntime.runOpportunity(
+    { reader: b20RouteRuntime.aerodromeReader(), now: () => now },
+    {
+      wallet: input.walletAddress as `0x${string}`,
+      tokenAddress: input.tokenAddress as `0x${string}`,
+      profile,
+    },
+  );
+
+  let clearanceId: string | null = null;
+  let expiresAt: string | null = null;
+  if (
+    run.certified.outcome.viability === 'qualified' &&
+    run.entryRoute &&
+    run.exitRoute &&
+    run.calls &&
+    run.simulationEvidenceHash &&
+    snapshot.blockNumber
+  ) {
+    if (await b20RouteRuntime.clearanceAvailable()) {
+      const clearance = buildClearanceV1({
+        id: `b20-clearance:${stableHashV1('b20-clearance-id/v1', {
+          tenantId: input.tenantId,
+          token: input.tokenAddress,
+          evidence: run.simulationEvidenceHash,
+        }).slice(2, 34)}`,
+        tenantId: input.tenantId,
+        walletAddress: input.walletAddress,
+        tokenAddress: input.tokenAddress,
+        profile,
+        controlSnapshotHash: snapshot.snapshotHash,
+        controlBlockNumber: snapshot.blockNumber,
+        entryRoute: run.entryRoute,
+        exitRoute: run.exitRoute,
+        calls: run.calls,
+        simulationEvidenceHash: run.simulationEvidenceHash,
+        certified: run.certified,
+        now,
+      });
+      const stored = await b20RouteRuntime.clearances().insertClearance(clearance);
+      clearanceId = stored.id;
+      expiresAt = stored.expiresAt;
+    }
+  }
+
+  const outcome = run.certified.outcome;
+  return {
+    ok: true,
+    body: B20OpportunitySimulateResponseV1Schema.parse({
+      tokenAddress: input.tokenAddress,
+      viability: outcome.viability,
+      rejectionReason: outcome.viability === 'rejected' ? outcome.reason : null,
+      unmeasuredReason: outcome.viability === 'unmeasured' ? outcome.reason : null,
+      coverage: run.certified.coverage.coverage,
+      viableRouteConfirmed: run.certified.coverage.viableRouteConfirmed,
+      bestRouteConfirmed: run.certified.coverage.bestRouteConfirmed,
+      clearanceId,
+      expiresAt,
+      simulatedRoundTripBps: run.certified.simulatedRoundTripBps,
+      simulatedReturnedAtomic: run.certified.simulatedReturnedAtomic,
+      simulatedAcquiredAtomic: run.certified.simulatedAcquiredAtomic,
+      simulationBlockNumber: run.certified.simulationBlockNumber,
+      controlsBlockNumber: snapshot.blockNumber,
+      checkedAt: now.toISOString(),
+    }),
+  };
+}
+
+/** Maps a facade refusal onto the response shape both surfaces already use. */
+function facadeRefusalV1(res: Response, refusal: B20FacadeRefusalV1): void {
+  res.status(refusal.status).json({
+    error: refusal.code,
+    code: refusal.code,
+    ...(refusal.detail ? { detail: refusal.detail } : {}),
+  });
+}
+
 b20ControlRouter.post('/b20/opportunity/simulate', async (req: Request, res: Response) => {
   const guard = b20Guard(req, res);
   if (!guard) return;
@@ -1055,152 +1243,22 @@ b20ControlRouter.post('/b20/opportunity/simulate', async (req: Request, res: Res
     res.status(400).json({ error: 'invalid_b20_opportunity_request', code: 'invalid_b20_opportunity_request' });
     return;
   }
-  const refusal = validateB20InspectRequestV1(parsed.data.chainId, parsed.data.tokenAddress);
-  if (refusal) {
-    res.status(400).json({ error: refusal, code: refusal, detail: refusalDetailV1(refusal) });
-    return;
-  }
-
-  const profile = {
-    quoteAsset: OPPORTUNITY_QUOTE_ASSET_V1,
-    positionAtomic: parsed.data.positionAtomic,
-    maxRoundTripBps: parsed.data.maxRoundTripBps,
-    maxExitSlippageBps: parsed.data.maxExitSlippageBps,
-  } as const;
-  // The user's numbers, bounded by the server's. A profile outside the bounds
-  // is refused with the field named, not clamped into something they did not
-  // choose and then answered as if they had.
-  const outOfBounds = profileRefusalV1(profile);
-  if (outOfBounds) {
-    res.status(400).json({ error: outOfBounds, code: outOfBounds });
-    return;
-  }
-  if (!b20RouteRuntime.rpcConfigured()) {
-    res.status(503).json({ error: 'b20_rpc_unavailable', code: 'b20_rpc_unavailable' });
-    return;
-  }
 
   try {
-    if (!(await b20RouteRuntime.migrationAvailable())) {
-      res.status(503).json({ error: 'b20_storage_unavailable', code: 'b20_storage_unavailable' });
+    const result = await runOpportunitySimulationV1({
+      tenantId: guard.user.id,
+      walletAddress: guard.user.address,
+      chainId: parsed.data.chainId,
+      tokenAddress: parsed.data.tokenAddress,
+      positionAtomic: parsed.data.positionAtomic,
+      maxRoundTripBps: parsed.data.maxRoundTripBps,
+      maxExitSlippageBps: parsed.data.maxExitSlippageBps,
+    });
+    if (!result.ok) {
+      facadeRefusalV1(res, result);
       return;
     }
-    const recent = await b20RouteRuntime
-      .repository()
-      .recentSnapshots(guard.user.id, parsed.data.tokenAddress, 1);
-    const snapshot = recent[0]?.snapshot ?? null;
-    if (!snapshot) {
-      // Controls are prior to price, and prior to simulation. Certifying a
-      // token whose controls were never read would clear one whose transfers
-      // are paused.
-      res.status(409).json({
-        error: 'b20_controls_unread',
-        code: 'b20_controls_unread',
-        detail: 'This token’s controls have not been read yet. Check it once before simulating an entry.',
-      });
-      return;
-    }
-    const controls = exitControlsFromSnapshotV1(snapshot);
-    const now = b20RouteRuntime.now();
-
-    const controlRefusal = !controls.factoryConfirmed
-      ? ('not_b20' as const)
-      : !controls.controlsFullyRead
-        ? ('controls_unreadable' as const)
-        : controls.transfersPaused
-          ? ('transfers_paused' as const)
-          : controls.transferPolicyActive
-            ? ('transfer_policy_may_block' as const)
-            : null;
-    if (controlRefusal) {
-      // Refused before a single quote or simulation is spent.
-      res.json(
-        B20OpportunitySimulateResponseV1Schema.parse({
-          tokenAddress: parsed.data.tokenAddress,
-          viability: 'rejected',
-          rejectionReason: controlRefusal,
-          unmeasuredReason: null,
-          coverage: 'complete',
-          viableRouteConfirmed: false,
-          bestRouteConfirmed: false,
-          clearanceId: null,
-          expiresAt: null,
-          simulatedRoundTripBps: null,
-          simulatedReturnedAtomic: null,
-          simulatedAcquiredAtomic: null,
-          simulationBlockNumber: null,
-          controlsBlockNumber: snapshot.blockNumber,
-          checkedAt: now.toISOString(),
-        }),
-      );
-      return;
-    }
-
-    const run = await b20RouteRuntime.runOpportunity(
-      { reader: b20RouteRuntime.aerodromeReader(), now: () => now },
-      {
-        wallet: guard.user.address as `0x${string}`,
-        tokenAddress: parsed.data.tokenAddress as `0x${string}`,
-        profile,
-      },
-    );
-
-    let clearanceId: string | null = null;
-    let expiresAt: string | null = null;
-    if (
-      run.certified.outcome.viability === 'qualified' &&
-      run.entryRoute &&
-      run.exitRoute &&
-      run.calls &&
-      run.simulationEvidenceHash &&
-      snapshot.blockNumber
-    ) {
-      if (await b20RouteRuntime.clearanceAvailable()) {
-        const clearance = buildClearanceV1({
-          id: `b20-clearance:${stableHashV1('b20-clearance-id/v1', {
-            tenantId: guard.user.id,
-            token: parsed.data.tokenAddress,
-            evidence: run.simulationEvidenceHash,
-          }).slice(2, 34)}`,
-          tenantId: guard.user.id,
-          walletAddress: guard.user.address,
-          tokenAddress: parsed.data.tokenAddress,
-          profile,
-          controlSnapshotHash: snapshot.snapshotHash,
-          controlBlockNumber: snapshot.blockNumber,
-          entryRoute: run.entryRoute,
-          exitRoute: run.exitRoute,
-          calls: run.calls,
-          simulationEvidenceHash: run.simulationEvidenceHash,
-          certified: run.certified,
-          now,
-        });
-        const stored = await b20RouteRuntime.clearances().insertClearance(clearance);
-        clearanceId = stored.id;
-        expiresAt = stored.expiresAt;
-      }
-    }
-
-    const outcome = run.certified.outcome;
-    res.json(
-      B20OpportunitySimulateResponseV1Schema.parse({
-        tokenAddress: parsed.data.tokenAddress,
-        viability: outcome.viability,
-        rejectionReason: outcome.viability === 'rejected' ? outcome.reason : null,
-        unmeasuredReason: outcome.viability === 'unmeasured' ? outcome.reason : null,
-        coverage: run.certified.coverage.coverage,
-        viableRouteConfirmed: run.certified.coverage.viableRouteConfirmed,
-        bestRouteConfirmed: run.certified.coverage.bestRouteConfirmed,
-        clearanceId,
-        expiresAt,
-        simulatedRoundTripBps: run.certified.simulatedRoundTripBps,
-        simulatedReturnedAtomic: run.certified.simulatedReturnedAtomic,
-        simulatedAcquiredAtomic: run.certified.simulatedAcquiredAtomic,
-        simulationBlockNumber: run.certified.simulationBlockNumber,
-        controlsBlockNumber: snapshot.blockNumber,
-        checkedAt: now.toISOString(),
-      }),
-    );
+    res.json(result.body);
   } catch (error) {
     storageFailure(res, error, 'opportunity-simulate');
   }
@@ -1220,46 +1278,49 @@ b20ControlRouter.post('/b20/opportunity/simulate', async (req: Request, res: Res
 // user's own Base Account to approve, or nothing at all.
 // ---------------------------------------------------------------------------
 
-b20ControlRouter.post('/opportunities/:clearanceId/prepare-entry', async (req: Request, res: Response) => {
-  const guard = b20Guard(req, res);
-  if (!guard) return;
-
-  const parsed = B20EntryPrepareRequestV1Schema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: 'invalid_b20_entry_request', code: 'invalid_b20_entry_request' });
-    return;
+/**
+ * T72-B §4 — clearance → prepare → persisted plan → kernel → exact-call
+ * simulation, as one function both surfaces call.
+ *
+ * It returns the plan's PROJECTION and never its calls. That was already true
+ * of the web route; it matters more now, because the caller on the other side
+ * may be a language model, and the difference between "here is what this plan
+ * does" and "here are the bytes" is the difference between a review and a
+ * transaction.
+ */
+export async function prepareEntryFromClearanceV1(input: {
+  tenantId: string;
+  walletAddress: string;
+  clearanceId: string;
+  chainId: number;
+  profileIdentity: string;
+  requestId: string;
+}): Promise<B20FacadeResultV1<Record<string, unknown>>> {
+  if (!b20RouteRuntime.rpcConfigured()) return { ok: false, status: 503, code: 'b20_rpc_unavailable' };
+  if (!(await b20RouteRuntime.clearanceAvailable())) {
+    return { ok: false, status: 503, code: 'b20_clearance_unavailable' };
   }
-  if (!b20RouteRuntime.rpcConfigured()) {
-    res.status(503).json({ error: 'b20_rpc_unavailable', code: 'b20_rpc_unavailable' });
-    return;
+  if (!(await b20RouteRuntime.entryPlanAvailable())) {
+    return { ok: false, status: 503, code: 'b20_entry_plan_unavailable' };
   }
+  const now = b20RouteRuntime.now();
+  const clearanceId = input.clearanceId;
+  const plans = b20RouteRuntime.entryPlans();
 
-  try {
-    if (!(await b20RouteRuntime.clearanceAvailable())) {
-      res.status(503).json({ error: 'b20_clearance_unavailable', code: 'b20_clearance_unavailable' });
-      return;
-    }
-    if (!(await b20RouteRuntime.entryPlanAvailable())) {
-      res.status(503).json({ error: 'b20_entry_plan_unavailable', code: 'b20_entry_plan_unavailable' });
-      return;
-    }
-    const now = b20RouteRuntime.now();
-    const clearanceId = String(req.params.clearanceId ?? '');
-    const plans = b20RouteRuntime.entryPlans();
-
-    // §2 — the idempotency lookup runs BEFORE any quoting. A retry must return
-    // the stored plan, not re-quote the pool and offer different numbers to a
-    // user who only refreshed.
-    const replay = await plans.findByIdempotency({
-      tenantId: guard.user.id,
-      walletAddress: guard.user.address,
-      clearanceId,
-      requestId: parsed.data.requestId,
-    });
-    if (replay) {
-      const replayCapabilities = await b20RouteRuntime.executionCapabilities();
-      res.json(
-        B20EntryPrepareResponseV1Schema.parse({
+  // §2 — the idempotency lookup runs BEFORE any quoting. A retry must return
+  // the stored plan, not re-quote the pool and offer different numbers to a
+  // user who only refreshed.
+  const replay = await plans.findByIdempotency({
+    tenantId: input.tenantId,
+    walletAddress: input.walletAddress,
+    clearanceId,
+    requestId: input.requestId,
+  });
+  if (replay) {
+    const replayCapabilities = await b20RouteRuntime.executionCapabilities();
+    return {
+      ok: true,
+      body: B20EntryPrepareResponseV1Schema.parse({
           outcome: 'prepared',
           refusalReason: null,
           refusalDetail: null,
@@ -1287,61 +1348,58 @@ b20ControlRouter.post('/opportunities/:clearanceId/prepare-entry', async (req: R
           executionUnavailableReason: entryExecutionAvailableV1(replayCapabilities)
             ? null
             : 'submission_not_wired',
-        }),
-      );
-      return;
-    }
+      }),
+    };
+  }
 
-    const clearance = await b20RouteRuntime
-      .clearances()
-      .getClearance(clearanceId, guard.user.id);
+  const clearance = await b20RouteRuntime.clearances().getClearance(clearanceId, input.tenantId);
 
-    const prepared = await b20RouteRuntime.prepareEntry(
-      {
-        b20Reader: b20RouteRuntime.reader(),
-        aerodromeReader: b20RouteRuntime.aerodromeReader(),
-        now: () => now,
-      },
-      {
-        clearance,
-        tenantId: guard.user.id,
-        walletAddress: guard.user.address,
-        chainId: parsed.data.chainId,
-        profileIdentity: parsed.data.profileIdentity,
-      },
-    );
+  const prepared = await b20RouteRuntime.prepareEntry(
+    {
+      b20Reader: b20RouteRuntime.reader(),
+      aerodromeReader: b20RouteRuntime.aerodromeReader(),
+      now: () => now,
+    },
+    {
+      clearance,
+      tenantId: input.tenantId,
+      walletAddress: input.walletAddress,
+      chainId: input.chainId,
+      profileIdentity: input.profileIdentity,
+    },
+  );
 
-    // §1/§7 — a successful preparation becomes a stored immutable entity
-    // before it is described to anyone. Persisting from the SERVER's own
-    // blueprint, clearance, controls and simulation: the request contributed a
-    // clearance id, a profile identity and a request id, and nothing else.
-    const capabilities = await b20RouteRuntime.executionCapabilities();
-    const capabilitiesAvailable = entryExecutionAvailableV1(capabilities);
-    let stored: Awaited<ReturnType<typeof plans.insertPreparedPlan>> | null = null;
-    if (prepared.blueprint && (!clearance || !prepared.simulation)) {
-      // Unreachable through the runner, which refuses a plan it could not
-      // simulate. Stated anyway: a blueprint that cannot be stored with the
-      // evidence that justified it is never described as prepared, because
-      // "prepared" is about to mean "there is a row a wallet can be asked to
-      // sign against".
-      res.status(500).json({ error: 'storage_integrity', code: 'storage_integrity' });
-      return;
-    }
-    if (prepared.blueprint && clearance && prepared.simulation) {
-      const draft = buildPreparedPlanV1({
-        clearance,
-        blueprint: prepared.blueprint,
-        simulation: prepared.simulation,
-        tokenName: prepared.tokenName,
-        tokenSymbol: prepared.tokenSymbol,
-        requestId: parsed.data.requestId,
-        now,
-      });
-      stored = await plans.insertPreparedPlan(draft);
-    }
+  // §1/§7 — a successful preparation becomes a stored immutable entity
+  // before it is described to anyone. Persisting from the SERVER's own
+  // blueprint, clearance, controls and simulation: the request contributed a
+  // clearance id, a profile identity and a request id, and nothing else.
+  const capabilities = await b20RouteRuntime.executionCapabilities();
+  const capabilitiesAvailable = entryExecutionAvailableV1(capabilities);
+  let stored: Awaited<ReturnType<typeof plans.insertPreparedPlan>> | null = null;
+  if (prepared.blueprint && (!clearance || !prepared.simulation)) {
+    // Unreachable through the runner, which refuses a plan it could not
+    // simulate. Stated anyway: a blueprint that cannot be stored with the
+    // evidence that justified it is never described as prepared, because
+    // "prepared" is about to mean "there is a row a wallet can be asked to
+    // sign against".
+    return { ok: false, status: 500, code: 'storage_integrity' };
+  }
+  if (prepared.blueprint && clearance && prepared.simulation) {
+    const draft = buildPreparedPlanV1({
+      clearance,
+      blueprint: prepared.blueprint,
+      simulation: prepared.simulation,
+      tokenName: prepared.tokenName,
+      tokenSymbol: prepared.tokenSymbol,
+      requestId: input.requestId,
+      now,
+    });
+    stored = await plans.insertPreparedPlan(draft);
+  }
 
-    res.json(
-      B20EntryPrepareResponseV1Schema.parse({
+  return {
+    ok: true,
+    body: B20EntryPrepareResponseV1Schema.parse({
         outcome: prepared.blueprint ? 'prepared' : 'refused',
         refusalReason: prepared.refusal,
         refusalDetail: prepared.detail,
@@ -1368,10 +1426,36 @@ b20ControlRouter.post('/opportunities/:clearanceId/prepare-entry', async (req: R
         // Availability is a fact about this surface, never an inference from
         // the plan holding unsigned calls. When false it is not a provider
         // failure and not a token rejection — the plan is sound.
-        executionAvailable: stored ? capabilitiesAvailable : false,
-        executionUnavailableReason: stored && !capabilitiesAvailable ? 'submission_not_wired' : null,
-      }),
-    );
+      executionAvailable: stored ? capabilitiesAvailable : false,
+      executionUnavailableReason: stored && !capabilitiesAvailable ? 'submission_not_wired' : null,
+    }),
+  };
+}
+
+b20ControlRouter.post('/opportunities/:clearanceId/prepare-entry', async (req: Request, res: Response) => {
+  const guard = b20Guard(req, res);
+  if (!guard) return;
+
+  const parsed = B20EntryPrepareRequestV1Schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_b20_entry_request', code: 'invalid_b20_entry_request' });
+    return;
+  }
+
+  try {
+    const result = await prepareEntryFromClearanceV1({
+      tenantId: guard.user.id,
+      walletAddress: guard.user.address,
+      clearanceId: String(req.params.clearanceId ?? ''),
+      chainId: parsed.data.chainId,
+      profileIdentity: parsed.data.profileIdentity,
+      requestId: parsed.data.requestId,
+    });
+    if (!result.ok) {
+      facadeRefusalV1(res, result);
+      return;
+    }
+    res.json(result.body);
   } catch (error) {
     storageFailure(res, error, 'prepare-entry');
   }
@@ -1430,37 +1514,163 @@ b20ControlRouter.get('/opportunities/entry-plans/:planId', async (req: Request, 
 });
 
 /**
- * The shared head of every submission route: flag, session, storage, and the
- * plan itself — read wallet-scoped, so another wallet gets a 404 rather than a
- * refusal that confirms the plan exists.
+ * Loads one plan, wallet-scoped.
+ *
+ * The scoping is in the QUERY, not in a check afterwards: another wallet
+ * receives exactly what a nonexistent plan receives, because the difference
+ * between "not yours" and "not there" is itself information — and on the MCP
+ * surface that information would be an assistant confirming that a stranger's
+ * plan exists.
  */
+export async function loadEntryPlanV1(input: {
+  tenantId: string;
+  walletAddress: string;
+  planId: string;
+}): Promise<B20FacadeResultV1<B20PreparedEntryPlanV1>> {
+  if (!(await b20RouteRuntime.entryPlanAvailable())) {
+    return { ok: false, status: 503, code: 'b20_entry_plan_unavailable' };
+  }
+  const plan = await b20RouteRuntime.entryPlans().getPreparedPlan({
+    planId: input.planId,
+    tenantId: input.tenantId,
+    walletAddress: input.walletAddress,
+  });
+  if (!plan) return { ok: false, status: 404, code: 'b20_entry_plan_not_found' };
+  return { ok: true, body: plan };
+}
+
+/** The shared head of every submission route. */
 async function entryPlanGuard(req: Request, res: Response) {
   const guard = b20Guard(req, res);
   if (!guard) return null;
-  if (!(await b20RouteRuntime.entryPlanAvailable())) {
-    res.status(503).json({ error: 'b20_entry_plan_unavailable', code: 'b20_entry_plan_unavailable' });
-    return null;
-  }
-  const plan = await b20RouteRuntime.entryPlans().getPreparedPlan({
-    planId: String(req.params.planId ?? ''),
+  const loaded = await loadEntryPlanV1({
     tenantId: guard.user.id,
     walletAddress: guard.user.address,
+    planId: String(req.params.planId ?? ''),
   });
-  if (!plan) {
-    res.status(404).json({ error: 'b20_entry_plan_not_found', code: 'b20_entry_plan_not_found' });
+  if (!loaded.ok) {
+    facadeRefusalV1(res, loaded);
     return null;
   }
-  return { user: guard.user, plan };
+  return { user: guard.user, plan: loaded.body };
 }
 
 /**
- * T68F-B 2/3 — open a submission and hand back the wallet request.
+ * T68F-B 2/3, T72-B §5 — open a submission and produce the wallet request.
  *
- * The request carries a chain id, a profile identity and an idempotency handle.
- * It carries NO calls, no calldata, no router, no recipient and no amount: the
- * server recovers every executable byte from the stored plan by id. There is no
- * code path here by which a browser can contribute a transaction.
+ * The caller contributes a chain id, a profile identity and an idempotency
+ * handle. It contributes NO calls, no calldata, no router, no recipient and no
+ * amount: every executable byte is recovered from the stored plan by id. That
+ * was already true when the caller was a browser; it is the whole security
+ * argument now that the caller may be a language model.
+ *
+ * A gate refusal is not an HTTP error — the plan exists and the caller is
+ * entitled to know where it stands — so the refusal travels in the body with
+ * its own status, and both surfaces render the same reason.
  */
+export interface BeginSubmissionResultV1 {
+  httpStatus: number;
+  body: Record<string, unknown>;
+  outcome: 'ready' | 'refused';
+  reason: string | null;
+  /** The exact persisted calls, present only on `ready`. */
+  payload: EntryWalletPayloadV1 | null;
+  attemptId: string | null;
+}
+
+export async function beginEntrySubmissionV1(input: {
+  tenantId: string;
+  walletAddress: string;
+  plan: B20PreparedEntryPlanV1;
+  chainId: number;
+  profileIdentity: string;
+  attemptRequestId: string;
+}): Promise<BeginSubmissionResultV1> {
+  const now = b20RouteRuntime.now();
+  const capabilities = await b20RouteRuntime.executionCapabilities();
+  const submissions = b20RouteRuntime.entrySubmissions();
+  const plan = input.plan;
+  const existing = await submissions.latestForPlan({ planId: plan.id, tenantId: input.tenantId });
+
+  const refused = (reason: string, detail: string, httpStatus = 200): BeginSubmissionResultV1 => ({
+    httpStatus,
+    outcome: 'refused',
+    reason,
+    payload: null,
+    attemptId: null,
+    body: B20EntryBeginSubmissionResponseV1Schema.parse({
+      outcome: 'refused',
+      reason,
+      detail,
+      status: entryStatusViewV1({ plan, attempt: existing, capabilities, now }),
+    }),
+  });
+
+  if (!capabilities.submissionRouteWired) {
+    return refused('submission_not_wired', 'Submission is not available on this server.', 503);
+  }
+
+  // An attempt that already holds this plan's slot is RETURNED, never
+  // replaced. A double click, a remount and a retried fetch all land here.
+  if (existing && existing.status === 'awaiting_wallet_approval') {
+    return {
+      httpStatus: 200,
+      outcome: 'ready',
+      reason: null,
+      payload: entryWalletPayloadV1(plan),
+      attemptId: existing.id,
+      body: B20EntryBeginSubmissionResponseV1Schema.parse({
+        outcome: 'ready',
+        attemptId: existing.id,
+        payload: entryWalletPayloadV1(plan),
+        review: b20EntryReviewV1(plan, capabilities),
+        status: entryStatusViewV1({ plan, attempt: existing, capabilities, now }),
+      }),
+    };
+  }
+
+  const clearance = await b20RouteRuntime.clearances().getClearance(plan.clearanceId, input.tenantId);
+  const gate = submitGateRefusalV1({
+    plan,
+    clearance,
+    walletAddress: input.walletAddress,
+    tenantId: input.tenantId,
+    chainId: input.chainId,
+    profileIdentity: input.profileIdentity,
+    // §11 — not "is there a live attempt?" but "has this plan's one slot been
+    // taken?". A succeeded, reverted or unresolved attempt keeps it.
+    hasLiveAttempt: attemptHoldsPlanSlotV1(existing),
+    now,
+    // The prepare-time control read is what this plan was built on, and a
+    // plan is short-lived precisely so this stays close to now.
+    controlsReadAt: new Date(Date.parse(plan.createdAt)),
+  });
+  if (gate) return refused(gate, SUBMIT_REFUSAL_COPY_V1[gate]);
+
+  const attempt = await openAttemptV1({
+    submissions,
+    plan,
+    attemptRequestId: input.attemptRequestId,
+    now,
+  });
+  return {
+    httpStatus: 200,
+    outcome: 'ready',
+    reason: null,
+    // The only place executable bytes leave this server, and they are always
+    // the stored ones.
+    payload: entryWalletPayloadV1(plan),
+    attemptId: attempt.id,
+    body: B20EntryBeginSubmissionResponseV1Schema.parse({
+      outcome: 'ready',
+      attemptId: attempt.id,
+      payload: entryWalletPayloadV1(plan),
+      review: b20EntryReviewV1(plan, capabilities),
+      status: entryStatusViewV1({ plan, attempt, capabilities, now }),
+    }),
+  };
+}
+
 b20ControlRouter.post(
   '/opportunities/entry-plans/:planId/begin-submission',
   async (req: Request, res: Response) => {
@@ -1473,79 +1683,15 @@ b20ControlRouter.post(
     if (!guard) return;
 
     try {
-      const now = b20RouteRuntime.now();
-      const capabilities = await b20RouteRuntime.executionCapabilities();
-      const submissions = b20RouteRuntime.entrySubmissions();
-      const plan = guard.plan;
-      const existing = await submissions.latestForPlan({ planId: plan.id, tenantId: guard.user.id });
-
-      const refuse = (reason: string, detail: string, status = 200): void => {
-        res.status(status).json(
-          B20EntryBeginSubmissionResponseV1Schema.parse({
-            outcome: 'refused',
-            reason,
-            detail,
-            status: entryStatusViewV1({ plan, attempt: existing, capabilities, now }),
-          }),
-        );
-      };
-
-      if (!capabilities.submissionRouteWired) {
-        refuse('submission_not_wired', 'Submission is not available on this server.', 503);
-        return;
-      }
-
-      // An attempt that already holds this plan's slot is RETURNED, never
-      // replaced. A double click, a remount and a retried fetch all land here.
-      if (existing && existing.status === 'awaiting_wallet_approval') {
-        res.json(
-          B20EntryBeginSubmissionResponseV1Schema.parse({
-            outcome: 'ready',
-            attemptId: existing.id,
-            payload: entryWalletPayloadV1(plan),
-            review: b20EntryReviewV1(plan, capabilities),
-            status: entryStatusViewV1({ plan, attempt: existing, capabilities, now }),
-          }),
-        );
-        return;
-      }
-
-      const clearance = await b20RouteRuntime.clearances().getClearance(plan.clearanceId, guard.user.id);
-      const gate = submitGateRefusalV1({
-        plan,
-        clearance,
-        walletAddress: guard.user.address,
+      const result = await beginEntrySubmissionV1({
         tenantId: guard.user.id,
+        walletAddress: guard.user.address,
+        plan: guard.plan,
         chainId: parsedBody.data.chainId,
         profileIdentity: parsedBody.data.profileIdentity,
-        hasLiveAttempt: Boolean(existing && existing.status !== 'terminal'),
-        now,
-        // The prepare-time control read is what this plan was built on, and a
-        // plan is short-lived precisely so this stays close to now.
-        controlsReadAt: new Date(Date.parse(plan.createdAt)),
-      });
-      if (gate) {
-        refuse(gate, SUBMIT_REFUSAL_COPY_V1[gate]);
-        return;
-      }
-
-      const attempt = await openAttemptV1({
-        submissions,
-        plan,
         attemptRequestId: parsedBody.data.attemptRequestId,
-        now,
       });
-      res.json(
-        B20EntryBeginSubmissionResponseV1Schema.parse({
-          outcome: 'ready',
-          attemptId: attempt.id,
-          // The only place executable bytes leave this server, and they are
-          // always the stored ones.
-          payload: entryWalletPayloadV1(plan),
-          review: b20EntryReviewV1(plan, capabilities),
-          status: entryStatusViewV1({ plan, attempt, capabilities, now }),
-        }),
-      );
+      res.status(result.httpStatus).json(result.body);
     } catch (error) {
       storageFailure(res, error, 'begin-submission');
     }
@@ -1553,12 +1699,52 @@ b20ControlRouter.post(
 );
 
 /**
- * T68F-B 6/8 — record what the WALLET did.
+ * T68F-B 6/8, T72-B §7 — record what the WALLET did.
  *
- * The client reports the wallet's behaviour, never a result: a browser cannot
- * tell this server that a transaction succeeded. The only fact it contributes
- * that the server did not already have is the batch id.
+ * The caller reports the wallet's behaviour, never a result: neither a browser
+ * nor an MCP client can tell this server that a transaction succeeded. The only
+ * fact it contributes that the server did not already have is the batch id.
  */
+export async function recordEntrySubmissionV1(input: {
+  tenantId: string;
+  walletAddress: string;
+  plan: B20PreparedEntryPlanV1;
+  attemptId: string;
+  result: WalletReportV1;
+  batchId: string | null;
+}): Promise<B20FacadeResultV1<Record<string, unknown>>> {
+  const now = b20RouteRuntime.now();
+  const capabilities = await b20RouteRuntime.executionCapabilities();
+  const submissions = b20RouteRuntime.entrySubmissions();
+  const attempt = await submissions.getAttempt({
+    attemptId: input.attemptId,
+    tenantId: input.tenantId,
+    walletAddress: input.walletAddress,
+  });
+  if (!attempt || attempt.planId !== input.plan.id) {
+    return { ok: false, status: 404, code: 'b20_entry_attempt_not_found' };
+  }
+
+  const updated = await recordWalletReportV1({
+    submissions,
+    attempt,
+    report: input.result,
+    batchId: input.batchId,
+    now,
+  });
+  if (!updated) return { ok: false, status: 409, code: 'b20_entry_submission_conflict' };
+
+  return {
+    ok: true,
+    body: B20EntryStatusResponseV1Schema.parse({
+      review: b20EntryReviewV1(input.plan, capabilities),
+      status: entryStatusViewV1({ plan: input.plan, attempt: updated, capabilities, now }),
+      expiresAt: input.plan.expiresAt,
+      expired: Date.parse(input.plan.expiresAt) <= now.getTime(),
+    }),
+  };
+}
+
 b20ControlRouter.post(
   '/opportunities/entry-plans/:planId/record-submission',
   async (req: Request, res: Response) => {
@@ -1578,65 +1764,51 @@ b20ControlRouter.post(
     if (!guard) return;
 
     try {
-      const now = b20RouteRuntime.now();
-      const capabilities = await b20RouteRuntime.executionCapabilities();
-      const submissions = b20RouteRuntime.entrySubmissions();
-      const attempt = await submissions.getAttempt({
-        attemptId: body.attemptId,
+      const result = await recordEntrySubmissionV1({
         tenantId: guard.user.id,
         walletAddress: guard.user.address,
-      });
-      if (!attempt || attempt.planId !== guard.plan.id) {
-        res.status(404).json({ error: 'b20_entry_attempt_not_found', code: 'b20_entry_attempt_not_found' });
-        return;
-      }
-
-      const updated = await recordWalletReportV1({
-        submissions,
-        attempt,
-        report: body.result,
+        plan: guard.plan,
+        attemptId: body.attemptId,
+        result: body.result,
         batchId: body.batchId,
-        now,
       });
-      if (!updated) {
-        res.status(409).json({ error: 'b20_entry_submission_conflict', code: 'b20_entry_submission_conflict' });
+      if (!result.ok) {
+        facadeRefusalV1(res, result);
         return;
       }
-      res.json(
-        B20EntryStatusResponseV1Schema.parse({
-          review: b20EntryReviewV1(guard.plan, capabilities),
-          status: entryStatusViewV1({ plan: guard.plan, attempt: updated, capabilities, now }),
-          expiresAt: guard.plan.expiresAt,
-          expired: Date.parse(guard.plan.expiresAt) <= now.getTime(),
-        }),
-      );
+      res.json(result.body);
     } catch (error) {
       storageFailure(res, error, 'record-submission');
     }
   },
 );
 
-/** T68F-B 9/11 — where did it get to. A refresh reads storage, so a submitted
- * entry never returns to `review`. */
+/** T68F-B 9/11, T72-B §8 — where did it get to. A refresh reads storage, so a
+ * submitted entry never returns to `review`. */
+export async function readEntryPlanStatusV1(input: {
+  tenantId: string;
+  plan: B20PreparedEntryPlanV1;
+}): Promise<Record<string, unknown>> {
+  const now = b20RouteRuntime.now();
+  const capabilities = await b20RouteRuntime.executionCapabilities();
+  const attempt = await b20RouteRuntime
+    .entrySubmissions()
+    .latestForPlan({ planId: input.plan.id, tenantId: input.tenantId });
+  return B20EntryStatusResponseV1Schema.parse({
+    review: b20EntryReviewV1(input.plan, capabilities),
+    status: entryStatusViewV1({ plan: input.plan, attempt, capabilities, now }),
+    expiresAt: input.plan.expiresAt,
+    expired: Date.parse(input.plan.expiresAt) <= now.getTime(),
+  });
+}
+
 b20ControlRouter.get(
   '/opportunities/entry-plans/:planId/status',
   async (req: Request, res: Response) => {
     const guard = await entryPlanGuard(req, res);
     if (!guard) return;
     try {
-      const now = b20RouteRuntime.now();
-      const capabilities = await b20RouteRuntime.executionCapabilities();
-      const attempt = await b20RouteRuntime
-        .entrySubmissions()
-        .latestForPlan({ planId: guard.plan.id, tenantId: guard.user.id });
-      res.json(
-        B20EntryStatusResponseV1Schema.parse({
-          review: b20EntryReviewV1(guard.plan, capabilities),
-          status: entryStatusViewV1({ plan: guard.plan, attempt, capabilities, now }),
-          expiresAt: guard.plan.expiresAt,
-          expired: Date.parse(guard.plan.expiresAt) <= now.getTime(),
-        }),
-      );
+      res.json(await readEntryPlanStatusV1({ tenantId: guard.user.id, plan: guard.plan }));
     } catch (error) {
       storageFailure(res, error, 'entry-plan-status');
     }

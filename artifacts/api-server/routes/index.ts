@@ -12,6 +12,7 @@ import { statusRouter } from './status';
 import { marketRouter } from './market';
 import { autonomyRouter } from './autonomy';
 import { mcpBaseRouter } from './mcpBase';
+import { mcpHandoffRouter } from './mcpHandoff';
 import { authRouter } from './auth';
 import { routeIntelligenceRouter } from './routeIntelligence';
 import { publicProofRouter } from './publicProof';
@@ -38,4 +39,8 @@ routes.use('/status', statusRouter);
 routes.use('/market', marketRouter);
 routes.use('/autonomy', autonomyRouter);
 routes.use('/mcp/base', mcpBaseRouter);
+// T72-B §1 — minting a handoff token requires the session that already proved
+// the wallet, so it lives behind the tenant gate while /mcp/private itself does
+// not (an MCP client has no cookie to send).
+routes.use('/mcp/handoff', mcpHandoffRouter);
 routes.use('/route-intelligence', routeIntelligenceRouter);

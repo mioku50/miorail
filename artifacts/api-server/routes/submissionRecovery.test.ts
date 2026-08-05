@@ -38,6 +38,8 @@ const FLAGS = {
   b20ControlV1: false,
   submissionRecoveryV1: true,
   publicProofV1: false,
+  mcpPrivateV1: false,
+  mcpPrivateExecutionV1: false,
   routeOutcomeFeedbackV1: false,
 };
 
