@@ -3096,10 +3096,46 @@ const B20CardLaunchV1Schema = z
     transactionHash: z.string().regex(/^0x[0-9a-f]{64}$/),
     logIndex: z.number().int().min(0),
     detectedAt: z.string().datetime(),
-    ageSeconds: z.number().int().min(0),
+    // T69-C.1 §1 — the launch time comes from the block, or it is absent.
+    // `detectedAt` is when Miorail's worker arrived, which with a cursor behind
+    // the head says nothing about how old a token is.
+    launchedAt: z.string().datetime().nullable(),
+    launchTimeSource: z.enum(['onchain_block', 'discovered']),
+    ageSeconds: z.number().int().min(0).nullable(),
     canonical: z.boolean(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    // The two must agree: a surface that reads one and not the other cannot be
+    // made to show an age it does not have.
+    const known = value.launchedAt !== null;
+    if (known !== (value.launchTimeSource === 'onchain_block') || known !== (value.ageSeconds !== null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['launchTimeSource'],
+        message: 'launchedAt, launchTimeSource and ageSeconds must agree',
+      });
+    }
+  });
+
+const B20CardActionV1Schema = z
+  .object({
+    action: z.enum(['check_wallet', 'try_profile', 'refresh_measurement', 'none']),
+    label: z.string().min(1).max(60).nullable(),
+    reason: z.string().min(20).max(400),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    // §2 — a label is present exactly when there is something to press. A
+    // labelled `none` is a dead button, which is what this task removes.
+    if ((value.label === null) !== (value.action === 'none')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['label'],
+        message: 'an action has a label if and only if it is not "none"',
+      });
+    }
+  });
 
 const B20CardObservationV1Schema = z
   .object({
@@ -3162,9 +3198,30 @@ export const B20OpportunityCardV1Schema = z
     launch: B20CardLaunchV1Schema,
     observation: B20CardObservationV1Schema.nullable(),
     canCheckProfile: z.boolean(),
+    action: B20CardActionV1Schema,
     notMeasured: z.array(z.string()).max(20),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    // §3, on the wire. A card whose evidence holds for every wallet must never
+    // reach a surface carrying an action that invites a wallet-specific check
+    // — the schema refuses the combination rather than trusting each surface
+    // to re-derive the rule.
+    const walletIndependent =
+      value.observation?.state === 'rejected' &&
+      value.observation.reasonCode !== null &&
+      ['not_b20', 'uninitialized', 'transfers_paused', 'no_entry_route', 'no_exit_route'].includes(
+        value.observation.reasonCode,
+      ) &&
+      value.observation.freshness === 'fresh';
+    if (walletIndependent && value.action.action === 'check_wallet') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['action'],
+        message: 'a fresh wallet-independent rejection may not offer a wallet check',
+      });
+    }
+  });
 
 export const B20OpportunityFeedResponseV1Schema = z
   .object({

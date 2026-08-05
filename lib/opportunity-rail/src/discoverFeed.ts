@@ -170,10 +170,24 @@ export interface B20CardLaunchV1 {
   blockNumber: string;
   transactionHash: string;
   logIndex: number;
+  /** When MIORAIL first stored it. Never presented as a launch time. */
   detectedAt: string;
-  /** Seconds since the launch was detected, so a surface need not carry a clock
-   * convention of its own. */
-  ageSeconds: number;
+  /**
+   * T69-C.1 §1 — when the token was actually created, from the block that
+   * carried the event. Null when the endpoint did not report a block
+   * timestamp, in which case a surface says "discovered" and names the block
+   * rather than implying a launch time it does not have.
+   */
+  launchedAt: string | null;
+  launchTimeSource: 'onchain_block' | 'discovered';
+  /**
+   * Seconds since the LAUNCH, not since detection. Null whenever `launchedAt`
+   * is — the ingestion worker can be hours or days behind the head, so
+   * detection time is a fact about Miorail's backlog and says nothing about
+   * how old a token is. Presenting one as the other made every stored launch
+   * look minutes old.
+   */
+  ageSeconds: number | null;
   canonical: boolean;
 }
 
@@ -229,6 +243,13 @@ export interface B20OpportunityCardV1 {
   observation: B20CardObservationV1 | null;
   /** §13 — a stale observation may never directly enable an entry plan. */
   canCheckProfile: boolean;
+  /**
+   * T69-C.1 §2 — the ONE action this card may offer, chosen from the rejection
+   * reason rather than from freshness alone. `canCheckProfile` remains what it
+   * was: a freshness gate. This is the narrower question of whether a wallet
+   * check is even the right thing to offer.
+   */
+  action: B20CardActionModelV1;
   /** §10 — named, so a surface renders the words rather than a zero. */
   notMeasured: readonly string[];
 }
@@ -271,6 +292,8 @@ export interface B20CardInputV1 {
     transactionHash: string;
     logIndex: number;
     detectedAt: string;
+    /** The block's own timestamp, when the endpoint reported one. */
+    blockTimestamp?: string | null;
     canonical: boolean;
   };
   observation: {
@@ -313,12 +336,150 @@ export interface B20CardInputV1 {
  * API, the web console and any later surface cannot each invent their own
  * wording for a state that decides whether somebody spends money.
  */
+// ---------------------------------------------------------------------------
+// T69-C.1 §2/§3 — which action a card may offer.
+//
+// The defect this replaces: any fresh, canonical card offered "Check against
+// my wallet", including one rejected because no exit route exists at all. That
+// reads as "your wallet might be different" — and for a missing route, a paused
+// transfer, or an unrecognised token, it is not. The evidence does not depend
+// on who is asking, so offering a wallet check invites a user to spend a
+// simulation disproving something already proven.
+//
+// A STALE rejection is a different matter: the chain has moved on, and
+// re-measuring may genuinely change the answer. So freshness decides whether a
+// wallet-independent rejection is final or merely old.
+// ---------------------------------------------------------------------------
+
+export const B20_CARD_ACTIONS_V1 = ['check_wallet', 'try_profile', 'refresh_measurement', 'none'] as const;
+export type B20CardActionV1 = (typeof B20_CARD_ACTIONS_V1)[number];
+
+/**
+ * Rejections that hold for every wallet.
+ *
+ * None of these is about the asker. A token the factory does not recognise is
+ * not recognised for anyone; a paused transfer is paused for everyone; a route
+ * Miorail cannot find is missing regardless of who looks.
+ */
+export const B20_WALLET_INDEPENDENT_REJECTIONS_V1 = [
+  'not_b20',
+  'uninitialized',
+  'transfers_paused',
+  'no_entry_route',
+  'no_exit_route',
+] as const;
+
+/** Rejections that are about the reference PROFILE, not about the token. A
+ * smaller position or a wider tolerance can legitimately pass. */
+export const B20_PROFILE_REJECTIONS_V1 = [
+  'round_trip_above_tolerance',
+  'exit_capacity_below_position',
+] as const;
+
+export interface B20CardActionModelV1 {
+  action: B20CardActionV1;
+  /** The button's words, or null when there is no button. */
+  label: string | null;
+  /** Always present: why this action and not another. */
+  reason: string;
+}
+
+export const B20_ACTION_COPY_V1 = {
+  superseded: 'A chain reorganisation replaced this launch, so it is no longer current.',
+  unmeasured: 'Nothing has been measured for this token yet, so there is nothing to check.',
+  // §3 — the sentence that has to exist. It says the evidence is about the
+  // token and closes the door on "maybe my wallet is special".
+  walletIndependent:
+    'This is a fact about the token at the measured block, not about any particular wallet — checking it against yours would not change it.',
+  stale: 'This measurement is past its freshness window. Re-measure before drawing anything from it.',
+  profile:
+    'The token was measured against the feed’s reference position and tolerance. A smaller position or a wider tolerance may pass.',
+  policy:
+    'A transfer policy is active on this token. Whether it admits YOUR wallet is the one thing a wallet-specific check can answer.',
+  provisional: 'Measured before any entry moved the pool. Your own check runs the entry and exit in sequence.',
+  queued: 'This launch is stored and waiting for its first measurement.',
+} as const;
+
+export function b20CardActionV1(input: {
+  canonical: boolean;
+  hasObservation: boolean;
+  state: B20ObservationStateV1 | null;
+  reasonCode: string | null;
+  freshness: B20FreshnessV1 | null;
+  transferPolicyState: B20TransferPolicyStateV1 | null;
+}): B20CardActionModelV1 {
+  if (!input.canonical) {
+    return { action: 'none', label: null, reason: B20_ACTION_COPY_V1.superseded };
+  }
+  if (!input.hasObservation || input.state === null) {
+    return { action: 'none', label: null, reason: B20_ACTION_COPY_V1.unmeasured };
+  }
+
+  const walletIndependent =
+    input.state === 'rejected' &&
+    input.reasonCode !== null &&
+    (B20_WALLET_INDEPENDENT_REJECTIONS_V1 as readonly string[]).includes(input.reasonCode);
+
+  // §3. Checked BEFORE staleness so a fresh, sound rejection is final rather
+  // than merely refreshable.
+  if (walletIndependent && input.freshness === 'fresh') {
+    return { action: 'none', label: null, reason: B20_ACTION_COPY_V1.walletIndependent };
+  }
+
+  // Everything below rests on numbers, and stale numbers support nothing —
+  // including a wallet-independent rejection, which the chain may have since
+  // overturned by adding a route or unpausing transfers.
+  if (input.freshness === 'stale') {
+    return { action: 'refresh_measurement', label: 'Refresh measurement', reason: B20_ACTION_COPY_V1.stale };
+  }
+
+  if (
+    input.state === 'rejected' &&
+    input.reasonCode !== null &&
+    (B20_PROFILE_REJECTIONS_V1 as readonly string[]).includes(input.reasonCode)
+  ) {
+    return { action: 'try_profile', label: 'Try another profile', reason: B20_ACTION_COPY_V1.profile };
+  }
+
+  if (input.state === 'unmeasured' || input.state === 'candidate') {
+    return {
+      action: 'refresh_measurement',
+      label: 'Refresh measurement',
+      reason: input.state === 'candidate' ? B20_ACTION_COPY_V1.queued : B20_ACTION_COPY_V1.unmeasured,
+    };
+  }
+
+  if (input.state === 'provisional') {
+    return {
+      action: 'check_wallet',
+      label: 'Check against my wallet',
+      // A restricted policy is THE wallet-dependent case, so it earns its own
+      // sentence rather than the generic one.
+      reason:
+        input.transferPolicyState === 'restricted'
+          ? B20_ACTION_COPY_V1.policy
+          : B20_ACTION_COPY_V1.provisional,
+    };
+  }
+
+  // A rejection with a reason this build does not know. Fail closed: no
+  // action, rather than guessing that a wallet could overturn it.
+  return { action: 'none', label: null, reason: B20_ACTION_COPY_V1.walletIndependent };
+}
+
 export function b20OpportunityCardV1(input: B20CardInputV1): B20OpportunityCardV1 {
-  const ageSeconds = Math.max(
-    0,
-    Math.floor((input.now.getTime() - Date.parse(input.launch.detectedAt)) / 1000),
-  );
-  const launch: B20CardLaunchV1 = { ...input.launch, ageSeconds };
+  const { blockTimestamp, ...launchFields } = input.launch;
+  // §1 — the age comes from the CHAIN or it does not exist. `detectedAt` is
+  // when the ingestion worker got here, which with a cursor behind the head is
+  // a fact about the backlog.
+  const launchedMs = blockTimestamp ? Date.parse(blockTimestamp) : Number.NaN;
+  const launchedAt = Number.isFinite(launchedMs) ? new Date(launchedMs).toISOString() : null;
+  const launch: B20CardLaunchV1 = {
+    ...launchFields,
+    launchedAt,
+    launchTimeSource: launchedAt === null ? 'discovered' : 'onchain_block',
+    ageSeconds: launchedAt === null ? null : Math.max(0, Math.floor((input.now.getTime() - launchedMs) / 1000)),
+  };
 
   if (!input.observation) {
     return {
@@ -329,6 +490,14 @@ export function b20OpportunityCardV1(input: B20CardInputV1): B20OpportunityCardV
       // against yet. The feed says so rather than offering an action that
       // would run on no evidence.
       canCheckProfile: false,
+      action: b20CardActionV1({
+        canonical: input.launch.canonical,
+        hasObservation: false,
+        state: null,
+        reasonCode: null,
+        freshness: null,
+        transferPolicyState: null,
+      }),
       notMeasured: B20_NOT_MEASURED_DIMENSIONS_V1,
     };
   }
@@ -394,6 +563,14 @@ export function b20OpportunityCardV1(input: B20CardInputV1): B20OpportunityCardV
     // §13/§14 — a STALE observation may not offer the action that leads to an
     // entry plan. The refresh path exists for that, and it re-reads first.
     canCheckProfile: freshness === 'fresh' && input.launch.canonical,
+    action: b20CardActionV1({
+      canonical: input.launch.canonical,
+      hasObservation: true,
+      state: source.state,
+      reasonCode: source.reasonCode,
+      freshness,
+      transferPolicyState: source.transferPolicyState,
+    }),
     notMeasured: B20_NOT_MEASURED_DIMENSIONS_V1,
   };
 }

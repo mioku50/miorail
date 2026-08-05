@@ -50,7 +50,11 @@ export interface OpportunityCardViewV1 {
   name: string;
   /** "asset" / "stablecoin" — the launch variant, not a judgement. */
   variantLabel: string;
-  ageLabel: string;
+  /** T69-C.1 §1 — "Launched" with a real age, or "Discovered by Miorail" with
+   * the block. The projection decides which; the card never labels a detection
+   * time as a launch time. */
+  timeLabel: string;
+  timeValue: string;
   state: OpportunityStateV1;
   /** One line: what was found. From the shared copy table, not written here. */
   headline: string;
@@ -67,8 +71,10 @@ export interface OpportunityCardViewV1 {
   /** The profile the measurement used, so the numbers mean something. */
   profileLabel: string;
   fresh: boolean;
-  /** Why the action is unavailable, when it is. Never only a dimmed control. */
-  actionUnavailableReason: string | null;
+  /** The button's words, or null when this card offers no action. */
+  actionLabel: string | null;
+  /** Always present: why this action, or why none. §3 depends on it. */
+  actionReason: string;
   /** Pre-entry, quote-alignment and transfer-policy sentences, in order. */
   notices: readonly string[];
   /** Dimensions this product did not measure and will not imply. */
@@ -150,8 +156,8 @@ function OpportunityCard({
         <span className="v mono">{card.profileLabel}</span>
       </div>
       <div className="kv">
-        <span className="k">Launched</span>
-        <span className="v mono">{card.ageLabel}</span>
+        <span className="k">{card.timeLabel}</span>
+        <span className="v mono">{card.timeValue}</span>
       </div>
       <div className="kv">
         <span className="k">Variant</span>
@@ -162,13 +168,15 @@ function OpportunityCard({
         <p className="lnote">Not measured: {card.notMeasured.join(', ')}.</p>
       )}
 
-      {card.actionUnavailableReason ? (
-        // T70 §6 — a disabled action explains itself in words. There is no
-        // dimmed button here at all: a control that cannot act is not a control.
-        <p className="note">{card.actionUnavailableReason}</p>
-      ) : (
+      {/* T69-C.1 §2/§3 — the reason is always shown, and the button appears
+          only when there is something a user could usefully do. A fresh
+          rejection that holds for every wallet gets the sentence and no
+          control: offering one would suggest their wallet might be exempt from
+          a fact about the token. */}
+      <p className="note">{card.actionReason}</p>
+      {card.actionLabel && (
         <button type="button" className="btn sec" onClick={() => onOpen(card.tokenAddress)}>
-          Check against my wallet
+          {card.actionLabel}
         </button>
       )}
     </article>

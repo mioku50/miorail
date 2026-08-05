@@ -109,6 +109,9 @@ export const B20StoredLaunchV1Schema = z
     blockHash: HexHash,
     transactionHash: HexHash,
     transactionIndex: z.number().int().min(0).nullable(),
+    /** The block's own timestamp. Null when the endpoint did not report one —
+     * a surface then names the block instead of implying a launch time. */
+    blockTimestamp: z.string().datetime().nullable(),
     logIndex: z.number().int().min(0),
     /** When this process read it, not when the chain produced it. */
     detectedAt: Timestamp,
@@ -294,6 +297,7 @@ export function storedLaunchFromDecodedV1(input: {
   detectedAt: string;
   confirmationCount: number;
   transactionIndex?: number | null;
+  blockTimestamp?: string | null;
 }): B20StoredLaunchV1 {
   return assertStoredLaunchV1({
     id: `${input.launch.transactionHash.toLowerCase()}:${input.launch.logIndex}`,
@@ -308,6 +312,7 @@ export function storedLaunchFromDecodedV1(input: {
     blockHash: input.launch.blockHash,
     transactionHash: input.launch.transactionHash,
     transactionIndex: input.transactionIndex ?? null,
+    blockTimestamp: input.blockTimestamp ?? null,
     logIndex: input.launch.logIndex,
     detectedAt: input.detectedAt,
     confirmationCount: input.confirmationCount,

@@ -280,7 +280,8 @@ export function createDatabaseB20ObservationRepository(
       const rows = await sql`
         SELECT
           l.id AS launch_id, l.token_address, l.name, l.symbol, l.variant, l.decimals,
-          l.block_number AS launch_block, l.transaction_hash, l.log_index, l.detected_at, l.canonical,
+          l.block_number AS launch_block, l.transaction_hash, l.log_index, l.detected_at,
+             l.block_timestamp, l.canonical,
           o.*
         FROM b20_launches l
         LEFT JOIN LATERAL (
@@ -330,7 +331,8 @@ export function createDatabaseB20ObservationRepository(
       const rows = await sql`
         SELECT
           l.id AS launch_id, l.token_address, l.name, l.symbol, l.variant, l.decimals,
-          l.block_number AS launch_block, l.transaction_hash, l.log_index, l.detected_at, l.canonical,
+          l.block_number AS launch_block, l.transaction_hash, l.log_index, l.detected_at,
+             l.block_timestamp, l.canonical,
           o.*
         FROM b20_launches l
         LEFT JOIN LATERAL (
@@ -419,6 +421,10 @@ function feedRowV1(row: Record<string, unknown>): B20FeedRowV1 {
       transactionHash: String(row.transaction_hash),
       logIndex: Number(row.log_index),
       detectedAt: isoV1(row.detected_at),
+      blockTimestamp:
+        row.block_timestamp === null || row.block_timestamp === undefined
+          ? null
+          : isoV1(row.block_timestamp),
       canonical: Boolean(row.canonical),
     },
     observation: row.state ? rowToObservationV1(row) : null,

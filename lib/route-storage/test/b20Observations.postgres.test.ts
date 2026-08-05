@@ -100,6 +100,7 @@ before(async () => {
   for (const file of [
     '0028_t69a_b20_discover_ingestion.sql',
     '0029_t69b_b20_opportunity_observations.sql',
+    '0030_t69c1_b20_launch_block_timestamp.sql',
   ]) {
     const migration = await readFile(resolve(drizzleDir(), file), 'utf8');
     await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));

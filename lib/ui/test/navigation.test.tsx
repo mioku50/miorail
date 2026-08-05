@@ -463,7 +463,9 @@ function wireCard(overrides: Record<string, unknown> = {}) {
       symbol: 'DINo1',
       variant: 'asset' as const,
       decimals: 18,
+      blockNumber: '49531000',
       ageSeconds: 900,
+      launchTimeSource: 'onchain_block' as const,
       canonical: true,
     },
     observation: {
@@ -482,6 +484,11 @@ function wireCard(overrides: Record<string, unknown> = {}) {
       freshness: 'fresh' as const,
     },
     canCheckProfile: true,
+    action: {
+      action: 'check_wallet' as const,
+      label: 'Check against my wallet',
+      reason: 'Measured before any entry moved the pool. Your own check runs the entry and exit in sequence.',
+    },
     notMeasured: ['unique buyers', 'trading volume'],
     ...overrides,
   };
@@ -541,13 +548,27 @@ describe('a card never turns a missing measurement into a number', () => {
   test('a stale card keeps its numbers and loses its action', () => {
     // §13 — freshness gates the ACTION, not the facts. A stale measurement is
     // still what was true when it was taken.
-    const view = opportunityCardViewV1(wireCard({ canCheckProfile: false }));
+    const view = opportunityCardViewV1(
+      wireCard({
+        canCheckProfile: false,
+        action: { action: 'refresh_measurement', label: 'Refresh measurement', reason: 'past its freshness window' },
+      }),
+    );
     assert.equal(view.costLabel, '1.18%');
-    assert.match(view.actionUnavailableReason ?? '', /freshness window/);
+    assert.equal(view.actionLabel, 'Refresh measurement');
   });
 
   test('the disabled action is words, not a dimmed button', () => {
-    const view = opportunityCardViewV1(wireCard({ canCheckProfile: false }));
+    const view = opportunityCardViewV1(
+      wireCard({
+        canCheckProfile: false,
+        action: {
+          action: 'none',
+          label: null,
+          reason: 'This is a fact about the token at the measured block, not about any particular wallet.',
+        },
+      }),
+    );
     const markup = renderToStaticMarkup(
       <OpportunitiesScreen
         pipelineNotice={null}
@@ -562,8 +583,8 @@ describe('a card never turns a missing measurement into a number', () => {
         onOpenToken={() => undefined}
       />,
     );
-    assert.match(markup, /freshness window/);
-    assert.ok(!/Check against my wallet/.test(markup), 'a stale card still offered the action');
+    assert.match(markup, /not about any particular wallet/);
+    assert.ok(!/Check against my wallet/.test(markup), 'a wallet-independent card still offered the action');
   });
 
   test('every notice reaches the card', () => {
@@ -624,5 +645,103 @@ describe('a failed feed request names its own cause', () => {
     const copy = discoverFailureCopyV1(new Error('connect ECONNREFUSED 10.0.0.4:8080'));
     assert.equal(copy, CONSOLE_DISCOVER_UNREACHABLE_COPY_V1);
     assert.ok(!copy.includes('10.0.0.4'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T69-C.1 §1/§2/§3 — at the surface.
+// ---------------------------------------------------------------------------
+
+describe('T69-C.1 §1 — a card never calls detection time a launch time', () => {
+  test('a real block timestamp is labelled "Launched"', () => {
+    const view = opportunityCardViewV1(wireCard());
+    assert.equal(view.timeLabel, 'Launched');
+    assert.equal(view.timeValue, '15 min ago');
+  });
+
+  test('without one, the card names the block instead of inventing a time', () => {
+    const view = opportunityCardViewV1(
+      wireCard({
+        launch: { ...wireCard().launch, ageSeconds: null, launchTimeSource: 'discovered' as const },
+      }),
+    );
+    assert.equal(view.timeLabel, 'Discovered by Miorail');
+    assert.equal(view.timeValue, 'block 49531000');
+    // Never a relative age: with the worker days behind, "15 min ago" was a
+    // claim about the backlog wearing a claim about the token.
+    assert.ok(!/ago/.test(view.timeValue));
+  });
+
+  test('the rendered card shows the honest label, not "Launched"', () => {
+    const view = opportunityCardViewV1(
+      wireCard({
+        launch: { ...wireCard().launch, ageSeconds: null, launchTimeSource: 'discovered' as const },
+      }),
+    );
+    const markup = renderToStaticMarkup(
+      <OpportunitiesScreen
+        pipelineNotice={null}
+        pipelineState="healthy"
+        feedRenderable
+        cards={[view] as OpportunityCardViewV1[]}
+        filter="all"
+        freshOnly={false}
+        loading={false}
+        onFilterChange={() => undefined}
+        onFreshOnlyChange={() => undefined}
+        onOpenToken={() => undefined}
+      />,
+    );
+    assert.match(markup, /Discovered by Miorail/);
+    assert.ok(!/>Launched</.test(markup));
+  });
+});
+
+describe('T69-C.1 §2/§3 — the card renders the server’s action, and only that', () => {
+  function render(action: OpportunityCardViewV1['actionLabel'], reason: string) {
+    const view = opportunityCardViewV1(
+      wireCard({ action: { action: action ? 'check_wallet' : 'none', label: action, reason } }),
+    );
+    return renderToStaticMarkup(
+      <OpportunitiesScreen
+        pipelineNotice={null}
+        pipelineState="healthy"
+        feedRenderable
+        cards={[view] as OpportunityCardViewV1[]}
+        filter="all"
+        freshOnly={false}
+        loading={false}
+        onFilterChange={() => undefined}
+        onFreshOnlyChange={() => undefined}
+        onOpenToken={() => undefined}
+      />,
+    );
+  }
+
+  test('§3 — a wallet-independent rejection renders its reason and no button', () => {
+    const markup = render(null, 'This is a fact about the token, not about any particular wallet.');
+    assert.match(markup, /not about any particular wallet/);
+    assert.ok(!/<button[^>]*>Check against my wallet/.test(markup));
+  });
+
+  test('the label comes from the server, so a new action needs no UI change', () => {
+    // "Try another profile" and "Refresh measurement" render through the same
+    // path as the wallet check. The view never decides which is appropriate —
+    // one implementation of "may a wallet overturn this?" is one too many.
+    for (const label of ['Try another profile', 'Refresh measurement', 'Check against my wallet']) {
+      assert.match(render(label, 'because the measurement says so, at length.'), new RegExp(label));
+    }
+  });
+
+  test('the reason is shown whether or not there is a button', () => {
+    assert.match(render(null, 'A reason long enough to be a sentence.'), /A reason long enough/);
+    assert.match(render('Refresh measurement', 'A reason long enough to be a sentence.'), /A reason long enough/);
+  });
+
+  test('the view cannot manufacture an action the server did not send', () => {
+    const source = read('../src/console/opportunityCardView.ts');
+    // No local rule about freshness, reasons or wallets: the field is copied.
+    assert.ok(!source.includes('canCheckProfile ?'), 'the view re-derives the action');
+    assert.ok(!/no_exit_route|transfers_paused/.test(source), 'the view knows rejection reasons');
   });
 });

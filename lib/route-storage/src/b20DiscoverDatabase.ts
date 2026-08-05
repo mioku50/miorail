@@ -105,6 +105,10 @@ function rowToLaunchV1(row: Record<string, unknown>): B20StoredLaunchV1 {
     blockHash: row.block_hash,
     transactionHash: row.transaction_hash,
     transactionIndex: row.transaction_index === null ? null : Number(row.transaction_index),
+    blockTimestamp:
+      row.block_timestamp === null || row.block_timestamp === undefined
+        ? null
+        : new Date(String(row.block_timestamp)).toISOString(),
     logIndex: Number(row.log_index),
     detectedAt: isoV1(row.detected_at),
     confirmationCount: Number(row.confirmation_count),
@@ -143,6 +147,7 @@ function launchesPayloadV1(launches: readonly B20StoredLaunchV1[]): string {
       block_hash: launch.blockHash,
       transaction_hash: launch.transactionHash,
       transaction_index: launch.transactionIndex,
+      block_timestamp: launch.blockTimestamp,
       log_index: launch.logIndex,
       detected_at: launch.detectedAt,
       confirmation_count: launch.confirmationCount,
@@ -239,17 +244,18 @@ export function createDatabaseB20DiscoverRepository(sql: SqlTemplateExecutor): B
         ), stored AS (
           INSERT INTO b20_launches (
             id, chain_id, factory_address, token_address, variant, name, symbol, decimals,
-            block_number, block_hash, transaction_hash, transaction_index, log_index,
+            block_number, block_hash, transaction_hash, transaction_index, log_index, block_timestamp,
             detected_at, confirmation_count, decoder_version, canonical, non_canonical_at, created_at
           )
           SELECT j.id, j.chain_id, j.factory_address, j.token_address, j.variant, j.name, j.symbol,
                  j.decimals, j.block_number::numeric(78,0), j.block_hash, j.transaction_hash,
-                 j.transaction_index, j.log_index, j.detected_at::timestamptz, j.confirmation_count,
+                 j.transaction_index, j.log_index, j.block_timestamp::timestamptz,
+                 j.detected_at::timestamptz, j.confirmation_count,
                  j.decoder_version, true, NULL::timestamptz, j.created_at::timestamptz
           FROM jsonb_to_recordset(${launchesPayloadV1(launches)}::text::jsonb) AS j(
             id text, chain_id integer, factory_address text, token_address text, variant text,
             name text, symbol text, decimals integer, block_number text, block_hash text,
-            transaction_hash text, transaction_index integer, log_index integer,
+            transaction_hash text, transaction_index integer, log_index integer, block_timestamp text,
             detected_at text, confirmation_count integer, decoder_version text, created_at text
           )
           CROSS JOIN moved

@@ -187,6 +187,7 @@ describe('a launch is chain evidence and nothing else', () => {
         name: 'o1 mascot',
         symbol: 'DINo1',
         decimals: 18,
+        blockTimestamp: null,
         blockNumber: '49401482',
         blockHash: hashV1('a'),
         transactionHash: hashV1('1'),

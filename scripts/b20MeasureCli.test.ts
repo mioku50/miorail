@@ -143,6 +143,7 @@ function launchFixture(overrides: Partial<B20StoredLaunchV1> = {}): B20StoredLau
     logIndex: 0,
     detectedAt: T0,
     confirmationCount: 12,
+    blockTimestamp: null,
     decoderVersion: LANE.decoderVersion,
     canonical: true,
     nonCanonicalAt: null,

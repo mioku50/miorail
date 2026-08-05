@@ -298,6 +298,9 @@ export interface B20FeedRowV1 {
     transactionHash: string;
     logIndex: number;
     detectedAt: string;
+    /** T69-C.1 §1 — the block's own timestamp. Null for rows written before
+     * migration 0030 and for endpoints that do not report one. */
+    blockTimestamp: string | null;
     canonical: boolean;
   };
   /** Null when this launch has never been measured. A real state, and not the
