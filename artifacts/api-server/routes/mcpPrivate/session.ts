@@ -1,5 +1,6 @@
 import type { Request } from 'express';
 import { getMiorailProductMigrationFlags } from '../../lib/productMigrationConfig.js';
+import { isTokenRevokedV1 } from './audit.js';
 import {
   MCP_HANDOFF_REFUSAL_COPY_V1,
   bearerTokenV1,
@@ -33,12 +34,20 @@ export interface McpPrivateIdentityV1 {
   source: 'handoff_token' | 'browser_session';
 }
 
-export type McpPrivateAuthRefusalV1 = McpHandoffRefusalV1 | 'mcp_private_disabled';
+export type McpPrivateAuthRefusalV1 =
+  | McpHandoffRefusalV1
+  | 'mcp_private_disabled'
+  | 'handoff_token_revoked';
 
 export const MCP_PRIVATE_AUTH_COPY_V1: Record<McpPrivateAuthRefusalV1, string> = {
   ...MCP_HANDOFF_REFUSAL_COPY_V1,
   mcp_private_disabled:
     'This Miorail server does not expose the private MCP surface. Only the public read-only tools at /mcp are available here.',
+  // §3 — deliberately distinct from expiry. "It ran out" and "somebody turned
+  // it off" are different events, and a user who revoked a token needs to see
+  // that the revocation is what stopped it.
+  handoff_token_revoked:
+    'That handoff token was revoked. Issue a new one from Miorail if you still want an assistant connected.',
 };
 
 export type McpPrivateAuthV1 =
@@ -48,6 +57,7 @@ export type McpPrivateAuthV1 =
 export const mcpPrivateAuthRuntime = {
   flags: getMiorailProductMigrationFlags,
   now: () => new Date(),
+  isRevoked: isTokenRevokedV1,
 };
 
 function sessionIdentityV1(req: Request): McpPrivateIdentityV1 | null {
@@ -68,7 +78,7 @@ function sessionIdentityV1(req: Request): McpPrivateIdentityV1 | null {
   };
 }
 
-export function resolvePrivateIdentityV1(req: Request): McpPrivateAuthV1 {
+export async function resolvePrivateIdentityV1(req: Request): Promise<McpPrivateAuthV1> {
   const flags = mcpPrivateAuthRuntime.flags(process.env);
   if (!flags.routeIntelligenceV1 || !flags.b20ControlV1 || !flags.mcpPrivateV1) {
     return { ok: false, reason: 'mcp_private_disabled' };
@@ -80,6 +90,17 @@ export function resolvePrivateIdentityV1(req: Request): McpPrivateAuthV1 {
     if (!secret) return { ok: false, reason: 'handoff_token_bad_signature' };
     const verified = verifyHandoffTokenV1({ token, secret, now: mcpPrivateAuthRuntime.now() });
     if (!verified.ok) return { ok: false, reason: verified.reason };
+    // §3 — checked after the signature and before the identity is used for
+    // anything. A revocation lookup on an unverified token would be a lookup
+    // on an attacker-chosen key.
+    if (
+      await mcpPrivateAuthRuntime.isRevoked({
+        tokenId: verified.claims.tokenId,
+        tenantId: verified.claims.tenantId,
+      })
+    ) {
+      return { ok: false, reason: 'handoff_token_revoked' };
+    }
     return {
       ok: true,
       identity: {

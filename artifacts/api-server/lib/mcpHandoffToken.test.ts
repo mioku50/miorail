@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import test, { describe } from 'node:test';
 
 import {
+  MCP_HANDOFF_DEFAULT_TTL_MS_V1,
   MCP_HANDOFF_MAX_TTL_MS_V1,
   MCP_HANDOFF_MIN_TTL_MS_V1,
   MCP_HANDOFF_PREFIX_V1,
@@ -114,8 +115,10 @@ describe('§10 — short-lived is a property of the code', () => {
     assert.equal(handoffTtlMsV1('99999999999'), MCP_HANDOFF_MAX_TTL_MS_V1);
     assert.equal(handoffTtlMsV1('1'), MCP_HANDOFF_MIN_TTL_MS_V1);
     assert.equal(handoffTtlMsV1('-5'), MCP_HANDOFF_MIN_TTL_MS_V1);
-    assert.equal(handoffTtlMsV1('not a number'), 30 * 60 * 1000);
-    assert.equal(handoffTtlMsV1(undefined), 30 * 60 * 1000);
+    // T72-C §3 — fifteen minutes in production.
+    assert.equal(handoffTtlMsV1('not a number'), MCP_HANDOFF_DEFAULT_TTL_MS_V1);
+    assert.equal(handoffTtlMsV1(undefined), MCP_HANDOFF_DEFAULT_TTL_MS_V1);
+    assert.equal(MCP_HANDOFF_DEFAULT_TTL_MS_V1, 15 * 60 * 1000);
   });
 
   test('two tokens for one wallet are distinguishable in an audit line', () => {

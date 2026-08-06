@@ -218,6 +218,13 @@
       "when": 1786118400001,
       "tag": "0030_t69c1_b20_launch_block_timestamp",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1786204800000,
+      "tag": "0031_t72c_mcp_execution_audit",
+      "breakpoints": true
     }
   ]
 }

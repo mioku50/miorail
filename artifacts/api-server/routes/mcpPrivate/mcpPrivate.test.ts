@@ -12,6 +12,8 @@ import {
   InMemoryB20ClearanceRepositoryV1,
   InMemoryB20EntryPlanRepositoryV1,
   InMemoryB20EntrySubmissionRepositoryV1,
+  InMemoryMcpExecutionAuditRepositoryV1,
+  InMemoryMcpHandoffRevocationRepositoryV1,
   entryPlanCallsHashV1,
   type B20OpportunityClearanceV1,
   type B20PreparedEntryPlanV1,
@@ -21,6 +23,7 @@ import { buildEntryBlueprintV1 } from '../../lib/b20EntryPlan.js';
 import { buildPreparedPlanV1 } from '../../lib/b20EntryPlanStore.js';
 import { routeHashV1 } from '../../lib/opportunityClearance.js';
 import { b20RouteRuntime } from '../b20Control.js';
+import { mcpAuditRuntime } from './audit.js';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
 import { resolvePrivateIdentityV1, mcpPrivateAuthRuntime } from './session.js';
 import type { McpPrivateIdentityV1 } from './session.js';
@@ -147,17 +150,27 @@ function preparedPlan(now = NOW): { plan: B20PreparedEntryPlanV1; run: unknown }
 }
 
 const original = { ...b20RouteRuntime };
+const originalAudit = { ...mcpAuditRuntime };
 const originalAuthFlags = mcpPrivateAuthRuntime.flags;
 let plans: InMemoryB20EntryPlanRepositoryV1;
 let submissions: InMemoryB20EntrySubmissionRepositoryV1;
 let clearances: InMemoryB20ClearanceRepositoryV1;
+let audit: InMemoryMcpExecutionAuditRepositoryV1;
+let revocations: InMemoryMcpHandoffRevocationRepositoryV1;
 let clock: Date;
 
 beforeEach(async () => {
   plans = new InMemoryB20EntryPlanRepositoryV1();
   submissions = new InMemoryB20EntrySubmissionRepositoryV1();
   clearances = new InMemoryB20ClearanceRepositoryV1();
+  audit = new InMemoryMcpExecutionAuditRepositoryV1();
+  revocations = new InMemoryMcpHandoffRevocationRepositoryV1();
   clock = NOW;
+
+  mcpAuditRuntime.available = async () => true;
+  mcpAuditRuntime.audit = () => audit;
+  mcpAuditRuntime.revocations = () => revocations;
+  mcpAuditRuntime.now = () => clock;
 
   await clearances.insertClearance(clearance());
 
@@ -182,6 +195,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   Object.assign(b20RouteRuntime, original);
+  Object.assign(mcpAuditRuntime, originalAudit);
   mcpPrivateAuthRuntime.flags = originalAuthFlags;
   delete process.env.MIORAIL_MCP_PRIVATE_V1;
   delete process.env.MIORAIL_MCP_PRIVATE_EXECUTION_V1;
@@ -258,33 +272,29 @@ describe('§10 — nothing happens without a proved wallet', () => {
   const request = (headers: Record<string, string> = {}, session?: unknown) =>
     resolvePrivateIdentityV1({ headers, session } as never);
 
-  test('no credential is a refusal, not an anonymous read', () => {
-    const resolved = request();
+  test('no credential is a refusal, not an anonymous read', async () => {
+    const resolved = await request();
     assert.equal(resolved.ok, false);
     assert.equal(resolved.ok === false && resolved.reason, 'handoff_token_missing');
   });
 
-  test('a bad token never falls back to a session', () => {
-    // Otherwise a stale token in a config would silently act as whoever last
-    // logged in on that browser.
-    const resolved = request(
+  test('a bad token never falls back to a session', async () => {
+    const resolved = await request(
       { authorization: 'Bearer miorail-mcp-v1.aaaa.bbbb' },
       { user: { id: `eip155:8453:${WALLET}`, address: WALLET, chainId: 8453 } },
     );
     assert.equal(resolved.ok, false);
   });
 
-  test('the surface is invisible while the flag is off', () => {
+  test('the surface is invisible while the flag is off', async () => {
     mcpPrivateAuthRuntime.flags = () => ({ ...FLAGS, mcpPrivateV1: false });
-    const resolved = request({}, { user: { id: `eip155:8453:${WALLET}`, address: WALLET, chainId: 8453 } });
+    const resolved = await request({}, { user: { id: `eip155:8453:${WALLET}`, address: WALLET, chainId: 8453 } });
     assert.equal(resolved.ok, false);
     assert.equal(resolved.ok === false && resolved.reason, 'mcp_private_disabled');
   });
 
-  test('a dev single-user session is not enough', () => {
-    // `tenantWalletAddress` deliberately lets dev mode read a wallet from the
-    // request body. That is right for local work and catastrophic here.
-    const resolved = request({}, { user: { id: 'default-user', address: WALLET, chainId: 8453 } });
+  test('a dev single-user session is not enough', async () => {
+    const resolved = await request({}, { user: { id: 'default-user', address: WALLET, chainId: 8453 } });
     assert.equal(resolved.ok, false);
   });
 });
@@ -687,6 +697,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
   test('the source scan actually found the files it claims to check', () => {
     // Without this a wrong `here` makes every assertion below pass vacuously.
     assert.deepEqual(sources.map((entry) => entry.name).sort(), [
+      'audit.ts',
       'index.ts',
       'server.ts',
       'session.ts',

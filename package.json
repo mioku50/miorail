@@ -30,7 +30,8 @@
     "b20:discover": "tsx scripts/b20_discover.ts",
     "b20:measure-opportunities": "tsx scripts/b20_measure_opportunities.ts",
     "smoke:b20-exit": "tsx scripts/smoke_b20_exit.ts",
-    "smoke:mcp": "tsx scripts/smoke_mcp.ts"
+    "smoke:mcp": "tsx scripts/smoke_mcp.ts",
+    "smoke:mcp-private": "tsx scripts/smoke_mcp_private.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

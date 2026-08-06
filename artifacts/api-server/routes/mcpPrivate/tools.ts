@@ -2,7 +2,7 @@ import {
   OPPORTUNITY_QUOTE_ASSET_V1,
   profileIdentityV1,
 } from '@mioagent/opportunity-rail';
-import { entryPlanCallsHashV1 } from '@mioagent/route-storage';
+import { entryPlanCallsHashV1, type McpAuditOutcomeV1 } from '@mioagent/route-storage';
 import {
   beginEntrySubmissionV1,
   loadEntryPlanV1,
@@ -13,6 +13,7 @@ import {
   type B20FacadeRefusalV1,
 } from '../b20Control.js';
 import { getMiorailProductMigrationFlags } from '../../lib/productMigrationConfig.js';
+import { McpAuditUnavailableError, recordAuditV1 } from './audit.js';
 import type { McpPrivateIdentityV1 } from './session.js';
 
 // ---------------------------------------------------------------------------
@@ -74,7 +75,23 @@ export const PRIVATE_REFUSAL_COPY_V1: Record<string, string> = {
   storage_integrity: 'Miorail could not store the evidence behind that plan, so it did not describe one.',
   mcp_execution_disabled:
     'This Miorail server does not hand executable calls to MCP clients. The plan is sound; the handoff is switched off here.',
+  mcp_audit_unavailable:
+    'Miorail could not record this handoff in its execution audit, so it did not perform it. Nothing was released and nothing was sent. This is a server problem, not a problem with the plan — try again shortly.',
 };
+
+/** The audit rows a tool writes carry the tool's own name, so a reader can see
+ * which call released something without inferring it from the outcome. */
+async function auditV1(
+  identity: McpPrivateIdentityV1,
+  input: Omit<Parameters<typeof recordAuditV1>[0], 'tokenId' | 'tenantId' | 'walletAddress'>,
+): Promise<void> {
+  await recordAuditV1({
+    tokenId: identity.tokenId,
+    tenantId: identity.tenantId,
+    walletAddress: identity.walletAddress,
+    ...input,
+  });
+}
 
 function refuse(refusal: B20FacadeRefusalV1): never {
   throw new McpPrivateError(
@@ -213,6 +230,16 @@ export async function miorailPrepareB20EntryV1(
   if (!loaded.ok) refuse(loaded);
   const plan = loaded.body;
 
+  // §2 — a plan was described to an assistant. Best-effort: refusing to show a
+  // user their own review because a log write failed would be a worse outcome
+  // than a gap in the log, and nothing irreversible happened here.
+  await auditV1(identity, {
+    toolName: 'miorail_prepare_b20_entry',
+    outcome: 'plan_read',
+    planId: plan.id,
+    callsHash: plan.callsHash,
+  });
+
   return {
     outcome: body.outcome,
     planId: plan.id,
@@ -284,6 +311,12 @@ export async function miorailGetBaseMcpActionV1(
   if (begun.outcome === 'refused' || !begun.payload) {
     const reason = begun.reason ?? 'entry_plan_not_found';
     const detail = (begun.body as { detail?: string }).detail;
+    await auditV1(identity, {
+      toolName: 'miorail_get_base_mcp_action',
+      outcome: 'refused',
+      planId: plan.id,
+      callsHash: plan.callsHash,
+    });
     return {
       outcome: 'refused',
       reason,
@@ -293,6 +326,44 @@ export async function miorailGetBaseMcpActionV1(
       action: null,
       caveats: MIORAIL_PRIVATE_CAVEATS_V1,
     };
+  }
+
+  // §2 — the mandatory row, written AFTER the attempt is open and BEFORE a
+  // single byte is returned.
+  //
+  // The ordering is the whole argument. Auditing first would record a release
+  // that the gate then refused; auditing after returning would let executable
+  // bytes leave a server that has no record of it. So the attempt is opened,
+  // the row is written, and only then do the calls exist outside this
+  // function.
+  //
+  // If the row cannot be written, the attempt is CANCELLED rather than left
+  // holding the plan — nothing was sent, so the honest state is the one that
+  // lets the user try again. If that cancellation also fails, the plan stays
+  // locked to an attempt that never released anything, which is the safe
+  // direction to fail in.
+  try {
+    await auditV1(identity, {
+      toolName: 'miorail_get_base_mcp_action',
+      outcome: 'action_released',
+      planId: plan.id,
+      callsHash: begun.payload.approvedCallsHash,
+    });
+  } catch (error) {
+    if (begun.attemptId) {
+      await recordEntrySubmissionV1({
+        tenantId: identity.tenantId,
+        walletAddress: identity.walletAddress,
+        plan,
+        attemptId: begun.attemptId,
+        result: 'cancelled',
+        batchId: null,
+      }).catch(() => undefined);
+    }
+    if (error instanceof McpAuditUnavailableError) {
+      throw new McpPrivateError('mcp_audit_unavailable', PRIVATE_REFUSAL_COPY_V1.mcp_audit_unavailable);
+    }
+    throw error;
   }
 
   const payload = begun.payload;
@@ -364,6 +435,35 @@ export async function miorailRecordBaseMcpSubmissionV1(
 
   const batchId = typeof args.batchId === 'string' && args.batchId.trim() ? args.batchId.trim() : null;
 
+  // §2 — audited BEFORE the state transition, which is safe here precisely
+  // because recording is idempotent: a client that gets the audit refusal
+  // retries with the same arguments and reaches the same attempt. Auditing
+  // afterwards would mean a batch could be recorded on a server with no record
+  // that it was.
+  if (args.result === 'user_rejected') {
+    await auditV1(identity, {
+      toolName: 'miorail_record_base_mcp_submission',
+      outcome: 'user_rejected',
+      planId: plan.id,
+      callsHash: plan.callsHash,
+    });
+  } else {
+    try {
+      await auditV1(identity, {
+        toolName: 'miorail_record_base_mcp_submission',
+        outcome: batchId ? 'submission_recorded' : 'submitted_unknown',
+        planId: plan.id,
+        callsHash: plan.callsHash,
+        batchId,
+      });
+    } catch (error) {
+      if (error instanceof McpAuditUnavailableError) {
+        throw new McpPrivateError('mcp_audit_unavailable', PRIVATE_REFUSAL_COPY_V1.mcp_audit_unavailable);
+      }
+      throw error;
+    }
+  }
+
   if (args.result === 'unknown' && !batchId) {
     // The one case the storage schema deliberately cannot express: a terminal
     // "unknown" is a claim about a batch, and there is no batch id to claim it
@@ -427,12 +527,38 @@ export async function miorailGetExecutionStatusV1(
 
   const status = await readEntryPlanStatusV1({ tenantId: identity.tenantId, plan: loaded.body });
   const state = (status.status as { state?: string } | undefined)?.state ?? null;
+  // §1 — the reconciled outcomes have their own audit vocabulary, so the trail
+  // ends with what actually happened rather than stopping at "a batch was
+  // recorded". Best-effort: a user asking where their entry got to must be
+  // told, even if the audit is unavailable.
+  await auditV1(identity, {
+    toolName: 'miorail_get_execution_status',
+    outcome: STATE_AUDIT_OUTCOME_V1[state ?? ''] ?? 'plan_read',
+    planId: loaded.body.id,
+    callsHash: loaded.body.callsHash,
+    batchId: (status.status as { batchId?: string | null } | undefined)?.batchId ?? null,
+  });
   return {
     ...status,
     stateMeaning: state ? (EXECUTION_STATE_COPY_V1[state] ?? null) : null,
     caveats: MIORAIL_PRIVATE_CAVEATS_V1,
   };
 }
+
+/**
+ * §1 — the reconciled states that have an audit outcome of their own.
+ *
+ * Anything not listed here is an ordinary read of a plan, which is what
+ * `plan_read` means. Mapping every state onto a distinct outcome would have
+ * meant inventing vocabulary the migration does not allow.
+ */
+export const STATE_AUDIT_OUTCOME_V1: Record<string, McpAuditOutcomeV1> = {
+  entry_succeeded: 'entry_succeeded',
+  entry_reverted: 'entry_reverted',
+  reconciliation_required: 'reconciliation_required',
+  submitted_unknown: 'submitted_unknown',
+  user_rejected: 'user_rejected',
+};
 
 /** §8 — one sentence per named outcome, so an assistant reports the state it
  * was given rather than the state it expected. */

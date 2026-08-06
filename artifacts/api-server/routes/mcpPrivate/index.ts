@@ -52,7 +52,7 @@ function jsonRpcError(res: Response, status: number, message: string): void {
 
 mcpPrivateRouter.post('/', async (req: Request, res: Response) => {
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
-  const auth = resolvePrivateIdentityV1(req);
+  const auth = await resolvePrivateIdentityV1(req);
 
   if (!auth.ok) {
     // Rate-limited on the UNAUTHENTICATED bucket, so a caller cannot probe

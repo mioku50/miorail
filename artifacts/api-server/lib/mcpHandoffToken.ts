@@ -29,7 +29,10 @@ import crypto from 'node:crypto';
  * any of it is parsed, so a credential from another system is never decoded. */
 export const MCP_HANDOFF_PREFIX_V1 = 'miorail-mcp-v1';
 
-export const MCP_HANDOFF_DEFAULT_TTL_MS_V1 = 30 * 60 * 1000;
+/** T72-C §3 — fifteen minutes. A bearer credential that cannot be revoked
+ * before it expires should not live long, and production runs at this value.
+ * `MIORAIL_MCP_HANDOFF_TTL_MS` may shorten it and cannot exceed the ceiling. */
+export const MCP_HANDOFF_DEFAULT_TTL_MS_V1 = 15 * 60 * 1000;
 /** The ceiling. §10 says short-lived, and this is what makes that a property of
  * the code rather than of whoever last edited the environment. */
 export const MCP_HANDOFF_MAX_TTL_MS_V1 = 4 * 60 * 60 * 1000;
