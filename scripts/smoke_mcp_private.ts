@@ -148,6 +148,25 @@ async function main(): Promise<void> {
     String(fabricated.refusalReason ?? fabricated.outcome ?? ''),
   );
 
+  // --- §4 the execution gate, checked without needing a plan ---------------
+  //
+  // The flag is read before the plan is looked up, so a nonexistent plan id is
+  // enough to tell Stage A from Stage B — and in Stage B the answer proves the
+  // other half: a plan that is not this wallet's is "not found", never
+  // "refused", because the difference would confirm it exists.
+  const gate = await client.callTool({
+    name: 'miorail_get_base_mcp_action',
+    arguments: { planId: 'plan-that-does-not-exist', positionAtomic, attemptRequestId: `gate-${Date.now()}` },
+  });
+  const gateText = textOf(gate);
+  const stageA = gateText.includes('mcp_execution_disabled');
+  const stageB = gateText.includes('b20_entry_plan_not_found');
+  record(
+    stageA ? 'Stage A: executable calls are unavailable' : 'Stage B: the execution gate is open',
+    stageA || stageB,
+    stageA ? 'MIORAIL_MCP_PRIVATE_EXECUTION_V1 is off' : gateText.slice(0, 80),
+  );
+
   if (!tokenAddress) {
     console.log('\nSMOKE_B20_TOKEN_ADDRESS is not set — stopping before qualification.');
     return summarise();
@@ -159,7 +178,17 @@ async function main(): Promise<void> {
     arguments: { tokenAddress, positionAtomic },
   });
   if ((checked as ToolResult).isError) {
-    record('the live exit check ran', false, textOf(checked).slice(0, 200));
+    const reason = textOf(checked);
+    // Not a defect: Miorail refuses to price a token whose transfer controls it
+    // has never read, and a wallet that has never inspected this token has not
+    // read them. Reported as a stop rather than a failure, because calling it a
+    // failure would train an operator to ignore this line.
+    if (reason.includes('b20_controls_unread')) {
+      console.log('\nThis wallet has not inspected that token on this server, so there is nothing to price.');
+      console.log('Open it once in Miorail (or run pnpm smoke:b20-control) and re-run.');
+      return summarise();
+    }
+    record('the live exit check ran', false, reason.slice(0, 200));
     return summarise();
   }
   const check = payloadOf(checked);
