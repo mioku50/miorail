@@ -3,7 +3,7 @@ import { createPublicClient, http } from 'viem';
 import { base } from 'viem/chains';
 import { canonicalUsdcForBaseChain } from '@mioagent/security/baseGuards';
 import type { SpendPermissionClaimV1, OnchainPermissionStatusV1 } from '@mioagent/intelligence-budget';
-import { getSubscriptionOwnerWallet, rpcUrlForNetwork } from '../routes/x402/index.js';
+import { getSubscriptionOwnerWallet, rpcUrlForNetwork } from './subscriptionOwner.js';
 
 // ---------------------------------------------------------------------------
 // T71 §4 — the bridge between a claim in a POST body and the chain.

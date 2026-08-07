@@ -11,7 +11,7 @@ import {
   getSubscriptionOwnerWallet,
   rpcUrlForNetwork,
   subscriptionWalletName,
-} from '../routes/x402/index.js';
+} from './subscriptionOwner.js';
 
 // T60 decision 1/7/13 — the REAL on-chain SpendPermissionCharger. This is a
 // thin wrapper over the EXISTING FuelChargeService (lib/autonomy/src/fuel.ts,

@@ -2,7 +2,6 @@ import { Router, Request, Response, type RequestHandler } from 'express';
 import { tenantUserId } from '../../middleware/tenantAuth';
 import { createRequireOperatorAuth } from '../../middleware/operatorAuth.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { base } from '@base-org/account/node';
 import {
   createX402MiddlewareFromEnv,
   x402MiddlewareDiagnosticsFromEnv,
@@ -32,6 +31,13 @@ import {
   type FuelCategory,
 } from '@mioagent/autonomy';
 import { canonicalUsdcForBaseChain } from '@mioagent/security/baseGuards';
+import {
+  getSubscriptionOwnerWallet,
+  rpcUrlForNetwork,
+  subscriptionWalletName,
+  SubscriptionOwnerUnavailableError,
+  type SubscriptionOwnerWallet,
+} from '../../lib/subscriptionOwner.js';
 import { eq, desc, and } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import {
@@ -71,15 +77,6 @@ interface CreateX402RouterOptions {
   dbEnabled?: boolean;
 }
 
-// T60: exported (was module-private) so lib/intelligenceBudgetCharger.ts can
-// reuse the SAME CDP subscription-owner wallet resolution rather than
-// reinventing it — decision 1's "переиспользовать, НЕ переизобретать".
-export interface SubscriptionOwnerWallet {
-  address: string;
-  walletName: string;
-  eoaAddress?: string;
-}
-
 interface SubscriptionOwnerReadiness {
   ready: boolean;
   deployed: boolean;
@@ -87,18 +84,6 @@ interface SubscriptionOwnerReadiness {
   gasSponsored: boolean;
   errorCode?: 'subscription_owner_gas_unavailable' | 'subscription_owner_deploy_funding_required' | 'subscription_owner_rpc_unavailable';
 }
-
-export class SubscriptionOwnerUnavailableError extends Error {
-  constructor(
-    message: string,
-    readonly errorCode: string,
-    readonly missingConfig: string[] = [],
-  ) {
-    super(message);
-  }
-}
-
-const subscriptionOwnerWalletCache = new Map<string, { wallet: SubscriptionOwnerWallet; expiresAt: number }>();
 
 function receiptId(record: X402SettlementRecord): string {
   if (record.txHash) return `x402:${record.network}:${record.txHash}`;
@@ -136,74 +121,19 @@ function sanitizedUrlHost(value?: string): string | undefined {
   }
 }
 
-export function subscriptionWalletName(env: NodeJS.ProcessEnv = process.env): string {
-  return env.BASE_SUBSCRIPTION_WALLET_NAME ||
-    env.CDP_SUBSCRIPTION_WALLET_NAME ||
-    'miorail-fuel-subscription-owner';
-}
-
-function missingSubscriptionOwnerConfig(env: NodeJS.ProcessEnv = process.env): string[] {
-  return [
-    ['CDP_API_KEY_ID', env.CDP_API_KEY_ID],
-    ['CDP_API_KEY_SECRET', env.CDP_API_KEY_SECRET],
-    ['CDP_WALLET_SECRET', env.CDP_WALLET_SECRET],
-  ].filter(([, value]) => !value).map(([name]) => String(name));
-}
-
-function isAddress(value?: string | null): boolean {
-  return typeof value === 'string' && /^0x[a-fA-F0-9]{40}$/.test(value);
-}
-
-export async function getSubscriptionOwnerWallet(env: NodeJS.ProcessEnv = process.env): Promise<SubscriptionOwnerWallet> {
-  const missingConfig = missingSubscriptionOwnerConfig(env);
-  if (missingConfig.length > 0) {
-    throw new SubscriptionOwnerUnavailableError(
-      'CDP subscription owner wallet config is incomplete.',
-      'subscription_owner_missing_config',
-      missingConfig,
-    );
-  }
-
-  const walletName = subscriptionWalletName(env);
-  const cached = subscriptionOwnerWalletCache.get(walletName);
-  if (cached && cached.expiresAt > Date.now()) return cached.wallet;
-
-  try {
-    const wallet = await base.subscription.getOrCreateSubscriptionOwnerWallet({ walletName });
-    if (!isAddress(wallet.address)) {
-      throw new SubscriptionOwnerUnavailableError(
-        'CDP subscription owner wallet returned an invalid address.',
-        'subscription_owner_invalid_address',
-      );
-    }
-    const publicWallet = {
-      address: wallet.address,
-      walletName: wallet.walletName || walletName,
-      eoaAddress: wallet.eoaAddress,
-    };
-    subscriptionOwnerWalletCache.set(walletName, {
-      wallet: publicWallet,
-      expiresAt: Date.now() + 5 * 60_000,
-    });
-    return publicWallet;
-  } catch (error) {
-    if (error instanceof SubscriptionOwnerUnavailableError) throw error;
-    throw new SubscriptionOwnerUnavailableError(
-      'CDP subscription owner wallet is unavailable.',
-      'subscription_owner_unavailable',
-    );
-  }
-}
-
-export function rpcUrlForNetwork(network?: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
-  if (network === 'eip155:84532') {
-    return env.BASE_SEPOLIA_RPC_URL || env.BASE_RPC_URL || 'https://sepolia.base.org';
-  }
-  if (network === 'eip155:8453' || !network) {
-    return env.BASE_MAINNET_RPC_URL || env.BASE_RPC_URL || 'https://mainnet.base.org';
-  }
-  return undefined;
-}
+// The subscription-owner wallet and RPC resolution now live in
+// ../../lib/subscriptionOwner.ts and are re-exported here so every existing
+// importer of this module keeps working. They moved because two LIBRARIES
+// (spendPermissionVerifier.ts, intelligenceBudgetCharger.ts) import them, and a
+// library importing a route module drags Express into places that have no HTTP
+// surface.
+export {
+  getSubscriptionOwnerWallet,
+  rpcUrlForNetwork,
+  subscriptionWalletName,
+  SubscriptionOwnerUnavailableError,
+  type SubscriptionOwnerWallet,
+};
 
 async function rpcHexResult(rpcUrl: string, method: 'eth_getCode' | 'eth_getBalance', address: string): Promise<string> {
   const response = await fetch(rpcUrl, {
