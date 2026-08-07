@@ -232,6 +232,24 @@ export interface RouteStorageRepository {
     walletAddress: string,
     chainId: number,
   ): Promise<IntelligenceBudgetRecord | null>;
+  /**
+   * T71 — the caller's most recent budget for this wallet, WHATEVER its status.
+   *
+   * `getActiveIntelligenceBudget` answers "may this wallet spend?", which is
+   * the right question for a charge and the wrong one for Settings: a paused
+   * budget returns null there, and a screen that reads null renders "not
+   * configured" — offering to create a second permission for a wallet that
+   * already granted one. Resume has the same problem, because the thing it
+   * needs to resume is precisely the one the active lookup hides.
+   *
+   * Newest first, so a wallet that revoked once and granted again sees the
+   * grant rather than the revocation.
+   */
+  getLatestIntelligenceBudget(
+    userId: string,
+    walletAddress: string,
+    chainId: number,
+  ): Promise<IntelligenceBudgetRecord | null>;
   getIntelligenceBudgetById(id: string, userId: string): Promise<IntelligenceBudgetRecord | null>;
   updateIntelligenceBudget(
     id: string,

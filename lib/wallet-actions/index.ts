@@ -70,3 +70,21 @@ export {
   MARKER_CLEARING_STATUSES_V1,
 } from './src/recoveryMarker';
 export type { MarkerStorageV1 } from './src/recoveryMarker';
+
+// T71: Base Spend Permission onboarding. The server says what to request, the
+// user's Base Account signs it, and the server verifies it on chain before any
+// budget exists. Miorail never signs.
+export {
+  useSpendPermissionOnboarding,
+  SPEND_PERMISSION_FLOW_COPY_V1,
+} from './src/useSpendPermissionOnboarding';
+export { useSpendPermissionGrant } from './src/useSpendPermissionGrant';
+export type { SpendPermissionGrantV1 } from './src/useSpendPermissionGrant';
+export type {
+  SpendPermissionFlowStatusV1,
+  PreparedPermissionV1,
+  WalletGrantedPermissionV1,
+  ConfirmResultV1,
+  UseSpendPermissionOnboardingArgs,
+  UseSpendPermissionOnboardingResultV1,
+} from './src/useSpendPermissionOnboarding';

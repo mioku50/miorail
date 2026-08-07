@@ -1959,6 +1959,124 @@ export function useRevokeIntelligenceBudget(
   });
 }
 
+// ---------------------------------------------------------------------------
+// T71 — the Spend Permission onboarding calls.
+//
+// `prepare` and `confirm` are deliberately NOT one call. Between them the
+// user's Base Account opens, and the whole security argument is that the server
+// decides what is asked for and separately decides whether what came back is
+// real. A single endpoint would have to trust the client for one half or the
+// other.
+// ---------------------------------------------------------------------------
+
+export function usePrepareSpendPermission(
+  options?: Omit<
+    UseMutationOptions<
+      apiSpec.PrepareSpendPermissionResponseV1,
+      Error,
+      { periodLimitUsdc: string; maxPerCallUsdc: string }
+    >,
+    'mutationFn' | 'retry'
+  >,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const response = await fetchApi<unknown>(
+        '/api/route-intelligence/intelligence-budget/permission/prepare',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(input),
+        },
+      );
+      return apiSpec.PrepareSpendPermissionResponseV1Schema.parse(response);
+    },
+  });
+}
+
+export function useConfirmSpendPermission(
+  options?: Omit<
+    UseMutationOptions<
+      apiSpec.ConfirmSpendPermissionResponseV1,
+      Error,
+      apiSpec.ConfirmSpendPermissionRequestV1
+    >,
+    'mutationFn' | 'retry'
+  >,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...options,
+    // Never retried automatically. A confirmation is idempotent on the server,
+    // but a silent retry would hide a `verification_unavailable` the user needs
+    // to see and decide about.
+    retry: false,
+    mutationFn: async (input) => {
+      const response = await fetchApi<unknown>(
+        '/api/route-intelligence/intelligence-budget/permission/confirm',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(input),
+        },
+      );
+      return apiSpec.ConfirmSpendPermissionResponseV1Schema.parse(response);
+    },
+    onSuccess: (data, variables, context, mutCtx) => {
+      queryClient.invalidateQueries({ queryKey: ['intelligence-budget'] });
+      queryClient.invalidateQueries({ queryKey: ['status'] });
+      if (options?.onSuccess) {
+        (options.onSuccess as any)(data, variables, context, mutCtx);
+      }
+    },
+  });
+}
+
+/** Pause and resume share one implementation: they are the same write with a
+ * different path, and two copies would drift on cache invalidation. */
+function useBudgetPauseStateV1(
+  path: 'pause' | 'resume',
+  options?: Omit<UseMutationOptions<apiSpec.IntelligenceBudgetResponseV1, Error, void>, 'mutationFn' | 'retry'>,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async () => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/intelligence-budget/${path}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        },
+      );
+      return apiSpec.IntelligenceBudgetResponseV1Schema.parse(response);
+    },
+    onSuccess: (data, variables, context, mutCtx) => {
+      queryClient.invalidateQueries({ queryKey: ['intelligence-budget'] });
+      queryClient.invalidateQueries({ queryKey: ['status'] });
+      if (options?.onSuccess) {
+        (options.onSuccess as any)(data, variables, context, mutCtx);
+      }
+    },
+  });
+}
+
+export function usePauseIntelligenceBudget(
+  options?: Omit<UseMutationOptions<apiSpec.IntelligenceBudgetResponseV1, Error, void>, 'mutationFn' | 'retry'>,
+) {
+  return useBudgetPauseStateV1('pause', options);
+}
+
+export function useResumeIntelligenceBudget(
+  options?: Omit<UseMutationOptions<apiSpec.IntelligenceBudgetResponseV1, Error, void>, 'mutationFn' | 'retry'>,
+) {
+  return useBudgetPauseStateV1('resume', options);
+}
+
 export interface SimulateWithBudgetInput {
   routeRunId: string;
   walletAddress: `0x${string}`;

@@ -99,6 +99,9 @@ import {
   useB20Watchlist,
   useIntelligenceCharges,
   useIntelligenceBudget,
+  usePauseIntelligenceBudget,
+  useResumeIntelligenceBudget,
+  useRevokeIntelligenceBudget,
   useMarketSnapshot,
   usePrepareSwapBlueprint,
   usePortfolio,
@@ -108,7 +111,14 @@ import {
   type NftProofResponseV1,
   type SimulateWithBudgetResponseV1,
 } from "@mioagent/api-client-react";
-import { BlueprintSubmitButton, EarnDepositFlow, SubmissionRecoveryRail, builderCodeForSurfaceV1, type BlueprintSubmitStatus } from "@mioagent/wallet-actions";
+import {
+  BlueprintSubmitButton,
+  EarnDepositFlow,
+  SubmissionRecoveryRail,
+  builderCodeForSurfaceV1,
+  useSpendPermissionGrant,
+  type BlueprintSubmitStatus,
+} from "@mioagent/wallet-actions";
 import { SimulateButton, type SimulateBlueprintResponseV1 } from "@mioagent/x402-actions";
 import { WalletConnect } from "./WalletConnect";
 
@@ -213,6 +223,12 @@ export function MiniConsole() {
   const flags = status.data?.productMigration;
   const paidIntelligenceOn = flags?.paidIntelligence === true;
   const budget = useIntelligenceBudget({ enabled: paidIntelligenceOn });
+  // T71 — the SAME flow the web console uses. A second implementation here
+  // would be a second payment path, and the second one always skips a check.
+  const pauseBudget = usePauseIntelligenceBudget();
+  const resumeBudget = useResumeIntelligenceBudget();
+  const revokeBudget = useRevokeIntelligenceBudget();
+  const spendPermissionGrant = useSpendPermissionGrant();
   const budgetSimulate = useSimulateWithBudget({
     onSuccess: (response) => {
       setBudgetResponse(response);
@@ -662,6 +678,19 @@ export function MiniConsole() {
       charges={charges.data?.charges ?? []}
       chargesLoading={charges.isPending && paidIntelligenceOn}
       chargesUnavailableReason={charges.error ? "Your charge history could not be read right now." : null}
+      onEnablePaidEvidence={spendPermissionGrant.enable}
+      onboardingStatus={spendPermissionGrant.status}
+      onboardingDetail={spendPermissionGrant.detail}
+      onboardingConsent={spendPermissionGrant.consent}
+      onPause={() => pauseBudget.mutate()}
+      onResume={() => resumeBudget.mutate()}
+      onRevoke={() => revokeBudget.mutate()}
+      changePending={
+        spendPermissionGrant.pending ||
+        pauseBudget.isPending ||
+        resumeBudget.isPending ||
+        revokeBudget.isPending
+      }
     />
   );
   const simulationSource = simulationSourceFromResponseV1(simulateResponse ?? budgetResponse);

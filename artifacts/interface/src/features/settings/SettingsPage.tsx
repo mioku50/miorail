@@ -19,11 +19,15 @@ import {
 import {
   useIntelligenceBudget,
   useIntelligenceCharges,
+  usePauseIntelligenceBudget,
+  useResumeIntelligenceBudget,
   useRevokeIntelligenceBudget,
   useStatus,
   useUpdateIntelligenceBudget,
 } from '@mioagent/api-client-react';
 import { useConsoleNav } from '../console/useConsoleNav';
+import { useSpendPermissionGrant } from '@mioagent/wallet-actions';
+
 
 // ---------------------------------------------------------------------------
 // T70 §2/§3 — Settings.
@@ -34,8 +38,11 @@ import { useConsoleNav } from '../console/useConsoleNav';
 // were in the way of a product whose first screen should be an opportunity.
 //
 // They are here now, intact. Nothing about the spending contract changed: this
-// page reads the same projection, calls the same two writes, and still refuses
-// to offer a "create permission" button for a wallet flow that does not exist.
+// page reads the same projection and calls the same writes.
+//
+// T71 finished the half that was missing. "Enable paid evidence" now opens the
+// user's Base Account, and the permission it signs is verified ON CHAIN before
+// a budget exists. Miorail still never signs, and this page still holds no key.
 // ---------------------------------------------------------------------------
 
 /** The provider slots the status endpoint reports, and the word each one is
@@ -64,6 +71,9 @@ export function SettingsPage() {
   const charges = useIntelligenceCharges({ enabled: paidIntelligenceOn });
   const updateBudget = useUpdateIntelligenceBudget();
   const revokeBudget = useRevokeIntelligenceBudget();
+  const pauseBudget = usePauseIntelligenceBudget();
+  const resumeBudget = useResumeIntelligenceBudget();
+  const grant = useSpendPermissionGrant();
   const budgetRecord = budget.data?.budget ?? null;
 
   const budgetChangeError = (() => {
@@ -142,7 +152,13 @@ export function SettingsPage() {
               { label: 'Settlement', value: status.data?.x402?.settleReady ? 'x402 · ready' : 'x402 · not ready' },
               { label: 'Network', value: status.data?.x402?.network ?? 'not reported' },
             ]}
-            changePending={updateBudget.isPending || revokeBudget.isPending}
+            changePending={
+              updateBudget.isPending ||
+              revokeBudget.isPending ||
+              pauseBudget.isPending ||
+              resumeBudget.isPending ||
+              grant.pending
+            }
             changeError={budgetChangeError}
             onUpdateLimit={(limits) =>
               updateBudget.mutate({
@@ -151,13 +167,15 @@ export function SettingsPage() {
               })
             }
             onRevoke={() => revokeBudget.mutate()}
-            // Deliberately no `onCreatePermission`. Granting a Base Account
-            // spend permission is a WALLET action and no client flow for it
-            // exists yet; wiring a button to the bookkeeping endpoint alone
-            // would record a permission the wallet never granted.
-            createUnavailableReason={
-              'Granting a spending permission is a wallet action your Base Account signs, and that flow is not built yet. Free route comparison is unaffected.'
-            }
+            onPause={() => pauseBudget.mutate()}
+            onResume={() => resumeBudget.mutate()}
+            // T71 — the real thing. The server says what to ask for, the user's
+            // Base Account signs it, and the server verifies it on chain before
+            // any budget exists. Miorail never signs.
+            onEnablePaidEvidence={grant.enable}
+            onboardingStatus={grant.status}
+            onboardingDetail={grant.detail}
+            onboardingConsent={grant.consent}
           />
         }
         adapters={adapterRows}

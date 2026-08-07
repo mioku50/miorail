@@ -9,9 +9,12 @@ import {
 } from '../src/console/BudgetPaymentsPanel';
 import {
   budgetPaymentsViewV1,
+  onboardingBusyV1,
+  onboardingRetryableV1,
   paidIntelligenceStateV1,
   paidIntelligenceViewV1,
   spendPermissionConsentV1,
+  SPEND_PERMISSION_ONBOARDING_STATES_V1,
   type BudgetProjectionLikeV1,
   type ChargeSummaryLikeV1,
   type PaidIntelligenceStateV1,
@@ -94,10 +97,26 @@ describe('§2.4 — the eight states are eight states', () => {
     assert.equal(paidIntelligenceStateV1({ ...ready, budget: budget({ status: 'paused' }) }), 'paused');
   });
 
-  test('a revoked or expired permission reads as missing', () => {
-    for (const status of ['revoked', 'expired'] as const) {
-      assert.equal(paidIntelligenceStateV1({ ...ready, budget: budget({ status }) }), 'permission_missing');
-    }
+  test('T71 — revoked is its own state, expired reads as missing', () => {
+    // These used to collapse together. "You turned this off" and "you have not
+    // set this up" are different sentences, and a user who deliberately
+    // revoked should see that their action took rather than a screen that
+    // looks like it forgot. Expiry stays `permission_missing` because the user
+    // did not do anything — time did.
+    assert.equal(paidIntelligenceStateV1({ ...ready, budget: budget({ status: 'revoked' }) }), 'revoked');
+    assert.equal(
+      paidIntelligenceStateV1({ ...ready, budget: budget({ status: 'expired' }) }),
+      'permission_missing',
+    );
+    assert.equal(paidIntelligenceStateV1({ ...ready, budget: null }), 'permission_missing');
+  });
+
+  test('T71 — a revoked permission still offers a way back on', () => {
+    const view = paidIntelligenceViewV1('revoked');
+    assert.equal(view.action, 'create_permission');
+    assert.equal(view.moneyAtRisk, false);
+    // And it is honest about the half Miorail cannot do for them.
+    assert.match(view.detail, /remove it there to withdraw it on chain/i);
   });
 
   test('a spent budget is its own state', () => {
@@ -309,16 +328,81 @@ describe('the drawer offers controls, not just a status', () => {
     assert.match(console_, /onRevoke=/);
   });
 
-  test('a permission is never recorded without the wallet that grants it', () => {
-    // Wiring the create button to the bookkeeping endpoint alone would record
-    // a permission the user's Base Account never signed.
-    assert.match(console_, /createUnavailableReason=/);
-    assert.ok(!/onCreatePermission=/.test(console_), 'no create flow exists to wire yet');
-    assert.match(panel, /createUnavailableReason/);
+  test('T71 — a permission is never recorded without the wallet that grants it', () => {
+    // This used to assert that no create flow existed at all, which was the
+    // honest thing while the wallet half was missing. Now the flow exists, and
+    // the invariant it has to keep is stronger: the ONLY way Settings can
+    // create a budget is through the wallet grant, whose result the server
+    // verifies on chain.
+    assert.match(console_, /onEnablePaidEvidence=/);
+    assert.match(console_, /useSpendPermissionGrant/);
+
+    // `useCreateIntelligenceBudget` takes a spendPermissionId and no proof of
+    // it. Wiring a button to that alone would record a permission the user's
+    // Base Account never signed — which is exactly what the old test was
+    // guarding against, and it stays guarded.
+    assert.ok(
+      !/useCreateIntelligenceBudget/.test(console_),
+      'Settings reached the bookkeeping-only create endpoint',
+    );
+  });
+
+  test('T71 — the panel collects both limits before opening a wallet', () => {
+    // A permission for an allowance the user never saw is not consent, however
+    // clearly the wallet renders it.
+    assert.match(panel, /enable-monthly/);
+    assert.match(panel, /enable-per-request/);
+    assert.match(panel, /Enable paid evidence/);
+    // And it refuses a per-request cap above the monthly limit client-side, so
+    // the user is told before a prompt opens rather than after.
+    assert.match(panel, /Number\(perRequest\) > Number\(monthly\)/);
+  });
+
+  test('T71 — pause and revoke are only offered where they mean something', () => {
+    // Pausing something already paused, or revoking something already revoked,
+    // is a button that does nothing and reads as a broken product.
+    assert.match(panel, /props\.budget\?\.status === 'active' && props\.onPause/);
+    assert.match(panel, /props\.budget\.status !== 'revoked' && props\.onRevoke/);
   });
 
   test('a failed change never echoes the server message', () => {
     // A server error can carry an endpoint, and an endpoint can carry a key.
     assert.match(console_, /That change could not be saved/);
+  });
+});
+
+describe('T71 — the onboarding states stay in step with the flow that produces them', () => {
+  test('lib/ui names exactly the states the wallet hook can be in', () => {
+    // lib/ui declares its own copy rather than importing @mioagent/wallet-actions:
+    // a panel should not pull a wallet SDK into the miniapp bundle to name a
+    // string. The copy is only safe while something fails when it drifts.
+    const hook = readFileSync(
+      path.join(here, '..', '..', 'wallet-actions', 'src', 'useSpendPermissionOnboarding.ts'),
+      'utf8',
+    );
+    const declared = hook
+      .slice(hook.indexOf('export type SpendPermissionFlowStatusV1'), hook.indexOf('/** What the server told us'))
+      .match(/'([a-z_]+)'/g)!
+      .map((quoted) => quoted.replaceAll("'", ''))
+      .sort();
+    assert.deepEqual([...SPEND_PERMISSION_ONBOARDING_STATES_V1].sort(), declared);
+  });
+
+  test('only the states where nothing is in flight offer to start again', () => {
+    for (const status of ['preparing', 'awaiting_wallet', 'verifying'] as const) {
+      assert.equal(onboardingBusyV1(status), true, `${status} allowed a second prompt`);
+    }
+    for (const status of ['idle', 'active', 'wallet_rejected', 'verification_failed'] as const) {
+      assert.equal(onboardingBusyV1(status), false);
+    }
+  });
+
+  test('a declined prompt is retryable and a wrong token is not', () => {
+    // Signing the same wrong thing again produces the same wrong thing; a user
+    // who simply changed their mind should be offered another go.
+    assert.equal(onboardingRetryableV1('wallet_rejected'), true);
+    assert.equal(onboardingRetryableV1('verification_retryable'), true);
+    assert.equal(onboardingRetryableV1('verification_failed'), false);
+    assert.equal(onboardingRetryableV1('active'), false);
   });
 });

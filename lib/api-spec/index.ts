@@ -68,6 +68,11 @@ export type CreateIntelligenceBudgetRequestV1 = z.infer<typeof schemas.CreateInt
 export type UpdateIntelligenceBudgetRequestV1 = z.infer<typeof schemas.UpdateIntelligenceBudgetRequestV1Schema>;
 export type RevokeIntelligenceBudgetRequestV1 = z.infer<typeof schemas.RevokeIntelligenceBudgetRequestV1Schema>;
 export type IntelligenceBudgetResponseV1 = z.infer<typeof schemas.IntelligenceBudgetResponseV1Schema>;
+export type PrepareSpendPermissionRequestV1 = z.infer<typeof schemas.PrepareSpendPermissionRequestV1Schema>;
+export type PrepareSpendPermissionResponseV1 = z.infer<typeof schemas.PrepareSpendPermissionResponseV1Schema>;
+export type ConfirmSpendPermissionRequestV1 = z.infer<typeof schemas.ConfirmSpendPermissionRequestV1Schema>;
+export type ConfirmSpendPermissionResponseV1 = z.infer<typeof schemas.ConfirmSpendPermissionResponseV1Schema>;
+export type SpendPermissionRefusalV1 = z.infer<typeof schemas.SpendPermissionRefusalV1Schema>;
 export type SimulateWithBudgetRequestV1 = z.infer<typeof schemas.SimulateWithBudgetRequestV1Schema>;
 export type SimulateWithBudgetResponseV1 = z.infer<typeof schemas.SimulateWithBudgetResponseV1Schema>;
 

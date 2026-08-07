@@ -1869,6 +1869,29 @@ export function createDatabaseRouteStorageRepository(
       return rows[0] ? budgetFromRow(rows[0]) : null;
     },
 
+    async getLatestIntelligenceBudget(
+      userId: string,
+      walletAddress: string,
+      chainId: number,
+    ): Promise<IntelligenceBudgetRecord | null> {
+      // Ordered by creation, not by status: a wallet that revoked and granted
+      // again must see the grant. `created_at DESC, id DESC` because two rows
+      // can share a timestamp and an arbitrary winner would make Settings
+      // flicker between them.
+      const rows = await sql`
+        SELECT id, schema_version, user_id, wallet_address, chain_id, spend_permission_id,
+               status, period_type, period_limit_atomic, period_spent_atomic, reserved_atomic,
+               max_per_call_atomic, allowed_categories, period_started_at, period_ends_at,
+               revoked_at, budget_hash, created_at, updated_at
+        FROM intelligence_budgets
+        WHERE user_id = ${userId} AND lower(wallet_address) = lower(${walletAddress})
+          AND chain_id = ${chainId}
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+      `;
+      return rows[0] ? budgetFromRow(rows[0]) : null;
+    },
+
     async getIntelligenceBudgetById(id: string, userId: string): Promise<IntelligenceBudgetRecord | null> {
       const rows = await sql`
         SELECT id, schema_version, user_id, wallet_address, chain_id, spend_permission_id,

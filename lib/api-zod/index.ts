@@ -1013,6 +1013,129 @@ export const UpdateIntelligenceBudgetRequestV1Schema = z
 
 export const RevokeIntelligenceBudgetRequestV1Schema = z.object({}).strict();
 
+// ---------------------------------------------------------------------------
+// T71 — Base Spend Permission onboarding.
+//
+// Two endpoints, and the split between them is the whole security argument.
+//
+// PREPARE tells the client what to ask the wallet for. Every field in the
+// response is resolved by the SERVER — the spender from the operator's
+// configuration, the token from canonical USDC, the chain from a constant, the
+// allowance from the limit the user chose. The client is a courier.
+//
+// CONFIRM carries back what the wallet actually signed. The server does not
+// trust a single field of it: the permission hash is recomputed on-chain, the
+// binding is re-checked against server-held values, and the chain is asked
+// whether it has ever heard of the thing. Only then does a record exist.
+//
+// There is no endpoint in between, and no shape by which a client can name a
+// spender, a token, a chain, a wallet or a permission hash and have it
+// believed.
+// ---------------------------------------------------------------------------
+
+export const PrepareSpendPermissionRequestV1Schema = z
+  .object({
+    /** The monthly ceiling the user chose. Bounds the allowance requested. */
+    periodLimitUsdc: UsdcAmountSchema,
+    maxPerCallUsdc: UsdcAmountSchema,
+    allowedCategories: z
+      .array(IntelligenceCategoryV1Schema)
+      .min(1)
+      .max(IntelligenceCategoryV1Schema.options.length)
+      .optional(),
+  })
+  .strict();
+
+export const PrepareSpendPermissionResponseV1Schema = z
+  .object({
+    /** Everything below is the SERVER's answer, to be passed to the wallet
+     * unchanged. A client that alters any of it produces a permission that
+     * fails verification at confirm time. */
+    account: AddressV1Schema,
+    spender: AddressV1Schema,
+    token: AddressV1Schema,
+    chainId: z.literal(8453),
+    /** Base-10 atomic USDC. */
+    allowanceAtomic: z.string().regex(/^[0-9]{1,30}$/),
+    periodInDays: z.number().int().min(28).max(366),
+    /** The three sentences shown before the wallet opens. */
+    consent: z.array(z.string().min(1).max(300)).min(1).max(6),
+    /** Named, never addressed: a raw address in a consent dialog is something
+     * nobody verifies and everybody skips. */
+    recipientLabel: z.string().min(1).max(120),
+  })
+  .strict();
+
+/** Exactly what `requestSpendPermission` returns, plus the limits the budget is
+ * to be created with. Nothing here is trusted; it is all re-derived. */
+export const ConfirmSpendPermissionRequestV1Schema = z
+  .object({
+    permission: z
+      .object({
+        signature: z.string().regex(/^0x[0-9a-fA-F]+$/).max(4000),
+        chainId: z.number().int(),
+        permissionHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
+        permission: z
+          .object({
+            account: AddressV1Schema,
+            spender: AddressV1Schema,
+            token: AddressV1Schema,
+            allowance: z.string().regex(/^[0-9]{1,40}$/),
+            period: z.number().int().positive(),
+            start: z.number().int().nonnegative(),
+            end: z.number().int().nonnegative(),
+            salt: z.string().regex(/^[0-9]{1,80}$/),
+            extraData: z.string().regex(/^0x[0-9a-fA-F]*$/).max(4000),
+          })
+          .strict(),
+      })
+      .strict(),
+    periodLimitUsdc: UsdcAmountSchema,
+    maxPerCallUsdc: UsdcAmountSchema,
+    allowedCategories: z
+      .array(IntelligenceCategoryV1Schema)
+      .min(1)
+      .max(IntelligenceCategoryV1Schema.options.length)
+      .optional(),
+  })
+  .strict();
+
+/** Why a confirmation did not produce a budget. Every one of these means
+ * NOTHING was stored and NOTHING was charged. */
+export const SpendPermissionRefusalV1Schema = z.enum([
+  'malformed_permission',
+  'signature_missing',
+  'permission_hash_mismatch',
+  'wallet_mismatch',
+  'chain_mismatch',
+  'token_mismatch',
+  'spender_mismatch',
+  'allowance_below_limit',
+  'period_too_short',
+  'not_started',
+  'already_expired',
+  'not_approved_onchain',
+  'permission_revoked',
+  'permission_inactive',
+  'remaining_below_limit',
+]);
+
+export const ConfirmSpendPermissionResponseV1Schema = z
+  .object({
+    outcome: z.enum(['activated', 'refused', 'verification_unavailable']),
+    /** Present only on `refused`. */
+    refusal: SpendPermissionRefusalV1Schema.nullable(),
+    /** One sentence for the user. Never a raw provider message. */
+    detail: z.string().min(1).max(400),
+    /** Whether trying again could plausibly work. `not_approved_onchain` and a
+     * transport failure are retryable; a wrong token never is. */
+    retryable: z.boolean(),
+    budget: IntelligenceBudgetProjectionV1Schema.nullable(),
+  })
+  .strict();
+
+export const PauseIntelligenceBudgetRequestV1Schema = z.object({}).strict();
+
 // T67E §2.2 — the Recent charges list for the Budget & payments drawer.
 //
 // What is deliberately NOT here: the x402 payment authorization payload, the

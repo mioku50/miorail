@@ -2,6 +2,11 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { logger } from '@mioagent/utils';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import {
+  ConfirmSpendPermissionRequestV1Schema,
+  ConfirmSpendPermissionResponseV1Schema,
+  PauseIntelligenceBudgetRequestV1Schema,
+  PrepareSpendPermissionRequestV1Schema,
+  PrepareSpendPermissionResponseV1Schema,
   CommerceCompareRequestV1Schema,
   CommerceCompareResponseV1Schema,
   CommerceOrderCreateRequestV1Schema,
@@ -116,7 +121,18 @@ import {
   type SpendPermissionCharger,
   type SpendPermissionSourceV1,
 } from '@mioagent/intelligence-budget';
-import { createDatabaseSpendPermissionRepository } from '@mioagent/autonomy';
+import {
+  createDatabaseSpendPermissionRepository,
+  type SpendPermissionRepository,
+} from '@mioagent/autonomy';
+import {
+  createSpendPermissionVerifierV1,
+  type SpendPermissionVerifierV1,
+} from '../lib/spendPermissionVerifier.js';
+import {
+  confirmSpendPermissionV1,
+  prepareSpendPermissionV1,
+} from '../lib/spendPermissionOnboarding.js';
 import {
   resolveCommerceIntentV1,
   resolveEarnIntentV1,
@@ -1915,6 +1931,23 @@ function simulationStateFromBudgetEvidenceV1(evidence: EvidenceRecordV1): Simula
       };
 }
 
+/**
+ * T71 — what a budget created through the onboarding flow may buy.
+ *
+ * Every intelligence category, because the user is choosing to enable paid
+ * evidence rather than to enable one provider: a default that silently excluded
+ * a category would show up as a paid check that never happens, with no
+ * explanation anywhere. The Settings panel lists what is allowed, and the
+ * PATCH route narrows it.
+ */
+export const DEFAULT_PAID_EVIDENCE_CATEGORIES_V1 = [
+  'route_quote',
+  'liquidity',
+  'risk',
+  'simulation',
+  'inference',
+] as const;
+
 /** flag + session — the common head of all five routes. Responds and returns
  * null on failure; returns the signed user otherwise. */
 function budgetFlagSessionGuard(req: Request, res: Response): ReturnType<typeof signedRoutePlanUser> {
@@ -1959,7 +1992,12 @@ routeIntelligenceRouter.get('/intelligence-budget', async (req: Request, res: Re
   try {
     if (!(await budgetMigrationOk(res))) return;
     const repository = budgetRouteRuntime.repository();
-    const record = await repository.getActiveIntelligenceBudget(user.id, user.address, 8453);
+    // T71 — the LATEST budget, whatever its status. The active lookup answers
+    // "may this wallet spend?", which is right for a charge and wrong for
+    // Settings: a paused budget came back null, and a screen reading null
+    // renders "not configured" and offers to create a second permission for a
+    // wallet that already granted one.
+    const record = await repository.getLatestIntelligenceBudget(user.id, user.address, 8453);
     res.json(
       IntelligenceBudgetResponseV1Schema.parse({
         budget: record ? budgetProjectionFromRecord(record) : null,
@@ -2193,6 +2231,286 @@ routeIntelligenceRouter.patch('/intelligence-budget', async (req: Request, res: 
   }
 });
 
+// ===========================================================================
+// T71 — Base Spend Permission onboarding.
+//
+// Three routes, and one of them writes: prepare says what to ask the wallet
+// for, confirm verifies what came back ON CHAIN before anything exists, and
+// pause/resume move a budget between the two states that stop and start paid
+// checks without touching the wallet at all.
+//
+// The client never names a spender, a token, a chain, a wallet or a permission
+// hash. Prepare resolves all five; confirm re-resolves them and compares. A
+// client that lies produces a refusal, not a budget.
+// ===========================================================================
+
+/** Both onboarding routes share one guard chain with the rest of the budget
+ * surface, plus a verifier that can actually reach Base. */
+export const spendPermissionRouteRuntime = {
+  verifier: (): SpendPermissionVerifierV1 => createSpendPermissionVerifierV1(process.env),
+  permissions: (): SpendPermissionRepository => createDatabaseSpendPermissionRepository(client),
+  prepare: prepareSpendPermissionV1,
+  confirm: confirmSpendPermissionV1,
+};
+
+// POST /route-intelligence/intelligence-budget/permission/prepare
+routeIntelligenceRouter.post(
+  '/intelligence-budget/permission/prepare',
+  async (req: Request, res: Response): Promise<void> => {
+    const user = budgetFlagSessionGuard(req, res);
+    if (!user) return;
+    const parsed = PrepareSpendPermissionRequestV1Schema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: 'invalid_intelligence_budget_request', code: 'invalid_intelligence_budget_request' });
+      return;
+    }
+    if (!budgetChainEnvOk(res)) return;
+    const periodLimitAtomic = decimalUsdcToAtomicV1(parsed.data.periodLimitUsdc);
+    const maxPerCallAtomic = decimalUsdcToAtomicV1(parsed.data.maxPerCallUsdc);
+    if (!periodLimitAtomic || !maxPerCallAtomic) {
+      res.status(400).json({ error: 'invalid_intelligence_budget_request', code: 'invalid_intelligence_budget_request' });
+      return;
+    }
+    // Checked before a wallet is ever opened: a permission that allows less
+    // than a single request could never buy one.
+    if (BigInt(maxPerCallAtomic) > BigInt(periodLimitAtomic)) {
+      res.status(400).json({ error: 'invalid_intelligence_budget_request', code: 'invalid_intelligence_budget_request' });
+      return;
+    }
+    try {
+      if (!(await budgetMigrationOk(res))) return;
+      const prepared = await spendPermissionRouteRuntime.prepare({
+        walletAddress: user.address,
+        periodLimitAtomic,
+        periodLimitUsdc: parsed.data.periodLimitUsdc,
+        maxPerCallUsdc: parsed.data.maxPerCallUsdc,
+        verifier: spendPermissionRouteRuntime.verifier(),
+      });
+      res.json(PrepareSpendPermissionResponseV1Schema.parse(prepared));
+    } catch {
+      // The spender could not be resolved. Never the cause: it is read from
+      // operator configuration that may name a wallet or a key.
+      res.status(503).json({ error: 'spend_permission_unavailable', code: 'spend_permission_unavailable' });
+    }
+  },
+);
+
+// POST /route-intelligence/intelligence-budget/permission/confirm
+routeIntelligenceRouter.post(
+  '/intelligence-budget/permission/confirm',
+  async (req: Request, res: Response): Promise<void> => {
+    const user = budgetFlagSessionGuard(req, res);
+    if (!user) return;
+    const parsed = ConfirmSpendPermissionRequestV1Schema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'invalid_intelligence_budget_request', code: 'invalid_intelligence_budget_request' });
+      return;
+    }
+    if (!budgetChainEnvOk(res)) return;
+    const periodLimitAtomic = decimalUsdcToAtomicV1(parsed.data.periodLimitUsdc);
+    const maxPerCallAtomic = decimalUsdcToAtomicV1(parsed.data.maxPerCallUsdc);
+    if (!periodLimitAtomic || !maxPerCallAtomic) {
+      res.status(400).json({ error: 'invalid_intelligence_budget_request', code: 'invalid_intelligence_budget_request' });
+      return;
+    }
+
+    try {
+      if (!(await budgetMigrationOk(res))) return;
+      const repository = budgetRouteRuntime.repository();
+      const now = budgetRouteRuntime.now();
+
+      const confirmed = await spendPermissionRouteRuntime.confirm({
+        tenantId: user.id,
+        // From the session. The body's `account` is checked against this by the
+        // verifier and is never read as the answer.
+        walletAddress: user.address,
+        claim: parsed.data.permission,
+        periodLimitAtomic,
+        now,
+        verifier: spendPermissionRouteRuntime.verifier(),
+        permissions: spendPermissionRouteRuntime.permissions(),
+      });
+
+      if (confirmed.outcome !== 'activated') {
+        res.json(
+          ConfirmSpendPermissionResponseV1Schema.parse({
+            outcome: confirmed.outcome,
+            refusal: confirmed.outcome === 'refused' ? confirmed.refusal : null,
+            detail: confirmed.detail,
+            retryable: confirmed.retryable,
+            budget: null,
+          }),
+        );
+        return;
+      }
+
+      // §4 — the budget is created only now, from a permission the chain has
+      // confirmed. An existing budget for the SAME permission is returned as-is:
+      // a repeated confirmation is a retry, not a second authorisation.
+      const existing = await repository.getLatestIntelligenceBudget(user.id, user.address, 8453);
+      if (existing && existing.status === 'active') {
+        if (existing.spendPermissionId !== confirmed.permissionId) {
+          res.status(409).json({ error: 'intelligence_budget_exists', code: 'intelligence_budget_exists' });
+          return;
+        }
+        res.json(
+          ConfirmSpendPermissionResponseV1Schema.parse({
+            outcome: 'activated',
+            refusal: null,
+            detail: 'Paid evidence is already active for this wallet.',
+            retryable: false,
+            budget: budgetProjectionFromRecord(existing),
+          }),
+        );
+        return;
+      }
+
+      const nowIso = now.toISOString();
+      const periodEnds = new Date(now);
+      periodEnds.setUTCMonth(periodEnds.getUTCMonth() + 1);
+      const allowedCategories =
+        parsed.data.allowedCategories ?? DEFAULT_PAID_EVIDENCE_CATEGORIES_V1;
+      const budgetId = `intelligence-budget:${stableHashV1('intelligence-budget-id/v1', {
+        tenantId: user.id,
+        spendPermissionId: confirmed.permissionId,
+        createdAt: nowIso,
+      }).slice(2)}`;
+      const draft: IntelligenceBudgetV1 = {
+        schemaVersion: 'intelligence-budget/v1',
+        id: budgetId,
+        tenantId: user.id,
+        walletAddress: user.address as IntelligenceBudgetV1['walletAddress'],
+        chainId: 8453,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        status: 'active',
+        spendPermissionId: confirmed.permissionId,
+        periodType: 'monthly',
+        asset: usdcAssetRefV1(),
+        periodLimitAtomic,
+        periodSpentAtomic: '0',
+        reservedAtomic: '0',
+        maxPerCallAtomic,
+        allowedCategories: allowedCategories as IntelligenceBudgetV1['allowedCategories'],
+        periodStartedAt: nowIso,
+        periodEndsAt: periodEnds.toISOString(),
+        revokedAt: null,
+        budgetHash: ZERO_HASH_V1,
+      };
+      let validated: IntelligenceBudgetV1;
+      try {
+        validated = IntelligenceBudgetV1Schema.parse({ ...draft, budgetHash: hashIntelligenceBudgetV1(draft) });
+      } catch {
+        res.status(400).json({ error: 'invalid_intelligence_budget_request', code: 'invalid_intelligence_budget_request' });
+        return;
+      }
+
+      const record = await repository.insertIntelligenceBudget({
+        id: validated.id,
+        schemaVersion: validated.schemaVersion,
+        userId: user.id,
+        walletAddress: validated.walletAddress,
+        chainId: 8453,
+        spendPermissionId: validated.spendPermissionId,
+        status: 'active',
+        periodType: 'monthly',
+        periodLimitAtomic: validated.periodLimitAtomic,
+        maxPerCallAtomic: validated.maxPerCallAtomic,
+        allowedCategories: validated.allowedCategories,
+        periodStartedAt: validated.periodStartedAt,
+        periodEndsAt: validated.periodEndsAt,
+        budgetHash: validated.budgetHash,
+        now: nowIso,
+      });
+      res.status(201).json(
+        ConfirmSpendPermissionResponseV1Schema.parse({
+          outcome: 'activated',
+          refusal: null,
+          detail: 'Paid evidence is active. Miorail can now buy evidence within the limits you set.',
+          retryable: false,
+          budget: budgetProjectionFromRecord(record),
+        }),
+      );
+    } catch (cause) {
+      if (cause instanceof RouteStorageConflictError) {
+        res.status(409).json({ error: 'intelligence_budget_exists', code: 'intelligence_budget_exists' });
+        return;
+      }
+      res.status(500).json({ error: 'budget_simulation_failed', code: 'budget_simulation_failed' });
+    }
+  },
+);
+
+/** Pause and resume, which are the same operation with different words and
+ * different starting states. Neither touches the wallet: the permission stays
+ * exactly as granted, and only Miorail's willingness to draw on it changes. */
+async function setBudgetPausedV1(
+  req: Request,
+  res: Response,
+  next: 'paused' | 'active',
+): Promise<void> {
+  const user = budgetFlagSessionGuard(req, res);
+  if (!user) return;
+  const parsed = PauseIntelligenceBudgetRequestV1Schema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_intelligence_budget_request', code: 'invalid_intelligence_budget_request' });
+    return;
+  }
+  if (!budgetChainEnvOk(res)) return;
+  try {
+    if (!(await budgetMigrationOk(res))) return;
+    const repository = budgetRouteRuntime.repository();
+    // The LATEST budget, not the active one: resume exists precisely to act on
+    // a budget the active lookup cannot see.
+    const record = await repository.getLatestIntelligenceBudget(user.id, user.address, 8453);
+    if (!record) {
+      res.status(404).json({ error: 'intelligence_budget_not_found', code: 'intelligence_budget_not_found' });
+      return;
+    }
+    // Revoked is final here. Resuming one would be Miorail deciding a user's
+    // withdrawal of consent was temporary; the way back is a new permission.
+    if (record.status === 'revoked' || record.status === 'expired') {
+      res.status(409).json({ error: 'intelligence_budget_not_resumable', code: 'intelligence_budget_not_resumable' });
+      return;
+    }
+    if (record.status === next) {
+      // Idempotent: pausing twice is one pause, and a double-click is not an
+      // error worth showing anybody.
+      res.json(IntelligenceBudgetResponseV1Schema.parse({ budget: budgetProjectionFromRecord(record) }));
+      return;
+    }
+
+    const nowIso = budgetRouteRuntime.now().toISOString();
+    const current = intelligenceBudgetV1FromRecord(record, usdcAssetRefV1());
+    const draft: IntelligenceBudgetV1 = {
+      ...current,
+      status: next,
+      updatedAt: nowIso,
+      budgetHash: ZERO_HASH_V1,
+    };
+    const updated = await repository.updateIntelligenceBudget(record.id, user.id, {
+      status: next,
+      budgetHash: hashIntelligenceBudgetV1(draft),
+      now: nowIso,
+    });
+    res.json(IntelligenceBudgetResponseV1Schema.parse({ budget: budgetProjectionFromRecord(updated) }));
+  } catch {
+    res.status(500).json({ error: 'budget_simulation_failed', code: 'budget_simulation_failed' });
+  }
+}
+
+// POST /route-intelligence/intelligence-budget/pause — stop paid checks. The
+// permission is untouched and free route comparison is unaffected.
+routeIntelligenceRouter.post('/intelligence-budget/pause', (req: Request, res: Response) =>
+  setBudgetPausedV1(req, res, 'paused'),
+);
+
+// POST /route-intelligence/intelligence-budget/resume — start them again. No
+// wallet action: the permission was never withdrawn.
+routeIntelligenceRouter.post('/intelligence-budget/resume', (req: Request, res: Response) =>
+  setBudgetPausedV1(req, res, 'active'),
+);
+
 // POST /route-intelligence/intelligence-budget/revoke — status='revoked'.
 routeIntelligenceRouter.post('/intelligence-budget/revoke', async (req: Request, res: Response): Promise<void> => {
   const user = budgetFlagSessionGuard(req, res);
@@ -2206,8 +2524,11 @@ routeIntelligenceRouter.post('/intelligence-budget/revoke', async (req: Request,
   try {
     if (!(await budgetMigrationOk(res))) return;
     const repository = budgetRouteRuntime.repository();
-    const record = await repository.getActiveIntelligenceBudget(user.id, user.address, 8453);
-    if (!record) {
+    // The latest, so a PAUSED budget can be revoked too. Requiring a user to
+    // resume before they can revoke would be asking them to turn spending back
+    // on in order to turn it off.
+    const record = await repository.getLatestIntelligenceBudget(user.id, user.address, 8453);
+    if (!record || record.status === 'revoked') {
       res.status(404).json({ error: 'intelligence_budget_not_found', code: 'intelligence_budget_not_found' });
       return;
     }
@@ -2227,6 +2548,21 @@ routeIntelligenceRouter.post('/intelligence-budget/revoke', async (req: Request,
       budgetHash,
       now: nowIso,
     });
+    // T71 — and stop Miorail drawing on the permission itself. The budget's
+    // status is what the coordinator gates on, so this is belt and braces; it
+    // is worth having because the two records outlive each other and a spender
+    // that is still marked active is a fact somebody will eventually trust.
+    //
+    // It does NOT revoke the permission on chain. Only the user's wallet can do
+    // that, and claiming otherwise would be the most consequential lie this
+    // surface could tell — so the response says so instead.
+    try {
+      await spendPermissionRouteRuntime.permissions().setActive(record.spendPermissionId, false);
+    } catch {
+      // Best effort. The budget is already revoked, which is what blocks paid
+      // checks; failing the request here would leave the user unsure whether
+      // their revocation took.
+    }
     res.json(IntelligenceBudgetResponseV1Schema.parse({ budget: budgetProjectionFromRecord(revoked) }));
   } catch {
     res.status(500).json({ error: 'budget_simulation_failed', code: 'budget_simulation_failed' });

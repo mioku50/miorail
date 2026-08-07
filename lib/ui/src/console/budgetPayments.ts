@@ -19,6 +19,15 @@ export type PaidIntelligenceStateV1 =
   | 'settlement_unavailable'
   /** No Spend Permission exists yet. The user can create one. */
   | 'permission_missing'
+  /**
+   * T71 — the user granted a permission and then withdrew it.
+   *
+   * Distinct from `permission_missing`, which it used to collapse into. "You
+   * have not set this up" and "you turned this off" are different sentences,
+   * and a user who deliberately revoked deserves to see that their action took
+   * rather than a screen that looks like it forgot.
+   */
+  | 'revoked'
   /** A permission exists and the user paused it. */
   | 'paused'
   /** The monthly limit is spent. */
@@ -65,6 +74,13 @@ const VIEW_V1: Record<PaidIntelligenceStateV1, Omit<PaidIntelligenceViewV1, 'sta
   permission_missing: {
     label: 'Not configured',
     detail: 'Miorail has no spending permission from your wallet, so it cannot buy paid evidence. Free comparison still works.',
+    action: 'create_permission',
+    moneyAtRisk: false,
+  },
+  revoked: {
+    label: 'Revoked',
+    detail:
+      'You revoked this permission, so Miorail will not buy paid evidence. Free route comparison still works. Your wallet may still list the permission — remove it there to withdraw it on chain as well.',
     action: 'create_permission',
     moneyAtRisk: false,
   },
@@ -170,9 +186,11 @@ export function paidIntelligenceStateV1(input: PaidIntelligenceInputV1): PaidInt
   );
   if (unresolved?.status === 'reconciliation_required') return 'reconciliation_required';
 
-  if (!input.budget || input.budget.status === 'revoked' || input.budget.status === 'expired') {
-    return 'permission_missing';
-  }
+  if (!input.budget) return 'permission_missing';
+  // Withdrawn, not absent. `expired` joins `permission_missing` because the
+  // user did not do anything — time did.
+  if (input.budget.status === 'revoked') return 'revoked';
+  if (input.budget.status === 'expired') return 'permission_missing';
   if (input.budget.status === 'paused') return 'paused';
   if (Number(input.budget.remainingUsdc) <= 0) return 'budget_exceeded';
   return 'ready';
@@ -263,6 +281,42 @@ export function budgetPaymentsViewV1(input: PaidIntelligenceInputV1): BudgetPaym
       needsAttention: charge.status === 'reconciliation_required',
     })),
   };
+}
+
+// ---------------------------------------------------------------------------
+// T71 — the wallet flow's own states.
+//
+// Declared here rather than imported from `@mioagent/wallet-actions`: this
+// package is compiled into the miniapp at a target where that package's
+// dependencies do not belong, and a panel should not pull a wallet SDK into a
+// bundle to name a string. `budgetPayments.test.ts` reads the hook's source
+// from disk and fails if the two lists drift.
+// ---------------------------------------------------------------------------
+
+export const SPEND_PERMISSION_ONBOARDING_STATES_V1 = [
+  'idle',
+  'preparing',
+  'awaiting_wallet',
+  'verifying',
+  'active',
+  'wallet_rejected',
+  'verification_failed',
+  'verification_retryable',
+  'failed',
+] as const;
+export type SpendPermissionOnboardingStatusV1 = (typeof SPEND_PERMISSION_ONBOARDING_STATES_V1)[number];
+
+/** States where a wallet prompt is open or a check is running, so the panel
+ * must not offer to start a second one. */
+export function onboardingBusyV1(status: SpendPermissionOnboardingStatusV1 | undefined): boolean {
+  return status === 'preparing' || status === 'awaiting_wallet' || status === 'verifying';
+}
+
+/** Whether trying again is worth offering. A declined prompt is retryable — the
+ * user may simply have changed their mind — while a permission for the wrong
+ * token is not, because signing the same thing again produces the same thing. */
+export function onboardingRetryableV1(status: SpendPermissionOnboardingStatusV1 | undefined): boolean {
+  return status === 'wallet_rejected' || status === 'verification_retryable' || status === 'failed';
 }
 
 /**

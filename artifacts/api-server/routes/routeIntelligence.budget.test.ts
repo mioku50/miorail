@@ -368,9 +368,20 @@ describe('T60 Intelligence Budget CRUD routes', () => {
     const response = await request(routeApp()).post('/api/route-intelligence/intelligence-budget/revoke').send({});
     assert.equal(response.status, 200);
     assert.equal(response.body.budget.status, 'revoked');
-    // After revoke, GET returns null (getActiveIntelligenceBudget only sees active).
+    // T71 — after revoke, GET still returns the budget, marked revoked.
+    //
+    // It used to return null, because the read was `getActiveIntelligenceBudget`.
+    // That made Settings show "Not configured" to a wallet that had granted a
+    // permission and then withdrawn it, and offer to create a second one. The
+    // status is the answer; absence is a different claim.
     const afterRevoke = await request(routeApp()).get('/api/route-intelligence/intelligence-budget');
-    assert.equal(afterRevoke.body.budget, null);
+    assert.equal(afterRevoke.body.budget.status, 'revoked');
+
+    // And revoking again is a 404: there is nothing left to withdraw.
+    const secondRevoke = await request(routeApp())
+      .post('/api/route-intelligence/intelligence-budget/revoke')
+      .send({});
+    assert.equal(secondRevoke.status, 404);
 
     const emptyRepository = new InMemoryRouteStorageRepository();
     budgetRouteRuntime.repository = () => emptyRepository;
@@ -477,6 +488,33 @@ describe('POST /api/route-intelligence/blueprints/:id/simulate-with-budget', () 
       .send(budgetBody(graph));
     assert.equal(response.status, 200);
     assert.equal(response.body.outcome, 'blocked');
+  });
+
+  test('T71 — a paused or revoked budget blocks a paid check, and buys nothing', async () => {
+    for (const action of ['pause', 'revoke'] as const) {
+      const { repository, graph } = await seedGraph();
+      await seedBudget(repository);
+      const provider = stubProvider();
+      const charger = stubCharger();
+      budgetRouteRuntime.repository = () => repository;
+      budgetRouteRuntime.spendPermissionRepository = () => stubSpendPermissionSource();
+      budgetRouteRuntime.charger = () => charger;
+      budgetRouteRuntime.createProvider = () => provider;
+
+      const changed = await request(routeApp())
+        .post(`/api/route-intelligence/intelligence-budget/${action}`)
+        .send({});
+      assert.equal(changed.status, 200, JSON.stringify(changed.body));
+
+      const response = await request(routeApp())
+        .post(`/api/route-intelligence/blueprints/${graph.blueprint.id}/simulate-with-budget`)
+        .send(budgetBody(graph));
+      assert.equal(response.body.outcome, 'blocked', `${action} did not block a paid check`);
+      // Nothing was bought and nothing was charged: the block happens before
+      // the provider is called, not after it has been paid.
+      assert.equal(provider.callCount(), 0, `${action} still reached the provider`);
+      assert.equal(charger.chargeCount(), 0, `${action} still charged`);
+    }
   });
 
   test('wallet mismatch -> 403 before any charge', async () => {

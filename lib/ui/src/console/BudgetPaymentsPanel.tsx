@@ -1,8 +1,11 @@
 import React from 'react';
 import {
   budgetPaymentsViewV1,
+  onboardingBusyV1,
+  onboardingRetryableV1,
   spendPermissionConsentV1,
   type PaidIntelligenceInputV1,
+  type SpendPermissionOnboardingStatusV1,
 } from './budgetPayments';
 
 void React;
@@ -23,6 +26,24 @@ void React;
 // ---------------------------------------------------------------------------
 
 export interface BudgetPaymentsPanelProps extends PaidIntelligenceInputV1 {
+  /**
+   * T71 — start the Base Spend Permission flow with the limits the user chose.
+   *
+   * Takes the limits because they are what the wallet is asked to authorise:
+   * a button that enabled paid evidence and THEN asked for a limit would have
+   * to request an allowance nobody had agreed to.
+   */
+  onEnablePaidEvidence?: (limits: { monthlyLimitUsdc: string; maxPerRequestUsdc: string }) => void;
+  /** Where the wallet flow has got to. Drives the states between "off" and
+   * "active" that a single boolean cannot express. */
+  onboardingStatus?: SpendPermissionOnboardingStatusV1;
+  /** One sentence about that state, from the flow itself. Never a raw wallet
+   * or server message. */
+  onboardingDetail?: string | null;
+  /** The consent lines the SERVER produced for this grant. Preferred over the
+   * locally composed ones once prepare has answered, because these are the
+   * numbers the wallet will actually be asked for. */
+  onboardingConsent?: readonly string[];
   onCreatePermission?: () => void;
   /** Both limits, as decimal USDC strings. The panel collects them; only the
    * wallet can authorise them. */
@@ -56,13 +77,29 @@ export function isUsdcAmountV1(value: string): boolean {
   return /^\d{1,7}(\.\d{1,6})?$/.test(value.trim()) && Number(value) > 0;
 }
 
+/** T71 §1's defaults, shown in the enable form so a user can accept them
+ * without typing. Stated here rather than left blank: an empty field is a
+ * decision the user has to make before they know what the numbers mean. */
+export const DEFAULT_MONTHLY_LIMIT_USDC_V1 = '3.00';
+export const DEFAULT_PER_REQUEST_USDC_V1 = '0.02';
+
 export function BudgetPaymentsPanel(props: BudgetPaymentsPanelProps): React.ReactElement {
   const view = budgetPaymentsViewV1(props);
   const { status } = view;
-  const consent = spendPermissionConsentV1({
-    monthlyLimitUsdc: props.budget?.monthlyLimitUsdc ?? '3.00',
-    maxPerRequestUsdc: props.budget?.maxPerRequestUsdc ?? '0.02',
-  });
+  const onboardingBusy = onboardingBusyV1(props.onboardingStatus);
+  // A declined prompt is not a fault, so it is not warned about; a failed
+  // verification is.
+  const onboardingWarn =
+    props.onboardingStatus === 'verification_failed' || props.onboardingStatus === 'failed';
+  // Once the server has said what it will ask for, those are the numbers shown.
+  // The locally composed lines are a placeholder for before that point.
+  const consent =
+    props.onboardingConsent && props.onboardingConsent.length > 0
+      ? [...props.onboardingConsent]
+      : spendPermissionConsentV1({
+          monthlyLimitUsdc: props.budget?.monthlyLimitUsdc ?? DEFAULT_MONTHLY_LIMIT_USDC_V1,
+          maxPerRequestUsdc: props.budget?.maxPerRequestUsdc ?? DEFAULT_PER_REQUEST_USDC_V1,
+        });
 
   return (
     <section className="panel" aria-label="Budget and payments">
@@ -109,7 +146,7 @@ export function BudgetPaymentsPanel(props: BudgetPaymentsPanelProps): React.Reac
         {/* The limits, as an actual form. This panel used to state a number and
             offer no way to change it, while the left rail said "set a spending
             limit — it takes one field". There was no field. */}
-        {props.onUpdateLimit && props.budget && (
+        {props.onUpdateLimit && props.budget && props.budget.status !== 'revoked' && (
           <form
             className="kv"
             onSubmit={(event) => {
@@ -151,8 +188,64 @@ export function BudgetPaymentsPanel(props: BudgetPaymentsPanelProps): React.Reac
 
         {props.changeError && <p className="note warn">{props.changeError}</p>}
 
+        {/* T71 — enabling paid evidence, with the two numbers the wallet is
+            about to be asked to authorise. They are collected BEFORE the
+            prompt: a permission for an allowance the user never saw is not
+            consent, however clearly the wallet renders it. */}
+        {status.action === 'create_permission' && props.onEnablePaidEvidence && (
+          <form
+            className="kv"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const data = new FormData(event.currentTarget);
+              const monthly = String(data.get('enable-monthly') ?? '').trim();
+              const perRequest = String(data.get('enable-per-request') ?? '').trim();
+              if (!isUsdcAmountV1(monthly) || !isUsdcAmountV1(perRequest)) return;
+              if (Number(perRequest) > Number(monthly)) return;
+              props.onEnablePaidEvidence?.({ monthlyLimitUsdc: monthly, maxPerRequestUsdc: perRequest });
+            }}
+          >
+            <div>
+              <span>Monthly limit (USDC)</span>
+              <input
+                className="goalinput"
+                name="enable-monthly"
+                aria-label="Monthly limit in USDC"
+                defaultValue={DEFAULT_MONTHLY_LIMIT_USDC_V1}
+                inputMode="decimal"
+              />
+            </div>
+            <div>
+              <span>Max per request (USDC)</span>
+              <input
+                className="goalinput"
+                name="enable-per-request"
+                aria-label="Maximum per request in USDC"
+                defaultValue={DEFAULT_PER_REQUEST_USDC_V1}
+                inputMode="decimal"
+              />
+            </div>
+            <div>
+              <button type="submit" className="btn" disabled={onboardingBusy}>
+                {onboardingBusy
+                  ? 'Waiting for your wallet…'
+                  : // A declined prompt and an unreachable chain both leave the
+                    // user exactly where they started, so the button says so
+                    // rather than repeating an offer they just turned down.
+                    onboardingRetryableV1(props.onboardingStatus)
+                    ? 'Try again'
+                    : 'Enable paid evidence'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {props.onboardingDetail && (
+          <p className={onboardingWarn ? 'note warn' : 'note'}>{props.onboardingDetail}</p>
+        )}
+
         <div className="ctarow">
-          {status.action === 'create_permission' &&
+          {status.action === 'create_permission' && !props.onEnablePaidEvidence &&
             (props.onCreatePermission ? (
               <button type="button" className="btn" onClick={props.onCreatePermission}>
                 Create permission
@@ -161,7 +254,7 @@ export function BudgetPaymentsPanel(props: BudgetPaymentsPanelProps): React.Reac
               // Named, not hidden and not faked. See `createUnavailableReason`.
               <span className="nt warn">
                 {props.createUnavailableReason ??
-                  'Granting a spending permission is a wallet action, and that flow is not built yet.'}
+                  'Enabling paid evidence needs a wallet, and this surface has none connected.'}
               </span>
             ))}
           {status.action === 'resume' && props.onResume && (
@@ -169,12 +262,14 @@ export function BudgetPaymentsPanel(props: BudgetPaymentsPanelProps): React.Reac
               Resume paid services
             </button>
           )}
-          {view.rows && props.onPause && status.action !== 'resume' && (
-            <button type="button" className="btn sec" onClick={props.onPause}>
+          {/* Pausing something already paused, or already revoked, is not an
+              action — it is a button that does nothing and reads as broken. */}
+          {props.budget?.status === 'active' && props.onPause && (
+            <button type="button" className="btn sec" disabled={props.changePending === true} onClick={props.onPause}>
               Pause paid services
             </button>
           )}
-          {view.rows && props.onRevoke && (
+          {props.budget && props.budget.status !== 'revoked' && props.onRevoke && (
             <button
               type="button"
               className="btn sec"
