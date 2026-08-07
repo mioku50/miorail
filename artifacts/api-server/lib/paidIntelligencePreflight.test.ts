@@ -53,6 +53,7 @@ function healthyDeps(overrides: Partial<PaidIntelligencePreflightDepsV1> = {}): 
     }),
     provider: () => ({ configured: true, providerId: 'alchemy-eth-simulate-v1', allowlist: [] }),
     spender: async () => SPENDER,
+    gasReadiness: async () => ({ ready: true, deployed: true, nativeBalancePresent: true, gasSponsored: false }),
     tables: async (names) => Object.fromEntries(names.map((name) => [name, true])),
     ...overrides,
   };
@@ -82,7 +83,58 @@ describe('paidIntelligencePreflightV1', () => {
       healthyEnv(),
     );
     assert.equal(report.ok, false);
-    assert.deepEqual(report.blocking, ['spender_wallet']);
+    // The gas check is reported as unmet too, and says WHY it could not run
+    // rather than inventing an answer about a wallet that does not exist.
+    assert.deepEqual(report.blocking, ['spender_wallet', 'spender_can_pay_gas']);
+    const gas = report.checks.find((entry) => entry.name === 'spender_can_pay_gas');
+    assert.match(gas?.detail ?? '', /did not resolve/);
+  });
+
+  test('a spender that cannot pay its own gas blocks — the user would sign for nothing', async () => {
+    const report = await paidIntelligencePreflightV1(
+      healthyDeps({
+        gasReadiness: async () => ({
+          ready: false,
+          deployed: true,
+          nativeBalancePresent: false,
+          gasSponsored: false,
+          errorCode: 'subscription_owner_gas_unavailable',
+        }),
+      }),
+      healthyEnv(),
+    );
+    assert.equal(report.ok, false);
+    assert.deepEqual(report.blocking, ['spender_can_pay_gas']);
+    const gas = report.checks.find((entry) => entry.name === 'spender_can_pay_gas');
+    assert.match(gas?.detail ?? '', /subscription_owner_gas_unavailable/);
+    assert.match(gas?.detail ?? '', /PAYMASTER_URL/);
+  });
+
+  test('a paymaster satisfies the gas check without any native balance', async () => {
+    const report = await paidIntelligencePreflightV1(
+      healthyDeps({
+        gasReadiness: async () => ({
+          ready: true,
+          deployed: true,
+          nativeBalancePresent: false,
+          gasSponsored: true,
+        }),
+      }),
+      healthyEnv(),
+    );
+    assert.equal(report.ok, true);
+    const gas = report.checks.find((entry) => entry.name === 'spender_can_pay_gas');
+    assert.match(gas?.detail ?? '', /PAYMASTER_URL sponsors/);
+  });
+
+  test('an RPC that cannot be reached does not pass the gas check by default', async () => {
+    const report = await paidIntelligencePreflightV1(
+      healthyDeps({ gasReadiness: async () => { throw new Error('https://rpc.example.invalid/secret-key timed out'); } }),
+      healthyEnv(),
+    );
+    assert.deepEqual(report.blocking, ['spender_can_pay_gas']);
+    const gas = report.checks.find((entry) => entry.name === 'spender_can_pay_gas');
+    assert.ok(!gas?.detail.includes('secret-key'));
   });
 
   test('an unresolvable spender is reported without the CDP error', async () => {
@@ -268,6 +320,12 @@ describe('paidIntelligencePreflightV1', () => {
       }),
       env,
     );
-    assert.deepEqual(report.blocking, ['paid_intelligence_flag', 'base_rpc', 'database_url', 'spender_wallet']);
+    assert.deepEqual(report.blocking, [
+      'paid_intelligence_flag',
+      'base_rpc',
+      'database_url',
+      'spender_wallet',
+      'spender_can_pay_gas',
+    ]);
   });
 });

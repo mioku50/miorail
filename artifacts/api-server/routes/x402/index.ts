@@ -32,10 +32,12 @@ import {
 } from '@mioagent/autonomy';
 import { canonicalUsdcForBaseChain } from '@mioagent/security/baseGuards';
 import {
+  checkSubscriptionOwnerReadiness,
   getSubscriptionOwnerWallet,
   rpcUrlForNetwork,
   subscriptionWalletName,
   SubscriptionOwnerUnavailableError,
+  type SubscriptionOwnerReadiness,
   type SubscriptionOwnerWallet,
 } from '../../lib/subscriptionOwner.js';
 import { eq, desc, and } from 'drizzle-orm';
@@ -75,14 +77,6 @@ interface CreateX402RouterOptions {
   spendPermissionRepository?: SpendPermissionRepository;
   fuelChargeServiceFactory?: (repository: SpendPermissionRepository) => Pick<FuelChargeService, 'reserve' | 'release' | 'preflightReserved' | 'chargeReserved'>;
   dbEnabled?: boolean;
-}
-
-interface SubscriptionOwnerReadiness {
-  ready: boolean;
-  deployed: boolean;
-  nativeBalancePresent: boolean;
-  gasSponsored: boolean;
-  errorCode?: 'subscription_owner_gas_unavailable' | 'subscription_owner_deploy_funding_required' | 'subscription_owner_rpc_unavailable';
 }
 
 function receiptId(record: X402SettlementRecord): string {
@@ -128,75 +122,14 @@ function sanitizedUrlHost(value?: string): string | undefined {
 // library importing a route module drags Express into places that have no HTTP
 // surface.
 export {
+  checkSubscriptionOwnerReadiness,
   getSubscriptionOwnerWallet,
   rpcUrlForNetwork,
   subscriptionWalletName,
   SubscriptionOwnerUnavailableError,
+  type SubscriptionOwnerReadiness,
   type SubscriptionOwnerWallet,
 };
-
-async function rpcHexResult(rpcUrl: string, method: 'eth_getCode' | 'eth_getBalance', address: string): Promise<string> {
-  const response = await fetch(rpcUrl, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: method,
-      method,
-      params: [address, 'latest'],
-    }),
-    signal: AbortSignal.timeout(2500),
-  });
-  if (!response.ok) throw new Error(`RPC ${method} failed with HTTP ${response.status}`);
-  const body = await response.json() as { result?: unknown; error?: unknown };
-  if (body.error || typeof body.result !== 'string') throw new Error(`RPC ${method} returned an invalid response`);
-  return body.result;
-}
-
-async function checkSubscriptionOwnerReadiness(
-  wallet: SubscriptionOwnerWallet,
-  network: SupportedX402Network,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<SubscriptionOwnerReadiness> {
-  const rpcUrl = rpcUrlForNetwork(network, env);
-  if (!rpcUrl) {
-    return {
-      ready: false,
-      deployed: false,
-      nativeBalancePresent: false,
-      gasSponsored: Boolean(env.PAYMASTER_URL),
-      errorCode: 'subscription_owner_rpc_unavailable',
-    };
-  }
-
-  try {
-    const [code, balance] = await Promise.all([
-      rpcHexResult(rpcUrl, 'eth_getCode', wallet.address),
-      rpcHexResult(rpcUrl, 'eth_getBalance', wallet.address),
-    ]);
-    const deployed = code !== '0x' && code !== '0x0';
-    const nativeBalancePresent = BigInt(balance) > 0n;
-    const gasSponsored = Boolean(env.PAYMASTER_URL);
-    const ready = gasSponsored || nativeBalancePresent;
-    return {
-      ready,
-      deployed,
-      nativeBalancePresent,
-      gasSponsored,
-      ...(!ready
-        ? { errorCode: deployed ? 'subscription_owner_gas_unavailable' as const : 'subscription_owner_deploy_funding_required' as const }
-        : {}),
-    };
-  } catch {
-    return {
-      ready: false,
-      deployed: false,
-      nativeBalancePresent: false,
-      gasSponsored: Boolean(env.PAYMASTER_URL),
-      errorCode: 'subscription_owner_rpc_unavailable',
-    };
-  }
-}
 
 async function detectPayerWalletType(
   payer?: string | null,

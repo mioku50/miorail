@@ -10,7 +10,11 @@ import {
   type PaidSimulationPricingV1,
 } from './paidIntelligenceConfig.js';
 import { paidEvidenceTokenV1 } from './spendPermissionVerifier.js';
-import { getSubscriptionOwnerWallet } from './subscriptionOwner.js';
+import {
+  checkSubscriptionOwnerReadiness,
+  getSubscriptionOwnerWallet,
+  type SubscriptionOwnerReadiness,
+} from './subscriptionOwner.js';
 
 // ---------------------------------------------------------------------------
 // T71 verification §1 — is this server allowed to offer paid evidence at all?
@@ -44,6 +48,7 @@ export const PAID_INTELLIGENCE_PREREQUISITES_V1 = [
   'budget_storage',
   'charge_storage',
   'spender_wallet',
+  'spender_can_pay_gas',
   'x402_settlement',
   'simulation_pricing',
 ] as const;
@@ -87,6 +92,8 @@ export interface PaidIntelligencePreflightDepsV1 {
   provider: (env: NodeJS.ProcessEnv) => SimulationProviderConfigV1;
   /** Resolves the SAME wallet the charger later draws with. */
   spender: () => Promise<string>;
+  /** Whether that wallet can pay for the charge transaction. */
+  gasReadiness: (address: string) => Promise<SubscriptionOwnerReadiness>;
   /** name -> present. */
   tables: (names: readonly string[]) => Promise<Record<string, boolean>>;
 }
@@ -116,6 +123,8 @@ export const paidIntelligencePreflightRuntime: PaidIntelligencePreflightDepsV1 =
   pricing: (env) => resolvePaidSimulationPricingV1(env),
   provider: (env) => resolvePaidSimulationProviderV1(env),
   spender: async () => (await getSubscriptionOwnerWallet()).address,
+  gasReadiness: (address) =>
+    checkSubscriptionOwnerReadiness({ address, walletName: 'preflight' }, 'eip155:8453'),
   tables: tablesPresentV1,
 };
 
@@ -211,6 +220,39 @@ export async function paidIntelligencePreflightV1(
     spender !== null,
     spender !== null ? spender : 'the subscription owner wallet did not resolve (CDP_API_KEY_ID / CDP_API_KEY_SECRET / CDP_WALLET_SECRET)',
   );
+
+  // The check that saves a user from signing for nothing.
+  //
+  // `base.subscription.charge` is a real transaction sent BY the subscription
+  // owner. Everything else can be perfectly configured — flag on, permission
+  // verified, budget created — and the first charge still fails because that
+  // wallet cannot pay for its own gas. The user finds out after they have
+  // granted the authority, which is the worst possible moment.
+  //
+  // Either a paymaster sponsors it or the wallet holds native ETH on Base. Both
+  // are fine; neither is not.
+  if (spender === null) {
+    add('spender_can_pay_gas', false, 'the spender did not resolve, so it could not be checked');
+  } else {
+    const gas = await deps.gasReadiness(spender).catch(
+      (): SubscriptionOwnerReadiness => ({
+        ready: false,
+        deployed: false,
+        nativeBalancePresent: false,
+        gasSponsored: false,
+        errorCode: 'subscription_owner_rpc_unavailable',
+      }),
+    );
+    add(
+      'spender_can_pay_gas',
+      gas.ready,
+      gas.ready
+        ? gas.gasSponsored
+          ? 'PAYMASTER_URL sponsors the charge'
+          : 'the spender holds native ETH on Base'
+        : `${gas.errorCode ?? 'not ready'} — set PAYMASTER_URL or fund the spender with ETH on Base`,
+    );
+  }
 
   // Blocking, and deliberately so. `paidIntelligenceStateV1` returns
   // `settlement_unavailable` when settlement is not ready, and that state offers
