@@ -138,6 +138,11 @@ async function verifyOnchainRefusalV1(preflight: PaidIntelligencePreflightV1): P
   // allowance, live window. Every binding check passes. The only thing wrong
   // with it is that no wallet ever approved it — so if it is refused, the
   // refusal came from the chain and nowhere else.
+  //
+  // Shaped the way `@base-org/account` shapes one, not the way it is convenient
+  // to write: a 32-byte HEX salt and uint48-max as the end. A hand-written
+  // decimal salt and a finite end are what let a wire schema ship that no real
+  // Base Account permission could satisfy.
   const permission = {
     account,
     spender: preflight.spender ?? '',
@@ -145,8 +150,8 @@ async function verifyOnchainRefusalV1(preflight: PaidIntelligencePreflightV1): P
     allowance: monthlyAtomic,
     period: PAID_EVIDENCE_PERIOD_DAYS_V1 * 86_400,
     start: nowSeconds - 3_600,
-    end: nowSeconds + 30 * 86_400,
-    salt: '1',
+    end: 281_474_976_710_655,
+    salt: `0x${'7f'.repeat(32)}`,
     extraData: '0x',
   };
 

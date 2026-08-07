@@ -450,3 +450,111 @@ describe('T71 — what a paused or revoked budget blocks', () => {
     assert.equal(record.budgetHash, recomputed);
   });
 });
+
+// ---------------------------------------------------------------------------
+// T71.1 — the shape a Base Account actually returns.
+//
+// Every fixture above was written by hand, and every one of them happened to
+// use a decimal salt and a finite end. The wallet does neither. `@base-org/account`
+// builds its message in `createSpendPermissionTypedData`:
+//
+//   salt: salt ?? getRandomHexString(32)   -> '0x' + 64 hex characters
+//   end:  end  ?? ETERNITY_TIMESTAMP       -> 281474976710655 (uint48 max)
+//
+// So the wire schema and the SDK never met, and the first real grant died in
+// `safeParse` in about a millisecond — before the chain was asked anything, and
+// with a 400 the UI could only render as "still not configured".
+//
+// These tests are the meeting. They post what the wallet produces.
+// ---------------------------------------------------------------------------
+
+/** uint48 max — what `@base-org/account` writes when a grant has no end date. */
+const ETERNITY_TIMESTAMP = 281_474_976_710_655;
+
+/** 32 random bytes, hex — what `getRandomHexString(32)` returns. */
+const WALLET_SALT = `0x${'7f'.repeat(32)}`;
+
+describe('T71.1 — a permission as @base-org/account emits it', () => {
+  test('a hex salt is accepted, because that is what the wallet signs', async () => {
+    const response = await confirm(confirmBody({ salt: WALLET_SALT }));
+    // 201: a confirmation that has nothing to reuse creates the budget.
+    assert.equal(response.status, 201);
+    assert.equal(response.body.outcome, 'activated');
+  });
+
+  test('a decimal salt is still accepted — wallets disagree about how to write a uint256', async () => {
+    const response = await confirm(confirmBody({ salt: '12345' }));
+    // 201: a confirmation that has nothing to reuse creates the budget.
+    assert.equal(response.status, 201);
+    assert.equal(response.body.outcome, 'activated');
+  });
+
+  test('the salt reaches the verifier byte for byte, because it is hash preimage', async () => {
+    let seen: string | undefined;
+    const inner = spendPermissionRouteRuntime.verifier();
+    spendPermissionRouteRuntime.verifier = () => ({
+      ...inner,
+      async derivedHash(claim) {
+        seen = claim.permission.salt;
+        return derivedHash;
+      },
+    });
+    await confirm(confirmBody({ salt: WALLET_SALT }));
+    // Not lowercased, not re-encoded, not widened to 32 bytes: the exact
+    // characters. Anything else derives a different hash on chain.
+    assert.equal(seen, WALLET_SALT);
+  });
+
+  test('a salt that is not a uint256 in either notation is still refused', async () => {
+    for (const salt of ['0x', 'abc', '0xzz', '', `0x${'f'.repeat(65)}`, '-1', '1.5']) {
+      const response = await confirm(confirmBody({ salt }));
+      assert.equal(response.status, 400, salt);
+    }
+  });
+
+  test('a permission with no end date is stored, not fatal', async () => {
+    // uint48 max in milliseconds is 2.8e17 — past MAX_SAFE_INTEGER and past what
+    // `new Date()` can hold. Before the clamp this passed every check and then
+    // failed on the INSERT.
+    const response = await confirm(confirmBody({ salt: WALLET_SALT, end: ETERNITY_TIMESTAMP }));
+    // 201: a confirmation that has nothing to reuse creates the budget.
+    assert.equal(response.status, 201);
+    assert.equal(response.body.outcome, 'activated');
+
+    const stored = (await permissions.getById(DERIVED_HASH))!;
+    assert.ok(stored, 'the permission was recorded');
+    assert.ok(Number.isSafeInteger(stored.expiresAt));
+    assert.ok(!Number.isNaN(new Date(stored.expiresAt).getTime()), 'the expiry is a real Date');
+    // Far enough away to mean "no end", near enough to be a timestamp.
+    assert.ok(stored.expiresAt > NOW.getTime());
+    assert.equal(new Date(stored.expiresAt).getUTCFullYear(), 9999);
+  });
+
+  test('an ordinary end date is stored exactly, not clamped', async () => {
+    const end = Math.floor(NOW.getTime() / 1000) + 60 * 60 * 24 * 60;
+    await confirm(confirmBody({ salt: WALLET_SALT, end }));
+    const stored = (await permissions.getById(DERIVED_HASH))!;
+    assert.equal(stored.expiresAt, end * 1000);
+  });
+
+  test('the whole wallet-shaped claim activates a budget end to end', async () => {
+    const response = await confirm(
+      confirmBody({
+        // Checksummed, exactly as `getAddress` returns them from the SDK.
+        account: '0x1111111111111111111111111111111111111111',
+        spender: '0x9999999999999999999999999999999999999999',
+        token: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        allowance: '3000000',
+        period: 2_592_000,
+        salt: WALLET_SALT,
+        end: ETERNITY_TIMESTAMP,
+        extraData: '0x',
+      }),
+    );
+    // 201: a confirmation that has nothing to reuse creates the budget.
+    assert.equal(response.status, 201);
+    assert.equal(response.body.outcome, 'activated');
+    assert.equal(response.body.budget.status, 'active');
+    assert.equal(response.body.budget.linkedSpendPermissionId, DERIVED_HASH);
+  });
+});

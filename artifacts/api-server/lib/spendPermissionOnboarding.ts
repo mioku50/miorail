@@ -40,6 +40,31 @@ export const PAID_EVIDENCE_PERIOD_DAYS_V1 = 30;
 export const PAID_EVIDENCE_DEFAULT_MONTHLY_USDC_V1 = '3.00';
 export const PAID_EVIDENCE_DEFAULT_PER_REQUEST_USDC_V1 = '0.02';
 
+/**
+ * What "no end" is recorded as: 9999-12-31T23:59:59Z.
+ *
+ * A permission granted without an explicit end carries uint48 max — year
+ * 8,921,556 — because that is what "never" looks like in a uint48. Multiplied to
+ * milliseconds that is 2.8e17, which is past `Number.MAX_SAFE_INTEGER`, past
+ * what `new Date()` can represent at all, and past what a timestamp column can
+ * be handed. The record was therefore unwritable, and the first real grant would
+ * have failed on the INSERT after passing every check.
+ *
+ * Clamped rather than stored, because the record's question is "has this
+ * lapsed?" and the answer is no either way. The chain's own `end` remains
+ * authoritative: it is what was signed, it is what the contract enforces, and
+ * every charge re-reads it through the verifier.
+ */
+export const PAID_EVIDENCE_NO_EXPIRY_MS_V1 = Date.UTC(9999, 11, 31, 23, 59, 59);
+
+export function permissionExpiryMsV1(endSeconds: number): number {
+  const milliseconds = endSeconds * 1000;
+  if (!Number.isSafeInteger(milliseconds) || milliseconds > PAID_EVIDENCE_NO_EXPIRY_MS_V1) {
+    return PAID_EVIDENCE_NO_EXPIRY_MS_V1;
+  }
+  return milliseconds;
+}
+
 export interface PreparedSpendPermissionV1 {
   account: string;
   spender: string;
@@ -214,7 +239,7 @@ export async function confirmSpendPermissionV1(input: {
     // configured recipient; a whitelist here would suggest it could fund
     // something else.
     whitelist: [],
-    expiresAt: input.claim.permission.end * 1000,
+    expiresAt: permissionExpiryMsV1(input.claim.permission.end),
     isActive: true,
   };
   await input.permissions.create(record);

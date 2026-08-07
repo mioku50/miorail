@@ -1084,7 +1084,17 @@ export const ConfirmSpendPermissionRequestV1Schema = z
             period: z.number().int().positive(),
             start: z.number().int().nonnegative(),
             end: z.number().int().nonnegative(),
-            salt: z.string().regex(/^[0-9]{1,80}$/),
+            // The salt is a uint256, and wallets disagree about how to write
+            // one. `@base-org/account` emits 32 random bytes as a hex string
+            // (`createSpendPermissionTypedData` -> `getRandomHexString(32)`);
+            // a decimal is equally valid. Both forms are accepted and NEITHER
+            // is rewritten: the salt is part of the hash preimage, so the exact
+            // characters the wallet signed have to survive to the contract.
+            //
+            // This regex used to be decimal-only, which meant no permission a
+            // Base Account ever produced could be confirmed — every real grant
+            // died in `safeParse` before the chain was asked anything.
+            salt: z.string().regex(/^(?:0x[0-9a-fA-F]{1,64}|[0-9]{1,80})$/),
             extraData: z.string().regex(/^0x[0-9a-fA-F]*$/).max(4000),
           })
           .strict(),
