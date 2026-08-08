@@ -290,7 +290,7 @@ function liveKyberResponseV1(intent: ReturnType<typeof makeIntent>, overrides: R
 }
 
 test('KyberSwap quotes the live response shape, which reports no price impact', async () => {
-  const intent = makeIntent({ amountAtomic: '100000' });
+  const intent = makeIntent();
   const result = await adapterFor(liveKyberResponseV1(intent)).quote({
     intent,
     walletAddress: WALLET,
@@ -301,7 +301,7 @@ test('KyberSwap quotes the live response shape, which reports no price impact', 
 });
 
 test('price impact is derived from the two USD figures KyberSwap does send', async () => {
-  const intent = makeIntent({ amountAtomic: '100000' });
+  const intent = makeIntent();
   const result = await adapterFor(liveKyberResponseV1(intent)).quote({
     intent,
     walletAddress: WALLET,
@@ -315,7 +315,7 @@ test('price impact is derived from the two USD figures KyberSwap does send', asy
 });
 
 test('a route worth more out than in reports zero impact, never a negative one', async () => {
-  const intent = makeIntent({ amountAtomic: '100000' });
+  const intent = makeIntent();
   const result = await adapterFor(
     liveKyberResponseV1(intent, { amountInUsd: '0.0999', amountOutUsd: '0.1001' }),
   ).quote({ intent, walletAddress: WALLET, requestId: 'kyber-positive', now: NOW });
@@ -326,7 +326,7 @@ test('a route worth more out than in reports zero impact, never a negative one',
 test('with neither a price impact nor a USD pair, the refusal stands', async () => {
   // The derivation is a reading of provider data, not a way to always have a
   // number. No data still means no quote.
-  const intent = makeIntent({ amountAtomic: '100000' });
+  const intent = makeIntent();
   const result = await adapterFor(
     liveKyberResponseV1(intent, { amountInUsd: undefined, amountOutUsd: undefined }),
   ).quote({ intent, walletAddress: WALLET, requestId: 'kyber-no-usd', now: NOW });
