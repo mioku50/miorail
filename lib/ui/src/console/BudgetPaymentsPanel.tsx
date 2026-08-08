@@ -144,11 +144,11 @@ export function BudgetPaymentsPanel(props: BudgetPaymentsPanelProps): React.Reac
 
         {view.rows ? (
           <>
-            <div className="kv">
+            <div>
               {view.rows.map((row) => (
-                <div key={row.label}>
-                  <span>{row.label}</span>
-                  <span className="mono">{row.value}</span>
+                <div className="kv" key={row.label}>
+                  <span className="k">{row.label}</span>
+                  <span className="v mono">{row.value}</span>
                 </div>
               ))}
             </div>
@@ -163,14 +163,14 @@ export function BudgetPaymentsPanel(props: BudgetPaymentsPanelProps): React.Reac
         )}
 
         {view.allowedCategories.length > 0 && (
-          <div className="kv">
-            <div>
-              <span>Allowed categories</span>
-              <span>{view.allowedCategories.join(', ')}</span>
+          <div>
+            <div className="kv">
+              <span className="k">Allowed categories</span>
+              <span className="v">{view.allowedCategories.join(', ')}</span>
             </div>
-            <div>
-              <span>Permission recipient</span>
-              <span>{view.recipientLabel}</span>
+            <div className="kv">
+              <span className="k">Permission recipient</span>
+              <span className="v">{view.recipientLabel}</span>
             </div>
           </div>
         )}
@@ -373,11 +373,11 @@ export function BudgetPaymentsPanel(props: BudgetPaymentsPanelProps): React.Reac
         <div className="pb tight">
           <details>
             <summary className="lnote">Technical details</summary>
-            <div className="kv">
+            <div>
               {(props.technicalDetails ?? []).map((row) => (
-                <div key={row.label}>
-                  <span>{row.label}</span>
-                  <span className="mono">{row.value}</span>
+                <div className="kv" key={row.label}>
+                  <span className="k">{row.label}</span>
+                  <span className="v mono">{row.value}</span>
                 </div>
               ))}
             </div>

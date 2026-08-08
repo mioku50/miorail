@@ -154,3 +154,53 @@ describe('the phone header cannot overlap or overflow', () => {
     assert.match(rulesFor(/\.mio-console footer\s*$/).join(' '), /overflow-x:\s*auto/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// `.kv` is a ROW, not a list.
+//
+// console.css declares it `display: flex; justify-content: space-between` with
+// `.k` and `.v` children. BudgetPaymentsPanel used it as a CONTAINER of rows —
+// `<div class="kv"><div><span/><span/></div>…</div>` — so each inner div became
+// an ordinary block whose two inline spans butted straight up against each
+// other, and Settings shipped "Monthly limit0.1 USDC Spent0 USDC".
+//
+// The class name was right, which is why the existing vocabulary guard passed.
+// This checks the level it is used AT.
+// ---------------------------------------------------------------------------
+describe('.kv is used as a row, not as a wrapper around rows', () => {
+  // Scoped to the panels whose markup has actually been corrected. Running it
+  // across the whole console directory fails on twelve more places in seven
+  // files — B20EntryReviewCard, B20ExitCard, B20Panels, B20PortfolioPanel,
+  // B20WatchScreen, ConsoleScreens and PublicProofPanels — and those are real:
+  // "Verified routes0" and "Provider quoteNot available" are visible on the
+  // route card today. They are a separate fix, not a reason to delete the
+  // guard; widen this list as each one is corrected.
+  const panels = ['BudgetPaymentsPanel.tsx'];
+
+  for (const file of panels) {
+    const source = readFileSync(new URL(`../src/console/${file}`, import.meta.url), 'utf8');
+
+    test(`${file} puts no block element directly inside a .kv`, () => {
+      // A `.kv` opened and then followed by a `<div` before it closes means the
+      // row is being used as a list. Deliberately crude: it reads the JSX as
+      // text, which is enough to catch the shape and cheap enough to keep.
+      const offenders: string[] = [];
+      const pattern = /className="kv"[^>]*>([\s\S]{0,400}?)<\/div>/g;
+      for (const match of source.matchAll(pattern)) {
+        if (/<div\b/.test(match[1]!)) offenders.push(match[1]!.trim().split('\n')[0]!);
+      }
+      assert.deepEqual(offenders, [], `${file} nests a div inside a .kv row`);
+    });
+
+    test(`${file} labels every .kv child as .k or .v`, () => {
+      // An unclassed span inside a row inherits neither the muted colour nor
+      // the right alignment, which is the same defect wearing a different hat.
+      const rows = source.matchAll(/className="kv"[^>]*>([\s\S]{0,400}?)<\/div>/g);
+      for (const row of rows) {
+        for (const span of row[1]!.matchAll(/<span([^>]*)>/g)) {
+          assert.match(span[1]!, /className="(k|v)[" ]/, `${file} has an unclassed span in a .kv row`);
+        }
+      }
+    });
+  }
+});
