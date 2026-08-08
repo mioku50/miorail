@@ -84,7 +84,7 @@ export const databaseConnectionInfo = Object.freeze({
  * identically by both, and for a `timestamp without time zone` column
  * Postgres reads it as the same UTC wall clock Neon stored.
  */
-export const toDriverParameter = (value: unknown): unknown =>
+export const toDriverParameter = (value: any): any =>
   value instanceof Date ? value.toISOString() : value;
 
 export const client = async (
