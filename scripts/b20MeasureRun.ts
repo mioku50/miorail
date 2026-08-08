@@ -128,6 +128,10 @@ export interface MeasurementDepsV1 {
   }): Promise<FactoryStatusV1>;
   analyseRoutes(input: {
     tokenAddress: string;
+    /** The block the launch was detected in. B20 pools are initialised in the
+     * same ten-block window, which is the only affordable way to find one on
+     * an endpoint that caps `eth_getLogs` at ten blocks. */
+    launchBlock: number;
     profile: OpportunityProfileV2;
   }): Promise<RouteMeasurementV1>;
   /** Null when the deep read could not run at all. */
@@ -399,7 +403,11 @@ async function measureOneV1(context: {
   const factorySettled = factory.isB20 === false || factory.initialized === false;
   const routes = factorySettled
     ? null
-    : await deps.analyseRoutes({ tokenAddress: launch.tokenAddress, profile: config.profile });
+    : await deps.analyseRoutes({
+        tokenAddress: launch.tokenAddress,
+        launchBlock: Number(launch.blockNumber),
+        profile: config.profile,
+      });
   const cheapFilter = cheapFilterResultV1({ factory, routes });
 
   // --- §9 — the deep control read, ONLY after the economics survived. ------
