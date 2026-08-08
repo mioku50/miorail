@@ -180,3 +180,65 @@ test('Uniswap quote artifacts are deterministic with injected clock and response
   const second = await adapter.quote(input);
   assert.deepEqual(first, second);
 });
+
+// ---------------------------------------------------------------------------
+// The gas field the trade API actually sends, captured live on 2026-08-08.
+//
+// Every fixture states `classicGasUseEstimateUSD`. The response does not
+// contain it — it carries `gasFeeUSD` — so estimatedCostUsd came back null,
+// the scorer marked the route `gas_usd_valuation_unavailable`, and an unscored
+// route cannot be ranked. With Aerodrome unscored for the same reason that
+// left one rankable candidate out of three: too few to compare, so no
+// recommendation, no Route Card, and nothing to review.
+//
+// The suite never saw it because the fixture describes a shape that is no
+// longer served.
+// ---------------------------------------------------------------------------
+
+test('Uniswap reads gasFeeUSD, the field the live response carries', async () => {
+  const intent = makeIntent();
+  const payload = uniswapResponse(intent) as { quote: Record<string, unknown> };
+  delete payload.quote.classicGasUseEstimateUSD;
+  payload.quote.gasFeeUSD = '0.0011195776733684418';
+
+  const result = await adapterFor(payload).quote({
+    intent,
+    walletAddress: WALLET,
+    requestId: 'uniswap-live-gas',
+    now: NOW,
+  });
+  assert.equal(result.outcome, 'quoted');
+  if (result.outcome !== 'quoted') return;
+  // Not null — a null here is what silently removed Uniswap from every
+  // comparison.
+  assert.equal(result.candidate.estimatedGas.estimatedCostUsd, '0.0011195776733684418');
+});
+
+test('the older field still works where a provider sends it', async () => {
+  const intent = makeIntent();
+  const payload = uniswapResponse(intent) as { quote: Record<string, unknown> };
+  delete payload.quote.gasFeeUSD;
+  payload.quote.classicGasUseEstimateUSD = '0.71';
+  const result = await adapterFor(payload).quote({
+    intent, walletAddress: WALLET, requestId: 'uniswap-old-gas', now: NOW,
+  });
+  assert.equal(result.outcome, 'quoted');
+  if (result.outcome !== 'quoted') return;
+  assert.equal(result.candidate.estimatedGas.estimatedCostUsd, '0.71');
+});
+
+test('with neither gas-USD field the route still quotes, unscored rather than refused', async () => {
+  // A missing valuation is a scoring question, not a malformed response. The
+  // adapter must not turn it into a refusal — the engine decides what an
+  // unpriced route is worth.
+  const intent = makeIntent();
+  const payload = uniswapResponse(intent) as { quote: Record<string, unknown> };
+  delete payload.quote.classicGasUseEstimateUSD;
+  delete payload.quote.gasFeeUSD;
+  const result = await adapterFor(payload).quote({
+    intent, walletAddress: WALLET, requestId: 'uniswap-no-gas-usd', now: NOW,
+  });
+  assert.equal(result.outcome, 'quoted');
+  if (result.outcome !== 'quoted') return;
+  assert.equal(result.candidate.estimatedGas.estimatedCostUsd, null);
+});

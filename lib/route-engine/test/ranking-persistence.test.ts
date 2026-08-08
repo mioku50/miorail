@@ -121,3 +121,63 @@ test('injected storage failure fails the evaluation instead of falling back', as
     RouteEnginePersistenceError,
   );
 });
+
+// ---------------------------------------------------------------------------
+// One unscorable route must not veto a comparison between the others.
+//
+// Production, every run: Aerodrome quotes on-chain and reports no USD gas
+// cost, so its metric is `not_scored`. Ranking bailed out entirely if ANY
+// route lacked a net result, so Aerodrome's missing valuation discarded a
+// perfectly good comparison between KyberSwap and Uniswap. No ranking, no
+// recommendation, no Route Card — and a Review button with nothing behind it,
+// four layers away from a missing field.
+//
+// "No data means not scored, not an invented rating" is the rule. Not scored
+// is what the unpriced route gets; it is not what the priced ones get.
+// ---------------------------------------------------------------------------
+
+test('an unpriced third route is left out of the ranking, not allowed to cancel it', async () => {
+  const intent = makeIntent({ optimizationMode: 'best_net_result' });
+  const uniswap = makeCandidate(intent, 'uniswap', { gasUsd: '0.20' });
+  const kyber = makeCandidate(intent, 'kyberswap', { gasUsd: '0.80' });
+  // Aerodrome: quoted and usable, but with no USD gas it cannot be scored.
+  const aerodrome = makeCandidate(intent, 'aerodrome', { gasUsd: null });
+
+  const result = await engine.evaluate({
+    intent,
+    walletAddress: WALLET,
+    requestId: 'unpriced-third',
+    now: NOW,
+    adapters: [
+      quotedAdapter('uniswap', uniswap),
+      quotedAdapter('kyberswap', kyber),
+      quotedAdapter('aerodrome', aerodrome),
+    ],
+  });
+
+  assert.equal(result.outcome, 'ready');
+  assert.equal(result.reason, 'multiple_routes_compared');
+  assert.ok(result.recommendedCandidateHash, 'the two priced routes were compared');
+  // All three still appear — the unscored one is reported, not hidden.
+  assert.equal(result.candidates.length, 3);
+  // And it is never the recommendation: it has no number to win on.
+  assert.notEqual(result.recommendedCandidateHash, aerodrome.candidateHash);
+});
+
+test('with every route unpriced there is still nothing to compare', async () => {
+  // The fallback must stay a fallback. Filtering is not a way to always
+  // produce a ranking.
+  const intent = makeIntent({ optimizationMode: 'best_net_result' });
+  const uniswap = makeCandidate(intent, 'uniswap', { gasUsd: null });
+  const kyber = makeCandidate(intent, 'kyberswap', { gasUsd: null });
+  const result = await engine.evaluate({
+    intent,
+    walletAddress: WALLET,
+    requestId: 'all-unpriced',
+    now: NOW,
+    adapters: [quotedAdapter('uniswap', uniswap), quotedAdapter('kyberswap', kyber)],
+  });
+  assert.equal(result.outcome, 'degraded');
+  assert.equal(result.reason, 'insufficient_rankable_candidates');
+  assert.equal(result.recommendedCandidateHash, null);
+});

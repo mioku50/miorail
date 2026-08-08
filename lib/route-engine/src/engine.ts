@@ -216,8 +216,22 @@ function rankRoutes(
   if (mode === 'best_net_result') {
     // Under v2 this is the history-adjusted figure; under v1 it is exactly the
     // raw one `netOutputAtomic` always was.
-    if (routes.some((route) => rankingNetOutputAtomicV1(route.netMetric) === null)) return null;
-    return [...routes].sort((left, right) => {
+    //
+    // Rank the routes that HAVE a net result. This used to bail out entirely
+    // if any single route lacked one, and in production that was every run:
+    // Aerodrome quotes on-chain and reports no USD gas cost, so its metric is
+    // `not_scored` — and one unscored route discarded the comparison between
+    // two perfectly scored ones. No ranking, no recommendation, no Route Card,
+    // and a Review button with nothing behind it.
+    //
+    // "No data means not scored, not an invented rating" is the rule, and this
+    // is it applied correctly: the unscorable route stays a candidate, keeps
+    // its own `not_scored` reason on the card, and simply takes no part in an
+    // ordering it has no number for. Refusing to order the others was the
+    // stronger claim, and the wrong one.
+    const scorable = routes.filter((route) => rankingNetOutputAtomicV1(route.netMetric) !== null);
+    if (scorable.length === 0) return null;
+    return [...scorable].sort((left, right) => {
       const leftNet = rankingNetOutputAtomicV1(left.netMetric)!;
       const rightNet = rankingNetOutputAtomicV1(right.netMetric)!;
       if (leftNet !== rightNet) return leftNet > rightNet ? -1 : 1;
@@ -230,8 +244,11 @@ function rankRoutes(
     });
   }
   if (mode === 'lowest_fees') {
-    if (routes.some((route) => route.netMetric.gasCostUsdMicros === null)) return null;
-    return [...routes].sort((left, right) => {
+    // Same rule, same reason: a route with no priced gas cannot be placed in a
+    // cheapest-first order, but it cannot stop the others being placed either.
+    const scorable = routes.filter((route) => route.netMetric.gasCostUsdMicros !== null);
+    if (scorable.length === 0) return null;
+    return [...scorable].sort((left, right) => {
       const leftGas = BigInt(left.netMetric.gasCostUsdMicros!);
       const rightGas = BigInt(right.netMetric.gasCostUsdMicros!);
       if (leftGas !== rightGas) return leftGas < rightGas ? -1 : 1;

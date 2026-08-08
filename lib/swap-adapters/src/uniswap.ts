@@ -47,6 +47,10 @@ const UniswapQuoteSchema = z
     classicGasUseEstimate: AtomicAmountV1Schema.optional(),
     gasFee: AtomicAmountV1Schema.optional(),
     classicGasUseEstimateUSD: DecimalLikeSchema.optional(),
+    /** What the trade API sends today. `classicGasUseEstimateUSD` above is not
+     * in the response any more, so reading only that yielded a null USD gas
+     * cost — see the note at the read below for what that cost. */
+    gasFeeUSD: DecimalLikeSchema.optional(),
     priceImpact: DecimalLikeSchema.optional(),
     priceImpactPct: DecimalLikeSchema.optional(),
     priceImpactBps: z.union([z.string(), z.number().int()]).optional(),
@@ -135,7 +139,15 @@ export class UniswapSwapRouteAdapter implements SwapRouteAdapter {
 
     const gasUnits = parsePositiveAtomic(quote.gasUseEstimate ?? quote.classicGasUseEstimate);
     const gasFee = parseUnsignedAtomic(quote.gasFee);
-    const gasUsd = parseProviderDecimal(quote.classicGasUseEstimateUSD);
+    // `gasFeeUSD` first: it is the field the live response carries, and
+    // `classicGasUseEstimateUSD` is not in it at all. Reading only the old name
+    // left estimatedCostUsd null, which the scorer reports as
+    // `gas_usd_valuation_unavailable` — an unscored route. With Aerodrome also
+    // unscored that left one rankable candidate out of three, too few to
+    // compare, so no route was ever recommended and no Route Card was built.
+    // The fixtures still state the old name, which is why the suite never saw
+    // it.
+    const gasUsd = parseProviderDecimal(quote.gasFeeUSD ?? quote.classicGasUseEstimateUSD);
     if (!gasUnits) return providerFailure(this.id, 'provider_invalid_schema');
     const providerMinimumOutput = parseUnsignedAtomic(
       quote.minimumOutput ?? quote.amountOutMinimum ?? quote.output.minimumAmount,
