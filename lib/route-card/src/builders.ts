@@ -206,8 +206,16 @@ function routeProjection(
     slippage: candidate.slippage,
     quoteObservedAt: candidate.quoteObservedAt,
     quoteExpiresAt: candidate.quoteExpiresAt,
-    quoteAgeSeconds: Math.floor(
-      (Date.parse(evaluation.evaluatedAt) - Date.parse(candidate.quoteObservedAt)) / 1_000,
+    // Clamped, like every other age in the codebase. `evaluatedAt` is the
+    // run's own start; a provider that stamps its real observation time stamps
+    // a moment after it, because the request had to happen first. That is age
+    // zero, not a negative age — and the contract declares this field
+    // nonnegative, so an unclamped subtraction does not produce a small
+    // oddity, it fails the whole projection with
+    // `route_plan_evaluation_failed` after the comparison already succeeded.
+    quoteAgeSeconds: Math.max(
+      0,
+      Math.floor((Date.parse(evaluation.evaluatedAt) - Date.parse(candidate.quoteObservedAt)) / 1_000),
     ),
     callCount: candidate.callCount,
     approvalCount: candidate.approvalCount,

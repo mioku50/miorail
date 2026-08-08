@@ -92,6 +92,31 @@ export function routeCardFailedAdapterFixture(id: 'uniswap' | 'kyberswap') {
   return { id, supports: () => true, quote: async () => ({ outcome: 'unavailable' as const, provider: id, errorCode: `${id}_unavailable`, retryable: false }) };
 }
 
+/**
+ * A run whose quotes were observed AFTER it started — the ordinary production
+ * case, since `now` is captured before the network calls and a provider that
+ * reports its real observation time reports a moment later.
+ */
+export async function lateObservationEvaluation(): Promise<SwapRouteEvaluationV1> {
+  const routeIntent = routeCardIntentFixture();
+  const uniswap = routeCardCandidateFixture(routeIntent, 'uniswap', '2026-07-15T12:03:00.000Z');
+  const kyber = routeCardCandidateFixture(routeIntent, 'kyberswap', '2026-07-15T12:04:00.000Z');
+  // Ten seconds BEFORE the fixtures' observation time (11:59:00Z), which is
+  // the ordering production always has: the run starts, then the providers
+  // answer and stamp their own clocks.
+  const startedBefore = new Date(Date.parse(uniswap.quoteObservedAt) - 10_000);
+  return createSwapRouteEngine().evaluate({
+    intent: routeIntent,
+    walletAddress: WALLET,
+    requestId: 'route-card-late-observation',
+    now: startedBefore,
+    adapters: [
+      routeCardQuotedAdapterFixture('uniswap', uniswap),
+      routeCardQuotedAdapterFixture('kyberswap', kyber),
+    ],
+  });
+}
+
 export async function readyEvaluation(): Promise<SwapRouteEvaluationV1> {
   const routeIntent = routeCardIntentFixture();
   const uniswap = routeCardCandidateFixture(routeIntent, 'uniswap', '2026-07-15T12:03:00.000Z');
