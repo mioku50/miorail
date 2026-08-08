@@ -194,84 +194,84 @@ export function B20EntryReviewCard(props: B20EntryReviewCardPropsV1): ReactEleme
       <div className="pb">
         <p className="note">{copy.detail}</p>
 
-        <div className="kv">
-          <div>
-            <span>Spend</span>
+        <div>
+          <div className="kv">
+            <span className="k">Spend</span>
             <b>{formatAtomicV1(review.spend.amountAtomic, 6, 2)} USDC</b>
           </div>
-          <div>
-            <span>Receive</span>
+          <div className="kv">
+            <span className="k">Receive</span>
             <b>
               {review.receive.tokenName ?? 'Unnamed token'}
               {review.receive.tokenSymbol ? ` (${review.receive.tokenSymbol})` : ''}
             </b>
           </div>
-          <div>
-            <span>Token address</span>
+          <div className="kv">
+            <span className="k">Token address</span>
             <b className="mono" title={review.receive.tokenAddress}>
               {shortAddressV1(review.receive.tokenAddress)}
             </b>
           </div>
-          <div>
-            <span>Expected output</span>
+          <div className="kv">
+            <span className="k">Expected output</span>
             <b>
               {formatAtomicV1(review.receive.expectedOutputAtomic, 18)} {symbol}
             </b>
           </div>
-          <div>
-            <span>Minimum output</span>
+          <div className="kv">
+            <span className="k">Minimum output</span>
             <b>
               {formatAtomicV1(review.receive.minimumOutputAtomic, 18)} {symbol}
             </b>
           </div>
-          <div>
-            <span>Approval</span>
+          <div className="kv">
+            <span className="k">Approval</span>
             <b>
               {review.approval.required && review.approval.amountAtomic
                 ? `${formatAtomicV1(review.approval.amountAtomic, 6, 2)} USDC — exactly this position`
                 : 'Existing allowance used'}
             </b>
           </div>
-          <div>
-            <span>Provider</span>
+          <div className="kv">
+            <span className="k">Provider</span>
             <b>{review.provider.providerName}</b>
           </div>
-          <div>
-            <span>Cleared route</span>
+          <div className="kv">
+            <span className="k">Cleared route</span>
             <b className="mono" title={review.provider.sourceKey}>
               {review.provider.sourceKey}
             </b>
           </div>
-          <div>
-            <span>Round trip, certified</span>
+          <div className="kv">
+            <span className="k">Round trip, certified</span>
             <b>{(review.certificationRoundTripBps / 100).toFixed(2)}% immediate cost</b>
           </div>
-          <div>
-            <span>Clearance</span>
+          <div className="kv">
+            <span className="k">Clearance</span>
             <b>{ageLabelV1((now.getTime() - Date.parse(review.clearanceCreatedAt)) / 1000)} old</b>
           </div>
-          <div>
-            <span>Clearance expires</span>
+          <div className="kv">
+            <span className="k">Clearance expires</span>
             <b>{review.clearanceExpiresAt}</b>
           </div>
-          <div>
-            <span>Certification block</span>
+          <div className="kv">
+            <span className="k">Certification block</span>
             <b className="mono">{review.certificationBlockNumber}</b>
           </div>
-          <div>
-            <span>Control block</span>
+          <div className="kv">
+            <span className="k">Control block</span>
             <b className="mono">{review.prepareControlBlockNumber ?? 'not reported'}</b>
           </div>
-          <div>
-            <span>Simulation block</span>
+          <div className="kv">
+            <span className="k">Simulation block</span>
             <b className="mono">{review.prepareSimulationBlockNumber}</b>
           </div>
-          <div>
-            <span>Coverage</span>
+          <div className="kv">
+            <span className="k">Coverage</span>
             <b>{review.coverage === 'complete' ? 'Every candidate route checked' : 'Partial sweep'}</b>
           </div>
-          <div>
-            <span>Exit</span>
+          <div className="kv">
+            <span className="k">Exit</span>
             <b>
               {review.viableRouteConfirmed
                 ? 'A route out was confirmed by simulation'
@@ -279,8 +279,8 @@ export function B20EntryReviewCard(props: B20EntryReviewCardPropsV1): ReactEleme
             </b>
           </div>
           {!review.bestRouteConfirmed && (
-            <div>
-              <span>Best route</span>
+            <div className="kv">
+              <span className="k">Best route</span>
               {/* Stated, not omitted. "Viable" and "best" are different claims,
                   and a partial sweep can only support the first. */}
               <b>Not confirmed — a cheaper route may exist and was not measured</b>

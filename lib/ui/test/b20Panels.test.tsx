@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
+import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+
+/** Every class console.css defines a rule for. */
+const definedConsoleClasses = new Set(
+  readFileSync(new URL('../src/console/console.css', import.meta.url), 'utf8')
+    .match(/\.[A-Za-z][A-Za-z0-9_-]*/g)
+    ?.map((selector) => selector.slice(1)) ?? [],
+);
 
 import {
   B20ControlCardPanel,
@@ -122,8 +130,13 @@ describe('the B20 card shows facts and never a grade', () => {
     ].join('');
     const classes = [...html.matchAll(/class="([^"]+)"/g)].flatMap((match) => match[1]!.split(/\s+/));
     // Inventing a class ships unstyled text, which has happened twice before.
+    //
+    // Read from the stylesheet rather than from a list kept here. The list
+    // version failed the moment these panels started using `.k` and `.v` —
+    // classes console.css has defined all along — which is a guard reporting
+    // its own staleness as a defect in the code it guards.
     for (const name of new Set(classes)) {
-      assert.ok(['panel', 'kv', 'note', 'mono'].includes(name), `unknown console class: ${name}`);
+      assert.ok(definedConsoleClasses.has(name), `unknown console class: ${name}`);
     }
   });
 });

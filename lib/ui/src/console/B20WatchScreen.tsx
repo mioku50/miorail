@@ -249,7 +249,7 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
             <div className="kv">
               {model.trackedTokens.map((entry) => (
                 <div key={entry.tokenAddress}>
-                  <span className="mono">{shortAddressV1(entry.tokenAddress)}</span>
+                  <span className="v mono">{shortAddressV1(entry.tokenAddress)}</span>
                   <span className={entry.lastOutcome === 'unreadable' ? 'warn' : undefined}>
                     {trackedStatusLineV1(entry)}
                   </span>
@@ -333,8 +333,8 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
                 the previous reading, and the block range says between when. */}
             {steady.map((token) => (
               <div className="kv" key={token.tokenAddress}>
-                <span>{tokenLabelV1(token)}</span>
-                <span className="mono">
+                <span className="k">{tokenLabelV1(token)}</span>
+                <span className="v mono">
                   {token.watch?.fromBlock ?? '—'} → {token.watch?.toBlock ?? '—'}
                 </span>
               </div>
@@ -356,8 +356,8 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
             </p>
             {baseline.map((token) => (
               <div className="kv" key={token.tokenAddress}>
-                <span>{tokenLabelV1(token)}</span>
-                <span className="mono">block {token.watch?.toBlock ?? '—'}</span>
+                <span className="k">{tokenLabelV1(token)}</span>
+                <span className="v mono">block {token.watch?.toBlock ?? '—'}</span>
               </div>
             ))}
           </div>
@@ -373,8 +373,8 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
           <div className="pb tight">
             {unreadable.map((token) => (
               <div className="kv" key={token.tokenAddress}>
-                <span className="mono">{shortAddressV1(token.tokenAddress)}</span>
-                <span>{token.reason ?? 'no reason reported'}</span>
+                <span className="v mono">{shortAddressV1(token.tokenAddress)}</span>
+                <span className="v">{token.reason ?? 'no reason reported'}</span>
               </div>
             ))}
           </div>

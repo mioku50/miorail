@@ -159,11 +159,11 @@ export function B20PortfolioPanel({
                   {lines.length === 0 ? (
                     <p className="cr-why">Controls have not been read for this token yet.</p>
                   ) : (
-                    <div className="kv">
+                    <div>
                       {lines.map((line) => (
-                        <div key={line.label}>
-                          <span>{line.label}</span>
-                          <span className={line.alarming ? 'warn' : undefined}>{line.state}</span>
+                        <div className="kv" key={line.label}>
+                          <span className="k">{line.label}</span>
+                          <span className={line.alarming ? 'v warn' : 'v'}>{line.state}</span>
                         </div>
                       ))}
                     </div>

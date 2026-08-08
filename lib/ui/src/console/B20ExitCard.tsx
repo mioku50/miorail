@@ -301,9 +301,9 @@ export function B20ExitCard({
 
         {/* T68D — the profile is the user's. Every number below is an answer to
             exactly these three, and changing any of them is a new question. */}
-        <div className="kv">
-          <div>
-            <span>Position (USDC)</span>
+        <div>
+          <div className="kv">
+            <span className="k">Position (USDC)</span>
             <input
               className="goalinput"
               aria-label="Position size in USDC"
@@ -312,8 +312,8 @@ export function B20ExitCard({
               onChange={(event) => onProfileChange({ ...profile, position: event.target.value })}
             />
           </div>
-          <div>
-            <span>Max round trip (%)</span>
+          <div className="kv">
+            <span className="k">Max round trip (%)</span>
             <input
               className="goalinput"
               aria-label="Maximum round-trip cost in percent"
@@ -322,8 +322,8 @@ export function B20ExitCard({
               onChange={(event) => onProfileChange({ ...profile, maxRoundTrip: event.target.value })}
             />
           </div>
-          <div>
-            <span>Max exit slippage (%)</span>
+          <div className="kv">
+            <span className="k">Max exit slippage (%)</span>
             <input
               className="goalinput"
               aria-label="Maximum exit slippage in percent"
@@ -376,58 +376,58 @@ export function B20ExitCard({
             </div>
 
             {check.status === 'qualified' && (
-              <div className="kv">
-                <div>
-                  <span>Simulated round trip</span>
-                  <span className="mono">
+              <div>
+                <div className="kv">
+                  <span className="k">Simulated round trip</span>
+                  <span className="v mono">
                     {check.simulatedRoundTripBps === null || check.simulatedRoundTripBps === undefined
                       ? 'not measured'
                       : bpsLabelV1(check.simulatedRoundTripBps)}
                   </span>
                 </div>
-                <div>
-                  <span>Simulated at</span>
-                  <span className="mono">
+                <div className="kv">
+                  <span className="k">Simulated at</span>
+                  <span className="v mono">
                     {check.simulationBlockNumber ? `block ${check.simulationBlockNumber}` : 'no block'}
                   </span>
                 </div>
-                <div>
-                  <span>Clearance expires</span>
+                <div className="kv">
+                  <span className="k">Clearance expires</span>
                   {/* Short-lived by design: pools move, and a clearance that
                       outlived the state it certified would authorise a trade
                       against numbers nobody measured. */}
-                  <span className="mono">{check.expiresAt ?? 'not issued'}</span>
+                  <span className="v mono">{check.expiresAt ?? 'not issued'}</span>
                 </div>
               </div>
             )}
 
-            <div className="kv">
-              <div>
-                <span>Round trip</span>
-                <span className="mono">
+            <div>
+              <div className="kv">
+                <span className="k">Round trip</span>
+                <span className="v mono">
                   {check.roundTripCostBps === null
                     ? 'not measured'
                     : `${bpsLabelV1(check.roundTripCostBps)} of ${positionLabel}`}
                 </span>
               </div>
-              <div>
-                <span>Exit capacity</span>
+              <div className="kv">
+                <span className="k">Exit capacity</span>
                 {/* Never interpolated. This is the largest size that was
                     actually probed and came in under tolerance. */}
-                <span className="mono">
+                <span className="v mono">
                   {check.exitCapacityAtomic === null
                     ? 'none at this tolerance'
                     : `${formatTokenAmount(check.exitCapacityAtomic)} within ${slippagePercentLabel}`}
                 </span>
               </div>
               {check.firstFailingAtomic !== null && (
-                <div>
-                  <span>First size over tolerance</span>
-                  <span className="mono">{formatTokenAmount(check.firstFailingAtomic)}</span>
+                <div className="kv">
+                  <span className="k">First size over tolerance</span>
+                  <span className="v mono">{formatTokenAmount(check.firstFailingAtomic)}</span>
                 </div>
               )}
-              <div>
-                <span>Sizes probed</span>
+              <div className="kv">
+                <span className="k">Sizes probed</span>
                 <span className={check.capacityInformative ? undefined : 'warn'}>
                   {check.probeCount === 0
                     ? 'none priced'
@@ -436,9 +436,9 @@ export function B20ExitCard({
                       : `${check.probeCount} measured — too few to describe depth`}
                 </span>
               </div>
-              <div>
-                <span>Controls read at</span>
-                <span className="mono">
+              <div className="kv">
+                <span className="k">Controls read at</span>
+                <span className="v mono">
                   {check.controlsBlockNumber === null ? 'no block' : `block ${check.controlsBlockNumber}`}
                 </span>
               </div>

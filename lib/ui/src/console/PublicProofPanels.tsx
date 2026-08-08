@@ -95,26 +95,26 @@ export function PublicProofHeaderPanel({ view }: { view: PublicProofViewV1 }): R
     <section className="panel">
       <h3>{publicProofHeadlineCopyV1(view.proofFamily, view.finalStatus)}</h3>
       <div className="kv">
-        <span>Proof family</span>
-        <span>{view.proofFamily}</span>
+        <span className="k">Proof family</span>
+        <span className="v">{view.proofFamily}</span>
       </div>
       <div className="kv">
-        <span>Final status</span>
-        <span>{view.finalStatus}</span>
+        <span className="k">Final status</span>
+        <span className="v">{view.finalStatus}</span>
       </div>
       {view.provider && (
         <div className="kv">
-          <span>Provider</span>
-          <span>{view.provider}</span>
+          <span className="k">Provider</span>
+          <span className="v">{view.provider}</span>
         </div>
       )}
       <div className="kv">
-        <span>Issued</span>
-        <span className="mono">{view.issuedAt}</span>
+        <span className="k">Issued</span>
+        <span className="v mono">{view.issuedAt}</span>
       </div>
       <div className="kv">
-        <span>Schema</span>
-        <span className="mono">{view.schemaVersion}</span>
+        <span className="k">Schema</span>
+        <span className="v mono">{view.schemaVersion}</span>
       </div>
     </section>
   );
@@ -123,10 +123,10 @@ export function PublicProofHeaderPanel({ view }: { view: PublicProofViewV1 }): R
 export function PublicProofResultPanel({ view }: { view: PublicProofViewV1 }): React.ReactElement {
   const row = (label: string, value: string | null) => (
     <div className="kv" key={label}>
-      <span>{label}</span>
+      <span className="k">{label}</span>
       {/* A missing number shows why it is missing rather than an empty cell
           that could be read as zero. */}
-      <span className={value ? 'mono' : undefined}>{value ?? 'not recorded'}</span>
+      <span className={value ? 'v mono' : 'v'}>{value ?? 'not recorded'}</span>
     </div>
   );
   return (
@@ -156,13 +156,13 @@ export function PublicProofReceiptsPanel({ view }: { view: PublicProofViewV1 }):
       <h3>Transactions</h3>
       {view.receipts.map((receipt) => (
         <div className="kv" key={receipt.transactionHash}>
-          <span>
+          <span className="k">
             <a className="mono" href={baseScanTxUrlV1(receipt.transactionHash)} target="_blank" rel="noreferrer">
               {shortPublicHashV1(receipt.transactionHash)}
             </a>
           </span>
           {/* The REAL receipt status, including reverted. */}
-          <span>{receipt.status}</span>
+          <span className="v">{receipt.status}</span>
         </div>
       ))}
       <p className="note">
@@ -194,26 +194,26 @@ export function PublicProofVerificationPanel({
     <section className="panel">
       <h3>Integrity</h3>
       <div className="kv">
-        <span>Bundle hash</span>
-        <span className="mono">{shortPublicHashV1(view.bundleHash)}</span>
+        <span className="k">Bundle hash</span>
+        <span className="v mono">{shortPublicHashV1(view.bundleHash)}</span>
       </div>
       <div className="kv">
-        <span>Proof hash</span>
-        <span className="mono">{shortPublicHashV1(view.proofHash)}</span>
+        <span className="k">Proof hash</span>
+        <span className="v mono">{shortPublicHashV1(view.proofHash)}</span>
       </div>
       <div className="kv">
-        <span>Approved calls hash</span>
-        <span className="mono">{shortPublicHashV1(view.approvedCallsHash)}</span>
+        <span className="k">Approved calls hash</span>
+        <span className="v mono">{shortPublicHashV1(view.approvedCallsHash)}</span>
       </div>
       <div className="kv">
-        <span>Recorded events</span>
-        <span className="mono">{String(view.eventCount)}</span>
+        <span className="k">Recorded events</span>
+        <span className="v mono">{String(view.eventCount)}</span>
       </div>
 
       {checks.map((check) => (
         <div className="kv" key={check.key}>
-          <span>{check.label}</span>
-          <span>{check.outcome === 'skipped' ? (check.detail ?? 'not applicable') : check.outcome}</span>
+          <span className="k">{check.label}</span>
+          <span className="v">{check.outcome === 'skipped' ? (check.detail ?? 'not applicable') : check.outcome}</span>
         </div>
       ))}
 
@@ -263,8 +263,8 @@ export function ShareProofPanel({
       {publicUrl ? (
         <>
           <div className="kv">
-            <span>Public link</span>
-            <span className="mono">{publicUrl}</span>
+            <span className="k">Public link</span>
+            <span className="v mono">{publicUrl}</span>
           </div>
           <button type="button" onClick={onCopy}>
             Copy link

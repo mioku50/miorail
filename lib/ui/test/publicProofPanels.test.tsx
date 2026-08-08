@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
+import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+
+/** Every class console.css defines a rule for. Read from the stylesheet, not
+ * kept as a list here: a frozen list reports its own staleness as a defect in
+ * the code it guards, which is what happened when these panels adopted the
+ * `.k` and `.v` classes console.css had defined all along. */
+const definedConsoleClasses = new Set(
+  readFileSync(new URL('../src/console/console.css', import.meta.url), 'utf8')
+    .match(/\.[A-Za-z][A-Za-z0-9_-]*/g)
+    ?.map((selector) => selector.slice(1)) ?? [],
+);
 
 import {
   PUBLIC_PROOF_SHARE_WARNING_V1,
@@ -166,7 +177,7 @@ describe('publishing is never accidental', () => {
     ].join('');
     const classes = [...html.matchAll(/class="([^"]+)"/g)].flatMap((match) => match[1]!.split(/\s+/));
     for (const name of new Set(classes)) {
-      assert.ok(['panel', 'kv', 'note', 'mono'].includes(name), `unknown console class: ${name}`);
+      assert.ok(definedConsoleClasses.has(name), `unknown console class: ${name}`);
     }
   });
 });

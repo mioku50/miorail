@@ -99,13 +99,13 @@ export function B20ControlCardPanel({ card }: { card: B20CardLikeV1 }): React.Re
     <section className="panel">
       <h3>B20 Control</h3>
       <div className="kv">
-        <span>Token</span>
-        <span className="mono">{card.tokenAddress}</span>
+        <span className="k">Token</span>
+        <span className="v mono">{card.tokenAddress}</span>
       </div>
       {isB20 && (
         <div className="kv">
-          <span>Name</span>
-          <span>
+          <span className="k">Name</span>
+          <span className="v">
             {card.displayName ?? '—'}
             {card.displaySymbol ? ` (${card.displaySymbol})` : ''}
             {card.variant ? ` · ${card.variant}` : ''}
@@ -118,12 +118,12 @@ export function B20ControlCardPanel({ card }: { card: B20CardLikeV1 }): React.Re
       {/* The block is not a footnote: every value above and below is a claim
           about this block and no other. */}
       <div className="kv">
-        <span>Observed at block</span>
-        <span className="mono">{card.blockNumber ?? 'not reached'}</span>
+        <span className="k">Observed at block</span>
+        <span className="v mono">{card.blockNumber ?? 'not reached'}</span>
       </div>
       <div className="kv">
-        <span>Block hash</span>
-        <span className="mono">{shortB20HashV1(card.blockHash)}</span>
+        <span className="k">Block hash</span>
+        <span className="v mono">{shortB20HashV1(card.blockHash)}</span>
       </div>
     </section>
   );
@@ -136,8 +136,8 @@ export function B20ControlsPanel({ card }: { card: B20CardLikeV1 }): React.React
       <h3>What these controls permit</h3>
       {card.statements.map((statement) => (
         <div className="kv" key={statement.key}>
-          <span>{statement.statement}</span>
-          <span>{B20_STATE_LABEL_V1[statement.observedState]}</span>
+          <span className="k">{statement.statement}</span>
+          <span className="v">{B20_STATE_LABEL_V1[statement.observedState]}</span>
         </div>
       ))}
       <p className="note">
@@ -155,7 +155,7 @@ export function B20FieldsPanel({ card }: { card: B20CardLikeV1 }): React.ReactEl
       <h3>Observed state</h3>
       {card.fields.map((field) => (
         <div className="kv" key={field.key}>
-          <span>{field.label}</span>
+          <span className="k">{field.label}</span>
           {/* A row without a value shows its reason in the value position, so
               a gap can never be mistaken for a zero. */}
           <span className={field.status === 'exact_chain_read' ? 'mono' : undefined}>
@@ -234,20 +234,20 @@ export function B20ControlWatchPanel({ watch }: { watch: B20WatchLikeV1 | null }
           <b>
             {change.label} · {B20_SEVERITY_LABEL_V1[change.severity]}
           </b>
-          <div className="kv">
-            <div>
-              <span>Was</span>
-              <span className="mono">{change.before}</span>
+          <div>
+            <div className="kv">
+              <span className="k">Was</span>
+              <span className="v mono">{change.before}</span>
             </div>
-            <div>
-              <span>Now</span>
-              <span className="mono">{change.after}</span>
+            <div className="kv">
+              <span className="k">Now</span>
+              <span className="v mono">{change.after}</span>
             </div>
             {/* Both hashes: the claim is checkable at each end, not just the
                 one that happens to be current. */}
-            <div>
-              <span>Evidence</span>
-              <span className="mono">
+            <div className="kv">
+              <span className="k">Evidence</span>
+              <span className="v mono">
                 {shortB20HashV1(change.evidenceBefore)} → {shortB20HashV1(change.evidenceAfter)}
               </span>
             </div>
@@ -351,8 +351,8 @@ export function B20EvidencePanel({ card }: { card: B20CardLikeV1 }): React.React
       <h3>Evidence</h3>
       {read.map((field) => (
         <div className="kv" key={field.key}>
-          <span>{field.label}</span>
-          <span className="mono">{shortB20HashV1(field.evidenceHash)}</span>
+          <span className="k">{field.label}</span>
+          <span className="v mono">{shortB20HashV1(field.evidenceHash)}</span>
         </div>
       ))}
       {card.unavailable.length > 0 && (

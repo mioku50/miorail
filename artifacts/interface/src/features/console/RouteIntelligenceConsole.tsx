@@ -514,8 +514,33 @@ export function RouteIntelligenceConsole() {
     );
   };
 
+  /**
+   * Why review cannot start, or null when it can.
+   *
+   * This used to be a bare `return` inside `reviewCandidate`, and the result
+   * was a button that did nothing and said nothing: a degraded run left
+   * `routeCardHash` empty, both "Use this" and "Review Transaction" clicked
+   * into the void, and the stepper stayed on `Review —` with no way to tell
+   * whether the click had registered.
+   *
+   * Stated as a value rather than checked at the click, so the screen can say
+   * it BEFORE the click and disable the control that cannot work.
+   */
+  const reviewBlockedReason = !connected
+    ? CONSOLE_COPY_V1.walletDisconnected
+    : result?.outcome !== 'evaluated' || !projection
+      ? 'This goal has not produced a route card yet.'
+      : !projection.routeCardHash
+        ? 'This comparison finished without a signable Route Card, so there is nothing to review. Comparing again may fix it if a provider was briefly unavailable.'
+        : null;
+
   const reviewCandidate = (candidateHash: string) => {
-    if (!address || !projection?.routeCardHash || result?.outcome !== 'evaluated') return;
+    // Belt and braces: the controls are disabled when this is set, so reaching
+    // here means a caller this component does not own. Still never silent.
+    if (reviewBlockedReason || !address || !projection || result?.outcome !== 'evaluated') {
+      console.warn('Route review refused', { reason: reviewBlockedReason ?? 'missing evaluation' });
+      return;
+    }
     setSubmission(null);
     setSimulateResponse(null);
     setBudgetResponse(null);
@@ -551,6 +576,36 @@ export function RouteIntelligenceConsole() {
     () => (projection ? providerDiagnosticRowsV1(projection, REGISTERED_SWAP_PROVIDERS_V1) : []),
     [projection],
   );
+  const candidateRows = useMemo(
+    () => (projection ? candidateRowsFromProjectionV1(projection, REGISTERED_SWAP_PROVIDERS_V1) : []),
+    [projection],
+  );
+
+  /**
+   * The candidate the big Review button acts on.
+   *
+   * Normally the recommendation. But a run where only one provider answered
+   * produces no recommendation at all — Miorail will not call a sample of one
+   * "best" — and that left the button wired to `recommended && …`, which is a
+   * silent no-op. The route was right there in the table with its own working
+   * "Use this"; only the headline button was dead.
+   *
+   * So when there is no comparison to recommend from, the sole quotable
+   * candidate IS the route under review. More than one and the button stays
+   * off: picking for the user is exactly what the missing recommendation
+   * declined to do.
+   */
+  const selectableCandidates = candidateRows.filter((row) => row.selectable);
+  const reviewTarget =
+    recommended?.candidateHash ??
+    (selectableCandidates.length === 1 ? selectableCandidates[0]!.id : null);
+  const reviewDisabledReason =
+    reviewBlockedReason ??
+    (reviewTarget
+      ? null
+      : selectableCandidates.length === 0
+        ? 'No provider returned a quotable route for this goal, so there is nothing to review.'
+        : 'No route is recommended. Choose one from the candidates below with “Use this”.');
 
   // --- T67E §1: the contextual B20 Control Card ------------------------------
   //
@@ -1064,8 +1119,8 @@ export function RouteIntelligenceConsole() {
         scoreRows={scoreRowsFromProjectionV1(projection)}
         scoringVersion={scoringVersionLabelV1(projection.pathScore)}
         providerHistory={providerHistoryViewsV1(projection)}
-        candidates={candidateRowsFromProjectionV1(projection, REGISTERED_SWAP_PROVIDERS_V1)}
-        onReview={() => recommended && reviewCandidate(recommended.candidateHash)}
+        candidates={candidateRows}
+        onReview={() => reviewTarget && reviewCandidate(reviewTarget)}
         tokenPanels={b20Panels(false)}
         diagnostics={diagnosticRows}
         claimHeadline={comparisonClaim?.headline ?? null}
@@ -1073,7 +1128,7 @@ export function RouteIntelligenceConsole() {
         comparePending={comparePending}
         onChangeGoal={() => setScreen('plan')}
         onSelectCandidate={reviewCandidate}
-        reviewDisabledReason={connected ? null : CONSOLE_COPY_V1.walletDisconnected}
+        reviewDisabledReason={reviewDisabledReason}
       />
     );
   } else if (screen === 'review' && nftPrepared) {

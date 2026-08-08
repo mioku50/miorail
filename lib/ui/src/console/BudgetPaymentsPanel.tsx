@@ -191,7 +191,7 @@ export function BudgetPaymentsPanel(props: BudgetPaymentsPanelProps): React.Reac
             }}
           >
             <div>
-              <span>Monthly limit (USDC)</span>
+              <span className="k">Monthly limit (USDC)</span>
               <input
                 className="goalinput"
                 name="monthly"
@@ -238,7 +238,7 @@ export function BudgetPaymentsPanel(props: BudgetPaymentsPanelProps): React.Reac
             }}
           >
             <div>
-              <span>Monthly limit (USDC)</span>
+              <span className="k">Monthly limit (USDC)</span>
               <input
                 className="goalinput"
                 name="enable-monthly"

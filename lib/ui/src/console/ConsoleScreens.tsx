@@ -86,8 +86,12 @@ function CandidateTable({
                 <span className={row.state === 'unavailable' || row.state === 'blocked' ? 'off' : undefined}>{row.stateLabel}</span>
               ) : row.state === 'chosen' ? (
                 <span className="pill br">chosen</span>
-              ) : row.selectable ? (
-                <button type="button" className="btn sec" onClick={() => onSelect?.(row.id)}>
+              ) : row.selectable && onSelect ? (
+                // `onSelect &&`, not `onSelect?.()`. Optional chaining rendered
+                // a live-looking button that swallowed the click when no
+                // handler was passed — the same dead control the Review button
+                // was, one row down.
+                <button type="button" className="btn sec" onClick={() => onSelect(row.id)}>
                   Use this
                 </button>
               ) : (
@@ -236,20 +240,20 @@ export function RouteScreen(model: RouteScreenModelV1) {
               <div key={entry.providerName} className="note" style={{ marginBottom: 10 }}>
                 <b>{entry.providerName}</b>
                 <p className="lnote" style={{ margin: '4px 0 8px' }}>{entry.headline}</p>
-                <div className="kv">
+                <div>
                   {entry.rows.map((row) => (
-                    <div key={row.label}>
-                      <span>{row.label}</span>
-                      <span className="mono">{row.value}</span>
+                    <div className="kv" key={row.label}>
+                      <span className="k">{row.label}</span>
+                      <span className="v mono">{row.value}</span>
                     </div>
                   ))}
-                  <div>
-                    <span>Provider quote</span>
-                    <span className="mono">{entry.quotedResult ?? 'Not available'}</span>
+                  <div className="kv">
+                    <span className="k">Provider quote</span>
+                    <span className="v mono">{entry.quotedResult ?? 'Not available'}</span>
                   </div>
-                  <div>
-                    <span>History-adjusted estimate</span>
-                    <span className="mono">{entry.historyAdjustedResult ?? 'Not available'}</span>
+                  <div className="kv">
+                    <span className="k">History-adjusted estimate</span>
+                    <span className="v mono">{entry.historyAdjustedResult ?? 'Not available'}</span>
                   </div>
                 </div>
                 {entry.uncalibratedNote && (

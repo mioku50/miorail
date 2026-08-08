@@ -168,14 +168,8 @@ describe('the phone header cannot overlap or overflow', () => {
 // This checks the level it is used AT.
 // ---------------------------------------------------------------------------
 describe('.kv is used as a row, not as a wrapper around rows', () => {
-  // Scoped to the panels whose markup has actually been corrected. Running it
-  // across the whole console directory fails on twelve more places in seven
-  // files — B20EntryReviewCard, B20ExitCard, B20Panels, B20PortfolioPanel,
-  // B20WatchScreen, ConsoleScreens and PublicProofPanels — and those are real:
-  // "Verified routes0" and "Provider quoteNot available" are visible on the
-  // route card today. They are a separate fix, not a reason to delete the
-  // guard; widen this list as each one is corrected.
-  const panels = ['BudgetPaymentsPanel.tsx'];
+  const panels = readdirSync(new URL('../src/console/', import.meta.url))
+    .filter((file) => file.endsWith('.tsx'));
 
   for (const file of panels) {
     const source = readFileSync(new URL(`../src/console/${file}`, import.meta.url), 'utf8');
@@ -198,7 +192,12 @@ describe('.kv is used as a row, not as a wrapper around rows', () => {
       const rows = source.matchAll(/className="kv"[^>]*>([\s\S]{0,400}?)<\/div>/g);
       for (const row of rows) {
         for (const span of row[1]!.matchAll(/<span([^>]*)>/g)) {
-          assert.match(span[1]!, /className="(k|v)[" ]/, `${file} has an unclassed span in a .kv row`);
+          // Static `className="v mono"` and conditional
+          // `className={x ? 'v warn' : 'v'}` both count: what matters is that
+          // every branch names the role, not how the string is built.
+          const attribute = /className=(?:"([^"]*)"|\{([^}]*)\})/.exec(span[1]!);
+          const labelled = attribute !== null && /(^|[\s'"`])[kv]([\s'"`]|$)/.test(attribute[1] ?? attribute[2] ?? '');
+          assert.ok(labelled, `${file} has an unclassed span in a .kv row: <span${span[1]}>`);
         }
       }
     });
