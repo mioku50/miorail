@@ -535,10 +535,15 @@ export function RouteIntelligenceConsole() {
         : null;
 
   const reviewCandidate = (candidateHash: string) => {
+    // Read out before the guard so the null check narrows the type as well as
+    // the behaviour. `routeCardHash` is `string | null` — a degraded run really
+    // does produce a projection with no Route Card, which is the exact state
+    // that made both buttons dead, and `prepare` cannot be called without one.
+    const routeCardHash = projection?.routeCardHash;
     // Belt and braces: the controls are disabled when this is set, so reaching
     // here means a caller this component does not own. Still never silent.
-    if (reviewBlockedReason || !address || !projection || result?.outcome !== 'evaluated') {
-      console.warn('Route review refused', { reason: reviewBlockedReason ?? 'missing evaluation' });
+    if (reviewBlockedReason || !address || !routeCardHash || result?.outcome !== 'evaluated') {
+      console.warn('Route review refused', { reason: reviewBlockedReason ?? 'missing route card' });
       return;
     }
     setSubmission(null);
@@ -549,7 +554,7 @@ export function RouteIntelligenceConsole() {
     prepare.mutate({
       walletAddress: address.toLowerCase() as `0x${string}`,
       routeRunId: result.routeRunId,
-      routeCardHash: projection.routeCardHash,
+      routeCardHash,
       selectedCandidateHash: candidateHash,
     });
   };
