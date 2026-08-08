@@ -67,12 +67,32 @@ export const databaseConnectionInfo = Object.freeze({
   configured: Boolean(connection.url),
   fingerprint: connection.identity?.fingerprint ?? null,
 });
+/**
+ * The one difference between the two drivers that callers cannot be asked to
+ * remember.
+ *
+ * Neon's HTTP driver accepts a JS `Date` as a parameter and serialises it.
+ * postgres-js does not — it throws `TypeError: The "string" argument must be
+ * of type string ... Received an instance of Date` before the query is even
+ * sent. Fifty-eight call sites across commerce, NFT, autonomy and route
+ * storage pass a Date, every one of them written and tested against Neon, and
+ * moving to a local PostgreSQL turned all of them into 500s.
+ *
+ * Converting here rather than at those fifty-eight sites is deliberate: this
+ * function is the ONLY place that knows which driver is in use, so it is the
+ * only place where a driver's quirk belongs. An ISO string is accepted
+ * identically by both, and for a `timestamp without time zone` column
+ * Postgres reads it as the same UTC wall clock Neon stored.
+ */
+export const toDriverParameter = (value: unknown): unknown =>
+  value instanceof Date ? value.toISOString() : value;
+
 export const client = async (
   strings: TemplateStringsArray,
   ...values: any[]
 ): Promise<Record<string, unknown>[]> => {
   const rows = postgresSql
-    ? await postgresSql(strings, ...values)
+    ? await postgresSql(strings, ...values.map(toDriverParameter))
     : await sql(strings, ...values);
   return rows as unknown as Record<string, unknown>[];
 };

@@ -2465,7 +2465,10 @@ routeIntelligenceRouter.post(
       // reported by category — never the value, same rule as safeZodIssuesV1.
       logger.error('Spend permission confirmation failed', {
         name: cause instanceof Error ? cause.name : typeof cause,
-        message: cause instanceof Error ? safeErrorMessageV1(cause.message) : null,
+        // `detail`, not `message`: the logger flattens meta onto the entry, so
+        // a `message` key here silently replaced the log's own title and the
+        // line came out unlabelled — which is how the first one was missed.
+        detail: cause instanceof Error ? safeErrorMessageV1(cause.message) : null,
         at: cause instanceof Error ? firstOwnFrameV1(cause.stack) : null,
       });
       res.status(500).json({ error: 'budget_simulation_failed', code: 'budget_simulation_failed' });
