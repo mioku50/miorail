@@ -59,7 +59,12 @@ test('Uniswap sends explicit intent slippage and derives minimum output from it'
     body = JSON.parse(String(init?.body));
   }).quote({ intent, walletAddress: WALLET, requestId: 'request-slippage', now: NOW });
   assert.equal(result.outcome, 'quoted');
-  assert.equal(body.slippageTolerance, '1.25');
+  // A NUMBER on the wire. The string '1.25' is what this asserted before, and
+  // the trade API answers 400 RequestValidationError: "slippageTolerance" must
+  // be a number — so this test was pinning the exact shape that made every
+  // production Uniswap quote fail.
+  assert.equal(body.slippageTolerance, 1.25);
+  assert.equal(typeof body.slippageTolerance, 'number');
   assert.equal(body.swapper, WALLET);
   assert.equal(body.type, 'EXACT_INPUT');
   assert.equal('apiKey' in body, false);
