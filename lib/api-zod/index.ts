@@ -3189,6 +3189,8 @@ export const B20PipelineStateV1Schema = z.enum([
   'measurement_pending',
   'healthy',
   'degraded',
+  /** T73-LIVE §8 — nobody has advanced the cursor recently. */
+  'worker_stale',
   'decoder_mismatch',
   'storage_unavailable',
 ]);
@@ -3211,6 +3213,9 @@ export const B20PipelineStatusV1Schema = z
         canonicalLaunchCount: z.number().int().min(0),
         launchesAwaitingMeasurement: z.number().int().min(0),
         observationCount: z.number().int().min(0),
+        /** T73-LIVE §8 — the most recent measurement burst. Null when no pass
+         * has ever reported; zero when one ran and nothing was due. */
+        observationsLastRun: z.number().int().min(0).nullable(),
         budgetExhausted: z.boolean(),
         operatorState: z.string().max(64).nullable(),
       })

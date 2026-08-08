@@ -38,8 +38,12 @@ const BASE_FACTS = {
   canonicalLaunchCount: 12,
   launchesAwaitingMeasurement: 0,
   observationCount: 12,
+  observationsLastRun: 4 as number | null,
   budgetExhausted: false,
   operatorState: null as string | null,
+  // T73-LIVE — staleness is measured against a clock, so every fixture states
+  // one. The base run finished a minute ago: current by any threshold.
+  now: NOW.toISOString(),
 };
 
 function card(overrides: Partial<B20CardInputV1['observation']> = {}, launchOverrides = {}) {

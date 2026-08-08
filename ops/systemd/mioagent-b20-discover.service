@@ -1,0 +1,61 @@
+# T73-LIVE §6 — B20 launch discovery, as a service rather than a habit.
+#
+# A long-running worker, not a timer. The requirement that decides this is
+# catch-up: production sat 290,000 blocks behind confirmed head, and a timer
+# firing every minute would need six hours of wall clock to close that at 800
+# blocks a pass. The worker reads what each pass reported and runs the next one
+# immediately while it is behind, then settles to a resting cadence once
+# current. A timer cannot express "go faster because you are behind".
+#
+# Restart=always plus a cursor in Postgres is the recovery story: there is no
+# state in this process to lose, so a crash costs at most one in-flight pass,
+# and that pass committed nothing.
+#
+# Concurrency is NOT this unit's job. The lease lives in b20_discover_cursors
+# as a row with an owner and an expiry, taken by a conditional UPDATE — so two
+# workers during a deploy, or on two hosts, cannot both advance the cursor.
+
+[Unit]
+Description=Miorail B20 launch discovery worker
+Documentation=https://github.com/mioku50/mioagent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/mioagent
+EnvironmentFile=/home/ubuntu/mioagent/.env
+Environment=NODE_ENV=production
+Environment=PATH=/home/ubuntu/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/ubuntu/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/b20_discover_worker.ts
+
+# SIGTERM stops the loop after the pass in flight, so a restart never interrupts
+# a commit. 90s is comfortably longer than one bounded pass.
+KillSignal=SIGTERM
+TimeoutStopSec=90
+
+Restart=always
+RestartSec=15
+# A configuration refusal exits 4 and a crash exits 5. Neither should become a
+# restart storm, so the burst limit stops the unit and leaves it visible in
+# `systemctl status` rather than looping quietly.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+# Read-only by construction — no signer, no key. These make that structural.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/mioagent
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mioagent-b20-discover
+
+[Install]
+WantedBy=multi-user.target

@@ -13,6 +13,7 @@ import {
   type B20ObservationInsertResultV1,
   type B20ObservationRepositoryV1,
   type B20OpportunityObservationV1,
+  B20_MEASURE_RUN_WINDOW_MS_V1,
   type B20PipelineCountsV1,
 } from './b20Observations.js';
 import type { InMemoryB20DiscoverRepositoryV1 } from './b20DiscoverMemory.js';
@@ -364,6 +365,10 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
       limit: 1,
     });
     const run = runs[0] ?? null;
+    const measuredAt = [...this.observations.values()]
+      .map((row) => row.measuredAt)
+      .sort((left, right) => Date.parse(right) - Date.parse(left));
+    const newest = measuredAt[0];
     return {
       canonicalLaunchCount: launches.length,
       launchesAwaitingMeasurement: awaiting,
@@ -374,10 +379,14 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
       lastIngestionResult: run?.result ?? null,
       lastIngestionConfirmedHead: run?.confirmedHead ?? null,
       lastIngestionBudgetExhausted: run?.budgetExhausted ?? false,
-      lastMeasurementRunAt:
-        [...this.observations.values()]
-          .map((row) => row.measuredAt)
-          .sort((left, right) => Date.parse(right) - Date.parse(left))[0] ?? null,
+      lastMeasurementRunAt: newest ?? null,
+      // The same window the database uses. The fake must not disagree with
+      // production about what "the last run" means, or a test that proves the
+      // status is honest proves nothing.
+      observationsLastRun:
+        newest === undefined
+          ? 0
+          : measuredAt.filter((at) => Date.parse(newest) - Date.parse(at) <= B20_MEASURE_RUN_WINDOW_MS_V1).length,
     };
   }
 }

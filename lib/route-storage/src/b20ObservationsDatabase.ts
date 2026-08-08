@@ -1,5 +1,6 @@
 import {
   B20_MEASUREMENT_VERSION_V1,
+  B20_MEASURE_RUN_WINDOW_MS_V1,
   B20_MEASURE_LANE_V1,
   assertObservationV1,
   decodeFeedCursorV1,
@@ -480,6 +481,10 @@ export function createDatabaseB20ObservationRepository(
                )) AS awaiting_measurement,
           (SELECT count(*)::int FROM b20_opportunity_observations) AS observations,
           (SELECT max(measured_at) FROM b20_opportunity_observations) AS last_measurement_at,
+          (SELECT count(*)::int FROM b20_opportunity_observations
+             WHERE measured_at >= (SELECT max(measured_at) FROM b20_opportunity_observations)
+                                  - make_interval(secs => ${B20_MEASURE_RUN_WINDOW_MS_V1 / 1000})
+          ) AS observations_last_run,
           c.last_processed_block, c.operator_state,
           r.finished_at AS last_run_at, r.result AS last_result,
           r.confirmed_head, r.budget_exhausted
@@ -504,6 +509,7 @@ export function createDatabaseB20ObservationRepository(
         lastIngestionConfirmedHead: digitsOrNullV1(row.confirmed_head),
         lastIngestionBudgetExhausted: Boolean(row.budget_exhausted),
         lastMeasurementRunAt: isoOrNullV1(row.last_measurement_at),
+        observationsLastRun: Number(row.observations_last_run ?? 0),
       };
     },
   };

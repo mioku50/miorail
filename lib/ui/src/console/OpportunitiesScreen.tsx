@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   CONSOLE_NO_ANALYSIS_COPY_V1,
+  type ConsoleOperationalLabelV1,
   type ConsolePipelineStateV1,
 } from './navigation';
 
@@ -95,6 +96,12 @@ export interface OpportunitiesScreenModelV1 {
   /** The pipeline's own sentence. Rendered ABOVE the list, always, when set. */
   pipelineNotice: string | null;
   pipelineState: ConsolePipelineStateV1 | null;
+  /** T73-LIVE §9 — the operational state in one word. Rendered even when the
+   * pipeline is healthy, because "Caught up above an empty list" and "empty
+   * list" are different statements and only the first one is honest. */
+  pipelineLabel?: ConsoleOperationalLabelV1 | null;
+  /** `Block X of Y · N behind`, or null when either block is unknown. */
+  pipelineProgress?: string | null;
   /**
    * False when the pipeline has something to say instead of a list. The empty
    * state below is then never drawn — that is the whole point of §9.2.
@@ -187,24 +194,30 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
   const filters = OPPORTUNITY_FILTERS_V1;
   return (
     <>
-      {model.pipelineNotice && (
+      {(model.pipelineNotice || model.pipelineLabel) && (
         <div className="panel">
           <div className="ph">
             <h3>Discover</h3>
             {/* No pill when there is no state. "unknown" told the user nothing
                 the sentence below does not say better, and read as a fault in
                 the token rather than in the connection. */}
-            {model.pipelineState && (
+            {(model.pipelineLabel || model.pipelineState) && (
               <span className="rt">
-                <span className="pill n">{model.pipelineState.replaceAll('_', ' ')}</span>
+                <span className={model.pipelineLabel === 'Caught up' ? 'pill' : 'pill n'}>
+                  {model.pipelineLabel ?? model.pipelineState?.replaceAll('_', ' ')}
+                </span>
               </span>
             )}
           </div>
           <div className="pb tight">
+            {/* §9 — where the cursor actually is. An operator and a user read
+                the same two numbers, and neither has to infer them from the
+                length of the list below. */}
+            {model.pipelineProgress && <p className="lnote mono">{model.pipelineProgress}</p>}
             {/* The pipeline's sentence, verbatim from the shared copy table.
                 This is the line that stops "nothing has run" being read as
                 "nothing is out there". */}
-            <p className="note">{model.pipelineNotice}</p>
+            {model.pipelineNotice && <p className="note">{model.pipelineNotice}</p>}
             {model.onRefresh && (
               <button type="button" className="btn sec" onClick={model.onRefresh}>
                 Check again

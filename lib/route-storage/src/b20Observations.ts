@@ -353,7 +353,22 @@ export interface B20PipelineCountsV1 {
   lastIngestionConfirmedHead: string | null;
   lastIngestionBudgetExhausted: boolean;
   lastMeasurementRunAt: string | null;
+  /**
+   * T73-LIVE §8 — observations written by the most recent measurement burst.
+   *
+   * Derived rather than recorded: an observation carries no run id, so this
+   * counts rows whose `measured_at` falls inside `B20_MEASURE_RUN_WINDOW_MS_V1`
+   * of the newest one. A pass is bounded by its own runtime limit and writes
+   * its rows seconds apart, so that window is one pass in practice — but it is
+   * a window, not a run, and calling it an exact count would be a small lie in
+   * a field an operator uses to decide whether the worker is alive.
+   */
+  observationsLastRun: number;
 }
+
+/** How close together two observations must be to count as one measurement
+ * burst. Comfortably wider than a pass's own runtime ceiling. */
+export const B20_MEASURE_RUN_WINDOW_MS_V1 = 10 * 60 * 1000;
 
 export interface B20MeasureLeaseV1 {
   id: string;

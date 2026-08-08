@@ -348,8 +348,10 @@ export async function pipelineStatusV1(
       canonicalLaunchCount: 0,
       launchesAwaitingMeasurement: 0,
       observationCount: 0,
+      observationsLastRun: null,
       budgetExhausted: false,
       operatorState: null,
+      now: now.toISOString(),
     });
     return { ...status, message: b20PipelineCopyV1(status) };
   }
@@ -367,8 +369,12 @@ export async function pipelineStatusV1(
     canonicalLaunchCount: counts.canonicalLaunchCount,
     launchesAwaitingMeasurement: counts.launchesAwaitingMeasurement,
     observationCount: counts.observationCount,
+    observationsLastRun: counts.observationsLastRun,
     budgetExhausted: counts.lastIngestionBudgetExhausted,
     operatorState: counts.ingestionOperatorState,
+    // T73-LIVE §8 — the clock the staleness check runs against. A dead worker
+    // used to report `healthy`, because nothing compared the last run to now.
+    now: now.toISOString(),
   });
   return { ...status, message: b20PipelineCopyV1(status) };
 }

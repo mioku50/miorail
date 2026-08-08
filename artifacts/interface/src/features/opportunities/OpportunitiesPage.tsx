@@ -13,6 +13,8 @@ import {
   discoverFailureCopyV1,
   opportunityCardViewV1,
   useConsoleTheme,
+  consoleOperationalLabelV1,
+  consolePipelineProgressV1,
   type ConsolePipelineStateV1,
   type OpportunityFilterV1,
 } from '@mioagent/ui';
@@ -135,6 +137,17 @@ export function OpportunitiesPage() {
       <OpportunitiesScreen
         pipelineNotice={pipelineNotice}
         pipelineState={(pipeline?.state as ConsolePipelineStateV1 | undefined) ?? null}
+        // §9 — stated, never inferred from how many cards came back.
+        pipelineLabel={consoleOperationalLabelV1((pipeline?.state as ConsolePipelineStateV1 | undefined) ?? null)}
+        pipelineProgress={
+          pipeline
+            ? consolePipelineProgressV1({
+                ingestionCursorBlock: pipeline.facts.ingestionCursorBlock,
+                confirmedHead: pipeline.facts.confirmedHead,
+                blocksBehind: pipeline.blocksBehind,
+              })
+            : null
+        }
         feedRenderable={discoverOn && (feed.isPending || home.feedRenderable)}
         cards={cards}
         filter={filter}

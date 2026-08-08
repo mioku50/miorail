@@ -1,0 +1,54 @@
+# T73-LIVE §6 — Exit-First measurement, as a service.
+#
+# Separate unit and separate lease from discovery on purpose. The two do
+# different work at different rates: discovery reads logs and moves a cursor,
+# measurement spends paced control reads and a router quote ladder per token.
+# One process doing both would let a slow quote ladder stall the cursor, and a
+# shared lease would make that structural.
+#
+# §3 is why this runs continuously rather than once a day. T73's 24h Measured
+# Movers needs TWO comparable observations of the same token about a day apart.
+# Nothing can manufacture that pair after the fact — it exists only if this
+# worker kept coming back. A worker that measures each launch once produces a
+# Movers rail that is empty forever, and correctly so.
+
+[Unit]
+Description=Miorail B20 Exit-First measurement worker
+Documentation=https://github.com/mioku50/mioagent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/mioagent
+EnvironmentFile=/home/ubuntu/mioagent/.env
+Environment=NODE_ENV=production
+Environment=PATH=/home/ubuntu/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/ubuntu/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/b20_measure_worker.ts
+
+KillSignal=SIGTERM
+TimeoutStopSec=120
+
+Restart=always
+RestartSec=30
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+# Read-only by construction — two readers, no signer, no key, no allowance
+# write, no state override. These make that structural.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/mioagent
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mioagent-b20-measure
+
+[Install]
+WantedBy=multi-user.target

@@ -38,6 +38,16 @@ export const B20_PIPELINE_STATES_V1 = [
   'healthy',
   /** A worker's last run failed, or measurements are coming back degraded. */
   'degraded',
+  /**
+   * T73-LIVE §8 — nobody has advanced the cursor recently.
+   *
+   * Distinct from every other state because it is the one that used to be
+   * invisible: a worker that stops leaves the last run rows exactly as they
+   * were, so a dead pipeline reported `healthy` and an empty feed read as a
+   * quiet chain. Ranked above `ingestion_catching_up`, because a cursor that is
+   * behind AND not moving is not catching up.
+   */
+  'worker_stale',
   /** The event shape changed. The launch feed is stopped until somebody looks. */
   'decoder_mismatch',
   'storage_unavailable',
@@ -56,6 +66,9 @@ export interface B20PipelineFactsV1 {
   canonicalLaunchCount: number;
   launchesAwaitingMeasurement: number;
   observationCount: number;
+  /** Observations written by the most recent measurement pass. Zero is a real
+   * answer — nothing was due — and null means no pass has ever reported. */
+  observationsLastRun: number | null;
   budgetExhausted: boolean;
   /** A CATEGORY, never a message. */
   operatorState: string | null;
@@ -74,6 +87,16 @@ export interface B20PipelineStatusV1 {
 export const B20_CATCHING_UP_BLOCKS_V1 = 2_400;
 
 /**
+ * How long without a finished ingestion run before the pipeline is stale.
+ *
+ * The worker's own idle cadence is a minute or two, so fifteen is many missed
+ * passes rather than one slow one — long enough that a deploy or a restart does
+ * not raise a false alarm, short enough that a dead worker is noticed within
+ * one sitting.
+ */
+export const B20_WORKER_STALE_AFTER_MS_V1 = 15 * 60 * 1000;
+
+/**
  * §1 — what an empty feed means.
  *
  * Ordered by what an operator would have to fix first: configuration before
@@ -81,7 +104,15 @@ export const B20_CATCHING_UP_BLOCKS_V1 = 2_400;
  * it — because none of the later states are meaningful while an earlier one is
  * broken.
  */
-export function b20PipelineStatusV1(input: B20PipelineFactsV1 & { storageAvailable: boolean }): B20PipelineStatusV1 {
+export function b20PipelineStatusV1(
+  input: B20PipelineFactsV1 & {
+    storageAvailable: boolean;
+    /** ISO. Required, because staleness is the whole point of the check and a
+     * defaulted clock is one nobody notices is wrong. */
+    now: string;
+    staleAfterMs?: number;
+  },
+): B20PipelineStatusV1 {
   const facts: B20PipelineFactsV1 = {
     ingestionCursorBlock: input.ingestionCursorBlock,
     confirmedHead: input.confirmedHead,
@@ -91,6 +122,7 @@ export function b20PipelineStatusV1(input: B20PipelineFactsV1 & { storageAvailab
     canonicalLaunchCount: input.canonicalLaunchCount,
     launchesAwaitingMeasurement: input.launchesAwaitingMeasurement,
     observationCount: input.observationCount,
+    observationsLastRun: input.observationsLastRun,
     budgetExhausted: input.budgetExhausted,
     operatorState: input.operatorState,
   };
@@ -113,11 +145,57 @@ export function b20PipelineStatusV1(input: B20PipelineFactsV1 & { storageAvailab
       : status('ingestion_not_started');
   }
   if (facts.operatorState !== null) return status('degraded');
+  // Before "catching up", deliberately. A cursor that is behind and not moving
+  // describes a stopped worker, and calling that progress is the failure this
+  // state exists to end.
+  if (workerStaleV1(facts.lastIngestionRunAt, input.now, input.staleAfterMs ?? B20_WORKER_STALE_AFTER_MS_V1)) {
+    return status('worker_stale');
+  }
   if (blocksBehind !== null && blocksBehind > B20_CATCHING_UP_BLOCKS_V1) {
     return status('ingestion_catching_up');
   }
   if (facts.launchesAwaitingMeasurement > 0) return status('measurement_pending');
   return status('healthy');
+}
+
+/** A run that finished longer ago than the threshold, or a cursor that exists
+ * with no finished run at all. */
+export function workerStaleV1(lastRunAt: string | null, now: string, staleAfterMs: number): boolean {
+  if (lastRunAt === null) return true;
+  const finished = Date.parse(lastRunAt);
+  if (!Number.isFinite(finished)) return true;
+  return Date.parse(now) - finished > staleAfterMs;
+}
+
+/**
+ * T73-LIVE §9 — one word for the operational state.
+ *
+ * Deliberately NOT derived from whether the feed has rows. An empty list with a
+ * healthy pipeline means nothing measured up; an empty list with a stale worker
+ * means nobody looked. Those are the two readings a user was previously unable
+ * to tell apart, and the fix is to stop making them guess from the list.
+ */
+export type B20OperationalLabelV1 = 'Caught up' | 'Catching up' | 'Worker stale' | 'Unavailable';
+
+export function b20OperationalLabelV1(status: B20PipelineStatusV1): B20OperationalLabelV1 {
+  switch (status.state) {
+    case 'storage_unavailable':
+    case 'configuration_required':
+    case 'decoder_mismatch':
+      return 'Unavailable';
+    case 'worker_stale':
+    case 'ingestion_not_started':
+      return 'Worker stale';
+    case 'ingestion_catching_up':
+      return 'Catching up';
+    case 'degraded':
+      // The worker IS running and the cursor IS moving; some reads came back
+      // incomplete. That is a data-quality statement, not an outage.
+      return 'Catching up';
+    case 'measurement_pending':
+    case 'healthy':
+      return 'Caught up';
+  }
 }
 
 /**
@@ -141,6 +219,10 @@ export function b20PipelineCopyV1(status: B20PipelineStatusV1): string {
       return `${facts.launchesAwaitingMeasurement} launch${facts.launchesAwaitingMeasurement === 1 ? ' has' : 'es have'} been found and ${facts.launchesAwaitingMeasurement === 1 ? 'is' : 'are'} waiting for Exit-First measurement.`;
     case 'degraded':
       return 'Some market measurements could not be completed. Missing data is not treated as a token failure.';
+    case 'worker_stale':
+      return facts.lastIngestionRunAt
+        ? `Discover has not advanced since ${facts.lastIngestionRunAt}. The list below is what was measured before that, not what is on chain now.`
+        : 'Discover has a cursor but no completed run, so nothing below reflects the current chain.';
     case 'decoder_mismatch':
       return 'The B20 launch event no longer matches what Miorail can read, so ingestion has stopped rather than record guesses.';
     case 'storage_unavailable':

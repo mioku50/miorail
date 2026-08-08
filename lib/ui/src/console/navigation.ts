@@ -186,11 +186,65 @@ export const CONSOLE_PIPELINE_STATES_V1 = [
   'measurement_pending',
   'healthy',
   'degraded',
+  'worker_stale',
   'decoder_mismatch',
   'storage_unavailable',
 ] as const;
 
 export type ConsolePipelineStateV1 = (typeof CONSOLE_PIPELINE_STATES_V1)[number];
+
+// ---------------------------------------------------------------------------
+// T73-LIVE §9 — the operational state, in one word.
+//
+// The rule this exists to enforce: never infer "the chain is quiet" from an
+// empty list. An empty feed with a healthy pipeline and an empty feed with a
+// worker that died three hours ago looked identical, and a user had no way to
+// tell which they were looking at.
+//
+// Mirrors `b20OperationalLabelV1` in @mioagent/opportunity-rail for the same
+// reason the state list above is mirrored — this package compiles into the
+// miniapp at a target where that package's dependencies do not belong.
+// `navigation.test.ts` reads the other file from disk and fails on drift.
+// ---------------------------------------------------------------------------
+
+export type ConsoleOperationalLabelV1 = 'Caught up' | 'Catching up' | 'Worker stale' | 'Unavailable';
+
+export function consoleOperationalLabelV1(
+  state: ConsolePipelineStateV1 | null,
+): ConsoleOperationalLabelV1 | null {
+  // Null is not "unavailable": the feed request itself has not answered, and
+  // claiming a pipeline state from no data is the guess this whole surface is
+  // supposed to stop making.
+  if (state === null) return null;
+  switch (state) {
+    case 'storage_unavailable':
+    case 'configuration_required':
+    case 'decoder_mismatch':
+      return 'Unavailable';
+    case 'worker_stale':
+    case 'ingestion_not_started':
+      return 'Worker stale';
+    case 'ingestion_catching_up':
+    case 'degraded':
+      return 'Catching up';
+    case 'measurement_pending':
+    case 'healthy':
+      return 'Caught up';
+  }
+}
+
+/** The cursor line, when both blocks are known. Plain numbers, no endpoint. */
+export function consolePipelineProgressV1(input: {
+  ingestionCursorBlock: string | null;
+  confirmedHead: string | null;
+  blocksBehind: number | null;
+}): string | null {
+  if (!input.ingestionCursorBlock || !input.confirmedHead) return null;
+  const behind = input.blocksBehind === null ? '' : ` · ${input.blocksBehind.toLocaleString('en-US')} behind`;
+  return `Block ${Number(input.ingestionCursorBlock).toLocaleString('en-US')} of ${Number(
+    input.confirmedHead,
+  ).toLocaleString('en-US')}${behind}`;
+}
 
 export interface ConsoleHomeInputV1 {
   /** Null when the feed endpoint itself could not be reached. */

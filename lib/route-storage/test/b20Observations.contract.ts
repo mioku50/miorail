@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
+import { measuredMoversV1 } from '@mioagent/opportunity-rail';
+
 import {
   B20_MEASUREMENT_VERSION_V1,
   RouteStorageConflictError,
@@ -516,6 +518,148 @@ export function describeB20ObservationRepositoryV1(
       assert.equal(pairs[0]!.launch.tokenAddress, TOKEN);
       assert.equal(pairs[0]!.launch.canonical, true);
       assert.ok(pairs[0]!.launch.decimals !== undefined);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // T73-LIVE §4 — the 24h rail is load-bearing on retention.
+  //
+  // Movers compares two measurements of the SAME token about a day apart. That
+  // only exists if a second measurement is INSERTED beside the first rather
+  // than replacing it. An "upsert the latest observation per token" storage
+  // design would look correct in every other test in this file, serve a
+  // perfectly good Discover feed, and make the Movers rail empty forever — with
+  // no error anywhere, because nothing would have failed.
+  //
+  // So this walks the actual production sequence: measure, wait a day, measure
+  // again, and follow the result all the way into the projection the card
+  // renders.
+  // -------------------------------------------------------------------------
+  describe(`${name}: measurements accumulate, and a day apart they become a mover`, () => {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const MEASURED_A = '2026-08-04T09:00:00.000Z';
+    const MEASURED_B = '2026-08-05T09:05:00.000Z';
+    const NOW = '2026-08-05T09:15:00.000Z';
+
+    /** Enough exit capacity to clear the rail's own thin-pool floor. */
+    const CAPACITY_A = '4000000000000000000';
+    const CAPACITY_B = '5000000000000000000';
+
+    async function measureTwice(): Promise<B20ObservationRepositoryV1> {
+      const { repository } = await seeded();
+      await repository.insertObservation(
+        observationFixtureV1({
+          observationBlockNumber: '49600000',
+          measuredAt: MEASURED_A,
+          staleAfter: new Date(Date.parse(MEASURED_A) + 30 * 60 * 1000).toISOString(),
+          largestPassingSizeAtomic: CAPACITY_A,
+        }),
+      );
+      await repository.insertObservation(
+        observationFixtureV1({
+          observationBlockNumber: '49643000',
+          measuredAt: MEASURED_B,
+          staleAfter: new Date(Date.parse(MEASURED_B) + 30 * 60 * 1000).toISOString(),
+          largestPassingSizeAtomic: CAPACITY_B,
+        }),
+      );
+      return repository;
+    }
+
+    test('the second measurement does not replace the first', async () => {
+      const repository = await measureTwice();
+      const counts = await repository.pipelineCounts({ now: NOW, maxLaunchAgeMs: 30 * DAY_MS });
+      // Two rows. One would mean the baseline the 24h card needs was destroyed
+      // by the very pass that was supposed to complete the pair.
+      assert.equal(counts.observationCount, 2);
+    });
+
+    test('listMoverPairs returns measurement A as the baseline for B', async () => {
+      const repository = await measureTwice();
+      const pairs = await repository.listMoverPairs({
+        limit: 10,
+        now: NOW,
+        baselineAgeMs: DAY_MS,
+        baselineToleranceMs: 4 * 60 * 60 * 1000,
+        maxLaunchAgeMs: 30 * DAY_MS,
+      });
+      assert.equal(pairs.length, 1);
+      assert.equal(pairs[0]!.latest.measuredAt, MEASURED_B);
+      assert.equal(pairs[0]!.baseline?.measuredAt, MEASURED_A);
+      assert.notEqual(pairs[0]!.baseline?.id, pairs[0]!.latest.id);
+    });
+
+    test('the pair becomes an eligible mover in the projection the card renders', async () => {
+      const repository = await measureTwice();
+      const pairs = await repository.listMoverPairs({
+        limit: 10,
+        now: NOW,
+        baselineAgeMs: DAY_MS,
+        baselineToleranceMs: 4 * 60 * 60 * 1000,
+        maxLaunchAgeMs: 30 * DAY_MS,
+      });
+      const projected = measuredMoversV1({
+        pairs: pairs.map((pair) => ({
+          launch: {
+            tokenAddress: pair.launch.tokenAddress,
+            symbol: pair.launch.symbol,
+            name: pair.launch.name,
+            decimals: pair.launch.decimals,
+            canonical: pair.launch.canonical,
+          },
+          latest: pair.latest,
+          baseline: pair.baseline,
+        })),
+        now: new Date(NOW),
+        baselineAgeMs: DAY_MS,
+        baselineToleranceMs: 4 * 60 * 60 * 1000,
+        minExitCapacityAtomic: '1000000000000000000',
+        limit: 5,
+      });
+      // The whole point: two passes a day apart, and the rail has a row.
+      assert.equal(projected.excluded.length, 0, JSON.stringify(projected.excluded));
+      assert.equal(projected.movers.length, 1);
+      assert.equal(projected.movers[0]!.tokenAddress, TOKEN);
+    });
+
+    test('one measurement alone is honestly not a mover', async () => {
+      const { repository } = await seeded();
+      await repository.insertObservation(
+        observationFixtureV1({
+          observationBlockNumber: '49643000',
+          measuredAt: MEASURED_B,
+          staleAfter: new Date(Date.parse(MEASURED_B) + 30 * 60 * 1000).toISOString(),
+          largestPassingSizeAtomic: CAPACITY_B,
+        }),
+      );
+      const pairs = await repository.listMoverPairs({
+        limit: 10,
+        now: NOW,
+        baselineAgeMs: DAY_MS,
+        baselineToleranceMs: 4 * 60 * 60 * 1000,
+        maxLaunchAgeMs: 30 * DAY_MS,
+      });
+      const projected = measuredMoversV1({
+        pairs: pairs.map((pair) => ({
+          launch: {
+            tokenAddress: pair.launch.tokenAddress,
+            symbol: pair.launch.symbol,
+            name: pair.launch.name,
+            decimals: pair.launch.decimals,
+            canonical: pair.launch.canonical,
+          },
+          latest: pair.latest,
+          baseline: pair.baseline,
+        })),
+        now: new Date(NOW),
+        baselineAgeMs: DAY_MS,
+        baselineToleranceMs: 4 * 60 * 60 * 1000,
+        minExitCapacityAtomic: '1000000000000000000',
+        limit: 5,
+      });
+      assert.equal(projected.movers.length, 0);
+      // Named, not dropped: time is the only thing missing, and the card says so.
+      assert.equal(projected.excluded[0]?.reason, 'no_baseline');
     });
   });
 
