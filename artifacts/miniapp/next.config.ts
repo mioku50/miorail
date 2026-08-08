@@ -1,4 +1,30 @@
+import { createRequire } from "node:module";
+import path from "node:path";
 import type { NextConfig } from "next";
+
+const require_ = createRequire(import.meta.url);
+
+/**
+ * One wagmi, one React context.
+ *
+ * pnpm installs a separate instance of wagmi for every distinct peer set, and
+ * this workspace produces six — all wagmi@3.6.21 against viem@2.53.1, differing
+ * only in how their peers resolved. The miniapp's RootProvider mounted
+ * WagmiProvider from ITS copy while MiniConsole's imports from
+ * @mioagent/wallet-actions and @mioagent/x402-actions called useConfig on
+ * THEIRS, so `next build` failed prerendering `/` with
+ * "useConfig must be used within WagmiProvider" — two contexts that can never
+ * see each other.
+ *
+ * Exact-match aliases (`$`), pointed at the package directory so the package's
+ * own `exports` map still decides the entry. Subpaths like `wagmi/connectors`
+ * are left alone deliberately: they carry no React context, and rewriting them
+ * would bypass the exports map for no benefit.
+ */
+const singleInstance = (name: string): [string, string] => [
+  `${name}$`,
+  path.dirname(require_.resolve(`${name}/package.json`)),
+];
 
 const API_URL = process.env.MIOAGENT_API_URL || "http://localhost:8080";
 
@@ -15,6 +41,12 @@ const nextConfig: NextConfig = {
     "@mioagent/wallet-actions",
   ],
   webpack: (config) => {
+    config.resolve.alias = {
+      ...(config.resolve.alias ?? {}),
+      ...Object.fromEntries(
+        ["wagmi", "@wagmi/core", "@tanstack/react-query"].map(singleInstance),
+      ),
+    };
     // NodeNext workspace sources use runtime `.js` specifiers while the files
     // checked into the monorepo are TypeScript. Vite resolves this natively;
     // Next/Webpack needs the equivalent explicit extension mapping.
