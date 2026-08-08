@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { logger } from '@mioagent/utils';
+import { safeZodIssuesV1 } from '../lib/safeZodIssues.js';
 import {
   B20InspectRequestV1Schema,
   B20InspectResponseV1Schema,
@@ -272,7 +273,7 @@ function b20Guard(req: Request, res: Response): { user: NonNullable<ReturnType<t
   return { user };
 }
 
-function storageFailure(res: Response, error: unknown, where: string): void {
+function storageFailure(res: Response, error: unknown, where: string, input?: unknown): void {
   if (error instanceof RouteStorageConflictError) {
     res.status(409).json({ error: 'b20_snapshot_conflict', code: 'b20_snapshot_conflict', detail: error.message });
     return;
@@ -283,7 +284,20 @@ function storageFailure(res: Response, error: unknown, where: string): void {
   }
   // The message is never echoed: an RPC error can carry the endpoint URL, and
   // the endpoint URL can carry the key.
-  logger.error('B20 control storage failed', { where, name: error instanceof Error ? error.name : 'unknown' });
+  //
+  // T73-LIVE-DB §4 — but `{ where, name: "ZodError" }` was not a diagnosis
+  // either. It said a page of launches failed its schema somewhere, which is
+  // where every investigation started rather than ended. The issues are
+  // extracted as SHAPES — path, code, expected, and a category of what arrived
+  // — so the next mismatch is readable from one log line without anybody
+  // reproducing it, and without the received values (addresses, hashes, token
+  // identities) reaching a log.
+  const issues = safeZodIssuesV1(error, input);
+  logger.error('B20 control storage failed', {
+    where,
+    name: error instanceof Error ? error.name : 'unknown',
+    ...(issues ? { issues } : {}),
+  });
   res.status(500).json({ error: 'storage_unavailable', code: 'storage_unavailable' });
 }
 
@@ -629,8 +643,11 @@ b20ControlRouter.get('/opportunities/b20', async (req: Request, res: Response) =
   const launchAgeRaw = Number.parseInt(String(req.query.launchAge ?? ''), 10);
   const maxLaunchAgeMs = Number.isFinite(launchAgeRaw) && launchAgeRaw > 0 ? launchAgeRaw : DISCOVER_FEED_WINDOW_MS_V1;
 
+  // Held outside the try so the failure log can say what SHAPE arrived at the
+  // schema, not merely that something did.
+  let feed: Awaited<ReturnType<typeof readDiscoverFeedV1>> | undefined;
   try {
-    const feed = await readDiscoverFeedV1({
+    feed = await readDiscoverFeedV1({
       limit,
       cursor,
       state: stateParam as (typeof FEED_STATES_V1)[number] | 'all',
@@ -639,7 +656,7 @@ b20ControlRouter.get('/opportunities/b20', async (req: Request, res: Response) =
     });
     res.json(B20OpportunityFeedResponseV1Schema.parse(feed));
   } catch (error) {
-    storageFailure(res, error, 'b20-opportunity-feed');
+    storageFailure(res, error, 'b20-opportunity-feed', feed);
   }
 });
 
