@@ -176,6 +176,8 @@ export function SettingsPage() {
             onboardingStatus={grant.status}
             onboardingDetail={grant.detail}
             onboardingConsent={grant.consent}
+            onRetryVerification={grant.retryVerification}
+            canRetryVerification={grant.canRetryVerification}
           />
         }
         adapters={adapterRows}

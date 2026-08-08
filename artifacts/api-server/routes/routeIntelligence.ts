@@ -2331,6 +2331,23 @@ routeIntelligenceRouter.post(
         permissions: spendPermissionRouteRuntime.permissions(),
       });
 
+      // T71.1 §1 — say what happened, in three fields.
+      //
+      // A confirmation that did not activate answers 200, because it is a typed
+      // result and not an error. That made it invisible: the access log showed
+      // `200`, the client rendered "Not configured", and the reason the chain
+      // gave existed nowhere at all. An operator could not tell a wallet that
+      // signed the wrong thing from a chain that had not caught up yet.
+      //
+      // Three fields, and deliberately no fourth. Not the permission, not the
+      // signature, not the salt, not the hash, not the wallet: a refusal is
+      // worth knowing about, and none of those are needed to know it.
+      logger.info('Spend permission confirmation', {
+        outcome: confirmed.outcome,
+        refusal: confirmed.outcome === 'refused' ? confirmed.refusal : null,
+        retryable: confirmed.outcome === 'activated' ? false : confirmed.retryable,
+      });
+
       if (confirmed.outcome !== 'activated') {
         res.json(
           ConfirmSpendPermissionResponseV1Schema.parse({

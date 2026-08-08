@@ -682,6 +682,8 @@ export function MiniConsole() {
       onboardingStatus={spendPermissionGrant.status}
       onboardingDetail={spendPermissionGrant.detail}
       onboardingConsent={spendPermissionGrant.consent}
+      onRetryVerification={spendPermissionGrant.retryVerification}
+      canRetryVerification={spendPermissionGrant.canRetryVerification}
       onPause={() => pauseBudget.mutate()}
       onResume={() => resumeBudget.mutate()}
       onRevoke={() => revokeBudget.mutate()}

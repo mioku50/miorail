@@ -31,6 +31,11 @@ export interface SpendPermissionGrantV1 {
   detail: string | null;
   consent: string[];
   pending: boolean;
+  /** T71.1 — a signed permission is in hand and the server said its own answer
+   * may be retried. The panel offers a check, never a second wallet prompt. */
+  canRetryVerification: boolean;
+  /** Re-runs confirm against the permission the wallet already signed. */
+  retryVerification: () => void;
   enable: (limits: { monthlyLimitUsdc: string; maxPerRequestUsdc: string }) => void;
 }
 
@@ -81,6 +86,11 @@ export function useSpendPermissionGrant(): SpendPermissionGrantV1 {
             refusal: result.refusal,
             detail: result.detail,
             retryable: result.retryable,
+            // Carried through so the flow can hand the activated budget straight
+            // to the panel. The mutation has already written it to the query
+            // cache; this is what stops the panel rendering "Not configured" for
+            // the one render before the refetch lands.
+            budget: result.budget ?? null,
           };
         },
       }),
@@ -98,11 +108,17 @@ export function useSpendPermissionGrant(): SpendPermissionGrantV1 {
     [flow],
   );
 
+  const retryVerification = useCallback(() => {
+    void flow.retryVerification();
+  }, [flow]);
+
   return {
     status: flow.status,
     detail: flow.detail,
     consent: flow.consent,
     pending: flow.pending,
+    canRetryVerification: flow.canRetryVerification,
+    retryVerification,
     enable,
   };
 }

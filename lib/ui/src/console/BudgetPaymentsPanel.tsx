@@ -4,6 +4,7 @@ import {
   onboardingBusyV1,
   onboardingRetryableV1,
   spendPermissionConsentV1,
+  spendPermissionOutcomeViewV1,
   type PaidIntelligenceInputV1,
   type SpendPermissionOnboardingStatusV1,
 } from './budgetPayments';
@@ -44,6 +45,18 @@ export interface BudgetPaymentsPanelProps extends PaidIntelligenceInputV1 {
    * locally composed ones once prepare has answered, because these are the
    * numbers the wallet will actually be asked for. */
   onboardingConsent?: readonly string[];
+  /**
+   * T71.1 — re-run the server's verification against the permission the wallet
+   * ALREADY signed.
+   *
+   * Separate from `onEnablePaidEvidence` on purpose. They read alike and are
+   * not: one opens a wallet and asks for a second permission, the other asks
+   * the server to look at Base again. Offering the first when the second is
+   * what is needed is how a user ends up with two grants for one budget.
+   */
+  onRetryVerification?: () => void;
+  /** Whether a signed permission is in hand to re-check. */
+  canRetryVerification?: boolean;
   onCreatePermission?: () => void;
   /** Both limits, as decimal USDC strings. The panel collects them; only the
    * wallet can authorise them. */
@@ -87,10 +100,13 @@ export function BudgetPaymentsPanel(props: BudgetPaymentsPanelProps): React.Reac
   const view = budgetPaymentsViewV1(props);
   const { status } = view;
   const onboardingBusy = onboardingBusyV1(props.onboardingStatus);
-  // A declined prompt is not a fault, so it is not warned about; a failed
-  // verification is.
-  const onboardingWarn =
-    props.onboardingStatus === 'verification_failed' || props.onboardingStatus === 'failed';
+  // T71.1 §2 — when the wallet flow has reached an outcome, the outcome is what
+  // the panel says. Otherwise a refused confirmation renders as "Not
+  // configured", which describes the user's situation as absence and offers
+  // them the button they just pressed.
+  const outcome = spendPermissionOutcomeViewV1(props.onboardingStatus);
+  const outcomeDetail = outcome ? (props.onboardingDetail ?? outcome.fallbackDetail) : props.onboardingDetail;
+  const onboardingWarn = outcome?.tone === 'warn';
   // Once the server has said what it will ask for, those are the numbers shown.
   // The locally composed lines are a placeholder for before that point.
   const consent =
@@ -105,9 +121,25 @@ export function BudgetPaymentsPanel(props: BudgetPaymentsPanelProps): React.Reac
     <section className="panel" aria-label="Budget and payments">
       <div className="ph">
         <h3>Budget &amp; payments</h3>
-        <span className="sub">{status.label}</span>
+        <span className="sub">{outcome ? outcome.label : status.label}</span>
       </div>
       <div className="pb">
+        {/* First, above everything, and never collapsed into the budget's own
+            state: what the server said about the permission this user just
+            signed. */}
+        {outcome && outcomeDetail && (
+          <p className={onboardingWarn ? 'note warn' : 'note'}>{outcomeDetail}</p>
+        )}
+        {outcome?.offerRetryVerification && props.onRetryVerification && props.canRetryVerification && (
+          <div className="ctarow">
+            <button type="button" className="btn" disabled={onboardingBusy} onClick={props.onRetryVerification}>
+              {onboardingBusy ? 'Checking…' : 'Retry verification'}
+            </button>
+            {/* Said plainly, because the alternative button on this panel does
+                exactly that and the two must not be confused. */}
+            <span className="nt">This re-checks the permission you already signed. Your wallet will not open again.</span>
+          </div>
+        )}
         <p className={status.moneyAtRisk ? 'note warn' : 'note'}>{status.detail}</p>
 
         {view.rows ? (
@@ -226,23 +258,32 @@ export function BudgetPaymentsPanel(props: BudgetPaymentsPanelProps): React.Reac
               />
             </div>
             <div>
-              <button type="submit" className="btn" disabled={onboardingBusy}>
+              <button
+                type="submit"
+                className={props.canRetryVerification ? 'btn sec' : 'btn'}
+                disabled={onboardingBusy}
+              >
                 {onboardingBusy
                   ? 'Waiting for your wallet…'
-                  : // A declined prompt and an unreachable chain both leave the
-                    // user exactly where they started, so the button says so
-                    // rather than repeating an offer they just turned down.
-                    onboardingRetryableV1(props.onboardingStatus)
-                    ? 'Try again'
-                    : 'Enable paid evidence'}
+                  : // T71.1 — when a signed permission is waiting to be
+                    // re-checked, this button is the OTHER thing: it opens the
+                    // wallet and asks for a second permission. It stays
+                    // available, because a retry that never succeeds must not
+                    // trap anyone, but it stops calling itself "try again" —
+                    // that is what the check above it does.
+                    props.canRetryVerification
+                    ? 'Sign a new permission instead'
+                    : // A declined prompt and an unreachable chain both leave the
+                      // user exactly where they started, so the button says so
+                      // rather than repeating an offer they just turned down.
+                      onboardingRetryableV1(props.onboardingStatus)
+                      ? 'Try again'
+                      : 'Enable paid evidence'}
               </button>
             </div>
           </form>
         )}
 
-        {props.onboardingDetail && (
-          <p className={onboardingWarn ? 'note warn' : 'note'}>{props.onboardingDetail}</p>
-        )}
 
         <div className="ctarow">
           {status.action === 'create_permission' && !props.onEnablePaidEvidence &&

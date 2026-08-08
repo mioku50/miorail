@@ -12,6 +12,7 @@ import {
   spendPermissionRouteRuntime,
 } from './routeIntelligence.js';
 import { PermissionStatusUnavailableError } from '../lib/spendPermissionVerifier.js';
+import { logger } from '@mioagent/utils';
 
 // ---------------------------------------------------------------------------
 // T71 — the onboarding flow, tested from the outside.
@@ -556,5 +557,95 @@ describe('T71.1 — a permission as @base-org/account emits it', () => {
     assert.equal(response.body.outcome, 'activated');
     assert.equal(response.body.budget.status, 'active');
     assert.equal(response.body.budget.linkedSpendPermissionId, DERIVED_HASH);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T71.1 §1 — the confirmation says what happened, and nothing else.
+//
+// A non-activated confirmation answers 200 because it is a typed outcome, not
+// an error. That made it invisible in production: the access log said `200`,
+// the client said "Not configured", and the reason the chain gave existed
+// nowhere. Three fields fix that. A fourth would start leaking the thing this
+// endpoint exists to protect.
+// ---------------------------------------------------------------------------
+
+describe('T71.1 — the confirmation is logged, safely', () => {
+  const SECRETS = [
+    `0x${'cd'.repeat(65)}`, // the signature
+    `0x${'7f'.repeat(32)}`, // the salt
+    DERIVED_HASH, // the permission hash
+    WALLET, // the wallet
+    SPENDER,
+  ];
+
+  function captureLogs(): { entries: { message: string; meta?: Record<string, unknown> }[]; restore: () => void } {
+    const entries: { message: string; meta?: Record<string, unknown> }[] = [];
+    const original = logger.info.bind(logger);
+    logger.info = (message: string, meta?: Record<string, unknown>) => {
+      entries.push({ message, meta });
+    };
+    return { entries, restore: () => { logger.info = original; } };
+  }
+
+  test('a refusal is logged with outcome, refusal and retryable', async () => {
+    onchain = { ...onchain, isApprovedOnchain: false };
+    const capture = captureLogs();
+    try {
+      const response = await confirm(confirmBody({ salt: `0x${'7f'.repeat(32)}` }));
+      assert.equal(response.status, 200);
+      assert.equal(response.body.outcome, 'refused');
+      const entry = capture.entries.find((line) => line.message === 'Spend permission confirmation');
+      assert.ok(entry, 'the confirmation was logged');
+      assert.deepEqual(entry?.meta, {
+        outcome: 'refused',
+        refusal: 'not_approved_onchain',
+        retryable: true,
+      });
+    } finally {
+      capture.restore();
+    }
+  });
+
+  test('an activation is logged too, so a silent 201 is not the only record', async () => {
+    const capture = captureLogs();
+    try {
+      const response = await confirm(confirmBody({ salt: `0x${'7f'.repeat(32)}` }));
+      assert.equal(response.status, 201);
+      const entry = capture.entries.find((line) => line.message === 'Spend permission confirmation');
+      assert.deepEqual(entry?.meta, { outcome: 'activated', refusal: null, retryable: false });
+    } finally {
+      capture.restore();
+    }
+  });
+
+  test('the log never carries the permission, the signature, the salt, the hash or the wallet', async () => {
+    onchain = { ...onchain, isApprovedOnchain: false };
+    const capture = captureLogs();
+    try {
+      await confirm(confirmBody({ salt: `0x${'7f'.repeat(32)}` }));
+      const serialised = JSON.stringify(capture.entries);
+      for (const secret of SECRETS) {
+        assert.ok(!serialised.includes(secret), `the log leaked ${secret.slice(0, 12)}…`);
+      }
+      // And nothing beyond the three fields, whatever else gets added later.
+      const entry = capture.entries.find((line) => line.message === 'Spend permission confirmation');
+      assert.deepEqual(Object.keys(entry?.meta ?? {}).sort(), ['outcome', 'refusal', 'retryable']);
+    } finally {
+      capture.restore();
+    }
+  });
+
+  test('an unreachable chain is logged as retryable, not as a refusal', async () => {
+    statusThrows = true;
+    const capture = captureLogs();
+    try {
+      const response = await confirm(confirmBody({ salt: `0x${'7f'.repeat(32)}` }));
+      assert.equal(response.body.outcome, 'verification_unavailable');
+      const entry = capture.entries.find((line) => line.message === 'Spend permission confirmation');
+      assert.deepEqual(entry?.meta, { outcome: 'verification_unavailable', refusal: null, retryable: true });
+    } finally {
+      capture.restore();
+    }
   });
 });

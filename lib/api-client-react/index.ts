@@ -2025,6 +2025,20 @@ export function useConfirmSpendPermission(
       return apiSpec.ConfirmSpendPermissionResponseV1Schema.parse(response);
     },
     onSuccess: (data, variables, context, mutCtx) => {
+      // T71.1 §5 — write the budget the server just returned BEFORE asking for
+      // it again.
+      //
+      // A first activation answers 201 with the budget in the body. Invalidating
+      // alone left a window where the query still held `{ budget: null }`, and
+      // the panel renders that window as "Not configured" — the same words it
+      // shows a user who has never granted anything. Priming the cache closes
+      // the window; the refetch that follows is what keeps the value honest.
+      //
+      // Only on `activated`. A refusal carries `budget: null`, and writing that
+      // would erase a budget the user already had.
+      if (data.outcome === 'activated' && data.budget) {
+        queryClient.setQueryData(['intelligence-budget'], { budget: data.budget });
+      }
       queryClient.invalidateQueries({ queryKey: ['intelligence-budget'] });
       queryClient.invalidateQueries({ queryKey: ['status'] });
       if (options?.onSuccess) {

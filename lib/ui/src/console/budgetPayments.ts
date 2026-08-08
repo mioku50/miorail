@@ -319,6 +319,92 @@ export function onboardingRetryableV1(status: SpendPermissionOnboardingStatusV1 
   return status === 'wallet_rejected' || status === 'verification_retryable' || status === 'failed';
 }
 
+// ---------------------------------------------------------------------------
+// T71.1 §2 — the outcome has to be visible, and it has to win.
+//
+// The panel's own status comes from the budget, and no budget means
+// "Not configured". That is the right answer for someone who has never granted
+// anything, and exactly the wrong one for someone whose wallet signed thirty
+// seconds ago and whose confirmation was refused: it describes their situation
+// as absence, offers them the button they just pressed, and says nothing about
+// what the server actually replied.
+//
+// So when the wallet flow has reached an outcome, the outcome is what the header
+// says. `null` means the flow has nothing to add and the budget's own state
+// stands.
+// ---------------------------------------------------------------------------
+
+export interface SpendPermissionOutcomeViewV1 {
+  /** Replaces the panel's header label. */
+  label: string;
+  /** Used only when the flow has no server sentence of its own. */
+  fallbackDetail: string;
+  tone: 'warn' | 'info';
+  /** Whether a signed permission can be re-checked without a wallet. */
+  offerRetryVerification: boolean;
+}
+
+export function spendPermissionOutcomeViewV1(
+  status: SpendPermissionOnboardingStatusV1 | undefined,
+): SpendPermissionOutcomeViewV1 | null {
+  switch (status) {
+    case 'preparing':
+    case 'awaiting_wallet':
+      return {
+        label: 'Waiting for your wallet',
+        fallbackDetail: 'Approve the spending permission in your Base Account. Miorail cannot sign it for you.',
+        tone: 'info',
+        offerRetryVerification: false,
+      };
+    case 'verifying':
+      return {
+        label: 'Checking on Base',
+        fallbackDetail: 'Your wallet signed. Miorail is checking the permission on Base.',
+        tone: 'info',
+        offerRetryVerification: false,
+      };
+    case 'verification_retryable':
+      return {
+        label: 'Not confirmed yet',
+        // Two facts, in this order: the permission exists, and no money moved.
+        // Either one alone is alarming.
+        fallbackDetail:
+          'Your permission is signed, but Base has not confirmed it yet. Nothing has been charged. Check again in a moment.',
+        tone: 'warn',
+        offerRetryVerification: true,
+      };
+    case 'verification_failed':
+      return {
+        label: 'Verification failed',
+        fallbackDetail:
+          'Miorail checked this permission on Base and would not accept it, so no budget was created and nothing was charged.',
+        tone: 'warn',
+        // Signing the same thing again produces the same thing.
+        offerRetryVerification: false,
+      };
+    case 'wallet_rejected':
+      return {
+        label: 'Not approved',
+        fallbackDetail:
+          'You declined the permission, so nothing was created and nothing was charged. Free route comparison is unaffected.',
+        tone: 'info',
+        offerRetryVerification: false,
+      };
+    case 'failed':
+      return {
+        label: 'Could not start',
+        fallbackDetail:
+          'Miorail could not start the permission flow, so your wallet was never asked. Nothing was created.',
+        tone: 'warn',
+        offerRetryVerification: false,
+      };
+    // `active` deliberately falls through: once a budget exists, the budget is
+    // the thing to describe, and it says more than the flow ever could.
+    default:
+      return null;
+  }
+}
+
 /**
  * The consent text shown before a permission is created.
  *
