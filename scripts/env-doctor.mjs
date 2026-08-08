@@ -221,9 +221,22 @@ if (INTERFACE_ENV_PATH && existsSync(INTERFACE_ENV_PATH)) {
 
 const BOOLEAN_FLAG_PREFIXES = ['MIORAIL_', 'MAINNET_EXECUTION_ENABLED'];
 
+// Not every MIORAIL_ variable is a flag. Timeouts, TTLs, prices, provider ids
+// and allowlists share the prefix, and treating them as booleans made this
+// check report eight ERRORS against a perfectly good `.env` — which is worse
+// than not checking at all, because an operator who sees `env-doctor: FAILED`
+// on a correct file learns to stop reading it. The suffixes below are the
+// shapes a non-flag takes; anything else under the prefix is a flag.
+const NON_FLAG_SUFFIXES = ['_MS', '_SECONDS', '_USDC', '_BPS', '_ID', '_URL', '_ALLOWLIST', '_BLOCK', '_KEY'];
+
+function looksLikeBooleanFlagV1(key) {
+  if (!BOOLEAN_FLAG_PREFIXES.some((prefix) => key.startsWith(prefix))) return false;
+  return !NON_FLAG_SUFFIXES.some((suffix) => key.endsWith(suffix));
+}
+
 console.log('Checking boolean flag values:');
 const malformedFlags = Object.entries(vars).filter(([key, value]) => {
-  if (!BOOLEAN_FLAG_PREFIXES.some((prefix) => key.startsWith(prefix))) return false;
+  if (!looksLikeBooleanFlagV1(key)) return false;
   if (value === '') return false;
   return value !== 'true' && value !== 'false';
 });
