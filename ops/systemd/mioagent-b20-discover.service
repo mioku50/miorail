@@ -28,17 +28,19 @@ WorkingDirectory=/home/ubuntu/mioagent
 EnvironmentFile=/home/ubuntu/mioagent/.env
 Environment=NODE_ENV=production
 Environment=PATH=/home/ubuntu/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin
-# --max-range sizes ONE pass, not the safety limit — the pass still stops at
-# confirmed head, still commits the cursor and the launches together, and still
-# refuses to advance past what it read. 10,000 blocks at a 500-block log window
-# is 20 `eth_getLogs` calls per pass, comfortably inside a dedicated endpoint's
-# limits and roughly twelve times the default catch-up rate. Caught up it costs
-# nothing: there is simply never that much chain to cover.
+# Deliberately no --max-range override.
 #
-# B20_DISCOVER_LOG_WINDOW lives in .env because the right value is a property of
-# the endpoint, not of this unit. The default of 10 is the floor that works on
-# Alchemy's free tier.
-ExecStart=/home/ubuntu/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/b20_discover_worker.ts --max-range=10000
+# It was tried: 10,000 blocks a pass with a 500- then 100-block log window, to
+# close a 250,000-block backlog roughly twelve times faster. The configured
+# endpoint refused both, and the worker did exactly the right thing — reported
+# `endpoint_unavailable`, left the cursor where it was, and backed off 30s then
+# 60s without hammering. The defaults (800 blocks a pass, a 10-block log window)
+# are the ones this endpoint actually serves.
+#
+# The knobs remain: `--max-range=N` here and `B20_DISCOVER_LOG_WINDOW` in .env,
+# because the right values are a property of the endpoint and not of this file.
+# Raise them together, and watch the journal before walking away.
+ExecStart=/home/ubuntu/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/b20_discover_worker.ts
 
 # SIGTERM stops the loop after the pass in flight, so a restart never interrupts
 # a commit. 90s is comfortably longer than one bounded pass.
