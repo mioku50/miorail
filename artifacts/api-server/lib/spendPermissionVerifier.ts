@@ -1,5 +1,5 @@
 import { getPermissionStatus } from '@base-org/account/spend-permission/node';
-import { createPublicClient, http } from 'viem';
+import { BaseError, ContractFunctionRevertedError, createPublicClient, http } from 'viem';
 import { base } from 'viem/chains';
 import { canonicalUsdcForBaseChain } from '@mioagent/security/baseGuards';
 import type { SpendPermissionClaimV1, OnchainPermissionStatusV1 } from '@mioagent/intelligence-budget';
@@ -50,32 +50,55 @@ export class PermissionStatusUnavailableError extends Error {
  * address this hash is computed by is part of what the check means. */
 const SPEND_PERMISSION_MANAGER_V1 = '0xf85210B21cC50302F477BA56686d2019dC9b67Ad' as const;
 
-/** Only `getHash` — the narrowest ABI that answers the question. */
-const SPEND_PERMISSION_MANAGER_GET_HASH_ABI_V1 = [
+const SPEND_PERMISSION_TUPLE_V1 = {
+  name: 'spendPermission',
+  type: 'tuple',
+  components: [
+    { name: 'account', type: 'address' },
+    { name: 'spender', type: 'address' },
+    { name: 'token', type: 'address' },
+    { name: 'allowance', type: 'uint160' },
+    { name: 'period', type: 'uint48' },
+    { name: 'start', type: 'uint48' },
+    { name: 'end', type: 'uint48' },
+    { name: 'salt', type: 'uint256' },
+    { name: 'extraData', type: 'bytes' },
+  ],
+} as const;
+
+/** The narrowest ABI that answers the two questions this module asks. */
+const SPEND_PERMISSION_MANAGER_ABI_V1 = [
   {
     type: 'function',
     name: 'getHash',
     stateMutability: 'view',
-    inputs: [
-      {
-        name: 'spendPermission',
-        type: 'tuple',
-        components: [
-          { name: 'account', type: 'address' },
-          { name: 'spender', type: 'address' },
-          { name: 'token', type: 'address' },
-          { name: 'allowance', type: 'uint160' },
-          { name: 'period', type: 'uint48' },
-          { name: 'start', type: 'uint48' },
-          { name: 'end', type: 'uint48' },
-          { name: 'salt', type: 'uint256' },
-          { name: 'extraData', type: 'bytes' },
-        ],
-      },
-    ],
+    inputs: [SPEND_PERMISSION_TUPLE_V1],
     outputs: [{ name: '', type: 'bytes32' }],
   },
+  {
+    type: 'function',
+    name: 'approveWithSignature',
+    stateMutability: 'nonpayable',
+    inputs: [SPEND_PERMISSION_TUPLE_V1, { name: 'signature', type: 'bytes' }],
+    outputs: [],
+  },
 ] as const;
+
+/** The permission as the contract's own ABI wants it. One place, so `getHash`
+ * and the signature check can never disagree about what was asked. */
+function contractArgs(claim: SpendPermissionClaimV1) {
+  return {
+    account: claim.permission.account as `0x${string}`,
+    spender: claim.permission.spender as `0x${string}`,
+    token: claim.permission.token as `0x${string}`,
+    allowance: BigInt(claim.permission.allowance),
+    period: claim.permission.period,
+    start: claim.permission.start,
+    end: claim.permission.end,
+    salt: BigInt(claim.permission.salt),
+    extraData: claim.permission.extraData as `0x${string}`,
+  } as const;
+}
 
 /** The SDK's own permission shape. Built from the claim rather than passed
  * through, so a field the client added cannot ride along into the SDK. */
@@ -96,6 +119,48 @@ function sdkPermission(claim: SpendPermissionClaimV1) {
       extraData: claim.permission.extraData,
     },
   };
+}
+
+/**
+ * T71-LIVE-2 §3 — does the contract accept this signature?
+ *
+ * `isApprovedOnchain` cannot answer that. It reads storage, and storage is
+ * written by `approveWithSignature`, which nobody has sent yet — the wallet
+ * signs and stops, and the Base Account SDK bundles the approve into the first
+ * spend. So the old gate was waiting for a transaction that only the blocked
+ * charge would ever have made.
+ *
+ * This asks the real question by SIMULATING that exact call. It is `eth_call`:
+ * no transaction, no gas, no broadcast, no state change — the server's
+ * never-signs boundary is untouched. What comes back is the contract's own
+ * verdict on the account's signature over these exact fields, including the
+ * ERC-6492 path that a Base Account which has not been deployed yet needs.
+ *
+ * A revert is an answer and is returned as `false`. Anything else is the
+ * network failing to answer, which must never be reported to a user as their
+ * wallet having done something wrong.
+ */
+async function signatureAcceptedV1(claim: SpendPermissionClaimV1, rpcUrl: string): Promise<boolean> {
+  const client = createPublicClient({ chain: base, transport: http(rpcUrl) });
+  try {
+    await client.simulateContract({
+      address: SPEND_PERMISSION_MANAGER_V1,
+      abi: SPEND_PERMISSION_MANAGER_ABI_V1,
+      functionName: 'approveWithSignature',
+      // No `account`: approveWithSignature is permissionless by design — the
+      // authority is the signature, not the sender — and passing the spender
+      // would imply otherwise.
+      args: [contractArgs(claim), claim.signature as `0x${string}`],
+    });
+    return true;
+  } catch (error) {
+    if (error instanceof BaseError && error.walk((e) => e instanceof ContractFunctionRevertedError)) {
+      return false;
+    }
+    // Never the cause: an RPC error carries the endpoint, and the endpoint
+    // carries the key.
+    throw new PermissionStatusUnavailableError();
+  }
 }
 
 export function createSpendPermissionVerifierV1(
@@ -119,21 +184,9 @@ export function createSpendPermissionVerifierV1(
         const client = createPublicClient({ chain: base, transport: http(rpcUrl) });
         return await client.readContract({
           address: SPEND_PERMISSION_MANAGER_V1,
-          abi: SPEND_PERMISSION_MANAGER_GET_HASH_ABI_V1,
+          abi: SPEND_PERMISSION_MANAGER_ABI_V1,
           functionName: 'getHash',
-          args: [
-            {
-              account: claim.permission.account as `0x${string}`,
-              spender: claim.permission.spender as `0x${string}`,
-              token: claim.permission.token as `0x${string}`,
-              allowance: BigInt(claim.permission.allowance),
-              period: claim.permission.period,
-              start: claim.permission.start,
-              end: claim.permission.end,
-              salt: BigInt(claim.permission.salt),
-              extraData: claim.permission.extraData as `0x${string}`,
-            },
-          ],
+          args: [contractArgs(claim)],
         });
       } catch {
         // Never the cause: an RPC error carries the endpoint, and the endpoint
@@ -148,9 +201,16 @@ export function createSpendPermissionVerifierV1(
       if (!rpcUrl) throw new PermissionStatusUnavailableError();
       try {
         const result = await getPermissionStatus(sdkPermission(claim) as never, { rpcUrl });
+        const isApprovedOnchain = result.isApprovedOnchain === true;
         return {
           isActive: result.isActive === true,
-          isApprovedOnchain: result.isApprovedOnchain === true,
+          isApprovedOnchain,
+          // Already in storage is the stronger fact, and asking again would
+          // depend on `approveWithSignature` being idempotent — which is not a
+          // guarantee worth relying on when the answer is already known.
+          signatureAcceptedOnchain: isApprovedOnchain
+            ? true
+            : await signatureAcceptedV1(claim, rpcUrl),
           isRevoked: result.isRevoked === true,
           isExpired: result.isExpired === true,
           remainingSpendAtomic: (result.remainingSpend ?? BigInt(0)).toString(),

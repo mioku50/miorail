@@ -119,12 +119,21 @@ export type ConfirmOutcomeV1 =
 /**
  * The refusals worth trying again.
  *
- * `not_approved_onchain` is the one that matters: a wallet can return a signed
- * permission a moment before the chain has it, and telling that user their
- * wallet did something wrong would be false. Everything else is a statement
- * about what was signed, and signing it again changes nothing.
+ * `not_approved_onchain` used to head this list, on the theory that a wallet
+ * can return a signed permission a moment before the chain has it. T71-LIVE-2
+ * showed that theory was wrong and expensive: the chain never has a signed
+ * permission, because signing sends no transaction. The retry loop it justified
+ * could not have succeeded on its first attempt or its thousandth, and it spent
+ * ten seconds telling real users to wait for something that was never coming.
+ *
+ * Now the gate is the contract's verdict on the signature, and a verdict does
+ * not change while you look at it. Every refusal here is a statement about what
+ * was signed; re-reading it changes nothing.
+ *
+ * `permission_inactive` stays: it is derived from a clock comparison, and a
+ * permission whose start is seconds away really does become active on its own.
  */
-const RETRYABLE_REFUSALS_V1: readonly PermissionRefusalV1[] = ['not_approved_onchain', 'permission_inactive'];
+const RETRYABLE_REFUSALS_V1: readonly PermissionRefusalV1[] = ['permission_inactive'];
 
 export function refusalIsRetryableV1(refusal: PermissionRefusalV1): boolean {
   return RETRYABLE_REFUSALS_V1.includes(refusal);

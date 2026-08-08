@@ -72,7 +72,13 @@ function expected(overrides: Partial<ExpectedPermissionBindingV1> = {}): Expecte
 function status(overrides: Partial<OnchainPermissionStatusV1> = {}): OnchainPermissionStatusV1 {
   return {
     isActive: true,
-    isApprovedOnchain: true,
+    // The shape a real Base Account grant arrives in: signed and acceptable to
+    // the contract, but not yet written to its storage — the approve is bundled
+    // into the first spend. Fixtures that said `isApprovedOnchain: true` here
+    // described a state no wallet has ever produced at confirm time, which is
+    // exactly why the impossible gate survived review.
+    isApprovedOnchain: false,
+    signatureAcceptedOnchain: true,
     isRevoked: false,
     isExpired: false,
     remainingSpendAtomic: MONTHLY_ATOMIC,
@@ -245,13 +251,56 @@ describe('the limits the user chose must be limits the chain will honour', () =>
 });
 
 describe('§10 — a signature in a POST body is not an on-chain permission', () => {
-  test('a permission the chain has never seen creates nothing', () => {
+  test('a signature the contract will not accept creates nothing', () => {
     // Without this, anyone who can reach the endpoint mints themselves a budget
     // out of well-formed JSON. This is the check that makes "no DB-only fake
     // permission" a property rather than a promise.
     assert.equal(
-      refusalOf(verifyPermissionStatusV1({ status: status({ isApprovedOnchain: false }), periodLimitAtomic: MONTHLY_ATOMIC })),
+      refusalOf(
+        verifyPermissionStatusV1({
+          status: status({ isApprovedOnchain: false, signatureAcceptedOnchain: false }),
+          periodLimitAtomic: MONTHLY_ATOMIC,
+        }),
+      ),
       'not_approved_onchain',
+    );
+  });
+
+  // T71-LIVE-2 — the regression that cost a working feature. Every real grant
+  // looks like this, and the old gate refused every one of them.
+  test('a freshly signed permission the chain has not stored yet is accepted', () => {
+    assert.deepEqual(
+      verifyPermissionStatusV1({
+        status: status({ isApprovedOnchain: false, signatureAcceptedOnchain: true }),
+        periodLimitAtomic: MONTHLY_ATOMIC,
+      }),
+      { ok: true },
+    );
+  });
+
+  test('a permission already in the contract storage is still accepted', () => {
+    // The state after the first charge has bundled its approve. Both paths must
+    // verify, or the second month refuses what the first allowed.
+    assert.deepEqual(
+      verifyPermissionStatusV1({
+        status: status({ isApprovedOnchain: true, signatureAcceptedOnchain: true }),
+        periodLimitAtomic: MONTHLY_ATOMIC,
+      }),
+      { ok: true },
+    );
+  });
+
+  test('revoked wins over an acceptable signature', () => {
+    // A revoked permission can still carry a valid signature — the signature is
+    // not what was withdrawn. Order matters, and the user must be told which.
+    assert.equal(
+      refusalOf(
+        verifyPermissionStatusV1({
+          status: status({ isRevoked: true, signatureAcceptedOnchain: true }),
+          periodLimitAtomic: MONTHLY_ATOMIC,
+        }),
+      ),
+      'permission_revoked',
     );
   });
 

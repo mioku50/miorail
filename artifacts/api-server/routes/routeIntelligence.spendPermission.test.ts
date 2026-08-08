@@ -47,7 +47,10 @@ let permissions: InMemorySpendPermissionRepository;
 /** What the stubbed chain says. Each test bends exactly one thing. */
 let onchain = {
   isActive: true,
-  isApprovedOnchain: true,
+  // A real Base Account grant: signed, acceptable to the contract, not yet in
+  // its storage. The approve rides along with the first spend.
+  isApprovedOnchain: false,
+  signatureAcceptedOnchain: true,
   isRevoked: false,
   isExpired: false,
   remainingSpendAtomic: '3000000',
@@ -114,7 +117,8 @@ beforeEach(() => {
   permissions = new InMemorySpendPermissionRepository();
   onchain = {
     isActive: true,
-    isApprovedOnchain: true,
+    isApprovedOnchain: false,
+    signatureAcceptedOnchain: true,
     isRevoked: false,
     isExpired: false,
     remainingSpendAtomic: '3000000',
@@ -280,13 +284,14 @@ describe('T71 — a lying client gets a refusal, never a budget', () => {
     await assertNothingStored();
   });
 
-  test('a permission the chain has never seen is refused, and is retryable', async () => {
-    onchain.isApprovedOnchain = false;
+  test('a signature the contract rejects is refused, and is NOT retryable', async () => {
+    onchain.signatureAcceptedOnchain = false;
     const response = await confirm(confirmBody());
     assert.equal(response.body.outcome, 'refused');
     assert.equal(response.body.refusal, 'not_approved_onchain');
-    // A wallet can return a signed permission a moment before the chain has it.
-    assert.equal(response.body.retryable, true);
+    // T71-LIVE-2: this used to be retryable, and the retry could never succeed.
+    // A contract's verdict on a signature does not change while you wait.
+    assert.equal(response.body.retryable, false);
     await assertNothingStored();
   });
 
@@ -589,7 +594,7 @@ describe('T71.1 — the confirmation is logged, safely', () => {
   }
 
   test('a refusal is logged with outcome, refusal and retryable', async () => {
-    onchain = { ...onchain, isApprovedOnchain: false };
+    onchain = { ...onchain, signatureAcceptedOnchain: false };
     const capture = captureLogs();
     try {
       const response = await confirm(confirmBody({ salt: `0x${'7f'.repeat(32)}` }));
@@ -600,7 +605,7 @@ describe('T71.1 — the confirmation is logged, safely', () => {
       assert.deepEqual(entry?.meta, {
         outcome: 'refused',
         refusal: 'not_approved_onchain',
-        retryable: true,
+        retryable: false,
       });
     } finally {
       capture.restore();
@@ -620,7 +625,7 @@ describe('T71.1 — the confirmation is logged, safely', () => {
   });
 
   test('the log never carries the permission, the signature, the salt, the hash or the wallet', async () => {
-    onchain = { ...onchain, isApprovedOnchain: false };
+    onchain = { ...onchain, signatureAcceptedOnchain: false };
     const capture = captureLogs();
     try {
       await confirm(confirmBody({ salt: `0x${'7f'.repeat(32)}` }));

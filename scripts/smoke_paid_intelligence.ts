@@ -231,7 +231,8 @@ async function verifyBindingRefusalV1(preflight: PaidIntelligencePreflightV1): P
     derivedHash: async () => `0x${'ab'.repeat(32)}`,
     status: async () => ({
       isActive: true,
-      isApprovedOnchain: true,
+      isApprovedOnchain: false,
+      signatureAcceptedOnchain: true,
       isRevoked: false,
       isExpired: false,
       remainingSpendAtomic: monthlyAtomic,

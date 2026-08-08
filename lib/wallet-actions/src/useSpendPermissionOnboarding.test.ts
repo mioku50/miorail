@@ -143,7 +143,7 @@ function harness(confirmResults: ConfirmResultV1[]) {
 }
 
 describe('T71.1 — a permission that is not confirmed yet', () => {
-  test('the real case: not_approved_onchain, then activated, one wallet prompt', async () => {
+  test('a retryable outcome, then activated, on one wallet prompt', async () => {
     const h = harness([NOT_APPROVED, ACTIVATED]);
     const log = recorder();
     await runSpendPermissionOnboardingV1(h.deps, LIMITS, log.emit);

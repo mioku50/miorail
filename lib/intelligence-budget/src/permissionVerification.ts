@@ -61,7 +61,26 @@ export interface ExpectedPermissionBindingV1 {
 /** The on-chain answer, read by the caller through the SDK. */
 export interface OnchainPermissionStatusV1 {
   isActive: boolean;
+  /**
+   * Whether SpendPermissionManager has the permission in STORAGE.
+   *
+   * T71-LIVE-2: this is false for every freshly signed permission and stays
+   * false until somebody submits `approveWithSignature`. `requestSpendPermission`
+   * only signs — it sends no transaction — and the Base Account SDK's own
+   * `prepareSpendCallData` treats `isApprovedOnchain === false` as "prepend the
+   * approve call to the first spend", not as an error. So this is a fact worth
+   * recording and NOT a precondition for activation.
+   */
   isApprovedOnchain: boolean;
+  /**
+   * Whether the contract accepts the signature for this exact permission.
+   *
+   * This is the check that replaces `isApprovedOnchain` as the gate. It is a
+   * simulated `approveWithSignature` — the same call the first charge will
+   * make — so a true here means the chain has validated the account's signature
+   * over these exact fields, and the first spend's approve step will succeed.
+   */
+  signatureAcceptedOnchain: boolean;
   isRevoked: boolean;
   isExpired: boolean;
   /** Atomic string. What is left in the current period. */
@@ -160,12 +179,26 @@ export function verifyPermissionBindingV1(input: {
 }
 
 /**
- * Stage two: has the chain actually seen it?
+ * Stage two: will the chain accept it?
  *
- * A signature in a POST body is a claim; `isApprovedOnchain` is the answer.
- * This is the check that makes §10's "no DB-only fake permission" structural
+ * A signature in a POST body is a claim, and this is where the chain answers.
+ * It is the check that makes §10's "no DB-only fake permission" structural
  * rather than a promise — without it, anyone who can reach the endpoint can
  * mint themselves a budget by inventing well-formed JSON.
+ *
+ * T71-LIVE-2 changed WHICH on-chain answer decides that, and the old one was
+ * unachievable. Requiring `isApprovedOnchain` required a permission to already
+ * be in SpendPermissionManager's storage — but nothing puts it there. The
+ * wallet only signs; the approve transaction is bundled into the FIRST SPEND,
+ * by design, by the spender. So the gate demanded a state that could only exist
+ * after the very charge the gate was blocking. Every real Base Account grant
+ * refused, forever, and no amount of retrying could have changed it.
+ *
+ * `signatureAcceptedOnchain` asks the question the old gate meant to ask: does
+ * SpendPermissionManager accept THIS signature over THESE fields? It is decided
+ * by the contract, over a permission whose identity was already pinned by the
+ * contract's own `getHash` in stage one, so the security property is intact —
+ * a client that invents JSON produces a signature the chain rejects.
  */
 export function verifyPermissionStatusV1(input: {
   status: OnchainPermissionStatusV1;
@@ -174,7 +207,11 @@ export function verifyPermissionStatusV1(input: {
   const { status } = input;
   if (status.isRevoked) return { ok: false, refusal: 'permission_revoked' };
   if (status.isExpired) return { ok: false, refusal: 'already_expired' };
-  if (!status.isApprovedOnchain) return { ok: false, refusal: 'not_approved_onchain' };
+  // Either is sufficient, and they are the two ways a permission can be real:
+  // already in storage, or carrying a signature the contract will honour.
+  if (!status.isApprovedOnchain && !status.signatureAcceptedOnchain) {
+    return { ok: false, refusal: 'not_approved_onchain' };
+  }
   if (!status.isActive) return { ok: false, refusal: 'permission_inactive' };
   if (!ATOMIC_V1.test(status.remainingSpendAtomic)) return { ok: false, refusal: 'malformed_permission' };
   if (BigInt(status.remainingSpendAtomic) < BigInt(input.periodLimitAtomic)) {
@@ -224,8 +261,10 @@ export const PERMISSION_REFUSAL_COPY_V1: Readonly<Record<PermissionRefusalV1, st
     'That permission renews faster than a monthly budget can track. Nothing was stored.',
   not_started: 'That permission does not start until later, so it cannot be activated yet.',
   already_expired: 'That permission has already expired. Granting a new one is the fix.',
+  // No longer "not yet" — the contract was asked to accept this signature and
+  // declined. Waiting cannot change that, so the copy must not imply it can.
   not_approved_onchain:
-    'The chain has no record of this permission yet. It may still be confirming — nothing was stored, and free route comparison is unaffected.',
+    'Base would not accept the signature on this permission, so no budget was created. Granting a new permission is the fix. Free route comparison is unaffected.',
   permission_revoked: 'That permission has been revoked, so no budget was created.',
   permission_inactive: 'That permission is not active on-chain, so no budget was created.',
   remaining_below_limit:
