@@ -663,4 +663,89 @@ export function describeB20ObservationRepositoryV1(
     });
   });
 
+  // -------------------------------------------------------------------------
+  // T73-LIVE-DB §10 — a launch nobody has measured yet.
+  //
+  // The feed reads `l.<cols>, o.*` across a LEFT JOIN. The observation row
+  // shares `token_address` and `launch_id` with the launch, a driver flattens
+  // each row into one object, and the LAST duplicate wins — so with no
+  // observation, `o.*` is all NULLs and the launch's own address was overwritten
+  // with one. `String(null)` is the four-character string "null", which fails
+  // the address regex and 500s the entire page.
+  //
+  // It hid on Neon because every launch in that window had an observation, and
+  // the duplicate then carried the same value. It surfaced on the first
+  // production database where discovery had run ahead of measurement — which is
+  // the normal state of a catching-up pipeline.
+  // -------------------------------------------------------------------------
+  describe(`${name}: a launch with no observation keeps its own identity`, () => {
+    test('the token address is the launch address, not "null"', async () => {
+      const { repository } = await seeded();
+      const page = await repository.listFeed({
+        limit: 10,
+        cursor: null,
+        maxLaunchAgeMs: 30 * 24 * 60 * 60 * 1000,
+        now: '2026-08-04T12:00:00.000Z',
+      });
+      assert.equal(page.rows.length, 1);
+      const [row] = page.rows;
+      assert.equal(row!.observation, null, 'nothing has measured this launch');
+      assert.equal(row!.launch.tokenAddress, TOKEN);
+      assert.match(row!.launch.tokenAddress, /^0x[0-9a-f]{40}$/);
+    });
+
+    test('every launch field survives, not only the address', async () => {
+      const { repository } = await seeded();
+      const page = await repository.listFeed({
+        limit: 10,
+        cursor: null,
+        maxLaunchAgeMs: 30 * 24 * 60 * 60 * 1000,
+        now: '2026-08-04T12:00:00.000Z',
+      });
+      const launch = page.rows[0]!.launch;
+      // Each of these is a column that `o.*` could shadow the day an
+      // observation gains a column of the same name.
+      assert.notEqual(launch.id, 'null');
+      assert.match(launch.blockNumber, /^[0-9]+$/);
+      assert.match(launch.transactionHash, /^0x[0-9a-f]{64}$/);
+      assert.equal(typeof launch.detectedAt, 'string');
+      assert.ok(!Number.isNaN(Date.parse(launch.detectedAt)));
+      assert.equal(launch.canonical, true);
+      assert.ok(launch.name.length > 0 && launch.name !== 'null');
+      assert.ok(launch.symbol.length > 0 && launch.symbol !== 'null');
+    });
+
+    test('the page cursor is built from a real launch id', async () => {
+      // A cursor carrying "null" paginates to nowhere, silently.
+      const { repository } = await seeded();
+      const page = await repository.listFeed({
+        limit: 1,
+        cursor: null,
+        maxLaunchAgeMs: 30 * 24 * 60 * 60 * 1000,
+        now: '2026-08-04T12:00:00.000Z',
+      });
+      if (page.nextCursor !== null) {
+        assert.ok(!page.nextCursor.includes('null'));
+      }
+      assert.notEqual(page.rows[0]!.launch.id, 'null');
+    });
+
+    test('an unmeasured launch and a measured one both project correctly', async () => {
+      const { repository } = await seeded();
+      await repository.insertObservation(
+        observationFixtureV1({ measuredAt: T0, staleAfter: '2026-08-04T00:30:00.000Z' }),
+      );
+      const page = await repository.listFeed({
+        limit: 10,
+        cursor: null,
+        maxLaunchAgeMs: 30 * 24 * 60 * 60 * 1000,
+        now: '2026-08-04T12:00:00.000Z',
+      });
+      // Same launch, now measured: the address must be identical either way.
+      assert.equal(page.rows[0]!.launch.tokenAddress, TOKEN);
+      assert.ok(page.rows[0]!.observation !== null);
+      assert.equal(page.rows[0]!.observation!.tokenAddress, TOKEN);
+    });
+  });
+
 }

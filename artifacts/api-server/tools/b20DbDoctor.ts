@@ -235,7 +235,7 @@ async function main(): Promise<void> {
       collectingHistory: false,
       toleranceBps: 300,
       moveLabel: '24h change from Miorail measured quotes',
-      moveNote: 'x',
+      moveNote: 'Measured by Miorail, not quoted from a market feed.',
       serverTime: now.toISOString(),
     });
     record('rails-shaped response parses', true, `${pairs.length} mover pair(s) available`);

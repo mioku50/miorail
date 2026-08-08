@@ -385,9 +385,25 @@ export function createDatabaseB20ObservationRepository(
       // the chain took back is not something a user should be offered.
       const rows = await sql`
         SELECT
-          l.id AS launch_id, l.token_address, l.name, l.symbol, l.variant, l.decimals,
-          l.block_number AS launch_block, l.transaction_hash, l.log_index, l.detected_at,
-             l.block_timestamp, l.canonical,
+          -- EVERY launch column is aliased, and that is load-bearing.
+          --
+          -- o.* expands to the whole observation row, which shares
+          -- token_address and launch_id with the launch. A driver builds one
+          -- flat object per row, so the LAST column of a duplicated name wins,
+          -- and on a LEFT JOIN with no observation o.* is all NULLs. The feed
+          -- therefore served String(null) as a token address: the literal
+          -- four-character string "null", which fails the address regex and
+          -- 500s the whole page.
+          --
+          -- It survived on Neon because every launch there happened to have an
+          -- observation, so the duplicate carried the same value. The first
+          -- unmeasured launch on any driver would have done this.
+          l.id AS launch_row_id, l.token_address AS launch_token_address,
+          l.name AS launch_name, l.symbol AS launch_symbol, l.variant AS launch_variant,
+          l.decimals AS launch_decimals, l.block_number AS launch_block,
+          l.transaction_hash AS launch_transaction_hash, l.log_index AS launch_log_index,
+          l.detected_at AS launch_detected_at, l.block_timestamp AS launch_block_timestamp,
+          l.canonical AS launch_canonical,
           o.*
         FROM b20_launches l
         LEFT JOIN LATERAL (
@@ -436,9 +452,25 @@ export function createDatabaseB20ObservationRepository(
       const versions = [...(input.measurementVersions ?? [B20_MEASUREMENT_VERSION_V1])];
       const rows = await sql`
         SELECT
-          l.id AS launch_id, l.token_address, l.name, l.symbol, l.variant, l.decimals,
-          l.block_number AS launch_block, l.transaction_hash, l.log_index, l.detected_at,
-             l.block_timestamp, l.canonical,
+          -- EVERY launch column is aliased, and that is load-bearing.
+          --
+          -- o.* expands to the whole observation row, which shares
+          -- token_address and launch_id with the launch. A driver builds one
+          -- flat object per row, so the LAST column of a duplicated name wins,
+          -- and on a LEFT JOIN with no observation o.* is all NULLs. The feed
+          -- therefore served String(null) as a token address: the literal
+          -- four-character string "null", which fails the address regex and
+          -- 500s the whole page.
+          --
+          -- It survived on Neon because every launch there happened to have an
+          -- observation, so the duplicate carried the same value. The first
+          -- unmeasured launch on any driver would have done this.
+          l.id AS launch_row_id, l.token_address AS launch_token_address,
+          l.name AS launch_name, l.symbol AS launch_symbol, l.variant AS launch_variant,
+          l.decimals AS launch_decimals, l.block_number AS launch_block,
+          l.transaction_hash AS launch_transaction_hash, l.log_index AS launch_log_index,
+          l.detected_at AS launch_detected_at, l.block_timestamp AS launch_block_timestamp,
+          l.canonical AS launch_canonical,
           o.*
         FROM b20_launches l
         LEFT JOIN LATERAL (
@@ -522,21 +554,27 @@ export function createDatabaseB20ObservationRepository(
 function feedRowV1(row: Record<string, unknown>): B20FeedRowV1 {
   return {
     launch: {
-      id: String(row.launch_id),
-      tokenAddress: String(row.token_address),
-      name: String(row.name),
-      symbol: String(row.symbol),
-      variant: row.variant as 'asset' | 'stablecoin',
-      decimals: row.decimals === null || row.decimals === undefined ? null : Number(row.decimals),
-      blockNumber: String(row.launch_block),
-      transactionHash: String(row.transaction_hash),
-      logIndex: Number(row.log_index),
-      detectedAt: isoV1(row.detected_at),
-      blockTimestamp:
-        row.block_timestamp === null || row.block_timestamp === undefined
+      // Read from the `launch_`-prefixed aliases ONLY. An unprefixed name here
+      // would read the observation's copy, which is NULL for every launch that
+      // has not been measured yet.
+      id: String(row.launch_row_id),
+      tokenAddress: String(row.launch_token_address),
+      name: String(row.launch_name),
+      symbol: String(row.launch_symbol),
+      variant: row.launch_variant as 'asset' | 'stablecoin',
+      decimals:
+        row.launch_decimals === null || row.launch_decimals === undefined
           ? null
-          : isoV1(row.block_timestamp),
-      canonical: Boolean(row.canonical),
+          : Number(row.launch_decimals),
+      blockNumber: String(row.launch_block),
+      transactionHash: String(row.launch_transaction_hash),
+      logIndex: Number(row.launch_log_index),
+      detectedAt: isoV1(row.launch_detected_at),
+      blockTimestamp:
+        row.launch_block_timestamp === null || row.launch_block_timestamp === undefined
+          ? null
+          : isoV1(row.launch_block_timestamp),
+      canonical: Boolean(row.launch_canonical),
     },
     observation: row.state ? rowToObservationV1(row) : null,
   };
