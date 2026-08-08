@@ -21,6 +21,7 @@ import {
 } from '@mioagent/route-outcomes';
 import type { NetResultMetricV1 } from './contracts.js';
 import {
+  OBSERVATION_LOOKAHEAD_MS_V1,
   REQUIRED_EVIDENCE_V1,
   SCORE_CONFIDENCE_V1,
   SWAP_PATH_SCORE_VERSION_V1,
@@ -113,7 +114,7 @@ function freshQuote(set: EvidenceSetV1, nowMs: number): EvidenceRecordV1 | undef
       record.evidenceType === 'quote' &&
       record.status === 'observed' &&
       record.validationStatus === 'valid' &&
-      Date.parse(record.observedAt) <= nowMs &&
+      Date.parse(record.observedAt) <= nowMs + OBSERVATION_LOOKAHEAD_MS_V1 &&
       record.expiresAt !== null &&
       Date.parse(record.expiresAt) > nowMs,
   );
@@ -125,7 +126,7 @@ function freshGas(set: EvidenceSetV1, nowMs: number): EvidenceRecordV1 | undefin
       record.evidenceType === 'gas' &&
       record.status === 'observed' &&
       record.validationStatus === 'valid' &&
-      Date.parse(record.observedAt) <= nowMs &&
+      Date.parse(record.observedAt) <= nowMs + OBSERVATION_LOOKAHEAD_MS_V1 &&
       (record.expiresAt === null || Date.parse(record.expiresAt) > nowMs),
   );
 }
@@ -180,7 +181,7 @@ function metricForCandidate(
       record.freeOrPaid === 'paid' &&
       record.validationStatus === 'valid' &&
       record.status === 'observed' &&
-      Date.parse(record.observedAt) <= nowMs &&
+      Date.parse(record.observedAt) <= nowMs + OBSERVATION_LOOKAHEAD_MS_V1 &&
       (record.expiresAt === null || Date.parse(record.expiresAt) > nowMs),
   );
   if (paid.some((record) => record.cost?.usdValue === null || !record.cost)) {
@@ -265,7 +266,13 @@ function dimension(input: {
       ? {
           observedAt: quote.observedAt,
           expiresAt: quote.expiresAt,
-          ageSeconds: Math.floor((input.now.getTime() - Date.parse(quote.observedAt)) / 1_000),
+          // Clamped at zero. An observation made DURING the run is newer
+          // than `now`, which is the run's own start — that is age zero, not a
+          // negative age, and the contract rightly refuses one.
+          ageSeconds: Math.max(
+            0,
+            Math.floor((input.now.getTime() - Date.parse(quote.observedAt)) / 1_000),
+          ),
           state: 'fresh' as const,
         }
       : null;

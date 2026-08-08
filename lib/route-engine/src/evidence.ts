@@ -13,7 +13,10 @@ import {
   type RouteCandidateV1,
   type RouteIntentV1,
 } from '@mioagent/route-domain';
-import { REQUIRED_EVIDENCE_V1 } from './policy.js';
+import {
+  OBSERVATION_LOOKAHEAD_MS_V1,
+  REQUIRED_EVIDENCE_V1,
+} from './policy.js';
 
 export class RouteEvidenceError extends Error {
   constructor(readonly code: string) {
@@ -46,7 +49,8 @@ function validateRecordLinkage(
   ) {
     throw new RouteEvidenceError('engine_invalid_evidence_linkage');
   }
-  if (Date.parse(record.observedAt) > nowMs) {
+  // Same reference problem as the candidate guard: see OBSERVATION_LOOKAHEAD_MS_V1.
+  if (Date.parse(record.observedAt) > nowMs + OBSERVATION_LOOKAHEAD_MS_V1) {
     throw new RouteEvidenceError('engine_future_evidence_observation');
   }
 }

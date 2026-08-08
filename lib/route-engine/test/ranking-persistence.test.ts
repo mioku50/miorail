@@ -181,3 +181,62 @@ test('with every route unpriced there is still nothing to compare', async () => 
   assert.equal(result.reason, 'insufficient_rankable_candidates');
   assert.equal(result.recommendedCandidateHash, null);
 });
+
+// ---------------------------------------------------------------------------
+// A quote observed DURING the run is fresher than the run, not from the future.
+//
+// `now` is the evaluation's own start, captured before any network call.
+// KyberSwap is the only adapter that passes the provider's own timestamp
+// through — the others fall back to `input.now` and so can never trip this —
+// and with the candidate phase taking five to ten seconds, its honest
+// observation time was always a few seconds past the snapshot. Rejected on
+// every single production run, which left one rankable route and therefore no
+// recommendation, no Route Card and a dead Review button.
+//
+// Diagnosed only once the comparison log named the code: the UI had been
+// reporting it as "invalid schema" for days, which it never was.
+// ---------------------------------------------------------------------------
+
+test('a quote observed seconds after the run started is accepted', async () => {
+  const intent = makeIntent();
+  const seconds = (n: number) => new Date(NOW.getTime() + n * 1000).toISOString();
+  const uniswap = makeCandidate(intent, 'uniswap', { gasUsd: '0.20' });
+  // Exactly the production shape: the provider stamped its own clock, ten
+  // seconds into a run whose `now` was taken before the first HTTP call.
+  const kyber = makeCandidate(intent, 'kyberswap', { gasUsd: '0.80', observedAt: seconds(10) });
+
+  const result = await engine.evaluate({
+    intent, walletAddress: WALLET, requestId: 'observed-during-run', now: NOW,
+    adapters: [quotedAdapter('uniswap', uniswap), quotedAdapter('kyberswap', kyber)],
+  });
+
+  assert.equal(result.candidates.length, 2, 'the provider-stamped quote survived');
+  assert.equal(result.outcome, 'ready');
+  assert.ok(result.recommendedCandidateHash);
+});
+
+test('a quote stamped an hour ahead is still refused', async () => {
+  // The tolerance covers a round trip, not a broken clock. This is what the
+  // guard is actually for: a timestamp that far out makes freshness scoring
+  // meaningless.
+  const intent = makeIntent();
+  const uniswap = makeCandidate(intent, 'uniswap', { gasUsd: '0.20' });
+  const kyber = makeCandidate(intent, 'kyberswap', {
+    gasUsd: '0.80',
+    // Well past the tolerance. The expiry moves with it, so the candidate is
+    // internally consistent and the guard is the only thing refusing it.
+    observedAt: new Date(NOW.getTime() + 60 * 60 * 1000).toISOString(),
+    expiresAt: new Date(NOW.getTime() + 64 * 60 * 1000).toISOString(),
+  });
+
+  const result = await engine.evaluate({
+    intent, walletAddress: WALLET, requestId: 'observed-far-future', now: NOW,
+    adapters: [quotedAdapter('uniswap', uniswap), quotedAdapter('kyberswap', kyber)],
+  });
+
+  assert.equal(result.candidates.length, 1);
+  assert.deepEqual(
+    result.adapterFailures.map((failure) => `${failure.provider}:${failure.errorCode}`),
+    ['kyberswap:engine_future_quote_observation'],
+  );
+});

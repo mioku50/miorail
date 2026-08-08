@@ -28,6 +28,7 @@ import {
   type ProviderReliabilityAssessmentV1,
 } from '@mioagent/route-outcomes';
 import {
+  OBSERVATION_LOOKAHEAD_MS_V1,
   SCORE_CONFIDENCE_V1,
   SUPPORTED_OPTIMIZATION_MODES_V1,
   SUPPORTED_OPTIMIZATION_MODES_V2,
@@ -112,7 +113,7 @@ function validateCandidate(
   ) {
     throw new RouteEvidenceError('engine_invalid_candidate_quote_binding');
   }
-  if (Date.parse(candidate.quoteObservedAt) > now.getTime()) {
+  if (Date.parse(candidate.quoteObservedAt) > now.getTime() + OBSERVATION_LOOKAHEAD_MS_V1) {
     throw new RouteEvidenceError('engine_future_quote_observation');
   }
   return candidate;

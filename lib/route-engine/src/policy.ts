@@ -1,5 +1,35 @@
 import type { EvidenceTypeV1, RouteIntentV1 } from '@mioagent/route-domain';
 
+/**
+ * How far after `now` an observation may honestly sit.
+ *
+ * `now` is the evaluation's OWN start, captured before any network call. A
+ * provider that reports its real observation time therefore reports a moment
+ * AFTER it — the request had to happen first. That is fresher than the
+ * snapshot, not from the future, and comparing the two directly was simply the
+ * wrong reference.
+ *
+ * In production it cost the whole comparison. KyberSwap is the only adapter
+ * that passes the provider's own timestamp through — the others fall back to
+ * `input.now` and so could never trip it — and with the candidate phase taking
+ * five to ten seconds, its quote was rejected on every run. Aerodrome cannot
+ * be scored (it reports no USD gas), so losing KyberSwap left one rankable
+ * route, which is not a comparison: no recommendation, no Route Card, and a
+ * Review button with nothing behind it.
+ *
+ * A minute is far longer than any run and far shorter than what these guards
+ * are for. They exist to catch a provider stamping a quote hours or days
+ * ahead, which makes freshness meaningless — not to police the seconds an HTTP
+ * round trip takes.
+ *
+ * One-sided by construction: a quote from the past still ages normally, and
+ * nothing here extends an expiry. Four places share it — the candidate guard,
+ * the evidence guard, and the quote and gas freshness filters — because a
+ * quote that clears one and fails the next is the same dead end wearing a
+ * different code.
+ */
+export const OBSERVATION_LOOKAHEAD_MS_V1 = 60_000;
+
 export const SWAP_PATH_SCORE_VERSION_V1 = 'swap-path-score/v1' as const;
 /** T67C.1 Part 2. v1 is frozen: it is recorded in every score snapshot already
  * persisted, and changing what that string means would rewrite the meaning of
