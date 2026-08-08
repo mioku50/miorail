@@ -176,3 +176,39 @@ test('resolvePluginCredential reads UNISWAP_MCP_GATEWAY_KEY in mcp mode and UNIS
     if (previousDirect === undefined) delete process.env.UNISWAP_API_KEY; else process.env.UNISWAP_API_KEY = previousDirect;
   }
 });
+
+test('in mcp mode with no gateway key, UNISWAP_API_KEY is used rather than refusing', () => {
+  // The production configuration that broke: UNISWAP_API_KEY set and valid,
+  // no gateway key, default mode. The resolver returned undefined and every
+  // Uniswap quote failed with PluginCredentialMissingError — so Uniswap
+  // vanished from comparisons and the route card had nothing to recommend.
+  //
+  // Safe because the plugin allowlist pins the host: the executor calls
+  // trade-api.gateway.uniswap.org, the API that issued this very key.
+  const previousGateway = process.env.UNISWAP_MCP_GATEWAY_KEY;
+  const previousDirect = process.env.UNISWAP_API_KEY;
+  try {
+    delete process.env.UNISWAP_MCP_GATEWAY_KEY;
+    process.env.UNISWAP_API_KEY = 'direct-secret';
+    assert.equal(resolvePluginCredential('uniswap', 'mcp'), 'direct-secret');
+
+    // The gateway key still wins where it is configured — the fallback is a
+    // fallback, not a replacement.
+    process.env.UNISWAP_MCP_GATEWAY_KEY = 'gateway-secret';
+    assert.equal(resolvePluginCredential('uniswap', 'mcp'), 'gateway-secret');
+
+    // And an empty gateway key is absent, not a credential.
+    process.env.UNISWAP_MCP_GATEWAY_KEY = '   ';
+    assert.equal(resolvePluginCredential('uniswap', 'mcp'), 'direct-secret');
+
+    // With neither, it still refuses. The fallback does not invent a key.
+    delete process.env.UNISWAP_MCP_GATEWAY_KEY;
+    delete process.env.UNISWAP_API_KEY;
+    assert.equal(resolvePluginCredential('uniswap', 'mcp'), undefined);
+  } finally {
+    if (previousGateway === undefined) delete process.env.UNISWAP_MCP_GATEWAY_KEY;
+    else process.env.UNISWAP_MCP_GATEWAY_KEY = previousGateway;
+    if (previousDirect === undefined) delete process.env.UNISWAP_API_KEY;
+    else process.env.UNISWAP_API_KEY = previousDirect;
+  }
+});

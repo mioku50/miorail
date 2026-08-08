@@ -242,3 +242,93 @@ test('KyberSwap artifacts are deterministic with injected clock and routeSummary
   const input = { intent, walletAddress: WALLET, requestId: 'deterministic-kyber', now: NOW } as const;
   assert.deepEqual(await adapter.quote(input), await adapter.quote(input));
 });
+
+// ---------------------------------------------------------------------------
+// The shape KyberSwap actually returns, captured from the live endpoint on
+// 2026-08-08.
+//
+// Every fixture above states `priceImpact`. The API stopped sending it — there
+// is no price-impact field in the response at all — and the adapter treated
+// its absence as a malformed body. So `provider_invalid_schema`, on every
+// quote, forever, while the whole suite stayed green against a shape nobody
+// serves any more.
+//
+// It cost four screens: no KyberSwap quote left Aerodrome alone, one provider
+// is `single_provider_available`, that outcome carries no recommendation, and
+// with no recommendation there is no signable Route Card. "Review transaction"
+// was dead because of a missing percentage.
+//
+// Field names are copied exactly, `routeID` and epoch `timestamp` included.
+// ---------------------------------------------------------------------------
+
+/** Verbatim from /base/api/v1/routes, trimmed to the fields the adapter reads. */
+function liveKyberResponseV1(intent: ReturnType<typeof makeIntent>, overrides: Record<string, unknown> = {}) {
+  return {
+    code: 0,
+    message: 'successfully',
+    data: {
+      routerAddress: KYBERSWAP_BASE_ROUTER,
+      routeSummary: {
+        tokenIn: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+        amountIn: intent.amount.amountAtomic,
+        amountInUsd: '0.10000368084064229',
+        tokenOut: KYBERSWAP_NATIVE_ETH,
+        amountOut: '51929875391875',
+        amountOutUsd: '0.09990771528228602',
+        gas: '435495',
+        gasPrice: '6000000',
+        gasUsd: '0.005027084329226023',
+        l1FeeUsd: '0.000011063741447043221',
+        route: [[{ exchange: 'uniswap-v3', pool: '0x'.padEnd(42, '1'), swapAmount: '100000' }]],
+        routeID: 'e2a1-live',
+        checksum: 'abc',
+        timestamp: 1786211688,
+        ...overrides,
+      },
+    },
+  };
+}
+
+test('KyberSwap quotes the live response shape, which reports no price impact', async () => {
+  const intent = makeIntent({ amountAtomic: '100000' });
+  const result = await adapterFor(liveKyberResponseV1(intent)).quote({
+    intent,
+    walletAddress: WALLET,
+    requestId: 'kyber-live-shape',
+    now: NOW,
+  });
+  assert.equal(result.outcome, 'quoted', `refused with ${result.outcome === 'quoted' ? '' : result.errorCode}`);
+});
+
+test('price impact is derived from the two USD figures KyberSwap does send', async () => {
+  const intent = makeIntent({ amountAtomic: '100000' });
+  const result = await adapterFor(liveKyberResponseV1(intent)).quote({
+    intent,
+    walletAddress: WALLET,
+    requestId: 'kyber-derived-impact',
+    now: NOW,
+  });
+  if (result.outcome !== 'quoted') throw new Error(`refused: ${result.errorCode}`);
+  // (0.10000368084064229 - 0.09990771528228602) / 0.10000368084064229 ≈ 0.09596%,
+  // which rounds to 10 bps and is rendered as a percentage on the candidate.
+  assert.equal(result.candidate.priceImpact.bps, 10);
+});
+
+test('a route worth more out than in reports zero impact, never a negative one', async () => {
+  const intent = makeIntent({ amountAtomic: '100000' });
+  const result = await adapterFor(
+    liveKyberResponseV1(intent, { amountInUsd: '0.0999', amountOutUsd: '0.1001' }),
+  ).quote({ intent, walletAddress: WALLET, requestId: 'kyber-positive', now: NOW });
+  if (result.outcome !== 'quoted') throw new Error(`refused: ${result.errorCode}`);
+  assert.equal(result.candidate.priceImpact.bps, 0);
+});
+
+test('with neither a price impact nor a USD pair, the refusal stands', async () => {
+  // The derivation is a reading of provider data, not a way to always have a
+  // number. No data still means no quote.
+  const intent = makeIntent({ amountAtomic: '100000' });
+  const result = await adapterFor(
+    liveKyberResponseV1(intent, { amountInUsd: undefined, amountOutUsd: undefined }),
+  ).quote({ intent, walletAddress: WALLET, requestId: 'kyber-no-usd', now: NOW });
+  assert.equal(result.outcome, 'invalid_response');
+});

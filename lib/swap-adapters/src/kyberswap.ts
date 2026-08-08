@@ -55,6 +55,43 @@ function field(record: Record<string, unknown>, ...keys: string[]): unknown {
   return undefined;
 }
 
+/**
+ * Price impact, from the provider's own two USD figures.
+ *
+ * KyberSwap's `/base/api/v1/routes` response carries no price-impact field —
+ * not `priceImpactBps`, not `priceImpact`, not `priceImpactPct`. The adapter
+ * treated its absence as a malformed response, so every KyberSwap quote was
+ * refused with `provider_invalid_schema`, always. In production that left
+ * Aerodrome as the only answering provider, which the engine correctly reports
+ * as `single_provider_available` — no comparison, no recommendation, no Route
+ * Card, and a route card a user cannot act on. One missing field, four screens
+ * away.
+ *
+ * `amountInUsd` and `amountOutUsd` are both stated BY KYBERSWAP, and the
+ * difference between them over the input is what price impact means. This is
+ * arithmetic on provider data, not a substituted guess: with no USD pair the
+ * function returns null and the old refusal stands.
+ *
+ * One caveat worth stating: this spread includes whatever fee the aggregator
+ * priced in, so it is the impact a user actually experiences rather than a
+ * pure pool-depth figure. That is the more useful of the two here, and it is
+ * the same quantity KyberSwap's own interface displays.
+ *
+ * Floating point is fine for exactly this: basis points are a bounded integer
+ * ratio for ranking and display, never an amount anyone is paid.
+ */
+function priceImpactFromUsdV1(routeSummary: Record<string, unknown>): number | null {
+  const inUsd = Number(parseProviderDecimal(field(routeSummary, 'amountInUsd')) ?? Number.NaN);
+  const outUsd = Number(parseProviderDecimal(field(routeSummary, 'amountOutUsd')) ?? Number.NaN);
+  if (!Number.isFinite(inUsd) || !Number.isFinite(outUsd) || inUsd <= 0) return null;
+  // A route that returns MORE value than it consumed has no adverse impact.
+  // Reported as zero rather than negative: the field is unsigned by contract,
+  // and "better than expected" is not a risk to warn anybody about.
+  const bps = Math.round(((inUsd - outUsd) / inUsd) * 10_000);
+  if (!Number.isFinite(bps) || bps > 1_000_000) return null;
+  return Math.max(0, bps);
+}
+
 function reportsNoRoute(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
@@ -168,7 +205,8 @@ export class KyberSwapRouteAdapter implements SwapRouteAdapter {
     const parsedImpactBps = parseUnsignedAtomic(rawPriceImpactBps);
     const priceImpactBps =
       rawPriceImpactBps === undefined
-        ? percentageToBasisPoints(String(field(routeSummary, 'priceImpact', 'priceImpactPct') ?? ''))
+        ? (percentageToBasisPoints(String(field(routeSummary, 'priceImpact', 'priceImpactPct') ?? '')) ??
+          priceImpactFromUsdV1(routeSummary))
         : parsedImpactBps === null
           ? null
           : Number(parsedImpactBps);

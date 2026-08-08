@@ -153,7 +153,28 @@ export function baseMcpPluginModeFromEnv(): BaseMcpPluginMode {
 
 export function resolvePluginCredential(plugin: string, mode: BaseMcpPluginMode = baseMcpPluginModeFromEnv()): string | undefined {
   if (plugin === 'uniswap') {
-    const raw = mode === 'direct' ? process.env.UNISWAP_API_KEY : process.env.UNISWAP_MCP_GATEWAY_KEY;
+    // The gateway key wins wherever it is configured — that part is unchanged.
+    //
+    // What changed is the else. In mcp mode with no gateway key, this returned
+    // undefined and the request failed with PluginCredentialMissingError, even
+    // though UNISWAP_API_KEY was set and valid. That looked like a config
+    // mistake and was not one: the executor builds a plain HTTPS request to
+    // `trade-api.gateway.uniswap.org`, Uniswap's own API, whose credential IS
+    // UNISWAP_API_KEY. The mode names a routing arrangement this call does not
+    // use, so it was gating a key against the wrong question.
+    //
+    // In production that silently removed Uniswap from every comparison. With
+    // KyberSwap also refusing, one provider was left, which the engine reports
+    // as `single_provider_available` — no recommendation, no Route Card,
+    // nothing to review.
+    //
+    // Falling back is safe because the host is pinned by the plugin allowlist
+    // above: this key can only ever be sent to the API that issued it. It is
+    // never logged, echoed in a tool trace, or returned to a caller.
+    const raw =
+      mode === 'direct'
+        ? process.env.UNISWAP_API_KEY
+        : (process.env.UNISWAP_MCP_GATEWAY_KEY?.trim() || process.env.UNISWAP_API_KEY);
     return raw?.trim() || undefined;
   }
   return undefined;
