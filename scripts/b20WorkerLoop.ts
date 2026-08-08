@@ -49,7 +49,13 @@ export interface WorkerCadenceV1 {
 }
 
 export const B20_DISCOVER_CADENCE_V1: WorkerCadenceV1 = {
-  catchUpMs: 1_500,
+  // Not as small as it could be, and that is the point. One pass at the default
+  // range is ~80 `eth_getLogs` calls; issuing those bursts 1.5s apart tripped
+  // Alchemy's compute-unit limit in production, and a rate-limited pass wastes
+  // ALL eighty calls and advances the cursor by nothing. Five seconds of rest
+  // between bursts moves the chain faster than fifteen hundred milliseconds of
+  // impatience — measured, not assumed.
+  catchUpMs: 5_000,
   // Base produces a block every two seconds, so a minute of rest is thirty
   // blocks — well inside one pass, and it keeps `blocksBehind` visibly near
   // zero on the status surface rather than sawtoothing.
