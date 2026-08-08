@@ -1,4 +1,5 @@
 import { RoutePlanResponseV1Schema, type RoutePlanResponseV1 } from '@mioagent/api-spec';
+import { logger } from '@mioagent/utils';
 import { buildRouteCardV1, buildRoutePlanProjectionV1 } from '@mioagent/route-card';
 import {
   routeEngineV1IdempotencyKey,
@@ -112,6 +113,36 @@ export class RoutePlanCoordinator {
         : undefined,
     });
     const routeCard = buildRouteCardV1(evaluation);
+
+    // Why a comparison came out the way it did — the one line that was missing.
+    //
+    // Three separate investigations this week ended at the same wall: the UI
+    // said "KyberSwap invalid schema" or "Uniswap HTTP error" and the server
+    // said nothing at all, so every diagnosis had to be rebuilt by hand with
+    // probes against live endpoints. A provider dropping out silently changes
+    // the outcome four layers downstream — no ranking, no recommendation, no
+    // Route Card, a dead Review button — and none of that is traceable to its
+    // cause without this.
+    //
+    // Provider ids, typed refusal codes and scoring statuses only. No wallet,
+    // no amounts, no hashes, no quotes, no endpoints, no credentials: which
+    // provider refused and under which code is the whole diagnosis, and none
+    // of the rest is needed to have it.
+    logger.info('Route comparison outcome', {
+      outcome: evaluation.outcome,
+      reason: evaluation.reason,
+      routeCard: routeCard ? 'built' : 'none',
+      quoted: evaluation.candidates.map((candidate) => candidate.provider.id).sort(),
+      refused: evaluation.adapterFailures.map(
+        (failure) => `${failure.provider}:${failure.errorCode}`,
+      ).sort(),
+      // A quoted route that cannot be scored is invisible in `quoted` and is
+      // exactly what stops a recommendation being made.
+      unscored: evaluation.netResultMetrics
+        .filter((metric) => metric.status !== 'computed')
+        .map((metric) => metric.reason ?? 'not_scored')
+        .sort(),
+    });
     if (routeCard) {
       await this.dependencies.repository.insertRouteCard(routeRun.id, routeCard);
     }
