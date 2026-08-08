@@ -125,9 +125,9 @@ export function createDatabaseB20ObservationRepository(
 
   return {
     async selectMeasurableLaunches(input) {
-      const now = new Date(input.now);
-      const oldest = new Date(Date.parse(input.now) - input.maxLaunchAgeMs);
-      const freshEnough = new Date(Date.parse(input.now) - input.minReMeasureIntervalMs);
+      const now = new Date(input.now).toISOString();
+      const oldest = new Date(Date.parse(input.now) - input.maxLaunchAgeMs).toISOString();
+      const freshEnough = new Date(Date.parse(input.now) - input.minReMeasureIntervalMs).toISOString();
       // `canonical` is in the WHERE clause, not filtered afterwards: a launch
       // the chain took back is not a token anybody should be shown a
       // measurement of, and a filter applied later is a filter that can be
@@ -143,9 +143,9 @@ export function createDatabaseB20ObservationRepository(
         ) o ON true
         WHERE l.canonical
           AND l.chain_id = 8453
-          AND l.detected_at >= ${oldest}
-          AND l.detected_at <= ${now}
-          AND (o.last_measured_at IS NULL OR o.last_measured_at < ${freshEnough})
+          AND l.detected_at >= ${oldest}::timestamptz
+          AND l.detected_at <= ${now}::timestamptz
+          AND (o.last_measured_at IS NULL OR o.last_measured_at < ${freshEnough}::timestamptz)
         ORDER BY l.detected_at ASC, l.id ASC
         LIMIT ${Math.max(1, Math.min(500, input.limit))}`;
       return rows.map((row): B20MeasurableLaunchV1 => {
@@ -283,7 +283,7 @@ export function createDatabaseB20ObservationRepository(
     async listMoverPairs(input) {
       const versions = [...(input.measurementVersions ?? [B20_MEASUREMENT_VERSION_V1])];
       const limit = Math.max(1, Math.min(100, input.limit));
-      const oldest = new Date(Date.parse(input.now) - input.maxLaunchAgeMs);
+      const oldest = new Date(Date.parse(input.now) - input.maxLaunchAgeMs).toISOString();
       const ageSeconds = Math.round(input.baselineAgeMs / 1000);
       const toleranceSeconds = Math.round(input.baselineToleranceMs / 1000);
 
@@ -373,7 +373,9 @@ export function createDatabaseB20ObservationRepository(
         throw observationConflictV1('The pagination cursor is not readable');
       }
       const oldest =
-        input.maxLaunchAgeMs == null ? null : new Date(Date.parse(input.now) - input.maxLaunchAgeMs);
+        input.maxLaunchAgeMs == null
+          ? null
+          : new Date(Date.parse(input.now) - input.maxLaunchAgeMs).toISOString();
 
       // ONE query. The latest observation per launch is a LATERAL, so the feed
       // costs one round trip whatever the page size — an observation read per
@@ -466,7 +468,7 @@ export function createDatabaseB20ObservationRepository(
     },
 
     async pipelineCounts(input) {
-      const oldest = new Date(Date.parse(input.now) - input.maxLaunchAgeMs);
+      const oldest = new Date(Date.parse(input.now) - input.maxLaunchAgeMs).toISOString();
       // One round trip for every count the pipeline status needs. A status
       // assembled from several queries could describe a pipeline that never
       // existed at any single moment.
