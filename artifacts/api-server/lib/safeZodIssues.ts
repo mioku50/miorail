@@ -47,6 +47,40 @@ export function safeValueCategoryV1(value: unknown): string {
   return typeof value;
 }
 
+/**
+ * An error message with every value-shaped thing removed.
+ *
+ * A viem error is the reason this exists: its message quotes the arguments the
+ * call was made with, and for a spend permission those arguments are a wallet
+ * address, a token, a salt and a signature. The sentence is worth keeping; the
+ * substitutions are not.
+ */
+export function safeErrorMessageV1(message: string, limit = 300): string {
+  return message
+    .replace(/0x[0-9a-fA-F]{8,}/g, '0x…')
+    .replace(/https?:\/\/\S+/g, '(url)')
+    .replace(/\s+/g, ' ')
+    .slice(0, limit);
+}
+
+/**
+ * Where a throw came from, as one frame, with no absolute path.
+ *
+ * A stack answers "which line" — the single most useful thing about an
+ * unexpected error — but it also prints the deploy's directory layout. This
+ * keeps the repo-relative tail and drops everything above it, and skips
+ * node_modules frames so the frame named is one somebody here can open.
+ */
+export function firstOwnFrameV1(stack: string | undefined): string | null {
+  if (!stack) return null;
+  for (const line of stack.split('\n').slice(1)) {
+    if (line.includes('node_modules') || line.includes('node:internal')) continue;
+    const match = /\(?((?:[\w.-]+\/)*[\w.-]+\.[cm]?[jt]s:\d+:\d+)\)?\s*$/.exec(line.trim());
+    if (match) return match[1]!.split('/').slice(-3).join('/');
+  }
+  return null;
+}
+
 interface ZodLikeIssueV1 {
   code?: unknown;
   path?: unknown;

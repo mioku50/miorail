@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { logger } from '@mioagent/utils';
+import { firstOwnFrameV1, safeErrorMessageV1 } from '../lib/safeZodIssues.js';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import {
   ConfirmSpendPermissionRequestV1Schema,
@@ -2453,6 +2454,20 @@ routeIntelligenceRouter.post(
         res.status(409).json({ error: 'intelligence_budget_exists', code: 'intelligence_budget_exists' });
         return;
       }
+      // T71-LIVE-2 — this catch used to swallow the error whole. A real wallet
+      // hit a 500 here and the entire record of why was one access-log line
+      // saying `500`; the outcome log above never runs, because the throw
+      // happened before it. That cost a full round trip through a user's
+      // wallet to learn nothing.
+      //
+      // Name and message only, and a bounded stack of FRAME LOCATIONS. A viem
+      // error's message can carry the permission's own fields, so it is
+      // reported by category — never the value, same rule as safeZodIssuesV1.
+      logger.error('Spend permission confirmation failed', {
+        name: cause instanceof Error ? cause.name : typeof cause,
+        message: cause instanceof Error ? safeErrorMessageV1(cause.message) : null,
+        at: cause instanceof Error ? firstOwnFrameV1(cause.stack) : null,
+      });
       res.status(500).json({ error: 'budget_simulation_failed', code: 'budget_simulation_failed' });
     }
   },
