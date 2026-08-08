@@ -10,6 +10,7 @@ import {
 import {
   budgetPaymentsViewV1,
   onboardingBusyV1,
+  perActionAffordabilityV1,
   onboardingRetryableV1,
   paidIntelligenceStateV1,
   paidIntelligenceViewV1,
@@ -404,5 +405,31 @@ describe('T71 — the onboarding states stay in step with the flow that produces
     assert.equal(onboardingRetryableV1('verification_retryable'), true);
     assert.equal(onboardingRetryableV1('verification_failed'), false);
     assert.equal(onboardingRetryableV1('active'), false);
+  });
+});
+
+describe('a per-action limit below the price of a check pays for nothing', () => {
+  test('the production case is called out, with the value that would work', () => {
+    const result = perActionAffordabilityV1({ maxPerRequestUsdc: '0.0002', priceUsdc: '0.01' });
+    assert.equal(result?.affordable, false);
+    assert.match(result!.note, /0\.01 USDC/);
+    assert.match(result!.note, /ceiling, not a payment/);
+  });
+
+  test('a limit equal to the price is enough — the check costs exactly that', () => {
+    assert.equal(perActionAffordabilityV1({ maxPerRequestUsdc: '0.01', priceUsdc: '0.01' })?.affordable, true);
+  });
+
+  test('a comfortable limit still explains what it covers', () => {
+    const result = perActionAffordabilityV1({ maxPerRequestUsdc: '0.02', priceUsdc: '0.01' });
+    assert.equal(result?.affordable, true);
+    assert.match(result!.note, /covers a 0\.01 USDC check/);
+  });
+
+  test('with no budget or no price it says nothing rather than guessing', () => {
+    assert.equal(perActionAffordabilityV1({ maxPerRequestUsdc: null, priceUsdc: '0.01' }), null);
+    assert.equal(perActionAffordabilityV1({ maxPerRequestUsdc: '0.01', priceUsdc: null }), null);
+    assert.equal(perActionAffordabilityV1({ maxPerRequestUsdc: '0.01', priceUsdc: '0' }), null);
+    assert.equal(perActionAffordabilityV1({ maxPerRequestUsdc: 'abc', priceUsdc: '0.01' }), null);
   });
 });

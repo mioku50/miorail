@@ -62,6 +62,7 @@ import {
   routeGraphFromRouteV1,
   scoreRowsFromProjectionV1,
   providerHistoryViewsV1,
+  perActionAffordabilityV1,
   scoringVersionLabelV1,
   shortfallNoticeFromProjectionV1,
   simulationSourceFromResponseV1,
@@ -1224,7 +1225,15 @@ export function RouteIntelligenceConsole() {
               label: 'Per action',
               value: budgetRecord?.maxPerRequestUsdc ? `$${budgetRecord.maxPerRequestUsdc}` : '',
               percent: 0,
-              note: budgetRecord ? 'from your Intelligence Budget' : CONSOLE_COPY_V1.limitsMissing,
+              // A ceiling below the price of a check pays for nothing, and the
+              // failure only shows up as "no simulation provider answered" two
+              // panels down. Said here, where the number is.
+              note: budgetRecord
+                ? (perActionAffordabilityV1({
+                    maxPerRequestUsdc: budgetRecord.maxPerRequestUsdc,
+                    priceUsdc: prepared?.simulationPriceUsdc ?? null,
+                  })?.note ?? 'from your Intelligence Budget')
+                : CONSOLE_COPY_V1.limitsMissing,
             },
             {
               id: 'monthly',

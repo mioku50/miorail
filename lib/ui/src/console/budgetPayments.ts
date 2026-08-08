@@ -422,3 +422,46 @@ export function spendPermissionConsentV1(input: {
     'You can revoke this permission from Miorail at any time.',
   ];
 }
+
+/**
+ * Can this per-action limit pay for anything?
+ *
+ * A per-action limit is a CEILING, not a payment, and that reading is easy to
+ * get backwards: setting it far below the price of a check feels like paying
+ * less and actually means paying for nothing at all. The server refuses the
+ * charge with `per_call_limit_exceeded`, no provider is ever asked, and the
+ * Review screen four steps later says "no simulation provider answered" — true
+ * in the narrowest sense and useless as a diagnosis.
+ *
+ * Production had exactly that: a 0.0002 USDC per-action limit against a 0.01
+ * USDC simulation. Fifty times too small, accepted by the form without a word.
+ *
+ * Says so where the number is entered, in the user's own units, and names the
+ * value that would work. Returns `null` when there is nothing to say — no
+ * budget yet, or no price to compare against — so the note stays quiet rather
+ * than guessing.
+ */
+export function perActionAffordabilityV1(input: {
+  maxPerRequestUsdc: string | null | undefined;
+  /** The cheapest paid check this server actually charges for. */
+  priceUsdc: string | null | undefined;
+}): { affordable: boolean; note: string } | null {
+  // `Number(null)` is 0, not NaN — an absent budget would otherwise read as a
+  // zero limit and be reported as "too low", which is advice about a number
+  // the user never entered.
+  if (!input.maxPerRequestUsdc || !input.priceUsdc) return null;
+  const limit = Number(input.maxPerRequestUsdc);
+  const price = Number(input.priceUsdc);
+  if (!Number.isFinite(limit) || !Number.isFinite(price) || price <= 0) return null;
+  if (limit >= price) {
+    // Worth stating even when it fits: it makes clear the limit is a ceiling
+    // and that the check costs a fixed amount under it.
+    return { affordable: true, note: `covers a ${input.priceUsdc} USDC check` };
+  }
+  return {
+    affordable: false,
+    note:
+      `too low — a paid check costs ${input.priceUsdc} USDC, so nothing can be charged. ` +
+      `Raise this to at least ${input.priceUsdc}. It is a ceiling, not a payment.`,
+  };
+}
