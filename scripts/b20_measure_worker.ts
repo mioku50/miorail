@@ -110,6 +110,9 @@ async function main(): Promise<number> {
           idempotentRepeats: outcome.idempotentRepeats,
           notChecked: outcome.notChecked,
           failed: outcome.failed,
+          // Only when there is something to say, and already scrubbed. Ten
+          // identical failures with no reason read as ten bad tokens.
+          ...(outcome.failureReasons.length > 0 ? { failureReasons: outcome.failureReasons } : {}),
           budgetExhausted: outcome.budgetExhausted,
           byState: outcome.byState,
         }),

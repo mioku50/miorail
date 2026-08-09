@@ -177,6 +177,11 @@ export interface MeasurePassOutcomeV1 {
   /** Candidates whose measurement threw. One broken token must not starve the
    * rest, so these are counted and skipped. */
   failed: number;
+  /** The distinct reasons behind `failed`, de-duplicated. Bounded and scrubbed
+   * of addresses, hex and URLs by `measureFailureReasonV1`: this is written to
+   * a log on every pass, and an endpoint or a token address does not belong
+   * there. */
+  failureReasons: string[];
   routerCalls: number;
   controlCalls: number;
   budgetExhausted: boolean;
@@ -190,6 +195,25 @@ export interface MeasurePassInputV1 {
   config: MeasurePassConfigV1;
   owner: string;
   now: () => Date;
+}
+
+/**
+ * A failure reason fit to be logged on every pass.
+ *
+ * Scrubbed and bounded: hex runs (addresses, hashes, calldata), URLs and
+ * anything long are removed, because this string is written to a service log
+ * and an RPC endpoint or a token address does not belong there. What survives
+ * is the part that identifies the BUG — "new row violates check constraint
+ * b20_observations_quote_asset_check" — which is the whole point.
+ */
+export function measureFailureReasonV1(error: unknown): string {
+  const raw = error instanceof Error ? `${error.name}: ${error.message}` : 'unknown error';
+  return raw
+    .replace(/https?:\/\/\S+/g, '[url]')
+    .replace(/0x[0-9a-fA-F]{8,}/g, '[hex]')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 200);
 }
 
 /** The transfer-policy rows a snapshot may carry. */
@@ -269,6 +293,7 @@ export async function runB20MeasurePassV1(input: MeasurePassInputV1): Promise<Me
     idempotentRepeats: 0,
     notChecked: 0,
     failed: 0,
+    failureReasons: [],
     routerCalls: 0,
     controlCalls: 0,
     budgetExhausted: false,
@@ -318,11 +343,17 @@ export async function runB20MeasurePassV1(input: MeasurePassInputV1): Promise<Me
         slice.map(async (launch) => {
           try {
             return await measureOneV1({ launch, input, deadline });
-          } catch {
+          } catch (error) {
             // §16.29 — one broken token must not starve the rest. The failure
             // is counted and the pass moves on; nothing is written, because
             // nothing was measured.
-            return { failed: true as const, launch };
+            //
+            // The REASON travels with it. A pass reporting `failed: 10` and
+            // nothing else is indistinguishable from ten different bugs, and a
+            // schema change that every token trips looks exactly like ten
+            // unlucky tokens — which is how a constraint violation ran for
+            // minutes before anyone could name it.
+            return { failed: true as const, launch, reason: measureFailureReasonV1(error) };
           }
         }),
       );
@@ -331,6 +362,7 @@ export async function runB20MeasurePassV1(input: MeasurePassInputV1): Promise<Me
         outcome.attempted += 1;
         if ('failed' in result) {
           outcome.failed += 1;
+          if (!outcome.failureReasons.includes(result.reason)) outcome.failureReasons.push(result.reason);
           continue;
         }
         outcome.routerCalls += result.routerCalls;

@@ -225,6 +225,13 @@
       "when": 1786204800000,
       "tag": "0031_t72c_mcp_execution_audit",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1786291200000,
+      "tag": "0032_b20_observation_quote_assets",
+      "breakpoints": true
     }
   ]
 }

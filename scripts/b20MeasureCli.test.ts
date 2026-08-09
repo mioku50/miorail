@@ -22,6 +22,7 @@ import {
 } from './b20MeasureCli.js';
 import {
   cheapFilterResultV1,
+  measureFailureReasonV1,
   runB20MeasurePassV1,
   transferPolicyStateV1,
   type ControlMeasurementV1,
@@ -809,5 +810,25 @@ describe('the worker is read-only against Base', () => {
       const source = readFileSync(path.join(ROOT, 'scripts', file), 'utf8');
       assert.ok(!source.includes('isTrustedRouteAsset'), `${file} must not reach into the allowlist`);
     }
+  });
+});
+
+describe('a failed candidate says why, without saying where', () => {
+  test('the reason survives; the endpoint and the addresses do not', () => {
+    const reason = measureFailureReasonV1(
+      new Error(
+        'new row violates check constraint "b20_observations_quote_asset_check" ' +
+          'at https://base-mainnet.example/v2/SECRET for 0xb200000000000000000000294511530ba9d34201',
+      ),
+    );
+    assert.match(reason, /b20_observations_quote_asset_check/, 'the part that names the bug is kept');
+    assert.doesNotMatch(reason, /https?:/);
+    assert.doesNotMatch(reason, /SECRET/);
+    assert.doesNotMatch(reason, /0xb200/);
+    assert.ok(reason.length <= 200);
+  });
+
+  test('a non-Error is not stringified into whatever it happens to be', () => {
+    assert.equal(measureFailureReasonV1({ rpcUrl: 'https://secret.example/key' }), 'unknown error');
   });
 });
