@@ -76,6 +76,7 @@ const GOOD_ROUTES: RouteMeasurementV1 = {
   exitReturnAtomic: '99000000',
   quoteAssetUsed: OPPORTUNITY_QUOTE_ASSET_V1,
   positionAtomicUsed: '100000000',
+  quoteAlignment: 'latest_not_anchored',
   entryRouteHash: null,
   exitRouteHash: null,
   entrySourceKey: 'aerodrome|usdc>token:volatile',

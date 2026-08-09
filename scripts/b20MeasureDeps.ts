@@ -29,6 +29,7 @@ import {
   type MeasurementDepsV1,
   type ObservationAnchorV1,
 } from './b20MeasureRun.js';
+import type { B20QuoteAlignmentV1 } from '@mioagent/opportunity-rail';
 
 // ---------------------------------------------------------------------------
 // T73-LIVE §2 — the measurement pass's dependencies, in one place.
@@ -40,7 +41,7 @@ import {
 // would claim to describe a moment that never existed.
 //
 // READ-ONLY by construction: two readers, `eth_call` / `eth_getBlockByNumber`
-// for B20 controls and `getAmountsOut` for Aerodrome. No signer, no key, no
+// for B20 controls and the v4 Quoter, and `getAmountsOut` for Aerodrome. No signer, no key, no
 // allowance write, no state override, no probe balance. Both endpoints are
 // handed to their readers and never appear in an observation, a summary or an
 // error.
@@ -66,6 +67,76 @@ export const B20_NATIVE_POSITION_ATOMIC_V1 = '30000000000000000';
 
 /** Native ETH, as Uniswap v4 addresses it. */
 const NATIVE_ASSET_V1 = '0x0000000000000000000000000000000000000000';
+
+/** One `eth_call`, as the B20 reader reports it. */
+export type QuoteCallResultV1 =
+  | { ok: true; value: string }
+  | { ok: false; reason: string };
+
+export interface V4QuoteContextV1 {
+  /** The quote function the v4 adapters take. */
+  call: (request: { to: string; data: string }) => Promise<string>;
+  /** Where the quotes in this measurement were actually read. */
+  alignment: () => B20QuoteAlignmentV1;
+}
+
+// ---------------------------------------------------------------------------
+// Quotes, pinned to the observation block.
+//
+// Every quote used to be read at `latest` while the factory and control reads
+// were pinned, and every observation carried `latest_not_anchored` to say so.
+// The reason given was Aerodrome's reader, which takes no block tag — but the
+// measurement moved to Uniswap v4, whose Quoter is an ordinary `eth_call`. The
+// caveat outlived its cause and sat on 50,937 observations in a single day,
+// describing mixed-block data that no longer had to be mixed.
+//
+// So the v4 path anchors. What it must never do is anchor SOMETIMES and still
+// claim to: a full node keeps roughly a hundred and twenty-eight blocks of
+// state, and a slow, rate-limited pass can outlive that window mid-token. When
+// the anchored block stops answering, this falls back to `latest` — and the
+// measurement then reports `latest_not_anchored`, which is the same data the
+// rail published before, correctly labelled.
+//
+// The fallback is one-way. Once a measurement has read anything at `latest`,
+// its numbers no longer describe a single moment, and a later call that
+// happens to anchor again does not undo that.
+// ---------------------------------------------------------------------------
+export function createV4QuoteContextV1(
+  call: (input: { to: string; data: string; blockTag: string }) => Promise<QuoteCallResultV1>,
+  blockTag: string,
+): V4QuoteContextV1 {
+  let alignment: B20QuoteAlignmentV1 = 'anchored';
+
+  // `reverted` and `empty_result` ARE the pool's answer — the Quoter reverts to
+  // return, and a swap it will not price comes back empty. Everything else is
+  // our side failing: a throttled read must never be published as "this token
+  // cannot be sold".
+  const poolAnswered = (reason: string) => reason === 'reverted' || reason === 'empty_result';
+
+  const quote = async (request: { to: string; data: string }): Promise<string> => {
+    if (alignment === 'anchored') {
+      const anchored = await call({ ...request, blockTag });
+      if (anchored.ok) return anchored.value;
+      // A revert at the anchor is a measurement AT the anchor. Still aligned.
+      if (poolAnswered(anchored.reason)) return '';
+      // Not the pool's answer. Either the endpoint is failing or it no longer
+      // holds state for this block, and one retry at `latest` tells them
+      // apart. Whichever it was, this observation is no longer one atomic
+      // moment and stops claiming to be.
+      const latest = await call({ ...request, blockTag: 'latest' });
+      alignment = 'latest_not_anchored';
+      if (latest.ok) return latest.value;
+      if (poolAnswered(latest.reason)) return '';
+      throw new V4QuoteUnavailableError();
+    }
+    const result = await call({ ...request, blockTag: 'latest' });
+    if (result.ok) return result.value;
+    if (poolAnswered(result.reason)) return '';
+    throw new V4QuoteUnavailableError();
+  };
+
+  return { call: quote, alignment: () => alignment };
+}
 
 export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): MeasurementDepsV1 {
   // ONE reader per pass, for the reason the sweep has one: it carries what it
@@ -117,24 +188,11 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
   // One lookup per token per pass. The pool cannot change, and the endpoint
   // meters `eth_getLogs`.
   const v4Pools = createB20PoolCacheV1(v4Logs);
-  // Quotes reuse the control reader's transport: it already paces itself
-  // against this endpoint's limit and retries only what is worth retrying.
-  const v4Call = async (request: { to: string; data: string }) => {
-    const result = await controlReader.call({ to: request.to, data: request.data, blockTag: 'latest' });
-    if (result.ok) return result.value;
-    // `reverted` and `empty_result` ARE the pool's answer — the Quoter reverts
-    // to return, and a swap it will not price comes back empty. Everything
-    // else is our side failing: a throttled read must never be published as
-    // "this token cannot be sold".
-    if (result.reason === 'reverted' || result.reason === 'empty_result') return '';
-    throw new V4QuoteUnavailableError();
-  };
 
   const deps: MeasurementDepsV1 = {
-    // Aerodrome's `getAmountsOut` takes no block tag, so router quotes are read
-    // at `latest` while the factory and control reads are pinned. Named rather
-    // than hidden: presenting the two as one atomic snapshot would be a claim
-    // nothing measured.
+    // Only for an observation where the factory settled the token and no quote
+    // was ever taken. Every measurement that does quote reports its own
+    // alignment, decided by what the endpoint actually answered.
     quoteAlignment: 'latest_not_anchored',
 
     async readAnchor(): Promise<ObservationAnchorV1 | null> {
@@ -159,7 +217,8 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
       return { isB20: true, initialized: initialized.ok ? initialized.value : null };
     },
 
-    async analyseRoutes({ tokenAddress, launchBlock, profile }) {
+    async analyseRoutes({ tokenAddress, launchBlock, profile, anchor }) {
+      const quotes = createV4QuoteContextV1(controlReader.call, anchor.blockTag);
       const lookup = Number.isSafeInteger(launchBlock) && launchBlock > 0
         ? await v4Pools.lookup(tokenAddress, launchBlock)
         : ({ ok: false, refusal: 'no_pool_initialized' } as const);
@@ -185,7 +244,7 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
         const trip = await b20RoundTripV4V1({
           pool,
           positionAtomic,
-          call: v4Call,
+          call: quotes.call,
         });
         if (trip.entryRouteFound) {
           const source = `uniswap-v4:${pool.poolId}`;
@@ -204,7 +263,7 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
                   sizeAtomic: trip.entryOutputAtomic,
                   outputAtomic: trip.exitReturnAtomic,
                 },
-                call: v4Call,
+                call: quotes.call,
               })
             : { quotes: [], quotesUsed: 0, endpointDegraded: false };
           // Impact is measured against the smallest rung that priced, by the
@@ -237,6 +296,7 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
             routerCalls: trip.quotesUsed + ladder.quotesUsed,
             quoteAssetUsed: measuredAsset,
             positionAtomicUsed: positionAtomic,
+            quoteAlignment: quotes.alignment(),
           };
         }
         // No entry on v4 — fall through to Aerodrome, but remember whether the
@@ -280,6 +340,10 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
         // Aerodrome was asked in the profile's own asset, so here the two agree.
         quoteAssetUsed: OPPORTUNITY_QUOTE_ASSET_V1,
         positionAtomicUsed: profile.positionAtomic,
+        // The Aerodrome reader takes no block tag, so a measurement that fell
+        // through to it is genuinely mixed-block. This is the case the caveat
+        // was written for, and the only one that should still carry it.
+        quoteAlignment: 'latest_not_anchored',
       };
     },
 

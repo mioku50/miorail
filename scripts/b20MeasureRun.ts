@@ -120,6 +120,17 @@ export interface RouteMeasurementV1 {
    * pair it was measured in, so a card can only ever state what happened. */
   quoteAssetUsed: B20MeasurementQuoteAssetV1;
   positionAtomicUsed: string;
+  /** Whether the quotes behind these numbers were read at the observation
+   * block, decided by what actually happened rather than declared up front.
+   *
+   * It used to be a constant on the deps, set to `latest_not_anchored` because
+   * Aerodrome's reader takes no block tag — and it stayed a constant after the
+   * measurement moved to Uniswap v4, whose Quoter is an ordinary `eth_call`
+   * that anchors fine. Every observation therefore carried a caveat about
+   * mixed-block data that was no longer true, on data that no longer needed
+   * it. Per measurement, because one pass can anchor and the next can fall
+   * back. */
+  quoteAlignment: B20QuoteAlignmentV1;
 }
 
 export interface ControlMeasurementV1 {
@@ -143,15 +154,19 @@ export interface MeasurementDepsV1 {
      * an endpoint that caps `eth_getLogs` at ten blocks. */
     launchBlock: number;
     profile: OpportunityProfileV2;
+    /** The observation's block. Quotes are pinned to it where the venue
+     * allows, which is what lets an observation describe one moment instead
+     * of two. */
+    anchor: ObservationAnchorV1;
   }): Promise<RouteMeasurementV1>;
   /** Null when the deep read could not run at all. */
   readControls(input: {
     tokenAddress: string;
     anchor: ObservationAnchorV1;
   }): Promise<ControlMeasurementV1 | null>;
-  /** Whether the router quotes are pinned to the anchor block. Aerodrome's
-   * `getAmountsOut` takes no block tag, so this is `latest_not_anchored` in
-   * production — named rather than hidden. */
+  /** The alignment to record when NO quote was taken — the factory settled
+   * the token before any router call. `RouteMeasurementV1.quoteAlignment` is
+   * the real answer whenever quotes actually happened. */
   quoteAlignment: B20QuoteAlignmentV1;
 }
 
@@ -449,6 +464,7 @@ async function measureOneV1(context: {
         tokenAddress: launch.tokenAddress,
         launchBlock: Number(launch.blockNumber),
         profile: config.profile,
+        anchor,
       });
   const cheapFilter = cheapFilterResultV1({ factory, routes });
 
@@ -553,7 +569,10 @@ async function measureOneV1(context: {
     controlsComplete: controls ? controls.controlsComplete : null,
     observationBlockNumber: anchor.blockNumber,
     observationBlockHash: anchor.blockHash,
-    quoteAlignment: deps.quoteAlignment,
+    // What the measurement did, not what the wiring expects it to do. The
+    // deps value covers only the case where the factory settled the token and
+    // no quote was ever taken.
+    quoteAlignment: routes?.quoteAlignment ?? deps.quoteAlignment,
     measuredAt,
     staleAfter: new Date(Date.parse(measuredAt) + config.observationStaleMs).toISOString(),
     measurementVersion: B20_MEASUREMENT_VERSION_V1,
