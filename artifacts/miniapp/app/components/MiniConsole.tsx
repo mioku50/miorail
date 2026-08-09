@@ -19,6 +19,7 @@ import {
   ConsoleMiniShell,
   ConsoleRightRail,
   B20PortfolioPanel,
+  BaseMcpExtensionsCard,
   WalletBalancesCard,
   OpportunitiesScreen,
   RouteHistoryList,
@@ -105,6 +106,7 @@ import {
   useRevokeIntelligenceBudget,
   useMarketSnapshot,
   usePrepareSwapBlueprint,
+  useBaseMcpToolsProbe,
   usePortfolio,
   useRouteHistory,
   useSimulateWithBudget,
@@ -824,6 +826,10 @@ export function MiniConsole() {
   // The B20 tab: what is held, plus adding one by address. The same server-side
   // watchlist the web console writes to — not a second list in this browser.
   const watchlist = useB20Watchlist({ enabled: b20GateOn && Boolean(address) && section === "portfolio" });
+  // A mutation, and only when the surface is open: every call is an
+  // authenticated round trip to somebody else's server with the user's
+  // credentials attached, so it is never a poll and never runs on mount.
+  const baseMcpProbe = useBaseMcpToolsProbe();
   const addWatch = useAddB20Watch();
   const sweep = useB20Watch();
   const [tokenInput, setTokenInput] = useState("");
@@ -1526,6 +1532,40 @@ export function MiniConsole() {
                   : "Press Check now to read what your tokens' controls have done."
           }
         />
+        {/* The way into Extensions in Base App. NOT a fifth tab: four tabs get
+            about 90px each at 390px, and a fifth ellipsises every label to
+            reach an informational catalogue. A one-line entry costs no tab
+            width and keeps the B20 content unmuddled. */}
+        <div className="ctarow">
+          <button type="button" className="btn sec" onClick={() => setSection("extensions")}>
+            Base MCP plugins →
+          </button>
+        </div>
+      </>
+    );
+  } else if (section === "extensions") {
+    sectionContent = (
+      <>
+        <BaseMcpExtensionsCard
+          enabled={status.data?.baseMcp?.enabled === true}
+          loading={baseMcpProbe.isPending}
+          status={baseMcpProbe.data?.status ?? null}
+          endpointHost={baseMcpProbe.data?.endpointHost ?? null}
+          tools={baseMcpProbe.data?.tools ?? []}
+          unavailableReason={
+            baseMcpProbe.error
+              // Never the error's own message: a transport failure can carry
+              // the endpoint, and the endpoint can carry a token.
+              ? "The plugin catalogue could not be read. Nothing here is a statement about which plugins exist."
+              : null
+          }
+          onRefresh={() => baseMcpProbe.mutate()}
+        />
+        <div className="ctarow">
+          <button type="button" className="btn sec" onClick={() => setSection("portfolio")}>
+            ← Back to B20
+          </button>
+        </div>
       </>
     );
   } else if (section === "proofs") {
