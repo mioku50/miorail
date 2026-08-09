@@ -302,4 +302,25 @@ describe('createToolAggregatorForUser baseMcpOnly', () => {
         const readOnly = selectBaseMcpRuntimeTools(tools, true, false, false);
         assert.deepEqual(readOnly.map((tool) => tool.name), ['get_portfolio']);
     });
+
+    test('the full live inventory reduces to reads, and `sign` is not one of them', () => {
+        // `sign` classifies as user_confirmed_transaction with enabled=true —
+        // Base Account shows the message before approving, so the tool is not
+        // disabled in principle. `enabled` is not `selected`, and this is the
+        // line where that distinction has to hold: a signature request in a
+        // console with no Route Card is the mixing the split exists to stop.
+        const tools = classifyDynamicBaseMcpTools([
+            'chain_rpc_request', 'complete_x402_request', 'fund', 'get_portfolio',
+            'get_request_status', 'get_transaction_history', 'get_wallets', 'help',
+            'initiate_x402_request', 'search_tokens', 'send', 'send_calls', 'sign',
+            'swap', 'web_request',
+        ].map((name) => ({ name, description: name, inputSchema: {} })));
+
+        const readOnly = selectBaseMcpRuntimeTools(tools, true, false, false);
+        assert.deepEqual(readOnly.map((tool) => tool.name).sort(), [
+            'chain_rpc_request', 'get_portfolio', 'get_request_status',
+            'get_transaction_history', 'get_wallets', 'help', 'search_tokens',
+            'web_request',
+        ]);
+    });
 });
