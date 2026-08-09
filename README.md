@@ -26,8 +26,8 @@ Six surfaces, shared between the web console and the Base App mini app from one 
 | **Discover** | `/opportunities` | B20 launch feed. Two workers ingest and measure; the rail shows measured exits or says why it cannot. |
 | **B20** | `/portfolio` | B20 holdings, what their controls have done since, wallet balances, and the paid exit proof. |
 | **Routes** | `/routes` | The goal flow: intent → candidates → Route Card → review → Base Account. |
-| **Proofs** | `/plan/history` | Route runs and their execution proofs. See *Known gaps* — no run has produced a proof in production yet. |
-| **Extensions** | `/extensions` | Base MCP: the published plugin catalogue, the live tool list, and an AI console scoped to Base MCP alone. |
+| **Activity** | `/plan/history` | Route runs and where each stopped, the x402 payment ledger, and proofs once a route is signed. In the drawer, not the tab bar. |
+| **Extensions** | `/extensions` | Base MCP: the published plugin catalogue, the live tool list, and an AI console scoped to Base MCP alone. In the drawer. |
 | **Settings** | `/settings` | Budget & payments, adapters, providers, network. |
 
 ### Route families
@@ -120,8 +120,7 @@ The repository is named `mioagent` and the namespace stays `@mioagent/*`. The pr
 
 Stated here because a README that lists only what works is the same failure mode the product is built to avoid.
 
-- **No route has completed in production.** Every route run is `ready`; one execution blueprint exists; every proof table — route, NFT, commerce, AI inference, spend permission — is empty. The Proofs surface is a working viewer for records that do not exist yet.
-- **Proofs drops out of the console shell.** `/plan/history` renders outside `ConsoleShell`, so opening the tab loses the tab bar, and it still uses pre-console styling.
+- **No route has completed in production.** Every route run is `ready`; one execution blueprint exists; every proof table — route, NFT, commerce, AI inference, spend permission — is empty. Activity states this per run rather than showing a status column.
 - **`/stream`** is the old mixed agent thread: Base MCP and partner providers in one loop. Off-navigation, not migrated to the split the Extensions console introduced.
 - **Wallet balances** in Base App depend on `heldTokens` for decimals; a token missing from that list renders without them.
 - The `unknown` Base MCP tools (`chain_rpc_request`, `complete_x402_request`, `fund`, and four others) are unclassified and therefore uncallable.
