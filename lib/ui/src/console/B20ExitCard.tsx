@@ -181,7 +181,13 @@ export const EXIT_REJECTION_COPY_V1: Record<ExitRejectionReasonV1, string> = {
   transfer_policy_may_block:
     'A transfer policy is active on this token, so it can refuse specific addresses. B20 offers no way to list who is on it, so an exit cannot be confirmed.',
   no_entry_route: 'No route into this token exists at this size.',
-  no_exit_route: 'No route out of this token exists. A position could be bought and not sold.',
+  // Measured, 2026-08-09: the sale reverts with Uniswap v4 core's
+  // `NotEnoughLiquidity(poolId)` — the pool prices a buy and has nothing to
+  // sell into. That is a DEPTH condition at one size and one moment, not a
+  // permission and not a permanent property, so the wording no longer claims
+  // that no route exists anywhere or that the position can never be sold.
+  no_exit_route:
+    'Entry priced; no sale could be priced at the measured size. Measured at one size, at one moment — not proof that no route exists anywhere.',
   round_trip_above_tolerance:
     'Even quoted before the entry moves the pool — the flattering direction — the round trip costs more than your limit allows.',
   simulation_reverted:
