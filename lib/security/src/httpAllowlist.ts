@@ -1,3 +1,5 @@
+import { BASE_MCP_PLUGIN_HOSTS_V1 } from './baseMcpPluginHosts.generated.js';
+
 // Central host allowlist for outbound partner HTTP calls (Moonwell HTTP API,
 // Uniswap trade/liquidity APIs, Morpho MCP + Morpho API). Before this module
 // there was no single place enforcing which external hosts a provider is
@@ -81,9 +83,41 @@ export async function partnerFetch(
 export interface PluginHttpScope {
   pluginId: string;
   hosts: string[];
-  methods: ('GET' | 'POST')[];
-  pathPrefixes: string[];
+  /** Omit to allow any method this gateway supports. A plugin with a
+   * hand-written manifest still names its methods and keeps them enforced. */
+  methods?: ('GET' | 'POST')[];
+  /** Omit to allow any path on an allowlisted host. See the note below on why
+   * that is the right default for specs Miorail did not author. */
+  pathPrefixes?: string[];
 }
+
+// ---------------------------------------------------------------------------
+// Why the path and method checks became optional.
+//
+// The scope started as host + method + path prefix, all mandatory, derived
+// from a manifest Miorail wrote per plugin. That is the tightest boundary
+// available and it is worth keeping — for the four plugins that have such a
+// manifest.
+//
+// It also meant the other seventeen native Base plugins could not be reached
+// at all, because nobody had written their manifest yet. The boundary was not
+// protecting anything there; it was just absent capability wearing a security
+// justification.
+//
+// So the rule is now: enforce whatever the scope DECLARES. A manifest that
+// names methods and paths keeps every check it had. A plugin known only from
+// Base's published spec is pinned to its hosts and left free within them.
+//
+// Host pinning is the part that actually stops the attack this exists for. The
+// threat is prompt injection — untrusted text reaching the model through token
+// names, NFT metadata or a provider response — steering a call at an attacker's
+// server. That is defeated by the host list, which comes from a generated file
+// and never from model output. A wrong path on the RIGHT host is a bad request
+// to a protocol the user chose; a right path on the WRONG host is exfiltration.
+//
+// What has not moved: nothing here signs, and every transaction still lands in
+// front of the user in Base Account.
+// ---------------------------------------------------------------------------
 
 export type PluginHttpScopeViolationCode = 'host' | 'method' | 'path';
 
@@ -99,6 +133,21 @@ export class PluginHttpScopeError extends Error {
     this.code = code;
     this.detail = detail;
   }
+}
+
+/**
+ * The scope for a native Base plugin Miorail has no manifest for.
+ *
+ * Hosts come from `baseMcpPluginHosts.generated.ts`, produced by
+ * `scripts/refreshBaseMcpPluginHosts.mts` from the same specs Claude and
+ * ChatGPT load. Null for a plugin Base does not publish, or one whose spec
+ * named no API host — and a null scope means no request, because an unknown
+ * plugin is not a plugin with an empty allowlist, it is one nobody checked.
+ */
+export function baseMcpPluginScopeV1(pluginId: string): PluginHttpScope | null {
+  const hosts = BASE_MCP_PLUGIN_HOSTS_V1[pluginId];
+  if (!hosts || hosts.length === 0) return null;
+  return { pluginId, hosts: [...hosts] };
 }
 
 export interface PluginScopedFetchOptions {
@@ -123,10 +172,14 @@ export async function pluginScopedFetch(
     throw new PluginHttpScopeError(scope.pluginId, 'host', parsed.host);
   }
   const method = String(init.method || 'GET').toUpperCase() as 'GET' | 'POST';
-  if (!scope.methods.includes(method)) {
+  // Declared, therefore enforced. An undeclared list is not an empty one: a
+  // scope built from Base's published spec knows the hosts and nothing more,
+  // and refusing every method because none was named would block the plugin
+  // it was written to enable.
+  if (scope.methods && !scope.methods.includes(method)) {
     throw new PluginHttpScopeError(scope.pluginId, 'method', method);
   }
-  if (!scope.pathPrefixes.some((prefix) => parsed.pathname.startsWith(prefix))) {
+  if (scope.pathPrefixes && !scope.pathPrefixes.some((prefix) => parsed.pathname.startsWith(prefix))) {
     throw new PluginHttpScopeError(scope.pluginId, 'path', parsed.pathname);
   }
   const timeoutMs = options.timeoutMs ?? 10_000;

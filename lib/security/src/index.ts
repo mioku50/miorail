@@ -185,6 +185,7 @@ export * from './simulation.js';
 export * from './baseGuards.js';
 export * from './executionGuard.js';
 export * from './httpAllowlist.js';
+export * from './baseMcpPluginHosts.generated.js';
 export * from './moonwellGuard.js';
 export * from './uniswapGuard.js';
 export * from './kyberGuard.js';
