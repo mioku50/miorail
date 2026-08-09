@@ -10,7 +10,7 @@ import {
   observationIdV1,
   type B20StoredLaunchV1,
 } from '@mioagent/route-storage';
-import { profileIdentityV1 } from '@mioagent/opportunity-rail';
+import { OPPORTUNITY_QUOTE_ASSET_V1, profileIdentityV1 } from '@mioagent/opportunity-rail';
 
 import {
   B20MeasureArgError,
@@ -73,6 +73,8 @@ const GOOD_ROUTES: RouteMeasurementV1 = {
   candidatesAnswered: 10,
   entryOutputAtomic: '4000000000000000000000',
   exitReturnAtomic: '99000000',
+  quoteAssetUsed: OPPORTUNITY_QUOTE_ASSET_V1,
+  positionAtomicUsed: '100000000',
   entryRouteHash: null,
   exitRouteHash: null,
   entrySourceKey: 'aerodrome|usdc>token:volatile',

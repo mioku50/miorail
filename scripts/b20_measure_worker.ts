@@ -7,7 +7,7 @@ import {
   type B20ObservationRepositoryV1,
 } from '@mioagent/route-storage';
 
-import { createB20MeasureDepsV1 } from './b20MeasureDeps.js';
+import { B20_NATIVE_POSITION_ATOMIC_V1, createB20MeasureDepsV1 } from './b20MeasureDeps.js';
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 import { parseB20MeasureArgsV1 } from './b20MeasureCli.js';
 import { runB20MeasurePassV1 } from './b20MeasureRun.js';
@@ -58,7 +58,11 @@ async function main(): Promise<number> {
   }
 
   const observations: B20ObservationRepositoryV1 = createDatabaseB20ObservationRepository(client);
-  const deps = createB20MeasureDepsV1({ rpcUrl, maxRetries: args.maxRetries });
+  const deps = createB20MeasureDepsV1({
+    rpcUrl,
+    maxRetries: args.maxRetries,
+    nativePositionAtomic: B20_NATIVE_POSITION_ATOMIC_V1,
+  });
 
   let running = true;
   const removeSignals = installStopSignalsV1(() => {

@@ -7,7 +7,7 @@ import {
   B20_OBSERVATION_UNMEASURED_REASONS_V1,
   B20_QUOTE_ALIGNMENT_V1,
   B20_TRANSFER_POLICY_STATES_V1,
-  OPPORTUNITY_QUOTE_ASSET_V1,
+  B20_MEASUREMENT_QUOTE_ASSETS_V1,
 } from '@mioagent/opportunity-rail';
 
 import { RouteStorageConflictError, RouteStorageIntegrityError } from './types.js';
@@ -49,8 +49,20 @@ export const B20OpportunityObservationV1Schema = z
     chainId: z.literal(B20_CHAIN_ID_V1),
     tokenAddress: HexAddress,
 
-    /** The feed's measurement parameters. NOT a user qualification. */
-    referenceQuoteAsset: z.literal(OPPORTUNITY_QUOTE_ASSET_V1),
+    /** The feed's measurement parameters. NOT a user qualification.
+     *
+     * Widened past USDC because the venue decides the pair, not the profile:
+     * every B20 v4 pool sampled is quoted against native ETH, and the previous
+     * literal forced those measurements to be STORED as USDC while a USDC-
+     * denominated size was spent as wei — a dust trade recorded as a hundred
+     * dollars. The set stays closed to the two assets B20 pools actually use;
+     * an arbitrary address here would let any pair masquerade as a comparable
+     * measurement.
+     *
+     * Execution is NOT widened. `OPPORTUNITY_QUOTE_ASSET_V1` still pins
+     * clearances, entry plans and approvals to USDC, so an ETH-measured
+     * observation can be shown and can never become an entry plan. */
+    referenceQuoteAsset: z.enum(B20_MEASUREMENT_QUOTE_ASSETS_V1),
     referencePositionAtomic: Uint,
     maxRoundTripBps: z.number().int().min(1).max(10_000),
     maxExitSlippageBps: z.number().int().min(1).max(10_000),

@@ -16,6 +16,7 @@ import {
   profileIdentityV1,
   roundTripV1,
   type B20CheapFilterResultV1,
+  type B20MeasurementQuoteAssetV1,
   type B20ObservationControlsV1,
   type B20QuoteAlignmentV1,
   type B20TransferPolicyStateV1,
@@ -110,6 +111,15 @@ export interface RouteMeasurementV1 {
   /** The exit-capacity ladder, already priced. Sizes are in the TOKEN. */
   probes: { sizeAtomic: string; slippageBps: number | null }[];
   routerCalls: number;
+  /** What was ACTUALLY spent, and in what.
+   *
+   * The profile names one quote asset, but a venue does not have to offer it:
+   * B20's v4 pools are quoted against native ETH, and spending a USDC-
+   * denominated position there buys the same NUMBER of wei — a dust trade
+   * filed as a hundred-dollar measurement. Every observation now records the
+   * pair it was measured in, so a card can only ever state what happened. */
+  quoteAssetUsed: B20MeasurementQuoteAssetV1;
+  positionAtomicUsed: string;
 }
 
 export interface ControlMeasurementV1 {
@@ -468,8 +478,11 @@ async function measureOneV1(context: {
     launchId: launch.launchId,
     chainId: 8453 as const,
     tokenAddress: launch.tokenAddress,
-    referenceQuoteAsset: config.profile.quoteAsset,
-    referencePositionAtomic: config.profile.positionAtomic,
+    // The pair actually measured, not the one the profile asked for. They
+    // differ wherever the venue does not quote the profile's asset, and the
+    // stored row has to describe the trade that was priced.
+    referenceQuoteAsset: routes?.quoteAssetUsed ?? config.profile.quoteAsset,
+    referencePositionAtomic: routes?.positionAtomicUsed ?? config.profile.positionAtomic,
     maxRoundTripBps: config.profile.maxRoundTripBps,
     maxExitSlippageBps: config.profile.maxExitSlippageBps,
     profileIdentity,

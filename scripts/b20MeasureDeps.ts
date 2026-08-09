@@ -12,6 +12,8 @@ import {
   V4QuoteUnavailableError,
 } from '@mioagent/swap-adapters';
 import {
+  b20MeasurementQuoteAssetV1,
+  OPPORTUNITY_QUOTE_ASSET_V1,
   exitProbeLadderV1,
   priceImpactLadderV1,
   type B20ObservationControlsV1,
@@ -47,7 +49,23 @@ import {
 export interface B20MeasureDepsInputV1 {
   rpcUrl: string;
   maxRetries: number;
+  /** The position to spend in pools quoted against NATIVE ETH, in wei.
+   *
+   * Every B20 v4 pool sampled is ETH-quoted, and the profile's position is
+   * denominated in USDC. Spending that number of wei prices a trade worth
+   * roughly nothing, so this is a separate, explicitly ETH-denominated size.
+   * It is not converted from dollars and must never be labelled as dollars:
+   * no price feed is read here, and a converted figure would be a claim about
+   * the ETH price at measurement time that nothing recorded. */
+  nativePositionAtomic: string;
 }
+
+/** 0.03 ETH. Big enough to move a launch pool's price and see the curve, small
+ * enough to be a position someone might actually take. */
+export const B20_NATIVE_POSITION_ATOMIC_V1 = '30000000000000000';
+
+/** Native ETH, as Uniswap v4 addresses it. */
+const NATIVE_ASSET_V1 = '0x0000000000000000000000000000000000000000';
 
 export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): MeasurementDepsV1 {
   // ONE reader per pass, for the reason the sweep has one: it carries what it
@@ -152,9 +170,21 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
       let v4Unreadable = !lookup.ok && lookup.refusal === 'endpoint_unavailable';
       if (lookup.ok) {
         const pool = lookup.pool;
+        // The pool decides the currency; the profile only decides the size in
+        // ITS currency. Matching them is not optional — a USDC position spent
+        // as wei is a different trade, and one nobody asked to have measured.
+        const positionAtomic = pool.quoteAsset === NATIVE_ASSET_V1
+          ? input.nativePositionAtomic
+          : profile.positionAtomic;
+        // A pair the rail cannot name is a pair it cannot compare. The pool
+        // resolver already refuses anything but ETH and USDC, so this is the
+        // type system being told what the venue guarantees — and a fallback to
+        // Aerodrome if that ever stops being true.
+        const measuredAsset = b20MeasurementQuoteAssetV1(pool.quoteAsset);
+        if (measuredAsset) {
         const trip = await b20RoundTripV4V1({
           pool,
-          positionAtomic: profile.positionAtomic,
+          positionAtomic,
           call: v4Call,
         });
         if (trip.entryRouteFound) {
@@ -205,11 +235,14 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
             exitSourceKey: trip.exitRouteFound ? source : null,
             probes,
             routerCalls: trip.quotesUsed + ladder.quotesUsed,
+            quoteAssetUsed: measuredAsset,
+            positionAtomicUsed: positionAtomic,
           };
         }
         // No entry on v4 — fall through to Aerodrome, but remember whether the
         // pool declined to price the buy or simply never answered.
         v4Unreadable = v4Unreadable || trip.endpointDegraded;
+        }
       }
       const analysis = await analyseExitV1({
         reader: aerodromeReader,
@@ -244,6 +277,9 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
         exitSourceKey: analysis.exitRoute ? aerodromeRouteKeyV1(analysis.exitRoute) : null,
         probes: analysis.probes,
         routerCalls: analysis.quotesUsed,
+        // Aerodrome was asked in the profile's own asset, so here the two agree.
+        quoteAssetUsed: OPPORTUNITY_QUOTE_ASSET_V1,
+        positionAtomicUsed: profile.positionAtomic,
       };
     },
 

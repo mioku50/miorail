@@ -34,6 +34,9 @@ export interface OpportunityCardWireV1 {
     headline: string;
     detail: string;
     referencePositionAtomic: string;
+    /** The asset the position is denominated in. Not always USDC: B20's v4
+     * pools are quoted against native ETH. */
+    referenceQuoteAsset?: string | null;
     maxRoundTripBps: number;
     optimisticRoundTripBps: number | null;
     largestPassingSizeAtomic: string | null;
@@ -59,6 +62,30 @@ export interface OpportunityCardWireV1 {
 /** USDC. The one asset this family quotes in, and the decimals the reference
  * position is expressed in. */
 const QUOTE_DECIMALS_V1 = 6;
+
+/** Native ETH, as Uniswap v4 addresses it. */
+const NATIVE_ASSET_V1 = '0x0000000000000000000000000000000000000000';
+
+/**
+ * How to render the position, in the asset it was actually measured in.
+ *
+ * B20's v4 pools are quoted against native ETH, so the reference asset is not
+ * always USDC. Printing wei with six decimals and a "USDC" suffix would put a
+ * number on the card that is wrong by twelve orders of magnitude AND name the
+ * wrong currency — a card stating a trade nobody priced.
+ *
+ * Unknown assets are shown by address rather than assumed: a guessed symbol on
+ * a long-tail token is exactly the kind of confident wrong label this feed
+ * exists to avoid.
+ */
+function quoteAssetDisplayV1(asset: string | null | undefined): { decimals: number; symbol: string } {
+  const address = (asset ?? '').toLowerCase();
+  if (address === NATIVE_ASSET_V1) return { decimals: 18, symbol: 'ETH' };
+  if (address === '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913') {
+    return { decimals: QUOTE_DECIMALS_V1, symbol: 'USDC' };
+  }
+  return { decimals: QUOTE_DECIMALS_V1, symbol: address ? `${address.slice(0, 6)}…${address.slice(-4)}` : 'quote asset' };
+}
 
 /** "4 min ago", "3 h ago", "2 d ago". Whole units only: a launch age to the
  * second implies a precision about when a token became visible that nothing
@@ -175,9 +202,12 @@ export function opportunityCardViewV1(card: OpportunityCardWireV1): OpportunityC
         })
       : null,
     profileLabel: observation
-      ? `${formatAtomicAmount(observation.referencePositionAtomic, QUOTE_DECIMALS_V1)} USDC · ${bpsLabelV1(
-          observation.maxRoundTripBps,
-        )} round trip`
+      ? (() => {
+          const quote = quoteAssetDisplayV1(observation.referenceQuoteAsset);
+          return `${formatAtomicAmount(observation.referencePositionAtomic, quote.decimals)} ${
+            quote.symbol
+          } · ${bpsLabelV1(observation.maxRoundTripBps)} round trip`;
+        })()
       : 'not measured',
     fresh: observation?.freshness === 'fresh',
     actionLabel,

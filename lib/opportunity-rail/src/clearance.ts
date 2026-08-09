@@ -20,6 +20,37 @@ import { z } from 'zod';
 /** Base mainnet USDC. The only quote asset a round trip may start and end in. */
 export const OPPORTUNITY_QUOTE_ASSET_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' as const;
 
+/** Native ETH, as Uniswap v4 addresses it. */
+export const OPPORTUNITY_NATIVE_ASSET_V1 = '0x0000000000000000000000000000000000000000' as const;
+
+/**
+ * What an OBSERVATION may be denominated in — deliberately wider than what an
+ * EXECUTION may be.
+ *
+ * Measuring is asking a pool a question, and B20's pools are quoted in native
+ * ETH, so refusing to record that would mean either not measuring the venue at
+ * all or recording the wrong pair. Executing is spending a user's money, and
+ * that stays pinned to `OPPORTUNITY_QUOTE_ASSET_V1`: the entry plan approves
+ * USDC and swaps USDC, so an ETH-quoted observation can be read on a card and
+ * can never turn into a transaction.
+ */
+export const B20_MEASUREMENT_QUOTE_ASSETS_V1 = [
+  OPPORTUNITY_QUOTE_ASSET_V1,
+  OPPORTUNITY_NATIVE_ASSET_V1,
+] as const;
+
+export type B20MeasurementQuoteAssetV1 = (typeof B20_MEASUREMENT_QUOTE_ASSETS_V1)[number];
+
+/** Narrows a venue-supplied address to an asset a measurement may be recorded
+ * in. Null for anything else — a pair we cannot name is a pair we cannot
+ * compare, and storing it would make the feed's numbers incommensurable. */
+export function b20MeasurementQuoteAssetV1(asset: string): B20MeasurementQuoteAssetV1 | null {
+  const lower = asset.toLowerCase();
+  return (B20_MEASUREMENT_QUOTE_ASSETS_V1 as readonly string[]).includes(lower)
+    ? (lower as B20MeasurementQuoteAssetV1)
+    : null;
+}
+
 /**
  * The profile a user actually chose.
  *

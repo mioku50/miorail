@@ -503,6 +503,33 @@ describe('a card never turns a missing measurement into a number', () => {
     assert.equal(view.capacityLabel, null);
   });
 
+  test('the position is labelled in the asset it was measured in', () => {
+    // B20's v4 pools are quoted against native ETH. Printing 0.03 ETH as
+    // "30000000000000000" with six decimals and a USDC suffix would be wrong
+    // by twelve orders of magnitude and name the wrong currency.
+    const eth = opportunityCardViewV1(
+      wireCard({
+        observation: {
+          ...wireCard().observation,
+          referenceQuoteAsset: '0x0000000000000000000000000000000000000000',
+          referencePositionAtomic: '30000000000000000',
+        },
+      }),
+    );
+    assert.match(eth.profileLabel, /0\.03 ETH/);
+
+    const usdc = opportunityCardViewV1(
+      wireCard({
+        observation: {
+          ...wireCard().observation,
+          referenceQuoteAsset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+          referencePositionAtomic: '100000000',
+        },
+      }),
+    );
+    assert.match(usdc.profileLabel, /100 USDC/);
+  });
+
   test('a never-measured launch says so instead of showing zeros', () => {
     const view = opportunityCardViewV1(wireCard({ observation: null }));
     assert.equal(view.state, 'unmeasured');

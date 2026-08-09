@@ -7,7 +7,7 @@ import {
   type B20ObservationRepositoryV1,
 } from '@mioagent/route-storage';
 
-import { createB20MeasureDepsV1 } from './b20MeasureDeps.js';
+import { B20_NATIVE_POSITION_ATOMIC_V1, createB20MeasureDepsV1 } from './b20MeasureDeps.js';
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 import {
   B20MeasureArgError,
@@ -78,7 +78,11 @@ async function main(): Promise<number> {
 
   // §2 — the same wiring the worker uses, from one module. Two copies would be
   // two definitions of what a measurement is.
-  const deps = createB20MeasureDepsV1({ rpcUrl, maxRetries: args.maxRetries });
+  const deps = createB20MeasureDepsV1({
+    rpcUrl,
+    maxRetries: args.maxRetries,
+    nativePositionAtomic: B20_NATIVE_POSITION_ATOMIC_V1,
+  });
 
   const owner = `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`;
   const outcome = await runB20MeasurePassV1({
