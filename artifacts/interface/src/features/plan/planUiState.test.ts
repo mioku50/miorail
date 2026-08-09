@@ -131,10 +131,17 @@ test('T59: paid simulation is gated on the paidIntelligence flag and a server-pr
   );
   assert.ok(source.includes('<SimulateButton'), 'the console must render the paid SimulateButton');
   // No price means no button: an unpriced paid action would be a charge the
-  // user was never quoted.
+  // user was never quoted. The sentence in its place says the surface was
+  // WITHDRAWN, not misconfigured — Miorail stopped charging for swap
+  // simulation, and "not configured" would send someone hunting for a fix that
+  // does not exist.
   assert.ok(
-    /Paid simulation is not configured on this server/.test(source),
-    'an unpriced server must say so rather than offering the action',
+    /no longer charges for swap simulation/.test(source),
+    'an unpriced server must say why, and not imply a broken setup',
+  );
+  assert.ok(
+    !/not configured on this server/.test(source),
+    'the withdrawn surface must not be described as a misconfiguration',
   );
 });
 

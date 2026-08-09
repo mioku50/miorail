@@ -19,6 +19,7 @@ import {
   ConsoleMiniShell,
   ConsoleRightRail,
   B20PortfolioPanel,
+  WalletBalancesCard,
   OpportunitiesScreen,
   RouteHistoryList,
   consoleHomeSectionV1,
@@ -1278,7 +1279,13 @@ export function MiniConsole() {
                     className="btn"
                   />
                 ) : (
-                  <span className="nt">Paid simulation is not configured on this server.</span>
+                  // Withdrawn, not broken. See the web console's copy: implying
+                  // a misconfiguration sends someone looking for a fix that
+                  // does not exist.
+                  <span className="nt">
+                    Miorail no longer charges for swap simulation. The safety checks still run,
+                    without a fork simulation.
+                  </span>
                 )}
                 {budgetHasHeadroom && address && (
                   <button
@@ -1450,6 +1457,22 @@ export function MiniConsole() {
   } else if (section === "portfolio") {
     sectionContent = (
       <>
+        {/* First, because the first question on this surface is "what do I
+            hold". Base App reaches the same endpoint as the web console, so
+            the two cannot drift apart. */}
+        <WalletBalancesCard
+          loading={portfolio.isPending && Boolean(address)}
+          unavailableReason={
+            !address
+              ? "Connect your wallet to see your balances."
+              : portfolio.error
+                // Never the provider's message: it can carry an endpoint, and
+                // an endpoint can carry a key.
+                ? "Your balances could not be read. This is not a statement about what you hold."
+                : null
+          }
+          rows={portfolio.data?.tokens ?? []}
+        />
         <div className="panel">
           <div className="ph">
             <h3>Watch a token</h3>

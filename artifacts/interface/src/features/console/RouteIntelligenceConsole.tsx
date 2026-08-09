@@ -1276,7 +1276,14 @@ export function RouteIntelligenceConsole() {
                     className="btn"
                   />
                 ) : (
-                  <span className="nt">Paid simulation is not configured on this server, so nothing can be simulated yet.</span>
+                  // Not "misconfigured" — withdrawn. Miorail stopped charging
+                  // for swap simulation, and a message implying a broken setup
+                  // would send someone hunting for a fix that does not exist.
+                  // The free checks below still run.
+                  <span className="nt">
+                    Miorail no longer charges for swap simulation. The safety checks below still run;
+                    they do not include a fork simulation.
+                  </span>
                 )}
                 {budgetHasHeadroom && address && (
                   <button
