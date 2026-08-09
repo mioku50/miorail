@@ -3,9 +3,8 @@ import { useLocation } from 'wouter';
 import { useAccount } from 'wagmi';
 import {
   B20EntryReviewCard,
-  B20ExitCapacityLeadersCard,
+  WalletBalancesCard,
   B20ExitCoverageCard,
-  B20MeasuredMoversCard,
   B20WatchScreen,
   ConsoleShell,
   EXIT_PROFILE_DEFAULTS_V1,
@@ -24,7 +23,6 @@ import {
   useB20BeginEntrySubmission,
   useB20EntryStatus,
   useB20ExitCheck,
-  useB20MarketRails,
   useB20OpportunitySimulate,
   useB20PrepareEntry,
   useB20RecordEntrySubmission,
@@ -152,10 +150,6 @@ export function B20WatchPage() {
   const status = useStatus();
   // T73-UI — the rails come from the server already ranked. Nothing below
   // re-sorts or re-derives them.
-  const [railExpanded, setRailExpanded] = useState(false);
-  const marketRails = useB20MarketRails({
-    enabled: status.data?.productMigration?.b20ControlV1 === true,
-  });
   const portfolio = usePortfolio(address);
   const sweep = useB20Watch();
 
@@ -490,24 +484,6 @@ export function B20WatchPage() {
   // T73-UI §1/§3 — the same node in both slots: `right` is the desktop column
   // and `railFold` is where the shell moves it below the main content under
   // 1180px, which is §3's mobile placement with no second layout.
-  const railModel = {
-    loading: marketRails.isPending && gateOn,
-    unavailableReason: !gateOn
-      ? 'B20 Discover is off on this server, so no market measurements were read.'
-      : marketRails.error
-        ? 'The measured market rails could not be read. Nothing here is a statement about any token.'
-        : null,
-    leaders: marketRails.data?.capacityLeaders ?? [],
-    movers: marketRails.data?.movers ?? [],
-    collectingHistory: marketRails.data?.collectingHistory === true,
-    toleranceBps: marketRails.data?.toleranceBps ?? 300,
-    moveLabel: marketRails.data?.moveLabel ?? '',
-    moveNote: marketRails.data?.moveNote ?? '',
-    now: new Date(),
-    expanded: railExpanded,
-    onToggleExpanded: () => setRailExpanded((open) => !open),
-    onOpenToken: (token: string) => runExitCheck(token),
-  };
 
   // §5 — the wallet's own coverage, for the token whose exit was just checked.
   // It is computed in this browser because the server never receives a balance:
@@ -518,8 +494,28 @@ export function B20WatchPage() {
       ? exitObservationForCoverageV1(exitToken, exitResult as never)
       : null;
 
+  // The wallet's ordinary balances. Deliberately ABOVE the B20 rails: the
+  // first question on a page called Portfolio is "what do I hold", and until
+  // now this surface answered only "what have my B20 controls done".
+  const balancesModel = {
+    loading: portfolio.isPending && Boolean(address),
+    unavailableReason: !address
+      ? 'Connect your wallet to see your balances.'
+      : portfolio.error
+        // Never the provider's message: it can carry an endpoint, and an
+        // endpoint can carry a key.
+        ? 'Your balances could not be read. This is not a statement about what you hold.'
+        : null,
+    rows: portfolio.data?.tokens ?? [],
+    note:
+      portfolio.data && (portfolio.data.tokens ?? []).length > 0
+        ? 'Balances come from a token provider; B20 holdings are read from the tokens themselves below.'
+        : null,
+  };
+
   const marketRail = (
     <>
+      <WalletBalancesCard {...balancesModel} />
       {coverageHolding && coverageObservation && (
         <B20ExitCoverageCard
           tokenAddress={coverageHolding.tokenAddress}
@@ -530,8 +526,6 @@ export function B20WatchPage() {
           now={new Date()}
         />
       )}
-      <B20ExitCapacityLeadersCard {...railModel} />
-      <B20MeasuredMoversCard {...railModel} />
     </>
   );
 

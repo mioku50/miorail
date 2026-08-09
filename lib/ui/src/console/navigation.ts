@@ -38,19 +38,26 @@ export interface ConsoleSectionDefinitionV1 {
 export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, ConsoleSectionDefinitionV1>> = {
   opportunities: {
     id: 'opportunities',
-    label: 'Opportunities',
-    compactLabel: 'Opportunities',
+    // "Opportunities" describes the shape of the list, not what is in it. This
+    // is the B20 launch feed, and Discover is what a user looking for new
+    // tokens would scan for.
+    label: 'Discover',
+    compactLabel: 'Discover',
     path: '/opportunities',
     blurb: 'Measured B20 launches, and what getting back out would cost.',
   },
   portfolio: {
     id: 'portfolio',
-    label: 'Portfolio',
-    // "Portfolio" and "Opportunities" side by side in a 390px bar leaves each
-    // about 90px. B20 is what the tab actually contains and it fits.
+    // Named for what the surface DOES, not for the generic category it sits
+    // in. Almost everything here is B20 — holdings, controls, exit checks —
+    // and wallet balances are context for them rather than the subject. The
+    // compact bar has said "B20" since it was built, with a comment noting
+    // that is what the tab actually contains; the full label just never
+    // followed, so the two disagreed on every screen wider than 390px.
+    label: 'B20',
     compactLabel: 'B20',
     path: '/portfolio',
-    blurb: 'The B20 tokens you hold, and what their controls have done since.',
+    blurb: 'The B20 tokens you hold, what their controls have done, and your wallet balances.',
   },
   routes: {
     id: 'routes',

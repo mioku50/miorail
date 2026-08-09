@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react';
 import { useLocation } from 'wouter';
 import { useAccount } from 'wagmi';
 import {
-  ConsoleRightRail,
+  B20ExitCapacityLeadersCard,
+  B20MeasuredMoversCard,
   ConsoleShell,
   OpportunitiesScreen,
   chainBlockNumberV1,
@@ -18,7 +19,7 @@ import {
   type ConsolePipelineStateV1,
   type OpportunityFilterV1,
 } from '@mioagent/ui';
-import { useB20Opportunities, useStatus } from '@mioagent/api-client-react';
+import { useB20MarketRails, useB20Opportunities, useStatus } from '@mioagent/api-client-react';
 import { useConsoleNav } from '../console/useConsoleNav';
 
 // ---------------------------------------------------------------------------
@@ -48,8 +49,10 @@ export function OpportunitiesPage() {
 
   const [filter, setFilter] = useState<OpportunityFilterV1>('all');
   const [freshOnly, setFreshOnly] = useState(false);
+  const [railExpanded, setRailExpanded] = useState(false);
 
   const discoverOn = status.data?.productMigration?.b20ControlV1 === true;
+  const marketRails = useB20MarketRails({ enabled: discoverOn });
   const feed = useB20Opportunities(
     { state: filter, freshness: freshOnly ? 'fresh' : 'all' },
     { enabled: discoverOn },
@@ -89,10 +92,43 @@ export function OpportunitiesPage() {
         ? discoverFailureCopyV1(feed.error)
         : home.notice;
 
+  // The measured market rails. They belong here rather than on B20: leaders and
+  // movers are statements about every token Miorail has measured, not about the
+  // ones this wallet happens to hold — and this is the surface a user scans
+  // when looking for something new. They also give Discover something true to
+  // show on days when no launch clears the exit policy.
+  const railModel = {
+    loading: marketRails.isPending && discoverOn,
+    unavailableReason: !discoverOn
+      ? 'B20 Discover is off on this server, so no market measurements were read.'
+      : marketRails.error
+        ? 'The measured market rails could not be read. Nothing here is a statement about any token.'
+        : null,
+    leaders: marketRails.data?.capacityLeaders ?? [],
+    movers: marketRails.data?.movers ?? [],
+    collectingHistory: marketRails.data?.collectingHistory === true,
+    toleranceBps: marketRails.data?.toleranceBps ?? 300,
+    moveLabel: marketRails.data?.moveLabel ?? '',
+    moveNote: marketRails.data?.moveNote ?? '',
+    now: new Date(),
+    expanded: railExpanded,
+    onToggleExpanded: () => setRailExpanded((open) => !open),
+    // Opening a token from the rail goes where that token can be acted on.
+    onOpenToken: (token: string) =>
+      navigate(`${consoleSectionPathV1('portfolio')}?token=${encodeURIComponent(token)}`),
+  };
+
+  const marketRail = (
+    <>
+      <B20ExitCapacityLeadersCard {...railModel} />
+      <B20MeasuredMoversCard {...railModel} />
+    </>
+  );
+
   return (
     <ConsoleShell
       header={{
-        crumb: ['Opportunities'],
+        crumb: ['Discover'],
         nav: nav.header,
         onNavigate: nav.navigate,
         blockNumber: chainBlockNumberV1(status.data ?? null),
@@ -115,19 +151,8 @@ export function OpportunitiesPage() {
         spendLabel: '$0',
         blockNumber: chainBlockNumberV1(status.data ?? null),
       }}
-      right={
-        // Nothing is running, so the rail collapses to one block rather than
-        // stacking five separate "unavailable" panels down the column.
-        <ConsoleRightRail
-          price={null}
-          priceUnavailableReason={null}
-          depth={null}
-          depthUnavailableReason={null}
-          evidenceFeed={[]}
-          spend={null}
-          freshness={[]}
-        />
-      }
+      right={marketRail}
+      railFold={marketRail}
       theme={theme}
       onThemeChange={setTheme}
       onNewGoal={() => navigate(consoleSectionPathV1('routes'))}

@@ -22,4 +22,5 @@ export * from './B20ExitCard';
 export * from './B20EntryReviewCard';
 export * from './B20PortfolioPanel';
 export * from './B20MarketRails';
+export * from './WalletBalancesCard';
 export * from './PublicProofPanels';

@@ -18,7 +18,7 @@ const here = path.dirname(url.fileURLToPath(import.meta.url));
 //
 // Both tables are DERIVED from the shared section table in lib/ui, so this test
 // also pins that the web app has no navigation vocabulary of its own.
-test('navigation is exactly Opportunities, Portfolio, Routes and Proofs', () => {
+test('navigation is exactly Discover, B20, Routes and Proofs', () => {
   const tabs = navTabs();
   assert.deepEqual(tabs.map((route) => route.path), [
     '/opportunities',
@@ -26,7 +26,12 @@ test('navigation is exactly Opportunities, Portfolio, Routes and Proofs', () => 
     '/routes',
     '/plan/history',
   ]);
-  assert.deepEqual(tabs.map((route) => route.label), ['Opportunities', 'Portfolio', 'Routes', 'Proofs']);
+  // Named for what each surface CONTAINS. Both of the first two are B20:
+  // Discover is the launch feed, B20 is what you already hold. "Opportunities"
+  // described the shape of a list and "Portfolio" the generic category, and
+  // neither told a user which flow they were in — the compact bar had already
+  // said "B20" for the second one since it was built.
+  assert.deepEqual(tabs.map((route) => route.label), ['Discover', 'B20', 'Routes', 'Proofs']);
 });
 
 test('the web tabs come from the shared table, not from a list typed here', () => {

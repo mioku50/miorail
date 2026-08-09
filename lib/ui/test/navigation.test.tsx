@@ -192,9 +192,9 @@ describe('§9.5/§9.6 — the drawer is navigation, not a control panel', () => 
 });
 
 describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
-  test('Base App shows Opportunities, B20, Routes and Proofs', () => {
+  test('Base App shows Discover, B20, Routes and Proofs', () => {
     const nav = consoleNavModelV1({ mounted: CONSOLE_PRIMARY_SECTIONS_V1, active: 'opportunities' });
-    assert.deepEqual(nav.map((item) => item.compactLabel), ['Opportunities', 'B20', 'Routes', 'Proofs']);
+    assert.deepEqual(nav.map((item) => item.compactLabel), ['Discover', 'B20', 'Routes', 'Proofs']);
   });
 
   test('the compact labels are in the shared table, not typed into the miniapp', () => {
