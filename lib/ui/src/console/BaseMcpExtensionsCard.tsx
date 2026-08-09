@@ -1,15 +1,22 @@
 // ---------------------------------------------------------------------------
-// Base MCP plugins, and what each one is allowed to do here.
+// Base MCP's core tools, and what each one is allowed to do here.
 //
-// Base MCP is a catalogue of third-party tools reachable with the user's own
-// Base Account. Two facts about it decide this whole screen:
+// These are the calls the Base MCP server itself exposes — get_portfolio,
+// send, swap, sign — read live from the endpoint, so a tool Base adds shows up
+// here on the next read without anyone shipping a release.
 //
-//   * Base does not operate, endorse or audit the plugins. They are other
-//     people's code, reached with the user's wallet.
+// They are NOT the plugins. This card was headed "Base MCP plugins" for a
+// release and listed none: the plugins are published specs and live in
+// BaseMcpPluginsCard next to this one. Two layers, two cards, two headings.
+//
+// Two facts decide this screen:
+//
+//   * Base does not operate, endorse or audit what these tools reach. They
+//     touch other people's protocols, with the user's wallet.
 //   * A write tool does not execute anything itself. It returns an approval
 //     URL, and the user approves in Base Account — outside Miorail entirely.
 //
-// So this surface LISTS and CLASSIFIES; it does not become a second execution
+// So this card LISTS and CLASSIFIES; it does not become a second execution
 // path. Miorail already has exactly one way to put calls in front of a wallet
 // (`useSubmitApprovedBlueprint`), and routing an approval URL through anything
 // that looked like it would mean two paths with one of them unaudited.
@@ -24,7 +31,7 @@
 // `unknown` deserves its name. A tool the classifier has never seen might be a
 // read, and might move money. Showing it as available because it is probably
 // harmless is precisely the assumption a catalogue of third-party code should
-// never make.
+// never make — and it is the case that grows, because the list is live.
 // ---------------------------------------------------------------------------
 
 export type BaseMcpCapabilityV1 =
@@ -98,7 +105,7 @@ export function baseMcpStatusCopyV1(status: BaseMcpStatusV1 | null, enabled: boo
       return 'Your Base MCP session expired. Connect again to keep using it.';
     case 'unreachable':
       // Not a claim about the plugins: we could not ask.
-      return 'Base MCP did not answer. Nothing here is a statement about which plugins exist.';
+      return 'Base MCP did not answer. Nothing here is a statement about which tools exist.';
     case 'degraded':
       return 'Base MCP answered only partly, so this list may be incomplete.';
     default:
@@ -123,7 +130,7 @@ export function BaseMcpExtensionsCard(model: BaseMcpExtensionsModelV1) {
   return (
     <div className="rp">
       <div className="rph">
-        <b>Base MCP plugins</b>
+        <b>Base MCP tools</b>
         {model.endpointHost && <span className="rt mono">{model.endpointHost}</span>}
       </div>
       <div className="rpb">
@@ -145,12 +152,12 @@ export function BaseMcpExtensionsCard(model: BaseMcpExtensionsModelV1) {
         )}
 
         {!model.enabled ? null : model.loading && groups.length === 0 ? (
-          <p className="empty">Reading the plugin catalogue…</p>
+          <p className="empty">Reading the tool catalogue…</p>
         ) : model.unavailableReason ? (
           <p className="empty">{model.unavailableReason}</p>
         ) : groups.length === 0 ? (
           <p className="empty">
-            No plugins have been read yet. Connect your Base Account to see what is available.
+            No tools have been read yet. Connect your Base Account to see what is available.
           </p>
         ) : (
           groups.map((group) => (
@@ -176,9 +183,10 @@ export function BaseMcpExtensionsCard(model: BaseMcpExtensionsModelV1) {
 
         {model.enabled && groups.length > 0 && (
           <p className="lnote">
-            Plugins are built by third parties. Base does not operate, endorse or audit them, and
-            Miorail does not either — it classifies what each one is allowed to do here and refuses
-            the rest. Transactions are approved in your Base Account and are irreversible.
+            Read live from Base MCP, so a tool Base adds appears here on the next read. Base does
+            not operate, endorse or audit the protocols these reach, and Miorail does not either —
+            it classifies what each tool is allowed to do here and refuses the rest. Transactions
+            are approved in your Base Account and are irreversible.
           </p>
         )}
       </div>

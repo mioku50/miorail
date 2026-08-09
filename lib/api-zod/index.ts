@@ -1527,6 +1527,39 @@ export const BaseMcpToolProbeResponseSchema = z.object({
   walletToolsStatus: z.enum(['available', 'unavailable']).optional(),
 });
 
+// The native Base MCP plugin catalogue, plus whether it has fallen behind the
+// one Base publishes. Deliberately separate from the tool probe: the tools are
+// a live authenticated read of mcp.base.org, the plugins are published specs
+// that exist whether or not this user has ever connected.
+export const BaseMcpPluginCatalogueResponseSchema = z.object({
+  plugins: z.array(z.object({
+    id: z.string(),
+    title: z.string(),
+    summary: z.string(),
+    version: z.string(),
+    integration: z.string(),
+    chains: z.array(z.string()),
+    tags: z.array(z.string()),
+    risk: z.array(z.string()),
+    auth: z.string(),
+    shell: z.string(),
+    hosts: z.array(z.string()),
+    externalMcpHost: z.string().nullable(),
+    cliPackage: z.string().nullable(),
+  })),
+  /** The date the committed catalogue was read from Base. */
+  generatedAt: z.string(),
+  drift: z.object({
+    status: z.enum(['in_sync', 'drifted', 'unchecked']),
+    knownCount: z.number(),
+    publishedCount: z.number().nullable(),
+    added: z.array(z.string()),
+    removed: z.array(z.string()),
+    checkedAt: z.string().nullable(),
+    reason: z.string().nullable(),
+  }),
+});
+
 export const DismissActionRequestSchema = z.object({
   actionId: z.string(),
 });

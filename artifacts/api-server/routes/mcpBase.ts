@@ -1,7 +1,15 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import crypto from 'node:crypto';
 import { logger } from '@mioagent/utils';
-import { BaseMcpToolProbeResponseSchema } from '@mioagent/api-zod';
+import {
+  BaseMcpPluginCatalogueResponseSchema,
+  BaseMcpToolProbeResponseSchema,
+} from '@mioagent/api-zod';
+import {
+  BASE_MCP_CATALOGUE_GENERATED_AT_V1,
+  BASE_MCP_PLUGIN_CATALOGUE_V1,
+} from '@mioagent/security';
+import { baseMcpPluginDriftV1 } from '../lib/baseMcpPluginDrift.js';
 import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
 import {
   baseMcpEnabledFromEnv,
@@ -27,6 +35,7 @@ export const mcpBaseRouteRuntime = {
   logger,
   probeBaseMcpTools,
   verifyBaseMcpWalletMatchViaOAuth,
+  baseMcpPluginDriftV1,
 };
 
 function sessionSecret(): string {
@@ -292,3 +301,21 @@ async function handleToolsProbe(req: Request, res: Response, next: NextFunction)
 
 mcpBaseRouter.get('/tools', handleToolsProbe);
 mcpBaseRouter.get('/probe', handleToolsProbe);
+
+// The plugin catalogue. NOT behind the OAuth session, and not behind
+// BASE_MCP_ENABLED either: which plugins Base publishes is public knowledge
+// that does not change when a token expires. Hiding it behind the connection
+// is what produced the screenshot where a disconnected user saw a page about
+// Base MCP with no plugins on it.
+mcpBaseRouter.get('/plugins', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const drift = await mcpBaseRouteRuntime.baseMcpPluginDriftV1();
+    return res.json(BaseMcpPluginCatalogueResponseSchema.parse({
+      plugins: BASE_MCP_PLUGIN_CATALOGUE_V1,
+      generatedAt: BASE_MCP_CATALOGUE_GENERATED_AT_V1,
+      drift,
+    }));
+  } catch (error) {
+    next(error);
+  }
+});

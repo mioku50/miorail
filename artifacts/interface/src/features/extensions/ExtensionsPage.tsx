@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useLocation } from 'wouter';
 import {
   BaseMcpExtensionsCard,
+  BaseMcpPluginsCard,
   ConsoleShell,
   chainBlockNumberV1,
   chainGasLabelV1,
@@ -11,18 +12,28 @@ import {
   type BaseMcpToolRowV1,
 } from '@mioagent/ui';
 import { useAccount } from 'wagmi';
-import { useBaseMcpToolsProbe, useStatus } from '@mioagent/api-client-react';
+import { useBaseMcpPlugins, useBaseMcpToolsProbe, useStatus } from '@mioagent/api-client-react';
 
 import { BaseMcpConnectButton } from '../../components/BaseMcpConnectButton';
 import { useConsoleNav } from '../console/useConsoleNav';
 
 // ---------------------------------------------------------------------------
-// Extensions — the Base MCP plugin catalogue.
+// Extensions — Base MCP, in its two layers.
 //
-// Read and classify, nothing else. The probe is a MUTATION rather than a query
-// on purpose: it opens an authenticated session to a third-party server, and
-// that is not something a page should do on mount, on focus, or on a timer.
-// The user asks; then it reads.
+//   * The PLUGINS: twenty specifications Base publishes, each a protocol with
+//     its own hosts, auth and risks. Public knowledge, so the card renders
+//     whether or not this browser has ever connected — the page used to go
+//     blank the moment a session expired, which is how a user ends up looking
+//     at a screen about Base MCP that mentions no plugin at all.
+//
+//   * The TOOLS: the calls mcp.base.org itself exposes, read live with the
+//     user's own credentials.
+//
+// Read and classify, nothing else. The tool probe is a MUTATION rather than a
+// query on purpose: it opens an authenticated session to a third-party server,
+// and that is not something a page should do on mount, on focus, or on a
+// timer. The user asks; then it reads. The plugin catalogue has no such cost,
+// so it is an ordinary query.
 // ---------------------------------------------------------------------------
 
 /** `0x1234…abcd`, or nothing when no wallet is connected. */
@@ -37,6 +48,7 @@ export function ExtensionsPage() {
   const { address } = useAccount();
   const status = useStatus();
   const probe = useBaseMcpToolsProbe();
+  const catalogue = useBaseMcpPlugins();
 
   const enabled = status.data?.baseMcp?.enabled === true;
   const [askedOnce, setAskedOnce] = useState(false);
@@ -68,6 +80,16 @@ export function ExtensionsPage() {
     onRefresh: readCatalogue,
   };
 
+  const plugins = {
+    loading: catalogue.isPending,
+    plugins: catalogue.data?.plugins ?? [],
+    drift: catalogue.data?.drift ?? null,
+    generatedAt: catalogue.data?.generatedAt ?? null,
+    unavailableReason: catalogue.error
+      ? 'The plugin catalogue could not be read from this server.'
+      : null,
+  };
+
   return (
     <ConsoleShell
       header={{
@@ -90,7 +112,9 @@ export function ExtensionsPage() {
       }}
       footer={{
         adaptersLabel: '—',
-        sourcesLabel: String(probe.data?.toolsCount ?? 0),
+        // The catalogue, not the session: this stays truthful when the Base
+        // MCP token has expired and the tool count is legitimately zero.
+        sourcesLabel: String(plugins.plugins.length),
         spendLabel: '$0',
         blockNumber: chainBlockNumberV1(status.data ?? null),
       }}
@@ -103,6 +127,9 @@ export function ExtensionsPage() {
       onSelectSession={() => navigate(consoleSectionPathV1('routes'))}
       onSelectProof={() => navigate(consoleSectionPathV1('proofs'))}
     >
+      {/* Plugins first: it is what the section is for, and it does not depend
+          on a connection. The live tool list follows. */}
+      <BaseMcpPluginsCard {...plugins} />
       <BaseMcpExtensionsCard {...model} />
       {enabled && (
         // The connect control is its own component because OAuth must open

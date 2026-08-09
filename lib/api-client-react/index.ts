@@ -1157,6 +1157,27 @@ export function useB20EntryStatus(
   });
 }
 
+/**
+ * The native Base MCP plugin catalogue, and whether it has fallen behind.
+ *
+ * A QUERY, unlike the tool probe next to it, and the difference is the point:
+ * the tools are a live authenticated read of somebody else's server with the
+ * user's credentials attached, so the user asks for it. The plugins are Base's
+ * published specs — public, and true whether or not this browser has ever
+ * connected — so the page can simply show them.
+ */
+export function useBaseMcpPlugins(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['base-mcp-plugins'],
+    enabled: options?.enabled ?? true,
+    staleTime: 15 * 60 * 1000,
+    queryFn: async () => {
+      const response = await fetchApi<unknown>('/api/mcp/base/plugins');
+      return apiSpec.BaseMcpPluginCatalogueResponseSchema.parse(response);
+    },
+  });
+}
+
 export function useBaseMcpToolsProbe(
   options?: Omit<UseMutationOptions<apiSpec.BaseMcpToolProbeResponse, Error, void>, 'mutationFn'>
 ) {

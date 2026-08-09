@@ -14,6 +14,7 @@ import {
 const originalAuth = mcpBaseRouteRuntime.auth;
 const originalLogger = mcpBaseRouteRuntime.logger;
 const originalProbeBaseMcpTools = mcpBaseRouteRuntime.probeBaseMcpTools;
+const originalPluginDrift = mcpBaseRouteRuntime.baseMcpPluginDriftV1;
 const originalDb = baseMcpOAuthStoreRuntime.db;
 const originalFetch = globalThis.fetch;
 
@@ -73,6 +74,7 @@ afterEach(() => {
   mcpBaseRouteRuntime.auth = originalAuth;
   mcpBaseRouteRuntime.logger = originalLogger;
   mcpBaseRouteRuntime.probeBaseMcpTools = originalProbeBaseMcpTools;
+  mcpBaseRouteRuntime.baseMcpPluginDriftV1 = originalPluginDrift;
   baseMcpOAuthStoreRuntime.db = originalDb;
   globalThis.fetch = originalFetch;
   clearBaseMcpStatusForTests();
@@ -515,4 +517,53 @@ test('GET /api/mcp/base/probe returns needs_reauth when stored token is absent',
   assert.strictEqual(JSON.stringify(response.body).includes('test-session-secret'), false);
 
   restoreEnv('SESSION_SECRET', originalSecret);
+});
+
+test('GET /api/mcp/base/plugins lists the catalogue without a Base MCP session', async () => {
+  // The whole point of splitting this from the tool probe: which plugins Base
+  // publishes is public, and a user whose token expired should still see them.
+  // Hiding the catalogue behind the connection is what produced a page about
+  // Base MCP with no plugin on it.
+  const originalEnabled = process.env.BASE_MCP_ENABLED;
+  delete process.env.BASE_MCP_ENABLED;
+  mcpBaseRouteRuntime.baseMcpPluginDriftV1 = async () => ({
+    status: 'in_sync' as const,
+    knownCount: 20,
+    publishedCount: 20,
+    added: [],
+    removed: [],
+    checkedAt: '2026-08-09T12:00:00.000Z',
+    reason: null,
+  });
+
+  const response = await request(app).get('/api/mcp/base/plugins');
+  assert.strictEqual(response.status, 200);
+  assert.ok(response.body.plugins.length >= 20);
+  assert.strictEqual(response.body.drift.status, 'in_sync');
+  const uniswap = response.body.plugins.find((plugin: { id: string }) => plugin.id === 'uniswap');
+  assert.ok(uniswap, 'uniswap must be in the catalogue');
+  assert.ok(uniswap.hosts.includes('trade-api.gateway.uniswap.org'));
+
+  restoreEnv('BASE_MCP_ENABLED', originalEnabled);
+});
+
+test('GET /api/mcp/base/plugins still lists the catalogue when the drift check fails', async () => {
+  // A failed drift check must degrade the INDICATOR, never the list. Returning
+  // no plugins because github was unreachable would be the same defect as
+  // reporting "no plugins exist" — our outage wearing Base's name.
+  mcpBaseRouteRuntime.baseMcpPluginDriftV1 = async () => ({
+    status: 'unchecked' as const,
+    knownCount: 20,
+    publishedCount: null,
+    added: [],
+    removed: [],
+    checkedAt: null,
+    reason: 'source_unreachable',
+  });
+
+  const response = await request(app).get('/api/mcp/base/plugins');
+  assert.strictEqual(response.status, 200);
+  assert.ok(response.body.plugins.length >= 20);
+  assert.strictEqual(response.body.drift.status, 'unchecked');
+  assert.strictEqual(response.body.drift.publishedCount, null);
 });

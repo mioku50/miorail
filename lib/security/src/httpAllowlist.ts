@@ -1,4 +1,4 @@
-import { BASE_MCP_PLUGIN_HOSTS_V1 } from './baseMcpPluginHosts.generated.js';
+import { BASE_MCP_PLUGIN_HOSTS_V1 } from './baseMcpPluginCatalogue.generated.js';
 
 // Central host allowlist for outbound partner HTTP calls (Moonwell HTTP API,
 // Uniswap trade/liquidity APIs, Morpho MCP + Morpho API). Before this module
@@ -138,11 +138,13 @@ export class PluginHttpScopeError extends Error {
 /**
  * The scope for a native Base plugin Miorail has no manifest for.
  *
- * Hosts come from `baseMcpPluginHosts.generated.ts`, produced by
- * `scripts/refreshBaseMcpPluginHosts.mts` from the same specs Claude and
- * ChatGPT load. Null for a plugin Base does not publish, or one whose spec
- * named no API host — and a null scope means no request, because an unknown
- * plugin is not a plugin with an empty allowlist, it is one nobody checked.
+ * Hosts come from `baseMcpPluginCatalogue.generated.ts`, produced by
+ * `scripts/refreshBaseMcpPluginCatalogue.mts` from the same specs Claude and
+ * ChatGPT load — specifically from each spec's own `requires.allowlist`. Null
+ * for a plugin Base does not publish, or one that declares no API host at all
+ * (aerodrome and balancer run through a shell; `yo` goes straight to chain).
+ * A null scope means no request, because an unknown plugin is not a plugin
+ * with an empty allowlist, it is one nobody checked.
  */
 export function baseMcpPluginScopeV1(pluginId: string): PluginHttpScope | null {
   const hosts = BASE_MCP_PLUGIN_HOSTS_V1[pluginId];

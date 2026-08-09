@@ -21,6 +21,7 @@ import {
   B20ExitCard,
   B20PortfolioPanel,
   BaseMcpExtensionsCard,
+  BaseMcpPluginsCard,
   EXIT_PROFILE_DEFAULTS_V1,
   WalletBalancesCard,
   formatAtomicAmount,
@@ -114,6 +115,7 @@ import {
   usePrepareSwapBlueprint,
   useB20ExitCheck,
   useB20OpportunitySimulate,
+  useBaseMcpPlugins,
   useBaseMcpToolsProbe,
   usePortfolio,
   useRouteHistory,
@@ -838,6 +840,10 @@ export function MiniConsole() {
   // authenticated round trip to somebody else's server with the user's
   // credentials attached, so it is never a poll and never runs on mount.
   const baseMcpProbe = useBaseMcpToolsProbe();
+  // The published plugin specs, unlike the tools above: public, cheap, and
+  // true whether or not this Base App session has ever authorized. Fetched
+  // only while the section is open so an unopened tab costs nothing.
+  const baseMcpPlugins = useBaseMcpPlugins({ enabled: section === "extensions" });
 
   // --- the paid B20 exit proof, in Base App ---------------------------------
   //
@@ -1684,7 +1690,7 @@ export function MiniConsole() {
             width and keeps the B20 content unmuddled. */}
         <div className="ctarow">
           <button type="button" className="btn sec" onClick={() => setSection("extensions")}>
-            Base MCP plugins →
+            Base MCP extensions →
           </button>
         </div>
       </>
@@ -1692,6 +1698,15 @@ export function MiniConsole() {
   } else if (section === "extensions") {
     sectionContent = (
       <>
+        <BaseMcpPluginsCard
+          loading={baseMcpPlugins.isPending}
+          plugins={baseMcpPlugins.data?.plugins ?? []}
+          drift={baseMcpPlugins.data?.drift ?? null}
+          generatedAt={baseMcpPlugins.data?.generatedAt ?? null}
+          unavailableReason={
+            baseMcpPlugins.error ? "The plugin catalogue could not be read from this server." : null
+          }
+        />
         <BaseMcpExtensionsCard
           enabled={status.data?.baseMcp?.enabled === true}
           loading={baseMcpProbe.isPending}
@@ -1702,7 +1717,7 @@ export function MiniConsole() {
             baseMcpProbe.error
               // Never the error's own message: a transport failure can carry
               // the endpoint, and the endpoint can carry a token.
-              ? "The plugin catalogue could not be read. Nothing here is a statement about which plugins exist."
+              ? "The tool catalogue could not be read. Nothing here is a statement about which tools exist."
               : null
           }
           onRefresh={() => baseMcpProbe.mutate()}

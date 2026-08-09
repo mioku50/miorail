@@ -49,8 +49,8 @@ describe('a third-party catalogue is grouped by what it may do, not by name', ()
 });
 
 describe('the connection line tells a user whether to act', () => {
-  test('an unreachable server is not a claim about the plugins', () => {
-    assert.match(baseMcpStatusCopyV1('unreachable', true), /Nothing here is a statement about which plugins/i);
+  test('an unreachable server is not a claim about the tools', () => {
+    assert.match(baseMcpStatusCopyV1('unreachable', true), /Nothing here is a statement about which tools/i);
   });
 
   test('a partial answer says the list may be incomplete', () => {

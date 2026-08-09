@@ -3,8 +3,9 @@ import test, { describe } from 'node:test';
 
 import {
   BASE_MCP_ALL_PLUGIN_HOSTS_V1,
+  BASE_MCP_PLUGIN_CATALOGUE_V1,
   BASE_MCP_PLUGIN_HOSTS_V1,
-} from './baseMcpPluginHosts.generated.js';
+} from './baseMcpPluginCatalogue.generated.js';
 import {
   PluginHttpScopeError,
   baseMcpPluginScopeV1,
@@ -51,9 +52,13 @@ describe('a plugin known only from Base’s spec is pinned to its hosts', () => 
 
   test('a plugin Base does not publish gets no scope, so it makes no request', () => {
     // Null, not an empty allowlist. An unknown plugin is one nobody checked,
-    // and `yo` named no API host at all — that is not a free pass either.
+    // and `yo` declares no API host at all — that is not a free pass either.
     assert.equal(baseMcpPluginScopeV1('definitely-not-a-plugin'), null);
     assert.equal(baseMcpPluginScopeV1('yo'), null);
+    // Same for the shell plugins: aerodrome and balancer reach their APIs from
+    // a terminal, so an HTTP scope for them would be an invention.
+    assert.equal(baseMcpPluginScopeV1('aerodrome'), null);
+    assert.equal(baseMcpPluginScopeV1('balancer'), null);
   });
 });
 
@@ -117,5 +122,39 @@ describe('the generated list is a boundary, not a scrape', () => {
 
   test('all twenty native plugins are present', () => {
     assert.equal(Object.keys(BASE_MCP_PLUGIN_HOSTS_V1).length, 20);
+  });
+
+  test('hosts are what each spec DECLARES, not what its prose links to', () => {
+    // The list used to come from a regex over the whole markdown, which read
+    // marketing links and example output as endpoints: `opensea.io`,
+    // `www.bitrefill.com`, `hydrex.fi`, `clanker.world`. None of them is called
+    // by any plugin, and every one of them was a host Miorail would have
+    // reached on a plugin's say-so. Now it is each spec's `requires.allowlist`.
+    for (const stale of ['opensea.io', 'www.bitrefill.com', 'hydrex.fi', 'clanker.world', 'www.avantisfi.com']) {
+      assert.ok(!BASE_MCP_ALL_PLUGIN_HOSTS_V1.includes(stale), stale);
+    }
+    assert.ok(BASE_MCP_ALL_PLUGIN_HOSTS_V1.includes('api.opensea.io'));
+    assert.ok(BASE_MCP_ALL_PLUGIN_HOSTS_V1.includes('api.bitrefill.com'));
+  });
+
+  test('every catalogue entry carries enough to be listed honestly', () => {
+    // The Extensions surface renders these fields. A blank id or title is a
+    // row nobody can act on, so the generator must not emit one.
+    for (const plugin of BASE_MCP_PLUGIN_CATALOGUE_V1) {
+      assert.match(plugin.id, /^[a-z0-9][a-z0-9-]*$/, plugin.id);
+      assert.ok(plugin.title.length > 0, `${plugin.id} has no title`);
+      assert.ok(plugin.summary.length > 0, `${plugin.id} has no summary`);
+      // Absent is stated as `unknown`, never guessed: flaunch's spec omits
+      // both, and inventing `none` would be a claim its author did not make.
+      assert.ok(plugin.shell.length > 0 && plugin.auth.length > 0, plugin.id);
+    }
+  });
+
+  test('the catalogue and the host map cannot disagree', () => {
+    // One source, derived twice. A hand-maintained second copy is how an
+    // allowlist and the screen describing it drift apart.
+    for (const plugin of BASE_MCP_PLUGIN_CATALOGUE_V1) {
+      assert.deepEqual([...(BASE_MCP_PLUGIN_HOSTS_V1[plugin.id] ?? [])], [...plugin.hosts], plugin.id);
+    }
   });
 });
