@@ -40,6 +40,20 @@ const MAX_MESSAGE_LENGTH_V1 = 2000;
 const MAX_ARGS_CHARS_V1 = 600;
 const MAX_RESULT_CHARS_V1 = 400;
 const MAX_REPLY_CHARS_V1 = 8000;
+/**
+ * What one tool result may add to the MODEL's context.
+ *
+ * Measured on the deployment: a question answered with no tool call took
+ * 3.7 seconds; the same console with three `get_portfolio` calls took 45. Four
+ * model turns do not account for forty seconds — but every turn after the
+ * first carries every previous tool result, and Base MCP's portfolio payload
+ * is well over a kilobyte of escaped JSON per call. The context is the cost.
+ *
+ * So the console bounds what goes back in. Generous enough that a portfolio
+ * still answers a portfolio question, small enough that four rounds do not
+ * compound into a minute.
+ */
+const MAX_MODEL_RESULT_CHARS_V1 = 1500;
 
 export type BaseMcpConsoleStatusV1 =
   | 'answered'
@@ -159,6 +173,16 @@ export function baseMcpConsoleResultTextV1(raw: string): string {
   return truncate(stripped, MAX_RESULT_CHARS_V1);
 }
 
+/**
+ * A tool result as the MODEL receives it: envelope unwrapped, bounded, and
+ * told when it was cut.
+ */
+export function boundedModelResultV1(raw: string): string {
+  const unwrapped = unwrapMcpContentV1(raw ?? '');
+  if (unwrapped.length <= MAX_MODEL_RESULT_CHARS_V1) return unwrapped;
+  return `${unwrapped.slice(0, MAX_MODEL_RESULT_CHARS_V1)}\n[truncated by Miorail: the tool returned more than this console passes on. Say the list is partial rather than presenting it as complete.]`;
+}
+
 function unavailable(
   status: BaseMcpConsoleStatusV1,
   errorCode: string,
@@ -231,6 +255,14 @@ export async function runBaseMcpConsoleV1(input: {
       llmProvider: baseMcpConsoleRuntimeV1.createLlmProvider(),
       toolAggregator: tools,
       systemPromptExtra: CONSOLE_PROMPT_V1,
+      // Applied before the result is pushed into the conversation, so this
+      // bounds the model's context as well as the trace. Truncation is
+      // ANNOUNCED rather than silent: a model that cannot tell a short list
+      // from a cut one will report the cut one as complete.
+      toolResultGuard: ({ content, isError }) => ({
+        content: boundedModelResultV1(content),
+        isError,
+      }),
       runtimeContext: {
         walletAddress: input.walletAddress,
         chainId: 8453,

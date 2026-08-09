@@ -5,6 +5,7 @@ import type { Request } from 'express';
 import {
   baseMcpConsoleArgsV1,
   baseMcpConsoleResultTextV1,
+  boundedModelResultV1,
   baseMcpConsoleRuntimeV1,
   runBaseMcpConsoleV1,
 } from './baseMcpConsole.js';
@@ -333,5 +334,47 @@ describe('the answer carries how long it took', () => {
     const result = await ask();
     assert.equal(result.status, 'no_tools');
     assert.equal(typeof result.elapsedMs, 'number');
+  });
+});
+
+describe('what the model is fed is bounded too, not just the screen', () => {
+  test('the guard unwraps and caps what goes back into the conversation', async () => {
+    // Measured: an answer with no tool call took 3.7s; three `get_portfolio`
+    // calls took 45. Four model turns do not explain forty seconds — but every
+    // turn after the first carries every previous result, and the portfolio
+    // payload is over a kilobyte of escaped JSON each time.
+    let config: Record<string, unknown> = {};
+    stubTools(BASE_MCP_INVENTORY);
+    stubAgent([{ type: 'message', content: 'ok' }], (captured) => {
+      config = captured;
+    });
+    await ask();
+    const guard = config.toolResultGuard as (input: { content: string; isError: boolean }) => {
+      content: string;
+      isError: boolean;
+    };
+    assert.ok(guard, 'the console must bound tool results');
+
+    const envelope = JSON.stringify({ content: [{ type: 'text', text: 'x'.repeat(5000) }] });
+    const guarded = guard({ content: envelope, isError: false });
+    assert.ok(guarded.content.length < 2000, `still ${guarded.content.length} chars`);
+    assert.doesNotMatch(guarded.content, /"type":"text"/, 'the envelope must be unwrapped');
+  });
+
+  test('a cut result SAYS it was cut', async () => {
+    // A model that cannot tell a short list from a truncated one will report
+    // the truncated one as complete — which is the same defect as inventing
+    // data, arrived at politely.
+    assert.match(boundedModelResultV1('y'.repeat(5000)), /truncated by Miorail/);
+    assert.match(boundedModelResultV1('y'.repeat(5000)), /partial/i);
+  });
+
+  test('a small result is passed through untouched', () => {
+    assert.equal(boundedModelResultV1('{"usd":"12.00"}'), '{"usd":"12.00"}');
+  });
+
+  test('the guard never changes whether the call failed', async () => {
+    const failed = boundedModelResultV1('{"errorCode":"base_mcp_timeout"}');
+    assert.equal(failed, '{"errorCode":"base_mcp_timeout"}');
   });
 });
