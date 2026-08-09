@@ -101,6 +101,11 @@ const WALLET_SCOPED_TOOLS = new Set([
   'walletsendcalls',
 ]);
 
+// What stays forbidden now that signing has been reclassified: key material
+// leaving or entering the wallet, and anything that puts an ALREADY-SIGNED
+// transaction on the wire. Neither has a Base Account approval step behind it
+// — an exported key is gone the moment it is returned, and a raw broadcast has
+// nothing left for anyone to approve.
 const DEFAULT_FORBIDDEN_DENYLIST = new Set([
   'broadcast',
   'broadcasttransaction',
@@ -111,15 +116,9 @@ const DEFAULT_FORBIDDEN_DENYLIST = new Set([
   'exportprivatekey',
   'importkey',
   'importprivatekey',
-  'personal_sign',
-  'personalsign',
   'sendrawtransaction',
   'sendtransaction',
-  'sign',
-  'signmessage',
   'signtransaction',
-  'signtypeddata',
-  'walletsign',
 ]);
 
 const FORBIDDEN_MARKERS = [
@@ -132,13 +131,34 @@ const FORBIDDEN_MARKERS = [
   'privatekey',
   'sendrawtransaction',
   'sendtransaction',
-  'signtypeddata',
+  // `signTransaction` is not `sign`. It hands back a signed transaction ready
+  // to broadcast, which is the one artefact Miorail must never hold.
   'signtransaction',
 ];
 
+// ---------------------------------------------------------------------------
+// Signing is a user-confirmed action, not a forbidden one.
+//
+// This list used to route straight to `forbidden`. That rule was written
+// against a server signing with a raw key, and then applied to a tool that
+// cannot do it: Base MCP's `sign` returns `{ approvalUrl, requestId }` like
+// every other write tool, and Base Account shows the user the full message
+// content before they approve. The protection the rule was reaching for
+// already exists a layer below us, outside our control — which makes it
+// stronger than anything this classifier could impose.
+//
+// Blocking it cost real capability. Several native plugins use `sign` as their
+// core tool — SIWE challenges, EIP-712 permits, protocol auth — and none of
+// them could work here.
+//
+// `signtypeddata` moves with it. EIP-712 is what a permit looks like, and the
+// approval screen renders structured data in full; if anything it is the more
+// legible of the two.
+// ---------------------------------------------------------------------------
 const SIGNATURE_MARKERS = [
   'personalsign',
   'signmessage',
+  'signtypeddata',
   'signature',
   'walletsign',
 ];
@@ -224,9 +244,9 @@ function classifyTool(tool: BaseMcpToolForClassification): ClassifiedBaseMcpTool
     return {
       ...tool,
       scope,
-      capability: 'forbidden',
-      enabled: false,
-      reason: 'signature_tool_forbidden',
+      capability: 'user_confirmed_transaction',
+      enabled: true,
+      reason: 'signature_requires_base_account_approval',
     };
   }
 

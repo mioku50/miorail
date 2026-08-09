@@ -131,17 +131,37 @@ test('explicit denylist overrides read-only allowlist', () => {
   assert.strictEqual(result.tools[0].reason, 'forbidden_by_denylist');
 });
 
-test('signature and broadcast tools are forbidden', () => {
+test('signing is user-confirmed; broadcasting and key export stay forbidden', () => {
+  // `sign` returns an approvalUrl like every other write tool, and Base Account
+  // shows the full message before the user approves. Forbidding it blocked the
+  // native plugins that use signing as their core tool while adding nothing —
+  // the protection already exists one layer below, outside our control.
+  //
+  // What has no approval step still cannot run: an exported key is gone the
+  // moment it is returned, and a raw broadcast has nothing left to approve.
   const result = classifyBaseMcpTools([
     { name: 'personal_sign' },
+    { name: 'sign_typed_data' },
     { name: 'broadcast_transaction' },
+    { name: 'export_private_key' },
+    { name: 'sign_transaction' },
   ]);
 
   assert.deepStrictEqual(result.capabilities, {
     readOnly: 0,
-    userConfirmedTransaction: 0,
-    forbidden: 2,
+    userConfirmedTransaction: 2,
+    forbidden: 3,
     unknown: 0,
   });
-  assert.strictEqual(result.tools.every((tool) => tool.capability === 'forbidden'), true);
+
+  const byName = new Map(result.tools.map((tool) => [tool.name, tool]));
+  assert.strictEqual(byName.get('personal_sign')?.capability, 'user_confirmed_transaction');
+  assert.strictEqual(byName.get('sign_typed_data')?.capability, 'user_confirmed_transaction');
+  assert.strictEqual(byName.get('personal_sign')?.reason, 'signature_requires_base_account_approval');
+
+  // `signTransaction` is NOT `sign`: it hands back a signed transaction ready
+  // to broadcast, which is the one artefact Miorail must never hold.
+  assert.strictEqual(byName.get('sign_transaction')?.capability, 'forbidden');
+  assert.strictEqual(byName.get('broadcast_transaction')?.capability, 'forbidden');
+  assert.strictEqual(byName.get('export_private_key')?.capability, 'forbidden');
 });
