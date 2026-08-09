@@ -464,7 +464,13 @@ async function measureOneV1(context: {
       ? roundTripV1({
           entry: {
             provider: 'aerodrome',
-            inputAtomic: config.profile.positionAtomic,
+            // What was SPENT, not what the profile asked for. The two differ
+            // on any venue that does not quote the profile's asset, and using
+            // the profile's number here compares a return in wei against an
+            // input in USDC atoms: the return dwarfs it, the loss reads as a
+            // gain, and the cost is clamped to a flattering 0 bps. Measured on
+            // mainnet, that turned a 449 bps round trip into "costs nothing".
+            inputAtomic: routes.positionAtomicUsed,
             outputAtomic: routes.entryOutputAtomic,
           },
           exit: {

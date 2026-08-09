@@ -341,6 +341,33 @@ describe('a background pass can never certify', () => {
     assert.equal(stored?.reasonCode, 'quoted_pre_entry');
   });
 
+  test('the round trip costs what was SPENT, not what the profile asked for', async () => {
+    // B20's v4 pools are quoted in native ETH, so the position actually spent
+    // is wei while the profile's is USDC atoms. Costing the trip against the
+    // profile compares a wei return to a USDC input: the return dwarfs it, a
+    // loss reads as a gain, and the clamp reports a flattering 0 bps. Measured
+    // on mainnet: 0.03 ETH in, 0.0286 ETH back — a 449 bps loss stored as 0.
+    const { observations } = await seed([launchFixture()]);
+    await pass(
+      observations,
+      fakeDeps({
+        async analyseRoutes() {
+          return {
+            ...GOOD_ROUTES,
+            quoteAssetUsed: '0x0000000000000000000000000000000000000000' as const,
+            positionAtomicUsed: '30000000000000000',
+            entryOutputAtomic: '4000000000000000000000',
+            exitReturnAtomic: '28653551773253690',
+          };
+        },
+      }),
+    );
+    const [stored] = await observations.listRecentObservations({ limit: 5 });
+    assert.equal(stored?.referenceQuoteAsset, '0x0000000000000000000000000000000000000000');
+    assert.equal(stored?.referencePositionAtomic, '30000000000000000');
+    assert.equal(stored?.optimisticRoundTripBps, 449, 'the loss is reported, not clamped away');
+  });
+
   test('nothing this worker writes is ever qualified', async () => {
     const { observations } = await seed([
       launchFixture({ transactionHash: hashOf('1') }),
