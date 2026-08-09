@@ -206,9 +206,17 @@ describe('§9.5/§9.6 — the drawer is navigation, not a control panel', () => 
 });
 
 describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
-  test('Base App shows Discover, B20 and Routes', () => {
+  test('Base App shows Discover, B20 and Routes AI', () => {
     const nav = consoleNavModelV1({ mounted: CONSOLE_PRIMARY_SECTIONS_V1, active: 'opportunities' });
-    assert.deepEqual(nav.map((item) => item.compactLabel), ['Discover', 'B20', 'Routes']);
+    assert.deepEqual(nav.map((item) => item.compactLabel), ['Discover', 'B20', 'Routes AI']);
+  });
+
+  test('the two AI surfaces are named apart', () => {
+    // They answer with different guarantees — a measured Route Card versus
+    // whatever a third-party tool returned — so they must not read as one
+    // feature split across two tabs.
+    assert.equal(CONSOLE_SECTION_TABLE_V1.routes.label, 'Routes AI');
+    assert.equal(CONSOLE_SECTION_TABLE_V1.extensions.label, 'Base MCP AI');
   });
 
   test('no tab is named for something that only exists after a signature', () => {

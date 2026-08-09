@@ -61,15 +61,23 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
   },
   extensions: {
     id: 'extensions',
-    label: 'Extensions',
-    compactLabel: 'Extensions',
+    // Named for the thing on the page rather than the category it belongs to.
+    // "Extensions" is a shelf; what is actually here is the Base MCP agent —
+    // its plugin catalogue, its live tools, and a thread that can reach them
+    // and nothing else.
+    label: 'Base MCP AI',
+    compactLabel: 'Base MCP AI',
     path: '/extensions',
-    blurb: 'Base MCP plugins, what each one is allowed to do, and what Miorail will not run.',
+    blurb: 'The Base MCP agent: published plugins, live tools, and a thread scoped to them alone.',
   },
   routes: {
     id: 'routes',
-    label: 'Routes',
-    compactLabel: 'Routes',
+    // "Routes AI" and "Base MCP AI" name the two AI surfaces and, by naming
+    // them apart, say that they are not the same thing: this one answers with
+    // a measured Route Card, the other with whatever a third-party tool
+    // returned.
+    label: 'Routes AI',
+    compactLabel: 'Routes AI',
     path: '/routes',
     blurb: 'State a goal and compare the ways to reach it.',
   },

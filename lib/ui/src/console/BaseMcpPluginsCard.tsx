@@ -173,15 +173,43 @@ function chainsLabelV1(chains: readonly string[]): string {
   return chains.length > 0 ? chains.join(' · ') : 'no chain stated';
 }
 
+/**
+ * The plugin's own description, cut to one line.
+ *
+ * Base writes these at wildly different lengths — Uniswap's is eight words,
+ * Bitrefill's is fifty-one — and rendering them whole turned twenty plugins
+ * into a wall of prose with no two rows the same height. A list you cannot
+ * scan is a list nobody reads. The full text is one click away at the spec;
+ * what this surface owes the reader is which plugins exist and what each one
+ * touches.
+ */
+export function baseMcpPluginSummaryLineV1(summary: string, max = 96): string {
+  const flat = summary.replace(/\s+/g, ' ').trim();
+  if (flat.length <= max) return flat;
+  // Cut on a word boundary so the ellipsis does not land mid-word.
+  const cut = flat.slice(0, max);
+  const lastSpace = cut.lastIndexOf(' ');
+  return `${(lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+}
+
 /** The second line of a plugin row: what it touches and what it costs to be
  * wrong about it. Base's own risk labels, not ours. */
-function detailLineV1(plugin: BaseMcpPluginRowV1): string {
+export function baseMcpPluginMetaLineV1(plugin: BaseMcpPluginRowV1): string {
   const parts = [chainsLabelV1(plugin.chains)];
   if (plugin.auth && plugin.auth !== 'none' && plugin.auth !== 'unknown') {
     parts.push(`auth: ${plugin.auth}`);
   }
   if (plugin.risk.length > 0) parts.push(`risk: ${plugin.risk.join(', ')}`);
   return parts.join(' · ');
+}
+
+/** The right-hand column: where the plugin actually goes. One host, plus a
+ * count when there are more — three full hostnames in a right-aligned mono
+ * column is the widest, least readable thing on the card. */
+export function baseMcpPluginHostsLabelV1(hosts: readonly string[]): string {
+  if (hosts.length === 0) return '—';
+  if (hosts.length === 1) return hosts[0]!;
+  return `${hosts[0]} +${hosts.length - 1}`;
 }
 
 export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
@@ -220,13 +248,18 @@ export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
               </div>
               <p className="lnote">{BASE_MCP_PLUGIN_REACH_COPY_V1[group.reach]}</p>
               {group.plugins.map((plugin) => (
+                // Three lines each, the same three every time. Uniform rows
+                // are what make twenty of anything scannable; variable ones
+                // read as a paragraph that happens to contain names.
                 <div key={plugin.id}>
                   <div className="qrow">
                     <span className="mono">{plugin.id}</span>
-                    <span className="v mono">{plugin.hosts.length > 0 ? plugin.hosts.join(' · ') : '—'}</span>
+                    <span className="v mono" title={plugin.hosts.join(' · ')}>
+                      {baseMcpPluginHostsLabelV1(plugin.hosts)}
+                    </span>
                   </div>
-                  <p className="lnote">{plugin.summary || plugin.title}</p>
-                  <p className="lnote">{detailLineV1(plugin)}</p>
+                  <p className="lnote">{baseMcpPluginSummaryLineV1(plugin.summary || plugin.title)}</p>
+                  <p className="lnote">{baseMcpPluginMetaLineV1(plugin)}</p>
                 </div>
               ))}
             </div>

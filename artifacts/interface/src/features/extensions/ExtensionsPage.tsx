@@ -96,7 +96,7 @@ export function ExtensionsPage() {
   return (
     <ConsoleShell
       header={{
-        crumb: ['Extensions'],
+        crumb: ['Base MCP AI'],
         nav: consoleNav.header,
         onNavigate: consoleNav.navigate,
         blockNumber: chainBlockNumberV1(status.data ?? null),

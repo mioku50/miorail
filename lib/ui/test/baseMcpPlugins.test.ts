@@ -4,7 +4,10 @@ import test, { describe } from 'node:test';
 import {
   BASE_MCP_PLUGIN_REACH_COPY_V1,
   baseMcpPluginDriftCopyV1,
+  baseMcpPluginHostsLabelV1,
+  baseMcpPluginMetaLineV1,
   baseMcpPluginReachV1,
+  baseMcpPluginSummaryLineV1,
   groupBaseMcpPluginsV1,
   type BaseMcpPluginDriftRowV1,
   type BaseMcpPluginRowV1,
@@ -139,5 +142,50 @@ describe('the drift line says whether the catalogue is current', () => {
 
   test('with no drift information at all the catalogue date still shows', () => {
     assert.match(baseMcpPluginDriftCopyV1(null, '2026-08-09'), /2026-08-09/);
+  });
+});
+
+describe('twenty plugins have to be scannable, not a wall of prose', () => {
+  test('a long description is cut to one line, on a word boundary', () => {
+    // Base writes these at wildly different lengths. Bitrefill's is fifty-one
+    // words; rendering it whole gave twenty rows no two of which were the same
+    // height, which is the screenshot that started this.
+    const bitrefill =
+      'Shop 1,500+ brands in 180+ countries — Amazon, Steam, Netflix, mobile top-ups, and travel eSIMs — paid with USDC on Base. Your agent searches, checks out, and delivers gift-card codes and eSIM details in chat.';
+    const line = baseMcpPluginSummaryLineV1(bitrefill);
+    assert.ok(line.length <= 97, `still ${line.length} chars`);
+    assert.ok(line.endsWith('…'));
+    assert.doesNotMatch(line, /\s…$/, 'the ellipsis must not follow a space');
+  });
+
+  test('a short description is left exactly as Base wrote it', () => {
+    const uniswap = 'Swap tokens and manage liquidity positions on Uniswap.';
+    assert.equal(baseMcpPluginSummaryLineV1(uniswap), uniswap);
+  });
+
+  test('newlines in a spec do not become a taller row', () => {
+    assert.equal(baseMcpPluginSummaryLineV1('one\n  two\tthree'), 'one two three');
+  });
+
+  test('several hosts collapse to one plus a count', () => {
+    // Three right-aligned hostnames were the widest thing on the card and the
+    // least useful: the reader wants to know where a plugin goes, not to read
+    // a DNS list.
+    assert.equal(baseMcpPluginHostsLabelV1([]), '—');
+    assert.equal(baseMcpPluginHostsLabelV1(['api.bankr.bot']), 'api.bankr.bot');
+    assert.equal(
+      baseMcpPluginHostsLabelV1(['api.avantisfi.com', 'core.avantisfi.com', 'data.avantisfi.com']),
+      'api.avantisfi.com +2',
+    );
+  });
+
+  test('the meta line states chains, and names auth only when there is any', () => {
+    assert.equal(baseMcpPluginMetaLineV1(plugin({})), 'base');
+    assert.equal(
+      baseMcpPluginMetaLineV1(plugin({ auth: 'api-key', risk: ['slippage'] })),
+      'base · auth: api-key · risk: slippage',
+    );
+    // A plugin whose spec names no chain says so rather than showing nothing.
+    assert.match(baseMcpPluginMetaLineV1(plugin({ chains: [] })), /no chain stated/);
   });
 });

@@ -1191,6 +1191,10 @@ export function useBaseMcpConsole(
     mutationFn: async (message: string) => {
       const response = await fetchApi<unknown>('/api/mcp/base/console', {
         method: 'POST',
+        // `fetchApi` does not add this, and `express.json()` skips a body
+        // without it — so the server saw `{}`, the schema rejected it, and the
+        // console answered "could not reach the server" in one millisecond.
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message }),
       });
       return apiSpec.BaseMcpConsoleResponseV1Schema.parse(response);

@@ -18,7 +18,7 @@ const here = path.dirname(url.fileURLToPath(import.meta.url));
 //
 // Both tables are DERIVED from the shared section table in lib/ui, so this test
 // also pins that the web app has no navigation vocabulary of its own.
-test('navigation is exactly Discover, B20 and Routes', () => {
+test('navigation is exactly Discover, B20 and Routes AI', () => {
   const tabs = navTabs();
   assert.deepEqual(tabs.map((route) => route.path), [
     '/opportunities',
@@ -33,7 +33,7 @@ test('navigation is exactly Discover, B20 and Routes', () => {
   // Activity (was Proofs) moved to the drawer: it is a viewer for records this
   // deployment has never produced, and a bar of three working surfaces beats
   // four where one is empty.
-  assert.deepEqual(tabs.map((route) => route.label), ['Discover', 'B20', 'Routes']);
+  assert.deepEqual(tabs.map((route) => route.label), ['Discover', 'B20', 'Routes AI']);
 });
 
 test('the web tabs come from the shared table, not from a list typed here', () => {

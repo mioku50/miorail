@@ -150,12 +150,25 @@ export async function runBaseMcpConsoleV1(input: {
   const message = input.message.trim().slice(0, MAX_MESSAGE_LENGTH_V1);
   if (!message) return unavailable('failed', 'empty_message');
 
-  const tools = await baseMcpConsoleRuntimeV1.createApiToolAggregatorForUser(
-    input.req,
-    input.userId,
-    input.sessionSecret,
-    { baseMcpOnly: true },
-  );
+  // Inside the guard, not before it. Building the aggregator refreshes OAuth
+  // and opens a session to somebody else's server; a throw there used to
+  // escape to the route and become an HTTP 500, which the surface can only
+  // render as "could not reach the server" — the least informative thing that
+  // is ever true.
+  let tools: Awaited<ReturnType<typeof createApiToolAggregatorForUser>>;
+  try {
+    tools = await baseMcpConsoleRuntimeV1.createApiToolAggregatorForUser(
+      input.req,
+      input.userId,
+      input.sessionSecret,
+      { baseMcpOnly: true },
+    );
+  } catch (error) {
+    const text = error instanceof Error ? `${error.name} ${error.message}` : String(error || '');
+    return /401|403|unauthor|invalid_grant|reauth|credential|decrypt/i.test(text)
+      ? unavailable('needs_reauth', 'needs_reauth')
+      : unavailable('failed', 'base_mcp_connect_failed');
+  }
 
   try {
     const inventory = await tools.listProviderTools();
