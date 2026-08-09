@@ -113,16 +113,33 @@ export function createV4QuoteContextV1(
   // cannot be sold".
   const poolAnswered = (reason: string) => reason === 'reverted' || reason === 'empty_result';
 
+  /**
+   * Whether a failure is plausibly about the BLOCK rather than the endpoint.
+   *
+   * This distinction is the whole fallback, and getting it wrong is expensive
+   * in the quiet direction. The first version treated every non-answer as a
+   * reason to retry at `latest`, which meant an ordinary rate-limit — the most
+   * common failure on this endpoint — silently converted an anchored
+   * measurement into an unanchored one. Production showed it immediately: 87
+   * of 92 v4 observations fell back, none of them because the block was gone.
+   *
+   * `rpc_error` is the classifier's catch-all and is where "missing trie node"
+   * and "header not found" land. Throttling, timeouts and transport failures
+   * are OUR problem: they degrade the measurement, exactly as they did before
+   * anchoring existed, rather than quietly changing what it describes.
+   */
+  const blockMayBeGone = (reason: string) => reason === 'rpc_error';
+
   const quote = async (request: { to: string; data: string }): Promise<string> => {
     if (alignment === 'anchored') {
       const anchored = await call({ ...request, blockTag });
       if (anchored.ok) return anchored.value;
       // A revert at the anchor is a measurement AT the anchor. Still aligned.
       if (poolAnswered(anchored.reason)) return '';
-      // Not the pool's answer. Either the endpoint is failing or it no longer
-      // holds state for this block, and one retry at `latest` tells them
-      // apart. Whichever it was, this observation is no longer one atomic
-      // moment and stops claiming to be.
+      if (!blockMayBeGone(anchored.reason)) throw new V4QuoteUnavailableError();
+      // The node may no longer hold state for this block. One retry at
+      // `latest` says which — and if it answers, this observation is no longer
+      // one atomic moment and stops claiming to be.
       const latest = await call({ ...request, blockTag: 'latest' });
       alignment = 'latest_not_anchored';
       if (latest.ok) return latest.value;

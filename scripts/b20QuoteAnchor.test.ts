@@ -109,11 +109,28 @@ describe('an endpoint that will not answer anywhere is degraded, never a finding
     // The recurring defect this rail is built against: a throttled read shaped
     // like a fact about the token.
     const rpc = reader({
-      [ANCHOR_V1]: { ok: false, reason: 'rate_limited' },
-      latest: { ok: false, reason: 'rate_limited' },
+      [ANCHOR_V1]: { ok: false, reason: 'rpc_error' },
+      latest: { ok: false, reason: 'rpc_error' },
     });
     const quotes = createV4QuoteContextV1(rpc.call, ANCHOR_V1);
     await assert.rejects(() => quotes.call(REQUEST_V1), V4QuoteUnavailableError);
+  });
+
+  test('a rate limit degrades the measurement instead of unanchoring it', async () => {
+    // The first version retried at `latest` on ANY non-answer, so the most
+    // ordinary failure on this endpoint quietly turned an anchored measurement
+    // into an unanchored one. Production showed it at once: 87 of 92 v4
+    // observations fell back, none because the block was gone.
+    for (const reason of ['rate_limited', 'rpc_timeout', 'rpc_unavailable', 'invalid_response']) {
+      const rpc = reader({
+        [ANCHOR_V1]: { ok: false, reason },
+        latest: { ok: true, value: '0x2a' },
+      });
+      const quotes = createV4QuoteContextV1(rpc.call, ANCHOR_V1);
+      await assert.rejects(() => quotes.call(REQUEST_V1), V4QuoteUnavailableError, reason);
+      assert.deepEqual(rpc.seen, [ANCHOR_V1], `${reason} must not be retried at latest`);
+      assert.equal(quotes.alignment(), 'anchored', `${reason} must not unanchor the measurement`);
+    }
   });
 
   test('a failure after the fallback still throws instead of answering', async () => {
