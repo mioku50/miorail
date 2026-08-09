@@ -5,14 +5,23 @@ import {
   inspectB20TokenV1,
 } from '@mioagent/b20-control';
 import {
+  b20QuoteExitSizesV4V1,
   b20RoundTripV4V1,
   createAerodromeReaderV1,
   createB20PoolCacheV1,
   V4QuoteUnavailableError,
 } from '@mioagent/swap-adapters';
-import type { B20ObservationControlsV1 } from '@mioagent/opportunity-rail';
+import {
+  exitProbeLadderV1,
+  priceImpactLadderV1,
+  type B20ObservationControlsV1,
+} from '@mioagent/opportunity-rail';
 
-import { aerodromeRouteKeyV1, analyseExitV1 } from '../artifacts/api-server/lib/exitAnalysis.js';
+import {
+  aerodromeRouteKeyV1,
+  analyseExitV1,
+  EXIT_PROBE_RUNGS_V1,
+} from '../artifacts/api-server/lib/exitAnalysis.js';
 import {
   transferPolicyStateV1,
   type MeasurementDepsV1,
@@ -150,6 +159,31 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
         });
         if (trip.entryRouteFound) {
           const source = `uniswap-v4:${pool.poolId}`;
+          // The capacity ladder, and only where there is something to climb:
+          // a token whose sale reverts at the full position has no capacity
+          // boundary to find, and probing one would spend four metered calls
+          // to rediscover that.
+          //
+          // The full-size rung is handed in rather than re-quoted — the round
+          // trip just paid for exactly that call.
+          const ladder = trip.exitRouteFound && trip.entryOutputAtomic
+            ? await b20QuoteExitSizesV4V1({
+                pool,
+                sizes: exitProbeLadderV1(trip.entryOutputAtomic, EXIT_PROBE_RUNGS_V1),
+                known: {
+                  sizeAtomic: trip.entryOutputAtomic,
+                  outputAtomic: trip.exitReturnAtomic,
+                },
+                call: v4Call,
+              })
+            : { quotes: [], quotesUsed: 0, endpointDegraded: false };
+          // Impact is measured against the smallest rung that priced, by the
+          // same pure function Aerodrome's ladder uses. One venue-independent
+          // definition of price impact, or the two rails would disagree about
+          // what a number on the same card means.
+          const probes = ladder.quotes.length > 0
+            ? priceImpactLadderV1(ladder.quotes).probes
+            : [];
           return {
             entryRouteFound: true,
             exitRouteFound: trip.exitRouteFound,
@@ -160,7 +194,7 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
             // An unanswered quote is the mirror image and gets the mirror
             // treatment: the round trip reports which one happened, and only
             // that case is degraded.
-            degraded: trip.endpointDegraded,
+            degraded: trip.endpointDegraded || ladder.endpointDegraded,
             candidatesTotal: 1,
             candidatesAnswered: 1,
             entryOutputAtomic: trip.entryOutputAtomic,
@@ -169,11 +203,8 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
             exitRouteHash: null,
             entrySourceKey: source,
             exitSourceKey: trip.exitRouteFound ? source : null,
-            // No ladder yet: this pass answers whether a round trip exists at
-            // the position at all. An invented probe would be a capacity
-            // number nobody measured.
-            probes: [],
-            routerCalls: trip.quotesUsed,
+            probes,
+            routerCalls: trip.quotesUsed + ladder.quotesUsed,
           };
         }
         // No entry on v4 — fall through to Aerodrome, but remember whether the

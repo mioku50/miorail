@@ -124,6 +124,74 @@ export async function b20RoundTripV4V1(input: B20RoundTripInputV1): Promise<B20R
   };
 }
 
+export interface B20ExitSizeQuotesInputV1 {
+  pool: B20PoolV1;
+  /** Sizes to sell, in the TOKEN's atomic units. The caller chooses them; this
+   * function has no opinion about ladders. */
+  sizes: readonly string[];
+  /** A size already priced elsewhere — the round trip's exit quote — so the
+   * same `eth_call` is not bought twice on a metered endpoint. */
+  known?: { sizeAtomic: string; outputAtomic: string | null };
+  call: (request: { to: string; data: string }) => Promise<string>;
+}
+
+export interface B20ExitSizeQuotesV1 {
+  /** One entry per size asked for, in the order given. `outputAtomic` is null
+   * where the pool would not price the sale — never zero, which would read as
+   * a measured price of nothing. */
+  quotes: { sizeAtomic: string; outputAtomic: string | null }[];
+  quotesUsed: number;
+  /** True when the endpoint stopped answering. The quotes gathered before that
+   * are real; the sizes after it were never asked. */
+  endpointDegraded: boolean;
+}
+
+/**
+ * Prices a set of exit sizes against one pool.
+ *
+ * Deliberately says nothing about capacity, slippage or tolerance — it reports
+ * what the pool answered at each size and stops. Turning those into a capacity
+ * boundary is the rail's job and already exists there; duplicating the
+ * judgement next to the venue would give the same question two answers.
+ *
+ * On an unanswered endpoint it STOPS. Continuing would spend the rest of the
+ * ladder's budget to collect more silence, and a ladder with holes in it
+ * invites reading a gap as a price wall.
+ */
+export async function b20QuoteExitSizesV4V1(
+  input: B20ExitSizeQuotesInputV1,
+): Promise<B20ExitSizeQuotesV1> {
+  // Selling the token: the input currency is the token itself.
+  const zeroForOne = input.pool.tokenIsCurrency0;
+  const quotes: { sizeAtomic: string; outputAtomic: string | null }[] = [];
+  let quotesUsed = 0;
+
+  for (const sizeAtomic of input.sizes) {
+    if (input.known && input.known.sizeAtomic === sizeAtomic) {
+      quotes.push({ sizeAtomic, outputAtomic: input.known.outputAtomic });
+      continue;
+    }
+    const size = BigInt(sizeAtomic);
+    if (size <= 0n) {
+      quotes.push({ sizeAtomic, outputAtomic: null });
+      continue;
+    }
+    const quote = await quoteV4ExactInputV1({
+      key: input.pool.key,
+      zeroForOne,
+      exactAmountAtomic: size,
+      call: input.call,
+    });
+    quotesUsed += 1;
+    if (!quote.ok && quote.refusal === 'endpoint_unavailable') {
+      return { quotes, quotesUsed, endpointDegraded: true };
+    }
+    quotes.push({ sizeAtomic, outputAtomic: quote.ok ? quote.amountOutAtomic : null });
+  }
+
+  return { quotes, quotesUsed, endpointDegraded: false };
+}
+
 /**
  * A pool lookup that remembers, for one measurement pass.
  *

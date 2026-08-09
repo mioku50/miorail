@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
-import { b20RoundTripV4V1, createB20PoolCacheV1 } from '../src/uniswap-v4-b20.js';
+import { b20QuoteExitSizesV4V1, b20RoundTripV4V1, createB20PoolCacheV1 } from '../src/uniswap-v4-b20.js';
 import { V4QuoteUnavailableError } from '../src/uniswap-v4-quoter.js';
 import { UNISWAP_V4_INITIALIZE_TOPIC_V1, UNISWAP_V4_POOL_MANAGER_V1 } from '../src/uniswap-v4-pinned.js';
 import type { B20PoolV1 } from '../src/uniswap-v4-pool.js';
@@ -186,6 +186,59 @@ describe('the pool lookup spends the metered budget once per token', () => {
     assert.deepEqual(await cache.lookup(TOKEN, 1), { ok: false, refusal: 'no_pool_initialized' });
     assert.equal(calls, after);
     assert.equal(cache.size, 1);
+  });
+});
+
+describe('the exit ladder prices sizes and judges nothing', () => {
+  test('every size asked for comes back, in order, selling the token', async () => {
+    const { seen, call } = scriptedCall([result(400_000n), result(900_000n)]);
+    const ladder = await b20QuoteExitSizesV4V1({
+      pool: POOL,
+      sizes: ['250', '500'],
+      call,
+    });
+    assert.deepEqual(ladder.quotes, [
+      { sizeAtomic: '250', outputAtomic: '400000' },
+      { sizeAtomic: '500', outputAtomic: '900000' },
+    ]);
+    assert.equal(ladder.quotesUsed, 2);
+    // The token is currency1 in this pool, so selling it is 1→0.
+    assert.equal(directionOf(seen[0]!), false, 'the ladder sells, it does not buy');
+  });
+
+  test('a size already priced is not bought a second time', async () => {
+    const { call } = scriptedCall([result(400_000n)]);
+    const ladder = await b20QuoteExitSizesV4V1({
+      pool: POOL,
+      sizes: ['250', '500'],
+      known: { sizeAtomic: '500', outputAtomic: '980000' },
+      call,
+    });
+    assert.equal(ladder.quotesUsed, 1, 'the round trip already paid for the full rung');
+    assert.deepEqual(ladder.quotes[1], { sizeAtomic: '500', outputAtomic: '980000' });
+  });
+
+  test('a size the pool will not price is null, never zero', async () => {
+    const { call } = scriptedCall([result(400_000n), '']);
+    const ladder = await b20QuoteExitSizesV4V1({ pool: POOL, sizes: ['250', '500'], call });
+    assert.equal(ladder.quotes[1]!.outputAtomic, null);
+    assert.equal(ladder.endpointDegraded, false, 'the pool answered; it said no');
+  });
+
+  test('an unanswered endpoint stops the ladder rather than punching holes in it', async () => {
+    let calls = 0;
+    const ladder = await b20QuoteExitSizesV4V1({
+      pool: POOL,
+      sizes: ['125', '250', '500'],
+      call: async () => {
+        calls += 1;
+        if (calls === 1) return result(100n);
+        throw new V4QuoteUnavailableError();
+      },
+    });
+    assert.equal(ladder.endpointDegraded, true);
+    assert.equal(calls, 2, 'the remaining rungs are not worth asking for');
+    assert.deepEqual(ladder.quotes, [{ sizeAtomic: '125', outputAtomic: '100' }]);
   });
 });
 
