@@ -1,4 +1,9 @@
 import { x402ConfigFromEnv, type X402RuntimeConfig } from '@mioagent/x402-gateway';
+import {
+  paidB20SimulationEnabledV1,
+  resolvePaidB20SimulationPricingV1,
+  simulationPriceUsdcForPrepareResponseV1,
+} from './paidIntelligenceConfig.js';
 
 // ---------------------------------------------------------------------------
 // T67X-A1 — whether paid intelligence can actually take money.
@@ -28,18 +33,49 @@ export interface PaidIntelligenceStatusV1 {
   readiness: PaidIntelligenceReadinessV1;
   /** Present only when readiness is `blocked`. */
   blockedReason?: string;
+  /** What is priced, and at what. Only surfaces that are actually switched on
+   * AND have a readable price appear — a client that sees no entry renders no
+   * paid control, which is the correct behaviour for a surface the server
+   * would refuse anyway. */
+  pricedSurfaces?: {
+    b20ExitProof?: { priceUsdc: string };
+    swapSimulation?: { priceUsdc: string };
+  };
+}
+
+/** Reads the two paid surfaces straight from env, so the price a client shows
+ * and the price the x402 middleware charges come from ONE resolution. */
+export function pricedSurfacesV1(
+  env: NodeJS.ProcessEnv = process.env,
+): PaidIntelligenceStatusV1['pricedSurfaces'] {
+  const surfaces: NonNullable<PaidIntelligenceStatusV1['pricedSurfaces']> = {};
+  if (paidB20SimulationEnabledV1(env)) {
+    const pricing = resolvePaidB20SimulationPricingV1(env);
+    // An unreadable price is not advertised. The route fails closed on the
+    // same condition, so the two agree instead of the screen promising a
+    // number the server will refuse.
+    if (pricing) surfaces.b20ExitProof = { priceUsdc: pricing.decimalUsdc };
+  }
+  const swapPrice = simulationPriceUsdcForPrepareResponseV1(env);
+  if (swapPrice) surfaces.swapSimulation = { priceUsdc: swapPrice };
+  return Object.keys(surfaces).length > 0 ? surfaces : undefined;
 }
 
 export function paidIntelligenceReadinessV1(
   flagEnabled: boolean,
   x402Config: X402RuntimeConfig = x402ConfigFromEnv(),
+  env: NodeJS.ProcessEnv = process.env,
 ): PaidIntelligenceStatusV1 {
   const settleReady = x402Config.settleReady === true;
   if (!flagEnabled) {
+    // Nothing is priced when the mechanism is off, whatever the surface flags
+    // say. Listing a price here would let a client offer a paid control that
+    // the gateway could never settle.
     return { flagEnabled: false, settleReady, readiness: 'disabled' };
   }
+  const pricedSurfaces = pricedSurfacesV1(env);
   if (settleReady) {
-    return { flagEnabled: true, settleReady: true, readiness: 'ready' };
+    return { flagEnabled: true, settleReady: true, readiness: 'ready', pricedSurfaces };
   }
   return {
     flagEnabled: true,

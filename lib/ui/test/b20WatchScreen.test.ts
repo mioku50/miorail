@@ -1,5 +1,6 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { simulateLabelV1 } from '../src/console/B20ExitCard';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
@@ -594,5 +595,23 @@ describe('T68E — the entry control exists only when everything is true', () =>
   test('the card consults the gate rather than inlining the conditions', () => {
     assert.match(card, /entryPlanAvailableV1/);
     assert.match(card, /\{entryAvailable && \(/);
+  });
+});
+
+describe('the price is on the control, not in a footnote', () => {
+  test('a priced simulation states what it costs before it is pressed', () => {
+    assert.equal(simulateLabelV1('0.0002', false), 'Run full simulation · $0.0002');
+  });
+
+  test('a free simulation claims no price', () => {
+    // Null and "0" are different. A card printing "$0" would be asserting a
+    // price where the server has none.
+    assert.equal(simulateLabelV1(null, false), 'Run full simulation');
+    assert.equal(simulateLabelV1(undefined, false), 'Run full simulation');
+    assert.equal(simulateLabelV1('  ', false), 'Run full simulation');
+  });
+
+  test('a running simulation shows progress, not a price to press again', () => {
+    assert.equal(simulateLabelV1('0.0002', true), 'Simulating both legs…');
   });
 });

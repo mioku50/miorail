@@ -99,6 +99,8 @@ export interface B20WatchScreenModelV1 {
     formatTokenAmount: (atomic: string) => string;
     loading: boolean;
     simulating: boolean;
+    /** Decimal USDC, or null when this server does not charge for it. */
+    simulationPriceUsdc?: string | null;
     unavailableReason: string | null;
     onCheck: (tokenAddress: string) => void;
     onSimulate: (tokenAddress: string) => void;
@@ -182,6 +184,7 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
         loading={model.exit.loading}
         unavailableReason={model.exit.unavailableReason}
         simulating={model.exit.simulating}
+        simulationPriceUsdc={model.exit.simulationPriceUsdc ?? null}
         onCheck={() => {
           if (model.exit.tokenAddress) model.exit.onCheck(model.exit.tokenAddress);
         }}

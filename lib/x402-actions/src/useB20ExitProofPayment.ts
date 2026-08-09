@@ -1,5 +1,7 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import type { z } from 'zod';
 import { useAccount, useSwitchChain, useWalletClient } from 'wagmi';
+import { B20OpportunitySimulateResponseV1Schema } from '@mioagent/api-zod';
 import {
   PaidActionError,
   runX402PaidFetch,
@@ -26,6 +28,8 @@ import {
 // twice — or worse, paying once and being shown the wrong proof.
 // ---------------------------------------------------------------------------
 
+export type B20ExitProofResponseV1 = z.infer<typeof B20OpportunitySimulateResponseV1Schema>;
+
 export interface B20ExitProofRequestV1 {
   tokenAddress: string;
   positionAtomic: string;
@@ -34,27 +38,30 @@ export interface B20ExitProofRequestV1 {
 }
 
 export interface UseB20ExitProofPaymentOptions {
-  request: B20ExitProofRequestV1;
   expectedChainId?: number;
   /** Test-only escape hatch — production callers never set this. */
   fetchImpl?: typeof fetch;
-  onSuccess?: (body: unknown, result: PaidActionResult) => void | Promise<void>;
+  onSuccess?: (body: B20ExitProofResponseV1, result: PaidActionResult) => void | Promise<void>;
   onFailure?: (error: PaidActionError) => void;
 }
 
 export interface UseB20ExitProofPaymentResult {
   state: PaidActionState;
-  response: unknown;
+  response: B20ExitProofResponseV1 | null;
   error: string | null;
   isBusy: boolean;
   isConnected: boolean;
   isWrongChain: boolean;
-  /** Deterministic per (token, profile, wallet). A re-click or a remount
-   * before the request settles sends the same key, so a retry never risks a
-   * second charge — and a DIFFERENT position produces a different key, so it
-   * is never answered from the first one's payment. */
+  /** The key the last run used. Deterministic per (token, profile, wallet):
+   * a re-click or a remount before the request settles sends the same key, so
+   * a retry never risks a second charge — and a DIFFERENT position produces a
+   * different key, so it is never answered from the first one's payment. */
   idempotencyKey: string;
-  run: () => Promise<void>;
+  /** The request is passed HERE rather than to the hook, because the token is
+   * chosen by a click. Taking it at construction would mean the click and the
+   * request could disagree by one render — and the thing that disagrees is
+   * which token somebody paid to have proven. */
+  run: (request: B20ExitProofRequestV1) => Promise<void>;
 }
 
 const BUSY_STATES: readonly PaidActionState[] = [
@@ -93,9 +100,9 @@ export function deterministicB20ExitProofKeyV1(
 export function useB20ExitProofPayment(
   options: UseB20ExitProofPaymentOptions,
 ): UseB20ExitProofPaymentResult {
-  const { request, expectedChainId = 8453, fetchImpl, onSuccess, onFailure } = options;
+  const { expectedChainId = 8453, fetchImpl, onSuccess, onFailure } = options;
   const [state, setState] = useState<PaidActionState>('idle');
-  const [response, setResponse] = useState<unknown>(null);
+  const [response, setResponse] = useState<B20ExitProofResponseV1 | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { isConnected, address, chainId } = useAccount();
   const { data: walletClient } = useWalletClient();
@@ -106,18 +113,9 @@ export function useB20ExitProofPayment(
 
   const isBusy = BUSY_STATES.includes(state);
   const isWrongChain = Boolean(isConnected && chainId !== expectedChainId);
-  const idempotencyKey = useMemo(
-    () => (address ? deterministicB20ExitProofKeyV1(request, address) : ''),
-    [
-      address,
-      request.tokenAddress,
-      request.positionAtomic,
-      request.maxRoundTripBps,
-      request.maxExitSlippageBps,
-    ],
-  );
+  const [idempotencyKey, setIdempotencyKey] = useState('');
 
-  const run = useCallback(async () => {
+  const run = useCallback(async (request: B20ExitProofRequestV1) => {
     if (inFlightRef.current) return;
     if (!isConnected || !address) {
       setState('unsupported_wallet');
@@ -130,6 +128,8 @@ export function useB20ExitProofPayment(
     }
     inFlightRef.current = true;
     setError(null);
+    const runKey = deterministicB20ExitProofKeyV1(request, address);
+    setIdempotencyKey(runKey);
     try {
       // The token and the profile, and nothing else. No wallet balance, no
       // position the user actually holds: the server prices a question about
@@ -139,7 +139,7 @@ export function useB20ExitProofPayment(
         walletClient,
         expectedChainId,
         fetchImpl,
-        runId: idempotencyKey,
+        runId: runKey,
         onState: setState,
         init: {
           method: 'POST',
@@ -153,8 +153,26 @@ export function useB20ExitProofPayment(
           }),
         },
       });
-      setResponse(result.body);
-      await onSuccess?.(result.body, result);
+      // Validated here, where the contract lives. A body that does not match
+      // must not become a verdict about somebody's token merely because it
+      // arrived over a paid channel — and the caller should not have to know
+      // the schema to be safe from that.
+      const parsed = B20OpportunitySimulateResponseV1Schema.safeParse(result.body);
+      if (!parsed.success) {
+        const invalid = new PaidActionError(
+          'failed',
+          'The exit proof response failed schema validation',
+          undefined,
+          'invalid_response_schema',
+        );
+        setState('failed');
+        setResponse(null);
+        setError(invalid.message);
+        onFailure?.(invalid);
+        return;
+      }
+      setResponse(parsed.data);
+      await onSuccess?.(parsed.data, result);
     } catch (cause) {
       const failure =
         cause instanceof PaidActionError
@@ -172,12 +190,10 @@ export function useB20ExitProofPayment(
     address,
     expectedChainId,
     fetchImpl,
-    idempotencyKey,
     isConnected,
     isWrongChain,
     onFailure,
     onSuccess,
-    request,
     switchChain,
     walletClient,
   ]);

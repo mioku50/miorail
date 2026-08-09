@@ -1942,6 +1942,15 @@ export const StatusResponseSchema = z.object({
     settleReady: z.boolean(),
     readiness: z.enum(['ready', 'blocked', 'disabled']),
     blockedReason: z.string().optional(),
+    // WHICH operation costs money, and what it costs. A client must be able to
+    // state the price before the user clicks, and it cannot know that from the
+    // flags alone. Absent when nothing here is priced — so a surface with no
+    // entry renders no price and offers no paid control, rather than guessing
+    // a default and charging something else.
+    pricedSurfaces: z.object({
+      b20ExitProof: z.object({ priceUsdc: z.string() }).optional(),
+      swapSimulation: z.object({ priceUsdc: z.string() }).optional(),
+    }).optional(),
   }).optional(),
   autonomy: z.object({
     spendPermissionsPersistence: z.enum(['database']),

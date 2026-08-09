@@ -136,6 +136,17 @@ export interface B20ExitCardProps {
   onSimulate: () => void;
   simulating: boolean;
   /**
+   * What the simulation costs, as a decimal USDC string — null when it is
+   * free on this server.
+   *
+   * On the button itself, not in a footnote. This is the one operation Miorail
+   * charges for, and a user must read the price on the control they are about
+   * to press rather than discover it from a budget line afterwards. Null and
+   * "0" are different: null means nothing will be charged, and a card that
+   * printed "$0" would be claiming a price where there is none.
+   */
+  simulationPriceUsdc?: string | null;
+  /**
    * Hands a CONFIRMED opportunity to the existing execution path.
    *
    * Absent on every state but `qualified`, and the card renders no such control
@@ -266,6 +277,13 @@ export function exitHeadlineV1(
   return base;
 }
 
+/** "Run full simulation · $0.0002", or the bare label when it is free. */
+export function simulateLabelV1(priceUsdc: string | null | undefined, busy: boolean): string {
+  if (busy) return 'Simulating both legs…';
+  const price = (priceUsdc ?? '').trim();
+  return price.length > 0 ? `Run full simulation · $${price}` : 'Run full simulation';
+}
+
 export function B20ExitCard({
   check,
   profile,
@@ -278,6 +296,7 @@ export function B20ExitCard({
   onCheck,
   onSimulate,
   simulating,
+  simulationPriceUsdc,
   onBuildEntryPlan,
   now,
 }: B20ExitCardProps): React.ReactElement {
@@ -355,7 +374,7 @@ export function B20ExitCard({
                 // The only action a provisional result offers. There is no
                 // "build entry plan" here, and there is no prop to render one.
                 <button type="button" className="btn" onClick={onSimulate} disabled={simulating}>
-                  {simulating ? 'Simulating both legs…' : 'Run full simulation'}
+                  {simulateLabelV1(simulationPriceUsdc, simulating)}
                 </button>
               )}
               {check.status === 'unmeasured' && (
@@ -376,7 +395,9 @@ export function B20ExitCard({
                 // Earned, then went stale. Re-running is a different
                 // instruction from re-checking, and the copy says which.
                 <button type="button" className="btn" onClick={onSimulate} disabled={simulating}>
-                  Qualification expired — run again
+                  {simulationPriceUsdc
+                    ? `Qualification expired — run again · $${simulationPriceUsdc}`
+                    : 'Qualification expired — run again'}
                 </button>
               )}
             </div>

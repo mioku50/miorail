@@ -39,6 +39,7 @@ import { useSendCalls } from 'wagmi';
  * rather than assumed. */
 const B20_QUOTE_ASSET_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 import { isWalletRejectionError } from '@mioagent/wallet-actions';
+import { useB20ExitProofPayment } from '@mioagent/x402-actions';
 import { useConsoleNav } from '../console/useConsoleNav';
 import type { MarketObservationV1 } from '@mioagent/opportunity-rail/marketRails';
 
@@ -254,6 +255,9 @@ export function B20WatchPage() {
   const [exitProfile, setExitProfile] = useState<ExitProfileV1>(EXIT_PROFILE_DEFAULTS_V1);
   const exitCheck = useB20ExitCheck();
   const exitSimulate = useB20OpportunitySimulate();
+  const exitProofPriceUsdc =
+    status.data?.paidIntelligence?.pricedSurfaces?.b20ExitProof?.priceUsdc ?? null;
+  const exitProofPayment = useB20ExitProofPayment({});
   const profileAtomic = useMemo(() => {
     const positionAtomic = usdcToAtomicV1(exitProfile.position);
     const maxRoundTripBps = percentToBpsV1(exitProfile.maxRoundTrip);
@@ -279,40 +283,58 @@ export function B20WatchPage() {
     },
     [exitCheck, profileAtomic],
   );
+  // Two paths, chosen by whether the SERVER says this costs money.
+  //
+  // The paid path needs a wallet client to answer the 402, so routing a free
+  // simulation through it would demand a signature-capable wallet for an
+  // operation nobody is charging for. The free path cannot answer a 402 at
+  // all. Picking by the advertised price keeps each one on the case it can
+  // actually complete, and the price comes from the same env resolution the
+  // x402 middleware charges from.
   const runSimulation = useCallback(
     (token: string) => {
       if (!profileAtomic) return;
       setExitToken(token);
-      exitSimulate.mutate({
+      const request = {
         tokenAddress: token,
         positionAtomic: profileAtomic.positionAtomic,
         maxRoundTripBps: profileAtomic.maxRoundTripBps,
         maxExitSlippageBps: profileAtomic.maxExitSlippageBps,
-      });
+      };
+      if (exitProofPriceUsdc) {
+        void exitProofPayment.run(request);
+        return;
+      }
+      exitSimulate.mutate(request);
     },
-    [exitSimulate, profileAtomic],
+    [exitProofPayment, exitProofPriceUsdc, exitSimulate, profileAtomic],
   );
   // The simulation's answer wins when there is one: it is the only measurement
   // that can confirm, and a stale provisional beside a fresh confirmation would
   // be two answers to one question.
+  // Both simulation paths land in the same shape; the paid one is validated
+  // against the contract inside its hook.
+  const paidSimulation = exitProofPayment.response;
+
   const exitResult = useMemo(() => {
-    if (exitSimulate.data) {
+    const simulated = exitSimulate.data ?? paidSimulation;
+    if (simulated) {
       return {
-        status: exitSimulate.data.viability,
-        reason: exitSimulate.data.rejectionReason,
-        unmeasuredReason: exitSimulate.data.unmeasuredReason,
-        coverage: exitSimulate.data.coverage,
-        viableRouteConfirmed: exitSimulate.data.viableRouteConfirmed,
-        bestRouteConfirmed: exitSimulate.data.bestRouteConfirmed,
-        clearanceId: exitSimulate.data.clearanceId,
-        expiresAt: exitSimulate.data.expiresAt,
-        simulatedRoundTripBps: exitSimulate.data.simulatedRoundTripBps,
-        simulationBlockNumber: exitSimulate.data.simulationBlockNumber,
-        controlsBlockNumber: exitSimulate.data.controlsBlockNumber,
-        checkedAt: exitSimulate.data.checkedAt,
+        status: simulated.viability,
+        reason: simulated.rejectionReason,
+        unmeasuredReason: simulated.unmeasuredReason,
+        coverage: simulated.coverage,
+        viableRouteConfirmed: simulated.viableRouteConfirmed,
+        bestRouteConfirmed: simulated.bestRouteConfirmed,
+        clearanceId: simulated.clearanceId,
+        expiresAt: simulated.expiresAt,
+        simulatedRoundTripBps: simulated.simulatedRoundTripBps,
+        simulationBlockNumber: simulated.simulationBlockNumber,
+        controlsBlockNumber: simulated.controlsBlockNumber,
+        checkedAt: simulated.checkedAt,
         measurement: null,
         optimistic: false,
-        roundTripCostBps: exitSimulate.data.simulatedRoundTripBps,
+        roundTripCostBps: simulated.simulatedRoundTripBps,
         exitCapacityAtomic: null,
         firstFailingAtomic: null,
         probeCount: 0,
@@ -322,7 +344,7 @@ export function B20WatchPage() {
       };
     }
     return exitCheck.data ?? null;
-  }, [exitSimulate.data, exitCheck.data]);
+  }, [exitSimulate.data, paidSimulation, exitCheck.data]);
 
   // --- T68F-B: the entry flow ------------------------------------------------
   //
@@ -611,6 +633,10 @@ export function B20WatchPage() {
           unavailableReason: exitUnavailable,
           onCheck: runExitCheck,
           onSimulate: runSimulation,
+          // Straight from the server's own resolution, never a constant here:
+          // a price typed into the client is a price that will one day differ
+          // from the one actually charged.
+          simulationPriceUsdc: exitProofPriceUsdc,
           // T68F-B — wired. The card only offers this when the clearance is
           // live and qualified; the gate lives in `entryPlanAvailableV1`.
           onBuildEntryPlan: buildEntryPlan,
