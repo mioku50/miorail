@@ -6,624 +6,173 @@
 
 Miorail is the intent, route-intelligence, and execution-verification layer for Base.
 
-A user describes the outcome they want in ordinary language. Miorail converts that request into a typed intent, evaluates several approved execution routes, gathers the data required to compare them honestly, normalizes the results, prepares one reviewable transaction plan, validates the calls, and asks the user to approve the final action through Base Account.
+A user describes an outcome in ordinary language. Miorail turns it into a typed intent, evaluates approved execution routes, gathers the data needed to compare them honestly, normalizes the results, prepares one reviewable plan, validates the calls, and asks the user to approve the final action in their own Base Account.
 
-When free data is not sufficient, Miorail can purchase approved data, simulation, inference, or compute through **x402**. A bounded **Base Spend Permission** can fund those service calls without granting Miorail permission to move the user's portfolio assets.
+The rule underneath all of it: **a measurement that did not happen is never reported as a result.** An empty rail says the rail is empty. A provider that did not answer is a provider that did not answer, not a zero, not a refusal, and not a finding about the token.
 
-After execution, Miorail compares the expected and actual result and stores a durable **Route Proof**.
-
-The existing logo remains unchanged.
-
-> Current stage: architecture transition from the legacy Miorail terminal to the route-intelligence product  
-> Network focus: Base  
-> Execution model: non-custodial, user-approved asset movement  
-> Intelligence payments: approved x402 services funded one-time or through bounded Spend Permissions  
-> Primary product object: Miorail Route Card  
-> Demo: `https://98.86.240.34.sslip.io`
-
-The complete product direction is documented in [`docs/MIORAIL_VISION.md`](docs/MIORAIL_VISION.md).
+> Network: Base mainnet (8453)
+> Execution model: non-custodial. Miorail never holds a key and never broadcasts.
+> Live: `https://miorail.xyz` — web console and Base App mini app
+> Product direction: [`docs/MIORAIL_VISION.md`](docs/MIORAIL_VISION.md)
 
 ---
 
-## Product promise
+## What runs today
 
-A Base user should not need to know which aggregator, protocol plugin, MCP tool, data provider, approval pattern, or contract call can complete a task.
+Six surfaces, shared between the web console and the Base App mini app from one section table (`lib/ui/src/console/navigation.ts`), so the two cannot drift.
 
-They should be able to say:
+| Surface | Path | State |
+| --- | --- | --- |
+| **Discover** | `/opportunities` | B20 launch feed. Two workers ingest and measure; the rail shows measured exits or says why it cannot. |
+| **B20** | `/portfolio` | B20 holdings, what their controls have done since, wallet balances, and the paid exit proof. |
+| **Routes** | `/routes` | The goal flow: intent → candidates → Route Card → review → Base Account. |
+| **Proofs** | `/plan/history` | Route runs and their execution proofs. See *Known gaps* — no run has produced a proof in production yet. |
+| **Extensions** | `/extensions` | Base MCP: the published plugin catalogue, the live tool list, and an AI console scoped to Base MCP alone. |
+| **Settings** | `/settings` | Budget & payments, adapters, providers, network. |
 
-```text
-Swap 100 USDC to ETH with the best net result.
-```
+### Route families
 
-```text
-Find a low-risk place to earn yield on 500 USDC.
-```
+`swap`, `earn`, `commerce`, `nft`, `private_ai` — each with its own intent, candidates, scoring, Route Card, review and proof shape, behind its own flag. They share the route-run lifecycle in `lib/route-storage`, not a generic "do anything" tool.
 
-```text
-Use MEV protection even if the route returns slightly less.
-```
+### B20 Discover
 
-```text
-Verify this route with deeper liquidity and contract data before I sign.
-```
-
-Miorail turns the request into an **Execution Blueprint**:
+The largest thing in the repository that is actually running.
 
 ```text
-Goal
-  → approved route candidates
-  → free and paid intelligence
-  → normalized comparison
-  → Path Score + confidence
-  → Route Card
-  → transaction calls
-  → Safety Kernel
-  → Base Account approval
-  → Route Proof
+launch events (Uniswap v4 shared hook)
+  → b20_launches                      [miorail-b20-discover]
+  → exit measurement, both legs against one state
+  → b20_opportunity_observations      [miorail-b20-measure]
+  → Discover rail
 ```
+
+Two facts shape it. B20 tokens trade on **Uniswap v4**, in a pool created inside the launch's own ten-block window — measuring Aerodrome instead is why an early build rejected 99.7% of launches. And an observation the worker made in the background can never be `qualified`; only a measurement someone asked for can make an affirmative claim.
+
+The rail distinguishes *rejected*, *provisional*, *unmeasured* and *endpoint unavailable*, and it will show an empty rail rather than soften the rule that produced it.
+
+### Base MCP, in two layers
+
+- **Plugins** — 20 specifications Base publishes. Miorail keeps a committed catalogue generated from their frontmatter (`scripts/refreshBaseMcpPluginCatalogue.mts`), including each spec's own `requires.allowlist`, which is the host boundary. A live check compares plugin *names* against what Base publishes and reports drift; a name cannot widen an allowlist.
+- **Tools** — the calls `mcp.base.org` exposes, read live and classified `read_only` / `user_confirmed_transaction` / `forbidden` / `unknown`. **`unknown` is treated as forbidden.**
+
+The **Base MCP console** is an AI thread whose entire inventory is Base MCP. The separation from Miorail's own routers is structural: `baseMcpOnly` in the tool factory suppresses every other provider, including ones not yet written, and implies read-only. With no Base MCP tools available the model is not called at all. Every tool call is shown with its arguments and result — *which third party said this* is the question the separation exists to answer.
+
+### Paid intelligence (x402)
+
+Two priced surfaces, named separately so switching one on can never silently start charging for the other. Both default off.
+
+| Surface | Flag | Production |
+| --- | --- | --- |
+| Swap simulation | `MIORAIL_PAID_SWAP_SIMULATION_V1` | off — the same comparison is free in any wallet, and a fork simulation is a *safety* step |
+| B20 exit proof | `MIORAIL_PAID_B20_SIMULATION_V1` | on, `0.0002` USDC |
+
+The exit proof is the one answer no other tool on Base gives: whether a B20 position can be exited, at what size, proven by a sequential simulation of both legs against a single state. Turning a paid surface off never removes a safety check.
+
+A bounded **Base Spend Permission** funds these calls. It does not grant Miorail permission to move portfolio assets.
 
 ---
 
-## Why Miorail exists
+## Execution boundary
 
-Base MCP gives an AI assistant access to wallet and execution capabilities. A general AI host can call tools, list plugins, prepare transactions, make x402 payments, and ask the user to approve actions.
+This is the part that is not negotiable, and most of the codebase's comments exist to defend it.
 
-That is useful infrastructure, but it is not the complete Miorail product.
+- Miorail never stores a user private key and never signs a raw transaction.
+- The server prepares calls; **only the client opens the wallet**, through the single `useSubmitApprovedBlueprint` path. There is no second execution path.
+- Approval happens in Base Account. A Base MCP write tool returns an approval URL the user completes outside Miorail — routing that through anything resembling our own submit path would create two paths with one unaudited.
+- Blueprint hashes are bound to what was reviewed. The client does not supply calldata, router, recipient, deadline or minimum output.
+- RPC URLs, API keys and provider credentials never reach evidence, hashes, logs or a rendered trace.
 
-Miorail owns the layer between the user's goal and the final wallet request:
+---
 
-- request several approved routes instead of calling the first matching tool;
-- normalize incompatible provider outputs into one comparison model;
-- acquire the data required to compare routes honestly;
-- use x402 to buy approved intelligence when free sources are insufficient;
-- score routes according to the user's real objective;
-- attach confidence, freshness, provenance, and cost to every score;
-- compose multi-step actions into one transaction plan;
-- validate the relationship between the intent and the calldata;
-- compare the expected result with the actual onchain result;
-- build a persistent history of route quality, provider reliability, and execution evidence.
-
-A direct flow such as:
+## Architecture
 
 ```text
-User message → Base MCP tool
+Natural-language request
+  → Intent Engine            typed goal + constraints
+  → Curated Skill Registry   approved route sources only
+  → Intelligence Layer       free + approved x402 evidence, with provenance
+  → Route Engine             normalize + Path Score + confidence
+  → Route Card               evidence, alternatives, what is missing
+  → Transaction Composer     Execution Blueprint (EIP-5792)
+  → Safety Kernel            decode, verify, simulate
+  → Base Account approval    the user, in their own wallet
+  → Route Proof              expected vs actual
 ```
 
-is explicitly not the target architecture.
+pnpm workspace. `artifacts/` holds the three deployables — `api-server`, `interface` (Vite/React), `miniapp` (Next.js, Base App) — and `lib/` holds ~40 packages under `@mioagent/*`. The ones worth knowing first:
 
-The Miorail flow is:
-
-```text
-User intent
-  → multi-route evaluation
-  → data acquisition and provenance
-  → deterministic scoring
-  → Route Card
-  → Execution Blueprint
-  → Safety Kernel
-  → Base Account approval
-  → Route Proof
-```
-
----
-
-## The core product object: Miorail Route Card
-
-The main user-facing result is not a raw chat response and not a protocol directory.
-
-It is a structured **Route Card**.
-
-Example:
-
-```text
-Swap 100 USDC → ETH
-
-Recommended route: KyberSwap
-Expected output: 0.03142 ETH
-Minimum output: 0.03110 ETH
-Estimated network cost: $0.02
-Intelligence cost: $0.006
-Price impact: 0.08%
-Approvals: 1
-Route complexity: 2 calls
-Quote age: 8 seconds
-
-Path Score
-• Net result: 94/100 · High confidence
-• Safety: 86/100 · High confidence
-• Liquidity: 96/100 · High confidence
-• Simplicity: 78/100 · High confidence
-• MEV protection: 62/100 · Medium confidence
-
-Evidence used
-✓ 3 current swap quotes
-✓ liquidity analysis
-✓ contract checks
-✓ transaction simulation
-
-Paid enrichment
-• liquidity analysis: $0.002
-• simulation: $0.004
-
-Alternatives
-• Uniswap: 0.03135 ETH, simpler route
-• o1.exchange: 0.03131 ETH, MEV-protected
-
-Why this route
-KyberSwap currently provides the highest expected net output after
-estimated costs. Choose o1.exchange instead when MEV protection matters
-more than the output difference.
-
-[Review transaction]
-```
-
-A Route Card shows understandable outcomes, evidence, and costs rather than raw APIs or payment headers.
-
----
-
-## Miorail Path Score
-
-Miorail does not claim that one protocol is universally best.
-
-It ranks a route relative to the user's goal and selected optimization mode.
-
-Possible dimensions include:
-
-- net result;
-- safety;
-- liquidity;
-- route simplicity;
-- gas cost;
-- slippage and price impact;
-- exit flexibility;
-- MEV protection;
-- quote freshness;
-- provider reliability.
-
-Possible user modes include:
-
-```text
-Best net result
-Lowest risk
-Lowest fees
-Simplest route
-Fastest execution
-MEV protected
-```
-
-Every scored dimension must include:
-
-- deterministic score logic;
-- confidence level;
-- source provenance;
-- data freshness;
-- scoring version;
-- paid-service cost when applicable;
-- missing-data state.
-
-The governing rule is:
-
-> **No data — no score.**
-
-Miorail must show `Not scored` or `Insufficient data` instead of inventing a precise number. The LLM may explain the score, but it must never create the score itself.
-
-Example normalized evidence:
-
-```json
-{
-  "dimension": "liquidity",
-  "score": 92,
-  "confidence": 0.88,
-  "freshnessSeconds": 12,
-  "sources": ["provider-a", "provider-b"],
-  "paidCostUsd": 0.003,
-  "scoringVersion": "liquidity-v1"
-}
-```
-
----
-
-## x402 as the paid intelligence rail
-
-x402 is an important runtime layer of Miorail.
-
-It is used to purchase known, approved services that materially improve route quality, such as:
-
-- fresh market and liquidity data;
-- contract and token risk enrichment;
-- transaction simulation;
-- route verification;
-- premium inference or research;
-- known commerce and digital-service endpoints.
-
-Miorail does not expose an x402 Bazaar browser, dynamically trust arbitrary endpoints, or ask users to compare raw machine APIs.
-
-Approved x402 services live inside the curated Skill Registry with:
-
-- stable input and output schemas;
-- explicit trust assumptions;
-- exact or bounded pricing;
-- timeout and retry behavior;
-- fallback rules;
-- reliability history;
-- payment and service receipts.
-
-The user pays for a defined result, not for the protocol name `x402`.
-
----
-
-## Spend Permissions as the intelligence budget
-
-Base Spend Permissions are a first-class infrastructure layer for repeated paid intelligence calls.
-
-A user may create a bounded **Miorail Intelligence Budget**:
-
-```text
-Monthly limit: 3 USDC
-Maximum per request: 0.02 USDC
-
-Allowed
-✓ route quotes
-✓ liquidity data
-✓ risk data
-✓ simulation
-✓ approved inference
-
-Not allowed
-✗ token transfers
-✗ swaps
-✗ deposits
-✗ borrows
-✗ arbitrary contract calls
-```
-
-The security boundary is explicit:
-
-```text
-Spend Permission
-= pay for approved data, intelligence, and compute
-
-Base Account approval
-= authorize movement of user assets
-```
-
-A Spend Permission must be wallet-bound, category-bound, amount-bounded, auditable, revocable, and fail closed.
-
-For a first-time or unusual paid request, Miorail may still ask for one-time confirmation. The bounded budget exists to remove repeated payment prompts from trusted recurring intelligence workflows.
-
----
-
-## Route Proof
-
-After a transaction settles, Miorail records the difference between the plan and the result.
-
-Example:
-
-```text
-Expected output: 0.03142 ETH
-Actual output: 0.03139 ETH
-Deviation: -0.10%
-Estimated network cost: $0.020
-Actual network cost: $0.018
-Intelligence cost: $0.006
-Status: completed
-```
-
-A Route Proof should preserve:
-
-- the original typed intent;
-- all compared route candidates;
-- all free and paid evidence used;
-- provider provenance and freshness;
-- scoring version and confidence;
-- recommendation reason;
-- the selected route;
-- quote and expiration data;
-- the exact calls approved by the user;
-- simulation evidence;
-- x402 payment proofs and intelligence receipts;
-- transaction hashes and onchain receipts;
-- expected and actual asset changes;
-- partial-failure or reconciliation state.
-
-This gives Miorail its own persistent execution and intelligence data instead of behaving like a temporary chat session.
-
----
-
-## Core architecture
-
-```text
-┌──────────────────────────┐
-│ Natural-language request │
-└─────────────┬────────────┘
-              ↓
-┌──────────────────────────┐
-│ Intent Engine            │
-│ typed goal + constraints │
-└─────────────┬────────────┘
-              ↓
-┌──────────────────────────┐
-│ Curated Skill Registry   │
-│ approved route sources   │
-└─────────────┬────────────┘
-              ↓
-┌──────────────────────────┐
-│ Intelligence Layer       │
-│ free + approved x402     │
-└─────────────┬────────────┘
-              ↓
-┌──────────────────────────┐
-│ Route Engine             │
-│ normalize + score        │
-└─────────────┬────────────┘
-              ↓
-┌──────────────────────────┐
-│ Route Card               │
-│ evidence + alternatives  │
-└─────────────┬────────────┘
-              ↓
-┌──────────────────────────┐
-│ Transaction Composer     │
-│ Execution Blueprint      │
-└─────────────┬────────────┘
-              ↓
-┌──────────────────────────┐
-│ Safety Kernel            │
-│ decode, verify, simulate │
-└─────────────┬────────────┘
-              ↓
-┌──────────────────────────┐
-│ Base Account approval    │
-└─────────────┬────────────┘
-              ↓
-┌──────────────────────────┐
-│ Route Proof              │
-│ expected vs actual       │
-└──────────────────────────┘
-
-Spend Permission
-  → bounded Intelligence Budget
-  → approved x402 calls only
-```
-
-### Intent Engine
-
-Converts English and Russian requests into typed goals. It resolves assets, amounts, recipients, Basenames, optimization preferences, and missing constraints. It must fail safely when a financial request is ambiguous.
-
-### Curated Skill Registry
-
-Contains only explicitly integrated, typed, and tested capabilities.
-
-A skill may wrap:
-
-- a Base MCP capability;
-- a protocol adapter;
-- an aggregator;
-- a transaction builder;
-- a free data source;
-- an approved paid API;
-- an approved x402-enabled service.
-
-Unknown services are not dynamically added during a normal user request.
-
-### Intelligence Layer
-
-Coordinates free and paid evidence required by the Route Engine. It records provenance, freshness, confidence, price, payment proof, and provider reliability.
-
-### Route Engine
-
-Requests several compatible candidates, normalizes their outputs, computes Path Scores, applies user preferences, and produces a recommendation with meaningful alternatives.
-
-### Transaction Composer
-
-Turns the selected route into a reviewable Execution Blueprint containing approvals, permits, swaps, transfers, deposits, withdrawals, purchases, and compatible EIP-5792 batches.
-
-The server produces unsigned requests and never stores the user's private key.
-
-### Safety Kernel
-
-Automatically validates:
-
-- chain and asset consistency;
-- wallet and tenant binding;
-- recipients and spenders;
-- calldata and amounts;
-- intent-to-calldata semantics;
-- approvals;
-- slippage and deadlines;
-- quote freshness;
-- destination contracts;
-- transaction simulation where available;
-- idempotency and durable receipts.
-
-### Route Proof Engine
-
-Reconciles expected and actual results after execution and stores durable evidence for history, provider reliability, and future routing improvements.
-
----
-
-## The role of Base MCP
-
-Base MCP is an important wallet, capability, payment, and execution rail, but not the brain or product identity of Miorail.
-
-Miorail may use it for:
-
-- Base Account integration;
-- wallet-aware reads;
-- supported protocol and aggregator tools;
-- x402-compatible payments;
-- transaction preparation;
-- EIP-5792 call execution;
-- signing and approval flows.
-
-Miorail adds the persistent product layer:
-
-- multi-provider route evaluation;
-- data acquisition and provenance;
-- normalized comparison schemas;
-- deterministic Path Scores and confidence;
-- Miorail Intelligence Budget;
-- Route Cards;
-- multi-step Execution Blueprints;
-- intent-to-calldata validation;
-- Route Proof and execution history.
-
----
-
-## Initial MVP journeys
-
-### Swap Route Card
-
-- query multiple approved swap routes;
-- obtain current quotes, gas estimates, liquidity, and safety evidence;
-- use approved x402 enrichment when free data is insufficient;
-- normalize output, minimum output, gas, slippage, price impact, calls, and trust metadata;
-- compute confidence-aware Path Scores;
-- show a recommendation and alternatives;
-- prepare the complete unsigned transaction;
-- reconcile expected and actual output.
-
-### Earn Route Card
-
-- query approved lending and vault integrations;
-- normalize APY, liquidity, withdrawal mechanics, protocol risk, and transaction complexity;
-- acquire additional paid intelligence when required for a defensible comparison;
-- rank according to the user's risk and liquidity preference;
-- prepare approval and deposit calls;
-- preserve the selected route and receipt.
-
-### Intelligence Budget
-
-- create or connect a bounded Spend Permission;
-- restrict it to approved data and compute categories;
-- enforce monthly and per-call limits;
-- show every charge and remaining budget;
-- support revocation and fail-closed behavior;
-- keep portfolio asset movement outside the permission.
-
----
-
-## What Miorail is not
-
-Miorail is not:
-
-- a background scanner product;
-- an alerts and recommendations feed;
-- an Action Inbox clone;
-- a provider or protocol directory;
-- a policy-management dashboard;
-- an x402 Bazaar browser;
-- an unrestricted autonomous trading bot;
-- a custodial wallet;
-- a thin UI around Base MCP;
-- a system that lets an LLM invent transaction routes or scores.
-
----
-
-## Migration from the legacy product
-
-| Legacy component | New Miorail direction |
+| Package | What it owns |
 | --- | --- |
-| Agent Stream | Intent workspace |
-| Base MCP | Wallet, capability, payment, and execution rail |
-| Protocol skills | Curated route adapters |
-| Data providers | Intelligence Layer with provenance |
-| Action preparation | Execution Blueprints |
-| Action cards | Miorail Route Cards |
-| Security checks | Invisible Safety Kernel |
-| Portfolio data | Context for intent and route scoring |
-| Memory | Optimization preferences and constraints |
-| x402 gateway | Paid intelligence rail |
-| Spend Permissions | Bounded Miorail Intelligence Budget |
-| Receipts and audit logs | Route Proof and intelligence history |
+| `route-domain`, `route-storage` | The route-run lifecycle and its persistence |
+| `opportunity-rail`, `b20-control` | B20 measurement, clearance, and what a rail may claim |
+| `swap-adapters` | Uniswap v4 pool resolution, quoting, round trips |
+| `security` | Safety Kernel, host allowlists, Base MCP plugin catalogue |
+| `mcp`, `tools`, `agent` | Base MCP client, tool classification, the agent loop |
+| `x402-gateway`, `x402-actions`, `paid-intelligence` | The paid rail, both sides |
+| `wallet-actions` | The one client-side submit path |
+| `ui` | The console vocabulary shared by web and Base App |
 
-Scanner schedules, scanner-driven recommendations, visible autonomy policies, provider toggle grids, and dashboard-first navigation are no longer primary product concepts.
+The repository is named `mioagent` and the namespace stays `@mioagent/*`. The product is Miorail.
 
 ---
 
-## Rebuild stages
+## Known gaps
 
-1. **Architecture freeze** — stop expanding Scanner, Action Inbox, and visible Policy surfaces.
-2. **Legacy inventory** — identify reusable execution, receipt, x402, Spend Permission, safety, and provider components.
-3. **Intent Engine** — typed schemas, English/Russian parsing, ambiguity handling, and user preference resolution.
-4. **Route Candidate schema** — normalize quotes and opportunities across approved integrations.
-5. **Intelligence Layer** — provenance, freshness, confidence, free/paid evidence, and provider reliability.
-6. **x402 intelligence rail** — connect approved paid data, simulation, and compute services.
-7. **Spend Permission budget** — bounded categories, per-call limits, monthly caps, revocation, and ledger.
-8. **Path Score** — deterministic, versioned, confidence-aware scoring per intent family.
-9. **Route Cards** — comparison, evidence, cost, and recommendation UI.
-10. **Transaction Composer** — Execution Blueprint and EIP-5792 preparation.
-11. **Safety Kernel** — intent-to-calldata validation and simulation.
-12. **Route Proof** — expected-versus-actual reconciliation, payment proofs, and history.
-13. **Production hardening** — provider reliability, retries, failure recovery, observability, and independent review.
+Stated here because a README that lists only what works is the same failure mode the product is built to avoid.
 
-Each implementation step should be delivered as a small coder task with explicit scope, non-goals, acceptance criteria, tests, and a clear commit message.
-
----
-
-## Current repository status
-
-The repository contains a working foundation, including:
-
-- a web interface and API server;
-- Postgres persistence;
-- an OpenAI-compatible agent runtime;
-- Base Account and Base MCP integrations;
-- English and Russian intent-routing experiments;
-- x402 seller and buyer infrastructure;
-- Base Spend Permission support;
-- transaction preparation and safety components;
-- provider, portfolio, approvals, ledger, and receipt infrastructure.
-
-These components are migration assets, not a requirement to preserve the old product shape.
-
-The product name is **Miorail**. The repository name `mioagent` and package namespace `@mioagent/*` remain unchanged for compatibility.
+- **No route has completed in production.** Every route run is `ready`; one execution blueprint exists; every proof table — route, NFT, commerce, AI inference, spend permission — is empty. The Proofs surface is a working viewer for records that do not exist yet.
+- **Proofs drops out of the console shell.** `/plan/history` renders outside `ConsoleShell`, so opening the tab loses the tab bar, and it still uses pre-console styling.
+- **`/stream`** is the old mixed agent thread: Base MCP and partner providers in one loop. Off-navigation, not migrated to the split the Extensions console introduced.
+- **Wallet balances** in Base App depend on `heldTokens` for decimals; a token missing from that list renders without them.
+- The `unknown` Base MCP tools (`chain_rpc_request`, `complete_x402_request`, `fund`, and four others) are unclassified and therefore uncallable.
 
 ---
 
 ## Development
 
-Requirements:
-
-- Node.js 20+
-- pnpm
-- PostgreSQL
-
-Install dependencies:
+Requirements: Node 20+, pnpm, PostgreSQL.
 
 ```bash
 pnpm install
-```
-
-Run the workspace in development mode:
-
-```bash
+cp .env.example .env
 pnpm dev
 ```
 
-Run checks:
+Checks:
 
 ```bash
-pnpm check
-pnpm test
-pnpm build
+pnpm test:unit     # ~4,400 unit tests, no database
+pnpm test:db       # database-backed tests, isolated schema
+pnpm -r build
 ```
 
-Environment configuration starts from:
+Two things that have bitten before:
 
 ```bash
-cp .env.example .env
+# pnpm -r build does NOT cover scripts/
+npx tsc --noEmit -p scripts/tsconfig.json
 ```
 
-Do not place private keys, CDP secrets, provider keys, or production credentials in source control.
+```bash
+# duplicate keys in .env are last-wins and have silently taken the LLM router down
+pnpm env:doctor
+```
+
+Dependencies are held to `minimumReleaseAge: 7d` in `pnpm-workspace.yaml`. On `ERR_PNPM_NO_MATURE_MATCHING_VERSION`, pin a mature version — do not relax the policy.
+
+### Deploying
+
+`ops/deploy.sh`, run as root on the host. Six steps in order, and it refuses to claim success it has not checked — the last step compares the built entry bundle against the one nginx serves, because a redeploy that leaves the browser on an old bundle has happened here and looked like a fix that did not work.
+
+Services: `miorail-api`, `miorail-b20-discover`, `miorail-b20-measure`.
 
 ---
 
 ## Safety notice
 
-Miorail is experimental software undergoing a major architecture transition.
+Miorail is experimental software.
 
-Do not use it with funds you cannot afford to lose until route scoring, data provenance, x402 settlement, Spend Permission limits, transaction preparation, simulation, Base Account approval, and Route Proof reconciliation have been production hardened and independently reviewed.
+Do not use it with funds you cannot afford to lose until route scoring, data provenance, x402 settlement, Spend Permission limits, transaction preparation, simulation, Base Account approval and Route Proof reconciliation have been production hardened and independently reviewed. As of today the last of those has never run end to end — see *Known gaps*.
 
 ---
 
