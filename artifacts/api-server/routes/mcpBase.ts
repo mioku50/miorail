@@ -2,6 +2,8 @@ import { Router, type NextFunction, type Request, type Response } from 'express'
 import crypto from 'node:crypto';
 import { logger } from '@mioagent/utils';
 import {
+  BaseMcpConsoleRequestV1Schema,
+  BaseMcpConsoleResponseV1Schema,
   BaseMcpPluginCatalogueResponseSchema,
   BaseMcpToolProbeResponseSchema,
 } from '@mioagent/api-zod';
@@ -10,6 +12,7 @@ import {
   BASE_MCP_PLUGIN_CATALOGUE_V1,
 } from '@mioagent/security';
 import { baseMcpPluginDriftV1 } from '../lib/baseMcpPluginDrift.js';
+import { runBaseMcpConsoleV1 } from '../lib/baseMcpConsole.js';
 import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
 import {
   baseMcpEnabledFromEnv,
@@ -36,6 +39,7 @@ export const mcpBaseRouteRuntime = {
   probeBaseMcpTools,
   verifyBaseMcpWalletMatchViaOAuth,
   baseMcpPluginDriftV1,
+  runBaseMcpConsoleV1,
 };
 
 function sessionSecret(): string {
@@ -315,6 +319,41 @@ mcpBaseRouter.get('/plugins', async (_req: Request, res: Response, next: NextFun
       generatedAt: BASE_MCP_CATALOGUE_GENERATED_AT_V1,
       drift,
     }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+// The Base MCP console. A separate room from the Routes flow, on purpose: the
+// tools here belong to third parties, and mixing them with Miorail's measured
+// routes in one thread erases the difference between "we verified this" and
+// "somebody's API said so". Read-only by construction — see
+// lib/baseMcpConsole.ts for what makes that structural rather than a promise.
+mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { message } = BaseMcpConsoleRequestV1Schema.parse(req.body);
+    const secret = process.env.SESSION_SECRET;
+    if (!secret) {
+      return res.json(BaseMcpConsoleResponseV1Schema.parse({
+        status: 'disabled',
+        reply: null,
+        trace: [],
+        toolsAvailable: 0,
+        truncated: false,
+        errorCode: 'missing_config',
+        checkedAt: new Date().toISOString(),
+      }));
+    }
+
+    const result = await mcpBaseRouteRuntime.runBaseMcpConsoleV1({
+      req,
+      userId: tenantUserId(req),
+      sessionSecret: secret,
+      walletAddress: tenantWalletAddress(req),
+      message,
+      enabled: baseMcpEnabledFromEnv() && Boolean(baseMcpServerUrlFromEnv()),
+    });
+    return res.json(BaseMcpConsoleResponseV1Schema.parse(result));
   } catch (error) {
     next(error);
   }

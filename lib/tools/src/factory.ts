@@ -31,6 +31,19 @@ export interface CreateToolAggregatorOptions {
   includeBaseMcpSwap?: boolean;
   includeBaseMcpSend?: boolean;
   /**
+   * T74: register NOTHING but Base MCP.
+   *
+   * The Base MCP console exists to keep other people's tools apart from
+   * Miorail's verified routers, and "apart" has to be structural. Passing the
+   * right combination of the flags above would get there today and drift
+   * tomorrow — a new provider added to this factory would silently join a
+   * surface whose entire promise is that it contains no such thing.
+   *
+   * So this is one switch that suppresses every non-Base-MCP provider,
+   * including ones that do not exist yet, and it implies read-only.
+   */
+  baseMcpOnly?: boolean;
+  /**
    * T48b: version tag for the bounded TTL inventory cache
    * (dynamicBaseMcpCache.ts), typically derived from the user's Base MCP
    * oauth-token state (e.g. connectedAt+expiresAt). Changing this value
@@ -79,9 +92,10 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
   const settings = await settingsAPI.getUserSettings(userId);
 
   const toggles = settings?.protocolToggles as Record<string, boolean> | undefined;
+  const baseMcpOnly = options.baseMcpOnly === true;
 
-  const useCoinGecko = toggles?.coingecko === true;
-  const useMoralis = toggles?.moralis === true;
+  const useCoinGecko = !baseMcpOnly && toggles?.coingecko === true;
+  const useMoralis = !baseMcpOnly && toggles?.moralis === true;
 
   const coinGeckoProvider = useCoinGecko ? new RealCoinGeckoProvider() : undefined;
   let moralisProvider: RealMoralisProvider | undefined;
@@ -115,7 +129,7 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
       await baseClient.connect(transport);
       aggregator.registerCleanup(() => baseClient.close());
       mcpClient = new McpSendCallsClient(baseClient);
-      if (!options.baseMcpReadOnlyOnly) {
+      if (!options.baseMcpReadOnlyOnly && !baseMcpOnly) {
         aggregator.registerProvider(new BaseMcpToolProvider(mcpClient));
       }
       try {
@@ -123,14 +137,16 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
         const discoveredTools = await listDynamicBaseMcpToolsCached(baseClient, cacheKey, toggles);
         const dynamicTools = selectBaseMcpRuntimeTools(
           discoveredTools,
-          options.baseMcpReadOnlyOnly,
-          options.includeBaseMcpSwap,
-          options.includeBaseMcpSend,
+          // baseMcpOnly implies read-only. The console is a place to look at
+          // Base MCP, not a second way to reach a wallet.
+          options.baseMcpReadOnlyOnly || baseMcpOnly,
+          !baseMcpOnly && options.includeBaseMcpSwap,
+          !baseMcpOnly && options.includeBaseMcpSend,
         );
         if (dynamicTools.length > 0) {
           aggregator.registerProvider(new DynamicBaseMcpToolProvider(baseClient, dynamicTools, {
-            allowUserConfirmedSwap: options.includeBaseMcpSwap,
-            allowUserConfirmedSend: options.includeBaseMcpSend,
+            allowUserConfirmedSwap: !baseMcpOnly && options.includeBaseMcpSwap,
+            allowUserConfirmedSend: !baseMcpOnly && options.includeBaseMcpSend,
           }));
         }
       } catch (error) {
@@ -145,11 +161,11 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
     }
   }
 
-  if (options.includeMorphoReadOnly && toggles?.morpho !== false) {
+  if (!baseMcpOnly && options.includeMorphoReadOnly && toggles?.morpho !== false) {
     aggregator.registerProvider(new MorphoMcpToolProvider());
   }
 
-  if (options.includeUniswapQuote && toggles?.uniswap !== false) {
+  if (!baseMcpOnly && options.includeUniswapQuote && toggles?.uniswap !== false) {
     // T48b: BASE_MCP_PLUGIN_MODE default 'mcp' resolves UNISWAP_MCP_GATEWAY_KEY
     // here; UNISWAP_API_KEY is only consulted in 'direct' mode. Registration
     // never fails or gates on UNISWAP_API_KEY being unset in mcp mode — the
@@ -160,11 +176,11 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
 
   // Moonwell is a plain HTTP API (no MCP server, no API key). It is a Base
   // mainnet product, so it is only registered outside the Sepolia runtime.
-  if (options.includeMoonwell && toggles?.moonwell !== false && process.env.CHAIN_ENV !== 'sepolia') {
+  if (!baseMcpOnly && options.includeMoonwell && toggles?.moonwell !== false && process.env.CHAIN_ENV !== 'sepolia') {
     aggregator.registerProvider(new MoonwellHttpToolProvider());
   }
 
-  if (process.env.CHAIN_ENV === 'sepolia' && !options.baseMcpReadOnlyOnly) {
+  if (process.env.CHAIN_ENV === 'sepolia' && !options.baseMcpReadOnlyOnly && !baseMcpOnly) {
     const { SepoliaToolProvider } = await import('./sepolia.js');
     aggregator.registerProvider(new SepoliaToolProvider(mcpClient));
   }

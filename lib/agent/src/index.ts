@@ -21,6 +21,16 @@ export interface AgentConfig {
     content: string;
     isError: boolean;
   }) => { content: string; isError: boolean } | Promise<{ content: string; isError: boolean }>;
+  /**
+   * T74: extra system-prompt lines for a surface with a narrower promise than
+   * the general stream.
+   *
+   * Appended, never substituted: the lines below it — never invent a tool
+   * result, never read a private key, no transaction tools in read-only mode —
+   * are the ones that must hold on every surface, and a caller must not be
+   * able to replace them by supplying a persona.
+   */
+  systemPromptExtra?: string[];
 }
 
 export type AgentEvent =
@@ -107,6 +117,7 @@ export class Agent {
       `Enabled Base MCP read tools: ${baseMcpTools.join(', ') || 'none'}.`,
       `Enabled partner read tools: ${partnerTools.join(', ') || 'none'}.`,
       'In read-only mode, do not call send_calls, swap, sign, prepare, deposit, withdraw, or any transaction tool.',
+      ...(this.config.systemPromptExtra ?? []),
     ].filter(Boolean).join('\n');
 
     let systemPrompt = basePrompt;

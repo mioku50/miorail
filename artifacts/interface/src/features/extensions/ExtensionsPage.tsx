@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useLocation } from 'wouter';
 import {
+  BaseMcpConsoleCard,
   BaseMcpExtensionsCard,
   BaseMcpPluginsCard,
   ConsoleShell,
@@ -12,7 +13,7 @@ import {
   type BaseMcpToolRowV1,
 } from '@mioagent/ui';
 import { useAccount } from 'wagmi';
-import { useBaseMcpPlugins, useBaseMcpToolsProbe, useStatus } from '@mioagent/api-client-react';
+import { useBaseMcpConsole, useBaseMcpPlugins, useBaseMcpToolsProbe, useStatus } from '@mioagent/api-client-react';
 
 import { BaseMcpConnectButton } from '../../components/BaseMcpConnectButton';
 import { useConsoleNav } from '../console/useConsoleNav';
@@ -49,6 +50,8 @@ export function ExtensionsPage() {
   const status = useStatus();
   const probe = useBaseMcpToolsProbe();
   const catalogue = useBaseMcpPlugins();
+  const consoleAsk = useBaseMcpConsole();
+  const [question, setQuestion] = useState('');
 
   const enabled = status.data?.baseMcp?.enabled === true;
   const [askedOnce, setAskedOnce] = useState(false);
@@ -75,7 +78,7 @@ export function ExtensionsPage() {
     unavailableReason: probe.error
       // Never the error's own message: a transport failure can carry the
       // endpoint, and the endpoint can carry a token.
-      ? 'The plugin catalogue could not be read. Nothing here is a statement about which plugins exist.'
+      ? 'The tool catalogue could not be read. Nothing here is a statement about which tools exist.'
       : null,
     onRefresh: readCatalogue,
   };
@@ -130,6 +133,29 @@ export function ExtensionsPage() {
       {/* Plugins first: it is what the section is for, and it does not depend
           on a connection. The live tool list follows. */}
       <BaseMcpPluginsCard {...plugins} />
+      {enabled && (
+        // The AI thread for Base MCP, kept out of Routes on purpose: our
+        // routers are measured and carry a Route Card, these tools are other
+        // people's and carry whatever they returned. One window for both was
+        // one voice for two different guarantees.
+        <BaseMcpConsoleCard
+          question={question}
+          onQuestionChange={setQuestion}
+          onAsk={() => {
+            const message = question.trim();
+            if (message) consoleAsk.mutate(message);
+          }}
+          pending={consoleAsk.isPending}
+          answer={consoleAsk.data ?? null}
+          unavailableReason={
+            consoleAsk.error
+              // Never the error's own message: a transport failure can carry
+              // the endpoint, and the endpoint can carry a token.
+              ? 'The console could not reach the server. Nothing here is a statement about Base MCP.'
+              : null
+          }
+        />
+      )}
       <BaseMcpExtensionsCard {...model} />
       {enabled && (
         // The connect control is its own component because OAuth must open

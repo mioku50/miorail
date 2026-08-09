@@ -15,6 +15,7 @@ const originalAuth = mcpBaseRouteRuntime.auth;
 const originalLogger = mcpBaseRouteRuntime.logger;
 const originalProbeBaseMcpTools = mcpBaseRouteRuntime.probeBaseMcpTools;
 const originalPluginDrift = mcpBaseRouteRuntime.baseMcpPluginDriftV1;
+const originalConsole = mcpBaseRouteRuntime.runBaseMcpConsoleV1;
 const originalDb = baseMcpOAuthStoreRuntime.db;
 const originalFetch = globalThis.fetch;
 
@@ -75,6 +76,7 @@ afterEach(() => {
   mcpBaseRouteRuntime.logger = originalLogger;
   mcpBaseRouteRuntime.probeBaseMcpTools = originalProbeBaseMcpTools;
   mcpBaseRouteRuntime.baseMcpPluginDriftV1 = originalPluginDrift;
+  mcpBaseRouteRuntime.runBaseMcpConsoleV1 = originalConsole;
   baseMcpOAuthStoreRuntime.db = originalDb;
   globalThis.fetch = originalFetch;
   clearBaseMcpStatusForTests();
@@ -566,4 +568,48 @@ test('GET /api/mcp/base/plugins still lists the catalogue when the drift check f
   assert.ok(response.body.plugins.length >= 20);
   assert.strictEqual(response.body.drift.status, 'unchecked');
   assert.strictEqual(response.body.drift.publishedCount, null);
+});
+
+test('POST /api/mcp/base/console returns the answer with its trace', async () => {
+  const originalSecret = process.env.SESSION_SECRET;
+  process.env.SESSION_SECRET = 'test-session-secret';
+  let receivedEnabled: boolean | undefined;
+  mcpBaseRouteRuntime.runBaseMcpConsoleV1 = async (input) => {
+    receivedEnabled = input.enabled;
+    return {
+      status: 'answered' as const,
+      reply: 'Your Base Account holds 12 USDC.',
+      trace: [{ tool: 'get_portfolio', args: '{}', ok: true, result: '{"usd":"12"}', errorCode: null }],
+      toolsAvailable: 15,
+      truncated: false,
+      errorCode: null,
+      checkedAt: '2026-08-09T12:00:00.000Z',
+    };
+  };
+
+  const response = await request(app).post('/api/mcp/base/console').send({ message: 'what do I hold?' });
+  assert.strictEqual(response.status, 200);
+  assert.strictEqual(response.body.status, 'answered');
+  assert.strictEqual(response.body.trace.length, 1);
+  assert.strictEqual(response.body.trace[0].tool, 'get_portfolio');
+  assert.strictEqual(typeof receivedEnabled, 'boolean');
+  assert.strictEqual(JSON.stringify(response.body).includes('test-session-secret'), false);
+
+  restoreEnv('SESSION_SECRET', originalSecret);
+});
+
+test('POST /api/mcp/base/console rejects an empty message before running anything', async () => {
+  const originalSecret = process.env.SESSION_SECRET;
+  process.env.SESSION_SECRET = 'test-session-secret';
+  let called = false;
+  mcpBaseRouteRuntime.runBaseMcpConsoleV1 = async () => {
+    called = true;
+    throw new Error('must not run');
+  };
+
+  const response = await request(app).post('/api/mcp/base/console').send({ message: '' });
+  assert.ok(response.status >= 400, `expected a validation failure, got ${response.status}`);
+  assert.strictEqual(called, false);
+
+  restoreEnv('SESSION_SECRET', originalSecret);
 });

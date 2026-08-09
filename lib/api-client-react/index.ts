@@ -1178,6 +1178,27 @@ export function useBaseMcpPlugins(options?: { enabled?: boolean }) {
   });
 }
 
+/**
+ * The Base MCP console: one question, one answer, one trace.
+ *
+ * A mutation, because it spends the user's Base MCP session and an LLM call.
+ * Nothing about it is retried or refetched on focus.
+ */
+export function useBaseMcpConsole(
+  options?: Omit<UseMutationOptions<apiSpec.BaseMcpConsoleResponseV1, Error, string>, 'mutationFn'>,
+) {
+  return useMutation({
+    mutationFn: async (message: string) => {
+      const response = await fetchApi<unknown>('/api/mcp/base/console', {
+        method: 'POST',
+        body: JSON.stringify({ message }),
+      });
+      return apiSpec.BaseMcpConsoleResponseV1Schema.parse(response);
+    },
+    ...options,
+  });
+}
+
 export function useBaseMcpToolsProbe(
   options?: Omit<UseMutationOptions<apiSpec.BaseMcpToolProbeResponse, Error, void>, 'mutationFn'>
 ) {

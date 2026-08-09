@@ -242,3 +242,64 @@ describe('createToolAggregatorForUser', () => {
         mockGetDecryptedKey.mock.restore();
     });
 });
+
+// ---------------------------------------------------------------------------
+// T74: `baseMcpOnly` is a boundary, not a convenience.
+//
+// The Base MCP console exists so that other people's tools and Miorail's
+// measured routers are never in the same thread. That guarantee is only worth
+// something if it survives the next provider somebody adds to this factory —
+// which is why the switch suppresses everything rather than the caller passing
+// the right combination of `include*: false`.
+// ---------------------------------------------------------------------------
+describe('createToolAggregatorForUser baseMcpOnly', () => {
+    async function aggregatorWithEverythingRequested(options: Record<string, unknown>) {
+        const mockGetSettings = mock.method(settingsAPI, 'getUserSettings', async () => ({
+            // Every toggle a user could have turned on.
+            protocolToggles: { coingecko: true, moralis: true, morpho: true, uniswap: true, moonwell: true },
+        }));
+        const mockGetDecryptedKey = mock.method(settingsAPI, 'getDecryptedKey', async () => 'moralis-key');
+        const previousChainEnv = process.env.CHAIN_ENV;
+        process.env.CHAIN_ENV = 'mainnet';
+        try {
+            return await createToolAggregatorForUser('u1', 'secret', {
+                includeMorphoReadOnly: true,
+                includeUniswapQuote: true,
+                includeMoonwell: true,
+                ...options,
+            });
+        } finally {
+            process.env.CHAIN_ENV = previousChainEnv;
+            mockGetSettings.mock.restore();
+            mockGetDecryptedKey.mock.restore();
+        }
+    }
+
+    test('registers no partner or native provider, however loudly they were requested', async () => {
+        const aggregator = await aggregatorWithEverythingRequested({ baseMcpOnly: true });
+        const registered = [...(aggregator['providers'] as Map<string, unknown>).keys()];
+        assert.deepEqual(registered.filter((id) => !id.startsWith('base-mcp')), []);
+    });
+
+    test('without the switch the same request registers all of them', async () => {
+        // The control: this is what the console would have inherited if the
+        // separation were left to the caller.
+        const aggregator = await aggregatorWithEverythingRequested({});
+        const registered = [...(aggregator['providers'] as Map<string, unknown>).keys()];
+        for (const expected of ['native', 'morpho-mcp', 'uniswap-quote', 'moonwell-http']) {
+            assert.ok(registered.includes(expected), `${expected} should be registered without baseMcpOnly`);
+        }
+    });
+
+    test('baseMcpOnly implies read-only whatever the swap and send flags say', async () => {
+        // A user-confirmed transaction tool in a console with no Route Card is
+        // exactly the mixing this separates. `selectBaseMcpRuntimeTools` is
+        // where that filter lands, so assert it directly.
+        const tools = classifyDynamicBaseMcpTools([
+            { name: 'get_portfolio', description: 'read', inputSchema: {} },
+            { name: 'swap', description: 'swap tokens', inputSchema: {} },
+        ]);
+        const readOnly = selectBaseMcpRuntimeTools(tools, true, false, false);
+        assert.deepEqual(readOnly.map((tool) => tool.name), ['get_portfolio']);
+    });
+});

@@ -26,7 +26,16 @@ export async function createApiToolAggregatorForUser(
   req: Request,
   userId: string,
   sessionSecret: string,
-  options: { readOnlyOnly?: boolean; includeMorphoReadOnly?: boolean; includeUniswapQuote?: boolean; includeMoonwell?: boolean; includeBaseMcpSwap?: boolean; includeBaseMcpSend?: boolean } = {},
+  options: {
+    readOnlyOnly?: boolean;
+    includeMorphoReadOnly?: boolean;
+    includeUniswapQuote?: boolean;
+    includeMoonwell?: boolean;
+    includeBaseMcpSwap?: boolean;
+    includeBaseMcpSend?: boolean;
+    /** T74: Base MCP and nothing else, read-only. See CreateToolAggregatorOptions. */
+    baseMcpOnly?: boolean;
+  } = {},
 ) {
   const enabled = baseMcpEnabledFromEnv();
   const serverUrl = baseMcpServerUrlFromEnv();
@@ -63,6 +72,7 @@ export async function createApiToolAggregatorForUser(
     includeMoonwell: options.includeMoonwell,
     includeBaseMcpSwap: options.includeBaseMcpSwap,
     includeBaseMcpSend: options.includeBaseMcpSend,
+    baseMcpOnly: options.baseMcpOnly,
     dynamicToolsCacheVersion,
   });
 }

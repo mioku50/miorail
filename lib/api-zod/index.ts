@@ -1560,6 +1560,29 @@ export const BaseMcpPluginCatalogueResponseSchema = z.object({
   }),
 });
 
+// T74: the Base MCP console — an AI thread whose entire tool inventory is Base
+// MCP, kept apart from Miorail's own routers. Read-only by construction; the
+// trace is part of the answer, not a debug view.
+export const BaseMcpConsoleRequestV1Schema = z.object({
+  message: z.string().min(1).max(2000),
+});
+
+export const BaseMcpConsoleResponseV1Schema = z.object({
+  status: z.enum(['answered', 'no_tools', 'needs_reauth', 'disabled', 'failed']),
+  reply: z.string().nullable(),
+  trace: z.array(z.object({
+    tool: z.string(),
+    args: z.string(),
+    ok: z.boolean(),
+    result: z.string(),
+    errorCode: z.string().nullable(),
+  })),
+  toolsAvailable: z.number(),
+  truncated: z.boolean(),
+  errorCode: z.string().nullable(),
+  checkedAt: z.string(),
+});
+
 export const DismissActionRequestSchema = z.object({
   actionId: z.string(),
 });

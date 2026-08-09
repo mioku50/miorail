@@ -20,6 +20,7 @@ import {
   ConsoleRightRail,
   B20ExitCard,
   B20PortfolioPanel,
+  BaseMcpConsoleCard,
   BaseMcpExtensionsCard,
   BaseMcpPluginsCard,
   EXIT_PROFILE_DEFAULTS_V1,
@@ -115,6 +116,7 @@ import {
   usePrepareSwapBlueprint,
   useB20ExitCheck,
   useB20OpportunitySimulate,
+  useBaseMcpConsole,
   useBaseMcpPlugins,
   useBaseMcpToolsProbe,
   usePortfolio,
@@ -844,6 +846,10 @@ export function MiniConsole() {
   // true whether or not this Base App session has ever authorized. Fetched
   // only while the section is open so an unopened tab costs nothing.
   const baseMcpPlugins = useBaseMcpPlugins({ enabled: section === "extensions" });
+  // The Base MCP thread, kept out of the B20 and Routes surfaces: those carry
+  // measured routes, this carries whatever a third-party tool returned.
+  const baseMcpAsk = useBaseMcpConsole();
+  const [baseMcpQuestion, setBaseMcpQuestion] = useState("");
 
   // --- the paid B20 exit proof, in Base App ---------------------------------
   //
@@ -1707,6 +1713,23 @@ export function MiniConsole() {
             baseMcpPlugins.error ? "The plugin catalogue could not be read from this server." : null
           }
         />
+        {status.data?.baseMcp?.enabled === true && (
+          <BaseMcpConsoleCard
+            question={baseMcpQuestion}
+            onQuestionChange={setBaseMcpQuestion}
+            onAsk={() => {
+              const message = baseMcpQuestion.trim();
+              if (message) baseMcpAsk.mutate(message);
+            }}
+            pending={baseMcpAsk.isPending}
+            answer={baseMcpAsk.data ?? null}
+            unavailableReason={
+              baseMcpAsk.error
+                ? "The console could not reach the server. Nothing here is a statement about Base MCP."
+                : null
+            }
+          />
+        )}
         <BaseMcpExtensionsCard
           enabled={status.data?.baseMcp?.enabled === true}
           loading={baseMcpProbe.isPending}
