@@ -27,6 +27,10 @@ export interface BaseMcpToolClassificationResult {
 }
 
 const DEFAULT_READ_ONLY_ALLOWLIST = new Set([
+  // A JSON-RPC dispatcher, and the one read tool whose capability lives in an
+  // argument rather than in its name. Base accepts read methods only; we do
+  // not take that on trust — see `baseMcpReadOnlyArgumentGuardV1`.
+  'chainrpcrequest',
   'checkbalance',
   'checkbalances',
   'getaccount',
@@ -47,6 +51,10 @@ const DEFAULT_READ_ONLY_ALLOWLIST = new Set([
   'gettransactions',
   'getwallet',
   'getwallets',
+  // Returns guidance text about which plugin covers a task. It is also how the
+  // catalogue is discovered — `web_request` tells the model to call it when it
+  // does not know which skill applies.
+  'help',
   'listaccounts',
   'listbalances',
   'listhistory',
@@ -60,6 +68,11 @@ const DEFAULT_READ_ONLY_ALLOWLIST = new Set([
   'readcontract',
   'searchtokens',
   'simulatetrade',
+  // The fetch primitive every HTTP plugin is built on: without it the twenty
+  // plugins on the Extensions page are a catalogue of things we cannot reach.
+  // Base allowlists the hostname and strips Authorization/Cookie; we add the
+  // method restriction, because a POST is not a read.
+  'webrequest',
 ]);
 
 const READ_ONLY_PREFIXES = [
@@ -81,6 +94,12 @@ const READ_ONLY_PREFIXES = [
 ];
 
 const DEFAULT_USER_CONFIRMED_TRANSACTION_TOOLS = new Set([
+  // Returns an EIP-681 payment link and a QR code for topping the wallet up.
+  // Nothing is signed and no approval screen appears — which is exactly why it
+  // does not belong with the reads. The artefact it produces is a payment
+  // instruction the user acts on with their own money, and an AI that renders
+  // one has done something a read never does.
+  'fund',
   'send',
   'sendcalls',
   'sepoliasendcalls',
@@ -92,10 +111,18 @@ const DEFAULT_USER_CONFIRMED_TRANSACTION_TOOLS = new Set([
 // Base MCP OAuth. A protocol-prefixed market/read tool stays protocol-scoped
 // even when its name happens to contain a generic word such as "transaction".
 const WALLET_SCOPED_TOOLS = new Set([
+  // The x402 pair and `fund` move the authorized account's USDC or top it up;
+  // `sign` produces a signature from it. All four are meaningless — and must
+  // not run — when Base MCP is bound to a different wallet than the one the
+  // user is looking at.
+  'completex402request',
+  'fund',
   'getwallets',
   'getportfolio',
   'gettransactionhistory',
+  'initiatex402request',
   'send',
+  'sign',
   'swap',
   'sendcalls',
   'walletsendcalls',
@@ -155,6 +182,20 @@ const FORBIDDEN_MARKERS = [
 // approval screen renders structured data in full; if anything it is the more
 // legible of the two.
 // ---------------------------------------------------------------------------
+// The markers below are substrings, and none of them is a substring of the one
+// name Base MCP actually publishes: `sign`. So the rule above described a tool
+// it never reached, and `sign` fell through to `unknown` — uncallable, and
+// filed under "we do not know what this is" rather than "this needs your
+// approval". Exact names are matched first for that reason; a bare `sign`
+// cannot be a substring rule without also catching `design` and `assign`.
+const DEFAULT_SIGNATURE_TOOLS = new Set([
+  'personalsign',
+  'sign',
+  'signmessage',
+  'signtypeddata',
+  'walletsign',
+]);
+
 const SIGNATURE_MARKERS = [
   'personalsign',
   'signmessage',
@@ -183,6 +224,11 @@ const TRANSACTION_MARKERS = [
   'unstake',
   'walletsendcalls',
   'withdraw',
+  // x402 is a payment protocol; `initiate_x402_request` and
+  // `complete_x402_request` spend the user's USDC behind a Base Account
+  // approval. Matching the protocol rather than the two current names means a
+  // third x402 tool arrives already classified instead of arriving as unknown.
+  'x402',
 ];
 
 function parseConfiguredNames(value?: string): Set<string> {
@@ -240,7 +286,10 @@ function classifyTool(tool: BaseMcpToolForClassification): ClassifiedBaseMcpTool
     };
   }
 
-  if (SIGNATURE_MARKERS.some((marker) => normalized.includes(marker))) {
+  if (
+    DEFAULT_SIGNATURE_TOOLS.has(normalized) ||
+    SIGNATURE_MARKERS.some((marker) => normalized.includes(marker))
+  ) {
     return {
       ...tool,
       scope,
@@ -285,6 +334,76 @@ function classifyTool(tool: BaseMcpToolForClassification): ClassifiedBaseMcpTool
     enabled: false,
     reason: 'unknown_tool_disabled_by_default',
   };
+}
+
+// ---------------------------------------------------------------------------
+// Two read tools carry their capability in an argument, not in their name.
+//
+// `chain_rpc_request` dispatches a JSON-RPC method and `web_request` dispatches
+// an HTTP verb. Base states that the first accepts read methods only, and that
+// is very likely true — but a boundary we describe as structural cannot rest on
+// somebody else's enforcement of it. Everything a name-based classifier can say
+// about these two is "it depends on the call".
+//
+// So the classifier calls them read-only and this decides, per call, whether
+// the call is one. Fail closed: an unrecognised method is refused, because the
+// alternative is a denylist that is wrong the day a new method ships.
+// ---------------------------------------------------------------------------
+
+/** Read namespaces. `eth_get*` is a family with no writing member; everything
+ * outside this pattern — `eth_sendRawTransaction`, `eth_sign`, `personal_*`,
+ * `debug_*`, `admin_*`, `miner_*`, `txpool_*` — is refused. */
+const CHAIN_RPC_READ_METHOD_V1 =
+  /^(?:eth_(?:call|chainId|blockNumber|estimateGas|feeHistory|gasPrice|maxPriorityFeePerGas|syncing|get[A-Za-z]+)|net_(?:version|listening|peerCount)|web3_clientVersion)$/;
+
+export interface BaseMcpArgumentVerdictV1 {
+  allowed: boolean;
+  /** Typed, so a refusal reads as a rule rather than as a broken tool. */
+  errorCode?: string;
+  reason?: string;
+}
+
+const ALLOWED_V1: BaseMcpArgumentVerdictV1 = { allowed: true };
+
+export function baseMcpReadOnlyArgumentGuardV1(
+  toolName: string,
+  args: Record<string, unknown> | undefined,
+): BaseMcpArgumentVerdictV1 {
+  const normalized = normalizeToolName(toolName);
+  const input = args ?? {};
+
+  if (normalized === 'chainrpcrequest') {
+    const method = typeof input.method === 'string' ? input.method.trim() : '';
+    if (!method) {
+      return {
+        allowed: false,
+        errorCode: 'base_mcp_rpc_method_missing',
+        reason: 'chain_rpc_request needs an explicit read method.',
+      };
+    }
+    if (!CHAIN_RPC_READ_METHOD_V1.test(method)) {
+      return {
+        allowed: false,
+        errorCode: 'base_mcp_rpc_method_not_read_only',
+        reason: `${method} is not a read method. This surface calls read methods only; writes go through the Routes flow.`,
+      };
+    }
+    return ALLOWED_V1;
+  }
+
+  if (normalized === 'webrequest') {
+    const method = typeof input.method === 'string' ? input.method.trim().toUpperCase() : 'GET';
+    if (method !== 'GET') {
+      return {
+        allowed: false,
+        errorCode: 'base_mcp_web_request_not_get',
+        reason: `web_request is limited to GET here; ${method} can change state on the partner API.`,
+      };
+    }
+    return ALLOWED_V1;
+  }
+
+  return ALLOWED_V1;
 }
 
 export function emptyBaseMcpToolCapabilityCounts(): BaseMcpToolCapabilityCounts {

@@ -7,6 +7,7 @@ import type { ToolDef, ToolProvider } from './provider.js';
 
 type ClassifierRuntime = {
   classifyBaseMcpTools?: typeof baseMcpClassifier.classifyBaseMcpTools;
+  baseMcpReadOnlyArgumentGuardV1?: typeof baseMcpClassifier.baseMcpReadOnlyArgumentGuardV1;
 };
 
 const classifierModule = baseMcpClassifier as unknown as ClassifierRuntime & { default?: ClassifierRuntime };
@@ -15,6 +16,17 @@ const classifyBaseMcpToolsRuntime: typeof baseMcpClassifier.classifyBaseMcpTools
   classifierModule.default?.classifyBaseMcpTools ||
   (() => {
     throw new Error('Base MCP tool classifier is unavailable');
+  })
+);
+
+// Resolved from the same module namespace as the classifier above, and treated
+// the same way: a build that cannot reach one cannot reach the other, and this
+// provider has no safe behaviour without both.
+const readOnlyArgumentGuardRuntime: typeof baseMcpClassifier.baseMcpReadOnlyArgumentGuardV1 = (
+  classifierModule.baseMcpReadOnlyArgumentGuardV1 ||
+  classifierModule.default?.baseMcpReadOnlyArgumentGuardV1 ||
+  (() => {
+    throw new Error('Base MCP read-only argument guard is unavailable');
   })
 );
 
@@ -256,6 +268,18 @@ export class DynamicBaseMcpToolProvider implements ToolProvider {
 
     if (tool.capability !== 'read_only') {
       return { content: `Base MCP tool disabled: ${tool.reason}`, isError: true };
+    }
+
+    // `chain_rpc_request` and `web_request` are read-only per call, not per
+    // name. This is where that is decided — after the capability check, so a
+    // dispatcher tool cannot smuggle a write past a classification that was
+    // only ever able to read the name.
+    const verdict = readOnlyArgumentGuardRuntime(tool.name, args);
+    if (!verdict.allowed) {
+      return {
+        isError: true,
+        content: JSON.stringify({ errorCode: verdict.errorCode, reason: verdict.reason }),
+      };
     }
 
     try {

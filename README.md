@@ -53,7 +53,7 @@ The rail distinguishes *rejected*, *provisional*, *unmeasured* and *endpoint una
 ### Base MCP, in two layers
 
 - **Plugins** — 20 specifications Base publishes. Miorail keeps a committed catalogue generated from their frontmatter (`scripts/refreshBaseMcpPluginCatalogue.mts`), including each spec's own `requires.allowlist`, which is the host boundary. A live check compares plugin *names* against what Base publishes and reports drift; a name cannot widen an allowlist.
-- **Tools** — the calls `mcp.base.org` exposes, read live and classified `read_only` / `user_confirmed_transaction` / `forbidden` / `unknown`. **`unknown` is treated as forbidden.**
+- **Tools** — the calls `mcp.base.org` exposes, read live and classified `read_only` / `user_confirmed_transaction` / `forbidden` / `unknown`. **`unknown` is treated as forbidden.** Two of them — `chain_rpc_request` and `web_request` — carry their capability in an argument rather than in their name, so a per-call guard (`baseMcpReadOnlyArgumentGuardV1`) decides: read JSON-RPC methods only, GET only. Base enforces the same boundary upstream; Miorail does not rely on that.
 
 The **Base MCP console** is an AI thread whose entire inventory is Base MCP. The separation from Miorail's own routers is structural: `baseMcpOnly` in the tool factory suppresses every other provider, including ones not yet written, and implies read-only. With no Base MCP tools available the model is not called at all. Every tool call is shown with its arguments and result — *which third party said this* is the question the separation exists to answer.
 
@@ -123,7 +123,7 @@ Stated here because a README that lists only what works is the same failure mode
 - **No route has completed in production.** Every route run is `ready`; one execution blueprint exists; every proof table — route, NFT, commerce, AI inference, spend permission — is empty. Activity states this per run rather than showing a status column.
 - **`/stream`** is the old mixed agent thread: Base MCP and partner providers in one loop. Off-navigation, not migrated to the split the Extensions console introduced.
 - **Wallet balances** in Base App depend on `heldTokens` for decimals; a token missing from that list renders without them.
-- The `unknown` Base MCP tools (`chain_rpc_request`, `complete_x402_request`, `fund`, and four others) are unclassified and therefore uncallable.
+- Base MCP's x402 tools stay disabled on purpose. Miorail already has one x402 spend path (the B20 exit proof); a second one reachable from a chat surface is not a feature.
 
 ---
 
