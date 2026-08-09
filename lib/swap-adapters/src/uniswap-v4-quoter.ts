@@ -86,7 +86,32 @@ export function encodeV4QuoteExactInputSingleV1(request: V4QuoteRequestV1): `0x$
   return `0x${V4_QUOTE_EXACT_INPUT_SINGLE_SELECTOR_V1}${word(BigInt(32))}${body}`;
 }
 
-export type V4QuoteRefusalV1 = 'empty_result' | 'malformed_result' | 'zero_output';
+export type V4QuoteRefusalV1 =
+  | 'empty_result'
+  | 'malformed_result'
+  | 'zero_output'
+  // The endpoint, not the pool. See `V4QuoteUnavailableError`.
+  | 'endpoint_unavailable';
+
+/**
+ * Thrown by an injected `call` when the ENDPOINT failed — throttled, timed
+ * out, unreachable — as opposed to the pool refusing the swap.
+ *
+ * The distinction cannot be made from the transport alone: a reverting quote
+ * arrives as empty data on one client and as a thrown error on another, so a
+ * bare throw stays a refusal. Only a caller that can read its own transport's
+ * reason knows the difference, and this is how it says so.
+ *
+ * It matters more here than anywhere else in the rail: "you cannot sell this
+ * token" is the headline this feed exists to publish, and a rate limit shaped
+ * like a failed sell would publish it about tokens that sell fine.
+ */
+export class V4QuoteUnavailableError extends Error {
+  constructor(message = 'quote endpoint unavailable') {
+    super(message);
+    this.name = 'V4QuoteUnavailableError';
+  }
+}
 
 export type V4QuoteResultV1 =
   | { ok: true; amountOutAtomic: string; gasEstimate: string }
@@ -130,9 +155,13 @@ export async function quoteV4ExactInputV1(input: V4QuoteCallInputV1): Promise<V4
       to: input.quoter ?? UNISWAP_V4_QUOTER_V1,
       data: encodeV4QuoteExactInputSingleV1(input),
     });
-  } catch {
-    // A reverting quote is a liquidity answer, not an outage. The caller
-    // distinguishes an unreachable endpoint before it gets here.
+  } catch (error) {
+    // A reverting quote is a liquidity answer, not an outage — and many
+    // transports report a revert by throwing, so a bare throw stays an answer.
+    // Only the caller can tell the two apart, and it does so with this type.
+    if (error instanceof V4QuoteUnavailableError) {
+      return { ok: false, refusal: 'endpoint_unavailable' };
+    }
     return { ok: false, refusal: 'empty_result' };
   }
   return decodeV4QuoteResultV1(data);

@@ -1,4 +1,9 @@
-import { resolveB20PoolV1, type B20PoolV1, type RawLogV1 } from './uniswap-v4-pool.js';
+import {
+  resolveB20PoolV1,
+  type B20PoolResultV1,
+  type B20PoolV1,
+  type RawLogV1,
+} from './uniswap-v4-pool.js';
 import { quoteV4ExactInputV1 } from './uniswap-v4-quoter.js';
 
 // ---------------------------------------------------------------------------
@@ -36,6 +41,10 @@ export interface B20RoundTripV1 {
   /** How much of the position came back, in basis points. Null unless both
    * directions answered — a round trip with one leg missing has no cost. */
   roundTripBps: number | null;
+  /** True when a leg went unanswered by the ENDPOINT. The `*RouteFound` flags
+   * are then absences of evidence, not evidence of absence, and no verdict
+   * about the token may be drawn from them. */
+  endpointDegraded: boolean;
   /** `eth_call`s spent, so the caller can pace an endpoint that meters them. */
   quotesUsed: number;
 }
@@ -67,6 +76,7 @@ export async function b20RoundTripV4V1(input: B20RoundTripInputV1): Promise<B20R
       entryOutputAtomic: null,
       exitReturnAtomic: null,
       roundTripBps: null,
+      endpointDegraded: entry.refusal === 'endpoint_unavailable',
       quotesUsed: 1,
     };
   }
@@ -79,13 +89,16 @@ export async function b20RoundTripV4V1(input: B20RoundTripInputV1): Promise<B20R
   });
   if (!exit.ok) {
     // Entry priced, exit did not. That is the worst answer a holder can get
-    // and it must be reported as such, not rounded to "no route".
+    // and it must be reported as such, not rounded to "no route" — unless the
+    // endpoint simply did not answer, in which case it is not an answer at all
+    // and the flag below stops it being read as one.
     return {
       entryRouteFound: true,
       exitRouteFound: false,
       entryOutputAtomic: entry.amountOutAtomic,
       exitReturnAtomic: null,
       roundTripBps: null,
+      endpointDegraded: exit.refusal === 'endpoint_unavailable',
       quotesUsed: 2,
     };
   }
@@ -106,6 +119,7 @@ export async function b20RoundTripV4V1(input: B20RoundTripInputV1): Promise<B20R
     entryOutputAtomic: entry.amountOutAtomic,
     exitReturnAtomic: exit.amountOutAtomic,
     roundTripBps: lostBps,
+    endpointDegraded: false,
     quotesUsed: 2,
   };
 }
@@ -118,6 +132,9 @@ export async function b20RoundTripV4V1(input: B20RoundTripInputV1): Promise<B20R
  * on a fact that cannot change. Deliberately in-memory and pass-scoped: a
  * durable cache belongs in the database next to the launch, and pretending
  * this is one would be a claim about persistence it does not make.
+ *
+ * The result keeps its refusal, so a caller can tell "this token has no pool"
+ * from "the endpoint did not answer". Only the first is a measurement.
  */
 export function createB20PoolCacheV1(getLogs: (query: {
   address: string;
@@ -125,19 +142,22 @@ export function createB20PoolCacheV1(getLogs: (query: {
   toBlock: number;
   topics: (string | null)[];
 }) => Promise<readonly RawLogV1[]>) {
-  const known = new Map<string, B20PoolV1 | null>();
+  const known = new Map<string, B20PoolResultV1>();
   return {
-    async lookup(token: string, launchBlock: number): Promise<B20PoolV1 | null> {
+    async lookup(token: string, launchBlock: number): Promise<B20PoolResultV1> {
       const key = token.toLowerCase();
       const cached = known.get(key);
       if (cached !== undefined) return cached;
       const result = await resolveB20PoolV1({ token, launchBlock, getLogs });
-      const pool = result.ok ? result.pool : null;
       // A miss is cached too. "This token has no v4 pool" is as worth
       // remembering as the pool itself, and re-asking would spend the same
       // metered budget to learn the same nothing.
-      known.set(key, pool);
-      return pool;
+      //
+      // An unanswered endpoint is NOT cached: nothing was learned about the
+      // token, and remembering it would turn one rate-limited request into a
+      // verdict that outlives the outage for the whole pass.
+      if (result.ok || result.refusal !== 'endpoint_unavailable') known.set(key, result);
+      return result;
     },
     get size(): number {
       return known.size;

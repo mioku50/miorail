@@ -8,6 +8,7 @@ import {
   b20RoundTripV4V1,
   createAerodromeReaderV1,
   createB20PoolCacheV1,
+  V4QuoteUnavailableError,
 } from '@mioagent/swap-adapters';
 import type { B20ObservationControlsV1 } from '@mioagent/opportunity-rail';
 
@@ -77,8 +78,13 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
       signal: AbortSignal.timeout(15_000),
     });
     const body = (await response.json()) as { result?: unknown; error?: unknown };
-    // An endpoint that refuses the range must not read as "no pool here".
-    if (body.error || !Array.isArray(body.result)) return [];
+    // An endpoint that refuses the range must not read as "no pool here", so
+    // this THROWS rather than returning an empty list. The free plan caps
+    // `eth_getLogs` at ten blocks and rate-limits on top of that, which makes
+    // a refusal ordinary — and an ordinary refusal silently shaped like "no
+    // pool" would quietly restate the exact false negative this venue was
+    // added to fix. The resolver turns the throw into `endpoint_unavailable`.
+    if (body.error || !Array.isArray(body.result)) throw new Error('eth_getLogs unavailable');
     return body.result as { address?: string; topics?: string[]; data?: string; blockNumber?: string }[];
   };
   // One lookup per token per pass. The pool cannot change, and the endpoint
@@ -88,7 +94,13 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
   // against this endpoint's limit and retries only what is worth retrying.
   const v4Call = async (request: { to: string; data: string }) => {
     const result = await controlReader.call({ to: request.to, data: request.data, blockTag: 'latest' });
-    return result.ok ? result.value : '';
+    if (result.ok) return result.value;
+    // `reverted` and `empty_result` ARE the pool's answer — the Quoter reverts
+    // to return, and a swap it will not price comes back empty. Everything
+    // else is our side failing: a throttled read must never be published as
+    // "this token cannot be sold".
+    if (result.reason === 'reverted' || result.reason === 'empty_result') return '';
+    throw new V4QuoteUnavailableError();
   };
 
   const deps: MeasurementDepsV1 = {
@@ -121,10 +133,16 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
     },
 
     async analyseRoutes({ tokenAddress, launchBlock, profile }) {
-      const pool = Number.isSafeInteger(launchBlock) && launchBlock > 0
+      const lookup = Number.isSafeInteger(launchBlock) && launchBlock > 0
         ? await v4Pools.lookup(tokenAddress, launchBlock)
-        : null;
-      if (pool) {
+        : ({ ok: false, refusal: 'no_pool_initialized' } as const);
+      // The endpoint not answering is not evidence about the token. Carried
+      // into the fallback so the observation lands on `route_search_degraded`
+      // instead of asserting `no_entry_route` on the strength of a venue we
+      // never got to ask.
+      let v4Unreadable = !lookup.ok && lookup.refusal === 'endpoint_unavailable';
+      if (lookup.ok) {
+        const pool = lookup.pool;
         const trip = await b20RoundTripV4V1({
           pool,
           positionAtomic: profile.positionAtomic,
@@ -138,7 +156,11 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
             // A reverting sell is an ANSWER about the token, not a failing
             // endpoint. Calling it degraded would file the single most
             // important fact this rail measures under "we could not read".
-            degraded: false,
+            //
+            // An unanswered quote is the mirror image and gets the mirror
+            // treatment: the round trip reports which one happened, and only
+            // that case is degraded.
+            degraded: trip.endpointDegraded,
             candidatesTotal: 1,
             candidatesAnswered: 1,
             entryOutputAtomic: trip.entryOutputAtomic,
@@ -154,6 +176,9 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
             routerCalls: trip.quotesUsed,
           };
         }
+        // No entry on v4 — fall through to Aerodrome, but remember whether the
+        // pool declined to price the buy or simply never answered.
+        v4Unreadable = v4Unreadable || trip.endpointDegraded;
       }
       const analysis = await analyseExitV1({
         reader: aerodromeReader,
@@ -177,7 +202,7 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
       return {
         entryRouteFound: analysis.entryRouteFound,
         exitRouteFound: analysis.exitRouteFound,
-        degraded: analysis.endpointDegraded,
+        degraded: analysis.endpointDegraded || v4Unreadable,
         candidatesTotal: analysis.candidatesTotal,
         candidatesAnswered: analysis.candidatesAnswered,
         entryOutputAtomic: analysis.roundTrip?.entry.outputAtomic ?? null,

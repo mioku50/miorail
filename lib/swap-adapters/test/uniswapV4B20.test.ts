@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
 import { b20RoundTripV4V1, createB20PoolCacheV1 } from '../src/uniswap-v4-b20.js';
+import { V4QuoteUnavailableError } from '../src/uniswap-v4-quoter.js';
 import { UNISWAP_V4_INITIALIZE_TOPIC_V1, UNISWAP_V4_POOL_MANAGER_V1 } from '../src/uniswap-v4-pinned.js';
 import type { B20PoolV1 } from '../src/uniswap-v4-pool.js';
 
@@ -87,8 +88,45 @@ describe('a leg that does not price is reported, never rounded away', () => {
       entryOutputAtomic: null,
       exitReturnAtomic: null,
       roundTripBps: null,
+      endpointDegraded: false,
       quotesUsed: 1,
     });
+  });
+
+  test('an unanswered exit is not the same claim as an unsellable token', async () => {
+    // `exitRouteFound: false` is the headline this rail publishes. When the
+    // endpoint is the thing that failed, the flag stays false but carries the
+    // degradation, and the worker turns that into `route_search_degraded`
+    // rather than a verdict.
+    const trip = await b20RoundTripV4V1({
+      pool: POOL,
+      positionAtomic: '1000000',
+      call: async (request) => {
+        if (directionOf(request.data)) return result(500n);
+        throw new V4QuoteUnavailableError();
+      },
+    });
+    assert.equal(trip.entryRouteFound, true);
+    assert.equal(trip.exitRouteFound, false);
+    assert.equal(trip.endpointDegraded, true, 'nothing was learned about selling');
+  });
+
+  test('a reverting exit stays an answer about the token, not a degradation', async () => {
+    const { call } = scriptedCall([result(500n), '']);
+    const trip = await b20RoundTripV4V1({ pool: POOL, positionAtomic: '1000000', call });
+    assert.equal(trip.exitRouteFound, false);
+    assert.equal(trip.endpointDegraded, false);
+  });
+
+  test('an unanswered entry claims nothing about entry either', async () => {
+    const trip = await b20RoundTripV4V1({
+      pool: POOL,
+      positionAtomic: '1000000',
+      call: async () => { throw new V4QuoteUnavailableError(); },
+    });
+    assert.equal(trip.entryRouteFound, false);
+    assert.equal(trip.endpointDegraded, true);
+    assert.equal(trip.quotesUsed, 1, 'no exit quote is worth spending after that');
   });
 
   test('entry priced but exit reverted is the worst answer, and says so', async () => {
@@ -109,32 +147,33 @@ describe('a leg that does not price is reported, never rounded away', () => {
   });
 });
 
-describe('the pool lookup spends the metered budget once per token', () => {
-  function logsFor(token: string) {
-    return [
-      {
-        address: UNISWAP_V4_POOL_MANAGER_V1,
-        topics: [
-          UNISWAP_V4_INITIALIZE_TOPIC_V1,
-          `0x${'07'.repeat(32)}`,
-          `0x${'0'.repeat(24)}${USDC.slice(2)}`,
-          `0x${'0'.repeat(24)}${token.slice(2)}`,
-        ],
-        data:
-          '0x' + '0'.repeat(64) + (200).toString(16).padStart(64, '0') +
-          `${'0'.repeat(24)}${HOOK.slice(2)}` + '0'.repeat(64) + '0'.repeat(64),
-        blockNumber: '0x1',
-      },
-    ];
-  }
+/** One `Initialize` log that resolves: USDC/token, fee 0, tickSpacing 200. */
+function logsFor(token: string) {
+  return [
+    {
+      address: UNISWAP_V4_POOL_MANAGER_V1,
+      topics: [
+        UNISWAP_V4_INITIALIZE_TOPIC_V1,
+        `0x${'07'.repeat(32)}`,
+        `0x${'0'.repeat(24)}${USDC.slice(2)}`,
+        `0x${'0'.repeat(24)}${token.slice(2)}`,
+      ],
+      data:
+        '0x' + '0'.repeat(64) + (200).toString(16).padStart(64, '0') +
+        `${'0'.repeat(24)}${HOOK.slice(2)}` + '0'.repeat(64) + '0'.repeat(64),
+      blockNumber: '0x1',
+    },
+  ];
+}
 
+describe('the pool lookup spends the metered budget once per token', () => {
   test('a second lookup of the same token costs no requests', async () => {
     let calls = 0;
     const cache = createB20PoolCacheV1(async () => { calls += 1; return logsFor(TOKEN); });
     const first = await cache.lookup(TOKEN, 49_404_602);
     const after = calls;
     const second = await cache.lookup(TOKEN.toUpperCase(), 49_404_602);
-    assert.ok(first, 'the pool resolved');
+    assert.equal(first.ok, true, 'the pool resolved');
     assert.equal(calls, after, 'no further getLogs');
     assert.deepEqual(second, first, 'and the same pool, whatever the address casing');
   });
@@ -142,10 +181,39 @@ describe('the pool lookup spends the metered budget once per token', () => {
   test('a miss is remembered too — re-asking buys the same nothing', async () => {
     let calls = 0;
     const cache = createB20PoolCacheV1(async () => { calls += 1; return []; });
-    assert.equal(await cache.lookup(TOKEN, 1), null);
+    assert.deepEqual(await cache.lookup(TOKEN, 1), { ok: false, refusal: 'no_pool_initialized' });
     const after = calls;
-    assert.equal(await cache.lookup(TOKEN, 1), null);
+    assert.deepEqual(await cache.lookup(TOKEN, 1), { ok: false, refusal: 'no_pool_initialized' });
     assert.equal(calls, after);
     assert.equal(cache.size, 1);
+  });
+});
+
+describe('an endpoint that did not answer is never read as "no pool"', () => {
+  test('a throwing getLogs refuses with endpoint_unavailable, not no_pool_initialized', async () => {
+    // The whole point of the v4 venue was that asking the wrong place produced
+    // a confident `no_entry_route`. Asking the right place and not hearing back
+    // must not produce the same sentence.
+    const cache = createB20PoolCacheV1(async () => { throw new Error('rate limited'); });
+    assert.deepEqual(await cache.lookup(TOKEN, 1), { ok: false, refusal: 'endpoint_unavailable' });
+  });
+
+  test('it stops at the first unanswered request instead of spending the rest', async () => {
+    let calls = 0;
+    const cache = createB20PoolCacheV1(async () => { calls += 1; throw new Error('rate limited'); });
+    await cache.lookup(TOKEN, 1);
+    assert.equal(calls, 1, 'the second topic ordering is not worth a metered request');
+  });
+
+  test('an outage is not cached — the next pass asks again', async () => {
+    let calls = 0;
+    const cache = createB20PoolCacheV1(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('rate limited');
+      return logsFor(TOKEN);
+    });
+    assert.equal((await cache.lookup(TOKEN, 49_404_602)).ok, false);
+    assert.equal(cache.size, 0, 'nothing was learned about the token, so nothing is remembered');
+    assert.equal((await cache.lookup(TOKEN, 49_404_602)).ok, true, 'and the retry finds the pool');
   });
 });

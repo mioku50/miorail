@@ -3,6 +3,7 @@ import test, { describe } from 'node:test';
 
 import {
   V4_QUOTE_EXACT_INPUT_SINGLE_SELECTOR_V1,
+  V4QuoteUnavailableError,
   decodeV4QuoteResultV1,
   encodeV4QuoteExactInputSingleV1,
   quoteV4ExactInputV1,
@@ -123,5 +124,17 @@ describe('the call goes to the pinned Quoter and survives a throwing transport',
       call: async () => { throw new Error('execution reverted'); },
     });
     assert.deepEqual(result, { ok: false, refusal: 'empty_result' });
+  });
+
+  test('a transport saying the ENDPOINT failed is kept apart from a revert', async () => {
+    // Both arrive as an exception. Only one is a fact about the pool, and the
+    // other must never reach a card that says "this token cannot be sold".
+    const result = await quoteV4ExactInputV1({
+      key: KEY,
+      zeroForOne: false,
+      exactAmountAtomic: 1n,
+      call: async () => { throw new V4QuoteUnavailableError(); },
+    });
+    assert.deepEqual(result, { ok: false, refusal: 'endpoint_unavailable' });
   });
 });

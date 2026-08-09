@@ -52,7 +52,12 @@ export type B20PoolRefusalV1 =
   | 'wrong_event'
   | 'malformed_log'
   | 'token_not_in_pool'
-  | 'unsupported_quote_asset';
+  | 'unsupported_quote_asset'
+  // Not a fact about the token: the endpoint did not answer. Kept apart from
+  // `no_pool_initialized` because collapsing the two turns a rate limit into
+  // "this token has no pool", which is exactly the false negative that hid the
+  // v4 venue for months.
+  | 'endpoint_unavailable';
 
 export type B20PoolResultV1 =
   | { ok: true; pool: B20PoolV1 }
@@ -184,12 +189,21 @@ export async function resolveB20PoolV1(input: ResolveB20PoolInputV1): Promise<B2
       [UNISWAP_V4_INITIALIZE_TOPIC_V1, null, null, tokenTopic],
       [UNISWAP_V4_INITIALIZE_TOPIC_V1, null, tokenTopic, null],
     ]) {
-      const logs = await input.getLogs({
-        address: UNISWAP_V4_POOL_MANAGER_V1,
-        fromBlock,
-        toBlock,
-        topics,
-      });
+      let logs: readonly RawLogV1[];
+      try {
+        logs = await input.getLogs({
+          address: UNISWAP_V4_POOL_MANAGER_V1,
+          fromBlock,
+          toBlock,
+          topics,
+        });
+      } catch {
+        // Stop on the first unanswered request rather than walking the
+        // remaining windows: an endpoint that just refused is unlikely to
+        // answer the next one, and spending a metered budget to arrive at the
+        // same "we could not ask" helps nobody.
+        return { ok: false, refusal: 'endpoint_unavailable' };
+      }
       for (const log of logs) {
         const result = b20PoolFromInitializeLogV1(log, token);
         if (result.ok) return result;
