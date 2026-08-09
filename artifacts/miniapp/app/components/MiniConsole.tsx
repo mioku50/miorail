@@ -18,9 +18,15 @@ import {
   CONSOLE_PRIMARY_SECTIONS_V1,
   ConsoleMiniShell,
   ConsoleRightRail,
+  B20ExitCard,
   B20PortfolioPanel,
   BaseMcpExtensionsCard,
+  EXIT_PROFILE_DEFAULTS_V1,
   WalletBalancesCard,
+  formatAtomicAmount,
+  percentToBpsV1,
+  usdcToAtomicV1,
+  type ExitProfileV1,
   OpportunitiesScreen,
   RouteHistoryList,
   consoleHomeSectionV1,
@@ -106,6 +112,8 @@ import {
   useRevokeIntelligenceBudget,
   useMarketSnapshot,
   usePrepareSwapBlueprint,
+  useB20ExitCheck,
+  useB20OpportunitySimulate,
   useBaseMcpToolsProbe,
   usePortfolio,
   useRouteHistory,
@@ -122,7 +130,7 @@ import {
   useSpendPermissionGrant,
   type BlueprintSubmitStatus,
 } from "@mioagent/wallet-actions";
-import { SimulateButton, type SimulateBlueprintResponseV1 } from "@mioagent/x402-actions";
+import { SimulateButton, useB20ExitProofPayment, type SimulateBlueprintResponseV1 } from "@mioagent/x402-actions";
 import { WalletConnect } from "./WalletConnect";
 
 // ---------------------------------------------------------------------------
@@ -830,6 +838,98 @@ export function MiniConsole() {
   // authenticated round trip to somebody else's server with the user's
   // credentials attached, so it is never a poll and never runs on mount.
   const baseMcpProbe = useBaseMcpToolsProbe();
+
+  // --- the paid B20 exit proof, in Base App ---------------------------------
+  //
+  // Deliberately WITHOUT the entry-plan handler. The card renders no "build
+  // entry plan" control when that prop is absent, which is how the web version
+  // guarantees a provisional result can never reach a wallet. Base App gets
+  // the proof; opening a wallet from a clearance is a separate flow and is not
+  // duplicated here by accident.
+  const [exitToken, setExitToken] = useState<string | null>(null);
+  const [exitProfile, setExitProfile] = useState<ExitProfileV1>(EXIT_PROFILE_DEFAULTS_V1);
+  const exitCheck = useB20ExitCheck();
+  const exitSimulate = useB20OpportunitySimulate();
+  const exitProofPriceUsdc =
+    status.data?.paidIntelligence?.pricedSurfaces?.b20ExitProof?.priceUsdc ?? null;
+  const exitProofPayment = useB20ExitProofPayment({});
+
+  const exitProfileAtomic = useMemo(() => {
+    const positionAtomic = usdcToAtomicV1(exitProfile.position);
+    const maxRoundTripBps = percentToBpsV1(exitProfile.maxRoundTrip);
+    const maxExitSlippageBps = percentToBpsV1(exitProfile.maxSlippage);
+    if (!positionAtomic || !maxRoundTripBps || !maxExitSlippageBps) return null;
+    return { positionAtomic, maxRoundTripBps, maxExitSlippageBps };
+  }, [exitProfile]);
+
+  const runExitCheck = useCallback(
+    (token: string) => {
+      if (!exitProfileAtomic) return;
+      setExitToken(token);
+      exitCheck.mutate({
+        tokenAddress: token,
+        positionAtomic: exitProfileAtomic.positionAtomic,
+        maxRoundTripBps: exitProfileAtomic.maxRoundTripBps,
+        maxSlippageBps: exitProfileAtomic.maxExitSlippageBps,
+      });
+    },
+    [exitCheck, exitProfileAtomic],
+  );
+
+  // Two paths, chosen by whether the SERVER says this costs money — the same
+  // rule as the web console. The paid path needs a wallet client to answer the
+  // 402; the free path cannot answer one at all.
+  const runExitSimulation = useCallback(
+    (token: string) => {
+      if (!exitProfileAtomic) return;
+      setExitToken(token);
+      const request = {
+        tokenAddress: token,
+        positionAtomic: exitProfileAtomic.positionAtomic,
+        maxRoundTripBps: exitProfileAtomic.maxRoundTripBps,
+        maxExitSlippageBps: exitProfileAtomic.maxExitSlippageBps,
+      };
+      if (exitProofPriceUsdc) {
+        void exitProofPayment.run(request);
+        return;
+      }
+      exitSimulate.mutate(request);
+    },
+    [exitProfileAtomic, exitProofPayment, exitProofPriceUsdc, exitSimulate],
+  );
+
+  // The simulation's answer wins when there is one: it is the only measurement
+  // that can confirm, and a stale provisional beside a fresh confirmation
+  // would be two answers to one question.
+  const exitResult = useMemo(() => {
+    const simulated = exitSimulate.data ?? exitProofPayment.response;
+    if (simulated) {
+      return {
+        status: simulated.viability,
+        reason: simulated.rejectionReason,
+        unmeasuredReason: simulated.unmeasuredReason,
+        coverage: simulated.coverage,
+        viableRouteConfirmed: simulated.viableRouteConfirmed,
+        bestRouteConfirmed: simulated.bestRouteConfirmed,
+        clearanceId: simulated.clearanceId,
+        expiresAt: simulated.expiresAt,
+        simulatedRoundTripBps: simulated.simulatedRoundTripBps,
+        simulationBlockNumber: simulated.simulationBlockNumber,
+        controlsBlockNumber: simulated.controlsBlockNumber,
+        checkedAt: simulated.checkedAt,
+        measurement: null,
+        optimistic: false,
+        roundTripCostBps: simulated.simulatedRoundTripBps,
+        exitCapacityAtomic: null,
+        firstFailingAtomic: null,
+        probeCount: 0,
+        capacityInformative: false,
+        referenceSizeAtomic: null,
+        endpointDegraded: false,
+      };
+    }
+    return exitCheck.data ?? null;
+  }, [exitSimulate.data, exitProofPayment.response, exitCheck.data]);
   const addWatch = useAddB20Watch();
   const sweep = useB20Watch();
   const [tokenInput, setTokenInput] = useState("");
@@ -1531,6 +1631,52 @@ export function MiniConsole() {
                   ? null
                   : "Press Check now to read what your tokens' controls have done."
           }
+        />
+        {/* The paid exit proof. No `onBuildEntryPlan`, so the card renders no
+            control that could carry a provisional result towards a wallet. */}
+        <B20ExitCard
+          check={exitResult as never}
+          profile={exitProfile}
+          onProfileChange={setExitProfile}
+          positionLabel={`${exitProfile.position} USDC`}
+          slippagePercentLabel={`${exitProfile.maxSlippage}%`}
+          // Atomic units of the TOKEN being sold, so the decimals are the
+          // token's. Unknown decimals render the raw amount rather than a
+          // number scaled by a guess.
+          formatTokenAmount={(atomic) => {
+            // From the portfolio provider, which is where decimals are known.
+            // The miniapp's holdings projection carries a formatted label, not
+            // the raw scale.
+            const decimals =
+              heldTokens.find((token) => token.address.toLowerCase() === exitToken?.toLowerCase())
+                ?.decimals ?? null;
+            // Unknown decimals render the raw amount rather than a number
+            // scaled by a guess — a balance off by a factor of 10^18 is worse
+            // than an unformatted one.
+            return decimals === null ? atomic : formatAtomicAmount(atomic, decimals);
+          }}
+          loading={exitCheck.isPending}
+          simulating={exitSimulate.isPending || exitProofPayment.isBusy}
+          simulationPriceUsdc={exitProofPriceUsdc}
+          unavailableReason={
+            !address
+              ? "Connect your wallet to check an exit."
+              : !b20GateOn
+                ? "B20 inspection is off on this server, so nothing was read."
+                : exitProofPayment.error
+                  ? exitProofPayment.error
+                  : exitCheck.error
+                    // Never the raw message: a server error can carry an endpoint.
+                    ? "That exit could not be checked. Nothing here is a statement about the token."
+                    : null
+          }
+          onCheck={() => {
+            if (exitToken) runExitCheck(exitToken);
+          }}
+          onSimulate={() => {
+            if (exitToken) runExitSimulation(exitToken);
+          }}
+          now={new Date()}
         />
         {/* The way into Extensions in Base App. NOT a fifth tab: four tabs get
             about 90px each at 390px, and a fifth ellipsises every label to

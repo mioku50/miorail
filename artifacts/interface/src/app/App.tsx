@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Route, Switch, Redirect } from 'wouter';
 import { useStatus } from '@mioagent/api-client-react';
 import { useUiStore } from '../lib/state';
@@ -10,6 +10,11 @@ import { StreamPage } from '../features/stream/StreamPage';
 import { ActionsBuilder } from '../features/inbox/ActionsBuilder';
 import { HistoryPage } from '../features/history/HistoryPage';
 import { BaseMcpOAuthBridge } from './BaseMcpOAuthBridge';
+import {
+  baseMcpPopupMessageV1,
+  deliverBaseMcpPopupResultV1,
+  type BaseMcpOAuthMessageV1,
+} from './baseMcpPopupHandoff';
 import { ExtensionsPage } from '../features/extensions/ExtensionsPage';
 import { RequireSession } from './RequireSession';
 import { RouteHistoryPage } from '../features/plan/RouteHistoryPage';
@@ -55,9 +60,33 @@ function DeepLink({ children }: { children: React.ReactNode }) {
   return <div className="min-h-screen w-full bg-bg font-sans">{children}</div>;
 }
 
+/**
+ * The OAuth popup, which must never become a second copy of Miorail.
+ *
+ * Rendered INSTEAD of the app, decided from the URL before anything mounts.
+ * Doing this inside an effect further down meant the router, the queries and
+ * the Extensions page all rendered first — and when the close did not happen,
+ * the user was left looking at a narrower duplicate of the console while the
+ * window that opened it still said "connect again".
+ */
+function BaseMcpOAuthPopup({ message }: { message: BaseMcpOAuthMessageV1 }) {
+  useEffect(() => {
+    deliverBaseMcpPopupResultV1(message);
+  }, [message]);
+  // Shown only if `close()` was refused, which happens when the browser did
+  // not consider this window script-opened.
+  return (
+    <main className="mio-console">
+      <p className="note">Base Account authorization finished. You can close this window.</p>
+    </main>
+  );
+}
+
 export function App() {
   const togglePalette = useUiStore((s) => s.togglePalette);
   const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
+  // Read once, before the router: a popup is not a session.
+  const popupMessage = useMemo(() => baseMcpPopupMessageV1(window.location.search), []);
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -70,6 +99,8 @@ export function App() {
     document.addEventListener('keydown', down);
     return () => document.removeEventListener('keydown', down);
   }, [togglePalette, setPaletteOpen]);
+
+  if (popupMessage) return <BaseMcpOAuthPopup message={popupMessage} />;
 
   return (
     <>
