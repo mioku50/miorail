@@ -731,6 +731,12 @@ export function RouteIntelligenceConsole() {
         (dispatch.blockedReason ? { title: 'This route family is off on this server', detail: dispatch.blockedReason } : null));
 
   const budgetRecord = budget.data?.budget ?? null;
+  // Whether a swap review can be charged at all on this server. The paid
+  // surface moved to the B20 exit proof — swap comparison and its safety
+  // checks are free — so the server stops advertising a swap price, and the
+  // budget controls have to disappear with it. Leaving them printed the B20
+  // price ($0.0002) as a per-action ceiling on a swap that will never bill.
+  const swapSurfacePricedV1 = Boolean(status.data?.paidIntelligence?.pricedSurfaces?.swapSimulation);
   // --- T70 §2: Budget & payments moved to Settings ---------------------------
   //
   // The full panel, the two usage bars and the adapter list are on the Settings
@@ -817,8 +823,9 @@ export function RouteIntelligenceConsole() {
         text: row.available ? `${row.kind} · ${row.costLabel}` : row.resultLabel,
         available: row.available,
       }))}
+      paidSurfaceActive={swapSurfacePricedV1}
       spend={
-        budgetRecord
+        budgetRecord && swapSurfacePricedV1
           ? {
               percent: usagePercentV1(Number(budgetRecord.spentUsdc), Number(budgetRecord.monthlyLimitUsdc)),
               amount: `$${budgetRecord.spentUsdc}`,
@@ -1219,7 +1226,7 @@ export function RouteIntelligenceConsole() {
             { label: 'Simulation passed', passed: simulation.passed },
             { label: 'Within your limits', passed: Boolean(limits) },
           ]}
-          limits={[
+          limits={!swapSurfacePricedV1 ? [] : [
             {
               id: 'per-action',
               label: 'Per action',

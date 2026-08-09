@@ -661,6 +661,10 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
 
       {model.tokenPanels}
 
+      {/* Only when something on this review can actually be charged. An empty
+          budget panel on a free comparison is a control asking to be
+          configured for a payment that will never be requested. */}
+      {model.limits.length > 0 && (
       <div className="panel">
         <div className="ph">
           <h3>Your limits</h3>
@@ -686,6 +690,7 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
           </div>
         </div>
       </div>
+      )}
 
       <div className="ctarow">
         <button
@@ -1021,6 +1026,16 @@ export interface RightRailModelV1 {
   depthUnavailableReason: string | null;
   evidenceFeed: { id: string; time: string; source: string; text: string; available: boolean }[];
   spend: { percent: number; amount: string; capLabel: string; rows: { label: string; value: string }[] } | null;
+  /**
+   * Whether THIS route family can be charged at all.
+   *
+   * False hides the Intelligence spend panel outright rather than showing an
+   * empty budget. Swap comparison is free — the paid surface moved to the B20
+   * exit proof — so a budget panel on a swap asked the user to configure a
+   * ceiling for a charge that can never happen, and printed the B20 price
+   * ($0.0002) next to a swap as if it were about to be spent.
+   */
+  paidSurfaceActive?: boolean;
   freshness: { label: string; value: string; tone?: 'ok' | 'off' }[];
 }
 
@@ -1105,6 +1120,7 @@ export function ConsoleRightRail(model: RightRailModelV1) {
         </div>
       </div>
 
+      {model.paidSurfaceActive !== false && (
       <div className="rp">
         <div className="rph">
           Intelligence spend
@@ -1134,6 +1150,7 @@ export function ConsoleRightRail(model: RightRailModelV1) {
           )}
         </div>
       </div>
+      )}
 
       <div className="rp">
         <div className="rph">

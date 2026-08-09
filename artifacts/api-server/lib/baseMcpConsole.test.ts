@@ -286,3 +286,52 @@ describe('what a trace is allowed to show', () => {
     assert.ok(shown.length <= 1201, `capped, got ${shown.length}`);
   });
 });
+
+describe('an MCP envelope is unwrapped before it reaches the screen', () => {
+  test('the protocol wrapper is stripped and the payload survives', () => {
+    // Every Base MCP tool answers in `{"content":[{"type":"text","text":…}]}`
+    // and the payload inside is escaped once more. Rendering it raw put lines
+    // of backslashes on the trace — the opposite of something a reader checks.
+    const shown = baseMcpConsoleResultTextV1(
+      JSON.stringify({ content: [{ type: 'text', text: '{"totalUsdValue":"1.97"}' }] }),
+    );
+    assert.equal(shown, '{"totalUsdValue":"1.97"}');
+    assert.doesNotMatch(shown, /"content"|"type":"text"/);
+  });
+
+  test('a result that is not the envelope is left exactly as it came', () => {
+    assert.equal(baseMcpConsoleResultTextV1('{"errorCode":"base_mcp_timeout"}'), '{"errorCode":"base_mcp_timeout"}');
+    assert.equal(baseMcpConsoleResultTextV1('plain text'), 'plain text');
+  });
+
+  test('several text parts are joined rather than one being dropped', () => {
+    const shown = baseMcpConsoleResultTextV1(
+      JSON.stringify({ content: [{ type: 'text', text: 'first' }, { type: 'text', text: 'second' }] }),
+    );
+    assert.equal(shown, 'first second');
+  });
+
+  test('unwrapping does not lose the redaction pass', () => {
+    const shown = baseMcpConsoleResultTextV1(
+      JSON.stringify({ content: [{ type: 'text', text: 'Bearer sk-live-abc123' }] }),
+    );
+    assert.doesNotMatch(shown, /sk-live-abc123/);
+  });
+});
+
+describe('the answer carries how long it took', () => {
+  test('a completed answer reports elapsed milliseconds', async () => {
+    stubTools(BASE_MCP_INVENTORY);
+    stubAgent([{ type: 'message', content: 'ok' }]);
+    const result = await ask();
+    assert.equal(typeof result.elapsedMs, 'number');
+    assert.ok(result.elapsedMs >= 0);
+  });
+
+  test('a refusal reports it too, so a slow failure is not invisible', async () => {
+    stubTools([{ providerId: 'base-mcp-dynamic', tools: [] }]);
+    const result = await ask();
+    assert.equal(result.status, 'no_tools');
+    assert.equal(typeof result.elapsedMs, 'number');
+  });
+});

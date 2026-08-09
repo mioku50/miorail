@@ -582,6 +582,7 @@ test('POST /api/mcp/base/console returns the answer with its trace', async () =>
       trace: [{ tool: 'get_portfolio', args: '{}', ok: true, result: '{"usd":"12"}', errorCode: null }],
       toolsAvailable: 15,
       truncated: false,
+      elapsedMs: 1200,
       errorCode: null,
       checkedAt: '2026-08-09T12:00:00.000Z',
     };

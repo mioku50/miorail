@@ -4,6 +4,7 @@ import {
   BaseMcpConsoleCard,
   BaseMcpExtensionsCard,
   BaseMcpPluginsCard,
+  BaseMcpSummaryRail,
   ConsoleShell,
   chainBlockNumberV1,
   chainGasLabelV1,
@@ -121,23 +122,43 @@ export function ExtensionsPage() {
         spendLabel: '$0',
         blockNumber: chainBlockNumberV1(status.data ?? null),
       }}
-      // The catalogue IS the content, so the rail carries nothing rather than
-      // repeating it in a narrower column.
-      right={null}
+      // Not a repeat of the main column: counts and connection state, which is
+      // what a reader wants while scrolling twenty plugins. All of it is
+      // already loaded, so the rail costs no request.
+      right={
+        <BaseMcpSummaryRail
+          connection={probe.data?.status ?? null}
+          enabled={enabled}
+          endpointHost={probe.data?.endpointHost ?? null}
+          toolCounts={
+            probe.data
+              ? {
+                  readOnly: probe.data.capabilities.readOnly,
+                  userConfirmed: probe.data.capabilities.userConfirmedTransaction,
+                  forbidden: probe.data.capabilities.forbidden,
+                  unknown: probe.data.capabilities.unknown,
+                }
+              : null
+          }
+          plugins={plugins.plugins}
+          drift={plugins.drift}
+          generatedAt={plugins.generatedAt}
+        />
+      }
       theme={theme}
       onThemeChange={setTheme}
       onNewGoal={() => navigate(consoleSectionPathV1('routes'))}
       onSelectSession={() => navigate(consoleSectionPathV1('routes'))}
       onSelectProof={() => navigate(consoleSectionPathV1('activity'))}
     >
-      {/* Plugins first: it is what the section is for, and it does not depend
-          on a connection. The live tool list follows. */}
-      <BaseMcpPluginsCard {...plugins} />
       {enabled && (
-        // The AI thread for Base MCP, kept out of Routes on purpose: our
-        // routers are measured and carry a Route Card, these tools are other
-        // people's and carry whatever they returned. One window for both was
-        // one voice for two different guarantees.
+        // FIRST, because it is the only thing on this page you DO. It sat
+        // below a twenty-row catalogue, so the one interactive control on the
+        // surface was the one you had to scroll past everything to reach.
+        //
+        // Kept out of Routes on purpose: our routers are measured and carry a
+        // Route Card, these tools are other people's and carry whatever they
+        // returned. One window for both was one voice for two guarantees.
         <BaseMcpConsoleCard
           question={question}
           onQuestionChange={setQuestion}
@@ -156,6 +177,8 @@ export function ExtensionsPage() {
           }
         />
       )}
+      {/* Reference, below the thing you act with. */}
+      <BaseMcpPluginsCard {...plugins} />
       <BaseMcpExtensionsCard {...model} />
       {enabled && (
         // The connect control is its own component because OAuth must open

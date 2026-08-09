@@ -38,7 +38,7 @@ import { sanitizeStreamToolArgs, sanitizedToolErrorCode } from './streamReadRout
 const MAX_TOOL_CALLS_V1 = 8;
 const MAX_MESSAGE_LENGTH_V1 = 2000;
 const MAX_ARGS_CHARS_V1 = 600;
-const MAX_RESULT_CHARS_V1 = 1200;
+const MAX_RESULT_CHARS_V1 = 400;
 const MAX_REPLY_CHARS_V1 = 8000;
 
 export type BaseMcpConsoleStatusV1 =
@@ -66,6 +66,9 @@ export interface BaseMcpConsoleResultV1 {
   toolsAvailable: number;
   /** The tool budget ran out before the model finished. */
   truncated: boolean;
+  /** How long the whole answer took, so a slow one is a measured fact on the
+   * screen rather than a user counting seconds. */
+  elapsedMs: number;
   errorCode: string | null;
   checkedAt: string;
 }
@@ -84,6 +87,11 @@ const CONSOLE_PROMPT_V1 = [
   'You have no access to Miorail route intelligence here: no Route Card, no measured exit capacity, no verified router, no B20 data. Never present a Base MCP answer as a Miorail route or as verified by Miorail.',
   'Every tool here is read-only. If the user asks to swap, send, approve or sign, say that this console cannot, and that those live in the Routes flow.',
   'Attribute what you report to the tool that returned it. If no tool returned it, say you do not know rather than answering from memory.',
+  // Each request builds a fresh thread. Without this the model answered "I
+  // have not used any tools in this conversation so far" and referred to "my
+  // previous response" — inventing a continuity that does not exist.
+  'Each question is independent. You have no memory of earlier questions in this console and no record of tools used before this request, so never refer to a previous answer or claim what you did earlier.',
+  'Call a tool once. Do not repeat the same tool with slightly different arguments hoping for a better answer — every call costs the user time.',
 ];
 
 function truncate(value: string, max: number): string {
@@ -105,6 +113,36 @@ export function baseMcpConsoleArgsV1(raw: string): string {
 }
 
 /**
+ * The useful part of an MCP result.
+ *
+ * Every Base MCP tool answers in the protocol envelope
+ * `{"content":[{"type":"text","text":"…"}]}`, and the payload inside is itself
+ * JSON that has been escaped once more on the way in. Rendering the raw string
+ * put `{\"address\":\"0x…\",\"assets\":[{\"name\":\"[truncated]\"` on the
+ * screen — several lines of backslashes per call, which is the opposite of a
+ * trace anyone can read. Unwrapped where the shape matches, left alone where
+ * it does not.
+ */
+export function unwrapMcpContentV1(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw) as { content?: unknown };
+    if (!Array.isArray(parsed?.content)) return raw;
+    const text = parsed.content
+      .filter((part): part is { type: string; text: string } =>
+        Boolean(part) &&
+        typeof part === 'object' &&
+        (part as { type?: unknown }).type === 'text' &&
+        typeof (part as { text?: unknown }).text === 'string')
+      .map((part) => part.text)
+      .join(' ');
+    return text || raw;
+  } catch {
+    // Not the envelope. A tool is free to answer with anything.
+    return raw;
+  }
+}
+
+/**
  * A tool result as the trace shows it.
  *
  * The provider already redacts tokens and calldata on the way out of
@@ -112,7 +150,7 @@ export function baseMcpConsoleArgsV1(raw: string): string {
  * thing users screenshot.
  */
 export function baseMcpConsoleResultTextV1(raw: string): string {
-  const stripped = [...(raw ?? '')]
+  const stripped = [...unwrapMcpContentV1(raw ?? '')]
     .map((char) => (char.charCodeAt(0) <= 31 || char.charCodeAt(0) === 127 ? ' ' : char))
     .join('')
     .replace(/Bearer\s+[A-Za-z0-9._~+/-]+/gi, 'Bearer [redacted]')
@@ -125,6 +163,7 @@ function unavailable(
   status: BaseMcpConsoleStatusV1,
   errorCode: string,
   toolsAvailable = 0,
+  elapsedMs = 0,
 ): BaseMcpConsoleResultV1 {
   return {
     status,
@@ -132,6 +171,7 @@ function unavailable(
     trace: [],
     toolsAvailable,
     truncated: false,
+    elapsedMs,
     errorCode,
     checkedAt: new Date().toISOString(),
   };
@@ -145,10 +185,11 @@ export async function runBaseMcpConsoleV1(input: {
   message: string;
   enabled: boolean;
 }): Promise<BaseMcpConsoleResultV1> {
+  const startedAt = Date.now();
   if (!input.enabled) return unavailable('disabled', 'base_mcp_disabled');
 
   const message = input.message.trim().slice(0, MAX_MESSAGE_LENGTH_V1);
-  if (!message) return unavailable('failed', 'empty_message');
+  if (!message) return unavailable('failed', 'empty_message', 0, Date.now() - startedAt);
 
   // Inside the guard, not before it. Building the aggregator refreshes OAuth
   // and opens a session to somebody else's server; a throw there used to
@@ -166,8 +207,8 @@ export async function runBaseMcpConsoleV1(input: {
   } catch (error) {
     const text = error instanceof Error ? `${error.name} ${error.message}` : String(error || '');
     return /401|403|unauthor|invalid_grant|reauth|credential|decrypt/i.test(text)
-      ? unavailable('needs_reauth', 'needs_reauth')
-      : unavailable('failed', 'base_mcp_connect_failed');
+      ? unavailable('needs_reauth', 'needs_reauth', 0, Date.now() - startedAt)
+      : unavailable('failed', 'base_mcp_connect_failed', 0, Date.now() - startedAt);
   }
 
   try {
@@ -176,14 +217,14 @@ export async function runBaseMcpConsoleV1(input: {
     // MCP ever reached this aggregator, the console refuses rather than
     // quietly becoming the mixed thread it was built to replace.
     const foreign = inventory.filter((entry) => !entry.providerId.startsWith('base-mcp'));
-    if (foreign.length > 0) return unavailable('failed', 'non_base_mcp_provider_registered');
+    if (foreign.length > 0) return unavailable('failed', 'non_base_mcp_provider_registered', 0, Date.now() - startedAt);
 
     const toolsAvailable = inventory.reduce((total, entry) => total + entry.tools.length, 0);
     if (toolsAvailable === 0) {
       // Deliberately NOT an LLM answer. "Base MCP returned no callable tools"
       // and "here is what I remember about Base" are different statements, and
       // only one of them is true.
-      return unavailable('no_tools', 'no_base_mcp_tools');
+      return unavailable('no_tools', 'no_base_mcp_tools', 0, Date.now() - startedAt);
     }
 
     const agent = baseMcpConsoleRuntimeV1.createAgent({
@@ -237,6 +278,7 @@ export async function runBaseMcpConsoleV1(input: {
       trace,
       toolsAvailable,
       truncated,
+      elapsedMs: Date.now() - startedAt,
       errorCode: null,
       checkedAt: new Date().toISOString(),
     };
@@ -245,9 +287,9 @@ export async function runBaseMcpConsoleV1(input: {
     // can carry a token.
     const text = error instanceof Error ? `${error.name} ${error.message}` : String(error || '');
     if (/401|403|unauthor|invalid_grant|reauth|credential|decrypt/i.test(text)) {
-      return unavailable('needs_reauth', 'needs_reauth');
+      return unavailable('needs_reauth', 'needs_reauth', 0, Date.now() - startedAt);
     }
-    return unavailable('failed', 'base_mcp_console_failed');
+    return unavailable('failed', 'base_mcp_console_failed', 0, Date.now() - startedAt);
   } finally {
     await tools.close().catch(() => undefined);
   }

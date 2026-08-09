@@ -1579,6 +1579,7 @@ export const BaseMcpConsoleResponseV1Schema = z.object({
   })),
   toolsAvailable: z.number(),
   truncated: z.boolean(),
+  elapsedMs: z.number(),
   errorCode: z.string().nullable(),
   checkedAt: z.string(),
 });

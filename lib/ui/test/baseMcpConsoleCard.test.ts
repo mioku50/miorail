@@ -14,6 +14,7 @@ const answer = (overrides: Partial<BaseMcpConsoleAnswerV1> = {}): BaseMcpConsole
   trace: [{ tool: 'get_portfolio', args: '{}', ok: true, result: '{}', errorCode: null }],
   toolsAvailable: 12,
   truncated: false,
+  elapsedMs: 0,
   errorCode: null,
   ...overrides,
 });

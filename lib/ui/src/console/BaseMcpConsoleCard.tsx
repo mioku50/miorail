@@ -33,6 +33,9 @@ export interface BaseMcpConsoleAnswerV1 {
   trace: readonly BaseMcpConsoleTraceRowV1[];
   toolsAvailable: number;
   truncated: boolean;
+  /** How long the answer took. Shown, because a twenty-second wait the user
+   * counted themselves is worse than a twenty-second wait the page owns. */
+  elapsedMs?: number;
   errorCode: string | null;
 }
 
@@ -53,7 +56,10 @@ export interface BaseMcpConsoleModelV1 {
 export const BASE_MCP_CONSOLE_PROMPTS_V1: readonly string[] = [
   'What can you read with Base MCP right now?',
   'What does my Base Account hold?',
-  'Which Base MCP tools did you just use?',
+  // NOT "which tools did you just use?" — every request is a fresh thread with
+  // no memory of the last one, so that question can only be answered by
+  // inventing a history. It was, on the first day.
+  'Show my recent Base transactions',
 ];
 
 /**
@@ -88,7 +94,11 @@ export function baseMcpConsoleTraceSummaryV1(answer: BaseMcpConsoleAnswerV1): st
   const failed = answer.trace.filter((row) => !row.ok).length;
   const calls = `${answer.trace.length} Base MCP tool call${answer.trace.length === 1 ? '' : 's'}`;
   const failures = failed > 0 ? `, ${failed} failed` : '';
-  return `${calls}${failures}. Everything below came from these, or from nowhere.`;
+  // The elapsed time belongs next to the call count, because the call count is
+  // the explanation: each one is a round trip to somebody else's server with a
+  // model turn on either side.
+  const took = answer.elapsedMs ? ` Took ${(answer.elapsedMs / 1000).toFixed(1)}s.` : '';
+  return `${calls}${failures}. Everything below came from these, or from nowhere.${took}`;
 }
 
 export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {

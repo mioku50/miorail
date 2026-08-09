@@ -276,3 +276,98 @@ export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// The right rail for the Base MCP AI surface.
+//
+// The column was empty while the page it sits beside carried three stacked
+// cards and a 20-row catalogue in one scrolling column. Everything here is
+// already loaded — none of it costs a request — and all of it answers the
+// question a reader has while looking at that catalogue: what am I connected
+// to, and how much of this can actually run.
+// ---------------------------------------------------------------------------
+
+export interface BaseMcpRailModelV1 {
+  /** From the live tool probe. Null before it has answered once. */
+  connection: 'connected' | 'needs_reauth' | 'unreachable' | 'degraded' | null;
+  enabled: boolean;
+  endpointHost: string | null;
+  /** Live tool counts by what each one is allowed to do. */
+  toolCounts: { readOnly: number; userConfirmed: number; forbidden: number; unknown: number } | null;
+  plugins: readonly BaseMcpPluginRowV1[];
+  drift: BaseMcpPluginDriftRowV1 | null;
+  generatedAt: string | null;
+}
+
+const CONNECTION_TONE_V1: Readonly<Record<string, string>> = {
+  connected: 'g',
+  degraded: 'a',
+  needs_reauth: 'a',
+  unreachable: 'n',
+};
+
+export function BaseMcpSummaryRail(model: BaseMcpRailModelV1) {
+  const groups = groupBaseMcpPluginsV1(model.plugins);
+  const counts = model.toolCounts;
+
+  return (
+    <>
+      <div className="rp">
+        <div className="rph">
+          Base MCP
+          {model.endpointHost && <span className="rt mono">{model.endpointHost}</span>}
+        </div>
+        <div className="rpb">
+          <div className="qrow">
+            <span className={`pill ${model.connection ? CONNECTION_TONE_V1[model.connection] ?? 'n' : 'n'}`}>
+              {model.enabled ? (model.connection ?? 'not connected').replace(/_/g, ' ') : 'switched off'}
+            </span>
+            <span className="v mono">{counts ? counts.readOnly + counts.userConfirmed + counts.forbidden + counts.unknown : '—'}</span>
+          </div>
+          {counts ? (
+            <>
+              <div className="qrow">
+                <span>Readable</span>
+                <span className="v mono">{counts.readOnly}</span>
+              </div>
+              <div className="qrow">
+                <span>Needs your approval</span>
+                <span className="v mono">{counts.userConfirmed}</span>
+              </div>
+              <div className="qrow">
+                <span>Not callable here</span>
+                <span className="v mono">{counts.forbidden + counts.unknown}</span>
+              </div>
+              <p className="lnote">
+                Only the readable ones are offered to the console. Unclassified counts as not
+                callable.
+              </p>
+            </>
+          ) : (
+            <p className="empty">The tool list has not been read yet.</p>
+          )}
+        </div>
+      </div>
+
+      <div className="rp">
+        <div className="rph">
+          Plugins
+          <span className="rt mono">{model.plugins.length || '—'}</span>
+        </div>
+        <div className="rpb">
+          {groups.length === 0 ? (
+            <p className="empty">No catalogue loaded.</p>
+          ) : (
+            groups.map((group) => (
+              <div className="qrow" key={group.reach}>
+                <span>{REACH_LABEL_V1[group.reach]}</span>
+                <span className="v mono">{group.plugins.length}</span>
+              </div>
+            ))
+          )}
+          <p className="lnote">{baseMcpPluginDriftCopyV1(model.drift, model.generatedAt)}</p>
+        </div>
+      </div>
+    </>
+  );
+}
