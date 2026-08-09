@@ -7,6 +7,70 @@ import type { AssetRefV1, MoneyV1 } from '@mioagent/route-domain';
 
 const DEFAULT_SIMULATION_PRICE_USDC = '0.01';
 
+// ---------------------------------------------------------------------------
+// WHICH operation the Intelligence Budget pays for.
+//
+// It used to be the swap simulation, and that was the wrong thing to charge
+// for: the same swap, across more routers, is free in any ordinary wallet.
+// Paying to compare them buys a user nothing they cannot already get, and the
+// fork simulation on top is a SAFETY step — charging for safety on a
+// transaction someone is about to sign is the worst possible thing to meter.
+//
+// What is worth money is the answer no other tool on Base gives: whether a B20
+// position can be exited, at what size, proven by a sequential simulation of
+// both legs against one state. That is the operation behind `qualified`, the
+// product's one affirmative claim.
+//
+// Both surfaces are OFF by default and named separately. A single switch would
+// mean flipping the paid surface could silently start charging for something
+// else; two flags make each one a deliberate act. Turning a surface off never
+// removes a safety check — the swap review keeps its free tier (Safety Kernel,
+// call-structure, screening, canonical-token), which the UI already describes
+// accurately as being without a fork simulation.
+// ---------------------------------------------------------------------------
+
+function readPaidSurfaceFlagV1(env: NodeJS.ProcessEnv, name: string): boolean {
+  return (env[name] ?? '').trim().toLowerCase() === 'true';
+}
+
+/** The legacy surface. Off unless a deployment explicitly asks for it back. */
+export function paidSwapSimulationEnabledV1(env: NodeJS.ProcessEnv = process.env): boolean {
+  return readPaidSurfaceFlagV1(env, 'MIORAIL_PAID_SWAP_SIMULATION_V1');
+}
+
+/** The B20 exit proof — the surface this product actually sells. */
+export function paidB20SimulationEnabledV1(env: NodeJS.ProcessEnv = process.env): boolean {
+  return readPaidSurfaceFlagV1(env, 'MIORAIL_PAID_B20_SIMULATION_V1');
+}
+
+/**
+ * The B20 simulation's own price.
+ *
+ * Deliberately a separate variable rather than a shared one: the two surfaces
+ * price different work, and inheriting a swap price would silently set the
+ * B20 price the first time somebody edited the wrong line. Falls back to the
+ * swap price only when nothing is set, so an existing deployment that turns
+ * B20 on without adding a price still gets a defined, non-zero charge instead
+ * of failing closed for a reason nobody would guess.
+ */
+export function resolvePaidB20SimulationPricingV1(
+  env: NodeJS.ProcessEnv = process.env,
+): PaidSimulationPricingV1 | null {
+  const decimalUsdc = (
+    env.MIORAIL_B20_SIMULATION_PRICE_USDC ??
+    env.MIORAIL_SIMULATION_PRICE_USDC ??
+    DEFAULT_SIMULATION_PRICE_USDC
+  ).trim();
+  const amountAtomic = decimalUsdcToAtomicV1(decimalUsdc);
+  if (!amountAtomic) return null;
+  const asset = usdcAssetRefV1();
+  return {
+    amountAtomic,
+    decimalUsdc,
+    price: { asset, amountAtomic, amountDecimal: decimalUsdc, usdValue: decimalUsdc },
+  };
+}
+
 // T60: exported (was module-private) so the Intelligence Budget routes can
 // build the same canonical USDC AssetRefV1 without re-deriving it.
 export function usdcAssetRefV1(): AssetRefV1 {
@@ -88,6 +152,10 @@ export function resolvePaidSimulationProviderV1(env: NodeJS.ProcessEnv = process
  * only if) BOTH the price and the provider are validly configured — null
  * otherwise, so the client never advertises a price the feature can't honor. */
 export function simulationPriceUsdcForPrepareResponseV1(env: NodeJS.ProcessEnv = process.env): string | null {
+  // The surface switch comes first. With paid swap simulation off there is no
+  // price to advertise, and the client must not render a "Simulate for $x"
+  // control for an operation the server will refuse.
+  if (!paidSwapSimulationEnabledV1(env)) return null;
   const pricing = resolvePaidSimulationPricingV1(env);
   const provider = resolvePaidSimulationProviderV1(env);
   if (!pricing || !provider.configured) return null;

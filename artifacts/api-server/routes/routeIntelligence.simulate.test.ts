@@ -128,6 +128,10 @@ function stubSettlementPaymentMiddleware(txHash = `0x${'a'.repeat(64)}`) {
 
 function resetSimulateRuntime() {
   Object.assign(simulateRouteRuntime, originalRuntime);
+  // This suite is ABOUT the paid path, so it turns the surface on explicitly.
+  // The default is off — paid swap simulation is no longer a surface Miorail
+  // sells — and the refusal that produces has its own test below.
+  simulateRouteRuntime.paidSurfaceEnabled = () => true;
   simulateRouteRuntime.flags = () => ({ routeIntelligenceV1: true, legacyTerminal: true, paidIntelligence: true, earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false, nftRouteV1: false, nftExecutionV1: false, privateAiRouteV1: false, privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, mcpPrivateV1: false, mcpPrivateExecutionV1: false, routeOutcomeFeedbackV1: false, });
   simulateRouteRuntime.migrationAvailable = async () => true;
   simulateRouteRuntime.now = () => NOW;
@@ -185,6 +189,27 @@ describe('POST /api/route-intelligence/blueprints/:blueprintId/simulate', () => 
       .send(requestBody());
     assert.equal(response.status, 404);
     assert.equal(response.body.code, 'paid_intelligence_disabled');
+  });
+
+  test('paid swap simulation is not offered, and refuses before any charge exists', async () => {
+    // The surface is off by default. The refusal has to happen ahead of the
+    // charge-creating middleware: refusing at the payment step would leave a
+    // pending IntelligenceCharge for an operation that never ran and never
+    // could, and that row is what a user's budget is reconciled against.
+    const seeded = await seedRepository();
+    simulateRouteRuntime.repository = () => seeded.repository;
+    simulateRouteRuntime.paidSurfaceEnabled = () => false;
+
+    const response = await request(routeApp())
+      .post(`/api/route-intelligence/blueprints/${seeded.blueprintId}/simulate`)
+      .send(requestBody({ routeRunId: seeded.routeRunId, blueprintHash: seeded.blueprintHash }));
+    assert.equal(response.status, 404);
+    assert.equal(response.body.code, 'simulation_not_offered');
+    assert.deepEqual(
+      await seeded.repository.listIntelligenceCharges(seeded.routeRunId, USER.id),
+      [],
+      'a refused surface must leave no pending charge behind',
+    );
   });
 
   test('returns 404 when routeIntelligenceV1 is off regardless of paidIntelligence', async () => {

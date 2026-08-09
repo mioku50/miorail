@@ -1,4 +1,9 @@
-import { Router, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
+import { createX402MiddlewareFromEnv } from '@mioagent/x402-gateway';
+import {
+  paidB20SimulationEnabledV1,
+  resolvePaidB20SimulationPricingV1,
+} from '../lib/paidIntelligenceConfig.js';
 import { logger } from '@mioagent/utils';
 import { safeZodIssuesV1 } from '../lib/safeZodIssues.js';
 import {
@@ -1257,7 +1262,56 @@ function facadeRefusalV1(res: Response, refusal: B20FacadeRefusalV1): void {
   });
 }
 
-b20ControlRouter.post('/b20/opportunity/simulate', async (req: Request, res: Response) => {
+// ---------------------------------------------------------------------------
+// The one operation in this product worth charging for.
+//
+// Everything else Miorail does either has a free equivalent elsewhere (a swap
+// with more routers, in any wallet) or is a safety check on a transaction the
+// user is about to sign, which must never be metered. This is neither: it is
+// the sequential simulation of BOTH legs against one state — the only thing
+// that can promote a measurement to `qualified`, and the answer no other tool
+// on Base gives.
+//
+// Built once at module load, like the swap gateway it replaces. Fails closed:
+// with the surface off, or the price unreadable, no x402 challenge is ever
+// issued and no money is at risk.
+// ---------------------------------------------------------------------------
+function buildB20SimulatePaymentMiddlewareV1(env: NodeJS.ProcessEnv = process.env) {
+  // Off is not an error. The simulation stays available unpaid, exactly as it
+  // was before this surface existed — turning the charge on is the deliberate
+  // act, not turning it off.
+  if (!paidB20SimulationEnabledV1(env)) {
+    return (_req: Request, _res: Response, next: NextFunction) => next();
+  }
+  const pricing = resolvePaidB20SimulationPricingV1(env);
+  if (!pricing) {
+    // A price that cannot be parsed must never become "free": it is a
+    // misconfiguration, and answering as though the operation were unpriced
+    // would give away the one thing this product sells.
+    return (_req: Request, res: Response) => {
+      res.status(503).json({ error: 'b20_simulation_unpriced', code: 'b20_simulation_unpriced' });
+    };
+  }
+  return createX402MiddlewareFromEnv(
+    {
+      routePath: '/route-intelligence/b20/opportunity/simulate',
+      serviceName: 'Miorail B20 Exit Proof',
+      amountAtomicOverride: pricing.amountAtomic,
+    },
+    env,
+  );
+}
+
+export const b20SimulatePaymentRuntimeV1 = {
+  // Overridable so tests can exercise both the paid and unpaid paths without
+  // reaching a facilitator — the same seam every other runtime here uses.
+  middleware: buildB20SimulatePaymentMiddlewareV1(),
+};
+
+b20ControlRouter.post(
+  '/b20/opportunity/simulate',
+  (req: Request, res: Response, next: NextFunction) => b20SimulatePaymentRuntimeV1.middleware(req, res, next),
+  async (req: Request, res: Response) => {
   const guard = b20Guard(req, res);
   if (!guard) return;
 
@@ -1285,7 +1339,8 @@ b20ControlRouter.post('/b20/opportunity/simulate', async (req: Request, res: Res
   } catch (error) {
     storageFailure(res, error, 'opportunity-simulate');
   }
-});
+  },
+);
 
 // ---------------------------------------------------------------------------
 // T68E — consuming a clearance in a verified entry plan.

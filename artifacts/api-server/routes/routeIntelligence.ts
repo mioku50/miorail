@@ -209,6 +209,7 @@ import { resolveEarnDataSourceV1 } from '../lib/earnLiveData.js';
 import {
   atomicUsdcToDecimalV1,
   decimalUsdcToAtomicV1,
+  paidSwapSimulationEnabledV1,
   resolvePaidSimulationPricingV1,
   resolvePaidSimulationProviderV1,
   simulationPriceUsdcForPrepareResponseV1,
@@ -1274,6 +1275,15 @@ function settlementFromX402Record(record: X402SettlementRecord): PaidSimulationS
  * NEVER issued (and no money is ever at risk) for a misconfigured price or
  * an unlisted/missing simulation provider. */
 function buildSimulatePaymentMiddleware(env: NodeJS.ProcessEnv = process.env) {
+  // Paid swap simulation is no longer a surface this product sells. Refused
+  // with its own code, not `simulation_provider_unavailable`: "we do not
+  // charge for this" and "the provider is down" are different facts, and only
+  // the second is worth retrying. The swap review keeps its free checks.
+  if (!paidSwapSimulationEnabledV1(env)) {
+    return (_req: Request, res: Response) => {
+      res.status(404).json({ error: 'simulation_not_offered', code: 'simulation_not_offered' });
+    };
+  }
   const pricing = resolvePaidSimulationPricingV1(env);
   const providerConfig = resolvePaidSimulationProviderV1(env);
   if (!pricing || !providerConfig.configured) {
@@ -1301,6 +1311,9 @@ export const simulateRouteRuntime = {
   now: () => new Date(),
   pricing: resolvePaidSimulationPricingV1,
   providerConfig: resolvePaidSimulationProviderV1,
+  // Overridable so the existing paid-path tests keep exercising the paid path
+  // rather than every one of them asserting the new refusal.
+  paidSurfaceEnabled: paidSwapSimulationEnabledV1,
   repository: (): RouteStorageRepository => createDatabaseRouteStorageRepository(client),
   contractSecurity: async ({ chainId, addresses }: { chainId: number; addresses: `0x${string}`[] }) =>
     (await loadTokenSecurityContext(chainId, addresses)).tokenSecurity,
@@ -1501,6 +1514,17 @@ async function buildSimulateReview(
 routeIntelligenceRouter.post(
   '/blueprints/:blueprintId/simulate',
   (_req, _res, next) => simulateSettlementStorage.run({}, () => next()),
+  // BEFORE the guard and before anything is written. The payment middleware
+  // sits further down the chain, after a pending IntelligenceCharge has been
+  // inserted — refusing there would leave a charge record for an operation
+  // that never ran and never could.
+  (_req: Request, res: Response, next: NextFunction) => {
+    if (!simulateRouteRuntime.paidSurfaceEnabled(process.env)) {
+      res.status(404).json({ error: 'simulation_not_offered', code: 'simulation_not_offered' });
+      return;
+    }
+    next();
+  },
   simulateGuardMiddleware,
   async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
     const { user, body, blueprint } = res.locals as SimulateLocals;

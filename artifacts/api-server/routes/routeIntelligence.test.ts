@@ -399,10 +399,21 @@ describe('POST /api/route-intelligence/swap/prepare', () => {
     process.env.MIORAIL_SIMULATION_PRICE_USDC = '0.02';
     process.env.MIORAIL_SIMULATION_PROVIDER_URL = 'https://sim.example.test/simulate';
     process.env.MIORAIL_SIMULATION_PROVIDER_ALLOWLIST = 'sim.example.test';
+
+    // A configured price is still no price when the surface is off. Miorail no
+    // longer sells paid swap simulation, and advertising a figure the server
+    // would refuse to honour is how a client ends up rendering "Simulate for
+    // $0.02" over an endpoint that answers 404.
+    const surfaceOff = await request(routeApp()).post('/api/route-intelligence/swap/prepare').send(PREPARE_BODY);
+    assert.equal(surfaceOff.status, 200);
+    assert.equal(surfaceOff.body.simulationPriceUsdc, null);
+
+    process.env.MIORAIL_PAID_SWAP_SIMULATION_V1 = 'true';
     const configured = await request(routeApp()).post('/api/route-intelligence/swap/prepare').send(PREPARE_BODY);
     assert.equal(configured.status, 200);
     assert.equal(configured.body.simulationPriceUsdc, '0.02');
 
+    delete process.env.MIORAIL_PAID_SWAP_SIMULATION_V1;
     delete process.env.MIORAIL_SIMULATION_PRICE_USDC;
     delete process.env.MIORAIL_SIMULATION_PROVIDER_URL;
     delete process.env.MIORAIL_SIMULATION_PROVIDER_ALLOWLIST;
