@@ -27,9 +27,9 @@ export const DISCOVER_OFF_COPY_V1 =
   'B20 Discover is off on this server, so there is no launch feed to show. This is not a statement about what is launching.';
 
 export interface ConsoleNavV1 {
-  /** Four entries for the header bar. */
+  /** Three entries for the header bar. */
   header: readonly ConsoleNavItemV1[];
-  /** Five entries for the rail, which is the drawer on a phone. */
+  /** Six entries for the rail, which is the drawer on a phone. */
   rail: readonly ConsoleNavItemV1[];
   navigate: (section: ConsoleSectionV1) => void;
 }

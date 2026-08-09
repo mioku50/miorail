@@ -23,6 +23,7 @@ export * from './B20EntryReviewCard';
 export * from './B20PortfolioPanel';
 export * from './B20MarketRails';
 export * from './WalletBalancesCard';
+export * from './ActivityPanels';
 export * from './BaseMcpConsoleCard';
 export * from './BaseMcpExtensionsCard';
 export * from './BaseMcpPluginsCard';

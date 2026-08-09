@@ -157,7 +157,7 @@ export function OpportunitiesPage() {
       onThemeChange={setTheme}
       onNewGoal={() => navigate(consoleSectionPathV1('routes'))}
       onSelectSession={() => navigate(consoleSectionPathV1('routes'))}
-      onSelectProof={() => navigate(consoleSectionPathV1('proofs'))}
+      onSelectProof={() => navigate(consoleSectionPathV1('activity'))}
     >
       <OpportunitiesScreen
         pipelineNotice={pipelineNotice}

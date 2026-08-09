@@ -128,7 +128,7 @@ export function ExtensionsPage() {
       onThemeChange={setTheme}
       onNewGoal={() => navigate(consoleSectionPathV1('routes'))}
       onSelectSession={() => navigate(consoleSectionPathV1('routes'))}
-      onSelectProof={() => navigate(consoleSectionPathV1('proofs'))}
+      onSelectProof={() => navigate(consoleSectionPathV1('activity'))}
     >
       {/* Plugins first: it is what the section is for, and it does not depend
           on a connection. The live tool list follows. */}

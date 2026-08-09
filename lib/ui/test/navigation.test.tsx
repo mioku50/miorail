@@ -155,19 +155,29 @@ describe('§9.2 — an unconfigured pipeline is never an empty feed', () => {
 describe('§9.5/§9.6 — the drawer is navigation, not a control panel', () => {
   const shell = read('../src/console/ConsoleShell.tsx');
 
-  test('the drawer carries the four tabs plus Extensions and Settings', () => {
-    // Extensions is here and NOT in the tab bar. Four tabs get about 90px each
-    // at 390px wide; a fifth would ellipsis every label to make room for the
-    // surface reached least often.
+  test('the drawer carries the three tabs plus Activity, Extensions and Settings', () => {
+    // Activity and Extensions are here and NOT in the tab bar. Neither is
+    // where work starts, and a bar of three working surfaces is more honest
+    // than four where one is a viewer for records nobody has produced.
     assert.equal(CONSOLE_DRAWER_SECTIONS_V1.length, 6);
     assert.deepEqual([...CONSOLE_DRAWER_SECTIONS_V1], [
       'opportunities',
       'portfolio',
       'routes',
-      'proofs',
+      'activity',
       'extensions',
       'settings',
     ]);
+  });
+
+  test('every drawer section is reachable, so the drawer is the complete map', () => {
+    // Dropping a tab from the bar is only safe if the drawer still lists it.
+    for (const section of CONSOLE_SECTIONS_V1) {
+      assert.ok(
+        (CONSOLE_DRAWER_SECTIONS_V1 as readonly string[]).includes(section),
+        `${section} is reachable from nowhere`,
+      );
+    }
   });
 
   test('the adapter list and the usage bars are gone from the shell', () => {
@@ -196,9 +206,18 @@ describe('§9.5/§9.6 — the drawer is navigation, not a control panel', () => 
 });
 
 describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
-  test('Base App shows Discover, B20, Routes and Proofs', () => {
+  test('Base App shows Discover, B20 and Routes', () => {
     const nav = consoleNavModelV1({ mounted: CONSOLE_PRIMARY_SECTIONS_V1, active: 'opportunities' });
-    assert.deepEqual(nav.map((item) => item.compactLabel), ['Discover', 'B20', 'Routes', 'Proofs']);
+    assert.deepEqual(nav.map((item) => item.compactLabel), ['Discover', 'B20', 'Routes']);
+  });
+
+  test('no tab is named for something that only exists after a signature', () => {
+    // "Proofs" promised the one row this deployment has never produced. The
+    // same gap Portfolio/Discover had: a surface named for its rarest state.
+    for (const section of CONSOLE_SECTIONS_V1) {
+      assert.notEqual(CONSOLE_SECTION_TABLE_V1[section].label, 'Proofs');
+    }
+    assert.equal(CONSOLE_SECTION_TABLE_V1.activity.label, 'Activity');
   });
 
   test('the compact labels are in the shared table, not typed into the miniapp', () => {
@@ -215,7 +234,7 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
   });
 
   test('both surfaces use the same order', () => {
-    assert.deepEqual([...CONSOLE_PRIMARY_SECTIONS_V1], ['opportunities', 'portfolio', 'routes', 'proofs']);
+    assert.deepEqual([...CONSOLE_PRIMARY_SECTIONS_V1], ['opportunities', 'portfolio', 'routes']);
   });
 
   test('every section has a static path with no wallet state in it', () => {
@@ -254,8 +273,8 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
 
 describe('§9.8 — an unwired section gets no button', () => {
   test('a section that is not mounted does not appear at all', () => {
-    const nav = consoleNavModelV1({ mounted: ['routes', 'proofs'], active: 'routes' });
-    assert.deepEqual(nav.map((item) => item.id), ['routes', 'proofs']);
+    const nav = consoleNavModelV1({ mounted: ['routes', 'activity'], active: 'routes' });
+    assert.deepEqual(nav.map((item) => item.id), ['routes', 'activity']);
   });
 
   test('a mounted-but-unusable section is present, inert and explained', () => {

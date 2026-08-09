@@ -1440,7 +1440,7 @@ export function RouteIntelligenceConsole() {
                 },
               ]
         }
-        onExport={() => consoleNav.navigate('proofs')}
+        onExport={() => consoleNav.navigate('activity')}
         onNewGoal={() => {
           setScreen('plan');
           setGoal('');
@@ -1503,7 +1503,7 @@ export function RouteIntelligenceConsole() {
         evaluationSettled.current = false;
       }}
       onSelectSession={() => setScreen(projection ? 'route' : 'plan')}
-      onSelectProof={() => consoleNav.navigate('proofs')}
+      onSelectProof={() => consoleNav.navigate('activity')}
     >
       {/* T67C.2: an unfinished submission surfaces above everything else. A
           user who reloaded mid-flight needs to finish CHECKING that batch
@@ -1513,7 +1513,7 @@ export function RouteIntelligenceConsole() {
         walletAddress={address ?? null}
         chainId={chainId ?? null}
         enabled={Boolean(flags?.submissionRecoveryV1)}
-        onResolved={() => consoleNav.navigate('proofs')}
+        onResolved={() => consoleNav.navigate('activity')}
       />
       {content}
     </ConsoleShell>

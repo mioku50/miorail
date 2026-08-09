@@ -587,7 +587,7 @@ export function B20WatchPage() {
       // handlers navigate there rather than doing nothing here.
       onNewGoal={() => consoleNav.navigate('routes')}
       onSelectSession={() => consoleNav.navigate('routes')}
-      onSelectProof={() => consoleNav.navigate('proofs')}
+      onSelectProof={() => consoleNav.navigate('activity')}
     >
       {entryReview && entryState && (
         <B20EntryReviewCard

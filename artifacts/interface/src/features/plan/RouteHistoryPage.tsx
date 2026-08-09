@@ -1,29 +1,72 @@
-// T58: tenant Route Run history at /plan/history (the legacy /history page —
-// chat + action inbox — is untouched). Cursor-paginated, read-only: the page
-// never reconciles; selecting an item with a proof shows its reconciled
-// Execution Proof via a pure GET.
+// ---------------------------------------------------------------------------
+// Activity — route runs, paid intelligence, and proofs once there are any.
+//
+// Two things were wrong with this page, and only one of them was the name.
+//
+// It rendered OUTSIDE ConsoleShell, wrapped in the bare `DeepLink` div. Opening
+// the tab therefore removed the tab bar: the only way back was one "← Back to
+// plan" link, and the page arrived in pre-console styling so it read as a
+// different product. A primary navigation entry that drops you out of the
+// navigation is a bug regardless of what the entry is called.
+//
+// And it showed only route runs. In production all of them sit at `ready` —
+// prepared, compared, never signed — while thirteen settled USDC payments, the
+// one provably completed thing this product has done, appeared nowhere. So the
+// paid ledger is here too.
+//
+// Read-only, as before: the page never reconciles and never re-runs.
+// ---------------------------------------------------------------------------
 
-import { useEffect, useState } from 'react';
-import { Link } from 'wouter';
+import { useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'wouter';
 import {
   useRevokeProofShare,
   useRouteHistory,
   useRouteProof,
   useShareProof,
   useStatus,
+  useX402Ledger,
 } from '@mioagent/api-client-react';
-import { ExecutionProofPanel, RouteHistoryList, ShareProofPanel, type RouteHistoryItemView } from '@mioagent/ui';
+import {
+  ActivityProofCard,
+  ActivityRunsCard,
+  ActivitySpendCard,
+  ConsoleShell,
+  ShareProofPanel,
+  chainBlockNumberV1,
+  chainGasLabelV1,
+  chainLabelV1,
+  consoleSectionPathV1,
+  useConsoleTheme,
+  type ActivityRunRowV1,
+} from '@mioagent/ui';
+import { useAccount } from 'wagmi';
+
+import { useConsoleNav } from '../console/useConsoleNav';
+
+/** `0x1234…abcd`, or nothing when no wallet is connected. */
+function shortAddress(address: string | undefined): string | null {
+  return address ? `${address.slice(0, 6)}…${address.slice(-4)}` : null;
+}
 
 export function RouteHistoryPage() {
-  const [items, setItems] = useState<RouteHistoryItemView[]>([]);
+  const [, navigate] = useLocation();
+  const consoleNav = useConsoleNav('activity');
+  const { theme, setTheme } = useConsoleTheme();
+  const { address } = useAccount();
+
+  const [runs, setRuns] = useState<ActivityRunRowV1[]>([]);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
-  const [selected, setSelected] = useState<RouteHistoryItemView | null>(null);
+  const [selected, setSelected] = useState<ActivityRunRowV1 | null>(null);
+
+  const status = useStatus();
   const history = useRouteHistory({ limit: 20, cursor });
   const proof = useRouteProof(selected?.proofId ?? null);
+  const ledger = useX402Ledger();
+
   // T67C.2: publishing is an explicit owner action. The link lives in local
-  // state rather than being fetched, because a proof with no share has no
-  // link to fetch — and the absence of one is exactly what "private" means.
-  const status = useStatus();
+  // state rather than being fetched, because a proof with no share has no link
+  // to fetch — and the absence of one is exactly what "private" means.
   const share = useShareProof();
   const revoke = useRevokeProofShare();
   const [publicUrl, setPublicUrl] = useState<string | null>(null);
@@ -35,98 +78,126 @@ export function RouteHistoryPage() {
 
   useEffect(() => {
     if (!history.data) return;
-    setItems((current) => {
+    setRuns((current) => {
       const known = new Set(current.map((item) => item.routeRunId));
       return [...current, ...history.data.items.filter((item) => !known.has(item.routeRunId))];
     });
   }, [history.data]);
 
+  const spend = useMemo(
+    () => ({
+      loading: ledger.isPending,
+      entries: ledger.data?.entries ?? [],
+      summary: ledger.data?.summary ?? null,
+      unavailableReason: ledger.error
+        // Never the error's own message: a transport failure can carry the
+        // endpoint, and the endpoint can carry a key.
+        ? 'The payment ledger could not be read. This says nothing about what was paid.'
+        : null,
+    }),
+    [ledger.data, ledger.error, ledger.isPending],
+  );
+
+  const publishable =
+    selected?.proofId &&
+    proof.data &&
+    status.data?.productMigration?.publicProofV1 &&
+    // A pending proof describes a question Miorail has not answered, and
+    // publishing it would put a claim on the internet Miorail is not making.
+    proof.data.proof.finalStatus !== 'pending';
+
   return (
-    <main className="flex-1 overflow-y-auto bg-bg px-4 pb-24 pt-6 sm:px-7 lg:px-10 lg:pb-10">
-      <div className="mx-auto w-full max-w-[880px]">
-        <header className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-pop">Route intelligence · Base</p>
-            <h1 className="mt-2 font-display text-2xl font-semibold tracking-tight text-ink">Route history</h1>
-            <p className="mt-1 text-sm text-ink-2">
-              Your past route runs with their blueprint and independently verified execution proofs.
-            </p>
-          </div>
-          <Link
-            href="/plan"
-            className="rounded-full border border-line bg-panel-2 px-4 py-2 text-sm text-ink-2 transition-colors hover:border-accent/45 hover:text-ink"
-          >
-            ← Back to plan
-          </Link>
-        </header>
+    <ConsoleShell
+      header={{
+        crumb: ['Activity'],
+        nav: consoleNav.header,
+        onNavigate: consoleNav.navigate,
+        blockNumber: chainBlockNumberV1(status.data ?? null),
+        gasLabel: chainGasLabelV1(status.data ?? null),
+        networkLabel: chainLabelV1(status.data?.chainId),
+        connected: Boolean(address) && status.data?.rpc?.status === 'connected',
+        walletLabel: shortAddress(address),
+      }}
+      left={{
+        nav: consoleNav.rail,
+        sessions: [],
+        sessionCount: '0',
+        proofs: [],
+        proofCount: String(runs.filter((run) => run.proofId).length),
+        onOpenSettings: () => consoleNav.navigate('settings'),
+      }}
+      footer={{
+        adaptersLabel: '—',
+        sourcesLabel: String(runs.length),
+        spendLabel: ledger.data?.summary?.totalSpentUsdc
+          ? `$${ledger.data.summary.totalSpentUsdc}`
+          : '$0',
+        blockNumber: chainBlockNumberV1(status.data ?? null),
+      }}
+      right={null}
+      theme={theme}
+      onThemeChange={setTheme}
+      onNewGoal={() => navigate(consoleSectionPathV1('routes'))}
+      onSelectSession={() => navigate(consoleSectionPathV1('routes'))}
+      onSelectProof={() => undefined}
+    >
+      {/* The ledger first: it is the part of this page that currently has
+          content, and burying it under twenty unsigned runs was the old
+          ordering's mistake. */}
+      <ActivitySpendCard {...spend} />
 
-        <section className="mt-6 space-y-4" aria-live="polite">
-          {history.isPending && items.length === 0 && (
-            <div className="rounded-xl border border-line bg-panel p-6">
-              <p className="font-mono text-xs uppercase tracking-[0.18em] text-accent-2">Loading history…</p>
-            </div>
-          )}
-          {history.isError && (
-            <div className="rounded-xl border border-risk/35 bg-risk-soft p-6" role="alert">
-              <p className="text-sm text-ink-2">History could not be loaded: {history.error?.message}</p>
-            </div>
-          )}
-          {(items.length > 0 || (!history.isPending && !history.isError)) && (
-            <RouteHistoryList
-              items={items}
-              nextCursor={history.data?.nextCursor ?? null}
-              loadingMore={history.isPending}
-              onSelect={setSelected}
-              onLoadMore={setCursor}
-            />
-          )}
+      <ActivityRunsCard
+        loading={history.isPending}
+        runs={runs}
+        selectedRunId={selected?.routeRunId ?? null}
+        onSelect={setSelected}
+        hasMore={Boolean(history.data?.nextCursor)}
+        onLoadMore={() => setCursor(history.data?.nextCursor ?? undefined)}
+        unavailableReason={
+          history.isError
+            ? 'Route history could not be read on this server. This says nothing about what you have run.'
+            : null
+        }
+      />
 
-          {selected && !selected.proofId && (
-            <p className="text-xs text-ink-3">
-              This run has no execution proof yet — it never reached an approved submission.
-            </p>
-          )}
-          {selected?.proofId && proof.isPending && (
-            <p className="font-mono text-xs uppercase tracking-[0.18em] text-accent-2">Loading execution proof…</p>
-          )}
-          {selected?.proofId && proof.isError && (
-            <p className="text-xs text-risk">Execution proof could not be loaded: {proof.error?.message}</p>
-          )}
-          {selected?.proofId && proof.data && (
-            <ExecutionProofPanel proof={proof.data.proof} lifecycle={proof.data.lifecycle} />
-          )}
-          {/* Only for a proof that has finished. A pending proof describes a
-              question Miorail has not answered, and publishing it would put a
-              claim on the internet that Miorail itself is not making. */}
-          {selected?.proofId &&
-            proof.data &&
-            status.data?.productMigration?.publicProofV1 &&
-            proof.data.proof.finalStatus !== 'pending' && (
-              <ShareProofPanel
-                publicUrl={publicUrl}
-                pending={share.isPending || revoke.isPending}
-                onShare={() => {
-                  const proofId = selected.proofId;
-                  if (!proofId) return;
-                  share.mutate({ proofId }, { onSuccess: (result) => setPublicUrl(result.url) });
-                }}
-                onRevoke={() => {
-                  const proofId = selected.proofId;
-                  if (!proofId) return;
-                  revoke.mutate({ proofId }, { onSuccess: () => setPublicUrl(null) });
-                }}
-                onCopy={() => {
-                  if (publicUrl) void navigator.clipboard?.writeText(new URL(publicUrl, location.origin).toString());
-                }}
-                onDownload={() => {
-                  // The public id is in the URL the server returned; the
-                  // download route serves the canonical bundle under it.
-                  if (publicUrl) location.href = `/api/public/proofs/${publicUrl.split('/').pop()}/bundle`;
-                }}
-              />
-            )}
-        </section>
-      </div>
-    </main>
+      {selected && (
+        <ActivityProofCard
+          runLabel={selected.intentSummary || selected.routeRunId}
+          loading={Boolean(selected.proofId) && proof.isPending}
+          proof={selected.proofId && proof.data ? proof.data.proof : null}
+          lifecycle={proof.data?.lifecycle ?? null}
+          unavailableReason={
+            selected.proofId && proof.isError
+              ? 'That execution proof could not be read. It exists; this server did not return it.'
+              : null
+          }
+        />
+      )}
+
+      {publishable && (
+        <ShareProofPanel
+          publicUrl={publicUrl}
+          pending={share.isPending || revoke.isPending}
+          onShare={() => {
+            const proofId = selected?.proofId;
+            if (!proofId) return;
+            share.mutate({ proofId }, { onSuccess: (result) => setPublicUrl(result.url) });
+          }}
+          onRevoke={() => {
+            const proofId = selected?.proofId;
+            if (!proofId) return;
+            revoke.mutate({ proofId }, { onSuccess: () => setPublicUrl(null) });
+          }}
+          onCopy={() => {
+            if (publicUrl) void navigator.clipboard?.writeText(new URL(publicUrl, location.origin).toString());
+          }}
+          onDownload={() => {
+            // The public id is in the URL the server returned; the download
+            // route serves the canonical bundle under it.
+            if (publicUrl) location.href = `/api/public/proofs/${publicUrl.split('/').pop()}/bundle`;
+          }}
+        />
+      )}
+    </ConsoleShell>
   );
 }

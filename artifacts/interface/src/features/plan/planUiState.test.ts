@@ -18,20 +18,22 @@ const here = path.dirname(url.fileURLToPath(import.meta.url));
 //
 // Both tables are DERIVED from the shared section table in lib/ui, so this test
 // also pins that the web app has no navigation vocabulary of its own.
-test('navigation is exactly Discover, B20, Routes and Proofs', () => {
+test('navigation is exactly Discover, B20 and Routes', () => {
   const tabs = navTabs();
   assert.deepEqual(tabs.map((route) => route.path), [
     '/opportunities',
     '/portfolio',
     '/routes',
-    '/plan/history',
   ]);
   // Named for what each surface CONTAINS. Both of the first two are B20:
   // Discover is the launch feed, B20 is what you already hold. "Opportunities"
   // described the shape of a list and "Portfolio" the generic category, and
   // neither told a user which flow they were in — the compact bar had already
   // said "B20" for the second one since it was built.
-  assert.deepEqual(tabs.map((route) => route.label), ['Discover', 'B20', 'Routes', 'Proofs']);
+  // Activity (was Proofs) moved to the drawer: it is a viewer for records this
+  // deployment has never produced, and a bar of three working surfaces beats
+  // four where one is empty.
+  assert.deepEqual(tabs.map((route) => route.label), ['Discover', 'B20', 'Routes']);
 });
 
 test('the web tabs come from the shared table, not from a list typed here', () => {
@@ -89,7 +91,13 @@ test('T58: RouteHistoryPage is a pure read (no reconcile), the console gates rec
     'the history page must never trigger reconciliation',
   );
   assert.ok(historySource.includes('useRouteHistory'), 'history page must use the shared history hook');
-  assert.ok(historySource.includes('ExecutionProofPanel'), 'history page must show the proof panel on selection');
+  assert.ok(historySource.includes('ActivityProofCard'), 'history page must show the proof on selection');
+  // The page rendered outside ConsoleShell for two releases, so opening the
+  // tab removed the tab bar and left one back link as the only way out.
+  assert.ok(historySource.includes('ConsoleShell'), 'Activity must render inside the console shell');
+  // The paid ledger is the one thing this product has provably completed, and
+  // it was invisible while the page showed only unsigned route runs.
+  assert.ok(historySource.includes('useX402Ledger'), 'Activity must show what was actually paid');
 
   const source = consoleSource();
   assert.ok(source.includes('useBoundedProofReconciliation'), 'the console must use the bounded reconciliation hook');

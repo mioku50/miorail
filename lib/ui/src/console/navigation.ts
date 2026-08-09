@@ -15,7 +15,7 @@
 
 /** Every place a user can be. `settings` is deliberately last: it is where you
  * go to change something, not a surface you work in. */
-export const CONSOLE_SECTIONS_V1 = ['opportunities', 'portfolio', 'routes', 'proofs', 'extensions', 'settings'] as const;
+export const CONSOLE_SECTIONS_V1 = ['opportunities', 'portfolio', 'routes', 'activity', 'extensions', 'settings'] as const;
 
 export type ConsoleSectionV1 = (typeof CONSOLE_SECTIONS_V1)[number];
 
@@ -73,12 +73,17 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
     path: '/routes',
     blurb: 'State a goal and compare the ways to reach it.',
   },
-  proofs: {
-    id: 'proofs',
-    label: 'Proofs',
-    compactLabel: 'Proofs',
+  activity: {
+    id: 'activity',
+    // Was "Proofs", which promised the one thing that only exists after a
+    // signature. Every route run in production sits at `ready` and every proof
+    // table is empty, so the tab was named for its rarest row. This surface is
+    // a journal of runs and paid intelligence that BECOMES a proof journal —
+    // the same gap Portfolio/Discover had, and the same fix.
+    label: 'Activity',
+    compactLabel: 'Activity',
     path: '/plan/history',
-    blurb: 'What was signed, what it cost, and how it can be checked.',
+    blurb: 'Route runs, what each one reached, paid intelligence, and proofs once a route is signed.',
   },
   settings: {
     id: 'settings',
@@ -93,14 +98,18 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
  * The primary navigation, in order. Opportunities first because it is the only
  * surface that answers "what should I look at?" — Routes answers "how do I do
  * this thing I already decided on", which is a later question.
+ *
+ * Three, not four. Activity moved to the drawer beside Extensions: a tab bar
+ * of three working surfaces is more honest than four where one is a viewer for
+ * records this deployment has never produced, and the three that remain get
+ * ~130px each on a 390px screen instead of ~90px.
  */
-export const CONSOLE_PRIMARY_SECTIONS_V1 = ['opportunities', 'portfolio', 'routes', 'proofs'] as const;
+export const CONSOLE_PRIMARY_SECTIONS_V1 = ['opportunities', 'portfolio', 'routes'] as const;
 
-/** T70 §3 — the mobile drawer is exactly these five and nothing else. */
-// Extensions sits in the drawer, not the tab bar. The compact bar gives each
-// of four tabs about 90px at 390px wide, and a fifth would push every label
-// into an ellipsis to make room for the surface used least often.
-export const CONSOLE_DRAWER_SECTIONS_V1 = [...CONSOLE_PRIMARY_SECTIONS_V1, 'extensions', 'settings'] as const;
+/** T70 §3 — the mobile drawer is exactly these six and nothing else. */
+// Activity and Extensions sit in the drawer rather than the tab bar. Neither
+// is where work starts; both are places you go to look something up.
+export const CONSOLE_DRAWER_SECTIONS_V1 = [...CONSOLE_PRIMARY_SECTIONS_V1, 'activity', 'extensions', 'settings'] as const;
 
 export function consoleSectionLabelV1(section: ConsoleSectionV1): string {
   return CONSOLE_SECTION_TABLE_V1[section].label;

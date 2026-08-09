@@ -30,7 +30,8 @@ import {
   usdcToAtomicV1,
   type ExitProfileV1,
   OpportunitiesScreen,
-  RouteHistoryList,
+  ActivityRunsCard,
+  ActivitySpendCard,
   consoleHomeSectionV1,
   consoleNavModelV1,
   opportunityCardViewV1,
@@ -121,6 +122,7 @@ import {
   useBaseMcpToolsProbe,
   usePortfolio,
   useRouteHistory,
+  useX402Ledger,
   useSimulateWithBudget,
   useStatus,
   type NftProofResponseV1,
@@ -251,6 +253,10 @@ export function MiniConsole() {
     },
   });
   const history = useRouteHistory({ limit: 5 });
+  // The paid ledger, only while Activity is open: it is the one thing this
+  // product has provably completed, and it was invisible on a tab that showed
+  // route runs which never reached a signature.
+  const ledger = useX402Ledger({ enabled: section === "activity" });
   const market = useMarketSnapshot();
   const portfolio = usePortfolio(address);
 
@@ -1752,19 +1758,32 @@ export function MiniConsole() {
         </div>
       </>
     );
-  } else if (section === "proofs") {
+  } else if (section === "activity") {
     sectionContent = (
-      <div className="panel">
-        <div className="ph">
-          <h3>Route proofs</h3>
-          <span className="rt">
-            <span className="sub mono">{historyItems.length}</span>
-          </span>
-        </div>
-        <div className="pb">
-          <RouteHistoryList items={historyItems} nextCursor={null} />
-        </div>
-      </div>
+      <>
+        <ActivitySpendCard
+          loading={ledger.isPending}
+          entries={ledger.data?.entries ?? []}
+          summary={ledger.data?.summary ?? null}
+          unavailableReason={
+            ledger.error
+              ? "The payment ledger could not be read. This says nothing about what was paid."
+              : null
+          }
+        />
+        <ActivityRunsCard
+          loading={history.isPending}
+          runs={historyItems}
+          selectedRunId={null}
+          onSelect={() => undefined}
+          hasMore={false}
+          unavailableReason={
+            history.isError
+              ? "Route history could not be read on this server. This says nothing about what you have run."
+              : null
+          }
+        />
+      </>
     );
   }
 

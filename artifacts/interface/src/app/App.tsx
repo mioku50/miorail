@@ -157,12 +157,13 @@ export function App() {
         {/* The old B20 path. Bookmarked by anyone who used the tab. */}
         <Route path="/b20">{() => <Redirect to="/portfolio" replace />}</Route>
 
-        {/* Proofs — the console's third entry. */}
+        {/* Activity — route runs, paid intelligence, and proofs once a route
+            is signed. No longer wrapped in DeepLink: it renders its own
+            ConsoleShell, so opening it from the drawer keeps the navigation
+            instead of stranding the reader on a page with one back link. */}
         <Route path="/plan/history">
           <RequireSession>
-            <DeepLink>
-              <RouteHistoryPage />
-            </DeepLink>
+            <RouteHistoryPage />
           </RequireSession>
         </Route>
 
