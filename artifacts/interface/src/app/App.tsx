@@ -10,6 +10,7 @@ import { StreamPage } from '../features/stream/StreamPage';
 import { ActionsBuilder } from '../features/inbox/ActionsBuilder';
 import { HistoryPage } from '../features/history/HistoryPage';
 import { BaseMcpOAuthBridge } from './BaseMcpOAuthBridge';
+import { ExtensionsPage } from '../features/extensions/ExtensionsPage';
 import { RequireSession } from './RequireSession';
 import { RouteHistoryPage } from '../features/plan/RouteHistoryPage';
 import { RouteIntelligenceConsole } from '../features/console/RouteIntelligenceConsole';
@@ -93,6 +94,14 @@ export function App() {
         <Route path="/portfolio">
           <RequireSession>
             <B20WatchPage />
+          </RequireSession>
+        </Route>
+
+        {/* Extensions — the Base MCP plugin catalogue. Read and classify; the
+            approval of any write tool happens in Base Account, never here. */}
+        <Route path="/extensions">
+          <RequireSession>
+            <ExtensionsPage />
           </RequireSession>
         </Route>
 

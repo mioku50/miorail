@@ -155,13 +155,17 @@ describe('§9.2 — an unconfigured pipeline is never an empty feed', () => {
 describe('§9.5/§9.6 — the drawer is navigation, not a control panel', () => {
   const shell = read('../src/console/ConsoleShell.tsx');
 
-  test('the drawer carries exactly five sections', () => {
-    assert.equal(CONSOLE_DRAWER_SECTIONS_V1.length, 5);
+  test('the drawer carries the four tabs plus Extensions and Settings', () => {
+    // Extensions is here and NOT in the tab bar. Four tabs get about 90px each
+    // at 390px wide; a fifth would ellipsis every label to make room for the
+    // surface reached least often.
+    assert.equal(CONSOLE_DRAWER_SECTIONS_V1.length, 6);
     assert.deepEqual([...CONSOLE_DRAWER_SECTIONS_V1], [
       'opportunities',
       'portfolio',
       'routes',
       'proofs',
+      'extensions',
       'settings',
     ]);
   });

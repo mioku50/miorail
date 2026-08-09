@@ -15,7 +15,7 @@
 
 /** Every place a user can be. `settings` is deliberately last: it is where you
  * go to change something, not a surface you work in. */
-export const CONSOLE_SECTIONS_V1 = ['opportunities', 'portfolio', 'routes', 'proofs', 'settings'] as const;
+export const CONSOLE_SECTIONS_V1 = ['opportunities', 'portfolio', 'routes', 'proofs', 'extensions', 'settings'] as const;
 
 export type ConsoleSectionV1 = (typeof CONSOLE_SECTIONS_V1)[number];
 
@@ -59,6 +59,13 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
     path: '/portfolio',
     blurb: 'The B20 tokens you hold, what their controls have done, and your wallet balances.',
   },
+  extensions: {
+    id: 'extensions',
+    label: 'Extensions',
+    compactLabel: 'Extensions',
+    path: '/extensions',
+    blurb: 'Base MCP plugins, what each one is allowed to do, and what Miorail will not run.',
+  },
   routes: {
     id: 'routes',
     label: 'Routes',
@@ -90,7 +97,10 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
 export const CONSOLE_PRIMARY_SECTIONS_V1 = ['opportunities', 'portfolio', 'routes', 'proofs'] as const;
 
 /** T70 §3 — the mobile drawer is exactly these five and nothing else. */
-export const CONSOLE_DRAWER_SECTIONS_V1 = [...CONSOLE_PRIMARY_SECTIONS_V1, 'settings'] as const;
+// Extensions sits in the drawer, not the tab bar. The compact bar gives each
+// of four tabs about 90px at 390px wide, and a fifth would push every label
+// into an ellipsis to make room for the surface used least often.
+export const CONSOLE_DRAWER_SECTIONS_V1 = [...CONSOLE_PRIMARY_SECTIONS_V1, 'extensions', 'settings'] as const;
 
 export function consoleSectionLabelV1(section: ConsoleSectionV1): string {
   return CONSOLE_SECTION_TABLE_V1[section].label;
