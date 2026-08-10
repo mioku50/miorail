@@ -252,6 +252,118 @@ export function describeB20ObservationRepositoryV1(
     });
   });
 
+  describe(`${name}: a settled verdict earns a longer silence`, () => {
+    // Production, 2026-08-10: 750 tokens, 72 observations each in 24 hours,
+    // `count(distinct state) = 1`. 36,453 of them re-confirmed `no_entry_route`
+    // on 541 tokens. A flat 20-minute interval spent the whole RPC budget
+    // re-learning nothing, and starved the provisional tokens the rail exists
+    // for. These tests pin the shape of the fix, not the burn.
+    const HOUR = 3_600_000;
+    const at = (ms: number) => new Date(Date.parse(T0) + ms).toISOString();
+
+    async function measured(
+      repository: B20ObservationHarnessV1['repository'],
+      entries: { atMs: number; state: string; reasonCode: string }[],
+    ): Promise<void> {
+      let block = 49_500_000;
+      for (const entry of entries) {
+        block += 1;
+        await repository.insertObservation(observationFixtureV1({
+          state: entry.state as B20OpportunityObservationV1['state'],
+          reasonCode: entry.reasonCode as B20OpportunityObservationV1['reasonCode'],
+          // `no_entry_route` with a found entry route would be an observation
+          // the production path could never produce.
+          entryRouteFound: entry.reasonCode !== 'no_entry_route',
+          exitRouteFound: entry.reasonCode !== 'no_entry_route' && entry.reasonCode !== 'no_exit_route',
+          observationBlockNumber: String(block),
+          measuredAt: at(entry.atMs),
+          // Must follow `measuredAt`; the fixture default is pinned to T0.
+          staleAfter: at(entry.atMs + 30 * 60_000),
+        }));
+      }
+    }
+
+    const due = (repository: B20ObservationHarnessV1['repository'], nowMs: number) =>
+      repository.selectMeasurableLaunches({
+        limit: 10,
+        maxLaunchAgeMs: 72 * HOUR,
+        minReMeasureIntervalMs: 20 * 60_000,
+        now: at(nowMs),
+      });
+
+    test('a route-existence rejection waits hours, not minutes', async () => {
+      const { repository } = await seeded();
+      await measured(repository, [{ atMs: 0, state: 'rejected', reasonCode: 'no_entry_route' }]);
+      assert.equal((await due(repository, HOUR)).length, 0, 'an hour is not long enough');
+      assert.equal((await due(repository, 5 * HOUR)).length, 0);
+      assert.equal((await due(repository, 7 * HOUR)).length, 1, 'six hours is');
+    });
+
+    test('the same verdict three times running earns a day', async () => {
+      const { repository } = await seeded();
+      await measured(repository, [
+        { atMs: 0, state: 'rejected', reasonCode: 'no_entry_route' },
+        { atMs: 6 * HOUR, state: 'rejected', reasonCode: 'no_entry_route' },
+        { atMs: 12 * HOUR, state: 'rejected', reasonCode: 'no_entry_route' },
+      ]);
+      assert.equal((await due(repository, 19 * HOUR)).length, 0, 'six hours no longer suffices');
+      assert.equal((await due(repository, 37 * HOUR)).length, 1);
+    });
+
+    test('the repeat count is consecutive — a different answer resets it', async () => {
+      // Otherwise a token that recovered and then failed again would inherit
+      // the silence it earned before recovering.
+      const { repository } = await seeded();
+      await measured(repository, [
+        { atMs: 0, state: 'rejected', reasonCode: 'no_entry_route' },
+        { atMs: 6 * HOUR, state: 'rejected', reasonCode: 'no_entry_route' },
+        { atMs: 12 * HOUR, state: 'provisional', reasonCode: 'quoted_pre_entry' },
+        { atMs: 13 * HOUR, state: 'rejected', reasonCode: 'no_entry_route' },
+      ]);
+      assert.equal((await due(repository, 20 * HOUR)).length, 1, 'back to six hours, not a day');
+    });
+
+    test('a rejection about price waits an hour, because price moves', async () => {
+      const { repository } = await seeded();
+      await measured(repository, [
+        { atMs: 0, state: 'rejected', reasonCode: 'round_trip_above_tolerance' },
+        { atMs: HOUR, state: 'rejected', reasonCode: 'round_trip_above_tolerance' },
+        { atMs: 2 * HOUR, state: 'rejected', reasonCode: 'round_trip_above_tolerance' },
+        { atMs: 3 * HOUR, state: 'rejected', reasonCode: 'round_trip_above_tolerance' },
+      ]);
+      // Four in a row, and it still gets an hour: repetition settles a question
+      // about whether a route exists, not one about what it costs today.
+      assert.equal((await due(repository, 3 * HOUR + 30 * 60_000)).length, 0);
+      assert.equal((await due(repository, 4 * HOUR + 60_000)).length, 1);
+    });
+
+    test('an unreadable control is retried soon — that failure may be ours', async () => {
+      // The recurring defect this rail is built against. `controls_unread`
+      // carries `unmeasured`, not `rejected`, precisely because it describes
+      // our own read failing rather than the token — and the answer to a read
+      // that did not complete is to read again, not to wait a day.
+      const { repository } = await seeded();
+      await measured(repository, [
+        { atMs: 0, state: 'unmeasured', reasonCode: 'controls_unread' },
+        { atMs: 25 * 60_000, state: 'unmeasured', reasonCode: 'controls_unread' },
+        { atMs: 50 * 60_000, state: 'unmeasured', reasonCode: 'controls_unread' },
+        { atMs: 75 * 60_000, state: 'unmeasured', reasonCode: 'controls_unread' },
+      ]);
+      assert.equal((await due(repository, 100 * 60_000)).length, 1, 'still the base interval');
+    });
+
+    test('a provisional token keeps the short interval it was built for', async () => {
+      const { repository } = await seeded();
+      await measured(repository, [
+        { atMs: 0, state: 'provisional', reasonCode: 'quoted_pre_entry' },
+        { atMs: 25 * 60_000, state: 'provisional', reasonCode: 'quoted_pre_entry' },
+        { atMs: 50 * 60_000, state: 'provisional', reasonCode: 'quoted_pre_entry' },
+        { atMs: 75 * 60_000, state: 'provisional', reasonCode: 'quoted_pre_entry' },
+      ]);
+      assert.equal((await due(repository, 100 * 60_000)).length, 1);
+    });
+  });
+
   describe(`${name}: one worker measures at a time`, () => {
     test('a second worker cannot take a held lease', async () => {
       const { repository } = await createHarness();

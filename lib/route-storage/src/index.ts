@@ -28,6 +28,7 @@ export * from './b20Discover.js';
 export * from './b20DiscoverMemory.js';
 export * from './b20DiscoverDatabase.js';
 export * from './b20Observations.js';
+export * from './b20MeasurementBackoff.js';
 export * from './b20ObservationsMemory.js';
 export * from './b20ObservationsDatabase.js';
 export * from './submissionAttempts.js';

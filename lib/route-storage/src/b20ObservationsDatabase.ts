@@ -12,6 +12,11 @@ import {
   type B20ObservationRepositoryV1,
   type B20OpportunityObservationV1,
 } from './b20Observations.js';
+import {
+  B20_MEASUREMENT_BACKOFF_V1,
+  B20_REPRICEABLE_REJECTIONS_V1,
+  B20_ROUTE_EXISTENCE_REJECTIONS_V1,
+} from './b20MeasurementBackoff.js';
 import type { SqlTemplateExecutor } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -127,7 +132,14 @@ export function createDatabaseB20ObservationRepository(
     async selectMeasurableLaunches(input) {
       const now = new Date(input.now).toISOString();
       const oldest = new Date(Date.parse(input.now) - input.maxLaunchAgeMs).toISOString();
-      const freshEnough = new Date(Date.parse(input.now) - input.minReMeasureIntervalMs).toISOString();
+      // One cutoff per backoff class rather than one for everything. The class
+      // is chosen in SQL because the choice depends on `repeats`, which only
+      // the database can count — but the reason lists and the durations come
+      // from the shared policy, so this query and the in-memory repository
+      // cannot drift apart on what a rejection means.
+      const backoff = { ...B20_MEASUREMENT_BACKOFF_V1, baseMs: input.minReMeasureIntervalMs };
+      const cutoff = (ms: number) => new Date(Date.parse(input.now) - ms).toISOString();
+      const baseCutoff = cutoff(backoff.baseMs);
       // `canonical` is in the WHERE clause, not filtered afterwards: a launch
       // the chain took back is not a token anybody should be shown a
       // measurement of, and a filter applied later is a filter that can be
@@ -137,15 +149,51 @@ export function createDatabaseB20ObservationRepository(
                o.last_measured_at
         FROM b20_launches l
         LEFT JOIN LATERAL (
-          SELECT max(measured_at) AS last_measured_at
-          FROM b20_opportunity_observations
-          WHERE launch_id = l.id
+          SELECT last.measured_at AS last_measured_at,
+                 last.state       AS last_state,
+                 last.reason_code AS last_reason_code,
+                 -- Consecutive, not total: everything newer than the most
+                 -- recent observation that said something different. A token
+                 -- that flipped back to provisional and then rejected again
+                 -- starts its count over, which is the point.
+                 (
+                   SELECT count(*)
+                   FROM b20_opportunity_observations r
+                   WHERE r.launch_id = l.id
+                     AND r.measured_at > COALESCE((
+                       SELECT max(x.measured_at)
+                       FROM b20_opportunity_observations x
+                       WHERE x.launch_id = l.id
+                         AND (x.state IS DISTINCT FROM last.state
+                              OR x.reason_code IS DISTINCT FROM last.reason_code)
+                     ), '-infinity'::timestamptz)
+                 ) AS repeats
+          FROM b20_opportunity_observations last
+          WHERE last.launch_id = l.id
+          ORDER BY last.measured_at DESC, last.id DESC
+          LIMIT 1
         ) o ON true
         WHERE l.canonical
           AND l.chain_id = 8453
           AND l.detected_at >= ${oldest}::timestamptz
           AND l.detected_at <= ${now}::timestamptz
-          AND (o.last_measured_at IS NULL OR o.last_measured_at < ${freshEnough}::timestamptz)
+          AND (
+            o.last_measured_at IS NULL
+            OR o.last_measured_at < (
+              CASE
+                WHEN o.last_state <> 'rejected' THEN ${baseCutoff}::timestamptz
+                WHEN o.last_reason_code = ANY(${[...B20_REPRICEABLE_REJECTIONS_V1]}::text[])
+                  THEN ${cutoff(backoff.repriceableMs)}::timestamptz
+                WHEN o.last_reason_code = ANY(${[...B20_ROUTE_EXISTENCE_REJECTIONS_V1]}::text[])
+                  THEN CASE
+                         WHEN o.repeats >= ${backoff.settledAfterRepeats}
+                           THEN ${cutoff(backoff.settledMs)}::timestamptz
+                         ELSE ${cutoff(backoff.settlingMs)}::timestamptz
+                       END
+                ELSE ${baseCutoff}::timestamptz
+              END
+            )
+          )
         ORDER BY l.detected_at ASC, l.id ASC
         LIMIT ${Math.max(1, Math.min(500, input.limit))}`;
       return rows.map((row): B20MeasurableLaunchV1 => {

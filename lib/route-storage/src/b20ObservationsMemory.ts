@@ -16,6 +16,7 @@ import {
   B20_MEASURE_RUN_WINDOW_MS_V1,
   type B20PipelineCountsV1,
 } from './b20Observations.js';
+import { B20_MEASUREMENT_BACKOFF_V1, b20ReMeasureIntervalMsV1 } from './b20MeasurementBackoff.js';
 import type { InMemoryB20DiscoverRepositoryV1 } from './b20DiscoverMemory.js';
 
 /**
@@ -63,13 +64,29 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
     for (const launch of canonical) {
       const detected = Date.parse(launch.detectedAt);
       if (now - detected > input.maxLaunchAgeMs) continue;
-      const observations = [...this.observations.values()].filter((row) => row.launchId === launch.id);
-      const lastMeasuredAt = observations.length
-        ? observations
-            .map((row) => row.measuredAt)
-            .sort((left, right) => Date.parse(right) - Date.parse(left))[0]!
-        : null;
-      if (lastMeasuredAt && now - Date.parse(lastMeasuredAt) < input.minReMeasureIntervalMs) continue;
+      // Newest first, so [0] is the observation the backoff is decided on and
+      // the run of matching rows after it is the consecutive repeat count.
+      const observations = [...this.observations.values()]
+        .filter((row) => row.launchId === launch.id)
+        .sort((left, right) => Date.parse(right.measuredAt) - Date.parse(left.measuredAt));
+      const latest = observations[0] ?? null;
+      const lastMeasuredAt = latest?.measuredAt ?? null;
+      if (latest && lastMeasuredAt) {
+        // The same policy the Postgres query applies, from the same module.
+        // These two disagreeing is how three T65 bugs reached production.
+        let repeats = 0;
+        for (const row of observations) {
+          if (row.state !== latest.state || (row.reasonCode ?? null) !== (latest.reasonCode ?? null)) break;
+          repeats += 1;
+        }
+        const dueAfterMs = b20ReMeasureIntervalMsV1({
+          state: latest.state,
+          reasonCode: latest.reasonCode ?? null,
+          repeats,
+          backoff: { ...B20_MEASUREMENT_BACKOFF_V1, baseMs: input.minReMeasureIntervalMs },
+        });
+        if (now - Date.parse(lastMeasuredAt) < dueAfterMs) continue;
+      }
       rows.push({
         launchId: launch.id,
         tokenAddress: launch.tokenAddress,
