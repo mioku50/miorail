@@ -221,6 +221,10 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
         canonical: launch.canonical,
       },
       observation: this.latestFor(launch.id, versions),
+      // The in-memory feed has no launch-buyers store behind it, and null is
+      // the honest value: nobody measured that window here. It is NOT "nobody
+      // bought", which would be a row with a zero count.
+      launchBuyers: null,
     };
   }
 

@@ -348,6 +348,8 @@ export function createDatabaseB20ObservationRepository(
         SELECT
           l.id AS launch_id, l.token_address, l.name, l.symbol, l.variant, l.decimals,
           l.block_number AS launch_block, l.canonical,
+          lb.buyer_count, lb.top_buyer_share_bps, lb.top_three_share_bps,
+          lb.search_from_block AS buyers_from_block, lb.search_to_block AS buyers_to_block,
           to_jsonb(o.*) || jsonb_build_object(
             'reference_position_atomic', o.reference_position_atomic::text,
             'entry_output_atomic', o.entry_output_atomic::text,
@@ -388,6 +390,10 @@ export function createDatabaseB20ObservationRepository(
           ))) ASC, prev.id ASC
           LIMIT 1
         ) b ON true
+        -- Launch-window buying, when it has been measured. LEFT because it is
+        -- context about a launch, not part of a measurement: a token nobody
+        -- has looked at yet must still appear on the feed.
+        LEFT JOIN b20_launch_buyers lb ON lb.token_address = l.token_address
         WHERE l.canonical
           AND l.chain_id = 8453
           AND l.detected_at >= ${oldest}::timestamptz
@@ -628,5 +634,17 @@ function feedRowV1(row: Record<string, unknown>): B20FeedRowV1 {
       canonical: Boolean(row.launch_canonical),
     },
     observation: row.state ? rowToObservationV1(row) : null,
+    // Null when nobody has measured the window yet — which is NOT the same as
+    // "nobody bought". A measured-and-empty window stores a row with a zero
+    // count, and only that row means nobody bought.
+    launchBuyers: row.buyer_count === null || row.buyer_count === undefined
+      ? null
+      : {
+          buyerCount: Number(row.buyer_count),
+          topBuyerShareBps: numberOrNullV1(row.top_buyer_share_bps),
+          topThreeShareBps: numberOrNullV1(row.top_three_share_bps),
+          fromBlock: String(row.buyers_from_block),
+          toBlock: String(row.buyers_to_block),
+        },
   };
 }

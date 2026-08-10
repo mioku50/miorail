@@ -58,6 +58,13 @@ export interface OpportunityCardWireV1 {
     } | null;
     freshness: 'fresh' | 'stale';
   } | null;
+  /** Launch-window buying, measured once the window closed. Absent when nobody
+   * measured it — which every launch whose window is still open is. */
+  launchBuyers?: {
+    buyerCount: number;
+    topBuyerShareBps: number | null;
+    topThreeShareBps: number | null;
+  } | null;
   canCheckProfile: boolean;
   /** T69-C.1 §2 — the server decided this from the rejection reason. The view
    * renders it; it does not re-derive it, because two implementations of "may
@@ -229,7 +236,40 @@ export function opportunityCardViewV1(card: OpportunityCardWireV1): OpportunityC
     notices,
     notMeasured: card.notMeasured,
     ...hookLabelsV1(card.observation?.poolHook ?? null),
+    ...buyerLabelsV1(card.launchBuyers ?? null),
   };
+}
+
+/**
+ * Launch-window buying, in words.
+ *
+ * Three states, and keeping them apart is the whole job. Null means NOBODY
+ * MEASURED — a launch whose ten-thousand-block window is still open has no
+ * answer yet, and rendering that as "0 buyers" would be a claim nobody made.
+ * A measured zero means nobody bought, which is the common true answer and is
+ * said plainly. Anything else carries the concentration, because one wallet
+ * holding everything and seventy-six wallets sharing it are different exits.
+ *
+ * Never "snipers": intent is not on chain. And never a holdings claim — this
+ * is gross buying in a window, and a buyer may have sold it all since.
+ */
+export function buyerLabelsV1(
+  buyers: OpportunityCardWireV1['launchBuyers'],
+): { buyersLabel: string | null; buyersNote: string | null } {
+  if (!buyers) return { buyersLabel: null, buyersNote: null };
+  if (buyers.buyerCount === 0) {
+    return {
+      buyersLabel: 'Nobody',
+      buyersNote: 'Nothing left the pool in the launch window. There is no buying to concentrate.',
+    };
+  }
+  const wallets = buyers.buyerCount === 1 ? '1 wallet' : `${buyers.buyerCount} wallets`;
+  const top = buyers.topBuyerShareBps === null ? null : bpsLabelV1(buyers.topBuyerShareBps);
+  const label = top ? `${wallets} · largest ${top}` : wallets;
+  const note = buyers.buyerCount === 1
+    ? 'One wallet took everything that left the pool in the launch window, so an exit depends on that wallet not selling first. Bought, not held — it may have sold since.'
+    : `Largest share of launch-window buying${top ? ` is ${top}` : ''}. Bought, not held: a wallet counted here may have sold it all since.`;
+  return { buyersLabel: label, buyersNote: note };
 }
 
 /**

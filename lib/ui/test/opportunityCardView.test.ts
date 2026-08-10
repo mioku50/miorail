@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
-import { hookLabelsV1 } from '../src/console/opportunityCardView';
+import { buyerLabelsV1, hookLabelsV1 } from '../src/console/opportunityCardView';
 
 // ---------------------------------------------------------------------------
 // The pool hook is the one part of a B20 venue that can be verified by
@@ -83,5 +83,63 @@ describe('the pool hook, in words', () => {
   test('the zero pool fee is why the hook matters, and the sentence says it', () => {
     const { hookNote } = hookLabelsV1({ standing: 'standard', permissions: FULL });
     assert.match(hookNote!, /charges no fee of its own/);
+  });
+});
+
+describe('launch-window buying, in words', () => {
+  test('an unmeasured window says nothing — never "0 buyers"', () => {
+    // A launch whose 10,000-block window is still open has no answer yet.
+    // Rendering that as zero would be a claim nobody made.
+    assert.deepEqual(buyerLabelsV1(null), { buyersLabel: null, buyersNote: null });
+    assert.deepEqual(buyerLabelsV1(undefined), { buyersLabel: null, buyersNote: null });
+  });
+
+  test('a measured zero says nobody bought, plainly', () => {
+    // The common true answer: eight of ten sampled launches.
+    const { buyersLabel, buyersNote } = buyerLabelsV1({
+      buyerCount: 0, topBuyerShareBps: null, topThreeShareBps: null,
+    });
+    assert.equal(buyersLabel, 'Nobody');
+    assert.match(buyersNote!, /no buying to concentrate/);
+  });
+
+  test('one wallet holding everything is called out as an exit dependency', () => {
+    const { buyersLabel, buyersNote } = buyerLabelsV1({
+      buyerCount: 1, topBuyerShareBps: 10_000, topThreeShareBps: 10_000,
+    });
+    assert.match(buyersLabel!, /1 wallet/);
+    assert.match(buyersNote!, /depends on that wallet not selling first/);
+  });
+
+  test('many buyers carry the largest share, not just a count', () => {
+    const { buyersLabel } = buyerLabelsV1({
+      buyerCount: 76, topBuyerShareBps: 1482, topThreeShareBps: 2973,
+    });
+    assert.match(buyersLabel!, /76 wallets/);
+    assert.match(buyersLabel!, /largest/);
+  });
+
+  test('it says bought, never held', () => {
+    // Gross buying in a window. A wallet counted here may have sold it all
+    // since, and calling it holdings would be unsupported by a Transfer log.
+    for (const count of [1, 76]) {
+      const { buyersNote } = buyerLabelsV1({
+        buyerCount: count, topBuyerShareBps: 5_000, topThreeShareBps: 7_000,
+      });
+      assert.match(buyersNote!, /Bought, not held/);
+    }
+  });
+
+  test('it never says "sniper" — intent is not on chain', () => {
+    for (const buyers of [
+      { buyerCount: 0, topBuyerShareBps: null, topThreeShareBps: null },
+      { buyerCount: 1, topBuyerShareBps: 10_000, topThreeShareBps: 10_000 },
+      { buyerCount: 76, topBuyerShareBps: 1482, topThreeShareBps: 2973 },
+    ]) {
+      const text = JSON.stringify(buyerLabelsV1(buyers)).toLowerCase();
+      for (const forbidden of ['sniper', 'bot', 'insider', 'holds', 'holder']) {
+        assert.ok(!text.includes(forbidden), `must not say "${forbidden}": ${text}`);
+      }
+    }
   });
 });

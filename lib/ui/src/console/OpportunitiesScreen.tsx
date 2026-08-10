@@ -85,6 +85,11 @@ export interface OpportunityCardViewV1 {
   hookLabel: string | null;
   /** The sentence under it, when the permissions are worth stating. */
   hookNote: string | null;
+  /** Who bought out of the pool in the launch's own window, in words. Null
+   * when nobody measured that window — never rendered as "0 buyers", which
+   * would be a claim nobody made. */
+  buyersLabel: string | null;
+  buyersNote: string | null;
   /** Dimensions this product did not measure and will not imply. */
   notMeasured: readonly string[];
 }
@@ -189,6 +194,17 @@ function OpportunityCard({
         </div>
       )}
       {card.hookNote && <p className="lnote">{card.hookNote}</p>}
+
+      {/* Concentration of launch-window buying. The exit-first reading: if one
+          wallet took everything that left the pool, an exit depends on that
+          wallet not selling first. */}
+      {card.buyersLabel && (
+        <div className="kv">
+          <span className="k">Bought at launch</span>
+          <span className="v">{card.buyersLabel}</span>
+        </div>
+      )}
+      {card.buyersNote && <p className="lnote">{card.buyersNote}</p>}
 
       {card.notMeasured.length > 0 && (
         <p className="lnote">Not measured: {card.notMeasured.join(', ')}.</p>

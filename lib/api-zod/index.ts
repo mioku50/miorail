@@ -3373,6 +3373,15 @@ const B20CardObservationV1Schema = z
           .nullable(),
       })
       .nullable(),
+    /** Launch-window buying. Null means nobody measured that window; a zero
+     * count with null shares means nobody bought. Different facts. */
+    launchBuyers: z
+      .object({
+        buyerCount: z.number().int().min(0),
+        topBuyerShareBps: z.number().int().min(0).max(10_000).nullable(),
+        topThreeShareBps: z.number().int().min(0).max(10_000).nullable(),
+      })
+      .nullable(),
     optimisticReturnAtomic: z.string().regex(/^\d+$/).nullable(),
     optimisticRoundTripBps: z.number().int().min(0).nullable(),
     routeCoverage: z.enum(['complete', 'partial']),

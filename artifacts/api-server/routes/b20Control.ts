@@ -456,6 +456,7 @@ export async function readDiscoverFeedV1(input: {
           canonical: row.launch.canonical,
         },
         observation: row.observation,
+        launchBuyers: row.launchBuyers,
         now,
       }),
     )

@@ -331,6 +331,19 @@ export interface B20FeedRowV1 {
   /** Null when this launch has never been measured. A real state, and not the
    * same as a measurement that found nothing. */
   observation: B20OpportunityObservationV1 | null;
+  /** Who bought out of the pool in the launch's own window.
+   *
+   * Null means nobody has measured that window yet — a launch whose window is
+   * still open has none, by design. It is NOT "nobody bought": that is a row
+   * with `buyerCount: 0`, and the shares are null there because a
+   * concentration among nobody is not a number. */
+  launchBuyers: {
+    buyerCount: number;
+    topBuyerShareBps: number | null;
+    topThreeShareBps: number | null;
+    fromBlock: string;
+    toBlock: string;
+  } | null;
 }
 
 /**

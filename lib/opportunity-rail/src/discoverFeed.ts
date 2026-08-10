@@ -299,6 +299,14 @@ export interface B20CardObservationV1 {
    * Permissions, never behaviour: a hook allowed to take a fee may take none.
    * The measured round trip stays the only evidence of what exiting costs. */
   poolHook: B20HookAssessmentV1 | null;
+  /** Buying in the launch's own window. Null when nobody has measured that
+   * window — which a launch whose window is still open never has. NOT the same
+   * as nobody buying: that is a measured row with a zero count. */
+  launchBuyers: {
+    buyerCount: number;
+    topBuyerShareBps: number | null;
+    topThreeShareBps: number | null;
+  } | null;
   optimisticReturnAtomic: string | null;
   optimisticRoundTripBps: number | null;
   routeCoverage: 'complete' | 'partial';
@@ -373,6 +381,14 @@ export const B20_STALE_NOTICE_V1 = 'Market observation expired.';
 export const B20_UNSTABLE_CAPACITY_NOTICE_V1 = 'Capacity was not monotonic across tested sizes.';
 
 export interface B20CardInputV1 {
+  /** Launch-window buying, when it has been measured. Optional and separate
+   * from `observation` because it is context about a launch rather than part
+   * of a measurement of it — it has its own window and its own freshness. */
+  launchBuyers?: {
+    buyerCount: number;
+    topBuyerShareBps: number | null;
+    topThreeShareBps: number | null;
+  } | null;
   launch: {
     tokenAddress: string;
     name: string;
@@ -629,6 +645,7 @@ export function b20OpportunityCardV1(input: B20CardInputV1): B20OpportunityCardV
       // keeping the interpretation in one tested function means a card cannot
       // drift from what the bits actually say.
       poolHook: source.poolHookAddress ? b20HookAssessmentV1(source.poolHookAddress) : null,
+      launchBuyers: input.launchBuyers ?? null,
       optimisticReturnAtomic: source.optimisticExitReturnAtomic,
       optimisticRoundTripBps: source.optimisticRoundTripBps,
       routeCoverage: source.routeCoverage,
