@@ -61,8 +61,9 @@ export type BaseMcpIndicatorTone = 'connected' | 'action' | 'muted';
 // T48a.1: compact status→label mapping for the sidebar Base MCP indicator.
 // Reuses `baseMcpConnectLabel`/`baseMcpNeedsAuth` rather than re-deriving
 // connect/reconnect wording, so the indicator and the existing Base MCP
-// surfaces (BaseMcpView, AgentStream, OpsRail) never disagree about whether
-// a reconnect is needed.
+// surfaces never disagree about whether a reconnect is needed. The three that
+// shared this in T48a — BaseMcpView, AgentStream, OpsRail — have all since
+// been retired into the Base MCP console; the rule outlived them.
 export function baseMcpStatusLabel(baseMcp?: any): {
   label: string;
   tone: BaseMcpIndicatorTone;

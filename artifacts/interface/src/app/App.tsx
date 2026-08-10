@@ -6,7 +6,6 @@ import { CHAIN_ENV } from '../lib/chain';
 import { CommandPalette } from '../shell/CommandPalette';
 import { Toaster } from '../shell/Toast';
 import { ActionsPage } from '../features/actions/ActionsPage';
-import { StreamPage } from '../features/stream/StreamPage';
 import { ActionsBuilder } from '../features/inbox/ActionsBuilder';
 import { HistoryPage } from '../features/history/HistoryPage';
 import { BaseMcpOAuthBridge } from './BaseMcpOAuthBridge';
@@ -184,13 +183,6 @@ export function App() {
             </RequireSession>
           )}
         </Route>
-        <Route path="/stream">
-          <RequireSession>
-            <DeepLink>
-              <StreamPage />
-            </DeepLink>
-          </RequireSession>
-        </Route>
         <Route path="/build">
           <DeepLink>
             <ActionsBuilder />
@@ -204,6 +196,13 @@ export function App() {
         <Route path="/inbox/:actionId">{(params) => <Redirect to={`/actions/${params.actionId}`} />}</Route>
 
         {/* Retired surfaces. Old bookmarks land on the flow instead of a 404. */}
+
+        {/* The mixed thread. Base MCP and our own providers answered from one
+            loop in one voice, which is the confusion the Base MCP console was
+            built to end — so the console is where it goes, not Routes. Nothing
+            linked here; it was reachable only by typing the URL, and the last
+            message anyone sent was 2026-07-13. */}
+        <Route path="/stream">{() => <Redirect to="/extensions" replace />}</Route>
         <Route path="/configure">{() => <Redirect to="/routes" replace />}</Route>
         <Route path="/fuel">{() => <Redirect to="/routes" replace />}</Route>
         <Route path="/autonomy">{() => <Redirect to="/routes" replace />}</Route>

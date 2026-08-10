@@ -209,8 +209,13 @@ chatRouter.post('/', async (req, res, next) => {
         includeMorphoReadOnly: true,
         includeUniswapQuote: true,
         includeMoonwell: true,
-        includeBaseMcpSwap: runtimeExecutionCapabilities.userConfirmedEnabled,
-        includeBaseMcpSend: runtimeExecutionCapabilities.userConfirmedEnabled,
+        // Base MCP `swap` and `send` used to be registered here whenever the
+        // deployment had user-confirmed execution on. That made this route a
+        // second way to reach a wallet — a free-form thread with no Route
+        // Card, no simulation and no blueprint hash, one environment variable
+        // away from being live. It was inert only because the flag is off,
+        // which is a configuration, not a design. Execution belongs to the
+        // Routes flow and its one submit path.
       },
     );
     res.once('finish', () => { void tools.close(); });

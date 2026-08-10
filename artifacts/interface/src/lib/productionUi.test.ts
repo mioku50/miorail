@@ -33,6 +33,17 @@ test('the retired cockpit surfaces are deleted, not merely unlinked', () => {
     '../features/autonomy/AutonomyCockpit.tsx',
     '../shell/TopBar.tsx',
     '../shell/TabBar.tsx',
+    // Agent Stream: Base MCP and our own providers answering from one loop in
+    // one voice. The Base MCP console exists because that voice could not say
+    // which guarantee it was handing you, so keeping the old thread alongside
+    // it would have preserved the exact confusion the split removed.
+    '../features/stream/AgentStream.tsx',
+    '../features/stream/StreamPage.tsx',
+    '../features/stream/AgentComposer.tsx',
+    '../features/stream/ChatMessage.tsx',
+    '../features/stream/ToolCallTrace.tsx',
+    '../features/stream/agentComposerState.ts',
+    '../features/stream/chatMessageState.ts',
   ]) {
     assert.equal(exists(relative), false, `${relative} must no longer exist`);
   }
@@ -77,10 +88,19 @@ test('ordinary user surfaces do not regress to vendor or transport jargon', () =
   }
 });
 
-test('Agent Stream exposes the Base MCP reconnect CTA outside diagnostics', () => {
-  const stream = source('../features/stream/AgentStream.tsx');
-  assert.match(stream, /baseMcpNeedsAuth\(statusData\?\.baseMcp\)/);
-  assert.match(stream, /<BaseMcpConnectButton/);
-  assert.match(stream, /returnTo="\/stream"/);
-  assert.match(stream, /baseMcpConnectLabel\(statusData\?\.baseMcp\)/);
+test('the Base MCP reconnect CTA lives outside diagnostics', () => {
+  // The guarantee outlived the surface that used to carry it. Agent Stream is
+  // gone — a Base MCP session that has expired must still be repairable from
+  // the page that noticed, not from a settings screen the reader has no reason
+  // to open.
+  const extensions = source('../features/extensions/ExtensionsPage.tsx');
+  assert.match(extensions, /<BaseMcpConnectButton/);
+  assert.match(extensions, /Reconnect Base Account/);
+  assert.match(extensions, /returnTo=\{consoleSectionPathV1\('extensions'\)\}/);
+
+  // And from the console card itself, which is where an expired session is
+  // actually reported.
+  const card = source('../../../../lib/ui/src/console/BaseMcpConsoleCard.tsx');
+  assert.match(card, /needs_reauth/);
+  assert.match(card, /Connect Base Account/);
 });

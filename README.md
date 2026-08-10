@@ -77,7 +77,7 @@ A bounded **Base Spend Permission** funds these calls. It does not grant Miorail
 This is the part that is not negotiable, and most of the codebase's comments exist to defend it.
 
 - Miorail never stores a user private key and never signs a raw transaction.
-- The server prepares calls; **only the client opens the wallet**, through the single `useSubmitApprovedBlueprint` path. There is no second execution path.
+- The server prepares calls; **only the client opens the wallet**, through the single `useSubmitApprovedBlueprint` path. There is no second execution path. No chat surface registers Base MCP's `swap` or `send`: a free-form thread that can reach a wallet without a Route Card, a simulation and a blueprint hash is that second path, whatever the execution flags say.
 - Approval happens in Base Account. A Base MCP write tool returns an approval URL the user completes outside Miorail — routing that through anything resembling our own submit path would create two paths with one unaudited.
 - Blueprint hashes are bound to what was reviewed. The client does not supply calldata, router, recipient, deadline or minimum output.
 - RPC URLs, API keys and provider credentials never reach evidence, hashes, logs or a rendered trace.
@@ -121,7 +121,6 @@ The repository is named `mioagent` and the namespace stays `@mioagent/*`. The pr
 Stated here because a README that lists only what works is the same failure mode the product is built to avoid.
 
 - **No route has completed in production.** Every route run is `ready`; one execution blueprint exists; every proof table — route, NFT, commerce, AI inference, spend permission — is empty. Activity states this per run rather than showing a status column.
-- **`/stream`** is the old mixed agent thread: Base MCP and partner providers in one loop. Off-navigation, not migrated to the split the Extensions console introduced.
 - **Wallet balances** in Base App depend on `heldTokens` for decimals; a token missing from that list renders without them.
 - Base MCP's x402 tools stay disabled on purpose. Miorail already has one x402 spend path (the B20 exit proof); a second one reachable from a chat surface is not a feature.
 
