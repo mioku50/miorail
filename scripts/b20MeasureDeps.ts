@@ -25,12 +25,14 @@ import {
   analyseExitV1,
   EXIT_PROBE_RUNGS_V1,
 } from '../artifacts/api-server/lib/exitAnalysis.js';
+import { createB20BuyerMeasurementV1 } from './b20BuyerStore.js';
 import {
   transferPolicyStateV1,
   type MeasurementDepsV1,
   type ObservationAnchorV1,
 } from './b20MeasureRun.js';
 import type { B20QuoteAlignmentV1 } from '@mioagent/opportunity-rail';
+import type { B20LaunchBuyersRepositoryV1 } from '@mioagent/route-storage';
 
 // ---------------------------------------------------------------------------
 // T73-LIVE §2 — the measurement pass's dependencies, in one place.
@@ -60,6 +62,10 @@ export interface B20MeasureDepsInputV1 {
    * no price feed is read here, and a converted figure would be a claim about
    * the ETH price at measurement time that nothing recorded. */
   nativePositionAtomic: string;
+  /** Launch-window buying, measured once per token. Optional for the same
+   * reason `poolStore` is: without it the worker measures routes exactly as
+   * before, it just never learns who bought. */
+  buyerRepository?: B20LaunchBuyersRepositoryV1;
   /** Where a resolved pool survives between passes. Optional: without it the
    * worker still measures, it just re-pays two `eth_getLogs` per token per
    * pass to re-learn a fact fixed at launch. */
@@ -267,12 +273,29 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
   // call this worker makes, roughly three times an `eth_call`, twice per
   // measurement because the token may be either side of the pair.
   const v4Pools = createB20PoolCacheV1(v4Logs, input.poolStore);
+  const buyerMeasurement = input.buyerRepository
+    ? createB20BuyerMeasurementV1({ repository: input.buyerRepository, getLogs: v4Logs })
+    : null;
 
   const deps: MeasurementDepsV1 = {
     // Only for an observation where the factory settled the token and no quote
     // was ever taken. Every measurement that does quote reports its own
     // alignment, decided by what the endpoint actually answered.
     quoteAlignment: 'latest_not_anchored',
+
+    // Built here rather than injected whole, so it shares `v4Logs` — the reader
+    // that already waits out a throttle. A second bare fetch would rediscover
+    // that problem on the most expensive call in the pass.
+    ...(input.buyerRepository
+      ? {
+          measureLaunchBuyers: (args: { tokenAddress: string; launchBlock: number; observedHead: number }) =>
+            buyerMeasurement!.ensureMeasured({
+              token: args.tokenAddress,
+              launchBlock: args.launchBlock,
+              observedHead: args.observedHead,
+            }),
+        }
+      : {}),
 
     async readAnchor(): Promise<ObservationAnchorV1 | null> {
       const anchor = await controlReader.readBlockAnchor();

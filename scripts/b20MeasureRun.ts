@@ -148,6 +148,14 @@ export interface ControlMeasurementV1 {
 export interface MeasurementDepsV1 {
   /** §4. Null when the anchor could not be read — and then NOTHING is stored. */
   readAnchor(): Promise<ObservationAnchorV1 | null>;
+  /** Who bought out of the pool in the launch's own window, measured once and
+   * cached. Optional: a worker without it still measures routes exactly as
+   * before. Its return value is unused here — the row is the point. */
+  measureLaunchBuyers?(input: {
+    tokenAddress: string;
+    launchBlock: number;
+    observedHead: number;
+  }): Promise<unknown>;
   readFactoryStatus(input: {
     tokenAddress: string;
     anchor: ObservationAnchorV1;
@@ -472,6 +480,25 @@ async function measureOneV1(context: {
         anchor,
       });
   const cheapFilter = cheapFilterResultV1({ factory, routes });
+
+  // §— launch-window buying, measured once per token and then cached forever.
+  //
+  // Deliberately AFTER the route search and never blocking it: this is context
+  // about a launch, not a measurement of it, and a failure here must not cost
+  // an observation. It costs one `eth_getLogs` on the first pass that finds
+  // the window closed, and nothing on every pass after.
+  if (deps.measureLaunchBuyers && !factorySettled) {
+    try {
+      await deps.measureLaunchBuyers({
+        tokenAddress: launch.tokenAddress,
+        launchBlock: Number(launch.blockNumber),
+        observedHead: Number(anchor.blockNumber),
+      });
+    } catch {
+      // Swallowed on purpose. The observation below is the product; this is a
+      // note in its margin.
+    }
+  }
 
   // --- §9 — the deep control read, ONLY after the economics survived. ------
   const controlMeasurement =

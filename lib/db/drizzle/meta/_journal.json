@@ -246,6 +246,13 @@
       "when": 1786464000000,
       "tag": "0034_b20_launch_pools",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1786550400000,
+      "tag": "0035_b20_launch_buyers",
+      "breakpoints": true
     }
   ]
 }

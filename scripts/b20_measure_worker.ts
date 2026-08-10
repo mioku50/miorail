@@ -3,6 +3,7 @@ import { hostname } from 'node:os';
 
 import { client, closeDb } from '@mioagent/db';
 import {
+  createDatabaseB20LaunchBuyersRepository,
   createDatabaseB20LaunchPoolRepository,
   createDatabaseB20ObservationRepository,
   type B20ObservationRepositoryV1,
@@ -67,6 +68,9 @@ async function main(): Promise<number> {
     // A pool is fixed at launch, so re-deriving it every pass spent two
     // `eth_getLogs` — the most expensive call here — to relearn the same fact.
     poolStore: createB20PoolStoreV1(createDatabaseB20LaunchPoolRepository(client)),
+    // One eth_getLogs per token, on the first pass that finds the launch's
+    // window closed, and nothing on every pass after.
+    buyerRepository: createDatabaseB20LaunchBuyersRepository(client),
   });
 
   let running = true;

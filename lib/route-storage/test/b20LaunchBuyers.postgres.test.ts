@@ -6,8 +6,8 @@ import postgres from 'postgres';
 
 import type { SqlTemplateExecutor } from '../src/types.js';
 
-import { createDatabaseB20LaunchPoolRepository } from '../src/b20LaunchPoolsDatabase.js';
-import { b20LaunchPoolContractV1 } from './b20LaunchPools.contract.js';
+import { createDatabaseB20LaunchBuyersRepository } from '../src/b20LaunchBuyersDatabase.js';
+import { b20LaunchBuyersContractV1 } from './b20LaunchBuyers.contract.js';
 
 // ---------------------------------------------------------------------------
 // The same contract the in-memory repository is held to, run against real
@@ -17,7 +17,7 @@ import { b20LaunchPoolContractV1 } from './b20LaunchPools.contract.js';
 // Runs only against a THROWAWAY database named by MIOAGENT_MIGRATION_TEST_URL:
 //
 //   MIOAGENT_MIGRATION_TEST_URL=postgres://postgres:x@127.0.0.1:55437/t \
-//     npx tsx --test lib/route-storage/test/b20LaunchPools.postgres.test.ts
+//     npx tsx --test lib/route-storage/test/b20LaunchBuyers.postgres.test.ts
 // ---------------------------------------------------------------------------
 
 const url = process.env.MIOAGENT_MIGRATION_TEST_URL?.trim();
@@ -35,8 +35,8 @@ function drizzleDir(): string {
 before(async () => {
   if (!throwaway) return;
   sql = postgres(url!, { max: 1, onnotice: () => {} });
-  await sql.unsafe('DROP TABLE IF EXISTS b20_launch_pools CASCADE');
-  const migration = await readFile(resolve(drizzleDir(), '0034_b20_launch_pools.sql'), 'utf8');
+  await sql.unsafe('DROP TABLE IF EXISTS b20_launch_buyers CASCADE');
+  const migration = await readFile(resolve(drizzleDir(), '0035_b20_launch_buyers.sql'), 'utf8');
   await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));
 });
 
@@ -45,12 +45,12 @@ after(async () => {
 });
 
 if (!throwaway) {
-  describe('postgres launch pool cache', () => {
+  describe('postgres launch buyers cache', () => {
     test('skipped: set MIOAGENT_MIGRATION_TEST_URL to a throwaway local database', () => {});
   });
 } else {
-  b20LaunchPoolContractV1('postgres', async () => {
-    await sql!.unsafe('TRUNCATE b20_launch_pools');
+  b20LaunchBuyersContractV1('postgres', async () => {
+    await sql!.unsafe('TRUNCATE b20_launch_buyers');
     // postgres-js's tagged template is structurally wider than the executor
     // this package accepts, so it is narrowed here exactly as the observation
     // suite narrows it — one seam, not a cast inside the repository.
@@ -59,6 +59,6 @@ if (!throwaway) {
         strings: TemplateStringsArray,
         ...values: unknown[]
       ) => Promise<Record<string, unknown>[]>)(strings, ...values);
-    return { repository: createDatabaseB20LaunchPoolRepository(executor) };
+    return { repository: createDatabaseB20LaunchBuyersRepository(executor) };
   });
 }
