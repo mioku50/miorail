@@ -13,5 +13,6 @@ export * from './aerodrome.js';
 export * from './uniswap-v4-pinned.js';
 export * from './uniswap-v4-pool.js';
 export * from './uniswap-v4-hooks.js';
+export * from './b20-launch-buyers.js';
 export * from './uniswap-v4-quoter.js';
 export * from './uniswap-v4-b20.js';
