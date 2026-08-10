@@ -45,6 +45,17 @@ export interface OpportunityCardWireV1 {
     transferPolicyNotice: string | null;
     quoteAlignmentNotice: string | null;
     preEntryNotice: string | null;
+    /** Decoded server-side from the hook's own address, so this screen never
+     * re-derives permission bits. Absent for a venue with no hooks. */
+    poolHook?: {
+      standing: 'standard' | 'non_standard' | 'no_hook' | 'unreadable';
+      permissions: {
+        hook: string;
+        mayChangeSwapAmounts: boolean;
+        mayInterceptSwaps: boolean;
+        mayGateLiquidity: boolean;
+      } | null;
+    } | null;
     freshness: 'fresh' | 'stale';
   } | null;
   canCheckProfile: boolean;
@@ -217,5 +228,40 @@ export function opportunityCardViewV1(card: OpportunityCardWireV1): OpportunityC
     actionReason: serverAction.reason,
     notices,
     notMeasured: card.notMeasured,
+    ...hookLabelsV1(card.observation?.poolHook ?? null),
   };
+}
+
+/**
+ * The hook, in words, or nothing.
+ *
+ * Two rules. It states PERMISSION — "may take a fee on every swap" — never
+ * behaviour, because the bits in a hook's address say what the PoolManager
+ * will call, not what the hook then does. And an unreadable hook says so
+ * rather than defaulting to "standard": 48 of 50 sampled launches use the same
+ * hook, so a silent default would be right often enough to be trusted and
+ * wrong exactly where it matters.
+ */
+export function hookLabelsV1(
+  hook: NonNullable<OpportunityCardWireV1['observation']>['poolHook'],
+): { hookLabel: string | null; hookNote: string | null } {
+  if (!hook) return { hookLabel: null, hookNote: null };
+  if (hook.standing === 'unreadable') {
+    return { hookLabel: 'Not readable', hookNote: 'The pool hook could not be decoded.' };
+  }
+  if (hook.standing === 'no_hook') {
+    return { hookLabel: 'None', hookNote: 'Nothing can intercept a swap in this pool.' };
+  }
+  const permissions = hook.permissions;
+  const label = hook.standing === 'standard' ? 'Standard launch hook' : 'Not the usual hook';
+  const may: string[] = [];
+  // Ordered by what an exit-first reader needs first: the cost of getting out
+  // before who may provide the liquidity.
+  if (permissions?.mayChangeSwapAmounts) may.push('change the amounts of every swap');
+  if (permissions?.mayInterceptSwaps) may.push('refuse a swap');
+  if (permissions?.mayGateLiquidity) may.push('gate who adds or removes liquidity');
+  const note = may.length > 0
+    ? `This pool charges no fee of its own, so the hook is what sets the cost of exiting. It may ${may.join(', ')}. What it actually does is not stated here — only the measured round trip is.`
+    : 'This hook claims none of the permissions that affect a swap.';
+  return { hookLabel: label, hookNote: note };
 }

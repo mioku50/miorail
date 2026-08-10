@@ -7,7 +7,7 @@ import {
   V4_NO_HOOK_V1,
   b20HookAssessmentV1,
   v4HookPermissionsV1,
-} from '../src/uniswap-v4-hooks.js';
+} from '../src/poolHook.js';
 
 // ---------------------------------------------------------------------------
 // Both addresses were read off Base mainnet on 2026-08-10 from the `Initialize`

@@ -8,6 +8,7 @@ import {
   type B20QuoteAlignmentV1,
   type B20TransferPolicyStateV1,
 } from './observation.js';
+import { b20HookAssessmentV1, type B20HookAssessmentV1 } from './poolHook.js';
 
 // ---------------------------------------------------------------------------
 // T69-C §1/§5/§6/§18 — what the Discover feed is allowed to show, and what an
@@ -290,6 +291,14 @@ export interface B20CardObservationV1 {
   exitRouteFound: boolean;
   entrySourceKey: string | null;
   exitSourceKey: string | null;
+  /** What the pool's Uniswap v4 hook is ALLOWED to do, decoded from the low 14
+   * bits of its own address. Null when the venue has no hooks or none was
+   * recorded — "not read" and "no hook" are different, and `standing` carries
+   * that difference rather than this field being overloaded.
+   *
+   * Permissions, never behaviour: a hook allowed to take a fee may take none.
+   * The measured round trip stays the only evidence of what exiting costs. */
+  poolHook: B20HookAssessmentV1 | null;
   optimisticReturnAtomic: string | null;
   optimisticRoundTripBps: number | null;
   routeCoverage: 'complete' | 'partial';
@@ -389,6 +398,7 @@ export interface B20CardInputV1 {
     exitRouteFound: boolean;
     entrySourceKey: string | null;
     exitSourceKey: string | null;
+    poolHookAddress?: string | null;
     optimisticExitReturnAtomic: string | null;
     optimisticRoundTripBps: number | null;
     routeCoverage: 'complete' | 'partial';
@@ -615,6 +625,10 @@ export function b20OpportunityCardV1(input: B20CardInputV1): B20OpportunityCardV
       exitRouteFound: source.exitRouteFound,
       entrySourceKey: source.entrySourceKey,
       exitSourceKey: source.exitSourceKey,
+      // Decoded here rather than stored: the address is the whole truth, and
+      // keeping the interpretation in one tested function means a card cannot
+      // drift from what the bits actually say.
+      poolHook: source.poolHookAddress ? b20HookAssessmentV1(source.poolHookAddress) : null,
       optimisticReturnAtomic: source.optimisticExitReturnAtomic,
       optimisticRoundTripBps: source.optimisticRoundTripBps,
       routeCoverage: source.routeCoverage,

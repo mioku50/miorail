@@ -78,6 +78,13 @@ export interface OpportunityCardViewV1 {
   actionReason: string;
   /** Pre-entry, quote-alignment and transfer-policy sentences, in order. */
   notices: readonly string[];
+  /** What the pool's Uniswap v4 hook is ALLOWED to do — "standard" or not, and
+   * the permissions its address spells. Null when the venue has no hook or
+   * none was recorded. Never a behaviour: a hook permitted to take a fee may
+   * take none, and only the measured round trip says what an exit cost. */
+  hookLabel: string | null;
+  /** The sentence under it, when the permissions are worth stating. */
+  hookNote: string | null;
   /** Dimensions this product did not measure and will not imply. */
   notMeasured: readonly string[];
 }
@@ -170,6 +177,18 @@ function OpportunityCard({
         <span className="k">Variant</span>
         <span className="v">{card.variantLabel}</span>
       </div>
+
+      {/* The one part of a B20 venue that can be verified by inspection: v4
+          spells a hook's permissions in the low bits of its own address, and a
+          B20 token's own code cannot be read at all. Shown as permission, not
+          behaviour — the sentence says so explicitly. */}
+      {card.hookLabel && (
+        <div className="kv">
+          <span className="k">Pool hook</span>
+          <span className="v">{card.hookLabel}</span>
+        </div>
+      )}
+      {card.hookNote && <p className="lnote">{card.hookNote}</p>}
 
       {card.notMeasured.length > 0 && (
         <p className="lnote">Not measured: {card.notMeasured.join(', ')}.</p>

@@ -391,6 +391,33 @@ describe('the card carries nothing executable', () => {
     // client could execute.
     assert.equal(card().observation?.entrySourceKey, 'aerodrome|in');
   });
+
+  test('the pool hook reaches the card decoded, not as a bare address', () => {
+    // The point of storing the address is that a card can say what the hook is
+    // ALLOWED to do. A raw string would leave every consumer to re-derive it.
+    const hooked = card({
+      poolHookAddress: '0x985c14baa2a18316ffda0aefb3a632fadfca2acc',
+    }).observation?.poolHook;
+    assert.equal(hooked?.standing, 'standard');
+    assert.equal(hooked?.permissions?.mayChangeSwapAmounts, true);
+    assert.equal(hooked?.permissions?.mayGateLiquidity, true);
+
+    const unusual = card({
+      poolHookAddress: '0xf85f1f3082cfbc5e1149972309b25054e4d420cc',
+    }).observation?.poolHook;
+    assert.equal(unusual?.standing, 'non_standard');
+    // Fewer permissions, but it can still move the amounts of every swap —
+    // which with a zero pool fee is what decides an exit's cost.
+    assert.equal(unusual?.permissions?.mayGateLiquidity, false);
+    assert.equal(unusual?.permissions?.mayChangeSwapAmounts, true);
+  });
+
+  test('a venue with no hook recorded shows null, never a default hook', () => {
+    // Aerodrome has no hooks, and every observation written before the column
+    // existed has none either. Inventing one would be a claim about a pool
+    // nobody read.
+    assert.equal(card().observation?.poolHook, null);
+  });
 });
 
 // ---------------------------------------------------------------------------

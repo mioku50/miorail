@@ -3355,6 +3355,24 @@ const B20CardObservationV1Schema = z
     exitRouteFound: z.boolean(),
     entrySourceKey: z.string().max(200).nullable(),
     exitSourceKey: z.string().max(200).nullable(),
+    /** What the pool's v4 hook may do, decoded from its own address. Every
+     * field is a permission, never an observed behaviour. */
+    poolHook: z
+      .object({
+        standing: z.enum(['standard', 'non_standard', 'no_hook', 'unreadable']),
+        permissions: z
+          .object({
+            hook: z.string().regex(/^0x[0-9a-f]{40}$/),
+            permissionBits: z.number().int().min(0).max(0x3fff),
+            flags: z.array(z.string().max(64)).max(14),
+            none: z.boolean(),
+            mayChangeSwapAmounts: z.boolean(),
+            mayInterceptSwaps: z.boolean(),
+            mayGateLiquidity: z.boolean(),
+          })
+          .nullable(),
+      })
+      .nullable(),
     optimisticReturnAtomic: z.string().regex(/^\d+$/).nullable(),
     optimisticRoundTripBps: z.number().int().min(0).nullable(),
     routeCoverage: z.enum(['complete', 'partial']),
