@@ -3,11 +3,13 @@ import { hostname } from 'node:os';
 
 import { client, closeDb } from '@mioagent/db';
 import {
+  createDatabaseB20LaunchPoolRepository,
   createDatabaseB20ObservationRepository,
   type B20ObservationRepositoryV1,
 } from '@mioagent/route-storage';
 
 import { B20_NATIVE_POSITION_ATOMIC_V1, createB20MeasureDepsV1 } from './b20MeasureDeps.js';
+import { createB20PoolStoreV1 } from './b20PoolStore.js';
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 import { parseB20MeasureArgsV1 } from './b20MeasureCli.js';
 import { runB20MeasurePassV1 } from './b20MeasureRun.js';
@@ -62,6 +64,9 @@ async function main(): Promise<number> {
     rpcUrl,
     maxRetries: args.maxRetries,
     nativePositionAtomic: B20_NATIVE_POSITION_ATOMIC_V1,
+    // A pool is fixed at launch, so re-deriving it every pass spent two
+    // `eth_getLogs` — the most expensive call here — to relearn the same fact.
+    poolStore: createB20PoolStoreV1(createDatabaseB20LaunchPoolRepository(client)),
   });
 
   let running = true;

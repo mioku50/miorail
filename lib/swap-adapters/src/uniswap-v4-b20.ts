@@ -5,6 +5,7 @@ import {
   type RawLogV1,
 } from './uniswap-v4-pool.js';
 import { quoteV4ExactInputV1 } from './uniswap-v4-quoter.js';
+import { B20_POOL_SEARCH_BLOCKS_V1 } from './uniswap-v4-pinned.js';
 
 // ---------------------------------------------------------------------------
 // The round trip, on the venue B20 tokens actually trade on.
@@ -204,19 +205,65 @@ export async function b20QuoteExitSizesV4V1(
  * The result keeps its refusal, so a caller can tell "this token has no pool"
  * from "the endpoint did not answer". Only the first is a measurement.
  */
+/**
+ * Somewhere that outlives the pass.
+ *
+ * A narrow port, not a repository: this package must not learn about Postgres,
+ * and the mapping between a stored row and a `B20PoolResultV1` belongs at the
+ * seam that already imports both. `read` returning null means "nothing known",
+ * never "no pool" — absence has to arrive as a cached RESULT to be trusted.
+ *
+ * Both sides may fail. A store that throws must not take a measurement down
+ * with it: the network answer is still available, so a cache miss is the worst
+ * a broken store can cause.
+ */
+export interface B20PoolStoreV1 {
+  read(input: {
+    token: string; fromBlock: number; toBlock: number;
+  }): Promise<B20PoolResultV1 | null>;
+  write(input: {
+    token: string; fromBlock: number; toBlock: number; result: B20PoolResultV1;
+  }): Promise<void>;
+}
+
 export function createB20PoolCacheV1(getLogs: (query: {
   address: string;
   fromBlock: number;
   toBlock: number;
   topics: (string | null)[];
-}) => Promise<readonly RawLogV1[]>) {
+}) => Promise<readonly RawLogV1[]>, store?: B20PoolStoreV1) {
   const known = new Map<string, B20PoolResultV1>();
   return {
     async lookup(token: string, launchBlock: number): Promise<B20PoolResultV1> {
       const key = token.toLowerCase();
       const cached = known.get(key);
       if (cached !== undefined) return cached;
+      // The window this lookup is about to search, stated up front so the store
+      // can refuse to answer a question it never asked. `resolveB20PoolV1`
+      // walks forward from the launch block in fixed-size windows.
+      const window = { fromBlock: launchBlock, toBlock: launchBlock + B20_POOL_SEARCH_BLOCKS_V1 - 1 };
+      if (store) {
+        try {
+          const stored = await store.read({ token, ...window });
+          if (stored) {
+            known.set(key, stored);
+            return stored;
+          }
+        } catch {
+          // A cache that cannot be read is a cache miss, not a measurement
+          // failure. Falling through costs two metered requests; refusing here
+          // would cost the observation.
+        }
+      }
       const result = await resolveB20PoolV1({ token, launchBlock, getLogs });
+      if (store && (result.ok || result.refusal !== 'endpoint_unavailable')) {
+        try {
+          await store.write({ token, ...window, result });
+        } catch {
+          // Same reasoning in the other direction: failing to remember is not
+          // a reason to discard what was just measured.
+        }
+      }
       // A miss is cached too. "This token has no v4 pool" is as worth
       // remembering as the pool itself, and re-asking would spend the same
       // metered budget to learn the same nothing.

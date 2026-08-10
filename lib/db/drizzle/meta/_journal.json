@@ -239,6 +239,13 @@
       "when": 1786377600000,
       "tag": "0033_b20_observation_pool_hook",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1786464000000,
+      "tag": "0034_b20_launch_pools",
+      "breakpoints": true
     }
   ]
 }

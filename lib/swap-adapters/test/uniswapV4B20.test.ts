@@ -189,6 +189,86 @@ describe('the pool lookup spends the metered budget once per token', () => {
   });
 });
 
+describe('the durable store makes that budget last beyond one pass', () => {
+  /** A store that records what it was asked to remember. */
+  function recordingStore() {
+    const rows = new Map<string, { fromBlock: number; toBlock: number; result: unknown }>();
+    const writes: string[] = [];
+    return {
+      rows,
+      writes,
+      store: {
+        async read({ token, fromBlock, toBlock }: { token: string; fromBlock: number; toBlock: number }) {
+          const row = rows.get(token.toLowerCase());
+          if (!row || row.fromBlock !== fromBlock || row.toBlock < toBlock) return null;
+          return row.result as never;
+        },
+        async write({ token, fromBlock, toBlock, result }: {
+          token: string; fromBlock: number; toBlock: number; result: unknown;
+        }) {
+          rows.set(token.toLowerCase(), { fromBlock, toBlock, result });
+          writes.push(token.toLowerCase());
+        },
+      },
+    };
+  }
+
+  test('a pool learned in one pass costs no requests in the next', async () => {
+    const { store, writes } = recordingStore();
+    let calls = 0;
+    const first = createB20PoolCacheV1(async () => { calls += 1; return logsFor(TOKEN); }, store);
+    const resolved = await first.lookup(TOKEN, 49_404_602);
+    assert.equal(resolved.ok, true);
+    assert.deepEqual(writes, [TOKEN.toLowerCase()], 'the pool was remembered');
+
+    // A NEW cache: this is what the next pass, or the next process, sees.
+    const spent = calls;
+    const second = createB20PoolCacheV1(async () => { calls += 1; return logsFor(TOKEN); }, store);
+    const again = await second.lookup(TOKEN, 49_404_602);
+    assert.equal(calls, spent, 'no getLogs at all');
+    assert.deepEqual(again, resolved);
+  });
+
+  test('an unanswered endpoint is never remembered — it says nothing about the token', async () => {
+    const { store, writes } = recordingStore();
+    const cache = createB20PoolCacheV1(async () => { throw new Error('429'); }, store);
+    assert.deepEqual(await cache.lookup(TOKEN, 1), { ok: false, refusal: 'endpoint_unavailable' });
+    assert.deepEqual(writes, [], 'a throttle must not outlive the outage as a verdict');
+  });
+
+  test('a searched-and-empty window IS remembered', async () => {
+    const { store, writes } = recordingStore();
+    const cache = createB20PoolCacheV1(async () => [], store);
+    assert.deepEqual(await cache.lookup(TOKEN, 1), { ok: false, refusal: 'no_pool_initialized' });
+    assert.deepEqual(writes, [TOKEN.toLowerCase()]);
+  });
+
+  test('a store that throws is a cache miss, never a failed measurement', async () => {
+    let calls = 0;
+    const broken = {
+      async read() { throw new Error('database is down'); },
+      async write() { throw new Error('database is still down'); },
+    };
+    const cache = createB20PoolCacheV1(async () => { calls += 1; return logsFor(TOKEN); }, broken as never);
+    const result = await cache.lookup(TOKEN, 49_404_602);
+    assert.equal(result.ok, true, 'the network answer still stands');
+    assert.equal(calls, 1);
+  });
+
+  test('a row from a different window is not used — widening must re-ask', async () => {
+    const { store } = recordingStore();
+    let calls = 0;
+    const first = createB20PoolCacheV1(async () => { calls += 1; return logsFor(TOKEN); }, store);
+    await first.lookup(TOKEN, 49_404_602);
+    const spent = calls;
+    // A different launch block is a different search, so the stored row must
+    // not answer it.
+    const second = createB20PoolCacheV1(async () => { calls += 1; return logsFor(TOKEN); }, store);
+    await second.lookup(TOKEN, 49_404_700);
+    assert.ok(calls > spent, 'the resolver was asked again');
+  });
+});
+
 describe('the exit ladder prices sizes and judges nothing', () => {
   test('every size asked for comes back, in order, selling the token', async () => {
     const { seen, call } = scriptedCall([result(400_000n), result(900_000n)]);

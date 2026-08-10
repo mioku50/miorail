@@ -9,6 +9,7 @@ import {
   b20RoundTripV4V1,
   createAerodromeReaderV1,
   createB20PoolCacheV1,
+  type B20PoolStoreV1,
   V4QuoteUnavailableError,
 } from '@mioagent/swap-adapters';
 import {
@@ -59,6 +60,10 @@ export interface B20MeasureDepsInputV1 {
    * no price feed is read here, and a converted figure would be a claim about
    * the ETH price at measurement time that nothing recorded. */
   nativePositionAtomic: string;
+  /** Where a resolved pool survives between passes. Optional: without it the
+   * worker still measures, it just re-pays two `eth_getLogs` per token per
+   * pass to re-learn a fact fixed at launch. */
+  poolStore?: B20PoolStoreV1;
 }
 
 /** 0.03 ETH. Big enough to move a launch pool's price and see the curve, small
@@ -257,9 +262,11 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
     // added to fix. The resolver turns the throw into `endpoint_unavailable`.
     throw lastError;
   };
-  // One lookup per token per pass. The pool cannot change, and the endpoint
-  // meters `eth_getLogs`.
-  const v4Pools = createB20PoolCacheV1(v4Logs);
+  // One lookup per token per pass, and — when a store is wired — one lookup per
+  // token EVER. The pool cannot change and `eth_getLogs` is the most expensive
+  // call this worker makes, roughly three times an `eth_call`, twice per
+  // measurement because the token may be either side of the pair.
+  const v4Pools = createB20PoolCacheV1(v4Logs, input.poolStore);
 
   const deps: MeasurementDepsV1 = {
     // Only for an observation where the factory settled the token and no quote
