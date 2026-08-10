@@ -176,31 +176,63 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
     toBlock: number;
     topics: (string | null)[];
   }) => {
-    const response = await fetch(input.rpcUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'eth_getLogs',
-        params: [{
-          address: query.address,
-          fromBlock: `0x${query.fromBlock.toString(16)}`,
-          toBlock: `0x${query.toBlock.toString(16)}`,
-          topics: query.topics,
-        }],
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    const body = (await response.json()) as { result?: unknown; error?: unknown };
+    // Every other reader in this pass survives a throttle — `createB20ReaderV1`
+    // carries what it learned about the endpoint's limit from token to token.
+    // This one was a bare fetch, so a single 429 became `route_search_degraded`
+    // on a token that was perfectly measurable. On a metered plan that was
+    // rare; the moment the workers moved to a free endpoint, where the limit is
+    // requests per second rather than units per month, it became 12% of every
+    // pass. A throttle is the endpoint asking us to wait, so we wait.
+    let lastError: unknown = new Error('eth_getLogs unavailable');
+    for (let attempt = 0; attempt <= Math.max(0, input.maxRetries); attempt += 1) {
+      if (attempt > 0) {
+        // Doubling from 250ms. The free endpoints that answer archival logs
+        // throttle near 13 requests a second, and one pass asks for far fewer
+        // than that — so a 429 here is a burst, and a burst is over quickly.
+        await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** (attempt - 1)));
+      }
+      let response: Response;
+      try {
+        response = await fetch(input.rpcUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'eth_getLogs',
+            params: [{
+              address: query.address,
+              fromBlock: `0x${query.fromBlock.toString(16)}`,
+              toBlock: `0x${query.toBlock.toString(16)}`,
+              topics: query.topics,
+            }],
+          }),
+          signal: AbortSignal.timeout(15_000),
+        });
+      } catch (error) {
+        // A timeout or a dropped connection. Never the URL in the message —
+        // it carries a key on the plans that use one.
+        lastError = new Error('eth_getLogs unreachable');
+        continue;
+      }
+      if (response.status === 429 || response.status >= 500) {
+        lastError = new Error(`eth_getLogs throttled (${response.status})`);
+        continue;
+      }
+      const body = (await response.json().catch(() => ({}))) as { result?: unknown; error?: unknown };
+      if (body.error || !Array.isArray(body.result)) {
+        lastError = new Error('eth_getLogs unavailable');
+        continue;
+      }
+      return body.result as { address?: string; topics?: string[]; data?: string; blockNumber?: string }[];
+    }
     // An endpoint that refuses the range must not read as "no pool here", so
     // this THROWS rather than returning an empty list. The free plan caps
     // `eth_getLogs` at ten blocks and rate-limits on top of that, which makes
     // a refusal ordinary — and an ordinary refusal silently shaped like "no
     // pool" would quietly restate the exact false negative this venue was
     // added to fix. The resolver turns the throw into `endpoint_unavailable`.
-    if (body.error || !Array.isArray(body.result)) throw new Error('eth_getLogs unavailable');
-    return body.result as { address?: string; topics?: string[]; data?: string; blockNumber?: string }[];
+    throw lastError;
   };
   // One lookup per token per pass. The pool cannot change, and the endpoint
   // meters `eth_getLogs`.
