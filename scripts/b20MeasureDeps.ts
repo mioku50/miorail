@@ -78,6 +78,10 @@ export interface V4QuoteContextV1 {
   call: (request: { to: string; data: string }) => Promise<string>;
   /** Where the quotes in this measurement were actually read. */
   alignment: () => B20QuoteAlignmentV1;
+  /** Why the last quote could not be taken, if one could not. Diagnostic: the
+   * observation records `route_search_degraded`, which names the symptom and
+   * not the call. */
+  lastFailureReason: () => string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,13 +134,32 @@ export function createV4QuoteContextV1(
    */
   const blockMayBeGone = (reason: string) => reason === 'rpc_error';
 
+  // Every throw below used to discard the reason, which is why three
+  // consecutive production fixes were aimed at guesses. `route_search_degraded`
+  // says only that coverage was incomplete — it never names the call that
+  // failed. Recording the reason here is the difference between "the endpoint
+  // is throttling us" and "the endpoint no longer holds that block", and those
+  // want opposite fixes.
+  let lastFailureReason: string | null = null;
+  const unavailable = (reason: string, at: 'anchor' | 'latest'): V4QuoteUnavailableError => {
+    lastFailureReason = reason;
+    // Off unless an operator asks. A worker that prints a line per failed quote
+    // is unreadable at four measurements a minute, and unusable at thirty-five.
+    if (process.env.B20_DEBUG_RPC === '1') {
+      // The reason is a fixed category from the reader's classifier, never an
+      // echo of the endpoint — a URL with a key in it must not reach a log.
+      console.log(JSON.stringify({ event: 'b20_quote_unavailable', reason, at }));
+    }
+    return new V4QuoteUnavailableError();
+  };
+
   const quote = async (request: { to: string; data: string }): Promise<string> => {
     if (alignment === 'anchored') {
       const anchored = await call({ ...request, blockTag });
       if (anchored.ok) return anchored.value;
       // A revert at the anchor is a measurement AT the anchor. Still aligned.
       if (poolAnswered(anchored.reason)) return '';
-      if (!blockMayBeGone(anchored.reason)) throw new V4QuoteUnavailableError();
+      if (!blockMayBeGone(anchored.reason)) throw unavailable(anchored.reason, 'anchor');
       // The node may no longer hold state for this block. One retry at
       // `latest` says which — and if it answers, this observation is no longer
       // one atomic moment and stops claiming to be.
@@ -144,15 +167,15 @@ export function createV4QuoteContextV1(
       alignment = 'latest_not_anchored';
       if (latest.ok) return latest.value;
       if (poolAnswered(latest.reason)) return '';
-      throw new V4QuoteUnavailableError();
+      throw unavailable(latest.reason, 'latest');
     }
     const result = await call({ ...request, blockTag: 'latest' });
     if (result.ok) return result.value;
     if (poolAnswered(result.reason)) return '';
-    throw new V4QuoteUnavailableError();
+    throw unavailable(result.reason, 'latest');
   };
 
-  return { call: quote, alignment: () => alignment };
+  return { call: quote, alignment: () => alignment, lastFailureReason: () => lastFailureReason };
 }
 
 export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): MeasurementDepsV1 {
