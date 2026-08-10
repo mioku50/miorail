@@ -273,6 +273,50 @@ export function describeB20ObservationRepositoryV1(
       assert.equal(due[0]?.lastMeasuredAt, null);
     });
 
+    test('the NEWEST unmeasured launch is offered first, because that is what Discover shows', async () => {
+      // This ordering was oldest-first, on the reasoning that a backlog should
+      // drain in arrival order. Discover lists launches newest-first, so that
+      // made the top of the home screen the part the worker reached last: on
+      // 2026-08-10 the newest fifty canonical launches had ZERO observations
+      // between them while 1,828 older ones were ground through at 200/hour.
+      const harness = await seeded();
+      await harness.seedLaunch({
+        id: `${observationHashV1('2')}:0`,
+        tokenAddress: `0xb2${'1'.repeat(38)}`,
+        detectedAt: '2026-08-04T00:50:00.000Z',
+        blockNumber: '49500100',
+      });
+      const due = await harness.repository.selectMeasurableLaunches({
+        limit: 10,
+        maxLaunchAgeMs: 48 * 3_600_000,
+        minReMeasureIntervalMs: 20 * 60_000,
+        now: '2026-08-04T01:00:00.000Z',
+      });
+      assert.equal(due.length, 2);
+      assert.equal(due[0]?.tokenAddress, `0xb2${'1'.repeat(38)}`, 'the newer launch comes first');
+      assert.equal(due[1]?.tokenAddress, TOKEN);
+    });
+
+    test('a budget of one spends it on the newest, not the oldest', async () => {
+      // The case that actually bit: a worker with `--max-candidates=1` takes
+      // exactly one launch per pass, so the ordering IS the product.
+      const harness = await seeded();
+      await harness.seedLaunch({
+        id: `${observationHashV1('3')}:0`,
+        tokenAddress: `0xb2${'2'.repeat(38)}`,
+        detectedAt: '2026-08-04T00:55:00.000Z',
+        blockNumber: '49500200',
+      });
+      const due = await harness.repository.selectMeasurableLaunches({
+        limit: 1,
+        maxLaunchAgeMs: 48 * 3_600_000,
+        minReMeasureIntervalMs: 20 * 60_000,
+        now: '2026-08-04T01:00:00.000Z',
+      });
+      assert.equal(due.length, 1);
+      assert.equal(due[0]?.tokenAddress, `0xb2${'2'.repeat(38)}`);
+    });
+
     test('a launch older than the window is left alone', async () => {
       const { repository } = await seeded();
       const due = await repository.selectMeasurableLaunches({

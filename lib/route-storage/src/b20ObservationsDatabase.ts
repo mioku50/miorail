@@ -195,7 +195,10 @@ export function createDatabaseB20ObservationRepository(
               END
             )
           )
-        ORDER BY l.detected_at ASC, l.id ASC
+        -- NEWEST first; see the in-memory repository for why this flipped.
+        -- Discover lists launches newest-first, so oldest-first made the top of
+        -- the home screen the part the worker would reach last.
+        ORDER BY l.detected_at DESC, l.id DESC
         LIMIT ${Math.max(1, Math.min(500, input.limit))}`;
       return rows.map((row): B20MeasurableLaunchV1 => {
         const record = row as Record<string, unknown>;

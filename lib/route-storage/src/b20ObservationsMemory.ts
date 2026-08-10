@@ -96,10 +96,23 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
         lastMeasuredAt,
       });
     }
-    // Oldest unmeasured first, so a backlog drains in the order it arrived
-    // rather than starving whatever happens to sort last.
+    // NEWEST first. This was oldest-first, on the reasoning that a backlog
+    // should drain in arrival order — which is right for a backfill and wrong
+    // for a live feed. Discover lists launches newest-first, so the top of the
+    // product's home screen was permanently the part the worker would reach
+    // last: on 2026-08-10 the newest fifty canonical launches had ZERO
+    // observations between them while 1,828 older ones were being ground
+    // through at 200/hour.
+    //
+    // Starvation is what oldest-first was protecting against, and it is not a
+    // real risk here: launches arrive at 8-28 an hour against a measurement
+    // capacity of ~200, so the newest are covered within minutes and the rest
+    // of the capacity walks backwards through the backlog. What this does give
+    // up is the very oldest unmeasured launches, which now age out of
+    // `maxLaunchAgeMs` unmeasured — an acceptable trade, because a six-day-old
+    // launch nobody measured is not what a Discover feed is for.
     return rows
-      .sort((left, right) => Date.parse(left.detectedAt) - Date.parse(right.detectedAt))
+      .sort((left, right) => Date.parse(right.detectedAt) - Date.parse(left.detectedAt))
       .slice(0, Math.max(1, Math.min(500, input.limit)));
   }
 
