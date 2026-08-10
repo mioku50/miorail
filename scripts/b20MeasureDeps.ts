@@ -364,6 +364,11 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
             exitRouteHash: null,
             entrySourceKey: source,
             exitSourceKey: trip.exitRouteFound ? source : null,
+            // Already decoded from the pool's own Initialize log, and until now
+            // discarded. The v4 pool id in `source` commits to it — a pool id
+            // is the keccak of the PoolKey — but nothing could READ it back out
+            // of a hash, so the address is carried alongside for display.
+            poolHookAddress: pool.key.hooks,
             probes,
             routerCalls: trip.quotesUsed + ladder.quotesUsed,
             quoteAssetUsed: measuredAsset,
@@ -407,6 +412,10 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
         exitRouteHash: null,
         entrySourceKey: analysis.entryRoute ? aerodromeRouteKeyV1(analysis.entryRoute) : null,
         exitSourceKey: analysis.exitRoute ? aerodromeRouteKeyV1(analysis.exitRoute) : null,
+        // Aerodrome pools have no hooks. Null is the honest value, not zero —
+        // the zero address is how v4 spells "a v4 pool with no hook", which is
+        // a different statement about a different venue.
+        poolHookAddress: null,
         probes: analysis.probes,
         routerCalls: analysis.quotesUsed,
         // Aerodrome was asked in the profile's own asset, so here the two agree.

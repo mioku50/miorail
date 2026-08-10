@@ -108,6 +108,11 @@ export interface RouteMeasurementV1 {
   exitRouteHash: string | null;
   entrySourceKey: string | null;
   exitSourceKey: string | null;
+  /** The Uniswap v4 hook on the pool this was measured in, or null when the
+   * venue has none. Its permissions are readable from the address alone, and
+   * with `fee = 0` on every B20 pool sampled, the hook is the only thing that
+   * can set what an exit costs. */
+  poolHookAddress: string | null;
   /** The exit-capacity ladder, already priced. Sizes are in the TOKEN. */
   probes: { sizeAtomic: string; slippageBps: number | null }[];
   routerCalls: number;
@@ -550,6 +555,7 @@ async function measureOneV1(context: {
     exitRouteHash: routes?.exitRouteHash ?? null,
     entrySourceKey: routes?.entrySourceKey ?? null,
     exitSourceKey: routes?.exitSourceKey ?? null,
+    poolHookAddress: routes?.poolHookAddress ?? null,
     entryOutputAtomic: routes?.entryOutputAtomic ?? null,
     optimisticExitReturnAtomic: routes?.exitReturnAtomic ?? null,
     optimisticRoundTripBps: roundTrip?.costBps ?? null,

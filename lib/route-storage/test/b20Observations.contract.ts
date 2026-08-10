@@ -64,6 +64,9 @@ export function observationFixtureV1(
     exitRouteHash: observationHashV1('b'),
     entrySourceKey: 'aerodrome|usdc>token:volatile',
     exitSourceKey: 'aerodrome|token>usdc:volatile',
+    // The default fixture is an Aerodrome measurement, and Aerodrome has no
+    // hooks. Tests that care override it.
+    poolHookAddress: null as string | null,
     entryOutputAtomic: '4000000000000000000000',
     optimisticExitReturnAtomic: '99000000',
     optimisticRoundTripBps: 100,
@@ -129,6 +132,59 @@ export function describeB20ObservationRepositoryV1(
       assert.equal(stored.observation.quoteAlignment, 'latest_not_anchored');
       const read = await repository.getObservation(stored.observation.id);
       assert.equal(read?.evidenceHash, stored.observation.evidenceHash);
+    });
+
+    test('a v4 hook address survives the round trip, and Aerodrome stores none', async () => {
+      // The hook was decoded from the pool's Initialize log and then thrown
+      // away for months. Storing it is the whole point, so a repository that
+      // silently drops it must fail here.
+      const { repository } = await seeded();
+      const withHook = await repository.insertObservation(observationFixtureV1({
+        poolHookAddress: '0x985c14baa2a18316ffda0aefb3a632fadfca2acc',
+        entrySourceKey: 'uniswap-v4:0x07fff5bcbb831fd8e0f19d50334ed92b56b35d364712518a2aa37520a9246fe8',
+      }));
+      assert.equal(withHook.observation.poolHookAddress, '0x985c14baa2a18316ffda0aefb3a632fadfca2acc');
+      const read = await repository.getObservation(withHook.observation.id);
+      assert.equal(read?.poolHookAddress, '0x985c14baa2a18316ffda0aefb3a632fadfca2acc');
+
+      // Null is the venue saying it has no hooks, and it must stay null rather
+      // than becoming the zero address, which in v4 means something else: a v4
+      // pool that HAS no hook.
+      const aerodrome = await repository.insertObservation(observationFixtureV1({
+        observationBlockNumber: '49500001',
+      }));
+      assert.equal(aerodrome.observation.poolHookAddress, null);
+    });
+
+    test('a hook that is not a lowercase address is refused by both repositories', async () => {
+      // Parity: the in-memory fake must refuse exactly what the CHECK
+      // constraint refuses. A checksummed address would compare unequal to the
+      // pinned standard hook and quietly read as "unusual".
+      const { repository } = await seeded();
+      for (const bad of [
+        '0x985C14BAA2A18316FFDA0AEFB3A632FADFCA2ACC',
+        '0x985c14ba',
+        'not-an-address',
+        '',
+      ]) {
+        await assert.rejects(
+          () => repository.insertObservation(observationFixtureV1({ poolHookAddress: bad })),
+          `expected refusal for ${JSON.stringify(bad)}`,
+        );
+      }
+    });
+
+    test('the hook is not part of the evidence hash, because the pool id already commits to it', async () => {
+      // A v4 pool id is the keccak of its PoolKey, and the PoolKey includes the
+      // hook — so two observations of one pool cannot disagree about the hook
+      // without disagreeing about `entrySourceKey` first. Hashing it again
+      // would change every future hash to prove nothing new.
+      const base = observationFixtureV1({ poolHookAddress: null });
+      const hooked = observationFixtureV1({
+        poolHookAddress: '0x985c14baa2a18316ffda0aefb3a632fadfca2acc',
+      });
+      assert.equal(hooked.evidenceHash, base.evidenceHash);
+      assert.equal(hooked.id, base.id);
     });
 
     test('a retry with identical evidence returns the stored row and writes nothing', async () => {

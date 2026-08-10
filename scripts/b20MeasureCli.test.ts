@@ -81,6 +81,7 @@ const GOOD_ROUTES: RouteMeasurementV1 = {
   exitRouteHash: null,
   entrySourceKey: 'aerodrome|usdc>token:volatile',
   exitSourceKey: 'aerodrome|token>usdc:volatile',
+  poolHookAddress: null,
   probes: [
     { sizeAtomic: '2000000000000000000000', slippageBps: 10 },
     { sizeAtomic: '4000000000000000000000', slippageBps: 50 },

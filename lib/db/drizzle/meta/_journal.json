@@ -232,6 +232,13 @@
       "when": 1786291200000,
       "tag": "0032_b20_observation_quote_assets",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1786377600000,
+      "tag": "0033_b20_observation_pool_hook",
+      "breakpoints": true
     }
   ]
 }

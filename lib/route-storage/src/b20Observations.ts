@@ -80,6 +80,19 @@ export const B20OpportunityObservationV1Schema = z
     entrySourceKey: z.string().min(1).max(200).nullable(),
     exitSourceKey: z.string().min(1).max(200).nullable(),
 
+    /** The Uniswap v4 hook attached to the pool this was measured in.
+     *
+     * Lowercase, because the standard-hook comparison is an equality test and a
+     * checksummed address would read as "unusual". Null for a venue that has no
+     * hooks (Aerodrome) and for every row written before the column existed —
+     * "not read" and "no hook" are different answers, and the zero address is
+     * how v4 spells the second one.
+     *
+     * Not part of the evidence hash on purpose: a v4 pool id is the keccak of
+     * its PoolKey, which includes the hook, so `entrySourceKey` already commits
+     * to it. This field is for showing, not for proving. */
+    poolHookAddress: z.string().regex(/^0x[0-9a-f]{40}$/).nullable(),
+
     /** Null when it could not be measured — never zero. "No quote" and "free"
      * are different answers. */
     entryOutputAtomic: Uint.nullable(),
