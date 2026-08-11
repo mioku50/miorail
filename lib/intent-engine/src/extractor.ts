@@ -86,6 +86,23 @@ export async function extractSwapIntentV2(input: {
       )}</user_request>`,
     },
   ];
-  const response = await input.llm.generate({ messages, temperature: 0 });
-  return parseSwapIntentExtractionV2(response.message.content || '');
+  // ONE retry, and only when the answer did not obey the contract.
+  //
+  // Measured 2026-08-11 on qwen/qwen3.7-flash: the same request twelve times
+  // produced eleven clean extractions and one that the strict parser refused.
+  // That refusal becomes `extractor_invalid`, which is a REJECTION — so roughly
+  // one goal in twelve died with "Miorail cannot route this swap" over a
+  // formatting slip in one response. No model in the measured set obeys the
+  // contract every time, so this is a property of the system, not of the model.
+  //
+  // A malformed answer is not a failure the provider chain can see: the HTTP
+  // call succeeded, and only the parse says otherwise. Two attempts, then the
+  // hard rejection stands — a second wrong answer is a real disagreement about
+  // the request, not a slip.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await input.llm.generate({ messages, temperature: 0 });
+    const extraction = parseSwapIntentExtractionV2(response.message.content || '');
+    if (extraction) return extraction;
+  }
+  return null;
 }

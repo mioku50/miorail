@@ -103,3 +103,58 @@ test('with nothing pending the prompt carries no awaiting_fields block at all', 
   });
   assert.equal((llm.request?.messages[1]?.content ?? '').includes('awaiting_fields'), false);
 });
+
+class SequenceLlmDouble implements LlmProvider {
+  calls = 0;
+
+  constructor(private readonly replies: string[]) {}
+
+  async generate(): Promise<LlmResponse> {
+    const content = this.replies[this.calls] ?? '';
+    this.calls += 1;
+    return { message: { role: 'assistant', content } };
+  }
+}
+
+test('a single malformed answer is retried, because it kills the goal outright', () => {
+  // Measured: the same request twelve times through qwen/qwen3.7-flash gave
+  // eleven clean extractions and one the strict parser refused — and a refusal
+  // is `extractor_invalid`, a REJECTION. One goal in twelve was dying on a
+  // formatting slip.
+  const llm = new SequenceLlmDouble([
+    `\`\`\`json\n${JSON.stringify(swapExtraction())}\n\`\`\``,
+    JSON.stringify(swapExtraction()),
+  ]);
+  return resolveSwapIntentWithLlmV2({
+    llm,
+    message: 'Swap 100 USDC to ETH.',
+    context: testContext(),
+  }).then((result) => {
+    assert.equal(result.outcome, 'ready', JSON.stringify(result));
+    assert.equal(llm.calls, 2);
+  });
+});
+
+test('two malformed answers still fail closed, and stop at two', async () => {
+  // A second wrong answer is a disagreement about the request, not a slip.
+  const llm = new SequenceLlmDouble(['not-json', 'still not json', JSON.stringify(swapExtraction())]);
+  const result = await resolveSwapIntentWithLlmV2({
+    llm,
+    message: 'Swap 100 USDC to ETH.',
+    context: testContext(),
+  });
+  assert.equal(result.outcome, 'rejected');
+  assert.ok(result.issues.some((item) => item.code === 'extractor_invalid'));
+  assert.equal(llm.calls, 2);
+});
+
+test('a well-formed answer is never asked twice', async () => {
+  const llm = new SequenceLlmDouble([JSON.stringify(swapExtraction())]);
+  const result = await resolveSwapIntentWithLlmV2({
+    llm,
+    message: 'Swap 100 USDC to ETH.',
+    context: testContext(),
+  });
+  assert.equal(result.outcome, 'ready');
+  assert.equal(llm.calls, 1);
+});
