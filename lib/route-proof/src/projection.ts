@@ -37,6 +37,21 @@ export const RouteProofProjectionV1Schema = z
       .strict(),
     minimumOutput: z.string().nullable(),
     actualOutput: z.string().nullable(),
+    /**
+     * Why `actualOutput` is null, when the chain has already answered.
+     *
+     * Reconstruction reads ERC-20 Transfer logs, and native ETH emits none —
+     * `assetChanges.ts` reports `native_output_unverifiable` and the proof goes
+     * to `reconciliation_required` rather than guessing an amount. That reason
+     * was computed and then dropped, so the screen showed a bare em dash next
+     * to a green "reconciled" pill and the user could not tell whether Miorail
+     * had failed or had declined to invent a number.
+     *
+     * DERIVED here, not stored: the proof already carries everything needed
+     * (a null actual output, the final status, and the output asset's kind),
+     * so no schema or proof hash changes.
+     */
+    actualOutputUnavailableReason: z.enum(['native_output_unverifiable', 'not_reconciled']).nullable(),
     outputDeviationBps: z.number().int().nullable(),
     minimumSatisfied: z.boolean().nullable(),
     estimatedGas: GasEstimateV1Schema,
@@ -77,6 +92,12 @@ export function toRouteProofProjectionV1(
     },
     minimumOutput: outputChange?.minimumAmountAtomic ?? null,
     actualOutput: proof.actualResult?.outputAmountAtomic ?? null,
+    actualOutputUnavailableReason:
+      proof.actualResult?.outputAmountAtomic
+        ? null
+        : outputAsset?.kind === 'native'
+          ? 'native_output_unverifiable'
+          : 'not_reconciled',
     outputDeviationBps: proof.deviation.outputBps,
     minimumSatisfied: proof.deviation.withinTolerance,
     estimatedGas: proof.estimatedGas,

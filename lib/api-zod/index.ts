@@ -786,6 +786,11 @@ export const RouteProofProjectionV1Schema = z
       .strict(),
     minimumOutput: z.string().nullable(),
     actualOutput: z.string().nullable(),
+    /** Why `actualOutput` is null even though the chain has answered. A native
+     * output emits no ERC-20 Transfer log, so the amount cannot be read from
+     * the receipt and Miorail declines to invent one. Derived server-side from
+     * the proof itself — see lib/route-proof/src/projection.ts. */
+    actualOutputUnavailableReason: z.enum(['native_output_unverifiable', 'not_reconciled']).nullable(),
     outputDeviationBps: z.number().int().nullable(),
     minimumSatisfied: z.boolean().nullable(),
     estimatedGas: GasEstimateV1Schema,

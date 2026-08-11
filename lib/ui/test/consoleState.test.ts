@@ -14,6 +14,7 @@ import {
   deriveEvidenceRowsV1,
   deriveScoreRowsV1,
   deriveSimulationViewV1,
+  routeProofViewV1,
   deriveStepperV1,
   intelligenceSpendLabelV1,
   quoteFreshnessV1,
@@ -358,5 +359,44 @@ describe('limits', () => {
     assert.equal(usagePercentV1(2000, 1000), 100);
     assert.equal(usagePercentV1(5, 0), 0);
     assert.equal(usagePercentV1(Number.NaN, 100), 0);
+  });
+});
+
+describe('the proof screen reads the projection the server actually sends', () => {
+  const base = {
+    proofId: 'route-proof:9a53fa63',
+    finalStatus: 'reconciliation_required' as const,
+    actualOutput: null,
+    actualOutputUnavailableReason: 'native_output_unverifiable' as const,
+    expectedOutput: { amountAtomic: '53669907222570', asset: { symbol: 'ETH', decimals: 18 } },
+    actualGas: { gasUnits: '237664' },
+    receipts: [{ blockNumber: '49844678' }],
+  };
+
+  test('a native output says why the amount cannot be read, and never claims success', () => {
+    // What the user saw after a swap that DID execute: "Actual output —",
+    // "Actual gas —", "block —" and a green "reconciled" pill. Every one of
+    // those came from reading field names the response does not have, while
+    // the response carried gas 237664 and block 49844678 all along.
+    const view = routeProofViewV1(base);
+    assert.equal(view.actualOutputDecimal, null);
+    assert.match(view.actualOutputReason, /native asset/);
+    assert.match(view.actualOutputReason, /cannot be read from the receipt/);
+    // Not green: the proof is not completed, and the pill must not say it is.
+    assert.equal(view.statusTone, 'n');
+    assert.equal(view.statusLabel, 'reconciliation required');
+    assert.equal(view.blockNumber, '49844678');
+  });
+
+  test('a verified output is converted exactly, without floating point', () => {
+    const view = routeProofViewV1({
+      ...base,
+      finalStatus: 'completed',
+      actualOutput: '53669907222570',
+      actualOutputUnavailableReason: null,
+    });
+    assert.equal(view.actualOutputDecimal, '0.00005366990722257');
+    assert.equal(view.statusTone, 'g');
+    assert.equal(view.statusLabel, 'completed');
   });
 });

@@ -29,6 +29,7 @@ import {
   coverageFromStatusV1,
   deriveAdapterRowsV1,
   deriveSimulationViewV1,
+  routeProofViewV1,
   dispatchRouteFamilyV1,
   emptyStageClockV1,
   haltStageRailV1,
@@ -1426,32 +1427,42 @@ export function RouteIntelligenceConsole() {
       </>
     );
   } else if (screen === 'proof') {
-    const proof = reconciliation.proof as {
-      proofHash?: string;
-      status?: string;
-      actualOutput?: { amountDecimal?: string; asset?: { symbol?: string } };
-      actualGasUsed?: string;
-      blockNumber?: string;
-      transactionHashes?: string[];
-    } | null;
+    // The cast this replaces named five fields the response does not have —
+    // `proofHash`, `status`, `actualOutput.amountDecimal`, `actualGasUsed`,
+    // `blockNumber`. Every read was `undefined`, so a finished swap showed
+    // "reconciling", em dashes for gas and block, and a GREEN "reconciled"
+    // pill that was only the `??` fallback. The data was in the response the
+    // whole time. An `as` cast is a claim TypeScript cannot check, so this one
+    // reads the projection's real names.
+    const proof = reconciliation.proof ?? null;
+    const proofView = proof ? routeProofViewV1(proof) : null;
     content = (
       <ProofScreen
         steps={steps}
-        eyebrow={proof?.proofHash ? `Route proof · ${proof.proofHash.slice(0, 12)}…` : 'Route proof · reconciling'}
-        amount={proof?.actualOutput?.amountDecimal ?? '—'}
-        unit={proof?.actualOutput?.asset?.symbol ?? ''}
-        usd={proof ? 'received' : ''}
+        eyebrow={proof ? `Route proof · ${proof.proofId.slice(-12)}` : 'Route proof · reconciling'}
+        amount={proofView?.actualOutputDecimal ?? '—'}
+        unit={proofView?.actualOutputDecimal ? proof!.expectedOutput.asset.symbol : ''}
+        usd={proofView?.actualOutputDecimal ? 'received' : ''}
         headlinePill={
           proof
-            ? { label: proof.status ?? 'reconciled', tone: 'g' }
+            ? { label: proofView!.statusLabel, tone: proofView!.statusTone }
             : { label: submission?.status === 'confirmed' ? 'reconciling with the chain' : 'awaiting confirmation', tone: 'n' }
         }
         why="What Miorail promised, next to what the chain actually did. Every proof is stored and exportable."
         kpis={
           proof
             ? [
-                { k: 'Actual output', v: proof.actualOutput?.amountDecimal ?? '—', d: proof.actualOutput?.asset?.symbol ?? '' },
-                { k: 'Actual gas', v: proof.actualGasUsed ?? '—', d: 'from the receipt' },
+                {
+                  k: 'Actual output',
+                  v: proofView!.actualOutputDecimal ?? 'not verifiable',
+                  // Not an em dash: when the output is native ETH the chain
+                  // emits no Transfer log, so Miorail declines to invent an
+                  // amount rather than failing to find one.
+                  d: proofView!.actualOutputDecimal
+                    ? proof.expectedOutput.asset.symbol
+                    : proofView!.actualOutputReason,
+                },
+                { k: 'Actual gas', v: proof.actualGas?.gasUnits ?? '—', d: 'from the receipt' },
               ]
             : []
         }
@@ -1461,7 +1472,7 @@ export function RouteIntelligenceConsole() {
           { title: simulation.passed ? 'Simulation passed' : 'Simulation not run', detail: simulation.subLabel },
           { title: 'Approved in Base Account', detail: submission?.batchId ?? 'awaiting the wallet' },
           ...(submission?.txHashes ?? []).map((hash) => ({ title: 'Transaction', detail: hash, done: true })),
-          ...(proof ? [{ title: 'Reconciled onchain', detail: `block ${proof.blockNumber ?? '—'}`, done: true }] : []),
+          ...(proof ? [{ title: 'Reconciled onchain', detail: `block ${proofView!.blockNumber ?? '—'}`, done: true }] : []),
         ]}
         planVsActual={
           proof && recommended
@@ -1469,14 +1480,16 @@ export function RouteIntelligenceConsole() {
                 {
                   label: 'Output',
                   expected: `${recommended.expectedOutput.amountDecimal} ${recommended.expectedOutput.asset.symbol}`,
-                  actual: `${proof.actualOutput?.amountDecimal ?? '—'} ${proof.actualOutput?.asset?.symbol ?? ''}`,
+                  actual: proofView!.actualOutputDecimal
+                    ? `${proofView!.actualOutputDecimal} ${proof.expectedOutput.asset.symbol}`
+                    : 'not verifiable',
                   difference: '—',
                   tone: 'none' as const,
                 },
                 {
                   label: 'Gas',
                   expected: recommended.estimatedGas.gasUnits,
-                  actual: proof.actualGasUsed ?? '—',
+                  actual: proof.actualGas?.gasUnits ?? '—',
                   difference: '—',
                   tone: 'none' as const,
                 },
@@ -1487,7 +1500,7 @@ export function RouteIntelligenceConsole() {
           proof
             ? [
                 { label: 'Proof hash', value: proof.proofHash ?? '—' },
-                { label: 'Transactions', value: (proof.transactionHashes ?? submission?.txHashes ?? []).join(', ') || '—' },
+                { label: 'Transactions', value: (proof.transactionHashes.length ? proof.transactionHashes : submission?.txHashes ?? []).join(', ') || '—' },
                 { label: 'Route chosen', value: recommended?.provider.displayName ?? '—' },
                 { label: 'Not scored', value: 'MEV protection — no approved source connected', dim: true },
               ]

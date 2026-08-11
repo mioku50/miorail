@@ -741,6 +741,7 @@ const PROOF_PROJECTION = {
   },
   minimumOutput: '37810000000000000',
   actualOutput: '38000000000000000',
+  actualOutputUnavailableReason: null,
   outputDeviationBps: 0,
   minimumSatisfied: true,
   estimatedGas: { gasUnits: '190000', maxFeePerGasWei: '1500000000', estimatedCostNative: '0.000285', estimatedCostUsd: '0.71' },
@@ -858,7 +859,15 @@ describe('POST /api/route-intelligence/route-proofs/:proofId/reconcile', () => {
 
     routeProofRouteRuntime.reconcile = async () => ({
       outcome: 'reconciliation_required',
-      proof: { ...PROOF_PROJECTION, actualOutput: null, finalStatus: 'reconciliation_required', reconciliationState: 'manual_review' },
+      proof: {
+        ...PROOF_PROJECTION,
+        actualOutput: null,
+        // A native output emits no Transfer log, so the amount is not readable
+        // from the receipt and the projection says which of the two it is.
+        actualOutputUnavailableReason: 'native_output_unverifiable' as const,
+        finalStatus: 'reconciliation_required',
+        reconciliationState: 'manual_review',
+      },
       lifecycle: 'reconciliation_required',
     }) as never;
     const manual = await request(routeApp()).post(url).send(RECONCILE_BODY);

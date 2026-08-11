@@ -580,3 +580,68 @@ export function usagePercentV1(used: number, limit: number): number {
   if (!Number.isFinite(used) || !Number.isFinite(limit) || limit <= 0) return 0;
   return Math.max(0, Math.min(100, Math.round((used / limit) * 100)));
 }
+
+// --- Route proof -------------------------------------------------------------
+
+/** The fields of `RouteProofProjectionV1` this view needs, structurally. */
+export interface RouteProofSourceV1 {
+  proofId: string;
+  finalStatus: 'pending' | 'completed' | 'partial_failure' | 'failed' | 'cancelled' | 'reconciliation_required';
+  actualOutput: string | null;
+  actualOutputUnavailableReason: 'native_output_unverifiable' | 'not_reconciled' | null;
+  expectedOutput: { amountAtomic: string; asset: { symbol: string; decimals: number } };
+  actualGas: { gasUnits: string } | null;
+  receipts: readonly { blockNumber: string | null }[];
+}
+
+export interface RouteProofViewV1 {
+  /** Null when the chain's answer cannot be read, never a guess. */
+  actualOutputDecimal: string | null;
+  /** Why it is null — a sentence, shown where the number would be. */
+  actualOutputReason: string;
+  statusLabel: string;
+  statusTone: 'g' | 'n' | 'a';
+  blockNumber: string | null;
+}
+
+/** Base units to a human decimal. Exact: string arithmetic, never a float. */
+function atomicToDecimalV1(value: string, decimals: number): string | null {
+  if (!/^\d+$/.test(value) || !Number.isInteger(decimals) || decimals < 0) return null;
+  if (decimals === 0) return value;
+  const padded = value.padStart(decimals + 1, '0');
+  const whole = padded.slice(0, -decimals).replace(/^0+(?=\d)/, '') || '0';
+  const fraction = padded.slice(-decimals).replace(/0+$/, '');
+  return fraction ? `${whole}.${fraction}` : whole;
+}
+
+/**
+ * The proof screen's values, read from the projection the server actually
+ * sends.
+ *
+ * The console used to cast the response to a shape with `proofHash`, `status`,
+ * `actualOutput.amountDecimal`, `actualGasUsed` and `blockNumber` — none of
+ * which exist on it. Every read came back undefined, so a completed swap
+ * displayed em dashes and a green "reconciled" pill that was only the `??`
+ * fallback, while the response carried the gas, the block and the receipt all
+ * along.
+ */
+export function routeProofViewV1(proof: RouteProofSourceV1): RouteProofViewV1 {
+  const actualOutputDecimal = proof.actualOutput
+    ? atomicToDecimalV1(proof.actualOutput, proof.expectedOutput.asset.decimals)
+    : null;
+  const statusTone: RouteProofViewV1['statusTone'] =
+    proof.finalStatus === 'completed' ? 'g' : proof.finalStatus === 'failed' ? 'a' : 'n';
+  return {
+    actualOutputDecimal,
+    // A native output emits no ERC-20 Transfer log, so there is nothing to read
+    // and Miorail declines to invent a figure. That is a different statement
+    // from "we tried and failed", and the screen must not blur them.
+    actualOutputReason:
+      proof.actualOutputUnavailableReason === 'native_output_unverifiable'
+        ? `${proof.expectedOutput.asset.symbol} is the chain's native asset and emits no transfer log, so the amount received cannot be read from the receipt`
+        : 'not reconciled yet',
+    statusLabel: proof.finalStatus.replace(/_/g, ' '),
+    statusTone,
+    blockNumber: proof.receipts.find((receipt) => receipt.blockNumber)?.blockNumber ?? null,
+  };
+}
