@@ -177,6 +177,41 @@ test('Uniswap build adapter surfaces a malformed swap_5792 response as invalid_r
   assert.equal(result.outcome, 'invalid_response');
 });
 
+test('a transport that throws becomes an unavailable outcome, never an exception', async () => {
+  // What this closes: `partnerFetch` throws on DNS failure, a reset connection
+  // or its own 10s timeout, and nothing between it and the Express handler
+  // caught. One transient blip reached the user as a bare 500 whose only
+  // record was an access-log line — the composer cannot report a refusal it
+  // was never given. KyberSwap's build adapter has always answered
+  // `kyberswap_routes_unreachable` here.
+  const quoteThrew = await new UniswapSwapBuildAdapter({
+    transport: {
+      async post(path) {
+        if (path === '/v1/quote') throw new TypeError('fetch failed');
+        throw new Error('unreachable');
+      },
+    },
+  }).build(buildInput(makeIntent()));
+  assert.equal(quoteThrew.outcome, 'unavailable');
+  if (quoteThrew.outcome === 'unavailable') {
+    assert.equal(quoteThrew.errorCode, 'uniswap_quote_unreachable');
+    assert.equal(quoteThrew.retryable, true);
+  }
+
+  const swapThrew = await new UniswapSwapBuildAdapter({
+    transport: {
+      async post(path, body) {
+        if (path === '/v1/quote') return transportOf({}).post(path, body);
+        throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+      },
+    },
+  }).build(buildInput(makeIntent()));
+  assert.equal(swapThrew.outcome, 'unavailable');
+  if (swapThrew.outcome === 'unavailable') {
+    assert.equal(swapThrew.errorCode, 'uniswap_swap_unreachable');
+  }
+});
+
 test('Uniswap build adapter is not_configured without an API key or transport override', async () => {
   const previous = process.env.UNISWAP_API_KEY;
   delete process.env.UNISWAP_API_KEY;

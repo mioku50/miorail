@@ -90,7 +90,19 @@ export class UniswapSwapBuildAdapter implements SwapBuildAdapter {
       generatePermitAsTransaction: true,
       permitAmount: 'EXACT',
     };
-    const quoteResult = await this.client.quote(quoteBody);
+    // `partnerFetch` THROWS on a transport failure — DNS, reset connection, or
+    // its own 10s AbortSignal — and nothing above this line catches: not the
+    // transport, not the client, not the composer. One transient network blip
+    // therefore left the user a bare 500 with no line in the log, while the
+    // quote-side client has normalised caught errors all along. KyberSwap's
+    // build adapter already answers `kyberswap_routes_unreachable` here; this
+    // is the same contract for the twin that was missed.
+    let quoteResult: Awaited<ReturnType<UniswapTradeClient['quote']>>;
+    try {
+      quoteResult = await this.client.quote(quoteBody);
+    } catch {
+      return failure('unavailable', 'uniswap_quote_unreachable', true);
+    }
     // The phase is part of the code. Both calls used to report the same
     // `uniswap_http_400`, so the string the user was shown could not say which
     // of the two requests had been refused — and finding out cost a live probe.
@@ -143,7 +155,12 @@ export class UniswapSwapBuildAdapter implements SwapBuildAdapter {
       deadline: Math.floor(Date.parse(quoteExpiry) / 1000),
       urgency: 'normal',
     };
-    const swapResult = await this.client.swap5792(swapBody, input.walletAddress);
+    let swapResult: Awaited<ReturnType<UniswapTradeClient['swap5792']>>;
+    try {
+      swapResult = await this.client.swap5792(swapBody, input.walletAddress);
+    } catch {
+      return failure('unavailable', 'uniswap_swap_unreachable', true);
+    }
     if (swapResult.outcome === 'http_error') {
       return failure('unavailable', `uniswap_swap_http_${swapResult.status}`, true);
     }
