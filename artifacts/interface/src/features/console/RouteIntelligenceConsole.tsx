@@ -1234,6 +1234,11 @@ export function RouteIntelligenceConsole() {
       <>
         <ReviewScreen
           steps={steps}
+          // A Route Card expires with the shortest quote it displays, which is
+          // ~20s. "Back to routes" led to that same expired card and the same
+          // refusal, so the recoverable refusal offers the thing that fixes it.
+          onCompareAgain={() => compare({ fresh: true })}
+          comparePending={comparePending}
           calls={
             prepared?.blueprint.calls.map((call, index) => ({
               index: index + 1,

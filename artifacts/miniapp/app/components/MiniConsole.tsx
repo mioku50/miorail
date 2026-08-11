@@ -1416,6 +1416,10 @@ export function MiniConsole() {
           // carry no blueprint, and reading only the fourth left this screen
           // blaming simulation for a refusal it never made.
           notice={swapPrepareNoticeV1(prepare.data as never)}
+          // And the same dead end: the card expires with its shortest quote,
+          // so "back" returned to a card that refused again.
+          onCompareAgain={() => compare({ fresh: true })}
+          comparePending={comparePending}
           calls={
             prepared?.blueprint.calls.map((call, index) => ({
               index: index + 1,

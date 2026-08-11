@@ -639,6 +639,18 @@ export interface ConsoleTerminalFailureV1 {
    * False for a rejection, which is not a question and has no answer field.
    */
   answerable?: boolean;
+  /**
+   * True when a NEW COMPARISON is what fixes this, so the screen can offer it
+   * directly. Route Cards expire with the shortest quote they display — around
+   * twenty seconds — and "Back to routes" returned the user to that same
+   * expired card, which refused again on the next click. A dead end that
+   * loops is worse than one that stops, because it looks like progress.
+   *
+   * False for `unsupported` and `blocked`: comparing again cannot change an
+   * unsupported pair or a Safety Kernel verdict, and offering it would be a
+   * button that promises something it cannot do.
+   */
+  canCompareAgain?: boolean;
 }
 
 /** The swap prepare response as it crosses the wire, structurally. */
@@ -663,7 +675,7 @@ export function swapPrepareNoticeV1(
 ): ConsoleTerminalFailureV1 | null {
   if (!data || data.outcome === 'prepared') return null;
   if (data.outcome === 'refresh_required') {
-    return { title: 'This route needs comparing again', detail: data.detail };
+    return { title: 'This route needs comparing again', detail: data.detail, canCompareAgain: true };
   }
   if (data.outcome === 'unsupported') {
     return { title: 'Miorail cannot prepare this route', detail: data.detail };

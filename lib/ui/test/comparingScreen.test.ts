@@ -250,6 +250,57 @@ describe('Review says why there is nothing to sign', () => {
     assert.equal(rendered.includes('needs comparing again'), false);
   });
 
+  test('an expired comparison offers a new comparison, not just the way back', () => {
+    // The loop this closes: a Route Card expires with the shortest quote it
+    // displays — measured at ~22 seconds in production — and "Back to routes"
+    // returned the user to that same expired card, which refused again on the
+    // next click. Reported as "I went back, picked another route, same error".
+    let compared = 0;
+    const model = review({
+      notice: {
+        title: 'This route needs comparing again',
+        detail: 'Route Card quote comparison has expired',
+        canCompareAgain: true,
+      },
+      onCompareAgain: () => {
+        compared += 1;
+      },
+    });
+    const found = findButtonByLabel(ReviewScreen(model) as unknown as { props: unknown }, 'Compare again');
+    assert.ok(found, 'no way to compare again was rendered');
+    found();
+    assert.equal(compared, 1);
+  });
+
+  test('a refusal a new comparison cannot fix does not offer one', () => {
+    // Comparing again cannot change an unsupported pair or a Safety Kernel
+    // verdict; a button that promises it would be a lie about what happens.
+    const rendered = JSON.stringify(
+      ReviewScreen(
+        review({
+          notice: { title: 'The Safety Kernel refused this transaction', detail: 'Recipient is not your wallet.' },
+          onCompareAgain: () => {},
+        }),
+      ),
+    );
+    assert.equal(rendered.includes('Compare again'), false);
+    assert.match(rendered, /Back to routes/);
+  });
+
+  test('a comparison already running says so instead of accepting a second click', () => {
+    const rendered = JSON.stringify(
+      ReviewScreen(
+        review({
+          notice: { title: 'This route needs comparing again', detail: 'expired', canCompareAgain: true },
+          onCompareAgain: () => {},
+          comparePending: true,
+        }),
+      ),
+    );
+    assert.match(rendered, /Comparing…/);
+    assert.match(rendered, /"disabled":true/);
+  });
+
   test('the notice offers the way back, so the screen is never a dead end', () => {
     let backs = 0;
     const model = review({

@@ -450,6 +450,10 @@ describe('prepare answers 200 with three refusals the console used to drop', () 
       {
         title: 'This route needs comparing again',
         detail: 'The quote behind this Route Card expired.',
+        // An expired comparison is the one refusal a new comparison fixes, so
+        // the screen may offer it. Without this the user went "back" to the
+        // same expired card and was refused again.
+        canCompareAgain: true,
       },
     );
     assert.deepEqual(
@@ -466,6 +470,16 @@ describe('prepare answers 200 with three refusals the console used to drop', () 
         title: 'The Safety Kernel refused this transaction',
         detail: 'Recipient is not your wallet.',
       },
+    );
+    // Neither of those two carries the offer: comparing again cannot change an
+    // unsupported pair or a Safety Kernel verdict.
+    assert.equal(
+      swapPrepareNoticeV1({ outcome: 'unsupported', reason: 'unsupported_pair', detail: 'x' })?.canCompareAgain,
+      undefined,
+    );
+    assert.equal(
+      swapPrepareNoticeV1({ outcome: 'blocked', safety: { blockedReason: 'x' } })?.canCompareAgain,
+      undefined,
     );
   });
 

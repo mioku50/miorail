@@ -628,7 +628,12 @@ export interface ReviewScreenModelV1 {
    * whose only explanation was about simulation. The server's reason belongs on
    * screen, where the user is looking.
    */
-  notice?: { title: string; detail: string } | null;
+  notice?: { title: string; detail: string; canCompareAgain?: boolean } | null;
+  /** Runs a NEW comparison. Offered only when the notice says one would help —
+   * see `canCompareAgain` — because a Route Card expires with the shortest
+   * quote it shows, and going "back" to an expired card only fails again. */
+  onCompareAgain?: () => void;
+  comparePending?: boolean;
   /** T67E §1 — the same token panels as the Route screen, in full detail. This
    * is the last screen before a signature, so the controls the user is about to
    * be subject to belong here more than anywhere. */
@@ -648,9 +653,21 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
         <div className="note warn" role="alert" style={{ marginBottom: 14 }}>
           <b>{model.notice.title}</b>
           <p style={{ margin: '6px 0 10px' }}>{model.notice.detail}</p>
-          <button type="button" className="btn" onClick={model.onBack}>
-            Back to routes
-          </button>
+          <div className="ctarow">
+            {model.notice.canCompareAgain && model.onCompareAgain && (
+              <button
+                type="button"
+                className="btn"
+                onClick={model.onCompareAgain}
+                disabled={model.comparePending}
+              >
+                {model.comparePending ? 'Comparing…' : 'Compare again'}
+              </button>
+            )}
+            <button type="button" className="btn sec" onClick={model.onBack}>
+              Back to routes
+            </button>
+          </div>
         </div>
       )}
 
