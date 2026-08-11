@@ -1,7 +1,6 @@
 import { BASE_UNISWAP_UNIVERSAL_ROUTER_2 } from '@mioagent/security/uniswapGuard';
 import {
   atomicToHumanDecimal,
-  basisPointsToPercentage,
   canonicalRequestHash,
   canonicalResponseHash,
   minimumOutputAtomic,
@@ -9,6 +8,7 @@ import {
   parseUnsignedAtomic,
   providerTokenAddress,
   createPartnerFetchTradeTransport,
+  uniswapSlippageToleranceV1,
   UniswapTradeClient,
   type UniswapTradeTransport,
 } from '@mioagent/swap-adapters';
@@ -84,12 +84,19 @@ export class UniswapSwapBuildAdapter implements SwapBuildAdapter {
       // Slippage is ALWAYS the stored intent constraint — including an
       // explicit 0 — mirroring UniswapQuoteClient's strict handling. Auto
       // slippage would let the provider pick a value the user never approved.
-      slippageTolerance: basisPointsToPercentage(intent.slippageConstraint.maxBps),
+      // It goes as a JSON number: the decimal string is a 400 here, which is
+      // why this build path never once produced a transaction.
+      slippageTolerance: uniswapSlippageToleranceV1(intent.slippageConstraint.maxBps),
       generatePermitAsTransaction: true,
       permitAmount: 'EXACT',
     };
     const quoteResult = await this.client.quote(quoteBody);
-    if (quoteResult.outcome === 'http_error') return failure('unavailable', `uniswap_http_${quoteResult.status}`, true);
+    // The phase is part of the code. Both calls used to report the same
+    // `uniswap_http_400`, so the string the user was shown could not say which
+    // of the two requests had been refused — and finding out cost a live probe.
+    if (quoteResult.outcome === 'http_error') {
+      return failure('unavailable', `uniswap_quote_http_${quoteResult.status}`, true);
+    }
     if (quoteResult.outcome !== 'quote') return failure('invalid_response', 'uniswap_quote_invalid', false);
 
     // Build-side outputs come from the exact quote object that is fed into
@@ -137,7 +144,9 @@ export class UniswapSwapBuildAdapter implements SwapBuildAdapter {
       urgency: 'normal',
     };
     const swapResult = await this.client.swap5792(swapBody, input.walletAddress);
-    if (swapResult.outcome === 'http_error') return failure('unavailable', `uniswap_http_${swapResult.status}`, true);
+    if (swapResult.outcome === 'http_error') {
+      return failure('unavailable', `uniswap_swap_http_${swapResult.status}`, true);
+    }
     if (swapResult.outcome !== 'prepared') return failure('invalid_response', 'uniswap_5792_invalid', false);
 
     const routerCalls = swapResult.calls!.filter((call) => call.to.toLowerCase() === ROUTER.toLowerCase());

@@ -1,8 +1,8 @@
 import { partnerFetch } from '@mioagent/security/httpAllowlist';
 import {
-  basisPointsToPercentage,
   normalizeCaughtProviderError,
   providerFailure,
+  uniswapSlippageToleranceV1,
   type BASE_MAINNET_CHAIN_ID,
 } from './normalization.js';
 import type { SwapAdapterFailure } from './types.js';
@@ -67,17 +67,11 @@ export class UniswapQuoteClient {
       swapper: request.swapper,
       protocols: ['V4', 'V3', 'V2'],
       routingPreference: 'BEST_PRICE',
-      // A NUMBER, not the decimal string. `basisPointsToPercentage` returns
-      // "0.50" and the trade API answers
-      //   400 RequestValidationError: "slippageTolerance" must be a number
-      // so every Uniswap quote was rejected before it was ever routed. The
-      // string form is right everywhere else in this codebase — amounts are
-      // kept exact as strings precisely so nobody rounds money — but this is a
-      // tolerance the provider wants as JSON number, and sending it any other
-      // way means sending nothing at all.
+      // A NUMBER, not the decimal string — see `uniswapSlippageToleranceV1`,
+      // which owns that rule for every Uniswap request this repo sends.
       ...(request.slippageBps === null
         ? { autoSlippage: 'DEFAULT' }
-        : { slippageTolerance: Number(basisPointsToPercentage(request.slippageBps)) }),
+        : { slippageTolerance: uniswapSlippageToleranceV1(request.slippageBps) }),
     };
 
     try {

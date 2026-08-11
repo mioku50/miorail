@@ -87,8 +87,56 @@ test('Uniswap build adapter honors an explicit zero slippage constraint (never a
   }
   // The request carries the explicit stored-intent constraint — including 0 —
   // and never falls back to provider-chosen auto slippage.
-  assert.equal(capturedQuoteBody?.slippageTolerance, '0');
+  assert.equal(capturedQuoteBody?.slippageTolerance, 0);
+  assert.equal(typeof capturedQuoteBody?.slippageTolerance, 'number');
   assert.equal('autoSlippage' in (capturedQuoteBody ?? {}), false);
+});
+
+test('Uniswap build adapter sends slippageTolerance as a JSON number, not a decimal string', async () => {
+  // The defect this closes: this assertion used to read `'0'`, pinning the
+  // string form. Every prepare on a Uniswap route was answered
+  //   400 RequestValidationError: "slippageTolerance" must be a number
+  // and the suite stayed green, because it checked the value and not the type
+  // the provider actually validates. Comparing worked (the quote client sends
+  // a number), so the failure only ever appeared at the Review step.
+  let capturedQuoteBody: Record<string, unknown> | undefined;
+  const adapter = new UniswapSwapBuildAdapter({
+    transport: transportOf({
+      quote: (body) => {
+        capturedQuoteBody = body as Record<string, unknown>;
+        return {
+          status: 200,
+          payload: { routing: 'CLASSIC', quote: { routing: 'CLASSIC', output: { amount: '38000000000000000' } } },
+        };
+      },
+    }),
+  });
+  const result = await adapter.build(buildInput(makeIntent()));
+  assert.equal(result.outcome, 'built');
+  assert.equal(typeof capturedQuoteBody?.slippageTolerance, 'number');
+  // 50 bps is 0.5 percent — JSON.stringify must emit `0.5`, never `"0.50"`.
+  assert.equal(capturedQuoteBody?.slippageTolerance, 0.5);
+  assert.match(JSON.stringify(capturedQuoteBody), /"slippageTolerance":0\.5(?!")/);
+});
+
+test('a refused Uniswap request names which of the two calls was refused', async () => {
+  // One shared `uniswap_http_400` for both phases meant the code shown to the
+  // user could not say whether the quote or the calldata build was rejected.
+  const quoteRefused = await new UniswapSwapBuildAdapter({
+    transport: transportOf({ quote: () => ({ status: 400, payload: { errorCode: 'RequestValidationError' } }) }),
+  }).build(buildInput(makeIntent()));
+  assert.equal(quoteRefused.outcome, 'unavailable');
+  if (quoteRefused.outcome === 'unavailable') {
+    assert.equal(quoteRefused.errorCode, 'uniswap_quote_http_400');
+  }
+
+  const swapRefused = await new UniswapSwapBuildAdapter({
+    transport: transportOf({ swap: () => ({ status: 400, payload: { errorCode: 'RequestValidationError' } }) }),
+  }).build(buildInput(makeIntent()));
+  assert.equal(swapRefused.outcome, 'unavailable');
+  if (swapRefused.outcome === 'unavailable') {
+    assert.equal(swapRefused.errorCode, 'uniswap_swap_http_400');
+  }
 });
 
 test('Uniswap build adapter rejects a quote response without a usable output amount', async () => {

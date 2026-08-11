@@ -58,6 +58,23 @@ export function basisPointsToPercentage(bps: number): string {
   return atomicToHumanDecimal(String(bps), 2)!;
 }
 
+/**
+ * The percentage the Uniswap trade API accepts in a request body: a JSON
+ * NUMBER. Sent as the decimal string every other amount in this codebase uses,
+ * every request is rejected before it is routed:
+ *
+ *   400 RequestValidationError: "slippageTolerance" must be a number
+ *
+ * That is not a rounding concern — a tolerance is a bound, not money, and the
+ * exact bound is still enforced by `minimumOutputAtomic` on our side. This
+ * exists so the knowledge lives in ONE place: it was fixed in the quote client
+ * and left broken in the build adapter, which is why preparing a Uniswap
+ * transaction failed for months while comparing worked.
+ */
+export function uniswapSlippageToleranceV1(bps: number): number {
+  return Number(basisPointsToPercentage(bps));
+}
+
 export function minimumOutputAtomic(expectedOutput: string, slippageBps: number): string {
   if (!UNSIGNED_INTEGER.test(expectedOutput) || BigInt(expectedOutput) <= 0n) {
     throw new TypeError('Expected output must be a positive atomic amount');
