@@ -51,10 +51,20 @@ function CandidateTable({
   rows,
   onSelect,
   withAction,
+  selectBlockedReason,
 }: {
   rows: readonly CandidateRowViewV1[];
   onSelect?: (id: string) => void;
   withAction: boolean;
+  /**
+   * Why NO row can be chosen, whatever the row itself says. A degraded run
+   * produces candidates with real numbers and no signable Route Card, and
+   * `Use this` then clicked into a `console.warn`. The Review button below
+   * already stated this reason and disabled itself; the table did not, so the
+   * user pressed the working-looking control and nothing happened. Reported
+   * exactly that way, twice.
+   */
+  selectBlockedReason?: string | null;
 }) {
   return (
     <table>
@@ -91,7 +101,13 @@ function CandidateTable({
                 // a live-looking button that swallowed the click when no
                 // handler was passed — the same dead control the Review button
                 // was, one row down.
-                <button type="button" className="btn sec" onClick={() => onSelect(row.id)}>
+                <button
+                  type="button"
+                  className="btn sec"
+                  onClick={() => onSelect(row.id)}
+                  disabled={Boolean(selectBlockedReason)}
+                  title={selectBlockedReason ?? undefined}
+                >
                   Use this
                 </button>
               ) : (
@@ -271,7 +287,14 @@ export function RouteScreen(model: RouteScreenModelV1) {
           <span className="sub">{candidateSummaryV1(model.candidates)}</span>
         </div>
         <div className="pb tight">
-          <CandidateTable rows={model.candidates} onSelect={model.onSelectCandidate} withAction />
+          {/* The same reason that disables Review disables choosing a row:
+              both need a signable Route Card, and neither can invent one. */}
+          <CandidateTable
+            rows={model.candidates}
+            onSelect={model.onSelectCandidate}
+            withAction
+            selectBlockedReason={model.reviewDisabledReason}
+          />
         </div>
       </div>
 

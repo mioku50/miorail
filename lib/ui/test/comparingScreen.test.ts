@@ -4,6 +4,7 @@ import {
   ComparingScreen,
   PlanScreen,
   ReviewScreen,
+  RouteScreen,
   type ComparingScreenModelV1,
   type PlanScreenModelV1,
   type ReviewScreenModelV1,
@@ -357,6 +358,64 @@ describe('the signing button is the real one', () => {
   test('with no slot the built-in button still renders, so the row is never empty', () => {
     const rendered = JSON.stringify(ReviewScreen(review({ simulation: { ...review().simulation, canSign: false, disabledReason: 'x' } })));
     assert.match(rendered, /Approve in Base Account/);
+    assert.match(rendered, /"disabled":true/);
+  });
+});
+
+describe('a route cannot be chosen when no Route Card exists', () => {
+  test('Use this is disabled with the same reason that disables Review', () => {
+    // Reported: "Uniswap was unavailable, I tried to pick another provider
+    // with Use this, and the buttons did nothing." A degraded run yields
+    // candidates with real numbers and NO signable Route Card, so selecting
+    // one only reached a console.warn. Review already said so and disabled
+    // itself; the table did not.
+    const reason = 'This comparison finished without a signable Route Card, so there is nothing to review.';
+    const rendered = JSON.stringify(
+      RouteScreen({
+        steps: [],
+        eyebrow: 'Recommended route',
+        amount: '0.1',
+        unit: 'USDC',
+        usd: '$0.10',
+        providerLabel: 'Aerodrome',
+        freshness: { label: 'fresh', tone: 'g' },
+        why: 'best net result',
+        kpis: [],
+        graph: null,
+        graphUnavailableReason: 'no graph',
+        graphLegend: [],
+        simulatedPill: { label: 'not simulated', tone: 'n' },
+        scoreRows: [],
+        scoringVersion: 'swap-path-score/v1',
+        candidates: [
+          {
+            id: 'aerodrome',
+            name: 'Aerodrome',
+            outputLabel: '0.000053',
+            netLabel: '0.000052',
+            scorePercent: 50,
+            scoreDim: false,
+            why: 'Alternative route',
+            state: 'alternative',
+            stateLabel: 'alternative',
+            actionLabel: 'Use this',
+            selectable: true,
+          },
+        ],
+        onSelectCandidate: () => {},
+        onReview: () => {},
+        onChangeGoal: () => {},
+        reviewDisabledReason: reason,
+      } as never),
+    );
+    // The row keeps its numbers rather than hiding, and the SAME reason that
+    // disables Review is handed to the table, which disables every Use this.
+    // (React does not expand a child component here, so the assertion is on
+    // the prop crossing the boundary — the table's own behaviour is the one
+    // line `disabled={Boolean(selectBlockedReason)}`.)
+    assert.match(rendered, /Aerodrome/);
+    assert.match(rendered, /"selectBlockedReason":"This comparison finished without a signable Route Card/);
+    // And Review itself stays disabled, as it already was.
     assert.match(rendered, /"disabled":true/);
   });
 });
