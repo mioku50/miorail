@@ -1499,7 +1499,7 @@ export function RouteIntelligenceConsole() {
         record={
           proof
             ? [
-                { label: 'Proof hash', value: proof.proofHash ?? '—' },
+                { label: 'Proof id', value: proof.proofId },
                 { label: 'Transactions', value: (proof.transactionHashes.length ? proof.transactionHashes : submission?.txHashes ?? []).join(', ') || '—' },
                 { label: 'Route chosen', value: recommended?.provider.displayName ?? '—' },
                 { label: 'Not scored', value: 'MEV protection — no approved source connected', dim: true },
