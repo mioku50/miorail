@@ -44,6 +44,7 @@ import {
   PlanVsActualCards,
   ReviewScreen,
   swapPrepareNoticeV1,
+  swapPrepareRequestFailedNoticeV1,
   RouteGraph,
   adaptersFromStatusV1,
   consoleFailureCopyV1,
@@ -1415,7 +1416,9 @@ export function MiniConsole() {
           // Same defect as the web console: three of prepare's four outcomes
           // carry no blueprint, and reading only the fourth left this screen
           // blaming simulation for a refusal it never made.
-          notice={swapPrepareNoticeV1(prepare.data as never)}
+          // `isError` first: a 500 leaves no body to map, so reading only the
+          // body left this screen empty with no reason on it.
+          notice={prepare.isError ? swapPrepareRequestFailedNoticeV1() : swapPrepareNoticeV1(prepare.data as never)}
           // And the same dead end: the card expires with its shortest quote,
           // so "back" returned to a card that refused again.
           onCompareAgain={() => compare({ fresh: true })}

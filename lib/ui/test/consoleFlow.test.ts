@@ -21,6 +21,7 @@ import {
   stageDurationMsV1,
   startStageV1,
   swapPrepareNoticeV1,
+  swapPrepareRequestFailedNoticeV1,
   swapTerminalFailureV1,
   stepperFromClockV1,
 } from '../src/console/consoleFlow';
@@ -496,5 +497,19 @@ describe('prepare answers 200 with three refusals the console used to drop', () 
     const notice = swapPrepareNoticeV1({ outcome: 'blocked', safety: { blockedReason: null } });
     assert.equal(notice?.title, 'The Safety Kernel refused this transaction');
     assert.match(notice?.detail ?? '', /safety check/i);
+  });
+});
+
+describe('a prepare that never answered still explains itself', () => {
+  test('a failed request produces a notice, because there is no body to map', () => {
+    // Third instance of the same class in one day: the server answered 500,
+    // `swapPrepareNoticeV1` correctly saw no body, and Review rendered its
+    // empty shell — zero calls, every check "not confirmed", a disabled
+    // button — with the simulation sentence as the only text on screen.
+    const notice = swapPrepareRequestFailedNoticeV1();
+    assert.equal(notice.title, 'Miorail could not prepare this route');
+    assert.match(notice.detail, /[Nn]othing was signed/);
+    // A server-side failure is worth retrying with a fresh comparison.
+    assert.equal(notice.canCompareAgain, true);
   });
 });

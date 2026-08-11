@@ -51,6 +51,7 @@ import {
   b20TargetForRouteV1,
   b20UnavailableCopyV1,
   swapPrepareNoticeV1,
+  swapPrepareRequestFailedNoticeV1,
   swapTerminalFailureV1,
   candidateRowsFromProjectionV1,
   comparisonClaimFromProjectionV1,
@@ -1224,7 +1225,12 @@ export function RouteIntelligenceConsole() {
   } else if (screen === 'review') {
     // Three of prepare's four outcomes carry no blueprint, and reading only the
     // fourth left this screen blaming simulation for a refusal it never made.
-    const prepareNotice = swapPrepareNoticeV1(prepare.data as never);
+    // `isError` first: a 500 leaves no body to map, and reading only the body
+    // left this screen empty for a reason it could not name — the same defect
+    // as reading only the `prepared` branch, one layer further out.
+    const prepareNotice = prepare.isError
+      ? swapPrepareRequestFailedNoticeV1()
+      : swapPrepareNoticeV1(prepare.data as never);
     const priceLabel = prepared?.simulationPriceUsdc ? `${prepared.simulationPriceUsdc} USDC` : null;
     const budgetHasHeadroom = Boolean(budgetRecord && Number(budgetRecord.remainingUsdc) > 0);
     const simulationEvidence =

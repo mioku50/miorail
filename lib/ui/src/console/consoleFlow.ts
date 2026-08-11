@@ -670,6 +670,24 @@ export type SwapPrepareLikeV1 =
  * cases and it is carried through verbatim, exactly as the clarification path
  * carries the intent engine's own sentence.
  */
+/**
+ * When the prepare REQUEST itself failed — a 500, a dropped connection, a
+ * timeout — there is no outcome to map, and `swapPrepareNoticeV1` correctly
+ * returns null for a body that never arrived. Without this, Review rendered
+ * its empty shell with no explanation at all: zero calls, every check "not
+ * confirmed", a disabled button, and one sentence about simulation that was
+ * not the reason. That is the same defect as reading only the `prepared`
+ * branch of the 200 union, one layer further out.
+ */
+export function swapPrepareRequestFailedNoticeV1(): ConsoleTerminalFailureV1 {
+  return {
+    title: 'Miorail could not prepare this route',
+    detail:
+      'The server failed while preparing this transaction. Nothing was signed and nothing was sent. The failure is recorded server-side; comparing again is the safe next step.',
+    canCompareAgain: true,
+  };
+}
+
 export function swapPrepareNoticeV1(
   data: SwapPrepareLikeV1 | null | undefined,
 ): ConsoleTerminalFailureV1 | null {
