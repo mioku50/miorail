@@ -130,17 +130,38 @@ function toToolDef(tool: DynamicBaseMcpTool): ToolDef {
   };
 }
 
+/**
+ * How deep this walks before giving up.
+ *
+ * Four of those levels are spent before any real data begins: the MCP
+ * envelope is `{content:[{type,text}]}` and `text` is itself a JSON STRING,
+ * which costs one more when it is parsed. The old budget of 6 therefore left
+ * three levels for the payload — so `get_transaction_history` came back as
+ * `{"address":"0x…","transactions":[{"hash":"[truncated]","type":"[truncated]"…`
+ * and the model, given a table of placeholders, rendered a table of dots. The
+ * user reported it as a bad answer; the tool had answered fine.
+ */
+const MAX_REDACT_DEPTH_V1 = 12;
+
 function redactSecrets(value: unknown, depth = 0, transactionResult = false): unknown {
-  if (depth > 6) return '[truncated]';
-  if (Array.isArray(value)) return value.slice(0, 100).map((item) => redactSecrets(item, depth + 1, transactionResult));
+  // The cap belongs on CONTAINERS only. A string or a number cannot recurse,
+  // so cutting one buys no safety and deletes the answer. That ordering is
+  // what turned every leaf of a legitimate result into "[truncated]".
+  if (Array.isArray(value)) {
+    if (depth > MAX_REDACT_DEPTH_V1) return '[truncated]';
+    return value.slice(0, 100).map((item) => redactSecrets(item, depth + 1, transactionResult));
+  }
   if (typeof value === 'string') {
+    const plain = value.replace(/Bearer\s+[A-Za-z0-9._~+/-]+/gi, 'Bearer [redacted]').slice(0, 20_000);
+    if (depth > MAX_REDACT_DEPTH_V1) return plain;
     try {
       return JSON.stringify(redactSecrets(JSON.parse(value), depth + 1, transactionResult));
     } catch {
-      return value.replace(/Bearer\s+[A-Za-z0-9._~+/-]+/gi, 'Bearer [redacted]').slice(0, 20_000);
+      return plain;
     }
   }
   if (!value || typeof value !== 'object') return value;
+  if (depth > MAX_REDACT_DEPTH_V1) return '[truncated]';
 
   const output: Record<string, unknown> = {};
   for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {

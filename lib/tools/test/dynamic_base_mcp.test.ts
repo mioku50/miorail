@@ -177,3 +177,60 @@ describe('DynamicBaseMcpToolProvider', () => {
     assert.deepStrictEqual(mockClient.calls.map((call) => call.name), ['moonwell_get_markets', 'morpho_query_vaults']);
   });
 });
+
+describe('a real result survives redaction', () => {
+  function providerReturning(payload: unknown) {
+    const tools = classifyDynamicBaseMcpTools([
+      { name: 'get_transaction_history', description: 'History', inputSchema: { type: 'object' } },
+    ]);
+    const client = {
+      getClient() {
+        return {
+          // The MCP envelope, with the payload double-encoded exactly as the
+          // protocol sends it.
+          callTool: async () => ({ content: [{ type: 'text', text: JSON.stringify(payload) }] }),
+        };
+      },
+    };
+    return new DynamicBaseMcpToolProvider(client, tools, {});
+  }
+
+  test('transaction fields reach the model instead of the word truncated', async () => {
+    // Reported as "why is the answer so mangled": the console showed a table
+    // of dots because every leaf arrived as the literal string "[truncated]".
+    // The envelope plus the double-encoded text spent the whole depth budget
+    // before the transactions began.
+    const result = await providerReturning({
+      address: '0x4de27ead5a3c9aeb58c7f812178ddde282670d70',
+      transactions: [
+        { hash: '0xaaa1', type: 'transfer', status: 'success', timestamp: '2026-08-11T18:00:00Z', fee: '0.000021' },
+      ],
+    }).callTool('get_transaction_history', { chain: 'base' });
+
+    assert.equal(result.isError, false);
+    assert.match(result.content, /0xaaa1/);
+    assert.match(result.content, /transfer/);
+    assert.match(result.content, /success/);
+    assert.equal(result.content.includes('[truncated]'), false);
+  });
+
+  test('a secret nested below the old cutoff is still redacted, not merely hidden', async () => {
+    // Raising the budget means these levels are now VISITED. They must be
+    // redacted by name there, exactly as they are at the top.
+    const result = await providerReturning({
+      a: { b: { c: { d: { e: { access_token: 'secret-token', note: 'keep me' } } } } },
+    }).callTool('get_transaction_history', {});
+    assert.equal(result.content.includes('secret-token'), false);
+    assert.match(result.content, /\[redacted\]/);
+    assert.match(result.content, /keep me/);
+  });
+
+  test('pathological nesting still terminates', async () => {
+    let deep: Record<string, unknown> = { leaf: 'bottom' };
+    for (let i = 0; i < 40; i += 1) deep = { next: deep };
+    const result = await providerReturning(deep).callTool('get_transaction_history', {});
+    assert.equal(result.isError, false);
+    assert.match(result.content, /\[truncated\]/);
+    assert.equal(result.content.includes('bottom'), false);
+  });
+});
