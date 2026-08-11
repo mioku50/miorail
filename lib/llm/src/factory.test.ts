@@ -247,3 +247,46 @@ test('providerLabelV1 reports the host and never a path or credential', () => {
   assert.equal(providerLabelV1('https://gateway.example/v1/sk-secret-token'), 'gateway.example');
   assert.equal(providerLabelV1(''), 'llm-provider');
 });
+
+test('two links on the same host are told apart in the log', async (t) => {
+  const originalEnv = { ...process.env };
+  t.after(() => {
+    process.env = { ...originalEnv };
+  });
+  clearFallbackEnv();
+  process.env.LLM_PROVIDER = 'openai-compatible';
+  process.env.LLM_BASE_URL = 'https://api.airforce';
+  process.env.LLM_API_KEY = 'test';
+  process.env.LLM_MODEL = 'gpt-4o-mini';
+  // Both spares are OpenRouter, on different models. Production logged
+  // "openrouter.ai failed, falling over to openrouter.ai" — true, and useless.
+  process.env.LLM_FALLBACK_BASE_URL = 'https://openrouter.ai/api';
+  process.env.LLM_FALLBACK_MODEL = 'qwen/qwen3.7-flash';
+  process.env.LLM_FALLBACK_2_BASE_URL = 'https://openrouter.ai/api';
+  process.env.LLM_FALLBACK_2_MODEL = 'nvidia/nemotron-3-nano-30b-a3b:free';
+  process.env.OPENROUTER_KEY = 'sk-or-test';
+
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  const originalFetch = globalThis.fetch;
+  console.warn = (message: string) => warnings.push(message);
+  // Offline: the factory builds its own clients, so the only seam is fetch.
+  // Without this the chain dials three real hosts and waits out three 60s
+  // timeouts inside a unit test.
+  globalThis.fetch = (async () => {
+    throw new Error('offline in tests');
+  }) as typeof fetch;
+  try {
+    await assert.rejects(() =>
+      createLlmProvider().generate({ messages: [{ role: 'user', content: 'hi' }] }),
+    );
+  } finally {
+    console.warn = originalWarn;
+    globalThis.fetch = originalFetch;
+  }
+  const hops = warnings.join('\n');
+  assert.match(hops, /openrouter\.ai \(qwen\/qwen3\.7-flash\)/);
+  assert.match(hops, /openrouter\.ai \(nvidia\/nemotron-3-nano-30b-a3b:free\)/);
+  // The unique host keeps its short, familiar name.
+  assert.match(hops, /^\[llm\] api\.airforce failed/m);
+});

@@ -67,7 +67,7 @@ function fallbackApiKeyV1(baseUrl: string, prefix: string): string {
  * second. A second spare exists because the primary here answers 429 on most
  * requests, which makes a single spare the provider rather than the spare.
  */
-function fallbackLinkV1(prefix: string): NamedLlmProviderV1 | null {
+function fallbackLinkV1(prefix: string): (NamedLlmProviderV1 & { model: string }) | null {
   const baseUrl = trimmed(`${prefix}_BASE_URL`);
   const model = trimmed(`${prefix}_MODEL`);
   const apiKey = baseUrl
@@ -87,17 +87,38 @@ function fallbackLinkV1(prefix: string): NamedLlmProviderV1 | null {
 
   return {
     label: providerLabelV1(baseUrl),
+    model,
     provider: new OpenAiCompatibleClient({ apiKey, baseUrl, defaultModel: model }),
   };
 }
 
-function withFallbackV1(primary: NamedLlmProviderV1): LlmProvider {
+/**
+ * Adds the model to a label whenever the host alone cannot identify the link.
+ *
+ * Two OpenRouter links in one chain logged "openrouter.ai failed, falling over
+ * to openrouter.ai" — true, and useless: an operator cannot tell which model
+ * ran out. Hosts stay bare when they are unique, because that is the shorter
+ * and more familiar line.
+ */
+function disambiguateLabelsV1(
+  links: ReadonlyArray<NamedLlmProviderV1 & { model?: string }>,
+): NamedLlmProviderV1[] {
+  const seen = new Map<string, number>();
+  for (const link of links) seen.set(link.label, (seen.get(link.label) ?? 0) + 1);
+  return links.map((link) =>
+    (seen.get(link.label) ?? 0) > 1 && link.model
+      ? { label: `${link.label} (${link.model})`, provider: link.provider }
+      : { label: link.label, provider: link.provider },
+  );
+}
+
+function withFallbackV1(primary: NamedLlmProviderV1 & { model?: string }): LlmProvider {
   const spares = [fallbackLinkV1('LLM_FALLBACK'), fallbackLinkV1('LLM_FALLBACK_2')].filter(
-    (link): link is NamedLlmProviderV1 => link !== null,
+    (link): link is NamedLlmProviderV1 & { model: string } => link !== null,
   );
   if (spares.length === 0) return primary.provider;
 
-  return new LlmProviderChainV1([primary, ...spares], {
+  return new LlmProviderChainV1(disambiguateLabelsV1([primary, ...spares]), {
     onFallover: ({ from, to, reason }) => {
       // Hosts and a redacted provider message. An operator needs to know the
       // primary is down long before the last spare also runs out.
@@ -114,12 +135,14 @@ export function createLlmProvider(): LlmProvider {
       throw new Error('LLM_PROVIDER is openai but OPENAI_API_KEY is not set');
     }
     const baseUrl = 'https://api.openai.com';
+    const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
     return withFallbackV1({
       label: providerLabelV1(baseUrl),
+      model,
       provider: new OpenAiCompatibleClient({
         apiKey: process.env.OPENAI_API_KEY,
         baseUrl,
-        defaultModel: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+        defaultModel: model,
         fetchImpl: fetchForPaymentMode()
       })
     });
@@ -145,6 +168,7 @@ export function createLlmProvider(): LlmProvider {
     }
     return withFallbackV1({
       label: providerLabelV1(baseUrl),
+      model,
       provider: new OpenAiCompatibleClient({
         apiKey,
         baseUrl,
