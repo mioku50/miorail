@@ -43,6 +43,7 @@ import {
   PlanScreen,
   PlanVsActualCards,
   ReviewScreen,
+  swapPrepareNoticeV1,
   RouteGraph,
   adaptersFromStatusV1,
   consoleFailureCopyV1,
@@ -1411,6 +1412,10 @@ export function MiniConsole() {
         <ConsoleStepperCompact label={stepLabel} steps={steps} expanded={railOpen} onToggle={() => setRailOpen((open) => !open)} />
         <ReviewScreen
           steps={steps}
+          // Same defect as the web console: three of prepare's four outcomes
+          // carry no blueprint, and reading only the fourth left this screen
+          // blaming simulation for a refusal it never made.
+          notice={swapPrepareNoticeV1(prepare.data as never)}
           calls={
             prepared?.blueprint.calls.map((call, index) => ({
               index: index + 1,

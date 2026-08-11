@@ -618,6 +618,17 @@ export interface ReviewScreenModelV1 {
   onApprove: () => void;
   onBack: () => void;
   approvePending: boolean;
+  /**
+   * Why there is nothing to sign, when the server said so.
+   *
+   * `prepare` answers 200 with one of four outcomes and only one of them
+   * carries a blueprint. The other three — refresh required, unsupported,
+   * blocked by the Safety Kernel — used to be dropped on the floor, leaving a
+   * Review screen with no calls, every check unconfirmed, and a disabled button
+   * whose only explanation was about simulation. The server's reason belongs on
+   * screen, where the user is looking.
+   */
+  notice?: { title: string; detail: string } | null;
   /** T67E §1 — the same token panels as the Route screen, in full detail. This
    * is the last screen before a signature, so the controls the user is about to
    * be subject to belong here more than anywhere. */
@@ -629,6 +640,19 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
   return (
     <section aria-label="Review transaction">
       <ConsoleStepper steps={model.steps} />
+
+      {/* First, above everything: when the server refused to prepare, that is
+          the whole state of this screen and the panels below it are empty for
+          that reason rather than for a reason of their own. */}
+      {model.notice && (
+        <div className="note warn" role="alert" style={{ marginBottom: 14 }}>
+          <b>{model.notice.title}</b>
+          <p style={{ margin: '6px 0 10px' }}>{model.notice.detail}</p>
+          <button type="button" className="btn" onClick={model.onBack}>
+            Back to routes
+          </button>
+        </div>
+      )}
 
       <div className="cols2" style={{ marginBottom: 14 }}>
         <div className="panel">

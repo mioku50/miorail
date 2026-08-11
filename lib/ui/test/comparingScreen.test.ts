@@ -1,6 +1,13 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { ComparingScreen, PlanScreen, type ComparingScreenModelV1, type PlanScreenModelV1 } from '../src/index';
+import {
+  ComparingScreen,
+  PlanScreen,
+  ReviewScreen,
+  type ComparingScreenModelV1,
+  type PlanScreenModelV1,
+  type ReviewScreenModelV1,
+} from '../src/index';
 
 // ---------------------------------------------------------------------------
 // T64.3.1 §4 — Comparing must END.
@@ -193,3 +200,67 @@ function findButtonByLabel(node: unknown, label: string): (() => void) | null {
   }
   return findButtonByLabel(props.children, label);
 }
+
+describe('Review says why there is nothing to sign', () => {
+  function review(overrides: Partial<ReviewScreenModelV1> = {}): ReviewScreenModelV1 {
+    return {
+      steps: [],
+      calls: [],
+      simulation: {
+        available: false,
+        passed: false,
+        headline: 'Simulation not available',
+        detail: 'No simulation provider answered.',
+        subLabel: 'not available',
+        canSign: false,
+        disabledReason: 'Simulation is not available yet, so nothing is signed from a guess.',
+      },
+      balanceChanges: [],
+      balanceUnavailableReason: null,
+      checks: [{ label: 'Chain is Base mainnet', passed: false }],
+      limits: [],
+      onLimitChange: () => {},
+      onApprove: () => {},
+      onBack: () => {},
+      approvePending: false,
+      ...overrides,
+    };
+  }
+
+  test('a refused prepare states the server’s reason instead of blaming simulation', () => {
+    // What the user saw: zero calls, every check "not confirmed", a disabled
+    // button, and the only sentence on screen was about simulation — which was
+    // not the reason for any of it.
+    const rendered = JSON.stringify(
+      ReviewScreen(
+        review({
+          notice: {
+            title: 'This route needs comparing again',
+            detail: 'The quote behind this Route Card expired.',
+          },
+        }),
+      ),
+    );
+    assert.match(rendered, /This route needs comparing again/);
+    assert.match(rendered, /The quote behind this Route Card expired/);
+  });
+
+  test('a prepared route carries no notice at all', () => {
+    const rendered = JSON.stringify(ReviewScreen(review()));
+    assert.equal(rendered.includes('needs comparing again'), false);
+  });
+
+  test('the notice offers the way back, so the screen is never a dead end', () => {
+    let backs = 0;
+    const model = review({
+      notice: { title: 'The Safety Kernel refused this transaction', detail: 'Recipient is not your wallet.' },
+      onBack: () => {
+        backs += 1;
+      },
+    });
+    const found = findButtonByLabel(ReviewScreen(model) as unknown as { props: unknown }, 'Back to routes');
+    assert.ok(found, 'no way back was rendered');
+    found();
+    assert.equal(backs, 1);
+  });
+});

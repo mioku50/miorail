@@ -20,6 +20,7 @@ import {
   routeFamilyForGoalV1,
   stageDurationMsV1,
   startStageV1,
+  swapPrepareNoticeV1,
   swapTerminalFailureV1,
   stepperFromClockV1,
 } from '../src/console/consoleFlow';
@@ -435,5 +436,51 @@ describe('a swap that the server answered with a question is terminal', () => {
     // Every row is resolved. Not one of them may still read as running.
     assert.equal(rows.some((row) => row.state === 'running'), false, JSON.stringify(rows));
     assert.ok(rows.every((row) => row.state === 'failed' || row.state === 'done'));
+  });
+});
+
+describe('prepare answers 200 with three refusals the console used to drop', () => {
+  test('each refusal becomes a sentence, carried from the server', () => {
+    assert.deepEqual(
+      swapPrepareNoticeV1({
+        outcome: 'refresh_required',
+        reason: 'quote_expired',
+        detail: 'The quote behind this Route Card expired.',
+      }),
+      {
+        title: 'This route needs comparing again',
+        detail: 'The quote behind this Route Card expired.',
+      },
+    );
+    assert.deepEqual(
+      swapPrepareNoticeV1({
+        outcome: 'unsupported',
+        reason: 'unsupported_pair',
+        detail: 'This pair cannot be prepared.',
+      }),
+      { title: 'Miorail cannot prepare this route', detail: 'This pair cannot be prepared.' },
+    );
+    assert.deepEqual(
+      swapPrepareNoticeV1({ outcome: 'blocked', safety: { blockedReason: 'Recipient is not your wallet.' } }),
+      {
+        title: 'The Safety Kernel refused this transaction',
+        detail: 'Recipient is not your wallet.',
+      },
+    );
+  });
+
+  test('a prepared route has no notice, and neither does an absent response', () => {
+    assert.equal(swapPrepareNoticeV1({ outcome: 'prepared' }), null);
+    assert.equal(swapPrepareNoticeV1(null), null);
+    assert.equal(swapPrepareNoticeV1(undefined), null);
+  });
+
+  test('a blocked verdict without a reason still says something', () => {
+    // The schema refuses a blocked result with a null reason, so this is the
+    // shape no server should send — and an empty warning box is worse than a
+    // general one.
+    const notice = swapPrepareNoticeV1({ outcome: 'blocked', safety: { blockedReason: null } });
+    assert.equal(notice?.title, 'The Safety Kernel refused this transaction');
+    assert.match(notice?.detail ?? '', /safety check/i);
   });
 });

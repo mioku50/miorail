@@ -93,11 +93,21 @@ export const B20_DETECTION_COPY_V1: Record<string, string> = {
   unsupported_chain: 'This card reads Base mainnet only.',
 };
 
+/**
+ * Titled "Token controls", not "B20 Control".
+ *
+ * This panel appears on EVERY swap route, about whatever token the route
+ * acquires — so on a plain USDC→ETH swap it was headed with the name of an
+ * internal feature the user had no reason to connect to their goal. What it
+ * reports is what the token's contract can do to a holder; whether that token
+ * came from the B20 factory is one of the facts inside, and there the word
+ * means something.
+ */
 export function B20ControlCardPanel({ card }: { card: B20CardLikeV1 }): React.ReactElement {
   const isB20 = card.detectionOutcome === 'b20' || card.detectionOutcome === 'b20_uninitialised';
   return (
     <section className="panel">
-      <h3>B20 Control</h3>
+      <h3>Token controls</h3>
       <div className="kv">
         <span className="k">Token</span>
         <span className="v mono">{card.tokenAddress}</span>
@@ -310,7 +320,7 @@ export function B20ControlSection({
   if (loading) {
     return (
       <section className="panel">
-        <h3>B20 Control</h3>
+        <h3>Token controls</h3>
         <p className="note">Reading this token’s controls on Base…</p>
       </section>
     );
@@ -321,7 +331,7 @@ export function B20ControlSection({
     if (!unavailableReason) return null;
     return (
       <section className="panel">
-        <h3>B20 Control</h3>
+        <h3>Token controls</h3>
         <p className="note">{unavailableReason}</p>
       </section>
     );

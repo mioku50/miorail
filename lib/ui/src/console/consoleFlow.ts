@@ -641,6 +641,43 @@ export interface ConsoleTerminalFailureV1 {
   answerable?: boolean;
 }
 
+/** The swap prepare response as it crosses the wire, structurally. */
+export type SwapPrepareLikeV1 =
+  | { outcome: 'prepared' }
+  | { outcome: 'refresh_required'; reason: string; detail: string }
+  | { outcome: 'unsupported'; reason: string; detail: string }
+  | { outcome: 'blocked'; safety: { blockedReason: string | null } };
+
+/**
+ * What the Review screen says when prepare produced no blueprint.
+ *
+ * Three of the four prepare outcomes carry no calls, and the console read only
+ * the fourth. The screen then rendered every check as "not confirmed", zero
+ * calls to sign, and a disabled button explained by a line about simulation —
+ * none of which was the reason. The server states a reason in each of the three
+ * cases and it is carried through verbatim, exactly as the clarification path
+ * carries the intent engine's own sentence.
+ */
+export function swapPrepareNoticeV1(
+  data: SwapPrepareLikeV1 | null | undefined,
+): ConsoleTerminalFailureV1 | null {
+  if (!data || data.outcome === 'prepared') return null;
+  if (data.outcome === 'refresh_required') {
+    return { title: 'This route needs comparing again', detail: data.detail };
+  }
+  if (data.outcome === 'unsupported') {
+    return { title: 'Miorail cannot prepare this route', detail: data.detail };
+  }
+  return {
+    title: 'The Safety Kernel refused this transaction',
+    // A blocked verdict always carries a reason — the schema refuses one that
+    // does not — but a null here would otherwise render as an empty warning.
+    detail:
+      data.safety.blockedReason ??
+      'A safety check did not pass, so nothing was prepared for signing.',
+  };
+}
+
 /** The swap evaluation as it crosses the wire, structurally. */
 export type SwapEvaluationLikeV1 =
   | { outcome: 'evaluated' }

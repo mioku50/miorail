@@ -50,6 +50,7 @@ import {
   b20ErrorCodeV1,
   b20TargetForRouteV1,
   b20UnavailableCopyV1,
+  swapPrepareNoticeV1,
   swapTerminalFailureV1,
   candidateRowsFromProjectionV1,
   comparisonClaimFromProjectionV1,
@@ -1221,6 +1222,9 @@ export function RouteIntelligenceConsole() {
       </>
     );
   } else if (screen === 'review') {
+    // Three of prepare's four outcomes carry no blueprint, and reading only the
+    // fourth left this screen blaming simulation for a refusal it never made.
+    const prepareNotice = swapPrepareNoticeV1(prepare.data as never);
     const priceLabel = prepared?.simulationPriceUsdc ? `${prepared.simulationPriceUsdc} USDC` : null;
     const budgetHasHeadroom = Boolean(budgetRecord && Number(budgetRecord.remainingUsdc) > 0);
     const simulationEvidence =
@@ -1244,6 +1248,7 @@ export function RouteIntelligenceConsole() {
               mono: true,
             })) ?? []
           }
+          notice={prepareNotice}
           simulation={simulation}
           balanceChanges={(simulationEvidence?.stateChanges ?? []).map(
             (change: { address: string; kind: string; summary: string }) => ({
