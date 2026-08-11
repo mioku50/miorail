@@ -404,7 +404,16 @@ function groundedAssets(
 
   const parseExtracted = (raw: string | null, field: 'fromAsset' | 'toAsset') => {
     if (!raw) return null;
-    if (!rawFieldIsGrounded(raw, message)) {
+    // Grounded by SPELLING, or failing that by the asset the spelling names.
+    // "Хочу обменять 0.1 USDC на эфир" was rejected because the extractor
+    // answered "ETH" for a message that says "эфир" — a correct normalisation,
+    // read as an invention. The second check cannot invent anything: the asset
+    // still has to be one the message itself names.
+    const named = resolveRouteAssetV1(raw);
+    const groundedByAsset = Boolean(
+      named && occurrences.some((occurrence) => occurrence.asset.assetId === named.assetId),
+    );
+    if (!rawFieldIsGrounded(raw, message) && !groundedByAsset) {
       issues.push(
         issue(
           'extractor_field_ungrounded',

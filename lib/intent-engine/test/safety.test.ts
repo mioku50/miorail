@@ -113,6 +113,30 @@ test('malformed extractor output is rejected and cannot produce placeholders', (
 test('ungrounded extractor fields are rejected instead of trusted', () => {
   const result = rejected('Swap USDC to ETH.', swapExtraction({ amount: '100' }));
   assert.equal(result.issues[0]?.code, 'extractor_field_ungrounded');
+
+  // An asset the message never names, however it is spelled. This is the case
+  // the groundedness rule exists for and it must survive the allowance below.
+  const invented = rejected(
+    'Обменяй 100 USDC на эфир.',
+    swapExtraction({ fromAsset: 'USDC', toAsset: 'WETH' }),
+  );
+  assert.equal(invented.issues[0]?.code, 'extractor_field_ungrounded');
+});
+
+test('a normalised spelling of an asset the message DOES name is grounded', () => {
+  // Found by swapping the fallback model: a smaller extractor answers "ETH" for
+  // a message that says "эфир". That is a correct normalisation, and comparing
+  // raw strings read it as an invention. The asset must still appear in the
+  // message — only the spelling is allowed to differ.
+  const result = resolveSwapIntentV2({
+    message: 'Хочу обменять 100 USDC на эфир.',
+    extraction: swapExtraction({ fromAsset: 'USDC', toAsset: 'ETH' }),
+    context: testContext(),
+  });
+  assert.equal(result.outcome, 'ready', JSON.stringify(result));
+  if (result.outcome === 'ready') {
+    assert.equal(result.routeIntent.toAsset?.symbol, 'ETH');
+  }
 });
 
 test('LLM chain extraction cannot override authenticated Base mainnet binding', () => {
