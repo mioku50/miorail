@@ -60,6 +60,33 @@ export interface UniswapTradeSwapResult {
   requestId?: string;
 }
 
+/**
+ * The native value attached to a call, as an unsigned base-unit DECIMAL string.
+ *
+ * The trade API sends `value` as HEX — literally `"0x00"` — and everything
+ * downstream speaks decimal: the blueprint schema (`Expected unsigned
+ * base-unit integer string`), the Safety Kernel, the wallet payload. Passing
+ * the hex through therefore killed `swap/prepare` at the very last step, after
+ * the quote, the calldata and every safety check had already succeeded.
+ *
+ * Unreadable input is REFUSED, never defaulted to zero: `value` is native ETH
+ * the provider means to attach, and silently dropping it would change the
+ * transaction. An absent field is the one exception — nothing attached is
+ * genuinely zero.
+ */
+export function normalizeCallValueV1(value: unknown): string | null {
+  if (value === undefined || value === null) return '0';
+  if (typeof value === 'number') {
+    return Number.isInteger(value) && value >= 0 ? String(value) : null;
+  }
+  if (typeof value === 'bigint') return value >= 0n ? value.toString() : null;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) return trimmed;
+  if (/^0x[0-9a-f]+$/i.test(trimmed)) return BigInt(trimmed).toString();
+  return null;
+}
+
 export async function requestUniswapTradeSwap5792(
   transport: UniswapTradeTransport,
   body: unknown,
@@ -88,7 +115,9 @@ export async function requestUniswapTradeSwap5792(
     if (!/^0x[0-9a-f]{40}$/.test(to) || !/^0x(?:[0-9a-f]{2})*$/.test(data)) {
       return { outcome: 'invalid_response' };
     }
-    calls.push({ to: to as `0x${string}`, value: String(call.value ?? '0'), data: data as `0x${string}` });
+    const value = normalizeCallValueV1(call.value);
+    if (value === null) return { outcome: 'invalid_response' };
+    calls.push({ to: to as `0x${string}`, value, data: data as `0x${string}` });
   }
   return { outcome: 'prepared', calls, requestId: record.requestId.slice(0, 200) };
 }
@@ -131,7 +160,7 @@ export function createPartnerFetchTradeTransport(
         },
         { fetchImpl: options.fetchImpl, timeoutMs: options.timeoutMs },
       );
-      let payload: unknown = null;
+      let payload: unknown;
       try {
         payload = await response.json();
       } catch {

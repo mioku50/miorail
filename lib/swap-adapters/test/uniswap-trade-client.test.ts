@@ -86,3 +86,72 @@ test('swap5792() rejects a wallet mismatch, wrong chain, or malformed call', asy
   );
   assert.equal((await malformedCall.swap5792({}, WALLET)).outcome, 'invalid_response');
 });
+
+test('swap5792() converts the provider’s HEX value into base-unit decimal', async () => {
+  // The last wall in the reported swap: the trade API sends `value: "0x00"`,
+  // and everything downstream reads base-unit decimal. The blueprint schema
+  // rejected it — `Expected unsigned base-unit integer string` at
+  // calls.0.valueWei — AFTER the quote, the calldata and every safety check
+  // had already passed, so the console showed an empty Review with no reason.
+  const hexValue = new UniswapTradeClient(
+    transportOf({
+      '/v1/swap_5792': {
+        status: 200,
+        payload: {
+          from: WALLET,
+          chainId: 8453,
+          requestId: 'req-1',
+          calls: [
+            { to: '0x2222222222222222222222222222222222222222', value: '0x00', data: '0xabcdef' },
+            { to: '0x2222222222222222222222222222222222222222', value: '0x0de0b6b3a7640000', data: '0xabcdef' },
+          ],
+        },
+      },
+    }),
+  );
+  const result = await hexValue.swap5792({}, WALLET);
+  assert.equal(result.outcome, 'prepared');
+  assert.equal(result.calls?.[0]?.value, '0');
+  // Exactly one ether, not rounded through a float.
+  assert.equal(result.calls?.[1]?.value, '1000000000000000000');
+});
+
+test('swap5792() refuses a value it cannot read rather than defaulting it to zero', async () => {
+  // `value` is native ETH the provider means to attach. Reading "later" or
+  // "" as zero would quietly change the transaction, so an unreadable amount
+  // is an invalid response — the same fail-closed rule as a malformed target.
+  for (const value of ['later', '', '-1', '0x', {}, ['0']]) {
+    const client = new UniswapTradeClient(
+      transportOf({
+        '/v1/swap_5792': {
+          status: 200,
+          payload: {
+            from: WALLET,
+            chainId: 8453,
+            requestId: 'req-1',
+            calls: [{ to: '0x2222222222222222222222222222222222222222', value, data: '0xabcdef' }],
+          },
+        },
+      }),
+    );
+    assert.equal((await client.swap5792({}, WALLET)).outcome, 'invalid_response', `value ${JSON.stringify(value)}`);
+  }
+
+  // An absent field is the one honest zero: nothing was attached.
+  const absent = new UniswapTradeClient(
+    transportOf({
+      '/v1/swap_5792': {
+        status: 200,
+        payload: {
+          from: WALLET,
+          chainId: 8453,
+          requestId: 'req-1',
+          calls: [{ to: '0x2222222222222222222222222222222222222222', data: '0xabcdef' }],
+        },
+      },
+    }),
+  );
+  const result = await absent.swap5792({}, WALLET);
+  assert.equal(result.outcome, 'prepared');
+  assert.equal(result.calls?.[0]?.value, '0');
+});
