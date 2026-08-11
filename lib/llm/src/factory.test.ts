@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { createLlmProvider, providerLabelV1 } from './factory.js';
-import { FallbackLlmProvider } from './fallback.js';
+import { LlmProviderChainV1 } from './fallback.js';
 import { OpenAiCompatibleClient } from './openai.js';
 
 /** Clears every fallback variable so one subtest cannot configure another. */
@@ -9,8 +9,12 @@ function clearFallbackEnv(): void {
   delete process.env.LLM_FALLBACK_BASE_URL;
   delete process.env.LLM_FALLBACK_API_KEY;
   delete process.env.LLM_FALLBACK_MODEL;
+  delete process.env.LLM_FALLBACK_2_BASE_URL;
+  delete process.env.LLM_FALLBACK_2_API_KEY;
+  delete process.env.LLM_FALLBACK_2_MODEL;
   delete process.env.OPENROUTER_API_KEY;
   delete process.env.OPENROUTER_KEY;
+  delete process.env.AGENTROUTER_API_KEY;
 }
 
 test('createLlmProvider', async (t) => {
@@ -134,7 +138,7 @@ test('createLlmProvider', async (t) => {
     process.env.LLM_FALLBACK_BASE_URL = 'https://openrouter.ai/api';
     process.env.LLM_FALLBACK_API_KEY = 'test-fallback';
     process.env.LLM_FALLBACK_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
-    assert.ok(createLlmProvider() instanceof FallbackLlmProvider);
+    assert.ok(createLlmProvider() instanceof LlmProviderChainV1);
   });
 
   await t.test('a HALF configured fallback throws instead of silently having none', () => {
@@ -160,7 +164,7 @@ test('createLlmProvider', async (t) => {
     process.env.LLM_FALLBACK_BASE_URL = 'https://openrouter.ai/api';
     process.env.LLM_FALLBACK_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
     process.env.OPENROUTER_KEY = 'sk-or-test';
-    assert.ok(createLlmProvider() instanceof FallbackLlmProvider);
+    assert.ok(createLlmProvider() instanceof LlmProviderChainV1);
   });
 
   await t.test('an OpenRouter key is NEVER sent to a different host', () => {
@@ -176,13 +180,63 @@ test('createLlmProvider', async (t) => {
     assert.throws(() => createLlmProvider(), /missing: LLM_FALLBACK_API_KEY/);
   });
 
+  await t.test('a second spare joins the chain after the first', () => {
+    // One spare stops being a spare when the primary answers 429 on most
+    // requests, which is what api.airforce does here.
+    process.env.LLM_PROVIDER = 'openai-compatible';
+    process.env.LLM_BASE_URL = 'https://api.airforce';
+    process.env.LLM_API_KEY = 'test';
+    process.env.LLM_MODEL = 'gpt-4o-mini';
+    process.env.LLM_FALLBACK_BASE_URL = 'https://openrouter.ai/api';
+    process.env.LLM_FALLBACK_API_KEY = 'test-fallback';
+    process.env.LLM_FALLBACK_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
+    process.env.LLM_FALLBACK_2_BASE_URL = 'https://agentrouter.org';
+    process.env.LLM_FALLBACK_2_MODEL = 'gpt-5.6-sol';
+    process.env.AGENTROUTER_API_KEY = 'ar-test';
+    assert.ok(createLlmProvider() instanceof LlmProviderChainV1);
+  });
+
+  await t.test('a HALF configured second spare throws, exactly like the first', () => {
+    process.env.LLM_PROVIDER = 'openai-compatible';
+    process.env.LLM_BASE_URL = 'https://api.airforce';
+    process.env.LLM_API_KEY = 'test';
+    process.env.LLM_MODEL = 'gpt-4o-mini';
+    process.env.LLM_FALLBACK_2_BASE_URL = 'https://agentrouter.org';
+    assert.throws(
+      () => createLlmProvider(),
+      /missing: LLM_FALLBACK_2_API_KEY, LLM_FALLBACK_2_MODEL/,
+    );
+  });
+
+  await t.test('an AgentRouter key is NEVER sent to a different host', () => {
+    process.env.LLM_PROVIDER = 'openai-compatible';
+    process.env.LLM_BASE_URL = 'https://api.airforce';
+    process.env.LLM_API_KEY = 'test';
+    process.env.LLM_MODEL = 'gpt-4o-mini';
+    process.env.LLM_FALLBACK_2_BASE_URL = 'https://someone-elses-gateway.example';
+    process.env.LLM_FALLBACK_2_MODEL = 'some-model';
+    process.env.AGENTROUTER_API_KEY = 'ar-test';
+    assert.throws(() => createLlmProvider(), /missing: LLM_FALLBACK_2_API_KEY/);
+  });
+
+  await t.test('a second spare alone is a chain, with no first spare configured', () => {
+    process.env.LLM_PROVIDER = 'openai-compatible';
+    process.env.LLM_BASE_URL = 'https://api.airforce';
+    process.env.LLM_API_KEY = 'test';
+    process.env.LLM_MODEL = 'gpt-4o-mini';
+    process.env.LLM_FALLBACK_2_BASE_URL = 'https://agentrouter.org';
+    process.env.LLM_FALLBACK_2_MODEL = 'gpt-5.6-sol';
+    process.env.AGENTROUTER_API_KEY = 'ar-test';
+    assert.ok(createLlmProvider() instanceof LlmProviderChainV1);
+  });
+
   await t.test('the fallback applies to a direct OpenAI primary too', () => {
     process.env.LLM_PROVIDER = 'openai';
     process.env.OPENAI_API_KEY = 'test';
     process.env.LLM_FALLBACK_BASE_URL = 'https://openrouter.ai/api';
     process.env.LLM_FALLBACK_API_KEY = 'test-fallback';
     process.env.LLM_FALLBACK_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
-    assert.ok(createLlmProvider() instanceof FallbackLlmProvider);
+    assert.ok(createLlmProvider() instanceof LlmProviderChainV1);
   });
 });
 

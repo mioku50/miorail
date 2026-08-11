@@ -4,8 +4,10 @@ import { test } from 'node:test';
 import {
   FallbackLlmProvider,
   LlmChainExhaustedError,
+  LlmProviderChainV1,
   NON_FAILOVER_STATUSES_V1,
   shouldFallOverV1,
+  type NamedLlmProviderV1,
 } from './fallback.js';
 import { LlmHttpError } from './openai.js';
 import type { LlmProvider, LlmRequest, LlmResponse } from './types.js';
@@ -137,4 +139,77 @@ test('shouldFallOverV1 treats a non-HTTP failure as the provider\'s fault', () =
   assert.equal(shouldFallOverV1(new Error('ECONNRESET')), true);
   assert.equal(shouldFallOverV1(new LlmHttpError(404, 'no such model')), true);
   assert.equal(shouldFallOverV1(new LlmHttpError(400, 'bad')), false);
+});
+
+test('a three-link chain tries each in order and stops at the first that answers', async () => {
+  const tried: string[] = [];
+  const failing = (label: string): NamedLlmProviderV1 => ({
+    label,
+    provider: {
+      generate: async () => {
+        tried.push(label);
+        throw new LlmHttpError(429, 'rate limited');
+      },
+    },
+  });
+  const answering: NamedLlmProviderV1 = {
+    label: 'third',
+    provider: {
+      generate: async () => {
+        tried.push('third');
+        return { message: { role: 'assistant', content: 'ok' } };
+      },
+    },
+  };
+  const chain = new LlmProviderChainV1([failing('first'), failing('second'), answering]);
+  const response = await chain.generate({ messages: [{ role: 'user', content: 'hi' }] });
+  assert.equal(response.message.content, 'ok');
+  assert.deepEqual(tried, ['first', 'second', 'third']);
+});
+
+test('an exhausted three-link chain names every provider that failed', async () => {
+  const failing = (label: string, status: number): NamedLlmProviderV1 => ({
+    label,
+    provider: {
+      generate: async () => {
+        throw new LlmHttpError(status, `${label} is unwell`);
+      },
+    },
+  });
+  const chain = new LlmProviderChainV1([
+    failing('api.airforce', 429),
+    failing('openrouter.ai', 402),
+    failing('agentrouter.org', 401),
+  ]);
+  await assert.rejects(
+    () => chain.generate({ messages: [{ role: 'user', content: 'hi' }] }),
+    (error: unknown) => {
+      assert.ok(error instanceof LlmChainExhaustedError);
+      assert.equal(error.failures.length, 3);
+      // All three, because "agentrouter returned 401" alone sends the operator
+      // to investigate the link that was never the primary.
+      for (const host of ['api.airforce', 'openrouter.ai', 'agentrouter.org']) {
+        assert.match(error.message, new RegExp(host));
+      }
+      return true;
+    },
+  );
+});
+
+test('a malformed request stops the chain at the first link, not the last', async () => {
+  // A 400 means the REQUEST is wrong. Trying two more providers would triple
+  // the latency, spend two more quotas, and then blame the last one.
+  let calls = 0;
+  const link = (label: string): NamedLlmProviderV1 => ({
+    label,
+    provider: {
+      generate: async () => {
+        calls += 1;
+        throw new LlmHttpError(400, 'bad request');
+      },
+    },
+  });
+  const chain = new LlmProviderChainV1([link('first'), link('second'), link('third')]);
+  await assert.rejects(() => chain.generate({ messages: [] }), /400/);
+  assert.equal(calls, 1);
 });

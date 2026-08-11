@@ -1,6 +1,6 @@
 import { LlmProvider } from './types';
 import { OpenAiCompatibleClient } from './openai';
-import { FallbackLlmProvider, type NamedLlmProviderV1 } from './fallback';
+import { LlmProviderChainV1, type NamedLlmProviderV1 } from './fallback';
 import { createLazyX402BuyerPaidFetch, x402BuyerPaymentModeFromEnv } from '@mioagent/x402-gateway';
 
 function fetchForPaymentMode(): typeof fetch | undefined {
@@ -27,11 +27,20 @@ export function providerLabelV1(baseUrl: string): string {
  * for an unrelated base URL would hand it to whoever that host is. */
 const OPENROUTER_HOSTS_V1: readonly string[] = ['openrouter.ai'];
 
-function fallbackApiKeyV1(baseUrl: string): string {
-  const explicit = trimmed('LLM_FALLBACK_API_KEY');
+/** Hosts whose own key variable is honoured, and only for that host. Same rule
+ * as OpenRouter's: a key is a bearer credential for ONE host, and resolving it
+ * for an unrelated base URL would hand it to whoever that host is. */
+const AGENTROUTER_HOSTS_V1: readonly string[] = ['agentrouter.org'];
+
+function fallbackApiKeyV1(baseUrl: string, prefix: string): string {
+  const explicit = trimmed(`${prefix}_API_KEY`);
   if (explicit) return explicit;
-  if (!OPENROUTER_HOSTS_V1.includes(providerLabelV1(baseUrl))) return '';
-  return trimmed('OPENROUTER_API_KEY') || trimmed('OPENROUTER_KEY');
+  const host = providerLabelV1(baseUrl);
+  if (OPENROUTER_HOSTS_V1.includes(host)) {
+    return trimmed('OPENROUTER_API_KEY') || trimmed('OPENROUTER_KEY');
+  }
+  if (AGENTROUTER_HOSTS_V1.includes(host)) return trimmed('AGENTROUTER_API_KEY');
+  return '';
 }
 
 /**
@@ -51,36 +60,50 @@ function fallbackApiKeyV1(baseUrl: string): string {
  * in x402: an x402-paid fetch would attempt payment against a gateway that
  * never asked for one.
  */
-function withFallbackV1(primary: NamedLlmProviderV1): LlmProvider {
-  const baseUrl = trimmed('LLM_FALLBACK_BASE_URL');
-  const model = trimmed('LLM_FALLBACK_MODEL');
-  const apiKey = baseUrl ? fallbackApiKeyV1(baseUrl) : trimmed('LLM_FALLBACK_API_KEY');
+/**
+ * One configured fallback link, or null when its variables are all unset.
+ *
+ * `prefix` is `LLM_FALLBACK` for the first spare and `LLM_FALLBACK_2` for the
+ * second. A second spare exists because the primary here answers 429 on most
+ * requests, which makes a single spare the provider rather than the spare.
+ */
+function fallbackLinkV1(prefix: string): NamedLlmProviderV1 | null {
+  const baseUrl = trimmed(`${prefix}_BASE_URL`);
+  const model = trimmed(`${prefix}_MODEL`);
+  const apiKey = baseUrl
+    ? fallbackApiKeyV1(baseUrl, prefix)
+    : trimmed(`${prefix}_API_KEY`);
 
-  if (!baseUrl && !model && !apiKey) return primary.provider;
+  if (!baseUrl && !model && !apiKey) return null;
 
   const missing = [
-    baseUrl ? null : 'LLM_FALLBACK_BASE_URL',
-    apiKey ? null : 'LLM_FALLBACK_API_KEY',
-    model ? null : 'LLM_FALLBACK_MODEL',
+    baseUrl ? null : `${prefix}_BASE_URL`,
+    apiKey ? null : `${prefix}_API_KEY`,
+    model ? null : `${prefix}_MODEL`,
   ].filter((name): name is string => name !== null);
   if (missing.length > 0) {
     throw new Error(`LLM fallback is partially configured — missing: ${missing.join(', ')}`);
   }
 
-  return new FallbackLlmProvider(
-    primary,
-    {
-      label: providerLabelV1(baseUrl),
-      provider: new OpenAiCompatibleClient({ apiKey, baseUrl, defaultModel: model }),
-    },
-    {
-      onFallover: ({ from, to, reason }) => {
-        // Hosts and a redacted provider message. An operator needs to know the
-        // primary is down long before the fallback also runs out.
-        console.warn(`[llm] ${from} failed, falling over to ${to}: ${reason}`);
-      },
-    },
+  return {
+    label: providerLabelV1(baseUrl),
+    provider: new OpenAiCompatibleClient({ apiKey, baseUrl, defaultModel: model }),
+  };
+}
+
+function withFallbackV1(primary: NamedLlmProviderV1): LlmProvider {
+  const spares = [fallbackLinkV1('LLM_FALLBACK'), fallbackLinkV1('LLM_FALLBACK_2')].filter(
+    (link): link is NamedLlmProviderV1 => link !== null,
   );
+  if (spares.length === 0) return primary.provider;
+
+  return new LlmProviderChainV1([primary, ...spares], {
+    onFallover: ({ from, to, reason }) => {
+      // Hosts and a redacted provider message. An operator needs to know the
+      // primary is down long before the last spare also runs out.
+      console.warn(`[llm] ${from} failed, falling over to ${to}: ${reason}`);
+    },
+  });
 }
 
 export function createLlmProvider(): LlmProvider {

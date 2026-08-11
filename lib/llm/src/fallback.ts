@@ -38,22 +38,31 @@ export function shouldFallOverV1(error: unknown): boolean {
   return true;
 }
 
-/** Raised only when BOTH providers failed. It names both, because "OpenRouter
- * returned 429" on its own sends the operator to investigate a provider that
- * was never the primary. */
+/** Raised only when EVERY provider failed. It names them all, because
+ * "OpenRouter returned 429" on its own sends the operator to investigate a
+ * provider that was never the primary. */
 export class LlmChainExhaustedError extends Error {
-  readonly primaryError: unknown;
-  readonly fallbackError: unknown;
+  /** Every link that was tried, in order, with the error it produced. */
+  readonly failures: ReadonlyArray<{ label: string; error: unknown }>;
 
-  constructor(primary: { label: string; error: unknown }, fallback: { label: string; error: unknown }) {
+  constructor(failures: ReadonlyArray<{ label: string; error: unknown }>) {
     super(
       `Every configured LLM provider failed. ` +
-        `${primary.label}: ${messageOf(primary.error)} | ` +
-        `${fallback.label}: ${messageOf(fallback.error)}`,
+        failures.map((failure) => `${failure.label}: ${messageOf(failure.error)}`).join(' | '),
     );
     this.name = 'LlmChainExhaustedError';
-    this.primaryError = primary.error;
-    this.fallbackError = fallback.error;
+    this.failures = failures;
+  }
+
+  /** The first link's error. Kept because a two-provider chain is still the
+   * common case and callers read these by name. */
+  get primaryError(): unknown {
+    return this.failures[0]?.error;
+  }
+
+  /** The LAST link's error — the one that ended the chain. */
+  get fallbackError(): unknown {
+    return this.failures[this.failures.length - 1]?.error;
   }
 }
 
@@ -73,37 +82,54 @@ export interface FallbackLlmProviderOptions {
   onFallover?: (event: { from: string; to: string; reason: string }) => void;
 }
 
-export class FallbackLlmProvider implements LlmProvider {
+/**
+ * An ordered chain of providers, tried until one answers.
+ *
+ * Two links is the shape this started as and still the common one; a third
+ * exists because the primary here answers 429 on most requests and a single
+ * spare is then not a spare at all. Order is cheapest-first: the chain spends
+ * the free tier before the paid one, and a link is only reached when every
+ * link before it failed in a way a different provider could survive.
+ */
+export class LlmProviderChainV1 implements LlmProvider {
   constructor(
-    private readonly primary: NamedLlmProviderV1,
-    private readonly fallback: NamedLlmProviderV1,
+    private readonly links: ReadonlyArray<NamedLlmProviderV1>,
     private readonly options: FallbackLlmProviderOptions = {},
-  ) {}
+  ) {
+    if (links.length === 0) throw new Error('An LLM chain needs at least one provider');
+  }
 
   async generate(request: LlmRequest): Promise<LlmResponse> {
-    let primaryError: unknown;
-    try {
-      return await this.primary.provider.generate(request);
-    } catch (error) {
-      // A request that the fallback would reject identically is rethrown as-is,
-      // so the caller sees the real cause rather than a second symptom.
-      if (!shouldFallOverV1(error)) throw error;
-      primaryError = error;
+    const failures: Array<{ label: string; error: unknown }> = [];
+    for (const [index, link] of this.links.entries()) {
+      if (index > 0) {
+        this.options.onFallover?.({
+          from: this.links[index - 1]!.label,
+          to: link.label,
+          reason: messageOf(failures[failures.length - 1]?.error),
+        });
+      }
+      try {
+        return await link.provider.generate(request);
+      } catch (error) {
+        // A request the NEXT provider would reject identically is rethrown
+        // as-is, so the caller sees the real cause rather than a second symptom.
+        if (!shouldFallOverV1(error)) throw error;
+        failures.push({ label: link.label, error });
+      }
     }
+    throw new LlmChainExhaustedError(failures);
+  }
+}
 
-    this.options.onFallover?.({
-      from: this.primary.label,
-      to: this.fallback.label,
-      reason: messageOf(primaryError),
-    });
-
-    try {
-      return await this.fallback.provider.generate(request);
-    } catch (fallbackError) {
-      throw new LlmChainExhaustedError(
-        { label: this.primary.label, error: primaryError },
-        { label: this.fallback.label, error: fallbackError },
-      );
-    }
+/** The two-link chain, kept as its own name because that is how most callers
+ * and every existing test describe it. */
+export class FallbackLlmProvider extends LlmProviderChainV1 {
+  constructor(
+    primary: NamedLlmProviderV1,
+    fallback: NamedLlmProviderV1,
+    options: FallbackLlmProviderOptions = {},
+  ) {
+    super([primary, fallback], options);
   }
 }
