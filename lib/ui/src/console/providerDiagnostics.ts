@@ -79,6 +79,16 @@ const REASON_BY_ERROR_CODE_V1: Record<string, SwapDiagnosticReasonV1> = {
   provider_http_error: 'provider_http_error',
   provider_invalid_schema: 'provider_invalid_schema',
   provider_asset_mismatch: 'provider_invalid_schema',
+  // T-fix: the Uniswap adapter used to answer `provider_invalid_schema` from
+  // six different places, so an intermittent refusal was undiagnosable in the
+  // log. The codes are now distinct and the SENTENCE the user reads is
+  // deliberately the same — "a response this version of Miorail could not
+  // verify" is true of all of them, and none is the user's problem to solve.
+  provider_output_not_positive: 'provider_invalid_schema',
+  provider_gas_units_missing: 'provider_invalid_schema',
+  provider_minimum_above_output: 'provider_invalid_schema',
+  provider_price_impact_invalid: 'provider_invalid_schema',
+  provider_slippage_echo_mismatch: 'provider_invalid_schema',
   provider_not_configured: 'provider_not_configured',
   provider_router_mismatch: 'provider_preflight_failed',
   provider_no_route: 'no_route',

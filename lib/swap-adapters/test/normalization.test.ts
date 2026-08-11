@@ -6,6 +6,7 @@ import {
   humanDecimalToAtomic,
   minimumOutputAtomic,
   percentageToBasisPoints,
+  providerFailure,
 } from '../src/index.js';
 
 test('human decimals convert to atomic amounts without floating point arithmetic', () => {
@@ -28,4 +29,24 @@ test('percentage and basis point conversions are deterministic', () => {
 test('minimum output uses integer arithmetic and rounds down', () => {
   assert.equal(minimumOutputAtomic('101', 50), '100');
   assert.equal(minimumOutputAtomic('1000000', 50), '995000');
+});
+
+test('splitting a refusal code does not move its outcome', () => {
+  // The codes were split so an intermittent Uniswap refusal is diagnosable in
+  // the log. The OUTCOME decides retryability and how the engine counts the
+  // candidate, so it must not drift with the label: every "we could not accept
+  // this answer" code stays `invalid_response`, not the `unavailable` default.
+  for (const code of [
+    'provider_invalid_schema',
+    'provider_output_not_positive',
+    'provider_gas_units_missing',
+    'provider_minimum_above_output',
+    'provider_price_impact_invalid',
+    'provider_slippage_echo_mismatch',
+  ]) {
+    const failure = providerFailure('uniswap', code);
+    assert.equal(failure.outcome, 'invalid_response', code);
+    assert.equal(failure.retryable, false, code);
+    assert.equal(failure.errorCode, code);
+  }
 });

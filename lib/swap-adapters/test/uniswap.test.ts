@@ -128,7 +128,11 @@ test('Uniswap rejects a non-positive output without creating a candidate', async
     output: { amount: '0', token: '0x0000000000000000000000000000000000000000' },
   })).quote({ intent, walletAddress: WALLET, requestId: 'invalid-output', now: NOW });
   assert.equal(result.outcome, 'invalid_response');
-  assert.equal(result.errorCode, 'provider_invalid_schema');
+  // Its own code now: this refusal used to share `provider_invalid_schema`
+  // with five unrelated causes, so an intermittent production refusal could
+  // not be attributed. The OUTCOME is unchanged, which is what matters to the
+  // engine.
+  assert.equal(result.errorCode, 'provider_output_not_positive');
 });
 
 test('Uniswap rejects mismatched response assets', async () => {

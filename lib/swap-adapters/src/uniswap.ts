@@ -124,8 +124,14 @@ export class UniswapSwapRouteAdapter implements SwapRouteAdapter {
     const parsed = UniswapResponseSchema.safeParse(response.payload);
     if (!parsed.success) return providerFailure(this.id, 'provider_invalid_schema');
     const quote = parsed.data.quote;
+    // Each refusal below carries its OWN code. They all used to answer
+    // `provider_invalid_schema`, so six unrelated causes — a shape we cannot
+    // parse, a missing gas estimate, a slippage echo that disagrees with what
+    // we asked for — arrived in the log under one word, and an intermittent
+    // Uniswap refusal could not be attributed to them or to us. The sentence
+    // shown to the user is unchanged; see REASON_BY_ERROR_CODE_V1.
     if (BigInt(quote.output.amount) <= 0n) {
-      return providerFailure(this.id, 'provider_invalid_schema');
+      return providerFailure(this.id, 'provider_output_not_positive');
     }
     if (quote.input.amount !== input.intent.amount.amountAtomic) {
       return providerFailure(this.id, 'provider_asset_mismatch');
@@ -148,7 +154,7 @@ export class UniswapSwapRouteAdapter implements SwapRouteAdapter {
     // The fixtures still state the old name, which is why the suite never saw
     // it.
     const gasUsd = parseProviderDecimal(quote.gasFeeUSD ?? quote.classicGasUseEstimateUSD);
-    if (!gasUnits) return providerFailure(this.id, 'provider_invalid_schema');
+    if (!gasUnits) return providerFailure(this.id, 'provider_gas_units_missing');
     const providerMinimumOutput = parseUnsignedAtomic(
       quote.minimumOutput ?? quote.amountOutMinimum ?? quote.output.minimumAmount,
     );
@@ -156,7 +162,7 @@ export class UniswapSwapRouteAdapter implements SwapRouteAdapter {
       providerMinimumOutput !== null &&
       BigInt(providerMinimumOutput) > BigInt(quote.output.amount)
     ) {
-      return providerFailure(this.id, 'provider_invalid_schema');
+      return providerFailure(this.id, 'provider_minimum_above_output');
     }
     const parsedImpactBps = parseUnsignedAtomic(quote.priceImpactBps);
     const priceImpactBps =
@@ -171,12 +177,15 @@ export class UniswapSwapRouteAdapter implements SwapRouteAdapter {
       priceImpactBps < 0 ||
       priceImpactBps > 1_000_000
     ) {
-      return providerFailure(this.id, 'provider_invalid_schema');
+      return providerFailure(this.id, 'provider_price_impact_invalid');
     }
     if (quote.slippageTolerance !== undefined) {
       const responseSlippage = percentageToBasisPoints(String(quote.slippageTolerance));
       if (responseSlippage !== input.intent.slippageConstraint.maxBps) {
-        return providerFailure(this.id, 'provider_invalid_schema');
+        // Not a malformed response: the provider answered with a tolerance
+        // other than the one the user approved. Refusing is right; calling it
+        // a schema fault hid which of the six causes actually fired.
+        return providerFailure(this.id, 'provider_slippage_echo_mismatch');
       }
     }
     const times = resolveQuoteTimes({

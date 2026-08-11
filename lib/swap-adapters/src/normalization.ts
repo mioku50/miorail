@@ -211,6 +211,16 @@ export function normalizeAddress(value: unknown): `0x${string}` | null {
   return parsed.success ? parsed.data : null;
 }
 
+/** Codes that all mean "the answer came back, and we could not accept it". */
+const INVALID_RESPONSE_CODES_V1 = new Set([
+  'provider_invalid_schema',
+  'provider_output_not_positive',
+  'provider_gas_units_missing',
+  'provider_minimum_above_output',
+  'provider_price_impact_invalid',
+  'provider_slippage_echo_mismatch',
+]);
+
 export function providerFailure(
   provider: SwapAdapterId,
   errorCode: string,
@@ -225,7 +235,12 @@ export function providerFailure(
   if (errorCode === 'provider_rate_limited' || status === 429) {
     return { outcome: 'rate_limited', provider, errorCode: 'provider_rate_limited', retryable: true };
   }
-  if (errorCode === 'provider_invalid_schema' || errorCode === 'provider_expired_quote') {
+  // Everything a response can be wrong ABOUT is one outcome — `invalid_response`
+  // — while keeping its own code. The codes were split so an intermittent
+  // refusal is diagnosable in the log; the OUTCOME must not move with them,
+  // because it is what decides retryability and how the engine counts the
+  // candidate. Splitting the label is a reporting change, not a policy one.
+  if (INVALID_RESPONSE_CODES_V1.has(errorCode) || errorCode === 'provider_expired_quote') {
     return { outcome: 'invalid_response', provider, errorCode, retryable: false };
   }
   if (
