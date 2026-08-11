@@ -21,6 +21,9 @@ import type {
   SwapBuildResultV1,
 } from '../types.js';
 
+const CANONICAL_USDC_BASE_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+const CANONICAL_WETH_BASE_V1 = '0x4200000000000000000000000000000000000006';
+
 function failure(outcome: SwapBuildFailureOutcome, errorCode: string, retryable: boolean): SwapBuildFailure {
   return { outcome, provider: 'kyberswap', errorCode, retryable };
 }
@@ -47,13 +50,23 @@ export class KyberSwapBuildAdapter implements SwapBuildAdapter {
 
   async build(input: SwapBuildInput): Promise<SwapBuildResultV1> {
     const { intent } = input;
-    if (
-      intent.fromAsset?.symbol !== 'USDC' ||
-      !['ETH', 'WETH'].includes(intent.toAsset?.symbol ?? '') ||
-      intent.chainId !== 8453
-    ) {
+    // Both directions between the canonical Base assets — the USDC-in rule was
+    // this adapter's, not KyberSwap's. ETH↔WETH stays out: a wrap is not a
+    // routed trade. Identified by ADDRESS; a symbol is a label anyone can take.
+    const sideOf = (asset: typeof intent.fromAsset) => {
+      if (!asset) return null;
+      if (asset.kind === 'native') return 'weth' as const;
+      const address = asset.address?.toLowerCase();
+      if (address === CANONICAL_USDC_BASE_V1) return 'usdc' as const;
+      if (address === CANONICAL_WETH_BASE_V1) return 'weth' as const;
+      return null;
+    };
+    const fromSide = sideOf(intent.fromAsset);
+    const toSide = sideOf(intent.toAsset);
+    if (intent.chainId !== 8453 || !fromSide || !toSide || fromSide === toSide) {
       return failure('rejected', 'kyberswap_pair_unsupported', false);
     }
+    const inputIsNative = intent.fromAsset?.kind === 'native';
     if (input.walletAddress.toLowerCase() !== intent.walletAddress.toLowerCase()) {
       return failure('rejected', 'kyberswap_wallet_mismatch', false);
     }
@@ -61,7 +74,7 @@ export class KyberSwapBuildAdapter implements SwapBuildAdapter {
     if (!executor || executor.namespace !== 'kyberswap') {
       return failure('not_configured', 'kyberswap_not_configured', false);
     }
-    const tokenIn = providerTokenAddress(intent.fromAsset, 'kyberswap');
+    const tokenIn = providerTokenAddress(intent.fromAsset!, 'kyberswap');
     const tokenOut = providerTokenAddress(intent.toAsset!, 'kyberswap');
     if (!tokenIn || !tokenOut) return failure('rejected', 'kyberswap_asset_untrusted', false);
 
@@ -157,18 +170,39 @@ export class KyberSwapBuildAdapter implements SwapBuildAdapter {
     ) {
       return failure('invalid_response', 'kyberswap_build_invalid', false);
     }
-    if (transactionValue !== '0') return failure('rejected', 'kyberswap_native_value_nonzero', false);
+    // A native input MUST attach exactly the input amount; an ERC-20 input must
+    // attach nothing. The provider's own figure has to agree with the intent,
+    // or the value moved is not the value that was reviewed.
+    const expectedValue = inputIsNative ? intent.amount.amountAtomic : '0';
+    if (transactionValue !== expectedValue) {
+      return failure('rejected', 'kyberswap_native_value_mismatch', false);
+    }
 
-    const usdc = canonicalUsdcForBaseChain(8453).toLowerCase() as `0x${string}`;
-    const approveData = encodeFunctionData({
-      abi: erc20Abi,
-      functionName: 'approve',
-      args: [builtRouter, BigInt(intent.amount.amountAtomic)],
-    });
-    const calls: SwapBuildCallV1[] = [
-      { to: usdc, value: '0', data: approveData },
-      { to: builtRouter, value: '0', data: calldata.toLowerCase() as `0x${string}` },
-    ];
+    // Native ETH has nothing to approve, so that batch is the router call
+    // alone. An ERC-20 input approves its OWN token, exactly.
+    const inputToken = (
+      intent.fromAsset?.address ?? canonicalUsdcForBaseChain(8453)
+    ).toLowerCase() as `0x${string}`;
+    const calls: SwapBuildCallV1[] = inputIsNative
+      ? [
+          {
+            to: builtRouter,
+            value: intent.amount.amountAtomic,
+            data: calldata.toLowerCase() as `0x${string}`,
+          },
+        ]
+      : [
+          {
+            to: inputToken,
+            value: '0',
+            data: encodeFunctionData({
+              abi: erc20Abi,
+              functionName: 'approve',
+              args: [builtRouter, BigInt(intent.amount.amountAtomic)],
+            }),
+          },
+          { to: builtRouter, value: '0', data: calldata.toLowerCase() as `0x${string}` },
+        ];
 
     const requestHash = canonicalRequestHash('kyberswap', { routesPath, buildBody });
     const responseHash = canonicalResponseHash('kyberswap', { routeSummary, routerAddress: builtRouter, calldata });

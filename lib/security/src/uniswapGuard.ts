@@ -10,10 +10,16 @@ const PERMIT2_APPROVE_SELECTOR = '0x87517c45';
 const ADDRESS = /^0x[0-9a-f]{40}$/;
 const HEX_DATA = /^0x[0-9a-f]+$/;
 
+/** The canonical Base assets this guard will validate a swap between. */
+export type UniswapGuardAsset = 'USDC' | 'ETH' | 'WETH';
+
 export interface UniswapSwapContext {
   amountDecimal: string;
-  inputToken: 'USDC';
-  outputToken: 'ETH' | 'WETH';
+  /** Was fixed at 'USDC'. Widened so the same pinning rules cover a swap in
+   * the other direction; the guard derives the approval target, the decimals
+   * and the native-value rule from this rather than assuming any of them. */
+  inputToken: UniswapGuardAsset;
+  outputToken: UniswapGuardAsset;
   swapper: string;
   routerVersion: '2.0';
   expiresAt: string;
@@ -36,15 +42,31 @@ function fail(code: string, reason: string, checks: string[]): UniswapGuardResul
   return { success: false, code, reason, checks };
 }
 
-function decimalUsdc(value: string): bigint | null {
-  if (!/^\d+(?:\.\d{1,6})?$/.test(value)) return null;
+/** Base units for a decimal amount, at the asset's OWN precision. Was fixed at
+ * six, which is USDC's; an 18-decimal input parsed that way would understate
+ * the amount by twelve orders of magnitude, and every amount check below
+ * compares against it. */
+function decimalToRaw(value: string, decimals: number): bigint | null {
+  const pattern = new RegExp(`^\\d+(?:\\.\\d{1,${decimals}})?$`);
+  if (!pattern.test(value)) return null;
   const [whole, fraction = ''] = value.split('.');
   try {
-    const amount = BigInt(`${whole}${fraction.padEnd(6, '0')}`);
+    const amount = BigInt(`${whole}${fraction.padEnd(decimals, '0')}`);
     return amount > 0n ? amount : null;
   } catch {
     return null;
   }
+}
+
+function decimalsFor(asset: UniswapGuardAsset): number {
+  return asset === 'USDC' ? 6 : 18;
+}
+
+/** The ERC-20 the wallet must approve, or null when the input is native ETH
+ * and there is nothing to approve. */
+function inputTokenAddress(asset: UniswapGuardAsset, usdc: string): string | null {
+  if (asset === 'ETH') return null;
+  return asset === 'USDC' ? usdc : BASE_WETH_ADDRESS;
 }
 
 function wordAddress(word: string): string | null {
@@ -68,23 +90,33 @@ export function validateUniswapSwap(input: {
   checks.push('Base mainnet chain');
 
   const context = input.context;
-  if (!context || context.inputToken !== 'USDC' || !['ETH', 'WETH'].includes(context.outputToken)) {
-    return fail('uniswap_context_invalid', 'Only canonical Base USDC to ETH/WETH is supported', checks);
+  const ASSETS: readonly UniswapGuardAsset[] = ['USDC', 'ETH', 'WETH'];
+  if (!context || !ASSETS.includes(context.inputToken) || !ASSETS.includes(context.outputToken)) {
+    return fail('uniswap_context_invalid', 'Only canonical Base USDC, ETH and WETH are supported', checks);
+  }
+  // ETH↔WETH is a wrap, not a swap: there is no pool, and letting it through
+  // would put the guard's name on a transaction it never checked a price for.
+  const sideOf = (asset: UniswapGuardAsset) => (asset === 'USDC' ? 'usdc' : 'weth');
+  if (sideOf(context.inputToken) === sideOf(context.outputToken)) {
+    return fail('uniswap_context_invalid', 'Input and output must be different canonical assets', checks);
   }
   if (context.routerVersion !== '2.0') return fail('uniswap_router_version_invalid', 'Uniswap router version is not pinned', checks);
   if (!ADDRESS.test(context.swapper.toLowerCase())) return fail('uniswap_swapper_invalid', 'Authenticated swapper is invalid', checks);
   const expiry = Date.parse(context.expiresAt);
   if (!Number.isFinite(expiry) || expiry <= nowMs) return fail('uniswap_quote_expired', 'Prepared Uniswap quote expired', checks);
-  const amountRaw = decimalUsdc(context.amountDecimal);
-  if (!amountRaw) return fail('uniswap_amount_invalid', 'USDC input amount is invalid', checks);
-  checks.push('Exact positive USDC input and unexpired quote');
+  const amountRaw = decimalToRaw(context.amountDecimal, decimalsFor(context.inputToken));
+  if (!amountRaw) return fail('uniswap_amount_invalid', 'Input amount is invalid', checks);
+  checks.push(`Exact positive ${context.inputToken} input and unexpired quote`);
 
   if (!Array.isArray(input.calls) || input.calls.length < 1 || input.calls.length > 4) {
     return fail('uniswap_batch_size_invalid', 'Uniswap swap must contain one to four calls', checks);
   }
   const usdc = canonicalUsdcForBaseChain(8453).toLowerCase();
   const router = BASE_UNISWAP_UNIVERSAL_ROUTER_2;
+  const inputAddress = inputTokenAddress(context.inputToken, usdc);
+  const inputIsNative = inputAddress === null;
   let routerCalls = 0;
+  let attachedValue = 0n;
   const spenders = new Set<string>();
 
   for (const call of input.calls) {
@@ -92,9 +124,14 @@ export function validateUniswapSwap(input: {
     const data = String(call.data || '').toLowerCase();
     let value: bigint;
     try { value = BigInt(String(call.value || '0')); } catch { return fail('uniswap_value_invalid', 'Call value is invalid', checks); }
-    // USDC is always the input asset in the bounded policy, so no native value
-    // may be attached to any approval or router call.
-    if (value !== 0n) return fail('uniswap_native_value_blocked', 'USDC-input swaps cannot transfer native value', checks);
+    // A native input MUST attach its amount, and only to the router. An ERC-20
+    // input must attach nothing. Both are checked against the total below, so
+    // the batch cannot smuggle value in through a second call.
+    if (value < 0n) return fail('uniswap_value_invalid', 'Call value is invalid', checks);
+    if (value !== 0n && (!inputIsNative || to !== router)) {
+      return fail('uniswap_native_value_blocked', 'Only a native-input router call may carry value', checks);
+    }
+    attachedValue += value;
     if (!ADDRESS.test(to) || !HEX_DATA.test(data) || data.length < 10) {
       return fail('uniswap_call_malformed', 'Uniswap call target or calldata is malformed', checks);
     }
@@ -104,14 +141,14 @@ export function validateUniswapSwap(input: {
       continue;
     }
 
-    if (to === usdc) {
+    if (inputAddress && to === inputAddress) {
       if (data.length !== 138 || data.slice(0, 10) !== ERC20_APPROVE_SELECTOR) {
-        return fail('uniswap_approval_invalid', 'USDC call must be an exact approve', checks);
+        return fail('uniswap_approval_invalid', 'The input token call must be an exact approve', checks);
       }
       const spender = wordAddress(data.slice(10, 74));
       const approved = BigInt(`0x${data.slice(74, 138)}`);
       if (![PERMIT2_ADDRESS, router].includes(spender || '') || approved !== amountRaw) {
-        return fail('uniswap_approval_not_exact', 'USDC approval must be exact and limited to Permit2/router', checks);
+        return fail('uniswap_approval_not_exact', 'The input approval must be exact and limited to Permit2/router', checks);
       }
       spenders.add(spender!);
       continue;
@@ -126,7 +163,7 @@ export function validateUniswapSwap(input: {
       const spender = wordAddress(data.slice(74, 138));
       const approved = BigInt(`0x${data.slice(138, 202)}`);
       const permitExpiry = BigInt(`0x${data.slice(202, 266)}`);
-      if (token !== usdc || spender !== router || approved !== amountRaw || permitExpiry > BigInt(Math.floor(expiry / 1000))) {
+      if (token !== inputAddress || spender !== router || approved !== amountRaw || permitExpiry > BigInt(Math.floor(expiry / 1000))) {
         return fail('uniswap_permit2_not_exact', 'Permit2 approval must match token, router, amount and expiry', checks);
       }
       spenders.add(router);
@@ -137,6 +174,18 @@ export function validateUniswapSwap(input: {
   }
 
   if (routerCalls !== 1) return fail('uniswap_router_call_invalid', 'Exactly one pinned Universal Router call is required', checks);
+  // The whole batch may move exactly the input amount in native value, and
+  // only when the input IS native. Checked on the total so two calls cannot
+  // each carry a "valid-looking" part.
+  const expectedValue = inputIsNative ? amountRaw : 0n;
+  if (attachedValue !== expectedValue) {
+    return fail('uniswap_native_value_mismatch', 'Attached native value must equal the input amount exactly', checks);
+  }
+  // A native input has nothing to approve, so an approval in that batch is a
+  // spend nobody asked for.
+  if (inputIsNative && spenders.size > 0) {
+    return fail('uniswap_native_input_approval', 'A native-input swap must contain no approval', checks);
+  }
   checks.push('Pinned Universal Router target and exact bounded approvals');
   return {
     success: true,
@@ -144,11 +193,13 @@ export function validateUniswapSwap(input: {
     checks,
     semantics: {
       actionType: 'uniswap_swap',
-      tokenAddresses: [usdc],
+      tokenAddresses: inputAddress ? [inputAddress] : [],
       recipients: [],
       spenders: [...spenders],
       spendAmountRaw: amountRaw.toString(),
-      spendAmountUsdc: Number(amountRaw) / 1_000_000,
+      // Only meaningful for a USDC input; a non-USDC input is not a dollar
+      // figure and must not be reported as one.
+      spendAmountUsdc: context.inputToken === 'USDC' ? Number(amountRaw) / 1_000_000 : 0,
     },
   };
 }

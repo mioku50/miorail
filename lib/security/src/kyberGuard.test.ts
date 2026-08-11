@@ -103,3 +103,99 @@ test('T56 KyberSwap guard expiry check honors an injected clock deterministicall
   assert.equal(withoutClock.success, false);
   if (!withoutClock.success) assert.equal(withoutClock.code, 'kyberswap_quote_expired');
 });
+
+// ---------------------------------------------------------------------------
+// Both directions. The USDC-in rule was this repo's, not KyberSwap's, and the
+// console ranked three routes for `0.0001 ETH to USDC` before refusing at
+// Review. Widening it moves real money in a new shape, so the value rule is
+// what these pin: a native input attaches EXACTLY the input amount, to the
+// router and nowhere else, and brings no approval with it.
+// ---------------------------------------------------------------------------
+
+const ONE_ETH = 1_000_000_000_000_000_000n;
+
+function nativeContext() {
+  return { ...context(), amountDecimal: '1', inputToken: 'ETH' as const, outputToken: 'USDC' as const };
+}
+
+test('a native input attaches exactly its amount to the pinned router', () => {
+  const result = validateKyberSwap({
+    chain: 8453,
+    context: nativeContext(),
+    calls: [{ to: KYBERSWAP_BASE_ROUTER, value: ONE_ETH.toString(), data: '0x12345678' }],
+  });
+  assert.equal(result.success, true);
+  // Eighteen decimals, not six: parsing an ETH amount as USDC would understate
+  // it by twelve orders of magnitude, and every amount check compares to this.
+  if (result.success) assert.equal(result.semantics.spendAmountRaw, ONE_ETH.toString());
+  // A non-USDC input is not a dollar figure and must not be reported as one.
+  if (result.success) assert.equal(result.semantics.spendAmountUsdc, 0);
+});
+
+test('a native input that attaches the wrong amount is refused', () => {
+  for (const value of ['0', (ONE_ETH + 1n).toString(), (ONE_ETH / 2n).toString()]) {
+    const result = validateKyberSwap({
+      chain: 8453,
+      context: nativeContext(),
+      calls: [{ to: KYBERSWAP_BASE_ROUTER, value, data: '0x12345678' }],
+    });
+    assert.equal(result.success, false, `value ${value} must be refused`);
+  }
+});
+
+test('value on anything but the router call is refused', () => {
+  const result = validateKyberSwap({
+    chain: 8453,
+    context: nativeContext(),
+    calls: [
+      { to: canonicalUsdcForBaseChain(8453), value: ONE_ETH.toString(), data: approveData(KYBERSWAP_BASE_ROUTER, ONE_ETH) },
+      { to: KYBERSWAP_BASE_ROUTER, value: '0', data: '0x12345678' },
+    ],
+  });
+  assert.equal(result.success, false);
+});
+
+test('a native input carrying an approval is refused — there is nothing to approve', () => {
+  const result = validateKyberSwap({
+    chain: 8453,
+    context: nativeContext(),
+    calls: [
+      { to: canonicalUsdcForBaseChain(8453), value: '0', data: approveData(KYBERSWAP_BASE_ROUTER, ONE_ETH) },
+      { to: KYBERSWAP_BASE_ROUTER, value: ONE_ETH.toString(), data: '0x12345678' },
+    ],
+  });
+  assert.equal(result.success, false);
+});
+
+test('a WETH input approves WETH, and a USDC approval in that batch is refused', () => {
+  const weth = '0x4200000000000000000000000000000000000006';
+  const wethContext = { ...context(), amountDecimal: '1', inputToken: 'WETH' as const, outputToken: 'USDC' as const };
+  const allowed = validateKyberSwap({
+    chain: 8453,
+    context: wethContext,
+    calls: [
+      { to: weth, value: '0', data: approveData(KYBERSWAP_BASE_ROUTER, ONE_ETH) },
+      { to: KYBERSWAP_BASE_ROUTER, value: '0', data: '0x12345678' },
+    ],
+  });
+  assert.equal(allowed.success, true);
+
+  const wrongToken = validateKyberSwap({
+    chain: 8453,
+    context: wethContext,
+    calls: [
+      { to: canonicalUsdcForBaseChain(8453), value: '0', data: approveData(KYBERSWAP_BASE_ROUTER, ONE_ETH) },
+      { to: KYBERSWAP_BASE_ROUTER, value: '0', data: '0x12345678' },
+    ],
+  });
+  assert.equal(wrongToken.success, false);
+});
+
+test('ETH to WETH is refused: a wrap is not a routed trade', () => {
+  const result = validateKyberSwap({
+    chain: 8453,
+    context: { ...context(), amountDecimal: '1', inputToken: 'ETH' as const, outputToken: 'WETH' as const },
+    calls: [{ to: KYBERSWAP_BASE_ROUTER, value: ONE_ETH.toString(), data: '0x12345678' }],
+  });
+  assert.equal(result.success, false);
+});

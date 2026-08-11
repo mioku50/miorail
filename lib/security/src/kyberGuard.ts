@@ -1,4 +1,5 @@
 import { canonicalUsdcForBaseChain, normalizeBaseChain, type BaseCall } from './baseGuards.js';
+import { BASE_WETH_ADDRESS } from './uniswapGuard.js';
 
 // Pinned independently of @mioagent/swap-adapters (which depends on
 // @mioagent/security, so the reverse dependency is not available here). Must
@@ -9,10 +10,16 @@ const ERC20_APPROVE_SELECTOR = '0x095ea7b3';
 const ADDRESS = /^0x[0-9a-f]{40}$/;
 const HEX_DATA = /^0x[0-9a-f]+$/;
 
+/** The canonical Base assets this guard will validate a swap between. */
+export type KyberGuardAsset = 'USDC' | 'ETH' | 'WETH';
+
 export interface KyberSwapContext {
   amountDecimal: string;
-  inputToken: 'USDC';
-  outputToken: 'ETH' | 'WETH';
+  /** Was fixed at 'USDC'. Widened so the same pinning rules cover the other
+   * direction; decimals, the approval target and the native-value rule are all
+   * derived from this rather than assumed. */
+  inputToken: KyberGuardAsset;
+  outputToken: KyberGuardAsset;
   swapper: string;
   recipient: string;
   routerAddress: string;
@@ -36,15 +43,21 @@ function fail(code: string, reason: string, checks: string[]): KyberGuardResult 
   return { success: false, code, reason, checks };
 }
 
-function decimalUsdc(value: string): bigint | null {
-  if (!/^\d+(?:\.\d{1,6})?$/.test(value)) return null;
+/** Base units at the asset's OWN precision — six is USDC's, not everyone's. */
+function decimalToRaw(value: string, decimals: number): bigint | null {
+  const pattern = new RegExp(`^\\d+(?:\\.\\d{1,${decimals}})?$`);
+  if (!pattern.test(value)) return null;
   const [whole, fraction = ''] = value.split('.');
   try {
-    const amount = BigInt(`${whole}${fraction.padEnd(6, '0')}`);
+    const amount = BigInt(`${whole}${fraction.padEnd(decimals, '0')}`);
     return amount > 0n ? amount : null;
   } catch {
     return null;
   }
+}
+
+function decimalsFor(asset: KyberGuardAsset): number {
+  return asset === 'USDC' ? 6 : 18;
 }
 
 function wordAddress(word: string): string | null {
@@ -74,8 +87,14 @@ export function validateKyberSwap(input: {
   checks.push('Base mainnet chain');
 
   const context = input.context;
-  if (!context || context.inputToken !== 'USDC' || !['ETH', 'WETH'].includes(context.outputToken)) {
-    return fail('kyberswap_context_invalid', 'Only canonical Base USDC to ETH/WETH is supported', checks);
+  const ASSETS: readonly KyberGuardAsset[] = ['USDC', 'ETH', 'WETH'];
+  if (!context || !ASSETS.includes(context.inputToken) || !ASSETS.includes(context.outputToken)) {
+    return fail('kyberswap_context_invalid', 'Only canonical Base USDC, ETH and WETH are supported', checks);
+  }
+  // ETH↔WETH is a wrap, not a routed swap.
+  const sideOf = (asset: KyberGuardAsset) => (asset === 'USDC' ? 'usdc' : 'weth');
+  if (sideOf(context.inputToken) === sideOf(context.outputToken)) {
+    return fail('kyberswap_context_invalid', 'Input and output must be different canonical assets', checks);
   }
   if (context.routerAddress.toLowerCase() !== KYBERSWAP_BASE_ROUTER) {
     return fail('kyberswap_router_not_pinned', 'KyberSwap router is not the pinned Base router', checks);
@@ -93,17 +112,21 @@ export function validateKyberSwap(input: {
   if (!Number.isFinite(expiry) || expiry <= nowMs) {
     return fail('kyberswap_quote_expired', 'Prepared KyberSwap route expired', checks);
   }
-  const amountRaw = decimalUsdc(context.amountDecimal);
-  if (!amountRaw) return fail('kyberswap_amount_invalid', 'USDC input amount is invalid', checks);
-  checks.push('Exact positive USDC input, pinned router, and unexpired route');
+  const amountRaw = decimalToRaw(context.amountDecimal, decimalsFor(context.inputToken));
+  if (!amountRaw) return fail('kyberswap_amount_invalid', 'Input amount is invalid', checks);
+  checks.push(`Exact positive ${context.inputToken} input, pinned router, and unexpired route`);
 
   if (!Array.isArray(input.calls) || input.calls.length < 1 || input.calls.length > 2) {
     return fail('kyberswap_batch_size_invalid', 'KyberSwap swap must contain one or two calls', checks);
   }
   const usdc = canonicalUsdcForBaseChain(8453).toLowerCase();
   const router = KYBERSWAP_BASE_ROUTER;
+  const inputAddress =
+    context.inputToken === 'ETH' ? null : context.inputToken === 'USDC' ? usdc : BASE_WETH_ADDRESS;
+  const inputIsNative = inputAddress === null;
   let routerCalls = 0;
   let approvalCalls = 0;
+  let attachedValue = 0n;
   const spenders = new Set<string>();
 
   for (const call of input.calls) {
@@ -115,9 +138,12 @@ export function validateKyberSwap(input: {
     } catch {
       return fail('kyberswap_value_invalid', 'Call value is invalid', checks);
     }
-    if (value !== 0n) {
-      return fail('kyberswap_native_value_blocked', 'USDC-input swaps cannot transfer native value', checks);
+    // A native input attaches its amount to the router call and nowhere else.
+    if (value < 0n) return fail('kyberswap_value_invalid', 'Call value is invalid', checks);
+    if (value !== 0n && (!inputIsNative || to !== router)) {
+      return fail('kyberswap_native_value_blocked', 'Only a native-input router call may carry value', checks);
     }
+    attachedValue += value;
     if (!ADDRESS.test(to) || !HEX_DATA.test(data) || data.length < 10) {
       return fail('kyberswap_call_malformed', 'KyberSwap call target or calldata is malformed', checks);
     }
@@ -127,16 +153,16 @@ export function validateKyberSwap(input: {
       continue;
     }
 
-    if (to === usdc) {
+    if (inputAddress && to === inputAddress) {
       if (data.length !== 138 || data.slice(0, 10) !== ERC20_APPROVE_SELECTOR) {
-        return fail('kyberswap_approval_invalid', 'USDC call must be an exact approve', checks);
+        return fail('kyberswap_approval_invalid', 'The input token call must be an exact approve', checks);
       }
       const spender = wordAddress(data.slice(10, 74));
       const approved = BigInt(`0x${data.slice(74, 138)}`);
       if (spender !== router || approved !== amountRaw) {
         return fail(
           'kyberswap_approval_not_exact',
-          'USDC approval must be exact and limited to the pinned router',
+          'The input approval must be exact and limited to the pinned router',
           checks,
         );
       }
@@ -152,7 +178,14 @@ export function validateKyberSwap(input: {
     return fail('kyberswap_router_call_invalid', 'Exactly one pinned KyberSwap router call is required', checks);
   }
   if (approvalCalls > 1) {
-    return fail('kyberswap_approval_count_invalid', 'At most one exact USDC approval is allowed', checks);
+    return fail('kyberswap_approval_count_invalid', 'At most one exact input approval is allowed', checks);
+  }
+  const expectedValue = inputIsNative ? amountRaw : 0n;
+  if (attachedValue !== expectedValue) {
+    return fail('kyberswap_native_value_mismatch', 'Attached native value must equal the input amount exactly', checks);
+  }
+  if (inputIsNative && approvalCalls > 0) {
+    return fail('kyberswap_native_input_approval', 'A native-input swap must contain no approval', checks);
   }
   checks.push('Pinned KyberSwap router target and at most one exact approval');
   return {
@@ -161,11 +194,11 @@ export function validateKyberSwap(input: {
     checks,
     semantics: {
       actionType: 'kyberswap_swap',
-      tokenAddresses: [usdc],
+      tokenAddresses: inputAddress ? [inputAddress] : [],
       recipients: [recipient],
       spenders: [...spenders],
       spendAmountRaw: amountRaw.toString(),
-      spendAmountUsdc: Number(amountRaw) / 1_000_000,
+      spendAmountUsdc: context.inputToken === 'USDC' ? Number(amountRaw) / 1_000_000 : 0,
     },
   };
 }

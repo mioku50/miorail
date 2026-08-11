@@ -110,6 +110,26 @@ function evaluateContractSecurityV1(input: {
  * simulation honesty (never a fabricated `passed`) is enforced by the caller
  * mapping simulationAcceptable before invoking this function (decision 6).
  */
+/**
+ * The canonical asset a guard context names, or null when the intent holds
+ * something the bounded policy does not cover.
+ *
+ * Identified by ADDRESS, never by the symbol alone — a symbol is a label
+ * anyone can reuse, and this value decides which token an approval is allowed
+ * to name. Native ETH has no address, so `kind` identifies it.
+ */
+function guardAssetV1(asset: RouteIntentV1['fromAsset']): 'USDC' | 'ETH' | 'WETH' | null {
+  if (!asset) return null;
+  if (asset.kind === 'native') return 'ETH';
+  const address = asset.address?.toLowerCase();
+  if (address === CANONICAL_USDC_BASE_KERNEL) return 'USDC';
+  if (address === CANONICAL_WETH_BASE_KERNEL) return 'WETH';
+  return null;
+}
+
+const CANONICAL_USDC_BASE_KERNEL = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+const CANONICAL_WETH_BASE_KERNEL = '0x4200000000000000000000000000000000000006';
+
 export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOutput {
   const checks: SafetyKernelCheckV1[] = [];
   const baseCalls: BaseCall[] = input.calls.map((call) => ({
@@ -240,15 +260,24 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
       );
     }
   } else if (input.provider === 'uniswap') {
-    const toAssetSymbol = input.intent.toAsset?.symbol;
-    const context: UniswapSwapContext = {
-      amountDecimal: input.intent.amount.amountDecimal,
-      inputToken: 'USDC',
-      outputToken: toAssetSymbol === 'WETH' ? 'WETH' : 'ETH',
-      swapper: input.walletAddress,
-      routerVersion: '2.0',
-      expiresAt: input.quoteExpiry,
-    };
+    // Both sides come from the stored intent's ADDRESSES. They used to be
+    // `inputToken: 'USDC'` and an output guessed from a symbol, which pinned
+    // the guard to one direction and would have mislabelled the approval
+    // target the moment the other direction shipped.
+    const inputToken = guardAssetV1(input.intent.fromAsset);
+    const outputToken = guardAssetV1(input.intent.toAsset);
+    const context: UniswapSwapContext | undefined =
+      inputToken && outputToken
+        ? {
+            amountDecimal: input.intent.amount.amountDecimal,
+            inputToken,
+            outputToken,
+            swapper: input.walletAddress,
+            routerVersion: '2.0',
+            expiresAt: input.quoteExpiry,
+          }
+        : undefined;
+    // An absent context is a REFUSAL inside the guard, not a skipped check.
     const guard = validateUniswapSwap({ chain: input.chainId, calls: baseCalls, context, now: input.now });
     checks.push(
       check(
@@ -259,16 +288,20 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
       ),
     );
   } else {
-    const toAssetSymbol = input.intent.toAsset?.symbol;
-    const context: KyberSwapContext = {
-      amountDecimal: input.intent.amount.amountDecimal,
-      inputToken: 'USDC',
-      outputToken: toAssetSymbol === 'WETH' ? 'WETH' : 'ETH',
-      swapper: input.walletAddress,
-      recipient: input.walletAddress,
-      routerAddress: input.routerAddress,
-      expiresAt: input.quoteExpiry,
-    };
+    const inputToken = guardAssetV1(input.intent.fromAsset);
+    const outputToken = guardAssetV1(input.intent.toAsset);
+    const context: KyberSwapContext | undefined =
+      inputToken && outputToken
+        ? {
+            amountDecimal: input.intent.amount.amountDecimal,
+            inputToken,
+            outputToken,
+            swapper: input.walletAddress,
+            recipient: input.walletAddress,
+            routerAddress: input.routerAddress,
+            expiresAt: input.quoteExpiry,
+          }
+        : undefined;
     const guard = validateKyberSwap({ chain: input.chainId, calls: baseCalls, context, now: input.now });
     checks.push(
       check(

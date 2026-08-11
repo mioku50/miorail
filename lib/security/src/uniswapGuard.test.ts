@@ -58,3 +58,96 @@ test('T47 Uniswap guard blocks unlimited approvals, foreign targets and native v
   ];
   for (const calls of cases) assert.equal(validateUniswapSwap({ chain: 8453, context: context(), calls }).success, false);
 });
+
+// ---------------------------------------------------------------------------
+// Both directions. Uniswap always quoted and built ETH-in; only this guard and
+// the adapter above it insisted on USDC. Widening it lets real native value
+// into a batch for the first time, so these pin the value rule rather than the
+// happy path: exactly the input amount, on the router call, and nowhere else.
+// ---------------------------------------------------------------------------
+
+const ONE_ETH_U = 1_000_000_000_000_000_000n;
+const WETH_ADDRESS = '0x4200000000000000000000000000000000000006';
+
+function nativeContextU() {
+  return { ...context(), amountDecimal: '1', inputToken: 'ETH' as const, outputToken: 'USDC' as const };
+}
+
+test('a native input attaches exactly its amount to the pinned Universal Router', () => {
+  const result = validateUniswapSwap({
+    chain: 8453,
+    context: nativeContextU(),
+    calls: [{ to: BASE_UNISWAP_UNIVERSAL_ROUTER_2, value: ONE_ETH_U.toString(), data: '0x3593564c' }],
+  });
+  assert.equal(result.success, true);
+  // Eighteen decimals, not USDC's six.
+  if (result.success) assert.equal(result.semantics.spendAmountRaw, ONE_ETH_U.toString());
+  if (result.success) assert.equal(result.semantics.spendAmountUsdc, 0);
+});
+
+test('a native input with the wrong attached value is refused', () => {
+  for (const value of ['0', (ONE_ETH_U + 1n).toString()]) {
+    const result = validateUniswapSwap({
+      chain: 8453,
+      context: nativeContextU(),
+      calls: [{ to: BASE_UNISWAP_UNIVERSAL_ROUTER_2, value, data: '0x3593564c' }],
+    });
+    assert.equal(result.success, false, `value ${value} must be refused`);
+  }
+});
+
+test('an ERC-20 input may attach no value at all', () => {
+  const result = validateUniswapSwap({
+    chain: 8453,
+    context: context(),
+    calls: [
+      { to: canonicalUsdcForBaseChain(8453), value: '0', data: approveData(PERMIT2_ADDRESS, 1_250_000n) },
+      { to: BASE_UNISWAP_UNIVERSAL_ROUTER_2, value: '1', data: '0x3593564c' },
+    ],
+  });
+  assert.equal(result.success, false);
+});
+
+test('a native input carrying an approval is refused', () => {
+  const result = validateUniswapSwap({
+    chain: 8453,
+    context: nativeContextU(),
+    calls: [
+      { to: canonicalUsdcForBaseChain(8453), value: '0', data: approveData(PERMIT2_ADDRESS, ONE_ETH_U) },
+      { to: BASE_UNISWAP_UNIVERSAL_ROUTER_2, value: ONE_ETH_U.toString(), data: '0x3593564c' },
+    ],
+  });
+  assert.equal(result.success, false);
+});
+
+test('a WETH input approves WETH, not USDC', () => {
+  const wethContext = { ...context(), amountDecimal: '1', inputToken: 'WETH' as const, outputToken: 'USDC' as const };
+  const allowed = validateUniswapSwap({
+    chain: 8453,
+    context: wethContext,
+    calls: [
+      { to: WETH_ADDRESS, value: '0', data: approveData(PERMIT2_ADDRESS, ONE_ETH_U) },
+      { to: BASE_UNISWAP_UNIVERSAL_ROUTER_2, value: '0', data: '0x3593564c' },
+    ],
+  });
+  assert.equal(allowed.success, true);
+
+  const wrongToken = validateUniswapSwap({
+    chain: 8453,
+    context: wethContext,
+    calls: [
+      { to: canonicalUsdcForBaseChain(8453), value: '0', data: approveData(PERMIT2_ADDRESS, ONE_ETH_U) },
+      { to: BASE_UNISWAP_UNIVERSAL_ROUTER_2, value: '0', data: '0x3593564c' },
+    ],
+  });
+  assert.equal(wrongToken.success, false);
+});
+
+test('ETH to WETH is refused: a wrap is not a routed trade', () => {
+  const result = validateUniswapSwap({
+    chain: 8453,
+    context: { ...context(), amountDecimal: '1', inputToken: 'ETH' as const, outputToken: 'WETH' as const },
+    calls: [{ to: BASE_UNISWAP_UNIVERSAL_ROUTER_2, value: ONE_ETH_U.toString(), data: '0x3593564c' }],
+  });
+  assert.equal(result.success, false);
+});

@@ -52,13 +52,25 @@ export class TransactionComposerBindingError extends Error {
   }
 }
 
+/**
+ * The partner-built providers trade BOTH directions between the canonical Base
+ * assets, exactly as Aerodrome already did.
+ *
+ * This was USDC-in only, inherited from the first adapter rather than from any
+ * property of Uniswap or KyberSwap — both quote and build the reverse fine. So
+ * a comparison would rank three routes for `0.0001 ETH to USDC` and then
+ * refuse at Review with "Only canonical Base USDC to ETH or WETH is
+ * supported", which read as a limit of the chain rather than of this code.
+ *
+ * ETH↔WETH stays out: that is a wrap, not a routed trade.
+ */
 function isSupportedPair(intent: RouteIntentV1): boolean {
-  return (
-    intent.chainId === 8453 &&
-    intent.fromAsset?.symbol === 'USDC' &&
-    intent.fromAsset.address?.toLowerCase() === CANONICAL_USDC_BASE &&
-    (intent.toAsset?.symbol === 'ETH' || intent.toAsset?.symbol === 'WETH')
-  );
+  if (intent.chainId !== 8453) return false;
+  const from = canonicalAerodromeSideV1(intent.fromAsset);
+  const to = canonicalAerodromeSideV1(intent.toAsset);
+  if (!from || !to) return false;
+  const poolToken = (side: 'usdc' | 'weth' | 'eth') => (side === 'usdc' ? 'usdc' : 'weth');
+  return poolToken(from) !== poolToken(to);
 }
 
 /** One canonical Base asset, identified by address — or by being native ETH.
