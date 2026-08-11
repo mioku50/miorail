@@ -241,7 +241,12 @@ export type ConsolePipelineStateV1 = (typeof CONSOLE_PIPELINE_STATES_V1)[number]
 // `navigation.test.ts` reads the other file from disk and fails on drift.
 // ---------------------------------------------------------------------------
 
-export type ConsoleOperationalLabelV1 = 'Caught up' | 'Catching up' | 'Worker stale' | 'Unavailable';
+export type ConsoleOperationalLabelV1 =
+  | 'Caught up'
+  | 'Measuring'
+  | 'Catching up'
+  | 'Worker stale'
+  | 'Unavailable';
 
 export function consoleOperationalLabelV1(
   state: ConsolePipelineStateV1 | null,
@@ -261,7 +266,13 @@ export function consoleOperationalLabelV1(
     case 'ingestion_catching_up':
     case 'degraded':
       return 'Catching up';
+    // Its own word. `measurement_pending` used to share 'Caught up' with
+    // `healthy`, so the panel read "Caught up" directly above "440 launches
+    // have been found and are waiting for Exit-First measurement" — two true
+    // statements about two different stages, printed as a contradiction.
+    // Ingestion being current says nothing about whether anything was measured.
     case 'measurement_pending':
+      return 'Measuring';
     case 'healthy':
       return 'Caught up';
   }

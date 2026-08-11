@@ -176,7 +176,12 @@ export function workerStaleV1(lastRunAt: string | null, now: string, staleAfterM
  * means nobody looked. Those are the two readings a user was previously unable
  * to tell apart, and the fix is to stop making them guess from the list.
  */
-export type B20OperationalLabelV1 = 'Caught up' | 'Catching up' | 'Worker stale' | 'Unavailable';
+export type B20OperationalLabelV1 =
+  | 'Caught up'
+  | 'Measuring'
+  | 'Catching up'
+  | 'Worker stale'
+  | 'Unavailable';
 
 export function b20OperationalLabelV1(status: B20PipelineStatusV1): B20OperationalLabelV1 {
   switch (status.state) {
@@ -193,7 +198,13 @@ export function b20OperationalLabelV1(status: B20PipelineStatusV1): B20Operation
       // The worker IS running and the cursor IS moving; some reads came back
       // incomplete. That is a data-quality statement, not an outage.
       return 'Catching up';
+    // Its own word. `measurement_pending` used to share 'Caught up' with
+    // `healthy`, so the panel read "Caught up" directly above "440 launches
+    // have been found and are waiting for Exit-First measurement" — two true
+    // statements about two different stages, printed as a contradiction.
+    // Ingestion being current says nothing about whether anything was measured.
     case 'measurement_pending':
+      return 'Measuring';
     case 'healthy':
       return 'Caught up';
   }
@@ -357,8 +368,15 @@ export interface B20OpportunityCardV1 {
  * omitted, because a missing row reads as "nothing to report" and a named one
  * reads as "nobody measured this". */
 export const B20_NOT_MEASURED_DIMENSIONS_V1 = [
-  'unique buyers',
+  // Narrowed, not removed. Buyers INSIDE the launch window are measured now
+  // and shown on the card; buyers after it are not, and the unqualified phrase
+  // would now be false.
+  'unique buyers beyond the launch window',
   'trading volume',
+  // Stays. What is measured is GROSS BUYING in a window — a wallet counted
+  // there may have sold everything since, so nothing here says who holds the
+  // supply. Dropping this line because a concentration number appeared would
+  // be the exact overclaim the number was written to avoid.
   'holder concentration',
   'related-wallet clusters',
   'organic buy pressure',

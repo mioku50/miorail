@@ -303,7 +303,16 @@ describe('a card states what was measured and what it means', () => {
     // "nobody measured this".
     const sample = card();
     assert.deepEqual(sample.notMeasured, B20_NOT_MEASURED_DIMENSIONS_V1);
-    for (const dimension of ['unique buyers', 'trading volume', 'holder concentration'] as const) {
+    for (const dimension of [
+      'unique buyers beyond the launch window',
+      'trading volume',
+      // Still here on purpose. Launch-window BUYING is measured now, and a
+      // wallet counted there may have sold everything since — so nothing this
+      // product publishes says who holds the supply. Dropping this line
+      // because a concentration number appeared would be the overclaim the
+      // number was written to avoid.
+      'holder concentration',
+    ] as const) {
       assert.ok(sample.notMeasured.includes(dimension));
     }
     assert.ok(!JSON.stringify(sample).includes('"uniqueBuyers":0'));

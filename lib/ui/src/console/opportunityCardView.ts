@@ -226,7 +226,9 @@ export function opportunityCardViewV1(card: OpportunityCardWireV1): OpportunityC
             quote.symbol
           } · ${bpsLabelV1(observation.maxRoundTripBps)} round trip`;
         })()
-      : 'not measured',
+      // Null, not the words. The row is hidden entirely when there is no
+      // measurement to name a profile for.
+      : null,
     fresh: observation?.freshness === 'fresh',
     actionLabel,
     // Always shown, whether or not there is a button: a card that offers

@@ -547,7 +547,7 @@ describe('a card never turns a missing measurement into a number', () => {
         },
       }),
     );
-    assert.match(eth.profileLabel, /0\.03 ETH/);
+    assert.match(eth.profileLabel ?? "", /0\.03 ETH/);
 
     const usdc = opportunityCardViewV1(
       wireCard({
@@ -558,7 +558,7 @@ describe('a card never turns a missing measurement into a number', () => {
         },
       }),
     );
-    assert.match(usdc.profileLabel, /100 USDC/);
+    assert.match(usdc.profileLabel ?? "", /100 USDC/);
   });
 
   test('a never-measured launch says so instead of showing zeros', () => {
@@ -567,6 +567,9 @@ describe('a card never turns a missing measurement into a number', () => {
     assert.equal(view.costLabel, null);
     assert.equal(view.capacityLabel, null);
     assert.match(view.headline, /Not measured/);
+    // The profile row is HIDDEN rather than told it has nothing to say. One
+    // unmeasured card used to state "not measured" five separate times.
+    assert.equal(view.profileLabel, null);
   });
 
   test('the screen renders "not measured", never 0.00%', () => {

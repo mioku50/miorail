@@ -69,8 +69,9 @@ export interface OpportunityCardViewV1 {
    * strongest form that prohibition can take.
    */
   capacityLabel: string | null;
-  /** The profile the measurement used, so the numbers mean something. */
-  profileLabel: string;
+  /** The profile the measurement used, so the numbers mean something. Null
+   * when there is no measurement — the row is then not rendered at all. */
+  profileLabel: string | null;
   fresh: boolean;
   /** The button's words, or null when this card offers no action. */
   actionLabel: string | null;
@@ -170,10 +171,16 @@ function OpportunityCard({
         </p>
       ))}
 
-      <div className="kv">
-        <span className="k">Measured against</span>
-        <span className="v mono">{card.profileLabel}</span>
-      </div>
+      {/* Hidden rather than printed as "not measured". A row whose whole job is
+          to name the profile a measurement used says nothing when there was no
+          measurement, and repeating the words is how one unmeasured card came
+          to say "not measured" five times. */}
+      {card.profileLabel && (
+        <div className="kv">
+          <span className="k">Measured against</span>
+          <span className="v mono">{card.profileLabel}</span>
+        </div>
+      )}
       <div className="kv">
         <span className="k">{card.timeLabel}</span>
         <span className="v mono">{card.timeValue}</span>
@@ -206,7 +213,11 @@ function OpportunityCard({
       )}
       {card.buyersNote && <p className="lnote">{card.buyersNote}</p>}
 
-      {card.notMeasured.length > 0 && (
+      {/* Only beside a real measurement. The list exists to bound what a
+          measurement CLAIMS; on a card where nothing was measured it is seven
+          more negations under a sentence that already said nothing was
+          checked. */}
+      {card.notMeasured.length > 0 && card.profileLabel && (
         <p className="lnote">Not measured: {card.notMeasured.join(', ')}.</p>
       )}
 
