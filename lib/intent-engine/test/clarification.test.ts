@@ -49,6 +49,43 @@ test('asset errors never create incomplete RouteIntentV1 objects', () => {
   assert.equal(unknown.routeIntent, null);
 });
 
+test('one named asset behind a destination marker is the destination, not the source', () => {
+  for (const message of ['Swap 0.1 to ETH', 'Convert 0.1 into ETH', 'Обменяй 0.1 на ETH']) {
+    const named = clarification(message, swapExtraction({ amount: '0.1', fromAsset: null }));
+    assert.equal(named.clarification.code, 'from_asset_required', message);
+    assert.equal(named.pendingIntent?.toAssetSymbol, 'ETH', message);
+    assert.equal(named.pendingIntent?.fromAssetSymbol, null, message);
+
+    // The extractor may stay silent; the marker in the user's own text decides.
+    const silent = clarification(
+      message,
+      swapExtraction({ amount: '0.1', fromAsset: null, toAsset: null }),
+    );
+    assert.equal(silent.clarification.code, 'from_asset_required', message);
+  }
+
+  const sourceMarker = clarification(
+    'Swap 0.1 from ETH',
+    swapExtraction({ amount: '0.1', fromAsset: 'ETH', toAsset: null }),
+  );
+  assert.equal(sourceMarker.clarification.code, 'to_asset_required');
+});
+
+test('the destination named alone survives into the next turn as a pending intent', () => {
+  const first = clarification('Swap 0.1 to ETH', swapExtraction({ amount: '0.1', fromAsset: null }));
+  assert.ok(first.pendingIntent);
+
+  const second = resolveSwapIntentV2({
+    message: 'USDC',
+    extraction: swapExtraction({ amount: null, fromAsset: 'USDC', toAsset: null }),
+    context: testContext({ requestId: 'request-fixture-2', pendingIntents: [first.pendingIntent] }),
+  });
+  assert.equal(second.outcome, 'ready', JSON.stringify(second));
+  assert.equal(second.routeIntent?.fromAsset?.symbol, 'USDC');
+  assert.equal(second.routeIntent?.toAsset?.symbol, 'ETH');
+  assert.equal(second.routeIntent?.amount.amountDecimal, '0.1');
+});
+
 test('invalid slippage and ambiguous protocol requests are structured clarification', () => {
   const slippage = clarification('Swap 100 USDC to ETH with slippage bananas.', swapExtraction());
   assert.equal(slippage.clarification.code, 'slippage_invalid');

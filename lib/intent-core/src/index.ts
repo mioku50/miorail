@@ -160,14 +160,35 @@ export function normalizeSemanticAmount(raw: string | null): NormalizedAmount | 
   return exact ? { kind: 'exact', value: exact } : null;
 }
 
+/**
+ * Names that mean a registry asset without spelling its ticker. Russian users
+ * write "эфир", not "ETH", and an unresolved name becomes "which trusted Base
+ * token do you mean?" against a token the registry already holds.
+ * Aliases resolve to a registry entry; they never add one.
+ */
+const TRUSTED_ASSET_ALIASES: Record<string, keyof typeof TRUSTED_ASSETS> = {
+  ETHER: 'ETH',
+  NATIVEETH: 'ETH',
+  ЭФИР: 'ETH',
+  ЭФИРА: 'ETH',
+  ЭФИРЕ: 'ETH',
+  ЭФИРОМ: 'ETH',
+  ЭФИРИУМ: 'ETH',
+  ЭФИРИУМА: 'ETH',
+  ЭФИРИУМЕ: 'ETH',
+  WRAPPEDETH: 'WETH',
+  WRAPPEDETHER: 'WETH',
+  ЮСДС: 'USDC',
+  ЮСДЦ: 'USDC',
+};
+
 export function resolveTrustedAsset(raw: string | null): TrustedAsset | null {
   if (!raw) return null;
   const normalized = raw
     .trim()
     .toUpperCase()
     .replace(/[\s_-]+/g, '');
-  const alias = normalized === 'ETHER' || normalized === 'NATIVEETH' ? 'ETH' : normalized;
-  const asset = TRUSTED_ASSETS[alias];
+  const asset = TRUSTED_ASSETS[TRUSTED_ASSET_ALIASES[normalized] ?? normalized];
   return asset ? { ...asset } : null;
 }
 

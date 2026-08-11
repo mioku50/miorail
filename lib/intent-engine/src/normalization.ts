@@ -163,9 +163,19 @@ export function resolveRouteAssetV1(raw: string | null): AssetRefV1 | null {
   return byAddress ? toAssetRef(byAddress) : null;
 }
 
-function assetOccurrences(message: string): AssetRefV1[] {
-  const found: Array<{ index: number; asset: AssetRefV1 }> = [];
-  const symbolPattern = /\b(?:USDC|WETH|ETH|ETHER)\b/giu;
+interface AssetOccurrenceV1 {
+  index: number;
+  asset: AssetRefV1;
+}
+
+// Ticker or plain name. The Cyrillic forms need lookarounds rather than \b,
+// which is ASCII-only; the alias table decides what each spelling resolves to.
+const ASSET_SYMBOL_PATTERN_V1 =
+  /(?<![\p{L}\p{N}])(?:USDC|WETH|ETH|ETHER|ЭФИР\p{L}*|ЮСД[СЦ])(?![\p{L}\p{N}])/giu;
+
+function assetOccurrences(message: string): AssetOccurrenceV1[] {
+  const found: AssetOccurrenceV1[] = [];
+  const symbolPattern = new RegExp(ASSET_SYMBOL_PATTERN_V1);
   for (const match of message.matchAll(symbolPattern)) {
     const asset = resolveRouteAssetV1(match[0]);
     if (asset) found.push({ index: match.index ?? 0, asset });
@@ -177,11 +187,67 @@ function assetOccurrences(message: string): AssetRefV1[] {
   }
   found.sort((left, right) => left.index - right.index);
   const seen = new Set<string>();
-  return found.flatMap(({ asset }) => {
-    if (seen.has(asset.assetId)) return [];
-    seen.add(asset.assetId);
-    return [asset];
+  return found.flatMap((occurrence) => {
+    if (seen.has(occurrence.asset.assetId)) return [];
+    seen.add(occurrence.asset.assetId);
+    return [occurrence];
   });
+}
+
+// A single named asset is not automatically the source. "Swap 0.1 to ETH"
+// names the destination and leaves the source unsaid; reading it as the source
+// produced a same-asset pair and asked the user why the two sides matched.
+// Only a marker standing immediately before the symbol counts as direction.
+// \b cannot open these: JS word boundaries are ASCII, so \bна\b never matches.
+const AMOUNT_BETWEEN_V1 = String.raw`(?:\d+(?:[.,]\d+)?\s+)?`;
+const DESTINATION_MARKER_V1 = new RegExp(
+  String.raw`(?:^|[^\p{L}\p{N}])(?:to|into|for|в|на)\s+${AMOUNT_BETWEEN_V1}$|(?:->|=>|→)\s*$`,
+  'iu',
+);
+const SOURCE_MARKER_V1 = new RegExp(
+  String.raw`(?:^|[^\p{L}\p{N}])(?:from|из|с)\s+${AMOUNT_BETWEEN_V1}$`,
+  'iu',
+);
+
+// "купи ETH за 100 USDC" and "how much ETH for 100 USDC" name the destination
+// first: the asset behind the payment marker is the one that leaves the wallet.
+// Only a buy-shaped sentence reverses the positional reading — "продай ETH за
+// USDC" uses the same preposition for the opposite direction.
+const BUY_SHAPED_V1 = /(?:^|[^\p{L}\p{N}])(?:buy|purchase|how\s+much)|(?:куп|приобрет|скольк)/iu;
+const SELL_SHAPED_V1 = /(?:^|[^\p{L}\p{N}])sell|прода/iu;
+const PAYMENT_MARKER_V1 = new RegExp(
+  String.raw`(?:^|[^\p{L}\p{N}])(?:for|with|за|на)\s+${AMOUNT_BETWEEN_V1}$`,
+  'iu',
+);
+
+function occurrenceDirectionV1(
+  message: string,
+  occurrence: AssetOccurrenceV1,
+): 'source' | 'destination' | null {
+  const before = message.slice(0, occurrence.index);
+  if (DESTINATION_MARKER_V1.test(before)) return 'destination';
+  if (SOURCE_MARKER_V1.test(before)) return 'source';
+  return null;
+}
+
+function orderedAssetPairV1(
+  message: string,
+  occurrences: AssetOccurrenceV1[],
+): [AssetOccurrenceV1, AssetOccurrenceV1] {
+  const [first, second] = occurrences;
+  const buyShaped = BUY_SHAPED_V1.test(message) && !SELL_SHAPED_V1.test(message);
+  const paysWithSecond = PAYMENT_MARKER_V1.test(message.slice(0, second.index));
+  return buyShaped && paysWithSecond ? [second, first] : [first, second];
+}
+
+/**
+ * Whether the message itself names two different trusted assets. A verb that
+ * usually means "move tokens somewhere" ("перевести", "transfer") means
+ * "convert" when the sentence names both sides of a pair, so the unsupported
+ * goal guard needs to see the pair before refusing.
+ */
+export function namesTrustedAssetPairV1(message: string): boolean {
+  return assetOccurrences(message).length >= 2;
 }
 
 function rawFieldIsGrounded(raw: string, message: string): boolean {
@@ -362,10 +428,10 @@ function groundedAssets(
   let toAsset = parseExtracted(extraction.toAsset, 'toAsset');
 
   if (occurrences.length >= 2) {
-    const [orderedFrom, orderedTo] = occurrences;
+    const [orderedFrom, orderedTo] = orderedAssetPairV1(message, occurrences);
     if (
-      (fromAsset && fromAsset.assetId !== orderedFrom.assetId) ||
-      (toAsset && toAsset.assetId !== orderedTo.assetId)
+      (fromAsset && fromAsset.assetId !== orderedFrom.asset.assetId) ||
+      (toAsset && toAsset.assetId !== orderedTo.asset.assetId)
     ) {
       issues.push(
         issue(
@@ -376,19 +442,24 @@ function groundedAssets(
         ),
       );
     } else {
-      fromAsset = orderedFrom;
-      toAsset = orderedTo;
+      fromAsset = orderedFrom.asset;
+      toAsset = orderedTo.asset;
     }
   } else if (occurrences.length === 1) {
     const only = occurrences[0];
     if (allowPending && pending?.fromAssetSymbol && !pending.toAssetSymbol) {
       const pendingFrom = resolveRouteAssetV1(pending.fromAssetSymbol);
-      if (pendingFrom?.assetId !== only.assetId) toAsset ??= only;
+      if (pendingFrom?.assetId !== only.asset.assetId) toAsset ??= only.asset;
     } else if (allowPending && pending?.toAssetSymbol && !pending.fromAssetSymbol) {
       const pendingTo = resolveRouteAssetV1(pending.toAssetSymbol);
-      if (pendingTo?.assetId !== only.assetId) fromAsset ??= only;
-    } else {
-      fromAsset ??= only;
+      if (pendingTo?.assetId !== only.asset.assetId) fromAsset ??= only.asset;
+    } else if (occurrenceDirectionV1(message, only) === 'destination') {
+      if (fromAsset?.assetId !== only.asset.assetId) toAsset ??= only.asset;
+    } else if (toAsset?.assetId !== only.asset.assetId) {
+      // The default stays "the one named asset is the source", but it may never
+      // fill a slot the other side already holds — that is how one named asset
+      // became an invalid pair instead of a missing source.
+      fromAsset ??= only.asset;
     }
   }
 
@@ -571,7 +642,11 @@ export function mapExecutionRequestedV1(message: string): boolean {
   ) {
     return false;
   }
-  if (/\b(?:prepare|swap|exchange|convert)\b|(?:подготов|обмен|свап)/iu.test(normalized)) {
+  if (
+    /\b(?:prepare|swap|exchange|convert|buy|sell)\b|(?:подготов|обмен|поменя|свап|куп|прода|конверт|перевед)/iu.test(
+      normalized,
+    )
+  ) {
     return true;
   }
   return false;

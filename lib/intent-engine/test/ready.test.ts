@@ -37,6 +37,42 @@ test('basic EN/RU USDC to ETH swaps produce valid exact RouteIntentV1 objects', 
   assert.equal(english.routeIntent.intentHash, russian.routeIntent.intentHash);
 });
 
+test('everyday Russian swap verbs and token names resolve to the same intent', () => {
+  const cases: Array<[string, Partial<SwapIntentExtractionV2>]> = [
+    ['Переведи 100 USDC в ETH.', {}],
+    ['Поменяй 100 USDC на ETH.', {}],
+    ['Свап 100 USDC в ETH.', {}],
+    ['Хочу обменять 100 USDC на эфир.', { toAsset: 'эфир' }],
+    ['Обменяй 100 USDC на эфириум.', { toAsset: 'эфириум' }],
+  ];
+  for (const [message, overrides] of cases) {
+    const result = ready(message, swapExtraction(overrides));
+    assert.equal(result.routeIntent.fromAsset?.symbol, 'USDC', message);
+    assert.equal(result.routeIntent.toAsset?.symbol, 'ETH', message);
+    assert.equal(result.routeIntent.amount.amountDecimal, '100', message);
+    assert.equal(result.routeIntent.executionRequested, true, message);
+  }
+});
+
+test('buy wording names the destination first and does not reverse the pair', () => {
+  const bought = ready('Купи ETH за 100 USDC.', swapExtraction());
+  assert.equal(bought.routeIntent.fromAsset?.symbol, 'USDC');
+  assert.equal(bought.routeIntent.toAsset?.symbol, 'ETH');
+
+  const quoted = ready('Сколько ETH дадут за 100 USDC?', swapExtraction());
+  assert.equal(quoted.routeIntent.fromAsset?.symbol, 'USDC');
+  assert.equal(quoted.routeIntent.toAsset?.symbol, 'ETH');
+  assert.equal(quoted.routeIntent.executionRequested, false);
+
+  // The same preposition, the opposite direction: selling keeps source first.
+  const sold = ready(
+    'Продай 1.25 ETH за USDC.',
+    swapExtraction({ amount: '1.25', fromAsset: 'ETH', toAsset: 'USDC' }),
+  );
+  assert.equal(sold.routeIntent.fromAsset?.symbol, 'ETH');
+  assert.equal(sold.routeIntent.toAsset?.symbol, 'USDC');
+});
+
 test('ETH to USDC uses source decimals and preserves amount/source asset identity', () => {
   const result = ready(
     'Swap 1.25 ETH to USDC.',

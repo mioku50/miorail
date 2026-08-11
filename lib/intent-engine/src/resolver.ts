@@ -21,6 +21,7 @@ import {
   decimalToAtomicV1,
   detectIntentLocaleV1,
   groundSwapFieldsV2,
+  namesTrustedAssetPairV1,
   sortIntentIssuesV1,
 } from './normalization.js';
 import type {
@@ -36,7 +37,16 @@ const SERVER_SIGNING_LANGUAGE =
 const UNSUPPORTED_CHAIN_LANGUAGE =
   /\b(?:ethereum mainnet|ethereum network|on ethereum|arbitrum|optimism|polygon|base sepolia|sepolia)\b|\bchain\s*(?:1|84532)\b|(?:сеть|сети)\s+(?:ethereum|arbitrum|optimism|polygon|sepolia)/iu;
 const UNSUPPORTED_GOAL_LANGUAGE =
-  /\b(?:send|transfer|lend|earn|yield|supply|borrow|repay|withdraw)\b|(?:отправ|перевед|доходност|заработ|внес|одолж|погас|вывед)/iu;
+  /\b(?:send|lend|earn|yield|supply|borrow|repay|withdraw)\b|(?:отправ|доходност|заработ|внес|одолж|погас|вывед)/iu;
+// "Переведи 0.1 USDC в ETH" is how a Russian speaker asks for a conversion, and
+// "transfer" carries the same double meaning. These verbs name an unsupported
+// goal only when the request does not name both sides of a swap pair; sending
+// tokens to a recipient never does, and an untrusted address is refused before
+// this point anyway.
+const CONVERTIBLE_TRANSFER_LANGUAGE = /\btransfer\b|(?:перевед|перевес|перевод)/iu;
+// ...and never when the sentence also names somewhere for the tokens to land.
+const RECIPIENT_TARGET_LANGUAGE =
+  /\b(?:wallet|address|recipient|friend|exchange|him|her|them)\b|(?:кошел|адрес|получател|друг|бирж|ему|ей|им)/iu;
 
 const CLARIFICATION_CODES = new Set<ClarificationCodeV1>([
   'amount_required',
@@ -145,7 +155,14 @@ function safetyIssues(message: string, extraction: SwapIntentExtractionV2 | null
       ),
     );
   }
-  if (extraction?.goal === 'unsupported' || UNSUPPORTED_GOAL_LANGUAGE.test(message)) {
+  const transferIsNotConversion =
+    CONVERTIBLE_TRANSFER_LANGUAGE.test(message) &&
+    (!namesTrustedAssetPairV1(message) || RECIPIENT_TARGET_LANGUAGE.test(message));
+  if (
+    extraction?.goal === 'unsupported' ||
+    UNSUPPORTED_GOAL_LANGUAGE.test(message) ||
+    transferIsNotConversion
+  ) {
     issues.push(
       issue(
         'unsupported_goal',

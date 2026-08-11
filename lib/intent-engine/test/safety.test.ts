@@ -82,6 +82,26 @@ test('unsupported financial goals cannot be disguised as swap intent', () => {
   assert.equal(result.issues[0]?.code, 'unsupported_goal');
 });
 
+test('a transfer verb is a swap only when the request names both sides of a pair', () => {
+  // "Переведи X в Y" is ordinary Russian for a conversion, so the pair decides.
+  for (const message of [
+    'Переведи 100 USDC другу.',
+    'Переведи 100 USDC на кошелёк.',
+    'Transfer 100 USDC to my other wallet.',
+  ]) {
+    const result = rejected(message, swapExtraction({ toAsset: null }));
+    assert.equal(result.issues[0]?.code, 'unsupported_goal', message);
+  }
+
+  // A pair is not enough when the sentence also names somewhere to send to.
+  const toWallet = rejected('Переведи 100 USDC в ETH на кошелёк друга.', swapExtraction());
+  assert.equal(toWallet.issues[0]?.code, 'unsupported_goal');
+
+  // Sending stays unsupported however many assets the sentence mentions.
+  const send = rejected('Отправь 100 USDC на ETH адрес.', swapExtraction());
+  assert.equal(send.issues[0]?.code, 'unsupported_goal');
+});
+
 test('malformed extractor output is rejected and cannot produce placeholders', () => {
   const result = rejected('Swap 100 USDC to ETH.', null);
   assert.deepEqual(
