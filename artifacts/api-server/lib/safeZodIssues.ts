@@ -81,6 +81,36 @@ export function firstOwnFrameV1(stack: string | undefined): string | null {
   return null;
 }
 
+/**
+ * What a route handler must record before answering 500.
+ *
+ * Every `catch {}` that discards its cause turns an unexpected failure into an
+ * access-log line and nothing else. That is not a small loss: a Route
+ * Intelligence 500 costs the user a whole comparison, and without the cause
+ * the next step is guessing. A transient network throw inside the Uniswap
+ * build adapter was diagnosed this way — by elimination against the database,
+ * because the server itself had recorded nothing.
+ *
+ * Name, redacted message and one repo-relative frame. Same redaction rules as
+ * `safeErrorMessageV1`, so provider URLs, keys and addresses never reach the
+ * journal. Returns the meta object the caller passes to `logger.error`, which
+ * keeps every call site one line.
+ */
+export function safeFailureMetaV1(cause: unknown): {
+  name: string;
+  // `detail`, not `message`: the logger flattens meta onto the entry, so a
+  // `message` key silently replaces the log's own title and the line comes out
+  // unlabelled — which is how the first swallowed 500 was missed.
+  detail: string | null;
+  at: string | null;
+} {
+  return {
+    name: cause instanceof Error ? cause.name : typeof cause,
+    detail: cause instanceof Error ? safeErrorMessageV1(cause.message) : null,
+    at: cause instanceof Error ? firstOwnFrameV1(cause.stack) : null,
+  };
+}
+
 interface ZodLikeIssueV1 {
   code?: unknown;
   path?: unknown;

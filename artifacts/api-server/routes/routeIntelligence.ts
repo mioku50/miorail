@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { logger } from '@mioagent/utils';
-import { firstOwnFrameV1, safeErrorMessageV1 } from '../lib/safeZodIssues.js';
+import { firstOwnFrameV1, safeErrorMessageV1, safeFailureMetaV1 } from '../lib/safeZodIssues.js';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import {
   ConfirmSpendPermissionRequestV1Schema,
@@ -575,7 +575,8 @@ routeIntelligenceRouter.post('/earn/compare', async (req, res) => {
         routeCard: persisted.routeCard,
       }),
     );
-  } catch {
+  } catch (cause) {
+    logger.error('Earn compare failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'earn_compare_failed', code: 'earn_compare_failed' });
   }
 });
@@ -651,7 +652,8 @@ routeIntelligenceRouter.post('/earn/prepare', async (req, res) => {
       now: earnPrepareRouteRuntime.now(),
     });
     res.json(EarnPrepareResponseV1Schema.parse(result));
-  } catch {
+  } catch (cause) {
+    logger.error('Earn prepare failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'earn_prepare_failed', code: 'earn_prepare_failed' });
   }
 });
@@ -685,7 +687,8 @@ routeIntelligenceRouter.post('/earn/blueprints/:blueprintId/approve', async (req
       now: earnBlueprintRouteRuntime.now(),
     });
     res.json(EarnBlueprintApproveResponseV1Schema.parse(result));
-  } catch {
+  } catch (cause) {
+    logger.error('Blueprint approve failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'blueprint_approve_failed', code: 'blueprint_approve_failed' });
   }
 });
@@ -876,7 +879,8 @@ routeIntelligenceRouter.post('/swap/prepare', async (req, res) => {
         ? { ...result, simulationPriceUsdc: simulationPriceUsdcForPrepareResponseV1(process.env) }
         : result;
     res.json(SwapPrepareResponseV1Schema.parse(withSimulationPrice));
-  } catch {
+  } catch (cause) {
+    logger.error('Swap prepare failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'swap_prepare_failed', code: 'swap_prepare_failed' });
   }
 });
@@ -944,7 +948,8 @@ routeIntelligenceRouter.post('/swap/blueprints/:blueprintId/approve', async (req
       now: swapBlueprintRouteRuntime.now(),
     });
     res.json(SwapBlueprintApproveResponseV1Schema.parse(result));
-  } catch {
+  } catch (cause) {
+    logger.error('Blueprint approve failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'blueprint_approve_failed', code: 'blueprint_approve_failed' });
   }
 });
@@ -1202,7 +1207,8 @@ routeIntelligenceRouter.get('/route-proofs/:proofId', async (req, res) => {
       return;
     }
     res.json(RouteProofGetResponseV1Schema.parse(result));
-  } catch {
+  } catch (cause) {
+    logger.error('Route proof reconcile failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'route_proof_reconcile_failed', code: 'route_proof_reconcile_failed' });
   }
 });
@@ -1453,7 +1459,8 @@ async function simulateGuardMiddleware(req: Request, res: Response, next: NextFu
     (res.locals as SimulateLocals).pricing = pricing;
     (res.locals as SimulateLocals).chargeProvider = simulationProviderRefV1(providerConfig.providerId);
     next();
-  } catch {
+  } catch (cause) {
+    logger.error('Simulation failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'simulation_failed', code: 'simulation_failed' });
   }
 }
@@ -1640,7 +1647,8 @@ routeIntelligenceRouter.post(
       }
       (res.locals as SimulateLocals).pendingCharge = pendingCharge;
       next();
-    } catch {
+    } catch (cause) {
+      logger.error('Simulation failed', safeFailureMetaV1(cause));
       res.status(500).json({ error: 'simulation_failed', code: 'simulation_failed' });
     }
   },
@@ -2053,7 +2061,8 @@ routeIntelligenceRouter.get('/intelligence-budget', async (req: Request, res: Re
         budget: record ? budgetProjectionFromRecord(record) : null,
       }),
     );
-  } catch {
+  } catch (cause) {
+    logger.error('Budget simulation failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'budget_simulation_failed', code: 'budget_simulation_failed' });
   }
 });
@@ -2090,7 +2099,8 @@ routeIntelligenceRouter.get('/intelligence-charges', async (req: Request, res: R
         })),
       }),
     );
-  } catch {
+  } catch (cause) {
+    logger.error('Intelligence charges failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'intelligence_charges_failed', code: 'intelligence_charges_failed' });
   }
 });
@@ -2215,7 +2225,8 @@ routeIntelligenceRouter.post('/intelligence-budget', async (req: Request, res: R
       }
       throw cause;
     }
-  } catch {
+  } catch (cause) {
+    logger.error('Budget simulation failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'budget_simulation_failed', code: 'budget_simulation_failed' });
   }
 });
@@ -2276,7 +2287,8 @@ routeIntelligenceRouter.patch('/intelligence-budget', async (req: Request, res: 
       now: nowIso,
     });
     res.json(IntelligenceBudgetResponseV1Schema.parse({ budget: budgetProjectionFromRecord(updated) }));
-  } catch {
+  } catch (cause) {
+    logger.error('Budget simulation failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'budget_simulation_failed', code: 'budget_simulation_failed' });
   }
 });
@@ -2578,7 +2590,8 @@ async function setBudgetPausedV1(
       now: nowIso,
     });
     res.json(IntelligenceBudgetResponseV1Schema.parse({ budget: budgetProjectionFromRecord(updated) }));
-  } catch {
+  } catch (cause) {
+    logger.error('Budget simulation failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'budget_simulation_failed', code: 'budget_simulation_failed' });
   }
 }
@@ -2648,7 +2661,8 @@ routeIntelligenceRouter.post('/intelligence-budget/revoke', async (req: Request,
       // their revocation took.
     }
     res.json(IntelligenceBudgetResponseV1Schema.parse({ budget: budgetProjectionFromRecord(revoked) }));
-  } catch {
+  } catch (cause) {
+    logger.error('Budget simulation failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'budget_simulation_failed', code: 'budget_simulation_failed' });
   }
 });
@@ -2817,7 +2831,8 @@ routeIntelligenceRouter.post(
           budget: budgetProjectionFromRecord(result.budget),
         }),
       );
-    } catch {
+    } catch (cause) {
+      logger.error('Budget simulation failed', safeFailureMetaV1(cause));
       res.status(500).json({ error: 'budget_simulation_failed', code: 'budget_simulation_failed' });
     }
   },
@@ -3221,7 +3236,8 @@ routeIntelligenceRouter.post('/commerce/orders', async (req, res) => {
         amounts: commerceAmountReviewV1({ candidate, invoice: validated.invoice }),
       }),
     );
-  } catch {
+  } catch (cause) {
+    logger.error('Commerce order failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'commerce_order_failed', code: 'commerce_order_failed' });
   }
 });
@@ -3303,7 +3319,8 @@ routeIntelligenceRouter.get('/commerce/orders/:invoiceId', async (req, res) => {
         events,
       }),
     );
-  } catch {
+  } catch (cause) {
+    logger.error('Commerce order status failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'commerce_order_status_failed', code: 'commerce_order_status_failed' });
   }
 });
@@ -3415,7 +3432,8 @@ routeIntelligenceRouter.post('/commerce/orders/:invoiceId/reconcile', async (req
         events,
       }),
     );
-  } catch {
+  } catch (cause) {
+    logger.error('Commerce reconcile failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'commerce_reconcile_failed', code: 'commerce_reconcile_failed' });
   }
 });
@@ -3451,7 +3469,8 @@ routeIntelligenceRouter.get('/commerce/history', async (req, res) => {
     const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(rawLimit, 100)) : 20;
     const items = await commerceRouteRuntime.repository().listCommerceHistory(user.id, limit);
     res.json(CommerceHistoryResponseV1Schema.parse({ items }));
-  } catch {
+  } catch (cause) {
+    logger.error('Commerce history failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'commerce_history_failed', code: 'commerce_history_failed' });
   }
 });
@@ -3619,7 +3638,8 @@ routeIntelligenceRouter.post('/commerce/orders/:orderId/payment/prepare', async 
         signableReason: gate.reason,
       }),
     );
-  } catch {
+  } catch (cause) {
+    logger.error('Commerce payment prepare failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'commerce_payment_prepare_failed', code: 'commerce_payment_prepare_failed' });
   }
 });
@@ -3713,7 +3733,8 @@ routeIntelligenceRouter.post('/commerce/orders/:orderId/payment/approve', async 
         safety,
       }),
     );
-  } catch {
+  } catch (cause) {
+    logger.error('Commerce payment approve failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'commerce_payment_approve_failed', code: 'commerce_payment_approve_failed' });
   }
 });
@@ -3804,7 +3825,8 @@ routeIntelligenceRouter.post('/commerce/orders/:orderId/payment/submission', asy
         },
       }),
     );
-  } catch {
+  } catch (cause) {
+    logger.error('Commerce payment submission failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'commerce_payment_submission_failed', code: 'commerce_payment_submission_failed' });
   }
 });
@@ -3882,7 +3904,8 @@ routeIntelligenceRouter.get('/commerce/orders/:orderId/delivery', async (req, re
         fields: read.secret.fields,
       }),
     );
-  } catch {
+  } catch (cause) {
+    logger.error('Commerce delivery failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'commerce_delivery_failed', code: 'commerce_delivery_failed' });
   }
 });

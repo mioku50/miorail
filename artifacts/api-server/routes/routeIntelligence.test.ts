@@ -24,6 +24,7 @@ import {
 } from '../../../lib/route-card/test/fixtures.js';
 import { RouteProofReconcileBindingError } from '@mioagent/route-proof';
 import { RouteStorageIntegrityError } from '@mioagent/route-storage';
+import { logger } from '@mioagent/utils';
 import {
   routeIntelligenceRouter,
   routePlanRouteRuntime,
@@ -340,6 +341,35 @@ describe('POST /api/route-intelligence/swap/prepare', () => {
     assert.equal(failed.status, 500);
     assert.deepEqual(failed.body, { error: 'swap_prepare_failed', code: 'swap_prepare_failed' });
     assert.equal(JSON.stringify(failed.body).includes('secret detail'), false);
+  });
+
+  test('a 500 is recorded server-side, with no provider URL or key in the record', async () => {
+    // The defect this closes: the catch discarded its cause, so a real failure
+    // in production left one access-log line saying `500` and nothing else.
+    // Diagnosing it meant reconstructing the flow from database rows.
+    const entries: { title: string; meta: Record<string, unknown> }[] = [];
+    const original = logger.error;
+    logger.error = ((title: string, meta: Record<string, unknown>) => {
+      entries.push({ title, meta });
+    }) as typeof logger.error;
+    try {
+      swapPrepareRouteRuntime.migrationAvailable = async () => true;
+      swapPrepareRouteRuntime.prepare = async () => {
+        throw new TypeError('fetch failed for https://trade-api.example/v1/quote key 0xdeadbeefdeadbeef');
+      };
+      const failed = await request(routeApp()).post('/api/route-intelligence/swap/prepare').send(PREPARE_BODY);
+      assert.equal(failed.status, 500);
+      assert.equal(entries.length, 1);
+      assert.equal(entries[0]!.title, 'Swap prepare failed');
+      assert.equal(entries[0]!.meta.name, 'TypeError');
+      const recorded = JSON.stringify(entries[0]!.meta);
+      // The sentence survives; the URL and the long hex do not.
+      assert.match(recorded, /fetch failed/);
+      assert.equal(recorded.includes('trade-api.example'), false);
+      assert.equal(recorded.includes('deadbeefdeadbeef'), false);
+    } finally {
+      logger.error = original;
+    }
   });
 
   test('returns a validated unsupported outcome', async () => {
