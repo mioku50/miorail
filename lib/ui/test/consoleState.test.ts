@@ -254,11 +254,33 @@ describe('nothing is signed on a guess', () => {
     assert.equal(view.disabledReason, CONSOLE_COPY_V1.simulationUnavailable);
   });
 
-  test('a reverted simulation also blocks signing and says what to do next', () => {
-    const view = deriveSimulationViewV1({ status: 'failed', provider: 'Alchemy', blockNumber: '1', ageSeconds: 3, gasUsed: '21000' });
+  test('a reverted simulation blocks signing EVEN when the server allowed the route', () => {
+    // A revert is evidence, not an absence of it. The server's verdict cannot
+    // overrule calls that were run against live state and failed.
+    const view = deriveSimulationViewV1(
+      { status: 'failed', provider: 'Alchemy', blockNumber: '1', ageSeconds: 3, gasUsed: '21000' },
+      true,
+    );
     assert.equal(view.canSign, false);
     assert.match(view.detail, /Nothing was signed/);
     assert.match(view.detail, /change the route or the amount/);
+  });
+
+  test('an absent simulation is not a veto once the Safety Kernel has allowed the route', () => {
+    // The defect this closes: the screen ran its own "no simulation, no
+    // signing" rule on top of the server's. `simulation_evidence` IS a Safety
+    // Kernel check — a route that needs simulation and lacks it comes back
+    // `blocked` and never reaches Review — so the screen's copy of the rule
+    // only ever fired on routes the server had already cleared. With the paid
+    // simulation path off by default, that meant NO swap could be signed at
+    // all: every check green, Approve permanently dead.
+    const view = deriveSimulationViewV1(null, true);
+    assert.equal(view.canSign, true);
+    assert.equal(view.disabledReason, null);
+    // The panel still tells the truth about simulation — it just stops voting.
+    assert.equal(view.available, false);
+    assert.equal(view.passed, false);
+    assert.equal(view.headline, 'Simulation not available');
   });
 
   test('only a passed simulation unlocks the signing CTA', () => {

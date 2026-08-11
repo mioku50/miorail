@@ -430,9 +430,30 @@ export interface SimulationViewV1 {
 /**
  * The Review screen's simulation block. It NEVER disappears and NEVER turns
  * into a green tick when the adapter is missing: an unavailable simulation is
- * stated as such and the signing button stays disabled with the reason.
+ * stated as such.
+ *
+ * `serverAllowsSigning` is the Safety Kernel's verdict, and it is the ONLY
+ * thing that may enable the CTA. This screen used to decide by itself —
+ * "no simulation, no signing" — which sounds prudent and was wrong in both
+ * directions:
+ *
+ *   - The server already ran that rule. `simulation_evidence` is a Safety
+ *     Kernel CHECK, so a route that needs simulation and lacks it comes back
+ *     `blocked` and never reaches Review at all. Aerodrome, whose calldata
+ *     this server writes, is exactly that case.
+ *   - For a partner-built route at standard depth the server's answer is that
+ *     signing is fine without a fork simulation, and it says so in
+ *     `simulationHonesty`. The screen overrode it, so with the paid
+ *     simulation path off — its default — NO swap could ever be signed. That
+ *     is what the user hit: every check green, Approve dead.
+ *
+ * A simulation that RAN and REVERTED still vetoes below, whatever the server
+ * says: that is evidence, not an absence of it.
  */
-export function deriveSimulationViewV1(simulation: SimulationSourceV1 | null): SimulationViewV1 {
+export function deriveSimulationViewV1(
+  simulation: SimulationSourceV1 | null,
+  serverAllowsSigning = false,
+): SimulationViewV1 {
   if (!simulation || simulation.status === 'unavailable') {
     const reason = simulation?.reason ?? null;
     return {
@@ -443,8 +464,8 @@ export function deriveSimulationViewV1(simulation: SimulationSourceV1 | null): S
         ? `${consoleFailureCopyV1(reason)} Route comparison and the calls above are unchanged.`
         : 'No simulation provider answered. Route comparison and the calls above are unchanged.',
       subLabel: 'not available',
-      canSign: false,
-      disabledReason: CONSOLE_COPY_V1.simulationUnavailable,
+      canSign: serverAllowsSigning,
+      disabledReason: serverAllowsSigning ? null : CONSOLE_COPY_V1.simulationUnavailable,
     };
   }
   if (simulation.status === 'failed') {

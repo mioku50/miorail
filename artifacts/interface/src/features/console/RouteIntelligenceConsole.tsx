@@ -813,7 +813,9 @@ export function RouteIntelligenceConsole() {
 
   // Simulation comes from whichever paid path actually ran — never invented.
   const simulationSource = simulationSourceFromResponseV1(simulateResponse ?? budgetResponse);
-  const simulation = deriveSimulationViewV1(simulationSource);
+  // `prepared` IS the Safety Kernel's verdict: a route it refused comes back
+  // `blocked`, never prepared. The screen must not re-run that decision.
+  const simulation = deriveSimulationViewV1(simulationSource, Boolean(prepared));
   const quoteFreshness = quoteFreshnessFromRouteV1(recommended);
 
   const historyItems = history.data?.items ?? [];

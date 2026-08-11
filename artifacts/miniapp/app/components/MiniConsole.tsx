@@ -748,7 +748,8 @@ export function MiniConsole() {
     />
   );
   const simulationSource = simulationSourceFromResponseV1(simulateResponse ?? budgetResponse);
-  const simulation = deriveSimulationViewV1(simulationSource);
+  // Same rule as the web console: `prepared` is the Safety Kernel's verdict.
+  const simulation = deriveSimulationViewV1(simulationSource, Boolean(prepared));
   const quoteFreshness = quoteFreshnessFromRouteV1(recommended);
   const historyItems = history.data?.items ?? [];
   // The same pure mapper the web console uses, so both surfaces state a price,
