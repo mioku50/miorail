@@ -95,6 +95,25 @@ function contextFrom(
       status: result.status,
       summary: result.summary,
       rawRiskLabels: result.rawRiskLabels,
+      // The flags were read and then dropped here, so the Safety Kernel saw a
+      // one-word status and could not refuse a token for what its contract can
+      // actually do to a holder.
+      flags: result.flags
+        ? {
+            isHoneypot: result.flags.isHoneypot,
+            cannotSellAll: result.flags.cannotSellAll,
+            ownerCanChangeBalance: result.flags.ownerCanChangeBalance,
+            hiddenOwner: result.flags.hiddenOwner,
+            canTakeBackOwnership: result.flags.canTakeBackOwnership,
+            selfdestruct: result.flags.selfdestruct,
+            hasBlacklist: result.flags.hasBlacklist,
+            isMintable: result.flags.isMintable,
+            isProxy: result.flags.isProxy,
+            isOpenSource: result.flags.isOpenSource,
+            buyTax: result.flags.buyTax,
+            sellTax: result.flags.sellTax,
+          }
+        : undefined,
     })),
   };
 }

@@ -16,12 +16,40 @@ import { validateUniswapSwap, type UniswapSwapContext } from './uniswapGuard.js'
 // untouched — they keep the exact path below.
 export type ExecutableActionType = 'revoke_approval' | 'limited_transfer' | 'uniswap_swap' | MoonwellActionType;
 
+/**
+ * The specific things a token contract can do to its holder.
+ *
+ * These were read from GoPlus and then DROPPED on the way to the Safety
+ * Kernel, which saw only the aggregated status. For the canonical three assets
+ * that cost nothing. For any other token it is the whole question: "can this
+ * be sold at all" and "what does selling cost" are the difference between a
+ * token and a trap, and neither is visible in a one-word status.
+ *
+ * Structural on purpose — lib/security does not depend on lib/data-providers.
+ */
+export interface ExecutionTokenSecurityFlags {
+  isHoneypot?: boolean;
+  cannotSellAll?: boolean;
+  ownerCanChangeBalance?: boolean;
+  hiddenOwner?: boolean;
+  canTakeBackOwnership?: boolean;
+  selfdestruct?: boolean;
+  hasBlacklist?: boolean;
+  isMintable?: boolean;
+  isProxy?: boolean;
+  isOpenSource?: boolean;
+  /** Percentages as the provider sends them: "0", "0.05", "40". */
+  buyTax?: string;
+  sellTax?: string;
+}
+
 export interface ExecutionTokenSecurityResult {
   address: string;
   provider: 'goplus' | 'none';
   status: 'ok' | 'warning' | 'high-risk' | 'unknown' | 'failed';
   summary?: string;
   rawRiskLabels?: string[];
+  flags?: ExecutionTokenSecurityFlags;
 }
 
 export interface ExecutionGuardProviderContext {

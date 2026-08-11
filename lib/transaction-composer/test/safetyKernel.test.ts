@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { encodeFunctionData, erc20Abi } from 'viem';
 import type { ExecutionCallV1 } from '@mioagent/route-domain';
-import { runSafetyKernel } from '../src/safetyKernel.js';
+import { runSafetyKernel, tokenSecurityRefusalV1 } from '../src/safetyKernel.js';
 import { NOW, USDC_BASE, WALLET, makeIntent } from './fixtures.js';
 
 const ROUTER = '0x6ff5693b99212da76ad316178a184ab56d299b43' as const;
@@ -140,4 +140,55 @@ test('blocks a KyberSwap batch when the router is not pinned', () => {
     }),
   );
   assert.equal(result.verdict, 'blocked');
+});
+
+// ---------------------------------------------------------------------------
+// Token security policy. GoPlus reported these flags all along; the kernel saw
+// only an aggregated status, so no token could ever be refused for what its
+// contract does to a holder. Widening swaps beyond three known assets makes
+// that the whole question, so the rules are pinned here rather than left to a
+// provider's one-word verdict.
+// ---------------------------------------------------------------------------
+
+test('a token that cannot be sold is refused, whatever its status says', () => {
+  for (const flags of [
+    { isHoneypot: true },
+    { cannotSellAll: true },
+    { ownerCanChangeBalance: true },
+    { hiddenOwner: true },
+    { canTakeBackOwnership: true },
+    { selfdestruct: true },
+  ]) {
+    const refusal = tokenSecurityRefusalV1({ status: 'ok', flags });
+    assert.ok(refusal, `${JSON.stringify(flags)} must be refused`);
+  }
+});
+
+test('a blacklist, a mint function and a proxy are NOT refusals — canonical USDC is all three', () => {
+  // This is the rule that keeps the policy usable. Refusing on a blacklist
+  // would refuse the safest asset on Base, and a policy that refuses
+  // everything gets switched off.
+  const usdcLike = {
+    hasBlacklist: true,
+    isMintable: true,
+    isProxy: true,
+    isOpenSource: true,
+    buyTax: '0',
+    sellTax: '0',
+  };
+  assert.equal(tokenSecurityRefusalV1({ status: 'ok', flags: usdcLike }), null);
+});
+
+test('tax is a threshold, and an unreadable tax is not a zero tax', () => {
+  assert.equal(tokenSecurityRefusalV1({ status: 'ok', flags: { sellTax: '0.05' } }), null);
+  assert.equal(tokenSecurityRefusalV1({ status: 'ok', flags: { sellTax: '10' } }), null);
+  assert.match(String(tokenSecurityRefusalV1({ status: 'ok', flags: { sellTax: '40' } })), /sell tax is 40%/);
+  assert.match(String(tokenSecurityRefusalV1({ status: 'ok', flags: { buyTax: '99' } })), /buy tax is 99%/);
+  // Not silently treated as zero.
+  assert.match(String(tokenSecurityRefusalV1({ status: 'ok', flags: { sellTax: 'n/a' } })), /could not be read/);
+});
+
+test('no flags at all is not a refusal by itself — the status still governs', () => {
+  assert.equal(tokenSecurityRefusalV1({ status: 'ok' }), null);
+  assert.equal(tokenSecurityRefusalV1({ status: 'ok', flags: {} }), null);
 });

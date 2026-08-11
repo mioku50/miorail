@@ -68,6 +68,47 @@ function check(
   return { id, description, status, detail };
 }
 
+/**
+ * What a token contract may do before Miorail will route it, expressed as the
+ * refusal it earns. Null means nothing here refuses it.
+ *
+ * Grounded in what GoPlus actually reports, and deliberately NOT a list of
+ * everything scary:
+ *
+ *   * A BLACKLIST is not a refusal. Canonical USDC has one. So does most of
+ *     regulated stablecoin land. Refusing on it would refuse the safest asset
+ *     on the chain, which is how a policy ends up switched off entirely.
+ *   * MINTABLE and PROXY are not refusals either, for the same reason: USDC is
+ *     both.
+ *   * What IS refused is the token being unsellable or the owner being able to
+ *     reach into a holder's balance — those are not risks to price, they are
+ *     the absence of ownership.
+ *
+ * Tax has a threshold rather than a boolean: a small transfer fee is a design
+ * choice, and a large one is a trap wearing the same field.
+ */
+export const MAX_TOKEN_TAX_PERCENT_V1 = 10;
+
+export function tokenSecurityRefusalV1(
+  result: Pick<ExecutionTokenSecurityResult, 'status' | 'flags'>,
+): string | null {
+  const flags = result.flags ?? {};
+  if (flags.isHoneypot) return 'the token cannot be sold (honeypot)';
+  if (flags.cannotSellAll) return 'the token cannot be fully sold';
+  if (flags.ownerCanChangeBalance) return 'the owner can change holder balances';
+  if (flags.hiddenOwner) return 'the token has a hidden owner';
+  if (flags.canTakeBackOwnership) return 'ownership can be taken back';
+  if (flags.selfdestruct) return 'the contract can self-destruct';
+  for (const [name, raw] of [['buy tax', flags.buyTax], ['sell tax', flags.sellTax]] as const) {
+    if (raw === undefined || raw === null || raw === '') continue;
+    const percent = Number(raw);
+    // An unreadable tax is not a zero tax.
+    if (!Number.isFinite(percent)) return `${name} could not be read`;
+    if (percent > MAX_TOKEN_TAX_PERCENT_V1) return `${name} is ${percent}%`;
+  }
+  return null;
+}
+
 function evaluateContractSecurityV1(input: {
   required: boolean;
   provider: string;
@@ -89,15 +130,32 @@ function evaluateContractSecurityV1(input: {
       summary: found?.summary ?? null,
     };
   });
-  const blocked = verdicts.some(
-    (verdict) => verdict.provider !== 'goplus' || ['failed', 'unknown', 'high-risk'].includes(verdict.status),
-  );
+  // The aggregated status, as before — plus the specific contract powers the
+  // kernel could not see until the flags were carried through.
+  const refusals = input.results
+    .map((entry) => {
+      const reason = tokenSecurityRefusalV1(entry);
+      return reason ? `${entry.address}: ${reason}` : null;
+    })
+    .filter((reason): reason is string => reason !== null);
+  const blocked =
+    refusals.length > 0 ||
+    verdicts.some(
+      (verdict) => verdict.provider !== 'goplus' || ['failed', 'unknown', 'high-risk'].includes(verdict.status),
+    );
   const warning = verdicts.some((verdict) => verdict.status === 'warning');
   return {
     provider: input.provider,
     required: true,
     status: blocked ? 'blocked' : warning ? 'warning' : 'passed',
-    verdicts,
+    // The refusal reads back verbatim. "No usable verdict" was true of the one
+    // case this check originally had; a token the contract itself makes
+    // unsellable is a different statement and deserves its own words.
+    verdicts: verdicts.map((verdict) => {
+      const found = input.results.find((entry) => entry.address.toLowerCase() === verdict.address.toLowerCase());
+      const refusal = found ? tokenSecurityRefusalV1(found) : null;
+      return refusal ? { ...verdict, summary: refusal } : verdict;
+    }),
   };
 }
 
@@ -322,10 +380,16 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
   checks.push(
     check(
       'contract_token_security',
-      'Contract/token security verdict for the canonical input token (GoPlus)',
+      'Contract/token security verdict for the input token (GoPlus)',
       contractSecurity.status === 'blocked' ? 'failed' : 'passed',
       contractSecurity.status === 'blocked'
-        ? 'No usable GoPlus verdict for the canonical input token'
+        ? (input.contractSecurityResults
+            .map((entry) => {
+              const reason = tokenSecurityRefusalV1(entry);
+              return reason ? `${entry.address} — ${reason}` : null;
+            })
+            .filter((reason): reason is string => reason !== null)
+            .join('; ') || 'No usable GoPlus verdict for the input token')
         : contractSecurity.status === 'warning'
           ? 'GoPlus reported a non-blocking warning'
           : null,
