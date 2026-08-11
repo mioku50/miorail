@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { LlmProvider, LlmRequest, LlmResponse } from '@mioagent/llm';
 import { parseSwapIntentExtractionV2, resolveSwapIntentWithLlmV2 } from '../src/index.js';
-import { swapExtraction, testContext } from './fixtures.js';
+import { TEST_TENANT, TEST_TIME, TEST_WALLET, swapExtraction, testContext } from './fixtures.js';
 
 class StrictLlmDouble implements LlmProvider {
   request?: LlmRequest;
@@ -50,4 +50,56 @@ test('unknown output keys and malformed LLM JSON fail closed', async () => {
       ['extractor_invalid'],
     );
   }
+});
+
+test('the extractor is told WHICH fields a stored goal is missing, never their values', async () => {
+  // Production found this: a bare "ETH" answering "which token should be
+  // received?" reached the extractor with no context at all, came back as an
+  // ambiguous goal, and ended a continuation the resolver could have finished.
+  const llm = new StrictLlmDouble(
+    JSON.stringify({ goal: 'swap', amount: null, fromAsset: null, toAsset: 'ETH', chainId: 8453 }),
+  );
+  const pending = {
+    schemaVersion: 'pending-swap-intent/v2' as const,
+    tenantId: TEST_TENANT,
+    walletAddress: TEST_WALLET,
+    chainId: 8453 as const,
+    sourceRequestId: 'first-turn',
+    createdAt: TEST_TIME,
+    expiresAt: new Date(Date.parse(TEST_TIME) + 600_000).toISOString(),
+    amountDecimal: '100',
+    fromAssetSymbol: 'USDC' as const,
+    toAssetSymbol: null,
+    optimizationMode: null,
+    verificationDepth: null,
+    protocolConstraint: null,
+    slippageMaxBps: 100,
+    executionRequested: true,
+  };
+  const result = await resolveSwapIntentWithLlmV2({
+    llm,
+    message: 'ETH',
+    context: testContext({
+      requestId: 'second-turn',
+      requestedAt: '2026-07-15T12:01:00.000Z',
+      pendingIntents: [pending],
+    }),
+  });
+  const prompt = llm.request?.messages[1]?.content ?? '';
+  assert.match(prompt, /<awaiting_fields>toAsset<\/awaiting_fields>/);
+  // Names only. The amount and the source asset are in the stored goal and must
+  // not reach a prompt that is forbidden from copying financial fields.
+  assert.equal(prompt.includes('100'), false);
+  assert.equal(prompt.includes('USDC'), false);
+  assert.equal(result.outcome, 'ready', JSON.stringify(result));
+});
+
+test('with nothing pending the prompt carries no awaiting_fields block at all', async () => {
+  const llm = new StrictLlmDouble(JSON.stringify(swapExtraction()));
+  await resolveSwapIntentWithLlmV2({
+    llm,
+    message: 'Swap 100 USDC to ETH.',
+    context: testContext(),
+  });
+  assert.equal((llm.request?.messages[1]?.content ?? '').includes('awaiting_fields'), false);
 });
