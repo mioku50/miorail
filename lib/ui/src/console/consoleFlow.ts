@@ -630,6 +630,15 @@ export function comparingProgressV1(input: ComparingProgressInputV1): ComparingP
 export interface ConsoleTerminalFailureV1 {
   title: string;
   detail: string;
+  /**
+   * True when `detail` is a QUESTION the server asked, which the user can
+   * answer in one word. A question with no way to answer it was the defect:
+   * the console asked "which exact Base token should be swapped?" and offered
+   * only "Edit goal", so the only way to reply was to retype the sentence.
+   *
+   * False for a rejection, which is not a question and has no answer field.
+   */
+  answerable?: boolean;
 }
 
 /** The swap evaluation as it crosses the wire, structurally. */
@@ -656,7 +665,11 @@ export function swapTerminalFailureV1(
 ): ConsoleTerminalFailureV1 | null {
   if (!data) return null;
   if (data.outcome === 'needs_clarification') {
-    return { title: 'This goal needs one more detail', detail: data.clarification.message };
+    return {
+      title: 'This goal needs one more detail',
+      detail: data.clarification.message,
+      answerable: true,
+    };
   }
   if (data.outcome === 'rejected') {
     return {

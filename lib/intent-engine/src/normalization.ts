@@ -6,6 +6,8 @@ import {
 } from '@mioagent/intent-core';
 import type { AssetRefV1, RouteIntentV1 } from '@mioagent/route-domain';
 import type {
+  CarriedProtocolConstraintV2,
+  CarriedSwapConstraintsV2,
   ClarificationCodeV1,
   ClarificationV1,
   IntentIssueCodeV1,
@@ -33,6 +35,9 @@ export interface GroundedSwapFieldsV2 {
   protocolConstraint: ProtocolConstraintV1;
   slippageConstraint: SlippageConstraintV1;
   executionRequested: boolean;
+  /** The four fields above, minus everything the user never asked for. This is
+   * what a follow-up turn is allowed to inherit — see CarriedSwapConstraintsV2. */
+  carried: CarriedSwapConstraintsV2;
   pendingIntent: PendingSwapIntentV2 | null;
   issues: IntentIssueV1[];
 }
@@ -473,6 +478,10 @@ function groundedAssets(
 
 export function mapOptimizationModeV1(message: string): {
   value: OptimizationModeV1;
+  /** Whether the message ASKED for this mode. `best_net_result` is also the
+   * default, so the value alone cannot tell a choice from a fallback — and a
+   * follow-up turn must inherit only the choice. */
+  stated: boolean;
   issues: IntentIssueV1[];
 } {
   const normalized = normalizeText(message);
@@ -489,6 +498,7 @@ export function mapOptimizationModeV1(message: string): {
   if (unique.length > 1) {
     return {
       value: 'best_net_result',
+      stated: false,
       issues: [
         issue(
           'intent_ambiguous',
@@ -499,7 +509,7 @@ export function mapOptimizationModeV1(message: string): {
       ],
     };
   }
-  return { value: unique[0] ?? 'best_net_result', issues: [] };
+  return { value: unique[0] ?? 'best_net_result', stated: unique.length === 1, issues: [] };
 }
 
 export function mapVerificationDepthV1(message: string): VerificationDepthV1 {
@@ -633,23 +643,102 @@ export function mapSlippageConstraintV1(message: string): {
   return { value: { maxBps: bps, source: 'user' }, issues: [] };
 }
 
-export function mapExecutionRequestedV1(message: string): boolean {
+/**
+ * Three answers, not two. A message that says nothing about executing is not
+ * the same as one that says "do not execute yet" — only the second is a choice
+ * a follow-up turn should keep. `mapExecutionRequestedV1` collapses the pair
+ * that a single request needs.
+ */
+export function executionIntentV1(message: string): 'execute' | 'quote_only' | null {
   const normalized = normalizeText(message);
   if (
     /\b(?:do not|don['’]?t|not)\s+(?:execute|trade|swap)\b|\bquote(?:-only)?\b|\bcompare routes?\b|не\s+(?:исполняй|выполняй|совершай)|только\s+котиров|сравни\w*\s+маршрут/iu.test(
       normalized,
     )
   ) {
-    return false;
+    return 'quote_only';
   }
   if (
     /\b(?:prepare|swap|exchange|convert|buy|sell)\b|(?:подготов|обмен|поменя|свап|куп|прода|конверт|перевед)/iu.test(
       normalized,
     )
   ) {
-    return true;
+    return 'execute';
   }
-  return false;
+  return null;
+}
+
+export function mapExecutionRequestedV1(message: string): boolean {
+  return executionIntentV1(message) === 'execute';
+}
+
+const OPTIMIZATION_MODES_V2: ReadonlyArray<OptimizationModeV1> = [
+  'best_net_result',
+  'lowest_fees',
+  'lowest_risk',
+  'fastest_execution',
+  'simplest_route',
+  'mev_protected',
+];
+const CONSTRAINABLE_PROTOCOLS_V2 = ['uniswap', 'kyberswap'] as const;
+
+type ConstrainableProtocolV2 = (typeof CONSTRAINABLE_PROTOCOLS_V2)[number];
+
+/** The wide route-intent constraint narrowed to what a later turn may inherit,
+ * or null when there is nothing to inherit. `any` constrains nothing, and a
+ * protocol outside the closed set is not something this engine can re-apply. */
+function carriedProtocolConstraintV2(
+  value: ProtocolConstraintV1,
+): CarriedProtocolConstraintV2 | null {
+  if (value.mode === 'any') return null;
+  const protocols = value.protocols.filter((name): name is ConstrainableProtocolV2 =>
+    (CONSTRAINABLE_PROTOCOLS_V2 as readonly string[]).includes(name),
+  );
+  if (protocols.length === 0 || protocols.length !== value.protocols.length) return null;
+  return { mode: value.mode, protocols };
+}
+
+/**
+ * A carried constraint is only ever something this engine wrote, so anything
+ * that could not have come out of it is refused rather than repaired. The
+ * values below decide what a later turn inherits, so accepting a shape the
+ * engine never produces would mean inheriting a constraint no user stated.
+ */
+function carriedConstraintsAreValidV2(pending: CarriedSwapConstraintsV2): boolean {
+  if (
+    pending.optimizationMode !== null &&
+    !OPTIMIZATION_MODES_V2.includes(pending.optimizationMode)
+  ) {
+    return false;
+  }
+  if (pending.verificationDepth !== null && !['enhanced', 'maximum'].includes(pending.verificationDepth)) {
+    return false;
+  }
+  if (pending.executionRequested !== null && typeof pending.executionRequested !== 'boolean') {
+    return false;
+  }
+  if (
+    pending.slippageMaxBps !== null &&
+    (!Number.isInteger(pending.slippageMaxBps) ||
+      pending.slippageMaxBps < 0 ||
+      pending.slippageMaxBps > 10_000)
+  ) {
+    return false;
+  }
+  const protocol = pending.protocolConstraint;
+  if (protocol === null) return true;
+  return (
+    typeof protocol === 'object' &&
+    // `any` is the absence of a constraint and is stored as null, so seeing it
+    // here means the value did not come from this engine.
+    (protocol.mode === 'include_only' || protocol.mode === 'exclude') &&
+    Array.isArray(protocol.protocols) &&
+    protocol.protocols.length > 0 &&
+    protocol.protocols.every((name) =>
+      (CONSTRAINABLE_PROTOCOLS_V2 as readonly string[]).includes(name),
+    ) &&
+    new Set(protocol.protocols).size === protocol.protocols.length
+  );
 }
 
 function validPendingIntents(
@@ -670,7 +759,8 @@ function validPendingIntents(
       typeof pending.sourceRequestId !== 'string' ||
       (pending.amountDecimal !== null && typeof pending.amountDecimal !== 'string') ||
       ![null, 'USDC', 'ETH', 'WETH'].includes(pending.fromAssetSymbol) ||
-      ![null, 'USDC', 'ETH', 'WETH'].includes(pending.toAssetSymbol)
+      ![null, 'USDC', 'ETH', 'WETH'].includes(pending.toAssetSymbol) ||
+      !carriedConstraintsAreValidV2(pending)
     ) {
       return false;
     }
@@ -699,6 +789,36 @@ function validPendingIntents(
   });
 }
 
+/** Amount and assets for one reading of the request — with a stored intent
+ * available, or deliberately without one. Pure, so it can be run twice. */
+function groundSwapCoreV2(
+  input: { message: string; extraction: SwapIntentExtractionV2 },
+  pending: PendingSwapIntentV2 | null,
+): {
+  amount: ReturnType<typeof normalizeExtractedAmount>;
+  assets: ReturnType<typeof groundedAssets>;
+  amountDecimal: string | null;
+  fromAsset: AssetRefV1 | null;
+  toAsset: AssetRefV1 | null;
+  issues: IntentIssueV1[];
+} {
+  const amount = normalizeExtractedAmount(input.extraction, input.message, pending);
+  const assets = groundedAssets(
+    input.extraction,
+    input.message,
+    pending,
+    !amount.conflictsPending,
+  );
+  return {
+    amount,
+    assets,
+    amountDecimal: amount.value,
+    fromAsset: assets.fromAsset,
+    toAsset: assets.toAsset,
+    issues: [...amount.issues, ...assets.issues],
+  };
+}
+
 export function groundSwapFieldsV2(input: {
   message: string;
   extraction: SwapIntentExtractionV2;
@@ -717,27 +837,58 @@ export function groundSwapFieldsV2(input: {
       ),
     );
   }
-  const pending = pendingCandidates.length === 1 ? pendingCandidates[0] : null;
-  const amount = normalizeExtractedAmount(input.extraction, input.message, pending);
-  issues.push(...amount.issues);
+  const stored = pendingCandidates.length === 1 ? pendingCandidates[0] : null;
+
+  // A message that states the whole swap by itself is a NEW GOAL, not an answer
+  // to an older question, so the stored intent is ignored rather than compared
+  // against. Without this, "Swap 5 WETH to USDC" typed while an abandoned
+  // "Swap 100 USDC" was still pending came back as "please restate one
+  // unambiguous swap request" — the amounts differ because the goals differ.
+  const alone = groundSwapCoreV2(input, null);
+  const selfContained = Boolean(alone.amountDecimal && alone.fromAsset && alone.toAsset);
+  const pending = selfContained ? null : stored;
+  const core = selfContained ? alone : groundSwapCoreV2(input, pending);
+  const amount = core.amount;
+  const assets = core.assets;
+  issues.push(...core.issues);
   const allowPending = !amount.conflictsPending;
-  const assets = groundedAssets(input.extraction, input.message, pending, allowPending);
-  issues.push(...assets.issues);
 
   const optimization = mapOptimizationModeV1(input.message);
   const protocol = mapProtocolConstraintV1(input.message);
   const slippage = mapSlippageConstraintV1(input.message);
   issues.push(...optimization.issues, ...protocol.issues, ...slippage.issues);
 
+  // Every constraint the user has ever stated in this exchange, with THIS turn
+  // winning wherever it speaks. Without this, answering "ETH" to "which token
+  // should be received?" silently dropped "1% slippage, only Uniswap" from the
+  // turn before — the user would then approve a route they did not ask for.
+  const verification = mapVerificationDepthV1(input.message);
+  const execution = executionIntentV1(input.message);
+  const inherited = allowPending ? pending : null;
+  const carried: CarriedSwapConstraintsV2 = {
+    optimizationMode: optimization.stated ? optimization.value : (inherited?.optimizationMode ?? null),
+    verificationDepth:
+      verification === 'standard' ? (inherited?.verificationDepth ?? null) : verification,
+    protocolConstraint:
+      carriedProtocolConstraintV2(protocol.value) ?? (inherited?.protocolConstraint ?? null),
+    slippageMaxBps:
+      slippage.value.source === 'user' ? slippage.value.maxBps : (inherited?.slippageMaxBps ?? null),
+    executionRequested: execution === null ? (inherited?.executionRequested ?? null) : execution === 'execute',
+  };
+
   return {
     amountDecimal: amount.value,
     fromAsset: assets.fromAsset,
     toAsset: assets.toAsset,
-    optimizationMode: optimization.value,
-    verificationDepth: mapVerificationDepthV1(input.message),
-    protocolConstraint: protocol.value,
-    slippageConstraint: slippage.value,
-    executionRequested: mapExecutionRequestedV1(input.message),
+    optimizationMode: carried.optimizationMode ?? optimization.value,
+    verificationDepth: carried.verificationDepth ?? 'standard',
+    protocolConstraint: carried.protocolConstraint ?? protocol.value,
+    slippageConstraint:
+      carried.slippageMaxBps === null
+        ? slippage.value
+        : { maxBps: carried.slippageMaxBps, source: 'user' },
+    executionRequested: carried.executionRequested ?? false,
+    carried,
     pendingIntent: pending,
     issues: sortIntentIssuesV1(issues),
   };
@@ -780,5 +931,7 @@ export function buildPendingSwapIntentV2(input: {
     fromAssetSymbol:
       (input.fields.fromAsset?.symbol as PendingSwapIntentV2['fromAssetSymbol']) ?? null,
     toAssetSymbol: (input.fields.toAsset?.symbol as PendingSwapIntentV2['toAssetSymbol']) ?? null,
+    // Carried verbatim: these are already "stated or inherited", never defaults.
+    ...input.fields.carried,
   };
 }

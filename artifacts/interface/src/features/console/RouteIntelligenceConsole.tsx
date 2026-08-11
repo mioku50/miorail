@@ -142,6 +142,10 @@ export function RouteIntelligenceConsole() {
 
   const [screen, setScreen] = useState<ConsoleScreenV1>('plan');
   const [goal, setGoal] = useState('');
+  /** The one-word reply to a clarification. Held here rather than inside
+   * ComparingScreen, which is a pure function of its model like every other
+   * screen in that file. */
+  const [answerDraft, setAnswerDraft] = useState('');
   const [clock, setClock] = useState<ConsoleStageClockV1>(emptyStageClockV1);
   const [submission, setSubmission] = useState<BlueprintSubmissionState | null>(null);
   const [nftSubmission, setNftSubmission] = useState<BlueprintSubmissionState | null>(null);
@@ -511,6 +515,37 @@ export function RouteIntelligenceConsole() {
         // the one on screen.
         ...(options?.fresh ? { requestId: `retry-${globalThis.crypto.randomUUID()}` } : {}),
       },
+      { onSettled: () => mark('candidates', 'complete') },
+    );
+  };
+
+  /**
+   * Answers the server's clarification without retyping the goal.
+   *
+   * The amount, the pair and every constraint already stated are held SERVER
+   * SIDE against this wallet, so the answer is sent as its own short message
+   * and the engine completes the goal from what it already grounded. It never
+   * travels back through the client, which is what stops a caller from
+   * inventing an amount or a token that appeared in no message.
+   *
+   * Swap only: it is the family whose engine keeps a pending intent. The other
+   * families still end at Edit goal, which is where they were.
+   */
+  const answerClarification = (answer: string) => {
+    if (!address || !answer.trim() || dispatch.engine !== 'swap') return;
+    setAnswerDraft('');
+    evaluationSettled.current = false;
+    const at = Date.now();
+    let next = emptyStageClockV1();
+    next = startStageV1(next, 'intent', at);
+    next = completeStageV1(next, 'intent', at);
+    next = startStageV1(next, 'candidates', at);
+    setClock(next);
+    // The goal box is left exactly as the user typed it. Appending the answer
+    // would build a sentence nobody wrote — "Swap 0.1 to Eth USDC" reads as
+    // ETH→USDC on the next comparison, the reverse of what was just agreed.
+    evaluation.mutate(
+      { message: answer.trim(), walletAddress: address.toLowerCase() as `0x${string}` },
       { onSettled: () => mark('candidates', 'complete') },
     );
   };
@@ -949,6 +984,12 @@ export function RouteIntelligenceConsole() {
         onCompareAgain={() => compare({ fresh: true })}
         comparePending={comparePending}
         onEditGoal={() => setScreen('plan')}
+        // Only the swap family keeps a half-finished goal server-side, so only
+        // its questions can be answered in one word.
+        onAnswer={dispatch.engine === 'swap' ? answerClarification : undefined}
+        answerValue={answerDraft}
+        onAnswerChange={setAnswerDraft}
+        answerPending={comparePending}
         shortfallNotice={projection ? shortfallNoticeFromProjectionV1(projection) : null}
         onCancel={() => setScreen('plan')}
       />

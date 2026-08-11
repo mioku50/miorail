@@ -90,6 +90,62 @@ describe('Comparing ends instead of spinning', () => {
     assert.equal(clicked, 1);
   });
 
+  test('a question can be answered where it is asked', () => {
+    // The defect this closes: the console asked "which exact Base token should
+    // be swapped?" and offered only Edit goal, so the only way to reply was to
+    // retype the sentence the question was about.
+    let answered: string | null = null;
+    const model = comparing({
+      failure: {
+        title: 'This goal needs one more detail',
+        detail: 'Which exact Base token should be swapped?',
+        answerable: true,
+      },
+      answerValue: '  USDC  ',
+      onAnswer: (value) => {
+        answered = value;
+      },
+    });
+    const rendered = JSON.stringify(ComparingScreen(model));
+    assert.match(rendered, /Which exact Base token should be swapped\?/);
+    assert.match(rendered, /mio-clarification-answer/);
+    // Reuses console.css classes; a new class name would ship unstyled.
+    assert.match(rendered, /goalinput/);
+
+    const submit = findButtonByLabel(ComparingScreen(model) as unknown as { props: unknown }, 'Answer');
+    assert.ok(submit, 'no Answer button was rendered');
+    submit();
+    assert.equal(answered, 'USDC');
+  });
+
+  test('a rejection offers no answer field, because it asked nothing', () => {
+    const rendered = JSON.stringify(
+      ComparingScreen(
+        comparing({
+          failure: { title: 'Miorail cannot route this swap', detail: 'Sending is not a swap.' },
+          onAnswer: () => {},
+        }),
+      ),
+    );
+    assert.equal(rendered.includes('mio-clarification-answer'), false);
+    assert.match(rendered, /Edit goal/);
+  });
+
+  test('an empty answer cannot be submitted', () => {
+    let answered = 0;
+    const model = comparing({
+      failure: { title: 'Needs detail', detail: 'Which token?', answerable: true },
+      answerValue: '   ',
+      onAnswer: () => {
+        answered += 1;
+      },
+    });
+    const submit = findButtonByLabel(ComparingScreen(model) as unknown as { props: unknown }, 'Answer');
+    assert.ok(submit, 'no Answer button was rendered');
+    submit();
+    assert.equal(answered, 0);
+  });
+
   test('a run still in flight keeps its live wording and shows no failure block', () => {
     const rendered = JSON.stringify(
       ComparingScreen(

@@ -401,8 +401,14 @@ export interface ComparingScreenModelV1 {
    * becomes terminal: no spinner survives, Candidates says it is finished
    * rather than "updating live", and the user gets a way out.
    */
-  failure: { title: string; detail: string } | null;
+  failure: { title: string; detail: string; answerable?: boolean } | null;
   onEditGoal: () => void;
+  /** Answers the server's question in place. Absent means the only way forward
+   * is Edit goal — which is what a question with no answer field looked like. */
+  onAnswer?: (answer: string) => void;
+  answerValue?: string;
+  onAnswerChange?: (value: string) => void;
+  answerPending?: boolean;
   onCancel: () => void;
   /** T67E §3 — one row per registered adapter, with a typed reason. */
   diagnostics?: readonly ProviderDiagnosticRowV1[];
@@ -413,6 +419,16 @@ export interface ComparingScreenModelV1 {
 }
 
 export function ComparingScreen(model: ComparingScreenModelV1) {
+  // No hook: every screen in this file is a pure function of its model, which
+  // is why the tests can call them directly. The answer text lives in the
+  // container along with the goal it completes.
+  const answer = model.answerValue ?? '';
+  const canAnswer = Boolean(model.failure?.answerable && model.onAnswer);
+  const submitAnswer = () => {
+    const trimmed = answer.trim();
+    if (!trimmed || model.answerPending) return;
+    model.onAnswer?.(trimmed);
+  };
   return (
     <section aria-label="Comparing routes">
       <ConsoleStepper steps={model.steps} />
@@ -458,7 +474,47 @@ export function ComparingScreen(model: ComparingScreenModelV1) {
             <div className="note warn" role="alert" style={{ marginTop: 14 }}>
               <b>{model.failure.title}</b>
               <p style={{ margin: '6px 0 10px' }}>{model.failure.detail}</p>
-              <button type="button" className="btn" onClick={model.onEditGoal}>
+              {/* A question gets a field to answer it in. The rest of the goal
+                  is still held by the server, so one word finishes it — and
+                  nothing else about the goal has to be retyped to say it. */}
+              {canAnswer && (
+                <div className="ctarow" style={{ marginBottom: 10 }}>
+                  <label
+                    htmlFor="mio-clarification-answer"
+                    style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}
+                  >
+                    {model.failure.detail}
+                  </label>
+                  <input
+                    id="mio-clarification-answer"
+                    className="goalinput"
+                    style={{ flex: 1, minWidth: 160 }}
+                    placeholder="USDC"
+                    value={answer}
+                    disabled={model.answerPending}
+                    onChange={(event) => model.onAnswerChange?.(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        submitAnswer();
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={!answer.trim() || model.answerPending}
+                    onClick={submitAnswer}
+                  >
+                    {model.answerPending ? 'Answering…' : 'Answer'}
+                  </button>
+                </div>
+              )}
+              <button
+                type="button"
+                className={canAnswer ? 'btn sec' : 'btn'}
+                onClick={model.onEditGoal}
+              >
                 Edit goal
               </button>
             </div>

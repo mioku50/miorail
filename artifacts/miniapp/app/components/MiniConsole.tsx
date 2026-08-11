@@ -210,6 +210,8 @@ export function MiniConsole() {
 
   const [screen, setScreen] = useState<ConsoleScreenV1>("plan");
   const [goal, setGoal] = useState("");
+  /** The one-word reply to a clarification, held beside the goal it completes. */
+  const [answerDraft, setAnswerDraft] = useState("");
   const [clock, setClock] = useState<ConsoleStageClockV1>(emptyStageClockV1);
   const [railOpen, setRailOpen] = useState(false);
   const [submission, setSubmission] = useState<SubmissionState | null>(null);
@@ -612,6 +614,33 @@ export function MiniConsole() {
         walletAddress: wallet,
         ...(options?.fresh ? { requestId: `retry-${globalThis.crypto.randomUUID()}` } : {}),
       },
+      { onSettled: () => mark("candidates", "complete") },
+    );
+  };
+
+  /**
+   * Answers the server's clarification without retyping the goal. The rest of
+   * the goal is held server-side against this wallet, so one word finishes it —
+   * see RouteIntelligenceConsole for why it never travels through the client.
+   *
+   * Swap only: it is the family whose engine keeps a pending intent.
+   */
+  const answerClarification = (answer: string) => {
+    const trimmed = answer.trim();
+    if (!address || !trimmed || dispatch.engine !== "swap") return;
+    setAnswerDraft("");
+    settled.current = false;
+    const at = Date.now();
+    let next = emptyStageClockV1();
+    next = startStageV1(next, "intent", at);
+    next = completeStageV1(next, "intent", at);
+    next = startStageV1(next, "candidates", at);
+    setClock(next);
+    // The goal box is left as the user typed it: appending the answer would
+    // build a sentence nobody wrote, and "Swap 0.1 to Eth USDC" re-reads as the
+    // reverse pair.
+    evaluation.mutate(
+      { message: trimmed, walletAddress: address.toLowerCase() as `0x${string}` },
       { onSettled: () => mark("candidates", "complete") },
     );
   };
@@ -1061,7 +1090,46 @@ export function MiniConsole() {
               <div className="note warn" role="alert">
                 <b>{comparingFailure.title}</b>
                 <p style={{ margin: "6px 0 10px" }}>{comparingFailure.detail}</p>
-                <button type="button" className="btn" onClick={() => setScreen("plan")}>
+                {/* A question gets a field to answer it in. Retyping a sentence
+                    on a phone to add one word is the whole cost this removes. */}
+                {comparingFailure.answerable && dispatch.engine === "swap" && (
+                  <div className="ctarow" style={{ marginBottom: 10 }}>
+                    <label
+                      htmlFor="mio-clarification-answer"
+                      style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }}
+                    >
+                      {comparingFailure.detail}
+                    </label>
+                    <input
+                      id="mio-clarification-answer"
+                      className="goalinput"
+                      style={{ flex: 1, minWidth: 120 }}
+                      placeholder="USDC"
+                      value={answerDraft}
+                      disabled={comparePending}
+                      onChange={(event) => setAnswerDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          answerClarification(answerDraft);
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={!answerDraft.trim() || comparePending}
+                      onClick={() => answerClarification(answerDraft)}
+                    >
+                      {comparePending ? "Answering…" : "Answer"}
+                    </button>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  className={comparingFailure.answerable && dispatch.engine === "swap" ? "btn sec" : "btn"}
+                  onClick={() => setScreen("plan")}
+                >
                   Edit goal
                 </button>
               </div>

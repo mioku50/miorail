@@ -5,11 +5,16 @@ import {
   routeEngineV1IdempotencyKey,
   type SwapRouteEngine,
 } from '@mioagent/route-engine';
-import type { RouteStorageRepository } from '@mioagent/route-storage';
+import type {
+  RouteStorageRepository,
+  SwapPendingIntentRepositoryV1,
+  SwapPendingIntentRowV1,
+} from '@mioagent/route-storage';
 import type { SwapRouteAdapter } from '@mioagent/swap-adapters';
 import {
   resolveSwapIntentWithLlmV2,
   type IntentResolutionV2,
+  type PendingSwapIntentV2,
 } from '@mioagent/intent-engine';
 import type { LlmProvider } from '@mioagent/llm';
 import type { ProviderReliabilityAssessmentV1 } from '@mioagent/route-outcomes';
@@ -24,6 +29,9 @@ export interface RoutePlanCoordinatorDependencies {
   engine: SwapRouteEngine;
   adapters: SwapRouteAdapter[];
   repository: RouteStorageRepository;
+  /** Absent means no continuation: every request is read on its own, exactly as
+   * before this existed. Supplied only where the table is present. */
+  pendingIntents?: SwapPendingIntentRepositoryV1;
   resolveIntent?: typeof resolveSwapIntentWithLlmV2;
   /** T67C.1 Part 2. Absent means swap-path-score/v1 end to end: the reader is
    * never called, no reliability evidence is created, and the evaluation
@@ -46,11 +54,65 @@ export type ReliabilityLoaderFactoryV1 = (context: {
   runStartedAt: Date;
 }) => ReliabilityLoaderV1;
 
+/** Row → engine. Only the schema tag is added; every field is already the
+ * engine's own, and tsc is what keeps the two shapes from drifting apart. */
+function toPendingSwapIntentV2(row: SwapPendingIntentRowV1): PendingSwapIntentV2 {
+  return { schemaVersion: 'pending-swap-intent/v2', ...row };
+}
+
+/** Engine → row, dropping only the schema tag the table does not carry. */
+function toPendingIntentRowV1(pending: PendingSwapIntentV2): SwapPendingIntentRowV1 {
+  const { schemaVersion: _schemaVersion, ...row } = pending;
+  return row;
+}
+
 export class RoutePlanCoordinator {
   constructor(private readonly dependencies: RoutePlanCoordinatorDependencies) {}
 
+  /** A pending intent is a convenience, so losing one degrades the next turn
+   * rather than failing this one. The failure is logged, never swallowed. */
+  private async readPendingIntent(
+    binding: { tenantId: string; walletAddress: string },
+    now: Date,
+  ): Promise<PendingSwapIntentV2 | null> {
+    if (!this.dependencies.pendingIntents) return null;
+    try {
+      const row = await this.dependencies.pendingIntents.readPendingIntent(binding, now);
+      return row ? toPendingSwapIntentV2(row) : null;
+    } catch (error) {
+      logger.warn('Pending swap intent could not be read', { reason: String(error) });
+      return null;
+    }
+  }
+
+  /** Kept only while its question stands. Anything else — ready, rejected, or a
+   * clarification with nothing grounded — clears it, so a finished goal cannot
+   * lend its constraints to an unrelated later one. */
+  private async storePendingIntent(
+    binding: { tenantId: string; walletAddress: string },
+    resolution: IntentResolutionV2,
+  ): Promise<void> {
+    const repository = this.dependencies.pendingIntents;
+    if (!repository) return;
+    const pending =
+      resolution.outcome === 'needs_clarification' ? resolution.pendingIntent : null;
+    try {
+      if (pending) await repository.upsertPendingIntent(toPendingIntentRowV1(pending));
+      else await repository.clearPendingIntent(binding);
+    } catch (error) {
+      logger.warn('Pending swap intent could not be stored', { reason: String(error) });
+    }
+  }
+
   async evaluate(input: RoutePlanCoordinatorInput): Promise<RoutePlanResponseV1> {
     const resolveIntent = this.dependencies.resolveIntent ?? resolveSwapIntentWithLlmV2;
+    const binding = { tenantId: input.tenantId, walletAddress: input.walletAddress };
+    // Server-side only. The half-finished goal is looked up by the
+    // AUTHENTICATED tenant and wallet and never travels through the client,
+    // because a caller who could hand one back could state an amount and a pair
+    // that appeared in no message — and grounding every field in the user's own
+    // words is what the intent engine exists to do.
+    const carried = await this.readPendingIntent(binding, input.now);
     const resolution: IntentResolutionV2 = await resolveIntent({
       llm: this.dependencies.llm,
       message: input.message,
@@ -60,8 +122,10 @@ export class RoutePlanCoordinator {
         runtimeChainId: 8453,
         requestId: input.requestId,
         requestedAt: input.now.toISOString(),
+        pendingIntents: carried ? [carried] : [],
       },
     });
+    await this.storePendingIntent(binding, resolution);
     if (resolution.outcome === 'needs_clarification') {
       return RoutePlanResponseV1Schema.parse({
         outcome: 'needs_clarification',

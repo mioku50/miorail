@@ -253,6 +253,13 @@
       "when": 1786550400000,
       "tag": "0035_b20_launch_buyers",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1786636800000,
+      "tag": "0036_swap_pending_intents",
+      "breakpoints": true
     }
   ]
 }

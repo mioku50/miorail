@@ -58,6 +58,7 @@ import {
   RouteStorageIntegrityError,
   createDatabaseRouteStorageRepository,
   createDatabaseSubmissionAttemptRepository,
+  createDatabaseSwapPendingIntentRepository,
   type IntelligenceBudgetRecord,
   type RouteStorageRepository,
   createDatabaseProviderOutcomeRepository,
@@ -323,12 +324,31 @@ async function earnGateReady(res: Response): Promise<boolean> {
   return true;
 }
 
+/**
+ * Deliberately NOT part of `routeStorageMigrationAvailable`. A deployment whose
+ * 0036 has not run should keep planning routes, one message at a time, rather
+ * than answer 503 — so the table's absence removes the continuation and nothing
+ * else. It is checked rather than assumed because a silently missing table is
+ * how an earlier cache spent a day doing nothing at all.
+ */
+async function pendingIntentStorageAvailable(): Promise<boolean> {
+  const rows = await client`SELECT to_regclass('public.swap_pending_intents') AS pending_intents`;
+  return Boolean(rows[0]?.pending_intents);
+}
+
 export const routePlanRouteRuntime = {
   flags: getMiorailProductMigrationFlags,
   migrationAvailable: routeStorageMigrationAvailable,
+  pendingIntentStorageAvailable,
   coordinate: async (input: RoutePlanCoordinatorInput) => {
     const flags = getMiorailProductMigrationFlags(process.env);
     const repository = createDatabaseRouteStorageRepository(client);
+    const continuationAvailable = await routePlanRouteRuntime
+      .pendingIntentStorageAvailable()
+      .catch((error: unknown) => {
+        logger.warn('Pending swap intent table could not be checked', { reason: String(error) });
+        return false;
+      });
     const coordinator = new RoutePlanCoordinator({
       llm: createLlmProvider(),
       // T67C.1 Part 2: supplied ONLY when the flag is on. Absent means the
@@ -355,6 +375,11 @@ export const routePlanRouteRuntime = {
         new AerodromeSwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1() }),
       ],
       repository,
+      // Server-side continuation: the half-finished goal is keyed by the
+      // authenticated tenant and wallet and never passes through the client.
+      pendingIntents: continuationAvailable
+        ? createDatabaseSwapPendingIntentRepository(client)
+        : undefined,
     });
     return coordinator.evaluate(input);
   },

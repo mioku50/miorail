@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createSwapRouteEngine } from '@mioagent/route-engine';
-import { InMemoryRouteStorageRepository } from '@mioagent/route-storage';
-import type { IntentResolutionV2 } from '@mioagent/intent-engine';
+import {
+  InMemoryRouteStorageRepository,
+  createMemorySwapPendingIntentRepository,
+  type SwapPendingIntentRepositoryV1,
+  type SwapPendingIntentRowV1,
+} from '@mioagent/route-storage';
+import type { IntentResolutionV2, PendingSwapIntentV2 } from '@mioagent/intent-engine';
 import {
   NOW,
   WALLET,
@@ -31,8 +36,16 @@ function readyResolution(routeIntent = routeCardIntentFixture()): IntentResoluti
   };
 }
 
+/** The engine's pending intent as the table holds it: same fields, minus the
+ * schema tag the row does not carry. */
+function pendingIntentRow(pending: PendingSwapIntentV2): SwapPendingIntentRowV1 {
+  const { schemaVersion: _schemaVersion, ...row } = pending;
+  return row;
+}
+
 function coordinatorFor(inputOptions: {
   repository?: InMemoryRouteStorageRepository;
+  pendingIntents?: SwapPendingIntentRepositoryV1;
   resolution?: IntentResolutionV2;
   constrained?: boolean;
   degraded?: boolean;
@@ -60,6 +73,7 @@ function coordinatorFor(inputOptions: {
       engine: createSwapRouteEngine(),
       adapters,
       repository,
+      pendingIntents: inputOptions.pendingIntents,
       resolveIntent: async () => resolution,
     }),
   };
@@ -182,4 +196,130 @@ test('route-run storage failure fails closed before provider evaluation', async 
   });
   await assert.rejects(coordinator.evaluate(input), /storage unavailable/);
   assert.equal(engineCalls, 0);
+});
+
+// ---------------------------------------------------------------------------
+// The half-finished goal a clarification leaves behind.
+//
+// It is looked up by the AUTHENTICATED tenant and wallet and never travels
+// through the client, so these tests assert what the coordinator does with the
+// store rather than what any response carries.
+// ---------------------------------------------------------------------------
+
+function pendingIntentFixture(): PendingSwapIntentV2 {
+  return {
+    schemaVersion: 'pending-swap-intent/v2',
+    tenantId: input.tenantId,
+    walletAddress: WALLET,
+    chainId: 8453,
+    sourceRequestId: 'first-turn',
+    createdAt: NOW.toISOString(),
+    expiresAt: new Date(NOW.getTime() + 600_000).toISOString(),
+    amountDecimal: '100',
+    fromAssetSymbol: 'USDC',
+    toAssetSymbol: null,
+    optimizationMode: null,
+    verificationDepth: null,
+    protocolConstraint: null,
+    slippageMaxBps: 100,
+    executionRequested: true,
+  };
+}
+
+function clarificationResolution(pendingIntent: PendingSwapIntentV2 | null): IntentResolutionV2 {
+  return {
+    outcome: 'needs_clarification',
+    routeIntent: null,
+    clarification: {
+      code: 'to_asset_required',
+      message: 'Which exact token should be received?',
+      missingFields: ['toAsset'],
+      locale: 'en',
+    },
+    issues: [],
+    pendingIntent,
+  };
+}
+
+test('a clarification stores its half-finished goal for the next turn', async () => {
+  const pendingIntents = createMemorySwapPendingIntentRepository();
+  const coordinator = new RoutePlanCoordinator({
+    llm: {} as never,
+    engine: { evaluate: async () => { throw new Error('must not run'); } },
+    adapters: [],
+    repository: new InMemoryRouteStorageRepository(),
+    pendingIntents,
+    resolveIntent: async () => clarificationResolution(pendingIntentFixture()),
+  });
+  const result = await coordinator.evaluate({ ...input, requestId: 'clarify-1' });
+  assert.equal(result.outcome, 'needs_clarification');
+  const stored = await pendingIntents.readPendingIntent(
+    { tenantId: input.tenantId, walletAddress: WALLET },
+    NOW,
+  );
+  assert.equal(stored?.amountDecimal, '100');
+  // The constraint the user stated, so answering the question cannot lose it.
+  assert.equal(stored?.slippageMaxBps, 100);
+  assert.equal(stored?.executionRequested, true);
+});
+
+test('a stored goal reaches the resolver as authenticated context, not as input', async () => {
+  const pendingIntents = createMemorySwapPendingIntentRepository();
+  await pendingIntents.upsertPendingIntent(pendingIntentRow(pendingIntentFixture()));
+  let seen: readonly PendingSwapIntentV2[] | undefined;
+  const coordinator = new RoutePlanCoordinator({
+    llm: {} as never,
+    engine: { evaluate: async () => { throw new Error('must not run'); } },
+    adapters: [],
+    repository: new InMemoryRouteStorageRepository(),
+    pendingIntents,
+    resolveIntent: async (resolverInput) => {
+      seen = resolverInput.context.pendingIntents;
+      return clarificationResolution(null);
+    },
+  });
+  await coordinator.evaluate({ ...input, message: 'ETH', requestId: 'clarify-2' });
+  assert.equal(seen?.length, 1);
+  assert.equal(seen?.[0]?.amountDecimal, '100');
+  assert.equal(seen?.[0]?.slippageMaxBps, 100);
+});
+
+test('a resolved or refused goal clears the pending intent', async () => {
+  for (const resolution of [readyResolution(), {
+    outcome: 'rejected' as const,
+    routeIntent: null,
+    clarification: null,
+    issues: [{ code: 'unsupported_goal' as const, field: 'goal', severity: 'rejection' as const, message: 'no' }],
+    pendingIntent: null,
+  }]) {
+    const pendingIntents = createMemorySwapPendingIntentRepository();
+    await pendingIntents.upsertPendingIntent(pendingIntentRow(pendingIntentFixture()));
+    const { coordinator } = coordinatorFor({ resolution, pendingIntents });
+    await coordinator.evaluate({ ...input, requestId: `clear-${resolution.outcome}` });
+    // A finished goal that kept its pending intent would lend an amount and a
+    // constraint to whatever the user asks next.
+    assert.equal(
+      await pendingIntents.readPendingIntent({ tenantId: input.tenantId, walletAddress: WALLET }, NOW),
+      null,
+    );
+  }
+});
+
+test('a broken pending-intent store degrades the next turn, never this one', async () => {
+  const broken = {
+    readPendingIntent: async () => { throw new Error('pending storage unavailable'); },
+    upsertPendingIntent: async () => { throw new Error('pending storage unavailable'); },
+    clearPendingIntent: async () => { throw new Error('pending storage unavailable'); },
+  };
+  const coordinator = new RoutePlanCoordinator({
+    llm: {} as never,
+    engine: { evaluate: async () => { throw new Error('must not run'); } },
+    adapters: [],
+    repository: new InMemoryRouteStorageRepository(),
+    pendingIntents: broken,
+    resolveIntent: async () => clarificationResolution(pendingIntentFixture()),
+  });
+  // The clarification is the product; the continuation is a convenience.
+  const result = await coordinator.evaluate({ ...input, requestId: 'broken-store' });
+  assert.equal(result.outcome, 'needs_clarification');
 });

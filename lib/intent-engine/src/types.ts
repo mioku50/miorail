@@ -50,7 +50,32 @@ export interface ClarificationV1 {
   locale: IntentLocaleV1;
 }
 
-export interface PendingSwapIntentV2 {
+/**
+ * What the user has actually CHOSEN so far, as opposed to what the engine would
+ * default to. `null` everywhere means "never stated", and that distinction is
+ * the whole point: a later turn may inherit a constraint the user asked for,
+ * and may never inherit one they did not.
+ */
+/** The closed vocabulary a carried protocol constraint can name. Narrower than
+ * `RouteIntentV1['protocolConstraint']` on purpose: `any` is the ABSENCE of a
+ * constraint (stored as null), and only these two protocols can be constrained,
+ * so a shape outside this type is one the engine never wrote. */
+export interface CarriedProtocolConstraintV2 {
+  mode: 'include_only' | 'exclude';
+  protocols: Array<'uniswap' | 'kyberswap'>;
+}
+
+export interface CarriedSwapConstraintsV2 {
+  optimizationMode: RouteIntentV1['optimizationMode'] | null;
+  /** 'standard' is the default, so it is stored as null rather than as a choice. */
+  verificationDepth: 'enhanced' | 'maximum' | null;
+  protocolConstraint: CarriedProtocolConstraintV2 | null;
+  /** Only a slippage the user set; the 50 bps default is null. */
+  slippageMaxBps: number | null;
+  executionRequested: boolean | null;
+}
+
+export interface PendingSwapIntentV2 extends CarriedSwapConstraintsV2 {
   schemaVersion: 'pending-swap-intent/v2';
   tenantId: string;
   walletAddress: string;
