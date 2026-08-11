@@ -634,6 +634,13 @@ export interface ReviewScreenModelV1 {
    * quote it shows, and going "back" to an expired card only fails again. */
   onCompareAgain?: () => void;
   comparePending?: boolean;
+  /**
+   * The wallet-bound signing control, supplied by the container. `lib/ui`
+   * screens are pure and know nothing about wallets, so the one button that
+   * actually reaches Base Account arrives as a slot — and it belongs HERE, in
+   * the CTA row, not in a panel below the fold.
+   */
+  signSlot?: React.ReactNode;
   /** T67E §1 — the same token panels as the Route screen, in full detail. This
    * is the last screen before a signature, so the controls the user is about to
    * be subject to belong here more than anywhere. */
@@ -790,14 +797,22 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
       )}
 
       <div className="ctarow">
-        <button
-          type="button"
-          className="btn lg"
-          onClick={model.onApprove}
-          disabled={!model.simulation.canSign || model.approvePending}
-        >
-          {model.approvePending ? 'Waiting for Base Account…' : 'Approve in Base Account'}
-        </button>
+        {/* The REAL signing control, when the container has one to give. It
+            used to live in its own panel far below, while this row showed a
+            large primary button wired to `() => undefined` — so the obvious
+            button did nothing and the working one was under the fold. A CTA
+            that looks like the action and is not the action is a lie about
+            what the screen does. */}
+        {model.signSlot ?? (
+          <button
+            type="button"
+            className="btn lg"
+            onClick={model.onApprove}
+            disabled={!model.simulation.canSign || model.approvePending}
+          >
+            {model.approvePending ? 'Waiting for Base Account…' : 'Approve in Base Account'}
+          </button>
+        )}
         <button type="button" className="btn sec lg" onClick={model.onBack}>
           Back to routes
         </button>

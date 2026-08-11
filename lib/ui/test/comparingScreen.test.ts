@@ -315,3 +315,48 @@ describe('Review says why there is nothing to sign', () => {
     assert.equal(backs, 1);
   });
 });
+
+describe('the signing button is the real one', () => {
+  function review(overrides: Partial<ReviewScreenModelV1> = {}): ReviewScreenModelV1 {
+    return {
+      steps: [],
+      calls: [],
+      simulation: {
+        available: false,
+        passed: false,
+        headline: 'Simulation not available',
+        detail: 'No simulation provider answered.',
+        subLabel: 'not available',
+        canSign: true,
+        disabledReason: null,
+      },
+      balanceChanges: [],
+      balanceUnavailableReason: null,
+      checks: [],
+      limits: [],
+      onLimitChange: () => {},
+      onApprove: () => {},
+      onBack: () => {},
+      approvePending: false,
+      ...overrides,
+    };
+  }
+
+  test('a supplied sign slot replaces the placeholder CTA', () => {
+    // The defect: the CTA row held a large primary "Approve in Base Account"
+    // wired to `() => undefined`, while the control that actually reaches the
+    // wallet sat in a panel below the fold. People pressed the visible one and
+    // nothing happened.
+    const rendered = JSON.stringify(
+      ReviewScreen(review({ signSlot: { type: 'button', props: { children: 'Sign with Base Account' } } as never })),
+    );
+    assert.match(rendered, /Sign with Base Account/);
+    assert.equal(rendered.includes('Approve in Base Account'), false);
+  });
+
+  test('with no slot the built-in button still renders, so the row is never empty', () => {
+    const rendered = JSON.stringify(ReviewScreen(review({ simulation: { ...review().simulation, canSign: false, disabledReason: 'x' } })));
+    assert.match(rendered, /Approve in Base Account/);
+    assert.match(rendered, /"disabled":true/);
+  });
+});

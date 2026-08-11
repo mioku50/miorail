@@ -1310,8 +1310,24 @@ export function RouteIntelligenceConsole() {
             },
           ]}
           onLimitChange={() => undefined}
-          /* Signing is NOT a screen switch: the real Base Account submission
-             below owns it, so this CTA never advances the flow by itself. */
+          /* The real control, in the place the eye goes. It used to sit in a
+             panel below the fold while this row held a large primary button
+             wired to nothing, so the click people actually made did nothing. */
+          signSlot={
+            prepared && simulation.canSign ? (
+              <BlueprintSubmitButton
+                routeRunId={prepared.routeRunId}
+                blueprintId={prepared.blueprint.id}
+                blueprintHash={prepared.blueprint.blueprintHash}
+                quoteExpiry={prepared.blueprint.quoteExpiry}
+                builderCode={BUILDER_CODE}
+                onStateChange={(next) => {
+                  setSubmission(next);
+                  if (next.status !== 'idle') mark('signed', 'start');
+                }}
+              />
+            ) : undefined
+          }
           onApprove={() => undefined}
           tokenPanels={b20Panels(true)}
           onBack={() => setScreen('route')}
@@ -1381,32 +1397,9 @@ export function RouteIntelligenceConsole() {
           </div>
         )}
 
-        {/* T57 — the real approve → wallet_sendCalls → record-submission path. */}
-        {prepared && (
-          <div className="panel">
-            <div className="ph">
-              <h3>Sign in Base Account</h3>
-              <span className="sub">{CONSOLE_COPY_V1.prepared}</span>
-            </div>
-            <div className="pb">
-              {simulation.canSign ? (
-                <BlueprintSubmitButton
-                  routeRunId={prepared.routeRunId}
-                  blueprintId={prepared.blueprint.id}
-                  blueprintHash={prepared.blueprint.blueprintHash}
-                  quoteExpiry={prepared.blueprint.quoteExpiry}
-                  builderCode={BUILDER_CODE}
-                  onStateChange={(next) => {
-                    setSubmission(next);
-                    if (next.status !== 'idle') mark('signed', 'start');
-                  }}
-                />
-              ) : (
-                <p className="empty">{simulation.disabledReason}</p>
-              )}
-            </div>
-          </div>
-        )}
+        {/* T57's approve → wallet_sendCalls → record-submission path now lives
+            in the Review CTA row above (`signSlot`), so there is exactly one
+            signing button and it is the one people press. */}
       </>
     );
   } else if (screen === 'proof' && (nftProof || nftSubmission)) {

@@ -1461,6 +1461,23 @@ export function MiniConsole() {
             },
           ]}
           onLimitChange={() => undefined}
+          // Same as the web console: the real control belongs in the CTA row,
+          // not in a panel below the fold with a dead button above it.
+          signSlot={
+            prepared && simulation.canSign ? (
+              <BlueprintSubmitButton
+                routeRunId={prepared.routeRunId}
+                blueprintId={prepared.blueprint.id}
+                blueprintHash={prepared.blueprint.blueprintHash}
+                quoteExpiry={prepared.blueprint.quoteExpiry}
+                builderCode={BUILDER_CODE}
+                onStateChange={(next) => {
+                  setSubmission(next);
+                  if (next.status !== "idle") mark("signed", "start");
+                }}
+              />
+            ) : undefined
+          }
           onApprove={() => undefined}
           tokenPanels={b20Panels(true)}
           onBack={() => setScreen("route")}
@@ -1520,31 +1537,8 @@ export function MiniConsole() {
             </div>
           </div>
         )}
-        {prepared && (
-          <div className="panel">
-            <div className="ph">
-              <h3>Sign in Base Account</h3>
-              <span className="sub">{CONSOLE_COPY_V1.prepared}</span>
-            </div>
-            <div className="pb">
-              {simulation.canSign ? (
-                <BlueprintSubmitButton
-                  routeRunId={prepared.routeRunId}
-                  blueprintId={prepared.blueprint.id}
-                  blueprintHash={prepared.blueprint.blueprintHash}
-                  quoteExpiry={prepared.blueprint.quoteExpiry}
-                  builderCode={BUILDER_CODE}
-                  onStateChange={(next) => {
-                    setSubmission(next);
-                    if (next.status !== "idle") mark("signed", "start");
-                  }}
-                />
-              ) : (
-                <p className="empty">{simulation.disabledReason}</p>
-              )}
-            </div>
-          </div>
-        )}
+        {/* The signing control now lives in the Review CTA row above
+            (`signSlot`), so there is exactly one and it is the real one. */}
       </>
     );
   } else if (screen === "proof") {
