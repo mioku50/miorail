@@ -296,3 +296,5 @@ export function groundSemanticRecipient(
   }
   return { recipient: null, source: null };
 }
+
+export * from './tokenIdentity.js';
