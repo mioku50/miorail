@@ -1,9 +1,21 @@
 # o1 Trading API — Miorail compatibility research
 
-**Checked:** 2026-08-01
-**Verdict:** `incompatible` — specifically `incompatible_with_base_account_v1`
-**Status:** research and contract validation only. No adapter, no execution flag, no
-production change.
+**Originally checked:** 2026-08-01
+
+**Superseded:** 2026-08-12 by the official Base MCP o1.exchange skill v0.3.0
+
+**Current verdict:** the standard `POST /api/v2/order` path with
+`mevProtection: false` is compatible; the Permit2 `/order/complete` relay path
+remains incompatible and disabled.
+
+The original analysis below is retained as historical evidence for the
+Permit2 path. It must no longer be read as a verdict on every Trading API
+order. The released Miorail adapter decodes standard unsigned RLP transactions,
+uses the official shared credential, pins the Base router's ERC-1967 proxy,
+admin, implementation and bytecode hashes, replaces provider unlimited approval
+with an exact approval, and routes execution through Base Account plus Route
+Proof. It does not use `O1_AGGREGATOR_API_KEY`, `signTransaction`,
+`/order/complete`, or provider broadcast.
 
 This document records what the official specification and the official sample
 implementation actually require, so the verdict below can be re-checked by

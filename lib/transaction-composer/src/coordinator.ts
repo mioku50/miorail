@@ -160,18 +160,19 @@ export function simulationHonesty(intent: RouteIntentV1): { acceptable: boolean;
 /**
  * T67B.1 — whether the simulation evidence is good enough to sign on.
  *
- * Aerodrome is the one provider whose calldata this server writes itself, so
- * it is the one provider where a fork simulation is a PRECONDITION rather than
- * a nicety: nothing upstream has already executed these bytes against real
- * state. `unavailable` is not a pass, and a revert is a refusal, not a
- * warning. The partner-built providers keep the T57 rule unchanged.
+ * Aerodrome and o1 require a fork simulation. Aerodrome calldata is written
+ * locally; o1 returns calls through an upgradeable proxy and exposes no
+ * recipient argument in its swap selector. In both cases unavailable is not a
+ * pass, and a revert is a refusal rather than a warning.
  */
 export function simulationRequirementV1(
   provider: SwapBuildProviderId,
   intent: RouteIntentV1,
   simulationState: SimulationStateV1,
 ): { acceptable: boolean; detail: string } {
-  if (provider !== 'aerodrome') return simulationHonesty(intent);
+  if (provider !== 'aerodrome' && provider !== 'o1-exchange') {
+    return simulationHonesty(intent);
+  }
   if (simulationState.status === 'passed') {
     return { acceptable: true, detail: 'Simulated against Base mainnet state and every call succeeded.' };
   }
@@ -183,7 +184,7 @@ export function simulationRequirementV1(
   }
   return {
     acceptable: false,
-    detail: `Aerodrome calldata is built by this server and must simulate before it can be signed (${
+    detail: `${provider} calldata must simulate before it can be signed (${
       simulationState.errorCode ?? 'simulation unavailable'
     }).`,
   };
@@ -219,12 +220,17 @@ export function aerodromeKernelInputV1(
   candidate: RouteCandidateV1,
   blueprint: ExecutionBlueprintV1,
 ): Pick<RunSafetyKernelInput, 'aerodrome' | 'reviewedMinimumOutputAtomic'> {
-  if (providerId !== 'aerodrome') return {};
-  const route = routeFromCandidateV1(candidate);
-  if (!route) return {};
   const debit = blueprint.expectedAssetChanges.find((change) => change.direction === 'debit');
   const credit = blueprint.expectedAssetChanges.find((change) => change.direction === 'credit');
   if (!debit || !credit) return {};
+  if (providerId === 'o1-exchange') {
+    return {
+      reviewedMinimumOutputAtomic: credit.minimumAmountAtomic ?? credit.amountAtomic,
+    };
+  }
+  if (providerId !== 'aerodrome') return {};
+  const route = routeFromCandidateV1(candidate);
+  if (!route) return {};
   const inputIsNative = debit.asset.kind === 'native';
   return {
     aerodrome: {
@@ -256,7 +262,7 @@ export function aerodromeKernelInputV1(
  * function existed.
  */
 export async function reviewStoredBlueprintV1(
-  deps: Pick<TransactionComposerDependencies, 'contractSecurity'>,
+  deps: Pick<TransactionComposerDependencies, 'contractSecurity' | 'providerContractPin'>,
   input: Pick<TransactionComposerPrepareInput, 'routeRunId' | 'walletAddress'>,
   intent: RouteIntentV1,
   selected: RouteCandidateV1,
@@ -280,6 +286,10 @@ export async function reviewStoredBlueprintV1(
   const contractSecurityProviderName = contractSecurityResults.some((entry) => entry.provider === 'goplus')
     ? 'goplus'
     : (contractSecurityResults[0]?.provider ?? 'none');
+  const o1ContractPinVerified =
+    providerId === 'o1-exchange'
+      ? ((await deps.providerContractPin?.(providerId)) ?? false)
+      : undefined;
 
   const { result: safety, contractSecurity } = runSafetyKernel({
     provider: providerId,
@@ -298,6 +308,7 @@ export async function reviewStoredBlueprintV1(
     simulationDetail: simulation.detail,
     intentHash: blueprint.intentHash,
     selectedCandidateHash: blueprint.selectedCandidateHash,
+    o1ContractPinVerified,
     ...aerodromeKernelInputV1(providerId, selected, blueprint),
   });
 
@@ -526,7 +537,8 @@ export class DeterministicTransactionComposer implements TransactionComposer {
       // a new comparison instead of a pointless retry of the same selection.
       const reason: RefreshReasonV1 =
         buildResult.errorCode === 'aerodrome_route_changed' ||
-        buildResult.errorCode === 'aerodrome_factory_changed'
+        buildResult.errorCode === 'aerodrome_factory_changed' ||
+        buildResult.errorCode === 'o1_route_changed'
           ? 'route_changed'
           : 'quote_expired';
       return refreshRequiredResultV1(
@@ -562,11 +574,11 @@ export class DeterministicTransactionComposer implements TransactionComposer {
     );
 
     // --- Simulation ---------------------------------------------------------------
-    // Only for the provider whose calldata this server wrote. The partner-built
-    // providers keep the T57 behaviour byte for byte: no request, no charge,
-    // and an honestly `unavailable` state.
+    // Aerodrome and o1 require simulation. The other providers keep the T57
+    // behaviour byte for byte: no request, no charge, and an honestly
+    // `unavailable` state.
     let simulationState: SimulationStateV1 = unsimulatedStateV1();
-    if (providerId === 'aerodrome') {
+    if (providerId === 'aerodrome' || providerId === 'o1-exchange') {
       simulationState = this.deps.simulate
         ? await this.deps.simulate({
             chainId: 8453,
@@ -611,6 +623,7 @@ export class DeterministicTransactionComposer implements TransactionComposer {
       // the build agrees with itself.
       aerodrome: buildResult.aerodrome,
       reviewedMinimumOutputAtomic: selected.minimumOutput.amountAtomic,
+      o1ContractPinVerified: buildResult.o1?.contractPinVerified,
     });
 
     if (safety.verdict === 'blocked') {

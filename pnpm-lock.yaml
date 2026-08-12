@@ -983,6 +983,9 @@ importers:
       '@mioagent/x402-parser':
         specifier: workspace:*
         version: link:../x402-parser
+      viem:
+        specifier: ^2.53.1
+        version: 2.53.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@3.25.76)
     devDependencies:
       tsx:
         specifier: ^4.22.4
@@ -1027,6 +1030,9 @@ importers:
       '@noble/hashes':
         specifier: ^1.8.0
         version: 1.8.0
+      viem:
+        specifier: ^2.53.1
+        version: 2.53.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@3.25.76)
       zod:
         specifier: ^3.25.76
         version: 3.25.76

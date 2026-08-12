@@ -201,7 +201,7 @@ describe('the adapter quotes through the Router', () => {
     });
     assert.equal(result.outcome, 'quoted');
     if (result.outcome !== 'quoted') return;
-    assert.equal(result.candidate.priceImpact.bps, 0);
+    assert.equal(result.candidate.priceImpact, null);
     assert.ok(result.candidate.trustMetadata.riskFlags.includes('price_impact_unmeasured'));
     // A direct contract read involves no aggregator.
     assert.equal(result.candidate.trustMetadata.usesExternalAggregators, false);
@@ -352,15 +352,15 @@ describe('the RPC seam', () => {
 });
 
 describe('the registry', () => {
-  test('Routes registers released quote adapters plus honest manifested providers', () => {
+  test('Routes registers released quote adapters before honest manifested providers', () => {
     const ids = createDefaultSwapAdapters().map((adapter) => adapter.id);
     assert.deepEqual(ids, [
       'uniswap',
       'kyberswap',
       'aerodrome',
+      'o1-exchange',
       'balancer',
       'hydrex',
-      'o1-exchange',
     ]);
   });
 

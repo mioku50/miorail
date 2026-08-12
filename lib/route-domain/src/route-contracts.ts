@@ -160,7 +160,10 @@ const RouteCandidateV1ObjectSchema = z
     expectedOutput: TokenAmountV1Schema,
     minimumOutput: TokenAmountV1Schema,
     estimatedGas: GasEstimateV1Schema,
-    priceImpact: PercentageV1Schema,
+    // Some aggregators return a bounded minimum without a market/reference
+    // price. Null is the only honest value in that case; zero would claim an
+    // observation that never happened.
+    priceImpact: PercentageV1Schema.nullable(),
     slippage: PercentageV1Schema,
     callCount: z.number().int().min(0).max(100),
     approvalCount: z.number().int().min(0).max(100),

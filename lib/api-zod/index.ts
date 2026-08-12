@@ -1986,6 +1986,9 @@ export const StatusResponseSchema = z.object({
     // Aerodrome COMPARISON has no gate of its own; it rides on route
     // intelligence, because quoting it neither spends nor signs.
     aerodromeExecutionV1: z.boolean().optional(),
+    // o1 comparison is part of route intelligence; execution is an
+    // independent server-side gate, additive for older clients.
+    o1ExecutionV1: z.boolean().optional(),
     // T67C: same additive treatment.
     b20ControlV1: z.boolean().optional(),
     // T67C.2: same additive treatment.

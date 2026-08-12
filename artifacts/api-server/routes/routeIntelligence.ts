@@ -78,13 +78,16 @@ import {
 import {
   AerodromeSwapRouteAdapter,
   KyberSwapRouteAdapter,
+  O1SwapRouteAdapter,
   UniswapSwapRouteAdapter,
+  createO1RouterPinReaderV1,
 } from '@mioagent/swap-adapters';
 import {
   BlueprintSubmissionConflictError,
   KyberSwapBuildAdapter,
   UniswapSwapBuildAdapter,
   AerodromeSwapBuildAdapter,
+  O1SwapBuildAdapter,
   approveEarnBlueprintV1,
   approveExecutionBlueprintV1,
   createTransactionComposer,
@@ -374,6 +377,7 @@ export const routePlanRouteRuntime = {
         new UniswapSwapRouteAdapter(),
         new KyberSwapRouteAdapter(),
         new AerodromeSwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1() }),
+        new O1SwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1() }),
       ],
       repository,
       // T74: naming a token by address. Two conditions, both necessary — the
@@ -400,6 +404,16 @@ export const routePlanRouteRuntime = {
  * `not_configured` instead of quoting. */
 function baseMainnetRpcUrlV1(): string {
   return (process.env.BASE_MAINNET_RPC_URL || process.env.BASE_RPC_URL || '').trim();
+}
+
+/** Upgradeable provider boundaries are re-pinned before both review and
+ * approval. A missing RPC or any changed proxy/admin/implementation fails
+ * closed without exposing endpoint details. */
+async function providerContractPinVerifiedV1(provider: string): Promise<boolean> {
+  if (provider !== 'o1-exchange') return true;
+  const rpcUrl = baseMainnetRpcUrlV1();
+  if (!rpcUrl) return false;
+  return (await createO1RouterPinReaderV1({ rpcUrl }).verify()).ok;
 }
 
 export const routeIntelligenceRouter = Router();
@@ -811,28 +825,37 @@ export const swapPrepareRouteRuntime = {
     // what the composer checks, so a server with the flag off answers
     // `unsupported_provider` — a normal outcome the client already renders —
     // rather than throwing on a missing adapter.
-    const aerodromeEnabled = getMiorailProductMigrationFlags(process.env).aerodromeExecutionV1;
+    const flags = getMiorailProductMigrationFlags(process.env);
+    const aerodromeEnabled = flags.aerodromeExecutionV1;
+    const o1Enabled = flags.o1ExecutionV1;
     const composer = createTransactionComposer({
       repository: createDatabaseRouteStorageRepository(client),
       buildAdapters: [
         new UniswapSwapBuildAdapter(),
         new KyberSwapBuildAdapter(),
         new AerodromeSwapBuildAdapter({ rpcUrl }),
+        new O1SwapBuildAdapter({ rpcUrl }),
       ],
       quoteAdapters: [
         new UniswapSwapRouteAdapter(),
         new KyberSwapRouteAdapter(),
         new AerodromeSwapRouteAdapter({ rpcUrl }),
+        new O1SwapRouteAdapter({ rpcUrl }),
       ],
-      supportedProviders: aerodromeEnabled
-        ? ['uniswap', 'kyberswap', 'aerodrome']
-        : ['uniswap', 'kyberswap'],
-      // Aerodrome calldata is written by this server, so it is the one
-      // provider that must survive a fork simulation before it can be signed.
+      supportedProviders: [
+        'uniswap',
+        'kyberswap',
+        ...(aerodromeEnabled ? (['aerodrome'] as const) : []),
+        ...(o1Enabled ? (['o1-exchange'] as const) : []),
+      ],
+      // Aerodrome and o1 must survive a fork simulation before signing. o1
+      // returns decoded calls through an upgradeable proxy whose swap ABI has
+      // no explicit recipient argument.
       // No provider configured means BLOCKED, never "signed anyway".
       simulate: simulateSwapCallsV1,
       contractSecurity: async ({ chainId, addresses }) =>
         (await loadTokenSecurityContext(chainId, addresses)).tokenSecurity,
+      providerContractPin: providerContractPinVerifiedV1,
     });
     return composer.prepare(input);
   },
@@ -909,6 +932,7 @@ export const swapBlueprintRouteRuntime = {
         repository: createDatabaseRouteStorageRepository(client),
         contractSecurity: async ({ chainId, addresses }) =>
           (await loadTokenSecurityContext(chainId, addresses)).tokenSecurity,
+        providerContractPin: providerContractPinVerifiedV1,
       },
       input,
     ),

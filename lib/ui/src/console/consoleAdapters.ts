@@ -291,7 +291,7 @@ function routeWhyV1(route: RoutePlanRouteV1, recommended: boolean, comparative: 
         : 'Only route that produced a quote'
       : 'Alternative route',
     `${route.callCount} call${route.callCount === 1 ? '' : 's'}, ${route.approvalCount} approval${route.approvalCount === 1 ? '' : 's'}`,
-    `price impact ${route.priceImpact.percent}%`,
+    route.priceImpact ? `price impact ${route.priceImpact.percent}%` : 'price impact not provided',
   ];
   return parts.join(' · ');
 }

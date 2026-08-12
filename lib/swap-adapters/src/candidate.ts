@@ -45,7 +45,7 @@ export interface BuildQuoteArtifactsInput {
   expectedOutputAtomic: string;
   providerMinimumOutputAtomic?: string | null;
   gas: GasEstimateV1;
-  priceImpactBps: number;
+  priceImpactBps: number | null;
   observedAt: string;
   expiresAt: string;
   blockNumber: string | null;
@@ -120,10 +120,13 @@ export function buildQuoteArtifacts(input: BuildQuoteArtifactsInput): {
       amountDecimal: minimumDecimal,
     },
     estimatedGas: input.gas,
-    priceImpact: {
-      bps: input.priceImpactBps,
-      percent: basisPointsToPercentage(input.priceImpactBps),
-    },
+    priceImpact:
+      input.priceImpactBps === null
+        ? null
+        : {
+            bps: input.priceImpactBps,
+            percent: basisPointsToPercentage(input.priceImpactBps),
+          },
     slippage: {
       bps: input.intent.slippageConstraint.maxBps,
       percent: basisPointsToPercentage(input.intent.slippageConstraint.maxBps),

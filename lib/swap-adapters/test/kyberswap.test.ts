@@ -311,7 +311,7 @@ test('price impact is derived from the two USD figures KyberSwap does send', asy
   if (result.outcome !== 'quoted') throw new Error(`refused: ${result.errorCode}`);
   // (0.10000368084064229 - 0.09990771528228602) / 0.10000368084064229 ≈ 0.09596%,
   // which rounds to 10 bps and is rendered as a percentage on the candidate.
-  assert.equal(result.candidate.priceImpact.bps, 10);
+  assert.equal(result.candidate.priceImpact?.bps, 10);
 });
 
 test('a route worth more out than in reports zero impact, never a negative one', async () => {
@@ -320,7 +320,7 @@ test('a route worth more out than in reports zero impact, never a negative one',
     liveKyberResponseV1(intent, { amountInUsd: '0.0999', amountOutUsd: '0.1001' }),
   ).quote({ intent, walletAddress: WALLET, requestId: 'kyber-positive', now: NOW });
   if (result.outcome !== 'quoted') throw new Error(`refused: ${result.errorCode}`);
-  assert.equal(result.candidate.priceImpact.bps, 0);
+  assert.equal(result.candidate.priceImpact?.bps, 0);
 });
 
 test('with neither a price impact nor a USD pair, the refusal stands', async () => {

@@ -19,6 +19,7 @@
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/runtime-skills": "workspace:*",
     "@mioagent/security": "workspace:*",
+    "viem": "^2.53.1",
     "zod": "^3.25.76",
     "@noble/hashes": "^1.8.0"
   },

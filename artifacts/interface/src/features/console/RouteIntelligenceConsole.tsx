@@ -1229,7 +1229,11 @@ export function RouteIntelligenceConsole() {
             v: recommended?.estimatedGas.estimatedCostUsd ? `$${recommended.estimatedGas.estimatedCostUsd}` : '—',
             d: `est. ${recommended?.estimatedGas.gasUnits ?? '—'} gas`,
           },
-          { k: 'Price impact', v: recommended ? `${recommended.priceImpact.percent}%` : '—', d: 'from the quote' },
+          {
+            k: 'Price impact',
+            v: recommended?.priceImpact ? `${recommended.priceImpact.percent}%` : 'Not provided',
+            d: recommended?.priceImpact ? 'from the quote' : 'provider supplied no reference price',
+          },
           { k: 'Approvals', v: String(recommended?.approvalCount ?? '—'), d: 'exact amount' },
           { k: 'Calls', v: String(recommended?.callCount ?? '—'), d: 'one batch' },
           { k: 'Intelligence', v: spendLabel.split(' · ')[0], d: `${evidenceRows.length} sources` },

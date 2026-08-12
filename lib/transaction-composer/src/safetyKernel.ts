@@ -9,6 +9,7 @@ import { validateUniswapSwap, type UniswapSwapContext } from '@mioagent/security
 import { validateKyberSwap, type KyberSwapContext } from '@mioagent/security/kyberGuard';
 import type { SwapGuardAssetV1 } from '@mioagent/security/swapAsset';
 import { validateAerodromeSwap, type AerodromeSwapContext } from '@mioagent/security/aerodromeGuard';
+import { validateO1Swap, type O1SwapContext } from '@mioagent/security/o1Guard';
 import type { BaseCall } from '@mioagent/security/baseGuards';
 import type { ExecutionTokenSecurityResult } from '@mioagent/security';
 import type { ContractSecuritySummaryV1 } from '@mioagent/route-card';
@@ -53,6 +54,9 @@ export interface RunSafetyKernelInput {
    * decayed fresh quote agrees with itself, and would otherwise pass.
    */
   reviewedMinimumOutputAtomic?: string;
+  /** Fresh proxy + implementation code-hash check. Required for o1 because
+   * its pinned address is upgradeable. */
+  o1ContractPinVerified?: boolean;
 }
 
 export interface RunSafetyKernelOutput {
@@ -309,7 +313,45 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
     ),
   );
 
-  if (input.provider === 'aerodrome') {
+  if (input.provider === 'o1-exchange') {
+    checks.push(
+      check(
+        'provider_contract_pin_o1',
+        'o1 proxy, admin and implementation code hashes match the reviewed pins',
+        input.o1ContractPinVerified ? 'passed' : 'failed',
+        input.o1ContractPinVerified ? null : 'o1_contract_pin_unverified',
+      ),
+    );
+    const inputAddress = input.intent.fromAsset?.address?.toLowerCase();
+    const outputAddress = input.intent.toAsset?.address?.toLowerCase();
+    const reviewedMinimum = input.reviewedMinimumOutputAtomic;
+    const context: O1SwapContext | undefined =
+      inputAddress && outputAddress && reviewedMinimum
+        ? {
+            inputTokenAddress: inputAddress,
+            outputTokenAddress: outputAddress,
+            amountInAtomic: input.intent.amount.amountAtomic,
+            minimumOutputAtomic: reviewedMinimum,
+            swapper: input.walletAddress,
+            routerAddress: input.routerAddress,
+            expiresAt: input.quoteExpiry,
+          }
+        : undefined;
+    const guard = validateO1Swap({
+      chain: input.chainId,
+      calls: baseCalls,
+      context,
+      now: input.now,
+    });
+    checks.push(
+      check(
+        'provider_guard_o1',
+        'o1-specific RLP-derived calldata, route and router validation (validateO1Swap)',
+        guard.success ? 'passed' : 'failed',
+        guard.success ? null : `${guard.code}: ${guard.reason}`,
+      ),
+    );
+  } else if (input.provider === 'aerodrome') {
     const facts = input.aerodrome;
     const reviewedMinimum = input.reviewedMinimumOutputAtomic;
     if (!facts || !reviewedMinimum) {

@@ -256,7 +256,7 @@ export class AerodromeSwapRouteAdapter implements SwapRouteAdapter {
         // Not measured. See the header: the Router returns amounts, not a
         // reference price, and a fabricated figure would look identical to a
         // real one on the Route Card.
-        priceImpactBps: 0,
+        priceImpactBps: null,
         observedAt: times.observedAt,
         expiresAt: times.expiresAt,
         blockNumber,

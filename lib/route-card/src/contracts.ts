@@ -105,7 +105,7 @@ export const RoutePlanRouteV1Schema = z
     expectedOutput: TokenAmountV1Schema,
     minimumOutput: TokenAmountV1Schema,
     estimatedGas: GasEstimateV1Schema,
-    priceImpact: PercentageV1Schema,
+    priceImpact: PercentageV1Schema.nullable(),
     slippage: PercentageV1Schema,
     quoteObservedAt: z.string().datetime({ offset: true }),
     quoteExpiresAt: z.string().datetime({ offset: true }),

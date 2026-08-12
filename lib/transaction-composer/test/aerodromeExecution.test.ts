@@ -99,7 +99,7 @@ function aerodromeCandidate(
     expectedOutputAtomic,
     providerMinimumOutputAtomic: null,
     gas: { gasUnits: '180000', maxFeePerGasWei: null, estimatedCostNative: null, estimatedCostUsd: null },
-    priceImpactBps: 0,
+    priceImpactBps: null,
     observedAt: NOW.toISOString(),
     expiresAt: new Date(NOW.getTime() + 5 * 60_000).toISOString(),
     blockNumber: '33123456',

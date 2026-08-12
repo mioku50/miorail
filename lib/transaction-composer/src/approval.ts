@@ -23,7 +23,11 @@ import {
   TransactionComposerBindingError,
 } from './coordinator.js';
 import { runSafetyKernel, swapTokenSecurityAddressesV1 } from './safetyKernel.js';
-import type { ContractSecurityLookup, SwapBuildProviderId } from './types.js';
+import type {
+  ContractSecurityLookup,
+  SwapBuildProviderId,
+  SwapProviderContractPinLookup,
+} from './types.js';
 import { deriveBlueprintLifecycleV1, type LifecycleStateV1 } from './lifecycle.js';
 
 // ---------------------------------------------------------------------------
@@ -39,6 +43,7 @@ import { deriveBlueprintLifecycleV1, type LifecycleStateV1 } from './lifecycle.j
 export interface BlueprintApprovalDependencies {
   repository: RouteStorageRepository;
   contractSecurity: ContractSecurityLookup;
+  providerContractPin?: SwapProviderContractPinLookup;
 }
 
 export interface ApproveExecutionBlueprintInput {
@@ -261,6 +266,10 @@ export async function approveExecutionBlueprintV1(
     const contractSecurityProviderName = contractSecurityResults.some((entry) => entry.provider === 'goplus')
       ? 'goplus'
       : (contractSecurityResults[0]?.provider ?? 'none');
+    const o1ContractPinVerified =
+      providerId === 'o1-exchange'
+        ? ((await deps.providerContractPin?.(providerId)) ?? false)
+        : undefined;
 
     const { result: safety } = runSafetyKernel({
       provider: providerId,
@@ -279,6 +288,7 @@ export async function approveExecutionBlueprintV1(
       simulationDetail: simulation.detail,
       intentHash: blueprint.intentHash,
       selectedCandidateHash: blueprint.selectedCandidateHash,
+      o1ContractPinVerified,
       ...aerodromeKernelInputV1(providerId, candidate, blueprint),
     });
 

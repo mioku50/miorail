@@ -8,7 +8,7 @@ test('migration flags preserve the legacy product when variables are missing', (
     legacyTerminal: true,
     paidIntelligence: false,
     earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false,
-    nftRouteV1: false, nftExecutionV1: false, privateAiRouteV1: false, privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, mcpPrivateV1: false, mcpPrivateExecutionV1: false, routeOutcomeFeedbackV1: false, tokenIdentityV1: false,
+    nftRouteV1: false, nftExecutionV1: false, privateAiRouteV1: false, privateAiExecutionV1: false, aerodromeExecutionV1: false, o1ExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, mcpPrivateV1: false, mcpPrivateExecutionV1: false, routeOutcomeFeedbackV1: false, tokenIdentityV1: false,
   });
 });
 
@@ -19,13 +19,14 @@ test('migration flags accept only explicit boolean values', () => {
       MIORAIL_LEGACY_TERMINAL: 'false',
       MIORAIL_PAID_INTELLIGENCE: 'TRUE',
       MIORAIL_EARN_ROUTE_V1: 'true',
+      MIORAIL_O1_EXECUTION_V1: 'true',
     }),
     {
       routeIntelligenceV1: true,
       legacyTerminal: false,
       paidIntelligence: true,
       earnRouteV1: true, commerceRouteV1: false, commerceExecutionV1: false,
-      nftRouteV1: false, nftExecutionV1: false, privateAiRouteV1: false, privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, mcpPrivateV1: false, mcpPrivateExecutionV1: false, routeOutcomeFeedbackV1: false, tokenIdentityV1: false,
+      nftRouteV1: false, nftExecutionV1: false, privateAiRouteV1: false, privateAiExecutionV1: false, aerodromeExecutionV1: false, o1ExecutionV1: true, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, mcpPrivateV1: false, mcpPrivateExecutionV1: false, routeOutcomeFeedbackV1: false, tokenIdentityV1: false,
     },
   );
 });
@@ -43,7 +44,7 @@ test('invalid migration flag values fall back to the compatibility baseline', ()
       legacyTerminal: true,
       paidIntelligence: false,
       earnRouteV1: false, commerceRouteV1: false, commerceExecutionV1: false,
-    nftRouteV1: false, nftExecutionV1: false, privateAiRouteV1: false, privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, mcpPrivateV1: false, mcpPrivateExecutionV1: false, routeOutcomeFeedbackV1: false, tokenIdentityV1: false,
+    nftRouteV1: false, nftExecutionV1: false, privateAiRouteV1: false, privateAiExecutionV1: false, aerodromeExecutionV1: false, o1ExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, mcpPrivateV1: false, mcpPrivateExecutionV1: false, routeOutcomeFeedbackV1: false, tokenIdentityV1: false,
     },
   );
 });

@@ -16,14 +16,14 @@ import {
 // intelligence product. Running the x402 billing coordinator here would open a
 // charge for a wallet prompt the user may never accept.
 //
-// Only Aerodrome reaches this function. Uniswap and KyberSwap calldata comes
-// back from a partner that has already priced and routed it; Aerodrome
-// calldata is written by this server, so nothing has executed these bytes
-// against real state until this call does.
+// Aerodrome and o1.exchange reach this function. Aerodrome calldata is written
+// by this server; o1 calldata targets a pinned upgradeable proxy and its swap
+// ABI has no explicit recipient argument. Both must execute successfully
+// against current Base state before the wallet sees them.
 //
 // An answer that cannot be read leaves the state `unavailable`, and
 // `unavailable` is not a pass — the Safety Kernel is what decides, and for
-// Aerodrome it requires `passed`.
+// both providers it requires `passed`.
 // ---------------------------------------------------------------------------
 
 export interface SwapSimulationDepsV1 {

@@ -135,6 +135,12 @@ export type ContractSecurityLookup = (
   input: ContractSecurityLookupInput,
 ) => Promise<ExecutionTokenSecurityResult[]>;
 
+/** Re-checks an upgradeable provider boundary immediately before review or
+ * approval. Only o1 uses it today; immutable routers do not need the read. */
+export type SwapProviderContractPinLookup = (
+  provider: SwapBuildProviderId,
+) => Promise<boolean>;
+
 /** T67B.1: the calls this asks about are exactly the ones about to be
  * reviewed. The Blueprint does not exist yet — its own simulationState is what
  * this produces — so the binding is `callsHash`, which the provider re-derives
@@ -155,17 +161,17 @@ export interface TransactionComposerDependencies {
   buildAdapters: SwapBuildAdapter[];
   quoteAdapters: SwapRouteAdapter[];
   contractSecurity: ContractSecurityLookup;
+  providerContractPin?: SwapProviderContractPinLookup;
   /**
-   * T67B.1: fork simulation. Required for Aerodrome, whose calldata this
-   * server writes; absent, an Aerodrome preparation is BLOCKED rather than
-   * quietly signed unsimulated. Unused by the partner-built providers.
+   * Fork simulation. Required for Aerodrome and o1.exchange; absent, either
+   * preparation is BLOCKED rather than quietly signed unsimulated.
    */
   simulate?: SwapSimulationLookup;
   /**
    * T67B.1: which providers may be prepared at all. Defaults to the two
-   * partner-built ones; the API layer adds `aerodrome` only when
-   * MIORAIL_AERODROME_EXECUTION_V1 is on, so a disabled flag produces the
-   * ordinary `unsupported_provider` outcome instead of a 500.
+   * partner-built ones; the API layer adds Aerodrome and o1 only under their
+   * separate execution flags, so a disabled flag produces the ordinary
+   * `unsupported_provider` outcome instead of a 500.
    */
   supportedProviders?: readonly SwapBuildProviderId[];
   now?: () => Date;
@@ -177,7 +183,7 @@ export interface TransactionComposerDependencies {
 // selectedCandidate.provider.id only — never message-based detection.
 // ---------------------------------------------------------------------------
 
-export type SwapBuildProviderId = 'uniswap' | 'kyberswap' | 'aerodrome';
+export type SwapBuildProviderId = 'uniswap' | 'kyberswap' | 'aerodrome' | 'o1-exchange';
 
 export interface SwapBuildInput {
   intent: RouteIntentV1;
@@ -245,6 +251,9 @@ export interface SwapBuildSuccess {
    * when it is missing.
    */
   aerodrome?: AerodromeBuildFactsV1;
+  /** Present only after both o1 proxy and implementation hashes were checked
+   * during this exact build. Approval performs the same read again. */
+  o1?: { contractPinVerified: true };
 }
 
 /** Not a display projection: every field here is compared against decoded

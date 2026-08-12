@@ -25,6 +25,11 @@ export interface MiorailProductMigrationFlags {
    * Uniswap and KyberSwap sends nothing and signs nothing, and stays on
    * whenever route intelligence is on. */
   aerodromeExecutionV1: boolean;
+  /** o1.exchange standard swap execution. Comparison may ask the pinned,
+   * allowlisted adapter whenever route intelligence is enabled; this separate
+   * gate controls whether its exact server-reviewed calls may reach Base
+   * Account approval. The provider relay / Permit2 path is never used. */
+  o1ExecutionV1?: boolean;
   /** T67C: the B20 Control Card. Read-only — it inspects a token and signs
    * nothing — but it is gated until a live smoke run has confirmed the
    * interface against mainnet. */
@@ -135,6 +140,7 @@ export function getMiorailProductMigrationFlags(
     privateAiRouteV1: readBooleanFlag(env, 'MIORAIL_PRIVATE_AI_ROUTE_V1', false),
     privateAiExecutionV1: readBooleanFlag(env, 'MIORAIL_PRIVATE_AI_EXECUTION_V1', false),
     aerodromeExecutionV1: readBooleanFlag(env, 'MIORAIL_AERODROME_EXECUTION_V1', false),
+    o1ExecutionV1: readBooleanFlag(env, 'MIORAIL_O1_EXECUTION_V1', false),
     b20ControlV1: readBooleanFlag(env, 'MIORAIL_B20_CONTROL_V1', false),
     submissionRecoveryV1: readBooleanFlag(env, 'MIORAIL_SUBMISSION_RECOVERY_V1', false),
     publicProofV1: readBooleanFlag(env, 'MIORAIL_PUBLIC_PROOF_V1', false),

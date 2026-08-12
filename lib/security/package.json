@@ -11,13 +11,15 @@
     "./swapAsset": "./src/swapAsset.ts",
     "./uniswapGuard": "./src/uniswapGuard.ts",
     "./kyberGuard": "./src/kyberGuard.ts",
-    "./aerodromeGuard": "./src/aerodromeGuard.ts"
+    "./aerodromeGuard": "./src/aerodromeGuard.ts",
+    "./o1Guard": "./src/o1Guard.ts"
   },
   "scripts": {
     "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
-    "@mioagent/x402-parser": "workspace:*"
+    "@mioagent/x402-parser": "workspace:*",
+    "viem": "^2.53.1"
   },
   "devDependencies": {
     "tsx": "^4.22.4",
