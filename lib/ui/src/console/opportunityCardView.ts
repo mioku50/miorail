@@ -38,6 +38,11 @@ export interface OpportunityCardWireV1 {
      * pools are quoted against native ETH. */
     referenceQuoteAsset?: string | null;
     maxRoundTripBps: number;
+    entryRouteFound: boolean;
+    exitRouteFound: boolean;
+    entrySourceKey: string | null;
+    exitSourceKey: string | null;
+    routeCoverage: 'complete' | 'partial';
     optimisticRoundTripBps: number | null;
     largestPassingSizeAtomic: string | null;
     firstFailingSizeAtomic: string | null;
@@ -63,6 +68,12 @@ export interface OpportunityCardWireV1 {
       buyerCount: number;
       topBuyerShareBps: number | null;
       topThreeShareBps: number | null;
+    } | null;
+    /** Why a null launchBuyers value is null. Older servers may omit this;
+     * the client then stays silent instead of guessing from a block number. */
+    launchBuyerWindow?: {
+      status: 'collecting' | 'measured' | 'closed_unmeasured' | 'unknown';
+      closesAtBlock: string;
     } | null;
     freshness: 'fresh' | 'stale';
   } | null;
@@ -239,10 +250,67 @@ export function opportunityCardViewV1(card: OpportunityCardWireV1): OpportunityC
     notices,
     notMeasured: card.notMeasured,
     ...hookLabelsV1(card.observation?.poolHook ?? null),
+    ...routeLabelsV1(card.observation ?? null),
     // The API contract nests launch buyers in the observation. Reading a
     // top-level field silently discarded every stored buyer row while all
     // fixtures still passed because they tested the helper in isolation.
-    ...buyerLabelsV1(card.observation?.launchBuyers ?? null),
+    ...buyerLabelsV1(
+      card.observation?.launchBuyers ?? null,
+      card.observation?.launchBuyerWindow ?? null,
+    ),
+  };
+}
+
+function routeSourceLabelV1(source: string | null): string | null {
+  if (!source) return null;
+  const normalized = source.toLowerCase();
+  if (normalized.startsWith('aerodrome')) return 'Aerodrome';
+  if (normalized.startsWith('uniswap-v4')) return 'Uniswap v4';
+  if (normalized.startsWith('kyberswap')) return 'KyberSwap';
+  return 'an allowlisted venue';
+}
+
+/**
+ * Route availability is useful even when a round trip is impossible. The
+ * broken leg is the reason the two headline metrics are null; hiding it made
+ * a correctly rejected card look as though the worker learned nothing.
+ */
+export function routeLabelsV1(
+  observation: OpportunityCardWireV1['observation'],
+): { routeLabel: string | null; routeNote: string | null; routeTone: 'ok' | 'warn' } {
+  if (!observation) return { routeLabel: null, routeNote: null, routeTone: 'warn' };
+  const entry = routeSourceLabelV1(observation.entrySourceKey);
+  const exit = routeSourceLabelV1(observation.exitSourceKey);
+  const coverage = observation.routeCoverage === 'partial'
+    ? ' One or more configured venues did not answer, so route coverage is partial.'
+    : '';
+
+  if (observation.entryRouteFound && observation.exitRouteFound) {
+    const venue = entry && exit && entry === exit ? ` via ${entry}` : '';
+    return {
+      routeLabel: 'Entry + exit found',
+      routeNote: `Miorail priced both route legs${venue}. This states route availability; depth is only the measured exit ladder.${coverage}`,
+      routeTone: 'ok',
+    };
+  }
+  if (observation.entryRouteFound) {
+    return {
+      routeLabel: 'Entry found · exit missing',
+      routeNote: `Miorail priced entry${entry ? ` via ${entry}` : ''}, but no configured venue returned the route back. Round trip and exit capacity therefore stay unmeasured.${coverage}`,
+      routeTone: 'warn',
+    };
+  }
+  if (observation.exitRouteFound) {
+    return {
+      routeLabel: 'Exit found · entry missing',
+      routeNote: `Miorail priced an exit${exit ? ` via ${exit}` : ''}, but no configured venue returned the reference entry. A comparable round trip therefore stays unmeasured.${coverage}`,
+      routeTone: 'warn',
+    };
+  }
+  return {
+    routeLabel: 'No priced route',
+    routeNote: `No configured venue returned either route leg in this pass. No cost or capacity is inferred from that absence.${coverage}`,
+    routeTone: 'warn',
   };
 }
 
@@ -261,8 +329,29 @@ export function opportunityCardViewV1(card: OpportunityCardWireV1): OpportunityC
  */
 export function buyerLabelsV1(
   buyers: NonNullable<OpportunityCardWireV1['observation']>['launchBuyers'] | undefined,
+  window: NonNullable<OpportunityCardWireV1['observation']>['launchBuyerWindow'] | undefined = null,
 ): { buyersLabel: string | null; buyersNote: string | null } {
-  if (!buyers) return { buyersLabel: null, buyersNote: null };
+  if (!buyers) {
+    if (window?.status === 'collecting') {
+      return {
+        buyersLabel: 'Collecting',
+        buyersNote: `The launch-buying window is still open and closes at block ${window.closesAtBlock}. Miorail waits for the full window before stating a buyer count.`,
+      };
+    }
+    if (window?.status === 'closed_unmeasured') {
+      return {
+        buyersLabel: 'Not measured',
+        buyersNote: 'The launch-buying window is closed, but no complete buyer aggregate is stored. No buyer count is claimed.',
+      };
+    }
+    if (window?.status === 'unknown') {
+      return {
+        buyersLabel: 'Not measured',
+        buyersNote: 'The current confirmed Base head is unavailable, so Miorail cannot tell whether the launch-buying window has closed.',
+      };
+    }
+    return { buyersLabel: null, buyersNote: null };
+  }
   if (buyers.buyerCount === 0) {
     return {
       buyersLabel: 'Nobody',

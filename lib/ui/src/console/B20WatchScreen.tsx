@@ -56,9 +56,9 @@ export interface B20TrackedTokenLikeV1 {
 export function trackedStatusLineV1(entry: B20TrackedTokenLikeV1): string {
   if (entry.lastSweptAt === null) return 'not read yet';
   const when = entry.lastSweptAt.slice(0, 16).replace('T', ' ');
-  if (entry.lastOutcome === 'not_b20') return `not a B20 token · read ${when}`;
-  if (entry.lastOutcome === 'unreadable') return `could not be read · tried ${when}`;
-  return `read ${when}`;
+  if (entry.lastOutcome === 'not_b20') return `not a B20 token · read ${when} UTC`;
+  if (entry.lastOutcome === 'unreadable') return `could not be read · tried ${when} UTC`;
+  return `read ${when} UTC`;
 }
 
 export interface B20WatchScreenModelV1 {
@@ -114,9 +114,9 @@ export interface B20WatchScreenModelV1 {
   /** Why no sweep is possible. Rendered instead of the list. */
   unavailableReason: string | null;
   onSweep: () => void;
-  /** How many tokens the wallet holds, so "watching 0 of 12" is impossible to
-   * confuse with "you hold nothing". */
-  heldCount: number;
+  /** How many unique wallet/watchlist addresses were queued for the bounded
+   * sweep. These are candidates until the B20 factory confirms them. */
+  candidateCount: number;
 }
 
 function tokenLabelV1(token: B20WatchedTokenLikeV1): string {
@@ -166,6 +166,9 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
             ? 'Nothing has been checked yet — press Check now to read this wallet’s tokens.'
             : model.unavailableReason
         }
+        checked={model.checkedAt !== null}
+        loading={model.loading}
+        onCheckWallet={model.onSweep}
         onOpenToken={model.onOpenToken}
         onCheckExit={model.exit.onCheck}
         exitCheckedToken={model.exit.tokenAddress}
@@ -176,6 +179,17 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
           fill in. */}
       <B20ExitCard
         check={model.exit.check}
+        tokenLabel={
+          model.exit.tokenAddress === null
+            ? null
+            : (model.holdings.find((holding) => holding.tokenAddress === model.exit.tokenAddress)?.symbol
+              ?? shortAddressV1(model.exit.tokenAddress))
+        }
+        tokenDecimals={
+          model.exit.tokenAddress === null
+            ? null
+            : (model.holdings.find((holding) => holding.tokenAddress === model.exit.tokenAddress)?.decimals ?? null)
+        }
         profile={model.exit.profile}
         onProfileChange={model.exit.onProfileChange}
         positionLabel={model.exit.positionLabel}
@@ -275,12 +289,12 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
           <h3>B20 control watch</h3>
           <span className="sub">
             {model.tokens.length === 0
-              ? `${model.heldCount} token${model.heldCount === 1 ? '' : 's'} held`
-              : `${model.tokens.length} of ${model.heldCount} checked`}
+              ? `${model.candidateCount} wallet/watchlist address${model.candidateCount === 1 ? '' : 'es'} queued`
+              : `${model.tokens.length} of ${model.candidateCount} candidate${model.candidateCount === 1 ? '' : 's'} checked`}
           </span>
           <span className="rt">
             <button type="button" className="btn" onClick={model.onSweep} disabled={model.loading}>
-              {model.loading ? 'Reading the chain…' : 'Check now'}
+              {model.loading ? 'Reading B20 controls…' : 'Read B20 controls'}
             </button>
           </span>
         </div>

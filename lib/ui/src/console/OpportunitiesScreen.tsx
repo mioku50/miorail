@@ -86,6 +86,11 @@ export interface OpportunityCardViewV1 {
   hookLabel: string | null;
   /** The sentence under it, when the permissions are worth stating. */
   hookNote: string | null;
+  /** Which side of the allowlisted route search actually priced. This remains
+   * useful when the headline round trip/capacity could not be measured. */
+  routeLabel: string | null;
+  routeNote: string | null;
+  routeTone: 'ok' | 'warn';
   /** Who bought out of the pool in the launch's own window, in words. Null
    * when nobody measured that window — never rendered as "0 buyers", which
    * would be a claim nobody made. */
@@ -202,6 +207,14 @@ function OpportunityCard({
       )}
       {card.hookNote && <p className="lnote">{card.hookNote}</p>}
 
+      {card.routeLabel && (
+        <div className="kv">
+          <span className="k">Route liquidity</span>
+          <span className={`v ${card.routeTone}`}>{card.routeLabel}</span>
+        </div>
+      )}
+      {card.routeNote && <p className="lnote">{card.routeNote}</p>}
+
       {/* Concentration of launch-window buying. The exit-first reading: if one
           wallet took everything that left the pool, an exit depends on that
           wallet not selling first. */}
@@ -282,6 +295,10 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
             </span>
           </div>
           <div className="pb tight">
+            <p className="discover-scope">
+              Every card is built around a B20 token found through Miorail’s pinned B20 factory feed on Base.
+              This is B20 route intelligence, not a general token scanner.
+            </p>
             <nav className="crumb" aria-label="Filter opportunities">
               {filters.map((filter) => (
                 <button
@@ -303,6 +320,31 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
                 Fresh only
               </button>
             </nav>
+            <details className="discover-guide">
+              <summary>How to read a B20 card</summary>
+              <dl>
+                <div>
+                  <dt>Round trip</dt>
+                  <dd>Immediate entry and exit cost at the fixed reference size.</dd>
+                </div>
+                <div>
+                  <dt>Exit capacity</dt>
+                  <dd>Largest exit size actually tested within the 3% reference.</dd>
+                </div>
+                <div>
+                  <dt>Route liquidity</dt>
+                  <dd>Which side of the allowlisted route search could be priced.</dd>
+                </div>
+                <div>
+                  <dt>Bought at launch</dt>
+                  <dd>Buyer concentration after the complete 10,000-block launch window.</dd>
+                </div>
+              </dl>
+              <p>
+                A card measures exit conditions. It does not predict returns, recommend a token, or produce a
+                combined rating. “Past freshness window” means historical evidence, not a current quote.
+              </p>
+            </details>
           </div>
           <div className="pb">
             {model.loading ? (

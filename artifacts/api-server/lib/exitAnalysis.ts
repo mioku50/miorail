@@ -1,9 +1,12 @@
 import {
   AERODROME_USDC_V1,
+  b20QuoteExitSizesV4V1,
+  b20RoundTripV4V1,
   candidateRoutesV1,
   readAmountsOutManyV1,
   type AerodromeReaderV1,
   type AerodromeRouteLegV1,
+  type B20PoolV1,
 } from '@mioagent/swap-adapters';
 import {
   exitCapacityV1,
@@ -77,7 +80,7 @@ export interface ExitAnalysisInputV1 {
  */
 export type ExitOutcomeV1 =
   | OpportunityVerdictV1
-  | { status: 'unmeasured'; reason: 'endpoint_degraded' };
+  | { status: 'unmeasured'; reason: 'endpoint_degraded' | 'venue_not_indexed' | 'quote_asset_mismatch' };
 
 export interface ExitAnalysisV1 {
   verdict: ExitOutcomeV1;
@@ -119,6 +122,14 @@ export interface ExitAnalysisV1 {
   /** The priced ladder samples behind `exitCapacity`, so a caller can store a
    * deterministic hash over what was measured. */
   probes: { sizeAtomic: string; slippageBps: number | null }[];
+  /** Venue that produced the economic measurement. Null means none priced. */
+  provider: 'aerodrome' | 'uniswap_v4' | null;
+  /** Human-auditable route identity. Never calldata. */
+  sourceKey: string | null;
+  /** The spend and token amounts behind the buy quote shown in the UI. */
+  quoteAsset: string;
+  positionAtomicUsed: string;
+  entryOutputAtomic: string | null;
 }
 
 /** A readable, deterministic name for one route. Used as a stored source key,
@@ -239,6 +250,11 @@ export async function analyseExitV1(input: ExitAnalysisInputV1): Promise<ExitAna
       entryRoute,
       exitRoute,
       probes,
+      provider: null,
+      sourceKey: null,
+      quoteAsset,
+      positionAtomicUsed: input.profile.positionAtomic,
+      entryOutputAtomic: null,
       ...overrides,
     };
     return {
@@ -311,7 +327,14 @@ export async function analyseExitV1(input: ExitAnalysisInputV1): Promise<ExitAna
   degraded ||= exit.degraded;
   candidatesTotal += exit.total;
   candidatesAnswered += exit.answered;
-  if (!exit.best) return empty({ entryRouteFound: true });
+  if (!exit.best) {
+    return empty({
+      entryRouteFound: true,
+      provider: 'aerodrome',
+      sourceKey: entryRoute ? aerodromeRouteKeyV1(entryRoute) : null,
+      entryOutputAtomic: acquired.toString(),
+    });
+  }
   exitRoute = exit.best.route;
 
   const roundTrip = roundTripV1({
@@ -387,5 +410,172 @@ export async function analyseExitV1(input: ExitAnalysisInputV1): Promise<ExitAna
     entryRoute,
     exitRoute,
     probes,
+    provider: 'aerodrome',
+    sourceKey: entryRoute ? aerodromeRouteKeyV1(entryRoute) : null,
+    quoteAsset,
+    positionAtomicUsed: input.profile.positionAtomic,
+    entryOutputAtomic: acquired.toString(),
   };
+}
+
+// ---------------------------------------------------------------------------
+// The same exit question on the venue B20 tokens actually use.
+//
+// Discover already measures Uniswap v4 first. Keeping the interactive holder
+// check on Aerodrome alone made a real MIO pool render as `no_entry_route` — a
+// correct answer about the wrong venue. This path consumes a previously
+// resolved, pinned PoolKey; it performs quotes only and never builds calldata.
+// ---------------------------------------------------------------------------
+
+export interface V4ExitAnalysisInputV1 {
+  pool: B20PoolV1;
+  call: (request: { to: string; data: string }) => Promise<string>;
+  profile: OpportunityProfileV1;
+  controls: ExitControlsV1;
+}
+
+export async function analyseV4ExitV1(input: V4ExitAnalysisInputV1): Promise<ExitAnalysisV1> {
+  const position = BigInt(input.profile.positionAtomic);
+  const sourceKey = `uniswap-v4:${input.pool.poolId}`;
+  const emptyCapacity: ExitCapacityV1 = {
+    capacityAtomic: null,
+    firstFailingAtomic: null,
+    toleranceBps: input.profile.maxSlippageBps,
+    probeCount: 0,
+  };
+  const finish = (args: {
+    roundTrip: RoundTripV1 | null;
+    entryRouteFound: boolean;
+    exitRouteFound: boolean;
+    endpointDegraded: boolean;
+    exitCapacity?: ExitCapacityV1;
+    capacityInformative?: boolean;
+    referenceSizeAtomic?: string | null;
+    probes?: { sizeAtomic: string; slippageBps: number | null }[];
+    quotesUsed?: number;
+    entryOutputAtomic?: string | null;
+  }): ExitAnalysisV1 => {
+    const capacity = args.exitCapacity ?? emptyCapacity;
+    const verdict: ExitOutcomeV1 = args.endpointDegraded
+      ? { status: 'unmeasured', reason: 'endpoint_degraded' }
+      : opportunityVerdictV1({
+          profile: args.entryOutputAtomic
+            ? { ...input.profile, positionAtomic: args.entryOutputAtomic }
+            : input.profile,
+          controls: input.controls,
+          roundTrip: args.roundTrip,
+          entryRouteFound: args.entryRouteFound,
+          exitRouteFound: args.exitRouteFound,
+          exitCapacity: capacity,
+        });
+    return {
+      verdict,
+      roundTrip: args.roundTrip,
+      exitCapacity: capacity,
+      capacityInformative: args.capacityInformative ?? false,
+      referenceSizeAtomic: args.referenceSizeAtomic ?? null,
+      entryRouteFound: args.entryRouteFound,
+      exitRouteFound: args.exitRouteFound,
+      quotesUsed: args.quotesUsed ?? 0,
+      endpointDegraded: args.endpointDegraded,
+      candidatesTotal: 1,
+      candidatesAnswered: args.endpointDegraded ? 0 : 1,
+      entryRoute: null,
+      exitRoute: null,
+      probes: args.probes ?? [],
+      provider: args.entryOutputAtomic ? 'uniswap_v4' : null,
+      sourceKey: args.entryOutputAtomic ? sourceKey : null,
+      quoteAsset: input.pool.quoteAsset,
+      positionAtomicUsed: input.profile.positionAtomic,
+      entryOutputAtomic: args.entryOutputAtomic ?? null,
+    };
+  };
+
+  // Control refusals are prior to price and should not spend even one quote.
+  const controlsVerdict = opportunityVerdictV1({
+    profile: input.profile,
+    controls: input.controls,
+    roundTrip: null,
+    entryRouteFound: true,
+    exitRouteFound: true,
+    exitCapacity: emptyCapacity,
+  });
+  if (
+    controlsVerdict.status === 'rejected' &&
+    ['not_b20', 'controls_unreadable', 'transfers_paused', 'transfer_policy_may_block'].includes(
+      controlsVerdict.reason,
+    )
+  ) {
+    const result = finish({
+      roundTrip: null,
+      entryRouteFound: true,
+      exitRouteFound: true,
+      endpointDegraded: false,
+    });
+    return { ...result, verdict: controlsVerdict };
+  }
+
+  const trip = await b20RoundTripV4V1({
+    pool: input.pool,
+    positionAtomic: position.toString(),
+    call: input.call,
+  });
+  if (!trip.entryRouteFound || !trip.entryOutputAtomic) {
+    return finish({
+      roundTrip: null,
+      entryRouteFound: false,
+      exitRouteFound: false,
+      endpointDegraded: trip.endpointDegraded,
+      quotesUsed: trip.quotesUsed,
+    });
+  }
+  if (!trip.exitRouteFound || !trip.exitReturnAtomic) {
+    return finish({
+      roundTrip: null,
+      entryRouteFound: true,
+      exitRouteFound: false,
+      endpointDegraded: trip.endpointDegraded,
+      quotesUsed: trip.quotesUsed,
+      entryOutputAtomic: trip.entryOutputAtomic,
+    });
+  }
+
+  const roundTrip = roundTripV1({
+    entry: {
+      provider: 'uniswap_v4',
+      inputAtomic: position.toString(),
+      outputAtomic: trip.entryOutputAtomic,
+    },
+    exit: {
+      provider: 'uniswap_v4',
+      inputAtomic: trip.entryOutputAtomic,
+      outputAtomic: trip.exitReturnAtomic,
+    },
+    measurement: 'quoted_pre_entry',
+  });
+  const sizes = exitProbeLadderV1(trip.entryOutputAtomic, EXIT_PROBE_RUNGS_V1);
+  const ladderQuotes = await b20QuoteExitSizesV4V1({
+    pool: input.pool,
+    sizes,
+    known: { sizeAtomic: trip.entryOutputAtomic, outputAtomic: trip.exitReturnAtomic },
+    call: input.call,
+  });
+  const ladder = priceImpactLadderV1(ladderQuotes.quotes);
+  const capacity = exitCapacityV1(ladder.probes, input.profile.maxSlippageBps);
+  return finish({
+    roundTrip,
+    entryRouteFound: true,
+    exitRouteFound: true,
+    endpointDegraded: trip.endpointDegraded || ladderQuotes.endpointDegraded,
+    exitCapacity: capacity,
+    capacityInformative: exitLadderIsInformativeV1({
+      referenceSizeAtomic: ladder.referenceSizeAtomic,
+      positionAtomic: trip.entryOutputAtomic,
+      pricedProbeCount: ladder.probes.filter((probe) => probe.slippageBps !== null).length,
+    }),
+    referenceSizeAtomic: ladder.referenceSizeAtomic,
+    probes: ladder.probes,
+    quotesUsed: trip.quotesUsed + ladderQuotes.quotesUsed,
+    entryOutputAtomic: trip.entryOutputAtomic,
+  });
 }

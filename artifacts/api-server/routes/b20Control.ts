@@ -67,8 +67,10 @@ import {
   type B20WatchlistEntryV1,
   type B20WatchlistRepositoryV1,
   createDatabaseB20ObservationRepository,
+  createDatabaseB20LaunchPoolRepository,
   decodeFeedCursorV1,
   type B20ObservationRepositoryV1,
+  type B20LaunchPoolRepositoryV1,
 } from '@mioagent/route-storage';
 import { client } from '@mioagent/db';
 import { stableHashV1 } from '@mioagent/route-domain';
@@ -76,6 +78,7 @@ import {
   OPPORTUNITY_QUOTE_ASSET_V1,
   type B20PipelineStatusV1,
   b20OpportunityCardV1,
+  b20LaunchBuyerWindowV1,
   b20PipelineCopyV1,
   exitCapacityLeadersV1,
   measuredMoversV1,
@@ -85,9 +88,15 @@ import {
   b20PipelineStatusV1,
   profileRefusalV1,
 } from '@mioagent/opportunity-rail';
-import { createAerodromeReaderV1 } from '@mioagent/swap-adapters';
+import {
+  AERODROME_USDC_V1,
+  B20_BUYER_WINDOW_BLOCKS_V1,
+  V4QuoteUnavailableError,
+  createAerodromeReaderV1,
+  type B20PoolV1,
+} from '@mioagent/swap-adapters';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
-import { analyseExitV1 } from '../lib/exitAnalysis.js';
+import { analyseExitV1, analyseV4ExitV1 } from '../lib/exitAnalysis.js';
 import { runOpportunityV1 } from '../lib/opportunityRunner.js';
 import { buildClearanceV1 } from '../lib/opportunityClearance.js';
 import { prepareB20EntryV1 } from '../lib/b20EntryRunner.js';
@@ -177,6 +186,7 @@ export const b20RouteRuntime = {
   entrySubmissions: (): B20EntrySubmissionRepositoryV1 =>
     createDatabaseB20EntrySubmissionRepository(client),
   observations: (): B20ObservationRepositoryV1 => createDatabaseB20ObservationRepository(client),
+  launchPools: (): B20LaunchPoolRepositoryV1 => createDatabaseB20LaunchPoolRepository(client),
   /** Checked separately again: a server without 0028/0029 can still inspect,
    * watch and certify — it simply has no Discover feed, and says so rather
    * than answering with an empty one. */
@@ -455,6 +465,13 @@ export async function readDiscoverFeedV1(input: {
         },
         observation: row.observation,
         launchBuyers: row.launchBuyers,
+        launchBuyerWindow: b20LaunchBuyerWindowV1({
+          launchBlock: row.launch.blockNumber,
+          observedHead: pipeline.facts.confirmedHead,
+          windowBlocks: B20_BUYER_WINDOW_BLOCKS_V1,
+          measured: row.launchBuyers !== null,
+          measuredToBlock: row.launchBuyers?.toBlock ?? null,
+        }),
         now,
       }),
     )
@@ -1946,6 +1963,29 @@ b20ControlRouter.delete('/b20/watchlist/:tokenAddress', async (req: Request, res
 // halves can be dated independently rather than implied to be simultaneous.
 // ---------------------------------------------------------------------------
 
+async function storedV4PoolV1(tokenAddress: string): Promise<{
+  indexed: boolean;
+  pool: B20PoolV1 | null;
+}> {
+  const row = await b20RouteRuntime.launchPools().readLaunchPool(tokenAddress);
+  if (!row) return { indexed: false, pool: null };
+  if (row.outcome !== 'resolved') return { indexed: true, pool: null };
+  return { indexed: true, pool: {
+    poolId: row.poolId,
+    key: {
+      currency0: row.currency0,
+      currency1: row.currency1,
+      fee: row.fee,
+      tickSpacing: row.tickSpacing,
+      hooks: row.hooks,
+    },
+    token: row.tokenAddress,
+    quoteAsset: row.quoteAsset,
+    tokenIsCurrency0: row.tokenIsCurrency0,
+    blockNumber: Number(row.poolBlockNumber),
+  } };
+}
+
 b20ControlRouter.post('/b20/exit-check', async (req: Request, res: Response) => {
   const guard = b20Guard(req, res);
   if (!guard) return;
@@ -1987,16 +2027,60 @@ b20ControlRouter.post('/b20/exit-check', async (req: Request, res: Response) => 
     }
 
     const controls = exitControlsFromSnapshotV1(snapshot);
-    const analysis = await analyseExitV1({
-      reader: b20RouteRuntime.aerodromeReader(),
-      tokenAddress: parsed.data.tokenAddress as `0x${string}`,
-      profile: {
-        positionAtomic: parsed.data.positionAtomic,
-        maxRoundTripBps: parsed.data.maxRoundTripBps,
-        maxSlippageBps: parsed.data.maxSlippageBps,
-      },
-      controls,
-    });
+    const profile = {
+      positionAtomic: parsed.data.positionAtomic,
+      maxRoundTripBps: parsed.data.maxRoundTripBps,
+      maxSlippageBps: parsed.data.maxSlippageBps,
+    };
+    const v4 = await storedV4PoolV1(parsed.data.tokenAddress);
+    const v4Pool = v4.pool;
+    let analysis;
+    if (v4Pool && v4Pool.quoteAsset === AERODROME_USDC_V1) {
+      const quoteReader = b20RouteRuntime.reader();
+      analysis = await analyseV4ExitV1({
+        pool: v4Pool,
+        profile,
+        controls,
+        call: async (request) => {
+          const result = await quoteReader.call({ ...request, blockTag: 'latest' });
+          if (result.ok) return result.value;
+          if (result.reason === 'reverted' || result.reason === 'empty_result') return '';
+          throw new V4QuoteUnavailableError();
+        },
+      });
+    } else {
+      analysis = await analyseExitV1({
+        reader: b20RouteRuntime.aerodromeReader(),
+        tokenAddress: parsed.data.tokenAddress as `0x${string}`,
+        profile,
+        controls,
+      });
+      // Aerodrome is only one searched venue. If no v4 PoolKey is indexed,
+      // its empty answer cannot become "no route" while the venue B20 tokens
+      // normally use was never asked.
+      if (!analysis.entryRouteFound && analysis.verdict.status === 'rejected' && !v4.indexed) {
+        analysis = {
+          ...analysis,
+          verdict: { status: 'unmeasured' as const, reason: 'venue_not_indexed' as const },
+          // Coverage is incomplete, but the endpoint did answer. Keeping this
+          // false prevents the UI from blaming the RPC for a missing PoolKey.
+          endpointDegraded: false,
+        };
+      } else if (
+        v4Pool &&
+        v4Pool.quoteAsset !== AERODROME_USDC_V1 &&
+        !analysis.entryRouteFound &&
+        analysis.verdict.status === 'rejected'
+      ) {
+        analysis = {
+          ...analysis,
+          verdict: { status: 'unmeasured' as const, reason: 'quote_asset_mismatch' as const },
+          // Both venues answered; they simply do not provide the same quote
+          // asset, and no ETH/USD conversion is inferred here.
+          endpointDegraded: false,
+        };
+      }
+    }
 
     // T68D — the quote path may reject and may never certify. A pass here is
     // PROVISIONAL: the exit was priced against the pool before the entry moved
@@ -2026,6 +2110,11 @@ b20ControlRouter.post('/b20/exit-check', async (req: Request, res: Response) => 
         referenceSizeAtomic: analysis.referenceSizeAtomic,
         endpointDegraded: analysis.endpointDegraded,
         controlsBlockNumber: snapshot.blockNumber,
+        entryInputAtomic: analysis.positionAtomicUsed,
+        entryOutputAtomic: analysis.entryOutputAtomic,
+        quoteAsset: analysis.quoteAsset,
+        provider: analysis.provider,
+        sourceKey: analysis.sourceKey,
         checkedAt: b20RouteRuntime.now().toISOString(),
       }),
     );

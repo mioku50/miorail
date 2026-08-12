@@ -11,6 +11,7 @@ import {
   B20_QUOTE_ALIGNMENT_NOTICE_V1,
   B20_TRANSFER_POLICY_NOTICE_V1,
   B20_WALLET_INDEPENDENT_REJECTIONS_V1,
+  b20LaunchBuyerWindowV1,
   b20OpportunityCardV1,
   b20PipelineCopyV1,
   b20PipelineStatusV1,
@@ -27,6 +28,31 @@ import {
 // ---------------------------------------------------------------------------
 
 const NOW = new Date('2026-08-04T12:00:00.000Z');
+
+test('launch-buyer window state distinguishes collecting from a closed miss', () => {
+  assert.deepEqual(
+    b20LaunchBuyerWindowV1({ launchBlock: '1000', observedHead: '10999', windowBlocks: 10_000, measured: false }),
+    { status: 'collecting', closesAtBlock: '11000' },
+  );
+  assert.deepEqual(
+    b20LaunchBuyerWindowV1({ launchBlock: '1000', observedHead: '11000', windowBlocks: 10_000, measured: false }),
+    { status: 'closed_unmeasured', closesAtBlock: '11000' },
+  );
+  assert.deepEqual(
+    b20LaunchBuyerWindowV1({ launchBlock: '1000', observedHead: null, windowBlocks: 10_000, measured: false }),
+    { status: 'unknown', closesAtBlock: '11000' },
+  );
+  assert.deepEqual(
+    b20LaunchBuyerWindowV1({
+      launchBlock: '1000',
+      observedHead: '10999',
+      windowBlocks: 10_000,
+      measured: true,
+      measuredToBlock: '12000',
+    }),
+    { status: 'measured', closesAtBlock: '12000' },
+  );
+});
 
 const BASE_FACTS = {
   storageAvailable: true,

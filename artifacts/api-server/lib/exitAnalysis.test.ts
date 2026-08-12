@@ -3,9 +3,9 @@ import test, { describe } from 'node:test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import type { AerodromeReaderV1, AerodromeRouteLegV1 } from '@mioagent/swap-adapters';
+import type { AerodromeReaderV1, AerodromeRouteLegV1, B20PoolV1 } from '@mioagent/swap-adapters';
 import type { ExitControlsV1, OpportunityProfileV1 } from '@mioagent/opportunity-rail';
-import { analyseExitV1 } from './exitAnalysis.js';
+import { analyseExitV1, analyseV4ExitV1 } from './exitAnalysis.js';
 
 /** The harness runs this package's tests from the package directory; running
  * one file by hand happens from the repo root. Resolved for both rather than
@@ -21,6 +21,25 @@ const SOURCE_V1 = packageFileV1('lib/exitAnalysis.ts');
 const TOKEN = '0xb200000000000000000000578f3ae29d9e6e0101' as const;
 const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' as const;
 const FACTORY = '0x420dd381b31aef6683db6b902084cb0ffece40da' as const;
+const V4_POOL: B20PoolV1 = {
+  poolId: `0x${'11'.repeat(32)}`,
+  key: {
+    currency0: USDC,
+    currency1: TOKEN,
+    fee: 0,
+    tickSpacing: 200,
+    hooks: '0x985c14baa2a18316ffda0aefb3a632fadfca2acc',
+  },
+  token: TOKEN,
+  quoteAsset: USDC,
+  tokenIsCurrency0: false,
+  blockNumber: 48_661_648,
+};
+
+function v4ResultV1(amountOut: bigint): string {
+  const word = (value: bigint) => value.toString(16).padStart(64, '0');
+  return `0x${word(amountOut)}${word(100_000n)}`;
+}
 
 const OPEN_CONTROLS: ExitControlsV1 = {
   factoryConfirmed: true,
@@ -169,6 +188,31 @@ describe('controls come before price', () => {
 });
 
 describe('the round trip is measured, and labelled for what it is', () => {
+  test('the holder check measures the indexed Uniswap v4 venue before claiming no route', async () => {
+    const outputs = [
+      20_000_000_000_000_000_000_000n,
+      99_000_000n,
+      6_200_000n,
+      12_400_000n,
+      24_800_000n,
+      49_500_000n,
+    ];
+    let call = 0;
+    const analysis = await analyseV4ExitV1({
+      pool: V4_POOL,
+      profile: PROFILE,
+      controls: OPEN_CONTROLS,
+      call: async () => v4ResultV1(outputs[call++] ?? 1n),
+    });
+    assert.equal(analysis.provider, 'uniswap_v4');
+    assert.equal(analysis.sourceKey, `uniswap-v4:${V4_POOL.poolId}`);
+    assert.equal(analysis.entryOutputAtomic, outputs[0]!.toString());
+    assert.equal(analysis.positionAtomicUsed, PROFILE.positionAtomic);
+    assert.equal(analysis.entryRouteFound, true);
+    assert.equal(analysis.exitRouteFound, true);
+    assert.ok(analysis.roundTrip);
+  });
+
   test('a deep pool qualifies, and says the pass rests on an optimistic quote', async () => {
     const analysis = await analyseExitV1({
       reader: fakeRouter(),

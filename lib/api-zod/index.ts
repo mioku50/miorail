@@ -2935,6 +2935,8 @@ export const B20ExitCheckResponseV1Schema = z
         'insufficient_probe_balance',
         'simulation_undecodable',
         'controls_unread',
+        'venue_not_indexed',
+        'quote_asset_mismatch',
       ])
       .nullable()
       .optional(),
@@ -2981,6 +2983,13 @@ export const B20ExitCheckResponseV1Schema = z
     /** The block the controls were read at, so the two halves of this answer
      * can be dated independently. */
     controlsBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    /** The exact buy quote behind the displayed unit price. Additive and
+     * nullable so older clients keep parsing older deployments. */
+    entryInputAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable().optional(),
+    entryOutputAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable().optional(),
+    quoteAsset: AddressV1Schema.nullable().optional(),
+    provider: z.enum(['aerodrome', 'uniswap_v4']).nullable().optional(),
+    sourceKey: z.string().min(1).max(200).nullable().optional(),
     checkedAt: z.string().min(1).max(60),
   })
   .strict();
@@ -3387,6 +3396,16 @@ const B20CardObservationV1Schema = z
         topThreeShareBps: z.number().int().min(0).max(10_000).nullable(),
       })
       .nullable(),
+    /** Explains a null launchBuyers value. Optional for wire compatibility
+     * with a server deployed before the launch-window status was projected. */
+    launchBuyerWindow: z
+      .object({
+        status: z.enum(['collecting', 'measured', 'closed_unmeasured', 'unknown']),
+        closesAtBlock: z.string().regex(/^\d+$/),
+      })
+      .strict()
+      .nullable()
+      .optional(),
     optimisticReturnAtomic: z.string().regex(/^\d+$/).nullable(),
     optimisticRoundTripBps: z.number().int().min(0).nullable(),
     routeCoverage: z.enum(['complete', 'partial']),
@@ -3412,6 +3431,16 @@ const B20CardObservationV1Schema = z
   })
   .strict()
   .superRefine((observation, ctx) => {
+    if (observation.launchBuyerWindow) {
+      const measured = observation.launchBuyers !== null;
+      if (measured !== (observation.launchBuyerWindow.status === 'measured')) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['launchBuyerWindow', 'status'],
+          message: 'launch buyer window status must agree with the aggregate',
+        });
+      }
+    }
     if (observation.state === 'provisional' && !observation.preEntryNotice) {
       // §6 — the number beside it is a bound, and the sentence saying so is not
       // optional.

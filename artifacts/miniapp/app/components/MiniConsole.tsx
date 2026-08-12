@@ -997,7 +997,14 @@ export function MiniConsole() {
   const holdings = useMemo(() => {
     const balances = new Map(heldTokens.map((token) => [token.address.toLowerCase(), token]));
     return (sweep.data?.tokens ?? [])
-      .filter((token) => token.outcome === "watched")
+      .filter((token) => {
+        if (token.outcome !== "watched" || token.balanceAtomic == null) return false;
+        try {
+          return BigInt(token.balanceAtomic) > BigInt(0);
+        } catch {
+          return false;
+        }
+      })
       .map((token) => {
         const balance = balances.get(token.tokenAddress.toLowerCase());
         const changes = token.watch?.status === "compared" ? token.watch.changes : [];
@@ -1010,6 +1017,7 @@ export function MiniConsole() {
           // there is no decimal figure to hand a goal. Null keeps the amount
           // out of a sentence rather than putting base units into one.
           balanceDecimal: null,
+          decimals: token.decimals ?? null,
           // A missing price stays null all the way to the card. A 0 here would
           // reach a user as "worthless".
           usdLabel: balance?.usdValue ? `$${balance.usdValue}` : null,
@@ -1020,6 +1028,13 @@ export function MiniConsole() {
         };
       });
   }, [sweep.data, heldTokens]);
+  const b20HoldingAddresses = useMemo(
+    () => new Set(holdings.map((holding) => holding.tokenAddress.toLowerCase())),
+    [holdings],
+  );
+  const otherTokenCount = heldTokens.filter(
+    (token) => !b20HoldingAddresses.has(token.address.toLowerCase()),
+  ).length;
 
   let content: ReactNode;
 
@@ -1709,7 +1724,7 @@ export function MiniConsole() {
               disabled={sweepTokens.length === 0 || sweep.isPending}
               onClick={() => sweep.mutate({ tokens: sweepTokens })}
             >
-              {sweep.isPending ? "Checking…" : "Check now"}
+              {sweep.isPending ? "Reading B20 controls…" : "Read B20 controls"}
             </button>
             {/* The sweep is explicit here for the same reason as on the web:
                 each run is up to 25 metered on-chain reads. */}
@@ -1718,7 +1733,7 @@ export function MiniConsole() {
         </div>
         <B20PortfolioPanel
           holdings={holdings}
-          otherTokenCount={Math.max(0, heldTokens.length - holdings.length)}
+          otherTokenCount={otherTokenCount}
           emptyReason={
             !address
               ? "Connect your wallet to see what the tokens you hold have done."
@@ -1726,13 +1741,29 @@ export function MiniConsole() {
                 ? "B20 control inspection is off on this server, so nothing was read."
                 : sweep.data
                   ? null
-                  : "Press Check now to read what your tokens' controls have done."
+                  : "Read B20 controls to see what your tokens permit right now."
           }
+          checked={Boolean(sweep.data)}
+          loading={sweep.isPending}
+          onCheckWallet={() => {
+            if (sweepTokens.length > 0) sweep.mutate({ tokens: sweepTokens });
+          }}
         />
         {/* The paid exit proof. No `onBuildEntryPlan`, so the card renders no
             control that could carry a provisional result towards a wallet. */}
         <B20ExitCard
           check={exitResult as never}
+          tokenLabel={
+            exitToken === null
+              ? null
+              : (holdings.find((holding) => holding.tokenAddress === exitToken)?.symbol
+                ?? `${exitToken.slice(0, 8)}…${exitToken.slice(-4)}`)
+          }
+          tokenDecimals={
+            exitToken === null
+              ? null
+              : (holdings.find((holding) => holding.tokenAddress === exitToken)?.decimals ?? null)
+          }
           profile={exitProfile}
           onProfileChange={setExitProfile}
           positionLabel={`${exitProfile.position} USDC`}

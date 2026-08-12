@@ -36,6 +36,8 @@ export interface B20HoldingV1 {
   /** The same balance as a plain decimal, or null when it could not be read.
    * Handed to the swap goal so the amount is the number the user just saw. */
   balanceDecimal: string | null;
+  /** Token decimals read from the token. Null means formatting must stay raw. */
+  decimals: number | null;
   /** Null when no price source covered this token — shown as a stated absence,
    * never as $0. */
   usdLabel: string | null;
@@ -94,6 +96,12 @@ export interface B20PortfolioPanelProps {
   otherTokenCount: number;
   /** Null when a sweep has run. Otherwise says why there is nothing yet. */
   emptyReason: string | null;
+  /** Whether the wallet/control sweep has completed at least once. */
+  checked: boolean;
+  loading: boolean;
+  /** The same explicit sweep as the lower control panel. Kept here because
+   * this is where the empty state tells the user to act. */
+  onCheckWallet: () => void;
   onOpenToken?: (tokenAddress: string, amountDecimal: string | null) => void;
   /** T68C — asks the exit question for one holding. */
   onCheckExit?: (tokenAddress: string) => void;
@@ -106,6 +114,9 @@ export function B20PortfolioPanel({
   holdings,
   otherTokenCount,
   emptyReason,
+  checked,
+  loading,
+  onCheckWallet,
   onOpenToken,
   onCheckExit,
   exitCheckedToken,
@@ -118,9 +129,16 @@ export function B20PortfolioPanel({
       <div className="ph">
         <h3>Your B20 tokens</h3>
         <span className="sub">
-          {holdings.length === 0
+          {!checked
+            ? 'not checked'
+            : holdings.length === 0
             ? 'none found'
             : `${holdings.length} held · ${otherTokenCount} other token${otherTokenCount === 1 ? '' : 's'} in this wallet`}
+        </span>
+        <span className="rt">
+          <button type="button" className="btn" onClick={onCheckWallet} disabled={loading}>
+            {loading ? 'Reading B20 controls…' : 'Read B20 controls'}
+          </button>
         </span>
       </div>
       <div className="pb tight">
@@ -147,10 +165,10 @@ export function B20PortfolioPanel({
                       <span className="cr-v mono">{holding.balanceLabel}</span>
                     </div>
                     <div>
-                      <span className="cr-k">Value</span>
+                      <span className="cr-k">Estimated value</span>
                       {/* A missing price is stated, never rendered as $0 — a
                           zero would read as "worthless", which is a claim. */}
-                      <span className="cr-v mono">{holding.usdLabel ?? 'no price source'}</span>
+                      <span className="cr-v mono">{holding.usdLabel ?? 'not priced · measure below'}</span>
                     </div>
                     <div>
                       <span className="cr-k">Changes</span>
@@ -183,7 +201,9 @@ export function B20PortfolioPanel({
                       className="btn sec"
                       onClick={() => onCheckExit(holding.tokenAddress)}
                     >
-                      {exitCheckedToken === holding.tokenAddress ? 'Re-check exit' : 'Can I get out?'}
+                      {exitCheckedToken === holding.tokenAddress
+                        ? 'Re-measure price & exit'
+                        : 'Measure price & exit'}
                     </button>
                   )}
                   {onOpenToken && (

@@ -505,6 +505,11 @@ function wireCard(overrides: Record<string, unknown> = {}) {
       detail: 'Both legs quoted.',
       referencePositionAtomic: '100000000',
       maxRoundTripBps: 300,
+      entryRouteFound: true,
+      exitRouteFound: true,
+      entrySourceKey: 'aerodrome|usdc>token:volatile',
+      exitSourceKey: 'aerodrome|token>usdc:volatile',
+      routeCoverage: 'complete' as const,
       optimisticRoundTripBps: 118,
       largestPassingSizeAtomic: '4000000000000000000000',
       firstFailingSizeAtomic: '8000000000000000000000',
@@ -593,6 +598,31 @@ describe('a card never turns a missing measurement into a number', () => {
     assert.ok(!/0\.00%/.test(markup), 'an unmeasured token rendered a zero cost');
   });
 
+  test('Discover explains each measured dimension without claiming a score', () => {
+    const markup = renderToStaticMarkup(
+      <OpportunitiesScreen
+        pipelineNotice={null}
+        pipelineState="healthy"
+        feedRenderable
+        cards={[opportunityCardViewV1(wireCard())]}
+        filter="all"
+        freshOnly={false}
+        loading={false}
+        onFilterChange={() => undefined}
+        onFreshOnlyChange={() => undefined}
+        onOpenToken={() => undefined}
+      />,
+    );
+    assert.match(markup, /How to read a B20 card/);
+    assert.match(markup, /Every card is built around a B20 token/);
+    assert.match(markup, /not a general token scanner/);
+    for (const label of ['Round trip', 'Exit capacity', 'Route liquidity', 'Bought at launch']) {
+      assert.match(markup, new RegExp(label));
+    }
+    assert.match(markup, /does not predict returns/);
+    assert.match(markup, /does not.*combined rating/);
+  });
+
   test('capacity is a bound, never a point between two probes', () => {
     const view = opportunityCardViewV1(wireCard());
     assert.equal(view.capacityLabel, 'at least 4000 DINo1 · fails by 8000 DINo1');
@@ -677,6 +707,39 @@ describe('a card never turns a missing measurement into a number', () => {
     );
     assert.match(view.buyersLabel ?? '', /23 wallets/);
     assert.match(view.buyersLabel ?? '', /24\.26%/);
+  });
+
+  test('an open launch-buyer window is visible without inventing a partial count', () => {
+    const view = opportunityCardViewV1(
+      wireCard({
+        observation: {
+          ...wireCard().observation,
+          launchBuyers: null,
+          launchBuyerWindow: { status: 'collecting', closesAtBlock: '49541000' },
+        },
+      }),
+    );
+    assert.equal(view.buyersLabel, 'Collecting');
+    assert.match(view.buyersNote ?? '', /block 49541000/);
+    assert.ok(!/\b0\b/.test(view.buyersLabel ?? ''), 'an open buyer window rendered a zero count');
+  });
+
+  test('a one-sided route explains why cost and capacity are not measured', () => {
+    const view = opportunityCardViewV1(
+      wireCard({
+        observation: {
+          ...wireCard().observation,
+          entryRouteFound: true,
+          exitRouteFound: false,
+          exitSourceKey: null,
+          optimisticRoundTripBps: null,
+          largestPassingSizeAtomic: null,
+        },
+      }),
+    );
+    assert.equal(view.routeLabel, 'Entry found · exit missing');
+    assert.match(view.routeNote ?? '', /Aerodrome/);
+    assert.match(view.routeNote ?? '', /stay unmeasured/);
   });
 
   test('no card ever says safe, unsafe or scored', () => {

@@ -11,6 +11,7 @@ import {
   entryPlanAvailableV1,
   exitHeadlineV1,
   percentToBpsV1,
+  unitPriceFromBuyQuoteV1,
   usdcToAtomicV1,
 } from '../src/console/B20ExitCard';
 import {
@@ -135,8 +136,20 @@ describe('the B20 portfolio card', () => {
     // "$0.00" reaches a user as "worthless", which is a claim about the token.
     const { controlLinesV1 } = await import('../src/console/B20PortfolioPanel');
     const source = readFileSync(path.join(here, '../src/console/B20PortfolioPanel.tsx'), 'utf8');
-    assert.ok(source.includes("usdLabel ?? 'no price source'"));
+    assert.ok(source.includes("usdLabel ?? 'not priced · measure below'"));
     assert.equal(typeof controlLinesV1, 'function');
+  });
+
+  test('a buy quote becomes a unit price without floating point', () => {
+    assert.equal(
+      unitPriceFromBuyQuoteV1({
+        inputAtomic: '100000000',
+        outputAtomic: '20000000000000000000000',
+        tokenDecimals: 18,
+      }),
+      '$0.005',
+    );
+    assert.equal(unitPriceFromBuyQuoteV1({ inputAtomic: null, outputAtomic: '1', tokenDecimals: 18 }), null);
   });
 
   test('an unread token shows no control lines rather than clean ones', async () => {
@@ -341,7 +354,7 @@ describe('a watched token says when Miorail last looked', () => {
         lastSweptAt: '2026-08-02T09:30:00.000Z',
         lastOutcome: 'read',
       }),
-      'read 2026-08-02 09:30',
+      'read 2026-08-02 09:30 UTC',
     );
   });
 });

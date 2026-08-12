@@ -264,15 +264,33 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
 
     for (const launch of await this.canonicalLaunches()) {
       if (now - Date.parse(launch.detectedAt) > input.maxLaunchAgeMs) continue;
-      const latest = this.latestFor(launch.id, versions);
+      // Market history is append-only evidence. A later attempt that learned
+      // no market profile (for example controls/RPC degraded) must not erase
+      // the last quote and measured capacity from the read-only rails.
+      const marketObservations = [...this.observations.values()]
+        .filter(
+          (entry) =>
+            entry.launchId === launch.id &&
+            versions.includes(entry.measurementVersion) &&
+            (entry.state === 'provisional' ||
+              (entry.state === 'rejected' && entry.reasonCode === 'round_trip_above_tolerance')),
+        )
+        .sort((left, right) => {
+          const byTime = Date.parse(right.measuredAt) - Date.parse(left.measuredAt);
+          if (byTime !== 0) return byTime;
+          const leftBlock = BigInt(left.observationBlockNumber);
+          const rightBlock = BigInt(right.observationBlockNumber);
+          if (leftBlock !== rightBlock) return leftBlock > rightBlock ? -1 : 1;
+          return right.id.localeCompare(left.id);
+        });
+      const latest = marketObservations[0] ?? null;
       if (!latest) continue;
 
       const latestAt = Date.parse(latest.measuredAt);
       const target = latestAt - input.baselineAgeMs;
-      const candidates = [...this.observations.values()]
+      const candidates = marketObservations
         .filter(
           (entry) =>
-            entry.launchId === launch.id &&
             entry.id !== latest.id &&
             entry.measurementVersion === latest.measurementVersion &&
             Math.abs(Date.parse(entry.measuredAt) - target) <= input.baselineToleranceMs,

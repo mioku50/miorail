@@ -461,6 +461,16 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 /* Card rows — the mobile form of every comparison table. */
 .mio-console .cardrows { display: grid; gap: 10px; }
 .mio-console .cardrow { border-radius: var(--r); padding: 12px; background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); }
+.mio-console .discover-scope { margin: 0 0 10px; color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+.mio-console .discover-guide { margin-top: 10px; border-radius: var(--r); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); }
+.mio-console .discover-guide summary { cursor: pointer; padding: 10px 12px; color: var(--muted); font-size: 12px; font-weight: 650; }
+.mio-console .discover-guide[open] summary { color: var(--ink); border-bottom: 1px solid var(--line); }
+.mio-console .discover-guide dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; margin: 0; padding: 4px 12px; }
+.mio-console .discover-guide dl > div { padding: 8px 10px 8px 0; }
+.mio-console .discover-guide dt { color: var(--ink); font-size: 11.5px; font-weight: 650; }
+.mio-console .discover-guide dd { margin: 3px 0 0; color: var(--faint); font-size: 11px; line-height: 1.45; }
+.mio-console .discover-guide p { margin: 0; padding: 8px 12px 11px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.5; }
+.mio-console.mini .discover-guide dl { grid-template-columns: minmax(0, 1fr); }
 .mio-console .cardrow.off { opacity: .72; }
 .mio-console .cardrow.off .cr-name { color: var(--muted); }
 .mio-console .cr-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }

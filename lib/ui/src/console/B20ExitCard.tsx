@@ -43,7 +43,9 @@ export type ExitUnmeasuredReasonV1 =
   | 'simulation_unavailable'
   | 'insufficient_probe_balance'
   | 'simulation_undecodable'
-  | 'controls_unread';
+  | 'controls_unread'
+  | 'venue_not_indexed'
+  | 'quote_asset_mismatch';
 
 /** The profile the user chose. Editable, and stated beside every number it
  * produced: a card that answered for an unstated size would be answering a
@@ -115,11 +117,19 @@ export interface ExitCheckLikeV1 {
   simulatedRoundTripBps?: number | null;
   simulationBlockNumber?: string | null;
   simulatedReturnedAtomic?: string | null;
+  entryInputAtomic?: string | null;
+  entryOutputAtomic?: string | null;
+  quoteAsset?: string | null;
+  provider?: 'aerodrome' | 'uniswap_v4' | null;
+  sourceKey?: string | null;
 }
 
 export interface B20ExitCardProps {
   /** Null before anything has been asked. */
   check: ExitCheckLikeV1 | null;
+  /** The selected holding. Null means there is no honest token to quote. */
+  tokenLabel: string | null;
+  tokenDecimals: number | null;
   /** The profile as the user has it typed. */
   profile: ExitProfileV1;
   onProfileChange: (profile: ExitProfileV1) => void;
@@ -183,7 +193,34 @@ export const EXIT_UNMEASURED_COPY_V1: Record<ExitUnmeasuredReasonV1, string> = {
   simulation_undecodable:
     'The simulation ran but its asset movements could not be decoded, so the round trip could not be proven.',
   controls_unread: 'This token’s controls have not been read yet, and nothing clears without them.',
+  venue_not_indexed:
+    'The B20 token was read, but its Uniswap v4 pool has not been indexed yet. Aerodrome alone is not enough evidence to say there is no route.',
+  quote_asset_mismatch:
+    'This B20 pool is quoted in ETH, while the current profile is in USDC. Miorail did not invent an ETH/USD conversion, so this position remains unmeasured.',
 };
+
+/** Quote-derived USDC per token, with no float and no invented precision. */
+export function unitPriceFromBuyQuoteV1(input: {
+  inputAtomic: string | null | undefined;
+  outputAtomic: string | null | undefined;
+  tokenDecimals: number | null;
+}): string | null {
+  if (input.inputAtomic == null || input.outputAtomic == null || input.tokenDecimals == null) return null;
+  try {
+    const spent = BigInt(input.inputAtomic);
+    const received = BigInt(input.outputAtomic);
+    if (spent <= BigInt(0) || received <= BigInt(0) || input.tokenDecimals < 0 || input.tokenDecimals > 36) return null;
+    const precision = BigInt(12);
+    const scale = BigInt(10) ** precision;
+    const scaled = (spent * (BigInt(10) ** BigInt(input.tokenDecimals)) * scale) / (BigInt(1_000_000) * received);
+    if (scaled === BigInt(0)) return '<$0.000000000001';
+    const whole = scaled / scale;
+    const fraction = (scaled % scale).toString().padStart(Number(precision), '0').replace(/0+$/, '');
+    return `$${whole.toString()}${fraction ? `.${fraction}` : ''}`;
+  } catch {
+    return null;
+  }
+}
 
 export const EXIT_REJECTION_COPY_V1: Record<ExitRejectionReasonV1, string> = {
   not_b20: 'The B20 factory does not recognise this address, so none of the control checks apply to it.',
@@ -287,6 +324,8 @@ export function simulateLabelV1(priceUsdc: string | null | undefined, busy: bool
 
 export function B20ExitCard({
   check,
+  tokenLabel,
+  tokenDecimals,
   profile,
   onProfileChange,
   positionLabel,
@@ -308,23 +347,33 @@ export function B20ExitCard({
     handlerWired: Boolean(onBuildEntryPlan),
   });
   const expired = clearanceExpiredV1({ check, now: at });
+  const unitPrice = unitPriceFromBuyQuoteV1({
+    inputAtomic: check?.entryInputAtomic,
+    outputAtomic: check?.entryOutputAtomic,
+    tokenDecimals,
+  });
   return (
     // The anchor an exit check scrolls to: the button that starts it sits on a
     // holding card above, and the answer lands here.
     <div className="panel" id={B20_EXIT_ANCHOR_V1} tabIndex={-1}>
       <div className="ph">
-        <h3>Can I get back out?</h3>
+        <h3>{tokenLabel ? `Price & exit · ${tokenLabel}` : 'Price & exit'}</h3>
         <span className="sub">{check === null ? 'not checked' : check.status}</span>
         <span className="rt">
-          <button type="button" className="btn" onClick={onCheck} disabled={loading || simulating}>
-            {loading ? 'Quoting the router…' : 'Check exit'}
+          <button
+            type="button"
+            className="btn"
+            onClick={onCheck}
+            disabled={tokenLabel === null || loading || simulating}
+          >
+            {loading ? 'Quoting supported venues…' : tokenLabel === null ? 'Select a B20 token above' : 'Re-measure'}
           </button>
         </span>
       </div>
       <div className="pb">
         <p className="note">
-          Buying is easy to check and easy to do. This asks the other question: at your size, does a
-          route out exist, and what does the round trip cost.
+          Measures a buy quote, the route back out, round-trip cost and exit depth for the selected
+          B20 token. Nothing is executed and no transaction is prepared.
         </p>
 
         {/* T68D — the profile is the user's. Every number below is an answer to
@@ -371,6 +420,35 @@ export function B20ExitCard({
             <p className={check.status === 'qualified' ? 'nm' : 'nm warn'}>
               {exitHeadlineV1(check, { positionLabel, slippagePercentLabel })}
             </p>
+
+            {(check.provider || check.entryOutputAtomic) && (
+              <div>
+                <div className="kv">
+                  <span className="k">Venue measured</span>
+                  <span className="v">
+                    {check.provider === 'uniswap_v4'
+                      ? 'Uniswap v4'
+                      : check.provider === 'aerodrome'
+                        ? 'Aerodrome'
+                        : 'not measured'}
+                  </span>
+                </div>
+                {check.entryOutputAtomic && (
+                  <div className="kv">
+                    <span className="k">Buy quote</span>
+                    <span className="v mono">
+                      {positionLabel} → {formatTokenAmount(check.entryOutputAtomic)} {tokenLabel ?? 'tokens'}
+                    </span>
+                  </div>
+                )}
+                {unitPrice && (
+                  <div className="kv">
+                    <span className="k">Approx. buy price</span>
+                    <span className="v mono">{unitPrice} per {tokenLabel ?? 'token'}</span>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="ctarow">
               {check.status === 'provisional' && (

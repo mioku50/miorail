@@ -9,6 +9,8 @@ import {
   InMemoryB20ClearanceRepositoryV1,
   InMemoryB20EntryPlanRepositoryV1,
   InMemoryB20EntrySubmissionRepositoryV1,
+  createMemoryB20LaunchPoolRepository,
+  type B20LaunchPoolRepositoryV1,
 } from '@mioagent/route-storage';
 import { b20ControlRouter, b20RouteRuntime } from './b20Control.js';
 
@@ -55,6 +57,7 @@ let watchlist: InMemoryB20WatchlistRepositoryV1;
 let clearances: InMemoryB20ClearanceRepositoryV1;
 let entryPlans: InMemoryB20EntryPlanRepositoryV1;
 let entrySubmissions: InMemoryB20EntrySubmissionRepositoryV1;
+let launchPools: B20LaunchPoolRepositoryV1;
 let isB20Value: boolean;
 let blockNumber: string;
 
@@ -177,7 +180,7 @@ const preparedRun = (calls = 2, overrides: Record<string, unknown> = {}) =>
   })) as never;
 
 
-beforeEach(() => {
+beforeEach(async () => {
   repository = new InMemoryB20StorageRepositoryV1(() => NOW);
   isB20Value = true;
   blockNumber = '49059662';
@@ -199,6 +202,24 @@ beforeEach(() => {
   b20RouteRuntime.entryPlanAvailable = async () => true;
   entrySubmissions = new InMemoryB20EntrySubmissionRepositoryV1();
   b20RouteRuntime.entrySubmissions = () => entrySubmissions;
+  launchPools = createMemoryB20LaunchPoolRepository();
+  await launchPools.upsertLaunchPool({
+    tokenAddress: TOKEN,
+    searchFromBlock: '49000000',
+    searchToBlock: '49000009',
+    resolvedAt: NOW.toISOString(),
+    outcome: 'absent',
+    poolId: null,
+    currency0: null,
+    currency1: null,
+    fee: null,
+    tickSpacing: null,
+    hooks: null,
+    quoteAsset: null,
+    tokenIsCurrency0: null,
+    poolBlockNumber: null,
+  });
+  b20RouteRuntime.launchPools = () => launchPools;
   b20RouteRuntime.executionCapabilities = async () => ({
     submissionRouteWired: true,
     walletIntegrationWired: true,
@@ -540,6 +561,26 @@ describe('the exit check', () => {
     // The two halves are dated independently rather than implied simultaneous.
     assert.equal(response.body.controlsBlockNumber, blockNumber);
     assert.equal(response.body.endpointDegraded, false);
+  });
+
+  test('an unindexed v4 venue is unmeasured, not a false Aerodrome no-route verdict', async () => {
+    await inspect({ chainId: 8453, tokenAddress: TOKEN });
+    b20RouteRuntime.launchPools = () => createMemoryB20LaunchPoolRepository();
+    b20RouteRuntime.aerodromeReader = () => ({
+      async readDefaultFactory() {
+        return { ok: true, value: '0x420dd381b31aef6683db6b902084cb0ffece40da' as const };
+      },
+      async readAmountsOut() {
+        return { ok: false, reason: 'no_route' };
+      },
+      async readBlockNumber() { return blockNumber; },
+      async readAllowance() { return { ok: true, value: 0n }; },
+    });
+    const response = await check({ ...PROFILE, tokenAddress: TOKEN });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.status, 'unmeasured');
+    assert.equal(response.body.unmeasuredReason, 'venue_not_indexed');
+    assert.equal(response.body.reason, null);
   });
 
   test('nothing in the response prepares, approves or signs anything', async () => {

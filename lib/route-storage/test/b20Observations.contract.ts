@@ -651,7 +651,7 @@ export function describeB20ObservationRepositoryV1(
   // The in-memory store must not be kinder than Postgres: same baseline
   // choice, same tolerance, same null when nothing compatible exists.
   // -------------------------------------------------------------------------
-  describe(`${name}: a mover pair is a latest observation and its nearest baseline`, () => {
+  describe(`${name}: a mover pair is the latest comparable market observation and its nearest baseline`, () => {
     const DAY_MS = 24 * 60 * 60 * 1000;
     const pairsOf = (repository: B20ObservationRepositoryV1, now: string, toleranceMs = 4 * 60 * 60 * 1000) =>
       repository.listMoverPairs({
@@ -721,6 +721,34 @@ export function describeB20ObservationRepositoryV1(
       // A zero-length interval would render as a 0% change with full confidence.
       const pairs = await pairsOf(repository, '2026-08-05T12:10:00.000Z', DAY_MS);
       assert.notEqual(pairs[0]!.baseline?.id, pairs[0]!.latest.id);
+    });
+
+    test('a degraded refresh does not erase the last comparable profile or replace its baseline', async () => {
+      const { repository } = await seeded();
+      const comparableThen = '2026-08-04T09:00:00.000Z';
+      const degradedThen = '2026-08-04T09:30:00.000Z';
+      const comparableNow = '2026-08-05T09:05:00.000Z';
+      const degradedNow = '2026-08-05T09:35:00.000Z';
+      for (const [block, measuredAt, degraded] of [
+        ['49531000', comparableThen, false],
+        ['49531001', degradedThen, true],
+        ['49574000', comparableNow, false],
+        ['49574001', degradedNow, true],
+      ] as const) {
+        await repository.insertObservation(
+          observationFixtureV1({
+            observationBlockNumber: block,
+            measuredAt,
+            staleAfter: new Date(Date.parse(measuredAt) + 30 * 60 * 1000).toISOString(),
+            ...(degraded ? { state: 'unmeasured' as const, reasonCode: 'controls_incomplete' } : {}),
+          }),
+        );
+      }
+
+      const pairs = await pairsOf(repository, '2026-08-05T09:40:00.000Z');
+      assert.equal(pairs.length, 1);
+      assert.equal(pairs[0]!.latest.measuredAt, comparableNow);
+      assert.equal(pairs[0]!.baseline?.measuredAt, comparableThen);
     });
 
     test('the launch identity travels with the pair', async () => {

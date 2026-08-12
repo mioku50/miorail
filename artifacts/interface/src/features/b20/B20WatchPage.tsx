@@ -166,6 +166,16 @@ function sweepBalanceAtomicV1(
   return match?.balanceAtomic ?? '0';
 }
 
+/** A watch-only address with a zero balance is still watched, but it is not a
+ * holding. Parsing failure is an absence of proof and therefore false. */
+export function positiveAtomicBalanceV1(value: string | null | undefined): boolean {
+  try {
+    return value !== null && value !== undefined && BigInt(value) > 0n;
+  } catch {
+    return false;
+  }
+}
+
 export function B20WatchPage() {
   const [, navigate] = useLocation();
   const { address } = useAccount();
@@ -244,7 +254,7 @@ export function B20WatchPage() {
   const holdings = useMemo(() => {
     const balances = new Map(held.map((token) => [token.address.toLowerCase(), token]));
     return (sweep.data?.tokens ?? [])
-      .filter((token) => token.outcome === 'watched')
+      .filter((token) => token.outcome === 'watched' && positiveAtomicBalanceV1(token.balanceAtomic))
       .map((token) => {
         const balance = balances.get(token.tokenAddress.toLowerCase());
         const changes = token.watch?.status === 'compared' ? token.watch.changes : [];
@@ -274,7 +284,13 @@ export function B20WatchPage() {
       });
   }, [sweep.data, held]);
 
-  const otherTokenCount = Math.max(0, held.length - holdings.length);
+  const b20HoldingAddresses = useMemo(
+    () => new Set(holdings.map((holding) => holding.tokenAddress.toLowerCase())),
+    [holdings],
+  );
+  const otherTokenCount = held.filter(
+    (token) => !b20HoldingAddresses.has(token.address.toLowerCase()),
+  ).length;
 
   // T68C — the exit check, for one token at a time. Each run is a dozen-odd
   // metered router calls, so it happens when a user asks and never on mount.
@@ -738,7 +754,7 @@ export function B20WatchPage() {
         checkedAt={sweep.data?.checkedAt ?? null}
         loading={sweep.isPending}
         unavailableReason={unavailableReason}
-        heldCount={held.length}
+        candidateCount={sweepTokens.length}
         onSweep={() => {
           if (sweepTokens.length === 0) return;
           sweepRequested.current = true;

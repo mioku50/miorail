@@ -318,6 +318,9 @@ export interface B20CardObservationV1 {
     topBuyerShareBps: number | null;
     topThreeShareBps: number | null;
   } | null;
+  /** Whether the fixed launch-buying window is still collecting, measured, or
+   * closed without a complete aggregate. */
+  launchBuyerWindow: B20LaunchBuyerWindowViewV1 | null;
   optimisticReturnAtomic: string | null;
   optimisticRoundTripBps: number | null;
   routeCoverage: 'complete' | 'partial';
@@ -398,6 +401,35 @@ export const B20_STALE_NOTICE_V1 = 'Market observation expired.';
 /** §8 — when the ladder disagreed with itself. */
 export const B20_UNSTABLE_CAPACITY_NOTICE_V1 = 'Capacity was not monotonic across tested sizes.';
 
+export interface B20LaunchBuyerWindowViewV1 {
+  status: 'collecting' | 'measured' | 'closed_unmeasured' | 'unknown';
+  closesAtBlock: string;
+}
+
+/**
+ * Explains a missing launch-buyer aggregate without ever turning an unfinished
+ * window into a partial count. `observedHead` is the confirmed ingestion head,
+ * not a client clock or a guessed block cadence.
+ */
+export function b20LaunchBuyerWindowV1(input: {
+  launchBlock: string;
+  observedHead: string | null;
+  windowBlocks: number;
+  measured: boolean;
+  /** The exact stored window wins over today's configured width. */
+  measuredToBlock?: string | null;
+}): B20LaunchBuyerWindowViewV1 {
+  const closesAtBlock = input.measured && input.measuredToBlock
+    ? input.measuredToBlock
+    : (BigInt(input.launchBlock) + BigInt(input.windowBlocks)).toString();
+  if (input.measured) return { status: 'measured', closesAtBlock };
+  if (input.observedHead === null) return { status: 'unknown', closesAtBlock };
+  return {
+    status: BigInt(input.observedHead) < BigInt(closesAtBlock) ? 'collecting' : 'closed_unmeasured',
+    closesAtBlock,
+  };
+}
+
 export interface B20CardInputV1 {
   /** Launch-window buying, when it has been measured. Optional and separate
    * from `observation` because it is context about a launch rather than part
@@ -407,6 +439,10 @@ export interface B20CardInputV1 {
     topBuyerShareBps: number | null;
     topThreeShareBps: number | null;
   } | null;
+  /** Why launchBuyers is null. The buyer count is final only after its whole
+   * launch window closes, so surfaces need this state instead of guessing
+   * that null means zero or hiding the dimension entirely. */
+  launchBuyerWindow?: B20LaunchBuyerWindowViewV1 | null;
   launch: {
     tokenAddress: string;
     name: string;
@@ -664,6 +700,7 @@ export function b20OpportunityCardV1(input: B20CardInputV1): B20OpportunityCardV
       // drift from what the bits actually say.
       poolHook: source.poolHookAddress ? b20HookAssessmentV1(source.poolHookAddress) : null,
       launchBuyers: input.launchBuyers ?? null,
+      launchBuyerWindow: input.launchBuyerWindow ?? null,
       optimisticReturnAtomic: source.optimisticExitReturnAtomic,
       optimisticRoundTripBps: source.optimisticRoundTripBps,
       routeCoverage: source.routeCoverage,

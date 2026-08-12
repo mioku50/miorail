@@ -344,9 +344,15 @@ export function createDatabaseB20ObservationRepository(
       const ageSeconds = Math.round(input.baselineAgeMs / 1000);
       const toleranceSeconds = Math.round(input.baselineToleranceMs / 1000);
 
-      // ONE query, two LATERALs. The baseline is chosen NEAREST the target age
-      // rather than "newest older than it": with dense measurement the latter
-      // silently shortens the interval, and the rail's label promises 24 hours.
+      // ONE query, two LATERALs. `o` is the newest observation that actually
+      // contains a comparable market profile, not merely the newest attempt.
+      // A later RPC/control failure is useful on the Discover card, but it did
+      // not erase the quote and capacity Miorail measured earlier. Treating it
+      // as the market row made both rails empty after every degraded refresh.
+      //
+      // The baseline is chosen NEAREST the target age rather than "newest
+      // older than it": with dense measurement the latter silently shortens
+      // the interval, and the rail's label promises 24 hours.
       //
       // `to_jsonb` rather than 35 aliased columns — the keys are the same
       // snake_case the row mapper already reads, so one mapper serves both.
@@ -380,6 +386,10 @@ export function createDatabaseB20ObservationRepository(
           FROM b20_opportunity_observations obs
           WHERE obs.launch_id = l.id
             AND obs.measurement_version = ANY(${versions}::text[])
+            AND (
+              obs.state = 'provisional'
+              OR (obs.state = 'rejected' AND obs.reason_code = 'round_trip_above_tolerance')
+            )
           ORDER BY obs.measured_at DESC, obs.observation_block_number DESC, obs.id DESC
           LIMIT 1
         ) o ON true
@@ -389,6 +399,10 @@ export function createDatabaseB20ObservationRepository(
           WHERE prev.launch_id = l.id
             AND prev.measurement_version = o.measurement_version
             AND prev.id <> o.id
+            AND (
+              prev.state = 'provisional'
+              OR (prev.state = 'rejected' AND prev.reason_code = 'round_trip_above_tolerance')
+            )
             AND prev.measured_at <= o.measured_at - make_interval(secs => ${ageSeconds - toleranceSeconds})
             AND prev.measured_at >= o.measured_at - make_interval(secs => ${ageSeconds + toleranceSeconds})
           ORDER BY abs(extract(epoch FROM (

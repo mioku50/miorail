@@ -347,8 +347,8 @@ export interface B20FeedRowV1 {
 }
 
 /**
- * T73 §3 — one launch, its latest observation, and the one closest to a target
- * age before it.
+ * T73 §3 — one launch, its latest comparable MARKET observation, and the one
+ * closest to a target age before it.
  *
  * A separate shape from the feed row because a mover needs TWO observations and
  * the feed deliberately returns one. Both are read in a single query: a
@@ -366,6 +366,10 @@ export interface B20MoverPairRowV1 {
     blockNumber: string;
     canonical: boolean;
   };
+  /** Latest observation that actually contains a comparable market profile:
+   * provisional, or the explicit measured round-trip miss. A newer failed
+   * refresh remains the latest Discover observation but cannot erase stored
+   * quote/capacity history from a read-only market rail. */
   latest: B20OpportunityObservationV1;
   /** Null when nothing compatible sits near the target age. A real answer:
    * Miorail has not been measuring this token long enough. */
