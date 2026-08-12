@@ -20,7 +20,8 @@ import { sanitizeStreamToolArgs, sanitizedToolErrorCode } from './streamReadRout
 //     one switch that suppresses every non-Base-MCP provider, including ones
 //     nobody has written yet. Miorail's routers are not reachable from here,
 //     so an answer from here cannot borrow their authority.
-//   * Read-only, always. `baseMcpOnly` implies it. No swap, no send, no
+//   * Read-only, always. This caller supplies `baseMcpOnly` with no explicit
+//     action-tool allowlist. No swap, no send, no
 //     approval URL, no clearance, no Entry Plan, nothing that reaches a
 //     wallet. Transactions still belong to the one path that has always
 //     owned them.
@@ -99,7 +100,7 @@ export const baseMcpConsoleRuntimeV1 = {
 const CONSOLE_PROMPT_V1 = [
   'You are the Miorail Base MCP console. Your entire tool inventory is Base MCP, reached with the user’s own Base Account.',
   'You have no access to Miorail route intelligence here: no Route Card, no measured exit capacity, no verified router, no B20 data. Never present a Base MCP answer as a Miorail route or as verified by Miorail.',
-  'Every tool here is read-only. If the user asks to swap, send, approve or sign, say that this console cannot, and that those live in the Routes flow.',
+  'Every tool available to this model is read-only. A deterministic router handles released direct actions before this model runs. Swap and yield belong in Routes AI; signing is not released. Never call or claim a write tool.',
   'Attribute what you report to the tool that returned it. If no tool returned it, say you do not know rather than answering from memory.',
   // Each request builds a fresh thread. Without this the model answered "I
   // have not used any tools in this conversation so far" and referred to "my
@@ -119,7 +120,7 @@ function truncate(value: string, max: number): string {
 /** Arguments as the trace shows them: private-key-shaped keys redacted, control
  * characters stripped, bounded. */
 export function baseMcpConsoleArgsV1(raw: string): string {
-  let parsed: unknown = {};
+  let parsed: unknown;
   try {
     parsed = raw ? JSON.parse(raw) : {};
   } catch {
@@ -211,6 +212,8 @@ export async function runBaseMcpConsoleV1(input: {
   sessionSecret: string;
   walletAddress?: string;
   message: string;
+  /** Reviewed provider constraint selected before the model runs. */
+  providerPrompt?: string;
   enabled: boolean;
 }): Promise<BaseMcpConsoleResultV1> {
   const startedAt = Date.now();
@@ -258,7 +261,9 @@ export async function runBaseMcpConsoleV1(input: {
     const agent = baseMcpConsoleRuntimeV1.createAgent({
       llmProvider: baseMcpConsoleRuntimeV1.createLlmProvider(),
       toolAggregator: tools,
-      systemPromptExtra: CONSOLE_PROMPT_V1,
+      systemPromptExtra: input.providerPrompt
+        ? [...CONSOLE_PROMPT_V1, input.providerPrompt]
+        : CONSOLE_PROMPT_V1,
       // Applied before the result is pushed into the conversation, so this
       // bounds the model's context as well as the trace. Truncation is
       // ANNOUNCED rather than silent: a model that cannot tell a short list

@@ -133,6 +133,10 @@ export type BaseMcpToolProbeResponse = z.infer<typeof schemas.BaseMcpToolProbeRe
 export type BaseMcpPluginCatalogueResponse = z.infer<typeof schemas.BaseMcpPluginCatalogueResponseSchema>;
 export type BaseMcpConsoleRequestV1 = z.infer<typeof schemas.BaseMcpConsoleRequestV1Schema>;
 export type BaseMcpConsoleResponseV1 = z.infer<typeof schemas.BaseMcpConsoleResponseV1Schema>;
+export type BaseMcpActionReceiptV1 = z.infer<typeof schemas.BaseMcpActionReceiptV1Schema>;
+export type BaseMcpActionEnvelopeV1 = z.infer<typeof schemas.BaseMcpActionEnvelopeV1Schema>;
+export type BaseMcpActionReconcileResponseV1 = z.infer<typeof schemas.BaseMcpActionReconcileResponseV1Schema>;
+export type BaseMcpActionReceiptListResponseV1 = z.infer<typeof schemas.BaseMcpActionReceiptListResponseV1Schema>;
 
 // Workflows
 export type Workflow = z.infer<typeof schemas.WorkflowSchema>;

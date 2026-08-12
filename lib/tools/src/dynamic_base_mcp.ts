@@ -230,7 +230,12 @@ export class DynamicBaseMcpToolProvider implements ToolProvider {
   constructor(
     private client: BaseMcpCallClient,
     tools: DynamicBaseMcpTool[],
-    private readonly options: { allowUserConfirmedSwap?: boolean; allowUserConfirmedSend?: boolean } = {},
+    private readonly options: {
+      allowUserConfirmedSwap?: boolean;
+      allowUserConfirmedSend?: boolean;
+      /** Exact, normalized action tool names released by a vertical adapter. */
+      allowedUserConfirmedTools?: readonly string[];
+    } = {},
   ) {
     this.toolMap = new Map(tools.map((tool) => [tool.name, tool]));
   }
@@ -266,8 +271,12 @@ export class DynamicBaseMcpToolProvider implements ToolProvider {
     }
 
     if (tool.capability === 'user_confirmed_transaction') {
+      const explicitlyAllowed = (this.options.allowedUserConfirmedTools || [])
+        .map(normalizeToolName)
+        .includes(normalizeToolName(tool.name));
       const allowedProtectedTool = (this.options.allowUserConfirmedSwap && isSwapTool(tool.name))
-        || (this.options.allowUserConfirmedSend && isSendTool(tool.name));
+        || (this.options.allowUserConfirmedSend && isSendTool(tool.name))
+        || explicitlyAllowed;
       if (allowedProtectedTool) {
         try {
           const result = await this.client.getClient().callTool({ name, arguments: args });

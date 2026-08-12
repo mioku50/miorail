@@ -16,10 +16,10 @@
 //   * A write tool does not execute anything itself. It returns an approval
 //     URL, and the user approves in Base Account — outside Miorail entirely.
 //
-// So this card LISTS and CLASSIFIES; it does not become a second execution
-// path. Miorail already has exactly one way to put calls in front of a wallet
-// (`useSubmitApprovedBlueprint`), and routing an approval URL through anything
-// that looked like it would mean two paths with one of them unaudited.
+// So this card only LISTS and CLASSIFIES. Execution belongs to separately
+// released typed adapters: route actions continue through the Route Engine;
+// non-routable direct actions create a durable Action Receipt and require an
+// explicit Base Account approval. Live discovery never grants execution.
 //
 // The capability is therefore the headline of every row, not a footnote:
 //
@@ -47,6 +47,9 @@ export interface BaseMcpToolRowV1 {
   description?: string;
   capability: BaseMcpCapabilityV1;
   scope: 'wallet' | 'protocol';
+  surface?: 'read' | 'action' | 'routable' | 'blocked';
+  surfaceEnabled?: boolean;
+  surfaceReason?: string;
 }
 
 export interface BaseMcpExtensionsModelV1 {
@@ -126,6 +129,8 @@ const CAPABILITY_TONE_V1: Readonly<Record<BaseMcpCapabilityV1, string>> = {
 export function BaseMcpExtensionsCard(model: BaseMcpExtensionsModelV1) {
   const groups = groupBaseMcpToolsV1(model.tools);
   const statusCopy = baseMcpStatusCopyV1(model.status, model.enabled);
+  const classifiedActions = model.tools.filter((tool) => tool.surface === 'action');
+  const releasedActions = classifiedActions.filter((tool) => tool.surfaceEnabled).length;
 
   return (
     <div className="rp">
@@ -182,12 +187,28 @@ export function BaseMcpExtensionsCard(model: BaseMcpExtensionsModelV1) {
         )}
 
         {model.enabled && groups.length > 0 && (
-          <p className="lnote">
-            Read live from Base MCP, so a tool Base adds appears here on the next read. Base does
-            not operate, endorse or audit the protocols these reach, and Miorail does not either —
-            it classifies what each tool is allowed to do here and refuses the rest. Transactions
-            are approved in your Base Account and are irreversible.
-          </p>
+          <>
+            <div className="qrow">
+              <span>READ</span>
+              <span className="v mono">{model.tools.filter((tool) => tool.surface === 'read').length}</span>
+            </div>
+            <div className="qrow">
+              <span>ACTION</span>
+              <span className="v mono">
+                {releasedActions}/{classifiedActions.length} released
+              </span>
+            </div>
+            <div className="qrow">
+              <span>ROUTABLE</span>
+              <span className="v mono">{model.tools.filter((tool) => tool.surface === 'routable').length}</span>
+            </div>
+            <p className="lnote">
+              Read live from Base MCP, so a tool Base adds appears here on the next read. Discovery
+              never grants execution: each ACTION needs a released typed adapter; ROUTABLE tools
+              hand off to Routes AI. Base does not operate, endorse or audit the protocols these
+              reach, and Miorail does not either. Transactions are irreversible.
+            </p>
+          </>
         )}
       </div>
     </div>

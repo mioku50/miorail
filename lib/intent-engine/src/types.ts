@@ -58,11 +58,11 @@ export interface ClarificationV1 {
  */
 /** The closed vocabulary a carried protocol constraint can name. Narrower than
  * `RouteIntentV1['protocolConstraint']` on purpose: `any` is the ABSENCE of a
- * constraint (stored as null), and only these two protocols can be constrained,
+ * constraint (stored as null), and only reviewed Routes-owned protocols can be constrained,
  * so a shape outside this type is one the engine never wrote. */
 export interface CarriedProtocolConstraintV2 {
   mode: 'include_only' | 'exclude';
-  protocols: Array<'uniswap' | 'kyberswap'>;
+  protocols: Array<'uniswap' | 'kyberswap' | 'aerodrome' | 'balancer' | 'hydrex' | 'o1-exchange'>;
 }
 
 export interface CarriedSwapConstraintsV2 {

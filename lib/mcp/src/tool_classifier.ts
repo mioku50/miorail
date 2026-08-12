@@ -26,6 +26,90 @@ export interface BaseMcpToolClassificationResult {
   tools: ClassifiedBaseMcpTool[];
 }
 
+/**
+ * Product-level destination for a Base MCP capability.
+ *
+ * This is deliberately separate from `BaseMcpToolCapability`. The latter
+ * answers the transport question (can the tool only read, does it require a
+ * Base Account approval, or must it never be called?). This answers the
+ * product question: which Miorail surface owns the user's intent.
+ */
+export type BaseMcpSurfaceRouteV1 = 'read' | 'action' | 'routable' | 'blocked';
+
+export interface BaseMcpSurfaceVerdictV1 {
+  route: BaseMcpSurfaceRouteV1;
+  /** True only when this build has a complete vertical lifecycle for it. */
+  enabled: boolean;
+  reason: string;
+}
+
+const DIRECT_EXTENSION_ACTIONS_V1 = new Set([
+  'completex402request',
+  'fund',
+  'initiatex402request',
+  'personalsign',
+  'sign',
+  'signmessage',
+  'signtypeddata',
+  'walletsign',
+  'send',
+  'sendtoken',
+  'transfer',
+  'transfertoken',
+]);
+
+const ROUTABLE_ACTION_MARKERS_V1 = [
+  'swap',
+  'trade',
+  'yield',
+];
+
+/**
+ * Classify where a tool belongs without granting it execution authority.
+ *
+ * V1 releases exact Base MCP send/transfer and the initiate/complete x402
+ * pair. Sign is labelled ACTION so the UI no longer hides what Base exposes,
+ * but remains disabled until its typed message/reconciliation vertical ships.
+ * Generic `send_calls` stays blocked: an arbitrary-call dispatcher is not a
+ * capability adapter and must never become one by being discovered at
+ * runtime.
+ */
+export function baseMcpSurfaceVerdictV1(tool: ClassifiedBaseMcpTool): BaseMcpSurfaceVerdictV1 {
+  const normalized = normalizeToolName(tool.name);
+
+  if (tool.capability === 'read_only') {
+    return { route: 'read', enabled: tool.enabled, reason: 'read_in_extensions' };
+  }
+
+  if (tool.capability === 'forbidden' || tool.capability === 'unknown') {
+    return { route: 'blocked', enabled: false, reason: tool.reason };
+  }
+
+  if (ROUTABLE_ACTION_MARKERS_V1.some((marker) => normalized.includes(marker))) {
+    return { route: 'routable', enabled: true, reason: 'handoff_to_routes_ai' };
+  }
+
+  if (DIRECT_EXTENSION_ACTIONS_V1.has(normalized)) {
+    const sendReleased = ['send', 'sendtoken', 'transfer', 'transfertoken'].includes(normalized);
+    const x402Released = ['initiatex402request', 'completex402request'].includes(normalized);
+    return {
+      route: 'action',
+      enabled: sendReleased || x402Released,
+      reason: sendReleased
+        ? 'base_mcp_send_action_v1'
+        : x402Released
+          ? 'base_mcp_x402_action_v1'
+          : 'action_vertical_not_released',
+    };
+  }
+
+  return {
+    route: 'blocked',
+    enabled: false,
+    reason: 'explicit_extension_adapter_required',
+  };
+}
+
 const DEFAULT_READ_ONLY_ALLOWLIST = new Set([
   // A JSON-RPC dispatcher, and the one read tool whose capability lives in an
   // argument rather than in its name. Base accepts read methods only; we do

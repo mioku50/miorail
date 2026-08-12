@@ -118,10 +118,12 @@ export type RouteFamilyV1 = 'swap' | 'earn' | 'commerce' | 'nft' | 'private_ai' 
 
 // Two patterns per family: `\b` is an ASCII word boundary, so it never matches
 // before a Cyrillic letter — the RU alternatives are matched without it.
-const EARN_PATTERN_V1 = /\b(earn|yield|apy|deposit|supply|lend|lending|stake|staking|moonwell|morpho)/i;
+const EARN_PATTERN_V1 = /\b(earn|yield|apy|deposit|supply|lend|lending|stake|staking|moonwell|morpho|yield optimizer)|\byo\s+(?:protocol|vaults?)\b/i;
 const EARN_PATTERN_RU_V1 = /(разме|доход|застейк|вклад|депозит)/i;
 const SWAP_PATTERN_V1 = /\b(swap|trade|exchange|convert)/i;
 const SWAP_PATTERN_RU_V1 = /(обмен|своп|поменя)/i;
+const LIQUIDITY_ROUTE_PATTERN_V1 = /\b(liquidity|liquidity position|lp position|add liquidity|remove liquidity)\b|\bhydrex\b.{0,24}\bpositions?\b/i;
+const LIQUIDITY_ROUTE_PATTERN_RU_V1 = /(ликвидност|lp[- ]?позици)/i;
 const COMMERCE_PATTERN_V1 = /\b(buy|gift ?card|top ?up|voucher|bitrefill)/i;
 const COMMERCE_PATTERN_RU_V1 = /(купить|подар)/i;
 // NFT is checked FIRST because it shares its verb with commerce: "Buy NFT
@@ -212,6 +214,17 @@ export function dispatchRouteFamilyV1(
   const family = routeFamilyForGoalV1(text, { includePrivateAi: flags.privateAiRouteV1 === true });
   if (!flags.routeIntelligenceV1) {
     return { family, engine: null, blockedReason: 'Route intelligence is off on this server, so no route can be compared yet.' };
+  }
+  if (
+    family === 'unknown'
+    && (LIQUIDITY_ROUTE_PATTERN_V1.test(text) || LIQUIDITY_ROUTE_PATTERN_RU_V1.test(text))
+  ) {
+    return {
+      family,
+      engine: null,
+      blockedReason:
+        'This provider belongs in Routes, but the Liquidity Routes family has not passed its adapter, scoring, Safety Kernel and proof gates yet.',
+    };
   }
   if (family === 'earn') {
     return flags.earnRouteV1
@@ -444,6 +457,8 @@ export const ADAPTER_FAMILY_V1: Record<string, RouteFamilyV1 | 'simulation'> = {
   Uniswap: 'swap',
   KyberSwap: 'swap',
   Aerodrome: 'swap',
+  Balancer: 'swap',
+  Hydrex: 'swap',
   'o1.exchange': 'swap',
   Moonwell: 'earn',
   Morpho: 'earn',

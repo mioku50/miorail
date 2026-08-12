@@ -33,7 +33,8 @@ export async function createApiToolAggregatorForUser(
     includeMoonwell?: boolean;
     includeBaseMcpSwap?: boolean;
     includeBaseMcpSend?: boolean;
-    /** T74: Base MCP and nothing else, read-only. See CreateToolAggregatorOptions. */
+    baseMcpAllowedActionTools?: readonly string[];
+    /** Base MCP and nothing else. Read-only unless an exact typed action is allowed. */
     baseMcpOnly?: boolean;
   } = {},
 ) {
@@ -72,6 +73,7 @@ export async function createApiToolAggregatorForUser(
     includeMoonwell: options.includeMoonwell,
     includeBaseMcpSwap: options.includeBaseMcpSwap,
     includeBaseMcpSend: options.includeBaseMcpSend,
+    baseMcpAllowedActionTools: options.baseMcpAllowedActionTools,
     baseMcpOnly: options.baseMcpOnly,
     dynamicToolsCacheVersion,
   });

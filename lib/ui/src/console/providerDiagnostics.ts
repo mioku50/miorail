@@ -26,6 +26,9 @@ export const SWAP_PROVIDER_DISPLAY_NAME_V1: Record<string, string> = {
   uniswap: 'Uniswap',
   kyberswap: 'KyberSwap',
   aerodrome: 'Aerodrome',
+  balancer: 'Balancer',
+  hydrex: 'Hydrex',
+  'o1-exchange': 'o1.exchange',
 };
 
 export function swapProviderDisplayNameV1(providerId: string): string {
@@ -52,6 +55,7 @@ export type SwapDiagnosticReasonV1 =
   | 'provider_http_error'
   | 'provider_invalid_schema'
   | 'provider_not_configured'
+  | 'provider_not_released'
   | 'provider_preflight_failed'
   | 'no_route'
   | 'amount_too_small'
@@ -90,6 +94,9 @@ const REASON_BY_ERROR_CODE_V1: Record<string, SwapDiagnosticReasonV1> = {
   provider_price_impact_invalid: 'provider_invalid_schema',
   provider_slippage_echo_mismatch: 'provider_invalid_schema',
   provider_not_configured: 'provider_not_configured',
+  balancer_route_adapter_not_released: 'provider_not_released',
+  hydrex_route_adapter_not_released: 'provider_not_released',
+  o1_exchange_route_adapter_not_released: 'provider_not_released',
   provider_router_mismatch: 'provider_preflight_failed',
   provider_no_route: 'no_route',
   provider_unsupported_intent: 'unsupported_pair',
@@ -126,6 +133,7 @@ export const SWAP_DIAGNOSTIC_LABEL_V1: Record<SwapDiagnosticReasonV1, string> = 
   provider_http_error: 'HTTP error',
   provider_invalid_schema: 'invalid schema',
   provider_not_configured: 'not configured',
+  provider_not_released: 'not released',
   provider_preflight_failed: 'preflight failed',
   no_route: 'no route',
   amount_too_small: 'amount too small',
@@ -184,6 +192,8 @@ export function swapDiagnosticMessageV1(input: SwapDiagnosticMessageInputV1): st
       return `${name} returned a response this version of Miorail could not verify.${stillWorks} Nothing from it was used.`;
     case 'provider_not_configured':
       return `${name} is not configured on this server, so it was never asked.${stillWorks}`;
+    case 'provider_not_released':
+      return `${name} is assigned to Routes, but its typed quote adapter has not passed release gates yet, so no substitute route was used.${stillWorks}`;
     case 'provider_preflight_failed':
       return `${name} preflight could not verify the router on Base, so no calls were built from it.${stillWorks}`;
     case 'no_route':

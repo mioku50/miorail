@@ -24,7 +24,7 @@ export const SwapAdapterFailureV1Schema = z
     ]),
     // T67B: Aerodrome quotes over Base RPC rather than a partner API, so it
     // reports failures through the same shape as the two HTTP adapters.
-    provider: z.enum(['uniswap', 'kyberswap', 'aerodrome']),
+    provider: z.enum(['uniswap', 'kyberswap', 'aerodrome', 'balancer', 'hydrex', 'o1-exchange']),
     errorCode: z.string().min(1).max(200),
     retryable: z.boolean(),
   })
@@ -121,7 +121,8 @@ const SwapRouteEvaluationV1ObjectSchema = z
 export type SwapRouteEvaluationV1 = z.infer<typeof SwapRouteEvaluationV1ObjectSchema>;
 
 export function hashSwapRouteEvaluationV1(value: SwapRouteEvaluationV1): HashV1 {
-  const { evaluationHash: _evaluationHash, ...content } = value;
+  const content: Partial<SwapRouteEvaluationV1> = { ...value };
+  delete content.evaluationHash;
   return stableHashV1('swap-route-evaluation/v1', content);
 }
 

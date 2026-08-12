@@ -95,6 +95,9 @@ const providers = {
   uniswap: { id: 'uniswap', displayName: 'Uniswap', kind: 'dex', operator: 'Uniswap Labs' },
   kyberswap: { id: 'kyberswap', displayName: 'KyberSwap', kind: 'aggregator', operator: 'Kyber Network' },
   aerodrome: { id: 'aerodrome', displayName: 'Aerodrome', kind: 'dex', operator: 'Aerodrome Finance' },
+  balancer: { id: 'balancer', displayName: 'Balancer', kind: 'dex', operator: 'Balancer' },
+  hydrex: { id: 'hydrex', displayName: 'Hydrex', kind: 'dex', operator: 'Hydrex' },
+  'o1-exchange': { id: 'o1-exchange', displayName: 'o1.exchange', kind: 'aggregator', operator: 'o1.exchange' },
 } as const;
 
 interface CandidateOverrides {

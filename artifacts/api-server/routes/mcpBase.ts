@@ -4,15 +4,25 @@ import { logger } from '@mioagent/utils';
 import {
   BaseMcpConsoleRequestV1Schema,
   BaseMcpConsoleResponseV1Schema,
+  BaseMcpActionReconcileResponseV1Schema,
+  BaseMcpActionReceiptListResponseV1Schema,
   BaseMcpPluginCatalogueResponseSchema,
   BaseMcpToolProbeResponseSchema,
 } from '@mioagent/api-zod';
 import {
   BASE_MCP_CATALOGUE_GENERATED_AT_V1,
   BASE_MCP_PLUGIN_CATALOGUE_V1,
+  BASE_MCP_PROVIDER_INTENTS_BY_ID_V1,
 } from '@mioagent/security';
 import { baseMcpPluginDriftV1 } from '../lib/baseMcpPluginDrift.js';
 import { runBaseMcpConsoleV1 } from '../lib/baseMcpConsole.js';
+import {
+  classifyBaseMcpExtensionIntentV1,
+  listBaseMcpActionReceiptsV1,
+  prepareBaseMcpSendActionV1,
+  prepareBaseMcpX402ActionV1,
+  reconcileBaseMcpActionV1,
+} from '../lib/baseMcpExtensionActions.js';
 import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
 import {
   baseMcpEnabledFromEnv,
@@ -40,6 +50,11 @@ export const mcpBaseRouteRuntime = {
   verifyBaseMcpWalletMatchViaOAuth,
   baseMcpPluginDriftV1,
   runBaseMcpConsoleV1,
+  classifyBaseMcpExtensionIntentV1,
+  prepareBaseMcpSendActionV1,
+  prepareBaseMcpX402ActionV1,
+  reconcileBaseMcpActionV1,
+  listBaseMcpActionReceiptsV1,
 };
 
 function sessionSecret(): string {
@@ -286,6 +301,7 @@ async function handleToolsProbe(req: Request, res: Response, next: NextFunction)
           forbidden: 0,
           unknown: 0,
         },
+        routing: { read: 0, action: 0, routable: 0, blocked: 0 },
         tools: [],
         checkedAt: new Date().toISOString(),
         errorCode: 'missing_config',
@@ -315,7 +331,16 @@ mcpBaseRouter.get('/plugins', async (_req: Request, res: Response, next: NextFun
   try {
     const drift = await mcpBaseRouteRuntime.baseMcpPluginDriftV1();
     return res.json(BaseMcpPluginCatalogueResponseSchema.parse({
-      plugins: BASE_MCP_PLUGIN_CATALOGUE_V1,
+      plugins: BASE_MCP_PLUGIN_CATALOGUE_V1.map((plugin) => {
+        const intents = BASE_MCP_PROVIDER_INTENTS_BY_ID_V1[plugin.id];
+        if (!intents) throw new Error(`base_mcp_provider_intents_missing:${plugin.id}`);
+        return {
+          ...plugin,
+          productSurface: intents.productSurface,
+          lifecycleStage: intents.lifecycleStage,
+          examples: intents.examples,
+        };
+      }),
       generatedAt: BASE_MCP_CATALOGUE_GENERATED_AT_V1,
       drift,
     }));
@@ -324,14 +349,15 @@ mcpBaseRouter.get('/plugins', async (_req: Request, res: Response, next: NextFun
   }
 });
 
-// The Base MCP console. A separate room from the Routes flow, on purpose: the
+// The Base MCP Extensions console. A separate room from the Routes flow, on purpose: the
 // tools here belong to third parties, and mixing them with Miorail's measured
 // routes in one thread erases the difference between "we verified this" and
-// "somebody's API said so". Read-only by construction — see
-// lib/baseMcpConsole.ts for what makes that structural rather than a promise.
+// "somebody's API said so". Deterministic routing intercepts routable and
+// direct-action intent before the read-only agent runs. Only exact typed send
+// and x402 verticals can reach a write; see baseMcpExtensionActions.ts.
 mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { message } = BaseMcpConsoleRequestV1Schema.parse(req.body);
+    const { message, requestId } = BaseMcpConsoleRequestV1Schema.parse(req.body);
     const secret = process.env.SESSION_SECRET;
     if (!secret) {
       return res.json(BaseMcpConsoleResponseV1Schema.parse({
@@ -340,8 +366,124 @@ mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFun
         trace: [],
         toolsAvailable: 0,
         truncated: false,
+        elapsedMs: 0,
         errorCode: 'missing_config',
         checkedAt: new Date().toISOString(),
+      }));
+    }
+
+    const decision = mcpBaseRouteRuntime.classifyBaseMcpExtensionIntentV1(message);
+    if (decision.kind === 'handoff') {
+      return res.json(BaseMcpConsoleResponseV1Schema.parse({
+        status: 'handoff',
+        reply: 'This is a routable intent. It belongs in Routes AI, where providers are compared and the selected path passes the Safety Kernel.',
+        trace: [],
+        toolsAvailable: 0,
+        truncated: false,
+        elapsedMs: 0,
+        errorCode: null,
+        checkedAt: new Date().toISOString(),
+        handoff: {
+          target: 'routes',
+          path: '/routes',
+          reason: 'routable_intent',
+          originalMessage: decision.originalMessage,
+          provider: decision.provider,
+        },
+      }));
+    }
+    if (decision.kind === 'provider_handoff') {
+      return res.json(BaseMcpConsoleResponseV1Schema.parse({
+        status: 'handoff',
+        reply: 'Avantis view data stays available in Extensions. Trade preparation on this UI surface continues in the official Avantis interface; no position has been opened or changed.',
+        trace: [],
+        toolsAvailable: 0,
+        truncated: false,
+        elapsedMs: 0,
+        errorCode: null,
+        checkedAt: new Date().toISOString(),
+        handoff: decision.handoff,
+      }));
+    }
+    if (decision.kind === 'needs_input') {
+      return res.json(BaseMcpConsoleResponseV1Schema.parse({
+        status: 'needs_input',
+        reply: decision.reply,
+        trace: [],
+        toolsAvailable: 0,
+        truncated: false,
+        elapsedMs: 0,
+        errorCode: decision.errorCode,
+        checkedAt: new Date().toISOString(),
+      }));
+    }
+    if (decision.kind === 'send') {
+      if (!baseMcpEnabledFromEnv() || !baseMcpServerUrlFromEnv()) {
+        return res.json(BaseMcpConsoleResponseV1Schema.parse({
+          status: 'disabled',
+          reply: null,
+          trace: [],
+          toolsAvailable: 0,
+          truncated: false,
+          elapsedMs: 0,
+          errorCode: 'base_mcp_disabled',
+          checkedAt: new Date().toISOString(),
+        }));
+      }
+      const startedAt = Date.now();
+      const result = await mcpBaseRouteRuntime.prepareBaseMcpSendActionV1({
+        req,
+        userId: tenantUserId(req),
+        walletAddress: tenantWalletAddress(req),
+        sessionSecret: secret,
+        idempotencyKey: requestId,
+        message,
+        intent: decision.intent,
+      });
+      return res.json(BaseMcpConsoleResponseV1Schema.parse({
+        status: result.kind,
+        reply: result.reply,
+        trace: [],
+        toolsAvailable: result.toolsAvailable,
+        truncated: false,
+        elapsedMs: Date.now() - startedAt,
+        errorCode: result.errorCode,
+        checkedAt: new Date().toISOString(),
+        action: result.receipt
+          ? { receipt: result.receipt, approvalUrl: result.approvalUrl, resultPreview: result.resultPreview }
+          : null,
+      }));
+    }
+    if (decision.kind === 'x402') {
+      if (!baseMcpEnabledFromEnv() || !baseMcpServerUrlFromEnv()) {
+        return res.json(BaseMcpConsoleResponseV1Schema.parse({
+          status: 'disabled', reply: null, trace: [], toolsAvailable: 0, truncated: false,
+          elapsedMs: 0, errorCode: 'base_mcp_disabled', checkedAt: new Date().toISOString(),
+        }));
+      }
+      const startedAt = Date.now();
+      const result = await mcpBaseRouteRuntime.prepareBaseMcpX402ActionV1({
+        req,
+        userId: tenantUserId(req),
+        walletAddress: tenantWalletAddress(req),
+        sessionSecret: secret,
+        idempotencyKey: requestId,
+        message,
+        intent: decision.intent,
+      });
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json(BaseMcpConsoleResponseV1Schema.parse({
+        status: result.kind,
+        reply: result.reply,
+        trace: [],
+        toolsAvailable: result.toolsAvailable,
+        truncated: false,
+        elapsedMs: Date.now() - startedAt,
+        errorCode: result.errorCode,
+        checkedAt: new Date().toISOString(),
+        action: result.receipt
+          ? { receipt: result.receipt, approvalUrl: result.approvalUrl, resultPreview: result.resultPreview }
+          : null,
       }));
     }
 
@@ -351,9 +493,44 @@ mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFun
       sessionSecret: secret,
       walletAddress: tenantWalletAddress(req),
       message,
+      providerPrompt: decision.providerPrompt,
       enabled: baseMcpEnabledFromEnv() && Boolean(baseMcpServerUrlFromEnv()),
     });
     return res.json(BaseMcpConsoleResponseV1Schema.parse(result));
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** Direct extension actions have their own durable receipts, never Route Proofs. */
+mcpBaseRouter.get('/actions', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const receipts = await mcpBaseRouteRuntime.listBaseMcpActionReceiptsV1(tenantUserId(req), 50);
+    return res.json(BaseMcpActionReceiptListResponseV1Schema.parse({ receipts }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+mcpBaseRouter.post('/actions/:receiptId/reconcile', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const secret = process.env.SESSION_SECRET;
+    if (!secret) return res.status(503).json({ error: 'missing_config' });
+    const receiptId = String(req.params.receiptId || '').slice(0, 200);
+    const result = await mcpBaseRouteRuntime.reconcileBaseMcpActionV1({
+      req,
+      userId: tenantUserId(req),
+      walletAddress: tenantWalletAddress(req),
+      sessionSecret: secret,
+      receiptId,
+    });
+    if (!result.receipt) return res.status(404).json({ error: result.errorCode || 'base_mcp_action_receipt_not_found' });
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json(BaseMcpActionReconcileResponseV1Schema.parse({
+      receipt: result.receipt,
+      approvalUrl: result.approvalUrl,
+      resultPreview: result.resultPreview,
+    }));
   } catch (error) {
     next(error);
   }

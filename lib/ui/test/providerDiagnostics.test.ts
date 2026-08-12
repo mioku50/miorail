@@ -115,6 +115,8 @@ describe('the reason taxonomy', () => {
       'provider_http_error', 'provider_invalid_schema', 'provider_no_route',
       'provider_not_configured', 'provider_rate_limited', 'provider_router_mismatch',
       'provider_timeout', 'provider_unreachable', 'provider_unsupported_intent',
+      'balancer_route_adapter_not_released', 'hydrex_route_adapter_not_released',
+      'o1_exchange_route_adapter_not_released',
     ];
     for (const code of emitted) {
       assert.notEqual(swapDiagnosticReasonV1(code), 'unknown', `${code} must map to a safe reason`);
@@ -175,6 +177,19 @@ describe('a failure message says what still works', () => {
     const view = providerFailureViewV1({ provider: 'uniswap', errorCode: 'provider_not_configured' });
     assert.equal(view.retryable, false);
     assert.match(view.message, /not configured on this server/);
+  });
+
+  test('a manifested Routes provider is named as not released, not misreported as an outage', () => {
+    const view = providerFailureViewV1({
+      provider: 'balancer',
+      errorCode: 'balancer_route_adapter_not_released',
+      retryable: false,
+    });
+    assert.equal(view.providerName, 'Balancer');
+    assert.equal(view.reason, 'provider_not_released');
+    assert.equal(view.retryable, false);
+    assert.match(view.message, /assigned to Routes/);
+    assert.match(view.message, /no substitute route/);
   });
 });
 

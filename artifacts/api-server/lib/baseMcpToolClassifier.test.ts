@@ -1,6 +1,6 @@
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert';
-import { classifyBaseMcpTools } from './baseMcpToolClassifier.js';
+import { baseMcpSurfaceVerdictV1, classifyBaseMcpTools } from './baseMcpToolClassifier.js';
 
 function restoreEnv(name: string, value: string | undefined) {
   if (value === undefined) delete process.env[name];
@@ -164,4 +164,25 @@ test('signing is user-confirmed; broadcasting and key export stay forbidden', ()
   assert.strictEqual(byName.get('sign_transaction')?.capability, 'forbidden');
   assert.strictEqual(byName.get('broadcast_transaction')?.capability, 'forbidden');
   assert.strictEqual(byName.get('export_private_key')?.capability, 'forbidden');
+});
+
+test('product surface routing separates READ, ACTION and ROUTABLE without granting arbitrary writes', () => {
+  const classified = classifyBaseMcpTools([
+    { name: 'get_portfolio' },
+    { name: 'send' },
+    { name: 'sign' },
+    { name: 'initiate_x402_request' },
+    { name: 'swap' },
+    { name: 'send_calls' },
+    { name: 'mystery_plugin_magic' },
+  ]).tools;
+  const verdicts = Object.fromEntries(classified.map((tool) => [tool.name, baseMcpSurfaceVerdictV1(tool)]));
+
+  assert.deepEqual(verdicts.get_portfolio, { route: 'read', enabled: true, reason: 'read_in_extensions' });
+  assert.deepEqual(verdicts.send, { route: 'action', enabled: true, reason: 'base_mcp_send_action_v1' });
+  assert.deepEqual(verdicts.sign, { route: 'action', enabled: false, reason: 'action_vertical_not_released' });
+  assert.deepEqual(verdicts.initiate_x402_request, { route: 'action', enabled: true, reason: 'base_mcp_x402_action_v1' });
+  assert.deepEqual(verdicts.swap, { route: 'routable', enabled: true, reason: 'handoff_to_routes_ai' });
+  assert.deepEqual(verdicts.send_calls, { route: 'blocked', enabled: false, reason: 'explicit_extension_adapter_required' });
+  assert.equal(verdicts.mystery_plugin_magic.route, 'blocked');
 });

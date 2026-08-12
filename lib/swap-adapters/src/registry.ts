@@ -2,16 +2,31 @@ import type { RouteIntentV1 } from '@mioagent/route-domain';
 import { AerodromeSwapRouteAdapter } from './aerodrome.js';
 import { KyberSwapRouteAdapter } from './kyberswap.js';
 import { UniswapSwapRouteAdapter } from './uniswap.js';
+import { ManifestedSwapRouteAdapter } from './manifested.js';
 import type {
+  ReleasedSwapAdapterId,
   SwapAdapterId,
   SwapAdapterSelectionResult,
   SwapRouteAdapter,
 } from './types.js';
 
-const ADAPTER_ORDER: readonly SwapAdapterId[] = ['uniswap', 'kyberswap', 'aerodrome'];
+const RELEASED_ADAPTER_ORDER: readonly ReleasedSwapAdapterId[] = ['uniswap', 'kyberswap', 'aerodrome'];
+const ADAPTER_ORDER: readonly SwapAdapterId[] = [
+  ...RELEASED_ADAPTER_ORDER,
+  'balancer',
+  'hydrex',
+  'o1-exchange',
+];
 
 export function createDefaultSwapAdapters(): SwapRouteAdapter[] {
-  return [new UniswapSwapRouteAdapter(), new KyberSwapRouteAdapter(), new AerodromeSwapRouteAdapter()];
+  return [
+    new UniswapSwapRouteAdapter(),
+    new KyberSwapRouteAdapter(),
+    new AerodromeSwapRouteAdapter(),
+    new ManifestedSwapRouteAdapter('balancer'),
+    new ManifestedSwapRouteAdapter('hydrex'),
+    new ManifestedSwapRouteAdapter('o1-exchange'),
+  ];
 }
 
 export function getEligibleSwapAdapters(
@@ -19,7 +34,10 @@ export function getEligibleSwapAdapters(
   adapters: readonly SwapRouteAdapter[] = createDefaultSwapAdapters(),
 ): SwapAdapterSelectionResult {
   const unique = new Map(adapters.map((adapter) => [adapter.id, adapter]));
-  let allowed = new Set<SwapAdapterId>(ADAPTER_ORDER);
+  // A generic comparison includes only released quote adapters. Manifested
+  // providers enter the engine when explicitly requested and return an honest
+  // typed failure until their quote/build/proof vertical passes its gate.
+  let allowed = new Set<SwapAdapterId>(RELEASED_ADAPTER_ORDER);
   if (intent.protocolConstraint.mode === 'include_only') {
     allowed = new Set(
       intent.protocolConstraint.protocols.filter(

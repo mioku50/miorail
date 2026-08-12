@@ -114,6 +114,7 @@ describe('route family dispatch', () => {
     assert.equal(routeFamilyForGoalV1('Earn yield on 500 USDC'), 'earn');
     assert.equal(routeFamilyForGoalV1('Разместить 500 USDC под доходность'), 'earn');
     assert.equal(routeFamilyForGoalV1('Deposit 250 USDC into Moonwell'), 'earn');
+    assert.equal(routeFamilyForGoalV1('Show YO Protocol vaults on Base'), 'earn');
     assert.equal(routeFamilyForGoalV1('Buy a gift card'), 'commerce');
     assert.equal(routeFamilyForGoalV1(''), 'unknown');
   });
@@ -133,6 +134,16 @@ describe('route family dispatch', () => {
     assert.match(String(earn.blockedReason), /Earn routing is off/);
     assert.match(String(earn.blockedReason), /Swap routes still compare normally/);
     assert.equal(dispatchRouteFamilyV1('Swap 100 USDC to ETH', flags).engine, 'swap');
+  });
+
+  test('liquidity-provider goals get an explicit Routes gap instead of an empty run', () => {
+    const flags = { routeIntelligenceV1: true, earnRouteV1: true };
+    const hydrex = dispatchRouteFamilyV1('Show my Hydrex liquidity positions', flags);
+    assert.equal(hydrex.engine, null);
+    assert.match(hydrex.blockedReason || '', /Liquidity Routes family/);
+    const balancer = dispatchRouteFamilyV1('Add 100 USDC liquidity on Balancer', flags);
+    assert.equal(balancer.engine, null);
+    assert.match(balancer.blockedReason || '', /Safety Kernel and proof gates/);
   });
 
   test('with route intelligence off nothing runs, and the reason names the gate', () => {

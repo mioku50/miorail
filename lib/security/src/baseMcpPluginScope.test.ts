@@ -7,6 +7,10 @@ import {
   BASE_MCP_PLUGIN_HOSTS_V1,
 } from './baseMcpPluginCatalogue.generated.js';
 import {
+  BASE_MCP_PROVIDER_INTENTS_BY_ID_V1,
+  BASE_MCP_PROVIDER_INTENTS_V1,
+} from './baseMcpProviderIntents.js';
+import {
   PluginHttpScopeError,
   baseMcpPluginScopeV1,
   pluginScopedFetch,
@@ -155,6 +159,24 @@ describe('the generated list is a boundary, not a scrape', () => {
     // allowlist and the screen describing it drift apart.
     for (const plugin of BASE_MCP_PLUGIN_CATALOGUE_V1) {
       assert.deepEqual([...(BASE_MCP_PLUGIN_HOSTS_V1[plugin.id] ?? [])], [...plugin.hosts], plugin.id);
+    }
+  });
+
+  test('every plugin has reviewed ownership and example questions', () => {
+    assert.equal(BASE_MCP_PROVIDER_INTENTS_V1.length, BASE_MCP_PLUGIN_CATALOGUE_V1.length);
+    for (const plugin of BASE_MCP_PLUGIN_CATALOGUE_V1) {
+      const intents = BASE_MCP_PROVIDER_INTENTS_BY_ID_V1[plugin.id];
+      assert.ok(intents, `${plugin.id} has no provider intent registry entry`);
+      assert.ok(intents.examples.length > 0, `${plugin.id} has no example questions`);
+    }
+  });
+
+  test('explicit product ownership keeps route adapters and extension plugins separate', () => {
+    for (const id of ['balancer', 'yo', 'hydrex', 'o1-exchange']) {
+      assert.equal(BASE_MCP_PROVIDER_INTENTS_BY_ID_V1[id]?.productSurface, 'routes', id);
+    }
+    for (const id of ['avantis', 'virtuals', 'brickken', 'clawnch', 'flaunch', 'printr', 'bankr', 'gmgn']) {
+      assert.equal(BASE_MCP_PROVIDER_INTENTS_BY_ID_V1[id]?.productSurface, 'extensions', id);
     }
   });
 });

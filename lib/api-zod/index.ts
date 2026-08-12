@@ -1518,6 +1518,12 @@ export const BaseMcpToolProbeResponseSchema = z.object({
     forbidden: z.number(),
     unknown: z.number(),
   }),
+  routing: z.object({
+    read: z.number(),
+    action: z.number(),
+    routable: z.number(),
+    blocked: z.number(),
+  }).default({ read: 0, action: 0, routable: 0, blocked: 0 }),
   tools: z.array(z.object({
     name: z.string(),
     description: z.string().optional(),
@@ -1525,6 +1531,9 @@ export const BaseMcpToolProbeResponseSchema = z.object({
     scope: z.enum(['wallet', 'protocol']),
     enabled: z.boolean(),
     reason: z.string(),
+    surface: z.enum(['read', 'action', 'routable', 'blocked']).optional(),
+    surfaceEnabled: z.boolean().optional(),
+    surfaceReason: z.string().optional(),
   })),
   checkedAt: z.string(),
   errorCode: z.string().optional(),
@@ -1551,6 +1560,20 @@ export const BaseMcpPluginCatalogueResponseSchema = z.object({
     hosts: z.array(z.string()),
     externalMcpHost: z.string().nullable(),
     cliPackage: z.string().nullable(),
+    productSurface: z.enum(['routes', 'extensions']),
+    lifecycleStage: z.enum(['documented', 'manifested', 'adapter', 'scored', 'proven']),
+    examples: z.array(z.object({
+      id: z.string().min(1).max(80),
+      prompt: z.string().min(1).max(500),
+      surface: z.enum(['read', 'action', 'routable']),
+      disposition: z.enum([
+        'read_in_extensions',
+        'handoff_to_routes',
+        'handoff_to_provider_ui',
+        'typed_x402_required',
+        'adapter_required',
+      ]),
+    })).min(1).max(12),
   })),
   /** The date the committed catalogue was read from Base. */
   generatedAt: z.string(),
@@ -1565,15 +1588,116 @@ export const BaseMcpPluginCatalogueResponseSchema = z.object({
   }),
 });
 
-// T74: the Base MCP console — an AI thread whose entire tool inventory is Base
-// MCP, kept apart from Miorail's own routers. Read-only by construction; the
-// trace is part of the answer, not a debug view.
+// The Base MCP console — an AI thread whose entire tool inventory is Base MCP,
+// kept apart from Miorail's own routers. Reads use the bounded agent; exact
+// typed actions are intercepted before it and use the approval lifecycle.
 export const BaseMcpConsoleRequestV1Schema = z.object({
   message: z.string().min(1).max(2000),
+  /** Client-generated idempotency handle. Required for action intents, kept
+   * optional so old read-only clients remain wire-compatible. */
+  requestId: z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/).optional(),
 });
 
+export const BaseMcpActionReceiptStatusV1Schema = z.enum([
+  'preparing',
+  'approval_required',
+  'pending',
+  'reconciling',
+  'completed',
+  'rejected',
+  'failed',
+]);
+
+export const BaseMcpActionReconciliationStateV1Schema = z.enum([
+  'not_started',
+  'pending',
+  'matched',
+  'provider_confirmed',
+  'mismatched',
+  'unavailable',
+]);
+
+const BaseMcpActionReceiptCommonV1Schema = z.object({
+  schemaVersion: z.literal('base-mcp-action-receipt/v1'),
+  id: z.string().min(1).max(200),
+  actionHash: HashV1Schema,
+  provider: z.literal('base-mcp'),
+  chainId: z.literal(8453),
+  walletAddress: AddressV1Schema,
+  status: BaseMcpActionReceiptStatusV1Schema,
+  capabilityPolicy: z.literal('passed'),
+  approvalRequired: z.literal(true),
+  reconciliationState: BaseMcpActionReconciliationStateV1Schema,
+  transactionHash: HashV1Schema.nullable(),
+  blockNumber: z.string().regex(/^\d+$/).nullable(),
+  errorCode: z.string().min(1).max(120).nullable(),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+  finalizedAt: z.string().min(1).nullable(),
+  /** Explicit semantic boundary: this receipt is not a Route Proof. */
+  routeVerified: z.literal(false),
+});
+
+export const BaseMcpSendActionReceiptV1Schema = BaseMcpActionReceiptCommonV1Schema.extend({
+  actionType: z.literal('send'),
+  asset: z.object({
+    symbol: z.literal('USDC'),
+    address: AddressV1Schema,
+    decimals: z.literal(6),
+  }),
+  amount: UsdcAmountSchema.refine((value) => Number(value) > 0, 'Amount must be positive'),
+  recipient: AddressV1Schema,
+  reconciliationBasis: z.literal('erc20_transfer_event').default('erc20_transfer_event'),
+});
+
+export const BaseMcpX402ActionReceiptV1Schema = BaseMcpActionReceiptCommonV1Schema.extend({
+  actionType: z.literal('x402'),
+  method: z.literal('GET'),
+  url: z.string().url().startsWith('https://').max(2000),
+  maxPayment: UsdcAmountSchema.refine((value) => Number(value) > 0, 'Payment cap must be positive'),
+  paymentAsset: z.object({
+    symbol: z.literal('USDC'),
+    address: AddressV1Schema,
+    decimals: z.literal(6),
+  }),
+  responseHash: HashV1Schema.nullable(),
+  reconciliationBasis: z.literal('x402_endpoint_response'),
+});
+
+export const BaseMcpActionReceiptV1Schema = z.discriminatedUnion('actionType', [
+  BaseMcpSendActionReceiptV1Schema,
+  BaseMcpX402ActionReceiptV1Schema,
+]);
+
+export const BaseMcpActionEnvelopeV1Schema = z.object({
+  receipt: BaseMcpActionReceiptV1Schema,
+  /** Ephemeral. It is returned to this browser but never persisted. */
+  approvalUrl: z.string().url().startsWith('https://').nullable(),
+  /** Bounded paid endpoint response returned once; never persisted. */
+  resultPreview: z.string().max(2000).nullable().default(null),
+});
+
+export const BaseMcpHandoffV1Schema = z.discriminatedUnion('target', [
+  z.object({
+    target: z.literal('routes'),
+    path: z.string().min(1).max(120),
+    reason: z.literal('routable_intent'),
+    originalMessage: z.string().min(1).max(2000),
+    provider: z.string().min(1).max(80).nullable().default(null),
+  }),
+  z.object({
+    target: z.literal('provider'),
+    provider: z.literal('avantis'),
+    path: z.string().url().startsWith('https://www.avantisfi.com/trade?'),
+    reason: z.literal('provider_ui_required'),
+    originalMessage: z.string().min(1).max(2000),
+    summary: z.string().min(1).max(500),
+    risk: z.literal('liquidation'),
+  }),
+]);
+
 export const BaseMcpConsoleResponseV1Schema = z.object({
-  status: z.enum(['answered', 'no_tools', 'needs_reauth', 'disabled', 'failed']),
+  status: z.enum(['answered', 'handoff', 'action', 'needs_input', 'no_tools', 'needs_reauth', 'disabled', 'failed']),
   reply: z.string().nullable(),
   trace: z.array(z.object({
     tool: z.string(),
@@ -1587,6 +1711,13 @@ export const BaseMcpConsoleResponseV1Schema = z.object({
   elapsedMs: z.number(),
   errorCode: z.string().nullable(),
   checkedAt: z.string(),
+  handoff: BaseMcpHandoffV1Schema.nullable().default(null),
+  action: BaseMcpActionEnvelopeV1Schema.nullable().default(null),
+});
+
+export const BaseMcpActionReconcileResponseV1Schema = BaseMcpActionEnvelopeV1Schema;
+export const BaseMcpActionReceiptListResponseV1Schema = z.object({
+  receipts: z.array(BaseMcpActionReceiptV1Schema).max(100),
 });
 
 export const DismissActionRequestSchema = z.object({

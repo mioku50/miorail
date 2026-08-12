@@ -30,4 +30,5 @@ export * from './ActivityPanels';
 export * from './BaseMcpConsoleCard';
 export * from './BaseMcpExtensionsCard';
 export * from './BaseMcpPluginsCard';
+export * from './BaseMcpActionReceiptsCard';
 export * from './PublicProofPanels';

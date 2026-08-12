@@ -267,6 +267,20 @@
       "when": 1786723200000,
       "tag": "0037_b20_entry_route_proofs",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1786809600000,
+      "tag": "0038_base_mcp_action_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1786896000000,
+      "tag": "0039_swap_pending_intent_providers",
+      "breakpoints": true
     }
   ]
 }

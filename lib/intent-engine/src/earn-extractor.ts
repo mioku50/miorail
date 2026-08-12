@@ -25,6 +25,9 @@ export type EarnIntentIssueV1 =
   | 'asset_unsupported'
   | 'ambiguous_optimization'
   | 'conflicting_protocol_constraints'
+  | 'yo_route_adapter_not_released'
+  | 'balancer_earn_adapter_not_released'
+  | 'hydrex_earn_adapter_not_released'
   | 'not_earn_goal';
 
 export interface EarnIntentExtractionV1 {
@@ -47,7 +50,8 @@ function normalize(message: string): string {
 
 function detectEarnGoal(message: string): boolean {
   const text = normalize(message);
-  return /\b(earn|yield|apy|deposit|supply|lend|lending|interest)\b/iu.test(text) ||
+  return /\b(earn|yield|apy|deposit|supply|lend|lending|interest|yield optimizer)\b/iu.test(text) ||
+    /\byo\s+(?:protocol|vaults?)\b/iu.test(text) ||
     /(доходн|размест|внес|депозит|застейк|заработ|под\s+процент)/iu.test(text);
 }
 
@@ -105,6 +109,17 @@ export function mapEarnProtocolConstraintV1(message: string): {
     if (negative) exclude.add(protocol);
     if (positive) include.add(protocol);
   }
+
+  const yoPattern = 'yo\\s+(?:protocol|vaults?)|yield\\s+optimizer';
+  const yoNegativePattern = new RegExp(
+    `(?:do\\s+not\\s+use|don['’]?t\\s+use|avoid|exclude|without|skip|не\\s+использ\\w*|исключ\\w*|без).{0,24}(?:${yoPattern})`,
+    'giu',
+  );
+  const yoNegative = yoNegativePattern.test(text);
+  const withoutYoNegative = text.replace(yoNegativePattern, ' ');
+  const yoPositive = new RegExp(`(?:${yoPattern})`, 'iu').test(withoutYoNegative);
+  if (yoNegative) exclude.add('yo');
+  if (yoPositive) include.add('yo');
   if (include.size > 0 && exclude.size > 0) {
     return { value: { mode: 'any', protocols: [] }, conflicting: true };
   }
@@ -180,6 +195,34 @@ export function resolveEarnIntentV1(input: ResolveEarnIntentInputV1): EarnIntent
   const extraction = extractEarnIntentV1(input.message);
   if (extraction.goal !== 'earn') {
     return { status: 'unsupported', intent: null, extraction, issues: ['not_earn_goal', ...extraction.issues] };
+  }
+  const normalizedMessage = normalize(input.message);
+  if (/\bbalancer\b/iu.test(normalizedMessage)) {
+    return {
+      status: 'unsupported',
+      intent: null,
+      extraction,
+      issues: ['balancer_earn_adapter_not_released'],
+    };
+  }
+  if (/\bhydrex\b/iu.test(normalizedMessage)) {
+    return {
+      status: 'unsupported',
+      intent: null,
+      extraction,
+      issues: ['hydrex_earn_adapter_not_released'],
+    };
+  }
+  if (
+    extraction.protocolConstraint.mode === 'include_only'
+    && extraction.protocolConstraint.protocols.includes('yo')
+  ) {
+    return {
+      status: 'unsupported',
+      intent: null,
+      extraction,
+      issues: ['yo_route_adapter_not_released'],
+    };
   }
   const blocking = extraction.issues.filter(
     (code) => code === 'conflicting_amounts' || code === 'asset_unsupported' || code === 'conflicting_protocol_constraints',

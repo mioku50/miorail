@@ -319,6 +319,12 @@ const EARN_UNSUPPORTED_REASON_LABELS_V1: Record<string, string> = {
     'Neither Moonwell nor Morpho returned usable live data just now, so there is nothing to compare. No route is shown rather than a guessed one — try again in a moment.',
   no_candidates: 'No earn venue could be compared for this request.',
   no_protocols_selected: 'The protocol constraint in this request excludes every supported earn venue.',
+  yo_route_adapter_not_released:
+    'YO belongs in Routes, but its typed APY, liquidity, withdrawal and execution adapter has not passed release gates yet. No Moonwell or Morpho route was substituted.',
+  balancer_earn_adapter_not_released:
+    'Balancer belongs in Routes, but its Earn/liquidity adapter has not passed release gates yet. No Moonwell or Morpho route was substituted.',
+  hydrex_earn_adapter_not_released:
+    'Hydrex belongs in Routes, but its Earn/liquidity adapter has not passed release gates yet. No Moonwell or Morpho route was substituted.',
 };
 
 /** Maps a server `unsupported` reason code to a sentence. Unknown codes are

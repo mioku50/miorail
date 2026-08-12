@@ -117,6 +117,19 @@ test('protocol constraints normalize to lowercase canonical identifiers', () => 
       protocols: [],
     },
   );
+
+  const manifestedProviders = [
+    ['Swap 100 USDC to ETH through Balancer.', 'balancer'],
+    ['Swap 100 USDC to ETH on Hydrex.', 'hydrex'],
+    ['Get an o1.exchange quote to swap 100 USDC to ETH.', 'o1-exchange'],
+  ] as const;
+  for (const [message, provider] of manifestedProviders) {
+    assert.deepEqual(
+      ready(message).routeIntent.protocolConstraint,
+      { mode: 'include_only', protocols: [provider] },
+      message,
+    );
+  }
 });
 
 test('verification and slippage mappings use explicit deterministic values', () => {

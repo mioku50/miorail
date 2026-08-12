@@ -28,7 +28,14 @@ const ProtocolConstraint = z
     // `any` is the absence of a constraint and is stored as null, so it is not
     // one of the modes this row can hold.
     mode: z.enum(['include_only', 'exclude']),
-    protocols: z.array(z.enum(['uniswap', 'kyberswap'])).min(1),
+    protocols: z.array(z.enum([
+      'uniswap',
+      'kyberswap',
+      'aerodrome',
+      'balancer',
+      'hydrex',
+      'o1-exchange',
+    ])).min(1),
   })
   .refine((value) => new Set(value.protocols).size === value.protocols.length, {
     message: 'a protocol is named twice',

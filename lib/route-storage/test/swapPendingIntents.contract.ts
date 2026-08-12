@@ -79,6 +79,32 @@ export function swapPendingIntentContractV1(
       assert.equal(read?.executionRequested, null);
     });
 
+    test('every Routes-owned swap provider constraint round-trips without substitution', async () => {
+      const protocols = [
+        'uniswap',
+        'kyberswap',
+        'aerodrome',
+        'balancer',
+        'hydrex',
+        'o1-exchange',
+      ] as const;
+
+      for (const protocol of protocols) {
+        const { repository } = await makeRepository();
+        await repository.upsertPendingIntent(
+          pendingFixtureV1({
+            sourceRequestId: `request-${protocol}`,
+            protocolConstraint: { mode: 'include_only', protocols: [protocol] },
+          }),
+        );
+        const read = await repository.readPendingIntent(binding, during);
+        assert.deepEqual(read?.protocolConstraint, {
+          mode: 'include_only',
+          protocols: [protocol],
+        });
+      }
+    });
+
     test('an expired intent is invisible, not merely old', async () => {
       const { repository } = await makeRepository();
       await repository.upsertPendingIntent(pendingFixtureV1());

@@ -186,6 +186,7 @@ export * from './baseGuards.js';
 export * from './executionGuard.js';
 export * from './httpAllowlist.js';
 export * from './baseMcpPluginCatalogue.generated.js';
+export * from './baseMcpProviderIntents.js';
 export * from './moonwellGuard.js';
 export * from './swapAsset.js';
 export * from './uniswapGuard.js';

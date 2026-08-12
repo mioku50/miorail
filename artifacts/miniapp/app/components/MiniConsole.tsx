@@ -24,6 +24,7 @@ import {
   BaseMcpConsoleCard,
   BaseMcpExtensionsCard,
   BaseMcpPluginsCard,
+  BaseMcpActionReceiptsCard,
   EXIT_PROFILE_DEFAULTS_V1,
   WalletBalancesCard,
   formatAtomicAmount,
@@ -128,6 +129,8 @@ import {
   useBaseMcpConsole,
   useBaseMcpPlugins,
   useBaseMcpToolsProbe,
+  useBaseMcpActionReceipts,
+  useReconcileBaseMcpAction,
   usePortfolio,
   useRouteHistory,
   useX402Ledger,
@@ -897,6 +900,8 @@ export function MiniConsole() {
   // The Base MCP thread, kept out of the B20 and Routes surfaces: those carry
   // measured routes, this carries whatever a third-party tool returned.
   const baseMcpAsk = useBaseMcpConsole();
+  const reconcileBaseMcpAction = useReconcileBaseMcpAction();
+  const baseMcpActionReceipts = useBaseMcpActionReceipts({ enabled: section === "activity" });
   const [baseMcpQuestion, setBaseMcpQuestion] = useState("");
 
   // --- the paid B20 exit proof and explicit entry, in Base App ---------------
@@ -1981,7 +1986,7 @@ export function MiniConsole() {
             width and keeps the B20 content unmuddled. */}
         <div className="ctarow">
           <button type="button" className="btn sec" onClick={() => setSection("extensions")}>
-            Base MCP AI →
+            Base MCP Extensions →
           </button>
         </div>
       </>
@@ -1997,6 +2002,7 @@ export function MiniConsole() {
           unavailableReason={
             baseMcpPlugins.error ? "The plugin catalogue could not be read from this server." : null
           }
+          onSelectPrompt={(prompt) => setBaseMcpQuestion(prompt)}
         />
         {status.data?.baseMcp?.enabled === true && (
           <BaseMcpConsoleCard
@@ -2004,10 +2010,29 @@ export function MiniConsole() {
             onQuestionChange={setBaseMcpQuestion}
             onAsk={() => {
               const message = baseMcpQuestion.trim();
-              if (message) baseMcpAsk.mutate(message);
+              if (message) {
+                reconcileBaseMcpAction.reset();
+                baseMcpAsk.mutate(message);
+              }
             }}
             pending={baseMcpAsk.isPending}
-            answer={baseMcpAsk.data ?? null}
+            answer={
+              reconcileBaseMcpAction.data && baseMcpAsk.data?.action
+                ? { ...baseMcpAsk.data, action: reconcileBaseMcpAction.data }
+                : baseMcpAsk.data ?? null
+            }
+            readTools={baseMcpProbe.data?.routing.read}
+            actionTools={baseMcpProbe.data?.routing.action}
+            releasedActionTools={baseMcpProbe.data?.tools.filter(
+              (tool) => tool.surface === "action" && tool.surfaceEnabled,
+            ).length}
+            routableTools={baseMcpProbe.data?.routing.routable}
+            reconcilingAction={reconcileBaseMcpAction.isPending}
+            onOpenRoutes={(message) => {
+              setGoal(message);
+              setSection("routes");
+            }}
+            onReconcileAction={(receiptId) => reconcileBaseMcpAction.mutate(receiptId)}
             unavailableReason={
               baseMcpAsk.error
                 ? "The console could not reach the server. Nothing here is a statement about Base MCP."
@@ -2047,6 +2072,15 @@ export function MiniConsole() {
           unavailableReason={
             ledger.error
               ? "The payment ledger could not be read. This says nothing about what was paid."
+              : null
+          }
+        />
+        <BaseMcpActionReceiptsCard
+          loading={baseMcpActionReceipts.isPending}
+          receipts={baseMcpActionReceipts.data?.receipts ?? []}
+          unavailableReason={
+            baseMcpActionReceipts.error
+              ? "Base MCP action receipts could not be read. This says nothing about whether an action completed."
               : null
           }
         />

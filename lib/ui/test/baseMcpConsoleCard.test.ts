@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
+import { renderToStaticMarkup } from 'react-dom/server';
 
 import {
   BASE_MCP_CONSOLE_PROMPTS_V1,
+  BaseMcpConsoleCard,
   baseMcpConsoleStatusCopyV1,
   baseMcpConsoleTraceSummaryV1,
   type BaseMcpConsoleAnswerV1,
@@ -19,13 +21,110 @@ const answer = (overrides: Partial<BaseMcpConsoleAnswerV1> = {}): BaseMcpConsole
   ...overrides,
 });
 
+test('an ACTION renders an approval card and states that it is not a Route Proof', () => {
+  const html = renderToStaticMarkup(BaseMcpConsoleCard({
+    question: 'Send 5 USDC',
+    onQuestionChange: () => undefined,
+    onAsk: () => undefined,
+    pending: false,
+    unavailableReason: null,
+    answer: answer({
+      status: 'action',
+      trace: [],
+      action: {
+        approvalUrl: 'https://keys.coinbase.com/approve/test',
+        receipt: {
+          id: 'action-1',
+          status: 'approval_required',
+          actionType: 'send',
+          provider: 'base-mcp',
+          chainId: 8453,
+          asset: { symbol: 'USDC', address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', decimals: 6 },
+          amount: '5',
+          recipient: '0x2222222222222222222222222222222222222222',
+          reconciliationState: 'not_started',
+          transactionHash: null,
+          blockNumber: null,
+          errorCode: null,
+          routeVerified: false,
+          reconciliationBasis: 'erc20_transfer_event',
+        },
+      },
+    }),
+  }));
+  assert.match(html, /Action Receipt/);
+  assert.match(html, /Approve in Base Account/);
+  assert.match(html, /not a Miorail verified route/i);
+  assert.doesNotMatch(html, /Execution proof/);
+});
+
+test('a failed deterministic action still renders its immutable receipt', () => {
+  const failedWithReceipt = answer({
+    status: 'failed',
+    reply: 'That request ID is already bound to different action facts.',
+    trace: [],
+    errorCode: 'base_mcp_action_idempotency_conflict',
+    action: {
+      approvalUrl: null,
+      receipt: {
+        id: 'action-conflict',
+        status: 'approval_required',
+        actionType: 'send',
+        provider: 'base-mcp',
+        chainId: 8453,
+        asset: { symbol: 'USDC', address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', decimals: 6 },
+        amount: '5',
+        recipient: '0x2222222222222222222222222222222222222222',
+        reconciliationState: 'not_started',
+        transactionHash: null,
+        blockNumber: null,
+        errorCode: null,
+        routeVerified: false,
+        reconciliationBasis: 'erc20_transfer_event',
+      },
+    },
+  });
+  const html = renderToStaticMarkup(BaseMcpConsoleCard({
+    question: 'Send 6 USDC',
+    onQuestionChange: () => undefined,
+    onAsk: () => undefined,
+    pending: false,
+    unavailableReason: null,
+    answer: failedWithReceipt,
+  }));
+
+  assert.equal(baseMcpConsoleStatusCopyV1(failedWithReceipt), null);
+  assert.match(html, /Action Receipt/);
+  assert.match(html, /different action facts/);
+  assert.doesNotMatch(html, /The console could not complete that/);
+});
+
+test('a ROUTABLE response offers Routes AI and no approval URL', () => {
+  const html = renderToStaticMarkup(BaseMcpConsoleCard({
+    question: 'Swap 100 USDC to ETH',
+    onQuestionChange: () => undefined,
+    onAsk: () => undefined,
+    onOpenRoutes: () => undefined,
+    pending: false,
+    unavailableReason: null,
+    answer: answer({
+      status: 'handoff',
+      trace: [],
+      handoff: { target: 'routes', path: '/routes', originalMessage: 'Swap 100 USDC to ETH' },
+    }),
+  }));
+  assert.match(html, /ROUTABLE/);
+  assert.match(html, /Open Routes AI/);
+  assert.doesNotMatch(html, /Approve in Base Account/);
+});
+
 describe('the console never borrows the routers’ authority', () => {
-  test('no starter prompt asks for something the console refuses', () => {
-    // A chip offering "swap 10 USDC" would advertise a capability this surface
-    // does not have, and the refusal would read as a bug rather than a rule.
-    for (const prompt of BASE_MCP_CONSOLE_PROMPTS_V1) {
-      assert.doesNotMatch(prompt, /\b(swap|send|approve|sign|buy|sell)\b/i, prompt);
-    }
+  test('starter prompts demonstrate READ, ACTION and ROUTABLE without claiming unreleased actions', () => {
+    assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /hold|transactions/i.test(prompt)));
+    assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /send/i.test(prompt)));
+    assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /x402/i.test(prompt)));
+    assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /swap/i.test(prompt)));
+    assert.equal(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /sign|launch/i.test(prompt)), false);
   });
 
   test('an empty Base MCP inventory is stated as a connection fact', () => {
@@ -46,6 +145,8 @@ describe('the console never borrows the routers’ authority', () => {
 
   test('a completed answer adds no status line of its own', () => {
     assert.equal(baseMcpConsoleStatusCopyV1(answer()), null);
+    assert.equal(baseMcpConsoleStatusCopyV1(answer({ status: 'handoff' })), null);
+    assert.equal(baseMcpConsoleStatusCopyV1(answer({ status: 'action' })), null);
   });
 });
 

@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
+import { renderToStaticMarkup } from 'react-dom/server';
 
 import {
   BASE_MCP_PLUGIN_REACH_COPY_V1,
+  BaseMcpSummaryRail,
   baseMcpPluginDriftCopyV1,
   baseMcpPluginHostsLabelV1,
   baseMcpPluginMetaLineV1,
@@ -12,6 +14,22 @@ import {
   type BaseMcpPluginDriftRowV1,
   type BaseMcpPluginRowV1,
 } from '../src/console/BaseMcpPluginsCard';
+
+test('the summary rail exposes released ACTION tools instead of calling the console read-only', () => {
+  const html = renderToStaticMarkup(BaseMcpSummaryRail({
+    connection: 'connected',
+    enabled: true,
+    endpointHost: 'mcp.base.org',
+    toolCounts: { readOnly: 8, userConfirmed: 7, forbidden: 0, unknown: 0 },
+    routingCounts: { read: 8, action: 4, routable: 1, blocked: 2, releasedActions: 3 },
+    plugins: [],
+    drift: null,
+    generatedAt: null,
+  }));
+  assert.match(html, /3\/4 typed ACTION tools are released/);
+  assert.match(html, /hand off to Routes AI/);
+  assert.doesNotMatch(html, /Only the readable ones are offered/);
+});
 
 const plugin = (overrides: Partial<BaseMcpPluginRowV1>): BaseMcpPluginRowV1 => ({
   id: 'example',
@@ -27,6 +45,14 @@ const plugin = (overrides: Partial<BaseMcpPluginRowV1>): BaseMcpPluginRowV1 => (
   hosts: ['api.example.test'],
   externalMcpHost: null,
   cliPackage: null,
+  productSurface: 'extensions',
+  lifecycleStage: 'documented',
+  examples: [{
+    id: 'read',
+    prompt: 'Show Example status',
+    surface: 'read',
+    disposition: 'read_in_extensions',
+  }],
   ...overrides,
 });
 

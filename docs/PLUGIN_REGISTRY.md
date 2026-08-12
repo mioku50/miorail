@@ -13,10 +13,10 @@ documented → manifested → adapter → scored → proven
 | Stage | Meaning | Allowed product claim |
 |---|---|---|
 | `documented` | External or vendored documentation is known. No trusted runtime integration is implied. | “This service may be considered for a future route family.” |
-| `manifested` | A structured, allowlisted capability definition exists for constrained access. | “Miorail has a constrained read surface.” No Route Card or execution claim. |
+| `manifested` | A structured, allowlisted capability definition exists for constrained access. | “Miorail understands and constrains this capability.” No Route Card, recommendation, or execution claim. |
 | `adapter` | A typed provider-neutral adapter returns validated candidates/evidence or builds validated calls. | “Miorail can use this provider inside a scoped route implementation.” |
 | `scored` | Evidence is normalized and participates in deterministic comparison with honest gaps/confidence. | “Miorail can compare this provider for the supported goal.” |
-| `proven` | The full path reaches a validated Blueprint, user-approved execution, and Route Proof. | “Miorail supports this provider for the listed route family,” subject to rollout gates. |
+| `proven` | A route reaches a validated Blueprint, user-approved execution, and Route Proof. A non-routable Extensions action reaches its typed safety policy, explicit Base Account approval, and exact reconciled Action Receipt. | “Miorail supports this provider for the explicitly listed route family or action,” subject to rollout gates. An Action Receipt is never called a Route Proof. |
 
 Stages are monotonic only after tests and security gates exist. A broken or stale integration may be downgraded.
 
@@ -28,23 +28,28 @@ Stages are monotonic only after tests and security gates exist. A broken or stal
 | KyberSwap | Swap | `proven` | User-approved Base Account calls | Feature-gated | Provider-neutral comparison and pinned build path exist. |
 | Moonwell | Earn | `proven` | User-approved Base Account calls | **Production gated** | Live APY/liquidity evidence and persisted Earn proof path exist; pinned-contract startup preflight must pass before enablement. |
 | Morpho | Earn | `proven` | User-approved Base Account calls | **Production gated** | Live vault evidence and persisted ERC-4626 deposit proof path exist; pinned-contract startup preflight must pass before enablement. |
+| Base MCP core `send` | Extensions / canonical USDC transfer | `proven` | Base MCP approval URL + explicit Base Account approval | Available when Base MCP is enabled and Action Receipt migration is present | Typed exact-amount/address adapter, tenant/Base MCP wallet match, canonical USDC safety gate, bounded amount policy, idempotency, provider status, and exact onchain `Transfer` reconciliation. Produces an Action Receipt, **not** a Route Proof. |
+| Base MCP core `sign` | Extensions / signing | `manifested` | Disabled | Not released | Correctly classified as an approval capability, but no typed message policy or durable Action Receipt reconciliation vertical exists yet. |
+| Base MCP core x402 buyer tools | Extensions / explicit GET payment | `adapter` | Base MCP approval URL + explicit Base Account approval | Available when Base MCP is enabled and Action Receipt migration is present | Typed exact-URL/cap adapter, reviewed hosts, canonical USDC, tenant wallet binding, idempotency, ephemeral response, and stable response hash. Provider-confirmed only; independent onchain settlement reconciliation is still required for `proven`. Provider-specific prepare/pay protocols are not covered. |
+| Base MCP core `swap` | Swap | `manifested` | **Blocked in Extensions** | Routes handoff only | A swap intent is ROUTABLE and must enter provider comparison, Safety Kernel, and Route Proof. Native Base MCP swap cannot bypass Routes AI. |
+| Base MCP core `send_calls` | Unassigned dispatcher | `manifested` | **Disabled** | Not released | Dynamic discovery never turns arbitrary calls into an adapter. Each action needs its own exact typed vertical. |
 | Aerodrome | Advanced Swap | `manifested` | None in Route flow | Legacy read-only compatibility | Requires typed quote/build adapter, scoring, Safety Kernel, and proof before promotion. |
-| Avantis | Unassigned | `manifested` | None in Route flow | Legacy read-only compatibility | Not an active route-family commitment. |
+| Avantis | Extensions / Perps | `manifested` | Official provider UI handoff only | Reads + deterministic handoff | Position/market reads remain scoped to Extensions. Trade prompts are parsed into market, side, leverage, and collateral, labelled with liquidation risk, then handed to the official Avantis UI. No Miorail transaction adapter is claimed. |
 | o1.exchange (Trading API) | Advanced Swap | `documented` | **Disabled** | `compatibility: incompatible_with_base_account_v1` | T67D gate run 2026-08-01. The documented flow requires a user private key, `signTransaction`, and provider-side broadcast via `/order/complete`; the calldata is mutated after the quote by a Permit2 signature substitution. Do not claim route comparison or execution support. `pnpm o1:compat` reproduces the finding list. See [O1_TRADING_API_COMPATIBILITY.md](research/O1_TRADING_API_COMPATIBILITY.md). |
-| o1.exchange (DEX Aggregator API) | Advanced Swap | `documented` | None | Not evaluated | A **separate product**: Base-only, returns `{to,data,value}` for the O1Router and has no `/complete` step, so the user's own wallet submits. Architecturally closer to Miorail, but not gated, not adapted, and not connected. Must never be conflated with the Trading API row above. |
-| YO | Yield Expansion | `documented` | None | Planned | Requires typed APY/liquidity/withdrawal/build/proof adapters. |
+| o1.exchange (DEX Aggregator API) | Routes / Advanced Swap | `manifested` | None | Intent + typed not-released adapter | A **separate product** from the incompatible Trading API. Explicit requests reach Routes and return `o1_exchange_route_adapter_not_released`; no quote or substitute provider is invented. Real quote/build/proof gates remain outstanding. |
+| YO | Routes / Yield Expansion | `manifested` | None | Intent + typed unsupported result | YO requests reach Routes and never substitute Moonwell/Morpho. Requires typed APY/liquidity/withdrawal/build/proof adapters before a candidate exists. |
 | Bitrefill | Commerce | `scored` | User-signed x402 payment (gated off) | **Compare gate + checkout gate, both off by default** | T64: pinned Base 8453 + canonical USDC + pinned payTo, typed catalogue adapter, deterministic Commerce Score with `delivery_certainty` permanently Not scored, and a three-leg Commerce Route Proof. NOT `proven`: the proof path has no durable persistence yet and no delivered order has been reconciled. |
 | OpenSea | NFT | `documented` | None | Planned | Future NFT Route family. Requires listing, approval, purchase, and ownership proof. |
 | Venice | Private AI | `documented` | None | Planned | Future paid inference route; requires cost/privacy evidence and output receipt. |
-| Balancer | Advanced Swap | `documented` | None | Backlog | No Miorail Route adapter. |
-| Hydrex | Advanced Swap | `documented` | None | Backlog | No Miorail Route adapter. |
-| Printr | Unassigned | `documented` | None | Documentation-only | Must not appear as an available capability. |
-| GMGN | Unassigned | `documented` | None | Documentation-only | Must not appear as an available capability. |
-| Brickken | Unassigned | `documented` | None | Documentation-only | Must not appear as an available capability. |
-| Flaunch | Unassigned | `documented` | None | Documentation-only | Must not appear as an available capability. |
-| Clawnch | Unassigned | `documented` | None | Documentation-only | Must not appear as an available capability. |
-| Virtuals | Unassigned | `documented` | None | Frozen legacy reference | A legacy read-only namespace does not constitute Route capability. |
-| Bankr | Unassigned | `documented` | None | Frozen legacy reference | A legacy read-only namespace does not constitute Route capability. |
+| Balancer | Routes / Advanced Swap | `manifested` | None | Intent + typed not-released adapter | Explicit requests reach Routes and return `balancer_route_adapter_not_released`; no quote or provider substitution. |
+| Hydrex | Routes / Advanced Swap | `manifested` | None | Intent + typed not-released adapter | Explicit swap and liquidity requests reach Routes and return a provider-specific unreleased state; no quote or provider substitution. |
+| Printr | Extensions / token launch | `documented` | None | Documentation-only | Prompt examples and product ownership are visible; no action adapter. |
+| GMGN (`gmgh` accepted as alias) | Extensions / token intelligence | `documented` | None | Documentation-only | Read and quote questions are recognized; any buy/swap intent hands to Routes. No runtime provider claim. |
+| Brickken | Extensions / agent registration | `documented` | None | Documentation-only | Provider-specific prepare/pay x402 protocol requires its own typed adapter; generic x402 URL payment is not substituted. |
+| Flaunch | Extensions / token launch | `documented` | None | Documentation-only | Reads may use reviewed tools; buy/swap hands to Routes; launch has no action adapter. |
+| Clawnch | Extensions / token launch | `documented` | None | Documentation-only | Reads may use reviewed tools; launch has no action adapter. |
+| Virtuals | Extensions / agents | `documented` | None | Documentation-only | Prompt examples and product ownership are visible; no create-agent action adapter. |
+| Bankr | Extensions / launch intelligence | `documented` | None | Documentation-only | Reads may use reviewed tools; buy/swap hands to Routes. |
 
 ## Commerce Route Proof (T64)
 
@@ -220,9 +225,11 @@ be presented as a supported purchase path.
 
 1. Never infer support from `skills/**.md`, Base documentation, or plugin names.
 2. Never present a `documented` or `manifested` capability as a selectable Route Card provider.
-3. Never prepare calls for a capability below `adapter`.
+3. Never prepare calls for a capability below `adapter`; a live Base MCP tool
+   name or published plugin spec is not an adapter.
 4. Never recommend a capability below `scored`.
-5. Never claim completed execution support below `proven`.
+5. Never claim completed execution support below `proven`. For a non-routable
+   action, `proven` means an exact reconciled Action Receipt, not a Route Proof.
 6. Feature flags, migrations, provider configuration, and startup preflights may still block a `proven` capability in production.
 7. When registry and runtime disagree, fail closed and open a scoped registry/runtime reconciliation task.
 
@@ -233,7 +240,7 @@ be presented as a supported purchase path.
    `proven` blocked on the gate above;
 3. NFT — OpenSea;
 4. Private AI — Venice;
-5. Advanced Swap — o1.exchange and Aerodrome;
+5. Advanced Swap — Balancer, Hydrex, o1.exchange and Aerodrome;
 6. Yield Expansion — YO.
 
 Adding a new Markdown plugin file is not a roadmap item. Implementing and promoting a route family is.

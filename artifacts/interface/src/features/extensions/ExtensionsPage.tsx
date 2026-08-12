@@ -6,6 +6,7 @@ import {
   BaseMcpPluginsCard,
   BaseMcpSummaryRail,
   ConsoleShell,
+  GOAL_HANDOFF_KEY_V1,
   chainBlockNumberV1,
   chainGasLabelV1,
   chainLabelV1,
@@ -14,7 +15,13 @@ import {
   type BaseMcpToolRowV1,
 } from '@mioagent/ui';
 import { useAccount } from 'wagmi';
-import { useBaseMcpConsole, useBaseMcpPlugins, useBaseMcpToolsProbe, useStatus } from '@mioagent/api-client-react';
+import {
+  useBaseMcpConsole,
+  useBaseMcpPlugins,
+  useBaseMcpToolsProbe,
+  useReconcileBaseMcpAction,
+  useStatus,
+} from '@mioagent/api-client-react';
 
 import { BaseMcpConnectButton } from '../../components/BaseMcpConnectButton';
 import { useConsoleNav } from '../console/useConsoleNav';
@@ -31,11 +38,11 @@ import { useConsoleNav } from '../console/useConsoleNav';
 //   * The TOOLS: the calls mcp.base.org itself exposes, read live with the
 //     user's own credentials.
 //
-// Read and classify, nothing else. The tool probe is a MUTATION rather than a
-// query on purpose: it opens an authenticated session to a third-party server,
-// and that is not something a page should do on mount, on focus, or on a
-// timer. The user asks; then it reads. The plugin catalogue has no such cost,
-// so it is an ordinary query.
+// The tool catalogue only reads and classifies. Separately, the console routes
+// released typed actions before the read-only model runs. The probe is a
+// MUTATION rather than a query on purpose: it opens an authenticated session
+// to a third-party server, and that is not something a page should poll. The
+// plugin catalogue has no such cost, so it is an ordinary query.
 // ---------------------------------------------------------------------------
 
 /** `0x1234…abcd`, or nothing when no wallet is connected. */
@@ -52,6 +59,7 @@ export function ExtensionsPage() {
   const probe = useBaseMcpToolsProbe();
   const catalogue = useBaseMcpPlugins();
   const consoleAsk = useBaseMcpConsole();
+  const reconcileAction = useReconcileBaseMcpAction();
   const [question, setQuestion] = useState('');
 
   const enabled = status.data?.baseMcp?.enabled === true;
@@ -92,12 +100,16 @@ export function ExtensionsPage() {
     unavailableReason: catalogue.error
       ? 'The plugin catalogue could not be read from this server.'
       : null,
+    onSelectPrompt: (prompt: string) => {
+      setQuestion(prompt);
+      globalThis.document?.getElementById('base-mcp-console')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    },
   };
 
   return (
     <ConsoleShell
       header={{
-        crumb: ['Base MCP AI'],
+        crumb: ['Base MCP Extensions'],
         nav: consoleNav.header,
         onNavigate: consoleNav.navigate,
         blockNumber: chainBlockNumberV1(status.data ?? null),
@@ -140,6 +152,16 @@ export function ExtensionsPage() {
                 }
               : null
           }
+          routingCounts={
+            probe.data
+              ? {
+                  ...probe.data.routing,
+                  releasedActions: probe.data.tools.filter(
+                    (tool) => tool.surface === 'action' && tool.surfaceEnabled,
+                  ).length,
+                }
+              : null
+          }
           plugins={plugins.plugins}
           drift={plugins.drift}
           generatedAt={plugins.generatedAt}
@@ -159,23 +181,44 @@ export function ExtensionsPage() {
         // Kept out of Routes on purpose: our routers are measured and carry a
         // Route Card, these tools are other people's and carry whatever they
         // returned. One window for both was one voice for two guarantees.
-        <BaseMcpConsoleCard
-          question={question}
+        <div id="base-mcp-console">
+          <BaseMcpConsoleCard
+            question={question}
           onQuestionChange={setQuestion}
           onAsk={() => {
             const message = question.trim();
-            if (message) consoleAsk.mutate(message);
+            if (message) {
+              reconcileAction.reset();
+              consoleAsk.mutate(message);
+            }
           }}
           pending={consoleAsk.isPending}
-          answer={consoleAsk.data ?? null}
-          unavailableReason={
+          answer={
+            reconcileAction.data && consoleAsk.data?.action
+              ? { ...consoleAsk.data, action: reconcileAction.data }
+              : consoleAsk.data ?? null
+          }
+          readTools={probe.data?.routing.read}
+          actionTools={probe.data?.routing.action}
+          releasedActionTools={probe.data?.tools.filter(
+            (tool) => tool.surface === 'action' && tool.surfaceEnabled,
+          ).length}
+          routableTools={probe.data?.routing.routable}
+          reconcilingAction={reconcileAction.isPending}
+          onOpenRoutes={(message) => {
+            sessionStorage.setItem(GOAL_HANDOFF_KEY_V1, message);
+            navigate(`${consoleSectionPathV1('routes')}?goal=${encodeURIComponent(message)}`);
+          }}
+          onReconcileAction={(receiptId) => reconcileAction.mutate(receiptId)}
+            unavailableReason={
             consoleAsk.error
               // Never the error's own message: a transport failure can carry
               // the endpoint, and the endpoint can carry a token.
               ? 'The console could not reach the server. Nothing here is a statement about Base MCP.'
               : null
-          }
-        />
+            }
+          />
+        </div>
       )}
       {/* Reference, below the thing you act with. */}
       <BaseMcpPluginsCard {...plugins} />

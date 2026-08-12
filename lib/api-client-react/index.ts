@@ -1224,19 +1224,62 @@ export function useBaseMcpPlugins(options?: { enabled?: boolean }) {
 export function useBaseMcpConsole(
   options?: Omit<UseMutationOptions<apiSpec.BaseMcpConsoleResponseV1, Error, string>, 'mutationFn'>,
 ) {
+  const requestIdentity = useRef<{ message: string; requestId: string } | null>(null);
   return useMutation({
+    ...options,
+    retry: false,
     mutationFn: async (message: string) => {
+      const normalized = message.trim();
+      if (!requestIdentity.current || requestIdentity.current.message !== normalized) {
+        requestIdentity.current = { message: normalized, requestId: globalThis.crypto.randomUUID() };
+      }
       const response = await fetchApi<unknown>('/api/mcp/base/console', {
         method: 'POST',
         // `fetchApi` does not add this, and `express.json()` skips a body
         // without it — so the server saw `{}`, the schema rejected it, and the
         // console answered "could not reach the server" in one millisecond.
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message: normalized, requestId: requestIdentity.current.requestId }),
       });
-      return apiSpec.BaseMcpConsoleResponseV1Schema.parse(response);
+      const parsed = apiSpec.BaseMcpConsoleResponseV1Schema.parse(response);
+      const actionPending = parsed.action
+        && !['completed', 'rejected', 'failed'].includes(parsed.action.receipt.status);
+      if (!actionPending) requestIdentity.current = null;
+      return parsed;
     },
+  });
+}
+
+export function useBaseMcpActionReceipts(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['base-mcp-action-receipts'],
+    enabled: options?.enabled ?? true,
+    queryFn: async () => {
+      const response = await fetchApi<unknown>('/api/mcp/base/actions');
+      return apiSpec.BaseMcpActionReceiptListResponseV1Schema.parse(response);
+    },
+  });
+}
+
+export function useReconcileBaseMcpAction(
+  options?: Omit<
+    UseMutationOptions<apiSpec.BaseMcpActionReconcileResponseV1, Error, string>,
+    'mutationFn' | 'retry'
+  >,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
     ...options,
+    retry: false,
+    mutationFn: async (receiptId: string) => {
+      const response = await fetchApi<unknown>(
+        `/api/mcp/base/actions/${encodeURIComponent(receiptId)}/reconcile`,
+        { method: 'POST' },
+      );
+      const parsed = apiSpec.BaseMcpActionReconcileResponseV1Schema.parse(response);
+      await queryClient.invalidateQueries({ queryKey: ['base-mcp-action-receipts'] });
+      return parsed;
+    },
   });
 }
 

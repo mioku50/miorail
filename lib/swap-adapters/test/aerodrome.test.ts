@@ -352,9 +352,16 @@ describe('the RPC seam', () => {
 });
 
 describe('the registry', () => {
-  test('Aerodrome joins Uniswap and KyberSwap', () => {
+  test('Routes registers released quote adapters plus honest manifested providers', () => {
     const ids = createDefaultSwapAdapters().map((adapter) => adapter.id);
-    assert.deepEqual(ids, ['uniswap', 'kyberswap', 'aerodrome']);
+    assert.deepEqual(ids, [
+      'uniswap',
+      'kyberswap',
+      'aerodrome',
+      'balancer',
+      'hydrex',
+      'o1-exchange',
+    ]);
   });
 
   test('a swap intent selects all three', () => {

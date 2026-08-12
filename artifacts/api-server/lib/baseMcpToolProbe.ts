@@ -17,8 +17,10 @@ import {
 import { refreshBaseMcpOAuthIfNeeded } from './baseMcpOAuthLifecycle.js';
 import {
   classifyBaseMcpTools,
+  baseMcpSurfaceVerdictV1,
   emptyBaseMcpToolCapabilityCounts,
   type BaseMcpToolCapabilityCounts,
+  type BaseMcpSurfaceRouteV1,
   type ClassifiedBaseMcpTool,
 } from './baseMcpToolClassifier.js';
 
@@ -34,11 +36,32 @@ export interface BaseMcpToolProbeResult {
   endpointHost?: string;
   toolsCount: number;
   capabilities: BaseMcpToolCapabilityCounts;
-  tools: ClassifiedBaseMcpTool[];
+  routing: Record<BaseMcpSurfaceRouteV1, number>;
+  tools: Array<ClassifiedBaseMcpTool & {
+    surface: BaseMcpSurfaceRouteV1;
+    surfaceEnabled: boolean;
+    surfaceReason: string;
+  }>;
   checkedAt: string;
   errorCode?: string;
   protocolToolsStatus?: 'available' | 'unavailable';
   walletToolsStatus?: 'available' | 'unavailable';
+}
+
+function emptyRoutingCounts(): Record<BaseMcpSurfaceRouteV1, number> {
+  return { read: 0, action: 0, routable: 0, blocked: 0 };
+}
+
+function surfaceTools(classified: ClassifiedBaseMcpTool[]): BaseMcpToolProbeResult['tools'] {
+  return classified.map((tool) => {
+    const verdict = baseMcpSurfaceVerdictV1(tool);
+    return {
+      ...tool,
+      surface: verdict.route,
+      surfaceEnabled: verdict.enabled,
+      surfaceReason: verdict.reason,
+    };
+  });
 }
 
 type MinimalMcpClient = {
@@ -164,6 +187,7 @@ export async function probeBaseMcpTools(input: {
       endpointHost,
       toolsCount: 0,
       capabilities: emptyBaseMcpToolCapabilityCounts(),
+      routing: emptyRoutingCounts(),
       tools: [],
       checkedAt,
       errorCode: 'missing_config',
@@ -185,6 +209,7 @@ export async function probeBaseMcpTools(input: {
       endpointHost,
       toolsCount: 0,
       capabilities: emptyBaseMcpToolCapabilityCounts(),
+      routing: emptyRoutingCounts(),
       tools: [],
       checkedAt,
       errorCode: 'needs_reauth',
@@ -205,6 +230,7 @@ export async function probeBaseMcpTools(input: {
         endpointHost,
         toolsCount: 0,
         capabilities: emptyBaseMcpToolCapabilityCounts(),
+        routing: emptyRoutingCounts(),
         tools: [],
         checkedAt,
         errorCode: refresh.errorCode,
@@ -226,12 +252,18 @@ export async function probeBaseMcpTools(input: {
     );
     const tools = await withTimeout(listAllTools(client), timeoutMsFromEnv());
     const classified = classifyBaseMcpTools(tools);
+    const routedTools = surfaceTools(classified.tools);
+    const routing = routedTools.reduce<Record<BaseMcpSurfaceRouteV1, number>>((counts, tool) => {
+      counts[tool.surface] += 1;
+      return counts;
+    }, emptyRoutingCounts());
     const result: BaseMcpToolProbeResult = {
       status: classified.tools.length > 0 ? 'connected' : 'degraded',
       endpointHost,
       toolsCount: classified.tools.length,
       capabilities: classified.capabilities,
-      tools: classified.tools,
+      routing,
+      tools: routedTools,
       checkedAt,
       protocolToolsStatus: classified.tools.some((tool) => tool.scope === 'protocol' && tool.enabled) ? 'available' : 'unavailable',
       walletToolsStatus: classified.tools.some((tool) => tool.scope === 'wallet') ? 'available' : 'unavailable',
@@ -258,6 +290,7 @@ export async function probeBaseMcpTools(input: {
       endpointHost,
       toolsCount: 0,
       capabilities: emptyBaseMcpToolCapabilityCounts(),
+      routing: emptyRoutingCounts(),
       tools: [],
       checkedAt,
       errorCode: classified.errorCode,

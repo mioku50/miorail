@@ -12,9 +12,10 @@
 // this" is the question the separation exists to answer, and an answer without
 // its trace is exactly the undifferentiated voice this replaces.
 //
-// What the card can never render, because the server never produces it: an
-// approval URL, a prepared transaction, a Route Card, a clearance. This
-// surface reads.
+// Direct actions only arrive here through a deterministic typed adapter. The
+// model itself still reads; it never receives a write tool. A released action
+// may render an ephemeral Base Account approval URL and a durable Action
+// Receipt, but never a Route Card or Route Proof.
 // ---------------------------------------------------------------------------
 
 export interface BaseMcpConsoleTraceRowV1 {
@@ -25,7 +26,46 @@ export interface BaseMcpConsoleTraceRowV1 {
   errorCode: string | null;
 }
 
-export type BaseMcpConsoleStatusV1 = 'answered' | 'no_tools' | 'needs_reauth' | 'disabled' | 'failed';
+export type BaseMcpConsoleStatusV1 =
+  | 'answered'
+  | 'handoff'
+  | 'action'
+  | 'needs_input'
+  | 'no_tools'
+  | 'needs_reauth'
+  | 'disabled'
+  | 'failed';
+
+interface BaseMcpActionReceiptCommonUiV1 {
+  id: string;
+  status: 'preparing' | 'approval_required' | 'pending' | 'reconciling' | 'completed' | 'rejected' | 'failed';
+  provider: 'base-mcp';
+  chainId: 8453;
+  reconciliationState: 'not_started' | 'pending' | 'matched' | 'provider_confirmed' | 'mismatched' | 'unavailable';
+  transactionHash: string | null;
+  blockNumber: string | null;
+  errorCode: string | null;
+  routeVerified: false;
+}
+
+export type BaseMcpActionReceiptUiV1 = BaseMcpActionReceiptCommonUiV1 & (
+  | {
+      actionType: 'send';
+      asset: { symbol: 'USDC'; address: string; decimals: 6 };
+      amount: string;
+      recipient: string;
+      reconciliationBasis: 'erc20_transfer_event';
+    }
+  | {
+      actionType: 'x402';
+      method: 'GET';
+      url: string;
+      maxPayment: string;
+      paymentAsset: { symbol: 'USDC'; address: string; decimals: 6 };
+      responseHash: string | null;
+      reconciliationBasis: 'x402_endpoint_response';
+    }
+);
 
 export interface BaseMcpConsoleAnswerV1 {
   status: BaseMcpConsoleStatusV1;
@@ -37,6 +77,19 @@ export interface BaseMcpConsoleAnswerV1 {
    * counted themselves is worse than a twenty-second wait the page owns. */
   elapsedMs?: number;
   errorCode: string | null;
+  handoff?: {
+    target: 'routes' | 'provider';
+    path: string;
+    originalMessage: string;
+    provider?: string | null;
+    summary?: string;
+    risk?: 'liquidation';
+  } | null;
+  action?: {
+    receipt: BaseMcpActionReceiptUiV1;
+    approvalUrl: string | null;
+    resultPreview?: string | null;
+  } | null;
 }
 
 export interface BaseMcpConsoleModelV1 {
@@ -49,17 +102,25 @@ export interface BaseMcpConsoleModelV1 {
   unavailableReason: string | null;
   /** Offered when the console reports the session is gone. */
   onConnect?: () => void;
+  onOpenRoutes?: (message: string) => void;
+  onReconcileAction?: (receiptId: string) => void;
+  reconcilingAction?: boolean;
+  readTools?: number;
+  actionTools?: number;
+  releasedActionTools?: number;
+  routableTools?: number;
 }
 
-/** Openers that exercise Base MCP and nothing else — no route, no swap. A chip
- * that asked for a swap would advertise a capability this console refuses. */
+/** Openers that demonstrate each deterministic disposition: read, exact
+ * extension action, provider handoff and Routes handoff. */
 export const BASE_MCP_CONSOLE_PROMPTS_V1: readonly string[] = [
-  'What can you read with Base MCP right now?',
   'What does my Base Account hold?',
-  // NOT "which tools did you just use?" — every request is a fresh thread with
-  // no memory of the last one, so that question can only be answered by
-  // inventing a history. It was, on the first day.
   'Show my recent Base transactions',
+  'Send 5 USDC to [recipient Base address]',
+  'Pay x402 GET https://api.venice.ai/api/v1/models, max 0.10 USDC',
+  'Show my open Avantis positions and PnL',
+  'Open a 10x long BTC/USD with 100 USDC on Avantis',
+  'Swap 100 USDC to ETH',
 ];
 
 /**
@@ -72,9 +133,17 @@ export const BASE_MCP_CONSOLE_PROMPTS_V1: readonly string[] = [
  */
 export function baseMcpConsoleStatusCopyV1(answer: BaseMcpConsoleAnswerV1 | null): string | null {
   if (!answer) return null;
+  // A failed deterministic action can still carry the original immutable
+  // receipt (for example, an idempotency conflict). The receipt and its exact
+  // error are more useful than the generic console failure copy.
+  if (answer.action) return null;
   switch (answer.status) {
     case 'answered':
+    case 'handoff':
+    case 'action':
       return null;
+    case 'needs_input':
+      return answer.reply;
     case 'no_tools':
       return 'Base MCP offered no readable tools, so nothing was asked. This is a statement about the connection, not about Base.';
     case 'needs_reauth':
@@ -109,26 +178,32 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
   return (
     <div className="rp">
       <div className="rph">
-        <b>Base MCP console</b>
-        {answer && <span className="rt mono">{answer.toolsAvailable} tools</span>}
+        <b>Base MCP Extensions</b>
+        <span className="rt mono">
+          {model.readTools ?? '—'} READ ·{' '}
+          {model.releasedActionTools === undefined
+            ? `${model.actionTools ?? '—'} ACTION`
+            : `${model.releasedActionTools}/${model.actionTools ?? '—'} ACTION RELEASED`}
+          {model.routableTools ? ` · ${model.routableTools} ROUTABLE` : ''}
+        </span>
       </div>
       <div className="rpb">
         <p className="lnote">
-          This console reaches Base MCP and nothing else. Miorail’s own routers are not connected to
-          it, so an answer here is never a verified route — and every tool it can use is read-only,
-          so nothing here can reach your wallet.
+          AI Console — Base MCP capabilities. Reads stay here, direct actions require an explicit
+          Base Account approval, and routable intents move to Routes AI for comparison and Safety
+          Kernel checks.
         </p>
 
         <textarea
           className="goalinput"
           rows={2}
           value={model.question}
-          placeholder="Ask something Base MCP can read…"
+          placeholder="Ask Base MCP to read or act…"
           onChange={(event) => model.onQuestionChange(event.target.value)}
         />
         <div className="ctarow">
           <button type="button" className="btn" onClick={model.onAsk} disabled={!canAsk}>
-            {model.pending ? 'Asking…' : 'Ask Base MCP'}
+            {model.pending ? 'Working…' : 'Ask Base MCP'}
           </button>
           {model.onConnect && answer?.status === 'needs_reauth' && (
             <button type="button" className="btn sec" onClick={model.onConnect}>
@@ -153,12 +228,131 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
         {model.unavailableReason ? (
           <p className="empty">{model.unavailableReason}</p>
         ) : model.pending ? (
-          <p className="empty">Asking Base MCP…</p>
+          <p className="empty">Working with Base MCP…</p>
         ) : !answer ? (
           <p className="empty">Nothing asked yet.</p>
         ) : (
           <>
             {statusCopy && <p className="empty">{statusCopy}</p>}
+
+            {answer.status === 'handoff' && answer.handoff && (
+              <div>
+                <div className="qrow">
+                  <span className="pill br">ROUTABLE</span>
+                  <span className="v">
+                    {answer.handoff.target === 'routes' ? 'Routes AI' : 'Avantis'}
+                  </span>
+                </div>
+                <p className="lnote">{answer.reply}</p>
+                {answer.handoff.summary && <p className="note warn">{answer.handoff.summary}</p>}
+                {answer.handoff.target === 'routes' && model.onOpenRoutes && (
+                  <div className="ctarow">
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => model.onOpenRoutes?.(answer.handoff!.originalMessage)}
+                    >
+                      Open Routes AI
+                    </button>
+                  </div>
+                )}
+                {answer.handoff.target === 'provider' && (
+                  <div className="ctarow">
+                    <a className="btn" href={answer.handoff.path} target="_blank" rel="noopener noreferrer">
+                      Continue in Avantis
+                    </a>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {answer.action && (
+              <div>
+                <div className="qrow">
+                  <span className={`pill ${answer.action.receipt.status === 'completed' ? 'g' : answer.action.receipt.status === 'failed' || answer.action.receipt.status === 'rejected' ? 'n' : 'a'}`}>
+                    {answer.action.receipt.status}
+                  </span>
+                  <span className="v">Action Receipt</span>
+                </div>
+                {answer.action.receipt.actionType === 'send' ? (
+                  <>
+                    <div className="qrow">
+                      <span>Send</span>
+                      <span className="v mono">{answer.action.receipt.amount} USDC</span>
+                    </div>
+                    <div className="qrow">
+                      <span>To</span>
+                      <span className="v mono">{answer.action.receipt.recipient}</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="qrow">
+                      <span>x402 GET cap</span>
+                      <span className="v mono">{answer.action.receipt.maxPayment} USDC</span>
+                    </div>
+                    <p className="lnote mono">{answer.action.receipt.url}</p>
+                  </>
+                )}
+                <div className="qrow">
+                  <span>Network</span>
+                  <span className="v">Base</span>
+                </div>
+                <div className="qrow">
+                  <span>Provider</span>
+                  <span className="v">Base MCP</span>
+                </div>
+                <div className="qrow">
+                  <span>Reconciliation</span>
+                  <span className="v mono">{answer.action.receipt.reconciliationState}</span>
+                </div>
+                {answer.reply && <p className="lnote">{answer.reply}</p>}
+                {answer.action.resultPreview && (
+                  <pre className="mono aitext">{answer.action.resultPreview}</pre>
+                )}
+                <div className="ctarow">
+                  {answer.action.approvalUrl && (
+                    <a
+                      className="btn"
+                      href={answer.action.approvalUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Approve in Base Account
+                    </a>
+                  )}
+                  {model.onReconcileAction && !['completed', 'failed', 'rejected'].includes(answer.action.receipt.status) && (
+                    <button
+                      type="button"
+                      className="btn sec"
+                      disabled={model.reconcilingAction}
+                      onClick={() => model.onReconcileAction?.(answer.action!.receipt.id)}
+                    >
+                      {model.reconcilingAction ? 'Checking…' : 'Check status'}
+                    </button>
+                  )}
+                </div>
+                {answer.action.receipt.transactionHash && (
+                  <p className="lnote">
+                    tx{' '}
+                    <a
+                      className="mono"
+                      href={`https://basescan.org/tx/${answer.action.receipt.transactionHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {answer.action.receipt.transactionHash}
+                    </a>
+                    {answer.action.receipt.blockNumber ? ` · block ${answer.action.receipt.blockNumber}` : ''}
+                  </p>
+                )}
+                <p className="note warn">
+                  Base MCP extension action — capability policy passed and Base Account approval is
+                  required. Send is reconciled against exact onchain transfer facts; x402 is confirmed
+                  by the paid endpoint response and stored only as a hash. This is not a Miorail verified route.
+                </p>
+              </div>
+            )}
 
             {answer.status === 'answered' && (
               <>
@@ -202,8 +396,8 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
 
         <p className="lnote">
           Base does not operate, endorse or audit the plugins behind these tools, and Miorail does
-          not either. Swaps, sends and anything that needs signing stay in Routes, where they get a
-          Route Card and your Base Account confirmation.
+          not either. Swap and yield intents always go to Routes AI. A direct extension action is
+          shown as an Action Receipt and never as a Route Proof.
         </p>
       </div>
     </div>

@@ -18,6 +18,7 @@ if (!classifierApi?.classifyBaseMcpTools || !classifierApi.emptyBaseMcpToolCapab
 
 export const classifyBaseMcpTools = classifierApi.classifyBaseMcpTools;
 export const emptyBaseMcpToolCapabilityCounts = classifierApi.emptyBaseMcpToolCapabilityCounts;
+export const baseMcpSurfaceVerdictV1 = baseMcpClassifier.baseMcpSurfaceVerdictV1;
 
 export type {
   BaseMcpToolCapability,
@@ -25,5 +26,7 @@ export type {
   BaseMcpToolClassificationResult,
   BaseMcpToolForClassification,
   BaseMcpToolScope,
+  BaseMcpSurfaceRouteV1,
+  BaseMcpSurfaceVerdictV1,
   ClassifiedBaseMcpTool,
 } from '@mioagent/mcp';

@@ -3,6 +3,7 @@ export * from './kyberswap.js';
 export * from './normalization.js';
 export * from './provenance.js';
 export * from './registry.js';
+export * from './manifested.js';
 export * from './types.js';
 export * from './uniswap-client.js';
 export * from './uniswap-trade-client.js';

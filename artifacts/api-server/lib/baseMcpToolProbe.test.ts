@@ -87,6 +87,9 @@ test('probeBaseMcpTools lists sanitized tools without invoking send_calls or cal
       scope: 'wallet',
       enabled: true,
       reason: 'read_only_allowlist',
+      surface: 'read',
+      surfaceEnabled: true,
+      surfaceReason: 'read_in_extensions',
     },
     {
       name: 'send_calls',
@@ -95,6 +98,9 @@ test('probeBaseMcpTools lists sanitized tools without invoking send_calls or cal
       scope: 'wallet',
       enabled: false,
       reason: 'transaction_tool_user_confirmation_required',
+      surface: 'blocked',
+      surfaceEnabled: false,
+      surfaceReason: 'explicit_extension_adapter_required',
     },
   ]);
   assert.strictEqual(JSON.stringify(result).includes('private/path'), false);

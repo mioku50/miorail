@@ -574,11 +574,19 @@ export function mapProtocolConstraintV1(message: string): {
   issues: IntentIssueV1[];
 } {
   const normalized = normalizeText(message);
-  const known = ['uniswap', 'kyberswap'] as const;
+  const known = ['uniswap', 'kyberswap', 'aerodrome', 'balancer', 'hydrex', 'o1-exchange'] as const;
+  const providerPattern: Readonly<Record<(typeof known)[number], string>> = {
+    uniswap: 'uniswap',
+    kyberswap: 'kyberswap|kyber',
+    aerodrome: 'aerodrome',
+    balancer: 'balancer',
+    hydrex: 'hydrex',
+    'o1-exchange': 'o1(?:\\.exchange|\\s+exchange|-exchange)',
+  };
   const include = new Set<string>();
   const exclude = new Set<string>();
 
-  if (/(?:uniswap|kyberswap).{0,20}(?:\bor\b|или).{0,20}(?:uniswap|kyberswap)/iu.test(normalized)) {
+  if (/(?:uniswap|kyberswap|kyber|aerodrome|balancer|hydrex|o1(?:\.exchange|\s+exchange|-exchange)).{0,20}(?:\bor\b|или).{0,20}(?:uniswap|kyberswap|kyber|aerodrome|balancer|hydrex|o1(?:\.exchange|\s+exchange|-exchange))/iu.test(normalized)) {
     return {
       value: { mode: 'any', protocols: [] },
       issues: [
@@ -593,14 +601,15 @@ export function mapProtocolConstraintV1(message: string): {
   }
 
   for (const protocol of known) {
+    const pattern = providerPattern[protocol];
     const negativePattern = new RegExp(
-      `(?:do\\s+not\\s+use|don['’]?t\\s+use|avoid|exclude|without|не\\s+используй|исключи|без).{0,24}\\b${protocol}\\b`,
+      `(?:do\\s+not\\s+use|don['’]?t\\s+use|avoid|exclude|without|не\\s+используй|исключи|без).{0,24}(?:${pattern})`,
       'giu',
     );
     const negative = negativePattern.test(normalized);
     const withoutNegativeConstraint = normalized.replace(negativePattern, ' ');
     const positive = new RegExp(
-      `(?:use|only|используй|только).{0,24}\\b${protocol}\\b|\\b${protocol}\\b.{0,12}(?:only|только)`,
+      `(?:use|using|only|with|through|via|on|используй|только|через).{0,24}(?:${pattern})|(?:${pattern}).{0,12}(?:only|только)|(?:${pattern})`,
       'iu',
     ).test(withoutNegativeConstraint);
     if (negative) exclude.add(protocol);
@@ -615,10 +624,15 @@ export function mapProtocolConstraintV1(message: string): {
     normalized.match(/\buse\s+([a-z][a-z0-9.-]*)/iu)?.[1]
   )?.replace(/[.-]+$/, '');
   const nonProtocolUseWords = new Set(['a', 'base', 'best', 'mev', 'the', 'maximum', 'standard']);
+  const canonicalUnknownUse = unknownUse === 'kyber'
+    ? 'kyberswap'
+    : unknownUse === 'o1.exchange' || unknownUse === 'o1'
+      ? 'o1-exchange'
+      : unknownUse;
   if (
-    unknownUse &&
-    !known.includes(unknownUse as (typeof known)[number]) &&
-    !nonProtocolUseWords.has(unknownUse)
+    canonicalUnknownUse &&
+    !known.includes(canonicalUnknownUse as (typeof known)[number]) &&
+    !nonProtocolUseWords.has(canonicalUnknownUse)
   ) {
     return {
       value: { mode: 'any', protocols: [] },
@@ -724,7 +738,14 @@ const OPTIMIZATION_MODES_V2: ReadonlyArray<OptimizationModeV1> = [
   'simplest_route',
   'mev_protected',
 ];
-const CONSTRAINABLE_PROTOCOLS_V2 = ['uniswap', 'kyberswap'] as const;
+const CONSTRAINABLE_PROTOCOLS_V2 = [
+  'uniswap',
+  'kyberswap',
+  'aerodrome',
+  'balancer',
+  'hydrex',
+  'o1-exchange',
+] as const;
 
 type ConstrainableProtocolV2 = (typeof CONSTRAINABLE_PROTOCOLS_V2)[number];
 

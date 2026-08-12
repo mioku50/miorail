@@ -126,6 +126,12 @@ export function consoleFailureCopyV1(reason: string | null | undefined): string 
     country_required: 'Say the market, for example “a US Steam card”.',
     kind_ambiguous: 'Say whether this is a gift card, a top-up or an eSIM.',
     recipient_required: 'A top-up needs the phone number to credit.',
+    yo_route_adapter_not_released:
+      'YO belongs in Routes, but its typed APY, liquidity, withdrawal and execution adapter has not passed release gates yet. No Moonwell or Morpho route was substituted.',
+    balancer_earn_adapter_not_released:
+      'Balancer belongs in Routes, but its Earn/liquidity adapter has not passed release gates yet. No Moonwell or Morpho route was substituted.',
+    hydrex_earn_adapter_not_released:
+      'Hydrex belongs in Routes, but its Earn/liquidity adapter has not passed release gates yet. No Moonwell or Morpho route was substituted.',
   };
   return known[reason] ?? humanizeConsoleTokenV1(reason);
 }

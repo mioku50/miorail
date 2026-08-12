@@ -40,6 +40,14 @@ export interface BaseMcpPluginRowV1 {
   hosts: readonly string[];
   externalMcpHost: string | null;
   cliPackage: string | null;
+  productSurface: 'routes' | 'extensions';
+  lifecycleStage: 'documented' | 'manifested' | 'adapter' | 'scored' | 'proven';
+  examples: readonly {
+    id: string;
+    prompt: string;
+    surface: 'read' | 'action' | 'routable';
+    disposition: 'read_in_extensions' | 'handoff_to_routes' | 'handoff_to_provider_ui' | 'typed_x402_required' | 'adapter_required';
+  }[];
 }
 
 export interface BaseMcpPluginDriftRowV1 {
@@ -60,6 +68,8 @@ export interface BaseMcpPluginsModelV1 {
   generatedAt: string | null;
   /** Rendered INSTEAD of the list. Never alongside a partial one. */
   unavailableReason: string | null;
+  /** Selecting an example only fills the console. It never executes it. */
+  onSelectPrompt?: (prompt: string) => void;
 }
 
 /** How a plugin would be reached from here — which is not the same question as
@@ -260,6 +270,27 @@ export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
                   </div>
                   <p className="lnote">{baseMcpPluginSummaryLineV1(plugin.summary || plugin.title)}</p>
                   <p className="lnote">{baseMcpPluginMetaLineV1(plugin)}</p>
+                  <p className="lnote">
+                    Owner: <span className="mono">{plugin.productSurface === 'routes' ? 'Routes AI' : 'Base MCP Extensions'}</span>
+                    {' · '}stage: <span className="mono">{plugin.lifecycleStage}</span>
+                  </p>
+                  <details>
+                    <summary className="lnote">Example questions ({plugin.examples.length})</summary>
+                    <div className="ctarow">
+                      {plugin.examples.map((example) => (
+                        <button
+                          key={example.id}
+                          type="button"
+                          className="btn sec"
+                          disabled={!model.onSelectPrompt}
+                          title={`${example.surface} · ${example.disposition.replace(/_/g, ' ')}`}
+                          onClick={() => model.onSelectPrompt?.(example.prompt)}
+                        >
+                          {example.prompt}
+                        </button>
+                      ))}
+                    </div>
+                  </details>
                 </div>
               ))}
             </div>
@@ -294,6 +325,13 @@ export interface BaseMcpRailModelV1 {
   endpointHost: string | null;
   /** Live tool counts by what each one is allowed to do. */
   toolCounts: { readOnly: number; userConfirmed: number; forbidden: number; unknown: number } | null;
+  routingCounts?: {
+    read: number;
+    action: number;
+    routable: number;
+    blocked: number;
+    releasedActions: number;
+  } | null;
   plugins: readonly BaseMcpPluginRowV1[];
   drift: BaseMcpPluginDriftRowV1 | null;
   generatedAt: string | null;
@@ -309,6 +347,7 @@ const CONNECTION_TONE_V1: Readonly<Record<string, string>> = {
 export function BaseMcpSummaryRail(model: BaseMcpRailModelV1) {
   const groups = groupBaseMcpPluginsV1(model.plugins);
   const counts = model.toolCounts;
+  const routing = model.routingCounts;
 
   return (
     <>
@@ -339,8 +378,9 @@ export function BaseMcpSummaryRail(model: BaseMcpRailModelV1) {
                 <span className="v mono">{counts.forbidden + counts.unknown}</span>
               </div>
               <p className="lnote">
-                Only the readable ones are offered to the console. Unclassified counts as not
-                callable.
+                The console can read and act. {routing
+                  ? `${routing.releasedActions}/${routing.action} typed ACTION tools are released; ${routing.routable} ROUTABLE tools hand off to Routes AI; ${routing.blocked} still need an adapter or remain forbidden.`
+                  : 'Each write still needs a typed adapter and your Base Account approval.'}
               </p>
             </>
           ) : (

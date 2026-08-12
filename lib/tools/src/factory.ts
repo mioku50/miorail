@@ -31,6 +31,12 @@ export interface CreateToolAggregatorOptions {
   includeBaseMcpSwap?: boolean;
   includeBaseMcpSend?: boolean;
   /**
+   * Exact Base MCP write-tool names owned by a complete Extensions action
+   * vertical. This never enables arbitrary send_calls and never infers a
+   * plugin adapter from live discovery.
+   */
+  baseMcpAllowedActionTools?: readonly string[];
+  /**
    * T74: register NOTHING but Base MCP.
    *
    * The Base MCP console exists to keep other people's tools apart from
@@ -40,7 +46,9 @@ export interface CreateToolAggregatorOptions {
    * surface whose entire promise is that it contains no such thing.
    *
    * So this is one switch that suppresses every non-Base-MCP provider,
-   * including ones that do not exist yet, and it implies read-only.
+   * including ones that do not exist yet. It is read-only unless a caller
+   * also supplies `baseMcpAllowedActionTools`, whose exact names must be owned
+   * by a typed Extensions action vertical.
    */
   baseMcpOnly?: boolean;
   /**
@@ -78,12 +86,16 @@ export function selectBaseMcpRuntimeTools(
   readOnlyOnly = false,
   includeUserConfirmedSwap = false,
   includeUserConfirmedSend = false,
+  allowedActionTools: readonly string[] = [],
 ): DynamicBaseMcpTool[] {
+  const explicit = new Set(allowedActionTools.map((name) => name.toLowerCase().replace(/[^a-z0-9]/g, '')));
   return readOnlyOnly
     ? tools.filter((tool) => (tool.capability === 'read_only' && tool.enabled)
       || (includeUserConfirmedSwap && tool.capability === 'user_confirmed_transaction' && tool.group === 'swap')
       || (includeUserConfirmedSend && tool.capability === 'user_confirmed_transaction' && tool.group === 'base'
-        && /^(?:send|transfer|send_token|transfer_token)$/i.test(tool.name)))
+        && /^(?:send|transfer|send_token|transfer_token)$/i.test(tool.name))
+      || (tool.capability === 'user_confirmed_transaction'
+        && explicit.has(tool.name.toLowerCase().replace(/[^a-z0-9]/g, ''))))
     : tools;
 }
 
@@ -137,16 +149,19 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
         const discoveredTools = await listDynamicBaseMcpToolsCached(baseClient, cacheKey, toggles);
         const dynamicTools = selectBaseMcpRuntimeTools(
           discoveredTools,
-          // baseMcpOnly implies read-only. The console is a place to look at
-          // Base MCP, not a second way to reach a wallet.
+          // Base-MCP-only is read-only by default. An exact action name is
+          // admitted only for a typed Extensions vertical; dynamic discovery
+          // alone never grants it.
           options.baseMcpReadOnlyOnly || baseMcpOnly,
           !baseMcpOnly && options.includeBaseMcpSwap,
           !baseMcpOnly && options.includeBaseMcpSend,
+          options.baseMcpAllowedActionTools,
         );
         if (dynamicTools.length > 0) {
           aggregator.registerProvider(new DynamicBaseMcpToolProvider(baseClient, dynamicTools, {
             allowUserConfirmedSwap: !baseMcpOnly && options.includeBaseMcpSwap,
             allowUserConfirmedSend: !baseMcpOnly && options.includeBaseMcpSend,
+            allowedUserConfirmedTools: options.baseMcpAllowedActionTools,
           }));
         }
       } catch (error) {

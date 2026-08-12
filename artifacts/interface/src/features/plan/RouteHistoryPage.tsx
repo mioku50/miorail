@@ -21,6 +21,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'wouter';
 import {
   useRevokeProofShare,
+  useBaseMcpActionReceipts,
   useRouteHistory,
   useRouteProof,
   useShareProof,
@@ -31,6 +32,7 @@ import {
   ActivityProofCard,
   ActivityRunsCard,
   ActivitySpendCard,
+  BaseMcpActionReceiptsCard,
   ConsoleShell,
   ShareProofPanel,
   chainBlockNumberV1,
@@ -63,6 +65,7 @@ export function RouteHistoryPage() {
   const history = useRouteHistory({ limit: 20, cursor });
   const proof = useRouteProof(selected?.proofId ?? null);
   const ledger = useX402Ledger();
+  const extensionActions = useBaseMcpActionReceipts();
 
   // T67C.2: publishing is an explicit owner action. The link lives in local
   // state rather than being fetched, because a proof with no share has no link
@@ -145,6 +148,16 @@ export function RouteHistoryPage() {
           content, and burying it under twenty unsigned runs was the old
           ordering's mistake. */}
       <ActivitySpendCard {...spend} />
+
+      <BaseMcpActionReceiptsCard
+        loading={extensionActions.isPending}
+        receipts={extensionActions.data?.receipts ?? []}
+        unavailableReason={
+          extensionActions.error
+            ? 'Base MCP action receipts could not be read. This says nothing about whether an action completed.'
+            : null
+        }
+      />
 
       <ActivityRunsCard
         loading={history.isPending}

@@ -38,7 +38,12 @@ before(async () => {
   sql = postgres(url!, { max: 1, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS swap_pending_intents CASCADE');
   const migration = await readFile(resolve(drizzleDir(), '0036_swap_pending_intents.sql'), 'utf8');
+  const providerExpansion = await readFile(
+    resolve(drizzleDir(), '0039_swap_pending_intent_providers.sql'),
+    'utf8',
+  );
   await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));
+  await sql.unsafe(providerExpansion.replaceAll('--> statement-breakpoint', ''));
 });
 
 after(async () => {
