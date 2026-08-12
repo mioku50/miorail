@@ -187,6 +187,7 @@ export * from './executionGuard.js';
 export * from './httpAllowlist.js';
 export * from './baseMcpPluginCatalogue.generated.js';
 export * from './moonwellGuard.js';
+export * from './swapAsset.js';
 export * from './uniswapGuard.js';
 export * from './kyberGuard.js';
 export * from './aerodromeGuard.js';

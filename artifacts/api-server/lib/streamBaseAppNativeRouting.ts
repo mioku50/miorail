@@ -4,6 +4,7 @@ import type { AutonomyPolicy, AutonomyPolicyRepository } from '@mioagent/autonom
 import { evaluateExecutableAction } from '@mioagent/security';
 import { canonicalUsdcForBaseChain } from '@mioagent/security/baseGuards';
 import type { UniswapSwapContext } from '@mioagent/security/uniswapGuard';
+import { canonicalGuardAssetV1 } from '@mioagent/security/swapAsset';
 import { getAutonomyPolicyRepository } from './autonomyGateway.js';
 import { buildActionPlan } from './actionPlan.js';
 import { loadTokenSecurityContext } from './executionSecurity.js';
@@ -248,6 +249,13 @@ export async function prepareUniswap5792(intent: SwapIntent, walletAddress: stri
   if (intent.tokenIn !== 'USDC' || !['ETH', 'WETH'].includes(intent.tokenOut)) throw new Error('uniswap_pair_unsupported');
   const tokenIn = uniswapToken(intent.tokenIn);
   const tokenOut = uniswapToken(intent.tokenOut);
+  // The guard context now names each side by address rather than by symbol.
+  // This path is symbol-driven and stays that way — it is bounded to the three
+  // canonical assets by the line above — so the symbols are resolved here, in
+  // the same place that already refuses anything outside that set.
+  const inputAsset = canonicalGuardAssetV1(intent.tokenIn);
+  const outputAsset = canonicalGuardAssetV1(intent.tokenOut);
+  if (!inputAsset || !outputAsset) throw new Error('uniswap_pair_unsupported');
   const amount = baseUnits(intent.amount, tokenIn.decimals);
   const traces: StreamToolTrace[] = [];
   const client = new UniswapTradeClient(pluginHttpTradeTransport(traces));
@@ -288,8 +296,8 @@ export async function prepareUniswap5792(intent: SwapIntent, walletAddress: stri
     expiresAt,
     context: {
       amountDecimal: intent.amount,
-      inputToken: 'USDC',
-      outputToken: intent.tokenOut as 'ETH' | 'WETH',
+      inputAsset,
+      outputAsset,
       swapper: walletAddress,
       routerVersion: '2.0',
       expiresAt,

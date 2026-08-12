@@ -31,6 +31,7 @@ import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
 import { evaluateExecutableAction, screenAction, simulateTrade } from '@mioagent/security';
 import { isMoonwellActionType } from '@mioagent/security/moonwellGuard';
 import type { UniswapSwapContext } from '@mioagent/security/uniswapGuard';
+import { canonicalGuardAssetV1, type SwapGuardAssetV1 } from '@mioagent/security/swapAsset';
 import { stableSemanticHash } from '../lib/semanticIntent.js';
 import { preparedTransactionIntents } from '@mioagent/db';
 import { normalizeBaseChain } from '@mioagent/security/baseGuards';
@@ -685,16 +686,35 @@ actionsRouter.post('/:actionId/prepare', async (req, res, next) => {
     const moonwellContext = isMoonwellActionType(payload.actionType) && meta.moonwell?.amountDecimal
       ? { amountDecimal: String(meta.moonwell.amountDecimal) }
       : undefined;
-    const uniswapContext: UniswapSwapContext | undefined = payload.actionType === 'uniswap_swap' && meta.uniswap
-      ? {
-          amountDecimal: String(meta.uniswap.amountDecimal),
-          inputToken: meta.uniswap.inputToken,
-          outputToken: meta.uniswap.outputToken,
-          swapper: String(meta.uniswap.swapper),
-          routerVersion: meta.uniswap.routerVersion,
-          expiresAt: String(meta.uniswap.expiresAt),
+    // The guard names each swap side by address now. Rows written before that
+    // change stored a symbol (`inputToken: 'USDC'`), and rows written after it
+    // store the asset itself — both are read here, and an unrecognised stored
+    // symbol resolves to null, which leaves the context incomplete and makes
+    // the guard refuse. A stale row never silently loses its pinning.
+    const storedAsset = (asset: unknown, legacySymbol: unknown): SwapGuardAssetV1 | null => {
+      if (asset && typeof asset === 'object') {
+        const candidate = asset as { kind?: unknown; address?: unknown; decimals?: unknown };
+        if (candidate.kind === 'native') return { kind: 'native' };
+        if (candidate.kind === 'erc20' && typeof candidate.address === 'string' && typeof candidate.decimals === 'number') {
+          return { kind: 'erc20', address: candidate.address, decimals: candidate.decimals };
         }
-      : undefined;
+        return null;
+      }
+      return canonicalGuardAssetV1(legacySymbol);
+    };
+    const uniswapInputAsset = storedAsset(meta.uniswap?.inputAsset, meta.uniswap?.inputToken);
+    const uniswapOutputAsset = storedAsset(meta.uniswap?.outputAsset, meta.uniswap?.outputToken);
+    const uniswapContext: UniswapSwapContext | undefined =
+      payload.actionType === 'uniswap_swap' && meta.uniswap && uniswapInputAsset && uniswapOutputAsset
+        ? {
+            amountDecimal: String(meta.uniswap.amountDecimal),
+            inputAsset: uniswapInputAsset,
+            outputAsset: uniswapOutputAsset,
+            swapper: String(meta.uniswap.swapper),
+            routerVersion: meta.uniswap.routerVersion,
+            expiresAt: String(meta.uniswap.expiresAt),
+          }
+        : undefined;
 
     // T47 typed-intent integrity: native BaseApp actions are bound to the
     // authenticated tenant, wallet, stored payload hash and expiry. The client

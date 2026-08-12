@@ -8,6 +8,7 @@
     "./baseGuards": "./src/baseGuards.ts",
     "./httpAllowlist": "./src/httpAllowlist.ts",
     "./moonwellGuard": "./src/moonwellGuard.ts",
+    "./swapAsset": "./src/swapAsset.ts",
     "./uniswapGuard": "./src/uniswapGuard.ts",
     "./kyberGuard": "./src/kyberGuard.ts",
     "./aerodromeGuard": "./src/aerodromeGuard.ts"

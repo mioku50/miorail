@@ -65,6 +65,17 @@ export interface ExecutionSemantics {
   spenders: string[];
   spendAmountRaw: string;
   spendAmountUsdc: number;
+  /**
+   * Whether `spendAmountUsdc` is a real dollar figure.
+   *
+   * It only ever was one because the input was always canonical USDC. Now that
+   * a swap can spend any token, the field is 0 for everything else — and 0 is
+   * the most dangerous possible value, because a dollar budget cap reads it as
+   * "this costs nothing". Explicit `false` means DO NOT charge a budget with
+   * this number; refuse instead. Absent means the caller never said, which is
+   * how every pre-existing action type behaves.
+   */
+  spendAmountIsUsd?: boolean;
 }
 
 export interface ExecutionGuardInput {

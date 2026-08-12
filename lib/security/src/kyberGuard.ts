@@ -1,5 +1,10 @@
-import { canonicalUsdcForBaseChain, normalizeBaseChain, type BaseCall } from './baseGuards.js';
-import { BASE_WETH_ADDRESS } from './uniswapGuard.js';
+import { normalizeBaseChain, type BaseCall } from './baseGuards.js';
+import {
+  decimalAmountToRawV1,
+  isCanonicalBaseUsdcV1,
+  normalizeSwapAssetV1,
+  type SwapGuardAssetV1,
+} from './swapAsset.js';
 
 // Pinned independently of @mioagent/swap-adapters (which depends on
 // @mioagent/security, so the reverse dependency is not available here). Must
@@ -10,16 +15,15 @@ const ERC20_APPROVE_SELECTOR = '0x095ea7b3';
 const ADDRESS = /^0x[0-9a-f]{40}$/;
 const HEX_DATA = /^0x[0-9a-f]+$/;
 
-/** The canonical Base assets this guard will validate a swap between. */
-export type KyberGuardAsset = 'USDC' | 'ETH' | 'WETH';
-
 export interface KyberSwapContext {
   amountDecimal: string;
-  /** Was fixed at 'USDC'. Widened so the same pinning rules cover the other
-   * direction; decimals, the approval target and the native-value rule are all
-   * derived from this rather than assumed. */
-  inputToken: KyberGuardAsset;
-  outputToken: KyberGuardAsset;
+  /**
+   * The asset itself — address and decimals — not a symbol out of a set of
+   * three. Decimals, the approval target and the native-value rule are all
+   * derived from it.
+   */
+  inputAsset: SwapGuardAssetV1;
+  outputAsset: SwapGuardAssetV1;
   swapper: string;
   recipient: string;
   routerAddress: string;
@@ -33,6 +37,9 @@ export interface KyberSwapSemantics {
   spenders: string[];
   spendAmountRaw: string;
   spendAmountUsdc: number;
+  /** False whenever the input is not canonical USDC: the figure above is then
+   * 0, and a dollar budget must refuse rather than read that as free. */
+  spendAmountIsUsd: boolean;
 }
 
 export type KyberGuardResult =
@@ -41,23 +48,6 @@ export type KyberGuardResult =
 
 function fail(code: string, reason: string, checks: string[]): KyberGuardResult {
   return { success: false, code, reason, checks };
-}
-
-/** Base units at the asset's OWN precision — six is USDC's, not everyone's. */
-function decimalToRaw(value: string, decimals: number): bigint | null {
-  const pattern = new RegExp(`^\\d+(?:\\.\\d{1,${decimals}})?$`);
-  if (!pattern.test(value)) return null;
-  const [whole, fraction = ''] = value.split('.');
-  try {
-    const amount = BigInt(`${whole}${fraction.padEnd(decimals, '0')}`);
-    return amount > 0n ? amount : null;
-  } catch {
-    return null;
-  }
-}
-
-function decimalsFor(asset: KyberGuardAsset): number {
-  return asset === 'USDC' ? 6 : 18;
 }
 
 function wordAddress(word: string): string | null {
@@ -87,14 +77,20 @@ export function validateKyberSwap(input: {
   checks.push('Base mainnet chain');
 
   const context = input.context;
-  const ASSETS: readonly KyberGuardAsset[] = ['USDC', 'ETH', 'WETH'];
-  if (!context || !ASSETS.includes(context.inputToken) || !ASSETS.includes(context.outputToken)) {
-    return fail('kyberswap_context_invalid', 'Only canonical Base USDC, ETH and WETH are supported', checks);
+  // The pinned router can never also be a swap side: the loop below decides
+  // what a call means by comparing its target against both.
+  const inputAsset = normalizeSwapAssetV1(context?.inputAsset, [KYBERSWAP_BASE_ROUTER]);
+  const outputAsset = normalizeSwapAssetV1(context?.outputAsset, [KYBERSWAP_BASE_ROUTER]);
+  if (!context || !inputAsset || !outputAsset) {
+    return fail(
+      'kyberswap_context_invalid',
+      'Each swap side must be native ETH or a valid ERC-20 address with readable decimals',
+      checks,
+    );
   }
   // ETH↔WETH is a wrap, not a routed swap.
-  const sideOf = (asset: KyberGuardAsset) => (asset === 'USDC' ? 'usdc' : 'weth');
-  if (sideOf(context.inputToken) === sideOf(context.outputToken)) {
-    return fail('kyberswap_context_invalid', 'Input and output must be different canonical assets', checks);
+  if (inputAsset.side === outputAsset.side) {
+    return fail('kyberswap_context_invalid', 'Input and output must be different assets', checks);
   }
   if (context.routerAddress.toLowerCase() !== KYBERSWAP_BASE_ROUTER) {
     return fail('kyberswap_router_not_pinned', 'KyberSwap router is not the pinned Base router', checks);
@@ -112,17 +108,18 @@ export function validateKyberSwap(input: {
   if (!Number.isFinite(expiry) || expiry <= nowMs) {
     return fail('kyberswap_quote_expired', 'Prepared KyberSwap route expired', checks);
   }
-  const amountRaw = decimalToRaw(context.amountDecimal, decimalsFor(context.inputToken));
+  const amountRaw = decimalAmountToRawV1(context.amountDecimal, inputAsset.decimals);
   if (!amountRaw) return fail('kyberswap_amount_invalid', 'Input amount is invalid', checks);
-  checks.push(`Exact positive ${context.inputToken} input, pinned router, and unexpired route`);
+  // Named by ADDRESS, never by the contract's own symbol — this string is
+  // evidence, and a symbol is whatever the token says it is.
+  const inputLabel = inputAsset.address ?? 'native ETH';
+  checks.push(`Exact positive input (${inputLabel}), pinned router, and unexpired route`);
 
   if (!Array.isArray(input.calls) || input.calls.length < 1 || input.calls.length > 2) {
     return fail('kyberswap_batch_size_invalid', 'KyberSwap swap must contain one or two calls', checks);
   }
-  const usdc = canonicalUsdcForBaseChain(8453).toLowerCase();
   const router = KYBERSWAP_BASE_ROUTER;
-  const inputAddress =
-    context.inputToken === 'ETH' ? null : context.inputToken === 'USDC' ? usdc : BASE_WETH_ADDRESS;
+  const inputAddress = inputAsset.address;
   const inputIsNative = inputAddress === null;
   let routerCalls = 0;
   let approvalCalls = 0;
@@ -198,7 +195,8 @@ export function validateKyberSwap(input: {
       recipients: [recipient],
       spenders: [...spenders],
       spendAmountRaw: amountRaw.toString(),
-      spendAmountUsdc: context.inputToken === 'USDC' ? Number(amountRaw) / 1_000_000 : 0,
+      spendAmountUsdc: isCanonicalBaseUsdcV1(inputAddress) ? Number(amountRaw) / 1_000_000 : 0,
+      spendAmountIsUsd: isCanonicalBaseUsdcV1(inputAddress),
     },
   };
 }

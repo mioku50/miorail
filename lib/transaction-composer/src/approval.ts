@@ -22,7 +22,7 @@ import {
   simulationRequirementV1,
   TransactionComposerBindingError,
 } from './coordinator.js';
-import { runSafetyKernel } from './safetyKernel.js';
+import { runSafetyKernel, swapTokenSecurityAddressesV1 } from './safetyKernel.js';
 import type { ContractSecurityLookup, SwapBuildProviderId } from './types.js';
 import { deriveBlueprintLifecycleV1, type LifecycleStateV1 } from './lifecycle.js';
 
@@ -247,14 +247,13 @@ export async function approveExecutionBlueprintV1(
     }
     const providerId = candidate.provider.id as SwapBuildProviderId;
     const intent = run.intent;
-    const inputAsset = intent.fromAsset!;
     const routerCall = blueprint.calls.find((call) => call.callType === 'swap');
     const routerAddress = (routerCall?.to ?? candidate.provider.id) as `0x${string}`;
     // T67B.1: the simulation stored with these exact calls. Approve re-checks
     // the same immutable batch, so it re-uses the same evidence rather than
     // asking a provider about bytes it has already been asked about.
     const simulation = simulationRequirementV1(providerId, intent, blueprint.simulationState);
-    const contractSecurityAddresses = [inputAsset.address].filter((value): value is `0x${string}` => Boolean(value));
+    const contractSecurityAddresses = swapTokenSecurityAddressesV1(intent);
     const contractSecurityResults = await deps.contractSecurity({
       chainId: intent.chainId,
       addresses: contractSecurityAddresses,

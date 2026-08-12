@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { encodeFunctionData, erc20Abi } from 'viem';
-import type { ExecutionCallV1 } from '@mioagent/route-domain';
-import { runSafetyKernel, tokenSecurityRefusalV1 } from '../src/safetyKernel.js';
-import { NOW, USDC_BASE, WALLET, makeIntent } from './fixtures.js';
+import type { AssetRefV1, ExecutionCallV1 } from '@mioagent/route-domain';
+import { runSafetyKernel, swapTokenSecurityAddressesV1, tokenSecurityRefusalV1 } from '../src/safetyKernel.js';
+import { ETH_BASE, NOW, USDC_BASE, WALLET, makeIntent } from './fixtures.js';
 
 const ROUTER = '0x6ff5693b99212da76ad316178a184ab56d299b43' as const;
 
@@ -191,4 +191,42 @@ test('tax is a threshold, and an unreadable tax is not a zero tax', () => {
 test('no flags at all is not a refusal by itself — the status still governs', () => {
   assert.equal(tokenSecurityRefusalV1({ status: 'ok' }), null);
   assert.equal(tokenSecurityRefusalV1({ status: 'ok', flags: {} }), null);
+});
+
+// ---------------------------------------------------------------------------
+// Which tokens must earn a security verdict.
+//
+// It was the input alone. That held only while one side was always canonical
+// USDC: the other side was safe by construction. With both sides open, the
+// OUTPUT is where the danger lives — a honeypot bought is a honeypot that
+// cannot be sold, and the input's verdict says nothing about it.
+// ---------------------------------------------------------------------------
+
+test('both sides of a swap are sent for a token-security verdict', () => {
+  const mio: AssetRefV1 = {
+    assetId: 'eip155:8453/erc20:0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
+    chainId: 8453,
+    kind: 'erc20',
+    address: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
+    symbol: 'MIO',
+    decimals: 18,
+  };
+  const usdcToMio = swapTokenSecurityAddressesV1(makeIntent({ toAsset: mio }));
+  assert.deepEqual(usdcToMio, [USDC_BASE.address, mio.address]);
+
+  // Native ETH has no contract, so it contributes no address — and the token
+  // on the other side is still checked.
+  const mioToEth = swapTokenSecurityAddressesV1(makeIntent({ fromAsset: mio, toAsset: ETH_BASE }));
+  assert.deepEqual(mioToEth, [mio.address]);
+});
+
+test('one token is asked about once, however it reaches this helper', () => {
+  // A parsed intent cannot hold the same token twice: the schema lowercases
+  // every address and then refuses equal assetIds. So this is reached by
+  // handing the helper an UNPARSED shape, which is the only way a future
+  // caller could — and the point is that it costs one provider request and
+  // reports one token, not two.
+  const intent = makeIntent();
+  const doubled = { ...intent, toAsset: { ...USDC_BASE, address: USDC_BASE.address!.toUpperCase() } };
+  assert.deepEqual(swapTokenSecurityAddressesV1(doubled as unknown as typeof intent), [USDC_BASE.address]);
 });

@@ -18,7 +18,7 @@ import { atomicToHumanDecimal } from '@mioagent/swap-adapters';
 import { assembleExecutionBlueprintV1, blueprintIdV1, classifySwapCallV1 } from './blueprint.js';
 import { routeFromCandidateV1 } from './adapters/aerodrome.js';
 import { buildTransactionReviewProjectionV1 } from './reviewProjection.js';
-import { runSafetyKernel, type RunSafetyKernelInput } from './safetyKernel.js';
+import { runSafetyKernel, swapTokenSecurityAddressesV1, type RunSafetyKernelInput } from './safetyKernel.js';
 import {
   blockedResultV1,
   preparedResultV1,
@@ -267,7 +267,6 @@ export async function reviewStoredBlueprintV1(
   simulationStateOverride?: SimulationStateV1,
 ): Promise<TransactionPreparationResultV1> {
   const providerId = selected.provider.id as SwapBuildProviderId;
-  const inputAsset = intent.fromAsset!;
   const routerCall = blueprint.calls.find((call) => call.callType === 'swap');
   const routerAddress = (routerCall?.to ?? selected.provider.id) as `0x${string}`;
 
@@ -275,7 +274,7 @@ export async function reviewStoredBlueprintV1(
   // is the one stored with them. Re-running it would produce a different
   // result for the same immutable bytes.
   const simulation = simulationRequirementV1(providerId, intent, blueprint.simulationState);
-  const contractSecurityAddresses = [inputAsset.address].filter((value): value is `0x${string}` => Boolean(value));
+  const contractSecurityAddresses = swapTokenSecurityAddressesV1(intent);
   const contractSecurityResults = await deps.contractSecurity({
     chainId: intent.chainId,
     addresses: contractSecurityAddresses,
@@ -583,7 +582,7 @@ export class DeterministicTransactionComposer implements TransactionComposer {
 
     // --- Safety Kernel ----------------------------------------------------------
     const simulation = simulationRequirementV1(providerId, intent, simulationState);
-    const contractSecurityAddresses = [inputAsset.address].filter((value): value is `0x${string}` => Boolean(value));
+    const contractSecurityAddresses = swapTokenSecurityAddressesV1(intent);
     const contractSecurityResults = await this.deps.contractSecurity({
       chainId: intent.chainId,
       addresses: contractSecurityAddresses,

@@ -147,6 +147,19 @@ export class AutonomousExecutionGateway {
         guard,
       });
     }
+    // A dollar budget can only hold back a spend measured in dollars. Every
+    // action type that reaches here today spends canonical USDC, so this is
+    // never true yet — but the swap guards now report honestly when the input
+    // is some other token, and `spendAmountUsdc` is 0 in that case. Reserving 0
+    // against a cap is not "cheap", it is "uncapped", so this refuses instead
+    // of quietly letting an unpriced spend through.
+    if (guard.semantics.spendAmountIsUsd === false) {
+      return failure(
+        'spend_not_priced_in_usd',
+        'This spend is not denominated in USDC, so it cannot be charged against a USD budget',
+        { policy, screening: guard.screening, simulation: guard.simulation, guard },
+      );
+    }
     const spendAmountUsdc = guard.semantics.spendAmountUsdc;
 
     const reservation = await this.repository.reserve({

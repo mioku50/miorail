@@ -2,14 +2,25 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { canonicalUsdcForBaseChain } from './baseGuards.js';
 import { KYBERSWAP_BASE_ROUTER, validateKyberSwap } from './kyberGuard.js';
+import type { SwapGuardAssetV1 } from './swapAsset.js';
 
 const WALLET = '0x8e525bfce1ef40aa8075ef64e45421b5855c8909';
+const WETH_ADDRESS = '0x4200000000000000000000000000000000000006';
+
+// A side is an asset, not a name.
+const USDC_ASSET = {
+  kind: 'erc20',
+  address: canonicalUsdcForBaseChain(8453).toLowerCase(),
+  decimals: 6,
+} as const;
+const ETH_ASSET = { kind: 'native' } as const;
+const WETH_ASSET = { kind: 'erc20', address: WETH_ADDRESS, decimals: 18 } as const;
 
 function context() {
   return {
     amountDecimal: '1.25',
-    inputToken: 'USDC' as const,
-    outputToken: 'ETH' as const,
+    inputAsset: USDC_ASSET as SwapGuardAssetV1,
+    outputAsset: ETH_ASSET as SwapGuardAssetV1,
     swapper: WALLET,
     recipient: WALLET,
     routerAddress: KYBERSWAP_BASE_ROUTER,
@@ -115,7 +126,12 @@ test('T56 KyberSwap guard expiry check honors an injected clock deterministicall
 const ONE_ETH = 1_000_000_000_000_000_000n;
 
 function nativeContext() {
-  return { ...context(), amountDecimal: '1', inputToken: 'ETH' as const, outputToken: 'USDC' as const };
+  return {
+    ...context(),
+    amountDecimal: '1',
+    inputAsset: ETH_ASSET as SwapGuardAssetV1,
+    outputAsset: USDC_ASSET as SwapGuardAssetV1,
+  };
 }
 
 test('a native input attaches exactly its amount to the pinned router', () => {
@@ -168,8 +184,13 @@ test('a native input carrying an approval is refused — there is nothing to app
 });
 
 test('a WETH input approves WETH, and a USDC approval in that batch is refused', () => {
-  const weth = '0x4200000000000000000000000000000000000006';
-  const wethContext = { ...context(), amountDecimal: '1', inputToken: 'WETH' as const, outputToken: 'USDC' as const };
+  const weth = WETH_ADDRESS;
+  const wethContext = {
+    ...context(),
+    amountDecimal: '1',
+    inputAsset: WETH_ASSET as SwapGuardAssetV1,
+    outputAsset: USDC_ASSET as SwapGuardAssetV1,
+  };
   const allowed = validateKyberSwap({
     chain: 8453,
     context: wethContext,
@@ -194,8 +215,85 @@ test('a WETH input approves WETH, and a USDC approval in that batch is refused',
 test('ETH to WETH is refused: a wrap is not a routed trade', () => {
   const result = validateKyberSwap({
     chain: 8453,
-    context: { ...context(), amountDecimal: '1', inputToken: 'ETH' as const, outputToken: 'WETH' as const },
+    context: {
+      ...context(),
+      amountDecimal: '1',
+      inputAsset: ETH_ASSET as SwapGuardAssetV1,
+      outputAsset: WETH_ASSET as SwapGuardAssetV1,
+    },
     calls: [{ to: KYBERSWAP_BASE_ROUTER, value: ONE_ETH.toString(), data: '0x12345678' }],
   });
   assert.equal(result.success, false);
+});
+
+// ---------------------------------------------------------------------------
+// Any token, not three names — the same widening as the Uniswap guard, pinned
+// separately because these two have drifted apart before (the USDC-only rule
+// lived in four places and was fixed in one of them at a time).
+// ---------------------------------------------------------------------------
+
+const KYBER_MIO = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd';
+
+test('an arbitrary ERC-20 input approves its own address at its own decimals', () => {
+  const mioContext = {
+    ...context(),
+    amountDecimal: '10000',
+    inputAsset: { kind: 'erc20', address: KYBER_MIO, decimals: 18 } as SwapGuardAssetV1,
+    outputAsset: ETH_ASSET as SwapGuardAssetV1,
+  };
+  const amount = 10_000n * ONE_ETH;
+  const allowed = validateKyberSwap({
+    chain: 8453,
+    context: mioContext,
+    calls: [
+      { to: KYBER_MIO, value: '0', data: approveData(KYBERSWAP_BASE_ROUTER, amount) },
+      { to: KYBERSWAP_BASE_ROUTER, value: '0', data: '0x12345678' },
+    ],
+  });
+  assert.equal(allowed.success, true);
+  if (allowed.success) assert.equal(allowed.semantics.spendAmountRaw, amount.toString());
+  if (allowed.success) assert.equal(allowed.semantics.spendAmountUsdc, 0);
+
+  const wrongToken = validateKyberSwap({
+    chain: 8453,
+    context: mioContext,
+    calls: [
+      { to: canonicalUsdcForBaseChain(8453), value: '0', data: approveData(KYBERSWAP_BASE_ROUTER, amount) },
+      { to: KYBERSWAP_BASE_ROUTER, value: '0', data: '0x12345678' },
+    ],
+  });
+  assert.equal(wrongToken.success, false);
+});
+
+test('a token claiming the pinned router address is refused outright', () => {
+  const result = validateKyberSwap({
+    chain: 8453,
+    context: {
+      ...context(),
+      amountDecimal: '1',
+      inputAsset: { kind: 'erc20', address: KYBERSWAP_BASE_ROUTER, decimals: 18 } as SwapGuardAssetV1,
+      outputAsset: ETH_ASSET as SwapGuardAssetV1,
+    },
+    calls: [{ to: KYBERSWAP_BASE_ROUTER, value: '0', data: '0x12345678' }],
+  });
+  assert.equal(result.success, false);
+  if (!result.success) assert.equal(result.code, 'kyberswap_context_invalid');
+});
+
+test('an unusable asset is a refusal, never a default', () => {
+  const broken: SwapGuardAssetV1[] = [
+    { kind: 'erc20', address: '0x0000000000000000000000000000000000000000', decimals: 18 },
+    { kind: 'erc20', address: 'MIO', decimals: 18 },
+    { kind: 'erc20', address: KYBER_MIO, decimals: 1.5 },
+    { kind: 'erc20', address: KYBER_MIO, decimals: 255 },
+  ];
+  for (const inputAsset of broken) {
+    const result = validateKyberSwap({
+      chain: 8453,
+      context: { ...context(), amountDecimal: '1', inputAsset, outputAsset: ETH_ASSET as SwapGuardAssetV1 },
+      calls: [{ to: KYBERSWAP_BASE_ROUTER, value: '0', data: '0x12345678' }],
+    });
+    assert.equal(result.success, false, JSON.stringify(inputAsset));
+    if (!result.success) assert.equal(result.code, 'kyberswap_context_invalid');
+  }
 });

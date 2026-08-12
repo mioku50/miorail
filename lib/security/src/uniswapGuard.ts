@@ -1,25 +1,30 @@
-import { canonicalUsdcForBaseChain, normalizeBaseChain, type BaseCall } from './baseGuards.js';
+import { normalizeBaseChain, type BaseCall } from './baseGuards.js';
+import {
+  decimalAmountToRawV1,
+  isCanonicalBaseUsdcV1,
+  normalizeSwapAssetV1,
+  type SwapGuardAssetV1,
+} from './swapAsset.js';
 
 export const BASE_UNISWAP_UNIVERSAL_ROUTER_2 = '0x6ff5693b99212da76ad316178a184ab56d299b43';
 export const BASE_UNISWAP_UNIVERSAL_ROUTER_2_1_1 = '0xfdf682f51fe81aa4898f0ae2163d8a55c127fbc7';
 export const PERMIT2_ADDRESS = '0x000000000022d473030f116ddee9f6b43ac78ba3';
-export const BASE_WETH_ADDRESS = '0x4200000000000000000000000000000000000006';
 
 const ERC20_APPROVE_SELECTOR = '0x095ea7b3';
 const PERMIT2_APPROVE_SELECTOR = '0x87517c45';
 const ADDRESS = /^0x[0-9a-f]{40}$/;
 const HEX_DATA = /^0x[0-9a-f]+$/;
 
-/** The canonical Base assets this guard will validate a swap between. */
-export type UniswapGuardAsset = 'USDC' | 'ETH' | 'WETH';
-
 export interface UniswapSwapContext {
   amountDecimal: string;
-  /** Was fixed at 'USDC'. Widened so the same pinning rules cover a swap in
-   * the other direction; the guard derives the approval target, the decimals
-   * and the native-value rule from this rather than assuming any of them. */
-  inputToken: UniswapGuardAsset;
-  outputToken: UniswapGuardAsset;
+  /**
+   * Was a symbol from a set of three. It is now the asset itself — address and
+   * decimals — so the approval target, the base-unit scale and the
+   * native-value rule are all derived from the token the intent carries
+   * instead of from a name this guard happened to recognise.
+   */
+  inputAsset: SwapGuardAssetV1;
+  outputAsset: SwapGuardAssetV1;
   swapper: string;
   routerVersion: '2.0';
   expiresAt: string;
@@ -32,6 +37,9 @@ export interface UniswapSwapSemantics {
   spenders: string[];
   spendAmountRaw: string;
   spendAmountUsdc: number;
+  /** False whenever the input is not canonical USDC: the figure above is then
+   * 0, and a dollar budget must refuse rather than read that as free. */
+  spendAmountIsUsd: boolean;
 }
 
 export type UniswapGuardResult =
@@ -40,33 +48,6 @@ export type UniswapGuardResult =
 
 function fail(code: string, reason: string, checks: string[]): UniswapGuardResult {
   return { success: false, code, reason, checks };
-}
-
-/** Base units for a decimal amount, at the asset's OWN precision. Was fixed at
- * six, which is USDC's; an 18-decimal input parsed that way would understate
- * the amount by twelve orders of magnitude, and every amount check below
- * compares against it. */
-function decimalToRaw(value: string, decimals: number): bigint | null {
-  const pattern = new RegExp(`^\\d+(?:\\.\\d{1,${decimals}})?$`);
-  if (!pattern.test(value)) return null;
-  const [whole, fraction = ''] = value.split('.');
-  try {
-    const amount = BigInt(`${whole}${fraction.padEnd(decimals, '0')}`);
-    return amount > 0n ? amount : null;
-  } catch {
-    return null;
-  }
-}
-
-function decimalsFor(asset: UniswapGuardAsset): number {
-  return asset === 'USDC' ? 6 : 18;
-}
-
-/** The ERC-20 the wallet must approve, or null when the input is native ETH
- * and there is nothing to approve. */
-function inputTokenAddress(asset: UniswapGuardAsset, usdc: string): string | null {
-  if (asset === 'ETH') return null;
-  return asset === 'USDC' ? usdc : BASE_WETH_ADDRESS;
 }
 
 function wordAddress(word: string): string | null {
@@ -90,30 +71,41 @@ export function validateUniswapSwap(input: {
   checks.push('Base mainnet chain');
 
   const context = input.context;
-  const ASSETS: readonly UniswapGuardAsset[] = ['USDC', 'ETH', 'WETH'];
-  if (!context || !ASSETS.includes(context.inputToken) || !ASSETS.includes(context.outputToken)) {
-    return fail('uniswap_context_invalid', 'Only canonical Base USDC, ETH and WETH are supported', checks);
+  const router = BASE_UNISWAP_UNIVERSAL_ROUTER_2;
+  // A "token" claiming the router's or Permit2's address would make the loop
+  // below read a router call as an approval, so those addresses can never be a
+  // swap side.
+  const reserved = [router, PERMIT2_ADDRESS];
+  const inputAsset = normalizeSwapAssetV1(context?.inputAsset, reserved);
+  const outputAsset = normalizeSwapAssetV1(context?.outputAsset, reserved);
+  if (!context || !inputAsset || !outputAsset) {
+    return fail(
+      'uniswap_context_invalid',
+      'Each swap side must be native ETH or a valid ERC-20 address with readable decimals',
+      checks,
+    );
   }
   // ETH↔WETH is a wrap, not a swap: there is no pool, and letting it through
   // would put the guard's name on a transaction it never checked a price for.
-  const sideOf = (asset: UniswapGuardAsset) => (asset === 'USDC' ? 'usdc' : 'weth');
-  if (sideOf(context.inputToken) === sideOf(context.outputToken)) {
-    return fail('uniswap_context_invalid', 'Input and output must be different canonical assets', checks);
+  if (inputAsset.side === outputAsset.side) {
+    return fail('uniswap_context_invalid', 'Input and output must be different assets', checks);
   }
   if (context.routerVersion !== '2.0') return fail('uniswap_router_version_invalid', 'Uniswap router version is not pinned', checks);
   if (!ADDRESS.test(context.swapper.toLowerCase())) return fail('uniswap_swapper_invalid', 'Authenticated swapper is invalid', checks);
   const expiry = Date.parse(context.expiresAt);
   if (!Number.isFinite(expiry) || expiry <= nowMs) return fail('uniswap_quote_expired', 'Prepared Uniswap quote expired', checks);
-  const amountRaw = decimalToRaw(context.amountDecimal, decimalsFor(context.inputToken));
+  const amountRaw = decimalAmountToRawV1(context.amountDecimal, inputAsset.decimals);
   if (!amountRaw) return fail('uniswap_amount_invalid', 'Input amount is invalid', checks);
-  checks.push(`Exact positive ${context.inputToken} input and unexpired quote`);
+  // The label is the ADDRESS, never the contract's own symbol: a symbol
+  // rendered back to the user is a phishing surface, and this string is
+  // evidence.
+  const inputLabel = inputAsset.address ?? 'native ETH';
+  checks.push(`Exact positive input (${inputLabel}) and unexpired quote`);
 
   if (!Array.isArray(input.calls) || input.calls.length < 1 || input.calls.length > 4) {
     return fail('uniswap_batch_size_invalid', 'Uniswap swap must contain one to four calls', checks);
   }
-  const usdc = canonicalUsdcForBaseChain(8453).toLowerCase();
-  const router = BASE_UNISWAP_UNIVERSAL_ROUTER_2;
-  const inputAddress = inputTokenAddress(context.inputToken, usdc);
+  const inputAddress = inputAsset.address;
   const inputIsNative = inputAddress === null;
   let routerCalls = 0;
   let attachedValue = 0n;
@@ -197,9 +189,11 @@ export function validateUniswapSwap(input: {
       recipients: [],
       spenders: [...spenders],
       spendAmountRaw: amountRaw.toString(),
-      // Only meaningful for a USDC input; a non-USDC input is not a dollar
-      // figure and must not be reported as one.
-      spendAmountUsdc: context.inputToken === 'USDC' ? Number(amountRaw) / 1_000_000 : 0,
+      // Only meaningful for a canonical USDC input; any other input is not a
+      // dollar figure and must not be reported as one. By address — a token
+      // that calls itself USDC does not become dollars by saying so.
+      spendAmountUsdc: isCanonicalBaseUsdcV1(inputAddress) ? Number(amountRaw) / 1_000_000 : 0,
+      spendAmountIsUsd: isCanonicalBaseUsdcV1(inputAddress),
     },
   };
 }

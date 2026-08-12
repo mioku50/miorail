@@ -7,6 +7,7 @@
 // Subpath imports resolve the target file directly and sidestep this.
 import { validateUniswapSwap, type UniswapSwapContext } from '@mioagent/security/uniswapGuard';
 import { validateKyberSwap, type KyberSwapContext } from '@mioagent/security/kyberGuard';
+import type { SwapGuardAssetV1 } from '@mioagent/security/swapAsset';
 import { validateAerodromeSwap, type AerodromeSwapContext } from '@mioagent/security/aerodromeGuard';
 import type { BaseCall } from '@mioagent/security/baseGuards';
 import type { ExecutionTokenSecurityResult } from '@mioagent/security';
@@ -109,6 +110,33 @@ export function tokenSecurityRefusalV1(
   return null;
 }
 
+/**
+ * Every token contract this swap must have a security verdict for.
+ *
+ * It was the INPUT token alone, which was sound only while the perimeter was
+ * three known assets: with USDC always on one side, the other side was
+ * canonical by construction. Once either side can be an arbitrary token, the
+ * output is exactly where the danger is — a honeypot bought is a honeypot that
+ * cannot be sold, and the input verdict says nothing about it.
+ *
+ * Native ETH has no contract and contributes no address. Both sides being the
+ * same address is impossible (the guards refuse it), but the dedupe keeps the
+ * provider from being asked twice for the same token anyway.
+ */
+export function swapTokenSecurityAddressesV1(intent: RouteIntentV1): `0x${string}`[] {
+  const seen = new Set<string>();
+  const addresses: `0x${string}`[] = [];
+  for (const asset of [intent.fromAsset, intent.toAsset]) {
+    const address = asset?.address;
+    if (!address) continue;
+    const lower = address.toLowerCase();
+    if (seen.has(lower)) continue;
+    seen.add(lower);
+    addresses.push(address as `0x${string}`);
+  }
+  return addresses;
+}
+
 function evaluateContractSecurityV1(input: {
   required: boolean;
   provider: string;
@@ -169,24 +197,27 @@ function evaluateContractSecurityV1(input: {
  * mapping simulationAcceptable before invoking this function (decision 6).
  */
 /**
- * The canonical asset a guard context names, or null when the intent holds
- * something the bounded policy does not cover.
+ * The asset a guard context pins one side of the swap to.
  *
- * Identified by ADDRESS, never by the symbol alone — a symbol is a label
- * anyone can reuse, and this value decides which token an approval is allowed
- * to name. Native ETH has no address, so `kind` identifies it.
+ * It used to answer with one of three names, and anything else was null — a
+ * refusal. That made the guarded perimeter exactly three assets wide, which is
+ * not a security property: the guard's job is to prove the calldata matches
+ * the asset the user reviewed, and it can do that for any asset whose address
+ * and decimals are known. WHETHER a token may be routed at all is decided
+ * elsewhere and earlier — by the contract-security verdict below, which is why
+ * the output token is now sent for that verdict too.
+ *
+ * Identified by ADDRESS, never by symbol: a symbol is a label anyone can
+ * reuse, and this value decides which token an approval is allowed to name.
+ * Native ETH has no address, so `kind` identifies it.
  */
-function guardAssetV1(asset: RouteIntentV1['fromAsset']): 'USDC' | 'ETH' | 'WETH' | null {
+function guardAssetV1(asset: RouteIntentV1['fromAsset']): SwapGuardAssetV1 | null {
   if (!asset) return null;
-  if (asset.kind === 'native') return 'ETH';
+  if (asset.kind === 'native') return { kind: 'native' };
   const address = asset.address?.toLowerCase();
-  if (address === CANONICAL_USDC_BASE_KERNEL) return 'USDC';
-  if (address === CANONICAL_WETH_BASE_KERNEL) return 'WETH';
-  return null;
+  if (!address) return null;
+  return { kind: 'erc20', address, decimals: asset.decimals };
 }
-
-const CANONICAL_USDC_BASE_KERNEL = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
-const CANONICAL_WETH_BASE_KERNEL = '0x4200000000000000000000000000000000000006';
 
 export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOutput {
   const checks: SafetyKernelCheckV1[] = [];
@@ -322,14 +353,14 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
     // `inputToken: 'USDC'` and an output guessed from a symbol, which pinned
     // the guard to one direction and would have mislabelled the approval
     // target the moment the other direction shipped.
-    const inputToken = guardAssetV1(input.intent.fromAsset);
-    const outputToken = guardAssetV1(input.intent.toAsset);
+    const inputAsset = guardAssetV1(input.intent.fromAsset);
+    const outputAsset = guardAssetV1(input.intent.toAsset);
     const context: UniswapSwapContext | undefined =
-      inputToken && outputToken
+      inputAsset && outputAsset
         ? {
             amountDecimal: input.intent.amount.amountDecimal,
-            inputToken,
-            outputToken,
+            inputAsset,
+            outputAsset,
             swapper: input.walletAddress,
             routerVersion: '2.0',
             expiresAt: input.quoteExpiry,
@@ -346,14 +377,14 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
       ),
     );
   } else {
-    const inputToken = guardAssetV1(input.intent.fromAsset);
-    const outputToken = guardAssetV1(input.intent.toAsset);
+    const inputAsset = guardAssetV1(input.intent.fromAsset);
+    const outputAsset = guardAssetV1(input.intent.toAsset);
     const context: KyberSwapContext | undefined =
-      inputToken && outputToken
+      inputAsset && outputAsset
         ? {
             amountDecimal: input.intent.amount.amountDecimal,
-            inputToken,
-            outputToken,
+            inputAsset,
+            outputAsset,
             swapper: input.walletAddress,
             recipient: input.walletAddress,
             routerAddress: input.routerAddress,

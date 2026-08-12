@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test, { afterEach } from 'node:test';
 import { InMemoryAutonomyPolicyRepository } from '@mioagent/autonomy';
 import { BASE_UNISWAP_UNIVERSAL_ROUTER_2 } from '@mioagent/security/uniswapGuard';
+import { canonicalGuardAssetV1 } from '@mioagent/security/swapAsset';
 import {
   baseAppNativeRuntime,
   runDirectBaseAppNativeSend,
@@ -103,8 +104,8 @@ test('T47 native swap prepares only the tenant wallet and never returns the othe
       expiresAt,
       context: {
         amountDecimal: '0.5',
-        inputToken: 'USDC',
-        outputToken: 'ETH',
+        inputAsset: canonicalGuardAssetV1('USDC')!,
+        outputAsset: canonicalGuardAssetV1('ETH')!,
         swapper: TENANT_WALLET,
         routerVersion: '2.0',
         expiresAt,
@@ -150,7 +151,14 @@ test('T48b: native swap tool trace has real skill_load, plugin_http_request, sec
       calls: [{ to: BASE_UNISWAP_UNIVERSAL_ROUTER_2, value: '0', data: '0x12345678' }],
       requestId: 'trace-swap',
       expiresAt,
-      context: { amountDecimal: '0.5', inputToken: 'USDC', outputToken: 'ETH', swapper: walletAddress, routerVersion: '2.0', expiresAt },
+      context: {
+        amountDecimal: '0.5',
+        inputAsset: canonicalGuardAssetV1('USDC')!,
+        outputAsset: canonicalGuardAssetV1('ETH')!,
+        swapper: walletAddress,
+        routerVersion: '2.0',
+        expiresAt,
+      },
       traces: [
         { toolName: 'plugin_http_request:POST /v1/quote', args: { path: '/quote' }, result: { status: 'success' }, isError: false },
         { toolName: 'plugin_http_request:POST /v1/swap_5792', args: { path: '/swap_5792' }, result: { status: 'success' }, isError: false },
