@@ -28,6 +28,8 @@ export interface B20EntryExecutionCapabilitiesV1 {
   /** Status can be recovered afterwards. Without it a submission becomes
    * unobservable the moment the tab closes, so it is not offered. */
   reconciliationWired: boolean;
+  /** Canonical RouteProofV1 storage and its append-only event history exist. */
+  routeProofWired: boolean;
 }
 
 export const B20_ENTRY_EXECUTION_UNAVAILABLE_V1 = 'submission_not_wired' as const;
@@ -39,7 +41,8 @@ export function entryExecutionAvailableV1(
   return (
     capabilities.submissionRouteWired &&
     capabilities.walletIntegrationWired &&
-    capabilities.reconciliationWired
+    capabilities.reconciliationWired &&
+    capabilities.routeProofWired
   );
 }
 
@@ -79,7 +82,7 @@ export const B20_ENTRY_REFRESHABLE_STATES_V1: readonly B20EntryUiStateV1[] = [
  *
  * The attempt wins over the plan wherever they could disagree: a stored
  * attempt is what a refresh must recover, and a page that re-read only the
- * plan would show `review` for an entry that is already on chain.
+ * plan would show `review` for an entry that is already onchain.
  */
 export function entryUiStateV1(input: {
   plan: B20PreparedEntryPlanV1;

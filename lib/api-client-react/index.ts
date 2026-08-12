@@ -1130,6 +1130,43 @@ export function useB20RecordEntrySubmission(
   });
 }
 
+/** Ask the server to verify wallet-reported transaction hashes against Base
+ * and project the result into the canonical B20 Route Proof. */
+export function useB20ReconcileEntrySubmission(
+  options?: Omit<
+    UseMutationOptions<
+      apiSpec.B20EntryStatusResponseV1,
+      Error,
+      { planId: string; attemptId: string; transactionHashes: string[] }
+    >,
+    'mutationFn' | 'retry'
+  >,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/opportunities/entry-plans/${encodeURIComponent(input.planId)}/reconcile-submission`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            attemptId: input.attemptId,
+            transactionHashes: input.transactionHashes,
+          }),
+        },
+      );
+      return apiSpec.B20EntryStatusResponseV1Schema.parse(response);
+    },
+    onSuccess: (data, variables, onMutateResult, context) => {
+      queryClient.setQueryData(['b20-entry-status', variables.planId], data);
+      options?.onSuccess?.(data, variables, onMutateResult, context);
+    },
+  });
+}
+
 /**
  * Where did it get to.
  *

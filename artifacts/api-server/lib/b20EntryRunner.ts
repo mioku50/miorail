@@ -12,6 +12,7 @@ import {
 } from '@mioagent/swap-adapters';
 import {
   buildB20CardV1,
+  b20DecimalsFromSnapshotV1,
   exitControlsFromSnapshotV1,
   inspectB20TokenV1,
   type B20ReaderV1,
@@ -69,6 +70,9 @@ export interface PrepareSimulationEvidenceV1 {
   requestHash: string;
   evidenceHash: string;
   blockNumber: string;
+  /** The simulator's total gas observation for these exact calls. It is the
+   * Route Proof estimate; null/zero is never invented later. */
+  gasUsed: string;
 }
 
 export interface PrepareEntryResultV1 {
@@ -85,6 +89,8 @@ export interface PrepareEntryResultV1 {
    * from a client and never from token metadata treated as identity. */
   tokenName: string | null;
   tokenSymbol: string | null;
+  /** Read from decimals() at the same anchored block as the controls. */
+  tokenDecimals: number | null;
 }
 
 const REFUSED_TOKEN_V1 = '0x0000000000000000000000000000000000000000';
@@ -97,6 +103,7 @@ export async function prepareB20EntryV1(
   const clearance = input.clearance;
   let tokenName: string | null = null;
   let tokenSymbol: string | null = null;
+  let tokenDecimals: number | null = null;
   const refuse = (refusal: string, detail: string, token = clearance?.tokenAddress ?? REFUSED_TOKEN_V1): PrepareEntryResultV1 => ({
     blueprint: null,
     refusal,
@@ -105,6 +112,7 @@ export async function prepareB20EntryV1(
     simulation: null,
     tokenName,
     tokenSymbol,
+    tokenDecimals,
   });
 
   // 1. The clearance bindings, through the SHARED taxonomy. A parallel set of
@@ -143,6 +151,7 @@ export async function prepareB20EntryV1(
   const card = buildB20CardV1(inspection.snapshot);
   tokenName = card.displayName;
   tokenSymbol = card.displaySymbol;
+  tokenDecimals = b20DecimalsFromSnapshotV1(inspection.snapshot);
   const freshControls = {
     ...exitControlsFromSnapshotV1(inspection.snapshot),
     snapshotHash: inspection.snapshot.snapshotHash,
@@ -285,8 +294,10 @@ export async function prepareB20EntryV1(
         })),
       }),
       blockNumber: String(observed.blockNumber),
+      gasUsed: observed.gasUsed,
     },
     tokenName,
     tokenSymbol,
+    tokenDecimals,
   };
 }

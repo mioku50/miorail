@@ -37,6 +37,7 @@ export interface BuildPreparedPlanInputV1 {
   simulation: PrepareSimulationEvidenceV1;
   tokenName: string | null;
   tokenSymbol: string | null;
+  tokenDecimals: number | null;
   requestId: string;
   now: Date;
   /** Injected so a test does not have to accept a random id. */
@@ -66,6 +67,7 @@ export function buildPreparedPlanV1(input: BuildPreparedPlanInputV1): PreparedPl
     tokenAddress: input.clearance.tokenAddress,
     tokenName: input.tokenName,
     tokenSymbol: input.tokenSymbol,
+    tokenDecimals: input.tokenDecimals,
     quoteAsset: blueprint.quoteAsset,
     positionAtomic: blueprint.positionAtomic,
 
@@ -82,6 +84,7 @@ export function buildPreparedPlanV1(input: BuildPreparedPlanInputV1): PreparedPl
     prepareControlSnapshotHash: blueprint.prepareControlSnapshotHash,
     certificationSimulationEvidenceHash: blueprint.certificationEvidenceHash,
     prepareSimulationEvidenceHash: input.simulation.evidenceHash,
+    prepareSimulationGasUsed: input.simulation.gasUsed,
 
     expectedOutputAtomic: blueprint.expectedOutputAtomic,
     minimumOutputAtomic: blueprint.minimumOutputAtomic,

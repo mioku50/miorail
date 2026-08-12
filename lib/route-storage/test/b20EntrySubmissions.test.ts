@@ -349,6 +349,7 @@ describe('execution availability is a fact about the surface', () => {
         submissionRouteWired: true,
         walletIntegrationWired: true,
         reconciliationWired: true,
+        routeProofWired: true,
       }),
       true,
     );
@@ -356,12 +357,14 @@ describe('execution availability is a fact about the surface', () => {
       'submissionRouteWired',
       'walletIntegrationWired',
       'reconciliationWired',
+      'routeProofWired',
     ] as const) {
       assert.equal(
         entryExecutionAvailableV1({
           submissionRouteWired: true,
           walletIntegrationWired: true,
           reconciliationWired: true,
+          routeProofWired: true,
           [missing]: false,
         }),
         false,

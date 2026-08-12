@@ -23,6 +23,7 @@ import {
   B20EntryBeginSubmissionRequestV1Schema,
   B20EntryBeginSubmissionResponseV1Schema,
   B20EntryRecordSubmissionRequestV1Schema,
+  B20EntryReconcileSubmissionRequestV1Schema,
   B20EntryStatusResponseV1Schema,
   B20OpportunityFeedResponseV1Schema,
   B20OpportunityDetailResponseV1Schema,
@@ -53,10 +54,12 @@ import {
   createDatabaseB20ClearanceRepository,
   createDatabaseB20EntryPlanRepository,
   createDatabaseB20EntrySubmissionRepository,
+  createDatabaseB20EntryRouteProofRepository,
   b20EntryReviewV1,
   entryExecutionAvailableV1,
   type B20EntryExecutionCapabilitiesV1,
   type B20EntrySubmissionRepositoryV1,
+  type B20EntryRouteProofRepositoryV1,
   type B20ClearanceRepositoryV1,
   type B20EntryPlanRepositoryV1,
   type B20PreparedEntryPlanV1,
@@ -74,6 +77,8 @@ import {
 } from '@mioagent/route-storage';
 import { client } from '@mioagent/db';
 import { stableHashV1 } from '@mioagent/route-domain';
+import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
+import { reconcileB20EntryFromBaseV1 } from '../lib/b20EntryChainReconciler.js';
 import {
   OPPORTUNITY_QUOTE_ASSET_V1,
   type B20PipelineStatusV1,
@@ -114,14 +119,20 @@ import {
   recordWalletReportV1,
   type WalletReportV1,
 } from '../lib/b20EntrySubmitRunner.js';
+import {
+  b20EntryProofSummaryV1,
+  ensureB20EntryRouteProofV1,
+  syncB20EntryRouteProofV1,
+} from '../lib/b20EntryRouteProof.js';
 
 // ---------------------------------------------------------------------------
-// T67C — the B20 Control rail.
+// T67C/T68F — the B20 Control and explicit entry rail.
 //
-// Two routes, both read-only, and that is a property of the code: nothing in
-// this file builds a call, prepares a transaction, requests an approval or
-// touches a wallet. The only outbound network traffic is `eth_call` and
-// `eth_getBlockByNumber` through the injected reader.
+// Inspection, watching and discovery remain read-only. Entry is a separate,
+// explicit path: the server prepares and simulates exact calls, the client
+// asks the Base Account for approval, and this server only reads Base receipts
+// to reconcile the outcome into a canonical Route Proof. It never signs or
+// broadcasts.
 //
 // Idempotency is per tenant + token + BLOCK. Two inspections in the same block
 // are the same fact, so the second one reads the stored row instead of writing
@@ -133,7 +144,7 @@ import {
 
 export const b20ControlRouter = Router();
 
-/** The Base mainnet endpoint, resolved the way every other on-chain read in
+/** The Base mainnet endpoint, resolved the way every other onchain read in
  * this server resolves it. Empty means the routes answer 503 rather than
  * guessing. */
 function baseMainnetRpcUrlV1(): string {
@@ -185,6 +196,9 @@ export const b20RouteRuntime = {
   entryPlans: (): B20EntryPlanRepositoryV1 => createDatabaseB20EntryPlanRepository(client),
   entrySubmissions: (): B20EntrySubmissionRepositoryV1 =>
     createDatabaseB20EntrySubmissionRepository(client),
+  entryProofs: (): B20EntryRouteProofRepositoryV1 =>
+    createDatabaseB20EntryRouteProofRepository(client),
+  receiptReader: createViemBaseReceiptReader,
   observations: (): B20ObservationRepositoryV1 => createDatabaseB20ObservationRepository(client),
   launchPools: (): B20LaunchPoolRepositoryV1 => createDatabaseB20LaunchPoolRepository(client),
   /** Checked separately again: a server without 0028/0029 can still inspect,
@@ -232,12 +246,17 @@ export const b20RouteRuntime = {
   /** T68F-B 1 - availability is a fact about this SURFACE, never an inference
    * from a plan holding unsigned calls. */
   executionCapabilities: async (): Promise<B20EntryExecutionCapabilitiesV1> => {
-    const rows = await client`SELECT to_regclass('public.b20_entry_submissions') AS submissions`;
+    const rows = await client`SELECT
+      to_regclass('public.b20_entry_submissions') AS submissions,
+      to_regclass('public.b20_entry_route_proofs') AS proofs,
+      to_regclass('public.b20_entry_route_proof_events') AS proof_events`;
     const wired = Boolean(rows[0]?.submissions);
+    const proofWired = Boolean(rows[0]?.proofs && rows[0]?.proof_events);
     return {
       submissionRouteWired: wired,
       walletIntegrationWired: wired,
-      reconciliationWired: wired,
+      reconciliationWired: wired && baseMainnetRpcUrlV1().length > 0,
+      routeProofWired: proofWired,
     };
   },
   entryPlanAvailable: async (): Promise<boolean> => {
@@ -1447,6 +1466,7 @@ export async function prepareEntryFromClearanceV1(input: {
       simulation: prepared.simulation,
       tokenName: prepared.tokenName,
       tokenSymbol: prepared.tokenSymbol,
+      tokenDecimals: prepared.tokenDecimals,
       requestId: input.requestId,
       now,
     });
@@ -1524,8 +1544,8 @@ b20ControlRouter.post('/opportunities/:clearanceId/prepare-entry', async (req: R
  * wallet receives exactly what a nonexistent plan receives, because the
  * difference between "not yours" and "not there" is itself information.
  *
- * It returns the projection, never the unsigned calldata. The executable bytes
- * stay server-side while no submission path exists to use them.
+ * It returns the projection, never the unsigned calldata. Executable bytes
+ * leave the server only through the guarded begin-submission endpoint below.
  */
 b20ControlRouter.get('/opportunities/entry-plans/:planId', async (req: Request, res: Response) => {
   const guard = b20Guard(req, res);
@@ -1550,6 +1570,12 @@ b20ControlRouter.get('/opportunities/entry-plans/:planId', async (req: Request, 
     const attempt = await b20RouteRuntime
       .entrySubmissions()
       .latestForPlan({ planId: plan.id, tenantId: guard.user.id });
+    const proof = capabilities.routeProofWired && attempt
+      ? await b20RouteRuntime.entryProofs().getProofForAttempt({
+          attemptId: attempt.id,
+          tenantId: guard.user.id,
+        })
+      : null;
     res.json(
       B20EntryPlanResponseV1Schema.parse({
         review,
@@ -1562,6 +1588,7 @@ b20ControlRouter.get('/opportunities/entry-plans/:planId', async (req: Request, 
         // A refresh reads the ATTEMPT, so a submitted entry never looks
         // prepared again just because the tab was reloaded.
         status: entryStatusViewV1({ plan, attempt, capabilities, now: b20RouteRuntime.now() }),
+        routeProof: b20EntryProofSummaryV1(proof),
       }),
     );
   } catch (error) {
@@ -1662,13 +1689,19 @@ export async function beginEntrySubmissionV1(input: {
     }),
   });
 
-  if (!capabilities.submissionRouteWired) {
+  if (!entryExecutionAvailableV1(capabilities)) {
     return refused('submission_not_wired', 'Submission is not available on this server.', 503);
   }
 
   // An attempt that already holds this plan's slot is RETURNED, never
   // replaced. A double click, a remount and a retried fetch all land here.
   if (existing && existing.status === 'awaiting_wallet_approval') {
+    const proof = await ensureB20EntryRouteProofV1({
+      repository: b20RouteRuntime.entryProofs(),
+      plan,
+      attempt: existing,
+      now,
+    });
     return {
       httpStatus: 200,
       outcome: 'ready',
@@ -1681,6 +1714,7 @@ export async function beginEntrySubmissionV1(input: {
         payload: entryWalletPayloadV1(plan),
         review: b20EntryReviewV1(plan, capabilities),
         status: entryStatusViewV1({ plan, attempt: existing, capabilities, now }),
+        routeProof: b20EntryProofSummaryV1(proof),
       }),
     };
   }
@@ -1709,6 +1743,15 @@ export async function beginEntrySubmissionV1(input: {
     attemptRequestId: input.attemptRequestId,
     now,
   });
+  // A proof exists BEFORE executable bytes leave the server. If this write
+  // fails, no wallet payload is returned; a retry recovers the same attempt
+  // and completes this deterministic insert.
+  const proof = await ensureB20EntryRouteProofV1({
+    repository: b20RouteRuntime.entryProofs(),
+    plan,
+    attempt,
+    now,
+  });
   return {
     httpStatus: 200,
     outcome: 'ready',
@@ -1723,6 +1766,7 @@ export async function beginEntrySubmissionV1(input: {
       payload: entryWalletPayloadV1(plan),
       review: b20EntryReviewV1(plan, capabilities),
       status: entryStatusViewV1({ plan, attempt, capabilities, now }),
+      routeProof: b20EntryProofSummaryV1(proof),
     }),
   };
 }
@@ -1789,12 +1833,19 @@ export async function recordEntrySubmissionV1(input: {
     now,
   });
   if (!updated) return { ok: false, status: 409, code: 'b20_entry_submission_conflict' };
+  const proof = await syncB20EntryRouteProofV1({
+    repository: b20RouteRuntime.entryProofs(),
+    plan: input.plan,
+    attempt: updated,
+    now,
+  });
 
   return {
     ok: true,
     body: B20EntryStatusResponseV1Schema.parse({
       review: b20EntryReviewV1(input.plan, capabilities),
       status: entryStatusViewV1({ plan: input.plan, attempt: updated, capabilities, now }),
+      routeProof: b20EntryProofSummaryV1(proof),
       expiresAt: input.plan.expiresAt,
       expired: Date.parse(input.plan.expiresAt) <= now.getTime(),
     }),
@@ -1839,6 +1890,84 @@ b20ControlRouter.post(
   },
 );
 
+/** One read-only reconciliation pass. The browser can identify transactions
+ * reported by wallet_getCallsStatus, but it cannot declare success: receipt
+ * status, gas, block and ERC-20 movements are re-read on Base by the server. */
+export async function reconcileEntrySubmissionV1(input: {
+  tenantId: string;
+  walletAddress: string;
+  plan: B20PreparedEntryPlanV1;
+  attemptId: string;
+  transactionHashes: string[];
+}): Promise<B20FacadeResultV1<Record<string, unknown>>> {
+  const now = b20RouteRuntime.now();
+  const capabilities = await b20RouteRuntime.executionCapabilities();
+  if (!entryExecutionAvailableV1(capabilities)) {
+    return { ok: false, status: 503, code: 'b20_entry_reconciliation_unavailable' };
+  }
+  const submissions = b20RouteRuntime.entrySubmissions();
+  const attempt = await submissions.getAttempt({
+    attemptId: input.attemptId,
+    tenantId: input.tenantId,
+    walletAddress: input.walletAddress,
+  });
+  if (!attempt || attempt.planId !== input.plan.id) {
+    return { ok: false, status: 404, code: 'b20_entry_attempt_not_found' };
+  }
+  const updated = await reconcileB20EntryFromBaseV1({
+    reader: b20RouteRuntime.receiptReader(),
+    submissions,
+    proofs: b20RouteRuntime.entryProofs(),
+    plan: input.plan,
+    attempt,
+    transactionHashes: input.transactionHashes,
+    now,
+  });
+  const proof = await b20RouteRuntime.entryProofs().getProofForAttempt({
+    attemptId: updated.id,
+    tenantId: input.tenantId,
+  });
+  return {
+    ok: true,
+    body: B20EntryStatusResponseV1Schema.parse({
+      review: b20EntryReviewV1(input.plan, capabilities),
+      status: entryStatusViewV1({ plan: input.plan, attempt: updated, capabilities, now }),
+      routeProof: b20EntryProofSummaryV1(proof),
+      expiresAt: input.plan.expiresAt,
+      expired: Date.parse(input.plan.expiresAt) <= now.getTime(),
+    }),
+  };
+}
+
+b20ControlRouter.post(
+  '/opportunities/entry-plans/:planId/reconcile-submission',
+  async (req: Request, res: Response) => {
+    const parsedBody = B20EntryReconcileSubmissionRequestV1Schema.safeParse(req.body);
+    if (!parsedBody.success) {
+      res.status(400).json({ error: 'invalid_b20_reconciliation_request', code: 'invalid_b20_reconciliation_request' });
+      return;
+    }
+    const guard = await entryPlanGuard(req, res);
+    if (!guard) return;
+    try {
+      const result = await reconcileEntrySubmissionV1({
+        tenantId: guard.user.id,
+        walletAddress: guard.user.address,
+        plan: guard.plan,
+        attemptId: parsedBody.data.attemptId,
+        transactionHashes: parsedBody.data.transactionHashes,
+      });
+      if (!result.ok) {
+        facadeRefusalV1(res, result);
+        return;
+      }
+      res.json(result.body);
+    } catch (error) {
+      storageFailure(res, error, 'reconcile-submission');
+    }
+  },
+);
+
 /** T68F-B 9/11, T72-B §8 — where did it get to. A refresh reads storage, so a
  * submitted entry never returns to `review`. */
 export async function readEntryPlanStatusV1(input: {
@@ -1850,9 +1979,16 @@ export async function readEntryPlanStatusV1(input: {
   const attempt = await b20RouteRuntime
     .entrySubmissions()
     .latestForPlan({ planId: input.plan.id, tenantId: input.tenantId });
+  const proof = capabilities.routeProofWired && attempt
+    ? await b20RouteRuntime.entryProofs().getProofForAttempt({
+        attemptId: attempt.id,
+        tenantId: input.tenantId,
+      })
+    : null;
   return B20EntryStatusResponseV1Schema.parse({
     review: b20EntryReviewV1(input.plan, capabilities),
     status: entryStatusViewV1({ plan: input.plan, attempt, capabilities, now }),
+    routeProof: b20EntryProofSummaryV1(proof),
     expiresAt: input.plan.expiresAt,
     expired: Date.parse(input.plan.expiresAt) <= now.getTime(),
   });

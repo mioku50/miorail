@@ -12,6 +12,7 @@ import {
   InMemoryB20ClearanceRepositoryV1,
   InMemoryB20EntryPlanRepositoryV1,
   InMemoryB20EntrySubmissionRepositoryV1,
+  InMemoryB20EntryRouteProofRepositoryV1,
   InMemoryMcpExecutionAuditRepositoryV1,
   InMemoryMcpHandoffRevocationRepositoryV1,
   entryPlanCallsHashV1,
@@ -140,9 +141,11 @@ function preparedPlan(now = NOW): { plan: B20PreparedEntryPlanV1; run: unknown }
       requestHash: `0x${'1'.repeat(64)}`,
       evidenceHash: `0x${'2'.repeat(64)}`,
       blockNumber: '49450051',
+      gasUsed: '210000',
     },
     tokenName: 'Example',
     tokenSymbol: 'EXA',
+    tokenDecimals: 18,
     requestId: 'req-1',
     now,
     newId: () => 'plan-1',
@@ -154,6 +157,7 @@ const originalAudit = { ...mcpAuditRuntime };
 const originalAuthFlags = mcpPrivateAuthRuntime.flags;
 let plans: InMemoryB20EntryPlanRepositoryV1;
 let submissions: InMemoryB20EntrySubmissionRepositoryV1;
+let proofs: InMemoryB20EntryRouteProofRepositoryV1;
 let clearances: InMemoryB20ClearanceRepositoryV1;
 let audit: InMemoryMcpExecutionAuditRepositoryV1;
 let revocations: InMemoryMcpHandoffRevocationRepositoryV1;
@@ -162,6 +166,7 @@ let clock: Date;
 beforeEach(async () => {
   plans = new InMemoryB20EntryPlanRepositoryV1();
   submissions = new InMemoryB20EntrySubmissionRepositoryV1();
+  proofs = new InMemoryB20EntryRouteProofRepositoryV1();
   clearances = new InMemoryB20ClearanceRepositoryV1();
   audit = new InMemoryMcpExecutionAuditRepositoryV1();
   revocations = new InMemoryMcpHandoffRevocationRepositoryV1();
@@ -178,6 +183,7 @@ beforeEach(async () => {
   b20RouteRuntime.now = () => clock;
   b20RouteRuntime.entryPlans = () => plans;
   b20RouteRuntime.entrySubmissions = () => submissions;
+  b20RouteRuntime.entryProofs = () => proofs;
   b20RouteRuntime.clearances = () => clearances;
   b20RouteRuntime.entryPlanAvailable = async () => true;
   b20RouteRuntime.clearanceAvailable = async () => true;
@@ -187,6 +193,7 @@ beforeEach(async () => {
     submissionRouteWired: true,
     walletIntegrationWired: true,
     reconciliationWired: true,
+    routeProofWired: true,
   });
   mcpPrivateAuthRuntime.flags = () => ({ ...FLAGS });
   process.env.MIORAIL_MCP_PRIVATE_V1 = 'true';

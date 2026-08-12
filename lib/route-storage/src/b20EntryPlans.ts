@@ -110,6 +110,9 @@ export const B20PreparedEntryPlanV1Schema = z
     tokenAddress: z.string().regex(ADDRESS_V1),
     tokenName: z.string().max(120).nullable(),
     tokenSymbol: z.string().max(60).nullable(),
+    /** Exact decimals() reading used by the prepared plan. Null on legacy
+     * rows prepared before the reading was persisted. */
+    tokenDecimals: z.number().int().min(0).max(36).nullable().default(null),
     quoteAsset: z.literal(B20_ENTRY_QUOTE_ASSET_V1),
     positionAtomic: z.string().regex(/^[1-9][0-9]{0,17}$/),
 
@@ -133,6 +136,9 @@ export const B20PreparedEntryPlanV1Schema = z
      * the prepare-time one proved these exact bytes do not revert. */
     certificationSimulationEvidenceHash: z.string().regex(HASH_V1),
     prepareSimulationEvidenceHash: z.string().regex(HASH_V1),
+    /** Total gas observed while simulating these exact calls. Null only on
+     * legacy rows; a canonical Route Proof is never fabricated from null. */
+    prepareSimulationGasUsed: z.string().regex(UINT_V1).nullable().default(null),
 
     expectedOutputAtomic: z.string().regex(/^[1-9][0-9]*$/),
     minimumOutputAtomic: z.string().regex(/^[1-9][0-9]*$/),
@@ -311,6 +317,7 @@ export interface B20EntryReviewV1 {
     tokenAddress: string;
     tokenName: string | null;
     tokenSymbol: string | null;
+    tokenDecimals: number | null;
     expectedOutputAtomic: string;
     minimumOutputAtomic: string;
   };
@@ -361,6 +368,7 @@ export function b20EntryReviewV1(
       tokenAddress: plan.tokenAddress,
       tokenName: plan.tokenName,
       tokenSymbol: plan.tokenSymbol,
+      tokenDecimals: plan.tokenDecimals,
       expectedOutputAtomic: plan.expectedOutputAtomic,
       minimumOutputAtomic: plan.minimumOutputAtomic,
     },

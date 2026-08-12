@@ -96,6 +96,7 @@ const SIMULATION = {
   requestHash: `0x${'1'.repeat(64)}`,
   evidenceHash: `0x${'2'.repeat(64)}`,
   blockNumber: '49450051',
+  gasUsed: '210000',
 };
 
 const build = (allowance = '0') =>
@@ -105,6 +106,7 @@ const build = (allowance = '0') =>
     simulation: SIMULATION,
     tokenName: 'Example',
     tokenSymbol: 'EXA',
+    tokenDecimals: 18,
     requestId: 'req-1',
     now: NOW,
     newId: (() => {

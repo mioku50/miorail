@@ -3085,6 +3085,7 @@ export const B20EntryReviewV1Schema = z
         tokenAddress: AddressV1Schema,
         tokenName: z.string().max(120).nullable(),
         tokenSymbol: z.string().max(60).nullable(),
+        tokenDecimals: z.number().int().min(0).max(36).nullable(),
         expectedOutputAtomic: z.string().regex(/^[1-9][0-9]*$/),
         minimumOutputAtomic: z.string().regex(/^[1-9][0-9]*$/),
       })
@@ -3186,6 +3187,7 @@ export const B20EntryWalletPayloadV1Schema = z
     planId: z.string().min(1).max(200),
     blueprintHash: HashV1Schema,
     approvedCallsHash: HashV1Schema,
+    callsHash: HashV1Schema,
     chainId: z.literal('0x2105'),
     from: AddressV1Schema,
     calls: z
@@ -3203,6 +3205,21 @@ export const B20EntryWalletPayloadV1Schema = z
     /** Approval and swap land together or not at all: an approval that
      * executed without its swap is a standing allowance nobody asked for. */
     atomicRequired: z.literal(true),
+  })
+  .strict();
+
+/** Public-safe handle for the canonical RouteProofV1. The proof's executable
+ * calls stay server-side; this projection is enough to inspect its lineage and
+ * reconciliation state. */
+export const B20EntryRouteProofSummaryV1Schema = z
+  .object({
+    proofId: z.string().min(1).max(200),
+    proofHash: HashV1Schema,
+    finalStatus: z.enum(['pending', 'completed', 'partial_failure', 'failed', 'cancelled', 'reconciliation_required']),
+    reconciliationState: z.enum(['pending', 'matched', 'deviated', 'partial', 'failed', 'manual_review']),
+    approvedCallsHash: HashV1Schema,
+    transactionHashes: z.array(HashV1Schema).max(16),
+    updatedAt: z.string().datetime(),
   })
   .strict();
 
@@ -3225,6 +3242,7 @@ export const B20EntryBeginSubmissionResponseV1Schema = z.discriminatedUnion('out
       payload: B20EntryWalletPayloadV1Schema,
       review: B20EntryReviewV1Schema,
       status: B20EntryOutcomeV1Schema,
+      routeProof: B20EntryRouteProofSummaryV1Schema,
     })
     .strict(),
   z
@@ -3245,6 +3263,16 @@ export const B20EntryRecordSubmissionRequestV1Schema = z
     result: z.enum(['submitted', 'user_rejected', 'wallet_failed', 'cancelled']),
     /** Present only for `submitted`. Everything else must not name a batch. */
     batchId: z.string().min(1).max(200).nullable(),
+  })
+  .strict();
+
+/** One bounded server-side Base reconciliation pass. The hashes are lookup
+ * hints from wallet_getCallsStatus; the server re-reads every receipt. An
+ * empty list means retry the hashes already bound to the attempt. */
+export const B20EntryReconcileSubmissionRequestV1Schema = z
+  .object({
+    attemptId: z.string().min(1).max(200),
+    transactionHashes: z.array(HashV1Schema).max(16),
   })
   .strict();
 
@@ -3652,6 +3680,7 @@ export const B20EntryStatusResponseV1Schema = z
   .object({
     review: B20EntryReviewV1Schema,
     status: B20EntryOutcomeV1Schema,
+    routeProof: B20EntryRouteProofSummaryV1Schema.nullable(),
     expiresAt: z.string().min(1).max(60),
     expired: z.boolean(),
   })
@@ -3670,6 +3699,7 @@ export const B20EntryPlanResponseV1Schema = z
     executionAvailable: z.boolean(),
     executionUnavailableReason: z.literal('submission_not_wired').nullable(),
     status: B20EntryOutcomeV1Schema,
+    routeProof: B20EntryRouteProofSummaryV1Schema.nullable(),
   })
   .strict();
 

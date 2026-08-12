@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useAccount } from "wagmi";
+import { useAccount, useCallsStatus, useSendCalls } from "wagmi";
 import {
   CONSOLE_COPY_V1,
   CandidateCards,
@@ -19,6 +19,7 @@ import {
   ConsoleMiniShell,
   ConsoleRightRail,
   B20ExitCard,
+  B20EntryReviewCard,
   B20PortfolioPanel,
   BaseMcpConsoleCard,
   BaseMcpExtensionsCard,
@@ -118,6 +119,11 @@ import {
   useMarketSnapshot,
   usePrepareSwapBlueprint,
   useB20ExitCheck,
+  useB20PrepareEntry,
+  useB20BeginEntrySubmission,
+  useB20EntryStatus,
+  useB20ReconcileEntrySubmission,
+  useB20RecordEntrySubmission,
   useB20OpportunitySimulate,
   useBaseMcpConsole,
   useBaseMcpPlugins,
@@ -135,6 +141,8 @@ import {
   EarnDepositFlow,
   SubmissionRecoveryRail,
   builderCodeForSurfaceV1,
+  isWalletRejectionError,
+  transactionHashesFromReceipts,
   useSpendPermissionGrant,
   type BlueprintSubmitStatus,
 } from "@mioagent/wallet-actions";
@@ -161,6 +169,8 @@ const BUILDER_CODE = builderCodeForSurfaceV1({
   NEXT_PUBLIC_BASE_BUILDER_CODE: process.env.NEXT_PUBLIC_BASE_BUILDER_CODE,
   NEXT_PUBLIC_BUILDER_CODE: process.env.NEXT_PUBLIC_BUILDER_CODE,
 });
+
+const B20_QUOTE_ASSET_V1 = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 
 interface SubmissionState {
   status: BlueprintSubmitStatus;
@@ -889,13 +899,11 @@ export function MiniConsole() {
   const baseMcpAsk = useBaseMcpConsole();
   const [baseMcpQuestion, setBaseMcpQuestion] = useState("");
 
-  // --- the paid B20 exit proof, in Base App ---------------------------------
+  // --- the paid B20 exit proof and explicit entry, in Base App ---------------
   //
-  // Deliberately WITHOUT the entry-plan handler. The card renders no "build
-  // entry plan" control when that prop is absent, which is how the web version
-  // guarantees a provisional result can never reach a wallet. Base App gets
-  // the proof; opening a wallet from a clearance is a separate flow and is not
-  // duplicated here by accident.
+  // The exit card still exposes entry only for a live qualified clearance.
+  // From there Base App uses the same server projection, exact calls, Base
+  // Account approval and server receipt reconciliation as the web console.
   const [exitToken, setExitToken] = useState<string | null>(null);
   const [exitProfile, setExitProfile] = useState<ExitProfileV1>(EXIT_PROFILE_DEFAULTS_V1);
   const exitCheck = useB20ExitCheck();
@@ -980,6 +988,144 @@ export function MiniConsole() {
     }
     return exitCheck.data ?? null;
   }, [exitSimulate.data, exitProofPayment.response, exitCheck.data]);
+
+  // The B20 entry flow is intentionally adapted here rather than replaced by
+  // a miniapp-only state machine. The server remains the source of calls,
+  // lifecycle and proof truth; this surface only opens the Base Account and
+  // forwards the resulting batch/transaction identifiers.
+  const [b20EntryPlanId, setB20EntryPlanId] = useState<string | null>(null);
+  const [b20WalletError, setB20WalletError] = useState<string | null>(null);
+  const b20PrepareEntry = useB20PrepareEntry();
+  const b20BeginSubmission = useB20BeginEntrySubmission();
+  const b20RecordSubmission = useB20RecordEntrySubmission();
+  const b20ReconcileSubmission = useB20ReconcileEntrySubmission();
+  const b20SendCalls = useSendCalls();
+  const b20EntryStatus = useB20EntryStatus(b20EntryPlanId, { enabled: Boolean(b20EntryPlanId) });
+  const b20EntryReview = b20EntryStatus.data?.review ?? b20PrepareEntry.data?.review ?? null;
+  const b20EntryState = b20EntryStatus.data?.status ?? null;
+  const b20WalletBatchStatus = useCallsStatus({
+    id: b20EntryState?.batchId ?? "",
+    query: {
+      enabled: Boolean(
+        b20EntryState?.batchId &&
+        (b20EntryState.state === "submitted" || b20EntryState.state === "reconciling"),
+      ),
+      refetchInterval: 2_000,
+      retry: false,
+    },
+  });
+  const reconciledB20WalletStatusRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const walletStatus = b20WalletBatchStatus.data as {
+      status?: string;
+      receipts?: Array<{ transactionHash?: string }>;
+    } | undefined;
+    if (
+      !b20EntryPlanId ||
+      !b20EntryState?.attemptId ||
+      (walletStatus?.status !== "success" && walletStatus?.status !== "failure")
+    ) return;
+    const transactionHashes = transactionHashesFromReceipts(walletStatus.receipts);
+    if (transactionHashes.length === 0) return;
+    const key = `${b20EntryState.attemptId}:${transactionHashes.join(",")}`;
+    if (reconciledB20WalletStatusRef.current === key) return;
+    reconciledB20WalletStatusRef.current = key;
+    b20ReconcileSubmission.mutate(
+      { planId: b20EntryPlanId, attemptId: b20EntryState.attemptId, transactionHashes },
+      {
+        onError: () => {
+          setB20WalletError("Base receipt verification is temporarily unavailable. Use Check proof to retry.");
+        },
+      },
+    );
+  }, [b20EntryPlanId, b20EntryState?.attemptId, b20ReconcileSubmission, b20WalletBatchStatus.data]);
+
+  const b20ProfileIdentityV1 = useCallback(
+    () =>
+      [
+        B20_QUOTE_ASSET_V1,
+        usdcToAtomicV1(exitProfile.position),
+        percentToBpsV1(exitProfile.maxRoundTrip),
+        percentToBpsV1(exitProfile.maxSlippage),
+      ].join(":"),
+    [exitProfile],
+  );
+
+  const buildB20EntryPlan = useCallback(
+    (clearanceId: string) => {
+      setB20WalletError(null);
+      b20PrepareEntry.mutate(
+        {
+          clearanceId,
+          profileIdentity: b20ProfileIdentityV1(),
+          requestId: `entry:${clearanceId}`,
+        },
+        { onSuccess: (data) => setB20EntryPlanId(data.planId) },
+      );
+    },
+    [b20PrepareEntry, b20ProfileIdentityV1],
+  );
+
+  const confirmB20EntryInWallet = useCallback(async () => {
+    if (!b20EntryPlanId) return;
+    setB20WalletError(null);
+    const begun = await b20BeginSubmission.mutateAsync({
+      planId: b20EntryPlanId,
+      profileIdentity: b20ProfileIdentityV1(),
+      attemptRequestId: `attempt:${b20EntryPlanId}`,
+    });
+    if (begun.outcome !== "ready") {
+      setB20WalletError(begun.detail);
+      return;
+    }
+    try {
+      const result = await b20SendCalls.mutateAsync({
+        calls: begun.payload.calls as never,
+        chainId: 8453,
+        forceAtomic: begun.payload.atomicRequired,
+      });
+      const batchId = typeof result === "string" ? result : (result as { id?: string })?.id ?? null;
+      if (!batchId) {
+        await b20RecordSubmission.mutateAsync({
+          planId: b20EntryPlanId,
+          attemptId: begun.attemptId,
+          result: "wallet_failed",
+          batchId: null,
+        });
+        return;
+      }
+      await b20RecordSubmission.mutateAsync({
+        planId: b20EntryPlanId,
+        attemptId: begun.attemptId,
+        result: "submitted",
+        batchId,
+      });
+    } catch (error) {
+      await b20RecordSubmission.mutateAsync({
+        planId: b20EntryPlanId,
+        attemptId: begun.attemptId,
+        result: isWalletRejectionError(error) ? "user_rejected" : "wallet_failed",
+        batchId: null,
+      });
+    }
+  }, [b20BeginSubmission, b20EntryPlanId, b20ProfileIdentityV1, b20RecordSubmission, b20SendCalls]);
+
+  const refreshB20EntryProof = useCallback(() => {
+    const walletStatus = b20WalletBatchStatus.data as {
+      receipts?: Array<{ transactionHash?: string }>;
+    } | undefined;
+    const transactionHashes = transactionHashesFromReceipts(walletStatus?.receipts);
+    if (b20EntryPlanId && b20EntryState?.attemptId && b20EntryState.batchId) {
+      b20ReconcileSubmission.mutate({
+        planId: b20EntryPlanId,
+        attemptId: b20EntryState.attemptId,
+        transactionHashes,
+      });
+      return;
+    }
+    void b20EntryStatus.refetch();
+  }, [b20EntryPlanId, b20EntryState, b20EntryStatus, b20ReconcileSubmission, b20WalletBatchStatus.data]);
   const addWatch = useAddB20Watch();
   const sweep = useB20Watch();
   const [tokenInput, setTokenInput] = useState("");
@@ -1727,7 +1873,7 @@ export function MiniConsole() {
               {sweep.isPending ? "Reading B20 controls…" : "Read B20 controls"}
             </button>
             {/* The sweep is explicit here for the same reason as on the web:
-                each run is up to 25 metered on-chain reads. */}
+                each run is up to 25 metered onchain reads. */}
             <p className="lnote">Each check reads the controls of up to 25 tokens on Base.</p>
           </div>
         </div>
@@ -1748,9 +1894,31 @@ export function MiniConsole() {
           onCheckWallet={() => {
             if (sweepTokens.length > 0) sweep.mutate({ tokens: sweepTokens });
           }}
+          onCheckExit={(token) => runExitCheck(token)}
+          exitCheckedToken={exitToken}
         />
-        {/* The paid exit proof. No `onBuildEntryPlan`, so the card renders no
-            control that could carry a provisional result towards a wallet. */}
+        {b20EntryReview && b20EntryState && (
+          <B20EntryReviewCard
+            review={b20EntryReview}
+            status={b20EntryState}
+            routeProof={
+              b20EntryStatus.data?.routeProof ??
+              (b20BeginSubmission.data?.outcome === "ready" ? b20BeginSubmission.data.routeProof : null)
+            }
+            now={new Date()}
+            busy={
+              b20BeginSubmission.isPending ||
+              b20SendCalls.isPending ||
+              b20RecordSubmission.isPending ||
+              b20ReconcileSubmission.isPending
+            }
+            onConfirm={b20EntryReview.executionAvailable ? confirmB20EntryInWallet : undefined}
+            onRefresh={refreshB20EntryProof}
+            onBack={() => setB20EntryPlanId(null)}
+          />
+        )}
+        {b20WalletError && <p className="note warn">{b20WalletError}</p>}
+        {/* Only a live qualified clearance gets the entry-plan handler. */}
         <B20ExitCard
           check={exitResult as never}
           tokenLabel={
@@ -1804,6 +1972,7 @@ export function MiniConsole() {
           onSimulate={() => {
             if (exitToken) runExitSimulation(exitToken);
           }}
+          onBuildEntryPlan={buildB20EntryPlan}
           now={new Date()}
         />
         {/* The way into Extensions in Base App. NOT a fifth tab: four tabs get

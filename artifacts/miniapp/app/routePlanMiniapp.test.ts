@@ -60,3 +60,15 @@ test('T59: miniapp SimulateButton wiring never sends calldata and only wires the
   assert.ok(homeSource.includes('blueprintId={prepare.data.blueprint.id}'));
   assert.ok(homeSource.includes('blueprintHash={prepare.data.blueprint.blueprintHash}'));
 });
+
+test('B20 entry in Base App uses the shared proof flow and exact atomic Base Account calls', () => {
+  const source = readFileSync(path.join(here, 'components', 'MiniConsole.tsx'), 'utf8');
+  assert.ok(source.includes('useB20PrepareEntry'));
+  assert.ok(source.includes('useB20BeginEntrySubmission'));
+  assert.ok(source.includes('useB20ReconcileEntrySubmission'));
+  assert.ok(source.includes('<B20EntryReviewCard'));
+  assert.ok(source.includes('calls: begun.payload.calls'));
+  assert.ok(source.includes('forceAtomic: begun.payload.atomicRequired'));
+  assert.ok(source.includes('transactionHashesFromReceipts'));
+  assert.ok(source.includes('onBuildEntryPlan={buildB20EntryPlan}'));
+});

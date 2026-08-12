@@ -260,6 +260,13 @@
       "when": 1786636800000,
       "tag": "0036_swap_pending_intents",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1786723200000,
+      "tag": "0037_b20_entry_route_proofs",
+      "breakpoints": true
     }
   ]
 }

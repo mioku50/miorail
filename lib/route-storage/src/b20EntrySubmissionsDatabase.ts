@@ -113,6 +113,8 @@ export function createDatabaseB20EntrySubmissionRepository(
           batchId: batchId ?? from.batchId,
           errorCode: input.errorCode ?? from.errorCode,
           submittedAt: batchId && !from.submittedAt ? input.now.toISOString() : from.submittedAt,
+          transactionHashes: input.transactionHashes ?? from.transactionHashes,
+          receipts: input.receipts ?? from.receipts,
           reconciliation: input.reconciliation ?? from.reconciliation,
           updatedAt: input.now.toISOString(),
         },

@@ -72,6 +72,7 @@ function plan(overrides: Record<string, unknown> = {}): B20PreparedEntryPlanV1 {
     tokenAddress: TOKEN,
     tokenName: 'Example',
     tokenSymbol: 'EXA',
+    tokenDecimals: 18,
     quoteAsset: USDC,
     positionAtomic: '100000000',
     entryProviderId: 'aerodrome',
@@ -84,6 +85,7 @@ function plan(overrides: Record<string, unknown> = {}): B20PreparedEntryPlanV1 {
     prepareControlSnapshotHash: `0x${'a'.repeat(64)}`,
     certificationSimulationEvidenceHash: `0x${'e'.repeat(64)}`,
     prepareSimulationEvidenceHash: `0x${'2'.repeat(64)}`,
+    prepareSimulationGasUsed: '210000',
     expectedOutputAtomic: '4200000000000000000000',
     minimumOutputAtomic: '4074000000000000000000',
     deadlineSeconds: DEADLINE,
@@ -264,7 +266,9 @@ describe('the wallet payload is built from stored bytes and nothing else', () =>
       assert.equal(call.to, source.calls[index]!.to);
       assert.equal(call.data, source.calls[index]!.data);
     }
-    assert.equal(payload.approvedCallsHash, source.callsHash);
+    assert.equal(payload.callsHash, source.callsHash);
+    assert.match(payload.approvedCallsHash, /^0x[0-9a-f]{64}$/);
+    assert.notEqual(payload.approvedCallsHash, payload.callsHash);
     assert.equal(payload.blueprintHash, source.blueprintHash);
   });
 

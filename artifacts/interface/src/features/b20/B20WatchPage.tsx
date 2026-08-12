@@ -32,6 +32,7 @@ import {
   useB20ExitCheck,
   useB20OpportunitySimulate,
   useB20PrepareEntry,
+  useB20ReconcileEntrySubmission,
   useB20RecordEntrySubmission,
   useB20Watch,
   useB20Watchlist,
@@ -39,13 +40,13 @@ import {
   useRemoveB20Watch,
   useStatus,
 } from '@mioagent/api-client-react';
-import { useSendCalls } from 'wagmi';
+import { useCallsStatus, useSendCalls } from 'wagmi';
 
 /** Canonical Base USDC — the one asset this family quotes in. The profile
  * identity the server computed is restated from it, so a mismatch is caught
  * rather than assumed. */
 const B20_QUOTE_ASSET_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
-import { isWalletRejectionError } from '@mioagent/wallet-actions';
+import { isWalletRejectionError, transactionHashesFromReceipts } from '@mioagent/wallet-actions';
 import { useB20ExitProofPayment } from '@mioagent/x402-actions';
 import { useConsoleNav } from '../console/useConsoleNav';
 import type { MarketObservationV1 } from '@mioagent/opportunity-rail/marketRails';
@@ -58,7 +59,7 @@ import type { MarketObservationV1 } from '@mioagent/opportunity-rail/marketRails
 // second product. The centre column is the only thing that differs.
 //
 // The sweep is EXPLICIT. It runs when someone presses "Check now", never on
-// mount: each run is up to 25 on-chain reads against a metered endpoint, and a
+// mount: each run is up to 25 onchain reads against a metered endpoint, and a
 // page that spends an operator's RPC budget for being opened is a page nobody
 // should open.
 // ---------------------------------------------------------------------------
@@ -403,6 +404,7 @@ export function B20WatchPage() {
   const prepareEntry = useB20PrepareEntry();
   const beginSubmission = useB20BeginEntrySubmission();
   const recordSubmission = useB20RecordEntrySubmission();
+  const reconcileSubmission = useB20ReconcileEntrySubmission();
   const sendCalls = useSendCalls();
   const entryStatus = useB20EntryStatus(planId, { enabled: Boolean(planId) });
 
@@ -410,6 +412,46 @@ export function B20WatchPage() {
   const entryState = entryStatus.data?.status ?? prepareEntry.data?.review
     ? (entryStatus.data?.status ?? null)
     : null;
+  const walletBatchStatus = useCallsStatus({
+    id: entryState?.batchId ?? '',
+    query: {
+      enabled: Boolean(
+        entryState?.batchId &&
+        (entryState.state === 'submitted' || entryState.state === 'reconciling'),
+      ),
+      refetchInterval: 2_000,
+      retry: false,
+    },
+  });
+  const reconciledWalletStatusRef = useRef<string | null>(null);
+
+  /** wallet_getCallsStatus supplies identifiers, not truth. Once it names a
+   * terminal batch, the server re-reads those receipts on Base and alone
+   * decides whether the canonical proof completed, reverted or needs review. */
+  useEffect(() => {
+    const walletStatus = walletBatchStatus.data as {
+      status?: string;
+      receipts?: Array<{ transactionHash?: string }>;
+    } | undefined;
+    if (
+      !planId ||
+      !entryState?.attemptId ||
+      (walletStatus?.status !== 'success' && walletStatus?.status !== 'failure')
+    ) return;
+    const transactionHashes = transactionHashesFromReceipts(walletStatus.receipts);
+    if (transactionHashes.length === 0) return;
+    const key = `${entryState.attemptId}:${transactionHashes.join(',')}`;
+    if (reconciledWalletStatusRef.current === key) return;
+    reconciledWalletStatusRef.current = key;
+    reconcileSubmission.mutate(
+      { planId, attemptId: entryState.attemptId, transactionHashes },
+      {
+        onError: () => {
+          setWalletError('Base receipt verification is temporarily unavailable. Use Check proof to retry.');
+        },
+      },
+    );
+  }, [entryState?.attemptId, planId, reconcileSubmission, walletBatchStatus.data]);
 
   const profileIdentityV1 = useCallback(
     () =>
@@ -460,6 +502,8 @@ export function B20WatchPage() {
       // calldata is built, rewritten or reordered in this browser.
       const result = await sendCalls.mutateAsync({
         calls: begun.payload.calls as never,
+        chainId: 8453,
+        forceAtomic: begun.payload.atomicRequired,
       });
       const batchId = typeof result === 'string' ? result : (result as { id?: string })?.id ?? null;
       if (!batchId) {
@@ -490,6 +534,22 @@ export function B20WatchPage() {
       });
     }
   }, [planId, beginSubmission, profileIdentityV1, sendCalls, recordSubmission]);
+
+  const refreshEntryProof = useCallback(() => {
+    const walletStatus = walletBatchStatus.data as {
+      receipts?: Array<{ transactionHash?: string }>;
+    } | undefined;
+    const transactionHashes = transactionHashesFromReceipts(walletStatus?.receipts);
+    if (planId && entryState?.attemptId && entryState.batchId) {
+      reconcileSubmission.mutate({
+        planId,
+        attemptId: entryState.attemptId,
+        transactionHashes,
+      });
+      return;
+    }
+    void entryStatus.refetch();
+  }, [entryState, entryStatus, planId, reconcileSubmission, walletBatchStatus.data]);
   const exitUnavailable = (() => {
     if (!profileAtomic) {
       return 'That profile is not a size and two tolerances Miorail can act on. Whole USDC and a percent, please.';
@@ -685,12 +745,16 @@ export function B20WatchPage() {
         <B20EntryReviewCard
           review={entryReview}
           status={entryState}
+          routeProof={
+            entryStatus.data?.routeProof ??
+            (beginSubmission.data?.outcome === 'ready' ? beginSubmission.data.routeProof : null)
+          }
           now={new Date()}
-          busy={beginSubmission.isPending || sendCalls.isPending || recordSubmission.isPending}
+          busy={beginSubmission.isPending || sendCalls.isPending || recordSubmission.isPending || reconcileSubmission.isPending}
           // Passed only when the whole path exists. The card renders NO control
           // when this is absent, rather than a disabled one.
           onConfirm={entryReview.executionAvailable ? confirmInWallet : undefined}
-          onRefresh={() => entryStatus.refetch()}
+          onRefresh={refreshEntryProof}
           onBack={() => {
             setPlanId(null);
           }}

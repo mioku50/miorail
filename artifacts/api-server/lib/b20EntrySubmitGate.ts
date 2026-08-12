@@ -1,5 +1,6 @@
 import {
   B20_ENTRY_EXECUTION_FAMILY_V1,
+  b20EntryApprovedCallsHashV1,
   entryPlanCallsHashV1,
   type B20EntrySubmissionAttemptV1,
   type B20OpportunityClearanceV1,
@@ -32,6 +33,7 @@ export type SubmitRefusalV1 =
   | 'entry_plan_clearance_mismatch'
   | 'entry_plan_calls_tampered'
   | 'entry_plan_simulation_missing'
+  | 'entry_plan_proof_evidence_missing'
   | 'entry_plan_already_submitted'
   | 'entry_plan_controls_stale';
 
@@ -53,6 +55,8 @@ export const SUBMIT_REFUSAL_COPY_V1: Record<SubmitRefusalV1, string> = {
     'The stored transaction no longer matches what was checked, so nothing is offered to sign.',
   entry_plan_simulation_missing:
     'This plan has no prepare-time simulation on record, and an unsimulated plan is never sent to a wallet.',
+  entry_plan_proof_evidence_missing:
+    'This plan lacks token decimals or simulation gas needed for a factual Route Proof. Run the opportunity check again.',
   entry_plan_already_submitted:
     'This plan has already been submitted. Refresh the status rather than sending it twice.',
   entry_plan_controls_stale:
@@ -156,6 +160,9 @@ export function submitGateRefusalV1(input: SubmitGateInputV1): SubmitRefusalV1 |
   // the database is caught by the same line that catches a tampered request.
   if (entryPlanCallsHashV1(plan.calls) !== plan.callsHash) return 'entry_plan_calls_tampered';
   if (!plan.prepareSimulationEvidenceHash) return 'entry_plan_simulation_missing';
+  if (plan.tokenDecimals === null || plan.prepareSimulationGasUsed === null) {
+    return 'entry_plan_proof_evidence_missing';
+  }
 
   const readAt = input.controlsReadAt;
   const freshness = input.controlFreshnessMs ?? CONTROL_FRESHNESS_MS_V1;
@@ -171,7 +178,10 @@ export function submitGateRefusalV1(input: SubmitGateInputV1): SubmitRefusalV1 |
 export interface EntryWalletPayloadV1 {
   planId: string;
   blueprintHash: string;
+  /** Canonical RouteProofV1 hash of the typed approved calls. */
   approvedCallsHash: string;
+  /** B20 plan byte hash retained for submission binding and MCP hand-off. */
+  callsHash: string;
   chainId: '0x2105';
   from: string;
   calls: { to: string; value: string; data: string }[];
@@ -182,7 +192,8 @@ export function entryWalletPayloadV1(plan: B20PreparedEntryPlanV1): EntryWalletP
   return {
     planId: plan.id,
     blueprintHash: plan.blueprintHash,
-    approvedCallsHash: plan.callsHash,
+    approvedCallsHash: b20EntryApprovedCallsHashV1(plan),
+    callsHash: plan.callsHash,
     // Base mainnet, as a hex literal, because that is what the wallet contract
     // pins and a number here would be a different assertion.
     chainId: '0x2105',

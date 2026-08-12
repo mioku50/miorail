@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test, { afterEach, beforeEach, describe } from 'node:test';
 import express from 'express';
 import request from 'supertest';
+import { encodeAbiParameters, encodeEventTopics, erc20Abi, parseAbiParameters } from 'viem';
 import type { B20ReaderV1, B20RpcResultV1 } from '@mioagent/b20-control';
 import {
   InMemoryB20StorageRepositoryV1,
@@ -9,10 +10,12 @@ import {
   InMemoryB20ClearanceRepositoryV1,
   InMemoryB20EntryPlanRepositoryV1,
   InMemoryB20EntrySubmissionRepositoryV1,
+  InMemoryB20EntryRouteProofRepositoryV1,
   createMemoryB20LaunchPoolRepository,
   type B20LaunchPoolRepositoryV1,
 } from '@mioagent/route-storage';
 import { b20ControlRouter, b20RouteRuntime } from './b20Control.js';
+import { reconcileAttemptV1 } from '../lib/b20EntrySubmitRunner.js';
 
 // A detonator on the global fetch: the reader is injected, so a test that
 // forgets to stub it fails loudly rather than calling Base mainnet.
@@ -57,6 +60,7 @@ let watchlist: InMemoryB20WatchlistRepositoryV1;
 let clearances: InMemoryB20ClearanceRepositoryV1;
 let entryPlans: InMemoryB20EntryPlanRepositoryV1;
 let entrySubmissions: InMemoryB20EntrySubmissionRepositoryV1;
+let entryProofs: InMemoryB20EntryRouteProofRepositoryV1;
 let launchPools: B20LaunchPoolRepositoryV1;
 let isB20Value: boolean;
 let blockNumber: string;
@@ -174,9 +178,11 @@ const preparedRun = (calls = 2, overrides: Record<string, unknown> = {}) =>
       requestHash: `0x${'1'.repeat(64)}`,
       evidenceHash: `0x${'2'.repeat(64)}`,
       blockNumber: '49450051',
+      gasUsed: '210000',
     },
     tokenName: 'Example',
     tokenSymbol: 'EXA',
+    tokenDecimals: 18,
   })) as never;
 
 
@@ -202,6 +208,8 @@ beforeEach(async () => {
   b20RouteRuntime.entryPlanAvailable = async () => true;
   entrySubmissions = new InMemoryB20EntrySubmissionRepositoryV1();
   b20RouteRuntime.entrySubmissions = () => entrySubmissions;
+  entryProofs = new InMemoryB20EntryRouteProofRepositoryV1();
+  b20RouteRuntime.entryProofs = () => entryProofs;
   launchPools = createMemoryB20LaunchPoolRepository();
   await launchPools.upsertLaunchPool({
     tokenAddress: TOKEN,
@@ -224,6 +232,7 @@ beforeEach(async () => {
     submissionRouteWired: true,
     walletIntegrationWired: true,
     reconciliationWired: true,
+    routeProofWired: true,
   });
 });
 
@@ -1077,6 +1086,7 @@ describe('a clearance is consumed, never trusted', () => {
       submissionRouteWired: false,
       walletIntegrationWired: true,
       reconciliationWired: true,
+      routeProofWired: true,
     });
     const unwired = await prepare('clearance-1', { ...REQUEST, requestId: 'req-unwired' });
     assert.equal(unwired.body.executionAvailable, false);
@@ -1245,6 +1255,10 @@ describe('a prepared plan can be read back, by exactly one wallet', () => {
       .send(body as object);
   const status = (planId: string, server = app()) =>
     request(server).get(`/api/route-intelligence/opportunities/entry-plans/${planId}/status`);
+  const reconcile = (planId: string, body: unknown, server = app()) =>
+    request(server)
+      .post(`/api/route-intelligence/opportunities/entry-plans/${planId}/reconcile-submission`)
+      .send(body as object);
   const BEGIN = {
     chainId: 8453,
     profileIdentity: `${USDC}:100000000:300:300`,
@@ -1276,7 +1290,8 @@ describe('a prepared plan can be read back, by exactly one wallet', () => {
       assert.equal(call.data, stored!.calls[index]!.data);
       assert.equal(call.value, '0x0');
     }
-    assert.equal(payload.approvedCallsHash, stored!.callsHash);
+    assert.equal(payload.callsHash, stored!.callsHash);
+    assert.match(payload.approvedCallsHash, /^0x[0-9a-f]{64}$/);
     assert.equal(payload.from, WALLET);
     assert.equal(payload.chainId, '0x2105');
     assert.equal(payload.atomicRequired, true);
@@ -1398,6 +1413,7 @@ describe('a prepared plan can be read back, by exactly one wallet', () => {
       submissionRouteWired: false,
       walletIntegrationWired: false,
       reconciliationWired: false,
+      routeProofWired: false,
     });
     const response = await begin(planId);
     assert.equal(response.status, 503);
@@ -1406,14 +1422,130 @@ describe('a prepared plan can be read back, by exactly one wallet', () => {
     assert.equal(read.body.review.executionAvailable, false);
   });
 
-  test('no Route Proof is created by any of this', async () => {
+  test('a canonical Route Proof exists before calls leave the server and submission stays pending', async () => {
     const planId = await seedPlan();
-    const attemptId = (await begin(planId)).body.attemptId;
+    const begun = await begin(planId);
+    const attemptId = begun.body.attemptId;
+    assert.equal(begun.body.routeProof.finalStatus, 'pending');
+    assert.match(begun.body.routeProof.proofHash, /^0x[0-9a-f]{64}$/);
+    assert.match(begun.body.routeProof.approvedCallsHash, /^0x[0-9a-f]{64}$/);
     const submitted = await record(planId, { attemptId, result: 'submitted', batchId: 'batch-1' });
-    const bodies = JSON.stringify([submitted.body, (await status(planId)).body]);
-    for (const forbidden of ['proofId', 'routeProof', 'proofHash', 'shareToken']) {
-      assert.ok(!new RegExp(forbidden, 'i').test(bodies), `must not create ${forbidden}`);
-    }
+    assert.equal(submitted.body.routeProof.proofId, begun.body.routeProof.proofId);
+    assert.equal(submitted.body.routeProof.finalStatus, 'pending');
+    const events = await entryProofs.listEvents(begun.body.routeProof.proofId, USER.id);
+    assert.deepEqual(events.map((event) => event.eventType), ['calls_approved', 'submitted']);
+  });
+
+  test('a pre-submission rejection may retry with a new attempt and a new canonical proof', async () => {
+    const planId = await seedPlan();
+    const first = await begin(planId);
+    await record(planId, {
+      attemptId: first.body.attemptId,
+      result: 'user_rejected',
+      batchId: null,
+    });
+    const second = await begin(planId, { ...BEGIN, attemptRequestId: 'attempt-req-2' });
+    assert.equal(second.status, 200, JSON.stringify(second.body));
+    assert.equal(second.body.outcome, 'ready');
+    assert.notEqual(second.body.attemptId, first.body.attemptId);
+    assert.notEqual(second.body.routeProof.proofId, first.body.routeProof.proofId);
+  });
+
+  test('checked asset movements complete the Route Proof and append its reconciliation history', async () => {
+    const planId = await seedPlan();
+    const begun = await begin(planId);
+    await record(planId, { attemptId: begun.body.attemptId, result: 'submitted', batchId: 'batch-1' });
+    const plan = await entryPlans.getPreparedPlan({ planId, tenantId: USER.id, walletAddress: WALLET });
+    const attempt = await entrySubmissions.getAttempt({
+      attemptId: begun.body.attemptId,
+      tenantId: USER.id,
+      walletAddress: WALLET,
+    });
+    assert.ok(plan && attempt);
+    const transactionHash = `0x${'7'.repeat(64)}`;
+    await reconcileAttemptV1({
+      submissions: entrySubmissions,
+      proofs: entryProofs,
+      plan,
+      attempt,
+      attempts: 1,
+      now: new Date(NOW.getTime() + 1_000),
+      reading: {
+        status: 'confirmed',
+        assetChanges: [
+          { token: QUOTE_ASSET, direction: 'out', amountAtomic: '100000000' },
+          { token: TOKEN, direction: 'in', amountAtomic: '4200000000000000000000', counterparty: WALLET },
+        ],
+        transactionHashes: [transactionHash],
+        blockNumber: '49450060',
+        receipts: [{
+          transactionHash,
+          status: 'success',
+          blockNumber: '49450060',
+          gasUsed: '190000',
+        }],
+      },
+    });
+    const read = await status(planId);
+    assert.equal(read.body.status.state, 'entry_succeeded');
+    assert.equal(read.body.routeProof.finalStatus, 'completed');
+    assert.equal(read.body.routeProof.reconciliationState, 'matched');
+    assert.deepEqual(read.body.routeProof.transactionHashes, [transactionHash]);
+    const events = await entryProofs.listEvents(read.body.routeProof.proofId, USER.id);
+    assert.deepEqual(events.map((event) => event.eventType), [
+      'calls_approved',
+      'submitted',
+      'receipt_observed',
+      'completed',
+    ]);
+  });
+
+  test('the HTTP reconciliation route re-reads Base receipts before it completes the proof', async () => {
+    const planId = await seedPlan();
+    const begun = await begin(planId);
+    await record(planId, { attemptId: begun.body.attemptId, result: 'submitted', batchId: 'batch-verified' });
+    const transactionHash = `0x${'8'.repeat(64)}` as `0x${string}`;
+    const transferLog = (token: string, from: string, to: string, amount: bigint) => ({
+      address: token,
+      topics: encodeEventTopics({
+        abi: erc20Abi,
+        eventName: 'Transfer',
+        args: { from: from as `0x${string}`, to: to as `0x${string}` },
+      }) as readonly string[],
+      data: encodeAbiParameters(parseAbiParameters('uint256'), [amount]),
+    });
+    b20RouteRuntime.receiptReader = () => ({
+      async getTransactionReceipt(hash) {
+        assert.equal(hash, transactionHash);
+        return {
+          transactionHash,
+          status: 'success',
+          blockNumber: 49_450_060n,
+          gasUsed: 190_000n,
+          effectiveGasPriceWei: 1_000_000n,
+          logs: [
+            transferLog(QUOTE_ASSET, WALLET, ROUTER, 100_000_000n),
+            transferLog(TOKEN, ROUTER, WALLET, 4_200_000_000_000_000_000_000n),
+          ],
+        };
+      },
+    });
+    const response = await reconcile(planId, {
+      attemptId: begun.body.attemptId,
+      transactionHashes: [transactionHash],
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.status.state, 'entry_succeeded');
+    assert.equal(response.body.routeProof.finalStatus, 'completed');
+    assert.equal(response.body.routeProof.reconciliationState, 'matched');
+
+    // A browser may identify a transaction, but may not submit a receipt or an
+    // asset movement and turn its own assertion into a proof.
+    assert.equal((await reconcile(planId, {
+      attemptId: begun.body.attemptId,
+      transactionHashes: [transactionHash],
+      receipts: [{ transactionHash, status: 'success' }],
+    })).status, 400);
   });
 
   test('nothing in the submission path leaks a credential or an endpoint', async () => {

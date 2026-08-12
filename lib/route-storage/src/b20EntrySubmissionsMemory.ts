@@ -75,6 +75,8 @@ export class InMemoryB20EntrySubmissionRepositoryV1 implements B20EntrySubmissio
     batchId?: string | null;
     errorCode?: string | null;
     reconciliation?: B20EntrySubmissionAttemptV1['reconciliation'];
+    transactionHashes?: string[];
+    receipts?: B20EntrySubmissionAttemptV1['receipts'];
     now: Date;
   }): Promise<B20EntrySubmissionAttemptV1 | null> {
     const from = this.rows.get(input.attemptId);
@@ -93,6 +95,8 @@ export class InMemoryB20EntrySubmissionRepositoryV1 implements B20EntrySubmissio
         batchId: batchId ?? from.batchId,
         errorCode: input.errorCode ?? from.errorCode,
         submittedAt: batchId && !from.submittedAt ? input.now.toISOString() : from.submittedAt,
+        transactionHashes: input.transactionHashes ?? from.transactionHashes,
+        receipts: input.receipts ?? from.receipts,
         reconciliation: input.reconciliation ?? from.reconciliation,
         updatedAt: input.now.toISOString(),
       },

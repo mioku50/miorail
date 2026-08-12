@@ -7,11 +7,13 @@ import {
   type B20EntryExecutionCapabilitiesV1,
   type B20EntrySubmissionAttemptV1,
   type B20EntrySubmissionRepositoryV1,
+  type B20EntryRouteProofRepositoryV1,
   type B20EntryUiStateV1,
   type B20PreparedEntryPlanV1,
 } from '@mioagent/route-storage';
 
 import { reconcileEntryV1, type WalletCallStatusV1, type ObservedAssetChangeV1 } from './b20EntryReconcile.js';
+import { syncB20EntryRouteProofV1 } from './b20EntryRouteProof.js';
 
 // ---------------------------------------------------------------------------
 // T68F-B — the submission run.
@@ -56,7 +58,7 @@ export function entryStatusViewV1(input: {
     actualSpentAtomic: reconciliation?.spentAtomic ?? null,
     actualReceivedAtomic: reconciliation?.receivedAtomic ?? null,
     confirmedBlockNumber: reconciliation?.confirmedBlockNumber ?? null,
-    transactionHashes: reconciliation?.transactionHashes ?? [],
+    transactionHashes: reconciliation?.transactionHashes ?? input.attempt?.transactionHashes ?? [],
     reconciliationEvidenceHash: reconciliation?.evidenceHash ?? null,
     // A surface never re-derives these. Two implementations of "may I show a
     // submit button?" drift, and they drift towards showing one twice.
@@ -92,6 +94,8 @@ export async function openAttemptV1(input: {
     terminalOutcome: null,
     errorCode: null,
     submittedAt: null,
+    transactionHashes: [],
+    receipts: [],
     reconciliation: null,
     createdAt: input.now.toISOString(),
     updatedAt: input.now.toISOString(),
@@ -156,6 +160,14 @@ export interface WalletStatusReadingV1 {
   assetChanges: ObservedAssetChangeV1[] | null;
   transactionHashes: string[];
   blockNumber: string | null;
+  /** Strict receipt projections produced by the server's Base receipt reader.
+   * Raw wallet values must be verified before entering this state machine. */
+  receipts?: Array<{
+    transactionHash: string;
+    status: 'success' | 'reverted' | 'unknown';
+    blockNumber: string | null;
+    gasUsed: string | null;
+  }>;
 }
 
 /**
@@ -167,6 +179,9 @@ export interface WalletStatusReadingV1 {
  */
 export async function reconcileAttemptV1(input: {
   submissions: B20EntrySubmissionRepositoryV1;
+  /** Required by a wired execution surface; optional for pure state-machine
+   * tests that deliberately exercise no persistence outside the attempt. */
+  proofs?: B20EntryRouteProofRepositoryV1;
   plan: B20PreparedEntryPlanV1;
   attempt: B20EntrySubmissionAttemptV1;
   reading: WalletStatusReadingV1;
@@ -175,8 +190,25 @@ export async function reconcileAttemptV1(input: {
   now: Date;
 }): Promise<B20EntrySubmissionAttemptV1> {
   const { attempt } = input;
-  if (attempt.status === 'terminal') return attempt;
+  if (attempt.status === 'terminal') {
+    if (input.proofs) {
+      await syncB20EntryRouteProofV1({ repository: input.proofs, plan: input.plan, attempt, now: input.now });
+    }
+    return attempt;
+  }
   if (!attempt.batchId) return attempt;
+
+  const transactionHashes = [...new Set(input.reading.transactionHashes.map((hash) => hash.toLowerCase()))]
+    .filter((hash) => /^0x[0-9a-f]{64}$/.test(hash))
+    .slice(0, 16);
+  const transactionHashSet = new Set(transactionHashes);
+  const receipts = (input.reading.receipts ?? [])
+    .filter((receipt) => transactionHashSet.has(receipt.transactionHash.toLowerCase()))
+    .map((receipt) => ({
+      ...receipt,
+      transactionHash: receipt.transactionHash.toLowerCase() as `0x${string}`,
+    }))
+    .filter((receipt, index, all) => all.findIndex((other) => other.transactionHash === receipt.transactionHash) === index);
 
   const verdict = reconcileEntryV1({
     plan: input.plan,
@@ -190,26 +222,41 @@ export async function reconcileAttemptV1(input: {
   if (verdict.state === 'pending') return attempt;
 
   if (verdict.state === 'reconciling') {
-    if (attempt.status === 'reconciling') return attempt;
-    return (
+    if (
+      attempt.status === 'reconciling' &&
+      JSON.stringify(attempt.transactionHashes) === JSON.stringify(transactionHashes) &&
+      JSON.stringify(attempt.receipts) === JSON.stringify(receipts)
+    ) return attempt;
+    const updated = (
       (await input.submissions.updateAttempt({
         attemptId: attempt.id,
         tenantId: attempt.tenantId,
         status: 'reconciling',
+        transactionHashes,
+        receipts,
         now: input.now,
       })) ?? attempt
     );
+    if (input.proofs) {
+      await syncB20EntryRouteProofV1({ repository: input.proofs, plan: input.plan, attempt: updated, now: input.now });
+    }
+    return updated;
   }
 
-  return (
+  const updated =
     (await input.submissions.updateAttempt({
       attemptId: attempt.id,
       tenantId: attempt.tenantId,
       status: 'terminal',
       terminalOutcome: verdict.outcome,
       errorCode: verdict.errorCode,
+      transactionHashes,
+      receipts,
       reconciliation: verdict.reconciliation,
       now: input.now,
-    })) ?? attempt
-  );
+    })) ?? attempt;
+  if (input.proofs) {
+    await syncB20EntryRouteProofV1({ repository: input.proofs, plan: input.plan, attempt: updated, now: input.now });
+  }
+  return updated;
 }

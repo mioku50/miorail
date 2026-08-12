@@ -177,6 +177,18 @@ export function reconcileEntryV1(input: ReconcileInputV1): ReconcileVerdictV1 {
   }
 
   // Confirmed. Now the second, separate question: did it do what was planned?
+  const transactionHashes = [...new Set(input.transactionHashes.map((hash) => hash.toLowerCase()))]
+    .filter((hash) => /^0x[0-9a-f]{64}$/.test(hash))
+    .slice(0, 16);
+  if (transactionHashes.length === 0) {
+    if (attempts < max) return { state: 'reconciling' };
+    return {
+      state: 'terminal',
+      outcome: 'reconciliation_required',
+      reconciliation: null,
+      errorCode: 'transaction_hashes_unavailable',
+    };
+  }
   if (!input.assetChanges) {
     if (attempts < max) return { state: 'reconciling' };
     return {
@@ -206,16 +218,14 @@ export function reconcileEntryV1(input: ReconcileInputV1): ReconcileVerdictV1 {
       spentAtomic: matched.spentAtomic,
       receivedAtomic: matched.receivedAtomic,
       confirmedBlockNumber: input.blockNumber,
-      transactionHashes: [...new Set(input.transactionHashes.map((hash) => hash.toLowerCase()))]
-        .filter((hash) => /^0x[0-9a-f]{64}$/.test(hash))
-        .slice(0, 16),
+      transactionHashes,
       evidenceHash: reconciliationEvidenceHashV1({
         planId: input.plan.id,
         callsHash: input.plan.callsHash,
         spentAtomic: matched.spentAtomic,
         receivedAtomic: matched.receivedAtomic,
         blockNumber: input.blockNumber,
-        transactionHashes: input.transactionHashes,
+        transactionHashes,
       }),
     },
     errorCode: null,

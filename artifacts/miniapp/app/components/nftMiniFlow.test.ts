@@ -35,7 +35,8 @@ describe('the miniapp completes the NFT flow', () => {
 
   test('the wallet is reached only through the shared submission button', () => {
     assert.ok(/<BlueprintSubmitButton\s+goal="nft"/.test(source), 'the NFT review uses the shared submit button');
-    assert.ok(!/useSendCalls|sendCalls\.|sendCallsV1/.test(source), 'the miniapp must never call the wallet directly');
+    const nftReview = source.split('screen === "review" && nftPrepared')[1]?.split('screen === "proof" && (nftProof')[0] ?? '';
+    assert.ok(!/useSendCalls|sendCalls\.|sendCallsV1/.test(nftReview), 'the NFT path must never call the wallet directly');
     assert.ok(!/(?<!wallet_)send_calls/.test(source), 'Base MCP send_calls is not a submission path');
   });
 

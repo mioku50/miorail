@@ -27,6 +27,7 @@ export interface EntryReviewLikeV1 {
     tokenAddress: string;
     tokenName: string | null;
     tokenSymbol: string | null;
+    tokenDecimals: number | null;
     expectedOutputAtomic: string;
     minimumOutputAtomic: string;
   };
@@ -108,7 +109,7 @@ export const ENTRY_STATE_COPY_V1: Record<string, { title: string; detail: string
   },
   reconciling: {
     title: 'Checking what happened',
-    detail: 'The batch is on chain. Confirming what your wallet actually spent and received.',
+    detail: 'The batch is onchain. Confirming what your wallet actually spent and received.',
   },
   entry_succeeded: {
     title: 'Entry executed',
@@ -140,6 +141,9 @@ export const ENTRY_ERROR_COPY_V1: Record<string, string> = {
   no_token_received: 'No token arrived. An approval on its own is not an entry.',
   no_quote_asset_spent: 'No USDC left the wallet, so nothing was bought.',
   asset_changes_unavailable: 'The asset movements for this batch could not be read.',
+  transaction_hashes_unavailable: 'The wallet did not expose a transaction hash that can be checked on Base.',
+  receipt_status_conflict: 'Two verified receipt reads disagree. This proof is locked for manual review.',
+  non_atomic_batch_result: 'The supposedly atomic batch returned mixed receipt statuses and needs manual review.',
   status_provider_unavailable: 'The wallet status service could not be reached.',
   status_unknown: 'The wallet could not say what happened to this batch.',
   wallet_request_failed: 'The wallet request could not be opened.',
@@ -148,6 +152,14 @@ export const ENTRY_ERROR_COPY_V1: Record<string, string> = {
 export interface B20EntryReviewCardPropsV1 {
   review: EntryReviewLikeV1;
   status: EntryStatusLikeV1;
+  routeProof?: {
+    proofId: string;
+    proofHash: string;
+    finalStatus: string;
+    reconciliationState: string;
+    approvedCallsHash: string;
+    transactionHashes: string[];
+  } | null;
   now: Date;
   /** Opens the wallet. Absent means no execution path is wired in this build,
    * and then NO control is rendered — not a disabled one. A greyed-out button
@@ -163,6 +175,7 @@ export function B20EntryReviewCard(props: B20EntryReviewCardPropsV1): ReactEleme
   const { review, status, now } = props;
   const copy = ENTRY_STATE_COPY_V1[status.state] ?? ENTRY_STATE_COPY_V1.review!;
   const symbol = review.receive.tokenSymbol ?? 'token';
+  const tokenDecimals = review.receive.tokenDecimals ?? 18;
   // The server decides. This component never re-derives whether a wallet may
   // be opened, and the handler must exist for the control to render at all.
   const showConfirm = status.canSubmit && review.executionAvailable && Boolean(props.onConfirm);
@@ -180,8 +193,8 @@ export function B20EntryReviewCard(props: B20EntryReviewCardPropsV1): ReactEleme
             </button>
           )}
           {showRefresh && (
-            <button type="button" className="btn sec" onClick={props.onRefresh}>
-              Refresh status
+            <button type="button" className="btn sec" disabled={props.busy} onClick={props.onRefresh}>
+              {status.batchId ? 'Check proof' : 'Refresh status'}
             </button>
           )}
           {props.onBack && (
@@ -215,13 +228,13 @@ export function B20EntryReviewCard(props: B20EntryReviewCardPropsV1): ReactEleme
           <div className="kv">
             <span className="k">Expected output</span>
             <b>
-              {formatAtomicV1(review.receive.expectedOutputAtomic, 18)} {symbol}
+              {formatAtomicV1(review.receive.expectedOutputAtomic, tokenDecimals)} {symbol}
             </b>
           </div>
           <div className="kv">
             <span className="k">Minimum output</span>
             <b>
-              {formatAtomicV1(review.receive.minimumOutputAtomic, 18)} {symbol}
+              {formatAtomicV1(review.receive.minimumOutputAtomic, tokenDecimals)} {symbol}
             </b>
           </div>
           <div className="kv">
@@ -293,7 +306,7 @@ export function B20EntryReviewCard(props: B20EntryReviewCardPropsV1): ReactEleme
 
         {status.state === 'entry_succeeded' && status.actualReceivedAtomic && (
           <p className="note">
-            Received {formatAtomicV1(status.actualReceivedAtomic, 18)} {symbol} for{' '}
+            Received {formatAtomicV1(status.actualReceivedAtomic, tokenDecimals)} {symbol} for{' '}
             {formatAtomicV1(status.actualSpentAtomic ?? '0', 6, 2)} USDC
             {status.confirmedBlockNumber ? ` at block ${status.confirmedBlockNumber}` : ''}.
           </p>
@@ -303,6 +316,30 @@ export function B20EntryReviewCard(props: B20EntryReviewCardPropsV1): ReactEleme
         )}
         {status.batchId && (
           <p className="lnote mono">Wallet batch {shortAddressV1(status.batchId)}</p>
+        )}
+        {props.routeProof && (
+          <div className="cardrow" data-b20-route-proof={props.routeProof.finalStatus}>
+            <div className="kv">
+              <span className="k">Route Proof</span>
+              <b className="mono" title={props.routeProof.proofId}>{shortAddressV1(props.routeProof.proofId)}</b>
+            </div>
+            <div className="kv">
+              <span className="k">Proof status</span>
+              <b>{props.routeProof.finalStatus} · {props.routeProof.reconciliationState}</b>
+            </div>
+            <div className="kv">
+              <span className="k">Approved calls hash</span>
+              <b className="mono" title={props.routeProof.approvedCallsHash}>
+                {shortAddressV1(props.routeProof.approvedCallsHash)}
+              </b>
+            </div>
+            {props.routeProof.transactionHashes.map((hash) => (
+              <div className="kv" key={hash}>
+                <span className="k">Transaction</span>
+                <b className="mono" title={hash}>{shortAddressV1(hash)}</b>
+              </div>
+            ))}
+          </div>
         )}
         {!review.executionAvailable && (
           <p className="note">

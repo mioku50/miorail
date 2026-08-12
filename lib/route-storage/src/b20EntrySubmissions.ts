@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { TransactionReceiptV1Schema, type TransactionReceiptV1 } from '@mioagent/route-domain';
 import { RouteStorageConflictError } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -47,7 +48,7 @@ export type B20EntryAttemptStatusV1 = (typeof B20_ENTRY_ATTEMPT_STATUS_V1)[numbe
  * How an attempt ended. Deliberately six, never one generic `failed`.
  *
  *   entry_succeeded              the wallet spent USDC and received the token
- *   entry_reverted               the batch executed and reverted on chain
+ *   entry_reverted               the batch executed and reverted onchain
  *   submitted_unknown            a batch id exists; its result is unresolved
  *   reconciliation_required      it confirmed, but the assets do not match
  *   user_rejected                the wallet prompt was declined — nothing sent
@@ -79,7 +80,7 @@ export const B20_ENTRY_PRE_SUBMISSION_OUTCOMES_V1: readonly B20EntryTerminalOutc
   'cancelled_before_submission',
 ];
 
-/** What actually happened on chain, once a confirmed batch has been checked
+/** What actually happened onchain, once a confirmed batch has been checked
  * against the plan. Hashes and amounts — never a provider body. */
 export const B20EntryReconciliationV1Schema = z
   .object({
@@ -115,6 +116,10 @@ export const B20EntrySubmissionAttemptV1Schema = z
      * endpoints, and endpoints carry keys. */
     errorCode: z.string().min(1).max(80).nullable(),
     submittedAt: z.string().min(1).max(60).nullable(),
+    /** Receipt projections verified through the server RPC. Wallet-provided
+     * transaction hashes are lookup hints and never become proof alone. */
+    transactionHashes: z.array(z.string().regex(HASH_V1)).max(16).default([]),
+    receipts: z.array(TransactionReceiptV1Schema).max(16).default([]),
     reconciliation: B20EntryReconciliationV1Schema.nullable(),
     createdAt: z.string().min(1).max(60),
     updatedAt: z.string().min(1).max(60),
@@ -153,6 +158,13 @@ export const B20EntrySubmissionAttemptV1Schema = z
     if (value.terminalOutcome === 'entry_succeeded' && !value.reconciliation) {
       fail('reconciliation', 'A successful entry must record what the wallet actually received');
     }
+    const receiptHashes = new Set(value.receipts.map((receipt) => receipt.transactionHash));
+    if (receiptHashes.size !== value.receipts.length) {
+      fail('receipts', 'Receipt transaction hashes must be unique');
+    }
+    // Legacy terminal attempts predate receipt persistence. They remain
+    // readable; the proof projector never upgrades one without receipts into
+    // completed/failed and routes it to manual review instead.
   });
 export type B20EntrySubmissionAttemptV1 = z.infer<typeof B20EntrySubmissionAttemptV1Schema>;
 
@@ -203,7 +215,7 @@ export function attemptTransitionRefusalV1(input: {
   if (input.to === 'submitted' && !(input.batchId ?? input.from.batchId)) {
     return 'A submission must name the wallet batch it created';
   }
-  // A batch id, once known, identifies the thing on chain. Replacing it would
+  // A batch id, once known, identifies the thing onchain. Replacing it would
   // silently repoint the record at a different transaction.
   if (input.batchId && input.from.batchId && input.batchId !== input.from.batchId) {
     return 'This attempt already names a different wallet batch';
@@ -244,6 +256,8 @@ export interface B20EntrySubmissionRepositoryV1 {
     batchId?: string | null;
     errorCode?: string | null;
     reconciliation?: B20EntryReconciliationV1 | null;
+    transactionHashes?: string[];
+    receipts?: TransactionReceiptV1[];
     now: Date;
   }): Promise<B20EntrySubmissionAttemptV1 | null>;
 }

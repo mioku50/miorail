@@ -347,7 +347,7 @@ export async function miorailGetBaseMcpActionV1(
       toolName: 'miorail_get_base_mcp_action',
       outcome: 'action_released',
       planId: plan.id,
-      callsHash: begun.payload.approvedCallsHash,
+      callsHash: begun.payload.callsHash,
     });
   } catch (error) {
     if (begun.attemptId) {
@@ -378,7 +378,7 @@ export async function miorailGetBaseMcpActionV1(
       calls: payload.calls,
       atomicRequired: payload.atomicRequired,
     },
-    callsHash: payload.approvedCallsHash,
+    callsHash: payload.callsHash,
     // Recomputed from the bytes being returned, not copied from the column, so
     // a caller can prove the two agree without trusting either field alone.
     callsHashOfReturnedCalls: entryPlanCallsHashV1(plan.calls),
@@ -579,4 +579,3 @@ export const EXECUTION_STATE_COPY_V1: Record<string, string> = {
   reconciliation_required:
     'The batch was confirmed but the expected token receipt was not found in it. A confirmed approval is not an entry. This needs a person to look.',
 };
-
