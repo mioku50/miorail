@@ -51,6 +51,7 @@ step "4/7  install Base App service"
 # silently remain offline behind a healthy-looking build.
 install -m 0644 "$MINIAPP_UNIT_SOURCE" "$MINIAPP_UNIT_TARGET"
 systemctl daemon-reload
+systemctl enable miorail-miniapp >/dev/null
 
 step "5/7  publish the frontend"
 # THE step that was missing. --delete so a removed asset actually disappears
