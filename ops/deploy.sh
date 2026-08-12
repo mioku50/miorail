@@ -20,37 +20,46 @@ REPO=${REPO:-/home/miorail/mioagent}
 SERVE_ROOT=${SERVE_ROOT:-/var/www/miorail}
 SERVICE_USER=${SERVICE_USER:-miorail}
 NODE_BIN=${NODE_BIN:-/home/miorail/.nvm/versions/node/v22.23.1/bin}
-SERVICES=(miorail-api miorail-b20-discover miorail-b20-measure)
+SERVICES=(miorail-api miorail-miniapp miorail-b20-discover miorail-b20-measure)
+MINIAPP_UNIT_SOURCE="$REPO/ops/systemd/miorail-miniapp.service"
+MINIAPP_UNIT_TARGET=/etc/systemd/system/miorail-miniapp.service
 
 export PATH="$NODE_BIN:$PATH"
 as_service_user() { sudo -u "$SERVICE_USER" env PATH="$PATH" "$@"; }
 
 step() { printf '\n=== %s ===\n' "$1"; }
 
-step "1/6  source"
+step "1/7  source"
 cd "$REPO"
 as_service_user git pull --ff-only
 
-step "2/6  dependencies"
+step "2/7  dependencies"
 # --frozen-lockfile: a deploy that silently resolves a different tree is not a
 # deploy of the commit that was reviewed.
 as_service_user pnpm install --frozen-lockfile
 
-step "3/6  build"
+step "3/7  build"
 # `pnpm -r build` runs each package's own build. For the interface that is
 # `tsc -b && vite build`, and the `-b` matters: it type-checks against emitted
 # .d.ts files, so it catches errors `tsc --noEmit` resolves away from source.
 # One such error reached main because --noEmit was treated as equivalent.
 as_service_user pnpm -r build
 
-step "4/6  publish the frontend"
+step "4/7  install Base App service"
+# Nginx has always routed the public MiniApp host to port 3010. Keep the unit
+# in the repository and install it on every deploy so a rebuilt Base App cannot
+# silently remain offline behind a healthy-looking build.
+install -m 0644 "$MINIAPP_UNIT_SOURCE" "$MINIAPP_UNIT_TARGET"
+systemctl daemon-reload
+
+step "5/7  publish the frontend"
 # THE step that was missing. --delete so a removed asset actually disappears
 # rather than lingering to be served by a stale index.
 rsync -a --delete "$REPO/artifacts/interface/dist/" "$SERVE_ROOT/"
 find "$SERVE_ROOT" -type d -exec chmod 755 {} \;
 find "$SERVE_ROOT" -type f -exec chmod 644 {} \;
 
-step "5/6  restart"
+step "6/7  restart"
 systemctl restart "${SERVICES[@]}"
 sleep 5
 for service in "${SERVICES[@]}"; do
@@ -59,7 +68,7 @@ for service in "${SERVICES[@]}"; do
   [ "$state" = active ] || { echo "FAILED: $service is $state"; exit 1; }
 done
 
-step "6/6  verify what a browser will actually get"
+step "7/7  verify what browsers will actually get"
 # Comparing the served entry bundle against the one just built is the only
 # check that would have caught the stale-copy failure. Everything above can
 # succeed while this is wrong.
@@ -68,5 +77,9 @@ served_entry=$(grep -o 'assets/[A-Za-z0-9_-]*\.js' "$SERVE_ROOT/index.html" | he
 printf '  built  %s\n  served %s\n' "$built_entry" "$served_entry"
 [ "$built_entry" = "$served_entry" ] || { echo 'FAILED: the served bundle is not the built one'; exit 1; }
 
+miniapp_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' http://127.0.0.1:3010/)
+printf '  miniapp http://127.0.0.1:3010/  %s\n' "$miniapp_status"
+[ "$miniapp_status" = 200 ] || { echo 'FAILED: the Base App service is not serving its production build'; exit 1; }
+
 echo
-echo "Deployed. Served entry: $served_entry"
+echo "Deployed. Served entry: $served_entry · Base App: HTTP $miniapp_status"

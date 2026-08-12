@@ -1,6 +1,23 @@
-# B20 pipeline units
+# Production units
 
-Two long-running workers. No timers: see the header of each unit for why.
+`miorail-miniapp.service` serves the built Base App on `127.0.0.1:3010`, where
+the production Nginx MiniApp host proxies. `ops/deploy.sh` installs and verifies
+this unit on every deploy.
+
+The remaining checked-in units are the two long-running B20 workers. No timers:
+see the header of each worker unit for why.
+
+Install the MiniApp unit manually only when bootstrapping a host without the
+deploy script:
+
+```bash
+sudo install -m 0644 ops/systemd/miorail-miniapp.service /etc/systemd/system/miorail-miniapp.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now miorail-miniapp
+```
+
+Install the B20 worker templates after adapting their user and paths to the
+host:
 
 ```bash
 sudo cp ops/systemd/mioagent-b20-*.service /etc/systemd/system/
