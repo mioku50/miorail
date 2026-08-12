@@ -3467,15 +3467,34 @@ const B20CapacityLeaderV1Schema = z
     name: z.string(),
     decimals: z.number().int().min(0).max(255).nullable(),
     largestPassingSizeAtomic: z.string().regex(/^\d+$/),
+    capacityCoverageBps: z.number().int().nonnegative().safe(),
     firstFailingSizeAtomic: z.string().regex(/^\d+$/).nullable(),
     toleranceBps: z.number().int().min(1).max(10_000),
+    optimisticRoundTripBps: z.number().int().min(0).nullable(),
+    roundTripReferenceBps: z.number().int().min(1).max(10_000),
+    profileStatus: z.enum(['within_reference', 'outside_round_trip_reference', 'not_measured']),
     state: z.enum(['candidate', 'provisional', 'rejected', 'unmeasured']),
     reasonCode: z.string().max(64).nullable(),
     measuredAt: z.string().datetime(),
     observationBlockNumber: z.string().regex(/^\d+$/),
     freshness: z.literal('fresh'),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    const expected =
+      value.optimisticRoundTripBps === null
+        ? 'not_measured'
+        : value.optimisticRoundTripBps <= value.roundTripReferenceBps
+          ? 'within_reference'
+          : 'outside_round_trip_reference';
+    if (value.profileStatus !== expected) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['profileStatus'],
+        message: 'profile status must match the measured round trip and reference',
+      });
+    }
+  });
 
 /** §3 — a mover carries both quotes and the REAL interval, so "24h" can be
  * checked rather than taken on trust. */
@@ -3494,10 +3513,44 @@ const B20MeasuredMoverV1Schema = z
     baselineMeasuredAt: z.string().datetime(),
     measuredAt: z.string().datetime(),
     largestPassingSizeAtomic: z.string().regex(/^\d+$/),
-    // Only a measured observation can be a mover.
-    state: z.literal('provisional'),
+    optimisticRoundTripBps: z.number().int().min(0),
+    roundTripReferenceBps: z.number().int().min(1).max(10_000),
+    profileStatus: z.enum(['within_reference', 'outside_round_trip_reference']),
+    // A profile miss is still a measured observation, but no other rejection is.
+    state: z.enum(['provisional', 'rejected']),
+    reasonCode: z.string().max(64).nullable(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    const expected =
+      value.optimisticRoundTripBps <= value.roundTripReferenceBps
+        ? 'within_reference'
+        : 'outside_round_trip_reference';
+    if (value.profileStatus !== expected) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['profileStatus'],
+        message: 'profile status must match the measured round trip and reference',
+      });
+    }
+    if (
+      value.state === 'rejected' &&
+      (value.reasonCode !== 'round_trip_above_tolerance' || value.profileStatus !== 'outside_round_trip_reference')
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['state'],
+        message: 'only a measured round-trip reference miss can be a rejected mover',
+      });
+    }
+    if (value.state === 'provisional' && value.profileStatus !== 'within_reference') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['state'],
+        message: 'a provisional mover must be within the round-trip reference',
+      });
+    }
+  });
 
 export const B20MarketRailsResponseV1Schema = z
   .object({

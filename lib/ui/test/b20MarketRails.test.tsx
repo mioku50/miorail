@@ -18,11 +18,9 @@ import {
 void React;
 
 // ---------------------------------------------------------------------------
-// T73-UI — the rail renders the server's numbers and decides one thing.
-//
-// That one thing is §4: which rows a user sees by DEFAULT. Everything else —
-// the ranking, the exclusions, the arithmetic — was decided server-side and is
-// asserted here to be copied rather than recomputed.
+// T73-UI — the rail renders the server's numbers. The ranking, exclusions and
+// arithmetic were decided server-side and are asserted here to be copied
+// rather than recomputed. The view only labels profile status.
 // ---------------------------------------------------------------------------
 
 const NOW = new Date('2026-08-05T12:00:00.000Z');
@@ -34,8 +32,12 @@ function leader(address: string, overrides: Record<string, unknown> = {}) {
     name: 'token',
     decimals: 18,
     largestPassingSizeAtomic: '4000000000000000000000',
+    capacityCoverageBps: 10_000,
     firstFailingSizeAtomic: '8000000000000000000000',
     toleranceBps: 300,
+    optimisticRoundTripBps: 130,
+    roundTripReferenceBps: 300,
+    profileStatus: 'within_reference' as const,
     state: 'provisional' as const,
     reasonCode: 'quoted_pre_entry',
     measuredAt: '2026-08-05T11:50:00.000Z',
@@ -60,7 +62,11 @@ function mover(address: string, changeBps: number) {
     baselineMeasuredAt: '2026-08-04T11:50:00.000Z',
     measuredAt: '2026-08-05T11:50:00.000Z',
     largestPassingSizeAtomic: '4000000000000000000000',
+    optimisticRoundTripBps: 130,
+    roundTripReferenceBps: 300,
+    profileStatus: 'within_reference' as const,
     state: 'provisional' as const,
+    reasonCode: 'quoted_pre_entry',
   };
 }
 
@@ -88,31 +94,43 @@ const renderMovers = (overrides: Partial<B20MarketRailsModelV1> = {}) =>
 
 const ADDRESSES = Array.from({ length: 12 }, (_, index) => `0x${String(index + 10).repeat(20)}`.slice(0, 42));
 
-describe('§4 — rejected tokens are excluded from the default rail, and said so', () => {
-  test('a rejected token is filtered out of the leaders list', () => {
+describe('§4 — measured profile misses remain visible and are said plainly', () => {
+  test('a round-trip reference miss is kept in the leaders list', () => {
     const result = defaultRailLeadersV1([
       leader(ADDRESSES[0]!),
-      leader(ADDRESSES[1]!, { state: 'rejected', reasonCode: 'round_trip_above_tolerance' }),
+      leader(ADDRESSES[1]!, {
+        state: 'rejected',
+        reasonCode: 'round_trip_above_tolerance',
+        optimisticRoundTripBps: 436,
+        profileStatus: 'outside_round_trip_reference',
+      }),
     ]);
-    assert.equal(result.shown.length, 1);
-    assert.equal(result.hiddenRejected, 1);
+    assert.equal(result.shown.length, 2);
+    assert.equal(result.outsideReference, 1);
   });
 
-  test('the card states how many it hid, rather than filtering quietly', () => {
-    // A filtered list that does not say it filtered is a list a user cannot
-    // reason about — they see four rows and conclude four exist.
+  test('the card shows the measurement in amber and names the reference', () => {
     const markup = renderLeaders({
-      leaders: [leader(ADDRESSES[0]!), leader(ADDRESSES[1]!, { state: 'rejected' })],
+      leaders: [
+        leader(ADDRESSES[0]!),
+        leader(ADDRESSES[1]!, {
+          state: 'rejected',
+          reasonCode: 'round_trip_above_tolerance',
+          optimisticRoundTripBps: 436,
+          profileStatus: 'outside_round_trip_reference',
+        }),
+      ],
     });
-    assert.match(markup, /1 token with measured capacity is hidden here/);
-    assert.match(markup, /Miorail rejected it/);
+    assert.match(markup, /4\.36% round trip · outside 3% reference/);
+    assert.match(markup, /class="v mono warn"/);
+    assert.match(markup, /1 measured profile exceeds the configured round-trip reference and remains visible in amber/);
   });
 
-  test('nothing is said when nothing was hidden', () => {
-    assert.ok(!/hidden here/.test(renderLeaders({ leaders: [leader(ADDRESSES[0]!)] })));
+  test('nothing is said when every profile is within reference', () => {
+    assert.ok(!/remain.*visible in amber/.test(renderLeaders({ leaders: [leader(ADDRESSES[0]!)] })));
   });
 
-  test('the client filters but never re-ranks', () => {
+  test('the client labels but never re-ranks', () => {
     const source = readFileSync(new URL('../src/console/B20MarketRails.tsx', import.meta.url), 'utf8');
     const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     // §2 — no ordering, no comparison of measured magnitudes, no arithmetic on
@@ -188,7 +206,8 @@ describe('§6 — measured views, stated as such', () => {
   test('capacity renders as a bound, never a bare figure', () => {
     const markup = renderLeaders({ leaders: [leader(ADDRESSES[0]!)] });
     assert.match(markup, /≥ 4000 S/);
-    assert.match(markup, /Nothing between that and the first failing size/);
+    assert.match(markup, /100% of reference entry/);
+    assert.match(markup, /Nothing between the largest passing and first failing size/);
   });
 
   test('a signed move keeps its sign', () => {
@@ -229,6 +248,7 @@ describe('§5 — Your Exit Coverage', () => {
     measurementVersion: 'b20-exit-check/v1',
     entryOutputAtomic: null,
     optimisticRoundTripBps: null,
+    maxRoundTripBps: 300,
     largestPassingSizeAtomic: '4000000000000000000000',
     firstFailingSizeAtomic: '8000000000000000000000',
     capacityToleranceBps: 300,

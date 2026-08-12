@@ -39,6 +39,7 @@ function observation(overrides: Partial<MarketObservationV1> = {}): MarketObserv
     measurementVersion: 'b20-observation/v1',
     entryOutputAtomic: '4000000000000000000000',
     optimisticRoundTripBps: 130,
+    maxRoundTripBps: 300,
     largestPassingSizeAtomic: '4000000000000000000000',
     firstFailingSizeAtomic: '8000000000000000000000',
     capacityToleranceBps: TOLERANCE,
@@ -77,17 +78,18 @@ const A = '0xaa00000000000000000000000000000000000001';
 const B = '0xbb00000000000000000000000000000000000002';
 const C = '0xcc00000000000000000000000000000000000003';
 
-describe('§2 — Exit Capacity Leaders rank what actually passed', () => {
+describe('§2 — Exit Capacity Leaders rank comparable measured coverage', () => {
   const leadersOf = (rows: MarketRowV1[], limit = 5) =>
     exitCapacityLeadersV1({ rows, toleranceBps: TOLERANCE, now: NOW, limit });
 
-  test('ranked by the largest passing probe, descending', () => {
+  test('ranked by exit coverage, never by incomparable raw token amounts', () => {
     const result = leadersOf([
-      row(A, { largestPassingSizeAtomic: '1000' }),
-      row(B, { largestPassingSizeAtomic: '9000' }),
-      row(C, { largestPassingSizeAtomic: '5000' }),
+      row(A, { largestPassingSizeAtomic: '1000', entryOutputAtomic: '1000' }),
+      row(B, { largestPassingSizeAtomic: '9000', entryOutputAtomic: '18000' }),
+      row(C, { largestPassingSizeAtomic: '5000', entryOutputAtomic: '2500' }),
     ]);
-    assert.deepEqual(result.leaders.map((entry) => entry.tokenAddress), [B, C, A]);
+    assert.deepEqual(result.leaders.map((entry) => entry.tokenAddress), [C, A, B]);
+    assert.deepEqual(result.leaders.map((entry) => entry.capacityCoverageBps), [20_000, 10_000, 5_000]);
   });
 
   test('the ranking is deterministic when two tokens tie', () => {
@@ -142,17 +144,27 @@ describe('§2 — Exit Capacity Leaders rank what actually passed', () => {
     const leader = leadersOf([row(A)]).leaders[0]!;
     assert.equal(leader.largestPassingSizeAtomic, '4000000000000000000000');
     assert.equal(leader.firstFailingSizeAtomic, '8000000000000000000000');
+    assert.equal(leader.capacityCoverageBps, 10_000);
     // There is no field an interpolated figure could occupy.
     assert.ok(!('estimatedCapacityAtomic' in leader));
     assert.ok(!('capacityAtomic' in leader));
   });
 
-  test('a rejected token with real capacity is listed, and says it is rejected', () => {
+  test('a measured profile outside the reference is listed and labelled', () => {
     // It genuinely has the measured capacity; hiding it would make the rail a
     // curated list rather than a measurement. The state travels with it.
-    const leader = leadersOf([row(A, { state: 'rejected', reasonCode: 'round_trip_above_tolerance' })]).leaders[0]!;
+    const leader = leadersOf([
+      row(A, {
+        state: 'rejected',
+        reasonCode: 'round_trip_above_tolerance',
+        optimisticRoundTripBps: 436,
+      }),
+    ]).leaders[0]!;
     assert.equal(leader.state, 'rejected');
     assert.equal(leader.reasonCode, 'round_trip_above_tolerance');
+    assert.equal(leader.optimisticRoundTripBps, 436);
+    assert.equal(leader.roundTripReferenceBps, 300);
+    assert.equal(leader.profileStatus, 'outside_round_trip_reference');
   });
 
   test('the list is capped at the requested size', () => {
@@ -194,7 +206,7 @@ const moversOf = (pairs: MoverPairV1[], limit = 5) =>
     now: NOW,
     baselineAgeMs: DAY_MS,
     baselineToleranceMs: 4 * 60 * 60 * 1000,
-    minExitCapacityAtomic: '1000000000000000000',
+    minExitCoverageBps: 2_500,
     limit,
   });
 
@@ -279,7 +291,38 @@ describe('§3 — a 24h move is two measured quotes, divided', () => {
     assert.deepEqual(result.excluded, [{ tokenAddress: A, reason: 'below_minimum_capacity' }]);
   });
 
-  test('rejected, unmeasured and unstable observations never become movers', () => {
+  test('the thin-pool check is a decimals-independent coverage ratio', () => {
+    const result = moversOf([
+      pair(
+        A,
+        {
+          entryOutputAtomic: '4000000000',
+          largestPassingSizeAtomic: '1000000000',
+        },
+        { entryOutputAtomic: '5000000000' },
+        { decimals: 6 },
+      ),
+    ]);
+    assert.equal(result.movers.length, 1);
+    assert.equal(result.movers[0]!.decimals, 6);
+  });
+
+  test('a measured round-trip reference miss remains comparable history', () => {
+    const result = moversOf([
+      pair(A, {
+        state: 'rejected',
+        reasonCode: 'round_trip_above_tolerance',
+        optimisticRoundTripBps: 436,
+      }),
+    ]);
+    assert.equal(result.movers.length, 1);
+    assert.equal(result.movers[0]!.state, 'rejected');
+    assert.equal(result.movers[0]!.profileStatus, 'outside_round_trip_reference');
+    assert.equal(result.movers[0]!.optimisticRoundTripBps, 436);
+    assert.equal(result.movers[0]!.roundTripReferenceBps, 300);
+  });
+
+  test('non-profile rejections, unmeasured and unstable observations never become movers', () => {
     assert.deepEqual(moversOf([pair(A, { state: 'rejected', reasonCode: 'no_exit_route' })]).excluded, [
       { tokenAddress: A, reason: 'not_measured' },
     ]);

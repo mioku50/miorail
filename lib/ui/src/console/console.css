@@ -363,7 +363,9 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .qrow:last-child { border-bottom: 0; }
 .mio-console .qrow .v { color: var(--ink); font-weight: 500; }
 .mio-console .qrow .v.ok { color: var(--green); }
+.mio-console .qrow .v.warn { color: var(--amber); }
 .mio-console .qrow .v.off { color: var(--dim); }
+.mio-console .qrow .rail-reference { display: block; margin-top: 2px; color: currentColor; font-size: 10px; font-weight: 500; opacity: .82; }
 .mio-console .empty { font-size: 12px; color: var(--faint); padding: 4px 0; }
 
 .mio-console footer { grid-column: 1/-1; display: flex; align-items: center; gap: 16px; padding: 0 14px; border-top: 1px solid var(--line);

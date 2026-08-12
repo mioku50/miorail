@@ -56,14 +56,15 @@ export interface OpportunityCardWireV1 {
         mayGateLiquidity: boolean;
       } | null;
     } | null;
+    /** Launch-window buying lives inside the observation on the API wire.
+     * Null means the window has not been measured; a measured zero is an
+     * object whose buyerCount is zero. */
+    launchBuyers: {
+      buyerCount: number;
+      topBuyerShareBps: number | null;
+      topThreeShareBps: number | null;
+    } | null;
     freshness: 'fresh' | 'stale';
-  } | null;
-  /** Launch-window buying, measured once the window closed. Absent when nobody
-   * measured it — which every launch whose window is still open is. */
-  launchBuyers?: {
-    buyerCount: number;
-    topBuyerShareBps: number | null;
-    topThreeShareBps: number | null;
   } | null;
   canCheckProfile: boolean;
   /** T69-C.1 §2 — the server decided this from the rejection reason. The view
@@ -238,7 +239,10 @@ export function opportunityCardViewV1(card: OpportunityCardWireV1): OpportunityC
     notices,
     notMeasured: card.notMeasured,
     ...hookLabelsV1(card.observation?.poolHook ?? null),
-    ...buyerLabelsV1(card.launchBuyers ?? null),
+    // The API contract nests launch buyers in the observation. Reading a
+    // top-level field silently discarded every stored buyer row while all
+    // fixtures still passed because they tested the helper in isolation.
+    ...buyerLabelsV1(card.observation?.launchBuyers ?? null),
   };
 }
 
@@ -256,7 +260,7 @@ export function opportunityCardViewV1(card: OpportunityCardWireV1): OpportunityC
  * is gross buying in a window, and a buyer may have sold it all since.
  */
 export function buyerLabelsV1(
-  buyers: OpportunityCardWireV1['launchBuyers'],
+  buyers: NonNullable<OpportunityCardWireV1['observation']>['launchBuyers'] | undefined,
 ): { buyersLabel: string | null; buyersNote: string | null } {
   if (!buyers) return { buyersLabel: null, buyersNote: null };
   if (buyers.buyerCount === 0) {

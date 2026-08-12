@@ -512,6 +512,7 @@ function wireCard(overrides: Record<string, unknown> = {}) {
       transferPolicyNotice: null,
       quoteAlignmentNotice: 'Controls are block-anchored. Market quotes were read at latest.',
       preEntryNotice: 'Pre-entry estimate.',
+      launchBuyers: null,
       freshness: 'fresh' as const,
     },
     canCheckProfile: true,
@@ -659,6 +660,23 @@ describe('a card never turns a missing measurement into a number', () => {
       'Controls are block-anchored. Market quotes were read at latest.',
       'A transfer policy is active.',
     ]);
+  });
+
+  test('launch-buyer evidence is read from the API observation shape', () => {
+    const view = opportunityCardViewV1(
+      wireCard({
+        observation: {
+          ...wireCard().observation,
+          launchBuyers: {
+            buyerCount: 23,
+            topBuyerShareBps: 2426,
+            topThreeShareBps: 5160,
+          },
+        },
+      }),
+    );
+    assert.match(view.buyersLabel ?? '', /23 wallets/);
+    assert.match(view.buyersLabel ?? '', /24\.26%/);
   });
 
   test('no card ever says safe, unsafe or scored', () => {

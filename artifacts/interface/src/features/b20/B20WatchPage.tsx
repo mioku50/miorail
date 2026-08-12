@@ -137,6 +137,7 @@ function exitObservationForCoverageV1(
     measurementVersion: 'b20-exit-check/v1',
     entryOutputAtomic: null,
     optimisticRoundTripBps: null,
+    maxRoundTripBps: EXIT_CHECK_TOLERANCE_BPS_V1,
     largestPassingSizeAtomic: check.exitCapacityAtomic,
     firstFailingSizeAtomic: check.firstFailingAtomic,
     capacityToleranceBps: EXIT_CHECK_TOLERANCE_BPS_V1,

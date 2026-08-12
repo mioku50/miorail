@@ -754,8 +754,8 @@ export function describeB20ObservationRepositoryV1(
     const NOW = '2026-08-05T09:15:00.000Z';
 
     /** Enough exit capacity to clear the rail's own thin-pool floor. */
-    const CAPACITY_A = '4000000000000000000';
-    const CAPACITY_B = '5000000000000000000';
+    const CAPACITY_A = '1000000000000000000000';
+    const CAPACITY_B = '2000000000000000000000';
 
     async function measureTwice(): Promise<B20ObservationRepositoryV1> {
       const { repository } = await seeded();
@@ -825,7 +825,7 @@ export function describeB20ObservationRepositoryV1(
         now: new Date(NOW),
         baselineAgeMs: DAY_MS,
         baselineToleranceMs: 4 * 60 * 60 * 1000,
-        minExitCapacityAtomic: '1000000000000000000',
+        minExitCoverageBps: 2_500,
         limit: 5,
       });
       // The whole point: two passes a day apart, and the rail has a row.
@@ -866,7 +866,7 @@ export function describeB20ObservationRepositoryV1(
         now: new Date(NOW),
         baselineAgeMs: DAY_MS,
         baselineToleranceMs: 4 * 60 * 60 * 1000,
-        minExitCapacityAtomic: '1000000000000000000',
+        minExitCoverageBps: 2_500,
         limit: 5,
       });
       assert.equal(projected.movers.length, 0);

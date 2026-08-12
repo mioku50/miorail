@@ -49,6 +49,7 @@ export interface MarketObservationV1 {
   measurementVersion: string;
   entryOutputAtomic: string | null;
   optimisticRoundTripBps: number | null;
+  maxRoundTripBps: number;
   largestPassingSizeAtomic: string | null;
   firstFailingSizeAtomic: string | null;
   capacityToleranceBps: number;
@@ -86,7 +87,9 @@ export interface MarketRowV1 {
 export const CAPACITY_EXCLUSION_REASONS_V1 = [
   'stale',
   'not_canonical',
+  'no_reference_entry',
   'no_measured_capacity',
+  'unrepresentable_capacity',
   'unstable_ladder',
   'transfers_paused',
   'no_exit_route',
@@ -102,9 +105,19 @@ export interface ExitCapacityLeaderV1 {
   decimals: number | null;
   /** The largest probe that PASSED. Never a figure between two rungs. */
   largestPassingSizeAtomic: string;
+  /** Passing exit size divided by the tokens returned by one reference entry.
+   * This is the comparable ordering key; raw token amounts are not comparable
+   * across decimals or assets. */
+  capacityCoverageBps: number;
   /** The smallest probe that failed, when one did. The pair is the bound. */
   firstFailingSizeAtomic: string | null;
   toleranceBps: number;
+  /** The actual quote result and the profile reference are separate facts.
+   * A measured result outside the reference stays visible instead of being
+   * collapsed into an empty rail. */
+  optimisticRoundTripBps: number | null;
+  roundTripReferenceBps: number;
+  profileStatus: 'within_reference' | 'outside_round_trip_reference' | 'not_measured';
   /** Carried so a rejected token on this list reads as rejected. */
   state: B20ObservationStateV1;
   reasonCode: string | null;
@@ -122,6 +135,14 @@ export interface ExitCapacityLeadersInputV1 {
   limit: number;
 }
 
+function capacityCoverageBpsV1(observation: MarketObservationV1): number | null {
+  if (observation.largestPassingSizeAtomic === null || observation.entryOutputAtomic === null) return null;
+  const entryOutput = BigInt(observation.entryOutputAtomic);
+  if (entryOutput === BigInt(0)) return null;
+  const coverage = (BigInt(observation.largestPassingSizeAtomic) * BPS_V1) / entryOutput;
+  return coverage <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(coverage) : null;
+}
+
 export function exitCapacityExclusionV1(
   row: MarketRowV1,
   input: { toleranceBps: number; now: Date },
@@ -137,11 +158,16 @@ export function exitCapacityExclusionV1(
   // "largest passing" figure is then not a bound on anything.
   if (observation.capacityStable !== true) return 'unstable_ladder';
   if (observation.largestPassingSizeAtomic === null) return 'no_measured_capacity';
+  if (observation.entryOutputAtomic === null || BigInt(observation.entryOutputAtomic) === BigInt(0)) {
+    return 'no_reference_entry';
+  }
+  if (capacityCoverageBpsV1(observation) === null) return 'unrepresentable_capacity';
   return null;
 }
 
 /**
- * Ranked by the largest size that actually passed a probe.
+ * Ranked by measured exit coverage relative to one reference entry. Raw token
+ * amounts cannot be ordered across different decimals or different assets.
  *
  * Deterministic: ties break on token address, so two runs over the same data
  * produce the same order. Without that a rail reorders itself on every refresh
@@ -166,8 +192,12 @@ export function exitCapacityLeadersV1(input: ExitCapacityLeadersInputV1): {
       name: row.launch.name,
       decimals: row.launch.decimals,
       largestPassingSizeAtomic: row.observation.largestPassingSizeAtomic!,
+      capacityCoverageBps: capacityCoverageBpsV1(row.observation)!,
       firstFailingSizeAtomic: row.observation.firstFailingSizeAtomic,
       toleranceBps: row.observation.capacityToleranceBps,
+      optimisticRoundTripBps: row.observation.optimisticRoundTripBps,
+      roundTripReferenceBps: row.observation.maxRoundTripBps,
+      profileStatus: roundTripProfileStatusV1(row.observation),
       state: row.observation.state,
       reasonCode: row.observation.reasonCode,
       measuredAt: row.observation.measuredAt,
@@ -177,9 +207,9 @@ export function exitCapacityLeadersV1(input: ExitCapacityLeadersInputV1): {
   }
 
   eligible.sort((left, right) => {
-    const a = BigInt(left.largestPassingSizeAtomic);
-    const b = BigInt(right.largestPassingSizeAtomic);
-    if (a !== b) return a > b ? -1 : 1;
+    if (left.capacityCoverageBps !== right.capacityCoverageBps) {
+      return right.capacityCoverageBps - left.capacityCoverageBps;
+    }
     return left.tokenAddress.localeCompare(right.tokenAddress);
   });
 
@@ -236,7 +266,11 @@ export interface MeasuredMoverV1 {
   baselineMeasuredAt: string;
   measuredAt: string;
   largestPassingSizeAtomic: string;
-  state: B20ObservationStateV1;
+  optimisticRoundTripBps: number;
+  roundTripReferenceBps: number;
+  profileStatus: 'within_reference' | 'outside_round_trip_reference';
+  state: 'provisional' | 'rejected';
+  reasonCode: string | null;
 }
 
 export interface MeasuredMoversInputV1 {
@@ -246,29 +280,64 @@ export interface MeasuredMoversInputV1 {
   baselineAgeMs: number;
   /** How far from that a baseline may sit and still count. */
   baselineToleranceMs: number;
-  /**
-   * §3 — thin pools are excluded. A token whose measured exit capacity is a
-   * rounding error produces enormous percentage swings from quotes nobody
-   * could act on.
-   */
-  minExitCapacityAtomic: string;
+  /** §3 — thin pools are excluded. Minimum measured exit as a share of the tokens bought by the reference
+   * entry. Unlike a raw atomic threshold this is independent of decimals. */
+  minExitCoverageBps: number;
   limit: number;
+}
+
+function roundTripProfileStatusV1(
+  observation: Pick<MarketObservationV1, 'optimisticRoundTripBps' | 'maxRoundTripBps'>,
+): ExitCapacityLeaderV1['profileStatus'] {
+  if (observation.optimisticRoundTripBps === null) return 'not_measured';
+  return observation.optimisticRoundTripBps <= observation.maxRoundTripBps
+    ? 'within_reference'
+    : 'outside_round_trip_reference';
+}
+
+/** A round trip above the configured reference is still a measurement. It is
+ * comparable history when every other measurement invariant holds. Other
+ * rejection reasons remain ineligible: no route or incomplete controls are
+ * missing evidence, not a measured market profile. */
+type ComparableMarketObservationV1 = MarketObservationV1 & {
+  state: 'provisional' | 'rejected';
+  entryOutputAtomic: string;
+  optimisticRoundTripBps: number;
+};
+
+function isComparableMarketMeasurementV1(
+  observation: MarketObservationV1,
+): observation is ComparableMarketObservationV1 {
+  if (observation.optimisticRoundTripBps === null || observation.entryOutputAtomic === null) return false;
+  if (observation.state === 'provisional') return true;
+  return observation.state === 'rejected' && observation.reasonCode === 'round_trip_above_tolerance';
+}
+
+function assertComparableMarketMeasurementV1(
+  observation: MarketObservationV1,
+): asserts observation is ComparableMarketObservationV1 {
+  if (!isComparableMarketMeasurementV1(observation)) {
+    throw new Error('mover compatibility admitted an observation without a measured market profile');
+  }
 }
 
 /** Both observations must describe the same measurement, or the difference
  * between them is a difference in method rather than in the market. */
 export function moverCompatibilityV1(pair: MoverPairV1, input: MeasuredMoversInputV1): MoverExclusionV1 | null {
   const { latest, baseline, launch } = pair;
-  if (latest.state !== 'provisional') return 'not_measured';
+  if (!isComparableMarketMeasurementV1(latest)) return 'not_measured';
   if (Date.parse(latest.staleAfter) <= input.now.getTime()) return 'stale';
   if (latest.capacityStable !== true) return 'unstable_ladder';
   if (launch.decimals === null) return 'unknown_decimals';
-  if (latest.largestPassingSizeAtomic === null) return 'below_minimum_capacity';
-  if (BigInt(latest.largestPassingSizeAtomic) < BigInt(input.minExitCapacityAtomic)) {
+  if (latest.largestPassingSizeAtomic === null || latest.entryOutputAtomic === null) return 'below_minimum_capacity';
+  const entryOutput = BigInt(latest.entryOutputAtomic);
+  if (entryOutput === BigInt(0)) return 'not_measured';
+  const exitCoverageBps = Number((BigInt(latest.largestPassingSizeAtomic) * BPS_V1) / entryOutput);
+  if (exitCoverageBps < input.minExitCoverageBps) {
     return 'below_minimum_capacity';
   }
   if (!baseline) return 'no_baseline';
-  if (baseline.state !== 'provisional') return 'not_measured';
+  if (!isComparableMarketMeasurementV1(baseline)) return 'not_measured';
   if (baseline.capacityStable !== true) return 'unstable_ladder';
 
   if (
@@ -321,6 +390,9 @@ export function measuredMoversV1(input: MeasuredMoversInputV1): {
       continue;
     }
     const { latest, baseline, launch } = pair;
+    // moverCompatibilityV1 is the public explanation; this assertion keeps
+    // its type and the output projection fail-closed if the two ever drift.
+    assertComparableMarketMeasurementV1(latest);
     movers.push({
       tokenAddress: launch.tokenAddress,
       symbol: launch.symbol,
@@ -340,7 +412,14 @@ export function measuredMoversV1(input: MeasuredMoversInputV1): {
       baselineMeasuredAt: baseline!.measuredAt,
       measuredAt: latest.measuredAt,
       largestPassingSizeAtomic: latest.largestPassingSizeAtomic!,
+      optimisticRoundTripBps: latest.optimisticRoundTripBps,
+      roundTripReferenceBps: latest.maxRoundTripBps,
+      profileStatus:
+        latest.optimisticRoundTripBps <= latest.maxRoundTripBps
+          ? 'within_reference'
+          : 'outside_round_trip_reference',
       state: latest.state,
+      reasonCode: latest.reasonCode,
     });
   }
 

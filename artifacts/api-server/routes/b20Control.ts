@@ -46,7 +46,6 @@ import {
   type B20ReaderV1,
 } from '@mioagent/b20-control';
 import {
-  B20_MEASUREMENT_VERSION_V1,
   RouteStorageConflictError,
   RouteStorageIntegrityError,
   createDatabaseB20StorageRepository,
@@ -83,7 +82,6 @@ import {
   moversCollectingHistoryV1,
   MEASURED_MOVE_LABEL_V1,
   MEASURED_MOVE_NOTE_V1,
-  type MarketObservationV1,
   b20PipelineStatusV1,
   profileRefusalV1,
 } from '@mioagent/opportunity-rail';
@@ -471,38 +469,6 @@ export async function readDiscoverFeedV1(input: {
   return { pipeline, cards, nextCursor: page.nextCursor, serverTime: now.toISOString() };
 }
 
-/** T73 — the card's observation, in the shape the market projections read.
- * Built from the SAME card the feed serves, so a rail can never disagree with
- * the Discover surface about what was measured. */
-function marketObservationFromCardV1(card: ReturnType<typeof b20OpportunityCardV1>): MarketObservationV1 {
-  const observation = card.observation!;
-  return {
-    tokenAddress: card.launch.tokenAddress,
-    state: observation.state,
-    reasonCode: observation.reasonCode,
-    referenceQuoteAsset: observation.referenceQuoteAsset,
-    referencePositionAtomic: observation.referencePositionAtomic,
-    // Not on the card projection — the rails only compare it between two
-    // observations, and both come from the repository for movers.
-    profileIdentity: `${observation.referenceQuoteAsset}:${observation.referencePositionAtomic}:${observation.maxRoundTripBps}:${observation.maxExitSlippageBps}`,
-    measurementVersion: B20_MEASUREMENT_VERSION_V1,
-    entryOutputAtomic: null,
-    optimisticRoundTripBps: observation.optimisticRoundTripBps,
-    largestPassingSizeAtomic: observation.largestPassingSizeAtomic,
-    firstFailingSizeAtomic: observation.firstFailingSizeAtomic,
-    capacityToleranceBps: observation.capacityToleranceBps,
-    capacityStable: observation.capacityStable,
-    exitRouteFound: observation.exitRouteFound,
-    transfersPaused: observation.transfersPaused,
-    transferPolicyState: observation.transferPolicyState,
-    controlsComplete: observation.controlsComplete,
-    controlsBlockNumber: observation.controlsBlockNumber,
-    observationBlockNumber: observation.observationBlockNumber,
-    measuredAt: observation.measuredAt,
-    staleAfter: observation.staleAfter,
-  };
-}
-
 // ---------------------------------------------------------------------------
 // T73 — the two market rails.
 //
@@ -521,9 +487,10 @@ export const MARKET_RAIL_BASELINE_AGE_MS_V1 = 24 * 60 * 60 * 1000;
  * window. Four hours either side: wide enough to survive a slow pass, narrow
  * enough that the label is not a fiction. */
 export const MARKET_RAIL_BASELINE_TOLERANCE_MS_V1 = 4 * 60 * 60 * 1000;
-/** §3 — below this measured exit capacity a token is excluded from movers. A
- * pool this thin swings hundreds of percent on quotes nobody could act on. */
-export const MARKET_RAIL_MIN_CAPACITY_ATOMIC_V1 = '1000000000000000000';
+/** §3 — a mover needs a measured exit for at least 25% of the tokens returned
+ * by the reference entry. A ratio is intentional: a raw atomic threshold
+ * silently treats 6-decimal and 18-decimal B20s as different markets. */
+export const MARKET_RAIL_MIN_EXIT_COVERAGE_BPS_V1 = 2_500;
 
 b20ControlRouter.get('/opportunities/b20/market/rails', async (req: Request, res: Response) => {
   const guard = b20Guard(req, res);
@@ -554,25 +521,27 @@ b20ControlRouter.get('/opportunities/b20/market/rails', async (req: Request, res
       return;
     }
 
-    // The leaders read the same page the Discover feed serves.
-    const feed = await readDiscoverFeedV1({
+    // The leaders read the same repository page the Discover feed serves. The
+    // raw observation is intentional here: entryOutputAtomic is required to
+    // compare exit coverage across tokens, but is not a Discover-card field.
+    const feed = await observations.listFeed({
       limit: 50,
       cursor: null,
-      state: 'all',
-      freshness: 'all',
+      maxLaunchAgeMs: DISCOVER_FEED_WINDOW_MS_V1,
+      now: now.toISOString(),
     });
     const leaders = exitCapacityLeadersV1({
-      rows: feed.cards
-        .filter((card) => card.observation !== null)
-        .map((card) => ({
+      rows: feed.rows
+        .filter((row) => row.observation !== null)
+        .map((row) => ({
           launch: {
-            tokenAddress: card.launch.tokenAddress,
-            symbol: card.launch.symbol,
-            name: card.launch.name,
-            decimals: card.launch.decimals,
-            canonical: card.launch.canonical,
+            tokenAddress: row.launch.tokenAddress,
+            symbol: row.launch.symbol,
+            name: row.launch.name,
+            decimals: row.launch.decimals,
+            canonical: row.launch.canonical,
           },
-          observation: marketObservationFromCardV1(card),
+          observation: row.observation!,
         })),
       toleranceBps: MARKET_RAIL_TOLERANCE_BPS_V1,
       now,
@@ -601,7 +570,7 @@ b20ControlRouter.get('/opportunities/b20/market/rails', async (req: Request, res
       now,
       baselineAgeMs: MARKET_RAIL_BASELINE_AGE_MS_V1,
       baselineToleranceMs: MARKET_RAIL_BASELINE_TOLERANCE_MS_V1,
-      minExitCapacityAtomic: MARKET_RAIL_MIN_CAPACITY_ATOMIC_V1,
+      minExitCoverageBps: MARKET_RAIL_MIN_EXIT_COVERAGE_BPS_V1,
       limit,
     });
 
@@ -710,6 +679,10 @@ b20ControlRouter.get('/opportunities/b20/:tokenAddress', async (req: Request, re
         canonical: found.row.launch.canonical,
       },
       observation: found.row.observation,
+      // The list endpoint already carries this joined row. The detail endpoint
+      // must not make the same token lose its launch-window evidence when a
+      // user opens it.
+      launchBuyers: found.row.launchBuyers,
       now,
     });
 

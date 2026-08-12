@@ -15,9 +15,8 @@ void React;
 //
 // Every number here was computed by the server from stored observations. The
 // client sorts nothing, ranks nothing and recomputes nothing (§2/§4): if a
-// figure is not in the response it is not on the screen. The one thing this
-// file decides is which rows a user is shown by DEFAULT, and it says so out
-// loud rather than filtering quietly.
+// figure is not in the response it is not on the screen. Rows outside the
+// configured round-trip reference remain visible and are labelled here.
 //
 // The exception is Your Exit Coverage, which cannot be computed server-side:
 // it needs the wallet's position, and Miorail's server never receives a
@@ -28,21 +27,17 @@ void React;
 /** §6 — on every card. These are measurements, not advice. */
 export const MARKET_RAIL_DISCLAIMER_V1 = 'A measured view, not a recommendation.';
 
-/**
- * §4 — rejected tokens are not shown by default.
- *
- * The API still returns them, and deliberately: a rejected token can have real
- * measured capacity, and the endpoint's job is to report what was measured.
- * Deciding that a user browsing their portfolio should not be handed a list
- * headed by a token Miorail rejected is a PRODUCT choice, so it is made here,
- * once, with the count of what it hid stated on the card.
- */
+/** A round-trip profile miss is still measured evidence. The default rail
+ * keeps it visible and counts it so the card can state the distinction instead
+ * of allowing a 3% reference to turn a working measurement into an empty UI. */
 export function defaultRailLeadersV1(leaders: readonly ExitCapacityLeaderV1[]): {
   shown: ExitCapacityLeaderV1[];
-  hiddenRejected: number;
+  outsideReference: number;
 } {
-  const shown = leaders.filter((entry) => entry.state !== 'rejected');
-  return { shown, hiddenRejected: leaders.length - shown.length };
+  return {
+    shown: [...leaders],
+    outsideReference: leaders.filter((entry) => entry.profileStatus === 'outside_round_trip_reference').length,
+  };
 }
 
 function amountLabelV1(atomic: string, decimals: number | null, symbol: string): string {
@@ -93,14 +88,14 @@ function RailEmpty({ children }: { children: React.ReactNode }) {
 }
 
 export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
-  const { shown, hiddenRejected } = defaultRailLeadersV1(model.leaders);
+  const { shown, outsideReference } = defaultRailLeadersV1(model.leaders);
   const visible = shown.slice(0, model.expanded ? RAIL_FULL_V1 : RAIL_TOP_V1);
 
   return (
     <div className="rp">
       <div className="rph">
-        Exit Capacity Leaders
-        <span className="rt">{bpsLabelV1(model.toleranceBps)} slippage</span>
+        Measured Exit Capacity
+        <span className="rt">{bpsLabelV1(model.toleranceBps)} exit slippage</span>
       </div>
       <div className="rpb">
         {model.loading ? (
@@ -109,8 +104,8 @@ export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
           <RailEmpty>{model.unavailableReason}</RailEmpty>
         ) : visible.length === 0 ? (
           <RailEmpty>
-            No fresh exit measurement passed the {bpsLabelV1(model.toleranceBps)} tolerance. That is about what
-            Miorail has measured, not about what can be sold.
+            No fresh, stable exit ladder has measured capacity within {bpsLabelV1(model.toleranceBps)} exit
+            slippage. That is about Miorail evidence, not about what can be sold.
           </RailEmpty>
         ) : (
           <>
@@ -125,23 +120,31 @@ export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
                     leader.symbol
                   )}
                 </span>
-                <span className="v mono">
+                <span className={`v mono${leader.profileStatus === 'outside_round_trip_reference' ? ' warn' : ''}`}>
                   {/* The BOUND. "at least" is not decoration: the ladder knows
                       the largest size that passed and nothing above it. */}
                   ≥ {amountLabelV1(leader.largestPassingSizeAtomic, leader.decimals, leader.symbol)}
+                  <span className="rail-reference">
+                    {bpsLabelV1(leader.capacityCoverageBps)} of reference entry ·{' '}
+                    {leader.optimisticRoundTripBps === null
+                      ? 'round trip not measured'
+                      : `${bpsLabelV1(leader.optimisticRoundTripBps)} round trip · ${
+                          leader.profileStatus === 'outside_round_trip_reference' ? 'outside' : 'within'
+                        } ${bpsLabelV1(leader.roundTripReferenceBps)} reference`}
+                  </span>
                 </span>
               </div>
             ))}
             <p className="lnote">
-              Largest size that passed a probe within tolerance. Nothing between that and the first failing size
+              Ordered only by measured exit coverage relative to one Miorail reference entry, within{' '}
+              {bpsLabelV1(model.toleranceBps)} slippage. Nothing between the largest passing and first failing size
               was measured. {MARKET_RAIL_DISCLAIMER_V1}
             </p>
-            {hiddenRejected > 0 && (
-              // §4 — stated, not silent. A filtered list that does not say it
-              // filtered is a list a user cannot reason about.
+            {outsideReference > 0 && (
               <p className="lnote">
-                {hiddenRejected} token{hiddenRejected === 1 ? '' : 's'} with measured capacity {hiddenRejected === 1 ? 'is' : 'are'} hidden here
-                because Miorail rejected {hiddenRejected === 1 ? 'it' : 'them'} on another measurement.
+                {outsideReference} measured profile{outsideReference === 1 ? '' : 's'} exceed
+                {outsideReference === 1 ? 's' : ''} the configured round-trip reference and remain
+                {outsideReference === 1 ? 's' : ''} visible in amber.
               </p>
             )}
             {shown.length > RAIL_TOP_V1 && (
@@ -197,7 +200,18 @@ export function B20MeasuredMoversCard(model: B20MarketRailsModelV1) {
                     mover.symbol
                   )}
                 </span>
-                <span className={`v mono${mover.changeBps > 0 ? ' ok' : ''}`}>{signedBpsLabelV1(mover.changeBps)}</span>
+                <span
+                  className={`v mono${
+                    mover.profileStatus === 'outside_round_trip_reference' ? ' warn' : mover.changeBps > 0 ? ' ok' : ''
+                  }`}
+                >
+                  {signedBpsLabelV1(mover.changeBps)}
+                  <span className="rail-reference">
+                    {bpsLabelV1(mover.optimisticRoundTripBps)} round trip ·{' '}
+                    {mover.profileStatus === 'outside_round_trip_reference' ? 'outside' : 'within'}{' '}
+                    {bpsLabelV1(mover.roundTripReferenceBps)} reference
+                  </span>
+                </span>
               </div>
             ))}
             {/* The label is the server's, verbatim. Shortening it to "24h" is
