@@ -491,6 +491,10 @@ export const MARKET_RAIL_BASELINE_TOLERANCE_MS_V1 = 4 * 60 * 60 * 1000;
  * by the reference entry. A ratio is intentional: a raw atomic threshold
  * silently treats 6-decimal and 18-decimal B20s as different markets. */
 export const MARKET_RAIL_MIN_EXIT_COVERAGE_BPS_V1 = 2_500;
+/** The active window currently holds fewer than 800 launches. Keep the read
+ * bounded above that population so a market rail is not accidentally a
+ * projection of only the first Discover page. */
+export const MARKET_RAIL_ACTIVE_OBSERVATION_LIMIT_V1 = 1_000;
 
 b20ControlRouter.get('/opportunities/b20/market/rails', async (req: Request, res: Response) => {
   const guard = b20Guard(req, res);
@@ -521,52 +525,35 @@ b20ControlRouter.get('/opportunities/b20/market/rails', async (req: Request, res
       return;
     }
 
-    // The leaders read the same repository page the Discover feed serves. The
-    // raw observation is intentional here: entryOutputAtomic is required to
-    // compare exit coverage across tokens, but is not a Discover-card field.
-    const feed = await observations.listFeed({
-      limit: 50,
-      cursor: null,
-      maxLaunchAgeMs: DISCOVER_FEED_WINDOW_MS_V1,
-      now: now.toISOString(),
-    });
-    const leaders = exitCapacityLeadersV1({
-      rows: feed.rows
-        .filter((row) => row.observation !== null)
-        .map((row) => ({
-          launch: {
-            tokenAddress: row.launch.tokenAddress,
-            symbol: row.launch.symbol,
-            name: row.launch.name,
-            decimals: row.launch.decimals,
-            canonical: row.launch.canonical,
-          },
-          observation: row.observation!,
-        })),
-      toleranceBps: MARKET_RAIL_TOLERANCE_BPS_V1,
-      now,
-      limit,
-    });
-
+    // One bounded read supplies both rails. Reading the newest 50 launches made
+    // the cards empty whenever the fresh measured exits sat on page two, even
+    // though the worker and database were healthy.
     const pairs = await observations.listMoverPairs({
-      limit: 50,
+      limit: MARKET_RAIL_ACTIVE_OBSERVATION_LIMIT_V1,
       now: now.toISOString(),
       baselineAgeMs: MARKET_RAIL_BASELINE_AGE_MS_V1,
       baselineToleranceMs: MARKET_RAIL_BASELINE_TOLERANCE_MS_V1,
       maxLaunchAgeMs: DISCOVER_FEED_WINDOW_MS_V1,
     });
+    const marketPairs = pairs.map((pair) => ({
+      launch: {
+        tokenAddress: pair.launch.tokenAddress,
+        symbol: pair.launch.symbol,
+        name: pair.launch.name,
+        decimals: pair.launch.decimals,
+        canonical: pair.launch.canonical,
+      },
+      latest: pair.latest,
+      baseline: pair.baseline,
+    }));
+    const leaders = exitCapacityLeadersV1({
+      rows: marketPairs.map((pair) => ({ launch: pair.launch, observation: pair.latest })),
+      toleranceBps: MARKET_RAIL_TOLERANCE_BPS_V1,
+      now,
+      limit,
+    });
     const movers = measuredMoversV1({
-      pairs: pairs.map((pair) => ({
-        launch: {
-          tokenAddress: pair.launch.tokenAddress,
-          symbol: pair.launch.symbol,
-          name: pair.launch.name,
-          decimals: pair.launch.decimals,
-          canonical: pair.launch.canonical,
-        },
-        latest: pair.latest,
-        baseline: pair.baseline,
-      })),
+      pairs: marketPairs,
       now,
       baselineAgeMs: MARKET_RAIL_BASELINE_AGE_MS_V1,
       baselineToleranceMs: MARKET_RAIL_BASELINE_TOLERANCE_MS_V1,
