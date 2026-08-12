@@ -48,6 +48,7 @@ test('requestId-only result polls get_request_status until an approval link is a
 
 test('approval status aliases cover completed, rejected and failed terminal states', () => {
   assert.equal(normalizeBaseMcpApprovalState('confirmed'), 'completed');
+  assert.equal(normalizeBaseMcpApprovalState('signed'), 'completed');
   assert.equal(normalizeBaseMcpApprovalState('rejected'), 'rejected');
   assert.equal(normalizeBaseMcpApprovalState('error'), 'failed');
   assert.equal(normalizeBaseMcpApprovalState('processing'), 'pending');

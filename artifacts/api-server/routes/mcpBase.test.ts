@@ -17,6 +17,7 @@ const originalProbeBaseMcpTools = mcpBaseRouteRuntime.probeBaseMcpTools;
 const originalPluginDrift = mcpBaseRouteRuntime.baseMcpPluginDriftV1;
 const originalConsole = mcpBaseRouteRuntime.runBaseMcpConsoleV1;
 const originalClassifyExtension = mcpBaseRouteRuntime.classifyBaseMcpExtensionIntentV1;
+const originalResolveBaseName = mcpBaseRouteRuntime.resolveBaseNameV1;
 const originalPrepareExtension = mcpBaseRouteRuntime.prepareBaseMcpSendActionV1;
 const originalPrepareX402Extension = mcpBaseRouteRuntime.prepareBaseMcpX402ActionV1;
 const originalReconcileExtension = mcpBaseRouteRuntime.reconcileBaseMcpActionV1;
@@ -83,6 +84,7 @@ afterEach(() => {
   mcpBaseRouteRuntime.baseMcpPluginDriftV1 = originalPluginDrift;
   mcpBaseRouteRuntime.runBaseMcpConsoleV1 = originalConsole;
   mcpBaseRouteRuntime.classifyBaseMcpExtensionIntentV1 = originalClassifyExtension;
+  mcpBaseRouteRuntime.resolveBaseNameV1 = originalResolveBaseName;
   mcpBaseRouteRuntime.prepareBaseMcpSendActionV1 = originalPrepareExtension;
   mcpBaseRouteRuntime.prepareBaseMcpX402ActionV1 = originalPrepareX402Extension;
   mcpBaseRouteRuntime.reconcileBaseMcpActionV1 = originalReconcileExtension;
@@ -657,6 +659,7 @@ const ACTION_RECEIPT = {
   },
   amount: '5',
   recipient: '0x2222222222222222222222222222222222222222' as const,
+  recipientName: null,
   approvalRequired: true as const,
   reconciliationState: 'not_started' as const,
   transactionHash: null,
@@ -729,6 +732,60 @@ test('POST /api/mcp/base/console returns an approval Action Receipt for exact se
   restoreEnv('SESSION_SECRET', originalSecret);
   restoreEnv('BASE_MCP_ENABLED', originalEnabled);
   restoreEnv('BASE_MCP_SERVER_URL', originalUrl);
+});
+
+test('POST /api/mcp/base/console resolves a Basename before preparing the exact send', async () => {
+  const originalSecret = process.env.SESSION_SECRET;
+  const originalEnabled = process.env.BASE_MCP_ENABLED;
+  const originalUrl = process.env.BASE_MCP_SERVER_URL;
+  process.env.SESSION_SECRET = 'test-session-secret';
+  process.env.BASE_MCP_ENABLED = 'true';
+  process.env.BASE_MCP_SERVER_URL = 'https://mcp.base.org';
+  mcpBaseRouteRuntime.resolveBaseNameV1 = async (name) => ({
+    outcome: 'resolved', name, address: ACTION_RECEIPT.recipient,
+  });
+  mcpBaseRouteRuntime.prepareBaseMcpSendActionV1 = async (input) => {
+    assert.equal(input.intent.recipientName, 'mioku.base.eth');
+    assert.equal(input.intent.recipient, ACTION_RECEIPT.recipient);
+    return {
+      kind: 'action', reply: 'Review in Base Account.', errorCode: null,
+      toolsAvailable: 15,
+      receipt: { ...ACTION_RECEIPT, recipientName: 'mioku.base.eth' },
+      approvalUrl: 'https://keys.coinbase.com/approve/send-name-1',
+    };
+  };
+
+  const response = await request(app).post('/api/mcp/base/console').send({
+    message: 'Send 5 USDC to mioku.base.eth', requestId: 'send-name-1',
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.body.status, 'action');
+  assert.equal(response.body.action.receipt.recipientName, 'mioku.base.eth');
+  assert.equal(response.body.action.receipt.recipient, ACTION_RECEIPT.recipient);
+  restoreEnv('SESSION_SECRET', originalSecret);
+  restoreEnv('BASE_MCP_ENABLED', originalEnabled);
+  restoreEnv('BASE_MCP_SERVER_URL', originalUrl);
+});
+
+test('POST /api/mcp/base/console never prepares a send when the Basename is unresolved', async () => {
+  const originalSecret = process.env.SESSION_SECRET;
+  process.env.SESSION_SECRET = 'test-session-secret';
+  let prepared = false;
+  mcpBaseRouteRuntime.resolveBaseNameV1 = async (name) => ({
+    outcome: 'unresolved', name, errorCode: 'base_name_unresolved',
+  });
+  mcpBaseRouteRuntime.prepareBaseMcpSendActionV1 = async () => {
+    prepared = true;
+    throw new Error('must not prepare');
+  };
+  const response = await request(app).post('/api/mcp/base/console').send({
+    message: 'Send 5 USDC to missing.base.eth', requestId: 'send-name-missing',
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.body.status, 'needs_input');
+  assert.equal(response.body.errorCode, 'base_name_unresolved');
+  assert.equal(prepared, false);
+  restoreEnv('SESSION_SECRET', originalSecret);
 });
 
 test('Action Receipt list and reconcile routes remain tenant-scoped projections', async () => {

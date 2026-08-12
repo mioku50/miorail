@@ -54,6 +54,7 @@ export type BaseMcpActionReceiptUiV1 = BaseMcpActionReceiptCommonUiV1 & (
       asset: { symbol: 'USDC'; address: string; decimals: 6 };
       amount: string;
       recipient: string;
+      recipientName?: string | null;
       reconciliationBasis: 'erc20_transfer_event';
     }
   | {
@@ -116,7 +117,7 @@ export interface BaseMcpConsoleModelV1 {
 export const BASE_MCP_CONSOLE_PROMPTS_V1: readonly string[] = [
   'What does my Base Account hold?',
   'Show my recent Base transactions',
-  'Send 5 USDC to [recipient Base address]',
+  'Send 5 USDC to alice.base.eth',
   'Pay x402 GET https://api.venice.ai/api/v1/models, max 0.10 USDC',
   'Show my open Avantis positions and PnL',
   'Open a 10x long BTC/USD with 100 USDC on Avantis',
@@ -282,8 +283,16 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
                     </div>
                     <div className="qrow">
                       <span>To</span>
-                      <span className="v mono">{answer.action.receipt.recipient}</span>
+                      <span className="v mono">
+                        {answer.action.receipt.recipientName ?? answer.action.receipt.recipient}
+                      </span>
                     </div>
+                    {answer.action.receipt.recipientName && (
+                      <div className="qrow">
+                        <span>Resolved Base address</span>
+                        <span className="v mono">{answer.action.receipt.recipient}</span>
+                      </div>
+                    )}
                   </>
                 ) : (
                   <>

@@ -25,6 +25,9 @@ export interface BaseMcpSendActionIntentV1 {
   amount: string;
   amountAtomic: string;
   recipient: `0x${string}`;
+  /** Original Basename when resolution was used. Null for a literal address;
+   * optional only so receipts created before this additive field still parse. */
+  recipientName?: string | null;
 }
 
 export interface BaseMcpX402ActionIntentV1 {
@@ -184,13 +187,19 @@ async function appendEvent(receipt: StoredBaseMcpActionReceiptV1): Promise<void>
     errorCode: receipt.errorCode,
     createdAt: receipt.updatedAt,
   });
-  await client`
+  const rows = await client`
+    WITH allocated AS (
+      UPDATE base_mcp_action_receipts
+      SET next_event_sequence = next_event_sequence + 1
+      WHERE id = ${receipt.id} AND tenant_id = ${receipt.tenantId}
+      RETURNING next_event_sequence - 1 AS sequence
+    )
     INSERT INTO base_mcp_action_receipt_events (
       id, receipt_id, tenant_id, sequence, event_hash, status, payload, created_at
     )
     SELECT
       ${id}, ${receipt.id}, ${receipt.tenantId},
-      COALESCE(MAX(sequence), -1) + 1,
+      allocated.sequence,
       ${eventHash}, ${receipt.status},
       ${JSON.stringify({
         reconciliationState: receipt.reconciliationState,
@@ -200,10 +209,10 @@ async function appendEvent(receipt: StoredBaseMcpActionReceiptV1): Promise<void>
         errorCode: receipt.errorCode,
       })}::jsonb,
       ${receipt.updatedAt}::timestamptz
-    FROM base_mcp_action_receipt_events
-    WHERE receipt_id = ${receipt.id}
-    ON CONFLICT DO NOTHING
+    FROM allocated
+    RETURNING sequence
   `;
+  if (!rows[0]) throw new Error('base_mcp_action_receipt_event_allocation_failed');
 }
 
 export class PostgresBaseMcpActionReceiptRepositoryV1 implements BaseMcpActionReceiptRepositoryV1 {
@@ -472,6 +481,7 @@ export function publicBaseMcpActionReceiptV1(receipt: StoredBaseMcpActionReceipt
     asset: intent.asset,
     amount: intent.amount,
     recipient: intent.recipient,
+    recipientName: intent.recipientName ?? null,
     reconciliationBasis: 'erc20_transfer_event',
   });
 }

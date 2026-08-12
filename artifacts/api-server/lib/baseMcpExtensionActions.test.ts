@@ -145,10 +145,12 @@ describe('deterministic Base MCP Extensions intent router', () => {
     assert.equal(decision.intent.recipient, RECIPIENT);
   });
 
-  test('Base names, other assets and incomplete writes stay fail-closed in V1', () => {
-    const incomplete = classifyBaseMcpExtensionIntentV1('Send 5 USDC to alice.base.eth');
+  test('Base names enter deterministic resolution while unsupported writes need input', () => {
+    const named = classifyBaseMcpExtensionIntentV1('Send 5 USDC to alice.base.eth');
+    assert.equal(named.kind, 'send_name');
+    assert.equal(named.intent.recipientName, 'alice.base.eth');
+    const incomplete = classifyBaseMcpExtensionIntentV1('Send 5 ETH to alice.base.eth');
     assert.equal(incomplete.kind, 'needs_input');
-    assert.equal(incomplete.errorCode, 'base_mcp_send_exact_input_required');
     assert.equal(classifyBaseMcpExtensionIntentV1('Sign this EIP-712 message').kind, 'needs_input');
   });
 
@@ -159,6 +161,9 @@ describe('deterministic Base MCP Extensions intent router', () => {
     const perps = classifyBaseMcpExtensionIntentV1('Open a 10x long BTC/USD with 100 USDC on Avantis');
     assert.equal(perps.kind, 'provider_handoff');
     assert.equal(perps.handoff.path, 'https://www.avantisfi.com/trade?asset=BTC-USD');
+    const ambiguous = classifyBaseMcpExtensionIntentV1('Open a long on Avantis');
+    assert.equal(ambiguous.kind, 'needs_input');
+    assert.equal(ambiguous.errorCode, 'base_mcp_avantis_market_required');
   });
 });
 
@@ -169,7 +174,14 @@ test('x402 initiation returns approval and completion stores only a response has
       requestId: 'provider-x402-1',
       status: 'approval_required',
     },
-    status: { requestId: 'provider-x402-1', status: 'completed' },
+    // Production Base MCP nests the post-approval state in MCP text and calls
+    // it `signed`; that state must unlock complete_x402_request.
+    status: {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({ requestId: 'provider-x402-1', status: 'signed', signature: '[redacted]' }),
+      }],
+    },
     completed: { status: 200, body: { result: 'paid intelligence', authorization: 'Bearer secret' } },
   });
   const repository = installHappyRuntime(tools);

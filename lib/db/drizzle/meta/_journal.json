@@ -281,6 +281,13 @@
       "when": 1786896000000,
       "tag": "0039_swap_pending_intent_providers",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1786982400000,
+      "tag": "0040_base_mcp_action_event_sequence",
+      "breakpoints": true
     }
   ]
 }

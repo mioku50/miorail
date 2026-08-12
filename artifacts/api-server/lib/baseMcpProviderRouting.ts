@@ -95,11 +95,11 @@ export interface AvantisProviderHandoffV1 {
 }
 
 /** Build only the official Avantis deep link; no URL component comes from user input. */
-export function buildAvantisProviderHandoffV1(message: string): AvantisProviderHandoffV1 {
+export function buildAvantisProviderHandoffV1(message: string): AvantisProviderHandoffV1 | null {
   const upper = message.toUpperCase();
-  const market = upper.match(/\b([A-Z0-9]{2,10})\s*[/-]\s*USD\b/u)?.[1]
-    || upper.match(/\b(BTC|ETH|SNDK|SOL|ARB|OP)\b/u)?.[1]
-    || 'BTC';
+  const pair = upper.match(/\b(BTC|ETH|SNDK|SOL|ARB|OP)\s*[/-]\s*USD\b/u)?.[1];
+  const market = pair || upper.match(/\b(BTC|ETH|SNDK|SOL|ARB|OP)\b/u)?.[1] || null;
+  if (!market) return null;
   const side = /\b(short|шорт)\b/iu.test(message) ? 'short' : /\b(long|лонг)\b/iu.test(message) ? 'long' : null;
   const leverage = message.match(/\b(\d+(?:[.,]\d+)?)\s*x\b/iu)?.[1]?.replace(',', '.') ?? null;
   const collateral = message.match(/\b(\d+(?:[.,]\d+)?)\s*USDC\b/iu)?.[1]?.replace(',', '.') ?? null;

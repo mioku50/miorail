@@ -1647,6 +1647,7 @@ export const BaseMcpSendActionReceiptV1Schema = BaseMcpActionReceiptCommonV1Sche
   }),
   amount: UsdcAmountSchema.refine((value) => Number(value) > 0, 'Amount must be positive'),
   recipient: AddressV1Schema,
+  recipientName: z.string().min(1).max(255).endsWith('.base.eth').nullable().default(null),
   reconciliationBasis: z.literal('erc20_transfer_event').default('erc20_transfer_event'),
 });
 

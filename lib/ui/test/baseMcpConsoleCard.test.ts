@@ -99,6 +99,34 @@ test('a failed deterministic action still renders its immutable receipt', () => 
   assert.doesNotMatch(html, /The console could not complete that/);
 });
 
+test('a Basename send shows both the human name and resolved Base address', () => {
+  const html = renderToStaticMarkup(BaseMcpConsoleCard({
+    question: 'Send 5 USDC to mioku.base.eth',
+    onQuestionChange: () => undefined,
+    onAsk: () => undefined,
+    pending: false,
+    unavailableReason: null,
+    answer: answer({
+      status: 'action', trace: [],
+      action: {
+        approvalUrl: null,
+        receipt: {
+          id: 'action-name', status: 'approval_required', actionType: 'send',
+          provider: 'base-mcp', chainId: 8453,
+          asset: { symbol: 'USDC', address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', decimals: 6 },
+          amount: '5', recipientName: 'mioku.base.eth',
+          recipient: '0x2222222222222222222222222222222222222222',
+          reconciliationState: 'not_started', transactionHash: null, blockNumber: null,
+          errorCode: null, routeVerified: false, reconciliationBasis: 'erc20_transfer_event',
+        },
+      },
+    }),
+  }));
+  assert.match(html, /mioku\.base\.eth/);
+  assert.match(html, /Resolved Base address/);
+  assert.match(html, /0x2222222222222222222222222222222222222222/);
+});
+
 test('a ROUTABLE response offers Routes AI and no approval URL', () => {
   const html = renderToStaticMarkup(BaseMcpConsoleCard({
     question: 'Swap 100 USDC to ETH',

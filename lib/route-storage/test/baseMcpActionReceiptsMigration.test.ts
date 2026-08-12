@@ -37,12 +37,29 @@ test('migration 0039 expands only the closed Routes provider constraint set', as
   assert.doesNotMatch(sql, /sushiswap|unknown|dynamic/i);
 });
 
-test('the migration journal registers 0038 and 0039 in append-only order', async () => {
+test('migration 0040 allocates Action Receipt event sequences on a locked receipt row', async () => {
+  const sql = await readFile(drizzlePath('0040_base_mcp_action_event_sequence.sql'), 'utf8');
+  const runtime = await readFile(resolve(
+    process.cwd().endsWith('lib/route-storage') ? resolve(process.cwd(), '..', '..') : process.cwd(),
+    'artifacts/api-server/lib/baseMcpActionReceipts.ts',
+  ), 'utf8');
+  assert.match(sql, /ADD COLUMN "next_event_sequence" integer/);
+  assert.match(sql, /MAX\(event\."sequence"\) \+ 1/);
+  assert.match(runtime, /UPDATE base_mcp_action_receipts[\s\S]*next_event_sequence = next_event_sequence \+ 1/);
+  assert.match(runtime, /RETURNING next_event_sequence - 1 AS sequence/);
+  assert.match(runtime, /FROM allocated[\s\S]*RETURNING sequence/);
+  assert.doesNotMatch(runtime, /COALESCE\(MAX\(sequence\), -1\) \+ 1/);
+  assert.doesNotMatch(runtime, /ON CONFLICT DO NOTHING/);
+});
+
+test('the migration journal registers 0038 through 0040 in append-only order', async () => {
   const journal = JSON.parse(await readFile(drizzlePath('meta/_journal.json'), 'utf8')) as {
     entries: Array<{ idx: number; tag: string }>;
   };
   assert.equal(journal.entries[38]?.tag, '0038_base_mcp_action_receipts');
   assert.equal(journal.entries[39]?.tag, '0039_swap_pending_intent_providers');
+  assert.equal(journal.entries[40]?.tag, '0040_base_mcp_action_event_sequence');
   assert.equal(journal.entries[38]?.idx, 38);
   assert.equal(journal.entries[39]?.idx, 39);
+  assert.equal(journal.entries[40]?.idx, 40);
 });

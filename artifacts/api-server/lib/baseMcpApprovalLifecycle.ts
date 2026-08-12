@@ -81,7 +81,10 @@ export function normalizeBaseMcpApprovalState(value: unknown): BaseMcpApprovalSt
   const status = value.trim().toLowerCase().replace(/[\s-]+/g, '_');
   if (['approval_required', 'requires_approval', 'needs_approval', 'awaiting_approval'].includes(status)) return 'approval_required';
   if (['pending', 'submitted', 'processing', 'in_progress', 'queued'].includes(status)) return 'pending';
-  if (['completed', 'confirmed', 'success', 'succeeded', 'settled'].includes(status)) return 'completed';
+  // Base MCP returns `signed` after the Base Account approval is available.
+  // For x402 this is the terminal approval state that unlocks the separate
+  // complete_x402_request replay; leaving it as unknown strands paid requests.
+  if (['completed', 'confirmed', 'success', 'succeeded', 'settled', 'signed'].includes(status)) return 'completed';
   if (['rejected', 'declined', 'cancelled', 'canceled'].includes(status)) return 'rejected';
   if (['failed', 'error', 'errored', 'expired'].includes(status)) return 'failed';
   return undefined;

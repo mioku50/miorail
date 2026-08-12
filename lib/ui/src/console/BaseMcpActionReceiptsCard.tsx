@@ -13,7 +13,7 @@ interface BaseMcpActivityReceiptCommonV1 {
 }
 
 export type BaseMcpActivityReceiptV1 = BaseMcpActivityReceiptCommonV1 & (
-  | { actionType: 'send'; amount: string; asset: { symbol: string }; recipient: string }
+  | { actionType: 'send'; amount: string; asset: { symbol: string }; recipient: string; recipientName?: string | null }
   | { actionType: 'x402'; method: 'GET'; url: string; maxPayment: string; paymentAsset: { symbol: string }; responseHash: string | null }
 );
 
@@ -57,7 +57,9 @@ export function BaseMcpActionReceiptsCard(model: {
                 </span>
               </div>
               <p className="lnote mono">
-                {receipt.actionType === 'send' ? `to ${receipt.recipient}` : receipt.url}
+                {receipt.actionType === 'send'
+                  ? `to ${receipt.recipientName ?? receipt.recipient}${receipt.recipientName ? ` · ${receipt.recipient}` : ''}`
+                  : receipt.url}
               </p>
               <p className="lnote">
                 Base MCP · {receipt.reconciliationState} · {new Date(receipt.createdAt).toLocaleString()}

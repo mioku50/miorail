@@ -26,8 +26,14 @@ test('provider ownership keeps the explicit extension family in Extensions', () 
 
 test('Avantis write intent becomes a fixed provider UI handoff with parsed facts', () => {
   const handoff = buildAvantisProviderHandoffV1('Open a 10x long BTC/USD with 100 USDC on Avantis');
+  assert.ok(handoff);
   assert.equal(handoff.path, 'https://www.avantisfi.com/trade?asset=BTC-USD');
   assert.match(handoff.summary, /10x/);
   assert.match(handoff.summary, /100 USDC/);
   assert.equal(handoff.risk, 'liquidation');
+});
+
+test('Avantis never invents BTC when the market is missing or unrecognized', () => {
+  assert.equal(buildAvantisProviderHandoffV1('Open a long on Avantis'), null);
+  assert.equal(buildAvantisProviderHandoffV1('Open DOGE/USD on Avantis'), null);
 });

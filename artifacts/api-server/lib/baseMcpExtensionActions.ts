@@ -43,6 +43,10 @@ export type BaseMcpExtensionIntentV1 =
   | { kind: 'read'; providerId?: string; providerPrompt?: string }
   | { kind: 'handoff'; originalMessage: string; provider: string | null }
   | { kind: 'provider_handoff'; handoff: AvantisProviderHandoffV1 }
+  | {
+      kind: 'send_name';
+      intent: Omit<BaseMcpSendActionIntentV1, 'recipient'> & { recipientName: string };
+    }
   | { kind: 'send'; intent: BaseMcpSendActionIntentV1 }
   | { kind: 'x402'; intent: BaseMcpX402ActionIntentV1 }
   | { kind: 'needs_input'; errorCode: string; reply: string };
@@ -85,7 +89,15 @@ export function classifyBaseMcpExtensionIntentV1(message: string): BaseMcpExtens
     return { kind: 'handoff', originalMessage: trimmed, provider: provider.pluginId };
   }
   if (provider?.disposition === 'handoff_to_provider_ui' && provider.pluginId === 'avantis') {
-    return { kind: 'provider_handoff', handoff: buildAvantisProviderHandoffV1(trimmed) };
+    const handoff = buildAvantisProviderHandoffV1(trimmed);
+    if (!handoff) {
+      return {
+        kind: 'needs_input',
+        errorCode: 'base_mcp_avantis_market_required',
+        reply: 'Specify the Avantis market, for example BTC/USD or ETH/USD. Miorail did not select a default market and no position was opened.',
+      };
+    }
+    return { kind: 'provider_handoff', handoff };
   }
   if (provider?.disposition === 'typed_x402_required') {
     return {
@@ -139,13 +151,13 @@ export function classifyBaseMcpExtensionIntentV1(message: string): BaseMcpExtens
   const sendMarker = /\b(?:send|transfer)\b|(?:отправь|отправить|переведи|перевести)/iu;
   if (sendMarker.test(trimmed)) {
     const match = trimmed.match(
-      /(?:^|\s)(?:send|transfer|отправь|отправить|переведи|перевести)\s+(\d+(?:[.,]\d{1,6})?)\s+USDC\s+(?:to(?:\s+address)?|on(?:\s+address)?|на(?:\s+адрес)?|по\s+адресу|в)\s*(0x[a-fA-F0-9]{40})(?:\s|[.,!?]|$)/iu,
+      /(?:^|\s)(?:send|transfer|отправь|отправить|переведи|перевести)\s+(\d+(?:[.,]\d{1,6})?)\s+USDC\s+(?:to(?:\s+address)?|on(?:\s+address)?|на(?:\s+адрес)?|по\s+адресу|в)\s*(0x[a-fA-F0-9]{40}|[^\s,!?]{1,255}\.base\.eth)(?:\s|[.,!?]|$)/iu,
     );
     if (!match) {
       return {
         kind: 'needs_input',
         errorCode: 'base_mcp_send_exact_input_required',
-        reply: 'Send V1 needs an exact USDC amount and a Base address (0x…). Base names, ETH and other ERC-20 assets are not released in this action vertical yet.',
+        reply: 'Send V1 needs an exact USDC amount and either a Base address (0x…) or a Basename (*.base.eth). ETH and other ERC-20 assets are not released in this action vertical yet.',
       };
     }
     const money = canonicalUsdcAmount(match[1]);
@@ -156,18 +168,32 @@ export function classifyBaseMcpExtensionIntentV1(message: string): BaseMcpExtens
         reply: 'Use a positive USDC amount with no more than 6 decimal places.',
       };
     }
-    const recipient = match[2].toLowerCase() as `0x${string}`;
+    const recipientInput = match[2].toLowerCase();
+    const asset = {
+      symbol: 'USDC' as const,
+      address: canonicalUsdcForBaseChain(8453).toLowerCase() as `0x${string}`,
+      decimals: 6 as const,
+    };
+    if (!ADDRESS_V1.test(recipientInput)) {
+      return {
+        kind: 'send_name',
+        intent: {
+          asset,
+          amount: money.amount,
+          amountAtomic: money.amountAtomic,
+          recipientName: recipientInput,
+        },
+      };
+    }
+    const recipient = recipientInput as `0x${string}`;
     return {
       kind: 'send',
       intent: {
-        asset: {
-          symbol: 'USDC',
-          address: canonicalUsdcForBaseChain(8453).toLowerCase() as `0x${string}`,
-          decimals: 6,
-        },
+        asset,
         amount: money.amount,
         amountAtomic: money.amountAtomic,
         recipient,
+        recipientName: null,
       },
     };
   }

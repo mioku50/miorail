@@ -40,6 +40,7 @@ import {
 import { probeBaseMcpTools } from '../lib/baseMcpToolProbe.js';
 import { verifyBaseMcpWalletMatchViaOAuth } from '../lib/baseMcpWalletReconciliation.js';
 import { tenantUserId, tenantWalletAddress } from '../middleware/tenantAuth';
+import { resolveBaseNameV1 } from '../lib/baseNameResolver.js';
 
 export const mcpBaseRouter = Router();
 
@@ -51,6 +52,7 @@ export const mcpBaseRouteRuntime = {
   baseMcpPluginDriftV1,
   runBaseMcpConsoleV1,
   classifyBaseMcpExtensionIntentV1,
+  resolveBaseNameV1,
   prepareBaseMcpSendActionV1,
   prepareBaseMcpX402ActionV1,
   reconcileBaseMcpActionV1,
@@ -372,7 +374,36 @@ mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFun
       }));
     }
 
-    const decision = mcpBaseRouteRuntime.classifyBaseMcpExtensionIntentV1(message);
+    let decision = mcpBaseRouteRuntime.classifyBaseMcpExtensionIntentV1(message);
+    if (decision.kind === 'send_name') {
+      const resolution = await mcpBaseRouteRuntime.resolveBaseNameV1(decision.intent.recipientName);
+      if (resolution.outcome !== 'resolved') {
+        const reply = resolution.outcome === 'unresolved'
+          ? `No Base address is configured for ${resolution.name}. Check the Basename or send to an exact 0x address.`
+          : resolution.outcome === 'invalid'
+            ? 'That Basename is not valid. Use a normalized *.base.eth name or an exact 0x address.'
+            : 'Basename resolution is temporarily unavailable. No send action was prepared; retry or use an exact 0x address.';
+        res.setHeader('Cache-Control', 'no-store');
+        return res.json(BaseMcpConsoleResponseV1Schema.parse({
+          status: 'needs_input',
+          reply,
+          trace: [],
+          toolsAvailable: 0,
+          truncated: false,
+          elapsedMs: 0,
+          errorCode: resolution.errorCode,
+          checkedAt: new Date().toISOString(),
+        }));
+      }
+      decision = {
+        kind: 'send',
+        intent: {
+          ...decision.intent,
+          recipient: resolution.address.toLowerCase() as `0x${string}`,
+          recipientName: resolution.name,
+        },
+      };
+    }
     if (decision.kind === 'handoff') {
       return res.json(BaseMcpConsoleResponseV1Schema.parse({
         status: 'handoff',
