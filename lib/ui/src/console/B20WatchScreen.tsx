@@ -84,7 +84,7 @@ export interface B20WatchScreenModelV1 {
   holdings: readonly B20HoldingV1[];
   /** Non-B20 tokens in the wallet, counted rather than listed. */
   otherTokenCount: number;
-  onOpenToken?: (tokenAddress: string) => void;
+  onOpenToken?: (tokenAddress: string, amountDecimal: string | null) => void;
   /** T68C — the exit check, for the one token it was last run on. One at a
    * time on purpose: each check is a dozen-odd metered router calls, and a
    * page that ran one per holding on mount would be a page nobody could

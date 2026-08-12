@@ -35,7 +35,13 @@ describe('the web console completes the NFT flow', () => {
   });
 
   test('the wallet is reached only through the shared submission button', () => {
-    assert.ok(/<BlueprintSubmitButton\s+goal="nft"/.test(source), 'the NFT review uses the shared submit button');
+    // Props, not prop ORDER. This used to require `goal="nft"` to be the
+    // FIRST attribute, so adding a className ahead of it read as the NFT flow
+    // having grown its own submission path.
+    assert.ok(
+      /<BlueprintSubmitButton[\s\S]{0,600}?goal="nft"/.test(source),
+      'the NFT review uses the shared submit button',
+    );
     // No second implementation, no direct wagmi call, no Base MCP.
     assert.ok(!/useSendCalls|sendCalls\.|sendCallsV1/.test(source), 'the console must never call the wallet directly');
     assert.ok(!/(?<!wallet_)send_calls/.test(source), 'Base MCP send_calls is not a submission path');

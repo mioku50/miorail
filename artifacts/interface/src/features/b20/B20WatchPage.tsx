@@ -7,7 +7,14 @@ import {
   B20ExitCoverageCard,
   B20WatchScreen,
   ConsoleShell,
+  B20_EXIT_ANCHOR_V1,
+  B20_PORTFOLIO_ANCHOR_V1,
   EXIT_PROFILE_DEFAULTS_V1,
+  GOAL_HANDOFF_KEY_V1,
+  shouldRevealResultV1,
+  type ResultRevealStateV1,
+  swapTokenGoalV1,
+  swapTokenHrefV1,
   b20ErrorCodeV1,
   b20UnavailableCopyV1,
   percentToBpsV1,
@@ -72,6 +79,23 @@ const EXIT_CHECK_TOLERANCE_BPS_V1 = 300;
 
 /** Atomic units to a readable balance. Integer arithmetic: a float turns a
  * token with 18 decimals into scientific notation. */
+/** The same balance as `formatBalanceV1` renders, as a plain decimal a goal
+ * sentence can carry. Null rather than '0' when the read failed: a zero would
+ * become "swap my 0 …", which is a request nobody made. */
+function balanceDecimalV1(atomic: string | null, decimals: number | null): string | null {
+  if (atomic === null || decimals === null) return null;
+  let value: bigint;
+  try {
+    value = BigInt(atomic);
+  } catch {
+    return null;
+  }
+  if (value <= 0n) return null;
+  const scale = 10n ** BigInt(decimals);
+  const fraction = (value % scale).toString().padStart(decimals, '0').slice(0, 4).replace(/0+$/, '');
+  return fraction ? `${value / scale}.${fraction}` : `${value / scale}`;
+}
+
 function formatBalanceV1(atomic: string | null, decimals: number | null): string {
   if (atomic === null || decimals === null) return 'not read';
   const value = BigInt(atomic);
@@ -231,6 +255,10 @@ export function B20WatchPage() {
           // because none of them index B20. `null` means the read failed and
           // stays "not read"; it never becomes a zero.
           balanceLabel: formatBalanceV1(token.balanceAtomic ?? null, token.decimals ?? null),
+          // The same number as a plain decimal, for the swap goal. Null when
+          // the read failed — the console then asks how much rather than being
+          // handed a figure nobody saw.
+          balanceDecimal: balanceDecimalV1(token.balanceAtomic ?? null, token.decimals ?? null),
           // Carried through for the exit card, whose capacity figures are in
           // atomic units of THIS token — not of the USDC that would buy it.
           decimals: token.decimals ?? null,
@@ -273,6 +301,7 @@ export function B20WatchPage() {
   const runExitCheck = useCallback(
     (token: string) => {
       if (!profileAtomic) return;
+      exitRequested.current = true;
       setExitToken(token);
       exitCheck.mutate({
         tokenAddress: token,
@@ -294,6 +323,7 @@ export function B20WatchPage() {
   const runSimulation = useCallback(
     (token: string) => {
       if (!profileAtomic) return;
+      exitRequested.current = true;
       setExitToken(token);
       const request = {
         tokenAddress: token,
@@ -535,6 +565,51 @@ export function B20WatchPage() {
         : null,
   };
 
+  // -------------------------------------------------------------------------
+  // Taking the user to the answer.
+  //
+  // "Check now" is at the bottom of the page and fills in the portfolio panel
+  // at the top. "Can I get out?" is on a holding card and answers in the exit
+  // card below it. Both worked; both read as doing nothing, because a user who
+  // presses a button looks where the button is.
+  //
+  // Only on the edge from pending to settled, and only after a press in this
+  // session — see `shouldRevealResultV1`. A page that jumps whenever data
+  // arrives would fight a background refresh for the scroll position.
+  // -------------------------------------------------------------------------
+  const revealAnchor = useCallback((anchorId: string) => {
+    const element = document.getElementById(anchorId);
+    if (!element) return;
+    element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Focus follows the eye. Without it a keyboard user is scrolled somewhere
+    // their next Tab does not continue from, and a screen reader is told
+    // nothing at all.
+    element.focus({ preventScroll: true });
+  }, []);
+
+  const sweepReveal = useRef<ResultRevealStateV1 | null>(null);
+  const sweepRequested = useRef(false);
+  useEffect(() => {
+    const current = { pending: sweep.isPending, settled: Boolean(sweep.data) };
+    if (shouldRevealResultV1({ previous: sweepReveal.current, current, requested: sweepRequested.current })) {
+      revealAnchor(B20_PORTFOLIO_ANCHOR_V1);
+    }
+    sweepReveal.current = current;
+  }, [sweep.isPending, sweep.data, revealAnchor]);
+
+  const exitReveal = useRef<ResultRevealStateV1 | null>(null);
+  const exitRequested = useRef(false);
+  useEffect(() => {
+    const current = {
+      pending: exitCheck.isPending || exitSimulate.isPending || exitProofPayment.isBusy,
+      settled: exitResult !== null,
+    };
+    if (shouldRevealResultV1({ previous: exitReveal.current, current, requested: exitRequested.current })) {
+      revealAnchor(B20_EXIT_ANCHOR_V1);
+    }
+    exitReveal.current = current;
+  }, [exitCheck.isPending, exitSimulate.isPending, exitProofPayment.isBusy, exitResult, revealAnchor]);
+
   const marketRail = (
     <>
       <WalletBalancesCard {...balancesModel} />
@@ -616,7 +691,24 @@ export function B20WatchPage() {
         onUntrackToken={(token) => removeWatch.mutate({ tokenAddress: token })}
         // Swapping a held B20 token is the Routes flow's job, not a second
         // execution path. The tab hands the goal over rather than growing one.
-        onOpenToken={(token) => navigate(`/?goal=${encodeURIComponent(`swap ${token} to USDC`)}`)}
+        //
+        // It used to navigate to `/?goal=…`. `/` is a redirect route, so the
+        // query string never survived the trip, and the console did not read a
+        // goal in the first place — the button landed the user on Discover with
+        // nothing to show. Now it goes straight to Routes, and leaves a
+        // one-shot token that tells the console this navigation came from a
+        // click inside Miorail rather than from a link someone sent.
+        onOpenToken={(token, amountDecimal) => {
+          const goal = swapTokenGoalV1(token, amountDecimal);
+          try {
+            window.sessionStorage.setItem(GOAL_HANDOFF_KEY_V1, goal);
+          } catch {
+            // Session storage can be unavailable (private mode, a locked-down
+            // browser). The goal still travels in the URL — the console fills
+            // it in and waits for a click, which is the safe half of this.
+          }
+          navigate(swapTokenHrefV1(token, amountDecimal));
+        }}
         exit={{
           tokenAddress: exitToken,
           check: exitResult as never,
@@ -647,7 +739,9 @@ export function B20WatchPage() {
         unavailableReason={unavailableReason}
         heldCount={held.length}
         onSweep={() => {
-          if (sweepTokens.length > 0) sweep.mutate({ tokens: sweepTokens });
+          if (sweepTokens.length === 0) return;
+          sweepRequested.current = true;
+          sweep.mutate({ tokens: sweepTokens });
         }}
       />
     </ConsoleShell>

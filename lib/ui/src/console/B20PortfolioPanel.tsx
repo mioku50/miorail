@@ -1,5 +1,6 @@
 import React from 'react';
 import { shortAddressV1 } from './B20WatchScreen';
+import { B20_PORTFOLIO_ANCHOR_V1 } from './resultAnchors';
 
 void React;
 
@@ -32,6 +33,9 @@ export interface B20HoldingV1 {
   symbol: string | null;
   /** Formatted balance, as the portfolio reported it. */
   balanceLabel: string;
+  /** The same balance as a plain decimal, or null when it could not be read.
+   * Handed to the swap goal so the amount is the number the user just saw. */
+  balanceDecimal: string | null;
   /** Null when no price source covered this token — shown as a stated absence,
    * never as $0. */
   usdLabel: string | null;
@@ -90,7 +94,7 @@ export interface B20PortfolioPanelProps {
   otherTokenCount: number;
   /** Null when a sweep has run. Otherwise says why there is nothing yet. */
   emptyReason: string | null;
-  onOpenToken?: (tokenAddress: string) => void;
+  onOpenToken?: (tokenAddress: string, amountDecimal: string | null) => void;
   /** T68C — asks the exit question for one holding. */
   onCheckExit?: (tokenAddress: string) => void;
   /** The token the exit card below is currently about, so a holding does not
@@ -107,7 +111,10 @@ export function B20PortfolioPanel({
   exitCheckedToken,
 }: B20PortfolioPanelProps): React.ReactElement {
   return (
-    <div className="panel">
+    // The anchor "Check now" scrolls to. `tabIndex` so focus can land here as
+    // well as the viewport — a sighted user sees the panel, and a screen reader
+    // is told it is now the thing being read.
+    <div className="panel" id={B20_PORTFOLIO_ANCHOR_V1} tabIndex={-1}>
       <div className="ph">
         <h3>Your B20 tokens</h3>
         <span className="sub">
@@ -183,7 +190,7 @@ export function B20PortfolioPanel({
                     <button
                       type="button"
                       className="btn sec"
-                      onClick={() => onOpenToken(holding.tokenAddress)}
+                      onClick={() => onOpenToken(holding.tokenAddress, holding.balanceDecimal)}
                     >
                       Swap this token
                     </button>

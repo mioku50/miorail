@@ -1,4 +1,5 @@
 import React from 'react';
+import { B20_EXIT_ANCHOR_V1 } from './resultAnchors';
 
 void React;
 
@@ -308,7 +309,9 @@ export function B20ExitCard({
   });
   const expired = clearanceExpiredV1({ check, now: at });
   return (
-    <div className="panel">
+    // The anchor an exit check scrolls to: the button that starts it sits on a
+    // holding card above, and the answer lands here.
+    <div className="panel" id={B20_EXIT_ANCHOR_V1} tabIndex={-1}>
       <div className="ph">
         <h3>Can I get back out?</h3>
         <span className="sub">{check === null ? 'not checked' : check.status}</span>

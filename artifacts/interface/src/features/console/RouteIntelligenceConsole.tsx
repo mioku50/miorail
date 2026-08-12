@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import { useAccount } from 'wagmi';
 import {
   CONSOLE_BREADCRUMB_V1,
+  GOAL_HANDOFF_KEY_V1,
+  goalHandoffV1,
   CommerceInvoiceReviewPanel,
   CommerceRouteCardPanel,
   NftProofPanel,
@@ -136,6 +138,24 @@ const RECONCILABLE_SUBMISSION_STATUSES: BlueprintSubmitStatus[] = ['confirmed', 
 
 function shortAddress(address: string | undefined): string | null {
   return address ? `${address.slice(0, 6)}…${address.slice(-4)}` : null;
+}
+
+/**
+ * The one-shot handoff token, read and immediately removed.
+ *
+ * Single use on purpose: a token left behind would let a `?goal=` link that
+ * happened to carry the same text run itself on the next visit.
+ */
+function readGoalHandoffTokenV1(): string | null {
+  try {
+    const token = window.sessionStorage.getItem(GOAL_HANDOFF_KEY_V1);
+    window.sessionStorage.removeItem(GOAL_HANDOFF_KEY_V1);
+    return token;
+  } catch {
+    // Storage unavailable. No token means no auto-comparison, which is the
+    // safe half of the handoff — the goal still arrives in the box.
+    return null;
+  }
 }
 
 export function RouteIntelligenceConsole() {
@@ -522,6 +542,48 @@ export function RouteIntelligenceConsole() {
       { onSettled: () => mark('candidates', 'complete') },
     );
   };
+
+  /**
+   * A goal handed over from another screen.
+   *
+   * Two arrivals, told apart by where they came from rather than by what they
+   * say. A click on "Swap this token" leaves a one-shot token in session
+   * storage that no link can write, and that goal is compared straight away. A
+   * goal that arrives only in the URL is filled into the box and left there —
+   * the user reads it and presses Compare, because `?goal=` is text a stranger
+   * can choose and a Route Card the user did not ask for should not appear
+   * looking like one they did.
+   */
+  const handoffConsumed = useRef(false);
+  /**
+   * The auto-comparison waits for the goal to actually be in state.
+   *
+   * `compare()` reads `goal`, so calling it in the same tick that sets the goal
+   * would compare an empty string. It also waits for the wallet: arriving here
+   * before wagmi has resolved the account is the normal case, not the edge one.
+   */
+  const [pendingAutoCompare, setPendingAutoCompare] = useState<string | null>(null);
+  useEffect(() => {
+    if (handoffConsumed.current) return;
+    const handoff = goalHandoffV1({
+      search: window.location.search,
+      handoffToken: readGoalHandoffTokenV1(),
+    });
+    if (!handoff.goal) return;
+    handoffConsumed.current = true;
+    setGoal(handoff.goal);
+    if (handoff.autoCompare) setPendingAutoCompare(handoff.goal);
+  }, []);
+
+  useEffect(() => {
+    if (!pendingAutoCompare || goal !== pendingAutoCompare) return;
+    if (!address || dispatch.engine === null) return;
+    setPendingAutoCompare(null);
+    // `compare` is recreated every render and is deliberately not a dependency:
+    // the guard above, plus clearing the pending goal, is what makes this run
+    // exactly once.
+    compare();
+  }, [pendingAutoCompare, goal, address, dispatch.engine]);
 
   /**
    * Answers the server's clarification without retyping the goal.
@@ -1213,6 +1275,12 @@ export function RouteIntelligenceConsole() {
           submitSlot={
             nftRunId ? (
               <BlueprintSubmitButton
+                // The console's own button vocabulary. Without it this renders
+                // as plain text: the shared `Button` is dressed in Tailwind
+                // utilities that the interface build does not generate for
+                // `lib/ui` sources, so the primary control sat unstyled beside
+                // a properly drawn secondary one.
+                className="btn lg"
                 goal="nft"
                 routeRunId={nftRunId}
                 blueprintId={nftPrepared.response.blueprintId}
@@ -1332,6 +1400,9 @@ export function RouteIntelligenceConsole() {
           signSlot={
             prepared && simulation.canSign ? (
               <BlueprintSubmitButton
+                // See the NFT submit button above: console classes, because
+                // the shared Button's Tailwind classes are not in this build.
+                className="btn lg"
                 routeRunId={prepared.routeRunId}
                 blueprintId={prepared.blueprint.id}
                 blueprintHash={prepared.blueprint.blueprintHash}

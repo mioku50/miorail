@@ -1006,6 +1006,10 @@ export function MiniConsole() {
           name: token.displayName,
           symbol: token.displaySymbol ?? balance?.symbol ?? null,
           balanceLabel: token.balanceAtomic ?? "not read",
+          // The miniapp shows the ATOMIC balance and has no swap handoff, so
+          // there is no decimal figure to hand a goal. Null keeps the amount
+          // out of a sentence rather than putting base units into one.
+          balanceDecimal: null,
           // A missing price stays null all the way to the card. A 0 here would
           // reach a user as "worthless".
           usdLabel: balance?.usdValue ? `$${balance.usdValue}` : null,

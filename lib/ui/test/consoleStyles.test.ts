@@ -203,3 +203,67 @@ describe('.kv is used as a row, not as a wrapper around rows', () => {
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// A hash is 66 characters with no break opportunity, and a batch id can be
+// several hundred. Observed in production: the Proof screen's execution
+// timeline held an unbroken 450-character batch id, which widened its grid
+// column, pushed the "Plan vs actual" panel off the right edge and gave the
+// whole page a horizontal scrollbar.
+//
+// Two independent causes, so two assertions. Wrapping alone is not enough —
+// a grid track's automatic minimum is its content's min-content width, so an
+// unbreakable string expands the track no matter what the text does.
+// ---------------------------------------------------------------------------
+describe('a long hash cannot widen the page', () => {
+  test('every value line that can hold a hash is allowed to wrap', () => {
+    // The classes a hash, an address or a token symbol actually lands in.
+    for (const selector of ['.tl .ts', '.call .cs', '.kv .v', '.cardrow .cr-v']) {
+      const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const rule = new RegExp(`${escaped}[^{]*\\{[^}]*overflow-wrap:\\s*anywhere`);
+      const grouped = new RegExp(`${escaped},[\\s\\S]{0,300}?overflow-wrap:\\s*anywhere`);
+      assert.ok(rule.test(css) || grouped.test(css), `${selector} has no overflow-wrap rule`);
+    }
+  });
+
+  test('no grid track is a bare 1fr — every one can shrink below its content', () => {
+    const offenders: string[] = [];
+    for (const match of css.matchAll(/grid-template-columns:([^;]+);/g)) {
+      const value = match[1]!;
+      // `minmax(0,1fr)` is the shrinkable form. A bare `1fr` is not, and that
+      // is what let one string decide the width of the page.
+      const withoutMinmax = value.replace(/minmax\([^)]*\)/g, '');
+      if (/\b[\d.]*fr\b/.test(withoutMinmax)) offenders.push(value.trim());
+    }
+    assert.deepEqual(offenders, [], 'a bare fr track lets unbreakable content set the page width');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The shared `Button` is dressed in Tailwind utilities. The interface build
+// does not generate them for `lib/ui` sources — the compiled stylesheet holds
+// no `from-accent`, no `to-accent-2`, no `.bg-gradient-to-r` — so a `Button`
+// dropped onto a console screen renders as plain text.
+//
+// Observed: "Confirm in Base Account", the one control that opens the wallet,
+// sat as unstyled words beside a properly drawn "Back to routes". The obvious
+// button was the one that did nothing.
+// ---------------------------------------------------------------------------
+describe('a console control is styled by the console', () => {
+  const consoleScreens = readFileSync(
+    new URL('../../../artifacts/interface/src/features/console/RouteIntelligenceConsole.tsx', import.meta.url),
+    'utf8',
+  );
+
+  test('every wallet-actions button on the console carries a console class', () => {
+    const uses = [...consoleScreens.matchAll(/<BlueprintSubmitButton([\s\S]{0,1500}?)\/>/g)];
+    assert.ok(uses.length > 0, 'the console should still submit blueprints');
+    for (const use of uses) {
+      assert.match(
+        use[1]!,
+        /className="btn/,
+        'a BlueprintSubmitButton without a console class renders as plain text',
+      );
+    }
+  });
+});

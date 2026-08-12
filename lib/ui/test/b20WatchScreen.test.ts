@@ -213,11 +213,21 @@ describe('the B20 portfolio card', () => {
 
   test('swapping a held token hands over to the Routes flow', () => {
     // Not a second execution path. The tab passes the goal along.
+    //
+    // This used to assert `navigate(\`/?goal=` — the literal shape of the bug.
+    // `/` is a redirect route that dropped the query string, so the assertion
+    // was pinning a button that landed the user on Discover with nothing. What
+    // matters is the destination and the one-shot token, not the string.
     const page = readFileSync(
       path.join(here, '../../../artifacts/interface/src/features/b20/B20WatchPage.tsx'),
       'utf8',
     );
-    assert.ok(page.includes("navigate(`/?goal="));
+    assert.ok(page.includes('swapTokenHrefV1('), 'the href has one spelling, shared with the console');
+    assert.ok(!page.includes('navigate(`/?goal='), 'never `/`: that route drops the query');
+    assert.ok(
+      page.includes('GOAL_HANDOFF_KEY_V1'),
+      'a click leaves the token that separates it from a link someone sent',
+    );
   });
 });
 

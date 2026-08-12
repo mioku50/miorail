@@ -53,5 +53,9 @@ export function HomeRoute() {
     walletConnected: Boolean(address),
   });
 
-  return <Redirect to={consoleSectionPathV1(home.section)} replace />;
+  // The query string travels with the redirect. It used to be dropped, which
+  // is half of why "Swap this token" appeared to do nothing: the goal was put
+  // on `/`, and `/` is this — a route whose only job is to send you somewhere
+  // else. Nothing here reads the query; it is carried so the destination can.
+  return <Redirect to={`${consoleSectionPathV1(home.section)}${window.location.search}`} replace />;
 }

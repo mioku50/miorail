@@ -200,7 +200,12 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .ph .rt { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .mio-console .pb { padding: 16px; }
 .mio-console .pb.tight { padding: 12px 16px; }
-.mio-console .cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+/* minmax(0,…) rather than a bare 1fr. A grid track's automatic minimum is its
+   content's min-content width, and a 450-character transaction hash has no
+   break opportunity — so one unbroken string in the execution timeline widened
+   its column, pushed "Plan vs actual" off the screen and gave the whole page a
+   horizontal scrollbar. Every other grid in this file already does this. */
+.mio-console .cols2 { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 14px; }
 .mio-console .cols2 .panel { margin-bottom: 0; }
 
 .mio-console .herostrip { display: grid; grid-template-columns: minmax(0,1.15fr) minmax(0,1fr); border-radius: var(--r); margin-bottom: 14px;
@@ -220,8 +225,8 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .pill.n { color: var(--muted); background: var(--n-bg); box-shadow: inset 0 0 0 1px var(--line); font-weight: 500; }
 .mio-console .why { font-size: 13px; color: var(--muted); margin: 12px 0 0; max-width: 440px; }
 .mio-console .why b { color: var(--ink); }
-.mio-console .kpis { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px 16px; }
-.mio-console .kpis.two { grid-template-columns: 1fr 1fr; }
+.mio-console .kpis { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) minmax(0,1fr); gap: 12px 16px; }
+.mio-console .kpis.two { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
 .mio-console .kpi .k { font-size: 10.5px; color: var(--faint); }
 .mio-console .kpi .v { font-size: 15px; font-weight: 600; margin-top: 2px; }
 .mio-console .kpi .v.good { color: var(--green); }
@@ -316,11 +321,11 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .simbox.na .simhead { color: var(--muted); }
 .mio-console .simnote { font-size: 12.5px; color: var(--muted); }
 .mio-console .simnote b { color: var(--ink); }
-.mio-console .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 22px; }
+.mio-console .checks { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 8px 22px; }
 .mio-console .checks div { display: flex; gap: 9px; align-items: baseline; font-size: 12.5px; color: var(--muted); }
 .mio-console .tick { color: var(--green); font-size: 10px; font-weight: 700; }
 .mio-console .tick.na { color: var(--dim); }
-.mio-console .limits { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+.mio-console .limits { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) minmax(0,1fr); gap: 14px; }
 .mio-console .limits label { display: block; font-size: 11px; color: var(--faint); margin-bottom: 6px; }
 .mio-console .limits input { width: 100%; border: 0; border-radius: 8px; padding: 9px 12px; font: inherit; font-size: 13.5px; color: var(--ink);
   background: var(--field); box-shadow: inset 0 0 0 1px var(--line); outline: 0; }
@@ -413,9 +418,9 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
      toggle off the edge — which is how 0x86… ended up clipped by the viewport. */
   .mio-console header > .chip { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .mio-console .themetog { flex: none; }
-  .mio-console .scorewrap, .mio-console .cols2, .mio-console .herostrip { grid-template-columns: 1fr; }
+  .mio-console .scorewrap, .mio-console .cols2, .mio-console .herostrip { grid-template-columns: minmax(0,1fr); }
   .mio-console .heroR { border-left: 0; border-top: 1px solid var(--hero-line); }
-  .mio-console .limits, .mio-console .checks { grid-template-columns: 1fr; }
+  .mio-console .limits, .mio-console .checks { grid-template-columns: minmax(0,1fr); }
   .mio-console main { padding: 14px 14px 24px; }
 }
 @media (prefers-reduced-motion: reduce) { .mio-console aside.left { transition: none; } }
@@ -441,9 +446,9 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console.mini main { padding: 14px 12px 24px; }
 .mio-console.mini .minipanels { margin-top: 16px; }
 .mio-console.mini .cols2, .mio-console.mini .scorewrap, .mio-console.mini .herostrip,
-.mio-console.mini .limits, .mio-console.mini .checks { grid-template-columns: 1fr; }
+.mio-console.mini .limits, .mio-console.mini .checks { grid-template-columns: minmax(0,1fr); }
 .mio-console.mini .heroR { border-left: 0; border-top: 1px solid var(--hero-line); }
-.mio-console.mini .kpis { grid-template-columns: 1fr 1fr; }
+.mio-console.mini .kpis { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
 .mio-console.mini .amount { font-size: 34px; }
 .mio-console.mini .scorerow .cf { display: none; }
 .mio-console.mini .scorerow .nm { width: 92px; }
@@ -457,7 +462,7 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .cardrow.off .cr-name { color: var(--muted); }
 .mio-console .cr-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .mio-console .cr-name { font-size: 13.5px; font-weight: 600; color: var(--ink); }
-.mio-console .cr-nums { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 9px 0; }
+.mio-console .cr-nums { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 8px; margin: 9px 0; }
 .mio-console .cr-k { display: block; font-size: 10.5px; color: var(--faint); }
 .mio-console .cr-v { font-size: 13px; font-weight: 600; color: var(--ink); }
 .mio-console .cr-v.good { color: var(--green); }
@@ -486,7 +491,7 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   background: repeating-linear-gradient(115deg,var(--track-bg) 0 4px,transparent 4px 9px); }
 .mio-console .nftmedia .nftmedia-ph { font-size: 12px; font-weight: 600; color: var(--faint); }
 .mio-console .nftmedia .lnote { margin: 0; }
-@media (max-width: 900px) { .mio-console .nftrow { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .mio-console .nftrow { grid-template-columns: minmax(0,1fr); } }
 .mio-console.mini .nftrow { grid-template-columns: 96px minmax(0,1fr); }
 .mio-console.mini .nftmedia { width: 96px; height: 96px; }
 
@@ -534,6 +539,16 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
    capacity bounds wrap inside the card rather than widening the page. */
 .mio-console .cardrow .kv { flex-wrap: wrap; }
 .mio-console .cardrow .cr-name, .mio-console .cardrow .cr-v { overflow-wrap: anywhere; }
+
+/* Anywhere a hash, an address or an arbitrary token symbol can land.
+   `anywhere` rather than `break-word`: hex has no spaces and no hyphens, so
+   there is nothing for a normal break opportunity to use, and the string
+   simply runs past the panel. These are value lines only — labels stay
+   unbroken. */
+.mio-console .tl .ts,
+.mio-console .call .cs,
+.mio-console .kv .v,
+.mio-console .qrow .v { overflow-wrap: anywhere; }
 .mio-console .cardrow .cr-name .sub { font-size: 11.5px; font-weight: 400; color: var(--faint); margin-left: 6px; }
 
 .mio-console .aitext { margin: 10px 0 0; padding: 12px; border-radius: var(--r);
