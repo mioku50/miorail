@@ -75,7 +75,7 @@ const FLAGS = {
   publicProofV1: false,
   mcpPrivateV1: true,
   mcpPrivateExecutionV1: true,
-  routeOutcomeFeedbackV1: false,
+  routeOutcomeFeedbackV1: false, tokenIdentityV1: false,
 } as const;
 
 function clearance(): B20OpportunityClearanceV1 {

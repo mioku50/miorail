@@ -12,9 +12,11 @@ import { assembleExecutionBlueprintV1, blueprintIdV1, classifySwapCallV1 } from 
 import { createTransactionComposer, TransactionComposerBindingError } from '../src/coordinator.js';
 import type { TransactionComposerDependencies, TransactionComposerPrepareInput } from '../src/types.js';
 import {
+  ETH_BASE,
   NOW,
   TENANT,
   WALLET,
+  WETH_BASE,
   buildScenario,
   buildSideOutputs,
   defaultBuiltCalls,
@@ -229,7 +231,13 @@ test('graceful outcome: an expired Route Card requires a refresh instead of thro
 // Unsupported outcomes
 // ---------------------------------------------------------------------------
 
-test('unsupported: a non-canonical pair is never prepared', async () => {
+// The pair rule used to be "the canonical three". An ordinary Base ERC-20 was
+// refused here for being unfamiliar, which is not a safety property — whether
+// a token may be traded is decided by the token-security verdict and the
+// Safety Kernel, both of which run later and neither of which this gate can
+// stand in for. What this gate still refuses is a pair that cannot be a trade.
+
+test('a well-formed Base ERC-20 is no longer refused for being unfamiliar', async () => {
   const dai: AssetRefV1 = {
     assetId: 'eip155:8453/erc20:0x50c5725949a6f0c72e6c4a641f24049a917db0cb',
     chainId: 8453,
@@ -238,7 +246,33 @@ test('unsupported: a non-canonical pair is never prepared', async () => {
     symbol: 'DAI',
     decimals: 18,
   };
-  const scenario = buildScenario({ toAsset: dai });
+  const { scenario, deps } = await defaultScenarioDeps({ toAsset: dai });
+  const composer = createTransactionComposer(deps);
+  const result = await composer.prepare(prepareInput(scenario));
+  // It reaches the providers and is prepared like any other pair. The token's
+  // legitimacy is not this gate's question and never was.
+  assert.equal(result.outcome, 'prepared');
+});
+
+test('unsupported: ETH to WETH is never prepared — a wrap is not a routed trade', async () => {
+  const scenario = buildScenario({ fromAsset: ETH_BASE, toAsset: WETH_BASE, amountDecimal: '1' });
+  const repository = await seedRepository(scenario);
+  const composer = createTransactionComposer(baseDeps({ repository }));
+  const result = await composer.prepare(prepareInput(scenario));
+  assert.equal(result.outcome, 'unsupported');
+  if (result.outcome === 'unsupported') assert.equal(result.reason, 'unsupported_pair');
+});
+
+test('unsupported: an asset with decimals no amount could survive is refused', async () => {
+  const absurd: AssetRefV1 = {
+    assetId: 'eip155:8453/erc20:0x50c5725949a6f0c72e6c4a641f24049a917db0cb',
+    chainId: 8453,
+    kind: 'erc20',
+    address: '0x50c5725949a6f0c72e6c4a641f24049a917db0cb',
+    symbol: 'HUGE',
+    decimals: 200,
+  };
+  const scenario = buildScenario({ toAsset: absurd });
   const repository = await seedRepository(scenario);
   const composer = createTransactionComposer(baseDeps({ repository }));
   const result = await composer.prepare(prepareInput(scenario));

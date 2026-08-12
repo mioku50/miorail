@@ -43,7 +43,7 @@ const FLAGS = {
   publicProofV1: true,
   mcpPrivateV1: false,
   mcpPrivateExecutionV1: false,
-  routeOutcomeFeedbackV1: false,
+  routeOutcomeFeedbackV1: false, tokenIdentityV1: false,
 };
 
 const original = { ...publicProofRuntime };

@@ -11,6 +11,7 @@ import {
   type SimulationViewV1,
 } from './consoleState';
 import type { ProviderDiagnosticRowV1, ProviderHistoryViewV1 } from './consoleAdapters';
+import type { VerificationHonestyViewV1 } from './verificationHonesty';
 import {
   CONSOLE_NO_ANALYSIS_COPY_V1,
   CONSOLE_NO_ANALYSIS_TITLE_V1,
@@ -668,6 +669,14 @@ export interface ReviewScreenModelV1 {
    * is the last screen before a signature, so the controls the user is about to
    * be subject to belong here more than anywhere. */
   tokenPanels?: React.ReactNode;
+  /**
+   * T74 — what was checked, and what nobody looked at.
+   *
+   * A screen full of green ticks implies the questions it does not ask were
+   * answered somewhere. Once either side of a swap can be a token nobody has
+   * heard of, that implication is the most dangerous thing on the page.
+   */
+  honesty?: VerificationHonestyViewV1 | null;
 }
 
 export function ReviewScreen(model: ReviewScreenModelV1) {
@@ -785,6 +794,38 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
           </div>
         </div>
       </div>
+
+      {model.honesty && (
+        <div className="panel">
+          <div className="ph">
+            <h3>What was checked</h3>
+            <span className="sub">and what was not</span>
+          </div>
+          <div className="pb">
+            {model.honesty.verified.map((fact, index) => (
+              <div className="call" key={`${fact.label}-${index}`}>
+                <span className="cidx">{fact.tone === 'good' ? '✓' : '!'}</span>
+                <div>
+                  <div className="ct">{fact.label}</div>
+                  <div className="cs">{fact.detail}</div>
+                </div>
+              </div>
+            ))}
+            <div className="sechead">
+              <span>Not checked — by anyone, anywhere in this flow</span>
+            </div>
+            {model.honesty.notVerified.map((line) => (
+              <div className="call" key={line}>
+                <span className="cidx">—</span>
+                <div>
+                  <div className="cs">{line}</div>
+                </div>
+              </div>
+            ))}
+            <p className="note warn">{model.honesty.note}</p>
+          </div>
+        </div>
+      )}
 
       {model.tokenPanels}
 

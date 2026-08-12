@@ -298,3 +298,4 @@ export function groundSemanticRecipient(
 }
 
 export * from './tokenIdentity.js';
+export * from './tokenIdentityReader.js';

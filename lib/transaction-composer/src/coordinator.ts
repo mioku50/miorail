@@ -14,7 +14,7 @@ import {
   type SafetyKernelResultV1,
   type SimulationStateV1,
 } from '@mioagent/route-domain';
-import { atomicToHumanDecimal } from '@mioagent/swap-adapters';
+import { atomicToHumanDecimal, routablePairV1 } from '@mioagent/swap-adapters';
 import { assembleExecutionBlueprintV1, blueprintIdV1, classifySwapCallV1 } from './blueprint.js';
 import { routeFromCandidateV1 } from './adapters/aerodrome.js';
 import { buildTransactionReviewProjectionV1 } from './reviewProjection.js';
@@ -65,12 +65,10 @@ export class TransactionComposerBindingError extends Error {
  * ETH↔WETH stays out: that is a wrap, not a routed trade.
  */
 function isSupportedPair(intent: RouteIntentV1): boolean {
-  if (intent.chainId !== 8453) return false;
-  const from = canonicalAerodromeSideV1(intent.fromAsset);
-  const to = canonicalAerodromeSideV1(intent.toAsset);
-  if (!from || !to) return false;
-  const poolToken = (side: 'usdc' | 'weth' | 'eth') => (side === 'usdc' ? 'usdc' : 'weth');
-  return poolToken(from) !== poolToken(to);
+  // One statement of the rule, shared with the quote adapters and both build
+  // adapters. It used to live here in its own words, which is how comparison
+  // and preparation came to disagree about what was routable.
+  return intent.chainId === 8453 && routablePairV1(intent.fromAsset, intent.toAsset);
 }
 
 /** One canonical Base asset, identified by address — or by being native ETH.

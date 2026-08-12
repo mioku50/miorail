@@ -136,11 +136,71 @@ export function providerTokenAddress(
   asset: AssetRefV1,
   provider: SwapAdapterId,
 ): `0x${string}` | null {
-  if (!isTrustedRouteAsset(asset)) return null;
+  if (!isRoutableRouteAssetV1(asset)) return null;
   if (asset.kind === 'native') {
     return provider === 'uniswap' ? UNISWAP_NATIVE_ETH : KYBERSWAP_NATIVE_ETH;
   }
   return asset.address;
+}
+
+const ROUTE_ADDRESS_V1 = /^0x[0-9a-f]{40}$/;
+const ZERO_ADDRESS_V1 = '0x0000000000000000000000000000000000000000';
+/** Above this, base units stop being reconstructable. No routable ERC-20 is
+ * near it; matches the bound the intent layer and the guards use. */
+const MAX_ROUTE_ASSET_DECIMALS_V1 = 36;
+
+/**
+ * The key two sides of a swap are compared BY, or null when the asset cannot
+ * be routed at all.
+ *
+ * Native ETH normalises to WETH on purpose: ETH↔WETH is a wrap, there is no
+ * pool and no price to compare, and a wrap dressed as a route would carry a
+ * provider's name on a trade nobody quoted.
+ *
+ * This is the ONE place that decides what a routable side is. The rule used to
+ * be written out separately in the quote adapters, in both build adapters and
+ * in the composer — four copies of "USDC in only", fixed one at a time over
+ * three sessions.
+ */
+export function routeSideV1(asset: AssetRefV1 | null | undefined): string | null {
+  if (!asset) return null;
+  if (asset.chainId !== BASE_MAINNET_CHAIN_ID) return null;
+  if (asset.kind === 'native') return BASE_WETH_ADDRESS_V1;
+  const address = asset.address?.toLowerCase();
+  if (!address || !ROUTE_ADDRESS_V1.test(address) || address === ZERO_ADDRESS_V1) return null;
+  if (
+    !Number.isInteger(asset.decimals) ||
+    asset.decimals < 0 ||
+    asset.decimals > MAX_ROUTE_ASSET_DECIMALS_V1
+  ) {
+    return null;
+  }
+  return address;
+}
+
+const BASE_WETH_ADDRESS_V1 = '0x4200000000000000000000000000000000000006';
+
+/**
+ * An asset a provider may be ASKED about — the canonical three, or any
+ * well-formed Base ERC-20.
+ *
+ * This is not a claim that the token is safe. It says the asset is well enough
+ * described to quote. Whether it may be traded is decided later and elsewhere:
+ * by the token-security verdict on both sides, and by the Safety Kernel over
+ * the calldata that comes back.
+ */
+export function isRoutableRouteAssetV1(asset: AssetRefV1): boolean {
+  return isTrustedRouteAsset(asset) || routeSideV1(asset) !== null;
+}
+
+/** Both sides routable, and not the same side. */
+export function routablePairV1(
+  from: AssetRefV1 | null | undefined,
+  to: AssetRefV1 | null | undefined,
+): boolean {
+  const fromSide = routeSideV1(from);
+  const toSide = routeSideV1(to);
+  return fromSide !== null && toSide !== null && fromSide !== toSide;
 }
 
 export function isTrustedRouteAsset(asset: AssetRefV1): boolean {
@@ -156,7 +216,7 @@ export function isTrustedRouteAsset(asset: AssetRefV1): boolean {
   );
 }
 
-export function supportsSwapIntent(intent: RouteIntentV1): boolean {
+function wellFormedSwapIntentV1(intent: RouteIntentV1): boolean {
   const parsed = RouteIntentV1Schema.safeParse(intent);
   return Boolean(
     parsed.success &&
@@ -165,10 +225,25 @@ export function supportsSwapIntent(intent: RouteIntentV1): boolean {
       intent.chainId === BASE_MAINNET_CHAIN_ID &&
       intent.fromAsset &&
       intent.toAsset &&
-      isTrustedRouteAsset(intent.fromAsset) &&
-      isTrustedRouteAsset(intent.toAsset) &&
       BigInt(intent.amount.amountAtomic) > 0n,
   );
+}
+
+/** The canonical three only. Aerodrome keeps this: its route search is pinned
+ * to a known pool set, so asking it about an arbitrary token would produce a
+ * "no route" that says nothing. */
+export function supportsSwapIntent(intent: RouteIntentV1): boolean {
+  return (
+    wellFormedSwapIntentV1(intent) &&
+    isTrustedRouteAsset(intent.fromAsset!) &&
+    isTrustedRouteAsset(intent.toAsset!)
+  );
+}
+
+/** Any well-formed Base pair. Uniswap and KyberSwap route arbitrary tokens;
+ * the limit was never theirs. */
+export function supportsRoutableSwapIntentV1(intent: RouteIntentV1): boolean {
+  return wellFormedSwapIntentV1(intent) && routablePairV1(intent.fromAsset, intent.toAsset);
 }
 
 export function protocolAllowsAdapter(intent: RouteIntentV1, adapterId: SwapAdapterId): boolean {

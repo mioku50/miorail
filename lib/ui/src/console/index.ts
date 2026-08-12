@@ -3,6 +3,7 @@ export * from './OpportunitiesScreen';
 export * from './opportunityCardView';
 export * from './SettingsScreen';
 export * from './consoleState';
+export * from './verificationHonesty';
 export * from './consoleFlow';
 export * from './providerDiagnostics';
 export * from './consoleAdapters';

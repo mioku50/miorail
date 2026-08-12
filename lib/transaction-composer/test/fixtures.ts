@@ -237,14 +237,21 @@ export interface FixtureScenario {
 
 export function buildScenario(
   overrides: Partial<{
+    fromAsset: AssetRefV1;
     toAsset: AssetRefV1;
+    amountDecimal: string;
     verificationDepth: RouteIntentV1['verificationDepth'];
     cardStatus: RouteCardV1['status'];
     cardCreatedAt: string;
     cardExpiresAt: string;
   }> = {},
 ): FixtureScenario {
-  const intent = makeIntent({ toAsset: overrides.toAsset, verificationDepth: overrides.verificationDepth });
+  const intent = makeIntent({
+    fromAsset: overrides.fromAsset,
+    toAsset: overrides.toAsset,
+    amountDecimal: overrides.amountDecimal,
+    verificationDepth: overrides.verificationDepth,
+  });
   const uniswapArtifacts = makeCandidateAndEvidence(intent, 'uniswap');
   const kyberArtifacts = makeCandidateAndEvidence(intent, 'kyberswap', { expectedOutputAtomic: '38050000000000000' });
   const uniswapEvidenceSet = makeEvidenceSet(intent, uniswapArtifacts.candidate, uniswapArtifacts.evidence);

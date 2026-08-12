@@ -53,6 +53,7 @@ import {
 } from '@mioagent/api-zod';
 import { createLlmProvider } from '@mioagent/llm';
 import { createSwapRouteEngine } from '@mioagent/route-engine';
+import { createChainTokenIdentityReaderV1 } from '@mioagent/intent-core';
 import {
   RouteStorageConflictError,
   RouteStorageIntegrityError,
@@ -375,6 +376,14 @@ export const routePlanRouteRuntime = {
         new AerodromeSwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1() }),
       ],
       repository,
+      // T74: naming a token by address. Two conditions, both necessary — the
+      // flag, and an endpoint to read the contract from. With either missing
+      // the reader is absent, and an address outside the trusted three is
+      // refused exactly as before.
+      identifyToken:
+        flags.tokenIdentityV1 && baseMainnetRpcUrlV1()
+          ? createChainTokenIdentityReaderV1({ rpcUrl: baseMainnetRpcUrlV1() })
+          : undefined,
       // Server-side continuation: the half-finished goal is keyed by the
       // authenticated tenant and wallet and never passes through the client.
       pendingIntents: continuationAvailable

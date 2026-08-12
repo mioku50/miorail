@@ -7,6 +7,7 @@ import {
   parsePositiveAtomic,
   parseUnsignedAtomic,
   providerTokenAddress,
+  routablePairV1,
   createPartnerFetchTradeTransport,
   uniswapSlippageToleranceV1,
   UniswapTradeClient,
@@ -22,8 +23,6 @@ import type {
 } from '../types.js';
 
 const ROUTER = BASE_UNISWAP_UNIVERSAL_ROUTER_2 as `0x${string}`;
-const CANONICAL_USDC_BASE_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
-const CANONICAL_WETH_BASE_V1 = '0x4200000000000000000000000000000000000006';
 
 function failure(outcome: SwapBuildFailureOutcome, errorCode: string, retryable: boolean): SwapBuildFailure {
   return { outcome, provider: 'uniswap', errorCode, retryable };
@@ -58,21 +57,12 @@ export class UniswapSwapBuildAdapter implements SwapBuildAdapter {
   async build(input: SwapBuildInput): Promise<SwapBuildResultV1> {
     if (!this.configured) return failure('not_configured', 'uniswap_not_configured', false);
     const { intent } = input;
-    // Both directions between the canonical Base assets. This was USDC-in
-    // only — a limit of this adapter, never of Uniswap, which quotes and
-    // builds the reverse perfectly well. ETH↔WETH stays out: a wrap is not a
-    // routed trade.
-    const sideOf = (asset: typeof intent.fromAsset) => {
-      if (!asset) return null;
-      if (asset.kind === 'native') return 'weth' as const;
-      const address = asset.address?.toLowerCase();
-      if (address === CANONICAL_USDC_BASE_V1) return 'usdc' as const;
-      if (address === CANONICAL_WETH_BASE_V1) return 'weth' as const;
-      return null;
-    };
-    const fromSide = sideOf(intent.fromAsset);
-    const toSide = sideOf(intent.toAsset);
-    if (intent.chainId !== 8453 || !fromSide || !toSide || fromSide === toSide) {
+    // Any well-formed Base pair, both directions. This adapter carried its own
+    // copy of the pair rule three times over — USDC-in only, then the
+    // canonical three — and each copy had to be found and fixed separately.
+    // `routablePairV1` is now the single statement of it, shared with the
+    // quote adapters. ETH↔WETH is still excluded there: a wrap is not a trade.
+    if (intent.chainId !== 8453 || !routablePairV1(intent.fromAsset, intent.toAsset)) {
       return failure('rejected', 'uniswap_pair_unsupported', false);
     }
     if (input.walletAddress.toLowerCase() !== intent.walletAddress.toLowerCase()) {

@@ -159,13 +159,31 @@ function toAssetRef(asset: TrustedAsset): AssetRefV1 {
   };
 }
 
-export function resolveRouteAssetV1(raw: string | null): AssetRefV1 | null {
+/**
+ * Tokens identified on chain for THIS message, and nothing else.
+ *
+ * Deliberately per-request rather than a growing registry: an asset earns its
+ * place by the user naming its address in the words being read right now. A
+ * cache would let one request's token answer another request's symbol, which
+ * is the whole failure mode this design exists to avoid.
+ */
+export type IdentifiedAssetsV1 = readonly AssetRefV1[];
+
+/** The asset a raw field names — trusted by symbol or address, or identified
+ * on chain for this message. Symbols resolve ONLY against the trusted table:
+ * an identified token is reachable by its address, never by the name its own
+ * contract answers, because two contracts can answer the same name. */
+export function resolveRouteAssetV1(
+  raw: string | null,
+  identified: IdentifiedAssetsV1 = [],
+): AssetRefV1 | null {
   const bySymbol = resolveTrustedAsset(raw);
   if (bySymbol) return toAssetRef(bySymbol);
   if (!raw) return null;
   const lowered = raw.toLowerCase();
   const byAddress = trustedBaseAssets().find((asset) => asset.address?.toLowerCase() === lowered);
-  return byAddress ? toAssetRef(byAddress) : null;
+  if (byAddress) return toAssetRef(byAddress);
+  return identified.find((asset) => asset.address?.toLowerCase() === lowered) ?? null;
 }
 
 interface AssetOccurrenceV1 {
@@ -178,17 +196,25 @@ interface AssetOccurrenceV1 {
 const ASSET_SYMBOL_PATTERN_V1 =
   /(?<![\p{L}\p{N}])(?:USDC|WETH|ETH|ETHER|ЭФИР\p{L}*|ЮСД[СЦ])(?![\p{L}\p{N}])/giu;
 
-function assetOccurrences(message: string): AssetOccurrenceV1[] {
+function assetOccurrences(message: string, identified: IdentifiedAssetsV1 = []): AssetOccurrenceV1[] {
   const found: AssetOccurrenceV1[] = [];
   const symbolPattern = new RegExp(ASSET_SYMBOL_PATTERN_V1);
   for (const match of message.matchAll(symbolPattern)) {
-    const asset = resolveRouteAssetV1(match[0]);
+    const asset = resolveRouteAssetV1(match[0], identified);
     if (asset) found.push({ index: match.index ?? 0, asset });
   }
   for (const asset of trustedBaseAssets()) {
     if (!asset.address) continue;
     const index = message.toLowerCase().indexOf(asset.address.toLowerCase());
     if (index >= 0) found.push({ index, asset: toAssetRef(asset) });
+  }
+  // An identified token appears where its ADDRESS appears. It has a symbol,
+  // and that symbol is never matched here — the contract does not get to
+  // claim a position in the sentence by calling itself USDC.
+  for (const asset of identified) {
+    if (!asset.address) continue;
+    const index = message.toLowerCase().indexOf(asset.address.toLowerCase());
+    if (index >= 0) found.push({ index, asset });
   }
   found.sort((left, right) => left.index - right.index);
   const seen = new Set<string>();
@@ -251,21 +277,29 @@ function orderedAssetPairV1(
  * "convert" when the sentence names both sides of a pair, so the unsupported
  * goal guard needs to see the pair before refusing.
  */
-export function namesTrustedAssetPairV1(message: string): boolean {
-  return assetOccurrences(message).length >= 2;
+export function namesTrustedAssetPairV1(
+  message: string,
+  identified: IdentifiedAssetsV1 = [],
+): boolean {
+  return assetOccurrences(message, identified).length >= 2;
 }
 
 function rawFieldIsGrounded(raw: string, message: string): boolean {
   return normalizeText(message).includes(normalizeText(raw).trim());
 }
 
-function addressSafetyIssues(message: string): IntentIssueV1[] {
+function addressSafetyIssues(message: string, identified: IdentifiedAssetsV1 = []): IntentIssueV1[] {
   const tokens = message.match(/\b0x[0-9a-zA-Z]*/g) ?? [];
-  const trusted = new Set(
-    trustedBaseAssets().flatMap((asset) => (asset.address ? [asset.address.toLowerCase()] : [])),
-  );
+  // Known = pinned in the trusted table, OR read off its own contract for this
+  // message. An address that answered `symbol()` and `decimals()` is a token
+  // Miorail can name honestly; whether it may be TRADED is a separate verdict,
+  // taken later by the token-security check and the Safety Kernel.
+  const known = new Set([
+    ...trustedBaseAssets().flatMap((asset) => (asset.address ? [asset.address.toLowerCase()] : [])),
+    ...identified.flatMap((asset) => (asset.address ? [asset.address.toLowerCase()] : [])),
+  ]);
   for (const token of tokens) {
-    if (!/^0x[0-9a-fA-F]{40}$/.test(token) || !trusted.has(token.toLowerCase())) {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(token) || !known.has(token.toLowerCase())) {
       return [
         issue(
           'asset_address_unsafe',
@@ -398,9 +432,10 @@ function groundedAssets(
   message: string,
   pending: PendingSwapIntentV2 | null,
   allowPending: boolean,
+  identified: IdentifiedAssetsV1,
 ): { fromAsset: AssetRefV1 | null; toAsset: AssetRefV1 | null; issues: IntentIssueV1[] } {
-  const issues: IntentIssueV1[] = [...addressSafetyIssues(message)];
-  const occurrences = assetOccurrences(message);
+  const issues: IntentIssueV1[] = [...addressSafetyIssues(message, identified)];
+  const occurrences = assetOccurrences(message, identified);
 
   const parseExtracted = (raw: string | null, field: 'fromAsset' | 'toAsset') => {
     if (!raw) return null;
@@ -409,7 +444,7 @@ function groundedAssets(
     // answered "ETH" for a message that says "эфир" — a correct normalisation,
     // read as an invention. The second check cannot invent anything: the asset
     // still has to be one the message itself names.
-    const named = resolveRouteAssetV1(raw);
+    const named = resolveRouteAssetV1(raw, identified);
     const groundedByAsset = Boolean(
       named && occurrences.some((occurrence) => occurrence.asset.assetId === named.assetId),
     );
@@ -424,7 +459,7 @@ function groundedAssets(
       );
       return null;
     }
-    const asset = resolveRouteAssetV1(raw);
+    const asset = resolveRouteAssetV1(raw, identified);
     if (!asset) {
       issues.push(
         issue(
@@ -462,10 +497,10 @@ function groundedAssets(
   } else if (occurrences.length === 1) {
     const only = occurrences[0];
     if (allowPending && pending?.fromAssetSymbol && !pending.toAssetSymbol) {
-      const pendingFrom = resolveRouteAssetV1(pending.fromAssetSymbol);
+      const pendingFrom = resolveRouteAssetV1(pending.fromAssetSymbol, identified);
       if (pendingFrom?.assetId !== only.asset.assetId) toAsset ??= only.asset;
     } else if (allowPending && pending?.toAssetSymbol && !pending.fromAssetSymbol) {
-      const pendingTo = resolveRouteAssetV1(pending.toAssetSymbol);
+      const pendingTo = resolveRouteAssetV1(pending.toAssetSymbol, identified);
       if (pendingTo?.assetId !== only.asset.assetId) fromAsset ??= only.asset;
     } else if (occurrenceDirectionV1(message, only) === 'destination') {
       if (fromAsset?.assetId !== only.asset.assetId) toAsset ??= only.asset;
@@ -478,8 +513,8 @@ function groundedAssets(
   }
 
   if (allowPending) {
-    fromAsset ??= resolveRouteAssetV1(pending?.fromAssetSymbol ?? null);
-    toAsset ??= resolveRouteAssetV1(pending?.toAssetSymbol ?? null);
+    fromAsset ??= resolveRouteAssetV1(pending?.fromAssetSymbol ?? null, identified);
+    toAsset ??= resolveRouteAssetV1(pending?.toAssetSymbol ?? null, identified);
   }
 
   return { fromAsset, toAsset, issues };
@@ -801,7 +836,7 @@ function validPendingIntents(
 /** Amount and assets for one reading of the request — with a stored intent
  * available, or deliberately without one. Pure, so it can be run twice. */
 function groundSwapCoreV2(
-  input: { message: string; extraction: SwapIntentExtractionV2 },
+  input: { message: string; extraction: SwapIntentExtractionV2; identifiedAssets?: IdentifiedAssetsV1 },
   pending: PendingSwapIntentV2 | null,
 ): {
   amount: ReturnType<typeof normalizeExtractedAmount>;
@@ -817,6 +852,7 @@ function groundSwapCoreV2(
     input.message,
     pending,
     !amount.conflictsPending,
+    input.identifiedAssets ?? [],
   );
   return {
     amount,
@@ -833,6 +869,10 @@ export function groundSwapFieldsV2(input: {
   extraction: SwapIntentExtractionV2;
   context: IntentRuntimeContextV2;
   walletAddress: string;
+  /** Tokens read off their own contracts because the user named their
+   * addresses in THIS message. Empty means the request named only assets this
+   * repo already pins. */
+  identifiedAssets?: IdentifiedAssetsV1;
 }): GroundedSwapFieldsV2 {
   const issues: IntentIssueV1[] = [];
   const pendingCandidates = validPendingIntents(input.context, input.walletAddress);

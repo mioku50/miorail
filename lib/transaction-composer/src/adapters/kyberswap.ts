@@ -10,6 +10,7 @@ import {
   normalizeAddress,
   parsePositiveAtomic,
   providerTokenAddress,
+  routablePairV1,
 } from '@mioagent/swap-adapters';
 import type { TokenAmountV1 } from '@mioagent/route-domain';
 import type {
@@ -21,8 +22,6 @@ import type {
   SwapBuildResultV1,
 } from '../types.js';
 
-const CANONICAL_USDC_BASE_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
-const CANONICAL_WETH_BASE_V1 = '0x4200000000000000000000000000000000000006';
 
 function failure(outcome: SwapBuildFailureOutcome, errorCode: string, retryable: boolean): SwapBuildFailure {
   return { outcome, provider: 'kyberswap', errorCode, retryable };
@@ -50,20 +49,10 @@ export class KyberSwapBuildAdapter implements SwapBuildAdapter {
 
   async build(input: SwapBuildInput): Promise<SwapBuildResultV1> {
     const { intent } = input;
-    // Both directions between the canonical Base assets — the USDC-in rule was
-    // this adapter's, not KyberSwap's. ETH↔WETH stays out: a wrap is not a
-    // routed trade. Identified by ADDRESS; a symbol is a label anyone can take.
-    const sideOf = (asset: typeof intent.fromAsset) => {
-      if (!asset) return null;
-      if (asset.kind === 'native') return 'weth' as const;
-      const address = asset.address?.toLowerCase();
-      if (address === CANONICAL_USDC_BASE_V1) return 'usdc' as const;
-      if (address === CANONICAL_WETH_BASE_V1) return 'weth' as const;
-      return null;
-    };
-    const fromSide = sideOf(intent.fromAsset);
-    const toSide = sideOf(intent.toAsset);
-    if (intent.chainId !== 8453 || !fromSide || !toSide || fromSide === toSide) {
+    // Any well-formed Base pair, both directions — the pair rule is stated
+    // once, in swap-adapters, and shared with the quote path. The limit was
+    // never KyberSwap's.
+    if (intent.chainId !== 8453 || !routablePairV1(intent.fromAsset, intent.toAsset)) {
       return failure('rejected', 'kyberswap_pair_unsupported', false);
     }
     const inputIsNative = intent.fromAsset?.kind === 'native';

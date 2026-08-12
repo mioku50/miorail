@@ -52,6 +52,20 @@ export interface MiorailProductMigrationFlags {
    * means the projector is never installed, so no outcome is recorded at all
    * and scoring stays byte-compatible with swap-path-score/v1. */
   routeOutcomeFeedbackV1: boolean;
+  /**
+   * T74: naming a token by its CONTRACT ADDRESS.
+   *
+   * Off means a swap request may only name the three assets this repo pins, and
+   * any other address is refused as untrusted — the behaviour every release so
+   * far has had. On means an address the USER typed is read off its own
+   * contract (`symbol()`, `decimals()`) and may enter an intent.
+   *
+   * It is a gate on VOCABULARY, not on safety: whether the token may actually
+   * be traded is still decided afterwards by the token-security verdict and the
+   * Safety Kernel, neither of which this flag touches. It also does nothing
+   * without a Base RPC URL — with no endpoint there is nothing to read.
+   */
+  tokenIdentityV1: boolean;
 }
 
 /**
@@ -127,5 +141,6 @@ export function getMiorailProductMigrationFlags(
     mcpPrivateV1: readBooleanFlag(env, 'MIORAIL_MCP_PRIVATE_V1', false),
     mcpPrivateExecutionV1: readBooleanFlag(env, 'MIORAIL_MCP_PRIVATE_EXECUTION_V1', false),
     routeOutcomeFeedbackV1: readBooleanFlag(env, 'MIORAIL_ROUTE_OUTCOME_FEEDBACK_V1', false),
+    tokenIdentityV1: readBooleanFlag(env, 'MIORAIL_TOKEN_IDENTITY_V1', false),
   });
 }

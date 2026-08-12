@@ -120,6 +120,10 @@ describe('Status API', () => {
       nftExecutionV1: false,
       privateAiRouteV1: false,
       privateAiExecutionV1: false, aerodromeExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, routeOutcomeFeedbackV1: false,
+      // T74 `tokenIdentityV1` is deliberately absent: naming a token by address
+      // is decided server-side, and the api-zod status schema drops flags the
+      // client has no decision to make with — the same treatment mcpPrivateV1
+      // gets.
     });
     assert.deepStrictEqual(
       Object.keys(response.body.productMigration).sort(),

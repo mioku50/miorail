@@ -1,10 +1,15 @@
 import {
   bindBaseMainnetChain,
+  identifyMessageTokensV1,
   looksLikePromptInjection,
   requestsApprovalBypass,
+  trustedBaseAssets,
+  type TokenIdentityReaderV1,
+  type TokenIdentityV1,
 } from '@mioagent/intent-core';
 import {
   AddressV1Schema,
+  type AssetRefV1,
   RouteIntentV1Schema,
   TenantIdV1Schema,
   TimestampV1Schema,
@@ -21,6 +26,7 @@ import {
   decimalToAtomicV1,
   detectIntentLocaleV1,
   groundSwapFieldsV2,
+  type IdentifiedAssetsV1,
   namesTrustedAssetPairV1,
   sortIntentIssuesV1,
 } from './normalization.js';
@@ -112,7 +118,11 @@ function validateRuntimeContext(context: IntentRuntimeContextV2): {
   };
 }
 
-function safetyIssues(message: string, extraction: SwapIntentExtractionV2 | null): IntentIssueV1[] {
+function safetyIssues(
+  message: string,
+  extraction: SwapIntentExtractionV2 | null,
+  identifiedAssets: IdentifiedAssetsV1 = [],
+): IntentIssueV1[] {
   const issues: IntentIssueV1[] = [];
   const chain = bindBaseMainnetChain(extraction?.chainId ?? null, 8453);
   if (looksLikePromptInjection(message)) {
@@ -157,7 +167,7 @@ function safetyIssues(message: string, extraction: SwapIntentExtractionV2 | null
   }
   const transferIsNotConversion =
     CONVERTIBLE_TRANSFER_LANGUAGE.test(message) &&
-    (!namesTrustedAssetPairV1(message) || RECIPIENT_TARGET_LANGUAGE.test(message));
+    (!namesTrustedAssetPairV1(message, identifiedAssets) || RECIPIENT_TARGET_LANGUAGE.test(message));
   if (
     extraction?.goal === 'unsupported' ||
     UNSUPPORTED_GOAL_LANGUAGE.test(message) ||
@@ -276,12 +286,19 @@ export function resolveSwapIntentV2(input: {
   message: string;
   context: IntentRuntimeContextV2;
   extraction: SwapIntentExtractionV2 | null;
+  /**
+   * Tokens the user named by ADDRESS in this message, read off their own
+   * contracts before this function ran. Absent means the request named only
+   * assets this repo pins — the behaviour every existing caller had.
+   */
+  identifiedAssets?: IdentifiedAssetsV1;
 }): IntentResolutionV2 {
   const locale = detectIntentLocaleV1(input.message);
   const runtime = validateRuntimeContext(input.context);
+  const identifiedAssets = input.identifiedAssets ?? [];
   const initialIssues = sortIntentIssuesV1([
     ...runtime.issues,
-    ...safetyIssues(input.message, input.extraction),
+    ...safetyIssues(input.message, input.extraction, identifiedAssets),
   ]);
   if (initialIssues.some((item) => item.severity === 'rejection')) {
     return {
@@ -307,6 +324,7 @@ export function resolveSwapIntentV2(input: {
     extraction: input.extraction,
     context: input.context,
     walletAddress: runtime.walletAddress,
+    identifiedAssets,
   });
   const issues = sortIntentIssuesV1([
     ...initialIssues,
@@ -402,15 +420,46 @@ export function resolveSwapIntentV2(input: {
   };
 }
 
+/**
+ * A token named by address, turned into the asset the rest of the pipeline
+ * speaks. The symbol is carried for DISPLAY only — every comparison downstream
+ * is by `assetId`, which is built from the address.
+ */
+export function identifiedAssetRefV1(identity: TokenIdentityV1): AssetRefV1 {
+  return {
+    assetId: `eip155:8453/erc20:${identity.address}`,
+    chainId: 8453,
+    kind: 'erc20',
+    address: identity.address,
+    symbol: identity.symbol,
+    decimals: identity.decimals,
+  };
+}
+
 export async function resolveSwapIntentWithLlmV2(input: {
   llm: LlmProvider;
   message: string;
   context: IntentRuntimeContextV2;
+  /**
+   * Reads `symbol()` and `decimals()` off a contract. Absent means no
+   * identification happens and an address outside the trusted three is refused
+   * exactly as before — the behaviour every caller had until one of them
+   * started passing a reader.
+   *
+   * The order matters and is not an implementation detail: identification runs
+   * BEFORE extraction is ground, so the model never gets to decide which token
+   * an address is. It only ever labels tokens the chain already answered for.
+   */
+  identifyToken?: TokenIdentityReaderV1;
 }): Promise<IntentResolutionV2> {
+  const identified = input.identifyToken
+    ? await identifyMessageTokensV1(input.message, input.identifyToken, trustedBaseAssets())
+    : { identities: [], unreadable: [] };
   const extraction = await extractSwapIntentV2(input);
   return resolveSwapIntentV2({
     message: input.message,
     context: input.context,
     extraction,
+    identifiedAssets: identified.identities.map(identifiedAssetRefV1),
   });
 }

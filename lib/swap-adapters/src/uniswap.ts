@@ -18,7 +18,7 @@ import {
   providerFailure,
   providerTokenAddress,
   resolveQuoteTimes,
-  supportsSwapIntent,
+  supportsRoutableSwapIntentV1,
 } from './normalization.js';
 import { extractRouteProvenance } from './provenance.js';
 import {
@@ -92,7 +92,7 @@ export class UniswapSwapRouteAdapter implements SwapRouteAdapter {
   }
 
   supports(intent: SwapAdapterQuoteInput['intent']): boolean {
-    return supportsSwapIntent(intent) && protocolAllowsAdapter(intent, this.id);
+    return supportsRoutableSwapIntentV1(intent) && protocolAllowsAdapter(intent, this.id);
   }
 
   async quote(input: SwapAdapterQuoteInput): Promise<SwapAdapterResult> {

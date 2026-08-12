@@ -29,6 +29,7 @@ import {
   coverageFromStatusV1,
   deriveAdapterRowsV1,
   deriveSimulationViewV1,
+  verificationHonestyViewV1,
   routeProofViewV1,
   dispatchRouteFamilyV1,
   emptyStageClockV1,
@@ -1278,14 +1279,28 @@ export function RouteIntelligenceConsole() {
               ? 'The simulation reported no decodable asset movement for this wallet.'
               : 'Simulated balance changes appear once the Alchemy simulation runs.'
           }
-          checks={[
-            { label: 'Chain is Base mainnet', passed: Boolean(prepared) },
-            { label: 'Recipient is your wallet', passed: Boolean(prepared) },
-            { label: 'Calldata matches the intent', passed: Boolean(prepared) },
-            { label: 'Approval exact, not unlimited', passed: Boolean(prepared) },
-            { label: 'Simulation passed', passed: simulation.passed },
-            { label: 'Within your limits', passed: Boolean(limits) },
-          ]}
+          /* The kernel's OWN checks, by their own descriptions. These were six
+             hard-coded labels every one of which read `Boolean(prepared)` — so
+             the screen restated the server's verdict in its own words instead
+             of showing it, and a skipped check looked identical to a passed
+             one. */
+          checks={
+            prepared?.review.safety.checks.map((check) => ({
+              label: check.description,
+              passed: check.status === 'passed',
+            })) ?? []
+          }
+          honesty={
+            prepared
+              ? verificationHonestyViewV1({
+                  inputAsset: prepared.review.input.asset,
+                  outputAsset: prepared.review.expectedOutput.asset,
+                  contractSecurity: prepared.review.contractSecurity,
+                  safetyChecks: prepared.review.safety.checks,
+                  simulation: { state: prepared.review.simulationState.status },
+                })
+              : null
+          }
           limits={!swapSurfacePricedV1 ? [] : [
             {
               id: 'per-action',

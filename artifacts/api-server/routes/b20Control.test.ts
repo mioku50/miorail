@@ -46,7 +46,7 @@ const FLAGS = {
   publicProofV1: false,
   mcpPrivateV1: false,
   mcpPrivateExecutionV1: false,
-  routeOutcomeFeedbackV1: false,
+  routeOutcomeFeedbackV1: false, tokenIdentityV1: false,
 };
 
 const original = { ...b20RouteRuntime };

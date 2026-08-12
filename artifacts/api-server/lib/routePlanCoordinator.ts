@@ -16,6 +16,7 @@ import {
   type IntentResolutionV2,
   type PendingSwapIntentV2,
 } from '@mioagent/intent-engine';
+import type { TokenIdentityReaderV1 } from '@mioagent/intent-core';
 import type { LlmProvider } from '@mioagent/llm';
 import type { ProviderReliabilityAssessmentV1 } from '@mioagent/route-outcomes';
 import type { RouteCandidateV1 } from '@mioagent/route-domain';
@@ -33,6 +34,14 @@ export interface RoutePlanCoordinatorDependencies {
    * before this existed. Supplied only where the table is present. */
   pendingIntents?: SwapPendingIntentRepositoryV1;
   resolveIntent?: typeof resolveSwapIntentWithLlmV2;
+  /**
+   * Reads `symbol()` and `decimals()` for a token the user names by address.
+   *
+   * Absent means no identification: an address outside the three trusted
+   * assets is refused exactly as it was before this existed. Present means the
+   * user can name any token by its address — and only by its address.
+   */
+  identifyToken?: TokenIdentityReaderV1;
   /** T67C.1 Part 2. Absent means swap-path-score/v1 end to end: the reader is
    * never called, no reliability evidence is created, and the evaluation
    * canonicalises exactly as it did before this task. */
@@ -115,6 +124,7 @@ export class RoutePlanCoordinator {
     const carried = await this.readPendingIntent(binding, input.now);
     const resolution: IntentResolutionV2 = await resolveIntent({
       llm: this.dependencies.llm,
+      identifyToken: this.dependencies.identifyToken,
       message: input.message,
       context: {
         tenantId: input.tenantId,
