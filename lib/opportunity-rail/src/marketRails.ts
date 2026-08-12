@@ -86,6 +86,7 @@ export interface MarketRowV1 {
 /** Why a token is not on the leaders list. Named so a surface can say it. */
 export const CAPACITY_EXCLUSION_REASONS_V1 = [
   'not_canonical',
+  'not_comparable_profile',
   'no_reference_entry',
   'no_measured_capacity',
   'unrepresentable_capacity',
@@ -150,6 +151,15 @@ export function exitCapacityExclusionV1(
 ): CapacityExclusionV1 | null {
   const { launch, observation } = row;
   if (!launch.canonical) return 'not_canonical';
+  // Historical rows can contain fields written by older measurement code.
+  // The state/reason is the verdict: only a provisional profile or the one
+  // explicit measured profile miss may contribute to this read-only rail.
+  if (
+    observation.state !== 'provisional' &&
+    !(observation.state === 'rejected' && observation.reasonCode === 'round_trip_above_tolerance')
+  ) {
+    return 'not_comparable_profile';
+  }
   if (observation.capacityToleranceBps !== input.toleranceBps) return 'different_tolerance';
   if (!observation.exitRouteFound) return 'no_exit_route';
   if (observation.transfersPaused === true) return 'transfers_paused';

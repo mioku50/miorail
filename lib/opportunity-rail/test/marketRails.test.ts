@@ -168,6 +168,20 @@ describe('§2 — Exit Capacity Leaders rank comparable measured coverage', () =
     assert.equal(leader.profileStatus, 'outside_round_trip_reference');
   });
 
+  test('another rejection stays excluded even when a historical row contains economic fields', () => {
+    const result = leadersOf([
+      row(A, { state: 'rejected', reasonCode: 'not_b20' }),
+      row(B, { state: 'rejected', reasonCode: 'no_entry_route' }),
+      row(C, { state: 'unmeasured', reasonCode: 'route_search_degraded' }),
+    ]);
+    assert.deepEqual(result.leaders, []);
+    assert.deepEqual(result.excluded.map((entry) => entry.reason), [
+      'not_comparable_profile',
+      'not_comparable_profile',
+      'not_comparable_profile',
+    ]);
+  });
+
   test('the list is capped at the requested size', () => {
     const rows = [A, B, C].map((address, index) => row(address, { largestPassingSizeAtomic: String(1000 + index) }));
     assert.equal(leadersOf(rows, 2).leaders.length, 2);
