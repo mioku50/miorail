@@ -336,7 +336,10 @@ export function createDatabaseB20ObservationRepository(
 
     async listMoverPairs(input) {
       const versions = [...(input.measurementVersions ?? [B20_MEASUREMENT_VERSION_V1])];
-      const limit = Math.max(1, Math.min(100, input.limit));
+      // Market rails read the bounded 48h population, not only the newest feed
+      // page. Production crossed 600 active launches before the first fresh
+      // measured exit, so a 100-row clamp made healthy evidence invisible.
+      const limit = Math.max(1, Math.min(1_000, input.limit));
       const oldest = new Date(Date.parse(input.now) - input.maxLaunchAgeMs).toISOString();
       const ageSeconds = Math.round(input.baselineAgeMs / 1000);
       const toleranceSeconds = Math.round(input.baselineToleranceMs / 1000);

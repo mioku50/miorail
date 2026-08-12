@@ -406,7 +406,7 @@ export function createDatabaseB20DiscoverRepository(sql: SqlTemplateExecutor): B
               AND factory_address = ${input.key.factoryAddress}
               AND decoder_version = ${input.key.decoderVersion}
             ORDER BY block_number DESC, log_index DESC
-            LIMIT ${Math.max(1, Math.min(500, input.limit))}`
+            LIMIT ${Math.max(1, Math.min(1_000, input.limit))}`
         : await sql`
             SELECT * FROM b20_launches
             WHERE chain_id = ${input.key.chainId}
@@ -414,7 +414,7 @@ export function createDatabaseB20DiscoverRepository(sql: SqlTemplateExecutor): B
               AND decoder_version = ${input.key.decoderVersion}
               AND canonical
             ORDER BY block_number DESC, log_index DESC
-            LIMIT ${Math.max(1, Math.min(500, input.limit))}`;
+            LIMIT ${Math.max(1, Math.min(1_000, input.limit))}`;
       return rows.map((row) => rowToLaunchV1(row as Record<string, unknown>));
     },
   };

@@ -57,7 +57,7 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
         factoryAddress: '0xb20f000000000000000000000000000000000000',
         decoderVersion: 'b20-created/v1',
       },
-      limit: 500,
+      limit: 1_000,
     });
 
     const rows: B20MeasurableLaunchV1[] = [];
@@ -210,7 +210,7 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
         factoryAddress: '0xb20f000000000000000000000000000000000000',
         decoderVersion: 'b20-created/v1',
       },
-      limit: 500,
+      limit: 1_000,
     });
   }
 
@@ -258,7 +258,7 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
     measurementVersions?: readonly string[];
   }): Promise<B20MoverPairRowV1[]> {
     const versions = input.measurementVersions ?? [B20_MEASUREMENT_VERSION_V1];
-    const limit = Math.max(1, Math.min(100, input.limit));
+    const limit = Math.max(1, Math.min(1_000, input.limit));
     const now = Date.parse(input.now);
     const pairs: B20MoverPairRowV1[] = [];
 

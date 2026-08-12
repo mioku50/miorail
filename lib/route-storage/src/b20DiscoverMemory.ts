@@ -295,6 +295,6 @@ export class InMemoryB20DiscoverRepositoryV1 implements B20DiscoverRepositoryV1 
         const byBlock = Number(BigInt(right.blockNumber) - BigInt(left.blockNumber));
         return byBlock !== 0 ? byBlock : right.logIndex - left.logIndex;
       })
-      .slice(0, Math.max(1, Math.min(500, input.limit)));
+      .slice(0, Math.max(1, Math.min(1_000, input.limit)));
   }
 }

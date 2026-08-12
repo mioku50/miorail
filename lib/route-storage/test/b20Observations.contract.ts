@@ -731,6 +731,40 @@ export function describeB20ObservationRepositoryV1(
       assert.equal(pairs[0]!.launch.canonical, true);
       assert.ok(pairs[0]!.launch.decimals !== undefined);
     });
+
+    test('the active market read crosses a 100-row Discover page boundary', async () => {
+      // Production had its first fresh exit at launch rank 621. A repository
+      // clamp inherited from the paginated feed returned a healthy empty rail.
+      const harness = await createHarness();
+      const ids = new Set<string>();
+      for (let index = 0; index < 101; index += 1) {
+        const transactionHash = `0x${(index + 1).toString(16).padStart(64, '0')}`;
+        const launchId = `${transactionHash}:0`;
+        ids.add(launchId);
+        await harness.seedLaunch({
+          id: launchId,
+          tokenAddress: TOKEN,
+          detectedAt: T0,
+          blockNumber: String(3_000 + index),
+        });
+        await harness.repository.insertObservation(
+          observationFixtureV1({
+            launchId,
+            observationBlockNumber: String(49_600_000 + index),
+            measuredAt: T0,
+            staleAfter: '2026-08-04T00:30:00.000Z',
+          }),
+        );
+      }
+      const pairs = await harness.repository.listMoverPairs({
+        limit: 200,
+        now: '2026-08-04T00:10:00.000Z',
+        baselineAgeMs: DAY_MS,
+        baselineToleranceMs: 4 * 60 * 60 * 1000,
+        maxLaunchAgeMs: 30 * DAY_MS,
+      });
+      assert.equal(pairs.filter((pair) => ids.has(pair.launch.id)).length, 101);
+    });
   });
 
   // -------------------------------------------------------------------------
