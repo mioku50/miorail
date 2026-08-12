@@ -85,7 +85,6 @@ export interface MarketRowV1 {
 
 /** Why a token is not on the leaders list. Named so a surface can say it. */
 export const CAPACITY_EXCLUSION_REASONS_V1 = [
-  'stale',
   'not_canonical',
   'no_reference_entry',
   'no_measured_capacity',
@@ -123,7 +122,9 @@ export interface ExitCapacityLeaderV1 {
   reasonCode: string | null;
   measuredAt: string;
   observationBlockNumber: string;
-  freshness: 'fresh';
+  /** Freshness classifies the age of this measured bound; it does not erase
+   * the bound. Stale rows remain read-only evidence and are labelled as such. */
+  freshness: 'fresh' | 'stale';
 }
 
 export interface ExitCapacityLeadersInputV1 {
@@ -149,7 +150,6 @@ export function exitCapacityExclusionV1(
 ): CapacityExclusionV1 | null {
   const { launch, observation } = row;
   if (!launch.canonical) return 'not_canonical';
-  if (Date.parse(observation.staleAfter) <= input.now.getTime()) return 'stale';
   if (observation.capacityToleranceBps !== input.toleranceBps) return 'different_tolerance';
   if (!observation.exitRouteFound) return 'no_exit_route';
   if (observation.transfersPaused === true) return 'transfers_paused';
@@ -202,7 +202,7 @@ export function exitCapacityLeadersV1(input: ExitCapacityLeadersInputV1): {
       reasonCode: row.observation.reasonCode,
       measuredAt: row.observation.measuredAt,
       observationBlockNumber: row.observation.observationBlockNumber,
-      freshness: 'fresh',
+      freshness: Date.parse(row.observation.staleAfter) > input.now.getTime() ? 'fresh' : 'stale',
     });
   }
 
@@ -235,7 +235,6 @@ export const MOVER_EXCLUSION_REASONS_V1 = [
   'below_minimum_capacity',
   'not_measured',
   'unstable_ladder',
-  'stale',
 ] as const;
 export type MoverExclusionV1 = (typeof MOVER_EXCLUSION_REASONS_V1)[number];
 
@@ -271,6 +270,9 @@ export interface MeasuredMoverV1 {
   profileStatus: 'within_reference' | 'outside_round_trip_reference';
   state: 'provisional' | 'rejected';
   reasonCode: string | null;
+  /** A historical comparison remains the comparison Miorail measured after
+   * its quote window closes. This field prevents it reading as current. */
+  freshness: 'fresh' | 'stale';
 }
 
 export interface MeasuredMoversInputV1 {
@@ -326,7 +328,6 @@ function assertComparableMarketMeasurementV1(
 export function moverCompatibilityV1(pair: MoverPairV1, input: MeasuredMoversInputV1): MoverExclusionV1 | null {
   const { latest, baseline, launch } = pair;
   if (!isComparableMarketMeasurementV1(latest)) return 'not_measured';
-  if (Date.parse(latest.staleAfter) <= input.now.getTime()) return 'stale';
   if (latest.capacityStable !== true) return 'unstable_ladder';
   if (launch.decimals === null) return 'unknown_decimals';
   if (latest.largestPassingSizeAtomic === null || latest.entryOutputAtomic === null) return 'below_minimum_capacity';
@@ -420,6 +421,7 @@ export function measuredMoversV1(input: MeasuredMoversInputV1): {
           : 'outside_round_trip_reference',
       state: latest.state,
       reasonCode: latest.reasonCode,
+      freshness: Date.parse(latest.staleAfter) > input.now.getTime() ? 'fresh' : 'stale',
     });
   }
 

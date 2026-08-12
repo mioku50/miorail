@@ -102,10 +102,11 @@ describe('§2 — Exit Capacity Leaders rank comparable measured coverage', () =
     assert.deepEqual(first, [A, C]);
   });
 
-  test('a stale observation is excluded, not ranked', () => {
+  test('a stale observation keeps its measured bound and is labelled stale', () => {
     const result = leadersOf([row(A, { staleAfter: '2026-08-05T11:00:00.000Z' })]);
-    assert.deepEqual(result.leaders, []);
-    assert.deepEqual(result.excluded, [{ tokenAddress: A, reason: 'stale' }]);
+    assert.equal(result.leaders.length, 1);
+    assert.equal(result.leaders[0]!.freshness, 'stale');
+    assert.deepEqual(result.excluded, []);
   });
 
   test('an unstable ladder is excluded', () => {
@@ -338,10 +339,11 @@ describe('§3 — a 24h move is two measured quotes, divided', () => {
     ]);
   });
 
-  test('a stale latest observation is not a current move', () => {
-    assert.deepEqual(moversOf([pair(A, { staleAfter: '2026-08-05T11:00:00.000Z' })]).excluded, [
-      { tokenAddress: A, reason: 'stale' },
-    ]);
+  test('a stale latest observation keeps the historical move and is labelled stale', () => {
+    const result = moversOf([pair(A, { staleAfter: '2026-08-05T11:00:00.000Z' })]);
+    assert.equal(result.movers.length, 1);
+    assert.equal(result.movers[0]!.freshness, 'stale');
+    assert.deepEqual(result.excluded, []);
   });
 
   test('sorted by absolute move, so a fall ranks like a rise', () => {

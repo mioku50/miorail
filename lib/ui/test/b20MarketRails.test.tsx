@@ -67,6 +67,7 @@ function mover(address: string, changeBps: number) {
     profileStatus: 'within_reference' as const,
     state: 'provisional' as const,
     reasonCode: 'quoted_pre_entry',
+    freshness: 'fresh' as const,
   };
 }
 
@@ -220,6 +221,19 @@ describe('§6 — measured views, stated as such', () => {
     assert.equal(measuredAgoLabelV1('2026-08-05T11:50:00.000Z', NOW), 'measured 10 min ago');
     assert.equal(measuredAgoLabelV1('2026-08-05T11:59:40.000Z', NOW), 'measured just now');
     assert.equal(measuredAgoLabelV1('2026-08-04T12:00:00.000Z', NOW), 'measured 1 d ago');
+  });
+
+  test('stale market measurements keep their numbers and say they are past the window', () => {
+    const leaders = renderLeaders({ leaders: [leader(ADDRESSES[0]!, { freshness: 'stale' })] });
+    const movers = renderMovers({
+      movers: [{ ...mover(ADDRESSES[0]!, 2500), freshness: 'stale' }],
+    });
+    for (const markup of [leaders, movers]) {
+      assert.match(markup, /past freshness window/);
+      assert.match(markup, /measured 10 min ago/);
+    }
+    assert.match(leaders, /≥ 4000 S/);
+    assert.match(movers, /\+25%/);
   });
 
   test('no card says safe, recommended, best or predicted', () => {

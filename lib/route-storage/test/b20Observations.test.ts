@@ -303,3 +303,21 @@ describe('the mover query cannot lose precision on a large amount', () => {
     assert.deepEqual(missing, [], `these numeric columns would be returned as floats: ${missing.join(', ')}`);
   });
 });
+
+describe('launch-buyer evidence reaches every Discover read', () => {
+  const database = readFileSync(path.join(here, '..', 'src', 'b20ObservationsDatabase.ts'), 'utf8');
+
+  test('market, feed and token-detail queries all join the measured launch window', () => {
+    // The row mapper already treats a missing buyer row as honest null. If a
+    // read path forgets this join, every measured concentration also becomes
+    // null and the UI looks identical to a window nobody measured.
+    assert.equal(
+      database.match(/LEFT JOIN b20_launch_buyers lb ON lb\.token_address = l\.token_address/g)?.length,
+      3,
+    );
+    assert.equal(
+      database.match(/lb\.buyer_count, lb\.top_buyer_share_bps, lb\.top_three_share_bps/g)?.length,
+      3,
+    );
+  });
+});

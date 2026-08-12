@@ -3477,7 +3477,7 @@ const B20CapacityLeaderV1Schema = z
     reasonCode: z.string().max(64).nullable(),
     measuredAt: z.string().datetime(),
     observationBlockNumber: z.string().regex(/^\d+$/),
-    freshness: z.literal('fresh'),
+    freshness: z.enum(['fresh', 'stale']),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -3519,6 +3519,7 @@ const B20MeasuredMoverV1Schema = z
     // A profile miss is still a measured observation, but no other rejection is.
     state: z.enum(['provisional', 'rejected']),
     reasonCode: z.string().max(64).nullable(),
+    freshness: z.enum(['fresh', 'stale']),
   })
   .strict()
   .superRefine((value, ctx) => {

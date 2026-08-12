@@ -467,6 +467,8 @@ export function createDatabaseB20ObservationRepository(
           l.transaction_hash AS launch_transaction_hash, l.log_index AS launch_log_index,
           l.detected_at AS launch_detected_at, l.block_timestamp AS launch_block_timestamp,
           l.canonical AS launch_canonical,
+          lb.buyer_count, lb.top_buyer_share_bps, lb.top_three_share_bps,
+          lb.search_from_block AS buyers_from_block, lb.search_to_block AS buyers_to_block,
           o.*
         FROM b20_launches l
         LEFT JOIN LATERAL (
@@ -478,6 +480,7 @@ export function createDatabaseB20ObservationRepository(
           ORDER BY obs.measured_at DESC, obs.observation_block_number DESC, obs.id DESC
           LIMIT 1
         ) o ON true
+        LEFT JOIN b20_launch_buyers lb ON lb.token_address = l.token_address
         WHERE l.canonical
           AND l.chain_id = 8453
           AND (${oldest}::timestamptz IS NULL OR l.detected_at >= ${oldest}::timestamptz)
@@ -534,6 +537,8 @@ export function createDatabaseB20ObservationRepository(
           l.transaction_hash AS launch_transaction_hash, l.log_index AS launch_log_index,
           l.detected_at AS launch_detected_at, l.block_timestamp AS launch_block_timestamp,
           l.canonical AS launch_canonical,
+          lb.buyer_count, lb.top_buyer_share_bps, lb.top_three_share_bps,
+          lb.search_from_block AS buyers_from_block, lb.search_to_block AS buyers_to_block,
           o.*
         FROM b20_launches l
         LEFT JOIN LATERAL (
@@ -542,6 +547,7 @@ export function createDatabaseB20ObservationRepository(
           ORDER BY obs.measured_at DESC, obs.observation_block_number DESC, obs.id DESC
           LIMIT 1
         ) o ON true
+        LEFT JOIN b20_launch_buyers lb ON lb.token_address = l.token_address
         WHERE l.canonical AND l.chain_id = 8453 AND l.token_address = ${input.tokenAddress.toLowerCase()}
         -- The most recent canonical launch of this address. A token relaunched
         -- by a second event is a second launch, and the newest one is the live

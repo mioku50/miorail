@@ -104,7 +104,7 @@ export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
           <RailEmpty>{model.unavailableReason}</RailEmpty>
         ) : visible.length === 0 ? (
           <RailEmpty>
-            No fresh, stable exit ladder has measured capacity within {bpsLabelV1(model.toleranceBps)} exit
+            No stable exit ladder has measured capacity within {bpsLabelV1(model.toleranceBps)} exit
             slippage. That is about Miorail evidence, not about what can be sold.
           </RailEmpty>
         ) : (
@@ -131,6 +131,10 @@ export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
                       : `${bpsLabelV1(leader.optimisticRoundTripBps)} round trip · ${
                           leader.profileStatus === 'outside_round_trip_reference' ? 'outside' : 'within'
                         } ${bpsLabelV1(leader.roundTripReferenceBps)} reference`}
+                  </span>
+                  <span className={`rail-reference rail-freshness${leader.freshness === 'stale' ? ' off' : ''}`}>
+                    {leader.freshness === 'stale' ? 'past freshness window · ' : ''}
+                    {measuredAgoLabelV1(leader.measuredAt, model.now)}
                   </span>
                 </span>
               </div>
@@ -210,6 +214,10 @@ export function B20MeasuredMoversCard(model: B20MarketRailsModelV1) {
                     {bpsLabelV1(mover.optimisticRoundTripBps)} round trip ·{' '}
                     {mover.profileStatus === 'outside_round_trip_reference' ? 'outside' : 'within'}{' '}
                     {bpsLabelV1(mover.roundTripReferenceBps)} reference
+                  </span>
+                  <span className={`rail-reference rail-freshness${mover.freshness === 'stale' ? ' off' : ''}`}>
+                    {mover.freshness === 'stale' ? 'past freshness window · ' : ''}
+                    {measuredAgoLabelV1(mover.measuredAt, model.now)}
                   </span>
                 </span>
               </div>
