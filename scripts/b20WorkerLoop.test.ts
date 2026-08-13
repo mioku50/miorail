@@ -5,6 +5,7 @@ import {
   B20_DISCOVER_CADENCE_V1,
   B20_MEASURE_CADENCE_V1,
   WORKER_FATAL_RESULTS_V1,
+  createInterruptibleWaitV1,
   nextWorkerDelayMsV1,
   runWorkerLoopV1,
   type WorkerPassSignalV1,
@@ -110,6 +111,24 @@ describe('a provider that is down is not hammered', () => {
 });
 
 describe('the loop stops for the things another pass cannot fix', () => {
+  test('a stop wakes a worker already inside provider backoff', async () => {
+    let running = true;
+    const interruptibleWait = createInterruptibleWaitV1();
+    const loop = runWorkerLoopV1({
+      pass: async () => ({ result: 'endpoint_unavailable' }),
+      ...DISCOVER,
+      wait: interruptibleWait.wait,
+      shouldContinue: () => running,
+      log: () => {},
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    running = false;
+    interruptibleWait.wake();
+    const summary = await loop;
+    assert.equal(summary.passes, 1);
+    assert.equal(summary.stoppedBecause, 'signal');
+  });
+
   for (const result of WORKER_FATAL_RESULTS_V1) {
     test(`${result} exits rather than retrying forever`, async () => {
       let passes = 0;

@@ -16,9 +16,9 @@ import { parseB20MeasureArgsV1 } from './b20MeasureCli.js';
 import { runB20MeasurePassV1 } from './b20MeasureRun.js';
 import {
   B20_MEASURE_CADENCE_V1,
+  createInterruptibleWaitV1,
   installStopSignalsV1,
   runWorkerLoopV1,
-  sleepV1,
 } from './b20WorkerLoop.js';
 
 // ---------------------------------------------------------------------------
@@ -74,9 +74,11 @@ async function main(): Promise<number> {
   });
 
   let running = true;
+  const interruptibleWait = createInterruptibleWaitV1();
   const removeSignals = installStopSignalsV1(() => {
     console.log(JSON.stringify({ event: 'b20_measure_worker_stopping', owner: OWNER }));
     running = false;
+    interruptibleWait.wake();
   });
 
   console.log(
@@ -96,7 +98,7 @@ async function main(): Promise<number> {
     // Measurement has no cursor, so there is no "blocks behind" to chase; the
     // catch-up signal is the pass's own budget.
     catchUpThresholdBlocks: Number.POSITIVE_INFINITY,
-    wait: sleepV1,
+    wait: interruptibleWait.wait,
     shouldContinue: () => running,
     log: (entry) => console.log(JSON.stringify(entry)),
     pass: async () => {

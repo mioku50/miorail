@@ -203,4 +203,28 @@ export function installStopSignalsV1(onStop: () => void): () => void {
   };
 }
 
+export interface InterruptibleWaitV1 {
+  wait: (ms: number) => Promise<void>;
+  wake: () => void;
+}
+
+/** A worker may be in a multi-minute provider backoff when systemd asks it to
+ * stop. Resolve that one pending wait immediately without interrupting a pass
+ * or leaving a timer behind. */
+export function createInterruptibleWaitV1(): InterruptibleWaitV1 {
+  let wakePending: (() => void) | null = null;
+  return {
+    wait: (ms) => new Promise<void>((resolve) => {
+      const finish = (): void => {
+        clearTimeout(timer);
+        wakePending = null;
+        resolve();
+      };
+      const timer = setTimeout(finish, ms);
+      wakePending = finish;
+    }),
+    wake: () => wakePending?.(),
+  };
+}
+
 export const sleepV1 = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));

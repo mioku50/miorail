@@ -10,9 +10,9 @@ import { parseB20DiscoverArgsV1 } from './b20DiscoverCli.js';
 import { runB20DiscoverPassV1 } from './b20DiscoverRun.js';
 import {
   B20_DISCOVER_CADENCE_V1,
+  createInterruptibleWaitV1,
   installStopSignalsV1,
   runWorkerLoopV1,
-  sleepV1,
 } from './b20WorkerLoop.js';
 
 // ---------------------------------------------------------------------------
@@ -61,10 +61,12 @@ async function main(): Promise<number> {
   });
 
   let running = true;
+  const interruptibleWait = createInterruptibleWaitV1();
   const removeSignals = installStopSignalsV1(() => {
     // Logged, because a service that stops silently looks like a crash.
     console.log(JSON.stringify({ event: 'b20_discover_worker_stopping', owner: OWNER }));
     running = false;
+    interruptibleWait.wake();
   });
 
   console.log(
@@ -81,7 +83,7 @@ async function main(): Promise<number> {
   const summary = await runWorkerLoopV1({
     cadence: B20_DISCOVER_CADENCE_V1,
     catchUpThresholdBlocks: CATCH_UP_THRESHOLD_BLOCKS,
-    wait: sleepV1,
+    wait: interruptibleWait.wait,
     shouldContinue: () => running,
     log: (entry) => console.log(JSON.stringify(entry)),
     pass: async () => {
