@@ -432,7 +432,7 @@ describe('x402 official smoke endpoint', () => {
 
   it('buyer smoke reaches paid fetch and fuel charge after browser permission is persisted', async () => {
     const repository = new InMemorySpendPermissionRepository();
-    let paidFetchCalled = false;
+    let paidFetchCalls = 0;
     let chargeCalls = 0;
     const app = express();
     app.use(express.json());
@@ -491,7 +491,7 @@ describe('x402 official smoke endpoint', () => {
         },
       }),
       buyerPaidFetch: async () => {
-        paidFetchCalled = true;
+        paidFetchCalls++;
         return new Response(JSON.stringify({ ok: true }), {
           status: 200,
           headers: { 'payment-response': paymentResponseHeader('0xoutgoing-real-sub') },
@@ -510,13 +510,22 @@ describe('x402 official smoke endpoint', () => {
     });
     assert.strictEqual(createRes.status, 201, JSON.stringify(createRes.body));
 
-    const smokeRes = await request(app).post('/x402/buyer-smoke').send({});
+    const smokeRes = await request(app).post('/x402/buyer-smoke').set('X-Idempotency-Key', 'buyer-smoke-happy-01').send({});
     assert.strictEqual(smokeRes.status, 200, JSON.stringify(smokeRes.body));
     assert.strictEqual(smokeRes.body.status, 'settled');
     assert.strictEqual(smokeRes.body.fuelPermissionId, 'real-subscription-2');
     assert.strictEqual(smokeRes.body.txHash, '0xoutgoing-real-sub');
-    assert.strictEqual(paidFetchCalled, true);
+    assert.strictEqual(paidFetchCalls, 1);
     assert.strictEqual(chargeCalls, 1);
+
+    const replay = await request(app)
+      .post('/x402/buyer-smoke')
+      .set('X-Idempotency-Key', 'buyer-smoke-happy-01')
+      .send({});
+    assert.strictEqual(replay.status, 200);
+    assert.strictEqual(replay.body.cached, true);
+    assert.strictEqual(paidFetchCalls, 1, 'the paid resource is never called twice');
+    assert.strictEqual(chargeCalls, 1, 'the reimbursement charge is never called twice');
   });
 
   it('buyer smoke returns controlled unavailable when payer signer is not configured', async () => {
@@ -531,12 +540,32 @@ describe('x402 official smoke endpoint', () => {
       spendPermissionRepository: repository,
     }));
 
-    const res = await request(app).post('/x402/buyer-smoke').send({});
+    const res = await request(app).post('/x402/buyer-smoke').set('X-Idempotency-Key', 'buyer-smoke-no-payer-01').send({});
     assert.strictEqual(res.status, 503);
     assert.strictEqual(res.body.error, 'x402_buyer_unavailable');
     assert.strictEqual(res.body.errorCode, 'x402_buyer_payer_missing_config');
     assert.strictEqual(res.body.buyerPayer.status, 'missing_config');
     assert.strictEqual(JSON.stringify(res.body).includes('redacted-token'), false);
+  });
+
+  it('buyer smoke requires a durable idempotency key before any payment work', async () => {
+    let paidFetchCalled = false;
+    const app = express();
+    app.use(express.json());
+    app.use('/x402', createX402Router({
+      dbEnabled: false,
+      env: configuredEnv({ X402_BUYER_SMOKE_URL: 'https://paid-resource.example.test/smoke' }),
+      buyerPaidFetch: async () => {
+        paidFetchCalled = true;
+        return new Response('{}', { status: 200 });
+      },
+    }));
+
+    const response = await request(app).post('/x402/buyer-smoke').send({});
+
+    assert.strictEqual(response.status, 400);
+    assert.strictEqual(response.body.error, 'x402_buyer_idempotency_key_required');
+    assert.strictEqual(paidFetchCalled, false);
   });
 
   it('buyer smoke requires an active fuel permission before calling the paid resource', async () => {
@@ -553,7 +582,7 @@ describe('x402 official smoke endpoint', () => {
       },
     }));
 
-    const res = await request(app).post('/x402/buyer-smoke').send({});
+    const res = await request(app).post('/x402/buyer-smoke').set('X-Idempotency-Key', 'buyer-smoke-no-permission-01').send({});
     assert.strictEqual(res.status, 402);
     assert.strictEqual(res.body.error, 'fuel_permission_required');
     assert.strictEqual(res.body.status, 'missing_permission');
@@ -604,7 +633,7 @@ describe('x402 official smoke endpoint', () => {
       },
     }));
 
-    const res = await request(app).post('/x402/buyer-smoke').send({});
+    const res = await request(app).post('/x402/buyer-smoke').set('X-Idempotency-Key', 'buyer-smoke-preflight-01').send({});
     assert.strictEqual(res.status, 503);
     assert.strictEqual(res.body.error, 'fuel_charge_preflight_failed');
     assert.strictEqual(res.body.paidResourceCalled, false);
@@ -682,7 +711,7 @@ describe('x402 official smoke endpoint', () => {
       },
     }));
 
-    const res = await request(app).post('/x402/buyer-smoke').send({});
+    const res = await request(app).post('/x402/buyer-smoke').set('X-Idempotency-Key', 'buyer-smoke-settled-01').send({});
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));
     assert.strictEqual(res.body.status, 'settled');
     assert.strictEqual(res.body.txHash, '0xoutgoing');
