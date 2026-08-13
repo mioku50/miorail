@@ -14,6 +14,7 @@ The rule underneath all of it: **a measurement that did not happen is never repo
 > Execution model: non-custodial. Miorail never holds a key and never broadcasts.
 > Live: `https://miorail.xyz` — web console and Base App mini app
 > Product direction: [`docs/MIORAIL_VISION.md`](docs/MIORAIL_VISION.md)
+> Manual production acceptance: [`docs/PRODUCTION_UI_VERIFICATION.md`](docs/PRODUCTION_UI_VERIFICATION.md)
 
 ---
 
