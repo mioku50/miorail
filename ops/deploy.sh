@@ -21,6 +21,9 @@ SERVE_ROOT=${SERVE_ROOT:-/var/www/miorail}
 SERVICE_USER=${SERVICE_USER:-miorail}
 NODE_BIN=${NODE_BIN:-/home/miorail/.nvm/versions/node/v22.23.1/bin}
 SERVICES=(miorail-api miorail-miniapp miorail-b20-discover miorail-b20-measure)
+MCP_PUBLIC_URL=${MCP_PUBLIC_URL:-https://miorail.xyz/mcp}
+NGINX_SNIPPET_SOURCE="$REPO/ops/nginx/miorail-app.conf"
+NGINX_SNIPPET_TARGET=/etc/nginx/snippets/miorail-app.conf
 MINIAPP_UNIT_SOURCE="$REPO/ops/systemd/miorail-miniapp.service"
 MINIAPP_UNIT_TARGET=/etc/systemd/system/miorail-miniapp.service
 B20_DISCOVER_UNIT_SOURCE="$REPO/ops/systemd/miorail-b20-discover.service"
@@ -53,7 +56,31 @@ step "3/7  build"
 # One such error reached main because --noEmit was treated as equivalent.
 as_service_user pnpm -r build
 
-step "4/7  install Base App and B20 services"
+step "4/7  install Nginx route, Base App and B20 services"
+# The public MCP endpoint is mounted at the API root rather than under /api.
+# Keep its reverse-proxy route in the repository: otherwise Nginx serves the
+# SPA for GET /mcp and rejects the MCP client's POST with its own HTTP 405.
+nginx_backup=$(mktemp)
+nginx_target_existed=false
+if [ -f "$NGINX_SNIPPET_TARGET" ]; then
+  cp -p "$NGINX_SNIPPET_TARGET" "$nginx_backup"
+  nginx_target_existed=true
+fi
+install -m 0644 "$NGINX_SNIPPET_SOURCE" "$NGINX_SNIPPET_TARGET"
+if ! nginx -t; then
+  if [ "$nginx_target_existed" = true ]; then
+    install -m 0644 "$nginx_backup" "$NGINX_SNIPPET_TARGET"
+  else
+    rm -f "$NGINX_SNIPPET_TARGET"
+  fi
+  rm -f "$nginx_backup"
+  nginx -t
+  echo 'FAILED: repository Nginx configuration is invalid; restored the previous snippet'
+  exit 1
+fi
+rm -f "$nginx_backup"
+systemctl reload nginx
+
 # Nginx has always routed the public MiniApp host to port 3010. Keep the unit
 # in the repository and install it on every deploy so a rebuilt Base App cannot
 # silently remain offline behind a healthy-looking build.
@@ -99,5 +126,40 @@ miniapp_status=$(curl --silent --show-error --output /dev/null --write-out '%{ht
 printf '  miniapp http://127.0.0.1:3010/  %s\n' "$miniapp_status"
 [ "$miniapp_status" = 200 ] || { echo 'FAILED: the Base App service is not serving its production build'; exit 1; }
 
+MCP_ACCEPT='application/json, text/event-stream'
+mcp_post() {
+  curl --silent --show-error --fail-with-body \
+    --connect-timeout 10 \
+    --max-time 30 \
+    --header 'Content-Type: application/json' \
+    --header "Accept: $MCP_ACCEPT" \
+    --data-binary "$1" \
+    "$MCP_PUBLIC_URL"
+}
+mcp_data_json() {
+  sed -n 's/^data: //p' | tail -1
+}
+
+mcp_initialize=$(mcp_post '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"miorail-deploy-smoke","version":"1.0.0"}}}' | mcp_data_json)
+printf '%s' "$mcp_initialize" | jq -e \
+  '.result.serverInfo.name == "miorail" and .result.protocolVersion == "2025-03-26"' \
+  >/dev/null || { echo 'FAILED: public MCP initialize response is not Miorail'; exit 1; }
+printf '  mcp initialize %-28s %s\n' "$MCP_PUBLIC_URL" 'Miorail 1.0.0'
+
+mcp_tools=$(mcp_post '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | mcp_data_json)
+printf '%s' "$mcp_tools" | jq -e '
+  .result.tools
+  | map(.name)
+  | sort
+  == [
+    "miorail_discover_status",
+    "miorail_explain_b20_rejection",
+    "miorail_get_b20_market_leaders",
+    "miorail_get_b20_opportunity",
+    "miorail_list_b20_opportunities"
+  ]
+' >/dev/null || { echo 'FAILED: public MCP tool registry is not the reviewed five-tool surface'; exit 1; }
+printf '  mcp tools/list %-28s %s\n' "$MCP_PUBLIC_URL" '5 read-only tools'
+
 echo
-echo "Deployed. Served entry: $served_entry · Base App: HTTP $miniapp_status"
+echo "Deployed. Served entry: $served_entry · Base App: HTTP $miniapp_status · Miorail MCP: 5 tools"
