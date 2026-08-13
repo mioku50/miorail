@@ -5,6 +5,7 @@ import { UniswapSwapRouteAdapter } from './uniswap.js';
 import { O1SwapRouteAdapter } from './o1.js';
 import { HydrexSwapRouteAdapter } from './hydrex.js';
 import { BalancerSwapRouteAdapter } from './balancer.js';
+import { supportsRoutableSwapIntentV1 } from './normalization.js';
 import type {
   ReleasedSwapAdapterId,
   SwapAdapterId,
@@ -32,10 +33,22 @@ export function getEligibleSwapAdapters(
   intent: RouteIntentV1,
   adapters: readonly SwapRouteAdapter[] = createDefaultSwapAdapters(),
 ): SwapAdapterSelectionResult {
+  // Chain/status/shape failures are not provider outcomes: there is no valid
+  // swap request to offer any adapter. Pair-specific support is different. A
+  // released provider that cannot quote native ETH must be ASKED locally and
+  // return its typed `provider_unsupported_intent` result, otherwise it
+  // disappears before diagnostics and the UI can only guess "not asked".
+  if (!supportsRoutableSwapIntentV1(intent)) {
+    return {
+      outcome: 'no_eligible_adapters',
+      adapters: [],
+      errorCode: 'no_eligible_swap_adapters',
+    };
+  }
   const unique = new Map(adapters.map((adapter) => [adapter.id, adapter]));
-  // A generic comparison includes only released quote adapters. Manifested
-  // providers enter the engine when explicitly requested and return an honest
-  // typed failure until their quote/build/proof vertical passes its gate.
+  // A generic comparison includes every released quote adapter allowed by the
+  // user's protocol constraint. Each adapter owns pair support and returns a
+  // typed failure without opening a socket when the pair is outside its scope.
   let allowed = new Set<SwapAdapterId>(RELEASED_ADAPTER_ORDER);
   if (intent.protocolConstraint.mode === 'include_only') {
     allowed = new Set(
@@ -51,7 +64,7 @@ export function getEligibleSwapAdapters(
 
   const selected = ADAPTER_ORDER.flatMap((id) => {
     const adapter = unique.get(id);
-    return adapter && allowed.has(id) && adapter.supports(intent) ? [adapter] : [];
+    return adapter && allowed.has(id) ? [adapter] : [];
   });
   return selected.length > 0
     ? { outcome: 'selected', adapters: selected }

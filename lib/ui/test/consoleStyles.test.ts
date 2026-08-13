@@ -239,6 +239,14 @@ describe('a long hash cannot widen the page', () => {
   });
 });
 
+describe('dense Route KPIs stay inside their cards', () => {
+  test('a KPI track can shrink and both value lines wrap long financial text', () => {
+    assert.match(rulesFor(/\.mio-console \.kpi\s*$/).join(' '), /min-width:\s*0/);
+    assert.match(rulesFor(/\.mio-console \.kpi \.v\s*$/).join(' '), /overflow-wrap:\s*anywhere/);
+    assert.match(rulesFor(/\.mio-console \.kpi \.d\s*$/).join(' '), /overflow-wrap:\s*anywhere/);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The shared `Button` is dressed in Tailwind utilities. The interface build
 // does not generate them for `lib/ui` sources — the compiled stylesheet holds

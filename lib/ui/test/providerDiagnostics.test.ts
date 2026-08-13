@@ -5,6 +5,7 @@ import path from 'node:path';
 import url from 'node:url';
 
 import {
+  REGISTERED_SWAP_PROVIDERS_V1,
   adaptersFromStatusV1,
   candidatesFromProjectionV1,
   comparisonClaimV1,
@@ -240,6 +241,17 @@ describe('§3.4 — what a comparison may claim', () => {
 
 describe('§3.4 — every registered adapter keeps a row', () => {
   const registered = ['uniswap', 'kyberswap', 'aerodrome'];
+
+  test('the shared web and MiniApp inventory names all released swap providers', () => {
+    assert.deepEqual([...REGISTERED_SWAP_PROVIDERS_V1], [
+      'uniswap',
+      'kyberswap',
+      'aerodrome',
+      'balancer',
+      'hydrex',
+      'o1-exchange',
+    ]);
+  });
 
   test('an adapter that was never asked says so, and borrows no error', () => {
     const rows = providerDiagnosticRowsV1(

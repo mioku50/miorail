@@ -364,13 +364,16 @@ describe('the registry', () => {
     ]);
   });
 
-  test('a swap intent selects all three', () => {
+  test('a swap intent asks every released provider so unsupported pairs remain visible', () => {
     const selection = getEligibleSwapAdapters(makeIntent());
     assert.equal(selection.outcome, 'selected');
     assert.deepEqual(selection.adapters.map((adapter) => adapter.id), [
       'uniswap',
       'kyberswap',
       'aerodrome',
+      'o1-exchange',
+      'hydrex',
+      'balancer',
     ]);
   });
 

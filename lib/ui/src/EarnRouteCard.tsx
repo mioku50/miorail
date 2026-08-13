@@ -188,6 +188,9 @@ export function EarnRouteCardView({
           <p className="mt-1 font-mono text-[11px] text-ink-3" data-earn-data-source={view.dataSourceLabel}>
             Live data: {view.dataSourceLabel} · updated {view.lastUpdatedLabel}
           </p>
+          <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.14em] text-accent-2" data-earn-route-coverage={view.routeCoverageLabel}>
+            {view.routeCoverageLabel}
+          </p>
         </div>
         <div className="rounded-full border border-accent/35 bg-accent-soft px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-accent-2">
           Read-only comparison

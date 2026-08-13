@@ -99,6 +99,9 @@ export interface EarnRouteCardViewV1 {
   dataSourceLabel: string;
   lastUpdatedLabel: string;
   staleWarning: string | null;
+  /** Protocol names already present below, surfaced before the long card list
+   * so a third candidate such as YO is not mistaken for a missing provider. */
+  routeCoverageLabel: string;
 }
 
 const OPTIMIZATION_LABELS: Record<string, string> = {
@@ -322,6 +325,10 @@ export function deriveEarnRouteCardViewV1(source: EarnRouteCardSourceV1): EarnRo
         : `${staleRows.map((row) => row.protocolLabel).join(' and ')} ${
             staleRows.length === 1 ? 'data is' : 'data are'
           } past the freshness window — shown below, but excluded from ranking.`,
+    routeCoverageLabel:
+      rows.length === 0
+        ? 'No routes returned'
+        : `${rows.length} route${rows.length === 1 ? '' : 's'} shown · ${rows.map((row) => row.protocolLabel).join(' · ')}`,
   };
 }
 

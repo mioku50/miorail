@@ -94,6 +94,7 @@ describe('T61 Earn Route Card view model', () => {
     assert.equal(view.optimizationLabel, 'Best net yield');
     assert.equal(view.recommendation?.protocolLabel, 'Morpho');
     assert.equal(view.rows.length, 2);
+    assert.equal(view.routeCoverageLabel, '2 routes shown · Moonwell · Morpho');
 
     const morpho = view.rows.find((r) => r.protocolLabel === 'Morpho')!;
     assert.equal(morpho.isRecommended, true);
@@ -231,6 +232,7 @@ describe('T61 EarnRouteCardView component', () => {
     assert.ok(rendered.includes('Moonwell API · Morpho API'));
     assert.ok(rendered.includes('2026-07-25 08:45 UTC'));
     assert.ok(rendered.includes('1.21M USDC'));
+    assert.ok(rendered.includes('2 routes shown · Moonwell · Morpho'));
   });
 
   test('T63A: a stale reading renders its warning banner on the card and the row', () => {

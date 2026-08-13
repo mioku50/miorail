@@ -3,10 +3,12 @@ import test, { describe, afterEach } from 'node:test';
 import type { Request } from 'express';
 
 import {
+  baseHistoryReplyV1,
   baseMcpConsoleArgsV1,
   baseMcpConsoleResultTextV1,
   boundedModelResultV1,
   baseMcpConsoleRuntimeV1,
+  deterministicBaseHistoryReadV1,
   runBaseMcpConsoleV1,
 } from './baseMcpConsole.js';
 
@@ -71,6 +73,78 @@ const ask = (message = 'what can you read?') =>
   runBaseMcpConsoleV1({ req, userId: 'u1', sessionSecret: 's', message, enabled: true });
 
 const BASE_MCP_INVENTORY = [{ providerId: 'base-mcp-dynamic', tools: [{ name: 'get_portfolio' }] }];
+
+describe('canonical Base transaction history is deterministic', () => {
+  test('the advertised recent-transactions prompt calls the documented Base MCP tool without an address', async () => {
+    let agentCreated = false;
+    let called: { name: string; args: Record<string, unknown> } | null = null;
+    const aggregator = {
+      listProviderTools: async () => [{
+        providerId: 'base-mcp-dynamic',
+        tools: [{ name: 'get_transaction_history' }, { name: 'get_portfolio' }],
+      }],
+      callTool: async (name: string, args: Record<string, unknown>) => {
+        called = { name, args };
+        return {
+          content: JSON.stringify({
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                transactions: [{
+                  hash: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                  type: 'transfer',
+                  status: 'success',
+                  timestamp: '2026-08-11T18:00:00Z',
+                }],
+              }),
+            }],
+          }),
+          isError: false,
+        };
+      },
+      close: async () => {},
+    };
+    baseMcpConsoleRuntimeV1.createApiToolAggregatorForUser = (async () => aggregator) as unknown as typeof baseMcpConsoleRuntimeV1.createApiToolAggregatorForUser;
+    baseMcpConsoleRuntimeV1.createLlmProvider = (() => ({})) as typeof baseMcpConsoleRuntimeV1.createLlmProvider;
+    baseMcpConsoleRuntimeV1.createAgent = (() => {
+      agentCreated = true;
+      throw new Error('canonical history must not depend on model tool choice');
+    }) as unknown as typeof baseMcpConsoleRuntimeV1.createAgent;
+
+    const result = await ask('Show my recent Base transactions');
+
+    assert.deepEqual(called, {
+      name: 'get_transaction_history',
+      args: { chain: 'base', limit: 10 },
+    });
+    assert.equal('address' in (called?.args ?? {}), false);
+    assert.equal(agentCreated, false);
+    assert.equal(result.status, 'answered');
+    assert.equal(result.trace[0]?.tool, 'get_transaction_history');
+    assert.match(result.reply ?? '', /Recent Base transactions/);
+    assert.match(result.reply ?? '', /success · transfer/);
+    assert.match(result.reply ?? '', /0xaaaaaaaa…aaaaaa/);
+  });
+
+  test('a requested count becomes a bounded typed argument', () => {
+    const inventory = [{ providerId: 'base-mcp-dynamic', tools: [{ name: 'get_transaction_history' }] }];
+    assert.deepEqual(deterministicBaseHistoryReadV1('Show my last 5 USDC transactions', inventory), {
+      tool: 'get_transaction_history',
+      args: { chain: 'base', limit: 5 },
+    });
+    assert.deepEqual(deterministicBaseHistoryReadV1('Show my latest 999 transactions', inventory)?.args, {
+      chain: 'base',
+      limit: 25,
+    });
+  });
+
+  test('history formatting never fabricates fields when Base returns an empty list', () => {
+    assert.equal(
+      baseHistoryReplyV1(JSON.stringify({ content: [{ type: 'text', text: '{"transactions":[]}' }] }), 10),
+      'Base MCP reports no recent transactions for the connected Base Account.',
+    );
+  });
+});
 
 describe('the console is Base MCP and nothing else', () => {
   test('it asks the factory for a Base-MCP-only aggregator', async () => {

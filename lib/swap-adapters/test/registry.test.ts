@@ -92,6 +92,24 @@ test('Balancer is a released adapter and can be explicitly selected for an ERC-2
   }
 });
 
+test('released ERC-20-only providers remain selected for native ETH and report their own typed gap', () => {
+  const selection = getEligibleSwapAdapters(makeIntent(), createDefaultSwapAdapters());
+  assert.equal(selection.outcome, 'selected');
+  if (selection.outcome === 'selected') {
+    assert.deepEqual(selection.adapters.map((adapter) => adapter.id), [
+      'uniswap',
+      'kyberswap',
+      'aerodrome',
+      'o1-exchange',
+      'hydrex',
+      'balancer',
+    ]);
+    assert.equal(selection.adapters.find((adapter) => adapter.id === 'hydrex')?.supports(makeIntent()), false);
+    assert.equal(selection.adapters.find((adapter) => adapter.id === 'o1-exchange')?.supports(makeIntent()), false);
+    assert.equal(selection.adapters.find((adapter) => adapter.id === 'balancer')?.supports(makeIntent()), false);
+  }
+});
+
 test('unsupported chain and non-ready intents select no adapters', () => {
   assert.equal(getEligibleSwapAdapters(makeIntent({ chainId: 84532 }), adapters).outcome, 'no_eligible_adapters');
   assert.equal(getEligibleSwapAdapters(makeIntent({ status: 'draft' }), adapters).outcome, 'no_eligible_adapters');

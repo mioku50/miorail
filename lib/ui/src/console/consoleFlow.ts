@@ -453,6 +453,7 @@ export const REGISTERED_SWAP_PROVIDERS_V1 = [
   'uniswap',
   'kyberswap',
   'aerodrome',
+  'balancer',
   'hydrex',
   'o1-exchange',
 ] as const;
