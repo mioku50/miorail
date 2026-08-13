@@ -32,12 +32,12 @@ import {
 // ---------------------------------------------------------------------------
 
 export const MIORAIL_MCP_NAME_V1 = 'miorail';
-export const MIORAIL_MCP_VERSION_V1 = '1.0.0';
+export const MIORAIL_MCP_VERSION_V1 = '1.1.0';
 
 /** §7 — what the assistant is told about the whole server, once. */
 export const MIORAIL_MCP_INSTRUCTIONS_V1 = `Miorail is a Base L2 route-intelligence product. This server is READ-ONLY: it reports what Miorail's background workers measured about B20 token launches, and it can neither trade, sign, quote a wallet, nor prepare a transaction.
 
-Three things you must preserve when you summarise anything from this server:
+Five things you must preserve when you summarise anything from this server:
 
 1. ${MIORAIL_MCP_CAVEATS_V1.provisional}
 
@@ -45,7 +45,11 @@ Three things you must preserve when you summarise anything from this server:
 
 3. ${MIORAIL_MCP_CAVEATS_V1.capacity}
 
-Miorail does not measure unique buyers, trading volume, holder concentration, related-wallet clusters, organic buy pressure, future price or profit probability. Do not infer any of them from what is here, and do not describe a token as safe, unsafe, good, promising or a scam on this evidence — none of those are things Miorail measured.
+4. ${MIORAIL_MCP_CAVEATS_V1.poolHook}
+
+5. ${MIORAIL_MCP_CAVEATS_V1.launchBuying}
+
+Miorail measures unique buying wallets only inside a completed launch window. It does not measure buyers beyond that window, trading volume, current holder concentration, related-wallet clusters, organic buy pressure, future price or profit probability. Do not infer any of them from what is here, and do not describe a token as safe, unsafe, good, promising or a scam on this evidence — none of those are things Miorail measured.
 
 An empty result is not the same as a quiet chain. Call miorail_discover_status first: the workers may be behind, unconfigured or degraded, and the status says which.`;
 
@@ -98,7 +102,7 @@ export function createMiorailMcpServerV1(): McpServer {
 
 Each result carries a state you must keep: "provisional" (measured, but before any entry moved the pool — NOT qualified, NOT a recommendation), "rejected" (a specific measured condition was not met — not a safety verdict), or "unmeasured" (Miorail could not complete a reading — says nothing about the token).
 
-Numbers may be null. A null round-trip cost means it was not measured; it does not mean zero, free or cheap.`,
+Numbers may be null. A null round-trip cost means it was not measured; it does not mean zero, free or cheap. Results also include the exact display-safe Discover Card plus measured route sources, pool-hook permissions and completed launch-window buying evidence. Hook permissions are not behavior, and launch-window buying is not current holdings.`,
       inputSchema: {
         state: z
           .enum(['all', 'candidate', 'provisional', 'rejected', 'unmeasured'])
@@ -107,7 +111,9 @@ Numbers may be null. A null round-trip cost means it was not measured; it does n
         freshness: z
           .enum(['all', 'fresh', 'stale'])
           .optional()
-          .describe('A stale measurement is still what was true when taken, but is past its window.'),
+          .describe(
+            'A stale measurement is still what was true when taken, but is past its window.',
+          ),
         limit: z.number().int().min(1).max(MCP_MAX_PAGE_V1).optional(),
         cursor: z.string().max(500).optional().describe('Opaque; from a previous call.'),
       },
@@ -126,7 +132,7 @@ Numbers may be null. A null round-trip cost means it was not measured; it does n
     {
       title: 'One measured B20 launch',
       description:
-        'Returns Miorail’s latest Exit-First measurement for one Base token address, with its controls, route coverage and capacity bounds. "Not in feed" means Miorail has not measured that address inside its current window — a statement about what Miorail has read, not about the token.',
+        'Returns Miorail’s latest Exit-First measurement for one Base token address, with its exact display-safe Discover Card, controls, route sources, pool-hook permissions, completed launch-window buying evidence and capacity bounds. Hook permissions are not behavior, and launch-window buying is not current holdings. "Not in feed" means Miorail has not measured that address inside its current window — a statement about what Miorail has read, not about the token.',
       inputSchema: {
         tokenAddress: z
           .string()
@@ -170,11 +176,13 @@ Numbers may be null. A null round-trip cost means it was not measured; it does n
 
 "${MCP_LEADER_DIMENSIONS_V1[0]}" orders by the largest exit size that stayed within the reference slippage tolerance. "${MCP_LEADER_DIMENSIONS_V1[1]}" orders by measured pre-entry round-trip cost, cheapest first.
 
-A token’s position here says only that one number is larger or smaller than another’s. Absence from the list is not a negative finding: rejected, unmeasured and stale tokens are excluded because they do not carry the number being sorted on.`,
+A token’s position here says only that one number is larger or smaller than another’s. Absence from the list is not a negative finding: rejected, unmeasured and stale tokens are excluded because they do not carry the number being sorted on. Each result retains its exact display-safe Discover Card, including pool-hook, route-source and completed launch-window buying evidence when measured.`,
       inputSchema: {
         orderBy: z
           .enum(MCP_LEADER_DIMENSIONS_V1)
-          .describe('Required. There is no default, because there is no default notion of "leading".'),
+          .describe(
+            'Required. There is no default, because there is no default notion of "leading".',
+          ),
         limit: z.number().int().min(1).max(MCP_MAX_PAGE_V1).optional(),
       },
     },

@@ -5,8 +5,12 @@ import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
-import { createMiorailMcpServerV1, MIORAIL_MCP_INSTRUCTIONS_V1 } from './server.js';
-import { b20RouteRuntime } from '../b20Control.js';
+import {
+  createMiorailMcpServerV1,
+  MIORAIL_MCP_INSTRUCTIONS_V1,
+  MIORAIL_MCP_VERSION_V1,
+} from './server.js';
+import { b20RouteRuntime, readDiscoverFeedV1 } from '../b20Control.js';
 
 // ---------------------------------------------------------------------------
 // T72 §8 — driven through a REAL MCP client over a real transport.
@@ -55,6 +59,7 @@ function observation(overrides: Record<string, unknown> = {}) {
     exitRouteFound: true,
     entrySourceKey: 'aerodrome|in',
     exitSourceKey: 'aerodrome|out',
+    poolHookAddress: '0x985c14baa2a18316ffda0aefb3a632fadfca2acc',
     optimisticExitReturnAtomic: '98700000',
     optimisticRoundTripBps: 130,
     routeCoverage: 'complete' as const,
@@ -77,8 +82,34 @@ function observation(overrides: Record<string, unknown> = {}) {
   };
 }
 
+type StubFeedRowV1 = {
+  launch: typeof LAUNCH;
+  observation: unknown;
+  launchBuyers?: {
+    buyerCount: number;
+    topBuyerShareBps: number | null;
+    topThreeShareBps: number | null;
+    fromBlock: string;
+    toBlock: string;
+  } | null;
+};
+
+const LAUNCH_BUYERS = {
+  buyerCount: 76,
+  topBuyerShareBps: 1_482,
+  topThreeShareBps: 2_973,
+  fromBlock: LAUNCH.blockNumber,
+  toBlock: '49541000',
+};
+
+const MEASURED_ROW: StubFeedRowV1 = {
+  launch: LAUNCH,
+  observation: observation(),
+  launchBuyers: LAUNCH_BUYERS,
+};
+
 /** A stub repository: the tools are exercised, the database is not. */
-function stubObservations(rows: { launch: typeof LAUNCH; observation: unknown }[]) {
+function stubObservations(rows: StubFeedRowV1[]) {
   return {
     listFeed: async () => ({ rows, nextCursor: null }),
     pipelineCounts: async () => ({
@@ -103,7 +134,7 @@ const original = {
 };
 
 before(() => {
-  b20RouteRuntime.observations = () => stubObservations([{ launch: LAUNCH, observation: observation() }]);
+  b20RouteRuntime.observations = () => stubObservations([MEASURED_ROW]);
   b20RouteRuntime.discoverAvailable = async () => true;
   b20RouteRuntime.now = () => new Date('2026-08-05T12:00:00.000Z');
 });
@@ -124,7 +155,10 @@ async function connectedClient(): Promise<Client> {
 }
 
 function payloadOf(result: unknown): Record<string, unknown> {
-  const typed = result as { structuredContent?: Record<string, unknown>; content?: { text?: string }[] };
+  const typed = result as {
+    structuredContent?: Record<string, unknown>;
+    content?: { text?: string }[];
+  };
   if (typed.structuredContent) return typed.structuredContent;
   return JSON.parse(typed.content?.[0]?.text ?? '{}') as Record<string, unknown>;
 }
@@ -133,16 +167,13 @@ describe('§8 — tool discovery', () => {
   test('a client sees exactly the five tools, with usable descriptions', async () => {
     const client = await connectedClient();
     const { tools } = await client.listTools();
-    assert.deepEqual(
-      tools.map((tool) => tool.name).sort(),
-      [
-        'miorail_discover_status',
-        'miorail_explain_b20_rejection',
-        'miorail_get_b20_market_leaders',
-        'miorail_get_b20_opportunity',
-        'miorail_list_b20_opportunities',
-      ],
-    );
+    assert.deepEqual(tools.map((tool) => tool.name).sort(), [
+      'miorail_discover_status',
+      'miorail_explain_b20_rejection',
+      'miorail_get_b20_market_leaders',
+      'miorail_get_b20_opportunity',
+      'miorail_list_b20_opportunities',
+    ]);
     for (const tool of tools) {
       // An assistant chooses from the description alone. A one-liner produces
       // a model that calls the wrong tool and summarises it wrongly.
@@ -151,12 +182,19 @@ describe('§8 — tool discovery', () => {
     await client.close();
   });
 
-  test('§7 — the server instructions carry all three caveats', async () => {
+  test('the advertised server version is 1.1.0', () => {
+    assert.equal(MIORAIL_MCP_VERSION_V1, '1.1.0');
+  });
+
+  test('§7 — the server instructions carry all five caveats', async () => {
     // These are what a model reads once, at connection, and what it falls back
     // on when a tool payload is truncated in its context.
     assert.match(MIORAIL_MCP_INSTRUCTIONS_V1, /PROVISIONAL IS NOT QUALIFIED/);
     assert.match(MIORAIL_MCP_INSTRUCTIONS_V1, /NO SUPPORTED ROUTE DOES NOT MEAN NO ROUTE/);
     assert.match(MIORAIL_MCP_INSTRUCTIONS_V1, /EXIT CAPACITY IS MEASURED, NOT INTERPOLATED/);
+    assert.match(MIORAIL_MCP_INSTRUCTIONS_V1, /POOL HOOK PERMISSIONS ARE NOT BEHAVIOR/);
+    assert.match(MIORAIL_MCP_INSTRUCTIONS_V1, /LAUNCH-WINDOW BUYING IS NOT CURRENT HOLDINGS/);
+    assert.match(MIORAIL_MCP_INSTRUCTIONS_V1, /buyers beyond that window/);
     assert.match(MIORAIL_MCP_INSTRUCTIONS_V1, /READ-ONLY/);
   });
 
@@ -164,7 +202,10 @@ describe('§8 — tool discovery', () => {
     const client = await connectedClient();
     const { tools } = await client.listTools();
     const leaders = tools.find((tool) => tool.name === 'miorail_get_b20_market_leaders')!;
-    assert.match(leaders.description ?? '', /NOT a ranking, a score, a recommendation or a prediction/);
+    assert.match(
+      leaders.description ?? '',
+      /NOT a ranking, a score, a recommendation or a prediction/,
+    );
     // `orderBy` has no default on purpose: there is no default notion of
     // "leading", and inventing one is the interpretation layer §3 forbids.
     assert.deepEqual((leaders.inputSchema as { required?: string[] }).required, ['orderBy']);
@@ -173,9 +214,67 @@ describe('§8 — tool discovery', () => {
 });
 
 describe('§4 — every distinction survives the trip', () => {
+  test('Discover Card parity survives list, get and market-leaders projections', async () => {
+    const feed = await readDiscoverFeedV1({
+      limit: 10,
+      cursor: null,
+      state: 'all',
+      freshness: 'all',
+    });
+    const expected = feed.cards[0]!;
+    const client = await connectedClient();
+
+    const list = payloadOf(
+      await client.callTool({ name: 'miorail_list_b20_opportunities', arguments: {} }),
+    );
+    const get = payloadOf(
+      await client.callTool({
+        name: 'miorail_get_b20_opportunity',
+        arguments: { tokenAddress: LAUNCH.tokenAddress },
+      }),
+    );
+    const leaders = payloadOf(
+      await client.callTool({
+        name: 'miorail_get_b20_market_leaders',
+        arguments: { orderBy: 'lowest_measured_round_trip' },
+      }),
+    );
+
+    const projected = [
+      (list.opportunities as Record<string, unknown>[])[0],
+      get.opportunity as Record<string, unknown>,
+      (leaders.results as Record<string, unknown>[])[0],
+    ];
+    for (const opportunity of projected) {
+      assert.deepEqual(opportunity.discoverCard, expected);
+      const measurement = opportunity.measurement as Record<string, unknown>;
+      assert.deepEqual(
+        (measurement.poolHook as Record<string, unknown>).assessment,
+        expected.observation?.poolHook,
+      );
+      assert.deepEqual(
+        (measurement.launchBuying as Record<string, unknown>).aggregate,
+        expected.observation?.launchBuyers,
+      );
+      assert.deepEqual(
+        (measurement.launchBuying as Record<string, unknown>).window,
+        expected.observation?.launchBuyerWindow,
+      );
+      assert.deepEqual(measurement.routeLiquidity, {
+        entrySourceKey: expected.observation?.entrySourceKey,
+        exitSourceKey: expected.observation?.exitSourceKey,
+        note: 'Provider source keys identify the measured entry and exit routes. A null source means that side was not found on the supported venues.',
+      });
+    }
+
+    await client.close();
+  });
+
   test('a provisional card arrives labelled provisional, with its pre-entry note', async () => {
     const client = await connectedClient();
-    const payload = payloadOf(await client.callTool({ name: 'miorail_list_b20_opportunities', arguments: {} }));
+    const payload = payloadOf(
+      await client.callTool({ name: 'miorail_list_b20_opportunities', arguments: {} }),
+    );
     const first = (payload.opportunities as Record<string, unknown>[])[0]!;
     const measurement = first.measurement as Record<string, unknown>;
     assert.equal(measurement.state, 'provisional');
@@ -189,9 +288,15 @@ describe('§4 — every distinction survives the trip', () => {
 
   test('capacity is a pair of bounds and a warning, never a single figure', async () => {
     const client = await connectedClient();
-    const payload = payloadOf(await client.callTool({ name: 'miorail_list_b20_opportunities', arguments: {} }));
-    const capacity = ((payload.opportunities as Record<string, unknown>[])[0]!.measurement as Record<string, unknown>)
-      .exitCapacity as Record<string, unknown>;
+    const payload = payloadOf(
+      await client.callTool({ name: 'miorail_list_b20_opportunities', arguments: {} }),
+    );
+    const capacity = (
+      (payload.opportunities as Record<string, unknown>[])[0]!.measurement as Record<
+        string,
+        unknown
+      >
+    ).exitCapacity as Record<string, unknown>;
     assert.equal(capacity.largestPassingSizeAtomic, '250000000');
     assert.equal(capacity.firstFailingSizeAtomic, '500000000');
     assert.match(String(capacity.note), /MEASURED, NOT INTERPOLATED/);
@@ -204,22 +309,36 @@ describe('§4 — every distinction survives the trip', () => {
   test('an unmeasured number is null and says it is not zero', async () => {
     b20RouteRuntime.observations = () =>
       stubObservations([
-        { launch: LAUNCH, observation: observation({ optimisticRoundTripBps: null, largestPassingSizeAtomic: null }) },
+        {
+          launch: LAUNCH,
+          observation: observation({
+            optimisticRoundTripBps: null,
+            largestPassingSizeAtomic: null,
+          }),
+        },
       ]);
     const client = await connectedClient();
-    const payload = payloadOf(await client.callTool({ name: 'miorail_list_b20_opportunities', arguments: {} }));
-    const measurement = (payload.opportunities as Record<string, unknown>[])[0]!.measurement as Record<string, unknown>;
+    const payload = payloadOf(
+      await client.callTool({ name: 'miorail_list_b20_opportunities', arguments: {} }),
+    );
+    const measurement = (payload.opportunities as Record<string, unknown>[])[0]!
+      .measurement as Record<string, unknown>;
     const roundTrip = measurement.roundTrip as Record<string, unknown>;
     assert.equal(roundTrip.measuredBps, null);
     assert.match(String(roundTrip.note), /not.*zero, free, or cheap/i);
-    b20RouteRuntime.observations = () => stubObservations([{ launch: LAUNCH, observation: observation() }]);
+    b20RouteRuntime.observations = () => stubObservations([MEASURED_ROW]);
     await client.close();
   });
 
   test('a launch with no block timestamp does not acquire one', async () => {
     const client = await connectedClient();
-    const payload = payloadOf(await client.callTool({ name: 'miorail_list_b20_opportunities', arguments: {} }));
-    const launch = (payload.opportunities as Record<string, unknown>[])[0]!.launch as Record<string, unknown>;
+    const payload = payloadOf(
+      await client.callTool({ name: 'miorail_list_b20_opportunities', arguments: {} }),
+    );
+    const launch = (payload.opportunities as Record<string, unknown>[])[0]!.launch as Record<
+      string,
+      unknown
+    >;
     assert.equal(launch.launchedAt, null);
     assert.equal(launch.launchTimeKnown, false);
     assert.match(String(launch.note), /do not report that block time as a launch time/i);
@@ -229,7 +348,10 @@ describe('§4 — every distinction survives the trip', () => {
   test('the reason vocabulary is typed, and says which findings a wallet cannot change', async () => {
     const client = await connectedClient();
     const payload = payloadOf(
-      await client.callTool({ name: 'miorail_explain_b20_rejection', arguments: { reasonCode: 'no_exit_route' } }),
+      await client.callTool({
+        name: 'miorail_explain_b20_rejection',
+        arguments: { reasonCode: 'no_exit_route' },
+      }),
     );
     const reason = (payload.reasons as Record<string, unknown>[])[0]!;
     assert.equal(reason.reasonCode, 'no_exit_route');
@@ -242,7 +364,9 @@ describe('§4 — every distinction survives the trip', () => {
   test('an empty feed still explains itself', async () => {
     b20RouteRuntime.discoverAvailable = async () => false;
     const client = await connectedClient();
-    const payload = payloadOf(await client.callTool({ name: 'miorail_discover_status', arguments: {} }));
+    const payload = payloadOf(
+      await client.callTool({ name: 'miorail_discover_status', arguments: {} }),
+    );
     assert.match(String(payload.emptyListMeaning), /does NOT mean the chain is quiet/);
     b20RouteRuntime.discoverAvailable = async () => true;
     await client.close();
@@ -294,7 +418,9 @@ describe('§8 — malformed input', () => {
 
   test('an unknown tool is an error, not a silent empty result', async () => {
     const client = await connectedClient();
-    const result = await client.callTool({ name: 'miorail_execute_trade', arguments: {} }).catch(() => 'threw');
+    const result = await client
+      .callTool({ name: 'miorail_execute_trade', arguments: {} })
+      .catch(() => 'threw');
     if (result !== 'threw') assert.equal((result as { isError?: boolean }).isError, true);
     await client.close();
   });
@@ -309,10 +435,11 @@ describe('§5/§8 — what this surface cannot do, and cannot leak', () => {
     // Without this, a wrong `here` makes `sources` empty and every assertion
     // below passes vacuously — which is exactly what happened once, and it cost
     // nothing to notice only because the total test count moved.
-    assert.deepEqual(
-      sources.map((entry) => entry.name).sort(),
-      ['index.ts', 'server.ts', 'tools.ts'],
-    );
+    assert.deepEqual(sources.map((entry) => entry.name).sort(), [
+      'index.ts',
+      'server.ts',
+      'tools.ts',
+    ]);
   });
 
   test('no signer, submission, clearance or payment reaches these files', () => {
@@ -341,7 +468,7 @@ describe('§5/§8 — what this surface cannot do, and cannot leak', () => {
     const { tools } = await client.listTools();
     for (const tool of tools) {
       const properties = Object.keys(
-        ((tool.inputSchema as { properties?: Record<string, unknown> }).properties ?? {}),
+        (tool.inputSchema as { properties?: Record<string, unknown> }).properties ?? {},
       );
       for (const property of properties) {
         assert.ok(
@@ -364,7 +491,7 @@ describe('§5/§8 — what this surface cannot do, and cannot leak', () => {
     for (const secret of ['hunter2', '10.0.0.4', 'postgres://', 'ECONNREFUSED']) {
       assert.ok(!text.includes(secret), `the error leaked ${secret}`);
     }
-    b20RouteRuntime.observations = () => stubObservations([{ launch: LAUNCH, observation: observation() }]);
+    b20RouteRuntime.observations = () => stubObservations([MEASURED_ROW]);
     await client.close();
   });
 
@@ -373,7 +500,10 @@ describe('§5/§8 — what this surface cannot do, and cannot leak', () => {
     for (const name of ['miorail_discover_status', 'miorail_list_b20_opportunities'] as const) {
       const text = JSON.stringify(payloadOf(await client.callTool({ name, arguments: {} })));
       assert.ok(!/https?:\/\//.test(text), `${name} returned a URL`);
-      assert.ok(!/apiKey|api_key|secret|password|Bearer /i.test(text), `${name} returned a credential`);
+      assert.ok(
+        !/apiKey|api_key|secret|password|Bearer /i.test(text),
+        `${name} returned a credential`,
+      );
     }
     await client.close();
   });
@@ -394,7 +524,10 @@ describe('§5/§8 — what this surface cannot do, and cannot leak', () => {
     const tools = sources.find((entry) => entry.name === 'tools.ts')!.text;
     assert.match(tools, /readDiscoverFeedV1/);
     // No direct repository access and no second card projection.
-    assert.ok(!tools.includes('createDatabaseB20ObservationRepository'), 'the tools reach the repository directly');
+    assert.ok(
+      !tools.includes('createDatabaseB20ObservationRepository'),
+      'the tools reach the repository directly',
+    );
     assert.ok(!tools.includes('b20OpportunityCardV1('), 'the tools build their own cards');
   });
 });

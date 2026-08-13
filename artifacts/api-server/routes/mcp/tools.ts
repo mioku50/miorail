@@ -24,7 +24,7 @@ import { readDiscoverFeedV1, pipelineStatusV1, b20RouteRuntime } from '../b20Con
 // could be quoted alone.
 // ---------------------------------------------------------------------------
 
-/** §7 — the three things an assistant must not lose. Attached to every
+/** §7 — the things an assistant must not lose. Attached to every
  * response, because any one of them may be the only object a model quotes. */
 export const MIORAIL_MCP_CAVEATS_V1 = {
   provisional:
@@ -33,6 +33,10 @@ export const MIORAIL_MCP_CAVEATS_V1 = {
     'NO SUPPORTED ROUTE DOES NOT MEAN NO ROUTE. Miorail searched the venues it supports. A token with no entry or exit route here may still trade somewhere Miorail does not read.',
   capacity:
     'EXIT CAPACITY IS MEASURED, NOT INTERPOLATED. The ladder priced a handful of sizes. It knows the largest that passed and the smallest that failed, and nothing about the range between them. Do not report a figure inside that gap.',
+  poolHook:
+    'POOL HOOK PERMISSIONS ARE NOT BEHAVIOR. Address bits say which callbacks a Uniswap v4 hook may run; they do not prove that it used them. Only measured route results state an observed outcome.',
+  launchBuying:
+    'LAUNCH-WINDOW BUYING IS NOT CURRENT HOLDINGS. Counts and shares describe gross buying during the complete launch window; wallets may have sold since. They do not identify snipers, bots, insiders, related wallets or intent.',
 } as const;
 
 /** §6 — bounded, and not by the caller. */
@@ -70,7 +74,17 @@ export function publicFailureV1(error: unknown): McpPublicError {
 /** The card, flattened for a reader that has no schema in front of it. Every
  * measured number keeps the qualifier that makes it honest. */
 export interface McpOpportunityV1 {
-  token: { address: string; symbol: string; name: string; variant: string; decimals: number | null };
+  /** The exact display-safe object returned to Discover Card consumers. This
+   * is the parity anchor: a new card field reaches MCP without a second manual
+   * projection having to remember it. */
+  discoverCard: B20OpportunityCardV1;
+  token: {
+    address: string;
+    symbol: string;
+    name: string;
+    variant: string;
+    decimals: number | null;
+  };
   launch: {
     blockNumber: string;
     /** Null when no block timestamp was available. NOT a detection time. */
@@ -96,6 +110,20 @@ export interface McpOpportunityV1 {
     routeCoverageNote: string;
     entryRouteFound: boolean;
     exitRouteFound: boolean;
+    routeLiquidity: {
+      entrySourceKey: string | null;
+      exitSourceKey: string | null;
+      note: string;
+    };
+    poolHook: {
+      assessment: NonNullable<B20OpportunityCardV1['observation']>['poolHook'];
+      note: string;
+    };
+    launchBuying: {
+      aggregate: NonNullable<B20OpportunityCardV1['observation']>['launchBuyers'];
+      window: NonNullable<B20OpportunityCardV1['observation']>['launchBuyerWindow'];
+      note: string;
+    };
     viableRouteConfirmed: boolean;
     bestRouteConfirmed: boolean;
     roundTrip: { measuredBps: number | null; note: string };
@@ -106,7 +134,12 @@ export interface McpOpportunityV1 {
       stable: boolean | null;
       note: string;
     };
-    referenceProfile: { positionAtomic: string; quoteAsset: string; maxRoundTripBps: number; maxExitSlippageBps: number };
+    referenceProfile: {
+      positionAtomic: string;
+      quoteAsset: string;
+      maxRoundTripBps: number;
+      maxExitSlippageBps: number;
+    };
     controls: {
       transfersPaused: boolean | null;
       transferPolicyState: string | null;
@@ -124,6 +157,7 @@ export interface McpOpportunityV1 {
 function opportunityFromCardV1(card: B20OpportunityCardV1): McpOpportunityV1 {
   const observation = card.observation;
   return {
+    discoverCard: card,
     token: {
       address: card.launch.tokenAddress,
       symbol: card.launch.symbol,
@@ -160,6 +194,23 @@ function opportunityFromCardV1(card: B20OpportunityCardV1): McpOpportunityV1 {
               : `The route search did not complete, so this token was compared against only part of what Miorail supports. ${MIORAIL_MCP_CAVEATS_V1.routeCoverage}`,
           entryRouteFound: observation.entryRouteFound,
           exitRouteFound: observation.exitRouteFound,
+          routeLiquidity: {
+            entrySourceKey: observation.entrySourceKey,
+            exitSourceKey: observation.exitSourceKey,
+            note:
+              observation.routeCoverage === 'complete'
+                ? 'Provider source keys identify the measured entry and exit routes. A null source means that side was not found on the supported venues.'
+                : `Provider source keys cover only the completed part of the search. ${MIORAIL_MCP_CAVEATS_V1.routeCoverage}`,
+          },
+          poolHook: {
+            assessment: observation.poolHook,
+            note: MIORAIL_MCP_CAVEATS_V1.poolHook,
+          },
+          launchBuying: {
+            aggregate: observation.launchBuyers,
+            window: observation.launchBuyerWindow,
+            note: MIORAIL_MCP_CAVEATS_V1.launchBuying,
+          },
           viableRouteConfirmed: observation.viableRouteConfirmed,
           bestRouteConfirmed: observation.bestRouteConfirmed,
           roundTrip: {
@@ -202,7 +253,11 @@ function opportunityFromCardV1(card: B20OpportunityCardV1): McpOpportunityV1 {
 export async function miorailDiscoverStatusV1(): Promise<Record<string, unknown>> {
   try {
     const available = await b20RouteRuntime.discoverAvailable();
-    const status = await pipelineStatusV1(b20RouteRuntime.observations(), b20RouteRuntime.now(), available);
+    const status = await pipelineStatusV1(
+      b20RouteRuntime.observations(),
+      b20RouteRuntime.now(),
+      available,
+    );
     return {
       state: status.state,
       summary: status.message,
@@ -235,7 +290,10 @@ export async function miorailListOpportunitiesV1(input: {
   cursor?: string | null;
 }): Promise<Record<string, unknown>> {
   try {
-    const limit = Math.max(1, Math.min(MCP_MAX_PAGE_V1, Math.floor(input.limit ?? MCP_DEFAULT_PAGE_V1)));
+    const limit = Math.max(
+      1,
+      Math.min(MCP_MAX_PAGE_V1, Math.floor(input.limit ?? MCP_DEFAULT_PAGE_V1)),
+    );
     const feed = await readDiscoverFeedV1({
       limit,
       cursor: input.cursor ?? null,
@@ -256,7 +314,9 @@ export async function miorailListOpportunitiesV1(input: {
   }
 }
 
-export async function miorailGetOpportunityV1(input: { tokenAddress: string }): Promise<Record<string, unknown>> {
+export async function miorailGetOpportunityV1(input: {
+  tokenAddress: string;
+}): Promise<Record<string, unknown>> {
   const tokenAddress = String(input.tokenAddress ?? '').toLowerCase();
   if (!ADDRESS_V1.test(tokenAddress)) {
     // Malformed and unknown stay distinct: one is the caller's mistake and the
@@ -271,7 +331,9 @@ export async function miorailGetOpportunityV1(input: { tokenAddress: string }): 
       state: 'all',
       freshness: 'all',
     });
-    const found = feed.cards.find((card) => card.launch.tokenAddress.toLowerCase() === tokenAddress);
+    const found = feed.cards.find(
+      (card) => card.launch.tokenAddress.toLowerCase() === tokenAddress,
+    );
     if (!found) {
       throw new McpPublicError(
         'not_in_feed',
@@ -298,7 +360,13 @@ export async function miorailGetOpportunityV1(input: { tokenAddress: string }): 
  * distinction the UI uses to decide whether to offer a wallet check.
  */
 export function miorailExplainRejectionV1(input: { reasonCode?: string }): Record<string, unknown> {
-  const walletIndependent = ['not_b20', 'uninitialized', 'transfers_paused', 'no_entry_route', 'no_exit_route'];
+  const walletIndependent = [
+    'not_b20',
+    'uninitialized',
+    'transfers_paused',
+    'no_entry_route',
+    'no_exit_route',
+  ];
   const describe = (code: string, copy: string, kind: 'rejected' | 'unmeasured') => ({
     reasonCode: code,
     state: kind,
@@ -317,7 +385,9 @@ export function miorailExplainRejectionV1(input: { reasonCode?: string }): Recor
     ),
   ];
 
-  const requested = input.reasonCode ? all.find((entry) => entry.reasonCode === input.reasonCode) : undefined;
+  const requested = input.reasonCode
+    ? all.find((entry) => entry.reasonCode === input.reasonCode)
+    : undefined;
   if (input.reasonCode && !requested) {
     throw new McpPublicError(
       'unknown_reason_code',
@@ -367,7 +437,10 @@ export async function miorailMarketLeadersV1(input: {
     );
   }
   try {
-    const limit = Math.max(1, Math.min(MCP_MAX_PAGE_V1, Math.floor(input.limit ?? MCP_DEFAULT_PAGE_V1)));
+    const limit = Math.max(
+      1,
+      Math.min(MCP_MAX_PAGE_V1, Math.floor(input.limit ?? MCP_DEFAULT_PAGE_V1)),
+    );
     const feed = await readDiscoverFeedV1({
       limit: MCP_MAX_PAGE_V1,
       cursor: null,

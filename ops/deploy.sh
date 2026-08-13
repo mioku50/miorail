@@ -142,9 +142,9 @@ mcp_data_json() {
 
 mcp_initialize=$(mcp_post '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"miorail-deploy-smoke","version":"1.0.0"}}}' | mcp_data_json)
 printf '%s' "$mcp_initialize" | jq -e \
-  '.result.serverInfo.name == "miorail" and .result.protocolVersion == "2025-03-26"' \
+  '.result.serverInfo.name == "miorail" and .result.serverInfo.version == "1.1.0" and .result.protocolVersion == "2025-03-26"' \
   >/dev/null || { echo 'FAILED: public MCP initialize response is not Miorail'; exit 1; }
-printf '  mcp initialize %-28s %s\n' "$MCP_PUBLIC_URL" 'Miorail 1.0.0'
+printf '  mcp initialize %-28s %s\n' "$MCP_PUBLIC_URL" 'Miorail 1.1.0'
 
 mcp_tools=$(mcp_post '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | mcp_data_json)
 printf '%s' "$mcp_tools" | jq -e '
