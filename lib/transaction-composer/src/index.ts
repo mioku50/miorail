@@ -13,3 +13,4 @@ export * from './adapters/uniswap.js';
 export * from './adapters/kyberswap.js';
 export * from './adapters/aerodrome.js';
 export * from './adapters/o1.js';
+export * from './adapters/hydrex.js';

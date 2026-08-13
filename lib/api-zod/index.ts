@@ -1989,6 +1989,7 @@ export const StatusResponseSchema = z.object({
     // o1 comparison is part of route intelligence; execution is an
     // independent server-side gate, additive for older clients.
     o1ExecutionV1: z.boolean().optional(),
+    hydrexExecutionV1: z.boolean().optional(),
     // T67C: same additive treatment.
     b20ControlV1: z.boolean().optional(),
     // T67C.2: same additive treatment.

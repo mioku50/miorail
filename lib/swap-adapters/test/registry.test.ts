@@ -81,7 +81,7 @@ test('adapter supports() independently enforces protocol constraints', () => {
 });
 
 test('Routes-owned manifested providers return a typed unavailable fact when explicitly selected', async () => {
-  for (const provider of ['balancer', 'hydrex'] as const) {
+  for (const provider of ['balancer'] as const) {
     const intent = withProtocolConstraint(makeIntent(), {
       mode: 'include_only',
       protocols: [provider],

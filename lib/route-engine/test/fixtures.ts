@@ -109,6 +109,7 @@ interface CandidateOverrides {
   expiresAt?: string;
   poolAddress?: `0x${string}` | null;
   sourceKey?: string;
+  upstreamProvider?: string | null;
   riskFlags?: string[];
   sourceIndependence?: 'independent' | 'overlapping' | 'unknown';
 }
@@ -158,7 +159,9 @@ export function makeCandidate(
       protocol: 'uniswap-v3',
       poolAddress,
       assets: [intent.fromAsset!, intent.toAsset!],
-      upstreamProvider: poolAddress ? 'uniswap-v3' : null,
+      upstreamProvider: overrides.upstreamProvider === undefined
+        ? (poolAddress ? 'uniswap-v3' : null)
+        : overrides.upstreamProvider,
     }],
     trustMetadata: {
       integrationKind: 'http_api',

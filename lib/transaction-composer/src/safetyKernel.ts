@@ -10,6 +10,7 @@ import { validateKyberSwap, type KyberSwapContext } from '@mioagent/security/kyb
 import type { SwapGuardAssetV1 } from '@mioagent/security/swapAsset';
 import { validateAerodromeSwap, type AerodromeSwapContext } from '@mioagent/security/aerodromeGuard';
 import { validateO1Swap, type O1SwapContext } from '@mioagent/security/o1Guard';
+import { validateHydrexSwap, type HydrexSwapContext } from '@mioagent/security/hydrexGuard';
 import type { BaseCall } from '@mioagent/security/baseGuards';
 import type { ExecutionTokenSecurityResult } from '@mioagent/security';
 import type { ContractSecuritySummaryV1 } from '@mioagent/route-card';
@@ -57,6 +58,9 @@ export interface RunSafetyKernelInput {
   /** Fresh proxy + implementation code-hash check. Required for o1 because
    * its pinned address is upgradeable. */
   o1ContractPinVerified?: boolean;
+  /** Fresh outer proxy plus selected upstream code-hash/allowlist check. */
+  hydrexContractPinVerified?: boolean;
+  hydrexUpstreamRouter?: string;
 }
 
 export interface RunSafetyKernelOutput {
@@ -313,7 +317,41 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
     ),
   );
 
-  if (input.provider === 'o1-exchange') {
+  if (input.provider === 'hydrex') {
+    checks.push(
+      check(
+        'provider_contract_pin_hydrex',
+        'Hydrex proxy, implementation and selected upstream code hashes match reviewed pins',
+        input.hydrexContractPinVerified ? 'passed' : 'failed',
+        input.hydrexContractPinVerified ? null : 'hydrex_contract_pin_unverified',
+      ),
+    );
+    const inputAddress = input.intent.fromAsset?.address?.toLowerCase();
+    const outputAddress = input.intent.toAsset?.address?.toLowerCase();
+    const reviewedMinimum = input.reviewedMinimumOutputAtomic;
+    const context: HydrexSwapContext | undefined =
+      inputAddress && outputAddress && reviewedMinimum && input.hydrexUpstreamRouter
+        ? {
+            inputTokenAddress: inputAddress,
+            outputTokenAddress: outputAddress,
+            amountInAtomic: input.intent.amount.amountAtomic,
+            minimumOutputAtomic: reviewedMinimum,
+            recipient: input.walletAddress,
+            routerAddress: input.routerAddress,
+            upstreamRouter: input.hydrexUpstreamRouter,
+            expiresAt: input.quoteExpiry,
+          }
+        : undefined;
+    const guard = validateHydrexSwap({ chain: input.chainId, calls: baseCalls, context, now: input.now });
+    checks.push(
+      check(
+        'provider_guard_hydrex',
+        'Hydrex outer calldata, nested route boundary and pinned upstream validation',
+        guard.success ? 'passed' : 'failed',
+        guard.success ? null : `${guard.code}: ${guard.reason}`,
+      ),
+    );
+  } else if (input.provider === 'o1-exchange') {
     checks.push(
       check(
         'provider_contract_pin_o1',

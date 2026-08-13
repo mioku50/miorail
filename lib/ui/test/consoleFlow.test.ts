@@ -235,7 +235,8 @@ describe('coverage and adapters come from the server, not the front end', () => 
 
     const during = adaptersFromStatusV1(allOn);
     assert.equal(during.find((row) => row.name === 'Uniswap')?.state, 'live');
-    assert.equal(during.find((row) => row.name === 'o1.exchange')?.state, 'blocked');
+    assert.equal(during.find((row) => row.name === 'Hydrex')?.state, 'live');
+    assert.equal(during.find((row) => row.name === 'o1.exchange')?.state, 'live');
 
     // T67E §5: a run REFINES the rail, it does not replace it. This used to
     // assert the replacement — `after` was exactly two rows — which meant that
@@ -249,7 +250,8 @@ describe('coverage and adapters come from the server, not the front end', () => 
     assert.equal(after.find((row) => row.name === 'Uniswap')?.state, 'degraded');
     // Everything else keeps the state its gate gives it.
     assert.equal(after.find((row) => row.name === 'Moonwell')?.state, 'live');
-    assert.equal(after.find((row) => row.name === 'o1.exchange')?.state, 'blocked');
+    assert.equal(after.find((row) => row.name === 'Hydrex')?.state, 'live');
+    assert.equal(after.find((row) => row.name === 'o1.exchange')?.state, 'live');
     assert.equal(after.length, before.length, 'a run must not shorten the rail');
   });
 
@@ -266,11 +268,13 @@ describe('Comparing is route-family aware and terminal', () => {
   const ALL_ADAPTERS = [
     { name: 'Uniswap', label: 'live', live: true, usable: true },
     { name: 'KyberSwap', label: 'live', live: true, usable: true },
+    { name: 'Aerodrome', label: 'live', live: true, usable: true },
+    { name: 'Hydrex', label: 'live', live: true, usable: true },
     { name: 'Moonwell', label: 'disabled', live: false, usable: false },
     { name: 'Morpho', label: 'disabled', live: false, usable: false },
     { name: 'Alchemy simulation', label: 'live', live: true, usable: true },
     { name: 'Bitrefill', label: 'live', live: true, usable: true },
-    { name: 'o1.exchange', label: 'blocked', live: false, usable: false },
+    { name: 'o1.exchange', label: 'live', live: true, usable: true },
   ];
 
   test('a commerce comparison lists only the commerce sources', () => {
@@ -323,14 +327,16 @@ describe('Comparing is route-family aware and terminal', () => {
       'Intent extraction',
       'Uniswap quote',
       'KyberSwap quote',
+      'Aerodrome quote',
+      'Hydrex quote',
       'o1.exchange quote',
       'Evidence collected',
       'Scoring against your goal',
     ]);
     assert.equal(rows.find((row) => row.label === 'Uniswap quote')?.state, 'done');
     assert.equal(rows.find((row) => row.label === 'KyberSwap quote')?.state, 'running');
-    // Planned, so it is not spinning and says so.
-    assert.equal(rows.find((row) => row.label === 'o1.exchange quote')?.state, 'failed');
+    assert.equal(rows.find((row) => row.label === 'Hydrex quote')?.state, 'running');
+    assert.equal(rows.find((row) => row.label === 'o1.exchange quote')?.state, 'running');
     assert.equal(rows.find((row) => row.label === 'Evidence collected')?.value, '3 sources');
   });
 

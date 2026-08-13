@@ -1743,7 +1743,7 @@ export function MiniConsole() {
                         difference: "—",
                         tone: "none" as const,
                       },
-                      { label: "Gas", expected: recommended.estimatedGas.gasUnits, actual: proof.actualGasUsed ?? "—", difference: "—", tone: "none" as const },
+                      { label: "Gas", expected: recommended.estimatedGas.gasUnits === "0" ? "Not provided" : recommended.estimatedGas.gasUnits, actual: proof.actualGasUsed ?? "—", difference: "—", tone: "none" as const },
                     ]
                   : []
               }

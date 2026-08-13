@@ -32,7 +32,7 @@ export interface RoutePlanRouteV1 {
   expectedOutput: { amountDecimal: string; asset: { symbol: string; address: string | null } };
   minimumOutput: { amountDecimal: string };
   estimatedGas: { gasUnits: string; estimatedCostUsd: string | null };
-  priceImpact: { percent: string };
+  priceImpact: { percent: string } | null;
   slippage: { percent: string };
   quoteAgeSeconds: number;
   callCount: number;

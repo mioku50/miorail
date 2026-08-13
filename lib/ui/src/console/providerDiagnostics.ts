@@ -122,6 +122,9 @@ export function swapDiagnosticReasonV1(errorCode: string): SwapDiagnosticReasonV
   // the engine's checks grow. Matching the prefix keeps a new check from
   // silently degrading to "unknown".
   if (errorCode.startsWith('engine_')) return 'provider_invalid_schema';
+  if (errorCode.startsWith('hydrex_') || errorCode.startsWith('o1_')) {
+    return 'provider_invalid_schema';
+  }
   return 'unknown';
 }
 

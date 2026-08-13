@@ -128,6 +128,11 @@ describe('the reason taxonomy', () => {
     assert.equal(swapDiagnosticReasonV1('engine_a_check_added_next_year'), 'provider_invalid_schema');
   });
 
+  test('released advanced adapters surface parser refusals as invalid responses', () => {
+    assert.equal(swapDiagnosticReasonV1('hydrex_inner_calldata_invalid'), 'provider_invalid_schema');
+    assert.equal(swapDiagnosticReasonV1('o1_route_asset_mismatch'), 'provider_invalid_schema');
+  });
+
   test('an unrecognised code does not invent a cause', () => {
     const view = providerFailureViewV1({ provider: 'uniswap', errorCode: 'something_new' });
     assert.equal(view.reason, 'unknown');
@@ -292,7 +297,7 @@ describe('§5 — the adapter rail is a source of truth', () => {
     // called "Route adapters" — exactly when a user would consult it.
     const rows = adaptersFromStatusV1(status, [{ name: 'Aerodrome' }], [{ name: 'Uniswap' }]);
     const names = rows.map((row) => row.name);
-    for (const expected of ['Uniswap', 'KyberSwap', 'Aerodrome', 'Moonwell', 'Bitrefill', 'OpenSea', 'o1.exchange']) {
+    for (const expected of ['Uniswap', 'KyberSwap', 'Aerodrome', 'Hydrex', 'Moonwell', 'Bitrefill', 'OpenSea', 'o1.exchange']) {
       assert.ok(names.includes(expected), `${expected} disappeared from the rail`);
     }
   });

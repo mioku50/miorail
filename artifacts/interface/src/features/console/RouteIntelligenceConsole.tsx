@@ -1227,7 +1227,9 @@ export function RouteIntelligenceConsole() {
           {
             k: 'Network cost',
             v: recommended?.estimatedGas.estimatedCostUsd ? `$${recommended.estimatedGas.estimatedCostUsd}` : '—',
-            d: `est. ${recommended?.estimatedGas.gasUnits ?? '—'} gas`,
+            d: recommended && recommended.estimatedGas.gasUnits !== '0'
+              ? `est. ${recommended.estimatedGas.gasUnits} gas`
+              : 'provider supplied no gas estimate',
           },
           {
             k: 'Price impact',
@@ -1578,7 +1580,7 @@ export function RouteIntelligenceConsole() {
                 },
                 {
                   label: 'Gas',
-                  expected: recommended.estimatedGas.gasUnits,
+                  expected: recommended.estimatedGas.gasUnits === '0' ? 'Not provided' : recommended.estimatedGas.gasUnits,
                   actual: proof.actualGas?.gasUnits ?? '—',
                   difference: '—',
                   tone: 'none' as const,

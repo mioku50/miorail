@@ -4,6 +4,7 @@ import { KyberSwapRouteAdapter } from './kyberswap.js';
 import { UniswapSwapRouteAdapter } from './uniswap.js';
 import { ManifestedSwapRouteAdapter } from './manifested.js';
 import { O1SwapRouteAdapter } from './o1.js';
+import { HydrexSwapRouteAdapter } from './hydrex.js';
 import type {
   ReleasedSwapAdapterId,
   SwapAdapterId,
@@ -11,11 +12,10 @@ import type {
   SwapRouteAdapter,
 } from './types.js';
 
-const RELEASED_ADAPTER_ORDER: readonly ReleasedSwapAdapterId[] = ['uniswap', 'kyberswap', 'aerodrome', 'o1-exchange'];
+const RELEASED_ADAPTER_ORDER: readonly ReleasedSwapAdapterId[] = ['uniswap', 'kyberswap', 'aerodrome', 'o1-exchange', 'hydrex'];
 const ADAPTER_ORDER: readonly SwapAdapterId[] = [
   ...RELEASED_ADAPTER_ORDER,
   'balancer',
-  'hydrex',
 ];
 
 export function createDefaultSwapAdapters(): SwapRouteAdapter[] {
@@ -24,8 +24,8 @@ export function createDefaultSwapAdapters(): SwapRouteAdapter[] {
     new KyberSwapRouteAdapter(),
     new AerodromeSwapRouteAdapter(),
     new O1SwapRouteAdapter(),
+    new HydrexSwapRouteAdapter(),
     new ManifestedSwapRouteAdapter('balancer'),
-    new ManifestedSwapRouteAdapter('hydrex'),
   ];
 }
 

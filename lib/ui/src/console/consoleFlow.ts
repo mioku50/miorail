@@ -366,7 +366,7 @@ export function coverageFromStatusV1(status: ConsoleServerStatusV1 | null): Cove
   return [
     {
       action: 'Swap on Base',
-      sources: routing ? 'Uniswap, KyberSwap, Aerodrome' : 'route intelligence gate is off',
+      sources: routing ? 'Uniswap, KyberSwap, Aerodrome, Hydrex, o1.exchange' : 'route intelligence gate is off',
       percent: routing ? 70 : 0,
       state: routing ? 'ready' : 'off',
       available: routing,
@@ -449,7 +449,13 @@ export interface AdapterStateSourceV1 {
 
 /** The swap adapters this build registers, in rail order. The candidate table
  * uses this to keep a row for an adapter that was never asked. */
-export const REGISTERED_SWAP_PROVIDERS_V1 = ['uniswap', 'kyberswap', 'aerodrome'] as const;
+export const REGISTERED_SWAP_PROVIDERS_V1 = [
+  'uniswap',
+  'kyberswap',
+  'aerodrome',
+  'hydrex',
+  'o1-exchange',
+] as const;
 
 /** Which route family each adapter belongs to, so a Commerce comparison never
  * lists a swap adapter it did not and will not call. */
@@ -529,18 +535,17 @@ function gatedAdaptersV1(status: ConsoleServerStatusV1 | null): AdapterStateSour
     // rides the routing gate like the other swap adapters — there is no
     // partner key of its own to be missing.
     { name: 'Aerodrome', state: gate(routing) },
+    // Hydrex and o1 participate in read-only comparison under the route gate.
+    // Their separate execution flags control build/approval, not visibility
+    // of measured candidates.
+    { name: 'Hydrex', state: gate(routing) },
+    { name: 'o1.exchange', state: gate(routing) },
     { name: 'Moonwell', state: gate(earn) },
     { name: 'Morpho', state: gate(earn) },
     { name: 'Alchemy simulation', state: gate(paid) },
     { name: 'Bitrefill', state: gate(commerce) },
     { name: 'OpenSea', state: gate(nft) },
     { name: 'Venice', state: gate(status?.productMigration.privateAiRouteV1 === true) },
-    // T67D: the compatibility gate returned `incompatible` on 2026-08-01 — the
-    // Trading API requires a raw private key, signTransaction and provider-side
-    // broadcast. `planned` would promise an integration that cannot happen
-    // without o1 changing its protocol. See
-    // docs/research/O1_TRADING_API_COMPATIBILITY.md.
-    { name: 'o1.exchange', state: 'blocked' },
   ];
 }
 

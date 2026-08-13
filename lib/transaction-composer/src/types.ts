@@ -183,7 +183,7 @@ export interface TransactionComposerDependencies {
 // selectedCandidate.provider.id only — never message-based detection.
 // ---------------------------------------------------------------------------
 
-export type SwapBuildProviderId = 'uniswap' | 'kyberswap' | 'aerodrome' | 'o1-exchange';
+export type SwapBuildProviderId = 'uniswap' | 'kyberswap' | 'aerodrome' | 'o1-exchange' | 'hydrex';
 
 export interface SwapBuildInput {
   intent: RouteIntentV1;
@@ -254,6 +254,12 @@ export interface SwapBuildSuccess {
   /** Present only after both o1 proxy and implementation hashes were checked
    * during this exact build. Approval performs the same read again. */
   o1?: { contractPinVerified: true };
+  /** Hydrex outer proxy and the exact upstream path were pinned during build. */
+  hydrex?: {
+    contractPinVerified: true;
+    upstreamRouter: `0x${string}`;
+    upstreamSource: 'ZEROX' | 'KYBERSWAP';
+  };
 }
 
 /** Not a display projection: every field here is compared against decoded

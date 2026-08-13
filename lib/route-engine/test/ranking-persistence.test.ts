@@ -22,6 +22,32 @@ test('same Uniswap pool across direct and aggregate candidates is overlap and lo
   assert.ok(result.comparisonConfidence.reasons.includes('overlapping_liquidity'));
 });
 
+test('Hydrex wrapping Kyber is dependency overlap even when Hydrex exposes no pool address', async () => {
+  const intent = makeIntent();
+  const kyber = makeCandidate(intent, 'kyberswap', {
+    poolAddress: null,
+    sourceIndependence: 'unknown',
+    sourceKey: 'eip155:8453/kyberswap:unknown',
+  });
+  const hydrex = makeCandidate(intent, 'hydrex', {
+    poolAddress: null,
+    sourceIndependence: 'overlapping',
+    sourceKey: 'eip155:8453/hydrex:kyberswap:0x6131b5fae19ea4f9d964eac0408e4408b66337b5',
+    upstreamProvider: 'kyberswap',
+  });
+  const result = await engine.evaluate({
+    intent,
+    walletAddress: WALLET,
+    requestId: 'hydrex-kyber-overlap',
+    now: NOW,
+    adapters: [quotedAdapter('kyberswap', kyber), quotedAdapter('hydrex', hydrex)],
+  });
+  assert.ok(result.crossCandidateOverlaps.some(
+    (overlap) => overlap.sourceKey === 'eip155:8453/upstream:kyberswap',
+  ));
+  assert.ok(result.comparisonConfidence.reasons.includes('overlapping_liquidity'));
+});
+
 test('same protocol with different pools does not imply overlap', async () => {
   const intent = makeIntent();
   const uniswap = makeCandidate(intent, 'uniswap', { poolAddress: '0x2222222222222222222222222222222222222222' });

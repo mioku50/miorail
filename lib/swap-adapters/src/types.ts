@@ -1,7 +1,7 @@
 import type { EvidenceRecordV1, RouteCandidateV1, RouteIntentV1 } from '@mioagent/route-domain';
 
-export type ReleasedSwapAdapterId = 'uniswap' | 'kyberswap' | 'aerodrome' | 'o1-exchange';
-export type ManifestedSwapAdapterId = 'balancer' | 'hydrex';
+export type ReleasedSwapAdapterId = 'uniswap' | 'kyberswap' | 'aerodrome' | 'o1-exchange' | 'hydrex';
+export type ManifestedSwapAdapterId = 'balancer';
 export type SwapAdapterId = ReleasedSwapAdapterId | ManifestedSwapAdapterId;
 
 export type SwapAdapterFailureOutcome =

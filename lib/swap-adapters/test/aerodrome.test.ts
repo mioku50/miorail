@@ -359,8 +359,8 @@ describe('the registry', () => {
       'kyberswap',
       'aerodrome',
       'o1-exchange',
-      'balancer',
       'hydrex',
+      'balancer',
     ]);
   });
 

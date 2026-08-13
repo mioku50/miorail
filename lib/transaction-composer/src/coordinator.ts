@@ -170,7 +170,7 @@ export function simulationRequirementV1(
   intent: RouteIntentV1,
   simulationState: SimulationStateV1,
 ): { acceptable: boolean; detail: string } {
-  if (provider !== 'aerodrome' && provider !== 'o1-exchange') {
+  if (provider !== 'aerodrome' && provider !== 'o1-exchange' && provider !== 'hydrex') {
     return simulationHonesty(intent);
   }
   if (simulationState.status === 'passed') {
@@ -224,6 +224,14 @@ export function aerodromeKernelInputV1(
   const credit = blueprint.expectedAssetChanges.find((change) => change.direction === 'credit');
   if (!debit || !credit) return {};
   if (providerId === 'o1-exchange') {
+    return {
+      reviewedMinimumOutputAtomic: credit.minimumAmountAtomic ?? credit.amountAtomic,
+    };
+  }
+  if (providerId === 'hydrex') {
+    const source = candidate.liquiditySources.length === 1 ? candidate.liquiditySources[0] : null;
+    const marker = source?.sourceKey.split(':').at(-1);
+    if (!marker || !/^0x[0-9a-f]{40}$/.test(marker)) return {};
     return {
       reviewedMinimumOutputAtomic: credit.minimumAmountAtomic ?? credit.amountAtomic,
     };
@@ -290,6 +298,12 @@ export async function reviewStoredBlueprintV1(
     providerId === 'o1-exchange'
       ? ((await deps.providerContractPin?.(providerId)) ?? false)
       : undefined;
+  const hydrexUpstreamRouter = providerId === 'hydrex'
+    ? selected.liquiditySources[0]?.sourceKey.split(':').at(-1)
+    : undefined;
+  const hydrexContractPinVerified = providerId === 'hydrex'
+    ? ((await deps.providerContractPin?.(providerId)) ?? false)
+    : undefined;
 
   const { result: safety, contractSecurity } = runSafetyKernel({
     provider: providerId,
@@ -309,6 +323,8 @@ export async function reviewStoredBlueprintV1(
     intentHash: blueprint.intentHash,
     selectedCandidateHash: blueprint.selectedCandidateHash,
     o1ContractPinVerified,
+    hydrexContractPinVerified,
+    hydrexUpstreamRouter,
     ...aerodromeKernelInputV1(providerId, selected, blueprint),
   });
 
@@ -538,7 +554,8 @@ export class DeterministicTransactionComposer implements TransactionComposer {
       const reason: RefreshReasonV1 =
         buildResult.errorCode === 'aerodrome_route_changed' ||
         buildResult.errorCode === 'aerodrome_factory_changed' ||
-        buildResult.errorCode === 'o1_route_changed'
+        buildResult.errorCode === 'o1_route_changed' ||
+        buildResult.errorCode === 'hydrex_route_changed'
           ? 'route_changed'
           : 'quote_expired';
       return refreshRequiredResultV1(
@@ -578,7 +595,7 @@ export class DeterministicTransactionComposer implements TransactionComposer {
     // behaviour byte for byte: no request, no charge, and an honestly
     // `unavailable` state.
     let simulationState: SimulationStateV1 = unsimulatedStateV1();
-    if (providerId === 'aerodrome' || providerId === 'o1-exchange') {
+    if (providerId === 'aerodrome' || providerId === 'o1-exchange' || providerId === 'hydrex') {
       simulationState = this.deps.simulate
         ? await this.deps.simulate({
             chainId: 8453,
@@ -624,6 +641,8 @@ export class DeterministicTransactionComposer implements TransactionComposer {
       aerodrome: buildResult.aerodrome,
       reviewedMinimumOutputAtomic: selected.minimumOutput.amountAtomic,
       o1ContractPinVerified: buildResult.o1?.contractPinVerified,
+      hydrexContractPinVerified: buildResult.hydrex?.contractPinVerified,
+      hydrexUpstreamRouter: buildResult.hydrex?.upstreamRouter,
     });
 
     if (safety.verdict === 'blocked') {

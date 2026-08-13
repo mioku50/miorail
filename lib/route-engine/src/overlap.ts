@@ -3,6 +3,12 @@ import type { CrossCandidateOverlapV1 } from './contracts.js';
 
 function sourceKeys(candidate: RouteCandidateV1, set: EvidenceSetV1): Set<string> {
   const keys = new Set<string>();
+  // An aggregator is itself a dependency boundary. Hydrex may wrap a Kyber
+  // route without exposing every pool address in its outer response; counting
+  // that and a direct Kyber candidate as independent would overstate evidence.
+  if (candidate.provider.id === 'kyberswap') {
+    keys.add(`eip155:${candidate.chainId}/upstream:kyberswap`);
+  }
   const sources = [
     ...candidate.liquiditySources,
     ...set.records.flatMap((record) => record.liquiditySources),

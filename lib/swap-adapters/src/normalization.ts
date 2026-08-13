@@ -321,6 +321,9 @@ export function providerFailure(
   if (errorCode.startsWith('o1_')) {
     return { outcome: 'invalid_response', provider, errorCode, retryable: false };
   }
+  if (errorCode.startsWith('hydrex_')) {
+    return { outcome: 'invalid_response', provider, errorCode, retryable: false };
+  }
   if (
     errorCode === 'provider_asset_mismatch' ||
     errorCode === 'provider_chain_mismatch' ||

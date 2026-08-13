@@ -193,3 +193,4 @@ export * from './uniswapGuard.js';
 export * from './kyberGuard.js';
 export * from './aerodromeGuard.js';
 export * from './o1Guard.js';
+export * from './hydrexGuard.js';

@@ -270,6 +270,12 @@ export async function approveExecutionBlueprintV1(
       providerId === 'o1-exchange'
         ? ((await deps.providerContractPin?.(providerId)) ?? false)
         : undefined;
+    const hydrexUpstreamRouter = providerId === 'hydrex'
+      ? candidate.liquiditySources[0]?.sourceKey.split(':').at(-1)
+      : undefined;
+    const hydrexContractPinVerified = providerId === 'hydrex'
+      ? ((await deps.providerContractPin?.(providerId)) ?? false)
+      : undefined;
 
     const { result: safety } = runSafetyKernel({
       provider: providerId,
@@ -289,6 +295,8 @@ export async function approveExecutionBlueprintV1(
       intentHash: blueprint.intentHash,
       selectedCandidateHash: blueprint.selectedCandidateHash,
       o1ContractPinVerified,
+      hydrexContractPinVerified,
+      hydrexUpstreamRouter,
       ...aerodromeKernelInputV1(providerId, candidate, blueprint),
     });
 

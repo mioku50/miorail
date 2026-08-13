@@ -12,7 +12,8 @@
     "./uniswapGuard": "./src/uniswapGuard.ts",
     "./kyberGuard": "./src/kyberGuard.ts",
     "./aerodromeGuard": "./src/aerodromeGuard.ts",
-    "./o1Guard": "./src/o1Guard.ts"
+    "./o1Guard": "./src/o1Guard.ts",
+    "./hydrexGuard": "./src/hydrexGuard.ts"
   },
   "scripts": {
     "test": "tsx --test src/**/*.test.ts"

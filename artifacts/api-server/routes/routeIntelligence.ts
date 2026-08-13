@@ -79,8 +79,10 @@ import {
   AerodromeSwapRouteAdapter,
   KyberSwapRouteAdapter,
   O1SwapRouteAdapter,
+  HydrexSwapRouteAdapter,
   UniswapSwapRouteAdapter,
   createO1RouterPinReaderV1,
+  createHydrexRouterPinReaderV1,
 } from '@mioagent/swap-adapters';
 import {
   BlueprintSubmissionConflictError,
@@ -88,6 +90,7 @@ import {
   UniswapSwapBuildAdapter,
   AerodromeSwapBuildAdapter,
   O1SwapBuildAdapter,
+  HydrexSwapBuildAdapter,
   approveEarnBlueprintV1,
   approveExecutionBlueprintV1,
   createTransactionComposer,
@@ -378,6 +381,7 @@ export const routePlanRouteRuntime = {
         new KyberSwapRouteAdapter(),
         new AerodromeSwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1() }),
         new O1SwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1() }),
+        new HydrexSwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1() }),
       ],
       repository,
       // T74: naming a token by address. Two conditions, both necessary — the
@@ -410,10 +414,14 @@ function baseMainnetRpcUrlV1(): string {
  * approval. A missing RPC or any changed proxy/admin/implementation fails
  * closed without exposing endpoint details. */
 async function providerContractPinVerifiedV1(provider: string): Promise<boolean> {
-  if (provider !== 'o1-exchange') return true;
   const rpcUrl = baseMainnetRpcUrlV1();
-  if (!rpcUrl) return false;
-  return (await createO1RouterPinReaderV1({ rpcUrl }).verify()).ok;
+  if (provider === 'o1-exchange') {
+    return Boolean(rpcUrl) && (await createO1RouterPinReaderV1({ rpcUrl }).verify()).ok;
+  }
+  if (provider === 'hydrex') {
+    return Boolean(rpcUrl) && (await createHydrexRouterPinReaderV1({ rpcUrl }).verifyAll()).ok;
+  }
+  return true;
 }
 
 export const routeIntelligenceRouter = Router();
@@ -828,6 +836,7 @@ export const swapPrepareRouteRuntime = {
     const flags = getMiorailProductMigrationFlags(process.env);
     const aerodromeEnabled = flags.aerodromeExecutionV1;
     const o1Enabled = flags.o1ExecutionV1;
+    const hydrexEnabled = flags.hydrexExecutionV1;
     const composer = createTransactionComposer({
       repository: createDatabaseRouteStorageRepository(client),
       buildAdapters: [
@@ -835,22 +844,25 @@ export const swapPrepareRouteRuntime = {
         new KyberSwapBuildAdapter(),
         new AerodromeSwapBuildAdapter({ rpcUrl }),
         new O1SwapBuildAdapter({ rpcUrl }),
+        new HydrexSwapBuildAdapter({ rpcUrl }),
       ],
       quoteAdapters: [
         new UniswapSwapRouteAdapter(),
         new KyberSwapRouteAdapter(),
         new AerodromeSwapRouteAdapter({ rpcUrl }),
         new O1SwapRouteAdapter({ rpcUrl }),
+        new HydrexSwapRouteAdapter({ rpcUrl }),
       ],
       supportedProviders: [
         'uniswap',
         'kyberswap',
         ...(aerodromeEnabled ? (['aerodrome'] as const) : []),
         ...(o1Enabled ? (['o1-exchange'] as const) : []),
+        ...(hydrexEnabled ? (['hydrex'] as const) : []),
       ],
-      // Aerodrome and o1 must survive a fork simulation before signing. o1
-      // returns decoded calls through an upgradeable proxy whose swap ABI has
-      // no explicit recipient argument.
+      // Aerodrome, o1 and Hydrex must survive a fork simulation before
+      // signing. Both advanced providers cross upgradeable contract
+      // boundaries, so a decoded call is never enough on its own.
       // No provider configured means BLOCKED, never "signed anyway".
       simulate: simulateSwapCallsV1,
       contractSecurity: async ({ chainId, addresses }) =>
