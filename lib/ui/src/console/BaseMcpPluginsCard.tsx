@@ -309,7 +309,7 @@ export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
 }
 
 // ---------------------------------------------------------------------------
-// The right rail for the Base MCP AI surface.
+// The right rail for the Base MCP Extensions surface.
 //
 // The column was empty while the page it sits beside carried three stacked
 // cards and a 20-row catalogue in one scrolling column. Everything here is

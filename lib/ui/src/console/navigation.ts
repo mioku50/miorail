@@ -61,21 +61,18 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
   },
   extensions: {
     id: 'extensions',
-    // Named for the thing on the page rather than the category it belongs to.
-    // "Extensions" is a shelf; what is actually here is the Base MCP agent —
-    // its plugin catalogue, its live tools, and a thread that can reach them
-    // and nothing else.
-    label: 'Base MCP AI',
-    compactLabel: 'Base MCP AI',
+    // This surface is the reviewed extension layer around Base MCP: plugin
+    // catalogue, live tools and a thread scoped to those capabilities. "AI"
+    // described the input method, not the product boundary.
+    label: 'Base MCP Extensions',
+    compactLabel: 'MCP Extensions',
     path: '/extensions',
-    blurb: 'The Base MCP agent: published plugins, live tools, and a thread scoped to them alone.',
+    blurb: 'Reviewed Base MCP plugins, live tools, and a thread scoped to those capabilities.',
   },
   routes: {
     id: 'routes',
-    // "Routes AI" and "Base MCP AI" name the two AI surfaces and, by naming
-    // them apart, say that they are not the same thing: this one answers with
-    // a measured Route Card, the other with whatever a third-party tool
-    // returned.
+    // Routes produces a measured Route Card; Base MCP Extensions exposes
+    // reviewed third-party capabilities. Their names keep that boundary clear.
     label: 'Routes AI',
     compactLabel: 'Routes AI',
     path: '/routes',

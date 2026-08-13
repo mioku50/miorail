@@ -211,12 +211,13 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
     assert.deepEqual(nav.map((item) => item.compactLabel), ['Discover', 'B20', 'Routes AI']);
   });
 
-  test('the two AI surfaces are named apart', () => {
+  test('Routes and the Base MCP extension layer are named apart', () => {
     // They answer with different guarantees — a measured Route Card versus
     // whatever a third-party tool returned — so they must not read as one
     // feature split across two tabs.
     assert.equal(CONSOLE_SECTION_TABLE_V1.routes.label, 'Routes AI');
-    assert.equal(CONSOLE_SECTION_TABLE_V1.extensions.label, 'Base MCP AI');
+    assert.equal(CONSOLE_SECTION_TABLE_V1.extensions.label, 'Base MCP Extensions');
+    assert.equal(CONSOLE_SECTION_TABLE_V1.extensions.compactLabel, 'MCP Extensions');
   });
 
   test('no tab is named for something that only exists after a signature', () => {

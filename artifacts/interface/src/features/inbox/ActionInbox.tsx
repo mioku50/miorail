@@ -129,7 +129,7 @@ export function ActionInbox() {
                 onClick={() => navigate('/extensions')}
                 className="px-3 py-1.5 bg-bg border border-line text-ink text-xs rounded-lg font-medium hover:bg-panel transition-colors"
               >
-                Open Base MCP AI
+                Open Base MCP Extensions
               </button>
             </div>
           </div>
