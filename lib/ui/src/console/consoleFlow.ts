@@ -462,8 +462,55 @@ export const REGISTERED_SWAP_PROVIDERS_V1 = [
  * by Intent Engine V2. The original amount, pair and token address remain in
  * the user's goal; only the provider choice made by that click is appended. */
 export function providerConstrainedGoalV1(goal: string, providerDisplayName: string): string {
-  const cleanGoal = goal.trim().replace(/[.!?\s]+$/u, '');
-  return `${cleanGoal}. Use ${providerDisplayName} only.`;
+  const provider = providerDisplayName.trim();
+  const escapedProvider = provider.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  // Idempotent by construction. If a defensive UI path ever offers the same
+  // provider choice twice, the URL and intent must not grow another sentence
+  // on every click. The server will receive one constraint, exactly once.
+  const repeatedConstraint = new RegExp(
+    `(?:[.!?\\s]+Use\\s+${escapedProvider}\\s+only\\s*)+$`,
+    'iu',
+  );
+  const withoutTrailingPunctuation = goal.trim().replace(/[.!?\s]+$/u, '');
+  const cleanGoal = withoutTrailingPunctuation
+    .replace(repeatedConstraint, '')
+    .replace(/[.!?\s]+$/u, '');
+  return `${cleanGoal}. Use ${provider} only.`;
+}
+
+export interface ProviderConstraintResolutionV1 {
+  needsConstraint: boolean;
+  blockedReason: string | null;
+}
+
+/**
+ * Decides whether a candidate click may add an include-only constraint.
+ *
+ * A missing Route Card after an unconstrained comparison can be resolved by
+ * an explicit user choice. A missing Route Card after that choice CANNOT be
+ * resolved by appending the same words and trying again. Both clients consume
+ * this helper so neither can recreate that loop independently.
+ */
+export function providerConstraintResolutionV1(input: {
+  hasProjection: boolean;
+  routeCardHash: string | null;
+  protocolConstraint: { mode: string; protocols: readonly string[] } | null;
+  providerDisplayName?: string | null;
+}): ProviderConstraintResolutionV1 {
+  if (!input.hasProjection || input.routeCardHash) {
+    return { needsConstraint: false, blockedReason: null };
+  }
+  const alreadyConstrained =
+    input.protocolConstraint?.mode === 'include_only' &&
+    input.protocolConstraint.protocols.length === 1;
+  if (!alreadyConstrained) return { needsConstraint: true, blockedReason: null };
+
+  const provider =
+    input.providerDisplayName?.trim() || input.protocolConstraint!.protocols[0] || 'This provider';
+  return {
+    needsConstraint: false,
+    blockedReason: `${provider} is already the only requested provider, but this run did not produce a reviewable Route Card. Refresh the comparison or change the goal; choosing ${provider} again cannot change the evidence.`,
+  };
 }
 
 /** Which route family each adapter belongs to, so a Commerce comparison never

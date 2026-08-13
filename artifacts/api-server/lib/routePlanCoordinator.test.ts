@@ -50,12 +50,18 @@ function coordinatorFor(inputOptions: {
   constrained?: boolean;
   degraded?: boolean;
   failed?: boolean;
+  unpriced?: boolean;
 }) {
   const repository = inputOptions.repository ?? new InMemoryRouteStorageRepository();
   const intent = inputOptions.resolution?.outcome === 'ready'
     ? inputOptions.resolution.routeIntent
     : routeCardIntentFixture(inputOptions.constrained);
-  const uniswap = routeCardCandidateFixture(intent, 'uniswap', '2026-07-15T12:03:00.000Z');
+  const uniswap = routeCardCandidateFixture(
+    intent,
+    'uniswap',
+    '2026-07-15T12:03:00.000Z',
+    inputOptions.unpriced ? null : '0.50',
+  );
   const kyberswap = routeCardCandidateFixture(intent, 'kyberswap', '2026-07-15T12:04:00.000Z');
   const adapters = inputOptions.failed
     ? [routeCardFailedAdapterFixture('uniswap'), routeCardFailedAdapterFixture('kyberswap')]
@@ -124,6 +130,26 @@ test('explicit protocol constraint persists an honest constrained card', async (
   if (result.outcome !== 'evaluated') return;
   assert.equal(result.evaluation.outcome, 'constrained');
   assert.match(result.routeCard?.recommendationReason ?? '', /not compared as the global best route/);
+  assert.equal((await repository.listRouteCards(intent.id, intent.tenantId)).length, 1);
+});
+
+test('explicit unpriced provider persists a Route Card with Not-scored net result', async () => {
+  const intent = routeCardIntentFixture(true);
+  const { coordinator, repository } = coordinatorFor({
+    constrained: true,
+    unpriced: true,
+    resolution: readyResolution(intent),
+  });
+  const result = await coordinator.evaluate({
+    ...input,
+    requestId: 'coordinator-constrained-unpriced-1',
+  });
+  assert.equal(result.outcome, 'evaluated');
+  if (result.outcome !== 'evaluated') return;
+  assert.equal(result.evaluation.outcome, 'constrained');
+  assert.equal(result.evaluation.netResultMetrics[0]?.status, 'not_scored');
+  assert.equal(result.projection.routeCardHash, result.routeCard?.routeCardHash);
+  assert.ok(result.routeCard, 'the explicit provider choice must reach Review');
   assert.equal((await repository.listRouteCards(intent.id, intent.tenantId)).length, 1);
 });
 

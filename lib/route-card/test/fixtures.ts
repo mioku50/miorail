@@ -48,7 +48,12 @@ export function routeCardIntentFixture(
   return RouteIntentV1Schema.parse({ ...draft, intentHash: hashRouteIntentV1(draft) });
 }
 
-export function routeCardCandidateFixture(routeIntent: RouteIntentV1, provider: 'uniswap' | 'kyberswap', expiresAt: string): RouteCandidateV1 {
+export function routeCardCandidateFixture(
+  routeIntent: RouteIntentV1,
+  provider: 'uniswap' | 'kyberswap',
+  expiresAt: string,
+  estimatedCostUsd: string | null = '0.50',
+): RouteCandidateV1 {
   const output = provider === 'uniswap' ? '250000000' : '251000000';
   const pool = provider === 'uniswap' ? '0x2222222222222222222222222222222222222222' : '0x3333333333333333333333333333333333333333';
   const draft: RouteCandidateV1 = {
@@ -58,7 +63,7 @@ export function routeCardCandidateFixture(routeIntent: RouteIntentV1, provider: 
     provider: PROVIDERS[provider], providerQuoteId: `quote-card-${provider}`, routeType: 'swap', inputAmount: routeIntent.amount,
     expectedOutput: { asset: USDC, amountAtomic: output, amountDecimal: provider === 'uniswap' ? '250' : '251' },
     minimumOutput: { asset: USDC, amountAtomic: (BigInt(output) * 995n / 1000n).toString(), amountDecimal: provider === 'uniswap' ? '248.75' : '249.745' },
-    estimatedGas: { gasUnits: '180000', maxFeePerGasWei: '1500000000', estimatedCostNative: '0.00027', estimatedCostUsd: '0.50' },
+    estimatedGas: { gasUnits: '180000', maxFeePerGasWei: '1500000000', estimatedCostNative: '0.00027', estimatedCostUsd },
     priceImpact: { bps: 10, percent: '0.1' }, slippage: { bps: 50, percent: '0.5' }, callCount: 1, approvalCount: 0,
     quoteObservedAt: '2026-07-15T11:59:00.000Z', quoteExpiresAt: expiresAt,
     liquiditySources: [{ sourceKey: `eip155:8453/uniswap-v3:${pool}`, chainId: 8453, protocol: 'uniswap-v3', poolAddress: pool, assets: [ETH, USDC], upstreamProvider: 'uniswap-v3' }],

@@ -18,6 +18,7 @@ import {
   formatStageDurationV1,
   haltStageRailV1,
   providerConstrainedGoalV1,
+  providerConstraintResolutionV1,
   routeFamilyForGoalV1,
   stageDurationMsV1,
   startStageV1,
@@ -375,6 +376,37 @@ describe('Comparing is route-family aware and terminal', () => {
         'Hydrex',
       ),
       'Swap 12497.607736 0x940181a94A35A4569E4529A3CDfB74e38FD98631 to USDC. Use Hydrex only.',
+    );
+    assert.equal(
+      providerConstrainedGoalV1(
+        'Swap 12497.607736 MIO to USDC. Use Hydrex only. Use Hydrex only.',
+        'Hydrex',
+      ),
+      'Swap 12497.607736 MIO to USDC. Use Hydrex only.',
+    );
+  });
+
+  test('a provider already constrained without a card is blocked instead of offered again', () => {
+    assert.deepEqual(
+      providerConstraintResolutionV1({
+        hasProjection: true,
+        routeCardHash: null,
+        protocolConstraint: { mode: 'any', protocols: [] },
+        providerDisplayName: 'Hydrex',
+      }),
+      { needsConstraint: true, blockedReason: null },
+    );
+    const constrained = providerConstraintResolutionV1({
+      hasProjection: true,
+      routeCardHash: null,
+      protocolConstraint: { mode: 'include_only', protocols: ['hydrex'] },
+      providerDisplayName: 'Hydrex',
+    });
+    assert.equal(constrained.needsConstraint, false);
+    assert.match(constrained.blockedReason ?? '', /already the only requested provider/);
+    assert.match(
+      constrained.blockedReason ?? '',
+      /choosing Hydrex again cannot change the evidence/,
     );
   });
 

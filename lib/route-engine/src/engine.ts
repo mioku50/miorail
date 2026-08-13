@@ -432,6 +432,25 @@ export class DeterministicSwapRouteEngine implements SwapRouteEngine {
     const overlaps = findCrossCandidateOverlapsV1(candidates, evidenceSets);
     const adapterFailures = sortedFailures(failures);
     const ranked = rankRoutes(intent.optimizationMode, usable, scoringVersion);
+    // An explicit include-only choice is a selection, not a ranking. Hydrex
+    // and other honest adapters may omit gas USD, which leaves net result Not
+    // scored and therefore correctly excludes them from `ranked`. Requiring a
+    // ranking here made the sole, fresh, explicitly requested candidate
+    // impossible to select: the evaluation said `constrained`, but carried no
+    // selected hash, so no Route Card could be built and both clients offered
+    // "Use Hydrex only" forever.
+    //
+    // The candidate still keeps every Not-scored dimension. This only binds
+    // the user's explicit provider choice so the ordinary Blueprint, Safety
+    // Kernel and simulation gates can decide whether Review is possible.
+    const explicitlyConstrainedRoute =
+      intent.protocolConstraint.mode === 'include_only' &&
+      intent.protocolConstraint.protocols.length === 1 &&
+      adapters.length === 1 &&
+      usable.length === 1 &&
+      usable[0]!.candidate.provider.id === intent.protocolConstraint.protocols[0]
+        ? usable[0]!
+        : null;
 
     let outcome: SwapRouteEvaluationV1['outcome'];
     let reason: SwapRouteEvaluationV1['reason'];
@@ -452,14 +471,10 @@ export class DeterministicSwapRouteEngine implements SwapRouteEngine {
     ) {
       outcome = 'degraded';
       reason = 'unsupported_optimization_evidence';
-    } else if (
-      intent.protocolConstraint.mode === 'include_only' &&
-      intent.protocolConstraint.protocols.length === 1 &&
-      adapters.length === 1
-    ) {
+    } else if (explicitlyConstrainedRoute) {
       outcome = 'constrained';
       reason = 'user_protocol_constraint';
-      recommendedCandidateHash = ranked?.[0]?.candidate.candidateHash ?? null;
+      recommendedCandidateHash = explicitlyConstrainedRoute.candidate.candidateHash;
     } else if (adapters.length > 1 && usable.length === 1) {
       outcome = 'degraded';
       reason = 'single_provider_available';

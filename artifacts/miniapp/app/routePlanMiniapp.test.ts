@@ -75,10 +75,16 @@ test('B20 entry in Base App uses the shared proof flow and exact atomic Base Acc
 
 test('Base App preserves a sole quoted route and requires an explicit provider constraint before Review', () => {
   const source = readFileSync(path.join(here, 'components', 'MiniConsole.tsx'), 'utf8');
+  const compactSource = source.replace(/\s+/gu, ' ');
   assert.ok(source.includes('projection?.availableRoutes.length === 1'));
   assert.ok(source.includes('providerConstrainedGoalV1(goal, route.provider.displayName)'));
+  assert.ok(source.includes('providerConstraintResolutionV1'));
+  assert.ok(
+    compactSource.includes(
+      'providerConstraintResolution.blockedReason ? undefined : selectCandidateForReview',
+    ),
+  );
   assert.ok(source.includes('goalOverride: constrainedGoal'));
-  assert.ok(source.includes('onSelect={selectCandidateForReview}'));
   assert.ok(source.includes('needsProviderConstraint ? "Use only" : "Use this"'));
   assert.ok(source.includes('"Available route"'));
   assert.ok(source.includes('primaryRoute.minimumOutput.amountDecimal'));

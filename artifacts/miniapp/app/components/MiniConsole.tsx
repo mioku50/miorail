@@ -79,6 +79,7 @@ import {
   marketRailFromSnapshotV1,
   providerUnavailableCopyV1,
   providerConstrainedGoalV1,
+  providerConstraintResolutionV1,
   quoteFreshnessFromRouteV1,
   routeGraphFromRouteV1,
   scoreRowsFromProjectionV1,
@@ -706,13 +707,21 @@ export function MiniConsole() {
   const reviewTarget =
     recommended?.candidateHash ??
     (selectableCandidates.length === 1 ? selectableCandidates[0]!.id : null);
-  const needsProviderConstraint = Boolean(projection && !projection.routeCardHash);
+  const providerConstraintResolution = providerConstraintResolutionV1({
+    hasProjection: Boolean(projection),
+    routeCardHash: projection?.routeCardHash ?? null,
+    protocolConstraint:
+      result?.outcome === "evaluated" ? result.intent.protocolConstraint : null,
+    providerDisplayName: primaryRoute?.provider.displayName,
+  });
+  const needsProviderConstraint = providerConstraintResolution.needsConstraint;
 
   const selectCandidateForReview = (candidateHash: string) => {
     if (projection?.routeCardHash) {
       reviewCandidate(candidateHash);
       return;
     }
+    if (providerConstraintResolution.blockedReason) return;
     const route = projection?.availableRoutes.find((entry) => entry.candidateHash === candidateHash);
     if (!route) return;
     const constrainedGoal = providerConstrainedGoalV1(goal, route.provider.displayName);
@@ -1605,7 +1614,11 @@ export function MiniConsole() {
           <div className="pb tight">
             <CandidateCards
               rows={candidateRows}
-              onSelect={selectCandidateForReview}
+              onSelect={
+                providerConstraintResolution.blockedReason
+                  ? undefined
+                  : selectCandidateForReview
+              }
               actionLabel={needsProviderConstraint ? "Use only" : "Use this"}
             />
           </div>
@@ -1614,7 +1627,11 @@ export function MiniConsole() {
           <button
             type="button"
             className="btn lg"
-            disabled={!connected || !reviewTarget}
+            disabled={
+              !connected ||
+              !reviewTarget ||
+              Boolean(providerConstraintResolution.blockedReason)
+            }
             onClick={() => reviewTarget && selectCandidateForReview(reviewTarget)}
           >
             {needsProviderConstraint && primaryRoute
@@ -1624,6 +1641,8 @@ export function MiniConsole() {
           <span className="nt">
             {!connected
               ? CONSOLE_COPY_V1.walletDisconnected
+              : providerConstraintResolution.blockedReason
+                ? providerConstraintResolution.blockedReason
               : !reviewTarget && selectableCandidates.length > 1
                 ? "Choose one provider above. Miorail will not pick from an unranked comparison."
                 : needsProviderConstraint

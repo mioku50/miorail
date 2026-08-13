@@ -1,18 +1,26 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { AssetRefV1 } from '@mioagent/route-domain';
 import { createSwapRouteEngine } from '../src/index.js';
 import {
   ETH,
   NOW,
   USDC,
   WALLET,
-  WETH,
   makeCandidate,
   makeIntent,
   quotedAdapter,
 } from './fixtures.js';
 
 const engine = createSwapRouteEngine();
+const UNPRICED_TOKEN: AssetRefV1 = {
+  assetId: 'eip155:8453/erc20:0x3333333333333333333333333333333333333333',
+  chainId: 8453,
+  kind: 'erc20',
+  address: '0x3333333333333333333333333333333333333333',
+  symbol: 'UNPRICED',
+  decimals: 18,
+};
 
 async function evaluatePair(
   intent = makeIntent(),
@@ -94,8 +102,8 @@ test('missing gas USD produces unavailable derived evidence and Not scored net r
   assert.equal(net.notScoredReason, 'insufficient_evidence');
 });
 
-test('ETH to WETH without a USDC anchor never invents net-result valuation', async () => {
-  const intent = makeIntent({ fromAsset: ETH, toAsset: WETH, protocolConstraint: { mode: 'include_only', protocols: ['uniswap'] } });
+test('ETH to an unpriced token without a USDC anchor never invents net-result valuation', async () => {
+  const intent = makeIntent({ fromAsset: ETH, toAsset: UNPRICED_TOKEN, protocolConstraint: { mode: 'include_only', protocols: ['uniswap'] } });
   const candidate = makeCandidate(intent, 'uniswap', { outputAtomic: '99000000000000000' });
   const result = await engine.evaluate({ intent, walletAddress: WALLET, requestId: 'no-anchor', now: NOW, adapters: [quotedAdapter('uniswap', candidate)] });
   const net = result.pathScores[0]!.dimensions.find((item) => item.dimension === 'net_result')!;

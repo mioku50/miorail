@@ -40,6 +40,7 @@ import {
   marketRailFromSnapshotV1,
   providerUnavailableCopyV1,
   providerConstrainedGoalV1,
+  providerConstraintResolutionV1,
   startStageV1,
   stepperFromClockV1,
   useConsoleTheme,
@@ -711,9 +712,16 @@ export function RouteIntelligenceConsole() {
   const reviewTarget =
     recommended?.candidateHash ??
     (selectableCandidates.length === 1 ? selectableCandidates[0]!.id : null);
-  const needsProviderConstraint = Boolean(projection && !projection.routeCardHash);
+  const providerConstraintResolution = providerConstraintResolutionV1({
+    hasProjection: Boolean(projection),
+    routeCardHash: projection?.routeCardHash ?? null,
+    protocolConstraint: result?.outcome === 'evaluated' ? result.intent.protocolConstraint : null,
+    providerDisplayName: primaryRoute?.provider.displayName,
+  });
+  const needsProviderConstraint = providerConstraintResolution.needsConstraint;
   const reviewDisabledReason =
     reviewBlockedReason ??
+    providerConstraintResolution.blockedReason ??
     (reviewTarget
       ? null
       : selectableCandidates.length === 0
@@ -721,6 +729,7 @@ export function RouteIntelligenceConsole() {
         : 'No route is recommended. Choose one from the candidates below with “Use this”.');
   const candidateSelectionDisabledReason =
     reviewBlockedReason ??
+    providerConstraintResolution.blockedReason ??
     (selectableCandidates.length === 0
       ? 'No provider returned a quotable route for this goal, so there is nothing to select.'
       : null);
@@ -737,6 +746,7 @@ export function RouteIntelligenceConsole() {
       reviewCandidate(candidateHash);
       return;
     }
+    if (providerConstraintResolution.blockedReason) return;
     const route = projection?.availableRoutes.find((entry) => entry.candidateHash === candidateHash);
     if (!route || reviewBlockedReason) return;
     const constrainedGoal = providerConstrainedGoalV1(goal, route.provider.displayName);

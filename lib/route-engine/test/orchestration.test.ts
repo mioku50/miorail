@@ -90,6 +90,25 @@ test('include-only protocol produces a constrained selection', async () => {
   assert.equal(result.adapterFailures.length, 0);
 });
 
+test('include-only unpriced route is selected without inventing a ranking', async () => {
+  const intent = makeIntent({
+    protocolConstraint: { mode: 'include_only', protocols: ['hydrex'] },
+  });
+  const candidate = makeCandidate(intent, 'hydrex', { gasUsd: null });
+  const result = await engine.evaluate({
+    intent,
+    walletAddress: WALLET,
+    requestId: 'include-only-unpriced-hydrex',
+    now: NOW,
+    adapters: [quotedAdapter('hydrex', candidate)],
+  });
+  assert.equal(result.outcome, 'constrained');
+  assert.equal(result.reason, 'user_protocol_constraint');
+  assert.equal(result.recommendedCandidateHash, candidate.candidateHash);
+  assert.equal(result.netResultMetrics[0]?.status, 'not_scored');
+  assert.equal(result.netResultMetrics[0]?.reason, 'gas_usd_valuation_unavailable');
+});
+
 test('wallet mismatch is rejected before any provider call', async () => {
   const intent = makeIntent();
   let calls = 0;
