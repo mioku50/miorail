@@ -23,4 +23,9 @@ minimumReleaseAgeExclude:
 # repo's bundler (tsx/vite) — is allowed; everything else stays disallowed
 # by default. Narrow allowlist, not a blanket approval.
 allowBuilds:
+  bufferutil: false
   esbuild: true
+  protobufjs: false
+  sharp: false
+  unrs-resolver: false
+  utf-8-validate: false
