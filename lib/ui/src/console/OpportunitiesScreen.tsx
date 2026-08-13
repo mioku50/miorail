@@ -144,9 +144,18 @@ function OpportunityCard({
   onOpen: (tokenAddress: string) => void;
 }) {
   const pill = STATE_PILL_V1[card.state];
-  const measurementMissing = card.state === 'unmeasured' && card.profileLabel === null;
+  // A failed route read is still a stored observation with a profile. The
+  // values decide whether the metric block has something to show; profile
+  // presence does not. This is the production shape of route_search_degraded.
+  const measurementMissing = card.costLabel === null && card.capacityLabel === null;
+  const measurementState =
+    card.state === 'unmeasured'
+      ? 'Not measured'
+      : card.state === 'candidate'
+        ? 'Queued'
+        : 'No complete measurement';
   return (
-    <article className={'cardrow' + (measurementMissing ? ' unmeasured-card' : '')}>
+    <article className={'cardrow' + (measurementMissing ? ' metrics-unavailable-card' : '')}>
       <div className="cr-top">
         <span className="cr-name">
           {card.symbol} <span className="sub">{card.name}</span>
@@ -157,7 +166,7 @@ function OpportunityCard({
       {measurementMissing ? (
         <div className="measurement-missing">
           <span>Round trip + exit capacity</span>
-          <strong className="mono">Not measured</strong>
+          <strong className="mono">{measurementState}</strong>
         </div>
       ) : (
         <div className="cr-nums">

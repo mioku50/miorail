@@ -23,6 +23,14 @@ NODE_BIN=${NODE_BIN:-/home/miorail/.nvm/versions/node/v22.23.1/bin}
 SERVICES=(miorail-api miorail-miniapp miorail-b20-discover miorail-b20-measure)
 MINIAPP_UNIT_SOURCE="$REPO/ops/systemd/miorail-miniapp.service"
 MINIAPP_UNIT_TARGET=/etc/systemd/system/miorail-miniapp.service
+B20_DISCOVER_UNIT_SOURCE="$REPO/ops/systemd/miorail-b20-discover.service"
+B20_DISCOVER_UNIT_TARGET=/etc/systemd/system/miorail-b20-discover.service
+B20_MEASURE_UNIT_SOURCE="$REPO/ops/systemd/miorail-b20-measure.service"
+B20_MEASURE_UNIT_TARGET=/etc/systemd/system/miorail-b20-measure.service
+B20_DISCOVER_DROPIN_SOURCE="$REPO/ops/systemd/miorail-b20-discover-runtime.conf"
+B20_DISCOVER_DROPIN_TARGET=/etc/systemd/system/miorail-b20-discover.service.d/rpc.conf
+B20_MEASURE_DROPIN_SOURCE="$REPO/ops/systemd/miorail-b20-measure-runtime.conf"
+B20_MEASURE_DROPIN_TARGET=/etc/systemd/system/miorail-b20-measure.service.d/rpc.conf
 
 export PATH="$NODE_BIN:$PATH"
 as_service_user() { sudo -u "$SERVICE_USER" env PATH="$PATH" "$@"; }
@@ -45,13 +53,22 @@ step "3/7  build"
 # One such error reached main because --noEmit was treated as equivalent.
 as_service_user pnpm -r build
 
-step "4/7  install Base App service"
+step "4/7  install Base App and B20 services"
 # Nginx has always routed the public MiniApp host to port 3010. Keep the unit
 # in the repository and install it on every deploy so a rebuilt Base App cannot
 # silently remain offline behind a healthy-looking build.
 install -m 0644 "$MINIAPP_UNIT_SOURCE" "$MINIAPP_UNIT_TARGET"
+install -m 0644 "$B20_DISCOVER_UNIT_SOURCE" "$B20_DISCOVER_UNIT_TARGET"
+install -m 0644 "$B20_MEASURE_UNIT_SOURCE" "$B20_MEASURE_UNIT_TARGET"
+# A 2026-08-13 incident came from an out-of-repo drop-in that silently replaced
+# the canonical RPC with an endpoint that returned HTTP 408 / RPC code 30 for
+# historical eth_getLogs. Install explicit resets every time: service state
+# that can stop the feed must live in the same commit as the worker.
+install -d -m 0755 "$(dirname "$B20_DISCOVER_DROPIN_TARGET")" "$(dirname "$B20_MEASURE_DROPIN_TARGET")"
+install -m 0644 "$B20_DISCOVER_DROPIN_SOURCE" "$B20_DISCOVER_DROPIN_TARGET"
+install -m 0644 "$B20_MEASURE_DROPIN_SOURCE" "$B20_MEASURE_DROPIN_TARGET"
 systemctl daemon-reload
-systemctl enable miorail-miniapp >/dev/null
+systemctl enable miorail-miniapp miorail-b20-discover miorail-b20-measure >/dev/null
 
 step "5/7  publish the frontend"
 # THE step that was missing. --delete so a removed asset actually disappears

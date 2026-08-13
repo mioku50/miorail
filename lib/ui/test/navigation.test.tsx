@@ -600,6 +600,41 @@ describe('a card never turns a missing measurement into a number', () => {
     assert.ok(!/0\.00%/.test(markup), 'an unmeasured token rendered a zero cost');
   });
 
+  test('a stored degraded observation uses one compact state instead of two empty metrics', () => {
+    const view = opportunityCardViewV1(
+      wireCard({
+        observation: {
+          ...wireCard().observation,
+          state: 'unmeasured',
+          headline: 'The route search did not complete.',
+          detail: 'Too many route candidates went unanswered.',
+          optimisticRoundTripBps: null,
+          largestPassingSizeAtomic: null,
+          firstFailingSizeAtomic: null,
+          capacityStable: null,
+        },
+      }),
+    );
+    assert.ok(view.profileLabel, 'the stored observation still names its profile');
+    const markup = renderToStaticMarkup(
+      <OpportunitiesScreen
+        pipelineNotice={null}
+        pipelineState="healthy"
+        feedRenderable
+        cards={[view]}
+        filter="all"
+        freshOnly={false}
+        loading={false}
+        onFilterChange={() => undefined}
+        onFreshOnlyChange={() => undefined}
+        onOpenToken={() => undefined}
+      />,
+    );
+    assert.match(markup, /measurement-missing/);
+    assert.match(markup, /Round trip \+ exit capacity/);
+    assert.ok(!markup.includes('cr-nums'), 'the empty two-column metrics block returned');
+  });
+
   test('Discover explains each measured dimension without claiming a score', () => {
     const markup = renderToStaticMarkup(
       <OpportunitiesScreen

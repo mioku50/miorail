@@ -374,7 +374,7 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 
 /* An unanswered measurement is a compact, directed state — not a large card
    containing two empty metric columns that looks unfinished. */
-.mio-console .unmeasured-card { border-left: 2px solid var(--amber); }
+.mio-console .metrics-unavailable-card { border-left: 2px solid var(--amber); }
 .mio-console .measurement-missing { display: flex; align-items: center; justify-content: space-between;
   gap: 12px; margin: 10px 0 8px; padding: 9px 11px; border-radius: 8px;
   background: var(--track-bg); color: var(--muted); font-size: 11.5px; }

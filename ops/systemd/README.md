@@ -1,11 +1,18 @@
 # Production units
 
 `miorail-miniapp.service` serves the built Base App on `127.0.0.1:3010`, where
-the production Nginx MiniApp host proxies. `ops/deploy.sh` installs and verifies
-this unit on every deploy.
+the production Nginx MiniApp host proxies. The `miorail-b20-*` units are the
+canonical ritual-vps workers. `ops/deploy.sh` installs all three on every
+deploy, including their checked-in runtime drop-ins.
 
-The remaining checked-in units are the two long-running B20 workers. No timers:
-see the header of each worker unit for why.
+Those drop-ins deliberately reset `EnvironmentFile` to the project `.env`.
+Do not add a second, unmanaged RPC environment file: an endpoint that answers
+`eth_blockNumber` but refuses historical `eth_getLogs` leaves discovery active
+while its cursor never moves. The worker journal exposes
+`logWindowsCompleted/logWindowsAttempted` so this failure is visible.
+
+The older `mioagent-b20-*` files remain adaptable templates for another host.
+No timers: see the header of each worker unit for why.
 
 Install the MiniApp unit manually only when bootstrapping a host without the
 deploy script:
