@@ -78,6 +78,7 @@ import {
   intelligenceSpendLabelV1,
   marketRailFromSnapshotV1,
   providerUnavailableCopyV1,
+  providerConstrainedGoalV1,
   quoteFreshnessFromRouteV1,
   routeGraphFromRouteV1,
   scoreRowsFromProjectionV1,
@@ -289,6 +290,8 @@ export function MiniConsole() {
   const result = evaluation.data;
   const projection = result?.outcome === "evaluated" ? (result.projection as unknown as RoutePlanProjectionV1) : null;
   const recommended = projection?.recommendedRoute ?? null;
+  const primaryRoute =
+    recommended ?? (projection?.availableRoutes.length === 1 ? projection.availableRoutes[0]! : null);
   const goalLabel = projection?.goalSummary ?? (goal.trim() || "New goal");
   const prepared = prepare.data?.outcome === "prepared" ? prepare.data : null;
 
@@ -555,8 +558,9 @@ export function MiniConsole() {
 
   /** `fresh` forces a NEW route run — see the web console for why the
    * default is idempotent and these two callers are not. */
-  const compare = (options?: { fresh?: boolean }) => {
-    if (!address || !goal.trim() || dispatch.engine === null) return;
+  const compare = (options?: { fresh?: boolean; goalOverride?: string }) => {
+    const requestGoal = options?.goalOverride?.trim() || goal.trim();
+    if (!address || !requestGoal || dispatch.engine === null) return;
     prepare.reset();
     setSubmission(null);
     setSimulateResponse(null);
@@ -589,7 +593,7 @@ export function MiniConsole() {
       // The goal text IS the prompt.
       aiCompare.mutate(
         {
-          messages: [{ role: "user", text: goal }],
+          messages: [{ role: "user", text: requestGoal }],
           walletAddress: wallet,
           maxSpendUsd: "0.05",
           maxCompletionTokens: 1_024,
@@ -606,18 +610,18 @@ export function MiniConsole() {
     }
     if (dispatch.engine === "nft") {
       // NFT before commerce: the two families share the verb "buy".
-      nftCompare.mutate({ message: goal, walletAddress: wallet }, { onSettled: () => mark("candidates", "complete") });
+      nftCompare.mutate({ message: requestGoal, walletAddress: wallet }, { onSettled: () => mark("candidates", "complete") });
       return;
     }
     if (dispatch.engine === "commerce") {
       commerceCompare.mutate(
-        { message: goal, walletAddress: wallet },
+        { message: requestGoal, walletAddress: wallet },
         { onSettled: () => mark("candidates", "complete") },
       );
       return;
     }
     if (dispatch.engine === "earn") {
-      earnCompare.mutate({ message: goal, walletAddress: wallet }, { onSettled: () => mark("candidates", "complete") });
+      earnCompare.mutate({ message: requestGoal, walletAddress: wallet }, { onSettled: () => mark("candidates", "complete") });
       return;
     }
     // No onError here, deliberately — see RouteIntelligenceConsole. Bouncing to
@@ -625,7 +629,7 @@ export function MiniConsole() {
     // nothing to act on.
     evaluation.mutate(
       {
-        message: goal,
+        message: requestGoal,
         walletAddress: wallet,
         ...(options?.fresh ? { requestId: `retry-${globalThis.crypto.randomUUID()}` } : {}),
       },
@@ -694,11 +698,32 @@ export function MiniConsole() {
     () => (projection ? providerDiagnosticRowsV1(projection, REGISTERED_SWAP_PROVIDERS_V1) : []),
     [projection],
   );
+  const candidateRows = useMemo(
+    () => (projection ? candidateRowsFromProjectionV1(projection, REGISTERED_SWAP_PROVIDERS_V1) : []),
+    [projection],
+  );
+  const selectableCandidates = candidateRows.filter((row) => row.selectable);
+  const reviewTarget =
+    recommended?.candidateHash ??
+    (selectableCandidates.length === 1 ? selectableCandidates[0]!.id : null);
+  const needsProviderConstraint = Boolean(projection && !projection.routeCardHash);
+
+  const selectCandidateForReview = (candidateHash: string) => {
+    if (projection?.routeCardHash) {
+      reviewCandidate(candidateHash);
+      return;
+    }
+    const route = projection?.availableRoutes.find((entry) => entry.candidateHash === candidateHash);
+    if (!route) return;
+    const constrainedGoal = providerConstrainedGoalV1(goal, route.provider.displayName);
+    setGoal(constrainedGoal);
+    compare({ fresh: true, goalOverride: constrainedGoal });
+  };
 
   // T67E §1 — same target rule and same copy as the web console: the card is
   // about the token the route ACQUIRES.
   const b20GateOn = flags?.b20ControlV1 === true;
-  const b20Target = b20TargetForRouteV1(recommended?.expectedOutput.asset ?? null);
+  const b20Target = b20TargetForRouteV1(primaryRoute?.expectedOutput.asset ?? null);
   const b20 = useB20Inspect(b20Target.address, { enabled: b20GateOn });
   const b20Card = b20.data?.card ?? null;
   const b20Unavailable = b20UnavailableCopyV1({
@@ -763,7 +788,7 @@ export function MiniConsole() {
   const simulationSource = simulationSourceFromResponseV1(simulateResponse ?? budgetResponse);
   // Same rule as the web console: `prepared` is the Safety Kernel's verdict.
   const simulation = deriveSimulationViewV1(simulationSource, Boolean(prepared));
-  const quoteFreshness = quoteFreshnessFromRouteV1(recommended);
+  const quoteFreshness = quoteFreshnessFromRouteV1(primaryRoute);
   const historyItems = history.data?.items ?? [];
   // The same pure mapper the web console uses, so both surfaces state a price,
   // its age and its provider identically — or state why there is none.
@@ -1481,23 +1506,38 @@ export function MiniConsole() {
       </>
     );
   } else if (screen === "route" && projection) {
-    const graph = routeGraphFromRouteV1(recommended, { amountLabel: goalLabel, walletLabel: "your wallet" });
+    const graph = routeGraphFromRouteV1(primaryRoute, { amountLabel: goalLabel, walletLabel: "your wallet" });
     content = (
       <>
         <ConsoleStepperCompact label={stepLabel} steps={steps} expanded={railOpen} onToggle={() => setRailOpen((open) => !open)} />
         <div className="herostrip">
           <div className="heroL">
-            <p className="eyebrow">Recommended route</p>
+            <p className="eyebrow">{recommended ? "Recommended route" : "Available route"}</p>
             <div className="amtrow">
-              <span className="amount mono">{recommended?.expectedOutput.amountDecimal ?? "—"}</span>
-              <span className="unit">{recommended?.expectedOutput.asset.symbol ?? ""}</span>
+              <span className="amount mono">{primaryRoute?.expectedOutput.amountDecimal ?? "—"}</span>
+              <span className="unit">{primaryRoute?.expectedOutput.asset.symbol ?? ""}</span>
               <span style={{ paddingBottom: 6, display: "flex", gap: 7 }}>
-                <span className="pill br">{recommended?.provider.displayName ?? "no provider"}</span>
+                <span className="pill br">{primaryRoute?.provider.displayName ?? "no provider"}</span>
                 <span className={`pill ${quoteFreshness.tone}`}>{quoteFreshness.label}</span>
               </span>
             </div>
+            <p className="why">{comparisonClaim?.headline ?? "No comparative recommendation was made."}</p>
           </div>
         </div>
+        {primaryRoute && (
+          <div className="panel">
+            <div className="ph">
+              <h3>Quoted terms</h3>
+              <span className="sub">provider facts</span>
+            </div>
+            <div className="pb tight">
+              <div className="kv"><span>Minimum output</span><span className="mono">{primaryRoute.minimumOutput.amountDecimal} {primaryRoute.expectedOutput.asset.symbol}</span></div>
+              <div className="kv"><span>Slippage</span><span className="mono">{primaryRoute.slippage.percent}%</span></div>
+              <div className="kv"><span>Approvals</span><span className="mono">{primaryRoute.approvalCount}</span></div>
+              <div className="kv"><span>Calls</span><span className="mono">{primaryRoute.callCount}</span></div>
+            </div>
+          </div>
+        )}
         <div className="panel">
           <div className="ph">
             <h3>Route path</h3>
@@ -1517,8 +1557,8 @@ export function MiniConsole() {
         {/* Both facts, same as the web console's header: which policy scored
             this, and how many dimensions it could actually score. */}
         <MiniScorePanel
-          rows={scoreRowsFromProjectionV1(projection)}
-          note={`${scoringVersionLabelV1(projection.pathScore)} · ${scoredCountLabelV1(scoreRowsFromProjectionV1(projection))}`}
+          rows={scoreRowsFromProjectionV1(projection, primaryRoute?.pathScore ?? null)}
+          note={`${scoringVersionLabelV1(primaryRoute?.pathScore ?? null)} · ${scoredCountLabelV1(scoreRowsFromProjectionV1(projection, primaryRoute?.pathScore ?? null))}`}
         />
         {/* T67C.1 Part 2: the SAME projection helper the web console uses, so
             the two surfaces cannot report different numbers for one run. */}
@@ -1563,14 +1603,33 @@ export function MiniConsole() {
             <h3>All candidates</h3>
           </div>
           <div className="pb tight">
-            <CandidateCards rows={candidateRowsFromProjectionV1(projection, REGISTERED_SWAP_PROVIDERS_V1)} onSelect={reviewCandidate} />
+            <CandidateCards
+              rows={candidateRows}
+              onSelect={selectCandidateForReview}
+              actionLabel={needsProviderConstraint ? "Use only" : "Use this"}
+            />
           </div>
         </div>
         <div className="ctarow">
-          <button type="button" className="btn lg" disabled={!connected || !recommended} onClick={() => recommended && reviewCandidate(recommended.candidateHash)}>
-            Review transaction
+          <button
+            type="button"
+            className="btn lg"
+            disabled={!connected || !reviewTarget}
+            onClick={() => reviewTarget && selectCandidateForReview(reviewTarget)}
+          >
+            {needsProviderConstraint && primaryRoute
+              ? `Use ${primaryRoute.provider.displayName} only`
+              : "Review transaction"}
           </button>
-          <span className="nt">{connected ? CONSOLE_COPY_V1.nothingSigned : CONSOLE_COPY_V1.walletDisconnected}</span>
+          <span className="nt">
+            {!connected
+              ? CONSOLE_COPY_V1.walletDisconnected
+              : !reviewTarget && selectableCandidates.length > 1
+                ? "Choose one provider above. Miorail will not pick from an unranked comparison."
+                : needsProviderConstraint
+                  ? "This fixes your provider choice first; Review opens after the constrained Route Card is built."
+                  : CONSOLE_COPY_V1.nothingSigned}
+          </span>
         </div>
       </>
     );

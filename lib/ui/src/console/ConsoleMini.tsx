@@ -142,9 +142,11 @@ export function ConsoleMiniShell(props: ConsoleMiniShellProps) {
 export function CandidateCards({
   rows,
   onSelect,
+  actionLabel = 'Use this',
 }: {
   rows: readonly CandidateRowViewV1[];
   onSelect?: (id: string) => void;
+  actionLabel?: string;
 }) {
   if (rows.length === 0) return <p className="empty">No routes have answered yet.</p>;
   return (
@@ -175,7 +177,7 @@ export function CandidateCards({
           <p className="cr-why">{row.why}</p>
           {row.selectable && onSelect && (
             <button type="button" className="btn sec" onClick={() => onSelect(row.id)}>
-              Use this
+              {actionLabel}
             </button>
           )}
         </article>
