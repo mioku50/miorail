@@ -144,8 +144,9 @@ function OpportunityCard({
   onOpen: (tokenAddress: string) => void;
 }) {
   const pill = STATE_PILL_V1[card.state];
+  const measurementMissing = card.state === 'unmeasured' && card.profileLabel === null;
   return (
-    <article className="cardrow">
+    <article className={'cardrow' + (measurementMissing ? ' unmeasured-card' : '')}>
       <div className="cr-top">
         <span className="cr-name">
           {card.symbol} <span className="sub">{card.name}</span>
@@ -153,19 +154,26 @@ function OpportunityCard({
         <span className={`pill ${pill.tone}`}>{pill.label}</span>
       </div>
 
-      <div className="cr-nums">
-        <div>
-          <span className="cr-k">Round trip</span>
-          {/* Null renders the words, never a zero. */}
-          <span className={`cr-v mono${card.costLabel ? '' : ' warn'}`}>{card.costLabel ?? 'not measured'}</span>
+      {measurementMissing ? (
+        <div className="measurement-missing">
+          <span>Round trip + exit capacity</span>
+          <strong className="mono">Not measured</strong>
         </div>
-        <div>
-          <span className="cr-k">Exit capacity</span>
-          <span className={`cr-v mono${card.capacityLabel ? '' : ' warn'}`}>
-            {card.capacityLabel ?? 'not measured'}
-          </span>
+      ) : (
+        <div className="cr-nums">
+          <div>
+            <span className="cr-k">Round trip</span>
+            {/* Null renders the words, never a zero. */}
+            <span className={'cr-v mono' + (card.costLabel ? '' : ' warn')}>{card.costLabel ?? 'not measured'}</span>
+          </div>
+          <div>
+            <span className="cr-k">Exit capacity</span>
+            <span className={'cr-v mono' + (card.capacityLabel ? '' : ' warn')}>
+              {card.capacityLabel ?? 'not measured'}
+            </span>
+          </div>
         </div>
-      </div>
+      )}
 
       <p className="cr-why">{card.headline}</p>
       <p className="lnote">{card.detail}</p>

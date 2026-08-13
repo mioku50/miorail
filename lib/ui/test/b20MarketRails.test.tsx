@@ -211,6 +211,14 @@ describe('§6 — measured views, stated as such', () => {
     assert.match(markup, /Nothing between the largest passing and first failing size/);
   });
 
+  test('large capacity remains inside the rail as a conservative compact bound', () => {
+    const markup = renderLeaders({
+      leaders: [leader(ADDRESSES[0]!, { largestPassingSizeAtomic: '11952475734632944328073399' })],
+    });
+    assert.match(markup, /≥ 11\.95M S/);
+    assert.ok(!markup.includes('11952475.734632944328073399'));
+  });
+
   test('a signed move keeps its sign', () => {
     assert.equal(signedBpsLabelV1(2500), '+25%');
     assert.equal(signedBpsLabelV1(-2500), '-25%');

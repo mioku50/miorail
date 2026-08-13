@@ -72,7 +72,11 @@ export const LAUNCH_LOG_WINDOW_V1 = 10;
 /** Gap between consecutive `eth_getLogs` requests. Eighty requests in a burst
  * is exactly the shape that trips a rate limiter, and being throttled mid-pass
  * throws away every window already paid for. */
-export const LAUNCH_LOG_PACE_MS_V1 = 60;
+// Production evidence (2026-08-13): 60 ms let a single request through but
+// throttled the eighty-window atomic pass mid-range. At 250 ms the reader stays
+// below the provider's observed getLogs burst ceiling while still catching up
+// more than sixty times faster than Base produces blocks.
+export const LAUNCH_LOG_PACE_MS_V1 = 250;
 
 /** How far back a reorg sends the cursor. Deeper than the confirmation window
  * by a wide margin: a reorg that reached confirmed blocks was already deeper

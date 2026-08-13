@@ -10,7 +10,7 @@ import {
   type ExecutionProofView,
 } from '../src/ExecutionProof';
 import { RouteHistoryList, routeHistoryProofTone, type RouteHistoryItemView } from '../src/RouteHistoryList';
-import { formatAtomicAmount } from '../src/formatAtomicAmount';
+import { formatAtomicAmount, formatCompactAtomicAmount } from '../src/formatAtomicAmount';
 
 const here = path.dirname(url.fileURLToPath(import.meta.url));
 
@@ -47,6 +47,13 @@ test('formatAtomicAmount formats by decimals with exact BigInt math', () => {
   assert.equal(formatAtomicAmount('123456789012345678901234567890', 18), '123456789012.34567890123456789');
   // Malformed input is returned untouched, never coerced through a float.
   assert.equal(formatAtomicAmount('not-a-number', 18), 'not-a-number');
+});
+
+test('formatCompactAtomicAmount keeps small values exact and truncates large bounds conservatively', () => {
+  assert.equal(formatCompactAtomicAmount('4000000000000000000000', 18), '4000');
+  assert.equal(formatCompactAtomicAmount('11952475734632944328073399', 18), '11.95M');
+  assert.equal(formatCompactAtomicAmount('11033777595221022306799686', 18), '11.03M');
+  assert.equal(formatCompactAtomicAmount('999999999999999999999999', 18), '999.9K');
 });
 
 test('formatDeviationBps renders sign and percent, null when unknown', () => {

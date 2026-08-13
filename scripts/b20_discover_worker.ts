@@ -110,6 +110,8 @@ async function main(): Promise<number> {
           blocksBehind,
           launchesInserted: outcome.launchesInserted,
           duplicates: outcome.duplicates,
+          logWindowsAttempted: outcome.logWindowsAttempted,
+          logWindowsCompleted: outcome.logWindowsCompleted,
           budgetExhausted: outcome.budgetExhausted,
           operatorState: outcome.operatorState,
         }),

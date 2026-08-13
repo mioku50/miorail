@@ -3,6 +3,7 @@ import test, { describe } from 'node:test';
 
 import {
   LAUNCH_CONFIRMATIONS_V1,
+  LAUNCH_LOG_PACE_MS_V1,
   LAUNCH_LOG_WINDOW_V1,
   LAUNCH_REWIND_DEPTH_V1,
   detectReorgV1,
@@ -701,6 +702,7 @@ describe('a pass is split into provider-bounded log requests', () => {
 
   test('the default window is the safe floor across endpoints', () => {
     assert.equal(LAUNCH_LOG_WINDOW_V1, 10);
+    assert.equal(LAUNCH_LOG_PACE_MS_V1, 250);
   });
 });
 

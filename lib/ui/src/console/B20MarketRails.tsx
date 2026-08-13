@@ -5,7 +5,7 @@ import {
   type MarketObservationV1,
   type MeasuredMoverV1,
 } from '@mioagent/opportunity-rail/marketRails';
-import { formatAtomicAmount } from '../formatAtomicAmount';
+import { formatCompactAtomicAmount } from '../formatAtomicAmount';
 import { bpsLabelV1 } from './B20ExitCard';
 
 void React;
@@ -43,7 +43,7 @@ export function defaultRailLeadersV1(leaders: readonly ExitCapacityLeaderV1[]): 
 function amountLabelV1(atomic: string, decimals: number | null, symbol: string): string {
   // Unknown decimals are stated, never divided by an assumed 18.
   if (decimals === null) return `${atomic} (atomic)`;
-  return `${formatAtomicAmount(atomic, decimals)} ${symbol}`;
+  return formatCompactAtomicAmount(atomic, decimals) + ' ' + symbol;
 }
 
 /** "measured 4 min ago". Whole minutes: a measurement age to the second
@@ -111,7 +111,7 @@ export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
           <>
             {visible.map((leader) => (
               <div className="qrow" key={leader.tokenAddress}>
-                <span>
+                <span className="rail-token">
                   {model.onOpenToken ? (
                     <button type="button" className="btn sec" onClick={() => model.onOpenToken?.(leader.tokenAddress)}>
                       {leader.symbol}
@@ -123,7 +123,9 @@ export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
                 <span className={`v mono${leader.profileStatus === 'outside_round_trip_reference' ? ' warn' : ''}`}>
                   {/* The BOUND. "at least" is not decoration: the ladder knows
                       the largest size that passed and nothing above it. */}
-                  ≥ {amountLabelV1(leader.largestPassingSizeAtomic, leader.decimals, leader.symbol)}
+                  <span className="rail-amount">
+                    ≥ {amountLabelV1(leader.largestPassingSizeAtomic, leader.decimals, leader.symbol)}
+                  </span>
                   <span className="rail-reference">
                     {bpsLabelV1(leader.capacityCoverageBps)} of reference entry ·{' '}
                     {leader.optimisticRoundTripBps === null

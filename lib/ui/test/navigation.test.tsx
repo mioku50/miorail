@@ -595,6 +595,8 @@ describe('a card never turns a missing measurement into a number', () => {
       />,
     );
     assert.match(markup, /not measured/);
+    assert.match(markup, /Round trip \+ exit capacity/);
+    assert.equal((markup.match(/not measured/gi) ?? []).length, 3);
     assert.ok(!/0\.00%/.test(markup), 'an unmeasured token rendered a zero cost');
   });
 
