@@ -563,6 +563,9 @@ export function simulationSourceFromResponseV1(response: unknown): SimulationSou
   return null;
 }
 
-export function scoreRowsFromProjectionV1(projection: RoutePlanProjectionV1 | null) {
-  return deriveScoreRowsV1(scoreDimensionsFromPathScoreV1((projection?.pathScore ?? null) as PathScoreLikeV1 | null));
+export function scoreRowsFromProjectionV1(
+  projection: RoutePlanProjectionV1 | null,
+  selectedPathScore: PathScoreLikeV1 | null = (projection?.pathScore ?? null) as PathScoreLikeV1 | null,
+) {
+  return deriveScoreRowsV1(scoreDimensionsFromPathScoreV1(selectedPathScore));
 }

@@ -458,6 +458,14 @@ export const REGISTERED_SWAP_PROVIDERS_V1 = [
   'o1-exchange',
 ] as const;
 
+/** Turns an explicit candidate click into the provider constraint understood
+ * by Intent Engine V2. The original amount, pair and token address remain in
+ * the user's goal; only the provider choice made by that click is appended. */
+export function providerConstrainedGoalV1(goal: string, providerDisplayName: string): string {
+  const cleanGoal = goal.trim().replace(/[.!?\s]+$/u, '');
+  return `${cleanGoal}. Use ${providerDisplayName} only.`;
+}
+
 /** Which route family each adapter belongs to, so a Commerce comparison never
  * lists a swap adapter it did not and will not call. */
 export const ADAPTER_FAMILY_V1: Record<string, RouteFamilyV1 | 'simulation'> = {
@@ -469,6 +477,7 @@ export const ADAPTER_FAMILY_V1: Record<string, RouteFamilyV1 | 'simulation'> = {
   'o1.exchange': 'swap',
   Moonwell: 'earn',
   Morpho: 'earn',
+  YO: 'earn',
   Bitrefill: 'commerce',
   OpenSea: 'nft',
   Venice: 'private_ai',
@@ -536,13 +545,15 @@ function gatedAdaptersV1(status: ConsoleServerStatusV1 | null): AdapterStateSour
     // rides the routing gate like the other swap adapters — there is no
     // partner key of its own to be missing.
     { name: 'Aerodrome', state: gate(routing) },
-    // Hydrex and o1 participate in read-only comparison under the route gate.
+    // Balancer, Hydrex and o1 participate in comparison under the route gate.
     // Their separate execution flags control build/approval, not visibility
     // of measured candidates.
+    { name: 'Balancer', state: gate(routing) },
     { name: 'Hydrex', state: gate(routing) },
     { name: 'o1.exchange', state: gate(routing) },
     { name: 'Moonwell', state: gate(earn) },
     { name: 'Morpho', state: gate(earn) },
+    { name: 'YO', state: gate(earn) },
     { name: 'Alchemy simulation', state: gate(paid) },
     { name: 'Bitrefill', state: gate(commerce) },
     { name: 'OpenSea', state: gate(nft) },

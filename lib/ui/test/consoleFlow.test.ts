@@ -17,6 +17,7 @@ import {
   emptyStageClockV1,
   formatStageDurationV1,
   haltStageRailV1,
+  providerConstrainedGoalV1,
   routeFamilyForGoalV1,
   stageDurationMsV1,
   startStageV1,
@@ -232,11 +233,14 @@ describe('coverage and adapters come from the server, not the front end', () => 
     // sent an operator looking for a broken RPC that was never broken.
     assert.equal(before.find((row) => row.name === 'Moonwell')?.state, 'disabled');
     assert.equal(before.find((row) => row.name === 'Morpho')?.state, 'disabled');
+    assert.equal(before.find((row) => row.name === 'YO')?.state, 'disabled');
 
     const during = adaptersFromStatusV1(allOn);
     assert.equal(during.find((row) => row.name === 'Uniswap')?.state, 'live');
+    assert.equal(during.find((row) => row.name === 'Balancer')?.state, 'live');
     assert.equal(during.find((row) => row.name === 'Hydrex')?.state, 'live');
     assert.equal(during.find((row) => row.name === 'o1.exchange')?.state, 'live');
+    assert.equal(during.find((row) => row.name === 'YO')?.state, 'live');
 
     // T67E §5: a run REFINES the rail, it does not replace it. This used to
     // assert the replacement — `after` was exactly two rows — which meant that
@@ -250,8 +254,10 @@ describe('coverage and adapters come from the server, not the front end', () => 
     assert.equal(after.find((row) => row.name === 'Uniswap')?.state, 'degraded');
     // Everything else keeps the state its gate gives it.
     assert.equal(after.find((row) => row.name === 'Moonwell')?.state, 'live');
+    assert.equal(after.find((row) => row.name === 'Balancer')?.state, 'live');
     assert.equal(after.find((row) => row.name === 'Hydrex')?.state, 'live');
     assert.equal(after.find((row) => row.name === 'o1.exchange')?.state, 'live');
+    assert.equal(after.find((row) => row.name === 'YO')?.state, 'live');
     assert.equal(after.length, before.length, 'a run must not shorten the rail');
   });
 
@@ -269,9 +275,11 @@ describe('Comparing is route-family aware and terminal', () => {
     { name: 'Uniswap', label: 'live', live: true, usable: true },
     { name: 'KyberSwap', label: 'live', live: true, usable: true },
     { name: 'Aerodrome', label: 'live', live: true, usable: true },
+    { name: 'Balancer', label: 'live', live: true, usable: true },
     { name: 'Hydrex', label: 'live', live: true, usable: true },
     { name: 'Moonwell', label: 'disabled', live: false, usable: false },
     { name: 'Morpho', label: 'disabled', live: false, usable: false },
+    { name: 'YO', label: 'disabled', live: false, usable: false },
     { name: 'Alchemy simulation', label: 'live', live: true, usable: true },
     { name: 'Bitrefill', label: 'live', live: true, usable: true },
     { name: 'o1.exchange', label: 'live', live: true, usable: true },
@@ -328,6 +336,7 @@ describe('Comparing is route-family aware and terminal', () => {
       'Uniswap quote',
       'KyberSwap quote',
       'Aerodrome quote',
+      'Balancer quote',
       'Hydrex quote',
       'o1.exchange quote',
       'Evidence collected',
@@ -338,6 +347,35 @@ describe('Comparing is route-family aware and terminal', () => {
     assert.equal(rows.find((row) => row.label === 'Hydrex quote')?.state, 'running');
     assert.equal(rows.find((row) => row.label === 'o1.exchange quote')?.state, 'running');
     assert.equal(rows.find((row) => row.label === 'Evidence collected')?.value, '3 sources');
+  });
+
+  test('an earn comparison lists YO before a candidate arrives', () => {
+    const rows = comparingProgressV1({
+      family: 'earn',
+      adapters: ALL_ADAPTERS,
+      answered: [],
+      terminalReason: null,
+      evidenceCount: null,
+      scored: false,
+    });
+    assert.deepEqual(rows.map((row) => row.label), [
+      'Intent extraction',
+      'Moonwell rates',
+      'Morpho rates',
+      'YO rates',
+      'Evidence collected',
+      'Scoring against your goal',
+    ]);
+  });
+
+  test('an explicit candidate click preserves the goal and adds only the provider constraint', () => {
+    assert.equal(
+      providerConstrainedGoalV1(
+        'Swap 12497.607736 0x940181a94A35A4569E4529A3CDfB74e38FD98631 to USDC.',
+        'Hydrex',
+      ),
+      'Swap 12497.607736 0x940181a94A35A4569E4529A3CDfB74e38FD98631 to USDC. Use Hydrex only.',
+    );
   });
 
   test('a terminal reason stops EVERY spinner', () => {

@@ -362,13 +362,12 @@ describe('the signing button is the real one', () => {
   });
 });
 
-describe('a route cannot be chosen when no Route Card exists', () => {
-  test('Use this is disabled with the same reason that disables Review', () => {
-    // Reported: "Uniswap was unavailable, I tried to pick another provider
-    // with Use this, and the buttons did nothing." A degraded run yields
-    // candidates with real numbers and NO signable Route Card, so selecting
-    // one only reached a console.warn. Review already said so and disabled
-    // itself; the table did not.
+describe('a degraded route can become an explicit provider constraint', () => {
+  test('candidate selection stays available while the general Review action is blocked', () => {
+    // A degraded run yields candidates with real numbers and no comparative
+    // Route Card. The general Review action must not choose one for the user,
+    // but an explicit row click may rerun that goal as provider-only and build
+    // a constrained Route Card.
     const reason = 'This comparison finished without a signable Route Card, so there is nothing to review.';
     const rendered = JSON.stringify(
       RouteScreen({
@@ -406,16 +405,16 @@ describe('a route cannot be chosen when no Route Card exists', () => {
         onReview: () => {},
         onChangeGoal: () => {},
         reviewDisabledReason: reason,
+        candidateSelectionDisabledReason: null,
+        candidateActionLabel: 'Use only',
       } as never),
     );
-    // The row keeps its numbers rather than hiding, and the SAME reason that
-    // disables Review is handed to the table, which disables every Use this.
-    // (React does not expand a child component here, so the assertion is on
-    // the prop crossing the boundary — the table's own behaviour is the one
-    // line `disabled={Boolean(selectBlockedReason)}`.)
+    // React does not expand CandidateTable here, so assert the gate crossing
+    // its component boundary: null means the row action is enabled.
     assert.match(rendered, /Aerodrome/);
-    assert.match(rendered, /"selectBlockedReason":"This comparison finished without a signable Route Card/);
-    // And Review itself stays disabled, as it already was.
+    assert.match(rendered, /"selectBlockedReason":null/);
+    assert.match(rendered, /"selectActionLabel":"Use only"/);
+    // Review itself stays disabled until the constrained rerun returns a card.
     assert.match(rendered, /"disabled":true/);
   });
 });

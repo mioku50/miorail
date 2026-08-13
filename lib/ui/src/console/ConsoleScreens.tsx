@@ -53,19 +53,20 @@ function CandidateTable({
   onSelect,
   withAction,
   selectBlockedReason,
+  selectActionLabel = 'Use this',
 }: {
   rows: readonly CandidateRowViewV1[];
   onSelect?: (id: string) => void;
   withAction: boolean;
   /**
-   * Why NO row can be chosen, whatever the row itself says. A degraded run
-   * produces candidates with real numbers and no signable Route Card, and
-   * `Use this` then clicked into a `console.warn`. The Review button below
-   * already stated this reason and disabled itself; the table did not, so the
-   * user pressed the working-looking control and nothing happened. Reported
-   * exactly that way, twice.
+   * Why NO row can be chosen, whatever the row itself says. This is separate
+   * from the headline Review gate: in a degraded run a candidate click can be
+   * the explicit choice that creates a provider-constrained Route Card.
    */
   selectBlockedReason?: string | null;
+  /** Used when selecting a candidate first creates an explicit
+   * provider-constrained Route Card instead of opening Review immediately. */
+  selectActionLabel?: string;
 }) {
   return (
     <table>
@@ -109,7 +110,7 @@ function CandidateTable({
                   disabled={Boolean(selectBlockedReason)}
                   title={selectBlockedReason ?? undefined}
                 >
-                  Use this
+                  {selectActionLabel}
                 </button>
               ) : (
                 <button type="button" className="btn sec" disabled>
@@ -151,6 +152,12 @@ export interface RouteScreenModelV1 {
   onChangeGoal: () => void;
   onSelectCandidate: (id: string) => void;
   reviewDisabledReason: string | null;
+  /** Candidate selection and the headline action have different gates: a
+   * degraded comparison may allow an explicit provider choice even though it
+   * cannot yet open Review. */
+  candidateSelectionDisabledReason?: string | null;
+  primaryActionLabel?: string;
+  candidateActionLabel?: string;
   graphOrientation?: 'horizontal' | 'vertical';
   /** T67E §3 — the same panel the Comparing screen shows. A user who reaches a
    * Route Card still needs to know which providers were not in the comparison
@@ -288,20 +295,26 @@ export function RouteScreen(model: RouteScreenModelV1) {
           <span className="sub">{candidateSummaryV1(model.candidates)}</span>
         </div>
         <div className="pb tight">
-          {/* The same reason that disables Review disables choosing a row:
-              both need a signable Route Card, and neither can invent one. */}
+          {/* Candidate selection has its own gate. A degraded comparison may
+              allow "Use only" to create the missing explicit constraint while
+              the general Review action still cannot choose among routes. */}
           <CandidateTable
             rows={model.candidates}
             onSelect={model.onSelectCandidate}
             withAction
-            selectBlockedReason={model.reviewDisabledReason}
+            selectBlockedReason={
+              model.candidateSelectionDisabledReason === undefined
+                ? model.reviewDisabledReason
+                : model.candidateSelectionDisabledReason
+            }
+            selectActionLabel={model.candidateActionLabel}
           />
         </div>
       </div>
 
       <div className="ctarow">
         <button type="button" className="btn lg" onClick={model.onReview} disabled={Boolean(model.reviewDisabledReason)}>
-          Review transaction
+          {model.primaryActionLabel ?? 'Review transaction'}
         </button>
         <button type="button" className="btn sec lg" onClick={model.onChangeGoal}>
           Change goal

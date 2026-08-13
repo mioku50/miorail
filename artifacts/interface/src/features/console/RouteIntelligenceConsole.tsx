@@ -39,6 +39,7 @@ import {
   intelligenceSpendLabelV1,
   marketRailFromSnapshotV1,
   providerUnavailableCopyV1,
+  providerConstrainedGoalV1,
   startStageV1,
   stepperFromClockV1,
   useConsoleTheme,
@@ -304,6 +305,11 @@ export function RouteIntelligenceConsole() {
   const result = evaluation.data;
   const projection = result?.outcome === 'evaluated' ? (result.projection as unknown as RoutePlanProjectionV1) : null;
   const recommended = projection?.recommendedRoute ?? null;
+  // A sample of one is never styled as a recommendation, but it is still a
+  // real quoted route. Keep its measured output, expiry, calls and approvals
+  // visible instead of replacing all of them with em dashes.
+  const primaryRoute =
+    recommended ?? (projection?.availableRoutes.length === 1 ? projection.availableRoutes[0]! : null);
   const goalLabel = projection?.goalSummary ?? (goal.trim() || 'New goal');
   const prepared = prepare.data?.outcome === 'prepared' ? prepare.data : null;
 
@@ -450,9 +456,10 @@ export function RouteIntelligenceConsole() {
    * stale-quote "Refresh", both of which exist to obtain fresh terms. Those two
    * pass a fresh id; every other caller keeps the idempotent behaviour.
    */
-  const compare = (options?: { fresh?: boolean; event?: FormEvent }) => {
+  const compare = (options?: { fresh?: boolean; event?: FormEvent; goalOverride?: string }) => {
     options?.event?.preventDefault();
-    if (!address || !goal.trim() || dispatch.engine === null) return;
+    const requestGoal = options?.goalOverride?.trim() || goal.trim();
+    if (!address || !requestGoal || dispatch.engine === null) return;
     prepare.reset();
     setSubmission(null);
     setSimulateResponse(null);
@@ -493,7 +500,7 @@ export function RouteIntelligenceConsole() {
       // is the only thing that can later prove this exact request ran.
       aiCompare.mutate(
         {
-          messages: [{ role: 'user', text: goal }],
+          messages: [{ role: 'user', text: requestGoal }],
           walletAddress: wallet,
           maxSpendUsd: '0.05',
           maxCompletionTokens: 1_024,
@@ -511,18 +518,18 @@ export function RouteIntelligenceConsole() {
     if (dispatch.engine === 'nft') {
       // An NFT goal never reaches the gift-card engine: the two share the verb
       // "buy" and nothing else.
-      nftCompare.mutate({ message: goal, walletAddress: wallet }, { onSettled: () => mark('candidates', 'complete') });
+      nftCompare.mutate({ message: requestGoal, walletAddress: wallet }, { onSettled: () => mark('candidates', 'complete') });
       return;
     }
     if (dispatch.engine === 'commerce') {
       commerceCompare.mutate(
-        { message: goal, walletAddress: wallet },
+        { message: requestGoal, walletAddress: wallet },
         { onSettled: () => mark('candidates', 'complete') },
       );
       return;
     }
     if (dispatch.engine === 'earn') {
-      earnCompare.mutate({ message: goal, walletAddress: wallet }, { onSettled: () => mark('candidates', 'complete') });
+      earnCompare.mutate({ message: requestGoal, walletAddress: wallet }, { onSettled: () => mark('candidates', 'complete') });
       return;
     }
     // No onError here, deliberately. Sending the user back to Plan discarded the
@@ -532,7 +539,7 @@ export function RouteIntelligenceConsole() {
     // with the server's own message rendered as a terminal failure.
     evaluation.mutate(
       {
-        message: goal,
+        message: requestGoal,
         walletAddress: wallet,
         // A new id ⟹ a new route run, new quotes and a new evidence set. The
         // previous Route Card is untouched in storage; it is simply no longer
@@ -632,9 +639,7 @@ export function RouteIntelligenceConsole() {
     ? CONSOLE_COPY_V1.walletDisconnected
     : result?.outcome !== 'evaluated' || !projection
       ? 'This goal has not produced a route card yet.'
-      : !projection.routeCardHash
-        ? 'This comparison finished without a signable Route Card, so there is nothing to review. Comparing again may fix it if a provider was briefly unavailable.'
-        : null;
+      : null;
 
   const reviewCandidate = (candidateHash: string) => {
     // Read out before the guard so the null check narrows the type as well as
@@ -706,6 +711,7 @@ export function RouteIntelligenceConsole() {
   const reviewTarget =
     recommended?.candidateHash ??
     (selectableCandidates.length === 1 ? selectableCandidates[0]!.id : null);
+  const needsProviderConstraint = Boolean(projection && !projection.routeCardHash);
   const reviewDisabledReason =
     reviewBlockedReason ??
     (reviewTarget
@@ -713,6 +719,30 @@ export function RouteIntelligenceConsole() {
       : selectableCandidates.length === 0
         ? 'No provider returned a quotable route for this goal, so there is nothing to review.'
         : 'No route is recommended. Choose one from the candidates below with “Use this”.');
+  const candidateSelectionDisabledReason =
+    reviewBlockedReason ??
+    (selectableCandidates.length === 0
+      ? 'No provider returned a quotable route for this goal, so there is nothing to select.'
+      : null);
+
+  /**
+   * A degraded comparison has no canonical recommendation and therefore no
+   * Route Card. Selecting a row is the missing user decision: rerun that same
+   * goal with an explicit include-only protocol constraint. The engine then
+   * produces a constrained Route Card without ever claiming the provider won
+   * a comparison. Review remains a separate click against that exact card.
+   */
+  const selectCandidateForReview = (candidateHash: string) => {
+    if (projection?.routeCardHash) {
+      reviewCandidate(candidateHash);
+      return;
+    }
+    const route = projection?.availableRoutes.find((entry) => entry.candidateHash === candidateHash);
+    if (!route || reviewBlockedReason) return;
+    const constrainedGoal = providerConstrainedGoalV1(goal, route.provider.displayName);
+    setGoal(constrainedGoal);
+    compare({ fresh: true, goalOverride: constrainedGoal });
+  };
 
   // --- T67E §1: the contextual B20 Control Card ------------------------------
   //
@@ -720,7 +750,7 @@ export function RouteIntelligenceConsole() {
   // transfers are paused reverts immediately and costs only gas; acquiring one
   // succeeds, and the constraint is discovered later by the holder.
   const b20GateOn = flags?.b20ControlV1 === true;
-  const b20Target = b20TargetForRouteV1(recommended?.expectedOutput.asset ?? null);
+  const b20Target = b20TargetForRouteV1(primaryRoute?.expectedOutput.asset ?? null);
   const b20 = useB20Inspect(b20Target.address, { enabled: b20GateOn });
   const b20Card = b20.data?.card ?? null;
   const b20Unavailable = b20UnavailableCopyV1({
@@ -880,7 +910,7 @@ export function RouteIntelligenceConsole() {
   // `prepared` IS the Safety Kernel's verdict: a route it refused comes back
   // `blocked`, never prepared. The screen must not re-run that decision.
   const simulation = deriveSimulationViewV1(simulationSource, Boolean(prepared));
-  const quoteFreshness = quoteFreshnessFromRouteV1(recommended);
+  const quoteFreshness = quoteFreshnessFromRouteV1(primaryRoute);
 
   const historyItems = history.data?.items ?? [];
   const proofs: ConsoleSessionItemV1[] = historyItems.slice(0, 5).map((run) => ({
@@ -1206,11 +1236,11 @@ export function RouteIntelligenceConsole() {
     content = (
       <RouteScreen
         steps={steps}
-        eyebrow={`Recommended route · ${goalLabel}`}
-        amount={recommended?.expectedOutput.amountDecimal ?? '—'}
-        unit={recommended?.expectedOutput.asset.symbol ?? ''}
+        eyebrow={`${recommended ? 'Recommended route' : 'Available route'} · ${goalLabel}`}
+        amount={primaryRoute?.expectedOutput.amountDecimal ?? '—'}
+        unit={primaryRoute?.expectedOutput.asset.symbol ?? ''}
         usd=""
-        providerLabel={recommended?.provider.displayName ?? 'no provider'}
+        providerLabel={primaryRoute?.provider.displayName ?? 'no provider'}
         freshness={quoteFreshness}
         why={
           // T67E §3.4 — the superlative is gated on there having been a
@@ -1223,40 +1253,47 @@ export function RouteIntelligenceConsole() {
               : 'No comparative recommendation was made — the routes below are shown for comparison only.'
         }
         kpis={[
-          { k: 'Minimum output', v: recommended?.minimumOutput.amountDecimal ?? '—', d: `slippage ${recommended?.slippage.percent ?? '—'}%` },
+          { k: 'Minimum output', v: primaryRoute?.minimumOutput.amountDecimal ?? '—', d: `slippage ${primaryRoute?.slippage.percent ?? '—'}%` },
           {
             k: 'Network cost',
-            v: recommended?.estimatedGas.estimatedCostUsd ? `$${recommended.estimatedGas.estimatedCostUsd}` : '—',
-            d: recommended && recommended.estimatedGas.gasUnits !== '0'
-              ? `est. ${recommended.estimatedGas.gasUnits} gas`
+            v: primaryRoute?.estimatedGas.estimatedCostUsd ? `$${primaryRoute.estimatedGas.estimatedCostUsd}` : '—',
+            d: primaryRoute && primaryRoute.estimatedGas.gasUnits !== '0'
+              ? `est. ${primaryRoute.estimatedGas.gasUnits} gas`
               : 'provider supplied no gas estimate',
           },
           {
             k: 'Price impact',
-            v: recommended?.priceImpact ? `${recommended.priceImpact.percent}%` : 'Not provided',
-            d: recommended?.priceImpact ? 'from the quote' : 'provider supplied no reference price',
+            v: primaryRoute?.priceImpact ? `${primaryRoute.priceImpact.percent}%` : 'Not provided',
+            d: primaryRoute?.priceImpact ? 'from the quote' : 'provider supplied no reference price',
           },
-          { k: 'Approvals', v: String(recommended?.approvalCount ?? '—'), d: 'exact amount' },
-          { k: 'Calls', v: String(recommended?.callCount ?? '—'), d: 'one batch' },
+          { k: 'Approvals', v: String(primaryRoute?.approvalCount ?? '—'), d: 'exact amount' },
+          { k: 'Calls', v: String(primaryRoute?.callCount ?? '—'), d: 'one batch' },
           { k: 'Intelligence', v: spendLabel.split(' · ')[0], d: `${evidenceRows.length} sources` },
         ]}
-        graph={routeGraphFromRouteV1(recommended, { amountLabel: goalLabel, walletLabel: walletLabel ?? 'your wallet' })}
+        graph={routeGraphFromRouteV1(primaryRoute, { amountLabel: goalLabel, walletLabel: walletLabel ?? 'your wallet' })}
         graphUnavailableReason="The provider did not return a pool breakdown for this route, so the path is not drawn."
-        graphLegend={recommended ? [`executed by ${recommended.provider.displayName}`, 'Output returns to your wallet'] : []}
+        graphLegend={primaryRoute ? [`executed by ${primaryRoute.provider.displayName}`, 'Output returns to your wallet'] : []}
         simulatedPill={simulation.passed ? { label: 'simulated', tone: 'g' } : { label: 'not simulated yet', tone: 'n' }}
-        scoreRows={scoreRowsFromProjectionV1(projection)}
-        scoringVersion={scoringVersionLabelV1(projection.pathScore)}
+        scoreRows={scoreRowsFromProjectionV1(projection, primaryRoute?.pathScore ?? null)}
+        scoringVersion={scoringVersionLabelV1(primaryRoute?.pathScore ?? null)}
         providerHistory={providerHistoryViewsV1(projection)}
         candidates={candidateRows}
-        onReview={() => reviewTarget && reviewCandidate(reviewTarget)}
+        onReview={() => reviewTarget && selectCandidateForReview(reviewTarget)}
         tokenPanels={b20Panels(false)}
         diagnostics={diagnosticRows}
         claimHeadline={comparisonClaim?.headline ?? null}
         onCompareAgain={() => compare({ fresh: true })}
         comparePending={comparePending}
         onChangeGoal={() => setScreen('plan')}
-        onSelectCandidate={reviewCandidate}
+        onSelectCandidate={selectCandidateForReview}
         reviewDisabledReason={reviewDisabledReason}
+        candidateSelectionDisabledReason={candidateSelectionDisabledReason}
+        primaryActionLabel={
+          needsProviderConstraint && reviewTarget && primaryRoute
+            ? `Use ${primaryRoute.provider.displayName} only`
+            : 'Review transaction'
+        }
+        candidateActionLabel={needsProviderConstraint ? 'Use only' : 'Use this'}
       />
     );
   } else if (screen === 'review' && nftPrepared) {
