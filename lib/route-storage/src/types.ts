@@ -279,6 +279,15 @@ export interface RouteStorageRepository {
     userId: string,
     now: string,
   ): Promise<SettleIntelligenceReservationResult>;
+  /** Extends a live reservation before a provider or payment side effect.
+   * The update is gated on status='reserved' and the existing lease still
+   * being live, so an already expired reservation can never be resurrected. */
+  renewIntelligenceReservation(
+    reservationId: string,
+    userId: string,
+    now: string,
+    expiresAt: string,
+  ): Promise<IntelligenceBudgetReservationRecord | null>;
   /** Idempotent (gated on status='reserved'): moves a reservation to
    * 'released' and decrements `reserved_atomic` by its amount in the same
    * statement. `reason` is accepted for the caller's own audit trail — this
@@ -291,7 +300,9 @@ export interface RouteStorageRepository {
   ): Promise<ReleaseIntelligenceReservationResult>;
   /** Lazily called before `reserveIntelligenceBudget`: expires every
    * still-'reserved' row past its `expiresAt` for this budget and returns
-   * `reserved_atomic` to the budget in one statement. */
+   * `reserved_atomic` to the budget in one statement. Reservations already
+   * linked to a payment-pending, reconciliation-required, or settled charge
+   * stay reserved until the payment outcome is reconciled. */
   expireStaleIntelligenceReservations(budgetId: string, now: string): Promise<IntelligenceBudgetRecord | null>;
 }
 

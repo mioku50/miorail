@@ -749,6 +749,9 @@ export const intelligenceBudgets = pgTable(
     uniqueIndex('intelligence_budgets_active_permission_unique')
       .on(table.spendPermissionId)
       .where(sql`${table.status} = 'active'`),
+    uniqueIndex('intelligence_budgets_active_wallet_unique')
+      .on(table.userId, sql`lower(${table.walletAddress})`, table.chainId)
+      .where(sql`${table.status} = 'active'`),
     index('intelligence_budgets_user_wallet_chain_idx').on(table.userId, table.walletAddress, table.chainId),
     check(
       'intelligence_budgets_status_check',
@@ -820,6 +823,46 @@ export const intelligenceCharges = pgTable(
     check(
       'intelligence_charges_status_check',
       sql`${table.status} IN ('quoted', 'reserved', 'payment_pending', 'settled', 'failed', 'reconciliation_required', 'released')`,
+    ),
+  ],
+);
+
+export const intelligenceChargeAttempts = pgTable(
+  'intelligence_charge_attempts',
+  {
+    idempotencyKey: text('idempotency_key').primaryKey(),
+    chargeId: text('charge_id')
+      .references(() => intelligenceCharges.id, restrictReference)
+      .notNull(),
+    userId: text('user_id')
+      .references(() => users.id, restrictReference)
+      .notNull(),
+    spendPermissionId: text('spend_permission_id')
+      .references(() => spendPermissions.id, restrictReference)
+      .notNull(),
+    expectedPayer: text('expected_payer').notNull(),
+    amountAtomic: numeric('amount_atomic', { precision: 78, scale: 0 }).notNull(),
+    status: text('status').notNull(),
+    proof: jsonb('proof'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+    settledAt: timestamp('settled_at', { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex('intelligence_charge_attempts_charge_unique').on(table.chargeId),
+    index('intelligence_charge_attempts_user_status_idx').on(table.userId, table.status, table.updatedAt),
+    check(
+      'intelligence_charge_attempts_status_check',
+      sql`${table.status} IN ('claimed', 'settled', 'outcome_unknown')`,
+    ),
+    check(
+      'intelligence_charge_attempts_payer_check',
+      sql`${table.expectedPayer} ~ '^0x[0-9a-f]{40}$'`,
+    ),
+    check('intelligence_charge_attempts_amount_check', sql`${table.amountAtomic} > 0`),
+    check(
+      'intelligence_charge_attempts_proof_check',
+      sql`(${table.status} = 'settled' AND ${table.proof} IS NOT NULL AND ${table.settledAt} IS NOT NULL) OR (${table.status} <> 'settled' AND ${table.settledAt} IS NULL)`,
     ),
   ],
 );

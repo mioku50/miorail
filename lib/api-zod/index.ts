@@ -2374,6 +2374,9 @@ export const X402LedgerResponseSchema = z.object({
     settlement: z.string().optional(),
     buyerFuelMode: z.string().optional(),
     x402: z.string().optional(),
+    summaryScope: z.literal('latest_100_tenant_receipts').optional(),
+    recordsConsidered: z.number().int().nonnegative().optional(),
+    truncated: z.boolean().optional(),
   }),
 });
 

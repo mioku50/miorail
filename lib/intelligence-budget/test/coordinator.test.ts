@@ -320,6 +320,93 @@ describe('runBudgetSimulationV1', () => {
     assert.equal(charger.chargeCallCount, 1); // still 1 — no repeat charge
   });
 
+  it('retry_later preserves payment_pending and a replay never buys provider evidence twice', async () => {
+    const { repository, spendPermissionRepository, routeRunId, blueprintId } = await seedBudgetSimulationFixture();
+    const provider = mockProvider({ ok: true, body: SUCCESS_BODY });
+    let first = true;
+    const charger = mockCharger({
+      charge: () => {
+        if (first) {
+          first = false;
+          return { ok: false, reason: 'spend_permission_charge_in_progress', disposition: 'retry_later' };
+        }
+        return { ok: true, proof: { txHash: `0x${'b'.repeat(64)}` } };
+      },
+    });
+    const deps = {
+      repository,
+      provider,
+      charger,
+      spendPermissionRepository,
+      now: () => NOW,
+      price: SIMULATION_PRICE,
+      providerId: SIMULATION_PROVIDER_REF.id,
+    };
+    const input = inputFor(routeRunId, blueprintId, { requestId: 'req-inflight' });
+
+    const inflight = await runBudgetSimulationV1(deps, input);
+    assert.deepEqual(inflight, { outcome: 'blocked', reason: 'spend_permission_charge_in_progress' });
+    assert.equal(provider.callCount, 1);
+
+    const replay = await runBudgetSimulationV1(deps, input);
+    assert.equal(replay.outcome, 'charged');
+    assert.equal(provider.callCount, 1, 'durable evidence is reused on a payment retry');
+    assert.equal(charger.chargeCallCount, 2);
+  });
+
+  it('never charges after the reservation lease expires during provider work', async () => {
+    const { repository, spendPermissionRepository, routeRunId, blueprintId, budget } = await seedBudgetSimulationFixture();
+    const provider = mockProvider({ ok: true, body: SUCCESS_BODY });
+    const charger = mockCharger();
+    const times = [
+      NOW,
+      new Date('2026-07-20T12:01:00.000Z'),
+      new Date('2026-07-20T12:10:00.000Z'),
+    ];
+
+    const result = await runBudgetSimulationV1(
+      {
+        repository,
+        provider,
+        charger,
+        spendPermissionRepository,
+        now: () => times.shift() ?? times.at(-1) ?? NOW,
+        price: SIMULATION_PRICE,
+        providerId: SIMULATION_PROVIDER_REF.id,
+        reservationTtlMs: 5 * 60_000,
+      },
+      inputFor(routeRunId, blueprintId, { requestId: 'req-expired-lease' }),
+    );
+
+    assert.equal(result.outcome, 'reconciliation_required');
+    if (result.outcome !== 'reconciliation_required') throw new Error('unreachable');
+    assert.equal(result.reason, 'reservation_expired');
+    assert.equal(charger.chargeCallCount, 0);
+    assert.equal(result.budget.status, 'paused');
+    const reservations = await repository.listIntelligenceBudgetReservations(budget.id, TENANT_ID);
+    assert.equal(reservations[0]?.status, 'reserved');
+  });
+
+  it('a settled proof without local accounting pauses the budget and never settles the reservation', async () => {
+    const { repository, spendPermissionRepository, routeRunId, blueprintId, budget } = await seedBudgetSimulationFixture();
+    const provider = mockProvider({ ok: true, body: SUCCESS_BODY });
+    const charger = mockCharger();
+    spendPermissionRepository.incrementSpent = async () => undefined;
+
+    const result = await runBudgetSimulationV1(
+      { repository, provider, charger, spendPermissionRepository, now: () => NOW, price: SIMULATION_PRICE, providerId: SIMULATION_PROVIDER_REF.id },
+      inputFor(routeRunId, blueprintId, { requestId: 'req-accounting-failure' }),
+    );
+
+    assert.equal(result.outcome, 'reconciliation_required');
+    if (result.outcome !== 'reconciliation_required') throw new Error('unreachable');
+    assert.equal(result.reason, 'spend_permission_accounting_reconciliation_required');
+    assert.equal(result.budget.status, 'paused');
+    const reservations = await repository.listIntelligenceBudgetReservations(budget.id, TENANT_ID);
+    assert.equal(reservations[0]?.status, 'reserved');
+    assert.equal(result.charge.status, 'reconciliation_required');
+  });
+
   it('an expired Spend Permission blocks before any reservation is made', async () => {
     const { repository, spendPermissionRepository, routeRunId, blueprintId, budget } = await seedBudgetSimulationFixture({
       permission: { expiresAt: Date.parse('2026-01-01T00:00:00.000Z') },

@@ -309,7 +309,11 @@ function receiptRecord(row: { id: string; receipt: unknown; createdAt: Date }): 
     amount: typeof receipt.amount === 'string' ? receipt.amount : '0',
     payTo: typeof receipt.payTo === 'string' ? receipt.payTo : '',
     payer: typeof receipt.payer === 'string' ? receipt.payer : undefined,
-    status: receipt.status === 'pending' || receipt.status === 'failed' ? receipt.status : 'settled',
+    // Missing or novel status is not proof of settlement. Only the exact
+    // durable value may contribute to settled spend totals.
+    status: receipt.status === 'settled' || receipt.status === 'pending' || receipt.status === 'failed'
+      ? receipt.status
+      : 'pending',
     attribution: receipt.attribution && typeof receipt.attribution === 'object' ? receipt.attribution as any : {},
     checkedAt: typeof receipt.checkedAt === 'string' ? receipt.checkedAt : row.createdAt.toISOString(),
     source: 'x402-facilitator',
@@ -855,7 +859,9 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
           .from(x402Receipts)
           .where(eq(x402Receipts.userId, userId))
           .orderBy(desc(x402Receipts.createdAt))
-          .limit(100);
+          // Fetch one sentinel row so the response can say honestly whether
+          // its spend summary is truncated instead of looking lifetime-wide.
+          .limit(101);
         records = rows.map(receiptRecord)
           .filter((record) => record.userId === userId);
       }
@@ -1238,7 +1244,9 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
           .limit(100);
       }
       const filterRunId = typeof req.query.runId === 'string' ? req.query.runId : undefined;
+      const truncated = rows.length > 100;
       const records = rows
+        .slice(0, 100)
         .map(receiptRecord)
         .filter((record) => record.userId === userId)
         .filter((record) => !filterRunId || record.runId === filterRunId);
@@ -1292,6 +1300,9 @@ export function createX402Router(options: CreateX402RouterOptions = {}) {
           settlement: entries.length > 0 ? 'real' : 'none',
           buyerFuelMode: 'settled_only',
           x402: x402ConfigFromEnv(env).status,
+          summaryScope: 'latest_100_tenant_receipts',
+          recordsConsidered: entries.length,
+          truncated,
         },
       };
 

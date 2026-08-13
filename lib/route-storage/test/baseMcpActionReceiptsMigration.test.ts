@@ -37,7 +37,7 @@ test('migration 0039 expands only the closed Routes provider constraint set', as
   assert.doesNotMatch(sql, /sushiswap|unknown|dynamic/i);
 });
 
-test('migration 0040 allocates Action Receipt event sequences on a locked receipt row', async () => {
+test('migration 0040 and runtime persist each receipt transition with its event atomically', async () => {
   const sql = await readFile(drizzlePath('0040_base_mcp_action_event_sequence.sql'), 'utf8');
   const runtime = await readFile(resolve(
     process.cwd().endsWith('lib/route-storage') ? resolve(process.cwd(), '..', '..') : process.cwd(),
@@ -45,9 +45,10 @@ test('migration 0040 allocates Action Receipt event sequences on a locked receip
   ), 'utf8');
   assert.match(sql, /ADD COLUMN "next_event_sequence" integer/);
   assert.match(sql, /MAX\(event\."sequence"\) \+ 1/);
-  assert.match(runtime, /UPDATE base_mcp_action_receipts[\s\S]*next_event_sequence = next_event_sequence \+ 1/);
-  assert.match(runtime, /RETURNING next_event_sequence - 1 AS sequence/);
-  assert.match(runtime, /FROM allocated[\s\S]*RETURNING sequence/);
+  assert.match(runtime, /WITH updated AS \([\s\S]*UPDATE base_mcp_action_receipts[\s\S]*next_event_sequence = next_event_sequence \+ 1/);
+  assert.match(runtime, /updated\.next_event_sequence - 1/);
+  assert.match(runtime, /FROM updated[\s\S]*SELECT updated\.\*[\s\S]*JOIN event_inserted/);
+  assert.doesNotMatch(runtime, /async function appendEvent/);
   assert.doesNotMatch(runtime, /COALESCE\(MAX\(sequence\), -1\) \+ 1/);
   assert.doesNotMatch(runtime, /ON CONFLICT DO NOTHING/);
 });
@@ -62,4 +63,6 @@ test('the migration journal registers 0038 through 0040 in append-only order', a
   assert.equal(journal.entries[38]?.idx, 38);
   assert.equal(journal.entries[39]?.idx, 39);
   assert.equal(journal.entries[40]?.idx, 40);
+  assert.equal(journal.entries[41]?.tag, '0041_intelligence_charge_attempts');
+  assert.equal(journal.entries[41]?.idx, 41);
 });

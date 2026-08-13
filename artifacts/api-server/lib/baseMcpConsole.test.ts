@@ -117,7 +117,8 @@ describe('canonical Base transaction history is deterministic', () => {
       name: 'get_transaction_history',
       args: { chain: 'base', limit: 10 },
     });
-    assert.equal('address' in (called?.args ?? {}), false);
+    const calledArgs = (called as { args: Record<string, unknown> } | null)?.args ?? {};
+    assert.equal('address' in calledArgs, false);
     assert.equal(agentCreated, false);
     assert.equal(result.status, 'answered');
     assert.equal(result.trace[0]?.tool, 'get_transaction_history');

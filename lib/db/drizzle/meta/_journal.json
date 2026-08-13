@@ -288,6 +288,13 @@
       "when": 1786982400000,
       "tag": "0040_base_mcp_action_event_sequence",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1787068800000,
+      "tag": "0041_intelligence_charge_attempts",
+      "breakpoints": true
     }
   ]
 }

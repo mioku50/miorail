@@ -2096,6 +2096,25 @@ export function createDatabaseRouteStorageRepository(
       return { reservation, budget: budgetRows[0] ? budgetFromRow(budgetRows[0]) : null };
     },
 
+    async renewIntelligenceReservation(
+      reservationId: string,
+      userId: string,
+      now: string,
+      expiresAt: string,
+    ): Promise<IntelligenceBudgetReservationRecord | null> {
+      const rows = await sql`
+        UPDATE intelligence_budget_reservations
+        SET expires_at = ${new Date(expiresAt)}, updated_at = ${new Date(now)}
+        WHERE id = ${reservationId}
+          AND user_id = ${userId}
+          AND status = 'reserved'
+          AND expires_at > ${new Date(now)}
+        RETURNING id, schema_version, budget_id, user_id, amount_atomic, status,
+                  idempotency_key, expires_at, created_at, updated_at
+      `;
+      return rows[0] ? reservationFromRow(rows[0]) : null;
+    },
+
     async releaseIntelligenceReservation(
       reservationId: string,
       userId: string,
@@ -2134,9 +2153,18 @@ export function createDatabaseRouteStorageRepository(
     async expireStaleIntelligenceReservations(budgetId: string, now: string): Promise<IntelligenceBudgetRecord | null> {
       await sql`
         WITH stale AS (
-          UPDATE intelligence_budget_reservations
+          UPDATE intelligence_budget_reservations AS reservation
           SET status = 'expired', updated_at = ${new Date(now)}
-          WHERE budget_id = ${budgetId} AND status = 'reserved' AND expires_at < ${new Date(now)}
+          WHERE reservation.budget_id = ${budgetId}
+            AND reservation.status = 'reserved'
+            AND reservation.expires_at < ${new Date(now)}
+            AND NOT EXISTS (
+              SELECT 1
+              FROM intelligence_charges AS charge
+              WHERE charge.user_id = reservation.user_id
+                AND charge.payload->>'reservationId' = reservation.id
+                AND charge.status IN ('payment_pending', 'reconciliation_required', 'settled')
+            )
           RETURNING amount_atomic
         )
         UPDATE intelligence_budgets AS b

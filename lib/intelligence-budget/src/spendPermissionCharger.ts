@@ -53,6 +53,8 @@ export interface SpendPermissionSourceV1 {
 
 export interface SpendPermissionPreflightInputV1 {
   permissionId: string;
+  /** Authenticated wallet bound to the budget and permission server-side. */
+  expectedPayer: `0x${string}`;
   /** Base-unit atomic amount of the intended charge. */
   amountAtomic: string;
 }
@@ -66,7 +68,11 @@ export interface SpendPermissionPreflightResultV1 {
 }
 
 export interface SpendPermissionChargeInputV1 {
+  chargeId: string;
+  tenantId: string;
   permissionId: string;
+  /** Authenticated wallet bound to the budget and permission server-side. */
+  expectedPayer: `0x${string}`;
   /** Base-unit atomic amount to charge — ALWAYS the reserved cost, never
    * client- or blueprint-supplied (decision 7). */
   amountAtomic: string;
@@ -78,7 +84,13 @@ export interface SpendPermissionChargeInputV1 {
 
 export type SpendPermissionChargeResultV1 =
   | { ok: true; proof: ConfirmedSettlementProofV1 }
-  | { ok: false; reason: string };
+  | {
+      ok: false;
+      reason: string;
+      /** A second request found the same durable attempt still in flight. It
+       * must return without mutating the budget or repeating the charge. */
+      disposition?: 'retry_later' | 'reconciliation_required';
+    };
 
 /**
  * Injected dependency (decision 1/13) — Budget NEVER moves user assets
@@ -86,8 +98,8 @@ export type SpendPermissionChargeResultV1 =
  * recoup recipient (decision 7). `preflight`/`charge` internally resolve
  * their own expected spender/asset/recipient from the real implementation's
  * closed-over env config — the coordinator never passes (or needs to know)
- * recipient/spender/asset; it only ever supplies permissionId/amountAtomic/
- * idempotencyKey.
+ * recipient/spender/asset; it only ever supplies durable charge identity,
+ * permissionId, expectedPayer, amountAtomic, and idempotencyKey.
  */
 export interface SpendPermissionCharger {
   preflight(input: SpendPermissionPreflightInputV1): Promise<SpendPermissionPreflightResultV1>;

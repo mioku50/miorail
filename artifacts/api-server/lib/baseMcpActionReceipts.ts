@@ -83,6 +83,8 @@ export interface StoredBaseMcpActionReceiptV1 {
   createdAt: string;
   updatedAt: string;
   finalizedAt: string | null;
+  /** Internal compare-and-swap cursor. Never included in the public schema. */
+  nextEventSequence?: number;
 }
 
 export interface BaseMcpActionReceiptRepositoryV1 {
@@ -172,10 +174,11 @@ function rowToStored(row: Record<string, unknown>): StoredBaseMcpActionReceiptV1
     finalizedAt: value('finalizedAt', 'finalized_at') == null
       ? null
       : new Date(String(value('finalizedAt', 'finalized_at'))).toISOString(),
+    nextEventSequence: Number(value('nextEventSequence', 'next_event_sequence') ?? 0),
   };
 }
 
-async function appendEvent(receipt: StoredBaseMcpActionReceiptV1): Promise<void> {
+function receiptEventV1(receipt: StoredBaseMcpActionReceiptV1) {
   const id = `base-mcp-action-event:${crypto.randomUUID()}`;
   const eventHash = stableHashV1('base-mcp-action-receipt-event/v1', {
     id,
@@ -187,32 +190,17 @@ async function appendEvent(receipt: StoredBaseMcpActionReceiptV1): Promise<void>
     errorCode: receipt.errorCode,
     createdAt: receipt.updatedAt,
   });
-  const rows = await client`
-    WITH allocated AS (
-      UPDATE base_mcp_action_receipts
-      SET next_event_sequence = next_event_sequence + 1
-      WHERE id = ${receipt.id} AND tenant_id = ${receipt.tenantId}
-      RETURNING next_event_sequence - 1 AS sequence
-    )
-    INSERT INTO base_mcp_action_receipt_events (
-      id, receipt_id, tenant_id, sequence, event_hash, status, payload, created_at
-    )
-    SELECT
-      ${id}, ${receipt.id}, ${receipt.tenantId},
-      allocated.sequence,
-      ${eventHash}, ${receipt.status},
-      ${JSON.stringify({
-        reconciliationState: receipt.reconciliationState,
-        transactionHash: receipt.transactionHash,
-        blockNumber: receipt.blockNumber,
-        responseHash: receipt.responseHash,
-        errorCode: receipt.errorCode,
-      })}::jsonb,
-      ${receipt.updatedAt}::timestamptz
-    FROM allocated
-    RETURNING sequence
-  `;
-  if (!rows[0]) throw new Error('base_mcp_action_receipt_event_allocation_failed');
+  return {
+    id,
+    eventHash,
+    payload: {
+      reconciliationState: receipt.reconciliationState,
+      transactionHash: receipt.transactionHash,
+      blockNumber: receipt.blockNumber,
+      responseHash: receipt.responseHash,
+      errorCode: receipt.errorCode,
+    },
+  };
 }
 
 export class PostgresBaseMcpActionReceiptRepositoryV1 implements BaseMcpActionReceiptRepositoryV1 {
@@ -235,26 +223,65 @@ export class PostgresBaseMcpActionReceiptRepositoryV1 implements BaseMcpActionRe
   }): Promise<{ receipt: StoredBaseMcpActionReceiptV1; created: boolean }> {
     const id = `base-mcp-action:${crypto.randomUUID()}`;
     const actionHash = baseMcpActionHashV1(input);
+    const preparingReceipt: StoredBaseMcpActionReceiptV1 = {
+      id,
+      tenantId: input.tenantId,
+      walletAddress: input.walletAddress,
+      chainId: 8453,
+      schemaVersion: 'base-mcp-action-receipt/v1',
+      actionType: input.actionType,
+      provider: 'base-mcp',
+      status: 'preparing',
+      idempotencyKey: input.idempotencyKey,
+      actionHash,
+      providerRequestId: null,
+      intent: input.intent,
+      durableProof: null,
+      reconciliationState: 'not_started',
+      transactionHash: null,
+      blockNumber: null,
+      responseHash: null,
+      errorCode: null,
+      createdAt: input.now,
+      updatedAt: input.now,
+      finalizedAt: null,
+      nextEventSequence: 1,
+    };
+    const event = receiptEventV1(preparingReceipt);
     const rows = await client`
-      INSERT INTO base_mcp_action_receipts (
-        id, tenant_id, wallet_address, chain_id, schema_version, action_type,
-        provider, status, idempotency_key, action_hash, intent_payload,
-        reconciliation_state, created_at, updated_at
-      ) VALUES (
-        ${id}, ${input.tenantId}, ${input.walletAddress}, 8453,
-        'base-mcp-action-receipt/v1', ${input.actionType}, 'base-mcp', 'preparing',
-        ${input.idempotencyKey}, ${actionHash}, ${JSON.stringify(input.intent)}::jsonb,
-        'not_started', ${input.now}::timestamptz, ${input.now}::timestamptz
+      WITH inserted AS (
+        INSERT INTO base_mcp_action_receipts (
+          id, tenant_id, wallet_address, chain_id, schema_version, action_type,
+          provider, status, idempotency_key, action_hash, intent_payload,
+          reconciliation_state, next_event_sequence, created_at, updated_at
+        ) VALUES (
+          ${id}, ${input.tenantId}, ${input.walletAddress}, 8453,
+          'base-mcp-action-receipt/v1', ${input.actionType}, 'base-mcp', 'preparing',
+          ${input.idempotencyKey}, ${actionHash}, ${JSON.stringify(input.intent)}::jsonb,
+          'not_started', 1, ${input.now}::timestamptz, ${input.now}::timestamptz
+        )
+        ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
+        RETURNING *
+      ), event_inserted AS (
+        INSERT INTO base_mcp_action_receipt_events (
+          id, receipt_id, tenant_id, sequence, event_hash, status, payload, created_at
+        )
+        SELECT
+          ${event.id}, inserted.id, inserted.tenant_id, 0,
+          ${event.eventHash}, inserted.status, ${JSON.stringify(event.payload)}::jsonb,
+          inserted.updated_at
+        FROM inserted
+        RETURNING receipt_id
       )
-      ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
-      RETURNING *
+      SELECT inserted.*
+      FROM inserted
+      JOIN event_inserted ON event_inserted.receipt_id = inserted.id
     `;
     const created = rows.length > 0;
     const receipt = created
       ? rowToStored(rows[0])
       : await this.getByIdempotency(input.tenantId, input.idempotencyKey);
     if (!receipt) throw new Error('base_mcp_action_receipt_create_failed');
-    if (created) await appendEvent(receipt);
     return { receipt, created };
   }
 
@@ -292,41 +319,64 @@ export class PostgresBaseMcpActionReceiptRepositoryV1 implements BaseMcpActionRe
     finalizedAt?: string | null;
     now: string;
   }): Promise<StoredBaseMcpActionReceiptV1 | null> {
-    const providerRequestId = input.providerRequestId ?? null;
-    const durableProof = input.durableProof === undefined ? null : JSON.stringify(input.durableProof);
-    const transactionHash = input.transactionHash ?? null;
-    const blockNumber = input.blockNumber ?? null;
-    const responseHash = input.responseHash ?? null;
-    const finalizedAt = input.finalizedAt ?? null;
+    const current = await this.get(input.id, input.tenantId);
+    if (!current) return null;
+    if (!baseMcpActionStatusTransitionAllowedV1(current.status, input.status)) return current;
+    const next: StoredBaseMcpActionReceiptV1 = {
+      ...current,
+      status: input.status,
+      reconciliationState: input.reconciliationState,
+      providerRequestId: input.providerRequestId ?? current.providerRequestId,
+      durableProof: input.durableProof ?? current.durableProof,
+      transactionHash: input.transactionHash ?? current.transactionHash,
+      blockNumber: input.blockNumber ?? current.blockNumber,
+      responseHash: input.responseHash ?? current.responseHash,
+      errorCode: input.errorCode === undefined ? current.errorCode : input.errorCode,
+      finalizedAt: input.finalizedAt ?? current.finalizedAt,
+      updatedAt: input.now,
+      nextEventSequence: (current.nextEventSequence ?? 0) + 1,
+    };
+    const event = receiptEventV1(next);
+    const durableProof = next.durableProof === null ? null : JSON.stringify(next.durableProof);
     const rows = await client`
-      UPDATE base_mcp_action_receipts
-      SET status = ${input.status},
-          reconciliation_state = ${input.reconciliationState},
-          provider_request_id = COALESCE(${providerRequestId}, provider_request_id),
-          durable_proof = COALESCE(${durableProof}::jsonb, durable_proof),
-          transaction_hash = COALESCE(${transactionHash}, transaction_hash),
-          block_number = COALESCE(${blockNumber}, block_number),
-          response_hash = COALESCE(${responseHash}, response_hash),
-          error_code = ${input.errorCode ?? null},
-          finalized_at = COALESCE(${finalizedAt}::timestamptz, finalized_at),
-          updated_at = ${input.now}::timestamptz
-      WHERE id = ${input.id} AND tenant_id = ${input.tenantId}
-        AND (
-          status = 'preparing'
-          OR (status IN ('approval_required', 'pending') AND ${input.status} IN (
-            'approval_required', 'pending', 'reconciling', 'completed', 'rejected', 'failed'
-          ))
-          OR (status = 'reconciling' AND ${input.status} IN ('reconciling', 'completed', 'failed'))
-          OR status = ${input.status}
+      WITH updated AS (
+        UPDATE base_mcp_action_receipts
+        SET status = ${next.status},
+            reconciliation_state = ${next.reconciliationState},
+            provider_request_id = ${next.providerRequestId},
+            durable_proof = ${durableProof}::jsonb,
+            transaction_hash = ${next.transactionHash},
+            block_number = ${next.blockNumber},
+            response_hash = ${next.responseHash},
+            error_code = ${next.errorCode},
+            finalized_at = ${next.finalizedAt}::timestamptz,
+            updated_at = ${next.updatedAt}::timestamptz,
+            next_event_sequence = next_event_sequence + 1
+        WHERE id = ${input.id}
+          AND tenant_id = ${input.tenantId}
+          AND status = ${current.status}
+          AND next_event_sequence = ${current.nextEventSequence ?? 0}
+        RETURNING *
+      ), event_inserted AS (
+        INSERT INTO base_mcp_action_receipt_events (
+          id, receipt_id, tenant_id, sequence, event_hash, status, payload, created_at
         )
-      RETURNING *
+        SELECT
+          ${event.id}, updated.id, updated.tenant_id,
+          updated.next_event_sequence - 1,
+          ${event.eventHash}, updated.status, ${JSON.stringify(event.payload)}::jsonb,
+          updated.updated_at
+        FROM updated
+        RETURNING receipt_id
+      )
+      SELECT updated.*
+      FROM updated
+      JOIN event_inserted ON event_inserted.receipt_id = updated.id
     `;
     // A concurrent request may already have advanced the same receipt. Return
     // that newer state instead of treating a refused regression as missing.
     if (!rows[0]) return this.get(input.id, input.tenantId);
-    const receipt = rowToStored(rows[0]);
-    await appendEvent(receipt);
-    return receipt;
+    return rowToStored(rows[0]);
   }
 
   async list(tenantId: string, limit = 20): Promise<StoredBaseMcpActionReceiptV1[]> {
@@ -385,6 +435,7 @@ export class InMemoryBaseMcpActionReceiptRepositoryV1 implements BaseMcpActionRe
       createdAt: input.now,
       updatedAt: input.now,
       finalizedAt: null,
+      nextEventSequence: 1,
     };
     this.rows.set(id, receipt);
     return { receipt: structuredClone(receipt), created: true };
@@ -426,6 +477,7 @@ export class InMemoryBaseMcpActionReceiptRepositoryV1 implements BaseMcpActionRe
       errorCode: input.errorCode === undefined ? row.errorCode : input.errorCode,
       finalizedAt: input.finalizedAt ?? row.finalizedAt,
       updatedAt: input.now,
+      nextEventSequence: (row.nextEventSequence ?? 0) + 1,
     };
     this.rows.set(input.id, updated);
     return structuredClone(updated);

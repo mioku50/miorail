@@ -267,6 +267,26 @@ function maximumX402AtomicV1(): bigint {
   return parsed ? BigInt(parsed.amountAtomic) : 1_000_000n;
 }
 
+const DEFAULT_BASE_MCP_X402_RECEIPT_TTL_MS = 24 * 60 * 60_000;
+
+function baseMcpX402ReceiptTtlMsV1(env: NodeJS.ProcessEnv = process.env): number {
+  const seconds = Number(env.BASE_MCP_ACTION_X402_TTL_SECONDS || '86400');
+  return Number.isFinite(seconds) && seconds >= 60 && seconds <= 7 * 24 * 60 * 60
+    ? Math.trunc(seconds * 1000)
+    : DEFAULT_BASE_MCP_X402_RECEIPT_TTL_MS;
+}
+
+export function baseMcpX402ReceiptExpiredV1(
+  receipt: StoredBaseMcpActionReceiptV1,
+  now: string,
+  ttlMs = baseMcpX402ReceiptTtlMsV1(),
+): boolean {
+  if (receipt.actionType !== 'x402' || ['completed', 'rejected', 'failed'].includes(receipt.status)) return false;
+  const createdAt = Date.parse(receipt.createdAt);
+  const checkedAt = Date.parse(now);
+  return Number.isFinite(createdAt) && Number.isFinite(checkedAt) && checkedAt - createdAt >= ttlMs;
+}
+
 function approvedX402HostV1(value: string): boolean {
   const defaults = ['api.venice.ai', 'mcp.brickken.com'];
   const configured = (process.env.BASE_MCP_ACTION_X402_ALLOWED_HOSTS || '')
@@ -405,6 +425,22 @@ export const baseMcpExtensionActionRuntime = {
   createReceiptReader: createViemBaseReceiptReader as () => ReceiptReaderV1,
   now: () => new Date().toISOString(),
 };
+
+async function expireStaleBaseMcpX402ReceiptV1(
+  receipt: StoredBaseMcpActionReceiptV1,
+  now: string,
+): Promise<StoredBaseMcpActionReceiptV1> {
+  if (!baseMcpX402ReceiptExpiredV1(receipt, now)) return receipt;
+  return (await baseMcpExtensionActionRuntime.repository.update({
+    id: receipt.id,
+    tenantId: receipt.tenantId,
+    status: 'failed',
+    reconciliationState: 'unavailable',
+    errorCode: 'base_mcp_x402_expired',
+    finalizedAt: now,
+    now,
+  })) ?? receipt;
+}
 
 async function verifyUsdcTransferOnchain(input: {
   transactionHash: HashV1;
@@ -921,8 +957,9 @@ export async function reconcileBaseMcpActionV1(input: {
   sessionSecret: string;
   receiptId: string;
 }): Promise<BaseMcpExtensionActionResultV1> {
-  const stored = await baseMcpExtensionActionRuntime.repository.get(input.receiptId, input.userId);
-  if (!stored) return failedWithoutReceipt('That Action Receipt was not found for this account.', 'base_mcp_action_receipt_not_found');
+  const found = await baseMcpExtensionActionRuntime.repository.get(input.receiptId, input.userId);
+  if (!found) return failedWithoutReceipt('That Action Receipt was not found for this account.', 'base_mcp_action_receipt_not_found');
+  const stored = await expireStaleBaseMcpX402ReceiptV1(found, baseMcpExtensionActionRuntime.now());
   if (['completed', 'rejected', 'failed'].includes(stored.status)) {
     return publicResult(stored, null, 'This Action Receipt is already final.', stored.errorCode);
   }
@@ -1060,5 +1097,7 @@ export async function listBaseMcpActionReceiptsV1(userId: string, limit = 20) {
     throw new Error('base_mcp_action_storage_unavailable');
   }
   const rows = await baseMcpExtensionActionRuntime.repository.list(userId, limit);
-  return rows.map(publicBaseMcpActionReceiptV1);
+  const now = baseMcpExtensionActionRuntime.now();
+  const finalized = await Promise.all(rows.map((receipt) => expireStaleBaseMcpX402ReceiptV1(receipt, now)));
+  return finalized.map(publicBaseMcpActionReceiptV1);
 }

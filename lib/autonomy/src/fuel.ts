@@ -31,6 +31,9 @@ export interface FuelChargeInput {
   recipient?: string;
   chainEnv?: string | number;
   expectedSubscriptionOwner?: string;
+  /** Server-stored subscriber wallet. Never accept this from an unauthenticated
+   * browser field: Base Account uses it to reject another payer's permission. */
+  expectedPayer?: string;
 }
 
 export interface FuelChargeResult {
@@ -192,6 +195,7 @@ export class FuelChargeService {
       const calls = await base.subscription.prepareCharge({
         id: input.permissionId,
         amount: input.amount.toString(),
+        ...(input.expectedPayer ? { expectedPayer: input.expectedPayer as `0x${string}` } : {}),
         ...(input.recipient ? { recipient: input.recipient as `0x${string}` } : {}),
         testnet,
         ...(this.options.rpcUrl ? { rpcUrl: this.options.rpcUrl } : {}),
@@ -259,6 +263,7 @@ export class FuelChargeService {
       const charge = await base.subscription.charge({
         id: input.permissionId,
         amount: input.amount.toString(),
+        ...(input.expectedPayer ? { expectedPayer: input.expectedPayer } : {}),
         ...(input.recipient ? { recipient: input.recipient } : {}),
         ...(this.options.paymasterUrl ? { paymasterUrl: this.options.paymasterUrl } : {}),
         ...(this.options.walletName ? { walletName: this.options.walletName } : {}),

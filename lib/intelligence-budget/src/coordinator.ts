@@ -186,6 +186,14 @@ function chargeReleasedAfterEvidencePersistFailureV1(charge: IntelligenceChargeV
   return recomputeChargeHash({ ...rest, status: 'released', serviceState: 'delivered', evidenceHash: null, updatedAt: now });
 }
 
+/** The reservation lease ended before any user charge was attempted. Keep
+ * any already-delivered evidence attached, but close the charge without a
+ * payment and without ever reviving the expired authorization window. */
+function chargeReleasedWithoutPaymentV1(charge: IntelligenceChargeV1, now: string): IntelligenceChargeV1 {
+  const { chargeHash: _chargeHash, ...rest } = charge;
+  return recomputeChargeHash({ ...rest, status: 'released', paymentState: 'failed', updatedAt: now });
+}
+
 /** Evidence durably persisted (decision 5.7 success path) — status advances
  * to 'payment_pending' (mirrors T59's OWN interim status, here meaning "the
  * service half is done, the Spend Permission charge is now pending"). */
@@ -270,6 +278,21 @@ async function reconstructCachedResultV1(
   return { outcome: 'charged', charge, evidence, evidenceSet, budget, reservation, response: null };
 }
 
+async function pauseBudgetForReconciliationV1(
+  deps: RunBudgetSimulationDependenciesV1,
+  budgetRecord: IntelligenceBudgetRecord,
+  budgetDomain: IntelligenceBudgetV1,
+  tenantId: string,
+  now: string,
+): Promise<IntelligenceBudgetRecord> {
+  const pausedHash = recomputedBudgetHash(budgetDomain, { status: 'paused' });
+  return deps.repository.updateIntelligenceBudget(budgetRecord.id, tenantId, {
+    status: 'paused',
+    budgetHash: pausedHash,
+    now,
+  });
+}
+
 /**
  * T60 decision 5 — the auto-flow behind [Use Intelligence Budget]:
  * reserve -> Miorail pays the simulation provider -> evidence -> charge the
@@ -335,6 +358,7 @@ export async function runBudgetSimulationV1(
   if (!bindingCheck.ok) return { outcome: 'blocked', reason: bindingCheck.reason };
   const chargerPreflight = await deps.charger.preflight({
     permissionId: budgetRecord.spendPermissionId,
+    expectedPayer: input.walletAddress,
     amountAtomic: deps.price.amountAtomic,
   });
   if (!chargerPreflight.ok) {
@@ -372,6 +396,29 @@ export async function runBudgetSimulationV1(
       // reference a real reservation.
       throw new BudgetSimulationBindingError('blueprint_not_found', 'Retry charge references a missing reservation');
     }
+    if (found.status !== 'reserved' || Date.parse(found.expiresAt) <= now.getTime()) {
+      if (charge.status === 'payment_pending') {
+        const reconciling = chargeReconciliationRequiredV1(charge, nowIso);
+        await deps.repository.updateIntelligenceCharge(input.routeRunId, charge.id, input.tenantId, reconciling);
+        const pausedBudget = await pauseBudgetForReconciliationV1(
+          deps,
+          budgetRecord,
+          budgetDomain,
+          input.tenantId,
+          nowIso,
+        );
+        return {
+          outcome: 'reconciliation_required',
+          charge: reconciling,
+          budget: pausedBudget,
+          reason: 'reservation_expired',
+        };
+      }
+      const releasedCharge = chargeReleasedWithoutPaymentV1(charge, nowIso);
+      await deps.repository.releaseIntelligenceReservation(found.id, input.tenantId, nowIso, 'reservation_expired');
+      await deps.repository.updateIntelligenceCharge(input.routeRunId, charge.id, input.tenantId, releasedCharge);
+      return { outcome: 'provider_failed', charge: releasedCharge, reason: 'reservation_expired' };
+    }
     reservation = found;
   } else {
     await deps.repository.expireStaleIntelligenceReservations(budgetRecord.id, nowIso);
@@ -404,112 +451,239 @@ export async function runBudgetSimulationV1(
       idempotencyKey,
       price: deps.price,
       provider: simulationProviderRefV1(deps.providerId),
-      now: nowIso,
+      // A concurrent request can receive the same idempotent reservation.
+      // Reusing its durable timestamp makes both charge inserts identical.
+      now: reservation.createdAt,
     });
     await deps.repository.insertIntelligenceCharge(input.routeRunId, charge);
   }
 
-  // --- (6) Miorail pays the provider — NEVER the user's own asset movement --
-  const requestHash = stableHashV1('intelligence-budget-simulation-request/v1', {
-    chainId: 8453,
-    walletAddress: input.walletAddress.toLowerCase(),
-    blueprintHash: blueprint.blueprintHash,
-    callsHash: blueprint.callsHash,
-  });
-  const transport = await deps.provider.simulate({
-    chainId: 8453,
-    walletAddress: input.walletAddress,
-    blueprintHash: blueprint.blueprintHash,
-    callsHash: blueprint.callsHash,
-    calls: blueprint.calls,
-  });
-  if (!transport.ok) {
-    await deps.repository.releaseIntelligenceReservation(reservation.id, input.tenantId, nowIso, transport.errorCode);
-    const failedCharge = chargeReleasedAfterProviderFailureV1(charge, { serviceState: 'failed', now: nowIso });
-    await deps.repository.updateIntelligenceCharge(input.routeRunId, charge.id, input.tenantId, failedCharge);
-    return { outcome: 'provider_failed', charge: failedCharge, reason: transport.errorCode };
-  }
-  const parsed = SimulationProviderResponseV1Schema.safeParse(transport.body);
-  if (!parsed.success || !(parsed.data.blockNumber > 0)) {
-    await deps.repository.releaseIntelligenceReservation(reservation.id, input.tenantId, nowIso, 'invalid_response');
-    const invalidCharge = chargeReleasedAfterProviderFailureV1(charge, { serviceState: 'invalid', now: nowIso });
-    await deps.repository.updateIntelligenceCharge(input.routeRunId, charge.id, input.tenantId, invalidCharge);
-    return { outcome: 'provider_failed', charge: invalidCharge, reason: 'invalid_response' };
-  }
-  const response = parsed.data;
-  const responseHash = stableHashV1('intelligence-budget-simulation-response/v1', response);
-  const blockNumberAtomic = String(response.blockNumber);
+  let evidenceRecord: EvidenceRecordV1 | undefined;
+  let nextSet: EvidenceSetV1 | undefined;
+  let deliveredCharge = charge;
+  let response: SimulationProviderResponseV1 | null = null;
 
-  // --- (7) Evidence — bare catch mirrors T59's own evidence_persist_failed --
-  let evidenceRecord: EvidenceRecordV1;
-  let nextSet: EvidenceSetV1;
-  let deliveredCharge: IntelligenceChargeV1;
-  try {
-    const candidates = await deps.repository.listCandidates(input.routeRunId, input.tenantId);
-    const candidate = candidates.find((entry) => entry.candidateHash === blueprint.selectedCandidateHash);
-    if (!candidate) throw new Error('candidate_not_found');
-    const evidenceSets = await deps.repository.listEvidenceSets(input.routeRunId, input.tenantId);
-    const currentSet = evidenceSets.find((set) => set.evidenceSetHash === blueprint.evidenceSetHash);
-    if (!currentSet) throw new Error('evidence_set_not_found');
+  if (charge.status === 'payment_pending') {
+    // A retry after evidence delivery must not buy the same provider result
+    // again. Recover only the durable hashes and continue to payment.
+    const evidenceRecords = await deps.repository.listEvidence(input.routeRunId, input.tenantId);
+    evidenceRecord = charge.evidenceHash
+      ? evidenceRecords.find((record) => record.evidenceHash === charge.evidenceHash)
+      : undefined;
+    const evidenceSets = charge.evidenceSetHash
+      ? await deps.repository.listEvidenceSets(input.routeRunId, input.tenantId)
+      : [];
+    nextSet = evidenceSets.find((set) => set.evidenceSetHash === charge.evidenceSetHash);
+    if (!evidenceRecord || !nextSet) {
+      const reconciling = chargeReconciliationRequiredV1(charge, nowIso);
+      await deps.repository.updateIntelligenceCharge(input.routeRunId, charge.id, input.tenantId, reconciling);
+      const pausedBudget = await pauseBudgetForReconciliationV1(
+        deps,
+        budgetRecord,
+        budgetDomain,
+        input.tenantId,
+        nowIso,
+      );
+      return {
+        outcome: 'reconciliation_required',
+        charge: reconciling,
+        budget: pausedBudget,
+        reason: 'evidence_missing',
+      };
+    }
+  } else {
+    const providerLeaseNow = deps.now();
+    const providerLeaseNowIso = providerLeaseNow.toISOString();
+    const providerLease = await deps.repository.renewIntelligenceReservation(
+      reservation.id,
+      input.tenantId,
+      providerLeaseNowIso,
+      new Date(providerLeaseNow.getTime() + ttlMs).toISOString(),
+    );
+    if (!providerLease) {
+      const releasedCharge = chargeReleasedWithoutPaymentV1(charge, providerLeaseNowIso);
+      await deps.repository.releaseIntelligenceReservation(
+        reservation.id,
+        input.tenantId,
+        providerLeaseNowIso,
+        'reservation_expired',
+      );
+      await deps.repository.updateIntelligenceCharge(input.routeRunId, charge.id, input.tenantId, releasedCharge);
+      return { outcome: 'provider_failed', charge: releasedCharge, reason: 'reservation_expired' };
+    }
+    reservation = providerLease;
 
-    evidenceRecord = buildSimulationEvidenceRecordV1({
-      tenantId: input.tenantId,
+    // --- (6) Miorail pays the provider — NEVER the user's own asset movement --
+    const requestHash = stableHashV1('intelligence-budget-simulation-request/v1', {
+      chainId: 8453,
+      walletAddress: input.walletAddress.toLowerCase(),
+      blueprintHash: blueprint.blueprintHash,
+      callsHash: blueprint.callsHash,
+    });
+    const transport = await deps.provider.simulate({
+      chainId: 8453,
       walletAddress: input.walletAddress,
-      intentHash: blueprint.intentHash,
-      candidateHash: blueprint.selectedCandidateHash,
-      provider: simulationProviderRefV1(deps.providerId),
-      observedAt: nowIso,
-      expiresAt: new Date(now.getTime() + EVIDENCE_TTL_MS).toISOString(),
-      blockNumber: blockNumberAtomic,
-      requestHash,
-      responseHash,
-      cost: deps.price,
-      intelligenceChargeId: charge.id,
-      validationStatus: 'valid',
-      validationErrors: response.status === 'reverted' ? ['simulation_reverted'] : [],
+      blueprintHash: blueprint.blueprintHash,
+      callsHash: blueprint.callsHash,
+      calls: blueprint.calls,
     });
-    await deps.repository.insertEvidence(input.routeRunId, candidate.id, evidenceRecord);
-    nextSet = buildUpdatedEvidenceSetV1({ previous: currentSet, newRecord: evidenceRecord, now: nowIso });
-    await deps.repository.insertEvidenceSet(input.routeRunId, candidate.id, nextSet);
+    if (!transport.ok) {
+      await deps.repository.releaseIntelligenceReservation(reservation.id, input.tenantId, nowIso, transport.errorCode);
+      const failedCharge = chargeReleasedAfterProviderFailureV1(charge, { serviceState: 'failed', now: nowIso });
+      await deps.repository.updateIntelligenceCharge(input.routeRunId, charge.id, input.tenantId, failedCharge);
+      return { outcome: 'provider_failed', charge: failedCharge, reason: transport.errorCode };
+    }
+    const parsed = SimulationProviderResponseV1Schema.safeParse(transport.body);
+    if (!parsed.success || !(parsed.data.blockNumber > 0)) {
+      await deps.repository.releaseIntelligenceReservation(reservation.id, input.tenantId, nowIso, 'invalid_response');
+      const invalidCharge = chargeReleasedAfterProviderFailureV1(charge, { serviceState: 'invalid', now: nowIso });
+      await deps.repository.updateIntelligenceCharge(input.routeRunId, charge.id, input.tenantId, invalidCharge);
+      return { outcome: 'provider_failed', charge: invalidCharge, reason: 'invalid_response' };
+    }
+    response = parsed.data;
+    const responseHash = stableHashV1('intelligence-budget-simulation-response/v1', response);
+    const blockNumberAtomic = String(response.blockNumber);
 
-    deliveredCharge = chargeEvidenceDeliveredV1(charge, {
-      evidenceHash: evidenceRecord.evidenceHash,
-      evidenceSetHash: nextSet.evidenceSetHash,
-      serviceResponseHash: responseHash,
-      now: nowIso,
-    });
-    await deps.repository.updateIntelligenceCharge(input.routeRunId, charge.id, input.tenantId, deliveredCharge, {
-      evidenceId: evidenceRecord.id,
-    });
-  } catch {
-    await deps.repository.releaseIntelligenceReservation(reservation.id, input.tenantId, nowIso, 'evidence_persist_failed');
-    const failedCharge = chargeReleasedAfterEvidencePersistFailureV1(charge, nowIso);
-    await deps.repository.updateIntelligenceCharge(input.routeRunId, charge.id, input.tenantId, failedCharge);
-    return { outcome: 'provider_failed', charge: failedCharge, reason: 'evidence_persist_failed' };
+    // --- (7) Evidence — bare catch mirrors T59's own evidence_persist_failed --
+    try {
+      const candidates = await deps.repository.listCandidates(input.routeRunId, input.tenantId);
+      const candidate = candidates.find((entry) => entry.candidateHash === blueprint.selectedCandidateHash);
+      if (!candidate) throw new Error('candidate_not_found');
+      const evidenceSets = await deps.repository.listEvidenceSets(input.routeRunId, input.tenantId);
+      const currentSet = evidenceSets.find((set) => set.evidenceSetHash === blueprint.evidenceSetHash);
+      if (!currentSet) throw new Error('evidence_set_not_found');
+
+      evidenceRecord = buildSimulationEvidenceRecordV1({
+        tenantId: input.tenantId,
+        walletAddress: input.walletAddress,
+        intentHash: blueprint.intentHash,
+        candidateHash: blueprint.selectedCandidateHash,
+        provider: simulationProviderRefV1(deps.providerId),
+        observedAt: nowIso,
+        expiresAt: new Date(now.getTime() + EVIDENCE_TTL_MS).toISOString(),
+        blockNumber: blockNumberAtomic,
+        requestHash,
+        responseHash,
+        cost: deps.price,
+        intelligenceChargeId: charge.id,
+        validationStatus: 'valid',
+        validationErrors: response.status === 'reverted' ? ['simulation_reverted'] : [],
+      });
+      await deps.repository.insertEvidence(input.routeRunId, candidate.id, evidenceRecord);
+      nextSet = buildUpdatedEvidenceSetV1({ previous: currentSet, newRecord: evidenceRecord, now: nowIso });
+      await deps.repository.insertEvidenceSet(input.routeRunId, candidate.id, nextSet);
+
+      deliveredCharge = chargeEvidenceDeliveredV1(charge, {
+        evidenceHash: evidenceRecord.evidenceHash,
+        evidenceSetHash: nextSet.evidenceSetHash,
+        serviceResponseHash: responseHash,
+        now: nowIso,
+      });
+      await deps.repository.updateIntelligenceCharge(input.routeRunId, charge.id, input.tenantId, deliveredCharge, {
+        evidenceId: evidenceRecord.id,
+      });
+    } catch {
+      await deps.repository.releaseIntelligenceReservation(reservation.id, input.tenantId, nowIso, 'evidence_persist_failed');
+      const failedCharge = chargeReleasedAfterEvidencePersistFailureV1(charge, nowIso);
+      await deps.repository.updateIntelligenceCharge(input.routeRunId, charge.id, input.tenantId, failedCharge);
+      return { outcome: 'provider_failed', charge: failedCharge, reason: 'evidence_persist_failed' };
+    }
+  }
+
+  if (!evidenceRecord || !nextSet) {
+    const reconciling = chargeReconciliationRequiredV1(deliveredCharge, nowIso);
+    await deps.repository.updateIntelligenceCharge(input.routeRunId, charge.id, input.tenantId, reconciling);
+    const pausedBudget = await pauseBudgetForReconciliationV1(
+      deps,
+      budgetRecord,
+      budgetDomain,
+      input.tenantId,
+      nowIso,
+    );
+    return {
+      outcome: 'reconciliation_required',
+      charge: reconciling,
+      budget: pausedBudget,
+      reason: 'evidence_missing',
+    };
   }
 
   // --- (8) Charge the user via their EXISTING Spend Permission --------------
+  const paymentLeaseNow = deps.now();
+  const paymentLeaseNowIso = paymentLeaseNow.toISOString();
+  const paymentLease = await deps.repository.renewIntelligenceReservation(
+    reservation.id,
+    input.tenantId,
+    paymentLeaseNowIso,
+    new Date(paymentLeaseNow.getTime() + ttlMs).toISOString(),
+  );
+  if (!paymentLease) {
+    const reconciling = chargeReconciliationRequiredV1(deliveredCharge, paymentLeaseNowIso);
+    await deps.repository.updateIntelligenceCharge(input.routeRunId, charge.id, input.tenantId, reconciling);
+    const pausedBudget = await pauseBudgetForReconciliationV1(
+      deps,
+      budgetRecord,
+      budgetDomain,
+      input.tenantId,
+      paymentLeaseNowIso,
+    );
+    return {
+      outcome: 'reconciliation_required',
+      charge: reconciling,
+      budget: pausedBudget,
+      reason: 'reservation_expired',
+    };
+  }
+  reservation = paymentLease;
   const chargeResult = await deps.charger.charge({
+    chargeId: charge.id,
+    tenantId: input.tenantId,
     permissionId: budgetRecord.spendPermissionId,
+    expectedPayer: input.walletAddress,
     amountAtomic: deps.price.amountAtomic,
     idempotencyKey,
   });
   if (!chargeResult.ok) {
+    if (chargeResult.disposition === 'retry_later') {
+      return { outcome: 'blocked', reason: chargeResult.reason };
+    }
     const reconciling = chargeReconciliationRequiredV1(deliveredCharge, nowIso);
     await deps.repository.updateIntelligenceCharge(input.routeRunId, charge.id, input.tenantId, reconciling);
-    const pausedHash = recomputedBudgetHash(budgetDomain, { status: 'paused' });
-    const pausedBudget = await deps.repository.updateIntelligenceBudget(budgetRecord.id, input.tenantId, {
-      status: 'paused',
-      budgetHash: pausedHash,
-      now: nowIso,
-    });
-    // Reservation is deliberately left 'reserved' (decision 5.8) — never
-    // released, never re-attempted automatically.
+    const pausedBudget = await pauseBudgetForReconciliationV1(
+      deps,
+      budgetRecord,
+      budgetDomain,
+      input.tenantId,
+      nowIso,
+    );
+    // Reservation remains open until the unknown external outcome is
+    // manually reconciled. It is never re-attempted automatically.
     return { outcome: 'reconciliation_required', charge: reconciling, budget: pausedBudget, reason: chargeResult.reason };
   }
 
   const proof = chargeResult.proof;
-  await deps.spendPermissionRepository.incrementSpent(budgetRecord.spendPermissionId, Number(deps.price.amountDecimal), proof);
+  const accountedPermission = await deps.spendPermissionRepository.incrementSpent(
+    budgetRecord.spendPermissionId,
+    Number(deps.price.amountDecimal),
+    proof,
+  );
+  if (!accountedPermission) {
+    const reconciling = chargeReconciliationRequiredV1(deliveredCharge, nowIso);
+    await deps.repository.updateIntelligenceCharge(input.routeRunId, charge.id, input.tenantId, reconciling);
+    const pausedBudget = await pauseBudgetForReconciliationV1(
+      deps,
+      budgetRecord,
+      budgetDomain,
+      input.tenantId,
+      nowIso,
+    );
+    return {
+      outcome: 'reconciliation_required',
+      charge: reconciling,
+      budget: pausedBudget,
+      reason: 'spend_permission_accounting_reconciliation_required',
+    };
+  }
   const settleResult = await deps.repository.settleIntelligenceReservation(reservation.id, input.tenantId, nowIso);
   const proofHash = stableHashV1('intelligence-budget-charge-proof/v1', proof);
   const settledCharge = chargeSettledV1(deliveredCharge, { chargedCost: deps.price, proofHash, now: nowIso });

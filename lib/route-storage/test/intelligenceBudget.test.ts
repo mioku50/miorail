@@ -55,7 +55,7 @@ test('insertIntelligenceBudget + getIntelligenceBudgetById + getActiveIntelligen
   assert.equal(await repository.getActiveIntelligenceBudget(USER_B, WALLET, 8453), null);
 });
 
-test('insertIntelligenceBudget rejects a duplicate id and a second active budget on the same permission', async () => {
+test('insertIntelligenceBudget rejects duplicate active permission or wallet bindings', async () => {
   const { repository } = await seededRepository();
   await assert.rejects(
     repository.insertIntelligenceBudget(budgetInput({ id: 'budget-1' })),
@@ -65,11 +65,19 @@ test('insertIntelligenceBudget rejects a duplicate id and a second active budget
     repository.insertIntelligenceBudget(budgetInput({ id: 'budget-2', spendPermissionId: 'permission-1' })),
     RouteStorageConflictError,
   );
-  // A different permission is fine.
-  const other = await repository.insertIntelligenceBudget(
-    budgetInput({ id: 'budget-3', spendPermissionId: 'permission-2' }),
+  await assert.rejects(
+    repository.insertIntelligenceBudget(budgetInput({ id: 'budget-3', spendPermissionId: 'permission-2' })),
+    RouteStorageConflictError,
   );
-  assert.equal(other.id, 'budget-3');
+  // A different permission and wallet is fine.
+  const other = await repository.insertIntelligenceBudget(
+    budgetInput({
+      id: 'budget-4',
+      spendPermissionId: 'permission-2',
+      walletAddress: '0x2222222222222222222222222222222222222222',
+    }),
+  );
+  assert.equal(other.id, 'budget-4');
 });
 
 test('updateIntelligenceBudget recomputes limits/categories/status/hash and fails closed when missing or foreign', async () => {
@@ -292,6 +300,35 @@ test('settleIntelligenceReservation: moves the amount from reserved to period_sp
   const repeat = await repository.settleIntelligenceReservation('reservation-1', USER_A, '2026-07-20T12:06:00.000Z');
   assert.equal(repeat.budget?.periodSpentAtomic, '10000');
   assert.equal(repeat.budget?.reservedAtomic, '0');
+});
+
+test('renewIntelligenceReservation extends only a still-live reserved lease', async () => {
+  const { repository } = await seededRepository();
+  await repository.reserveIntelligenceBudget({
+    budgetId: 'budget-1',
+    userId: USER_A,
+    reservationId: 'reservation-renew',
+    amountAtomic: '10000',
+    idempotencyKey: 'idem-renew',
+    now: NOW,
+    expiresAt: '2026-07-20T12:05:00.000Z',
+  });
+
+  const renewed = await repository.renewIntelligenceReservation(
+    'reservation-renew',
+    USER_A,
+    '2026-07-20T12:04:00.000Z',
+    '2026-07-20T12:20:00.000Z',
+  );
+  assert.equal(renewed?.expiresAt, '2026-07-20T12:20:00.000Z');
+
+  const expiredAttempt = await repository.renewIntelligenceReservation(
+    'reservation-renew',
+    USER_A,
+    '2026-07-20T12:21:00.000Z',
+    '2026-07-20T12:40:00.000Z',
+  );
+  assert.equal(expiredAttempt, null, 'an expired authorization is never resurrected');
 });
 
 test('releaseIntelligenceReservation: returns the amount to headroom WITHOUT touching period_spent, is idempotent', async () => {

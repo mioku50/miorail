@@ -5,6 +5,7 @@ import { canonicalUsdcForBaseChain } from '@mioagent/security/baseGuards';
 import {
   baseMcpExtensionActionRuntime,
   classifyBaseMcpExtensionIntentV1,
+  listBaseMcpActionReceiptsV1,
   prepareBaseMcpSendActionV1,
   prepareBaseMcpX402ActionV1,
   reconcileBaseMcpActionV1,
@@ -23,6 +24,7 @@ const original = { ...baseMcpExtensionActionRuntime };
 const originalSendMax = process.env.BASE_MCP_ACTION_SEND_MAX_USDC;
 const originalX402Max = process.env.BASE_MCP_ACTION_X402_MAX_USDC;
 const originalX402Hosts = process.env.BASE_MCP_ACTION_X402_ALLOWED_HOSTS;
+const originalX402Ttl = process.env.BASE_MCP_ACTION_X402_TTL_SECONDS;
 
 afterEach(() => {
   Object.assign(baseMcpExtensionActionRuntime, original);
@@ -32,6 +34,8 @@ afterEach(() => {
   else process.env.BASE_MCP_ACTION_X402_MAX_USDC = originalX402Max;
   if (originalX402Hosts === undefined) delete process.env.BASE_MCP_ACTION_X402_ALLOWED_HOSTS;
   else process.env.BASE_MCP_ACTION_X402_ALLOWED_HOSTS = originalX402Hosts;
+  if (originalX402Ttl === undefined) delete process.env.BASE_MCP_ACTION_X402_TTL_SECONDS;
+  else process.env.BASE_MCP_ACTION_X402_TTL_SECONDS = originalX402Ttl;
 });
 
 function topicAddress(address: string): `0x${string}` {
@@ -204,6 +208,39 @@ test('x402 initiation returns approval and completion stores only a response has
   const stored = (await repository.list('tenant-1'))[0];
   assert.equal(stored.responseHash, reconciled.receipt?.actionType === 'x402' ? reconciled.receipt.responseHash : null);
   assert.doesNotMatch(JSON.stringify(stored), /paid intelligence|Bearer secret/);
+});
+
+test('stale x402 approvals are finalized instead of remaining pending forever', async () => {
+  process.env.BASE_MCP_ACTION_X402_TTL_SECONDS = '60';
+  const repository = new InMemoryBaseMcpActionReceiptRepositoryV1();
+  installHappyRuntime(fakeX402Tools({ initial: {}, status: {}, completed: {} }), repository);
+  const input = prepareX402Input('stale-x402');
+  const created = await repository.create({
+    tenantId: input.userId,
+    walletAddress: WALLET,
+    idempotencyKey: input.idempotencyKey!,
+    actionType: 'x402',
+    intent: input.intent,
+    now: '2026-08-12T10:00:00.000Z',
+  });
+  await repository.update({
+    id: created.receipt.id,
+    tenantId: input.userId,
+    status: 'approval_required',
+    reconciliationState: 'not_started',
+    providerRequestId: 'provider-stale-x402',
+    now: '2026-08-12T10:00:01.000Z',
+  });
+  baseMcpExtensionActionRuntime.now = () => '2026-08-12T12:00:00.000Z';
+
+  const listed = await listBaseMcpActionReceiptsV1(input.userId);
+
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0]?.status, 'failed');
+  assert.equal(listed[0]?.reconciliationState, 'unavailable');
+  assert.equal(listed[0]?.errorCode, 'base_mcp_x402_expired');
+  const stored = await repository.get(created.receipt.id, input.userId);
+  assert.equal(stored?.finalizedAt, '2026-08-12T12:00:00.000Z');
 });
 
 test('x402 refuses an unapproved host and an over-cap payment before tools or storage', async () => {

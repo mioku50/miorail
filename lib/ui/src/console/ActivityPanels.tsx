@@ -187,6 +187,9 @@ export interface ActivitySpendSummaryV1 {
   devSmokeCallsCount?: number;
   failedBuyerAttemptsCount?: number;
   pendingBuyerAttemptsCount?: number;
+  summaryScope?: 'latest_100_tenant_receipts';
+  recordsConsidered?: number;
+  truncated?: boolean;
 }
 
 /** `$0.0002`, keeping the small denominations this product actually charges.
@@ -214,6 +217,13 @@ export function activitySpendSummaryCopyV1(summary: ActivitySpendSummaryV1 | nul
   if (!summary) return 'No paid intelligence has been recorded on this account.';
   const smokeCount = summary.devSmokeCallsCount ?? 0;
   const parts: string[] = [`${activitySpendLabelV1(summary.totalSpentUsdc)} settled in USDC on Base.`];
+  if (summary.summaryScope === 'latest_100_tenant_receipts') {
+    parts.push(
+      summary.truncated
+        ? 'This total covers only the latest 100 payment receipts, not lifetime spend.'
+        : `This total covers the ${summary.recordsConsidered ?? 0} payment receipt(s) currently in this ledger window.`,
+    );
+  }
   if (smokeCount > 0) {
     parts.push(
       `${activitySpendLabelV1(summary.devSmokeSpentUsdc)} of that is ${smokeCount} development smoke payment${
