@@ -1201,7 +1201,7 @@ export function MiniConsole() {
         }
         starters={[
           { id: "swap", title: "Swap 100 USDC → ETH", meta: "best net result" },
-          { id: "earn", title: "Earn yield on 500 USDC", meta: flags?.earnRouteV1 ? "Moonwell and Morpho" : "earn gate is off on this server" },
+          { id: "earn", title: "Earn yield on 500 USDC", meta: flags?.earnRouteV1 ? "Moonwell, Morpho, and YO" : "earn gate is off on this server" },
           // A goal known to reach the NFT engine, so the family is reachable
           // without guessing a phrasing the classifier accepts.
           {

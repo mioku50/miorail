@@ -49,15 +49,15 @@ export const EarnOptimizationModeV1Schema = z.enum([
 ]);
 export type EarnOptimizationModeV1 = z.infer<typeof EarnOptimizationModeV1Schema>;
 
-export const EarnProtocolV1Schema = z.enum(['moonwell', 'morpho']);
+export const EarnProtocolV1Schema = z.enum(['moonwell', 'morpho', 'yo']);
 export type EarnProtocolV1 = z.infer<typeof EarnProtocolV1Schema>;
 
-export const EarnVenueKindV1Schema = z.enum(['moonwell_market', 'morpho_vault']);
+export const EarnVenueKindV1Schema = z.enum(['moonwell_market', 'morpho_vault', 'yo_vault']);
 export type EarnVenueKindV1 = z.infer<typeof EarnVenueKindV1Schema>;
 
 /** Moonwell supply → redeem the mToken directly (`direct`); Morpho ERC-4626
  * vault → redeem shares (`vault_redeem`). Surfaced to the user verbatim. */
-export const WithdrawalModelV1Schema = z.enum(['direct', 'vault_redeem']);
+export const WithdrawalModelV1Schema = z.enum(['direct', 'vault_redeem', 'async_redeem']);
 export type WithdrawalModelV1 = z.infer<typeof WithdrawalModelV1Schema>;
 
 /** APY in integer basis points, or null when the datum is unknown/unavailable.
@@ -75,7 +75,9 @@ export const EarnVenueRefV1Schema = z
   })
   .strict()
   .superRefine((value, ctx) => {
-    const expectedKind = value.protocol === 'moonwell' ? 'moonwell_market' : 'morpho_vault';
+    const expectedKind =
+      value.protocol === 'moonwell' ? 'moonwell_market' :
+        value.protocol === 'morpho' ? 'morpho_vault' : 'yo_vault';
     if (value.kind !== expectedKind) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -168,6 +170,10 @@ const EarnCandidateV1ObjectSchema = z
     netApyBps: ApyBpsV1Schema,
     /** null = no liquidity datum → liquidity dimension is Not scored (spec §4). */
     availableLiquidityAtomic: AtomicAmountV1Schema.nullable(),
+    /** Total vault assets are TVL, not necessarily immediately withdrawable. */
+    totalAssetsAtomic: AtomicAmountV1Schema.nullable().optional(),
+    /** Expected position shares from a fresh onchain conversion, when known. */
+    expectedPositionAtomic: AtomicAmountV1Schema.nullable().optional(),
     withdrawalModel: WithdrawalModelV1Schema,
     estimatedGas: GasEstimateV1Schema,
     callCount: z.number().int().min(0).max(100),
@@ -188,6 +194,7 @@ export function hashEarnCandidateV1(value: EarnCandidateV1): HashV1 {
 const EXPECTED_WITHDRAWAL_MODEL_V1: Record<EarnProtocolV1, WithdrawalModelV1> = {
   moonwell: 'direct',
   morpho: 'vault_redeem',
+  yo: 'async_redeem',
 };
 
 export const EarnCandidateV1Schema = EarnCandidateV1ObjectSchema.superRefine((value, ctx) => {
@@ -298,6 +305,8 @@ const EarnEvidenceV1ObjectSchema = z
     rewardApyBps: ApyBpsV1Schema,
     netApyBps: ApyBpsV1Schema,
     availableLiquidityAtomic: AtomicAmountV1Schema.nullable(),
+    totalAssetsAtomic: AtomicAmountV1Schema.nullable().optional(),
+    expectedPositionAtomic: AtomicAmountV1Schema.nullable().optional(),
     fees: EarnFeeTermsV1Schema,
     withdrawalTerms: EarnWithdrawalTermsV1Schema,
     contracts: EarnContractSetV1Schema,

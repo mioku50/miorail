@@ -45,8 +45,20 @@ export interface EarnMoonwellMarketSnapshotV1 {
   availableLiquidityAtomic: string;
 }
 
+export interface EarnYoVaultSnapshotV1 {
+  blockNumber: string;
+  underlyingAsset: `0x${string}`;
+  totalAssetsAtomic: string;
+  totalSupplyAtomic: string;
+  expectedSharesAtomic: string;
+}
+
 export interface EarnChainReaderV1 {
   readMoonwellMarketSnapshot(input: { market: `0x${string}` }): Promise<EarnMoonwellMarketSnapshotV1>;
+  readYoVaultSnapshot?(input: {
+    vault: `0x${string}`;
+    amountAtomic: string;
+  }): Promise<EarnYoVaultSnapshotV1>;
 }
 
 /** Shared knobs for both live sources. Every duration is explicit so the
@@ -95,8 +107,14 @@ export const MORPHO_LIVE_PROVIDER_V1: EarnLiveProviderRefV1 = {
   displayName: 'Morpho API',
   operator: 'Morpho Labs',
 };
+export const YO_LIVE_PROVIDER_V1: EarnLiveProviderRefV1 = {
+  id: 'yo-onchain-v1',
+  displayName: 'YO onchain vault',
+  operator: 'YO',
+};
 
 export const EARN_LIVE_PROVIDERS_V1: Record<EarnProtocolV1, EarnLiveProviderRefV1> = {
   moonwell: MOONWELL_LIVE_PROVIDER_V1,
   morpho: MORPHO_LIVE_PROVIDER_V1,
+  yo: YO_LIVE_PROVIDER_V1,
 };

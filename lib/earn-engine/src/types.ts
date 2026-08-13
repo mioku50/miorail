@@ -11,6 +11,8 @@ export interface EarnObservationV1 {
   rewardApyBps: number | null;
   netApyBps: number | null;
   availableLiquidityAtomic: string | null;
+  totalAssetsAtomic?: string | null;
+  expectedPositionAtomic?: string | null;
   fees: { performanceFeeBps: number | null; managementFeeBps: number | null };
   withdrawalTerms: { model: WithdrawalModelV1; instant: boolean; noticePeriodSeconds: number | null };
   blockNumber: string | null;
@@ -45,5 +47,7 @@ export interface EarnDataSourceObserveInput {
  * the provider does. */
 export interface EarnDataSourceV1 {
   readonly id: string;
+  /** Closed capability list for this concrete source. Omitted means all pinned protocols. */
+  readonly supportedProtocols?: readonly EarnProtocolV1[];
   observe(input: EarnDataSourceObserveInput): Promise<EarnObservationResultV1>;
 }

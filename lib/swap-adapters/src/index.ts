@@ -22,5 +22,8 @@ export * from './hydrex-client.js';
 export * from './hydrex-pinned.js';
 export * from './hydrex-order.js';
 export * from './hydrex.js';
+export * from './balancer-client.js';
+export * from './balancer.js';
+export * from './balancer-build.js';
 export * from './uniswap-v4-quoter.js';
 export * from './uniswap-v4-b20.js';

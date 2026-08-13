@@ -119,7 +119,11 @@ export function rankEarnCandidatesV1(
   };
 }
 
-const EARN_PROTOCOL_LABELS_V1: Record<EarnProtocolV1, string> = { moonwell: 'Moonwell', morpho: 'Morpho' };
+const EARN_PROTOCOL_LABELS_V1: Record<EarnProtocolV1, string> = {
+  moonwell: 'Moonwell',
+  morpho: 'Morpho',
+  yo: 'YO',
+};
 
 function protocolList(protocols: readonly EarnProtocolV1[]): string {
   const labels = [...new Set(protocols)].sort().map((protocol) => EARN_PROTOCOL_LABELS_V1[protocol] ?? protocol);

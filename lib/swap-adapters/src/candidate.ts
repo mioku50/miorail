@@ -53,6 +53,9 @@ export interface BuildQuoteArtifactsInput {
   riskFlags: string[];
   usesExternalAggregators: boolean;
   sourceIndependence: 'independent' | 'overlapping' | 'unknown';
+  callCount?: number;
+  approvalCount?: number;
+  integrationKind?: 'internal' | 'base_mcp' | 'http_api' | 'onchain_read';
 }
 
 export function buildQuoteArtifacts(input: BuildQuoteArtifactsInput): {
@@ -92,8 +95,8 @@ export function buildQuoteArtifacts(input: BuildQuoteArtifactsInput): {
     requestHash: input.requestHash,
     responseHash: input.responseHash,
   }).slice(2)}`;
-  const callCount = fromAsset.kind === 'native' ? 1 : 2;
-  const approvalCount = fromAsset.kind === 'native' ? 0 : 1;
+  const callCount = input.callCount ?? (fromAsset.kind === 'native' ? 1 : 2);
+  const approvalCount = input.approvalCount ?? (fromAsset.kind === 'native' ? 0 : 1);
   const candidateDraft: RouteCandidateV1 = {
     schemaVersion: 'route-candidate/v1',
     id: candidateId,
@@ -137,7 +140,7 @@ export function buildQuoteArtifacts(input: BuildQuoteArtifactsInput): {
     quoteExpiresAt: input.expiresAt,
     liquiditySources: input.provenance.liquiditySources,
     trustMetadata: {
-      integrationKind: 'http_api',
+      integrationKind: input.integrationKind ?? 'http_api',
       operator: input.provider.operator,
       verifiedIntegration: true,
       riskFlags: [...new Set(input.riskFlags)].sort(),

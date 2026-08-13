@@ -90,6 +90,9 @@ function EarnCandidateCard({
             {row.liquidityAmountLabel}
           </dd>
           <dd className="mt-0.5 text-[11px] text-ink-3">Depth: {row.liquidityLabel}</dd>
+          {row.tvlAmountLabel !== '—' && (
+            <dd className="mt-0.5 text-[11px] text-ink-3">TVL: {row.tvlAmountLabel}</dd>
+          )}
         </div>
         <div>
           <dt className="text-ink-3">Withdrawal</dt>

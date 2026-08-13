@@ -42,7 +42,7 @@ export interface EarnIntentExtractionV1 {
 }
 
 const ZERO_HASH_V1 = `0x${'0'.repeat(64)}` as HashV1;
-const EARN_PROTOCOLS = ['moonwell', 'morpho'] as const;
+const EARN_PROTOCOLS = ['moonwell', 'morpho', 'yo'] as const;
 
 function normalize(message: string): string {
   return message.toLocaleLowerCase('en-US').replace(/ё/g, 'е');
@@ -211,17 +211,6 @@ export function resolveEarnIntentV1(input: ResolveEarnIntentInputV1): EarnIntent
       intent: null,
       extraction,
       issues: ['hydrex_earn_adapter_not_released'],
-    };
-  }
-  if (
-    extraction.protocolConstraint.mode === 'include_only'
-    && extraction.protocolConstraint.protocols.includes('yo')
-  ) {
-    return {
-      status: 'unsupported',
-      intent: null,
-      extraction,
-      issues: ['yo_route_adapter_not_released'],
     };
   }
   const blocking = extraction.issues.filter(

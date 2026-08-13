@@ -38,7 +38,8 @@ export function EarnComparePanel() {
         <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-pop">Earn · Base · USDC</p>
         <h2 className="mt-2 font-display text-xl font-semibold">Put USDC to work</h2>
         <p className="mt-2 text-sm leading-relaxed text-ink-2">
-          Compare the pinned Moonwell and Morpho USDC routes. Read-only — no transaction is prepared here.
+          Compare pinned Moonwell, Morpho, and YO USDC routes. YO APY stays Not scored until a canonical source exists.
+          Read-only — no transaction is prepared here.
         </p>
         <form onSubmit={submit} className="mt-4">
           <label htmlFor="mini-earn-goal" className="sr-only">Earn goal</label>

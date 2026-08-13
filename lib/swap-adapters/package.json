@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@balancer/sdk": "6.1.1",
     "@mioagent/intent-engine": "workspace:*",
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/runtime-skills": "workspace:*",

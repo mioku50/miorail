@@ -1,6 +1,7 @@
 import type { EarnProtocolV1 } from '@mioagent/route-domain';
 import { createMoonwellEarnDataSourceV1, type MoonwellEarnDataSourceOptionsV1 } from './moonwell-source.js';
 import { createMorphoEarnDataSourceV1, type MorphoEarnDataSourceOptionsV1 } from './morpho-source.js';
+import { createYoEarnDataSourceV1, type YoEarnDataSourceOptionsV1 } from './yo-source.js';
 import { createCachedEarnDataSourceV1, type EarnObservationCacheOptionsV1 } from './observation-cache.js';
 import type { EarnChainReaderV1 } from './live-types.js';
 import type { EarnDataSourceObserveInput, EarnDataSourceV1, EarnObservationResultV1 } from './types.js';
@@ -20,6 +21,7 @@ export interface LiveEarnDataSourceOptionsV1 {
   cache?: EarnObservationCacheOptionsV1;
   moonwell?: Partial<MoonwellEarnDataSourceOptionsV1>;
   morpho?: Partial<MorphoEarnDataSourceOptionsV1>;
+  yo?: Partial<YoEarnDataSourceOptionsV1>;
   id?: string;
 }
 
@@ -40,10 +42,21 @@ export function createLiveEarnDataSourceV1(options: LiveEarnDataSourceOptionsV1 
       createMorphoEarnDataSourceV1({ ...shared, ...options.morpho }),
       options.cache,
     ),
+    yo: createCachedEarnDataSourceV1(
+      createYoEarnDataSourceV1({
+        chainReader: options.chainReader ?? null,
+        freshnessTtlMs: options.freshnessTtlMs,
+        ...options.yo,
+      }),
+      options.cache,
+    ),
   };
 
   return {
     id: options.id ?? LIVE_EARN_DATA_SOURCE_ID_V1,
+    supportedProtocols: options.chainReader?.readYoVaultSnapshot
+      ? (['moonwell', 'morpho', 'yo'] as const)
+      : (['moonwell', 'morpho'] as const),
     async observe(input: EarnDataSourceObserveInput): Promise<EarnObservationResultV1> {
       const source = sources[input.protocol];
       if (!source) return { ok: false, reason: 'unsupported_protocol' };

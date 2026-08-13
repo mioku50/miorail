@@ -170,7 +170,7 @@ export function simulationRequirementV1(
   intent: RouteIntentV1,
   simulationState: SimulationStateV1,
 ): { acceptable: boolean; detail: string } {
-  if (provider !== 'aerodrome' && provider !== 'o1-exchange' && provider !== 'hydrex') {
+  if (provider !== 'aerodrome' && provider !== 'o1-exchange' && provider !== 'hydrex' && provider !== 'balancer') {
     return simulationHonesty(intent);
   }
   if (simulationState.status === 'passed') {
@@ -219,7 +219,7 @@ export function aerodromeKernelInputV1(
   providerId: SwapBuildProviderId,
   candidate: RouteCandidateV1,
   blueprint: ExecutionBlueprintV1,
-): Pick<RunSafetyKernelInput, 'aerodrome' | 'reviewedMinimumOutputAtomic'> {
+): Pick<RunSafetyKernelInput, 'aerodrome' | 'balancer' | 'reviewedMinimumOutputAtomic'> {
   const debit = blueprint.expectedAssetChanges.find((change) => change.direction === 'debit');
   const credit = blueprint.expectedAssetChanges.find((change) => change.direction === 'credit');
   if (!debit || !credit) return {};
@@ -233,6 +233,19 @@ export function aerodromeKernelInputV1(
     const marker = source?.sourceKey.split(':').at(-1);
     if (!marker || !/^0x[0-9a-f]{40}$/.test(marker)) return {};
     return {
+      reviewedMinimumOutputAtomic: credit.minimumAmountAtomic ?? credit.amountAtomic,
+    };
+  }
+  if (providerId === 'balancer') {
+    const sourceKeys = candidate.liquiditySources.map((source) => source.sourceKey);
+    const version = sourceKeys.every((key) => key.startsWith('balancer:v2:'))
+      ? 2
+      : sourceKeys.every((key) => key.startsWith('balancer:v3:'))
+        ? 3
+        : null;
+    if (!version || sourceKeys.length === 0) return {};
+    return {
+      balancer: { protocolVersion: version, sourceKeys },
       reviewedMinimumOutputAtomic: credit.minimumAmountAtomic ?? credit.amountAtomic,
     };
   }
@@ -555,7 +568,8 @@ export class DeterministicTransactionComposer implements TransactionComposer {
         buildResult.errorCode === 'aerodrome_route_changed' ||
         buildResult.errorCode === 'aerodrome_factory_changed' ||
         buildResult.errorCode === 'o1_route_changed' ||
-        buildResult.errorCode === 'hydrex_route_changed'
+        buildResult.errorCode === 'hydrex_route_changed' ||
+        buildResult.errorCode === 'balancer_route_changed'
           ? 'route_changed'
           : 'quote_expired';
       return refreshRequiredResultV1(
@@ -595,7 +609,7 @@ export class DeterministicTransactionComposer implements TransactionComposer {
     // behaviour byte for byte: no request, no charge, and an honestly
     // `unavailable` state.
     let simulationState: SimulationStateV1 = unsimulatedStateV1();
-    if (providerId === 'aerodrome' || providerId === 'o1-exchange' || providerId === 'hydrex') {
+    if (providerId === 'aerodrome' || providerId === 'o1-exchange' || providerId === 'hydrex' || providerId === 'balancer') {
       simulationState = this.deps.simulate
         ? await this.deps.simulate({
             chainId: 8453,
@@ -643,6 +657,7 @@ export class DeterministicTransactionComposer implements TransactionComposer {
       o1ContractPinVerified: buildResult.o1?.contractPinVerified,
       hydrexContractPinVerified: buildResult.hydrex?.contractPinVerified,
       hydrexUpstreamRouter: buildResult.hydrex?.upstreamRouter,
+      balancer: buildResult.balancer,
     });
 
     if (safety.verdict === 'blocked') {

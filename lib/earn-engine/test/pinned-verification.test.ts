@@ -40,8 +40,8 @@ describe('verifyPinnedEarnContractsV1', () => {
     assert.equal(verification.ok, true);
     assert.equal(verification.failures.length, 0);
     assert.equal(verification.usdc.codePresent, true);
-    assert.equal(verification.venues.length, 2);
-    // Only the Morpho vault is probed for ERC-4626 reads; Moonwell stays null.
+    assert.equal(verification.venues.length, 3);
+    // Morpho and YO are ERC-4626 vaults; Moonwell stays null.
     const morpho = verification.venues.find((v) => v.protocol === 'morpho')!;
     const moonwell = verification.venues.find((v) => v.protocol === 'moonwell')!;
     assert.equal(morpho.erc4626Ok, true);
@@ -71,7 +71,7 @@ describe('verifyPinnedEarnContractsV1', () => {
     );
     assert.equal(verification.ok, false);
     assert.ok(verification.failures.includes('moonwell_target_not_a_contract'));
-    assert.equal(underlyingReads, 1); // only the morpho venue was probed
+    assert.equal(underlyingReads, 2); // Morpho and YO were probed
   });
 
   test('a venue whose underlying is NOT canonical USDC fails closed', async () => {

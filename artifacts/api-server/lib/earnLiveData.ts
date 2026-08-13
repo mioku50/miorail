@@ -6,6 +6,7 @@ import {
   type EarnChainReaderV1,
   type EarnDataSourceV1,
   type EarnMoonwellMarketSnapshotV1,
+  type EarnYoVaultSnapshotV1,
 } from '@mioagent/earn-engine';
 import { baseRpcUrlV1 } from './earnPreflight.js';
 
@@ -71,6 +72,12 @@ const MOONWELL_MARKET_ABI = [
   { name: 'getCash', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
   { name: 'underlying', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
 ] as const;
+const YO_VAULT_ABI = [
+  { name: 'asset', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
+  { name: 'totalAssets', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'totalSupply', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'convertToShares', type: 'function', stateMutability: 'view', inputs: [{ type: 'uint256' }], outputs: [{ type: 'uint256' }] },
+] as const;
 
 /** The minimal read surface the live anchor needs. A viem PublicClient
  * satisfies it structurally; tests inject a fake so no live RPC is ever made. */
@@ -101,6 +108,28 @@ export function createViemEarnChainReaderV1(client: EarnLiveRpcClientV1): EarnCh
         blockNumber: blockNumber.toString(),
         underlyingAsset: underlying.toLowerCase() as `0x${string}`,
         availableLiquidityAtomic: cash.toString(),
+      };
+    },
+    async readYoVaultSnapshot({ vault, amountAtomic }): Promise<EarnYoVaultSnapshotV1> {
+      const amount = BigInt(amountAtomic);
+      const [blockNumber, underlying, totalAssets, totalSupply, expectedShares] = await Promise.all([
+        client.getBlockNumber(),
+        client.readContract({ address: vault as Address, abi: YO_VAULT_ABI, functionName: 'asset' }),
+        client.readContract({ address: vault as Address, abi: YO_VAULT_ABI, functionName: 'totalAssets' }),
+        client.readContract({ address: vault as Address, abi: YO_VAULT_ABI, functionName: 'totalSupply' }),
+        client.readContract({ address: vault as Address, abi: YO_VAULT_ABI, functionName: 'convertToShares', args: [amount] }),
+      ]);
+      if (
+        typeof underlying !== 'string' || typeof totalAssets !== 'bigint' ||
+        typeof totalSupply !== 'bigint' || typeof expectedShares !== 'bigint' ||
+        totalAssets < 0n || totalSupply < 0n || expectedShares <= 0n
+      ) throw new TypeError('yo_vault_snapshot_unreadable');
+      return {
+        blockNumber: blockNumber.toString(),
+        underlyingAsset: underlying.toLowerCase() as `0x${string}`,
+        totalAssetsAtomic: totalAssets.toString(),
+        totalSupplyAtomic: totalSupply.toString(),
+        expectedSharesAtomic: expectedShares.toString(),
       };
     },
   };

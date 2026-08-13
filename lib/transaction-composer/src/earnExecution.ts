@@ -50,8 +50,10 @@ function earnPositionAssetV1(candidate: EarnCandidateV1): AssetRefV1 {
     chainId: 8453,
     kind: 'erc20',
     address,
-    symbol: candidate.protocol === 'moonwell' ? 'mwUSDC' : 'mwUSDC-vault',
-    decimals: candidate.protocol === 'moonwell' ? 8 : 18,
+    symbol:
+      candidate.protocol === 'moonwell' ? 'mwUSDC' :
+        candidate.protocol === 'morpho' ? 'mwUSDC-vault' : 'yoUSD',
+    decimals: candidate.protocol === 'moonwell' ? 8 : candidate.protocol === 'morpho' ? 18 : 6,
   };
 }
 

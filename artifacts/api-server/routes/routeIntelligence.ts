@@ -80,6 +80,7 @@ import {
   KyberSwapRouteAdapter,
   O1SwapRouteAdapter,
   HydrexSwapRouteAdapter,
+  BalancerSwapRouteAdapter,
   UniswapSwapRouteAdapter,
   createO1RouterPinReaderV1,
   createHydrexRouterPinReaderV1,
@@ -91,6 +92,7 @@ import {
   AerodromeSwapBuildAdapter,
   O1SwapBuildAdapter,
   HydrexSwapBuildAdapter,
+  BalancerSwapBuildAdapter,
   approveEarnBlueprintV1,
   approveExecutionBlueprintV1,
   createTransactionComposer,
@@ -382,6 +384,7 @@ export const routePlanRouteRuntime = {
         new AerodromeSwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1() }),
         new O1SwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1() }),
         new HydrexSwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1() }),
+        new BalancerSwapRouteAdapter(),
       ],
       repository,
       // T74: naming a token by address. Two conditions, both necessary — the
@@ -837,6 +840,7 @@ export const swapPrepareRouteRuntime = {
     const aerodromeEnabled = flags.aerodromeExecutionV1;
     const o1Enabled = flags.o1ExecutionV1;
     const hydrexEnabled = flags.hydrexExecutionV1;
+    const balancerEnabled = flags.balancerExecutionV1;
     const composer = createTransactionComposer({
       repository: createDatabaseRouteStorageRepository(client),
       buildAdapters: [
@@ -845,6 +849,7 @@ export const swapPrepareRouteRuntime = {
         new AerodromeSwapBuildAdapter({ rpcUrl }),
         new O1SwapBuildAdapter({ rpcUrl }),
         new HydrexSwapBuildAdapter({ rpcUrl }),
+        new BalancerSwapBuildAdapter({ rpcUrl }),
       ],
       quoteAdapters: [
         new UniswapSwapRouteAdapter(),
@@ -852,6 +857,7 @@ export const swapPrepareRouteRuntime = {
         new AerodromeSwapRouteAdapter({ rpcUrl }),
         new O1SwapRouteAdapter({ rpcUrl }),
         new HydrexSwapRouteAdapter({ rpcUrl }),
+        new BalancerSwapRouteAdapter(),
       ],
       supportedProviders: [
         'uniswap',
@@ -859,6 +865,7 @@ export const swapPrepareRouteRuntime = {
         ...(aerodromeEnabled ? (['aerodrome'] as const) : []),
         ...(o1Enabled ? (['o1-exchange'] as const) : []),
         ...(hydrexEnabled ? (['hydrex'] as const) : []),
+        ...(balancerEnabled ? (['balancer'] as const) : []),
       ],
       // Aerodrome, o1 and Hydrex must survive a fork simulation before
       // signing. Both advanced providers cross upgradeable contract

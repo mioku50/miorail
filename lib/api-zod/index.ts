@@ -1990,6 +1990,7 @@ export const StatusResponseSchema = z.object({
     // independent server-side gate, additive for older clients.
     o1ExecutionV1: z.boolean().optional(),
     hydrexExecutionV1: z.boolean().optional(),
+    balancerExecutionV1: z.boolean().optional(),
     // T67C: same additive treatment.
     b20ControlV1: z.boolean().optional(),
     // T67C.2: same additive treatment.

@@ -970,7 +970,7 @@ export function RouteIntelligenceConsole() {
           {
             id: 'earn',
             title: 'Earn yield on 500 USDC, low risk',
-            meta: flags?.earnRouteV1 ? 'Moonwell and Morpho' : 'earn gate is off on this server',
+            meta: flags?.earnRouteV1 ? 'Moonwell, Morpho, and YO' : 'earn gate is off on this server',
           },
           // T65.2A — a goal that is KNOWN to dispatch to the NFT engine. The
           // family being on is not much use if reaching it depends on guessing

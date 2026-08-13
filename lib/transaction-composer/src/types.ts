@@ -183,7 +183,7 @@ export interface TransactionComposerDependencies {
 // selectedCandidate.provider.id only — never message-based detection.
 // ---------------------------------------------------------------------------
 
-export type SwapBuildProviderId = 'uniswap' | 'kyberswap' | 'aerodrome' | 'o1-exchange' | 'hydrex';
+export type SwapBuildProviderId = 'uniswap' | 'kyberswap' | 'aerodrome' | 'o1-exchange' | 'hydrex' | 'balancer';
 
 export interface SwapBuildInput {
   intent: RouteIntentV1;
@@ -260,6 +260,8 @@ export interface SwapBuildSuccess {
     upstreamRouter: `0x${string}`;
     upstreamSource: 'ZEROX' | 'KYBERSWAP';
   };
+  /** Balancer API path and local SDK build stayed on one protocol version. */
+  balancer?: BalancerBuildFactsV1;
 }
 
 /** Not a display projection: every field here is compared against decoded
@@ -272,6 +274,11 @@ export interface AerodromeBuildFactsV1 {
   inputIsNative: boolean;
   outputIsNative: boolean;
   inputTokenAddress: string | null;
+}
+
+export interface BalancerBuildFactsV1 {
+  protocolVersion: 2 | 3;
+  sourceKeys: string[];
 }
 
 export type SwapBuildResultV1 = SwapBuildSuccess | SwapBuildFailure;

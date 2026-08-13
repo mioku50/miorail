@@ -30,6 +30,7 @@ export interface EarnCandidateSourceV1 {
   provider: { displayName: string };
   observedAt: string;
   availableLiquidityAtomic: string | null;
+  totalAssetsAtomic?: string | null;
   amount: { asset: { symbol: string; decimals: number } };
 }
 
@@ -78,6 +79,7 @@ export interface EarnCandidateRowViewV1 {
   sourceLabel: string;
   observedAtLabel: string;
   liquidityAmountLabel: string;
+  tvlAmountLabel: string;
   contractLabel: string;
   isStale: boolean;
   /** Set only when this row's reading cannot be trusted for ranking. */
@@ -106,9 +108,13 @@ const OPTIMIZATION_LABELS: Record<string, string> = {
   lowest_risk: 'Lowest risk',
 };
 
-const PROTOCOL_LABELS: Record<string, string> = { moonwell: 'Moonwell', morpho: 'Morpho' };
+const PROTOCOL_LABELS: Record<string, string> = { moonwell: 'Moonwell', morpho: 'Morpho', yo: 'YO' };
 
-const WITHDRAWAL_LABELS: Record<string, string> = { direct: 'Direct', vault_redeem: 'Vault redeem' };
+const WITHDRAWAL_LABELS: Record<string, string> = {
+  direct: 'Direct',
+  vault_redeem: 'Vault redeem',
+  async_redeem: 'Async redeem · ~24h',
+};
 
 const LIQUIDITY_LABELS: Record<string, string> = {
   high: 'High',
@@ -257,6 +263,11 @@ function rowView(comparison: EarnComparisonSourceV1, recommendedHash: string | n
     observedAtLabel: formatEarnObservedAtV1(candidate.observedAt),
     liquidityAmountLabel: formatEarnLiquidityAmountV1(
       candidate.availableLiquidityAtomic,
+      candidate.amount.asset.decimals,
+      candidate.amount.asset.symbol,
+    ),
+    tvlAmountLabel: formatEarnLiquidityAmountV1(
+      candidate.totalAssetsAtomic ?? null,
       candidate.amount.asset.decimals,
       candidate.amount.asset.symbol,
     ),

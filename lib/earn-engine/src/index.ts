@@ -7,6 +7,7 @@ export * from './live-types.js';
 export * from './live-normalization.js';
 export * from './moonwell-source.js';
 export * from './morpho-source.js';
+export * from './yo-source.js';
 export * from './observation-cache.js';
 export * from './live-source.js';
 export * from './evidence.js';

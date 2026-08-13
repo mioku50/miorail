@@ -9,7 +9,7 @@ import {
   type SafetyKernelResultV1,
 } from '@mioagent/route-domain';
 import { isCanonicalBaseUsdcV1, isPinnedEarnTargetV1, pinnedEarnVenueV1 } from '@mioagent/earn-engine';
-import { MOONWELL_MINT_ABI, MORPHO_DEPOSIT_ABI } from './earnComposition.js';
+import { MOONWELL_MINT_ABI, MORPHO_DEPOSIT_ABI, YO_GATEWAY_DEPOSIT_ABI } from './earnComposition.js';
 
 // ---------------------------------------------------------------------------
 // T61 §7 — the earn deposit Safety Kernel. Runs over ALREADY server-built,
@@ -74,6 +74,9 @@ interface DecodedDeposit {
   amount: bigint;
   /** null for Moonwell (mint credits msg.sender — no receiver arg). */
   receiver: string | null;
+  vault: string | null;
+  minimumShares: bigint | null;
+  partnerId: number | null;
 }
 
 function decodeDeposit(call: ExecutionCallV1, protocol: EarnCandidateV1['protocol']): DecodedDeposit | null {
@@ -82,12 +85,24 @@ function decodeDeposit(call: ExecutionCallV1, protocol: EarnCandidateV1['protoco
       const decoded = decodeFunctionData({ abi: MOONWELL_MINT_ABI, data: call.data });
       if (decoded.functionName !== 'mint') return null;
       const [amount] = decoded.args as readonly [bigint];
-      return { amount, receiver: null };
+      return { amount, receiver: null, vault: null, minimumShares: null, partnerId: null };
     }
-    const decoded = decodeFunctionData({ abi: MORPHO_DEPOSIT_ABI, data: call.data });
-    if (decoded.functionName !== 'deposit') return null;
-    const [assets, receiver] = decoded.args as readonly [bigint, `0x${string}`];
-    return { amount: assets, receiver: receiver.toLowerCase() };
+    if (protocol === 'morpho') {
+      const decoded = decodeFunctionData({ abi: MORPHO_DEPOSIT_ABI, data: call.data });
+      if (decoded.functionName !== 'deposit') return null;
+      const [assets, receiver] = decoded.args as readonly [bigint, `0x${string}`];
+      return { amount: assets, receiver: receiver.toLowerCase(), vault: null, minimumShares: null, partnerId: null };
+    }
+    const decoded = decodeFunctionData({ abi: YO_GATEWAY_DEPOSIT_ABI, data: call.data });
+    const [vault, assets, minimumShares, receiver, partnerId] =
+      decoded.args as readonly [`0x${string}`, bigint, bigint, `0x${string}`, number];
+    return {
+      amount: assets,
+      receiver: receiver.toLowerCase(),
+      vault: vault.toLowerCase(),
+      minimumShares,
+      partnerId,
+    };
   } catch {
     return null;
   }
@@ -150,8 +165,8 @@ export function runEarnSafetyKernelV1(input: RunEarnSafetyKernelInputV1): { resu
       'pinned_approval_spender',
       'USDC approval spender is the pinned deposit target',
       input.candidate.contracts.approvalSpender.toLowerCase() === pinned.approvalSpender &&
-        pinned.approvalSpender === target,
-      'Approval spender is not the pinned deposit target',
+        isPinnedEarnTargetV1(pinned.approvalSpender),
+      'Approval spender is not the pinned protocol spender',
     ),
   );
 
@@ -190,7 +205,7 @@ export function runEarnSafetyKernelV1(input: RunEarnSafetyKernelInputV1): { resu
   const approvalExact =
     !!approval &&
     approvalToUsdc &&
-    approval.spender === target &&
+    approval.spender === pinned.approvalSpender &&
     approval.amount === BigInt(expectedAmount) &&
     approval.amount !== MAX_UINT256;
   checks.push(
@@ -213,8 +228,17 @@ export function runEarnSafetyKernelV1(input: RunEarnSafetyKernelInputV1): { resu
 
   // --- Deposit: decode by protocol; verify exact amount + receiver ------------
   const deposit = depositCalls[0] ? decodeDeposit(depositCalls[0], input.candidate.protocol) : null;
-  const depositToTarget = depositCalls[0] ? depositCalls[0].to.toLowerCase() === target : false;
-  const depositExact = !!deposit && depositToTarget && deposit.amount === BigInt(expectedAmount);
+  const depositCallTarget = input.candidate.protocol === 'yo' ? pinned.approvalSpender : target;
+  const depositToTarget = depositCalls[0] ? depositCalls[0].to.toLowerCase() === depositCallTarget : false;
+  const expectedYoShares = input.candidate.expectedPositionAtomic
+    ? (BigInt(input.candidate.expectedPositionAtomic) * 9_950n) / 10_000n
+    : null;
+  const yoSemantics =
+    input.candidate.protocol !== 'yo' ||
+    (deposit?.vault === target &&
+      deposit.minimumShares === expectedYoShares &&
+      deposit.partnerId === 0);
+  const depositExact = !!deposit && depositToTarget && deposit.amount === BigInt(expectedAmount) && yoSemantics;
   checks.push(
     check(
       'deposit_calldata_pinned',

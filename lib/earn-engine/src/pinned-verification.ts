@@ -62,6 +62,9 @@ async function verifyVenueV1(
   const codeSize = await reader.getCodeSize(venue.target);
   const codePresent = codeSize > 0;
   if (!codePresent) failures.push(`${venue.protocol}_target_not_a_contract`);
+  const spenderCodePresent =
+    venue.approvalSpender === venue.target || (await reader.getCodeSize(venue.approvalSpender)) > 0;
+  if (!spenderCodePresent) failures.push(`${venue.protocol}_approval_spender_not_a_contract`);
 
   let underlyingMatchesUsdc = false;
   if (codePresent) {
@@ -74,12 +77,12 @@ async function verifyVenueV1(
   // ERC-4626 reads are only meaningful for the Morpho vault; a Moonwell market
   // is a distinct mToken interface (its underlying() check above is enough).
   let erc4626Ok: boolean | null = null;
-  if (venue.venueKind === 'morpho_vault') {
+  if (venue.venueKind === 'morpho_vault' || venue.venueKind === 'yo_vault') {
     erc4626Ok = codePresent ? await reader.supportsErc4626Reads(venue.target) : false;
     if (!erc4626Ok) failures.push(`${venue.protocol}_missing_erc4626_reads`);
   }
 
-  const ok = codePresent && underlyingMatchesUsdc && (erc4626Ok === null || erc4626Ok === true);
+  const ok = codePresent && spenderCodePresent && underlyingMatchesUsdc && (erc4626Ok === null || erc4626Ok === true);
   return { protocol: venue.protocol, target: venue.target, codePresent, underlyingMatchesUsdc, erc4626Ok, ok, failures };
 }
 

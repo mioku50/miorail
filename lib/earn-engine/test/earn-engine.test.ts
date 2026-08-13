@@ -61,7 +61,7 @@ test('best_net_yield ranks Morpho above Moonwell and recommends it', async () =>
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(result.routeCard.status, 'ready');
-  assert.equal(result.routeCard.comparisons.length, 2);
+  assert.equal(result.routeCard.comparisons.length, 3);
   const rec = result.routeCard.comparisons.find(
     (c) => c.candidate.candidateHash === result.routeCard.recommendedCandidateHash,
   );
@@ -90,9 +90,9 @@ test('lowest_risk degrades with NO recommendation (no contract-risk evidence)', 
 });
 
 test('explicit protocol constraint restricts candidates', async () => {
-  assert.deepEqual(selectEarnProtocolsV1({ mode: 'any', protocols: [] }), ['moonwell', 'morpho']);
+  assert.deepEqual(selectEarnProtocolsV1({ mode: 'any', protocols: [] }), ['moonwell', 'morpho', 'yo']);
   assert.deepEqual(selectEarnProtocolsV1({ mode: 'include_only', protocols: ['moonwell'] }), ['moonwell']);
-  assert.deepEqual(selectEarnProtocolsV1({ mode: 'exclude', protocols: ['morpho'] }), ['moonwell']);
+  assert.deepEqual(selectEarnProtocolsV1({ mode: 'exclude', protocols: ['morpho'] }), ['moonwell', 'yo']);
 
   const result = await compareEarnRoutesV1(
     { dataSource: createCuratedEarnDataSourceV1() },

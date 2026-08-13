@@ -1,10 +1,5 @@
 import { protocolAllowsAdapter, supportsSwapIntent } from './normalization.js';
-import type {
-  ManifestedSwapAdapterId,
-  SwapAdapterQuoteInput,
-  SwapAdapterResult,
-  SwapRouteAdapter,
-} from './types.js';
+import type { SwapAdapterId, SwapAdapterQuoteInput, SwapAdapterResult, SwapRouteAdapter } from './types.js';
 
 /**
  * A provider that is owned by Routes and understood by the intent pipeline,
@@ -15,7 +10,7 @@ import type {
  * `Not available` fact without silently falling back to Uniswap/KyberSwap.
  */
 export class ManifestedSwapRouteAdapter implements SwapRouteAdapter {
-  constructor(readonly id: ManifestedSwapAdapterId) {}
+  constructor(readonly id: SwapAdapterId) {}
 
   supports(intent: Parameters<SwapRouteAdapter['supports']>[0]): boolean {
     return supportsSwapIntent(intent) && protocolAllowsAdapter(intent, this.id);

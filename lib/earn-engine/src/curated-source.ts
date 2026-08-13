@@ -26,6 +26,8 @@ const CURATED_TABLE_V1: Record<EarnProtocolV1, CuratedEntryV1> = {
   moonwell: { baseApyBps: 520, rewardApyBps: 60, netApyBps: 580, availableLiquidityAtomic: '4200000000000', performanceFeeBps: 0, managementFeeBps: 0 },
   // Higher headline APY, but a 10% performance fee already netted into netApy.
   morpho: { baseApyBps: 790, rewardApyBps: 0, netApyBps: 710, availableLiquidityAtomic: '1800000000000', performanceFeeBps: 1000, managementFeeBps: 0 },
+  // No canonical APY is available from YO onchain contracts.
+  yo: { baseApyBps: null, rewardApyBps: null, netApyBps: null, availableLiquidityAtomic: null, performanceFeeBps: null, managementFeeBps: null },
 };
 
 export interface CuratedEarnSourceOptionsV1 {
@@ -44,6 +46,7 @@ export function createCuratedEarnDataSourceV1(options: CuratedEarnSourceOptionsV
 
   return {
     id: providerId,
+    supportedProtocols: ['moonwell', 'morpho', 'yo'],
     async observe(input: EarnDataSourceObserveInput): Promise<EarnObservationResultV1> {
       const entry = CURATED_TABLE_V1[input.protocol];
       if (!entry) return { ok: false, reason: 'unsupported_protocol' };
@@ -69,7 +72,9 @@ export function createCuratedEarnDataSourceV1(options: CuratedEarnSourceOptionsV
           netApyBps: entry.netApyBps,
           availableLiquidityAtomic: entry.availableLiquidityAtomic,
           fees: { performanceFeeBps: entry.performanceFeeBps, managementFeeBps: entry.managementFeeBps },
-          withdrawalTerms: { model: input.venue.withdrawalModel, instant: true, noticePeriodSeconds: null },
+          withdrawalTerms: input.protocol === 'yo'
+            ? { model: input.venue.withdrawalModel, instant: false, noticePeriodSeconds: 86_400 }
+            : { model: input.venue.withdrawalModel, instant: true, noticePeriodSeconds: null },
           blockNumber: null,
           observedAt,
           expiresAt,

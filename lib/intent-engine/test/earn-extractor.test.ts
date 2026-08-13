@@ -46,14 +46,16 @@ test('"Use Moonwell only" and "Do not use Morpho" map to protocol constraints', 
   assert.deepEqual(mapEarnProtocolConstraintV1('не используй morpho').value, { mode: 'exclude', protocols: ['morpho'] });
 });
 
-test('YO enters the Earn route family but never falls back to Moonwell or Morpho', () => {
+test('YO enters the released Earn route family without falling back to another protocol', () => {
   assert.deepEqual(mapEarnProtocolConstraintV1('Show YO Protocol vaults on Base').value, {
     mode: 'include_only',
     protocols: ['yo'],
   });
   const result = resolve('Deposit 100 USDC into a YO vault on Base.');
-  assert.equal(result.status, 'unsupported');
-  assert.deepEqual(result.issues, ['yo_route_adapter_not_released']);
+  assert.equal(result.status, 'ready');
+  if (result.status === 'ready') {
+    assert.deepEqual(result.intent.protocolConstraint, { mode: 'include_only', protocols: ['yo'] });
+  }
 });
 
 test('Balancer and Hydrex yield requests never substitute a different Earn provider', () => {

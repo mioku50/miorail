@@ -11,6 +11,7 @@ import type { SwapGuardAssetV1 } from '@mioagent/security/swapAsset';
 import { validateAerodromeSwap, type AerodromeSwapContext } from '@mioagent/security/aerodromeGuard';
 import { validateO1Swap, type O1SwapContext } from '@mioagent/security/o1Guard';
 import { validateHydrexSwap, type HydrexSwapContext } from '@mioagent/security/hydrexGuard';
+import { validateBalancerSwap, type BalancerSwapContext } from '@mioagent/security/balancerGuard';
 import type { BaseCall } from '@mioagent/security/baseGuards';
 import type { ExecutionTokenSecurityResult } from '@mioagent/security';
 import type { ContractSecuritySummaryV1 } from '@mioagent/route-card';
@@ -22,7 +23,7 @@ import type {
   SafetyKernelResultV1,
 } from '@mioagent/route-domain';
 import { SafetyKernelResultV1Schema } from '@mioagent/route-domain';
-import type { AerodromeBuildFactsV1, SwapBuildProviderId } from './types.js';
+import type { AerodromeBuildFactsV1, BalancerBuildFactsV1, SwapBuildProviderId } from './types.js';
 
 export interface RunSafetyKernelInput {
   provider: SwapBuildProviderId;
@@ -61,6 +62,8 @@ export interface RunSafetyKernelInput {
   /** Fresh outer proxy plus selected upstream code-hash/allowlist check. */
   hydrexContractPinVerified?: boolean;
   hydrexUpstreamRouter?: string;
+  /** Locally rebuilt Balancer protocol and exact API path provenance. */
+  balancer?: BalancerBuildFactsV1;
 }
 
 export interface RunSafetyKernelOutput {
@@ -317,7 +320,38 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
     ),
   );
 
-  if (input.provider === 'hydrex') {
+  if (input.provider === 'balancer') {
+    const inputAddress = input.intent.fromAsset?.address?.toLowerCase();
+    const outputAddress = input.intent.toAsset?.address?.toLowerCase();
+    const reviewedMinimum = input.reviewedMinimumOutputAtomic;
+    const context: BalancerSwapContext | undefined =
+      inputAddress && outputAddress && reviewedMinimum && input.balancer
+        ? {
+            protocolVersion: input.balancer.protocolVersion,
+            inputTokenAddress: inputAddress,
+            outputTokenAddress: outputAddress,
+            amountInAtomic: input.intent.amount.amountAtomic,
+            minimumOutputAtomic: reviewedMinimum,
+            walletAddress: input.walletAddress,
+            routerAddress: input.routerAddress,
+            sourceKeys: input.balancer.sourceKeys,
+          }
+        : undefined;
+    const guard = validateBalancerSwap({
+      chain: input.chainId,
+      calls: baseCalls,
+      context,
+      now: input.now,
+    });
+    checks.push(
+      check(
+        'provider_guard_balancer',
+        'Balancer pinned contracts, exact approvals, reviewed pools and exact-input calldata',
+        guard.success ? 'passed' : 'failed',
+        guard.success ? null : `${guard.code}: ${guard.reason}`,
+      ),
+    );
+  } else if (input.provider === 'hydrex') {
     checks.push(
       check(
         'provider_contract_pin_hydrex',

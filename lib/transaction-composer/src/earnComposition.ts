@@ -1,6 +1,7 @@
 import { encodeFunctionData, erc20Abi } from 'viem';
 import {
   ExecutionBlueprintV1Schema,
+  SafetyKernelResultV1Schema,
   ZERO_HASH_V1,
   hashApprovedCallsV1,
   hashExecutionBlueprintV1,
@@ -54,6 +55,23 @@ export const MORPHO_DEPOSIT_ABI = [
   },
 ] as const;
 
+/** YO Gateway deposit — vault is explicit, shares are bounded, partnerId=0. */
+export const YO_GATEWAY_DEPOSIT_ABI = [
+  {
+    type: 'function',
+    name: 'deposit',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'vault', type: 'address' },
+      { name: 'assets', type: 'uint256' },
+      { name: 'minShares', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+      { name: 'partnerId', type: 'uint32' },
+    ],
+    outputs: [{ name: 'shares', type: 'uint256' }],
+  },
+] as const;
+
 const UNAVAILABLE_SIMULATION_V1: SimulationStateV1 = {
   status: 'unavailable',
   observedAt: null,
@@ -93,10 +111,25 @@ export function buildEarnDepositCallsV1(input: {
   const spender = input.candidate.contracts.approvalSpender;
 
   const approveData = encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [spender, amount] });
+  const expectedShares =
+    input.candidate.expectedPositionAtomic === undefined ||
+    input.candidate.expectedPositionAtomic === null
+      ? null
+      : BigInt(input.candidate.expectedPositionAtomic);
+  const minimumShares = expectedShares === null ? null : (expectedShares * 9_950n) / 10_000n;
+  if (input.candidate.protocol === 'yo' && (minimumShares === null || minimumShares <= 0n)) {
+    throw new TypeError('YO deposit requires a fresh positive share conversion');
+  }
   const depositData =
     input.candidate.protocol === 'moonwell'
       ? encodeFunctionData({ abi: MOONWELL_MINT_ABI, functionName: 'mint', args: [amount] })
-      : encodeFunctionData({ abi: MORPHO_DEPOSIT_ABI, functionName: 'deposit', args: [amount, input.walletAddress] });
+      : input.candidate.protocol === 'morpho'
+        ? encodeFunctionData({ abi: MORPHO_DEPOSIT_ABI, functionName: 'deposit', args: [amount, input.walletAddress] })
+        : encodeFunctionData({
+            abi: YO_GATEWAY_DEPOSIT_ABI,
+            functionName: 'deposit',
+            args: [target, amount, minimumShares!, input.walletAddress, 0],
+          });
 
   const approvalCall: ExecutionCallV1 = {
     index: 0,
@@ -112,7 +145,7 @@ export function buildEarnDepositCallsV1(input: {
   const depositCall: ExecutionCallV1 = {
     index: 1,
     callType: 'deposit',
-    to: target,
+    to: input.candidate.protocol === 'yo' ? spender : target,
     valueWei: '0',
     data: depositData,
     asset: input.intent.asset,
@@ -154,6 +187,54 @@ export function buildEarnDepositBlueprintV1(
   const quoteExpiry = input.quoteExpiry ?? input.candidate.expiresAt;
   if (Date.parse(quoteExpiry) <= input.now.getTime()) {
     return { outcome: 'expired', reason: 'Earn quote/evidence has expired and can no longer be prepared' };
+  }
+
+  if (
+    input.candidate.protocol === 'yo' &&
+    (input.candidate.expectedPositionAtomic === null ||
+      input.candidate.expectedPositionAtomic === undefined ||
+      BigInt(input.candidate.expectedPositionAtomic) <= 0n)
+  ) {
+    const reason = 'YO requires a fresh positive onchain share conversion before deposit preparation';
+    return {
+      outcome: 'blocked',
+      reason,
+      safety: SafetyKernelResultV1Schema.parse({
+        schemaVersion: 'safety-kernel-result/v1',
+        verdict: 'blocked',
+        checks: [{
+          id: 'yo_share_quote_present',
+          description: 'YO deposit requires a fresh positive convertToShares result',
+          status: 'failed',
+          detail: reason,
+        }],
+        blockedReason: reason,
+      }),
+    };
+  }
+
+  if (
+    input.candidate.protocol === 'yo' &&
+    (input.candidate.expectedPositionAtomic === null ||
+      input.candidate.expectedPositionAtomic === undefined ||
+      BigInt(input.candidate.expectedPositionAtomic) <= 0n)
+  ) {
+    const reason = 'YO requires a fresh positive onchain share conversion before deposit preparation';
+    return {
+      outcome: 'blocked',
+      reason,
+      safety: SafetyKernelResultV1Schema.parse({
+        schemaVersion: 'safety-kernel-result/v1',
+        verdict: 'blocked',
+        checks: [{
+          id: 'yo_share_quote_present',
+          description: 'YO deposit requires a fresh positive convertToShares result',
+          status: 'failed',
+          detail: reason,
+        }],
+        blockedReason: reason,
+      }),
+    };
   }
 
   const calls = buildEarnDepositCallsV1({

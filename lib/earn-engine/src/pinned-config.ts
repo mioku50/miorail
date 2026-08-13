@@ -59,9 +59,20 @@ export const PINNED_EARN_VENUES_V1: Record<EarnProtocolV1, PinnedEarnVenueV1> = 
     callCount: 2,
     approvalCount: 1,
   },
+  yo: {
+    protocol: 'yo',
+    venueKind: 'yo_vault',
+    identifier: 'YO yoUSD',
+    target: '0x0000000f2eb9f69274678c76222b35eec7588a65',
+    approvalSpender: '0xf1eee0957267b1a474323ff9cff7719e964969fa',
+    withdrawalModel: 'async_redeem',
+    estimatedGasUnits: '350000',
+    callCount: 2,
+    approvalCount: 1,
+  },
 };
 
-export const EARN_PROTOCOLS_V1: readonly EarnProtocolV1[] = ['moonwell', 'morpho'];
+export const EARN_PROTOCOLS_V1: readonly EarnProtocolV1[] = ['moonwell', 'morpho', 'yo'];
 
 export function pinnedEarnVenueV1(protocol: EarnProtocolV1): PinnedEarnVenueV1 {
   return PINNED_EARN_VENUES_V1[protocol];

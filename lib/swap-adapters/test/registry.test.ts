@@ -6,7 +6,7 @@ import {
   UniswapSwapRouteAdapter,
   getEligibleSwapAdapters,
 } from '../src/index.js';
-import { makeIntent, NOW, WALLET, withProtocolConstraint } from './fixtures.js';
+import { makeIntent, withProtocolConstraint } from './fixtures.js';
 
 const adapters = [
   new UniswapSwapRouteAdapter({ apiKey: 'fixture-key' }),
@@ -80,25 +80,15 @@ test('adapter supports() independently enforces protocol constraints', () => {
   assert.equal(adapters[1].supports(kyberOnly), true);
 });
 
-test('Routes-owned manifested providers return a typed unavailable fact when explicitly selected', async () => {
-  for (const provider of ['balancer'] as const) {
-    const intent = withProtocolConstraint(makeIntent(), {
-      mode: 'include_only',
-      protocols: [provider],
-    });
-    const selection = getEligibleSwapAdapters(intent, createDefaultSwapAdapters());
-    assert.equal(selection.outcome, 'selected');
-    if (selection.outcome !== 'selected') continue;
-    assert.deepEqual(selection.adapters.map((adapter) => adapter.id), [provider]);
-    assert.deepEqual(
-      await selection.adapters[0].quote({ intent, walletAddress: WALLET, requestId: `manifested-${provider}`, now: NOW }),
-      {
-        outcome: 'not_configured',
-        provider,
-        errorCode: `${provider.replace(/-/g, '_')}_route_adapter_not_released`,
-        retryable: false,
-      },
-    );
+test('Balancer is a released adapter and can be explicitly selected for an ERC-20 pair', () => {
+  const intent = withProtocolConstraint(makeIntent({ to: 'WETH' }), {
+    mode: 'include_only',
+    protocols: ['balancer'],
+  });
+  const selection = getEligibleSwapAdapters(intent, createDefaultSwapAdapters());
+  assert.equal(selection.outcome, 'selected');
+  if (selection.outcome === 'selected') {
+    assert.deepEqual(selection.adapters.map((adapter) => adapter.id), ['balancer']);
   }
 });
 

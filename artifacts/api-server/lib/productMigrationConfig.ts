@@ -33,6 +33,8 @@ export interface MiorailProductMigrationFlags {
   /** Hydrex comparison is ungated. This gate controls whether a pinned,
    * simulated Hydrex Blueprint may reach Base Account approval. */
   hydrexExecutionV1?: boolean;
+  /** Balancer comparison is read-only; execution is separately gated. */
+  balancerExecutionV1?: boolean;
   /** T67C: the B20 Control Card. Read-only — it inspects a token and signs
    * nothing — but it is gated until a live smoke run has confirmed the
    * interface against mainnet. */
@@ -145,6 +147,7 @@ export function getMiorailProductMigrationFlags(
     aerodromeExecutionV1: readBooleanFlag(env, 'MIORAIL_AERODROME_EXECUTION_V1', false),
     o1ExecutionV1: readBooleanFlag(env, 'MIORAIL_O1_EXECUTION_V1', false),
     hydrexExecutionV1: readBooleanFlag(env, 'MIORAIL_HYDREX_EXECUTION_V1', false),
+    balancerExecutionV1: readBooleanFlag(env, 'MIORAIL_BALANCER_EXECUTION_V1', false),
     b20ControlV1: readBooleanFlag(env, 'MIORAIL_B20_CONTROL_V1', false),
     submissionRecoveryV1: readBooleanFlag(env, 'MIORAIL_SUBMISSION_RECOVERY_V1', false),
     publicProofV1: readBooleanFlag(env, 'MIORAIL_PUBLIC_PROOF_V1', false),

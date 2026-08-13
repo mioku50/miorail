@@ -68,6 +68,7 @@ export function createCachedEarnDataSourceV1(
 
   return {
     id: inner.id,
+    supportedProtocols: inner.supportedProtocols,
     async observe(input: EarnDataSourceObserveInput): Promise<EarnObservationResultV1> {
       const key = earnObservationCacheKeyV1(inner.id, input);
       const entry = entries.get(key);

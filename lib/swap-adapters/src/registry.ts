@@ -2,9 +2,9 @@ import type { RouteIntentV1 } from '@mioagent/route-domain';
 import { AerodromeSwapRouteAdapter } from './aerodrome.js';
 import { KyberSwapRouteAdapter } from './kyberswap.js';
 import { UniswapSwapRouteAdapter } from './uniswap.js';
-import { ManifestedSwapRouteAdapter } from './manifested.js';
 import { O1SwapRouteAdapter } from './o1.js';
 import { HydrexSwapRouteAdapter } from './hydrex.js';
+import { BalancerSwapRouteAdapter } from './balancer.js';
 import type {
   ReleasedSwapAdapterId,
   SwapAdapterId,
@@ -12,10 +12,9 @@ import type {
   SwapRouteAdapter,
 } from './types.js';
 
-const RELEASED_ADAPTER_ORDER: readonly ReleasedSwapAdapterId[] = ['uniswap', 'kyberswap', 'aerodrome', 'o1-exchange', 'hydrex'];
+const RELEASED_ADAPTER_ORDER: readonly ReleasedSwapAdapterId[] = ['uniswap', 'kyberswap', 'aerodrome', 'o1-exchange', 'hydrex', 'balancer'];
 const ADAPTER_ORDER: readonly SwapAdapterId[] = [
   ...RELEASED_ADAPTER_ORDER,
-  'balancer',
 ];
 
 export function createDefaultSwapAdapters(): SwapRouteAdapter[] {
@@ -25,7 +24,7 @@ export function createDefaultSwapAdapters(): SwapRouteAdapter[] {
     new AerodromeSwapRouteAdapter(),
     new O1SwapRouteAdapter(),
     new HydrexSwapRouteAdapter(),
-    new ManifestedSwapRouteAdapter('balancer'),
+    new BalancerSwapRouteAdapter(),
   ];
 }
 

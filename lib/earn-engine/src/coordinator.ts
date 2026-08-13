@@ -61,7 +61,10 @@ export async function compareEarnRoutesV1(
   deps: { dataSource: EarnDataSourceV1 },
   input: CompareEarnRoutesInputV1,
 ): Promise<EarnComparisonResultV1> {
-  const protocols = selectEarnProtocolsV1(input.intent.protocolConstraint);
+  const protocols = selectEarnProtocolsV1(
+    input.intent.protocolConstraint,
+    deps.dataSource.supportedProtocols ?? EARN_PROTOCOLS_V1,
+  );
   if (protocols.length === 0) {
     return { ok: false, reason: 'no_protocols_selected', failures: [] };
   }

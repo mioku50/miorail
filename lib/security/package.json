@@ -13,10 +13,11 @@
     "./kyberGuard": "./src/kyberGuard.ts",
     "./aerodromeGuard": "./src/aerodromeGuard.ts",
     "./o1Guard": "./src/o1Guard.ts",
-    "./hydrexGuard": "./src/hydrexGuard.ts"
+    "./hydrexGuard": "./src/hydrexGuard.ts",
+    "./balancerGuard": "./src/balancerGuard.ts"
   },
   "scripts": {
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "tsx --test src/*.test.ts"
   },
   "dependencies": {
     "@mioagent/x402-parser": "workspace:*",
