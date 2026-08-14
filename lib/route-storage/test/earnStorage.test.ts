@@ -106,7 +106,15 @@ describe('T62 earn storage', () => {
 
     const candidates = await repo.listEarnCandidates(run.id, TENANT);
     assert.equal(candidates.length, entries.length);
-    assert.deepEqual(candidates.map((c) => c.protocol).sort(), ['moonwell', 'morpho']);
+    // Round-trip fidelity against the FIXTURE, not against a hand-written
+    // venue list. The literal here said ['moonwell', 'morpho'] and went red the
+    // day YO was released — this test is about what storage returns, and which
+    // venues are curated is pinned by the earn compare tests instead.
+    assert.deepEqual(
+      candidates.map((c) => c.protocol).sort(),
+      entries.map((entry) => entry.candidate.protocol).sort(),
+    );
+    assert.ok(candidates.length >= 2, 'a comparison worth storing has more than one venue');
 
     assert.equal((await repo.listEarnEvidence(run.id, TENANT)).length, entries.length);
     assert.equal((await repo.listEarnScores(run.id, TENANT)).length, entries.length);

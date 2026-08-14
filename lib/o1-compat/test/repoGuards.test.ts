@@ -8,6 +8,28 @@ import { dirname, join, resolve } from 'node:path';
 // against this package. A gate that only polices its own directory cannot
 // notice the thing it exists to prevent: a signing path appearing somewhere
 // else because o1 looked close enough to working.
+//
+// ---------------------------------------------------------------------------
+// SUPERSEDED IN PART, and deliberately so.
+//
+// T67D examined o1's Permit2 flow, found it required `/order/complete` and a
+// provider-side broadcast, and recorded the verdict `incompatible`. Four
+// assertions here followed from that verdict: no execution flag, no adapter,
+// a registry row reading `incompatible_with_base_account_v1`, and a console
+// entry hardcoded to `blocked`.
+//
+// DECISIONS.md §19 replaced the verdict, not the prohibitions. o1 now uses the
+// standard `POST /api/v2/order` path, which returns ordinary unsigned Base
+// transactions; `831aca7 feat(routes): release pinned o1 exchange swaps`
+// shipped it. Those four assertions had been failing ever since, which is
+// worse than useless — a red guard tells no one anything, and the whole suite
+// stops at it before the ~2,200 tests behind it ever run.
+//
+// So they are rewritten to hold down what §19 actually promises. Every
+// assertion that is still true is untouched: the signing primitives, the
+// private key, `/order/complete`, and the absence of a schema change are the
+// reason this file exists and none of them moved.
+// ---------------------------------------------------------------------------
 
 function repoRoot(): string {
   let current = resolve(process.cwd());
@@ -90,18 +112,35 @@ describe('T67D §14 — no signing path was introduced anywhere', () => {
     assert.deepEqual(offenders.map((file) => file.path), []);
   });
 
-  test('no o1 execution flag was added', () => {
-    // An adapter is a decision. A flag is how one gets made quietly.
-    const offenders = FILES.filter((file) =>
-      /MIORAIL_O1|O1_EXECUTION|o1ExecutionV1/.test(executableCode(file.text)),
+  test('o1 execution is behind a flag, and that flag defaults off', () => {
+    // The original assertion was that no such flag existed at all. §19 allows
+    // one; what it does not allow is a flag that is on because nobody chose.
+    // An adapter is a decision, and a default-true flag is how one gets made
+    // quietly.
+    const config = readFileSync(
+      resolve(ROOT, 'artifacts/api-server/lib/productMigrationConfig.ts'),
+      'utf8',
     );
+    assert.match(config, /o1ExecutionV1:\s*readBooleanFlag\(env,\s*'MIORAIL_O1_EXECUTION_V1',\s*false\)/);
+  });
+
+  test('the o1 credential §19 refuses is requested nowhere', () => {
+    // §19: "it does not require a per-user O1_AGGREGATOR_API_KEY". The legacy
+    // DEX Aggregator product is a different service, and reading its key would
+    // be the first step back toward the flow this gate rejected.
+    const offenders = FILES.filter((file) => /O1_AGGREGATOR_API_KEY/.test(executableCode(file.text)));
     assert.deepEqual(offenders.map((file) => file.path), []);
   });
 
-  test('no o1 swap adapter exists', () => {
-    const adapters = resolve(ROOT, 'lib/swap-adapters/src');
-    const names = existsSync(adapters) ? readdirSync(adapters) : [];
-    assert.deepEqual(names.filter((name) => /o1/i.test(name)), []);
+  test('the o1 adapter refuses the Permit2 relay path outright', () => {
+    // The adapter now exists — that is §19. What must not exist is the branch
+    // T67D actually objected to: Permit2, which is completed by o1 broadcasting
+    // through its own relay, outside the non-custodial boundary. It is refused
+    // by error code rather than merely unused, so a provider response that
+    // offers one cannot be silently followed.
+    const order = readFileSync(resolve(ROOT, 'lib/swap-adapters/src/o1-order.ts'), 'utf8');
+    assert.match(order, /entry\.permit2 !== undefined/);
+    assert.match(order, /o1_permit2_relay_unsupported/);
   });
 
   test('no migration was added for this task', () => {
@@ -112,17 +151,26 @@ describe('T67D §14 — no signing path was introduced anywhere', () => {
 });
 
 describe('T67D §13 — the registry and the rail agree', () => {
-  test('the registry records the verdict and separates the two products', () => {
+  test('the registry still separates the two o1 products', () => {
+    // The separation is the part §19 did not change, and the part that matters:
+    // the released adapter follows the standard-order specification, while the
+    // older DEX Aggregator product — the one whose key Miorail refuses — stays
+    // `documented` and disabled. Collapsing the two rows would let the second
+    // inherit the first's release.
     const registry = readFileSync(resolve(ROOT, 'docs/PLUGIN_REGISTRY.md'), 'utf8');
-    assert.match(registry, /incompatible_with_base_account_v1/);
     assert.match(registry, /DEX Aggregator API/);
-    // Never promoted past `documented`.
-    assert.equal(/o1\.exchange[^|]*\|[^|]*\|\s*`(adapter|scored|proven)`/.test(registry), false);
+    assert.match(registry, /o1\.exchange legacy DEX Aggregator API[^|]*\|[^|]*\|\s*`documented`/);
+    // `scored` is where §19 leaves it. `proven` requires a real reconciled
+    // Route Proof, which no o1 route has produced.
+    assert.equal(/o1\.exchange[^|]*\|[^|]*\|\s*`proven`/.test(registry), false);
   });
 
-  test('o1 is not presented as live anywhere in the console vocabulary', () => {
+  test('o1 visibility rides the routing gate, never a hardcoded live', () => {
+    // It may appear as a measured candidate — that is comparison, which spends
+    // and signs nothing. What it must never be is asserted live by the client
+    // independently of the server's gate.
     const flow = readFileSync(resolve(ROOT, 'lib/ui/src/console/consoleFlow.ts'), 'utf8');
-    assert.match(flow, /\{ name: 'o1\.exchange', state: 'blocked' \}/);
+    assert.match(flow, /\{ name: 'o1\.exchange', state: gate\(routing\) \}/);
     assert.equal(/\{ name: 'o1\.exchange', state: '(live|configured)' \}/.test(flow), false);
   });
 });

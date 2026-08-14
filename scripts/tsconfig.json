@@ -1,7 +1,21 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist"
+    "outDir": "dist",
+    // Every .ts file here is run through tsx as ESM — they use `import.meta`
+    // and none of them uses `require`. The package itself cannot declare
+    // `"type": "module"`, because two hand-written CommonJS helpers live beside
+    // them (`validate_tasks.js` and its test), and CI reaches those by exact
+    // filename through an `if [ -f ... ]` guard that would silently skip the
+    // check if they were renamed.
+    //
+    // So the module system is stated HERE, where it only affects typechecking.
+    // Nothing is emitted from this package: there is no build script and no
+    // dist. Inherited `NodeNext` resolved these files as CommonJS on the
+    // strength of that missing `"type"`, and reported `import.meta` as an
+    // error in code that has always run as ESM.
+    "module": "esnext",
+    "moduleResolution": "bundler"
   },
   "include": ["**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules", "dist"]
