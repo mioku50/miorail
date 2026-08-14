@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
 import { PublicMetricsSnapshotV1Schema } from '@mioagent/route-domain';
 import { publicMetricsSnapshotFromCountsV1 } from './publicMetrics.js';
@@ -57,7 +58,17 @@ test('public metrics suppresses a small wallet cohort and never invents an empty
 // the receipt's own atomic amount.
 // ---------------------------------------------------------------------------
 
-const SOURCE_V1 = readFileSync(new URL('./publicMetrics.ts', import.meta.url), 'utf8');
+/** This package declares no `"type"`, so `module: NodeNext` typechecks it as
+ * CommonJS and rejects `import.meta` — the same helper every other source-text
+ * test in this directory uses. */
+function packageFileV1(relative: string): string {
+  const cwd = process.cwd();
+  return cwd.endsWith(`${path.sep}artifacts${path.sep}api-server`)
+    ? path.join(cwd, relative)
+    : path.join(cwd, 'artifacts/api-server', relative);
+}
+
+const SOURCE_V1 = readFileSync(packageFileV1('lib/publicMetrics.ts'), 'utf8');
 
 function spendCteV1(): { whereClause: string; caseBody: string } {
   const start = SOURCE_V1.indexOf('production_x402_spend AS (');
