@@ -75,6 +75,8 @@ import {
   createDatabaseB20LaunchPoolRepository,
   decodeFeedCursorV1,
   type B20ObservationRepositoryV1,
+  type B20FeedRowV1,
+  type B20OpportunityObservationV1,
   type B20LaunchPoolRepositoryV1,
 } from '@mioagent/route-storage';
 import { client } from '@mioagent/db';
@@ -380,6 +382,58 @@ export const DISCOVER_FEED_WINDOW_MS_V1 = 48 * 60 * 60 * 1000;
 
 export const FEED_STATES_V1 = ['candidate', 'provisional', 'rejected', 'unmeasured'] as const;
 
+/** One projection for every public B20 reader (Discover, MCP, Copilot and the
+ * paid seller API). A new card field must never require four hand-maintained
+ * translations. */
+export function b20DiscoverCardFromRowV1(
+  row: B20FeedRowV1,
+  pipeline: B20PipelineStatusV1,
+  now: Date,
+) {
+  return b20OpportunityCardV1({
+    launch: {
+      tokenAddress: row.launch.tokenAddress,
+      name: row.launch.name,
+      symbol: row.launch.symbol,
+      variant: row.launch.variant,
+      decimals: row.launch.decimals,
+      blockNumber: row.launch.blockNumber,
+      transactionHash: row.launch.transactionHash,
+      logIndex: row.launch.logIndex,
+      detectedAt: row.launch.detectedAt,
+      blockTimestamp: row.launch.blockTimestamp,
+      canonical: row.launch.canonical,
+    },
+    observation: row.observation,
+    launchBuyers: row.launchBuyers,
+    launchBuyerWindow: b20LaunchBuyerWindowV1({
+      launchBlock: row.launch.blockNumber,
+      observedHead: pipeline.facts.confirmedHead,
+      windowBlocks: B20_BUYER_WINDOW_BLOCKS_V1,
+      measured: row.launchBuyers !== null,
+      measuredToBlock: row.launchBuyers?.toBlock ?? null,
+    }),
+    now,
+  });
+}
+
+export async function readB20EvidenceForTokenV1(tokenAddress: string): Promise<{
+  card: ReturnType<typeof b20OpportunityCardV1>;
+  history: B20OpportunityObservationV1[];
+} | null> {
+  if (!/^0x[0-9a-f]{40}$/.test(tokenAddress)) return null;
+  if (!(await b20RouteRuntime.discoverAvailable())) return null;
+  const observations = b20RouteRuntime.observations();
+  const now = b20RouteRuntime.now();
+  const result = await observations.getFeedRowForToken({ tokenAddress, historyLimit: 12 });
+  if (!result) return null;
+  const pipeline = await pipelineStatusV1(observations, now, true);
+  return {
+    card: b20DiscoverCardFromRowV1(result.row, pipeline, now),
+    history: result.history,
+  };
+}
+
 /** §1 — the status, assembled from counts the server actually has. */
 export async function pipelineStatusV1(
   observations: B20ObservationRepositoryV1,
@@ -470,33 +524,7 @@ export async function readDiscoverFeedV1(input: {
   });
 
   const cards = page.rows
-    .map((row) =>
-      b20OpportunityCardV1({
-        launch: {
-          tokenAddress: row.launch.tokenAddress,
-          name: row.launch.name,
-          symbol: row.launch.symbol,
-          variant: row.launch.variant,
-          decimals: row.launch.decimals,
-          blockNumber: row.launch.blockNumber,
-          transactionHash: row.launch.transactionHash,
-          logIndex: row.launch.logIndex,
-          detectedAt: row.launch.detectedAt,
-          blockTimestamp: row.launch.blockTimestamp,
-          canonical: row.launch.canonical,
-        },
-        observation: row.observation,
-        launchBuyers: row.launchBuyers,
-        launchBuyerWindow: b20LaunchBuyerWindowV1({
-          launchBlock: row.launch.blockNumber,
-          observedHead: pipeline.facts.confirmedHead,
-          windowBlocks: B20_BUYER_WINDOW_BLOCKS_V1,
-          measured: row.launchBuyers !== null,
-          measuredToBlock: row.launchBuyers?.toBlock ?? null,
-        }),
-        now,
-      }),
-    )
+    .map((row) => b20DiscoverCardFromRowV1(row, pipeline, now))
     // Freshness is computed against SERVER time, so a client with a skewed
     // clock cannot promote a stale observation into an actionable one.
     .filter((card) => {

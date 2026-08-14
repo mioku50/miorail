@@ -16,6 +16,8 @@ import { mcpHandoffRouter } from './mcpHandoff';
 import { authRouter } from './auth';
 import { routeIntelligenceRouter } from './routeIntelligence';
 import { publicProofRouter } from './publicProof';
+import { publicMetricsRouter } from './publicMetrics';
+import { x402IntelligenceRouterV1 } from './x402/intelligence';
 import { enforceTenantBinding, requireTenant } from '../middleware/tenantAuth';
 
 export const routes = Router();
@@ -25,6 +27,10 @@ routes.use('/auth', authRouter);
 // no session, no wallet and no SIWE; putting it behind the tenant middleware
 // would make it unreadable by the only people it exists for.
 routes.use('/public', publicProofRouter);
+routes.use('/public', publicMetricsRouter);
+// Public agents have no Miorail session. The fixed x402 middleware is the
+// access boundary for these read-only paid resources.
+routes.use('/x402/intelligence/v1', x402IntelligenceRouterV1);
 routes.use(requireTenant, enforceTenantBinding);
 routes.use('/memory', memoryRouter);
 routes.use('/settings', settingsRouter);

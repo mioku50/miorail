@@ -54,7 +54,49 @@ step "3/7  build"
 # `tsc -b && vite build`, and the `-b` matters: it type-checks against emitted
 # .d.ts files, so it catches errors `tsc --noEmit` resolves away from source.
 # One such error reached main because --noEmit was treated as equivalent.
-as_service_user pnpm -r build
+# Vite and Next inline PUBLIC variables at build time. The service environment
+# reaches the API at runtime, but it cannot retroactively add ERC-8021 to a
+# browser bundle, so resolve the one canonical public Builder Code explicitly.
+# Never `source` the whole .env into a build: it also carries server secrets.
+read_public_env_value() {
+  local wanted=$1 line key value
+  [ -f "$REPO/.env" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|'#'*) continue ;; esac
+    key=${line%%=*}
+    key=${key//[[:space:]]/}
+    [ "$key" = "$wanted" ] || continue
+    value=${line#*=}
+    value=${value%%#*}
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [ "${value:0:1}" = '"' ] && [ "${value: -1}" = '"' ]; then value=${value:1:${#value}-2}; fi
+    if [ "${value:0:1}" = "'" ] && [ "${value: -1}" = "'" ]; then value=${value:1:${#value}-2}; fi
+    printf '%s' "$value"
+    return 0
+  done < "$REPO/.env"
+}
+public_builder_code=$(read_public_env_value BASE_BUILDER_CODE)
+legacy_builder_code=$(read_public_env_value BUILDER_CODE)
+if [ -n "$public_builder_code" ] && [ -n "$legacy_builder_code" ] && [ "$public_builder_code" != "$legacy_builder_code" ]; then
+  echo 'FAILED: BASE_BUILDER_CODE and deprecated BUILDER_CODE disagree; refusing an ambiguously attributed build'
+  exit 1
+fi
+public_builder_code=${public_builder_code:-$legacy_builder_code}
+case "$public_builder_code" in
+  ''|todo|TODO|changeme|CHANGE_ME|replace_me|REPLACE_ME)
+    echo 'FAILED: BASE_BUILDER_CODE is missing or still a placeholder'
+    exit 1
+    ;;
+esac
+if ! [[ "$public_builder_code" =~ ^[a-z0-9_]{1,32}$ ]]; then
+  echo 'FAILED: a valid BASE_BUILDER_CODE is required to build attributed production wallet calls'
+  exit 1
+fi
+as_service_user env \
+  VITE_BASE_BUILDER_CODE="$public_builder_code" \
+  NEXT_PUBLIC_BASE_BUILDER_CODE="$public_builder_code" \
+  pnpm -r build
 
 step "4/7  install Nginx route, Base App and B20 services"
 # The public MCP endpoint is mounted at the API root rather than under /api.

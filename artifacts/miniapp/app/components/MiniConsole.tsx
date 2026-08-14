@@ -147,6 +147,7 @@ import {
   EarnDepositFlow,
   SubmissionRecoveryRail,
   builderCodeForSurfaceV1,
+  builderCodeToDataSuffix,
   isWalletRejectionError,
   transactionHashesFromReceipts,
   useSpendPermissionGrant,
@@ -175,6 +176,7 @@ const BUILDER_CODE = builderCodeForSurfaceV1({
   NEXT_PUBLIC_BASE_BUILDER_CODE: process.env.NEXT_PUBLIC_BASE_BUILDER_CODE,
   NEXT_PUBLIC_BUILDER_CODE: process.env.NEXT_PUBLIC_BUILDER_CODE,
 });
+const BUILDER_SUFFIX = builderCodeToDataSuffix(BUILDER_CODE);
 
 const B20_QUOTE_ASSET_V1 = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 
@@ -1126,6 +1128,9 @@ export function MiniConsole() {
         calls: begun.payload.calls as never,
         chainId: 8453,
         forceAtomic: begun.payload.atomicRequired,
+        capabilities: BUILDER_SUFFIX
+          ? { dataSuffix: { value: BUILDER_SUFFIX, optional: true } }
+          : undefined,
       });
       const batchId = typeof result === "string" ? result : (result as { id?: string })?.id ?? null;
       if (!batchId) {

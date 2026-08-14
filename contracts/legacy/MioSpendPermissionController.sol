@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 
+// LEGACY / EXPERIMENTAL ONLY.
+// Miorail production uses the official Base Account Spend Permission flow.
+// This controller is retained for historical reproducibility and is not part
+// of the default Foundry source tree, deployment scripts, or product claims.
+
 interface IERC20 {
     function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
     function transfer(address recipient, uint256 amount) external returns (bool);

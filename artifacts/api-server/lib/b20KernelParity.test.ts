@@ -155,6 +155,26 @@ const PARITY_V1: Record<string, { enforcedBy: string[] | null; why: string }> = 
   },
   provider_guard_uniswap: { enforcedBy: null, why: 'Aerodrome only on this path.' },
   provider_guard_kyberswap: { enforcedBy: null, why: 'Aerodrome only on this path.' },
+  provider_guard_balancer: {
+    enforcedBy: null,
+    why: 'The B20 entry blueprint is built from its exact cleared Aerodrome route; Balancer calls are not valid on this path.',
+  },
+  provider_contract_pin_hydrex: {
+    enforcedBy: null,
+    why: 'Hydrex proxy and implementation pins do not apply to the exact cleared Aerodrome-only B20 entry blueprint.',
+  },
+  provider_guard_hydrex: {
+    enforcedBy: null,
+    why: 'Hydrex outer and nested calldata are never accepted by the Aerodrome-only B20 entry blueprint.',
+  },
+  provider_contract_pin_o1: {
+    enforcedBy: null,
+    why: 'o1 proxy, admin and implementation pins do not apply to the exact cleared Aerodrome-only B20 entry blueprint.',
+  },
+  provider_guard_o1: {
+    enforcedBy: null,
+    why: 'o1 calldata and RLP routes are never accepted by the Aerodrome-only B20 entry blueprint.',
+  },
 };
 
 describe('the two kernels enforce the same invariants', () => {

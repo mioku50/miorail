@@ -24,4 +24,5 @@ export * from './formatAtomicAmount';
 export * from './ExecutionProof';
 export * from './RouteHistoryList';
 export * from './IntelligenceBudgetPanel';
+export * from './PublicMetricsDashboard';
 export * from './console';

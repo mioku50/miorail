@@ -484,7 +484,7 @@ export function RoutePlanHome() {
 
             {/* T61: the Earn Route Card surface, behind the server flag. Off
                 flag = zero change to the swap-only miniapp plan. */}
-            {status.data?.productMigration.earnRouteV1 && <EarnComparePanel />}
+            {status.data?.productMigration.earnRouteV1 && <EarnComparePanel builderCode={BUILDER_CODE} />}
           </>
         )}
       </main>

@@ -11,3 +11,5 @@ export * from './execution-contracts.js';
 export * from './proof-events.js';
 export * from './recovery-contracts.js';
 export * from './public-proof-contracts.js';
+export * from './public-metrics-contracts.js';
+export * from './x402-seller-contracts.js';

@@ -46,7 +46,12 @@ import { useCallsStatus, useSendCalls } from 'wagmi';
  * identity the server computed is restated from it, so a mismatch is caught
  * rather than assumed. */
 const B20_QUOTE_ASSET_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
-import { isWalletRejectionError, transactionHashesFromReceipts } from '@mioagent/wallet-actions';
+import {
+  builderCodeForSurfaceV1,
+  builderCodeToDataSuffix,
+  isWalletRejectionError,
+  transactionHashesFromReceipts,
+} from '@mioagent/wallet-actions';
 import { useB20ExitProofPayment } from '@mioagent/x402-actions';
 import { useConsoleNav } from '../console/useConsoleNav';
 import type { MarketObservationV1 } from '@mioagent/opportunity-rail/marketRails';
@@ -77,6 +82,12 @@ const ADDRESS_V1 = /^0x[0-9a-fA-F]{40}$/;
 /** The tolerance the exit check probes with. Stated so the coverage card can
  * name it rather than implying a capacity measured against nothing. */
 const EXIT_CHECK_TOLERANCE_BPS_V1 = 300;
+
+const B20_BUILDER_CODE_V1 = builderCodeForSurfaceV1({
+  VITE_BASE_BUILDER_CODE: import.meta.env?.VITE_BASE_BUILDER_CODE as string | undefined,
+  VITE_BUILDER_CODE: import.meta.env?.VITE_BUILDER_CODE as string | undefined,
+});
+const B20_BUILDER_SUFFIX_V1 = builderCodeToDataSuffix(B20_BUILDER_CODE_V1);
 
 /** Atomic units to a readable balance. Integer arithmetic: a float turns a
  * token with 18 decimals into scientific notation. */
@@ -504,6 +515,9 @@ export function B20WatchPage() {
         calls: begun.payload.calls as never,
         chainId: 8453,
         forceAtomic: begun.payload.atomicRequired,
+        capabilities: B20_BUILDER_SUFFIX_V1
+          ? { dataSuffix: { value: B20_BUILDER_SUFFIX_V1, optional: true } }
+          : undefined,
       });
       const batchId = typeof result === 'string' ? result : (result as { id?: string })?.id ?? null;
       if (!batchId) {

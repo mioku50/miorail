@@ -23,6 +23,7 @@ import { B20WatchPage } from '../features/b20/B20WatchPage';
 import { OpportunitiesPage } from '../features/opportunities/OpportunitiesPage';
 import { SettingsPage } from '../features/settings/SettingsPage';
 import { HomeRoute } from '../features/console/HomeRoute';
+import { PublicMetricsPage } from '../features/metrics/PublicMetricsPage';
 
 // ---------------------------------------------------------------------------
 // The Route Intelligence console IS the app.
@@ -105,6 +106,13 @@ export function App() {
     <>
       <ChainEnvMismatchBanner />
       <Switch>
+        {/* Public aggregate telemetry. No tenant, wallet or session: grant
+            reviewers and builders can inspect what Miorail has actually
+            measured and reconciled without entering the product. */}
+        <Route path="/metrics">
+          <PublicMetricsPage />
+        </Route>
+
         {/* T67C.2: a published proof. NOT wrapped in RequireSession — a proof
             only its owner can open is not a proof anybody else can check. */}
         <Route path="/proof/:publicId">

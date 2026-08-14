@@ -2,7 +2,7 @@
 pragma solidity 0.8.24;
 
 import "forge-std/Test.sol";
-import "../src/MioSpendPermissionController.sol";
+import "../MioSpendPermissionController.sol";
 
 contract MockERC20 {
     string public name = "Mock USDC";

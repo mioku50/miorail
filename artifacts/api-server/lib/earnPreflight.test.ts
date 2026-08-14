@@ -58,7 +58,7 @@ describe('runEarnContractPreflightV1 (uncached)', () => {
     assert.equal(verification.ok, true);
     assert.equal(verification.failures.length, 0);
     assert.equal(verification.usdc.codePresent, true);
-    assert.equal(verification.venues.length, 2);
+    assert.equal(verification.venues.length, 3);
   });
 
   test('wrong chain id fails closed without reading any contract', async () => {

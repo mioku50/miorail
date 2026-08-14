@@ -231,7 +231,7 @@ publicProofOwnerRouter.delete('/nft/proofs/:proofId/share', (req, res) => void r
 
 // --- the public half --------------------------------------------------------
 
-async function loadPublicBundleV1(publicId: string): Promise<PublicProofBundleV1 | null> {
+export async function loadPublicBundleV1(publicId: string): Promise<PublicProofBundleV1 | null> {
   const share = await publicProofRuntime.shares().getLiveShare(publicId);
   if (!share) return null;
   return bundleForShareV1(

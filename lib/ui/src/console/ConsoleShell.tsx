@@ -356,6 +356,7 @@ export function ConsoleShell(props: ConsoleShellProps) {
             Block <span className="v mono">{footer.blockNumber ?? '—'}</span>
           </span>
           <span className="sp" />
+          <a className="metriclink" href="/metrics">Public metrics</a>
         </footer>
       </div>
     </>

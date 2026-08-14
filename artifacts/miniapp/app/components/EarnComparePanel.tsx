@@ -19,7 +19,7 @@ const EARN_EXAMPLES = [
   "Размести 500 USDC под доходность.",
 ];
 
-export function EarnComparePanel() {
+export function EarnComparePanel({ builderCode }: { builderCode?: string }) {
   const { address } = useAccount();
   const [message, setMessage] = useState("");
   const earn = useEarnCompare();
@@ -101,7 +101,7 @@ export function EarnComparePanel() {
         )}
         {result?.outcome === "compared" && (
           result.routeRunId ? (
-            <EarnDepositFlow routeRunId={result.routeRunId} routeCard={result.routeCard} onRefresh={() => submit()} />
+            <EarnDepositFlow routeRunId={result.routeRunId} routeCard={result.routeCard} builderCode={builderCode} onRefresh={() => submit()} />
           ) : (
             <EarnRouteCardView view={deriveEarnRouteCardViewV1(result.routeCard)} onRefresh={() => submit()} />
           )

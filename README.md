@@ -21,6 +21,7 @@ The governing rule is simple:
 - Live web console: [miorail.xyz](https://miorail.xyz)
 - Base App: [ritual-familiars-94-141-161-182.sslip.io](https://ritual-familiars-94-141-161-182.sslip.io)
 - Public read-only MCP: `https://miorail.xyz/mcp`
+- Public product metrics: [miorail.xyz/metrics](https://miorail.xyz/metrics)
 - Product direction: [MIORAIL_VISION.md](docs/MIORAIL_VISION.md)
 - Capability truth: [PLUGIN_REGISTRY.md](docs/PLUGIN_REGISTRY.md)
 - Production acceptance: [PRODUCTION_UI_VERIFICATION.md](docs/PRODUCTION_UI_VERIFICATION.md)
@@ -58,6 +59,7 @@ capability state cannot silently diverge between clients.
 | **Activity** | `/plan/history` | Route runs and proofs, Base MCP Action Receipts, and intelligence/x402 charge history. |
 | **Base MCP Extensions** | `/extensions` | Live Base MCP reads, capability truth, deterministic Routes handoff, and released typed direct actions. |
 | **Settings** | `/settings` | Intelligence Budget, payments, adapter health, providers, and network state. |
+| **Public Metrics** | `/metrics` | Sessionless Base telemetry with exact definitions, privacy suppression, caveats, and a deterministic snapshot hash. |
 
 ## Capability truth
 
@@ -82,6 +84,7 @@ enabling a flag never promotes a provider above its registry stage.
 | OpenSea, Venice | `documented` | Planned NFT and Private AI route families. Their flags or partial contracts do not make them selectable providers. |
 | Base MCP canonical USDC send | `proven` Extensions action | Exact amount/recipient policy, explicit approval, and exact onchain `Transfer` reconciliation produce an Action Receipt, not a Route Proof. |
 | Base MCP explicit x402 GET | `adapter` Extensions action | Reviewed HTTPS hosts, canonical USDC ceiling, wallet binding, explicit approval, idempotency, and response hash exist. Independent onchain settlement reconciliation is still missing. |
+| Miorail x402 Intelligence Seller | `adapter`, default-off | External agents can pay exactly `0.001 USDC` for observation-bound B20 exit analysis, B20 liquidity evidence, or independent verification of an owner-published Route Proof. No endpoint prepares wallet calls. A real settled-and-delivered production acceptance is still required. |
 | Avantis | `manifested` Extensions / Perps | Read and intent parsing plus an official provider-UI handoff. Miorail does not invent perps calldata. |
 | Printr, GMGN, Brickken, Flaunch, Clawnch, Virtuals, Bankr | `documented` | Visible in the Extensions catalogue with example prompts; no runtime write capability is implied. |
 
@@ -187,6 +190,24 @@ the B20 sequential exit simulation at `0.0002 USDC`. Disabling a paid surface
 must never remove a mandatory Safety Kernel check. Reservations, charges, and
 reconciliation are persisted through the Intelligence Budget ledger.
 
+Miorail also implements the reverse, agent-facing side behind the default-off
+`MIORAIL_X402_SELLER_INTELLIGENCE_V1` gate:
+
+```text
+external agent
+  → x402 payment: exactly 0.001 USDC on Base
+  → Miorail stored intelligence / published proof verification
+  → versioned response + request hash + deterministic data hash
+```
+
+The free catalog is at `/api/x402/intelligence/v1/catalog`. Paid resources are
+limited to B20 exit analysis, B20 liquidity evidence, and enhanced verification
+of an already owner-published Route Proof. Invalid input and missing evidence
+are rejected before payment middleware; paid B20 evidence is bound to the exact
+stored observation and never interpolates capacity. Seller settlement and
+delivery are separate persisted states, and only delivered data hashes appear
+in public sold-intelligence metrics.
+
 ## Execution boundary
 
 - Miorail never stores a user private key, signs for the user, or broadcasts a
@@ -202,6 +223,12 @@ reconciliation are persisted through the Intelligence Budget ledger.
 - Receipt success alone is insufficient. Route Proof reconciles actual asset or
   position changes and gas; missing facts remain pending or require manual
   reconciliation.
+- Native Base ETH swap legs are reconstructed only from canonical WETH9
+  `Deposit`/`Withdrawal` events emitted for an exact approved router target;
+  Miorail never guesses native value from a receipt or RPC balance delta.
+- Every production `wallet_sendCalls` surface receives the same optional
+  ERC-8021 Builder Code suffix at build time. Attribution never changes the
+  server-approved calls and never blocks a wallet lacking suffix support.
 - RPC URLs, keys, approval URLs, paid response bodies, and delivery secrets do
   not enter public evidence, hashes, logs, or rendered traces.
 
@@ -243,6 +270,7 @@ This is a pnpm monorepo. The product name is Miorail; the repository name
 | `lib/mcp`, `lib/tools` | Base MCP transport, classification, and constrained tool execution. |
 | `lib/x402-gateway`, `lib/paid-intelligence`, `lib/intelligence-budget` | Paid evidence, reservations, charging, and reconciliation. |
 | `lib/ui`, `lib/api-zod`, `lib/api-client-react` | Shared web/Base App UI and runtime-validated API contracts. |
+| `contracts/legacy` | Historical custom Sepolia Spend Permission experiment; excluded from normal Foundry source/deploy/test paths. Production uses the official Base Account Spend Permission flow. |
 
 ## Development
 
@@ -294,6 +322,11 @@ Run `ops/deploy.sh` as root on the host. Its seven gates:
 6. restart and verify all services;
 7. compare built/served assets and smoke-test Base App plus public MCP.
 
+The build step injects only the public `BASE_BUILDER_CODE` into Vite and Next.
+It never sources the server `.env`, and refuses a missing, malformed, or
+conflicting code so production bundles cannot silently lose ERC-8021
+attribution.
+
 Production services:
 
 ```text
@@ -315,6 +348,8 @@ The project is functional but not broadly production-hardened. Current gates:
 - complete owner-verified Moonwell, Morpho, and YO deposit/exit journeys after
   pinned-contract preflight;
 - finish independent onchain settlement reconciliation for Extensions x402;
+- run one explicitly approved seller acceptance for each x402 intelligence
+  resource before enabling the seller flag or calling it production-proven;
 - keep Base MCP signing, ETH/other ERC-20 sends, Base names, arbitrary calls,
   and provider-specific plugin writes unreleased until typed verticals exist;
 - reconcile Commerce rollout configuration with its `scored` registry stage;

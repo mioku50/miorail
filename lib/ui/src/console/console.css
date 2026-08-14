@@ -387,6 +387,8 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console footer .g { display: flex; align-items: center; gap: 7px; }
 .mio-console footer .v { color: var(--muted); }
 .mio-console footer .sp { flex: 1; }
+.mio-console footer .metriclink { color: var(--br-text); text-decoration: none; white-space: nowrap; }
+.mio-console footer .metriclink:hover { text-decoration: underline; }
 
 /* Mobile drawer for the left rail (<=900px). */
 .mio-console .drawerbtn { display: none; border: 0; background: var(--panel); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line);
@@ -440,6 +442,116 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   .mio-console main { padding: 14px 14px 24px; }
 }
 @media (prefers-reduced-motion: reduce) { .mio-console aside.left { transition: none; } }
+
+/* ========================================================================== */
+/* Public evidence ledger — /metrics                                          */
+/* ========================================================================== */
+
+.mio-metrics, .mio-metrics * { box-sizing: border-box; }
+.mio-metrics {
+  min-height: 100vh; padding: 0 clamp(18px,5vw,76px); overflow: hidden;
+  color: var(--ink); background:
+    radial-gradient(900px 520px at 88% 3%,rgba(169,139,255,.13),transparent 64%),
+    radial-gradient(760px 480px at 10% 17%,rgba(106,169,255,.12),transparent 66%),
+    var(--bg); font-family: var(--font); line-height: 1.5;
+}
+.mio-metrics::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; opacity: .32;
+  background-image: linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+  background-size: 72px 72px; mask-image: linear-gradient(to bottom,black,transparent 58%);
+}
+.mio-metrics > * { position: relative; z-index: 1; max-width: 1280px; margin-inline: auto; }
+.pm-header { height: 72px; display: flex; align-items: center; gap: 22px; border-bottom: 1px solid var(--line); }
+.pm-brand { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font-weight: 700; letter-spacing: -.02em; }
+.pm-logo { width: 29px; height: 29px; position: relative; border-radius: 8px; background: var(--grad); box-shadow: var(--btn-shadow); }
+.pm-logo i { position: absolute; display: block; background: var(--on-accent); border-radius: 1px; }
+.pm-logo i:nth-child(1), .pm-logo i:nth-child(2) { top: 7px; width: 2px; height: 15px; }
+.pm-logo i:nth-child(1) { left: 8px; } .pm-logo i:nth-child(2) { right: 8px; }
+.pm-logo i:nth-child(3), .pm-logo i:nth-child(4) { left: 8px; width: 13px; height: 2px; opacity: .55; }
+.pm-logo i:nth-child(3) { top: 11px; } .pm-logo i:nth-child(4) { top: 17px; }
+.pm-chain { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.pm-chain i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: var(--dot-glow); }
+.pm-open, .pm-state button { border: 1px solid var(--line2); border-radius: 999px; padding: 8px 14px; color: var(--ink); background: var(--panel); text-decoration: none; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.pm-open:hover, .pm-state button:hover { border-color: var(--blue); background: var(--panel2); }
+.pm-hero { padding: clamp(74px,10vw,136px) 0 clamp(58px,7vw,92px); }
+.pm-eyebrow { display: flex; align-items: center; gap: 9px; color: var(--faint); font-size: 11px; letter-spacing: .06em; }
+.pm-eyebrow span, .pm-kicker { font-weight: 700; color: var(--br-text); }
+.pm-eyebrow i { width: 34px; height: 1px; background: var(--accent-line); }
+.pm-hero h1 { margin: 20px 0 24px; max-width: 1050px; font-size: clamp(44px,7.4vw,104px); line-height: .96; letter-spacing: -.065em; font-weight: 600; }
+.pm-hero h1 em { font-style: normal; color: transparent; background: var(--hero-text); background-clip: text; -webkit-background-clip: text; filter: var(--hero-drop); }
+.pm-hero > p { max-width: 700px; margin: 0; color: var(--muted); font-size: clamp(15px,1.6vw,19px); }
+.pm-lifecycle { position: relative; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 14px; padding-bottom: 86px; }
+.pm-rail { position: absolute; z-index: 0; left: 8%; right: 8%; top: 31px; height: 1px; background: linear-gradient(90deg,var(--line2),var(--blue),var(--violet),var(--green)); }
+.pm-node { position: relative; z-index: 1; min-height: 190px; padding: 21px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb,var(--bg) 74%,transparent); box-shadow: var(--shadow-card); backdrop-filter: blur(15px); }
+.pm-node::before { content: ""; position: absolute; top: 25px; right: 22px; width: 12px; height: 12px; border: 3px solid var(--bg); border-radius: 50%; background: var(--faint); box-shadow: 0 0 0 1px var(--line2); }
+.pm-node-blue::before { background: var(--blue); } .pm-node-violet::before { background: var(--violet); } .pm-node-green::before { background: var(--green); }
+.pm-node-step { color: var(--faint); font-size: 11px; }
+.pm-node p { margin: 31px 0 3px; color: var(--muted); font-size: 13px; }
+.pm-node strong { display: block; font-size: clamp(30px,3.2vw,47px); line-height: 1.05; letter-spacing: -.05em; }
+.pm-node small { display: block; margin-top: 9px; color: var(--faint); font-size: 11px; }
+.pm-proof-band { display: grid; grid-template-columns: minmax(0,1fr) 1px minmax(0,1fr); gap: clamp(26px,6vw,80px); align-items: center; margin-bottom: 96px; padding: clamp(28px,4vw,52px); border: 1px solid var(--hero-line); border-radius: 18px; background: var(--hero-bg); box-shadow: var(--hero-shadow); }
+.pm-proof-band span, .pm-x402-flow span { display: block; color: var(--muted); font-size: 12px; }
+.pm-proof-band strong { display: block; margin: 4px 0; font-size: clamp(34px,4.8vw,68px); line-height: 1; letter-spacing: -.055em; }
+.pm-proof-band small { color: var(--faint); }
+.pm-divider { height: 90px; width: 1px; background: var(--line2); }
+/* The two halves of the proof band, and the copy column beside the x402 flow.
+   Their children are already typeset by the `.pm-proof-band span/strong/small`
+   and `.pm-exchange h2` rules above, so these carry only the flow the grid
+   needs — but a class with no rule at all is how a panel ships unstyled and
+   nobody notices, which is what `every console class has a stylesheet rule`
+   exists to catch. `min-width: 0` so a long number cannot widen its column. */
+.pm-rate, .pm-wallets, .pm-exchange-copy { min-width: 0; }
+.pm-exchange-copy p { margin: 0; color: var(--muted); font-size: 14px; }
+.pm-exchange { display: grid; grid-template-columns: minmax(260px,.72fr) minmax(0,1.28fr); gap: clamp(40px,8vw,110px); align-items: center; padding: 78px 0 96px; border-top: 1px solid var(--line); }
+.pm-exchange h2, .pm-method h2 { margin: 12px 0 17px; font-size: clamp(30px,4vw,54px); line-height: 1.04; letter-spacing: -.045em; }
+.pm-exchange p { color: var(--muted); max-width: 440px; }
+.pm-x402-flow { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr); align-items: stretch; gap: 10px; }
+.pm-x402-flow > div { min-width: 0; padding: 23px 17px; border-radius: 13px; background: var(--panel); border: 1px solid var(--line); }
+.pm-x402-flow > div.sell { border-color: var(--g-line); background: var(--g-bg); }
+.pm-x402-flow strong { display: block; margin-top: 18px; font-size: clamp(22px,2.2vw,32px); letter-spacing: -.04em; overflow-wrap: anywhere; }
+.pm-x402-flow > b { align-self: center; color: var(--faint); font-weight: 400; }
+.pm-method { display: grid; grid-template-columns: minmax(260px,.75fr) minmax(0,1.25fr); gap: clamp(40px,8vw,110px); padding: 92px 0; border-top: 1px solid var(--line); }
+.pm-definitions details { border-bottom: 1px solid var(--line); }
+.pm-definitions summary { padding: 13px 3px; cursor: pointer; color: var(--muted); font-size: 13px; text-transform: capitalize; }
+.pm-definitions summary:hover { color: var(--ink); }
+.pm-definitions p { margin: -3px 3px 15px; color: var(--faint); font-size: 12px; }
+.pm-integrity { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; padding: 18px; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); }
+.pm-integrity div { min-width: 0; }
+.pm-integrity span { display: block; margin-bottom: 5px; color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+.pm-integrity code { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.pm-caveats { display: grid; grid-template-columns: 130px minmax(0,1fr); gap: 24px; padding: 28px 4px 72px; color: var(--faint); font-size: 11px; }
+.pm-caveats > span { color: var(--muted); font-weight: 600; }
+.pm-caveats ul { margin: 0; padding-left: 16px; }
+.pm-caveats li + li { margin-top: 5px; }
+.pm-footer { display: flex; justify-content: space-between; gap: 20px; padding: 23px 0 34px; border-top: 1px solid var(--line); color: var(--faint); font-size: 12px; }
+.pm-footer a { color: var(--br-text); }
+.pm-state { display: grid; place-content: center; gap: 16px; text-align: center; color: var(--muted); }
+.pm-pulse { width: 30px; height: 30px; margin: auto; border: 2px solid var(--line2); border-top-color: var(--blue); border-radius: 50%; animation: pm-spin 1s linear infinite; }
+@keyframes pm-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 900px) {
+  .pm-lifecycle { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .pm-rail { display: none; }
+  .pm-exchange, .pm-method { grid-template-columns: minmax(0,1fr); }
+  .pm-x402-flow { grid-template-columns: minmax(0,1fr); }
+  .pm-x402-flow > b { transform: rotate(90deg); justify-self: center; }
+}
+@media (max-width: 580px) {
+  .mio-metrics { padding-inline: 15px; }
+  .pm-header { height: 62px; }
+  .pm-chain { display: none; }
+  .pm-open { margin-left: auto; }
+  .pm-hero { padding-top: 64px; }
+  .pm-hero h1 { font-size: clamp(42px,15vw,66px); }
+  .pm-lifecycle { grid-template-columns: minmax(0,1fr); padding-bottom: 62px; }
+  .pm-node { min-height: 152px; }
+  .pm-node p { margin-top: 18px; }
+  .pm-proof-band { grid-template-columns: minmax(0,1fr); gap: 26px; }
+  .pm-divider { width: 100%; height: 1px; }
+  .pm-integrity { grid-template-columns: minmax(0,1fr); }
+  .pm-caveats { grid-template-columns: minmax(0,1fr); gap: 8px; }
+}
+@media (prefers-reduced-motion: reduce) { .pm-pulse { animation: none; } }
 
 /* ---------------------------------------------------------------------------
    Miniapp: centre column + status bar only. The left rail is a drawer, the

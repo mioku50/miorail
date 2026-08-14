@@ -262,8 +262,9 @@ export const x402Receipts = pgTable(
   'x402_receipts',
   {
     id: text('id').primaryKey(),
-    // Null is reserved for global seller-smoke diagnostics. Product buyer
-    // receipts always carry the authenticated tenant id.
+    // Null is reserved for global seller receipts and seller-smoke
+    // diagnostics. Product buyer receipts always carry the authenticated
+    // tenant id.
     userId: text('user_id').references(() => users.id),
     receipt: jsonb('receipt'),
     createdAt: timestamp('created_at').defaultNow().notNull(),

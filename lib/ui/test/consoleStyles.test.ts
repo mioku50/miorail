@@ -32,10 +32,25 @@ const defined = new Set(css.match(/\.[A-Za-z][A-Za-z0-9_-]*/g)?.map((selector) =
  */
 const EXTERNAL_V1 = new Set(['mio-console', 'mini']);
 
+/**
+ * Components styled by console.css but living OUTSIDE src/console.
+ *
+ * The guard scanned one directory, and `PublicMetricsDashboard.tsx` — a public
+ * page, styled entirely by this stylesheet — sits a level above it. Three of
+ * its classes had no rule and the guard could not see them. Anything that
+ * imports this stylesheet's vocabulary belongs in the sweep, wherever it lives.
+ */
+const EXTERNAL_CONSUMERS_V1 = ['PublicMetricsDashboard.tsx'];
+
 function consoleSources(): { file: string; source: string }[] {
-  return readdirSync(consoleDir)
+  const inConsole = readdirSync(consoleDir)
     .filter((name) => name.endsWith('.tsx'))
     .map((name) => ({ file: name, source: readFileSync(path.join(consoleDir, name), 'utf8') }));
+  const outside = EXTERNAL_CONSUMERS_V1.map((name) => ({
+    file: name,
+    source: readFileSync(path.join(consoleDir, '..', name), 'utf8'),
+  }));
+  return [...inConsole, ...outside];
 }
 
 /** Static class tokens in a file. Interpolations are blanked out first, so
@@ -50,12 +65,27 @@ function classTokens(source: string): string[] {
   return tokens;
 }
 
+/**
+ * `pm-node-${tone}` leaves the prefix `pm-node-` once the interpolation is
+ * blanked. That is not a class, so it can never match a rule by name — but
+ * exempting it outright would leave every variant unchecked. A prefix is
+ * satisfied when the stylesheet defines at least one class that starts with it,
+ * which is exactly the claim the component is making.
+ */
+function prefixIsStyledV1(token: string): boolean {
+  if (!token.endsWith('-')) return false;
+  for (const name of defined) {
+    if (name.length > token.length && name.startsWith(token)) return true;
+  }
+  return false;
+}
+
 describe('every console class has a stylesheet rule', () => {
   test('no panel invents a class vocabulary nobody styled', () => {
     const orphans: string[] = [];
     for (const { file, source } of consoleSources()) {
       for (const token of new Set(classTokens(source))) {
-        if (defined.has(token) || EXTERNAL_V1.has(token)) continue;
+        if (defined.has(token) || EXTERNAL_V1.has(token) || prefixIsStyledV1(token)) continue;
         orphans.push(`${file}: .${token}`);
       }
     }

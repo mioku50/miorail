@@ -172,9 +172,10 @@ describe('POST /api/route-intelligence/earn/compare', () => {
     assert.equal(response.body.outcome, 'compared');
     assert.equal(response.body.routeRunId, 'earn-run-t62-fixture');
     assert.equal(response.body.routeCard.optimizationMode, 'best_net_yield');
-    assert.equal(response.body.routeCard.comparisons.length, 2);
-    // best_net_yield ranks Morpho (net 7.10%) above Moonwell (net 5.80%) and can
-    // recommend it — safety stays Not scored but net_yield/liquidity carry it.
+    assert.equal(response.body.routeCard.comparisons.length, 3);
+    // best_net_yield compares the complete curated set (Moonwell, Morpho and
+    // YO) and may recommend the best measured candidate — safety stays Not
+    // scored while net_yield/liquidity carry the deterministic comparison.
     assert.notEqual(response.body.routeCard.recommendedCandidateHash, null);
     const serialized = JSON.stringify(response.body);
     assert.equal(/calldata|walletCalls|send_calls|x402|executionBlueprint/i.test(serialized), false);
@@ -266,10 +267,10 @@ describe('POST /api/route-intelligence/earn/compare', () => {
     const response = await request(routeApp()).post('/api/route-intelligence/earn/compare').send(BODY);
     assert.equal(response.status, 200);
     assert.equal(response.body.outcome, 'compared');
-    assert.equal(response.body.routeCard.comparisons.length, 2);
+    assert.equal(response.body.routeCard.comparisons.length, 3);
     const protocols = response.body.routeCard.comparisons
       .map((c: { candidate: { protocol: string } }) => c.candidate.protocol)
       .sort();
-    assert.deepEqual(protocols, ['moonwell', 'morpho']);
+    assert.deepEqual(protocols, ['moonwell', 'morpho', 'yo']);
   });
 });
