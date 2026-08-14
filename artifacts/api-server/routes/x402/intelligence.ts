@@ -40,6 +40,16 @@ interface SellerRequestContextV1 {
   service: X402IntelligenceServiceV1;
   requestHash: string;
   receiptId: string | null;
+  /**
+   * The delivered response hash, recorded the moment the handler produces it.
+   *
+   * Settlement runs on the resource server's `onAfterSettle` hook, which fires
+   * AFTER the response has been produced — so the handler always reaches
+   * delivery first, when no receipt row exists yet. Keeping the hash on the
+   * request context is what makes the two facts order-independent: whichever
+   * of the two runs second writes both.
+   */
+  delivery: { dataHash: string; deliveredAt: string } | null;
 }
 
 interface B20EvidenceV1 {
@@ -71,6 +81,34 @@ function receiptIdV1(record: X402SettlementRecord): string {
     : `x402:seller:${randomUUID()}`;
 }
 
+/**
+ * The `details` of a seller receipt.
+ *
+ * Settlement and delivery are two independently persisted facts, and "sold"
+ * means both. Which of the two is written first is NOT stable — settlement
+ * arrives on `onAfterSettle`, i.e. after the response — so this takes the
+ * delivery as an argument and carries it whenever it is already known. Pure,
+ * so the joint state is testable without a database.
+ */
+export function sellerReceiptDetailsV1(input: {
+  base: Record<string, unknown>;
+  service: X402IntelligenceServiceV1;
+  requestHash: string;
+  paymentStatus: string;
+  delivery: { dataHash: string; deliveredAt: string } | null;
+}): Record<string, unknown> {
+  return {
+    ...input.base,
+    service: input.service,
+    requestHash: input.requestHash,
+    paymentStatus: input.paymentStatus,
+    deliveryStatus: input.delivery ? 'delivered' : 'pending',
+    ...(input.delivery
+      ? { dataHash: input.delivery.dataHash, deliveredAt: input.delivery.deliveredAt }
+      : {}),
+  };
+}
+
 async function persistSellerSettlementV1(record: X402SettlementRecord, enabled: boolean): Promise<void> {
   if (!enabled) return;
   const context = requestContext.getStore();
@@ -83,13 +121,13 @@ async function persistSellerSettlementV1(record: X402SettlementRecord, enabled: 
     direction: 'incoming_seller_payment',
     category: 'seller_intelligence',
     service: context.service,
-    details: {
-      ...(record.details ?? {}),
+    details: sellerReceiptDetailsV1({
+      base: record.details ?? {},
       service: context.service,
       requestHash: context.requestHash,
       paymentStatus: record.status,
-      deliveryStatus: 'pending',
-    },
+      delivery: context.delivery,
+    }),
   };
   await db
     .insert(x402Receipts)
@@ -103,7 +141,14 @@ async function persistSellerSettlementV1(record: X402SettlementRecord, enabled: 
 async function markSellerDeliveryV1(dataHash: string, enabled: boolean): Promise<void> {
   if (!enabled) return;
   const context = requestContext.getStore();
-  if (!context?.receiptId) return;
+  if (!context) return;
+  // Record the delivery on the context FIRST, unconditionally. On the real
+  // ordering there is no receipt row yet, and the previous version returned
+  // here — so a settled, delivered sale stayed `deliveryStatus: pending` with
+  // no dataHash forever, and `x402IntelligenceSold` (which counts only when
+  // both facts exist) reported 0 through a genuine sale.
+  context.delivery = { dataHash, deliveredAt: new Date().toISOString() };
+  if (!context.receiptId) return;
   const rows = await db.select().from(x402Receipts).where(eq(x402Receipts.id, context.receiptId)).limit(1);
   const existing = rows[0]?.receipt && typeof rows[0].receipt === 'object'
     ? rows[0].receipt as Record<string, unknown>
@@ -119,7 +164,7 @@ async function markSellerDeliveryV1(dataHash: string, enabled: boolean): Promise
         ...details,
         deliveryStatus: 'delivered',
         dataHash,
-        deliveredAt: new Date().toISOString(),
+        deliveredAt: context.delivery.deliveredAt,
       },
     },
     updatedAt: new Date(),
@@ -350,7 +395,10 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
     return [
       (req: Request, res: Response, next: NextFunction) => {
         const requestHash = String(res.locals.x402IntelligenceRequestHash ?? '');
-        requestContext.run({ service, requestHash, receiptId: null }, () => gateway(req, res, next));
+        requestContext.run(
+          { service, requestHash, receiptId: null, delivery: null },
+          () => gateway(req, res, next),
+        );
       },
     ];
   }
