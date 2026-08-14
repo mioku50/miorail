@@ -6,6 +6,14 @@
 //   wallet_sendCalls → submission record) → Route Proof status.
 // The client NEVER supplies calldata, and it reuses the ONE
 // BlueprintSubmitButton / useSubmitApprovedBlueprint wallet implementation.
+//
+// Styling: console.css classes, NOT Tailwind. Neither the web nor the Base App
+// build generates Tailwind utilities for `lib/*` sources — the compiled
+// interface stylesheet holds no `.rounded-2xl` and no `.grid-cols-2` at all —
+// so the review panel shipped with no card, no padding, no grid and no label
+// sizing on both surfaces. Everything below reuses the same `.panel` / `.ph` /
+// `.pb` / `.kv` / `.note` vocabulary every other console panel is built from,
+// and consoleStyles.test.ts now sweeps this file so it cannot drift back.
 
 import { useState } from 'react';
 import { useAccount } from 'wagmi';
@@ -56,48 +64,49 @@ function EarnDepositReview({ prepared }: { prepared: PreparedEarn }) {
   const expiryLabel = Number.isFinite(expiryMs) ? new Date(expiryMs).toLocaleString() : blueprint.quoteExpiry;
 
   return (
-    <section className="mt-4 rounded-2xl border border-line bg-panel p-5" aria-label="Earn deposit review" data-earn-review="prepared">
-      <div className="flex items-center justify-between">
-        <h3 className="font-display text-lg font-semibold text-ink">Review deposit</h3>
-        <span
-          className={`rounded-full px-3 py-1 font-mono text-[10px] uppercase tracking-[0.14em] ${
-            prepared.safety.verdict === 'allowed' ? 'bg-accent-soft text-accent-2' : 'bg-warn-soft text-warn'
-          }`}
-        >
-          Safety: {prepared.safety.verdict}
+    <div className="panel" aria-label="Earn deposit review" data-earn-review="prepared">
+      <div className="ph">
+        <h3>Review deposit</h3>
+        <span className="rt">
+          <span className={`pill ${prepared.safety.verdict === 'allowed' ? 'g' : 'a'}`}>
+            Safety: {prepared.safety.verdict}
+          </span>
         </span>
       </div>
-      <p className="mt-1 text-xs text-ink-3">
-        The server prepared these exact calls — nothing is signed until you confirm in your Base Account.
-      </p>
-
-      <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-        <div>
-          <dt className="text-[11px] uppercase tracking-[0.14em] text-ink-3">Quote expiry</dt>
-          <dd className="mt-1 font-mono text-ink">{expiryLabel}</dd>
+      <div className="pb">
+        <p className="eyebrow">
+          The server prepared these exact calls — nothing is signed until you confirm in your Base Account.
+        </p>
+        <div className="kv">
+          <span className="k">Quote expiry</span>
+          <span className="v mono">{expiryLabel}</span>
         </div>
         {approval && (
-          <div>
-            <dt className="text-[11px] uppercase tracking-[0.14em] text-ink-3">Exact approval</dt>
-            <dd className="mt-1 font-mono text-ink">
-              {formatEarnAmountForDisplayV1(approval.amountAtomic, approval.asset.decimals)} {approval.asset.symbol}
-              <span className="ml-1 text-[11px] text-ink-3">({approval.approvalKind})</span>
-            </dd>
-            <dd className="mt-0.5 font-mono text-[11px] text-ink-3">→ {shortAddress(approval.spender)}</dd>
-          </div>
+          <>
+            <div className="kv">
+              <span className="k">Exact approval ({approval.approvalKind})</span>
+              <span className="v mono">
+                {formatEarnAmountForDisplayV1(approval.amountAtomic, approval.asset.decimals)} {approval.asset.symbol}
+              </span>
+            </div>
+            <div className="kv">
+              <span className="k">Approved spender</span>
+              <span className="v mono">{shortAddress(approval.spender)}</span>
+            </div>
+          </>
         )}
         {depositCall && (
-          <div>
-            <dt className="text-[11px] uppercase tracking-[0.14em] text-ink-3">Protocol contract</dt>
-            <dd className="mt-1 font-mono text-ink">{shortAddress(depositCall.to)}</dd>
+          <div className="kv">
+            <span className="k">Protocol contract</span>
+            <span className="v mono">{shortAddress(depositCall.to)}</span>
           </div>
         )}
-        <div>
-          <dt className="text-[11px] uppercase tracking-[0.14em] text-ink-3">Calls</dt>
-          <dd className="mt-1 font-mono text-ink">{blueprint.calls.map((call) => call.callType).join(' + ')}</dd>
+        <div className="kv">
+          <span className="k">Calls</span>
+          <span className="v mono">{blueprint.calls.map((call) => call.callType).join(' + ')}</span>
         </div>
-      </dl>
-    </section>
+      </div>
+    </div>
   );
 }
 
@@ -134,11 +143,20 @@ export function earnProofStatusMessageV1(state: EarnProofState): string {
 function EarnProofStatus({ state }: { state: EarnProofState }) {
   const finalized = state.recordedFinalStatus;
   return (
-    <div className="mt-3 rounded-xl border border-line bg-bg/50 p-4 text-sm" aria-live="polite" data-earn-proof-status={finalized ?? state.status}>
-      <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink-3">Route Proof</p>
-      <p className="mt-1 text-ink">{earnProofStatusMessageV1(state)}</p>
-      {state.proofId && <p className="mt-1 font-mono text-[11px] text-ink-3">Proof: {state.proofId}</p>}
-      {state.error && <p className="mt-1 text-xs text-warn">{state.error}</p>}
+    <div className="panel" aria-live="polite" data-earn-proof-status={finalized ?? state.status}>
+      <div className="ph">
+        <h3>Route Proof</h3>
+      </div>
+      <div className="pb">
+        <p className="note">{earnProofStatusMessageV1(state)}</p>
+        {state.proofId && (
+          <div className="kv">
+            <span className="k">Proof</span>
+            <span className="v mono">{state.proofId}</span>
+          </div>
+        )}
+        {state.error && <p className="note warn">{state.error}</p>}
+      </div>
     </div>
   );
 }
@@ -190,17 +208,17 @@ export function EarnDepositFlow({ routeRunId, routeCard, builderCode, onRefresh 
       />
 
       {prepare.isError && (
-        <p className="mt-3 text-sm text-warn" role="alert">
+        <p className="note warn" role="alert">
           The deposit could not be prepared: {prepare.error?.message}
         </p>
       )}
       {refreshRequired && (
-        <p className="mt-3 text-sm text-warn" role="alert" data-earn-review="refresh_required">
+        <p className="note warn" role="alert" data-earn-review="refresh_required">
           This comparison is stale — refresh the earn routes and select again.
         </p>
       )}
       {prepare.data?.outcome === 'blocked' && (
-        <p className="mt-3 text-sm text-warn" role="alert" data-earn-review="blocked">
+        <p className="note warn" role="alert" data-earn-review="blocked">
           Blocked by the Earn Safety Kernel: {prepare.data.reason}
         </p>
       )}
@@ -208,8 +226,9 @@ export function EarnDepositFlow({ routeRunId, routeCard, builderCode, onRefresh 
       {prepared && (
         <>
           <EarnDepositReview prepared={prepared} />
-          <div className="mt-3">
+          <div className="card-actions">
             <BlueprintSubmitButton
+              className="btn lg"
               goal="earn"
               routeRunId={routeRunId}
               blueprintId={prepared.blueprint.id}

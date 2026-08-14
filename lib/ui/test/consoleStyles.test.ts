@@ -33,14 +33,27 @@ const defined = new Set(css.match(/\.[A-Za-z][A-Za-z0-9_-]*/g)?.map((selector) =
 const EXTERNAL_V1 = new Set(['mio-console', 'mini']);
 
 /**
- * Components styled by console.css but living OUTSIDE src/console.
+ * Components styled by console.css but living OUTSIDE src/console — paths
+ * relative to `lib/ui`, so another package's file can be named too.
  *
  * The guard scanned one directory, and `PublicMetricsDashboard.tsx` — a public
  * page, styled entirely by this stylesheet — sits a level above it. Three of
- * its classes had no rule and the guard could not see them. Anything that
- * imports this stylesheet's vocabulary belongs in the sweep, wherever it lives.
+ * its classes had no rule and the guard could not see them.
+ *
+ * The Earn surface was the same hole one package wider. `EarnRouteCard.tsx`
+ * and `wallet-actions/EarnDepositFlow.tsx` render on the web console and in
+ * Base App, and both were written entirely in Tailwind — which NO build
+ * generates for `lib/*` sources. The compiled interface stylesheet contains no
+ * `.rounded-2xl` and no `.grid-cols-2` at all, so every `<dl>` in the Earn
+ * Route Card collapsed into run-together words and "Review deposit" rendered
+ * as plain text. Anything styled by this stylesheet belongs in the sweep,
+ * wherever it lives.
  */
-const EXTERNAL_CONSUMERS_V1 = ['PublicMetricsDashboard.tsx'];
+const EXTERNAL_CONSUMERS_V1 = [
+  'src/PublicMetricsDashboard.tsx',
+  'src/EarnRouteCard.tsx',
+  '../wallet-actions/src/EarnDepositFlow.tsx',
+];
 
 function consoleSources(): { file: string; source: string }[] {
   const inConsole = readdirSync(consoleDir)
@@ -48,7 +61,7 @@ function consoleSources(): { file: string; source: string }[] {
     .map((name) => ({ file: name, source: readFileSync(path.join(consoleDir, name), 'utf8') }));
   const outside = EXTERNAL_CONSUMERS_V1.map((name) => ({
     file: name,
-    source: readFileSync(path.join(consoleDir, '..', name), 'utf8'),
+    source: readFileSync(path.join(here, '..', name), 'utf8'),
   }));
   return [...inConsole, ...outside];
 }
@@ -211,12 +224,7 @@ describe('the phone header cannot overlap or overflow', () => {
 // This checks the level it is used AT.
 // ---------------------------------------------------------------------------
 describe('.kv is used as a row, not as a wrapper around rows', () => {
-  const panels = readdirSync(new URL('../src/console/', import.meta.url))
-    .filter((file) => file.endsWith('.tsx'));
-
-  for (const file of panels) {
-    const source = readFileSync(new URL(`../src/console/${file}`, import.meta.url), 'utf8');
-
+  for (const { file, source } of consoleSources()) {
     test(`${file} puts no block element directly inside a .kv`, () => {
       // A `.kv` opened and then followed by a `<div` before it closes means the
       // row is being used as a list. Deliberately crude: it reads the JSX as
@@ -315,6 +323,21 @@ describe('a console control is styled by the console', () => {
         /className="btn/,
         'a BlueprintSubmitButton without a console class renders as plain text',
       );
+    }
+  });
+
+  test('the shared Earn flow submits through a styled button too', () => {
+    // The console screen passed `className="btn"` at its own call sites, but
+    // Earn submits from inside the shared flow — so the one control that opens
+    // the wallet for a deposit was reached by a path this guard never saw.
+    const flow = readFileSync(
+      new URL('../../wallet-actions/src/EarnDepositFlow.tsx', import.meta.url),
+      'utf8',
+    );
+    const uses = [...flow.matchAll(/<BlueprintSubmitButton([\s\S]{0,1500}?)\/>/g)];
+    assert.ok(uses.length > 0, 'the earn flow should still submit a blueprint');
+    for (const use of uses) {
+      assert.match(use[1]!, /className="btn/, 'the Earn deposit button renders as plain text');
     }
   });
 });

@@ -99,12 +99,21 @@ export function EarnComparePanel({ builderCode }: { builderCode?: string }) {
             <p className="mt-2 text-sm text-ink-2">{earnUnsupportedReasonLabelV1(result.reason)}</p>
           </div>
         )}
+        {/* The shared Earn components are styled by console.css, not by
+            Tailwind — no build generates Tailwind utilities for `lib/*`. This
+            page is not a console screen, so it applies the scope root itself;
+            bare `.mio-console` only sets surface, colour and type, and adds no
+            layout of its own. NOT `.mini` — that modifier is the full-screen
+            shell (`height: 100vh`, a three-row grid) and would take over the
+            page. */}
         {result?.outcome === "compared" && (
-          result.routeRunId ? (
-            <EarnDepositFlow routeRunId={result.routeRunId} routeCard={result.routeCard} builderCode={builderCode} onRefresh={() => submit()} />
-          ) : (
-            <EarnRouteCardView view={deriveEarnRouteCardViewV1(result.routeCard)} onRefresh={() => submit()} />
-          )
+          <div className="mio-console">
+            {result.routeRunId ? (
+              <EarnDepositFlow routeRunId={result.routeRunId} routeCard={result.routeCard} builderCode={builderCode} onRefresh={() => submit()} />
+            ) : (
+              <EarnRouteCardView view={deriveEarnRouteCardViewV1(result.routeCard)} onRefresh={() => submit()} />
+            )}
+          </div>
         )}
       </div>
     </section>

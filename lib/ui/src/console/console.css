@@ -439,6 +439,10 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   .mio-console .scorewrap, .mio-console .cols2, .mio-console .herostrip { grid-template-columns: minmax(0,1fr); }
   .mio-console .heroR { border-left: 0; border-top: 1px solid var(--hero-line); }
   .mio-console .limits, .mio-console .checks { grid-template-columns: minmax(0,1fr); }
+  /* Only `.mio-console.mini` narrowed its KPI grid, so a three-up row of
+     labelled numbers stayed three-up on a phone browser — which is where the
+     Earn candidate cards put liquidity, withdrawal and gas. */
+  .mio-console .kpis { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
   .mio-console main { padding: 14px 14px 24px; }
 }
 @media (prefers-reduced-motion: reduce) { .mio-console aside.left { transition: none; } }
