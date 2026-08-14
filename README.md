@@ -84,7 +84,7 @@ enabling a flag never promotes a provider above its registry stage.
 | OpenSea, Venice | `documented` | Planned NFT and Private AI route families. Their flags or partial contracts do not make them selectable providers. |
 | Base MCP canonical USDC send | `proven` Extensions action | Exact amount/recipient policy, explicit approval, and exact onchain `Transfer` reconciliation produce an Action Receipt, not a Route Proof. |
 | Base MCP explicit x402 GET | `adapter` Extensions action | Reviewed HTTPS hosts, canonical USDC ceiling, wallet binding, explicit approval, idempotency, and response hash exist. Independent onchain settlement reconciliation is still missing. |
-| Miorail x402 Intelligence Seller | `adapter`, default-off | External agents can pay exactly `0.001 USDC` for observation-bound B20 exit analysis, B20 liquidity evidence, or independent verification of an owner-published Route Proof. No endpoint prepares wallet calls. A real settled-and-delivered production acceptance is still required. |
+| Miorail x402 Intelligence Seller | `adapter`, live | External agents can pay exactly `0.001 USDC` for observation-bound B20 exit analysis, B20 liquidity evidence, or independent verification of an owner-published Route Proof. No endpoint prepares wallet calls. Enabled in production on 2026-08-15; a real settled-and-delivered purchase is still required before any resource is called production-proven. |
 | Avantis | `manifested` Extensions / Perps | Read and intent parsing plus an official provider-UI handoff. Miorail does not invent perps calldata. |
 | Printr, GMGN, Brickken, Flaunch, Clawnch, Virtuals, Bankr | `documented` | Visible in the Extensions catalogue with example prompts; no runtime write capability is implied. |
 
@@ -190,8 +190,9 @@ the B20 sequential exit simulation at `0.0002 USDC`. Disabling a paid surface
 must never remove a mandatory Safety Kernel check. Reservations, charges, and
 reconciliation are persisted through the Intelligence Budget ledger.
 
-Miorail also implements the reverse, agent-facing side behind the default-off
-`MIORAIL_X402_SELLER_INTELLIGENCE_V1` gate:
+Miorail also implements the reverse, agent-facing side. It is live in
+production behind `MIORAIL_X402_SELLER_INTELLIGENCE_V1`, which fails closed
+when unset and sells nothing until x402 settlement is actually ready:
 
 ```text
 external agent
@@ -348,8 +349,10 @@ The project is functional but not broadly production-hardened. Current gates:
 - complete owner-verified Moonwell, Morpho, and YO deposit/exit journeys after
   pinned-contract preflight;
 - finish independent onchain settlement reconciliation for Extensions x402;
-- run one explicitly approved seller acceptance for each x402 intelligence
-  resource before enabling the seller flag or calling it production-proven;
+- run one explicitly approved seller acceptance purchase for each x402
+  intelligence resource before calling it production-proven; the gate is open
+  and the preflight ordering is verified, but no external agent has settled
+  and been delivered a paid response yet;
 - keep Base MCP signing, ETH/other ERC-20 sends, Base names, arbitrary calls,
   and provider-specific plugin writes unreleased until typed verticals exist;
 - reconcile Commerce rollout configuration with its `scored` registry stage;
