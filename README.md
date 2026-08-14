@@ -1,204 +1,338 @@
 # Miorail
 
-> formerly MioAgent
+> **One intent. Multiple routes. One verified plan.**
 
-**One intent. Multiple routes. One verified plan.**
+Miorail is a self-hostable, non-custodial intent, route-intelligence, and
+execution-verification product for Base.
 
-Miorail is the intent, route-intelligence, and execution-verification layer for Base.
+A user describes an outcome in ordinary language. Miorail turns it into a
+typed intent, evaluates curated routes, preserves evidence and provenance,
+computes only the scores the evidence supports, prepares one reviewable plan,
+validates its exact calls, and leaves final approval to the user's Base
+Account. After execution, Miorail reconciles expected and actual results into a
+durable Route Proof.
 
-A user describes an outcome in ordinary language. Miorail turns it into a typed intent, evaluates approved execution routes, gathers the data needed to compare them honestly, normalizes the results, prepares one reviewable plan, validates the calls, and asks the user to approve the final action in their own Base Account.
+The governing rule is simple:
 
-The rule underneath all of it: **a measurement that did not happen is never reported as a result.** An empty rail says the rail is empty. A provider that did not answer is a provider that did not answer, not a zero, not a refusal, and not a finding about the token.
+> **No data — no score.** A measurement that did not happen is never rendered
+> as zero, success, safety, or a recommendation.
 
-> Network: Base mainnet (8453)
-> Execution model: non-custodial. Miorail never holds a key and never broadcasts.
-> Live: `https://miorail.xyz` — web console and Base App mini app
-> Product direction: [`docs/MIORAIL_VISION.md`](docs/MIORAIL_VISION.md)
-> Manual production acceptance: [`docs/PRODUCTION_UI_VERIFICATION.md`](docs/PRODUCTION_UI_VERIFICATION.md)
+- Network: Base mainnet (`8453`)
+- Live web console: [miorail.xyz](https://miorail.xyz)
+- Base App: [ritual-familiars-94-141-161-182.sslip.io](https://ritual-familiars-94-141-161-182.sslip.io)
+- Public read-only MCP: `https://miorail.xyz/mcp`
+- Product direction: [MIORAIL_VISION.md](docs/MIORAIL_VISION.md)
+- Capability truth: [PLUGIN_REGISTRY.md](docs/PLUGIN_REGISTRY.md)
+- Production acceptance: [PRODUCTION_UI_VERIFICATION.md](docs/PRODUCTION_UI_VERIFICATION.md)
 
----
-
-## What runs today
-
-Six surfaces, shared between the web console and the Base App mini app from one section table (`lib/ui/src/console/navigation.ts`), so the two cannot drift.
-
-| Surface | Path | State |
-| --- | --- | --- |
-| **Discover** | `/opportunities` | B20 launch feed. Two workers ingest and measure; the rail shows measured exits or says why it cannot. |
-| **B20** | `/portfolio` | B20 holdings, what their controls have done since, wallet balances, and the paid exit proof. |
-| **Routes** | `/routes` | The goal flow: intent → candidates → Route Card → review → Base Account. |
-| **Activity** | `/plan/history` | Route runs and proofs, Base MCP Action Receipts, and the x402 payment ledger. In the drawer, not the tab bar. |
-| **Extensions** | `/extensions` | Base MCP: published plugin reference, live `READ / ACTION / ROUTABLE` capability truth, scoped AI reads, deterministic route handoff, and typed direct actions. In the drawer. |
-| **Settings** | `/settings` | Budget & payments, adapters, providers, network. |
-
-### Route families
-
-`swap`, `earn`, `commerce`, `nft`, `private_ai` — each with its own intent, candidates, scoring, Route Card, review and proof shape, behind its own flag. They share the route-run lifecycle in `lib/route-storage`, not a generic "do anything" tool.
-
-### B20 Discover
-
-The largest thing in the repository that is actually running.
-
-```text
-launch events (Uniswap v4 shared hook)
-  → b20_launches                      [miorail-b20-discover]
-  → exit measurement, both legs against one state
-  → b20_opportunity_observations      [miorail-b20-measure]
-  → Discover rail
-```
-
-Two facts shape it. B20 tokens trade on **Uniswap v4**, in a pool created inside the launch's own ten-block window — measuring Aerodrome instead is why an early build rejected 99.7% of launches. And an observation the worker made in the background can never be `qualified`; only a measurement someone asked for can make an affirmative claim.
-
-The rail distinguishes *rejected*, *provisional*, *unmeasured* and *endpoint unavailable*, and it will show an empty rail rather than soften the rule that produced it.
-
-### Base MCP Extensions
-
-- **Plugins** — 20 specifications Base publishes. Miorail keeps a committed catalogue generated from their frontmatter (`scripts/refreshBaseMcpPluginCatalogue.mts`), including each spec's own `requires.allowlist`, which is the host boundary. A live check compares plugin *names* against what Base publishes and reports drift; a name cannot widen an allowlist.
-- **Tools** — the calls `mcp.base.org` exposes, read live and classified `read_only` / `user_confirmed_transaction` / `forbidden` / `unknown`. **`unknown` is treated as forbidden.** Two of them — `chain_rpc_request` and `web_request` — carry their capability in an argument rather than in their name, so a per-call guard (`baseMcpReadOnlyArgumentGuardV1`) decides: read JSON-RPC methods only, GET only. Base enforces the same boundary upstream; Miorail does not rely on that.
-
-The product classifier then assigns each live core tool to `READ`, `ACTION`,
-`ROUTABLE`, or blocked. That label does not grant execution. Reads run inside
-an AI thread whose entire inventory is Base MCP and whose trace remains part of
-the answer. Swap/yield intent is intercepted deterministically and handed to
-Routes AI before any Base MCP write can run. An ACTION becomes callable only
-when a typed vertical owns its input policy, approval lifecycle, idempotency,
-storage, and reconciliation.
-
-Canonical Base USDC send is the first such vertical. It accepts an exact amount
-and `0x` recipient, enforces the server amount ceiling and safety policy, proves
-that the Base MCP OAuth wallet matches the Miorail tenant wallet, returns the
-ephemeral Base Account approval link, and stores a durable Action Receipt. A
-provider `completed` status is not enough: Miorail marks it complete only after
-matching the exact USDC `Transfer(from,to,amount)` in a server-read Base receipt.
-The result is explicitly not a Route Proof.
-
-Explicit x402 GET is the second typed action vertical. The user must name an
-exact public HTTPS resource and a USDC maximum, the host must be in the
-reviewed provider allowlist, and the server ceiling still applies. Miorail
-persists the action facts before calling Base MCP, keeps the approval URL and
-bounded response body ephemeral, and stores only a stable response hash. It is
-currently `adapter`, not `proven`: provider completion proves that the paid
-resource was returned, but this vertical does not yet independently reconcile
-an onchain settlement receipt.
-
-### Paid intelligence (x402)
-
-Two priced surfaces, named separately so switching one on can never silently start charging for the other. Both default off.
-
-| Surface | Flag | Production |
-| --- | --- | --- |
-| Swap simulation | `MIORAIL_PAID_SWAP_SIMULATION_V1` | off — the same comparison is free in any wallet, and a fork simulation is a *safety* step |
-| B20 exit proof | `MIORAIL_PAID_B20_SIMULATION_V1` | on, `0.0002` USDC |
-
-The exit proof is the one answer no other tool on Base gives: whether a B20 position can be exited, at what size, proven by a sequential simulation of both legs against a single state. Turning a paid surface off never removes a safety check.
-
-A bounded **Base Spend Permission** funds these calls. It does not grant Miorail permission to move portfolio assets.
-
----
-
-## Execution boundary
-
-This is the part that is not negotiable, and most of the codebase's comments exist to defend it.
-
-- Miorail never stores a user private key and never signs a raw transaction.
-- For routes, the server prepares exact calls and **only the client opens the wallet**, through the single `useSubmitApprovedBlueprint` path. Base MCP `swap` cannot enter the Extensions action path.
-- For a non-routable Extensions action, a deterministic typed adapter may call one exact allowlisted Base MCP tool. Base MCP returns an approval URL; the user reviews and approves in Base Account. Arbitrary `send_calls`, live-discovered writes, and documentation-only plugins are never executable by discovery.
-- Direct actions persist immutable intent facts and a provider request ID before continuing. Approval URLs are ephemeral. Completion requires server-read onchain facts and produces an Action Receipt, never a Route Proof.
-- Blueprint hashes are bound to what was reviewed. The client does not supply calldata, router, recipient, deadline or minimum output.
-- RPC URLs, API keys and provider credentials never reach evidence, hashes, logs or a rendered trace.
-
----
-
-## Architecture
+## Product loop
 
 ```text
 Natural-language request
-  → Intent Engine            typed goal + constraints
-  → Curated Skill Registry   approved route sources only
-  → Intelligence Layer       free + approved x402 evidence, with provenance
-  → Route Engine             normalize + Path Score + confidence
-  → Route Card               evidence, alternatives, what is missing
-  → Transaction Composer     Execution Blueprint (EIP-5792)
-  → Safety Kernel            decode, verify, simulate
-  → Base Account approval    the user, in their own wallet
-  → Route Proof              expected vs actual
+  → Intent Engine
+  → curated route candidates
+  → evidence and provenance
+  → deterministic Path Score
+  → Route Card
+  → Execution Blueprint
+  → Safety Kernel and simulation
+  → explicit Base Account approval
+  → receipt reconciliation
+  → Route Proof
 ```
 
-pnpm workspace. `artifacts/` holds the three deployables — `api-server`, `interface` (Vite/React), `miniapp` (Next.js, Base App) — and `lib/` holds ~40 packages under `@mioagent/*`. The ones worth knowing first:
+Miorail is not a thin chat wrapper around Base MCP, a provider directory, or a
+first-matching-tool router. Base MCP is a wallet and capability rail; Miorail
+owns the comparison, evidence, transaction composition, validation, and proof.
 
-| Package | What it owns |
+## Product surfaces
+
+Web and Base App render the same shared section contracts so financial copy and
+capability state cannot silently diverge between clients.
+
+| Surface | Web path | What it owns |
+| --- | --- | --- |
+| **Discover** | `/opportunities` | B20 launch measurements, market rails, evidence gaps, and the per-card `Ask Miorail` evidence lens. |
+| **B20** | `/portfolio` | Wallet B20 holdings, control snapshots, exit-first checks, simulation review, and B20 entry reconciliation. |
+| **Routes** | `/routes` | Intent, provider-neutral candidates, Route Cards, Blueprint review, Safety Kernel, Base Account approval, and Route Proof. |
+| **Activity** | `/plan/history` | Route runs and proofs, Base MCP Action Receipts, and intelligence/x402 charge history. |
+| **Base MCP Extensions** | `/extensions` | Live Base MCP reads, capability truth, deterministic Routes handoff, and released typed direct actions. |
+| **Settings** | `/settings` | Intelligence Budget, payments, adapter health, providers, and network state. |
+
+## Capability truth
+
+A Markdown plugin specification is documentation, not a connected capability.
+Every integration follows this lifecycle:
+
+```text
+documented → manifested → adapter → scored → proven
+```
+
+Feature flags and credentials may still block a `proven` capability. Conversely,
+enabling a flag never promotes a provider above its registry stage.
+
+| Capability | Current stage | Honest product claim |
+| --- | --- | --- |
+| Uniswap, KyberSwap | `proven` Swap | Provider-neutral quote, scoring, Blueprint, Safety Kernel, user-approved submission, and Route Proof exist. Provider-specific production evidence still needs to be captured in the acceptance ledger. |
+| Moonwell, Morpho | `proven` Earn, production-gated | Earn comparison and proof paths exist; pinned-contract preflight and owner production journeys remain rollout gates. |
+| Balancer, Hydrex, o1.exchange | `scored` Advanced Swap | They can participate in deterministic comparison and build constrained calls behind separate execution gates. Each still needs its own real reconciled Route Proof before promotion to `proven`. |
+| YO | `scored` Earn | Pinned yoUSD reads and exact Gateway deposit preparation exist. APY and instant withdrawal liquidity remain `Not scored`; redemption is asynchronous. |
+| Aerodrome | `manifested` Advanced Swap | Known and constrained, but not a released Routes execution provider. |
+| Bitrefill | `scored` Commerce | Typed catalogue, checkout contracts, and three-leg proof logic exist. A real paid-and-delivered order has not been reconciled, so it is not a supported purchase claim. |
+| OpenSea, Venice | `documented` | Planned NFT and Private AI route families. Their flags or partial contracts do not make them selectable providers. |
+| Base MCP canonical USDC send | `proven` Extensions action | Exact amount/recipient policy, explicit approval, and exact onchain `Transfer` reconciliation produce an Action Receipt, not a Route Proof. |
+| Base MCP explicit x402 GET | `adapter` Extensions action | Reviewed HTTPS hosts, canonical USDC ceiling, wallet binding, explicit approval, idempotency, and response hash exist. Independent onchain settlement reconciliation is still missing. |
+| Avantis | `manifested` Extensions / Perps | Read and intent parsing plus an official provider-UI handoff. Miorail does not invent perps calldata. |
+| Printr, GMGN, Brickken, Flaunch, Clawnch, Virtuals, Bankr | `documented` | Visible in the Extensions catalogue with example prompts; no runtime write capability is implied. |
+
+The full provider constraints and promotion gates live in
+[PLUGIN_REGISTRY.md](docs/PLUGIN_REGISTRY.md).
+
+## B20 intelligence
+
+B20 is an evidence layer around tokens created by the B20 factory and their
+Base liquidity. It is not a generic token screener and does not predict price
+or profit.
+
+```text
+Base launch events
+  → canonical b20_launches               [miorail-b20-discover]
+  → Exit-First measurements
+  → b20_opportunity_observations         [miorail-b20-measure]
+  → Discover cards, market rails, MCP
+```
+
+Measurements can preserve:
+
+- supported entry and exit routes plus pool-level provenance;
+- measured round-trip result against the explicit 3% reference;
+- tested exit-capacity bounds without interpolation;
+- Uniswap v4 hook address and decoded permissions;
+- launch-window buyer concentration and window state;
+- transfer-control evidence, freshness, missing data, and route coverage.
+
+`provisional` does not mean `qualified`. Hook permissions do not prove hook
+behaviour. Launch-window buying does not prove buyer intent, related wallets,
+or current holdings. A route miss covers Miorail's allowlisted venues at one
+observation, not every venue forever.
+
+### Ask Miorail
+
+Every Discover card has an evidence lens for questions such as:
+
+```text
+Why was this rejected?
+What is unusual here?
+What evidence is missing?
+Explain this hook.
+Can I get out with a 100 USDC position?
+What changed since the previous measurement?
+```
+
+The browser sends only the token address plus the exact append-only observation
+ID and evidence hash. The server reloads canonical evidence and rejects a
+changed observation instead of narrating stale client JSON. Answers are
+deterministic evidence projections, not financial recommendations. Any request
+to act is handed to Routes for fresh quotes and explicit approval.
+
+### Public Miorail MCP
+
+Miorail MCP `1.1.0` exposes exactly five read-only B20 tools:
+
+```text
+miorail_discover_status
+miorail_list_b20_opportunities
+miorail_get_b20_opportunity
+miorail_explain_b20_rejection
+miorail_get_b20_market_leaders
+```
+
+The public MCP surface has no wallet, signing, payment, approval, or execution
+tool. Its Discover Card projection is parity-tested against the web/Base App
+truth layer.
+
+## Base MCP Extensions
+
+Miorail reads the live `mcp.base.org` registry and classifies every tool as
+`READ`, `ACTION`, `ROUTABLE`, or blocked before an LLM can select it.
+
+- `READ` tools may answer scoped Base questions.
+- `ROUTABLE` swap and yield requests are handed to Routes; Base MCP swap cannot
+  bypass provider comparison or Route Proof.
+- An `ACTION` is released only through its own typed input policy, wallet
+  binding, safety checks, explicit approval, idempotency, persistence, and
+  reconciliation.
+- Unknown tools, arbitrary `send_calls`, and documentation-only plugins remain
+  blocked. Dynamic discovery never grants execution.
+
+Canonical USDC send and explicit x402 GET are the first typed direct-action
+verticals. Their durable record is an **Action Receipt**, deliberately separate
+from a Route Proof.
+
+## Paid intelligence and Intelligence Budget
+
+x402 funds allowlisted evidence, simulation, inference, or compute. It does not
+fund portfolio asset movement.
+
+```text
+Spend Permission
+  = bounded funding for approved intelligence categories
+
+Base Account approval
+  = swaps, sends, deposits, withdrawals, purchases, and other asset movement
+```
+
+The operator deployment currently keeps paid swap simulation off and enables
+the B20 sequential exit simulation at `0.0002 USDC`. Disabling a paid surface
+must never remove a mandatory Safety Kernel check. Reservations, charges, and
+reconciliation are persisted through the Intelligence Budget ledger.
+
+## Execution boundary
+
+- Miorail never stores a user private key, signs for the user, or broadcasts a
+  raw transaction from the server.
+- The server builds exact unsigned calls; the connected Base Account is the
+  only signer and submits `wallet_sendCalls` client-side.
+- The client never supplies calldata, router, recipient, spender, deadline, or
+  minimum output for a route.
+- Blueprint hashes bind the intent, candidate, evidence, approved calls, wallet,
+  chain, and expiry reviewed by the user.
+- Provider output is independently decoded and checked against pinned hosts and
+  contracts before wallet approval.
+- Receipt success alone is insufficient. Route Proof reconciles actual asset or
+  position changes and gas; missing facts remain pending or require manual
+  reconciliation.
+- RPC URLs, keys, approval URLs, paid response bodies, and delivery secrets do
+  not enter public evidence, hashes, logs, or rendered traces.
+
+## Production acceptance
+
+The owner has completed two production swap journeys through the UI:
+
+```text
+USDC → ETH → Route Proof reconciled
+ETH  → USDC → Route Proof reconciled
+```
+
+The owner has also verified a canonical `0.1 USDC` Base MCP send, recent Base
+transaction history, portfolio reads, and an explicit x402 GET that returned
+the paid resource.
+
+This proves the shared swap Route Proof lifecycle has run end to end in
+production. It does **not** prove every provider or route family independently:
+the provider, Route Proof ID, transaction hash, and client were not captured for
+the two swap journeys. Provider-specific and failure-path gates remain in
+[PRODUCTION_UI_VERIFICATION.md](docs/PRODUCTION_UI_VERIFICATION.md).
+
+## Repository map
+
+This is a pnpm monorepo. The product name is Miorail; the repository name
+`mioagent` and `@mioagent/*` package namespace remain for compatibility.
+
+| Path | Responsibility |
 | --- | --- |
-| `route-domain`, `route-storage` | The route-run lifecycle and its persistence |
-| `opportunity-rail`, `b20-control` | B20 measurement, clearance, and what a rail may claim |
-| `swap-adapters` | Uniswap v4 pool resolution, quoting, round trips |
-| `security` | Safety Kernel, host allowlists, Base MCP plugin catalogue |
-| `mcp`, `tools`, `agent` | Base MCP client, tool classification, the agent loop |
-| `x402-gateway`, `x402-actions`, `paid-intelligence` | The paid rail, both sides |
-| `wallet-actions` | The one client-side submit path |
-| `ui` | The console vocabulary shared by web and Base App |
-
-The repository is named `mioagent` and the namespace stays `@mioagent/*`. The product is Miorail.
-
----
-
-## Known gaps
-
-Stated here because a README that lists only what works is the same failure mode the product is built to avoid.
-
-- **Wallet balances** in Base App depend on `heldTokens` for decimals; a token missing from that list renders without them.
-- Base MCP signing stays classified as ACTION but disabled because it has no typed message policy or durable Action Receipt vertical yet.
-- Extensions x402 V1 is intentionally narrow: explicit GET only, canonical USDC cap, reviewed hosts only. Brickken and other provider-specific prepare/pay protocols still need their own adapters and cannot be replaced by this generic URL form.
-- Base names, ETH/other ERC-20 transfers, plugin actions, and arbitrary `send_calls` are not part of Send V1.
-
----
+| `artifacts/api-server` | Express API, authenticated product routes, public/private MCP, workers, and reconciliation orchestration. |
+| `artifacts/interface` | Vite/React web console. |
+| `artifacts/miniapp` | Next.js Base App. |
+| `lib/route-domain`, `lib/route-storage` | Versioned contracts, stable hashes, additive persistence, and append-only proof history. |
+| `lib/intent-engine`, `lib/route-engine`, `lib/route-card` | Typed intent, deterministic comparison, and Route Card projection. |
+| `lib/swap-adapters`, `lib/earn-engine` | Curated provider-neutral swap adapters and the Earn comparison engine. |
+| `lib/security`, `lib/transaction-composer` | Safety Kernel and exact unsigned Blueprint construction. |
+| `lib/route-proof`, `lib/proof-verifier` | Expected-versus-actual reconciliation and independent integrity verification. |
+| `lib/opportunity-rail`, `lib/b20-control` | B20 measurements, controls, capacity, and product-language boundaries. |
+| `lib/mcp`, `lib/tools` | Base MCP transport, classification, and constrained tool execution. |
+| `lib/x402-gateway`, `lib/paid-intelligence`, `lib/intelligence-budget` | Paid evidence, reservations, charging, and reconciliation. |
+| `lib/ui`, `lib/api-zod`, `lib/api-client-react` | Shared web/Base App UI and runtime-validated API contracts. |
 
 ## Development
 
-Requirements: Node 20+, pnpm, PostgreSQL.
+Requirements:
+
+- Node.js 22.x (production currently uses `22.23.1`);
+- pnpm 11.x through Corepack;
+- PostgreSQL.
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile
 cp .env.example .env
-pnpm dev
+
+# Run in separate shells as needed:
+pnpm exec tsx artifacts/api-server/index.ts
+pnpm --filter @mioagent/interface dev
+pnpm --filter @mioagent/miniapp dev
 ```
 
-Checks:
+Primary checks:
 
 ```bash
-pnpm test:unit     # ~4,400 unit tests, no database
-pnpm test:db       # database-backed tests, isolated schema
+pnpm test:unit
+pnpm test:db
+pnpm typecheck
 pnpm -r build
+git diff --check
 ```
 
-Two things that have bitten before:
+`pnpm -r build` does not typecheck `scripts/`. The current workspace typecheck
+still reports two known `TS1470` failures in `b20DiscoverCli.test.ts` and
+`b20SweepCli.test.ts`; do not mistake them for a feature regression or silently
+drop the scripts package from validation.
 
-```bash
-# pnpm -r build does NOT cover scripts/
-npx tsc --noEmit -p scripts/tsconfig.json
+Dependencies use `minimumReleaseAge: 7d` in `pnpm-workspace.yaml`. Pin a mature
+version when pnpm cannot resolve one; do not relax the supply-chain policy.
+Never commit `.env` files, RPC URLs, private keys, approval URLs, OAuth tokens,
+or provider credentials.
+
+### Deployment
+
+Run `ops/deploy.sh` as root on the host. Its seven gates:
+
+1. fast-forward the production worktree;
+2. install the frozen dependency graph;
+3. build every workspace deployable;
+4. install and validate nginx/systemd configuration;
+5. publish the exact web bundle nginx serves;
+6. restart and verify all services;
+7. compare built/served assets and smoke-test Base App plus public MCP.
+
+Production services:
+
+```text
+miorail-api
+miorail-miniapp
+miorail-b20-discover
+miorail-b20-measure
 ```
 
-```bash
-# duplicate keys in .env are last-wins and have silently taken the LLM router down
-pnpm env:doctor
-```
+## Known gaps
 
-Dependencies are held to `minimumReleaseAge: 7d` in `pnpm-workspace.yaml`. On `ERR_PNPM_NO_MATURE_MATCHING_VERSION`, pin a mature version — do not relax the policy.
+The project is functional but not broadly production-hardened. Current gates:
 
-### Deploying
-
-`ops/deploy.sh`, run as root on the host. Six steps in order, and it refuses to claim success it has not checked — the last step compares the built entry bundle against the one nginx serves, because a redeploy that leaves the browser on an old bundle has happened here and looked like a fix that did not work.
-
-Services: `miorail-api`, `miorail-b20-discover`, `miorail-b20-measure`.
-
----
+- capture provider-specific small-value Route Proofs for Uniswap and KyberSwap;
+- reconcile real Route Proofs before promoting Balancer, Hydrex, or o1.exchange
+  from `scored` to `proven`;
+- complete owner-verified B20 entry and exit journeys, including actual asset
+  changes, gas, deviation, and manual-review/partial-failure states;
+- complete owner-verified Moonwell, Morpho, and YO deposit/exit journeys after
+  pinned-contract preflight;
+- finish independent onchain settlement reconciliation for Extensions x402;
+- keep Base MCP signing, ETH/other ERC-20 sends, Base names, arbitrary calls,
+  and provider-specific plugin writes unreleased until typed verticals exist;
+- reconcile Commerce rollout configuration with its `scored` registry stage;
+  a feature flag must not advertise Bitrefill as `proven` before a real
+  paid-and-delivered order and operator recovery runbook exist;
+- replace the default in-process `express-session` MemoryStore before
+  horizontal scaling;
+- close the two script-package typecheck failures and complete independent
+  security, backup/restore, rollback, and failure-matrix review.
 
 ## Safety notice
 
-Miorail is experimental software.
+Miorail is experimental software. The core swap Route Proof lifecycle has
+completed owner-verified production journeys in both USDC/ETH directions, but
+provider-specific promotion, B20 and Earn proofs, x402 settlement, failure-path
+reconciliation, and independent production review remain open.
 
-Do not use it with funds you cannot afford to lose until route scoring, data provenance, x402 settlement, Spend Permission limits, transaction preparation, simulation, Base Account approval and Route Proof reconciliation have been production hardened and independently reviewed. As of today the last of those has never run end to end — see *Known gaps*.
-
----
+Do not use Miorail with funds you cannot afford to lose.
 
 ## License
 
