@@ -14,6 +14,7 @@
     "@mioagent/paid-intelligence": "workspace:*",
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/route-outcomes": "workspace:*",
+    "@mioagent/route-proof": "workspace:*",
     "@mioagent/route-storage": "workspace:*",
     "@mioagent/security": "workspace:*",
     "@mioagent/swap-adapters": "workspace:*",

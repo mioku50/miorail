@@ -6,6 +6,7 @@ import { RouteProofReconcileBindingError, createRouteProofReconciler } from '../
 import {
   ETH_BASE,
   NOW,
+  ROUTER,
   TENANT,
   TX_HASH_1,
   TX_HASH_2,
@@ -14,6 +15,7 @@ import {
   revertedReceiptSource,
   seedRouteProofFixture,
   successSwapReceiptSource,
+  weth9MovementLog,
 } from './fixtures.js';
 
 const LATER = new Date(NOW.getTime() + 60_000);
@@ -296,7 +298,7 @@ test('reconcile: conflict wash (adversary repro) — manual_review is sticky and
   assert.equal(eventsAfterLock.length, eventsAfterConflict.length, 'no events may be appended after the manual_review lock');
 });
 
-test('reconcile: non-conflict reconciliation_required (native output) repeat is a locked no-op too', async () => {
+test('reconcile: a legacy native-output manual review can be retried when WETH9 evidence appears', async () => {
   const seeded = await seedRouteProofFixture({ toAsset: ETH_BASE, transactionHashes: [TX_HASH_1] });
   const reader = mockReceiptReader({
     [TX_HASH_1]: successSwapReceiptSource({ transactionHash: TX_HASH_1, usdcAmountAtomic: seeded.intent.amount.amountAtomic, wethAmountAtomic: '0' }),
@@ -304,20 +306,27 @@ test('reconcile: non-conflict reconciliation_required (native output) repeat is 
   const reconciler = reconcilerFor(seeded, reader);
   const first = await reconciler.reconcile({ tenantId: TENANT, walletAddress: WALLET, routeRunId: seeded.intent.id, routeProofId: seeded.proof.id, now: LATER });
   assert.equal(first.outcome, 'reconciliation_required');
-  const eventsAfterFirst = await seeded.repository.listProofEvents(seeded.proof.id, TENANT);
-
-  const second = await reconciler.reconcile({ tenantId: TENANT, walletAddress: WALLET, routeRunId: seeded.intent.id, routeProofId: seeded.proof.id, now: EVEN_LATER });
-  assert.equal(second.outcome, 'already_finalized');
-  assert.equal(second.proof.finalStatus, 'reconciliation_required');
-  assert.equal(second.proof.reconciliationState, 'manual_review');
-  const eventsAfterSecond = await seeded.repository.listProofEvents(seeded.proof.id, TENANT);
-  assert.equal(eventsAfterSecond.length, eventsAfterFirst.length);
+  const secondReader = mockReceiptReader({
+    [TX_HASH_1]: {
+      ...successSwapReceiptSource({ transactionHash: TX_HASH_1, usdcAmountAtomic: seeded.intent.amount.amountAtomic, wethAmountAtomic: '0' }),
+      logs: [
+        ...successSwapReceiptSource({ transactionHash: TX_HASH_1, usdcAmountAtomic: seeded.intent.amount.amountAtomic, wethAmountAtomic: '0' }).logs,
+        weth9MovementLog('withdrawal', ROUTER, 38000000000000000n),
+      ],
+    },
+  });
+  const second = await createRouteProofReconciler({ repository: seeded.repository, receiptReader: secondReader }).reconcile({ tenantId: TENANT, walletAddress: WALLET, routeRunId: seeded.intent.id, routeProofId: seeded.proof.id, now: EVEN_LATER });
+  assert.equal(second.outcome, 'completed');
+  assert.equal(second.proof.finalStatus, 'completed');
+  assert.equal(second.proof.reconciliationState, 'matched');
+  assert.equal(second.proof.actualOutput, '38000000000000000');
 });
 
-test('reconcile: native ETH output -> reconciliation_required, actualOutput stays null', async () => {
+test('reconcile: native ETH output is completed from an approved-router WETH9 withdrawal', async () => {
   const seeded = await seedRouteProofFixture({ toAsset: ETH_BASE, transactionHashes: [TX_HASH_1] });
+  const baseReceipt = successSwapReceiptSource({ transactionHash: TX_HASH_1, usdcAmountAtomic: seeded.intent.amount.amountAtomic, wethAmountAtomic: '0' });
   const reader = mockReceiptReader({
-    [TX_HASH_1]: successSwapReceiptSource({ transactionHash: TX_HASH_1, usdcAmountAtomic: seeded.intent.amount.amountAtomic, wethAmountAtomic: '0' }),
+    [TX_HASH_1]: { ...baseReceipt, logs: [...baseReceipt.logs, weth9MovementLog('withdrawal', ROUTER, 38000000000000000n)] },
   });
   const reconciler = reconcilerFor(seeded, reader);
   const result = await reconciler.reconcile({
@@ -327,10 +336,10 @@ test('reconcile: native ETH output -> reconciliation_required, actualOutput stay
     routeProofId: seeded.proof.id,
     now: LATER,
   });
-  assert.equal(result.outcome, 'reconciliation_required');
-  assert.equal(result.proof.finalStatus, 'reconciliation_required');
-  assert.equal(result.proof.reconciliationState, 'manual_review');
-  assert.equal(result.proof.actualOutput, null);
+  assert.equal(result.outcome, 'completed');
+  assert.equal(result.proof.finalStatus, 'completed');
+  assert.equal(result.proof.reconciliationState, 'matched');
+  assert.equal(result.proof.actualOutput, '38000000000000000');
 });
 
 test('reconcile: actual below minimum -> completed but deviated, minimumSatisfied false', async () => {

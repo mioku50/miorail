@@ -23,6 +23,7 @@
     "smoke:opensea-nft": "tsx scripts/smoke_opensea_nft.ts",
     "smoke:b20-control": "tsx scripts/smoke_b20_control.ts",
     "proof:verify": "tsx lib/proof-verifier/src/cli.ts",
+    "proofs:reconcile-native": "tsx scripts/reconcile_native_route_proofs.ts",
     "outcomes:backfill": "tsx scripts/outcomes_backfill.ts",
     "reliability:rebuild": "tsx scripts/reliability_rebuild.ts",
     "o1:compat": "tsx scripts/o1_compat.ts",
@@ -45,5 +46,14 @@
     "tsx": "^4.22.4",
     "typescript": "^5.4.5",
     "typescript-eslint": "^8.61.1"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "bufferutil",
+      "protobufjs",
+      "sharp",
+      "unrs-resolver",
+      "utf-8-validate"
+    ]
   }
 }

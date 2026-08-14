@@ -40,12 +40,9 @@ export const RouteProofProjectionV1Schema = z
     /**
      * Why `actualOutput` is null, when the chain has already answered.
      *
-     * Reconstruction reads ERC-20 Transfer logs, and native ETH emits none —
-     * `assetChanges.ts` reports `native_output_unverifiable` and the proof goes
-     * to `reconciliation_required` rather than guessing an amount. That reason
-     * was computed and then dropped, so the screen showed a bare em dash next
-     * to a green "reconciled" pill and the user could not tell whether Miorail
-     * had failed or had declined to invent a number.
+     * Reconstruction reads ERC-20 Transfer logs and approved-router canonical
+     * WETH9 wrap/unwrap events. A native route with no such bound event still
+     * goes to `reconciliation_required` rather than guessing from a balance.
      *
      * DERIVED here, not stored: the proof already carries everything needed
      * (a null actual output, the final status, and the output asset's kind),

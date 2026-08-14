@@ -140,6 +140,25 @@ function deriveLifecycleAfterReconcileV1(proof: RouteProofV1, events: readonly R
   return pendingLifecycleV1(proof.receipts, events);
 }
 
+/** T74: old native ETH proofs entered manual review solely because the first
+ * reconciler knew ERC-20 Transfer logs only. They may be retried exactly once
+ * under the new WETH9-event reconstruction, but a receipt conflict or any
+ * other asset remains sticky manual review. */
+function nativeReconstructionRetryEligibleV1(
+  proof: RouteProofV1,
+  events: readonly RouteProofEventV1[],
+): boolean {
+  if (proof.finalStatus !== 'reconciliation_required' || proof.reconciliationState !== 'manual_review') return false;
+  if (proof.actualResult !== null) return false;
+  if (!proof.expectedResult.assetChanges.some((change) => change.asset.kind === 'native')) return false;
+  if (proof.receipts.length === 0 || proof.receipts.some((receipt) => receipt.status !== 'success')) return false;
+  const hasReceiptConflict = events.some((event) => {
+    const conflicts = event.payload.receiptConflicts;
+    return Array.isArray(conflicts) && conflicts.length > 0;
+  });
+  return !hasReceiptConflict;
+}
+
 function receiptsEqualV1(a: readonly TransactionReceiptV1[], b: readonly TransactionReceiptV1[]): boolean {
   if (a.length !== b.length) return false;
   const byHash = new Map(a.map((receipt) => [receipt.transactionHash, receipt]));
@@ -258,18 +277,13 @@ export function createRouteProofReconciler(deps: RouteProofReconcilerDependencie
       }
 
       // --- Idempotent no-op for an already-finalized proof ----------------
-      // `manual_review` is STICKY: once a proof enters manual review (a
-      // receipt conflict, or an output this method cannot reconstruct),
-      // repeated reconcile calls are pure no-ops — there is NO automated
-      // path from manual_review back to completed. Without this lock, a
-      // flapping RPC could "wash" a conflict clean over a few ordinary
-      // re-reconciles (conflict -> receipts overwritten -> next pass sees
-      // consistency -> completed). Exit from manual_review is a manual
-      // process outside T58. The outcome reuses `already_finalized` — the
-      // proof's REPORTED state is final as far as this reconciler goes.
+      // `manual_review` is sticky for conflicts and unknown assets. The only
+      // narrow retry is a legacy Base native-ETH proof: older code lacked the
+      // canonical WETH9 event reconstruction now available below. A conflict
+      // can therefore never be "washed" clean by a flapping RPC.
       if (
         (ROUTE_PROOF_TERMINAL_FINAL_STATUSES as readonly string[]).includes(proof.finalStatus) ||
-        proof.reconciliationState === 'manual_review'
+        (proof.reconciliationState === 'manual_review' && !nativeReconstructionRetryEligibleV1(proof, events))
       ) {
         return RouteProofReconciliationResultV1Schema.parse({
           outcome: 'already_finalized',
@@ -342,6 +356,7 @@ export function createRouteProofReconciler(deps: RouteProofReconcilerDependencie
             walletAddress,
             expectedAssetChanges: proof.expectedResult.assetChanges,
             successReceiptLogs: successLogs,
+            approvedCallTargets: proof.approvedCalls.map((call) => call.to),
           });
           if (reconstruction.kind === 'unsupported') {
             nextFinalStatus = 'reconciliation_required';

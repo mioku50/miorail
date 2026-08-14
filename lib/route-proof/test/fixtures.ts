@@ -30,7 +30,13 @@ import {
 import type { RouteStorageRepository } from '@mioagent/route-storage';
 import { InMemoryRouteStorageRepository } from '@mioagent/route-storage';
 import type { BaseReceiptReader, VerifiedReceiptLogV1, VerifiedReceiptSourceV1 } from '../src/receipts.js';
-import { CANONICAL_BASE_USDC, CANONICAL_BASE_WETH, ERC20_TRANSFER_TOPIC0 } from '../src/constants.js';
+import {
+  CANONICAL_BASE_USDC,
+  CANONICAL_BASE_WETH,
+  ERC20_TRANSFER_TOPIC0,
+  WETH_DEPOSIT_TOPIC0,
+  WETH_WITHDRAWAL_TOPIC0,
+} from '../src/constants.js';
 
 export const NOW = new Date('2026-07-18T12:00:00.000Z');
 export const WALLET = '0x1111111111111111111111111111111111111111' as const;
@@ -431,6 +437,18 @@ export function transferLog(token: `0x${string}`, from: `0x${string}`, to: `0x${
   return {
     address: token.toLowerCase(),
     topics: [ERC20_TRANSFER_TOPIC0, padAddressTopic(from), padAddressTopic(to)],
+    data: `0x${value.toString(16).padStart(64, '0')}` as `0x${string}`,
+  };
+}
+
+export function weth9MovementLog(
+  kind: 'deposit' | 'withdrawal',
+  actor: `0x${string}`,
+  value: bigint,
+): VerifiedReceiptLogV1 {
+  return {
+    address: CANONICAL_BASE_WETH,
+    topics: [kind === 'deposit' ? WETH_DEPOSIT_TOPIC0 : WETH_WITHDRAWAL_TOPIC0, padAddressTopic(actor)],
     data: `0x${value.toString(16).padStart(64, '0')}` as `0x${string}`,
   };
 }
