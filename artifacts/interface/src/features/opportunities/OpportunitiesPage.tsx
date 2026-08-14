@@ -11,6 +11,7 @@ import {
   chainLabelV1,
   consoleHomeSectionV1,
   consoleSectionPathV1,
+  GOAL_HANDOFF_KEY_V1,
   discoverFailureCopyV1,
   opportunityCardViewV1,
   useConsoleTheme,
@@ -19,7 +20,7 @@ import {
   type ConsolePipelineStateV1,
   type OpportunityFilterV1,
 } from '@mioagent/ui';
-import { useB20MarketRails, useB20Opportunities, useStatus } from '@mioagent/api-client-react';
+import { useB20CopilotAsk, useB20MarketRails, useB20Opportunities, useStatus } from '@mioagent/api-client-react';
 import { useConsoleNav } from '../console/useConsoleNav';
 
 // ---------------------------------------------------------------------------
@@ -50,6 +51,7 @@ export function OpportunitiesPage() {
   const [filter, setFilter] = useState<OpportunityFilterV1>('all');
   const [freshOnly, setFreshOnly] = useState(false);
   const [railExpanded, setRailExpanded] = useState(false);
+  const [copilotToken, setCopilotToken] = useState<string | null>(null);
 
   const discoverOn = status.data?.productMigration?.b20ControlV1 === true;
   const marketRails = useB20MarketRails({ enabled: discoverOn });
@@ -57,6 +59,7 @@ export function OpportunitiesPage() {
     { state: filter, freshness: freshOnly ? 'fresh' : 'all' },
     { enabled: discoverOn },
   );
+  const copilot = useB20CopilotAsk();
 
   // A transport failure is NOT an empty feed. The pipeline is unknown, and
   // `consoleHomeSectionV1` turns that into the unreachable sentence rather than
@@ -184,6 +187,28 @@ export function OpportunitiesPage() {
         // simulation and the clearance; Discover owns none of them.
         onOpenToken={(token) => navigate(`${consoleSectionPathV1('portfolio')}?token=${encodeURIComponent(token)}`)}
         onRefresh={() => void feed.refetch()}
+        copilot={{
+          tokenAddress: copilotToken,
+          loading: copilot.isPending,
+          answer:
+            copilot.data?.subject.tokenAddress === copilotToken
+              ? copilot.data
+              : null,
+          error: copilot.error?.message ?? null,
+          onAsk: (input) => {
+            setCopilotToken(input.tokenAddress);
+            copilot.mutate({ schemaVersion: 'b20-copilot-ask/v1', ...input });
+          },
+          onOpenRoutes: (goal) => {
+            try {
+              window.sessionStorage.setItem(GOAL_HANDOFF_KEY_V1, goal);
+            } catch {
+              // The URL still carries the goal. Without the one-shot token the
+              // console fills it in and waits for an explicit Compare click.
+            }
+            navigate(`${consoleSectionPathV1('routes')}?goal=${encodeURIComponent(goal)}`);
+          },
+        }}
       />
     </ConsoleShell>
   );

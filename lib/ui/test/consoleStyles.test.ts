@@ -81,6 +81,19 @@ describe('every console class has a stylesheet rule', () => {
   });
 });
 
+describe('the B20 copilot reads as evidence, not a floating chat widget', () => {
+  test('the answer is stamped to an observation and shrinks on Base App', () => {
+    assert.match(css, /\.b20-copilot\s*\{[^}]*inset 3px 0 0 var\(--accent-line\)/);
+    assert.match(css, /\.observation-stamp\s*\{/);
+    assert.match(css, /\.mio-console\.mini \.b20-answer-facts\s*\{[^}]*grid-template-columns:\s*minmax\(0,1fr\)/);
+  });
+
+  test('long evidence values wrap instead of widening Discover cards', () => {
+    const facts = rulesFor(/\.b20-answer-facts dd/).join(' ');
+    assert.match(facts, /overflow-wrap:\s*anywhere/);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Layout rules that a rendering test cannot see.
 //

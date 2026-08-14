@@ -501,6 +501,8 @@ function wireCard(overrides: Record<string, unknown> = {}) {
       canonical: true,
     },
     observation: {
+      observationId: `0x${'a'.repeat(64)}`,
+      evidenceHash: `0x${'b'.repeat(64)}`,
       state: 'provisional' as const,
       headline: 'A round trip priced under your tolerance.',
       detail: 'Both legs quoted.',
@@ -519,6 +521,7 @@ function wireCard(overrides: Record<string, unknown> = {}) {
       quoteAlignmentNotice: 'Controls are block-anchored. Market quotes were read at latest.',
       preEntryNotice: 'Pre-entry estimate.',
       launchBuyers: null,
+      observationBlockNumber: '49531100',
       freshness: 'fresh' as const,
     },
     canCheckProfile: true,
@@ -533,6 +536,13 @@ function wireCard(overrides: Record<string, unknown> = {}) {
 }
 
 describe('a card never turns a missing measurement into a number', () => {
+  test('the view preserves the exact observation references for Ask this card', () => {
+    const view = opportunityCardViewV1(wireCard());
+    assert.equal(view.observationId, `0x${'a'.repeat(64)}`);
+    assert.equal(view.evidenceHash, `0x${'b'.repeat(64)}`);
+    assert.equal(view.observationBlockNumber, '49531100');
+  });
+
   test('an unmeasured cost stays null all the way to the view', () => {
     const view = opportunityCardViewV1(
       wireCard({ observation: { ...wireCard().observation, optimisticRoundTripBps: null, largestPassingSizeAtomic: null } }),
@@ -790,6 +800,46 @@ describe('a card never turns a missing measurement into a number', () => {
           `the ${name} says "${banned}"`,
         );
       }
+    }
+  });
+});
+
+describe('Ask this B20 card stays an evidence read', () => {
+  test('the card offers Ask Miorail without adding a wallet action', () => {
+    const markup = renderToStaticMarkup(
+      <OpportunitiesScreen
+        pipelineNotice={null}
+        pipelineState="healthy"
+        feedRenderable
+        cards={[opportunityCardViewV1(wireCard())]}
+        filter="all"
+        freshOnly={false}
+        loading={false}
+        onFilterChange={() => undefined}
+        onFreshOnlyChange={() => undefined}
+        onOpenToken={() => undefined}
+        copilot={{
+          tokenAddress: null,
+          loading: false,
+          answer: null,
+          error: null,
+          onAsk: () => undefined,
+          onOpenRoutes: () => undefined,
+        }}
+      />,
+    );
+    assert.match(markup, /Ask Miorail/);
+    assert.match(markup, /aria-expanded="false"/);
+    assert.ok(!markup.includes('wallet_sendCalls'));
+  });
+
+  test('both product surfaces use the same copilot hook and shared screen', () => {
+    const web = read('../../../artifacts/interface/src/features/opportunities/OpportunitiesPage.tsx');
+    const mini = read('../../../artifacts/miniapp/app/components/MiniConsole.tsx');
+    for (const source of [web, mini]) {
+      assert.match(source, /useB20CopilotAsk/);
+      assert.match(source, /<OpportunitiesScreen/);
+      assert.match(source, /schemaVersion: ["']b20-copilot-ask\/v1["']/);
     }
   });
 });

@@ -28,6 +28,8 @@ import {
 // ---------------------------------------------------------------------------
 
 const NOW = new Date('2026-08-04T12:00:00.000Z');
+const OBSERVATION_ID = `0x${'aa'.repeat(32)}`;
+const EVIDENCE_HASH = `0x${'bb'.repeat(32)}`;
 
 test('launch-buyer window state distinguishes collecting from a closed miss', () => {
   assert.deepEqual(
@@ -74,6 +76,8 @@ const BASE_FACTS = {
 
 function card(overrides: Partial<B20CardInputV1['observation']> = {}, launchOverrides = {}) {
   const observation: B20CardInputV1['observation'] = {
+    id: OBSERVATION_ID,
+    evidenceHash: EVIDENCE_HASH,
     state: 'provisional',
     reasonCode: 'quoted_pre_entry',
     referencePositionAtomic: '100000000',
@@ -416,15 +420,21 @@ describe('freshness gates the action, not the facts', () => {
 });
 
 describe('the card carries nothing executable', () => {
-  test('no calldata, no ids a client cannot use, no provider output', () => {
+  test('no calldata, execution ids or provider output', () => {
     // §21.28.
-    const text = JSON.stringify(card());
-    for (const forbidden of ['calldata', '0x095ea7b3', 'blueprintHash', 'evidenceHash', 'rawResponse', 'sessionId']) {
+    const projected = card();
+    const text = JSON.stringify(projected);
+    for (const forbidden of ['calldata', '0x095ea7b3', 'blueprintHash', 'rawResponse', 'sessionId']) {
       assert.ok(!text.includes(forbidden), `the card must not carry ${forbidden}`);
     }
+    // Ask-this-card uses only immutable observation references. They let the
+    // server reject stale context; neither value is executable or a provider
+    // response.
+    assert.equal(projected.observation?.observationId, OBSERVATION_ID);
+    assert.equal(projected.observation?.evidenceHash, EVIDENCE_HASH);
     // Source KEYS are display strings naming pools; they are not routes a
     // client could execute.
-    assert.equal(card().observation?.entrySourceKey, 'aerodrome|in');
+    assert.equal(projected.observation?.entrySourceKey, 'aerodrome|in');
   });
 
   test('the pool hook reaches the card decoded, not as a bare address', () => {

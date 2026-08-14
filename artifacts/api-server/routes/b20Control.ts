@@ -28,6 +28,8 @@ import {
   B20OpportunityFeedResponseV1Schema,
   B20OpportunityDetailResponseV1Schema,
   B20MarketRailsResponseV1Schema,
+  B20CopilotAskRequestV1Schema,
+  B20CopilotAskResponseV1Schema,
 } from '@mioagent/api-zod';
 import {
   B20RequestError,
@@ -124,6 +126,7 @@ import {
   ensureB20EntryRouteProofV1,
   syncB20EntryRouteProofV1,
 } from '../lib/b20EntryRouteProof.js';
+import { answerB20CopilotV1, b20ObservationRefMatchesV1 } from '../lib/b20Copilot.js';
 
 // ---------------------------------------------------------------------------
 // T67C/T68F — the B20 Control and explicit entry rail.
@@ -658,6 +661,87 @@ b20ControlRouter.get('/opportunities/b20', async (req: Request, res: Response) =
   }
 });
 
+/**
+ * Ask about one exact Discover card.
+ *
+ * Read-only by construction: the request has no wallet, amount-to-sign,
+ * calldata, payment or tool name. The client references an observation, but
+ * every fact is reloaded from append-only storage before the deterministic
+ * answer is built. A card that changed while the tab was open is a 409, never
+ * an answer that quietly mixes old UI context with new server evidence.
+ */
+b20ControlRouter.post('/opportunities/b20/copilot/ask', async (req: Request, res: Response) => {
+  const guard = b20Guard(req, res);
+  if (!guard) return;
+  const parsed = B20CopilotAskRequestV1Schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_b20_copilot_request', code: 'invalid_b20_copilot_request' });
+    return;
+  }
+
+  try {
+    if (!(await b20RouteRuntime.discoverAvailable())) {
+      res.status(503).json({ error: 'discover_unavailable', code: 'discover_unavailable' });
+      return;
+    }
+    const observations = b20RouteRuntime.observations();
+    const found = await observations.getFeedRowForToken({
+      tokenAddress: parsed.data.tokenAddress,
+      historyLimit: 20,
+    });
+    if (!found) {
+      res.status(404).json({ error: 'launch_not_found', code: 'launch_not_found' });
+      return;
+    }
+
+    const current = found.row.observation;
+    const referencesMatch = b20ObservationRefMatchesV1(current, parsed.data);
+    if (!referencesMatch) {
+      res.status(409).json({
+        error: 'b20_observation_changed',
+        code: 'b20_observation_changed',
+        detail: 'This B20 card changed after it was opened. Refresh Discover before asking about it.',
+      });
+      return;
+    }
+
+    const now = b20RouteRuntime.now();
+    const pipeline = await pipelineStatusV1(observations, now, true);
+    const card = b20OpportunityCardV1({
+      launch: {
+        tokenAddress: found.row.launch.tokenAddress,
+        name: found.row.launch.name,
+        symbol: found.row.launch.symbol,
+        variant: found.row.launch.variant,
+        decimals: found.row.launch.decimals,
+        blockNumber: found.row.launch.blockNumber,
+        transactionHash: found.row.launch.transactionHash,
+        logIndex: found.row.launch.logIndex,
+        detectedAt: found.row.launch.detectedAt,
+        blockTimestamp: found.row.launch.blockTimestamp,
+        canonical: found.row.launch.canonical,
+      },
+      observation: current,
+      launchBuyers: found.row.launchBuyers,
+      launchBuyerWindow: b20LaunchBuyerWindowV1({
+        launchBlock: found.row.launch.blockNumber,
+        observedHead: pipeline.facts.confirmedHead,
+        windowBlocks: B20_BUYER_WINDOW_BLOCKS_V1,
+        measured: found.row.launchBuyers !== null,
+        measuredToBlock: found.row.launchBuyers?.toBlock ?? null,
+      }),
+      now,
+    });
+    res.json(
+      B20CopilotAskResponseV1Schema.parse(
+        answerB20CopilotV1({ card, history: found.history, question: parsed.data.question }),
+      ),
+    );
+  } catch (error) {
+    storageFailure(res, error, 'b20-copilot-ask');
+  }
+});
+
 b20ControlRouter.get('/opportunities/b20/:tokenAddress', async (req: Request, res: Response) => {
   const guard = b20Guard(req, res);
   if (!guard) return;
@@ -706,6 +790,13 @@ b20ControlRouter.get('/opportunities/b20/:tokenAddress', async (req: Request, re
       // must not make the same token lose its launch-window evidence when a
       // user opens it.
       launchBuyers: found.row.launchBuyers,
+      launchBuyerWindow: b20LaunchBuyerWindowV1({
+        launchBlock: found.row.launch.blockNumber,
+        observedHead: pipeline.facts.confirmedHead,
+        windowBlocks: B20_BUYER_WINDOW_BLOCKS_V1,
+        measured: found.row.launchBuyers !== null,
+        measuredToBlock: found.row.launchBuyers?.toBlock ?? null,
+      }),
       now,
     });
 

@@ -30,6 +30,8 @@ export interface OpportunityCardWireV1 {
     canonical: boolean;
   };
   observation: {
+    observationId?: string;
+    evidenceHash?: string;
     state: OpportunityStateV1;
     headline: string;
     detail: string;
@@ -75,6 +77,7 @@ export interface OpportunityCardWireV1 {
       status: 'collecting' | 'measured' | 'closed_unmeasured' | 'unknown';
       closesAtBlock: string;
     } | null;
+    observationBlockNumber?: string;
     freshness: 'fresh' | 'stale';
   } | null;
   canCheckProfile: boolean;
@@ -215,6 +218,9 @@ export function opportunityCardViewV1(card: OpportunityCardWireV1): OpportunityC
     timeLabel: timeRow.label,
     timeValue: timeRow.value,
     state: observation?.state ?? 'unmeasured',
+    observationId: (observation?.observationId as `0x${string}` | undefined) ?? null,
+    evidenceHash: (observation?.evidenceHash as `0x${string}` | undefined) ?? null,
+    observationBlockNumber: observation?.observationBlockNumber ?? null,
     headline: observation?.headline ?? OPPORTUNITY_UNMEASURED_COPY_V1.headline,
     detail: observation?.detail ?? OPPORTUNITY_UNMEASURED_COPY_V1.detail,
     // Null stays null the whole way. There is no `?? 0` anywhere in this file.

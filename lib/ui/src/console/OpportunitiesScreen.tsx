@@ -57,6 +57,10 @@ export interface OpportunityCardViewV1 {
   timeLabel: string;
   timeValue: string;
   state: OpportunityStateV1;
+  /** Exact append-only observation references. Null only before measurement. */
+  observationId: `0x${string}` | null;
+  evidenceHash: `0x${string}` | null;
+  observationBlockNumber: string | null;
   /** One line: what was found. From the shared copy table, not written here. */
   headline: string;
   /** The sentence under it. */
@@ -100,6 +104,47 @@ export interface OpportunityCardViewV1 {
   notMeasured: readonly string[];
 }
 
+export interface B20CopilotAnswerViewV1 {
+  schemaVersion: 'b20-copilot-answer/v1';
+  answerSource: 'deterministic_evidence';
+  questionKind:
+    | 'summary'
+    | 'why_rejected'
+    | 'unusual'
+    | 'missing_evidence'
+    | 'explain_hook'
+    | 'exit_capacity'
+    | 'compare_previous';
+  subject: { tokenAddress: string; symbol: string; name: string };
+  observation: {
+    observationId: string;
+    evidenceHash: string;
+    blockNumber: string;
+    measuredAt: string;
+    freshness: 'fresh' | 'stale';
+  } | null;
+  answer: string;
+  facts: readonly { label: string; value: string; tone: 'neutral' | 'positive' | 'warning' }[];
+  missingEvidence: readonly string[];
+  caveats: readonly string[];
+  routeHandoff: { label: 'Open in Routes'; goal: string } | null;
+}
+
+export interface B20CopilotPanelModelV1 {
+  /** The card whose latest request owns the mutation state. */
+  tokenAddress: string | null;
+  loading: boolean;
+  answer: B20CopilotAnswerViewV1 | null;
+  error: string | null;
+  onAsk: (input: {
+    tokenAddress: string;
+    observationId: `0x${string}` | null;
+    evidenceHash: `0x${string}` | null;
+    question: string;
+  }) => void;
+  onOpenRoutes: (goal: string) => void;
+}
+
 const STATE_PILL_V1: Readonly<Record<OpportunityStateV1, { tone: 'g' | 'a' | 'n' | 'br'; label: string }>> = {
   // `br` and not `g`: a provisional pass is the strongest thing background
   // measurement can say, and it is still not a confirmation. Green would read
@@ -133,16 +178,31 @@ export interface OpportunitiesScreenModelV1 {
   onFreshOnlyChange: (freshOnly: boolean) => void;
   /** Hands the token to the surface that owns wallet-bound checks. */
   onOpenToken: (tokenAddress: string) => void;
+  /** Optional while older deployments roll forward. It is read-only. */
+  copilot?: B20CopilotPanelModelV1;
   onRefresh?: () => void;
 }
+
+const B20_COPILOT_PROMPTS_V1 = [
+  'Why was this rejected?',
+  'What is unusual here?',
+  'What evidence is missing?',
+  'Explain this hook.',
+  'Can I get out with a 100 USDC position?',
+  'What changed since the previous measurement?',
+] as const;
 
 function OpportunityCard({
   card,
   onOpen,
+  copilot,
 }: {
   card: OpportunityCardViewV1;
   onOpen: (tokenAddress: string) => void;
+  copilot?: B20CopilotPanelModelV1;
 }) {
+  const [askOpen, setAskOpen] = React.useState(false);
+  const [question, setQuestion] = React.useState('');
   const pill = STATE_PILL_V1[card.state];
   // A failed route read is still a stored observation with a profile. The
   // values decide whether the metric block has something to show; profile
@@ -154,6 +214,18 @@ function OpportunityCard({
       : card.state === 'candidate'
         ? 'Queued'
         : 'No complete measurement';
+  const ownsCopilotState = copilot?.tokenAddress === card.tokenAddress;
+  const answer = ownsCopilotState ? copilot?.answer ?? null : null;
+  const ask = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed || !copilot) return;
+    copilot.onAsk({
+      tokenAddress: card.tokenAddress,
+      observationId: card.observationId,
+      evidenceHash: card.evidenceHash,
+      question: trimmed,
+    });
+  };
   return (
     <article className={'cardrow' + (measurementMissing ? ' metrics-unavailable-card' : '')}>
       <div className="cr-top">
@@ -257,10 +329,108 @@ function OpportunityCard({
           control: offering one would suggest their wallet might be exempt from
           a fact about the token. */}
       <p className="note">{card.actionReason}</p>
-      {card.actionLabel && (
-        <button type="button" className="btn sec" onClick={() => onOpen(card.tokenAddress)}>
-          {card.actionLabel}
-        </button>
+      <div className="card-actions">
+        {card.actionLabel && (
+          <button type="button" className="btn sec" onClick={() => onOpen(card.tokenAddress)}>
+            {card.actionLabel}
+          </button>
+        )}
+        {copilot && (
+          <button
+            type="button"
+            className={`btn sec ask-card${askOpen ? ' on' : ''}`}
+            aria-expanded={askOpen}
+            onClick={() => setAskOpen((open) => !open)}
+          >
+            Ask Miorail
+          </button>
+        )}
+      </div>
+
+      {askOpen && copilot && (
+        <section className="b20-copilot" aria-label={`Ask Miorail about ${card.symbol}`}>
+          <div className="b20-copilot-head">
+            <div>
+              <span className="eyebrow">Evidence lens</span>
+              <strong>Ask this B20 card</strong>
+            </div>
+            <span className="mono observation-stamp">
+              {card.observationBlockNumber ? `block ${card.observationBlockNumber}` : 'measurement pending'}
+            </span>
+          </div>
+          <p className="lnote">
+            Answers are rebuilt from this exact stored observation. Miorail explains evidence and unknowns; Routes
+            owns fresh quotes and execution.
+          </p>
+          <div className="b20-prompt-chips" aria-label="Example questions">
+            {B20_COPILOT_PROMPTS_V1.map((prompt) => (
+              <button key={prompt} type="button" onClick={() => { setQuestion(prompt); ask(prompt); }}>
+                {prompt}
+              </button>
+            ))}
+          </div>
+          <form
+            className="b20-ask-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              ask(question);
+            }}
+          >
+            <label htmlFor={`b20-ask-${card.tokenAddress}`}>Ask about this observation</label>
+            <div>
+              <input
+                id={`b20-ask-${card.tokenAddress}`}
+                value={question}
+                maxLength={500}
+                placeholder="What evidence is missing?"
+                onChange={(event) => setQuestion(event.currentTarget.value)}
+              />
+              <button type="submit" className="btn" disabled={!question.trim() || (ownsCopilotState && copilot.loading)}>
+                {ownsCopilotState && copilot.loading ? 'Reading…' : 'Ask'}
+              </button>
+            </div>
+          </form>
+
+          {ownsCopilotState && copilot.error && <p className="note warn">{copilot.error}</p>}
+          {answer && (
+            <div className="b20-answer" aria-live="polite">
+              <p>{answer.answer}</p>
+              {answer.facts.length > 0 && (
+                <dl className="b20-answer-facts">
+                  {answer.facts.map((fact) => (
+                    <div key={`${fact.label}:${fact.value}`}>
+                      <dt>{fact.label}</dt>
+                      <dd className={fact.tone === 'warning' ? 'warn' : fact.tone === 'positive' ? 'ok' : ''}>
+                        {fact.value}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+              {answer.missingEvidence.length > 0 && (
+                <details className="b20-answer-unknowns">
+                  <summary>{answer.missingEvidence.length} evidence gaps</summary>
+                  <ul>
+                    {answer.missingEvidence.map((item) => <li key={item}>{item}</li>)}
+                  </ul>
+                </details>
+              )}
+              {answer.routeHandoff && (
+                <button
+                  type="button"
+                  className="btn sec"
+                  onClick={() => copilot.onOpenRoutes(answer.routeHandoff!.goal)}
+                >
+                  {answer.routeHandoff.label}
+                </button>
+              )}
+              <details className="b20-answer-caveats">
+                <summary>Evidence boundaries</summary>
+                <ul>{answer.caveats.map((item) => <li key={item}>{item}</li>)}</ul>
+              </details>
+            </div>
+          )}
+        </section>
       )}
     </article>
   );
@@ -376,7 +546,12 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
             ) : (
               <div className="cardrows">
                 {model.cards.map((card) => (
-                  <OpportunityCard key={card.tokenAddress} card={card} onOpen={model.onOpenToken} />
+                  <OpportunityCard
+                    key={card.tokenAddress}
+                    card={card}
+                    onOpen={model.onOpenToken}
+                    copilot={model.copilot}
+                  />
                 ))}
               </div>
             )}

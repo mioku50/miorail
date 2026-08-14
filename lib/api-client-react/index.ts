@@ -891,6 +891,35 @@ export function useB20MarketRails(options?: { enabled?: boolean; limit?: number 
   });
 }
 
+/**
+ * Ask about one exact Discover card. This is a read-only evidence projection:
+ * no wallet hook, no x402 header and no automatic route execution.
+ */
+export function useB20CopilotAsk(
+  options?: Omit<
+    UseMutationOptions<
+      apiSpec.B20CopilotAskResponseV1,
+      Error,
+      apiSpec.B20CopilotAskRequestV1
+    >,
+    'mutationFn' | 'retry'
+  >,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const request = apiSpec.B20CopilotAskRequestV1Schema.parse(input);
+      const response = await fetchApi<unknown>('/api/route-intelligence/opportunities/b20/copilot/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+      return apiSpec.B20CopilotAskResponseV1Schema.parse(response);
+    },
+  });
+}
+
 export function useAddB20Watch(
   options?: Omit<UseMutationOptions<apiSpec.B20WatchlistResponseV1, Error, { tokenAddress: string }>, 'mutationFn'>,
 ) {

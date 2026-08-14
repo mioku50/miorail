@@ -290,6 +290,10 @@ export interface B20CardLaunchV1 {
  * card showing 0.00% cost for an unmeasured token is a lie with a decimal
  * point in it. */
 export interface B20CardObservationV1 {
+  /** Stable identity of the exact append-only observation this card projects. */
+  observationId: string;
+  /** Hash of the measured facts, used to reject a stale Ask-this-card context. */
+  evidenceHash: string;
   state: B20ObservationStateV1;
   reasonCode: string | null;
   headline: string;
@@ -458,6 +462,8 @@ export interface B20CardInputV1 {
     canonical: boolean;
   };
   observation: {
+    id: string;
+    evidenceHash: string;
     state: B20ObservationStateV1;
     reasonCode: string | null;
     referencePositionAtomic: string;
@@ -683,6 +689,8 @@ export function b20OpportunityCardV1(input: B20CardInputV1): B20OpportunityCardV
     schemaVersion: 'b20-opportunity-card/v1',
     launch,
     observation: {
+      observationId: source.id,
+      evidenceHash: source.evidenceHash,
       state: source.state,
       reasonCode: source.reasonCode,
       headline: B20_OBSERVATION_STATE_COPY_V1[source.state],

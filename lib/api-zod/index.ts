@@ -3525,6 +3525,8 @@ const B20CardActionV1Schema = z
 
 const B20CardObservationV1Schema = z
   .object({
+    observationId: HashV1Schema,
+    evidenceHash: HashV1Schema,
     state: z.enum(['candidate', 'provisional', 'rejected', 'unmeasured']),
     reasonCode: z.string().max(64).nullable(),
     headline: z.string().min(1),
@@ -3810,6 +3812,90 @@ export const B20OpportunityDetailResponseV1Schema = z
     serverTime: z.string().datetime(),
   })
   .strict();
+
+// ---------------------------------------------------------------------------
+// B20 Intelligence Copilot — one exact Discover observation, read-only.
+//
+// The client supplies references, never evidence. The server rehydrates the
+// canonical observation and refuses a changed id/hash before answering. This
+// prevents an old browser card from being narrated as current evidence.
+// ---------------------------------------------------------------------------
+
+export const B20CopilotQuestionKindV1Schema = z.enum([
+  'summary',
+  'why_rejected',
+  'unusual',
+  'missing_evidence',
+  'explain_hook',
+  'exit_capacity',
+  'compare_previous',
+]);
+
+export const B20CopilotAskRequestV1Schema = z
+  .object({
+    schemaVersion: z.literal('b20-copilot-ask/v1'),
+    tokenAddress: z.string().regex(/^0x[0-9a-f]{40}$/),
+    observationId: HashV1Schema.nullable(),
+    evidenceHash: HashV1Schema.nullable(),
+    question: z.string().trim().min(2).max(500),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if ((value.observationId === null) !== (value.evidenceHash === null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['observationId'],
+        message: 'observationId and evidenceHash must both be present or both be null',
+      });
+    }
+  });
+
+const B20CopilotFactV1Schema = z
+  .object({
+    label: z.string().min(1).max(80),
+    value: z.string().min(1).max(500),
+    tone: z.enum(['neutral', 'positive', 'warning']),
+  })
+  .strict();
+
+export const B20CopilotAskResponseV1Schema = z
+  .object({
+    schemaVersion: z.literal('b20-copilot-answer/v1'),
+    answerSource: z.literal('deterministic_evidence'),
+    questionKind: B20CopilotQuestionKindV1Schema,
+    subject: z
+      .object({
+        tokenAddress: z.string().regex(/^0x[0-9a-f]{40}$/),
+        symbol: z.string(),
+        name: z.string(),
+      })
+      .strict(),
+    observation: z
+      .object({
+        observationId: HashV1Schema,
+        evidenceHash: HashV1Schema,
+        blockNumber: z.string().regex(/^\d+$/),
+        measuredAt: z.string().datetime(),
+        freshness: z.enum(['fresh', 'stale']),
+      })
+      .strict()
+      .nullable(),
+    answer: z.string().min(1).max(4000),
+    facts: z.array(B20CopilotFactV1Schema).max(16),
+    missingEvidence: z.array(z.string().min(1).max(300)).max(20),
+    caveats: z.array(z.string().min(1).max(500)).min(1).max(12),
+    routeHandoff: z
+      .object({
+        label: z.literal('Open in Routes'),
+        goal: z.string().min(1).max(500),
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict();
+
+export type B20CopilotAskRequestV1 = z.infer<typeof B20CopilotAskRequestV1Schema>;
+export type B20CopilotAskResponseV1 = z.infer<typeof B20CopilotAskResponseV1Schema>;
 
 export type B20PipelineStatusV1Wire = z.infer<typeof B20PipelineStatusV1Schema>;
 export type B20OpportunityCardV1Wire = z.infer<typeof B20OpportunityCardV1Schema>;

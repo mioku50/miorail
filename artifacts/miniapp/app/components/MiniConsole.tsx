@@ -111,6 +111,7 @@ import {
   useEvaluateSwapRoute,
   useAddB20Watch,
   useB20Inspect,
+  useB20CopilotAsk,
   useB20Opportunities,
   useB20Watch,
   useB20Watchlist,
@@ -907,10 +908,12 @@ export function MiniConsole() {
 
   const [feedFilter, setFeedFilter] = useState<OpportunityFilterV1>("all");
   const [feedFresh, setFeedFresh] = useState(false);
+  const [copilotToken, setCopilotToken] = useState<string | null>(null);
   const opportunities = useB20Opportunities(
     { state: feedFilter, freshness: feedFresh ? "fresh" : "all" },
     { enabled: b20GateOn && section === "opportunities" },
   );
+  const copilot = useB20CopilotAsk();
   const feedPipeline = opportunities.data?.pipeline ?? null;
   const feedHome = consoleHomeSectionV1({
     pipeline: feedPipeline
@@ -1899,6 +1902,23 @@ export function MiniConsole() {
           setSection("portfolio");
         }}
         onRefresh={() => void opportunities.refetch()}
+        copilot={{
+          tokenAddress: copilotToken,
+          loading: copilot.isPending,
+          answer: copilot.data?.subject.tokenAddress === copilotToken ? copilot.data : null,
+          error: copilot.error?.message ?? null,
+          onAsk: (input) => {
+            setCopilotToken(input.tokenAddress);
+            copilot.mutate({ schemaVersion: "b20-copilot-ask/v1", ...input });
+          },
+          onOpenRoutes: (nextGoal) => {
+            // Base App uses one page rather than URL routes. The handoff only
+            // fills the goal; comparison remains an explicit tap in Routes.
+            setGoal(nextGoal);
+            setScreen("plan");
+            setSection("routes");
+          },
+        }}
       />
     );
   } else if (section === "portfolio") {
