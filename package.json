@@ -46,14 +46,5 @@
     "tsx": "^4.22.4",
     "typescript": "^5.4.5",
     "typescript-eslint": "^8.61.1"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "bufferutil",
-      "protobufjs",
-      "sharp",
-      "unrs-resolver",
-      "utf-8-validate"
-    ]
   }
 }
