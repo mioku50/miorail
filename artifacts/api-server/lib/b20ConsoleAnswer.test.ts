@@ -78,6 +78,46 @@ describe('Explore states whose limit a count describes', () => {
     assert.ok(result.caveats.some((entry) => /counts of the newest launches rather than of every launch/.test(entry)));
   });
 
+  test('a question that named a finding is answered with that finding first', () => {
+    // Measured live 2026-08-15: "which tokens did people buy but cannot sell"
+    // and "where was coverage incomplete" both opened with the same universe
+    // counts and appended the tokens at the end. The reads were right and the
+    // sentence answered a different question.
+    const result = b20ExploreAnswerV1({
+      summary: SUMMARY,
+      intent: 'find_bought_not_sellable',
+      cards: [cardV1({ symbol: 'WORM' }), cardV1({ symbol: 'MOSS' })],
+    });
+    assert.match(result.answer, /^60 launches were bought and would not price a sale/);
+    assert.match(result.answer, /The first 2 are: WORM, MOSS\./);
+  });
+
+  test('a finding about Miorail says so in the leading sentence, not in a caveat', () => {
+    const result = b20ExploreAnswerV1({
+      summary: SUMMARY,
+      intent: 'find_not_searched',
+      cards: [cardV1({ symbol: 'WORM' })],
+    });
+    assert.match(result.answer, /^193 launches carry a reading that never searched the venue/);
+    assert.match(result.answer, /That is Miorail’s limit, not a property of those tokens/);
+  });
+
+  test('a find that matched nothing says so plainly', () => {
+    // Zero is a real answer. Opening with the universe counts instead would
+    // read as an evasion of a question that has a one-sentence answer.
+    const result = b20ExploreAnswerV1({ summary: SUMMARY, intent: 'find_two_sided', cards: [] });
+    assert.match(result.answer, /^No launch in the last 48 hours priced in both directions/);
+  });
+
+  test('all of them is not "the first two of them"', () => {
+    const result = b20ExploreAnswerV1({
+      summary: { ...SUMMARY, standing: [{ kind: 'bought_not_sellable', group: 'bought_not_sellable', count: 2, aboutToken: true }] },
+      intent: 'find_bought_not_sellable',
+      cards: [cardV1({ symbol: 'WORM' }), cardV1({ symbol: 'MOSS' })],
+    });
+    assert.match(result.answer, /They are: WORM, MOSS\./);
+  });
+
   test('an empty universe is not reported as a shape', () => {
     const result = b20ExploreAnswerV1({
       summary: { ...SUMMARY, window: { ...SUMMARY.window, launches: 0 }, sections: [], standing: [] },

@@ -117,6 +117,36 @@ function windowLabelV1(maxLaunchAgeMs: number): string {
   return pluralV1(hours, 'hour', 'hours');
 }
 
+/**
+ * What each named finding is, said as the first sentence of its own answer.
+ *
+ * `none` is written to complete "No launch in the last 48 hours ___" and is as
+ * load-bearing as the rest: a find that matched nothing has a plain answer, and
+ * opening with the universe counts instead would read as an evasion.
+ */
+const FINDING_COPY_V1 = {
+  find_bought_not_sellable: {
+    standingKind: 'bought_not_sellable',
+    group: null,
+    headline: 'launches were bought and would not price a sale at the reference size.',
+    none: 'was bought and then failed to price a sale.',
+  },
+  find_two_sided: {
+    standingKind: null,
+    group: 'two_sided',
+    headline: 'launches priced in both directions at the reference size.',
+    none: 'priced in both directions at the reference size.',
+  },
+  find_not_searched: {
+    standingKind: 'venue_not_searched',
+    group: null,
+    // Whose limit this is, in the sentence that leads the answer rather than
+    // in a caveat under it.
+    headline: 'launches carry a reading that never searched the venue where B20 tokens trade. That is Miorail’s limit, not a property of those tokens.',
+    none: 'is waiting on a venue search Miorail did not perform.',
+  },
+} as const;
+
 export function b20ExploreAnswerV1(input: {
   summary: B20ConsoleSummaryV1;
   /** Present for the three "find" intents. Named tokens, already bounded. */
@@ -171,7 +201,7 @@ export function b20ExploreAnswerV1(input: {
     );
   }
 
-  const lead = `Miorail has stored measurements for ${pluralV1(summary.window.launches, 'B20 launch', 'B20 launches')} detected in the last ${window}.`;
+  const context = `Miorail has stored measurements for ${pluralV1(summary.window.launches, 'B20 launch', 'B20 launches')} detected in the last ${window}.`;
   const sectionSentence = summary.sections.length === 0
     ? ' None of them has reached a stored conclusion yet.'
     : ` They fall into ${pluralV1(summary.sections.length, 'group', 'groups')}: ${summary.sections
@@ -179,9 +209,6 @@ export function b20ExploreAnswerV1(input: {
         .join(', ')}.`;
 
   const named = (input.cards ?? []).slice(0, 5);
-  const namedSentence = named.length === 0
-    ? ''
-    : ` Named here: ${named.map((card) => symbolV1(card)).join(', ')}.`;
   for (const card of named) {
     facts.push({
       label: symbolV1(card),
@@ -195,8 +222,29 @@ export function b20ExploreAnswerV1(input: {
     ? ` ${limitGroup.count} of them describe a reading Miorail did not complete, and none of those is a statement about the token.`
     : '';
 
+  // A question that named a finding is answered with that finding FIRST.
+  //
+  // Measured live 2026-08-15: "which tokens did people buy but cannot sell"
+  // and "where was coverage incomplete" both came back opening with the same
+  // universe counts, with the tokens appended at the end of the paragraph. The
+  // reads were right and the sentence answered a different question.
+  const finding = FINDING_COPY_V1[input.intent as keyof typeof FINDING_COPY_V1] ?? null;
+  let lead = `${context}${sectionSentence}${limitSentence}`;
+  if (finding) {
+    const count = finding.standingKind
+      ? summary.standing.find((entry) => entry.kind === finding.standingKind)?.count ?? 0
+      : summary.sections.find((section) => section.group === finding.group)?.count ?? 0;
+    lead = named.length === 0
+      // Zero is a real answer here and it is NOT the universe counts. Opening
+      // with those would read as an evasion of a question with a plain answer.
+      ? `No launch in the last ${window} ${finding.none} ${context}`
+      : `${count} ${finding.headline} ${named.length === count ? 'They are' : `The first ${named.length} are`}: ${named
+          .map((card) => symbolV1(card))
+          .join(', ')}. ${context}${sectionSentence}`;
+  }
+
   return {
-    answer: `${lead}${sectionSentence}${limitSentence}${namedSentence}`,
+    answer: lead,
     facts: facts.slice(0, 16),
     missingEvidence: missingEvidence.slice(0, 20),
     caveats: caveats.slice(0, 12),
