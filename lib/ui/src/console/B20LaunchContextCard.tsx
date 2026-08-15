@@ -37,6 +37,7 @@ export interface B20LaunchContextViewV1 {
   corpus: {
     launchCount: number;
     standingCounts: readonly { kind: string; count: number }[];
+    standingSampleSize: number;
     coverage: { launchesRead: number; launchesTotal: number };
   } | null;
   claim: {

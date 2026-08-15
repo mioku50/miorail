@@ -254,9 +254,20 @@ export function b20ClaimStandingV1(claim: B20TokenClaimV1 | null): B20ClaimStand
 export interface B20DeployerCorpusV1 {
   /** Launches from this sender among those whose sender has been read. */
   launchCount: number;
-  /** Of those, how many reached each conclusion. Keyed by standing kind so the
-   * words match the feed rather than inventing a second vocabulary. */
+  /**
+   * How many of this sender's launches reached each conclusion. Keyed by
+   * standing kind so the words match the feed rather than inventing a second
+   * vocabulary.
+   *
+   * Computed over `standingSampleSize` launches, NOT over `launchCount`. One
+   * live sender has 359 launches and the breakdown reads the newest 25 of
+   * them; publishing the two side by side without saying so would put a
+   * fraction and a total in the same sentence, which is the exact defect this
+   * whole rail exists to keep out.
+   */
   standingCounts: readonly { kind: string; count: number }[];
+  /** How many launches the breakdown above actually covers. */
+  standingSampleSize: number;
   /** Launches in the whole corpus whose sender HAS been read, and how many
    * exist at all. Without this pair, "three launches from this sender" reads
    * as a complete count of what they did. */
@@ -353,6 +364,13 @@ export function b20LaunchContextCaveatsV1(input: {
     caveats.push(
       'An address that called the factory many times may be one project or a service launching for many. Miorail cannot tell which, and does not guess.',
     );
+    if (input.corpus.standingSampleSize < input.corpus.launchCount) {
+      // The two numbers have different denominators, so the smaller one says
+      // so out loud rather than being read as a share of the larger.
+      caveats.push(
+        `What those launches measured is broken down over ${input.corpus.standingSampleSize} of the ${input.corpus.launchCount}, not over all of them.`,
+      );
+    }
     if (bps < B20_DEPLOYER_COVERAGE_FLOOR_BPS_V1) {
       caveats.push(
         'Less than half the stored launches have had their sender read, so this is a count over a fraction of the corpus and will grow as the backfill runs.',

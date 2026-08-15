@@ -28,6 +28,7 @@ import {
 const CORPUS: B20DeployerCorpusV1 = {
   launchCount: 8,
   standingCounts: [{ kind: 'no_exit_route', count: 7 }],
+  standingSampleSize: 8,
   coverage: { launchesRead: 300, launchesTotal: 5909 },
 };
 
@@ -89,6 +90,20 @@ describe('a count is dropped, not hidden, when the sender cannot carry it', () =
     assert.equal(context.corpus?.launchCount, 8);
     assert.ok(
       context.caveats.some((caveat) => /over the 300 of 5909 stored launches/.test(caveat)),
+      context.caveats.join(' | '),
+    );
+  });
+
+  test('a breakdown over fewer launches than the count says so', () => {
+    // launchCount 8 with a breakdown over 8 says nothing; a breakdown over
+    // fewer must, or a fraction and a total sit in one sentence.
+    const context = b20LaunchContextV1({
+      reading: readingV1(B20_FACTORY_ADDRESS_V1),
+      corpus: { ...CORPUS, launchCount: 359, standingSampleSize: 25 },
+      claim: null,
+    });
+    assert.ok(
+      context.caveats.some((caveat) => /broken down over 25 of the 359/.test(caveat)),
       context.caveats.join(' | '),
     );
   });

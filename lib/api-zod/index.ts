@@ -4124,6 +4124,9 @@ export const B20LaunchContextResponseV1Schema = z
       .object({
         launchCount: z.number().int().min(0),
         standingCounts: z.array(z.object({ kind: z.string().min(1).max(64), count: z.number().int().min(0) }).strict()).max(20),
+        /** The breakdown's own denominator. It is NOT `launchCount`: one live
+         * sender has 359 launches and the breakdown reads 25 of them. */
+        standingSampleSize: z.number().int().min(0),
         coverage: z
           .object({ launchesRead: z.number().int().min(0), launchesTotal: z.number().int().min(0) })
           .strict(),

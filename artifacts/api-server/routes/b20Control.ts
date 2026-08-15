@@ -1518,6 +1518,7 @@ export async function readB20LaunchContextV1(tokenAddress: string): Promise<B20L
       launchCount: counts.launchCount,
       // Grouped by the SAME reason vocabulary the feed speaks, so a context
       // panel cannot invent a second set of words for one conclusion.
+      standingSampleSize: counts.launches.length,
       standingCounts: [...counts.launches.reduce((acc, launch) => {
         const kind = launch.state === null ? 'not_measured' : launch.reasonCode ?? launch.state;
         acc.set(kind, (acc.get(kind) ?? 0) + 1);

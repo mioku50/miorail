@@ -27,7 +27,7 @@ const contextV1 = (over: Partial<B20LaunchContextViewV1> = {}): B20LaunchContext
   tokenAddress: TOKEN,
   headline: 'Sent straight to the B20 factory.',
   reading: { status: 'read', deployerAddress: SENDER, relation: 'direct', readAt: '2026-08-16T00:00:00.000Z' },
-  corpus: { launchCount: 3, standingCounts: [], coverage: { launchesRead: 300, launchesTotal: 5909 } },
+  corpus: { launchCount: 3, standingCounts: [], standingSampleSize: 3, coverage: { launchesRead: 300, launchesTotal: 5909 } },
   claim: {
     status: 'no_claim',
     headline: 'Unverified context.',
