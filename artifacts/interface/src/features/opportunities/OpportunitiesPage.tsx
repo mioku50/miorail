@@ -25,6 +25,7 @@ import {
 import {
   useB20ConsoleAsk,
   useB20CopilotAsk,
+  useB20LaunchContext,
   useB20MarketRails,
   useB20Opportunities,
   useStatus,
@@ -63,6 +64,9 @@ export function OpportunitiesPage() {
   const [copilotToken, setCopilotToken] = useState<string | null>(null);
   const [consoleScope, setConsoleScope] = useState<B20ConsoleScopeViewV1>('explore');
   const [consoleTokens, setConsoleTokens] = useState<readonly string[]>([]);
+  // Null until a reader opens one. The query is disabled while it is null, so
+  // the feed costs nothing extra to render.
+  const [contextToken, setContextToken] = useState<string | null>(null);
 
   const discoverOn = status.data?.productMigration?.b20ControlV1 === true;
   const marketRails = useB20MarketRails({ enabled: discoverOn });
@@ -74,6 +78,7 @@ export function OpportunitiesPage() {
     { enabled: discoverOn },
   );
   const copilot = useB20CopilotAsk();
+  const launchContext = useB20LaunchContext(contextToken);
   const b20Console = useB20ConsoleAsk({
     // The scope the SERVER answered in wins. An address in the question moves
     // the answer to that token, and leaving the tab where it was would label
@@ -209,6 +214,13 @@ export function OpportunitiesPage() {
         // simulation and the clearance; Discover owns none of them.
         onOpenToken={(token) => navigate(`${consoleSectionPathV1('portfolio')}?token=${encodeURIComponent(token)}`)}
         onRefresh={() => void feed.refetch()}
+        launchContext={{
+          tokenAddress: contextToken,
+          loading: launchContext.isPending && contextToken !== null,
+          context: launchContext.data ?? null,
+          error: launchContext.error?.message ?? null,
+          onOpen: setContextToken,
+        }}
         console={{
           scope: consoleScope,
           tokenAddresses: consoleTokens,

@@ -688,6 +688,14 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .b20-answer-unknowns ul,
 .mio-console .b20-answer-reads ul,
 .mio-console .b20-answer-caveats ul { margin: 7px 0 0; padding-left: 18px; line-height: 1.5; }
+/* Stage 09 — the identity checklist and the context caveats. A list, never a
+   grade: every link is named with what happened to it, so "0 of 3" reads as a
+   checklist rather than as a score. */
+.mio-console .claim-links { margin: 8px 0 0; padding-left: 18px; color: var(--muted);
+  font-size: 11px; line-height: 1.55; }
+.mio-console .claim-links li.ok { color: var(--green); }
+.mio-console .claim-links li.warn { color: var(--amber); }
+
 /* Stage 07 — the tokens in an Investigate comparison. Visually apart from the
    prompt chips above them: those ask a question, these remove a token. */
 .mio-console .b20-token-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }

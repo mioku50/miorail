@@ -31,6 +31,7 @@ import {
   B20OpportunityDetailResponseV1Schema,
   B20MarketRailsResponseV1Schema,
   B20ConsoleAskRequestV1Schema,
+  B20LaunchContextResponseV1Schema,
   B20ConsoleAskResponseV1Schema,
   B20CopilotAskRequestV1Schema,
   B20CopilotAskResponseV1Schema,
@@ -76,10 +77,12 @@ import {
   type B20WatchlistEntryV1,
   type B20WatchlistRepositoryV1,
   createDatabaseB20ObservationRepository,
+  createDatabaseB20LaunchDeployerRepository,
   createDatabaseB20LaunchPoolRepository,
   decodeFeedCursorV1,
   encodeFeedCursorV1,
   type B20ObservationRepositoryV1,
+  type B20LaunchDeployerRepositoryV1,
   type B20FeedRowV1,
   type B20OpportunityObservationV1,
   type B20LaunchPoolRepositoryV1,
@@ -105,6 +108,12 @@ import {
   B20_STANDING_GROUP_COPY_V1,
   B20_EXIT_STANDING_KINDS_V1,
   b20CardStandingGroupV1,
+  b20LaunchContextV1,
+  b20SenderRelationV1,
+  b20SenderSupportsCountingV1,
+  type B20DeployerCorpusV1,
+  type B20DeployerReadingV1,
+  type B20LaunchContextV1 as B20LaunchContextModelV1,
   type B20StandingGroupV1,
 } from '@mioagent/opportunity-rail';
 import {
@@ -233,6 +242,7 @@ export const b20RouteRuntime = {
     createDatabaseB20EntryRouteProofRepository(client),
   receiptReader: createViemBaseReceiptReader,
   observations: (): B20ObservationRepositoryV1 => createDatabaseB20ObservationRepository(client),
+  deployers: (): B20LaunchDeployerRepositoryV1 => createDatabaseB20LaunchDeployerRepository(client),
   /**
    * The narrator, or null when none is configured.
    *
@@ -1465,6 +1475,91 @@ b20ControlRouter.post('/opportunities/b20/console/ask', async (req: Request, res
     );
   } catch (error) {
     storageFailure(res, error, 'b20-console-ask');
+  }
+});
+
+/**
+ * Stage 09 — Launch Context for one token.
+ *
+ * Its own route, reached on request. Not a field on the card and not a tab:
+ * a surface with a Launch Context tab has to fill it, and the honest content
+ * for almost every launch is "an address sent a transaction, and Miorail knows
+ * nothing else about it". That belongs where somebody asked for it.
+ */
+export async function readB20LaunchContextV1(tokenAddress: string): Promise<B20LaunchContextModelV1 | null> {
+  const observations = b20RouteRuntime.observations();
+  const found = await observations.getFeedRowForToken({ tokenAddress, historyLimit: 1 });
+  if (!found) return null;
+
+  const deployers = b20RouteRuntime.deployers();
+  const stored = await deployers.readDeployer(found.row.launch.id);
+
+  const reading: B20DeployerReadingV1 = !stored
+    ? { status: 'not_read' }
+    : stored.deployerAddress === null
+      ? { status: 'transaction_absent', readAt: stored.readAt }
+      : {
+          status: 'read',
+          deployerAddress: stored.deployerAddress,
+          relation: b20SenderRelationV1(stored.transactionTo),
+          readAt: stored.readAt,
+        };
+
+  // The counting read runs only when the relation supports it. Fetching it
+  // anyway and dropping it later would spend a query to produce something the
+  // domain layer is required to throw away.
+  let corpus: B20DeployerCorpusV1 | null = null;
+  if (reading.status === 'read' && b20SenderSupportsCountingV1(reading.relation)) {
+    const [counts, coverage] = await Promise.all([
+      deployers.countsForDeployer({ deployerAddress: reading.deployerAddress, limit: 25 }),
+      deployers.deployerCoverage(),
+    ]);
+    corpus = {
+      launchCount: counts.launchCount,
+      // Grouped by the SAME reason vocabulary the feed speaks, so a context
+      // panel cannot invent a second set of words for one conclusion.
+      standingCounts: [...counts.launches.reduce((acc, launch) => {
+        const kind = launch.state === null ? 'not_measured' : launch.reasonCode ?? launch.state;
+        acc.set(kind, (acc.get(kind) ?? 0) + 1);
+        return acc;
+      }, new Map<string, number>())].map(([kind, count]) => ({ kind, count })),
+      coverage,
+    };
+  }
+
+  // Claims are not implemented as a submission path yet, so there is never a
+  // claim to read. `null` is the honest input and produces the default
+  // standing — which is the resting state for almost every launch anyway.
+  return b20LaunchContextV1({ reading, corpus, claim: null });
+}
+
+b20ControlRouter.get('/opportunities/b20/:tokenAddress/context', async (req: Request, res: Response) => {
+  const guard = b20Guard(req, res);
+  if (!guard) return;
+
+  const tokenAddress = String(req.params.tokenAddress ?? '').toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(tokenAddress)) {
+    res.status(400).json({ error: 'invalid_token_address', code: 'invalid_token_address' });
+    return;
+  }
+  try {
+    if (!(await b20RouteRuntime.discoverAvailable())) {
+      res.status(503).json({ error: 'discover_unavailable', code: 'discover_unavailable' });
+      return;
+    }
+    const context = await readB20LaunchContextV1(tokenAddress);
+    if (!context) {
+      res.status(404).json({ error: 'launch_not_found', code: 'launch_not_found' });
+      return;
+    }
+    res.json(B20LaunchContextResponseV1Schema.parse({
+      schemaVersion: 'b20-launch-context/v1',
+      tokenAddress,
+      ...context,
+      serverTime: b20RouteRuntime.now().toISOString(),
+    }));
+  } catch (error) {
+    storageFailure(res, error, 'b20-launch-context');
   }
 });
 

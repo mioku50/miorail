@@ -4079,6 +4079,75 @@ export const B20ConsoleAskResponseV1Schema = z
   })
   .strict();
 
+// ---------------------------------------------------------------------------
+// Stage 09 — Launch Context. Read on request, about one token.
+//
+// The shape is built around one refusal: `corpus` is present only when the
+// launch transaction went STRAIGHT to the B20 factory. Measured on the first
+// 300 stored launches, every repeated sender went through a relayer or the
+// ERC-4337 EntryPoint, so counting launches by `tx.from` would have grouped
+// unrelated projects under one address. There is no field here that can carry
+// a count the domain layer refused to make.
+//
+// There is also no score. `verifiedLabel` is a fraction and the checklist is
+// beside it, because a single number folding unlike evidence together would be
+// sorted, and a ranked list of tokens is an investment signal.
+// ---------------------------------------------------------------------------
+
+export const B20SenderRelationV1Schema = z.enum([
+  'direct',
+  'bundler',
+  'intermediary',
+  'contract_creation',
+]);
+
+export const B20ClaimLinkV1Schema = z.enum(['launch_sender', 'domain_file', 'project_publication']);
+
+export const B20LaunchContextResponseV1Schema = z
+  .object({
+    schemaVersion: z.literal('b20-launch-context/v1'),
+    tokenAddress: z.string().regex(/^0x[0-9a-f]{40}$/),
+    headline: z.string().min(1).max(200),
+    reading: z.discriminatedUnion('status', [
+      z.object({ status: z.literal('not_read') }).strict(),
+      z
+        .object({
+          status: z.literal('read'),
+          deployerAddress: z.string().regex(/^0x[0-9a-f]{40}$/),
+          relation: B20SenderRelationV1Schema,
+          readAt: z.string().datetime(),
+        })
+        .strict(),
+      z.object({ status: z.literal('transaction_absent'), readAt: z.string().datetime() }).strict(),
+    ]),
+    corpus: z
+      .object({
+        launchCount: z.number().int().min(0),
+        standingCounts: z.array(z.object({ kind: z.string().min(1).max(64), count: z.number().int().min(0) }).strict()).max(20),
+        coverage: z
+          .object({ launchesRead: z.number().int().min(0), launchesTotal: z.number().int().min(0) })
+          .strict(),
+      })
+      .strict()
+      .nullable(),
+    claim: z
+      .object({
+        status: z.enum(['no_claim', 'unverified', 'verified', 'refuted']),
+        headline: z.string().min(1).max(200),
+        detail: z.string().min(1).max(600),
+        verifiedLinks: z.array(B20ClaimLinkV1Schema).max(3),
+        refutedLinks: z.array(B20ClaimLinkV1Schema).max(3),
+        uncheckedLinks: z.array(B20ClaimLinkV1Schema).max(3),
+        verifiedLabel: z.string().regex(/^\d+ of \d+$/),
+      })
+      .strict(),
+    caveats: z.array(z.string().min(1).max(500)).min(1).max(10),
+    serverTime: z.string().datetime(),
+  })
+  .strict();
+
+export type B20LaunchContextResponseV1 = z.infer<typeof B20LaunchContextResponseV1Schema>;
+
 export type B20ConsoleAskRequestV1 = z.infer<typeof B20ConsoleAskRequestV1Schema>;
 export type B20ConsoleAskResponseV1 = z.infer<typeof B20ConsoleAskResponseV1Schema>;
 

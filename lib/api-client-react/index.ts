@@ -958,6 +958,28 @@ export function useB20ConsoleAsk(
   });
 }
 
+/**
+ * Launch Context for one token, fetched when a reader opens it.
+ *
+ * A query keyed by the token rather than part of the feed: the honest content
+ * for almost every launch is "an address sent a transaction", and loading that
+ * for every card would spend a request per launch to show a sentence nobody
+ * asked for.
+ */
+export function useB20LaunchContext(tokenAddress: string | null, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['b20-launch-context', tokenAddress],
+    queryFn: async () => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/opportunities/b20/${String(tokenAddress)}/context`,
+      );
+      return apiSpec.B20LaunchContextResponseV1Schema.parse(response);
+    },
+    retry: false,
+    enabled: options?.enabled !== false && Boolean(tokenAddress),
+  });
+}
+
 export function useAddB20Watch(
   options?: Omit<UseMutationOptions<apiSpec.B20WatchlistResponseV1, Error, { tokenAddress: string }>, 'mutationFn'>,
 ) {

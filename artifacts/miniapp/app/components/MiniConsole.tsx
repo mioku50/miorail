@@ -116,6 +116,7 @@ import {
   useB20Inspect,
   useB20ConsoleAsk,
   useB20CopilotAsk,
+  useB20LaunchContext,
   useB20Opportunities,
   useB20Watch,
   useB20Watchlist,
@@ -922,6 +923,7 @@ export function MiniConsole() {
   // reader's scope when they switched tabs.
   const [portfolioScope, setPortfolioScope] = useState<B20ConsoleScopeViewV1>("portfolio");
   const [consoleTokens, setConsoleTokens] = useState<readonly string[]>([]);
+  const [contextToken, setContextToken] = useState<string | null>(null);
   const opportunities = useB20Opportunities(
     // The verdict section is filtered by the server, so Base App gets the same
     // sections the web console does without a second grouping rule of its own.
@@ -929,6 +931,7 @@ export function MiniConsole() {
     { enabled: b20GateOn && section === "opportunities" },
   );
   const copilot = useB20CopilotAsk();
+  const launchContext = useB20LaunchContext(contextToken);
   // The scope the SERVER answered in wins: an address in the question moves the
   // answer to that token, and leaving the tab where it was would label it wrongly.
   const b20Console = useB20ConsoleAsk({ onSuccess: (answer) => setConsoleScope(answer.scope) });
@@ -1925,6 +1928,13 @@ export function MiniConsole() {
           setSection("portfolio");
         }}
         onRefresh={() => void opportunities.refetch()}
+        launchContext={{
+          tokenAddress: contextToken,
+          loading: launchContext.isPending && contextToken !== null,
+          context: launchContext.data ?? null,
+          error: launchContext.error?.message ?? null,
+          onOpen: setContextToken,
+        }}
         console={{
           scope: consoleScope,
           tokenAddresses: consoleTokens,

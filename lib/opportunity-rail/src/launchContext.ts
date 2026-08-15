@@ -25,13 +25,109 @@
 //   vocabulary the feed already uses.
 // ---------------------------------------------------------------------------
 
+/**
+ * The B20 factory. A transaction sent straight here was sent by whoever called
+ * the factory, with nothing in between.
+ */
+export const B20_FACTORY_ADDRESS_V1 = '0xb20f000000000000000000000000000000000000';
+
+/**
+ * The canonical ERC-4337 EntryPoint.
+ *
+ * This address is why the whole anchor needed a second look. Measured on the
+ * first 300 stored launches: 25 of them were sent to the EntryPoint by only
+ * FOUR senders — those senders are bundlers, relaying UserOperations for
+ * unrelated people. `tx.from` on such a transaction is whoever paid to include
+ * it, and it says nothing at all about who launched the token.
+ */
+export const ERC4337_ENTRYPOINT_V1 = '0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789';
+
+/**
+ * What the sender of a launch transaction actually establishes.
+ *
+ * The reason for the split is STRUCTURAL, not statistical: on a relayed
+ * transaction `tx.from` is whoever paid to include it. For an ERC-4337
+ * UserOperation that is the bundler, and the actual initiator is inside the
+ * operation where a transaction read cannot see it. Grouping launches by
+ * `tx.from` — the obvious thing to build — would therefore file unrelated
+ * projects under one relayer and print counts about them. That is the failure
+ * this product keeps having, in its worst form yet: not our limit wearing a
+ * token's name, but one project's record wearing another's.
+ *
+ * Measured on 2,800 stored launches, which is what the split looks like in
+ * practice:
+ *
+ *   1,165 through one intermediary contract, from 588 senders
+ *     731 straight to the factory, from 302 senders
+ *     309 through the ERC-4337 EntryPoint, from SIX senders
+ *
+ * The EntryPoint row is the whole argument in one line. Six addresses account
+ * for 309 launches, and they are bundlers.
+ *
+ * A correction worth keeping: the first 300 launches read showed 121 direct
+ * launches from 121 distinct senders, and it looked as though the unambiguous
+ * anchor was also always unique. It is not — at ten times the sample there are
+ * repeats, one of them with 359 direct launches. An early sample answered a
+ * different question than the one it appeared to answer.
+ */
+export type B20SenderRelationV1 =
+  /** Straight to the B20 factory. The sender called it, and nobody stood in
+   * between. This is the only relation that supports counting. */
+  | 'direct'
+  /** Sent to the ERC-4337 EntryPoint, so the sender is a bundler. It is not
+   * the launcher and must never be counted as one. */
+  | 'bundler'
+  /** Through some other contract. The sender paid for the transaction; whether
+   * they are the launcher or a relayer for one is not established. */
+  | 'intermediary'
+  /** The transaction created a contract directly, with no recipient. */
+  | 'contract_creation';
+
+export function b20SenderRelationV1(transactionTo: string | null): B20SenderRelationV1 {
+  if (transactionTo === null) return 'contract_creation';
+  const to = transactionTo.toLowerCase();
+  if (to === B20_FACTORY_ADDRESS_V1) return 'direct';
+  if (to === ERC4337_ENTRYPOINT_V1) return 'bundler';
+  return 'intermediary';
+}
+
+/** Whether launches may be counted together because they share a sender. Only
+ * `direct` qualifies: everything else shares an address that may belong to
+ * infrastructure rather than to a launcher. */
+export function b20SenderSupportsCountingV1(relation: B20SenderRelationV1): boolean {
+  return relation === 'direct';
+}
+
+export const B20_SENDER_RELATION_COPY_V1: Readonly<Record<B20SenderRelationV1, { label: string; detail: string }>> = {
+  direct: {
+    label: 'Sent straight to the B20 factory',
+    detail:
+      'This address called the factory itself, with no contract in between. It is the one identity anchor on a launch that nobody can type into a log.',
+  },
+  bundler: {
+    label: 'Relayed through the ERC-4337 EntryPoint',
+    detail:
+      'The transaction was submitted by a bundler on somebody else’s behalf. The sender paid to include it and is not the launcher — Miorail cannot see who was, and will not guess.',
+  },
+  intermediary: {
+    label: 'Sent through another contract',
+    detail:
+      'This address paid for the transaction, but a contract stood between it and the factory. Whether it launched the token or relayed for whoever did is not established.',
+  },
+  contract_creation: {
+    label: 'Deployed a contract directly',
+    detail: 'The transaction had no recipient — it created a contract. The sender paid for that deployment.',
+  },
+};
+
 /** How a launch's sender reading stands. Three states, never two. */
 export type B20DeployerReadingV1 =
   /** Nobody has read this launch's transaction yet. Not a property of the
    * launch — a statement about how far the backfill has got. */
   | { status: 'not_read' }
-  /** The endpoint answered and named a sender. */
-  | { status: 'read'; deployerAddress: string; readAt: string }
+  /** The endpoint answered and named a sender. `relation` decides what that
+   * sender establishes — and, in particular, whether it may be counted. */
+  | { status: 'read'; deployerAddress: string; relation: B20SenderRelationV1; readAt: string }
   /** The endpoint answered and the transaction was not there. A reorged-away
    * transaction, or an endpoint serving less history than it claims. */
   | { status: 'transaction_absent'; readAt: string };
@@ -169,10 +265,44 @@ export interface B20DeployerCorpusV1 {
 
 export interface B20LaunchContextV1 {
   reading: B20DeployerReadingV1;
+  /** Null whenever the sender does not support counting, which is most of the
+   * time. Absence here is the honest state, not a gap to be filled. */
   corpus: B20DeployerCorpusV1 | null;
   claim: B20ClaimStandingV1;
+  /** The one-line verdict a surface leads with. */
+  headline: string;
   /** Sentences a surface must show beside any of the above. */
   caveats: readonly string[];
+}
+
+/**
+ * Assembles the context for one launch.
+ *
+ * The corpus is dropped — not merely hidden — whenever the relation does not
+ * support counting. A caller cannot render a count this function refused to
+ * make, which is the difference between a rule and a guideline.
+ */
+export function b20LaunchContextV1(input: {
+  reading: B20DeployerReadingV1;
+  corpus: B20DeployerCorpusV1 | null;
+  claim: B20TokenClaimV1 | null;
+}): B20LaunchContextV1 {
+  const counts = input.reading.status === 'read' && b20SenderSupportsCountingV1(input.reading.relation)
+    ? input.corpus
+    : null;
+  const claim = b20ClaimStandingV1(input.claim);
+  const headline = input.reading.status === 'not_read'
+    ? 'Miorail has not read this launch’s transaction.'
+    : input.reading.status === 'transaction_absent'
+      ? 'This launch’s transaction was not at the endpoint that answered.'
+      : B20_SENDER_RELATION_COPY_V1[input.reading.relation].label + '.';
+  return {
+    reading: input.reading,
+    corpus: counts,
+    claim,
+    headline,
+    caveats: [...b20LaunchContextCaveatsV1({ reading: input.reading, corpus: counts }), claim.detail],
+  };
 }
 
 /** Whether the sender read covers enough of the corpus for its counts to be
@@ -197,6 +327,18 @@ export function b20LaunchContextCaveatsV1(input: {
     );
     return caveats;
   }
+
+  caveats.push(B20_SENDER_RELATION_COPY_V1[input.reading.relation].detail);
+  if (!b20SenderSupportsCountingV1(input.reading.relation)) {
+    // The structural reason, said plainly: on a relayed transaction the sender
+    // is whoever paid to include it, so counting would group unrelated
+    // projects under one relayer.
+    caveats.push(
+      'Miorail does not count other launches from this address. On a relayed transaction the sender is whoever paid to include it, so counting them together would group unrelated projects under one address.',
+    );
+    return caveats;
+  }
+
   if (input.corpus) {
     const { launchesRead, launchesTotal } = input.corpus.coverage;
     const bps = launchesTotal === 0 ? 0 : Math.floor((launchesRead * 10_000) / launchesTotal);
@@ -204,6 +346,12 @@ export function b20LaunchContextCaveatsV1(input: {
     // invisible is the shape of every bad number this product has shipped.
     caveats.push(
       `Counts are over the ${launchesRead} of ${launchesTotal} stored launches whose sender Miorail has read. They are not a count of everything this address has done, on this chain or anywhere else.`,
+    );
+    // Measured: one direct sender accounts for 359 of the 731 direct launches
+    // read so far. Calling the factory itself proves the address was not
+    // relayed; it does not prove the address is the project.
+    caveats.push(
+      'An address that called the factory many times may be one project or a service launching for many. Miorail cannot tell which, and does not guess.',
     );
     if (bps < B20_DEPLOYER_COVERAGE_FLOOR_BPS_V1) {
       caveats.push(

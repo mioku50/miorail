@@ -91,7 +91,12 @@ export const B20_UNSUPPORTED_QUESTIONS_V1: readonly { patterns: readonly RegExp[
   },
   {
     patterns: [/\bwho (is|are) (the )?(dev|team|owner|founder)/i, /\bsniper/i, /\binsider/i, /кто (стоит|владелец|разработ)/iu],
-    refusal: 'Miorail does not identify wallets, teams or intent. It counts unique buying wallets inside a completed launch window and nothing about who they are.',
+    // Names what Miorail DOES have, because a refusal that understates its own
+    // capabilities is a false statement in the other direction. Stage 09 reads
+    // the launch transaction's sender; that is an address, and only when it
+    // called the factory directly does it establish even that much.
+    refusal:
+      'Miorail does not identify people, teams or intent. It can show which address sent the launch transaction — and only when that address called the B20 factory directly, because a relayed launch names a bundler instead — and it counts unique buying wallets inside a completed launch window. Neither of those is a person.',
   },
   {
     patterns: [/\brug\b/i, /\bscam\b/i, /\bhoneypot\b/i, /скам/iu, /обман/iu],

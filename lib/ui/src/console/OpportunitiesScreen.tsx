@@ -11,6 +11,7 @@ import {
   type ConsolePipelineStateV1,
 } from './navigation';
 import { B20ConsolePanel, type B20ConsolePanelModelV1 } from './B20ConsolePanel';
+import { B20LaunchContextCard, type B20LaunchContextModelV1 } from './B20LaunchContextCard';
 
 void React;
 
@@ -233,6 +234,15 @@ export interface OpportunitiesScreenModelV1 {
    * pinned to one observation, and this one cannot pin anything.
    */
   console?: B20ConsolePanelModelV1;
+  /**
+   * Stage 09 — Launch Context, opened per card.
+   *
+   * On request rather than on render: the honest content for almost every
+   * launch is "an address sent a transaction", and a feed that fetched it for
+   * every card would spend a query per launch to show a sentence nobody asked
+   * for.
+   */
+  launchContext?: B20LaunchContextModelV1;
   onRefresh?: () => void;
 }
 
@@ -249,10 +259,12 @@ function OpportunityCard({
   card,
   onOpen,
   copilot,
+  launchContext,
 }: {
   card: OpportunityCardViewV1;
   onOpen: (tokenAddress: string) => void;
   copilot?: B20CopilotPanelModelV1;
+  launchContext?: B20LaunchContextModelV1;
 }) {
   const [askOpen, setAskOpen] = React.useState(false);
   const [question, setQuestion] = React.useState('');
@@ -411,6 +423,11 @@ function OpportunityCard({
           )}
         </div>
       </details>
+
+      {/* Beside the evidence and closed by default. Whoever launched a token
+          is a different question from what its exit measured, and answering it
+          unasked would put an address on every card. */}
+      {launchContext && <B20LaunchContextCard tokenAddress={card.tokenAddress} model={launchContext} />}
 
       {/* T69-C.1 §2/§3 — the reason is always shown, and the button appears
           only when there is something a user could usefully do. A fresh
@@ -722,6 +739,7 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
                           card={card}
                           onOpen={model.onOpenToken}
                           copilot={model.copilot}
+                          launchContext={model.launchContext}
                         />
                       ))}
                     </div>

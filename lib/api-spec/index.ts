@@ -182,6 +182,7 @@ export type B20CopilotAskResponseV1 = z.infer<typeof schemas.B20CopilotAskRespon
 export type B20ConsoleAskRequestV1 = z.infer<typeof schemas.B20ConsoleAskRequestV1Schema>;
 export type B20ConsoleAskResponseV1 = z.infer<typeof schemas.B20ConsoleAskResponseV1Schema>;
 export type B20ConsoleScopeV1 = z.infer<typeof schemas.B20ConsoleScopeV1Schema>;
+export type B20LaunchContextResponseV1 = z.infer<typeof schemas.B20LaunchContextResponseV1Schema>;
 export type B20EntryPrepareRequestV1 = z.infer<typeof schemas.B20EntryPrepareRequestV1Schema>;
 export type B20EntryPrepareResponseV1 = z.infer<typeof schemas.B20EntryPrepareResponseV1Schema>;
 export type B20EntryReviewV1 = z.infer<typeof schemas.B20EntryReviewV1Schema>;
