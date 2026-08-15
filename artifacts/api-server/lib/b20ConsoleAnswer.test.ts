@@ -297,9 +297,25 @@ describe('Changes never reports an absence of comparison as an absence of moveme
         pairsConsidered: 12,
       },
     });
-    assert.match(result.answer, /WORM \+2\.5%/);
-    assert.match(result.answer, /MOSS -12%/);
+    assert.match(result.answer, /WORM at \+2\.5%/);
+    assert.match(result.answer, /MOSS at -12%/);
     assert.ok(result.caveats.some((entry) => /It is not a price/.test(entry)));
+  });
+
+  test('a symbol that is a number does not read as one', () => {
+    // Observed live: a B20 token whose symbol is "40", rendered directly after
+    // the sentence's own count of 40 launches.
+    const result = b20ChangesAnswerV1({
+      changes: {
+        movers: [mover('40', -2793)],
+        excluded: [],
+        collectingHistory: false,
+        baselineAgeMs: 24 * 60 * 60 * 1000,
+        pairsConsidered: 40,
+      },
+    });
+    assert.match(result.answer, /40 at -27\.93%/);
+    assert.doesNotMatch(result.answer, /: 40 -27\.93%/);
   });
 
   test('the denominator is stated, so a count is not read as out of everything', () => {

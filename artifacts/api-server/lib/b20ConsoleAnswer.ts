@@ -411,9 +411,13 @@ export function b20ChangesAnswerV1(input: { changes: B20ConsoleChangesReadV1 }):
 
   let answer: string;
   if (changes.movers.length > 0) {
+    // "SYMBOL at CHANGE", not "SYMBOL CHANGE". Observed live 2026-08-15: a B20
+    // token whose symbol is "40" rendered as "40 -27.93%" directly after the
+    // sentence's own count of 40 launches, and the name read as a stray
+    // number. A symbol is not an identifier and it is not always a word.
     const named = changes.movers
       .slice(0, 5)
-      .map((mover) => `${mover.symbol || mover.tokenAddress} ${signedBpsV1(mover.changeBps)}`)
+      .map((mover) => `${mover.symbol || mover.tokenAddress} at ${signedBpsV1(mover.changeBps)}`)
       .join(', ');
     answer = `Of ${pluralV1(changes.pairsConsidered, 'launch', 'launches')} with stored history, ${changes.movers.length} could be compared across about ${pluralV1(hours, 'hour', 'hours')}: ${named}. A positive figure means the same reference position bought fewer tokens in the later quote.`;
   } else if (changes.collectingHistory) {
