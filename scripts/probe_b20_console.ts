@@ -1,5 +1,5 @@
 import { b20RouteRuntime, runB20ConsolePlanV1 } from '../artifacts/api-server/routes/b20Control.js';
-import { planB20ConsoleAnswerV1, type B20ConsoleScopeV1 } from '../artifacts/api-server/lib/b20ConsolePlan.js';
+import { b20ScopeIsPrivateV1, planB20ConsoleAnswerV1, type B20ConsoleScopeV1 } from '../artifacts/api-server/lib/b20ConsolePlan.js';
 import { b20NarrationEvidenceStrengthV1 } from '../artifacts/api-server/lib/b20AnswerVerify.js';
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
@@ -52,6 +52,10 @@ async function main(): Promise<void> {
     ? [
         ...QUESTIONS_V1,
         { scope: 'investigate' as const, question: 'Compare these.', tokenAddresses: tokenArgs },
+        // The private scope, exercised with addresses an operator supplied.
+        // Nothing here reaches a provider and nothing is logged; the controls
+        // below check the second half of that.
+        { scope: 'portfolio' as const, question: 'Which of my positions is hardest to close?', tokenAddresses: tokenArgs },
       ]
     : QUESTIONS_V1;
 
@@ -102,6 +106,22 @@ async function main(): Promise<void> {
     if (plan.intent === 'measured_changes' && /nothing moved|no movement/i.test(answer.answer)) {
       console.error('   FAIL: an absence of comparison was rendered as an absence of movement');
       process.exitCode = 1;
+    }
+    if (b20ScopeIsPrivateV1(plan.scope)) {
+      // The private scope's two obligations, checked rather than trusted: the
+      // answer states whose size was measured, and nothing that goes back into
+      // a log repeats which tokens the wallet holds.
+      if (!/not at the size you are holding/.test(answer.answer)) {
+        console.error('   FAIL: a portfolio answer did not state that the measured size is not the held size');
+        process.exitCode = 1;
+      }
+      const surfaced = JSON.stringify(answer.reads);
+      for (const address of plan.tokenAddresses) {
+        if (surfaced.includes(address)) {
+          console.error('   FAIL: a held token address was repeated into the reads list');
+          process.exitCode = 1;
+        }
+      }
     }
   }
 
