@@ -2,6 +2,7 @@ import React from 'react';
 import { B20ControlWatchPanel, type B20WatchLikeV1 } from './B20Panels';
 import { B20ExitCard, type ExitCheckLikeV1, type ExitProfileV1 } from './B20ExitCard';
 import { B20PortfolioPanel, type B20HoldingV1 } from './B20PortfolioPanel';
+import { B20ConsolePanel, type B20ConsolePanelModelV1 } from './B20ConsolePanel';
 
 void React;
 
@@ -82,6 +83,14 @@ export interface B20WatchScreenModelV1 {
   onUntrackToken: (tokenAddress: string) => void;
   /** T68 — the B20 tokens this wallet holds, joined with their balances. */
   holdings: readonly B20HoldingV1[];
+  /**
+   * Stage 08 — the global console, with the Portfolio scope available.
+   *
+   * It renders here rather than only on Discover because this is the page that
+   * has read the wallet. Discover shows the same panel with three public
+   * scopes; the fourth appears where the holdings actually are.
+   */
+  console?: B20ConsolePanelModelV1;
   /** Non-B20 tokens in the wallet, counted rather than listed. */
   otherTokenCount: number;
   onOpenToken?: (tokenAddress: string, amountDecimal: string | null) => void;
@@ -173,6 +182,11 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
         onCheckExit={model.exit.onCheck}
         exitCheckedToken={model.exit.tokenAddress}
       />
+
+      {/* Directly under the holdings it ranks. The Portfolio scope reads the
+          same tokens the panel above lists, and appears only because this page
+          has read them. */}
+      {model.console && <B20ConsolePanel {...model.console} />}
 
       {/* Second, because it answers a question you only have once you hold
           something — and because it is the only card here that costs money to

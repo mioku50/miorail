@@ -146,15 +146,17 @@ import type { TenantUser } from '../middleware/tenantAuth.js';
 import { answerB20CopilotV1, b20ObservationRefMatchesV1 } from '../lib/b20Copilot.js';
 import { narrateB20AnswerV1 } from '../lib/b20Answer.js';
 import { planB20AnswerV1 } from '../lib/b20AnswerPlan.js';
-import { planB20ConsoleAnswerV1, type B20ConsolePlanV1 } from '../lib/b20ConsolePlan.js';
+import { b20ScopeIsPrivateV1, planB20ConsoleAnswerV1, type B20ConsolePlanV1 } from '../lib/b20ConsolePlan.js';
 import {
   B20_CONSOLE_BASE_CAVEATS_V1,
   b20ChangesAnswerV1,
   b20ExploreAnswerV1,
   b20InvestigateAnswerV1,
+  b20PortfolioAnswerV1,
   type B20ConsoleDeterministicV1,
   type B20ConsoleTokenReadV1,
 } from '../lib/b20ConsoleAnswer.js';
+import { referenceExitAssessmentV1, type B20ExitAssessmentV1 } from '../lib/b20ExitAssessment.js';
 
 // ---------------------------------------------------------------------------
 // T67C/T68F — the B20 Control and explicit entry rail.
@@ -1244,14 +1246,16 @@ b20ControlRouter.post('/opportunities/b20/copilot/ask', async (req: Request, res
 export async function runB20ConsolePlanV1(plan: B20ConsolePlanV1): Promise<B20ConsoleDeterministicV1> {
   const summaryStep = plan.steps.find((step) => step.tool === 'summary');
   const listStep = plan.steps.find((step) => step.tool === 'list');
-  const cardsStep = plan.steps.find((step) => step.tool === 'cards');
+  const positionsStep = plan.steps.find((step) => step.tool === 'positions');
+  const cardsStep = plan.steps.find((step) => step.tool === 'cards') ?? positionsStep;
   const changesStep = plan.steps.find((step) => step.tool === 'changes');
 
-  if (cardsStep && cardsStep.tool === 'cards') {
+  if (cardsStep && (cardsStep.tool === 'cards' || cardsStep.tool === 'positions')) {
     const observations = b20RouteRuntime.observations();
     const now = b20RouteRuntime.now();
     const pipeline = await pipelineStatusV1(observations, now, true);
     const reads: B20ConsoleTokenReadV1[] = [];
+    const assessments: Record<string, B20ExitAssessmentV1> = {};
     for (const tokenAddress of cardsStep.tokenAddresses) {
       const found = await observations.getFeedRowForToken({ tokenAddress, historyLimit: cardsStep.historyLimit });
       if (!found) {
@@ -1299,8 +1303,13 @@ export async function runB20ConsolePlanV1(plan: B20ConsolePlanV1): Promise<B20Co
           : null,
         historyCount: found.history.length,
       });
+      if (raw) assessments[tokenAddress] = referenceExitAssessmentV1(raw, null);
     }
-    return b20InvestigateAnswerV1({ reads });
+    // Same reads, two answers. A holder is asking which of THEIR positions is
+    // hardest to close, and a side-by-side of cards does not answer that.
+    return positionsStep
+      ? b20PortfolioAnswerV1({ reads, assessments })
+      : b20InvestigateAnswerV1({ reads });
   }
 
   if (changesStep && changesStep.tool === 'changes') {
@@ -1414,6 +1423,10 @@ b20ControlRouter.post('/opportunities/b20/console/ask', async (req: Request, res
     }
 
     const deterministic = await runB20ConsolePlanV1(plan);
+    // A private scope is never narrated. The bundle for a portfolio answer is
+    // the wallet's own token list, and sending it to a language provider for a
+    // nicer sentence is a trade nobody agreed to. Enforced by withholding the
+    // provider rather than by trusting a downstream check.
     const narrated = await narrateB20AnswerV1({
       question: parsed.data.question,
       bundle: {
@@ -1423,9 +1436,12 @@ b20ControlRouter.post('/opportunities/b20/console/ask', async (req: Request, res
         caveats: deterministic.caveats,
       },
       deterministic: deterministic.answer,
-      provider: b20RouteRuntime.narrator(),
+      provider: b20ScopeIsPrivateV1(plan.scope) ? null : b20RouteRuntime.narrator(),
     });
-    if (narrated.narrationRejectedBecause) {
+    if (narrated.narrationRejectedBecause && !b20ScopeIsPrivateV1(plan.scope)) {
+      // Never logged for a private scope: the reason would name the intent and
+      // the shape of a wallet's holdings, and nothing about that belongs in an
+      // operator log.
       logger.info('b20 console narration not used', {
         scope: plan.scope,
         intent: plan.intent,

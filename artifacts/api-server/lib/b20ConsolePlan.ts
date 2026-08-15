@@ -24,8 +24,25 @@ import { b20UniverseIntentV1, b20UnsupportedRefusalV1 } from './b20AnswerPlan.js
 // takes a wallet, and every argument comes from this file.
 // ---------------------------------------------------------------------------
 
-export const B20_CONSOLE_SCOPES_V1 = ['explore', 'investigate', 'changes'] as const;
+export const B20_CONSOLE_SCOPES_V1 = ['explore', 'investigate', 'changes', 'portfolio'] as const;
 export type B20ConsoleScopeV1 = (typeof B20_CONSOLE_SCOPES_V1)[number];
+
+/**
+ * The one scope whose subject belongs to the reader.
+ *
+ * Explore, Investigate and Changes are questions about a public corpus: every
+ * figure in their answers is already published on a Discover card. Portfolio is
+ * a question about which tokens a particular wallet is holding, and that list
+ * is the reader's, not Miorail's.
+ *
+ * So this scope is answered deterministically and is never narrated. Narration
+ * would send the bundle — the wallet's own token list — to a language provider
+ * for a nicer sentence, and nobody agreed to that trade. It is enforced at the
+ * route, and the reason is here so a later reader does not "enable" it.
+ */
+export function b20ScopeIsPrivateV1(scope: B20ConsoleScopeV1): boolean {
+  return scope === 'portfolio';
+}
 
 export type B20ConsoleStepV1 =
   /** Counts across a launch-age window. Answers "how many", never "which". */
@@ -42,7 +59,11 @@ export type B20ConsoleStepV1 =
   /** The exact stored cards for named tokens, with bounded history. */
   | { tool: 'cards'; tokenAddresses: readonly string[]; historyLimit: number }
   /** The measured-movement rail: latest and ~24h baseline, already paired. */
-  | { tool: 'changes'; limit: number };
+  | { tool: 'changes'; limit: number }
+  /** The same stored cards, read for a wallet's own holdings and ranked by
+   * measured exit difficulty. Separate from `cards` because the ANSWER is
+   * different — and because this step's arguments are the reader's position. */
+  | { tool: 'positions'; tokenAddresses: readonly string[]; historyLimit: number };
 
 export interface B20ConsolePlanV1 {
   /** The scope that actually answered. Not always the one the client asked
@@ -63,11 +84,17 @@ export type B20ConsoleIntentV1 =
   | 'find_not_searched'
   | 'compare_tokens'
   | 'measured_changes'
+  | 'rank_positions'
   | 'unsupported';
 
 /** Five, because the comparison is read by a person. Past that a console is
  * printing a table nobody asked for, and each token is its own read. */
 export const B20_CONSOLE_MAX_TOKENS_V1 = 5;
+
+/** A wallet holds what it holds, so this is not a display limit — it is the
+ * same bound the watchlist and the watch endpoint already use, because each
+ * position is its own read. */
+export const B20_CONSOLE_MAX_POSITIONS_V1 = 25;
 const CARD_HISTORY_LIMIT_V1 = 12;
 const LIST_LIMIT_V1 = 10;
 const CHANGES_LIMIT_V1 = 10;
@@ -138,13 +165,40 @@ export function planB20ConsoleAnswerV1(input: {
 
   const named = b20AddressesInV1(question);
   const selected = (input.tokenAddresses ?? []).map((address) => address.toLowerCase());
-  const tokenAddresses = [...new Set([...named, ...selected])].slice(0, B20_CONSOLE_MAX_TOKENS_V1);
 
   // An address in the question moves the answer to the token, whatever tab is
   // open. The scope on the plan then reports where the answer actually came
   // from — a surface that showed "Explore" above a token answer would be
   // labelling it wrongly.
   const scope: B20ConsoleScopeV1 = named.length > 0 ? 'investigate' : input.scope;
+
+  // Portfolio's bound is not a display limit: a wallet holds what it holds, and
+  // the cap is the same one the watch endpoint already applies because each
+  // position is its own read.
+  const tokenAddresses = [...new Set([...named, ...selected])].slice(
+    0,
+    scope === 'portfolio' ? B20_CONSOLE_MAX_POSITIONS_V1 : B20_CONSOLE_MAX_TOKENS_V1,
+  );
+
+  if (scope === 'portfolio') {
+    if (tokenAddresses.length === 0) {
+      return {
+        scope,
+        intent: 'unsupported',
+        steps: [],
+        tokenAddresses: [],
+        refusal:
+          'Portfolio ranks the B20 tokens this wallet holds. Miorail does not enumerate a wallet — connect one and open the B20 tab so the tokens are read there first.',
+      };
+    }
+    return {
+      scope,
+      intent: 'rank_positions',
+      steps: [{ tool: 'positions', tokenAddresses, historyLimit: CARD_HISTORY_LIMIT_V1 }],
+      tokenAddresses,
+      refusal: null,
+    };
+  }
 
   if (scope === 'investigate') {
     if (tokenAddresses.length === 0) {

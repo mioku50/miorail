@@ -22,7 +22,7 @@ void React;
 // answer to that token whichever tab is open.
 // ---------------------------------------------------------------------------
 
-export const B20_CONSOLE_SCOPES_V1 = ['explore', 'investigate', 'changes'] as const;
+export const B20_CONSOLE_SCOPES_V1 = ['explore', 'investigate', 'changes', 'portfolio'] as const;
 export type B20ConsoleScopeViewV1 = (typeof B20_CONSOLE_SCOPES_V1)[number];
 
 export const B20_CONSOLE_SCOPE_COPY_V1: Readonly<
@@ -48,6 +48,14 @@ export const B20_CONSOLE_SCOPE_COPY_V1: Readonly<
     blurb: 'The same token measured twice, about 24 hours apart. Two quotes Miorail took itself, divided.',
     prompts: ['What changed in the last day?', 'Which launches moved most?'],
   },
+  portfolio: {
+    label: 'Portfolio',
+    // Says the boundary before the reader asks, because it is the thing that
+    // makes this scope honest: the ranking is of what was measured, and the
+    // reference size is nobody's actual position.
+    blurb: 'The B20 tokens this wallet holds, hardest to close first — ordered by what Miorail measured at its reference size, which is not the size you hold.',
+    prompts: ['Which of my positions is hardest to close?', 'Which of mine priced no sale at all?'],
+  },
 };
 
 export interface B20ConsoleAnswerViewV1 {
@@ -68,6 +76,13 @@ export interface B20ConsolePanelModelV1 {
   scope: B20ConsoleScopeViewV1;
   /** Tokens the reader put in the Investigate scope. Addresses only. */
   tokenAddresses: readonly string[];
+  /**
+   * The B20 tokens this wallet holds, supplied by the surface that already
+   * read them. Miorail does not enumerate a wallet, so an empty list here is
+   * "nothing was read", never "this wallet holds nothing" — and the Portfolio
+   * scope is not offered at all until a surface passes one.
+   */
+  heldTokenAddresses?: readonly string[];
   loading: boolean;
   answer: B20ConsoleAnswerViewV1 | null;
   error: string | null;
@@ -80,13 +95,27 @@ const SHORT_ADDRESS_V1 = (address: string) => `${address.slice(0, 6)}…${addres
 
 export function B20ConsolePanel(model: B20ConsolePanelModelV1) {
   const [question, setQuestion] = useState('');
-  const copy = B20_CONSOLE_SCOPE_COPY_V1[model.scope];
+  const held = model.heldTokenAddresses ?? [];
+  // Offered only when a surface actually read a wallet. A Portfolio tab above
+  // a disconnected wallet would answer "nothing held", which is a claim
+  // nobody measured.
+  const scopes: readonly B20ConsoleScopeViewV1[] = held.length > 0
+    ? B20_CONSOLE_SCOPES_V1
+    : B20_CONSOLE_SCOPES_V1.filter((entry) => entry !== 'portfolio');
+  const scope: B20ConsoleScopeViewV1 = scopes.includes(model.scope) ? model.scope : 'explore';
+  const copy = B20_CONSOLE_SCOPE_COPY_V1[scope];
   const answer = model.answer;
 
   const ask = (value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return;
-    model.onAsk({ scope: model.scope, question: trimmed, tokenAddresses: model.tokenAddresses });
+    model.onAsk({
+      scope,
+      question: trimmed,
+      // Portfolio asks about the wallet's own tokens; every other scope asks
+      // about the ones the reader picked.
+      tokenAddresses: scope === 'portfolio' ? held : model.tokenAddresses,
+    });
   };
 
   return (
@@ -101,22 +130,22 @@ export function B20ConsolePanel(model: B20ConsolePanelModelV1) {
         <div className="filter-row">
           <span className="filter-row-k">Scope</span>
           <nav className="crumb" aria-label="What to ask about">
-            {B20_CONSOLE_SCOPES_V1.map((scope) => (
+            {scopes.map((entry) => (
               <button
-                key={scope}
+                key={entry}
                 type="button"
-                className={`btn sec${model.scope === scope ? ' on' : ''}`}
-                aria-pressed={model.scope === scope}
-                onClick={() => model.onScopeChange(scope)}
+                className={`btn sec${scope === entry ? ' on' : ''}`}
+                aria-pressed={scope === entry}
+                onClick={() => model.onScopeChange(entry)}
               >
-                {B20_CONSOLE_SCOPE_COPY_V1[scope].label}
+                {B20_CONSOLE_SCOPE_COPY_V1[entry].label}
               </button>
             ))}
           </nav>
         </div>
         <p className="lnote">{copy.blurb}</p>
 
-        {model.scope === 'investigate' && (
+        {scope === 'investigate' && (
           <div className="b20-token-chips" aria-label="Tokens in this comparison">
             {model.tokenAddresses.length === 0 ? (
               // Named rather than left blank: a symbol is not an identifier on
@@ -176,7 +205,7 @@ export function B20ConsolePanel(model: B20ConsolePanelModelV1) {
           <div className="b20-answer" aria-live="polite">
             {/* The scope that answered, when it is not the one on the tab. A
                 token answer under an "Explore" heading would be mislabelled. */}
-            {answer.scope !== model.scope && (
+            {answer.scope !== scope && (
               <p className="lnote">
                 Answered in {B20_CONSOLE_SCOPE_COPY_V1[answer.scope].label} — the question named something more
                 specific than the scope.

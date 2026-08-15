@@ -28,6 +28,9 @@ import type { B20OpportunityCardV1 } from '@mioagent/opportunity-rail';
 import type { B20OpportunityObservationV1 } from '@mioagent/route-storage';
 
 import { answerB20CopilotV1 } from '../../lib/b20Copilot.js';
+// The ONE exit judgement. A paid answer and a holder's own portfolio must not
+// disagree about whether a sale was measured, or at what size.
+import { decimalToAtomicUsdcV1, referenceExitAssessmentV1 } from '../../lib/b20ExitAssessment.js';
 import { readB20EvidenceForTokenV1 } from '../b20Control.js';
 import { loadPublicBundleV1 } from '../publicProof.js';
 import { MIORAIL_MCP_CAVEATS_V1 } from '../mcp/tools.js';
@@ -171,11 +174,6 @@ async function markSellerDeliveryV1(dataHash: string, enabled: boolean): Promise
   }).where(eq(x402Receipts.id, context.receiptId));
 }
 
-function decimalToAtomicUsdcV1(value: string): string {
-  const [whole, fraction = ''] = value.split('.');
-  return (BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, '0'))).toString();
-}
-
 function missingEvidenceV1(card: B20OpportunityCardV1, history: B20OpportunityObservationV1[]): string[] {
   return answerB20CopilotV1({ card, history, question: 'What evidence is missing?' }).missingEvidence;
 }
@@ -200,46 +198,6 @@ function observationRefV1(card: B20OpportunityCardV1, stored: B20OpportunityObse
     staleAfter: observation.staleAfter,
     freshness: observation.freshness,
     measurementVersion: stored.measurementVersion,
-  };
-}
-
-function referenceExitAssessmentV1(
-  stored: B20OpportunityObservationV1 | null,
-  requestedPositionUsdc: string | null,
-): Record<string, unknown> {
-  if (!stored) return { status: 'not_measured' };
-  if (!stored.exitRouteFound) return { status: 'no_supported_exit_route' };
-  if (stored.entryOutputAtomic === null || stored.largestPassingSizeAtomic === null) {
-    return { status: 'capacity_not_measured' };
-  }
-  const acquired = BigInt(stored.entryOutputAtomic);
-  const capacity = BigInt(stored.largestPassingSizeAtomic);
-  const coverageBps = acquired === 0n
-    ? null
-    : Number(((capacity * 10_000n) / acquired) > 10_000n ? 10_000n : ((capacity * 10_000n) / acquired));
-  const requestedAtomic = requestedPositionUsdc ? decimalToAtomicUsdcV1(requestedPositionUsdc) : null;
-  const requestComparison = requestedAtomic === null
-    ? 'reference_profile_only'
-    : stored.referenceQuoteAsset !== '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'
-      ? 'requested_usdc_not_comparable_to_reference_asset'
-      : requestedAtomic !== stored.referencePositionAtomic
-        ? 'requested_size_not_measured'
-        : coverageBps !== null && coverageBps >= 10_000
-          ? 'covered_at_exact_reference_size'
-          : 'not_fully_covered_at_exact_reference_size';
-  return {
-    status: 'measured_reference_bound',
-    requestComparison,
-    requestedPositionUsdc,
-    referenceQuoteAsset: stored.referenceQuoteAsset,
-    referencePositionAtomic: stored.referencePositionAtomic,
-    acquiredTokenAtomic: stored.entryOutputAtomic,
-    largestPassingTokenAtomic: stored.largestPassingSizeAtomic,
-    firstFailingTokenAtomic: stored.firstFailingSizeAtomic,
-    coverageBps,
-    capacityToleranceBps: stored.capacityToleranceBps,
-    capacityProbeCount: stored.capacityProbeCount,
-    capacityStable: stored.capacityStable,
   };
 }
 

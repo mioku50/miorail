@@ -234,6 +234,97 @@ describe('the console answers about named tokens', () => {
   });
 });
 
+describe('the private scope is private', () => {
+  test('a portfolio answer is never sent to a language model', async () => {
+    // The bundle for this scope is the wallet's own token list. Sending it to
+    // a provider for a nicer sentence is a trade nobody agreed to, and the
+    // provider is withheld rather than a downstream check being trusted.
+    let called = false;
+    b20RouteRuntime.narrator = () => ({
+      generate: async () => {
+        called = true;
+        return { message: { role: 'assistant' as const, content: 'a narration' } };
+      },
+    }) as never;
+
+    const response = await ask({
+      schemaVersion: 'b20-console-ask/v1',
+      scope: 'portfolio',
+      question: 'Which of my positions is hardest to close?',
+      tokenAddresses: [TOKEN, OTHER],
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(called, false, 'the narrator was called with a wallet’s holdings');
+    assert.equal(response.body.answerSource, 'deterministic_evidence');
+  });
+
+  test('the SAME question in a public scope does reach the narrator', async () => {
+    // The control. Without it, the test above passes whenever the narrator is
+    // unreachable for an unrelated reason and proves nothing.
+    let called = false;
+    b20RouteRuntime.narrator = () => ({
+      generate: async () => {
+        called = true;
+        return { message: { role: 'assistant' as const, content: 'Miorail could price a purchase but not a sale.' } };
+      },
+    }) as never;
+
+    await ask({
+      schemaVersion: 'b20-console-ask/v1',
+      scope: 'investigate',
+      question: 'Which of my positions is hardest to close?',
+      tokenAddresses: [TOKEN],
+    });
+    assert.equal(called, true);
+  });
+
+  test('the reads do not repeat the wallet’s holdings back into a log line', async () => {
+    const response = await ask({
+      schemaVersion: 'b20-console-ask/v1',
+      scope: 'portfolio',
+      question: 'Which of my positions is hardest to close?',
+      tokenAddresses: [TOKEN, OTHER],
+    });
+    const reads = JSON.stringify(response.body.reads);
+    assert.equal(reads.includes(TOKEN), false);
+    assert.equal(reads.includes(OTHER), false);
+    assert.match(reads, /2 held tokens/);
+  });
+
+  test('the size that was measured is not the size being held, and the answer says so', async () => {
+    const response = await ask({
+      schemaVersion: 'b20-console-ask/v1',
+      scope: 'portfolio',
+      question: 'Can I get out?',
+      tokenAddresses: [TOKEN],
+    });
+    assert.match(response.body.answer, /not at the size you are holding/);
+    assert.ok(response.body.caveats.some((caveat: string) => /never sent to a language model/.test(caveat)));
+  });
+
+  test('portfolio with no tokens says Miorail does not enumerate a wallet', async () => {
+    const response = await ask({
+      schemaVersion: 'b20-console-ask/v1',
+      scope: 'portfolio',
+      question: 'What do I hold?',
+    });
+    assert.match(response.body.answer, /Miorail does not enumerate a wallet/);
+    assert.deepEqual(response.body.reads, []);
+  });
+
+  test('Investigate still refuses more than five, and Portfolio takes more', async () => {
+    const six = Array.from({ length: 6 }, (_value, index) => `0x${String(index).repeat(40)}`);
+    assert.equal(
+      (await ask({ schemaVersion: 'b20-console-ask/v1', scope: 'investigate', question: 'compare', tokenAddresses: six })).status,
+      400,
+    );
+    assert.equal(
+      (await ask({ schemaVersion: 'b20-console-ask/v1', scope: 'portfolio', question: 'rank', tokenAddresses: six })).status,
+      200,
+    );
+  });
+});
+
 describe('the console answers about change', () => {
   test('an empty movers rail is never "nothing moved"', async () => {
     const response = await ask({

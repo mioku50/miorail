@@ -2,13 +2,16 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
 import {
+  B20_PORTFOLIO_SIZE_CAVEAT_V1,
   b20ChangesAnswerV1,
   b20ComparabilityV1,
   b20ExploreAnswerV1,
   b20InvestigateAnswerV1,
+  b20PortfolioAnswerV1,
   type B20ConsoleSummaryV1,
   type B20ConsoleTokenReadV1,
 } from './b20ConsoleAnswer.js';
+import type { B20ExitAssessmentV1 } from './b20ExitAssessment.js';
 
 // ---------------------------------------------------------------------------
 // The three scopes' deterministic answers.
@@ -235,6 +238,90 @@ describe('Investigate says what it does not have', () => {
     const result = b20InvestigateAnswerV1({ reads: [readV1('a'), readV1('b')] });
     assert.equal(result.reads.length, 2);
     assert.ok(result.reads.every((read) => read.tool === 'card'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+const measured = (coverageBps: number | null, over: Partial<B20ExitAssessmentV1> = {}): B20ExitAssessmentV1 => ({
+  status: 'measured_reference_bound',
+  requestComparison: 'reference_profile_only',
+  coverageBps,
+  capacityStable: true,
+  ...over,
+});
+
+const portfolio = (
+  entries: readonly { symbol: string; assessment: B20ExitAssessmentV1; profile?: Partial<NonNullable<B20ConsoleTokenReadV1['profile']>> }[],
+) =>
+  b20PortfolioAnswerV1({
+    reads: entries.map((entry) => readV1(entry.symbol, entry.profile ?? {})),
+    assessments: Object.fromEntries(
+      entries.map((entry) => [`0x${entry.symbol.repeat(40).slice(0, 40)}`, entry.assessment]),
+    ),
+  });
+
+describe('Portfolio orders what was measured, and says whose size it was', () => {
+  test('hardest to close first, by measured exit coverage', () => {
+    const result = portfolio([
+      { symbol: 'a', assessment: measured(9000) },
+      { symbol: 'b', assessment: measured(1200) },
+      { symbol: 'c', assessment: measured(4500) },
+    ]);
+    assert.match(result.answer, /hardest to close first by measured exit capacity: b at 12%, c at 45%, a at 90%/);
+  });
+
+  test('no sale priced is its own group, and is not a cost', () => {
+    // Ranking an absence beside a measurement would put "we could not price
+    // this" in an ordering of prices.
+    const result = portfolio([
+      { symbol: 'a', assessment: { status: 'no_supported_exit_route' } },
+      { symbol: 'b', assessment: measured(1200) },
+    ]);
+    assert.match(result.answer, /^One position priced no sale at all at the reference size: a\./);
+    assert.match(result.answer, /it is not a cost — nothing was quoted to compare/);
+  });
+
+  test('positions measured against different reference sizes are stated, not ordered', () => {
+    const result = portfolio([
+      { symbol: 'a', assessment: measured(9000) },
+      { symbol: 'b', assessment: measured(1200), profile: { referencePositionAtomic: '999' } },
+    ]);
+    assert.doesNotMatch(result.answer, /hardest to close first/);
+    assert.match(result.answer, /not against the same reference position, so they are stated rather than ordered/);
+  });
+
+  test('the size caveat is in the answer itself, not only under the fold', () => {
+    const result = portfolio([{ symbol: 'a', assessment: measured(9000) }]);
+    assert.match(result.answer, /not at the size you are holding/);
+    assert.ok(result.caveats.includes(B20_PORTFOLIO_SIZE_CAVEAT_V1));
+  });
+
+  test('an unmeasured position is named as unranked rather than ranked last', () => {
+    // Sorting it to the bottom would read as "the worst one", which is a claim
+    // about the token rather than about the absence of a measurement.
+    const result = portfolio([
+      { symbol: 'a', assessment: measured(9000) },
+      { symbol: 'b', assessment: { status: 'not_measured' } },
+      { symbol: 'c', assessment: { status: 'capacity_not_measured' } },
+    ]);
+    assert.match(result.answer, /2 positions could not be ordered/);
+    assert.match(result.answer, /b has no stored measurement yet/);
+    assert.match(result.answer, /c has no measured exit capacity to order by/);
+    assert.ok(result.missingEvidence.some((entry) => /An Exit-First measurement for b/.test(entry)));
+  });
+
+  test('an unstable ladder is flagged on the position it belongs to', () => {
+    const result = portfolio([{ symbol: 'a', assessment: measured(9000, { capacityStable: false }) }]);
+    assert.match(result.facts[0]?.value ?? '', /ladder unstable/);
+    assert.equal(result.facts[0]?.tone, 'warning');
+  });
+
+  test('the reads never repeat the wallet’s holdings', () => {
+    const result = portfolio([{ symbol: 'a', assessment: measured(9000) }, { symbol: 'b', assessment: measured(1200) }]);
+    assert.deepEqual(result.reads, [
+      { tool: 'positions', detail: '2 held tokens, read from stored measurements only' },
+    ]);
   });
 });
 

@@ -4006,7 +4006,7 @@ export type B20CopilotAskResponseV1 = z.infer<typeof B20CopilotAskResponseV1Sche
 // was built from rather than being asked to trust that it was current.
 // ---------------------------------------------------------------------------
 
-export const B20ConsoleScopeV1Schema = z.enum(['explore', 'investigate', 'changes']);
+export const B20ConsoleScopeV1Schema = z.enum(['explore', 'investigate', 'changes', 'portfolio']);
 
 export const B20ConsoleAskRequestV1Schema = z
   .object({
@@ -4017,10 +4017,27 @@ export const B20ConsoleAskRequestV1Schema = z
      * Tokens the reader selected. Addresses only — a symbol is not an
      * identifier on Base, and resolving one would be Miorail guessing which
      * token was meant and then measuring the guess.
+     *
+     * The cap depends on the scope and is checked below rather than here.
+     * Investigate is a side-by-side a person reads, so five; Portfolio is
+     * whatever a wallet holds, bounded at the same 25 the watch endpoint uses
+     * because each position is its own read.
      */
-    tokenAddresses: z.array(z.string().regex(/^0x[0-9a-fA-F]{40}$/)).max(5).optional(),
+    tokenAddresses: z.array(z.string().regex(/^0x[0-9a-fA-F]{40}$/)).max(25).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    const limit = value.scope === 'portfolio' ? 25 : 5;
+    if ((value.tokenAddresses?.length ?? 0) > limit) {
+      // Refused, never truncated. Silently dropping the sixth token would
+      // answer a comparison the caller did not ask for and label it as theirs.
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['tokenAddresses'],
+        message: `${value.scope} accepts at most ${limit} token addresses`,
+      });
+    }
+  });
 
 export const B20ConsoleAskResponseV1Schema = z
   .object({
@@ -4036,6 +4053,7 @@ export const B20ConsoleAskResponseV1Schema = z
       'find_not_searched',
       'compare_tokens',
       'measured_changes',
+      'rank_positions',
       'unsupported',
     ]),
     answerSource: z.enum(['deterministic_evidence', 'verified_narration']),

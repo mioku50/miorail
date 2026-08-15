@@ -20,6 +20,7 @@ import {
   ConsoleRightRail,
   B20ExitCard,
   B20EntryReviewCard,
+  B20ConsolePanel,
   B20PortfolioPanel,
   BaseMcpConsoleCard,
   BaseMcpExtensionsCard,
@@ -916,6 +917,10 @@ export function MiniConsole() {
   const [feedFresh, setFeedFresh] = useState(false);
   const [copilotToken, setCopilotToken] = useState<string | null>(null);
   const [consoleScope, setConsoleScope] = useState<B20ConsoleScopeViewV1>("explore");
+  // The B20 tab's own console state. Separate from Discover's: they are two
+  // surfaces asking two different questions, and sharing one would move a
+  // reader's scope when they switched tabs.
+  const [portfolioScope, setPortfolioScope] = useState<B20ConsoleScopeViewV1>("portfolio");
   const [consoleTokens, setConsoleTokens] = useState<readonly string[]>([]);
   const opportunities = useB20Opportunities(
     // The verdict section is filtered by the server, so Base App gets the same
@@ -2034,6 +2039,27 @@ export function MiniConsole() {
           }}
           onCheckExit={(token) => runExitCheck(token)}
           exitCheckedToken={exitToken}
+        />
+        {/* Stage 08 — the same console, with the Portfolio scope, directly
+            under the holdings it ranks. The scope appears only because this
+            surface has read the wallet. */}
+        <B20ConsolePanel
+          scope={portfolioScope}
+          tokenAddresses={[]}
+          heldTokenAddresses={holdings.map((holding) => holding.tokenAddress)}
+          loading={b20Console.isPending}
+          answer={b20Console.data ?? null}
+          error={b20Console.error?.message ?? null}
+          onScopeChange={setPortfolioScope}
+          onTokensChange={() => {}}
+          onAsk={(input) => {
+            b20Console.mutate({
+              schemaVersion: "b20-console-ask/v1",
+              scope: input.scope,
+              question: input.question,
+              ...(input.tokenAddresses.length > 0 ? { tokenAddresses: [...input.tokenAddresses] } : {}),
+            });
+          }}
         />
         {b20EntryReview && b20EntryState && (
           <B20EntryReviewCard

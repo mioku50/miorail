@@ -20,6 +20,7 @@ import {
   percentToBpsV1,
   usdcToAtomicV1,
   type ExitProfileV1,
+  type B20ConsoleScopeViewV1,
   chainBlockNumberV1,
   chainGasLabelV1,
   chainLabelV1,
@@ -34,6 +35,7 @@ import {
   useB20PrepareEntry,
   useB20ReconcileEntrySubmission,
   useB20RecordEntrySubmission,
+  useB20ConsoleAsk,
   useB20Watch,
   useB20Watchlist,
   usePortfolio,
@@ -307,6 +309,10 @@ export function B20WatchPage() {
   // T68C — the exit check, for one token at a time. Each run is a dozen-odd
   // metered router calls, so it happens when a user asks and never on mount.
   const [exitToken, setExitToken] = useState<string | null>(null);
+  // Portfolio is the scope this page exists for; the reader can still move to
+  // a public one, and an address in a question moves the answer itself.
+  const [consoleScope, setConsoleScope] = useState<B20ConsoleScopeViewV1>('portfolio');
+  const b20Console = useB20ConsoleAsk({ onSuccess: (answer) => setConsoleScope(answer.scope) });
   // T68D — the profile is the user's. The defaults live here, in the UI, and
   // are not a server constant wearing a label.
   const [exitProfile, setExitProfile] = useState<ExitProfileV1>(EXIT_PROFILE_DEFAULTS_V1);
@@ -778,6 +784,26 @@ export function B20WatchPage() {
       <B20WatchScreen
         tokens={sweep.data?.tokens ?? []}
         holdings={holdings}
+        console={{
+          scope: consoleScope,
+          tokenAddresses: [],
+          // The tokens this page has already read. Miorail never enumerates a
+          // wallet, so an empty list is "nothing read", not "nothing held".
+          heldTokenAddresses: holdings.map((holding) => holding.tokenAddress),
+          loading: b20Console.isPending,
+          answer: b20Console.data ?? null,
+          error: b20Console.error?.message ?? null,
+          onScopeChange: setConsoleScope,
+          onTokensChange: () => {},
+          onAsk: (input) => {
+            b20Console.mutate({
+              schemaVersion: 'b20-console-ask/v1',
+              scope: input.scope,
+              question: input.question,
+              ...(input.tokenAddresses.length > 0 ? { tokenAddresses: [...input.tokenAddresses] } : {}),
+            });
+          },
+        }}
         otherTokenCount={otherTokenCount}
         trackedTokens={watchlist.data?.tokens ?? []}
         trackRemaining={watchlist.data?.remaining ?? null}

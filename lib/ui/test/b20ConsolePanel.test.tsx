@@ -58,9 +58,11 @@ const model = (over: Partial<B20ConsolePanelModelV1> = {}): B20ConsolePanelModel
 const render = (over: Partial<B20ConsolePanelModelV1> = {}) =>
   renderToStaticMarkup(<B20ConsolePanel {...model(over)} />);
 
-describe('the three scopes are three questions, not a filter', () => {
-  test('every scope is offered, and the current one is pressed', () => {
-    const html = render({ scope: 'changes' });
+const HELD_V1 = ['0xb200000000000000000000195a5f43905160ee01'];
+
+describe('the scopes are separate questions, not a filter', () => {
+  test('every scope is offered once a wallet has been read, and the current one is pressed', () => {
+    const html = render({ scope: 'changes', heldTokenAddresses: HELD_V1 });
     for (const scope of B20_CONSOLE_SCOPES_V1) {
       assert.ok(html.includes(B20_CONSOLE_SCOPE_COPY_V1[scope].label), `${scope} missing`);
     }
@@ -69,8 +71,29 @@ describe('the three scopes are three questions, not a filter', () => {
 
   test('each scope says what it reads before anything is asked', () => {
     for (const scope of B20_CONSOLE_SCOPES_V1) {
-      assert.ok(render({ scope }).includes(B20_CONSOLE_SCOPE_COPY_V1[scope].blurb));
+      assert.ok(
+        render({ scope, heldTokenAddresses: HELD_V1 }).includes(B20_CONSOLE_SCOPE_COPY_V1[scope].blurb),
+      );
     }
+  });
+
+  test('Portfolio is not offered until a surface has read a wallet', () => {
+    // A Portfolio tab above a disconnected wallet would answer "nothing held",
+    // which is a claim nobody measured.
+    const html = render({ scope: 'explore' });
+    assert.equal(html.includes('>Portfolio<'), false);
+    assert.ok(html.includes('>Explore<'));
+  });
+
+  test('a Portfolio scope with no wallet read falls back rather than showing an empty tab', () => {
+    const html = render({ scope: 'portfolio' });
+    assert.match(html, /aria-pressed="true"[^>]*>Explore/);
+    assert.ok(html.includes(B20_CONSOLE_SCOPE_COPY_V1.explore.blurb));
+  });
+
+  test('Portfolio states the size boundary before anything is asked', () => {
+    const html = render({ scope: 'portfolio', heldTokenAddresses: HELD_V1 });
+    assert.match(html, /which is not the size you hold/);
   });
 
   test('Investigate with no token says what it needs instead of an empty box', () => {

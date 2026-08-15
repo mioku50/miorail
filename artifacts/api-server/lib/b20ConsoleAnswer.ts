@@ -7,6 +7,7 @@ import {
 import { b20QuoteAssetDisplayV1 } from '@mioagent/opportunity-rail/quoteAsset';
 
 import { b20AmountLabelV1 } from './b20Copilot.js';
+import type { B20ExitAssessmentV1 } from './b20ExitAssessment.js';
 import type { B20ConsolePlanV1 } from './b20ConsolePlan.js';
 
 // ---------------------------------------------------------------------------
@@ -359,6 +360,142 @@ export function b20InvestigateAnswerV1(input: {
       tool: 'card',
       detail: `${read.tokenAddress} · ${read.card ? `${read.historyCount} stored observations` : 'no canonical launch'}`,
     })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Portfolio
+// ---------------------------------------------------------------------------
+
+/**
+ * The sentence this whole scope is built around.
+ *
+ * A holder asks "can I get out of MY position". Miorail has never measured
+ * that position: every stored observation is one fixed reference size, chosen
+ * so launches are comparable to each other. So the ranking below orders what
+ * WAS measured, and this line goes with it everywhere — not as a disclaimer
+ * under the fold, but as part of the answer.
+ */
+export const B20_PORTFOLIO_SIZE_CAVEAT_V1 =
+  'Miorail measured each of these at one fixed reference size, not at the size you are holding. This orders what was measured; it does not say what your position would do.';
+
+export const B20_PORTFOLIO_PRIVACY_CAVEAT_V1 =
+  'This answer is built from your own token list and is never sent to a language model. It is not stored, and it is not cached for anyone else.';
+
+/**
+ * A holder's positions, hardest to close first.
+ *
+ * Three groups, because they are three different statements and ranking them
+ * together would put an absence and a measurement in one ordering:
+ *
+ *   1. no sale priced at all — the hardest, and not a cost anybody measured;
+ *   2. ranked by measured exit coverage, lowest first;
+ *   3. not measurable or not comparable, each with its reason.
+ *
+ * The ordering key is measured exit capacity as a share of what the reference
+ * entry bought — the same key the capacity rail already ranks by, because a
+ * raw token amount cannot be ordered across different decimals.
+ */
+export function b20PortfolioAnswerV1(input: {
+  reads: readonly B20ConsoleTokenReadV1[];
+  /** Each position's stored exit assessment, by token address. */
+  assessments: Readonly<Record<string, B20ExitAssessmentV1>>;
+}): B20ConsoleDeterministicV1 {
+  const facts: B20ConsoleFactV1[] = [];
+  const missingEvidence: string[] = [];
+  const caveats: string[] = [B20_PORTFOLIO_SIZE_CAVEAT_V1, B20_PORTFOLIO_PRIVACY_CAVEAT_V1];
+
+  const noSale: string[] = [];
+  const ranked: { symbol: string; coverageBps: number; capacityStable: boolean | null }[] = [];
+  const unranked: { symbol: string; because: string }[] = [];
+
+  for (const read of input.reads) {
+    const card = read.card;
+    if (!card) {
+      unranked.push({ symbol: read.tokenAddress, because: 'is not a canonical B20 launch Miorail has ingested' });
+      continue;
+    }
+    const symbol = symbolV1(card);
+    const assessment = input.assessments[read.tokenAddress] ?? { status: 'not_measured' as const };
+    if (assessment.status === 'no_supported_exit_route') {
+      noSale.push(symbol);
+      missingEvidence.push(`A supported exit route for ${symbol}.`);
+      continue;
+    }
+    if (assessment.status === 'not_measured') {
+      unranked.push({ symbol, because: 'has no stored measurement yet' });
+      missingEvidence.push(`An Exit-First measurement for ${symbol}.`);
+      continue;
+    }
+    if (assessment.status === 'capacity_not_measured' || assessment.coverageBps === null || assessment.coverageBps === undefined) {
+      unranked.push({ symbol, because: 'has no measured exit capacity to order by' });
+      missingEvidence.push(`A passing exit-capacity probe for ${symbol}.`);
+      continue;
+    }
+    ranked.push({ symbol, coverageBps: assessment.coverageBps, capacityStable: assessment.capacityStable ?? null });
+  }
+
+  // The comparability rule, on the same axis Investigate uses it: positions
+  // measured against different reference positions cannot be ordered against
+  // each other, whatever their coverage figures look like side by side.
+  const comparability = b20ComparabilityV1(input.reads.filter((read) => read.card !== null));
+  if (comparability.reason) caveats.push(comparability.reason);
+  const orderable = comparability.comparable;
+
+  ranked.sort((left, right) => left.coverageBps - right.coverageBps || left.symbol.localeCompare(right.symbol));
+
+  for (const entry of noSale) {
+    facts.push({ label: entry, value: 'No sale priced at the reference size', tone: 'warning' });
+  }
+  for (const entry of ranked) {
+    facts.push({
+      label: entry.symbol,
+      value: `${bpsV1(entry.coverageBps)} of the reference entry could be sold${entry.capacityStable === false ? ' · ladder unstable' : ''}`,
+      tone: entry.capacityStable === false ? 'warning' : 'neutral',
+    });
+  }
+  for (const entry of unranked) {
+    facts.push({ label: entry.symbol, value: `Not ranked — ${entry.because}`, tone: 'warning' });
+  }
+
+  const sentences: string[] = [];
+  if (noSale.length > 0) {
+    sentences.push(
+      `${noSale.length === 1 ? 'One position' : `${noSale.length} positions`} priced no sale at all at the reference size: ${noSale.join(', ')}. That is the hardest thing this measurement can say, and it is not a cost — nothing was quoted to compare.`,
+    );
+  }
+  if (ranked.length > 0) {
+    sentences.push(
+      orderable
+        ? `Of the rest, hardest to close first by measured exit capacity: ${ranked
+            .map((entry) => `${entry.symbol} at ${bpsV1(entry.coverageBps)}`)
+            .join(', ')}.`
+        // Not ordered, because ordering incomparable measurements is the exact
+        // mistake the figures make easy.
+        : `The rest were each measured, but not against the same reference position, so they are stated rather than ordered: ${ranked
+            .map((entry) => `${entry.symbol} at ${bpsV1(entry.coverageBps)}`)
+            .join(', ')}.`,
+    );
+  }
+  if (unranked.length > 0) {
+    sentences.push(
+      `${unranked.length === 1 ? 'One position could' : `${unranked.length} positions could`} not be ordered: ${unranked
+        .map((entry) => `${entry.symbol} ${entry.because}`)
+        .join(', ')}.`,
+    );
+  }
+  if (sentences.length === 0) sentences.push('None of these tokens is a canonical B20 launch Miorail has measured.');
+  sentences.push(B20_PORTFOLIO_SIZE_CAVEAT_V1);
+
+  return {
+    answer: sentences.join(' '),
+    facts: facts.slice(0, 16),
+    missingEvidence: [...new Set(missingEvidence)].slice(0, 20),
+    caveats: caveats.slice(0, 12),
+    // Deliberately not naming the addresses read: the response goes back to
+    // the reader who sent them, and repeating a wallet's holdings into a
+    // reads log is the one place this surface could leak them.
+    reads: [{ tool: 'positions', detail: `${input.reads.length} held tokens, read from stored measurements only` }],
   };
 }
 
