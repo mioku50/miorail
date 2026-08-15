@@ -25,6 +25,7 @@
     "proof:verify": "tsx lib/proof-verifier/src/cli.ts",
     "proofs:reconcile-native": "tsx scripts/reconcile_native_route_proofs.ts",
     "proofs:publish-share": "tsx scripts/publish_route_proof_share.ts",
+    "b20:probe-exit-size": "tsx scripts/probe_b20_exit_size.ts",
     "outcomes:backfill": "tsx scripts/outcomes_backfill.ts",
     "reliability:rebuild": "tsx scripts/reliability_rebuild.ts",
     "o1:compat": "tsx scripts/o1_compat.ts",
