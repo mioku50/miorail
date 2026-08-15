@@ -1,4 +1,4 @@
-import type { B20OpportunityCardV1 } from '@mioagent/opportunity-rail';
+import { b20QuoteAssetDisplayV1, type B20OpportunityCardV1 } from '@mioagent/opportunity-rail';
 import type { B20OpportunityObservationV1 } from '@mioagent/route-storage';
 
 export type B20CopilotQuestionKindV1 =
@@ -29,8 +29,6 @@ export interface B20CopilotAnswerV1 {
   routeHandoff: { label: 'Open in Routes'; goal: string } | null;
 }
 
-const NATIVE_ASSET_V1 = '0x0000000000000000000000000000000000000000';
-const USDC_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 
 export function b20ObservationRefMatchesV1(
   current: Pick<B20OpportunityObservationV1, 'id' | 'evidenceHash'> | null,
@@ -81,14 +79,16 @@ function formatAtomicV1(atomic: string, decimals: number): string {
   return fraction ? `${whole}.${fraction}` : whole.toString();
 }
 
-function quoteAssetV1(address: string): { symbol: string; decimals: number } {
-  const lower = address.toLowerCase();
-  if (lower === USDC_V1) return { symbol: 'USDC', decimals: 6 };
-  if (lower === NATIVE_ASSET_V1) return { symbol: 'ETH', decimals: 18 };
-  return { symbol: `${lower.slice(0, 6)}…${lower.slice(-4)}`, decimals: 18 };
-}
+/** The ONE table. This file used to hold its own, defaulting an unrecognised
+ * asset to eighteen decimals while the Discover card defaulted the same asset
+ * to six — so a single stored observation could be quoted back to a user as
+ * two numbers twelve orders of magnitude apart. */
+const quoteAssetV1 = b20QuoteAssetDisplayV1;
 
-function amountLabelV1(atomic: string, asset: { symbol: string; decimals: number }): string {
+function amountLabelV1(atomic: string, asset: { symbol: string; decimals: number | null }): string {
+  // Null decimals means this build does not know the asset's scale. The atomic
+  // figure is stated as atomic rather than divided by a guess.
+  if (asset.decimals === null) return `${atomic} (atomic, ${asset.symbol})`;
   return `${formatAtomicV1(atomic, asset.decimals)} ${asset.symbol}`;
 }
 

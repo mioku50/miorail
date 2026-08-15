@@ -14,6 +14,7 @@ import {
 } from '@mioagent/swap-adapters';
 import {
   b20MeasurementQuoteAssetV1,
+  b20QuoteAssetIsEthScaledV1,
   OPPORTUNITY_QUOTE_ASSET_V1,
   exitProbeLadderV1,
   priceImpactLadderV1,
@@ -76,8 +77,6 @@ export interface B20MeasureDepsInputV1 {
  * enough to be a position someone might actually take. */
 export const B20_NATIVE_POSITION_ATOMIC_V1 = '30000000000000000';
 
-/** Native ETH, as Uniswap v4 addresses it. */
-const NATIVE_ASSET_V1 = '0x0000000000000000000000000000000000000000';
 
 /** One `eth_call`, as the B20 reader reports it. */
 export type QuoteCallResultV1 =
@@ -243,9 +242,10 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
           }),
           signal: AbortSignal.timeout(15_000),
         });
-      } catch (error) {
+      } catch {
         // A timeout or a dropped connection. Never the URL in the message —
-        // it carries a key on the plans that use one.
+        // it carries a key on the plans that use one, and the caught error's
+        // own message would contain it.
         lastError = new Error('eth_getLogs unreachable');
         continue;
       }
@@ -334,13 +334,18 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
         // The pool decides the currency; the profile only decides the size in
         // ITS currency. Matching them is not optional — a USDC position spent
         // as wei is a different trade, and one nobody asked to have measured.
-        const positionAtomic = pool.quoteAsset === NATIVE_ASSET_V1
+        //
+        // Selected by SCALE, not by "is this native ETH". WETH is eighteen
+        // decimals like ETH, and the old test would have sent a WETH pool the
+        // profile's 100000000 — a ten-billionth of an ETH, a trade worth
+        // nothing, stored as though a position had been priced.
+        const positionAtomic = b20QuoteAssetIsEthScaledV1(pool.quoteAsset)
           ? input.nativePositionAtomic
           : profile.positionAtomic;
         // A pair the rail cannot name is a pair it cannot compare. The pool
-        // resolver already refuses anything but ETH and USDC, so this is the
-        // type system being told what the venue guarantees — and a fallback to
-        // Aerodrome if that ever stops being true.
+        // resolver already refuses anything but ETH, WETH and USDC, so this is
+        // the type system being told what the venue guarantees — and a
+        // fallback to Aerodrome if that ever stops being true.
         const measuredAsset = b20MeasurementQuoteAssetV1(pool.quoteAsset);
         if (measuredAsset) {
         const trip = await b20RoundTripV4V1({
@@ -350,20 +355,39 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
         });
         if (trip.entryRouteFound) {
           const source = `uniswap-v4:${pool.poolId}`;
-          // The capacity ladder, and only where there is something to climb:
-          // a token whose sale reverts at the full position has no capacity
-          // boundary to find, and probing one would spend four metered calls
-          // to rediscover that.
+          // The capacity ladder, and it runs whether or not the FULL sale
+          // priced.
+          //
+          // It used to be gated behind `trip.exitRouteFound`, on the reasoning
+          // that a token whose sale reverts at the full position has no
+          // capacity boundary to find. Measured 2026-08-15 against eleven
+          // launches that had buyers and no priced sale, that reasoning is
+          // wrong for more than half of them: six sold at SOME size — one at
+          // the full position, one at a quarter, one at a tenth, three only at
+          // a hundredth or below — and five reverted at every size down to
+          // 1/100,000. The gate could not tell those two apart, so every one
+          // of them was stored as the same "no exit route".
+          //
+          // Five halving rungs reach 1/16 of the position, which covers the
+          // first three. The 1/100-and-below cases stay unmeasured on purpose:
+          // finding them costs three more metered calls on EVERY token, and a
+          // bound of one per cent of a position is not an exit anybody can
+          // take. That is a decision to revisit with a number, not a gap.
           //
           // The full-size rung is handed in rather than re-quoted — the round
-          // trip just paid for exactly that call.
-          const ladder = trip.exitRouteFound && trip.entryOutputAtomic
+          // trip just paid for exactly that call, and its answer is the top of
+          // the ladder whether it was a price or a refusal.
+          //
+          // A DEGRADED trip runs no ladder. Its full-size result is an
+          // unanswered call, not a refusal, and feeding that in as a null
+          // would record an outage as a capacity bound.
+          const ladder = trip.entryOutputAtomic && !trip.endpointDegraded
             ? await b20QuoteExitSizesV4V1({
                 pool,
                 sizes: exitProbeLadderV1(trip.entryOutputAtomic, EXIT_PROBE_RUNGS_V1),
                 known: {
                   sizeAtomic: trip.entryOutputAtomic,
-                  outputAtomic: trip.exitReturnAtomic,
+                  outputAtomic: trip.exitRouteFound ? trip.exitReturnAtomic : null,
                 },
                 call: quotes.call,
               })

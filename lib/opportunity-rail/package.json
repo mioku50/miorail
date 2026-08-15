@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./marketRails": "./src/marketRails.ts",
-    "./exitStanding": "./src/exitStanding.ts"
+    "./exitStanding": "./src/exitStanding.ts",
+    "./quoteAsset": "./src/quoteAsset.ts"
   },
   "scripts": {
     "test": "NODE_ENV=test node --import tsx --test test/*.test.ts",

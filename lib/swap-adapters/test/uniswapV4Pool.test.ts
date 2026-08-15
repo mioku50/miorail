@@ -7,6 +7,7 @@ import {
   type RawLogV1,
 } from '../src/uniswap-v4-pool.js';
 import {
+  B20_POOL_SEARCH_BLOCKS_V1,
   UNISWAP_V4_INITIALIZE_TOPIC_V1,
   UNISWAP_V4_POOL_MANAGER_V1,
 } from '../src/uniswap-v4-pinned.js';
@@ -162,14 +163,49 @@ describe('the search stays inside the RPC plan', () => {
     };
   }
 
-  test('one window, ten blocks, never wider — the plan caps getLogs at ten', async () => {
+  test('one window, starting at the launch block, exactly as wide as configured', async () => {
+    // The width was ten while the RPC plan capped getLogs at ten blocks.
+    // Production now reads mainnet.base.org, which serves ten thousand in one
+    // call, and measurement showed the old width was losing real pools: of 120
+    // launches reported as "no venue found", nine had a readable pool and NONE
+    // was inside ten blocks (offsets 12, 13, 13, 14, 14, 14, 15, 43, 1197).
     const { calls, getLogs } = recordingGetLogs([initializeLog({ currency0: USDC, currency1: PDRSTR })]);
     const result = await resolveB20PoolV1({ token: PDRSTR, launchBlock: 49_404_602, getLogs });
     assert.equal(result.ok, true);
     for (const call of calls) {
-      assert.equal(call.toBlock - call.fromBlock + 1, 10, 'a request wider than ten blocks is refused by the endpoint');
-      assert.equal(call.fromBlock, 49_404_602);
+      assert.equal(call.toBlock - call.fromBlock + 1, B20_POOL_SEARCH_BLOCKS_V1);
+      assert.equal(call.fromBlock, 49_404_602, 'the search starts at the launch, never before it');
     }
+  });
+
+  test('the window reaches the offsets that were being missed, and stops short of a later event', async () => {
+    // 48 covers eight of the nine measured offsets. The ninth was 1197 blocks
+    // — about twenty minutes — and is deliberately outside: a pool created
+    // that much later is a separate event, and calling it the launch's pool
+    // would be a claim about intent that nothing here measures.
+    assert.ok(B20_POOL_SEARCH_BLOCKS_V1 > 43, 'the widest measured in-cluster offset must be reachable');
+    assert.ok(B20_POOL_SEARCH_BLOCKS_V1 < 1197, 'a pool twenty minutes later is not this launch’s pool');
+
+    const atOffset = async (offset: number) => {
+      const log = initializeLog({ currency0: USDC, currency1: PDRSTR });
+      log.blockNumber = 100 + offset;
+      const { getLogs } = recordingGetLogs([log]);
+      return resolveB20PoolV1({ token: PDRSTR, launchBlock: 100, getLogs });
+    };
+    // `recordingGetLogs` answers by topic rather than by range, so this asserts
+    // the RANGE the resolver asks for covers the offset.
+    const wide = await resolveB20PoolV1({
+      token: PDRSTR,
+      launchBlock: 100,
+      getLogs: async (query: { fromBlock: number; toBlock: number; topics: (string | null)[] }) => {
+        const offset = 43;
+        if (100 + offset < query.fromBlock || 100 + offset > query.toBlock) return [];
+        const log = initializeLog({ currency0: USDC, currency1: PDRSTR });
+        return (log.topics ?? [])[3] === query.topics[3] ? [log] : [];
+      },
+    });
+    assert.equal(wide.ok, true, 'a pool 43 blocks after the launch is inside the searched range');
+    assert.equal((await atOffset(0)).ok, true);
   });
 
   test('both currency positions are asked for, because either is possible', async () => {

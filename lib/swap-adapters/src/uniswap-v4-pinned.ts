@@ -64,16 +64,51 @@ export const UNISWAP_V4_INITIALIZE_TOPIC_V1 = topicV1(
  */
 export const UNISWAP_V4_NATIVE_V1 = '0x0000000000000000000000000000000000000000' as const;
 export const UNISWAP_V4_BASE_USDC_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' as const;
-export const B20_QUOTE_ASSETS_V1 = [UNISWAP_V4_NATIVE_V1, UNISWAP_V4_BASE_USDC_V1] as const;
+/**
+ * Base mainnet WETH — the canonical predeploy.
+ *
+ * Added on evidence, not on principle. Of 120 launches sampled 2026-08-15
+ * whose latest observation said Miorail had found no venue at all, nine had a
+ * Uniswap v4 pool that EXISTED and was refused here, and every one of the nine
+ * was quoted against this address. The card then told the user "Miorail has
+ * not found where this trades", which was false: Miorail found where it trades
+ * and declined to read it.
+ *
+ * The exclusion reasoning above is about long-tail pairs — an exit denominated
+ * in something the holder must then exit from as well. Wrapped ETH is not that.
+ */
+export const UNISWAP_V4_BASE_WETH_V1 = '0x4200000000000000000000000000000000000006' as const;
+export const B20_QUOTE_ASSETS_V1 = [
+  UNISWAP_V4_NATIVE_V1,
+  UNISWAP_V4_BASE_USDC_V1,
+  UNISWAP_V4_BASE_WETH_V1,
+] as const;
 
 /**
  * How far past a launch a pool may be initialised and still be counted as that
  * launch's pool.
  *
- * Ten, because that is the whole window: both tokens sampled had their pool
- * initialised in the SAME ten-block span as the launch (+0..+9), and because
- * the production RPC plan caps `eth_getLogs` at ten blocks per request. One
- * bounded request per token, at a block we already know, instead of scanning a
- * chain we are not allowed to scan.
+ * Was ten, for two reasons that both expired:
+ *
+ *   * the two tokens sampled when this was written had their pool initialised
+ *     in the same ten-block span as the launch;
+ *   * the production RPC plan then in use capped `eth_getLogs` at ten blocks.
+ *
+ * Production now reads mainnet.base.org, which serves a ten-thousand-block
+ * range in one call, so the second reason is gone. And the first did not
+ * generalise: measured over 120 launches on 2026-08-15 whose latest
+ * observation said no venue was found, nine had a readable pool and NONE of
+ * the nine was inside ten blocks. The offsets were 12, 13, 13, 14, 14, 14, 15,
+ * 43 and 1197.
+ *
+ * Forty-eight covers eight of those nine — roughly a hundred and sixty
+ * seconds on Base. The ninth is deliberately left out: a pool created twenty
+ * minutes after a launch is a separate event, and calling it the launch's pool
+ * would be a claim about intent that nothing here measures.
+ *
+ * Widening this also RETIRES every cached miss for free. A stored row answers
+ * only the window it searched (`launchPoolCoversWindowV1` requires its
+ * `searchToBlock` to reach the asked-for `toBlock`), so every row written at
+ * ten blocks stops answering and is re-resolved once.
  */
-export const B20_POOL_SEARCH_BLOCKS_V1 = 10;
+export const B20_POOL_SEARCH_BLOCKS_V1 = 48;

@@ -23,6 +23,9 @@ export const OPPORTUNITY_QUOTE_ASSET_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda
 /** Native ETH, as Uniswap v4 addresses it. */
 export const OPPORTUNITY_NATIVE_ASSET_V1 = '0x0000000000000000000000000000000000000000' as const;
 
+/** Base mainnet WETH. See `quoteAsset.ts` for why it is here. */
+export const OPPORTUNITY_WETH_ASSET_V1 = '0x4200000000000000000000000000000000000006' as const;
+
 /**
  * What an OBSERVATION may be denominated in — deliberately wider than what an
  * EXECUTION may be.
@@ -37,6 +40,12 @@ export const OPPORTUNITY_NATIVE_ASSET_V1 = '0x0000000000000000000000000000000000
 export const B20_MEASUREMENT_QUOTE_ASSETS_V1 = [
   OPPORTUNITY_QUOTE_ASSET_V1,
   OPPORTUNITY_NATIVE_ASSET_V1,
+  // Wrapped ETH. Nine of 120 sampled launches that Discover reported as
+  // "Miorail has not found where this trades" had a v4 pool against exactly
+  // this asset, refused by the resolver's allowlist. Measuring it is reading a
+  // venue that exists; it changes nothing about what may be EXECUTED, which
+  // stays pinned to `OPPORTUNITY_QUOTE_ASSET_V1` below.
+  OPPORTUNITY_WETH_ASSET_V1,
 ] as const;
 
 export type B20MeasurementQuoteAssetV1 = (typeof B20_MEASUREMENT_QUOTE_ASSETS_V1)[number];

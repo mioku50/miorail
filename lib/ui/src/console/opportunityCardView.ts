@@ -3,6 +3,7 @@ import {
   b20ExitStandingV1,
   type B20ExitStandingV1,
 } from '@mioagent/opportunity-rail/exitStanding';
+import { b20QuoteAssetDisplayV1 } from '@mioagent/opportunity-rail/quoteAsset';
 import { formatAtomicAmount } from '../formatAtomicAmount';
 import { bpsLabelV1 } from './B20ExitCard';
 import type { OpportunityCardViewV1, OpportunityStateV1 } from './OpportunitiesScreen';
@@ -103,33 +104,21 @@ export interface OpportunityCardWireV1 {
   notMeasured: readonly string[];
 }
 
-/** USDC. The one asset this family quotes in, and the decimals the reference
- * position is expressed in. */
-const QUOTE_DECIMALS_V1 = 6;
-
-/** Native ETH, as Uniswap v4 addresses it. */
-const NATIVE_ASSET_V1 = '0x0000000000000000000000000000000000000000';
-
 /**
  * How to render the position, in the asset it was actually measured in.
  *
- * B20's v4 pools are quoted against native ETH, so the reference asset is not
- * always USDC. Printing wei with six decimals and a "USDC" suffix would put a
- * number on the card that is wrong by twelve orders of magnitude AND name the
- * wrong currency — a card stating a trade nobody priced.
+ * B20's v4 pools are quoted against native ETH or WETH, so the reference asset
+ * is not always USDC. Printing wei with six decimals and a "USDC" suffix would
+ * put a number on the card that is wrong by twelve orders of magnitude AND name
+ * the wrong currency — a card stating a trade nobody priced.
  *
- * Unknown assets are shown by address rather than assumed: a guessed symbol on
- * a long-tail token is exactly the kind of confident wrong label this feed
- * exists to avoid.
+ * The table itself now lives in `@mioagent/opportunity-rail`, because there
+ * were three of them and they disagreed: this file defaulted an unknown asset
+ * to six decimals and the server-side copilot defaulted the same asset to
+ * eighteen, so one stored observation could be printed as two numbers twelve
+ * orders of magnitude apart.
  */
-function quoteAssetDisplayV1(asset: string | null | undefined): { decimals: number; symbol: string } {
-  const address = (asset ?? '').toLowerCase();
-  if (address === NATIVE_ASSET_V1) return { decimals: 18, symbol: 'ETH' };
-  if (address === '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913') {
-    return { decimals: QUOTE_DECIMALS_V1, symbol: 'USDC' };
-  }
-  return { decimals: QUOTE_DECIMALS_V1, symbol: address ? `${address.slice(0, 6)}…${address.slice(-4)}` : 'quote asset' };
-}
+const quoteAssetDisplayV1 = b20QuoteAssetDisplayV1;
 
 /** "4 min ago", "3 h ago", "2 d ago". Whole units only: a launch age to the
  * second implies a precision about when a token became visible that nothing
@@ -294,9 +283,15 @@ export function opportunityCardViewV1(card: OpportunityCardWireV1): OpportunityC
     profileLabel: observation
       ? (() => {
           const quote = quoteAssetDisplayV1(observation.referenceQuoteAsset);
-          return `${formatAtomicAmount(observation.referencePositionAtomic, quote.decimals)} ${
-            quote.symbol
-          } · ${bpsLabelV1(observation.maxRoundTripBps)} round trip`;
+          // `amountLabelV1` prints the atomic figure when the scale is unknown.
+          // A position divided by a guessed number of decimals looks entirely
+          // plausible and is off by orders of magnitude.
+          const position = amountLabelV1(
+            observation.referencePositionAtomic,
+            quote.decimals,
+            quote.symbol,
+          );
+          return `${position} · ${bpsLabelV1(observation.maxRoundTripBps)} round trip`;
         })()
       // Null, not the words. The row is hidden entirely when there is no
       // measurement to name a profile for.

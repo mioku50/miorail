@@ -1,6 +1,7 @@
 import {
   resolveB20PoolV1,
   quoteV4ExactInputV1,
+  V4QuoteUnavailableError,
 } from '@mioagent/swap-adapters';
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
@@ -76,7 +77,15 @@ const getLogsV1 = async (request: {
  * failure of each kind is printed once so the run can be read honestly.
  */
 const seenV1 = new Set<string>();
+/** Pacing. base.org rate-limits a tight loop, and a 429 that reaches the
+ * quoter as an ordinary failure is reported as `empty_result` — which reads
+ * exactly like "no liquidity at this size". Measured 2026-08-15: an unpaced
+ * batch of twelve tokens returned `empty_result` for BOTH controls. */
+const DELAY_MS_V1 = Number.parseInt(process.env.B20_PROBE_DELAY_MS ?? '350', 10);
+const pauseV1 = () => new Promise((resolve) => setTimeout(resolve, DELAY_MS_V1));
+
 const callV1 = async (request: { to: string; data: string }): Promise<string> => {
+  await pauseV1();
   try {
     return (await rpcV1('eth_call', [{ to: request.to, data: request.data }, 'latest'])) as string;
   } catch (error) {
@@ -87,7 +96,13 @@ const callV1 = async (request: { to: string; data: string }): Promise<string> =>
       seenV1.add(key);
       console.log(`   [${reverted ? 'REVERT' : 'TRANSPORT'}] ${message.slice(0, 160)}`);
     }
-    if (!reverted) throw error;
+    if (!reverted) {
+      // The typed error the quoter checks for. A bare throw is treated as a
+      // revert — "no liquidity" — so a rate limit would be recorded as a fact
+      // about the token. That is the bug class this whole rail exists around,
+      // and this probe was committing it.
+      throw new V4QuoteUnavailableError(message.slice(0, 120));
+    }
     return '';
   }
 };

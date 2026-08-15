@@ -295,6 +295,13 @@
       "when": 1787068800000,
       "tag": "0041_intelligence_charge_attempts",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1787155200000,
+      "tag": "0042_b20_observation_weth_quote",
+      "breakpoints": true
     }
   ]
 }
