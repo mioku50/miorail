@@ -9,6 +9,7 @@ import {
   type B20TransferPolicyStateV1,
 } from './observation.js';
 import { b20HookAssessmentV1, type B20HookAssessmentV1 } from './poolHook.js';
+import { b20ExitStandingV1, type B20ExitStandingV1 } from './exitStanding.js';
 
 // ---------------------------------------------------------------------------
 // T69-C §1/§5/§6/§18 — what the Discover feed is allowed to show, and what an
@@ -296,6 +297,16 @@ export interface B20CardObservationV1 {
   evidenceHash: string;
   state: B20ObservationStateV1;
   reasonCode: string | null;
+  /**
+   * The human verdict, and the machine-readable kind behind it.
+   *
+   * `state` and `reasonCode` stay exactly as measured — they are the evidence
+   * vocabulary and the x402 seller binds to them. `standing` is the reading
+   * layer on top, and it is what separates "nobody has bought this yet" from
+   * "people bought it and Miorail could not price a sale" from "Miorail never
+   * found the pool", all three of which used to say one sentence.
+   */
+  standing: B20ExitStandingV1;
   headline: string;
   detail: string;
   referencePositionAtomic: string;
@@ -674,6 +685,23 @@ export function b20OpportunityCardV1(input: B20CardInputV1): B20OpportunityCardV
   const freshness: B20FreshnessV1 = Date.parse(source.staleAfter) > input.now.getTime() ? 'fresh' : 'stale';
   const policyActive = source.transferPolicyState === 'restricted';
 
+  // The buyer aggregate is what separates "no market yet" from "a market that
+  // will not let you out", so an incomplete window must reach this as null
+  // rather than as zero — a window still collecting has not counted anybody.
+  const buyerCount =
+    input.launchBuyerWindow && input.launchBuyerWindow.status !== 'measured'
+      ? null
+      : input.launchBuyers?.buyerCount ?? null;
+  const standing = b20ExitStandingV1({
+    observation: {
+      state: source.state,
+      reasonCode: source.reasonCode,
+      entryRouteFound: source.entryRouteFound,
+      exitRouteFound: source.exitRouteFound,
+    },
+    buyerCount,
+  });
+
   const detail =
     source.state === 'rejected' && source.reasonCode && source.reasonCode in B20_OBSERVATION_REJECTION_COPY_V1
       ? B20_OBSERVATION_REJECTION_COPY_V1[
@@ -693,7 +721,11 @@ export function b20OpportunityCardV1(input: B20CardInputV1): B20OpportunityCardV
       evidenceHash: source.evidenceHash,
       state: source.state,
       reasonCode: source.reasonCode,
-      headline: B20_OBSERVATION_STATE_COPY_V1[source.state],
+      standing,
+      // The standing headline replaces the state copy. `detail` keeps the
+      // measured specifics below it — the conclusion first, its evidence
+      // underneath, rather than the evidence standing in for a conclusion.
+      headline: standing.headline,
       detail,
       referencePositionAtomic: source.referencePositionAtomic,
       referenceQuoteAsset: source.referenceQuoteAsset,

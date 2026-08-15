@@ -3529,6 +3529,24 @@ const B20CardObservationV1Schema = z
     evidenceHash: HashV1Schema,
     state: z.enum(['candidate', 'provisional', 'rejected', 'unmeasured']),
     reasonCode: z.string().max(64).nullable(),
+    /** The reading layer over `state`/`reasonCode`. `aboutToken` is false
+     * whenever the card is reporting what MIORAIL could not do — a surface
+     * must never count one of those as a finding about the token. */
+    standing: z.object({
+      kind: z.enum([
+        'not_measured',
+        'measurement_incomplete',
+        'venue_not_found',
+        'no_buyers_yet',
+        'bought_not_sellable',
+        'sale_unpriced',
+        'ruled_out',
+        'two_sided',
+      ]),
+      headline: z.string().min(1),
+      detail: z.string().min(1),
+      aboutToken: z.boolean(),
+    }),
     headline: z.string().min(1),
     detail: z.string().min(1),
     referencePositionAtomic: z.string().regex(/^\d+$/),
