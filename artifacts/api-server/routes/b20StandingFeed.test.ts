@@ -2,7 +2,13 @@ import assert from 'node:assert/strict';
 import test, { after, before, describe } from 'node:test';
 import { decodeFeedCursorV1 } from '@mioagent/route-storage';
 
-import { DISCOVER_STANDING_SCAN_LIMIT_V1, b20RouteRuntime, readDiscoverFeedV1 } from './b20Control.js';
+import {
+  DISCOVER_STANDING_SCAN_LIMIT_V1,
+  b20RouteRuntime,
+  readB20UniverseSummaryV1,
+  readDiscoverFeedV1,
+  resetB20SummaryCacheV1,
+} from './b20Control.js';
 
 // ---------------------------------------------------------------------------
 // The verdict section is a SERVER filter, and this is why.
@@ -258,5 +264,138 @@ describe('a verdict section is filled by scanning, not by taking one page', () =
     } finally {
       b20RouteRuntime.discoverAvailable = async () => true;
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The second axis: filters on measured evidence, not on the verdict.
+//
+// "Show me launches somebody bought and Miorail could not sell" is a verdict
+// question and Stage 02 answered it. "Show me launches with at least ten
+// buyers" and "show me launches whose round trip came in under 3%" are
+// evidence questions, and the feed could not express either.
+//
+// The rule both of them share is the one worth pinning: an UNMEASURED value is
+// excluded, never treated as zero. A round-trip bound that admitted unmeasured
+// launches would return "cheaper than 3%" for tokens nobody priced.
+// ---------------------------------------------------------------------------
+
+describe('filters on measured evidence exclude what was never measured', () => {
+  test('a buyer floor never admits a window that has not closed', async () => {
+    const feed = await read({ minBuyers: 1, limit: 25 });
+    for (const card of feed.cards) {
+      const window = card.observation?.launchBuyerWindow ?? null;
+      assert.equal(window?.status, 'measured', `${card.launch.symbol} was counted with an open window`);
+      assert.ok((card.observation?.launchBuyers?.buyerCount ?? 0) >= 1);
+    }
+  });
+
+  test('a buyer floor of zero still means "counted, and it was zero"', async () => {
+    // Not the same as "no bound". A caller asking for zero is asking for
+    // launches whose window closed with nobody in it.
+    const feed = await read({ minBuyers: 0, limit: 25 });
+    assert.ok(feed.cards.length > 0);
+    for (const card of feed.cards) {
+      assert.equal(card.observation?.launchBuyerWindow?.status, 'measured');
+    }
+  });
+
+  test('a round-trip ceiling excludes an unmeasured round trip rather than reading it as free', async () => {
+    const feed = await read({ maxRoundTripBps: 300, limit: 25 });
+    for (const card of feed.cards) {
+      const measured = card.observation?.optimisticRoundTripBps ?? null;
+      assert.notEqual(measured, null, `${card.launch.symbol} has no measured round trip`);
+      assert.ok(measured! <= 300);
+    }
+  });
+
+  test('bothRoutes selects for evidence rather than against it', async () => {
+    const feed = await read({ bothRoutes: true, limit: 25 });
+    for (const card of feed.cards) {
+      assert.equal(card.observation?.entryRouteFound, true);
+      assert.equal(card.observation?.exitRouteFound, true);
+    }
+  });
+
+  test('an exact conclusion is finer than its section', async () => {
+    // `venue_not_searched` and `venue_not_found` share the miorail_limit
+    // section and are different statements.
+    const feed = await read({ standingKind: 'no_buyers_yet', limit: 25 });
+    assert.ok(feed.cards.length > 0);
+    for (const card of feed.cards) {
+      assert.equal(card.observation?.standing.kind, 'no_buyers_yet');
+    }
+  });
+
+  test('filters compose, and an impossible pair returns nothing rather than everything', async () => {
+    // A silent drop is the dangerous failure: a caller who asked for the
+    // impossible and got the whole feed reads every card as satisfying it.
+    const feed = await read({ standingKind: 'no_buyers_yet', bothRoutes: true, limit: 25 });
+    assert.deepEqual(feed.cards, []);
+  });
+});
+
+describe('the universe is counted rather than paged', () => {
+  test('the counts add up to the launches read', async () => {
+    resetB20SummaryCacheV1();
+    const summary = await readB20UniverseSummaryV1({ now: NOW });
+    const standingTotal = summary.standing.reduce((sum, row) => sum + row.count, 0);
+    const sectionTotal = summary.sections.reduce((sum, row) => sum + row.count, 0);
+    const buyerTotal = summary.buyers.reduce((sum, row) => sum + row.count, 0);
+    assert.equal(standingTotal, summary.window.launches);
+    assert.equal(sectionTotal, summary.window.launches);
+    assert.equal(buyerTotal, summary.window.launches);
+    assert.ok(summary.window.launches > 25, 'a summary that only saw one page is a paged feed');
+  });
+
+  test('it counts the whole population, which one page cannot', async () => {
+    resetB20SummaryCacheV1();
+    const summary = await readB20UniverseSummaryV1({ now: NOW });
+    const page = await read({ limit: 25 });
+    const bought = summary.standing.find((row) => row.kind === 'bought_not_sellable')?.count ?? 0;
+    const onPage = page.cards.filter((card) => card.observation?.standing.kind === 'bought_not_sellable').length;
+    assert.ok(bought > onPage, `summary saw ${bought}, one page saw ${onPage}`);
+  });
+
+  test('every standing row carries the flag a reader must check before quoting it', async () => {
+    resetB20SummaryCacheV1();
+    const summary = await readB20UniverseSummaryV1({ now: NOW });
+    for (const row of summary.standing) {
+      assert.equal(typeof row.aboutToken, 'boolean');
+      // The invariant the whole split rests on, asserted at the aggregate too.
+      if (!row.aboutToken) assert.equal(row.group, 'miorail_limit');
+    }
+  });
+
+  test('a venue set nobody recorded is null, never an invented name', async () => {
+    resetB20SummaryCacheV1();
+    const summary = await readB20UniverseSummaryV1({ now: NOW });
+    for (const row of summary.venues) {
+      assert.ok(row.venues === null || row.venues.length > 0);
+    }
+  });
+
+  test('the answer says when it was computed and how long it may be reused', async () => {
+    resetB20SummaryCacheV1();
+    const summary = await readB20UniverseSummaryV1({ now: NOW });
+    assert.equal(summary.computedAt, NOW.toISOString());
+    assert.ok(summary.cachedForMs > 0);
+    assert.ok(summary.caveats.length >= 3);
+  });
+
+  test('a cached answer is reused rather than re-read', async () => {
+    resetB20SummaryCacheV1();
+    await readB20UniverseSummaryV1({ now: NOW });
+    listFeedCalls = 0;
+    await readB20UniverseSummaryV1({ now: new Date(NOW.getTime() + 1_000) });
+    assert.equal(listFeedCalls, 0, 'the summary re-read the corpus inside its own cache window');
+  });
+
+  test('a different window is a different question and is not served from cache', async () => {
+    resetB20SummaryCacheV1();
+    await readB20UniverseSummaryV1({ now: NOW });
+    listFeedCalls = 0;
+    await readB20UniverseSummaryV1({ now: NOW, maxLaunchAgeMs: 60 * 60 * 1000 });
+    assert.ok(listFeedCalls > 0, 'a narrower window was answered with a wider window’s counts');
   });
 });

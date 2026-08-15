@@ -40,6 +40,20 @@ export type B20ExitStandingKindV1 =
   | 'ruled_out'
   | 'two_sided';
 
+/** Every conclusion, for a caller that filters on one. Kept beside the type so
+ * a new kind cannot be added without becoming filterable. */
+export const B20_EXIT_STANDING_KINDS_V1 = [
+  'not_measured',
+  'measurement_incomplete',
+  'venue_not_searched',
+  'venue_not_found',
+  'no_buyers_yet',
+  'bought_not_sellable',
+  'sale_unpriced',
+  'ruled_out',
+  'two_sided',
+] as const;
+
 export interface B20ExitStandingV1 {
   kind: B20ExitStandingKindV1;
   /** One sentence a person can act on, in place of the old state copy. */

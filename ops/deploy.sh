@@ -214,10 +214,11 @@ printf '%s' "$mcp_tools" | jq -e '
     "miorail_explain_b20_rejection",
     "miorail_get_b20_market_leaders",
     "miorail_get_b20_opportunity",
-    "miorail_list_b20_opportunities"
+    "miorail_list_b20_opportunities",
+    "miorail_summarise_b20_universe"
   ]
-' >/dev/null || { echo 'FAILED: public MCP tool registry is not the reviewed five-tool surface'; exit 1; }
-printf '  mcp tools/list %-28s %s\n' "$MCP_PUBLIC_URL" '5 read-only tools'
+' >/dev/null || { echo 'FAILED: public MCP tool registry is not the reviewed six-tool surface'; exit 1; }
+printf '  mcp tools/list %-28s %s\n' "$MCP_PUBLIC_URL" '6 read-only tools'
 
 echo
 echo "Deployed. Served entry: $served_entry · Base App: HTTP $miniapp_status · Miorail MCP: 5 tools"

@@ -164,7 +164,7 @@ function payloadOf(result: unknown): Record<string, unknown> {
 }
 
 describe('§8 — tool discovery', () => {
-  test('a client sees exactly the five tools, with usable descriptions', async () => {
+  test('a client sees exactly the six tools, with usable descriptions', async () => {
     const client = await connectedClient();
     const { tools } = await client.listTools();
     assert.deepEqual(tools.map((tool) => tool.name).sort(), [
@@ -173,6 +173,7 @@ describe('§8 — tool discovery', () => {
       'miorail_get_b20_market_leaders',
       'miorail_get_b20_opportunity',
       'miorail_list_b20_opportunities',
+      'miorail_summarise_b20_universe',
     ]);
     for (const tool of tools) {
       // An assistant chooses from the description alone. A one-liner produces

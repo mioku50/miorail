@@ -8,7 +8,12 @@ import {
   type B20OpportunityCardV1,
   type B20StandingGroupV1,
 } from '@mioagent/opportunity-rail';
-import { readDiscoverFeedV1, pipelineStatusV1, b20RouteRuntime } from '../b20Control.js';
+import {
+  readB20UniverseSummaryV1,
+  readDiscoverFeedV1,
+  pipelineStatusV1,
+  b20RouteRuntime,
+} from '../b20Control.js';
 
 // ---------------------------------------------------------------------------
 // T72 — the read-only tool layer.
@@ -286,7 +291,7 @@ function opportunityFromCardV1(card: B20OpportunityCardV1): McpOpportunityV1 {
   };
 }
 
-// --- the five tools ---------------------------------------------------------
+// --- the tools --------------------------------------------------------------
 
 export async function miorailDiscoverStatusV1(): Promise<Record<string, unknown>> {
   try {
@@ -321,10 +326,25 @@ export async function miorailDiscoverStatusV1(): Promise<Record<string, unknown>
   }
 }
 
+export async function miorailSummariseUniverseV1(input: {
+  launchAgeHours?: number;
+}): Promise<Record<string, unknown>> {
+  try {
+    const hours = Math.max(1, Math.min(720, Math.floor(input.launchAgeHours ?? 48)));
+    return { ...(await readB20UniverseSummaryV1({ maxLaunchAgeMs: hours * 60 * 60 * 1000 })) };
+  } catch (error) {
+    throw publicFailureV1(error);
+  }
+}
+
 export async function miorailListOpportunitiesV1(input: {
   state?: 'all' | 'candidate' | 'provisional' | 'rejected' | 'unmeasured';
   freshness?: 'all' | 'fresh' | 'stale';
   standing?: B20StandingGroupV1 | 'all';
+  standingKind?: string;
+  bothRoutes?: boolean;
+  maxRoundTripBps?: number;
+  minBuyers?: number;
   limit?: number;
   cursor?: string | null;
 }): Promise<Record<string, unknown>> {
@@ -339,6 +359,13 @@ export async function miorailListOpportunitiesV1(input: {
       state: input.state === undefined || input.state === 'all' ? 'all' : input.state,
       freshness: input.freshness ?? 'all',
       standing: input.standing ?? 'all',
+      standingKind: input.standingKind ?? null,
+      bothRoutes: input.bothRoutes === true,
+      // Undefined means "no bound", and that is NOT the same as zero: a bound
+      // of zero selects only launches whose measured round trip was exactly
+      // free, which is a question somebody may legitimately ask.
+      maxRoundTripBps: input.maxRoundTripBps ?? null,
+      minBuyers: input.minBuyers ?? null,
     });
     return {
       pipeline: { state: feed.pipeline.state, summary: feed.pipeline.message },

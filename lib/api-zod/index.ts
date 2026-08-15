@@ -3802,6 +3802,69 @@ export const B20MarketRailsResponseV1Schema = z
     }
   });
 
+/**
+ * The universe, counted — the shape a planner asks for instead of paging.
+ *
+ * Every axis here is a count of STORED MEASUREMENTS in a launch-age window,
+ * never a count of tokens on Base. The `aboutToken` flag rides along on each
+ * standing row for the same reason it rides on a card: a bucket whose flag is
+ * false counts what Miorail could not measure, and a reader that adds it to a
+ * finding has produced a number nobody measured.
+ */
+export const B20UniverseSummaryV1Schema = z
+  .object({
+    window: z
+      .object({
+        maxLaunchAgeMs: z.number().int().positive(),
+        launches: z.number().int().min(0),
+        /** False when the scan limit was hit before the window ran out. */
+        complete: z.boolean(),
+      })
+      .strict(),
+    standing: z
+      .array(
+        z
+          .object({
+            kind: z.string().min(1).max(64),
+            group: z.enum(['bought_not_sellable', 'two_sided', 'no_buyers_yet', 'miorail_limit']),
+            count: z.number().int().min(0),
+            aboutToken: z.boolean(),
+          })
+          .strict(),
+      )
+      .max(32),
+    sections: z
+      .array(
+        z
+          .object({
+            group: z.enum(['bought_not_sellable', 'two_sided', 'no_buyers_yet', 'miorail_limit']),
+            label: z.string().min(1),
+            count: z.number().int().min(0),
+          })
+          .strict(),
+      )
+      .max(8),
+    reasonCodes: z
+      .array(z.object({ code: z.string().min(1).max(64), count: z.number().int().min(0) }).strict())
+      .max(64),
+    venues: z
+      .array(
+        z
+          .object({ venues: z.string().min(1).max(200).nullable(), count: z.number().int().min(0) })
+          .strict(),
+      )
+      .max(16),
+    buyers: z
+      .array(z.object({ band: z.string().min(1).max(32), count: z.number().int().min(0) }).strict())
+      .max(8),
+    computedAt: z.string().datetime(),
+    cachedForMs: z.number().int().min(0),
+    caveats: z.array(z.string().min(1)).min(1),
+  })
+  .strict();
+
+export type B20UniverseSummaryV1 = z.infer<typeof B20UniverseSummaryV1Schema>;
+
 export const B20OpportunityFeedResponseV1Schema = z
   .object({
     pipeline: B20PipelineStatusV1Schema,

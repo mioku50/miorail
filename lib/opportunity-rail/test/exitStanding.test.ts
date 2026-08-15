@@ -2,6 +2,7 @@ import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  B20_EXIT_STANDING_KINDS_V1,
   B20_STANDING_GROUPS_V1,
   B20_STANDING_GROUP_COPY_V1,
   b20CardStandingGroupV1,
@@ -390,5 +391,25 @@ describe('a verdict is only as wide as the venues behind it', () => {
         /\b(safe|unsafe|scam|rug|honeypot|buy now|opportunity|promising|gem|moon)\b/i,
       );
     }
+  });
+});
+
+describe('the kind list stays exhaustive', () => {
+  test('every kind a branch can return is filterable', () => {
+    // A new conclusion that nobody can ask for is a conclusion nobody sees.
+    const produced = new Set<string>();
+    const cases: Parameters<typeof b20ExitStandingV1>[0][] = [
+      { observation: null, buyerCount: null },
+      { observation: measured({ reasonCode: 'route_search_degraded' }), buyerCount: 0 },
+      { observation: measured({ entryRouteFound: false, venuesConsulted: null }), buyerCount: 0 },
+      { observation: measured({ entryRouteFound: false }), buyerCount: 0 },
+      { observation: measured({}), buyerCount: 0 },
+      { observation: measured({}), buyerCount: 62 },
+      { observation: measured({}), buyerCount: null },
+      { observation: measured({ exitRouteFound: true }), buyerCount: 1 },
+      { observation: measured({ state: 'provisional', exitRouteFound: true }), buyerCount: 1 },
+    ];
+    for (const input of cases) produced.add(b20ExitStandingV1(input).kind);
+    assert.deepEqual([...produced].sort(), [...B20_EXIT_STANDING_KINDS_V1].sort());
   });
 });

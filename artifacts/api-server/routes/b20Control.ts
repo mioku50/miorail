@@ -26,6 +26,7 @@ import {
   B20EntryReconcileSubmissionRequestV1Schema,
   B20EntryStatusResponseV1Schema,
   B20OpportunityFeedResponseV1Schema,
+  B20UniverseSummaryV1Schema,
   B20OpportunityDetailResponseV1Schema,
   B20MarketRailsResponseV1Schema,
   B20CopilotAskRequestV1Schema,
@@ -98,6 +99,8 @@ import {
   b20PipelineStatusV1,
   profileRefusalV1,
   B20_STANDING_GROUPS_V1,
+  B20_STANDING_GROUP_COPY_V1,
+  B20_EXIT_STANDING_KINDS_V1,
   b20CardStandingGroupV1,
   type B20StandingGroupV1,
 } from '@mioagent/opportunity-rail';
@@ -504,6 +507,19 @@ export async function readDiscoverFeedV1(input: {
   /** The verdict section, not the measurement state. `all` keeps the feed in
    * launch order and reads exactly one page, as it always has. */
   standing?: B20StandingGroupV1 | 'all';
+  /** One exact conclusion rather than its whole section — `bought_not_sellable`
+   * and `no_buyers_yet` share no section, but `venue_not_searched` and
+   * `venue_not_found` do, and they are different statements. */
+  standingKind?: string | null;
+  /** Only launches where BOTH directions priced. The one filter that selects
+   * for evidence rather than against it. */
+  bothRoutes?: boolean;
+  /** An upper bound on the measured round trip. A launch whose round trip was
+   * never measured is EXCLUDED, not treated as zero. */
+  maxRoundTripBps?: number | null;
+  /** A lower bound on completed launch-window buying. A window that has not
+   * closed has counted nobody, so it is excluded rather than read as zero. */
+  minBuyers?: number | null;
   maxLaunchAgeMs?: number;
 }): Promise<{
   pipeline: B20PipelineStatusV1 & { message: string };
@@ -531,8 +547,45 @@ export async function readDiscoverFeedV1(input: {
   };
 
   const standing = input.standing ?? 'all';
-  if (standing !== 'all') {
-    const filtered = await readStandingSectionV1({
+  const standingKind = input.standingKind ?? null;
+  const maxRoundTripBps = input.maxRoundTripBps ?? null;
+  const minBuyers = input.minBuyers ?? null;
+  const bothRoutes = input.bothRoutes === true;
+
+  /**
+   * Every filter that cannot be expressed as a SQL predicate over one page.
+   *
+   * They are applied to the card projection, not to the row, so the answer is
+   * the same object a reader will be shown. `maxRoundTripBps` and `minBuyers`
+   * both EXCLUDE an unmeasured value rather than treating it as zero: "cheaper
+   * than 3%" must not select a launch whose round trip nobody priced, and
+   * "at least ten buyers" must not select a window that has not closed.
+   */
+  const matches = (card: ReturnType<typeof b20OpportunityCardV1>): boolean => {
+    if (!freshEnough(card)) return false;
+    if (standing !== 'all' && b20CardStandingGroupV1(card) !== standing) return false;
+    const observation = card.observation;
+    if (standingKind !== null && observation?.standing.kind !== standingKind) return false;
+    if (bothRoutes && !(observation?.entryRouteFound && observation.exitRouteFound)) return false;
+    if (maxRoundTripBps !== null) {
+      const measured = observation?.optimisticRoundTripBps ?? null;
+      if (measured === null || measured > maxRoundTripBps) return false;
+    }
+    if (minBuyers !== null) {
+      const window = observation?.launchBuyerWindow ?? null;
+      const counted = window && window.status !== 'measured'
+        ? null
+        : observation?.launchBuyers?.buyerCount ?? null;
+      if (counted === null || counted < minBuyers) return false;
+    }
+    return true;
+  };
+
+  const narrowed =
+    standing !== 'all' || standingKind !== null || bothRoutes || maxRoundTripBps !== null || minBuyers !== null;
+
+  if (narrowed) {
+    const filtered = await readNarrowedFeedV1({
       observations,
       pipeline,
       now,
@@ -540,8 +593,7 @@ export async function readDiscoverFeedV1(input: {
       states: input.state === 'all' ? undefined : [input.state],
       cursor: input.cursor,
       limit: input.limit,
-      standing,
-      freshEnough,
+      matches,
     });
     return { pipeline, ...filtered, serverTime: now.toISOString() };
   }
@@ -572,21 +624,21 @@ export const DISCOVER_STANDING_SCAN_LIMIT_V1 = 1_200;
 const DISCOVER_STANDING_PAGE_V1 = 100;
 
 /**
- * One verdict section of the feed.
+ * A narrowed page of the feed.
  *
- * The section is decided by `b20CardStandingGroupV1` — the SAME function the
- * screen groups with, run over the SAME card projection. It is deliberately not
- * a SQL predicate: `bought_not_sellable` and `no_buyers_yet` are separated by
- * whether a buyer window closed, `sale_unpriced` by whether it was counted at
- * all, and a second implementation of that rule in SQL would be a second answer
- * to what a card means. Six of this repository's production bugs were exactly
- * that shape.
+ * Every predicate runs over the CARD projection — the same object a reader
+ * will be shown, built by the same function the screen groups with. It is
+ * deliberately not a set of SQL predicates: `bought_not_sellable` and
+ * `no_buyers_yet` are separated by whether a buyer window closed,
+ * `sale_unpriced` by whether it was counted at all, and a second
+ * implementation of those rules in SQL would be a second answer to what a card
+ * means. Six of this repository's production bugs were exactly that shape.
  *
  * The cursor it returns points at the last row it CONSUMED, not at the end of
  * the page it was reading. Rows after that were never examined and come back on
- * the next call, so a section pages without skipping.
+ * the next call, so a narrowed feed pages without skipping.
  */
-async function readStandingSectionV1(input: {
+async function readNarrowedFeedV1(input: {
   observations: B20ObservationRepositoryV1;
   pipeline: B20PipelineStatusV1 & { message: string };
   now: Date;
@@ -594,8 +646,7 @@ async function readStandingSectionV1(input: {
   states: (typeof FEED_STATES_V1)[number][] | undefined;
   cursor: string | null;
   limit: number;
-  standing: B20StandingGroupV1;
-  freshEnough: (card: ReturnType<typeof b20OpportunityCardV1>) => boolean;
+  matches: (card: ReturnType<typeof b20OpportunityCardV1>) => boolean;
 }): Promise<{ cards: ReturnType<typeof b20OpportunityCardV1>[]; nextCursor: string | null }> {
   const cards: ReturnType<typeof b20OpportunityCardV1>[] = [];
   let cursor = input.cursor;
@@ -613,8 +664,7 @@ async function readStandingSectionV1(input: {
     for (const row of page.rows) {
       scanned += 1;
       const card = b20DiscoverCardFromRowV1(row, input.pipeline, input.now);
-      if (!input.freshEnough(card)) continue;
-      if (b20CardStandingGroupV1(card) !== input.standing) continue;
+      if (!input.matches(card)) continue;
       cards.push(card);
       if (cards.length >= input.limit) {
         return {
@@ -635,6 +685,179 @@ async function readStandingSectionV1(input: {
 
   // The scan budget ran out with the section still open. The cursor says so.
   return { cards, nextCursor: cursor };
+}
+
+// ---------------------------------------------------------------------------
+// The universe, counted — so nobody has to page it.
+//
+// The Discover feed answers "what are the newest launches". It cannot answer
+// "how many launches were bought and could not be sold", and the only way to
+// get that from the feed is 46 pages of 25. A planner doing that spends 46
+// round trips to compute a number, and a person doing it does not.
+//
+// Built by reading the SAME card projection the feed reads, page by page, and
+// grouping with the SAME standing function the screen groups with. That is
+// deliberate and it is the whole design constraint: a summary computed by a
+// second SQL rule would eventually disagree with the cards it claims to
+// summarise, and a disagreement between a count and a list is the kind of bug
+// that is only found by a user.
+//
+// The cost is real — roughly a dozen bounded queries — so the result is cached
+// for a minute and the response states when it was computed. The corpus moves
+// at about five observations per twenty seconds; a minute-old count is a count
+// of a minute ago, and it says so rather than implying it is live.
+// ---------------------------------------------------------------------------
+
+/** How many launches one summary may read. Above the ~1,139 the live 48-hour
+ * window holds, so the count is currently exhaustive — and when it stops being
+ * so, the response says `complete: false` instead of quietly truncating. */
+export const DISCOVER_SUMMARY_SCAN_LIMIT_V1 = 3_000;
+const DISCOVER_SUMMARY_TTL_MS_V1 = 60_000;
+
+export interface B20UniverseSummaryV1 {
+  window: {
+    maxLaunchAgeMs: number;
+    /** Launches actually read. */
+    launches: number;
+    /** False when the scan limit was reached before the window ran out, so a
+     * reader knows the counts below are of a prefix rather than of everything. */
+    complete: boolean;
+  };
+  /** One row per measured conclusion, in the display order of their sections. */
+  standing: { kind: string; group: B20StandingGroupV1; count: number; aboutToken: boolean }[];
+  /** The same launches rolled up to the four sections a screen shows. */
+  sections: { group: B20StandingGroupV1; label: string; count: number }[];
+  /** The typed measurement vocabulary, unrolled. Not the same axis as
+   * `standing`: one reason code can reach several conclusions. */
+  reasonCodes: { code: string; count: number }[];
+  /** Which venues the readings behind these counts actually asked. */
+  venues: { venues: string | null; count: number }[];
+  /** Launch-window buying, in bands. `not_counted` is its own band because a
+   * window that has not closed has counted nobody — it is not a zero. */
+  buyers: { band: string; count: number }[];
+  computedAt: string;
+  cachedForMs: number;
+  caveats: readonly string[];
+}
+
+export const B20_SUMMARY_CAVEATS_V1 = [
+  'These are counts of STORED MEASUREMENTS inside a launch-age window, not of every B20 token on Base.',
+  'A count under a conclusion whose aboutToken is false is a count of what MIORAIL could not measure. It is not a count of tokens with that property.',
+  'Counts are computed from the same card projection the feed serves and may be up to a minute old. computedAt says when.',
+] as const;
+
+const BUYER_BANDS_V1 = ['not_counted', '0', '1', '2-9', '10+'] as const;
+
+function buyerBandV1(count: number | null): string {
+  if (count === null) return 'not_counted';
+  if (count === 0) return '0';
+  if (count === 1) return '1';
+  return count < 10 ? '2-9' : '10+';
+}
+
+let summaryCacheV1: { key: string; at: number; value: B20UniverseSummaryV1 } | null = null;
+
+/** Test seam: a summary computed under one corpus must not answer for another. */
+export function resetB20SummaryCacheV1(): void {
+  summaryCacheV1 = null;
+}
+
+export async function readB20UniverseSummaryV1(input: {
+  maxLaunchAgeMs?: number;
+  now?: Date;
+}): Promise<B20UniverseSummaryV1> {
+  const maxLaunchAgeMs = input.maxLaunchAgeMs ?? DISCOVER_FEED_WINDOW_MS_V1;
+  const now = input.now ?? b20RouteRuntime.now();
+  const key = String(maxLaunchAgeMs);
+  if (summaryCacheV1 && summaryCacheV1.key === key && now.getTime() - summaryCacheV1.at < DISCOVER_SUMMARY_TTL_MS_V1) {
+    return summaryCacheV1.value;
+  }
+
+  const available = await b20RouteRuntime.discoverAvailable();
+  const observations = b20RouteRuntime.observations();
+  const pipeline = await pipelineStatusV1(observations, now, available);
+
+  const standing = new Map<string, { group: B20StandingGroupV1; aboutToken: boolean; count: number }>();
+  const sections = new Map<B20StandingGroupV1, number>();
+  const reasonCodes = new Map<string, number>();
+  const venues = new Map<string, number>();
+  const buyers = new Map<string, number>();
+
+  let launches = 0;
+  let complete = true;
+  if (available) {
+    let cursor: string | null = null;
+    for (;;) {
+      const page = await observations.listFeed({
+        limit: Math.min(DISCOVER_STANDING_PAGE_V1, DISCOVER_SUMMARY_SCAN_LIMIT_V1 - launches),
+        cursor,
+        maxLaunchAgeMs,
+        now: now.toISOString(),
+      });
+      for (const row of page.rows) {
+        launches += 1;
+        const card = b20DiscoverCardFromRowV1(row, pipeline, now);
+        const kind = card.observation?.standing.kind ?? 'not_measured';
+        const group = b20CardStandingGroupV1(card);
+        const aboutToken = card.observation?.standing.aboutToken ?? false;
+        const current = standing.get(kind);
+        if (current) current.count += 1;
+        else standing.set(kind, { group, aboutToken, count: 1 });
+        sections.set(group, (sections.get(group) ?? 0) + 1);
+
+        const reason = card.observation?.reasonCode ?? 'not_measured';
+        reasonCodes.set(reason, (reasonCodes.get(reason) ?? 0) + 1);
+
+        // Null and empty both print as "not recorded": a row written before the
+        // field existed did not search nothing, it did not say.
+        const venueKey = card.observation?.venuesConsulted?.length
+          ? [...card.observation.venuesConsulted].join(',')
+          : 'not recorded';
+        venues.set(venueKey, (venues.get(venueKey) ?? 0) + 1);
+
+        const window = card.observation?.launchBuyerWindow ?? null;
+        const buyerCount = window && window.status !== 'measured'
+          ? null
+          : card.observation?.launchBuyers?.buyerCount ?? null;
+        const band = buyerBandV1(buyerCount);
+        buyers.set(band, (buyers.get(band) ?? 0) + 1);
+      }
+      if (!page.nextCursor) break;
+      if (launches >= DISCOVER_SUMMARY_SCAN_LIMIT_V1) {
+        complete = false;
+        break;
+      }
+      cursor = page.nextCursor;
+    }
+  }
+
+  const value: B20UniverseSummaryV1 = {
+    window: { maxLaunchAgeMs, launches, complete },
+    // Ordered by section, then by size within it, so the shape of the answer
+    // matches the shape of the screen.
+    standing: [...standing.entries()]
+      .map(([kind, entry]) => ({ kind, group: entry.group, count: entry.count, aboutToken: entry.aboutToken }))
+      .sort((left, right) =>
+        B20_STANDING_GROUPS_V1.indexOf(left.group) - B20_STANDING_GROUPS_V1.indexOf(right.group)
+        || right.count - left.count),
+    sections: B20_STANDING_GROUPS_V1
+      .map((group) => ({ group, label: B20_STANDING_GROUP_COPY_V1[group].label, count: sections.get(group) ?? 0 }))
+      .filter((section) => section.count > 0),
+    reasonCodes: [...reasonCodes.entries()]
+      .map(([code, count]) => ({ code, count }))
+      .sort((left, right) => right.count - left.count),
+    venues: [...venues.entries()]
+      .map(([label, count]) => ({ venues: label === 'not recorded' ? null : label, count }))
+      .sort((left, right) => right.count - left.count),
+    // Every band is listed, including the empty ones: a missing band reads as
+    // "not measured" when it means "none".
+    buyers: BUYER_BANDS_V1.map((band) => ({ band, count: buyers.get(band) ?? 0 })),
+    computedAt: now.toISOString(),
+    cachedForMs: DISCOVER_SUMMARY_TTL_MS_V1,
+    caveats: B20_SUMMARY_CAVEATS_V1,
+  };
+  summaryCacheV1 = { key, at: now.getTime(), value };
+  return value;
 }
 
 // ---------------------------------------------------------------------------
@@ -747,6 +970,26 @@ b20ControlRouter.get('/opportunities/b20/market/rails', async (req: Request, res
   }
 });
 
+/**
+ * The universe, counted.
+ *
+ * Deliberately a separate route from the feed rather than a field on it: the
+ * feed answers "what is newest" one page at a time, and folding a whole-window
+ * count into every page would make the cheap read pay for the expensive one.
+ */
+b20ControlRouter.get('/opportunities/b20/summary', async (req: Request, res: Response) => {
+  const guard = b20Guard(req, res);
+  if (!guard) return;
+
+  const launchAgeRaw = Number.parseInt(String(req.query.launchAge ?? ''), 10);
+  const maxLaunchAgeMs = Number.isFinite(launchAgeRaw) && launchAgeRaw > 0 ? launchAgeRaw : DISCOVER_FEED_WINDOW_MS_V1;
+  try {
+    res.json(B20UniverseSummaryV1Schema.parse(await readB20UniverseSummaryV1({ maxLaunchAgeMs })));
+  } catch (error) {
+    storageFailure(res, error, 'b20-universe-summary');
+  }
+});
+
 b20ControlRouter.get('/opportunities/b20', async (req: Request, res: Response) => {
   const guard = b20Guard(req, res);
   if (!guard) return;
@@ -782,6 +1025,30 @@ b20ControlRouter.get('/opportunities/b20', async (req: Request, res: Response) =
   const launchAgeRaw = Number.parseInt(String(req.query.launchAge ?? ''), 10);
   const maxLaunchAgeMs = Number.isFinite(launchAgeRaw) && launchAgeRaw > 0 ? launchAgeRaw : DISCOVER_FEED_WINDOW_MS_V1;
 
+  // The evidence axis. Each one is REFUSED when unparseable rather than
+  // silently dropped: a caller who asked for "at least ten buyers" and got the
+  // whole feed would read every card as satisfying it.
+  const boundedIntV1 = (raw: unknown, min: number, max: number): number | null | 'invalid' => {
+    if (raw === undefined || raw === '') return null;
+    const value = Number.parseInt(String(raw), 10);
+    if (!Number.isFinite(value) || value < min || value > max) return 'invalid';
+    return value;
+  };
+  const maxRoundTripBps = boundedIntV1(req.query.maxRoundTripBps, 0, 100_000);
+  const minBuyers = boundedIntV1(req.query.minBuyers, 0, 1_000_000);
+  if (maxRoundTripBps === 'invalid' || minBuyers === 'invalid') {
+    res.status(400).json({ error: 'invalid_filter_bound', code: 'invalid_filter_bound' });
+    return;
+  }
+  const standingKind = typeof req.query.standingKind === 'string' && req.query.standingKind.length > 0
+    ? req.query.standingKind
+    : null;
+  if (standingKind !== null && !(B20_EXIT_STANDING_KINDS_V1 as readonly string[]).includes(standingKind)) {
+    res.status(400).json({ error: 'unknown_standing_kind', code: 'unknown_standing_kind' });
+    return;
+  }
+  const bothRoutes = String(req.query.bothRoutes ?? '') === 'true';
+
   // Held outside the try so the failure log can say what SHAPE arrived at the
   // schema, not merely that something did.
   let feed: Awaited<ReturnType<typeof readDiscoverFeedV1>> | undefined;
@@ -792,6 +1059,10 @@ b20ControlRouter.get('/opportunities/b20', async (req: Request, res: Response) =
       state: stateParam as (typeof FEED_STATES_V1)[number] | 'all',
       freshness: freshness as 'fresh' | 'stale' | 'all',
       standing: standing as B20StandingGroupV1 | 'all',
+      standingKind,
+      bothRoutes,
+      maxRoundTripBps,
+      minBuyers,
       maxLaunchAgeMs,
     });
     res.json(B20OpportunityFeedResponseV1Schema.parse(feed));

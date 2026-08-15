@@ -1,6 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { B20_STANDING_GROUPS_V1 } from '@mioagent/opportunity-rail';
+import { B20_EXIT_STANDING_KINDS_V1, B20_STANDING_GROUPS_V1 } from '@mioagent/opportunity-rail';
 import {
   MCP_DEFAULT_PAGE_V1,
   MCP_LEADER_DIMENSIONS_V1,
@@ -12,10 +12,11 @@ import {
   miorailGetOpportunityV1,
   miorailListOpportunitiesV1,
   miorailMarketLeadersV1,
+  miorailSummariseUniverseV1,
 } from './tools.js';
 
 // ---------------------------------------------------------------------------
-// T72 — the Miorail MCP server: five read-only tools over stored evidence.
+// T72 — the Miorail MCP server: six read-only tools over stored evidence.
 //
 // It cannot execute anything. There is no signer, no wallet_sendCalls, no
 // clearance, no entry plan, no submission and no x402 payment on this surface,
@@ -123,6 +124,34 @@ Every measurement also carries a "standing": what the reading CONCLUDED, with an
           .describe(
             'A stale measurement is still what was true when taken, but is past its window.',
           ),
+        standingKind: z
+          .enum(B20_EXIT_STANDING_KINDS_V1)
+          .optional()
+          .describe(
+            'One exact conclusion rather than its whole section. "venue_not_searched" and "venue_not_found" share a section and are different statements: the first means Miorail did not look at the venue where these tokens trade.',
+          ),
+        bothRoutes: z
+          .boolean()
+          .optional()
+          .describe('Only launches where a purchase AND a sale both priced. Still not executable quotes.'),
+        maxRoundTripBps: z
+          .number()
+          .int()
+          .min(0)
+          .max(100000)
+          .optional()
+          .describe(
+            'Upper bound on the MEASURED round trip, in basis points. A launch whose round trip was never measured is excluded, never treated as zero.',
+          ),
+        minBuyers: z
+          .number()
+          .int()
+          .min(0)
+          .max(1000000)
+          .optional()
+          .describe(
+            'Lower bound on COMPLETED launch-window buying. A window that has not closed has counted nobody and is excluded, never read as zero.',
+          ),
         limit: z.number().int().min(1).max(MCP_MAX_PAGE_V1).optional(),
         cursor: z.string().max(500).optional().describe('Opaque; from a previous call.'),
       },
@@ -130,6 +159,36 @@ Every measurement also carries a "standing": what the reading CONCLUDED, with an
     async (args) => {
       try {
         return reply(await miorailListOpportunitiesV1(args ?? {}));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'miorail_summarise_b20_universe',
+    {
+      title: 'Count the measured B20 universe',
+      description: `Counts stored measurements across a launch-age window, broken down by what each measurement CONCLUDED, by typed reason code, by which venues were searched, and by launch-window buying band. Call this instead of paging the opportunity list to answer "how many": the list returns at most ${MCP_MAX_PAGE_V1} per call and the window holds over a thousand launches.
+
+Every number is a count of STORED MEASUREMENTS inside that window, never a count of tokens on Base.
+
+Read "aboutToken" on each standing row before quoting it. When it is false the bucket counts what MIORAIL could not measure — a venue it did not search, a call that did not answer — and reporting such a count as a property of tokens is wrong.
+
+Counts may be up to a minute old; "computedAt" says when they were taken.`,
+      inputSchema: {
+        launchAgeHours: z
+          .number()
+          .int()
+          .min(1)
+          .max(720)
+          .optional()
+          .describe('How far back to count, by launch age. Default 48 hours, the Discover window.'),
+      },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailSummariseUniverseV1(args ?? {}));
       } catch (error) {
         return refuse(error);
       }
