@@ -182,7 +182,23 @@ mcp_data_json() {
   sed -n 's/^data: //p' | tail -1
 }
 
-mcp_initialize=$(mcp_post '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"miorail-deploy-smoke","version":"1.0.0"}}}' | mcp_data_json)
+# The API binds its port about six seconds after systemd starts it, and step 6
+# does not wait. Twice now this step has reported `502` and exited 1 on a deploy
+# that had in fact succeeded — the services were up and serving the new bundle
+# seconds later. A verification that cries wolf is how a real failure gets
+# waved through, so the readiness wait is bounded and explicit rather than the
+# check being softened.
+mcp_ready=''
+for attempt in $(seq 1 20); do
+  mcp_ready=$(mcp_post '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"miorail-deploy-smoke","version":"1.0.0"}}}' 2>/dev/null | mcp_data_json)
+  [ -n "$mcp_ready" ] && break
+  [ "$attempt" = 1 ] && printf '  waiting for the API to bind'
+  printf '.'
+  sleep 3
+done
+[ "$mcp_ready" = "" ] || printf '\n'
+
+mcp_initialize="$mcp_ready"
 printf '%s' "$mcp_initialize" | jq -e \
   '.result.serverInfo.name == "miorail" and .result.serverInfo.version == "1.1.0" and .result.protocolVersion == "2025-03-26"' \
   >/dev/null || { echo 'FAILED: public MCP initialize response is not Miorail'; exit 1; }
