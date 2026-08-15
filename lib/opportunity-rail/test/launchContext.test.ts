@@ -19,8 +19,8 @@ import {
 // "this sender launched 8 tokens, 7 of which priced no sale". On a relayed
 // transaction `tx.from` is whoever paid to include it, so those counts would
 // put unrelated projects under one relayer — one project's record wearing
-// another's name. Measured on 2,800 stored launches: 309 launches came through
-// the ERC-4337 EntryPoint from SIX senders.
+// another's name. Measured across the whole stored corpus of 5,928 launches:
+// 458 came through the ERC-4337 EntryPoint from EIGHT senders.
 //
 // These tests pin the refusal, not the counting.
 // ---------------------------------------------------------------------------
@@ -46,7 +46,7 @@ describe('what a launch sender actually establishes', () => {
   });
 
   test('the ERC-4337 EntryPoint means the sender is a bundler', () => {
-    // Measured: 309 launches through this address from only SIX senders.
+    // Measured: 458 launches through this address from only EIGHT senders.
     assert.equal(b20SenderRelationV1(ERC4337_ENTRYPOINT_V1), 'bundler');
     assert.equal(b20SenderSupportsCountingV1('bundler'), false);
   });

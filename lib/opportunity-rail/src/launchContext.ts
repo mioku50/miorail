@@ -34,11 +34,11 @@ export const B20_FACTORY_ADDRESS_V1 = '0xb20f00000000000000000000000000000000000
 /**
  * The canonical ERC-4337 EntryPoint.
  *
- * This address is why the whole anchor needed a second look. Measured on the
- * first 300 stored launches: 25 of them were sent to the EntryPoint by only
- * FOUR senders — those senders are bundlers, relaying UserOperations for
- * unrelated people. `tx.from` on such a transaction is whoever paid to include
- * it, and it says nothing at all about who launched the token.
+ * This address is why the whole anchor needed a second look. Across the stored
+ * corpus 458 launches were sent to the EntryPoint by only EIGHT senders — those
+ * senders are bundlers, relaying UserOperations for unrelated people. `tx.from`
+ * on such a transaction is whoever paid to include it, and it says nothing at
+ * all about who launched the token.
  */
 export const ERC4337_ENTRYPOINT_V1 = '0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789';
 
@@ -54,21 +54,22 @@ export const ERC4337_ENTRYPOINT_V1 = '0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789
  * this product keeps having, in its worst form yet: not our limit wearing a
  * token's name, but one project's record wearing another's.
  *
- * Measured on 2,800 stored launches, which is what the split looks like in
- * practice:
+ * Measured across the WHOLE stored corpus — 5,928 launches, every one of their
+ * transactions read, none absent:
  *
- *   1,165 through one intermediary contract, from 588 senders
- *     731 straight to the factory, from 302 senders
- *     309 through the ERC-4337 EntryPoint, from SIX senders
+ *   3,440 through one intermediary contract, from 1,041 senders
+ *   1,050 straight to the factory, from 466 senders
+ *     458 through the ERC-4337 EntryPoint, from EIGHT senders
+ *     364 / 202 / 136 through three more contracts
  *
- * The EntryPoint row is the whole argument in one line. Six addresses account
- * for 309 launches, and they are bundlers.
+ * The EntryPoint row is the whole argument in one line. Eight addresses account
+ * for 458 launches, and they are bundlers.
  *
  * A correction worth keeping: the first 300 launches read showed 121 direct
  * launches from 121 distinct senders, and it looked as though the unambiguous
- * anchor was also always unique. It is not — at ten times the sample there are
- * repeats, one of them with 359 direct launches. An early sample answered a
- * different question than the one it appeared to answer.
+ * anchor was also always unique. It is not — across the full corpus 1,050
+ * direct launches come from 466 senders, one of them with 359. An early sample
+ * answered a different question than the one it appeared to answer.
  */
 export type B20SenderRelationV1 =
   /** Straight to the B20 factory. The sender called it, and nobody stood in
