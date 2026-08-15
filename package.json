@@ -29,6 +29,7 @@
     "b20:probe-pool-window": "tsx scripts/probe_b20_pool_window.ts",
     "b20:probe-narrator": "tsx scripts/probe_b20_narrator.ts",
     "b20:probe-console": "tsx scripts/probe_b20_console.ts",
+    "b20:read-launch-senders": "tsx scripts/b20_read_launch_senders.ts",
     "outcomes:backfill": "tsx scripts/outcomes_backfill.ts",
     "reliability:rebuild": "tsx scripts/reliability_rebuild.ts",
     "o1:compat": "tsx scripts/o1_compat.ts",

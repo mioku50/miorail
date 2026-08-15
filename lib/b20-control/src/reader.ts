@@ -128,6 +128,27 @@ export interface B20ReaderV1 {
    * rather than this method so that stays true.
    */
   callMany?(inputs: readonly B20BatchCallV1[]): Promise<B20RpcResultV1<string>[]>;
+  /**
+   * The sender of one transaction, by hash.
+   *
+   * Optional for the same reason `callMany` is: the fakes in this repo
+   * implement what they need, and a required method would break every one of
+   * them for a read only the launch-context backfill makes.
+   *
+   * `null` means the endpoint ANSWERED and the transaction was not there. A
+   * failure comes back as a failure — the difference decides whether anything
+   * may be stored at all, because storing an outage as "absent" would turn a
+   * bad minute into a permanent fact about somebody's launch.
+   */
+  readTransaction?(hash: string): Promise<B20RpcResultV1<B20TransactionV1 | null>>;
+}
+
+/** As much of a transaction as the identity anchor needs. Deliberately not the
+ * whole object: input data and value are not read, so they cannot be stored. */
+export interface B20TransactionV1 {
+  from: string;
+  to: string | null;
+  blockNumber: string | null;
 }
 
 /**
@@ -471,6 +492,33 @@ export function createB20ReaderV1(config: B20ReaderConfigV1): B20ReaderV1 {
   }
 
   return {
+    async readTransaction(hash: string) {
+      const result = await rpc('eth_getTransactionByHash', [hash]);
+      if (!result.ok) return result;
+      // A JSON-RPC null here is the endpoint saying "no such transaction",
+      // which is a real answer and is stored as one.
+      if (result.value === null) return { ok: true as const, value: null, raw: 'null' };
+      const tx = result.value as { from?: unknown; to?: unknown; blockNumber?: unknown };
+      const from = typeof tx.from === 'string' ? tx.from.toLowerCase() : null;
+      if (!from || !/^0x[0-9a-f]{40}$/.test(from)) {
+        return { ok: false as const, reason: 'invalid_response' as const };
+      }
+      const to = typeof tx.to === 'string' ? tx.to.toLowerCase() : null;
+      let blockNumber: string | null = null;
+      if (typeof tx.blockNumber === 'string') {
+        try {
+          blockNumber = BigInt(tx.blockNumber).toString();
+        } catch {
+          return { ok: false as const, reason: 'invalid_response' as const };
+        }
+      }
+      return {
+        ok: true as const,
+        value: { from, to: to && /^0x[0-9a-f]{40}$/.test(to) ? to : null, blockNumber },
+        raw: from,
+      };
+    },
+
     async readBlockAnchor() {
       const numberResult = await rpc('eth_blockNumber', []);
       if (!numberResult.ok) return numberResult;
