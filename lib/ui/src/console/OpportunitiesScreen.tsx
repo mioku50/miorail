@@ -634,6 +634,13 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
                 A card measures exit conditions. It does not predict returns, recommend a token, or produce a
                 combined rating. “Past freshness window” means historical evidence, not a current quote.
               </p>
+              {/* The one thing a reader has to understand about the sections,
+                  stated where they are looking when they first meet them. */}
+              <p>
+                Cards are grouped by what the measurement found. The last group is different from the others: it
+                holds cards where Miorail’s own reading did not complete — a venue it did not find, a call that did
+                not answer — and none of those is a statement about the token.
+              </p>
             </details>
           </div>
           <div className="pb">
