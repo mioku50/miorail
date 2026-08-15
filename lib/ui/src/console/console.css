@@ -680,11 +680,23 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .b20-answer-facts dd.warn { color: var(--amber); }
 .mio-console .b20-answer-facts dd.ok { color: var(--green); font-size: 11.5px; }
 .mio-console .b20-answer-unknowns,
+.mio-console .b20-answer-reads,
 .mio-console .b20-answer-caveats { margin-top: 9px; color: var(--muted); font-size: 11px; }
 .mio-console .b20-answer-unknowns summary,
+.mio-console .b20-answer-reads summary,
 .mio-console .b20-answer-caveats summary { cursor: pointer; color: var(--muted); font-weight: 650; }
 .mio-console .b20-answer-unknowns ul,
+.mio-console .b20-answer-reads ul,
 .mio-console .b20-answer-caveats ul { margin: 7px 0 0; padding-left: 18px; line-height: 1.5; }
+/* Stage 07 — the tokens in an Investigate comparison. Visually apart from the
+   prompt chips above them: those ask a question, these remove a token. */
+.mio-console .b20-token-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.mio-console .b20-token-chips button { border: 0; border-radius: 999px; padding: 5px 9px; cursor: pointer;
+  background: var(--panel2); color: var(--muted); font-size: 10.5px;
+  box-shadow: inset 0 0 0 1px var(--line); }
+.mio-console .b20-token-chips button:hover,
+.mio-console .b20-token-chips button:focus-visible { color: var(--ink); box-shadow: inset 0 0 0 1px var(--amber); }
+.mio-console .b20-token-chips .lnote { margin: 0; }
 .mio-console .b20-answer .btn { margin-top: 10px; }
 .mio-console.mini .b20-copilot-head { align-items: flex-start; }
 .mio-console.mini .b20-answer-facts { grid-template-columns: minmax(0,1fr); }

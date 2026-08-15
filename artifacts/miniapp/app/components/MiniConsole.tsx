@@ -37,6 +37,7 @@ import {
   consoleHomeSectionV1,
   consoleNavModelV1,
   opportunityCardViewV1,
+  type B20ConsoleScopeViewV1,
   type ConsolePipelineStateV1,
   type ConsoleSectionV1,
   type OpportunityFilterV1,
@@ -112,6 +113,7 @@ import {
   useEvaluateSwapRoute,
   useAddB20Watch,
   useB20Inspect,
+  useB20ConsoleAsk,
   useB20CopilotAsk,
   useB20Opportunities,
   useB20Watch,
@@ -913,6 +915,8 @@ export function MiniConsole() {
   const [feedStanding, setFeedStanding] = useState<OpportunityStandingFilterV1>("all");
   const [feedFresh, setFeedFresh] = useState(false);
   const [copilotToken, setCopilotToken] = useState<string | null>(null);
+  const [consoleScope, setConsoleScope] = useState<B20ConsoleScopeViewV1>("explore");
+  const [consoleTokens, setConsoleTokens] = useState<readonly string[]>([]);
   const opportunities = useB20Opportunities(
     // The verdict section is filtered by the server, so Base App gets the same
     // sections the web console does without a second grouping rule of its own.
@@ -920,6 +924,9 @@ export function MiniConsole() {
     { enabled: b20GateOn && section === "opportunities" },
   );
   const copilot = useB20CopilotAsk();
+  // The scope the SERVER answered in wins: an address in the question moves the
+  // answer to that token, and leaving the tab where it was would label it wrongly.
+  const b20Console = useB20ConsoleAsk({ onSuccess: (answer) => setConsoleScope(answer.scope) });
   const feedPipeline = opportunities.data?.pipeline ?? null;
   const feedHome = consoleHomeSectionV1({
     pipeline: feedPipeline
@@ -1913,6 +1920,23 @@ export function MiniConsole() {
           setSection("portfolio");
         }}
         onRefresh={() => void opportunities.refetch()}
+        console={{
+          scope: consoleScope,
+          tokenAddresses: consoleTokens,
+          loading: b20Console.isPending,
+          answer: b20Console.data ?? null,
+          error: b20Console.error?.message ?? null,
+          onScopeChange: setConsoleScope,
+          onTokensChange: setConsoleTokens,
+          onAsk: (input) => {
+            b20Console.mutate({
+              schemaVersion: "b20-console-ask/v1",
+              scope: input.scope,
+              question: input.question,
+              ...(input.tokenAddresses.length > 0 ? { tokenAddresses: [...input.tokenAddresses] } : {}),
+            });
+          },
+        }}
         copilot={{
           tokenAddress: copilotToken,
           loading: copilot.isPending,

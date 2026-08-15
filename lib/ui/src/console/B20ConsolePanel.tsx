@@ -1,0 +1,233 @@
+import React, { useState } from 'react';
+
+// The app bundlers use the automatic JSX runtime and need no import; the test
+// runner compiles this same file with the classic transform and emits
+// React.createElement. Without the reference the panel builds fine and is
+// unrenderable by the suite that proves it renders.
+void React;
+
+// ---------------------------------------------------------------------------
+// Stage 07 — the global console.
+//
+// The per-card copilot answers about one measurement a reader is already
+// looking at. This answers about the universe, and the difference that matters
+// on screen is what it can be held to: there is no observation to pin, so the
+// panel shows WHAT WAS READ beside every answer. A count with no denominator
+// and no read behind it is the shape this product's worst bugs have taken.
+//
+// The three scopes are not a filter and not a mode. They are three different
+// questions — how does the universe look, what is true of these tokens, what
+// changed — and each one reads different rows. The scope the server ANSWERED
+// in is what labels the panel, because an address in the question moves the
+// answer to that token whichever tab is open.
+// ---------------------------------------------------------------------------
+
+export const B20_CONSOLE_SCOPES_V1 = ['explore', 'investigate', 'changes'] as const;
+export type B20ConsoleScopeViewV1 = (typeof B20_CONSOLE_SCOPES_V1)[number];
+
+export const B20_CONSOLE_SCOPE_COPY_V1: Readonly<
+  Record<B20ConsoleScopeViewV1, { label: string; blurb: string; prompts: readonly string[] }>
+> = {
+  explore: {
+    label: 'Explore',
+    blurb: 'Counts across every B20 launch Miorail measured in the last 48 hours.',
+    prompts: [
+      'How many launches were measured?',
+      'Which tokens did people buy but cannot sell?',
+      'Where was coverage incomplete?',
+      'Which ones priced both routes?',
+    ],
+  },
+  investigate: {
+    label: 'Investigate',
+    blurb: 'One to five named tokens, side by side — and a refusal to rank them when they were not measured the same way.',
+    prompts: ['What was measured here?', 'What evidence is missing?', 'How do these compare?'],
+  },
+  changes: {
+    label: 'Changes',
+    blurb: 'The same token measured twice, about 24 hours apart. Two quotes Miorail took itself, divided.',
+    prompts: ['What changed in the last day?', 'Which launches moved most?'],
+  },
+};
+
+export interface B20ConsoleAnswerViewV1 {
+  schemaVersion: 'b20-console-answer/v1';
+  /** The scope that ANSWERED, which is not always the one that was asked. */
+  scope: B20ConsoleScopeViewV1;
+  intent: string;
+  answerSource: 'deterministic_evidence' | 'verified_narration';
+  answer: string;
+  facts: readonly { label: string; value: string; tone: 'neutral' | 'positive' | 'warning' }[];
+  missingEvidence: readonly string[];
+  caveats: readonly string[];
+  reads: readonly { tool: string; detail: string }[];
+  serverTime: string;
+}
+
+export interface B20ConsolePanelModelV1 {
+  scope: B20ConsoleScopeViewV1;
+  /** Tokens the reader put in the Investigate scope. Addresses only. */
+  tokenAddresses: readonly string[];
+  loading: boolean;
+  answer: B20ConsoleAnswerViewV1 | null;
+  error: string | null;
+  onScopeChange: (scope: B20ConsoleScopeViewV1) => void;
+  onTokensChange: (tokenAddresses: readonly string[]) => void;
+  onAsk: (input: { scope: B20ConsoleScopeViewV1; question: string; tokenAddresses: readonly string[] }) => void;
+}
+
+const SHORT_ADDRESS_V1 = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`;
+
+export function B20ConsolePanel(model: B20ConsolePanelModelV1) {
+  const [question, setQuestion] = useState('');
+  const copy = B20_CONSOLE_SCOPE_COPY_V1[model.scope];
+  const answer = model.answer;
+
+  const ask = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    model.onAsk({ scope: model.scope, question: trimmed, tokenAddresses: model.tokenAddresses });
+  };
+
+  return (
+    <div className="panel">
+      <div className="ph">
+        <h3>Ask Miorail</h3>
+        <span className="rt">
+          <span className="sub">read-only</span>
+        </span>
+      </div>
+      <div className="pb tight">
+        <div className="filter-row">
+          <span className="filter-row-k">Scope</span>
+          <nav className="crumb" aria-label="What to ask about">
+            {B20_CONSOLE_SCOPES_V1.map((scope) => (
+              <button
+                key={scope}
+                type="button"
+                className={`btn sec${model.scope === scope ? ' on' : ''}`}
+                aria-pressed={model.scope === scope}
+                onClick={() => model.onScopeChange(scope)}
+              >
+                {B20_CONSOLE_SCOPE_COPY_V1[scope].label}
+              </button>
+            ))}
+          </nav>
+        </div>
+        <p className="lnote">{copy.blurb}</p>
+
+        {model.scope === 'investigate' && (
+          <div className="b20-token-chips" aria-label="Tokens in this comparison">
+            {model.tokenAddresses.length === 0 ? (
+              // Named rather than left blank: a symbol is not an identifier on
+              // Base, and Miorail will not choose which token one means.
+              <p className="lnote">
+                No token selected. Paste a Base token address into the question, or open a card below and add it.
+              </p>
+            ) : (
+              model.tokenAddresses.map((address) => (
+                <button
+                  key={address}
+                  type="button"
+                  className="mono"
+                  aria-label={`Remove ${address}`}
+                  onClick={() => model.onTokensChange(model.tokenAddresses.filter((entry) => entry !== address))}
+                >
+                  {SHORT_ADDRESS_V1(address)} ×
+                </button>
+              ))
+            )}
+          </div>
+        )}
+
+        <div className="b20-prompt-chips" aria-label="Example questions">
+          {copy.prompts.map((prompt) => (
+            <button key={prompt} type="button" onClick={() => { setQuestion(prompt); ask(prompt); }}>
+              {prompt}
+            </button>
+          ))}
+        </div>
+
+        <form
+          className="b20-ask-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            ask(question);
+          }}
+        >
+          <label htmlFor="b20-console-ask">Ask about measured B20 launches</label>
+          <div>
+            <input
+              id="b20-console-ask"
+              value={question}
+              maxLength={500}
+              placeholder={copy.prompts[0]}
+              onChange={(event) => setQuestion(event.currentTarget.value)}
+            />
+            <button type="submit" className="btn" disabled={!question.trim() || model.loading}>
+              {model.loading ? 'Reading…' : 'Ask'}
+            </button>
+          </div>
+        </form>
+
+        {model.error && <p className="note warn">{model.error}</p>}
+
+        {answer && (
+          <div className="b20-answer" aria-live="polite">
+            {/* The scope that answered, when it is not the one on the tab. A
+                token answer under an "Explore" heading would be mislabelled. */}
+            {answer.scope !== model.scope && (
+              <p className="lnote">
+                Answered in {B20_CONSOLE_SCOPE_COPY_V1[answer.scope].label} — the question named something more
+                specific than the scope.
+              </p>
+            )}
+            <p>{answer.answer}</p>
+            <p className="lnote">
+              {answer.answerSource === 'verified_narration'
+                ? 'Rephrased from the evidence below. Every figure in it was checked against that evidence.'
+                : 'Built directly from the stored measurements below.'}
+            </p>
+            {answer.facts.length > 0 && (
+              <dl className="b20-answer-facts">
+                {answer.facts.map((fact) => (
+                  <div key={`${fact.label}:${fact.value}`}>
+                    <dt>{fact.label}</dt>
+                    <dd className={fact.tone === 'warning' ? 'warn' : fact.tone === 'positive' ? 'ok' : ''}>
+                      {fact.value}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+            {answer.missingEvidence.length > 0 && (
+              <details className="b20-answer-unknowns">
+                <summary>{answer.missingEvidence.length} evidence gaps</summary>
+                <ul>{answer.missingEvidence.map((item) => <li key={item}>{item}</li>)}</ul>
+              </details>
+            )}
+            {/* This panel's replacement for the card's observation stamp. A
+                global answer has no single measurement to pin, so what it owes
+                a reader instead is which reads produced it. */}
+            {answer.reads.length > 0 && (
+              <details className="b20-answer-reads">
+                <summary>What was read</summary>
+                <ul>
+                  {answer.reads.map((read) => (
+                    <li key={`${read.tool}:${read.detail}`}>
+                      <span className="mono">{read.tool}</span> — {read.detail}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            <details className="b20-answer-caveats">
+              <summary>Evidence boundaries</summary>
+              <ul>{answer.caveats.map((item) => <li key={item}>{item}</li>)}</ul>
+            </details>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

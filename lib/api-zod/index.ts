@@ -3995,6 +3995,75 @@ export const B20CopilotAskResponseV1Schema = z
 export type B20CopilotAskRequestV1 = z.infer<typeof B20CopilotAskRequestV1Schema>;
 export type B20CopilotAskResponseV1 = z.infer<typeof B20CopilotAskResponseV1Schema>;
 
+// ---------------------------------------------------------------------------
+// Stage 07 — the global console. Read-only, and no single card to pin.
+//
+// The per-card copilot refuses when the observation it was opened on has since
+// changed, because the client holds a reference to one exact measurement. A
+// question about the universe has no such reference, so the honest substitute
+// is on the response instead: `reads` says which bounded reads ran and what
+// they returned, and `serverTime` says when. A reader can see what the answer
+// was built from rather than being asked to trust that it was current.
+// ---------------------------------------------------------------------------
+
+export const B20ConsoleScopeV1Schema = z.enum(['explore', 'investigate', 'changes']);
+
+export const B20ConsoleAskRequestV1Schema = z
+  .object({
+    schemaVersion: z.literal('b20-console-ask/v1'),
+    scope: B20ConsoleScopeV1Schema,
+    question: z.string().trim().min(2).max(500),
+    /**
+     * Tokens the reader selected. Addresses only — a symbol is not an
+     * identifier on Base, and resolving one would be Miorail guessing which
+     * token was meant and then measuring the guess.
+     */
+    tokenAddresses: z.array(z.string().regex(/^0x[0-9a-fA-F]{40}$/)).max(5).optional(),
+  })
+  .strict();
+
+export const B20ConsoleAskResponseV1Schema = z
+  .object({
+    schemaVersion: z.literal('b20-console-answer/v1'),
+    /** The scope that ANSWERED, which is not always the one that was asked
+     * for: an address in the question moves the answer to that token. A
+     * surface reads this to label what it is showing. */
+    scope: B20ConsoleScopeV1Schema,
+    intent: z.enum([
+      'universe_counts',
+      'find_bought_not_sellable',
+      'find_two_sided',
+      'find_not_searched',
+      'compare_tokens',
+      'measured_changes',
+      'unsupported',
+    ]),
+    answerSource: z.enum(['deterministic_evidence', 'verified_narration']),
+    answer: z.string().min(1).max(4000),
+    facts: z
+      .array(
+        z
+          .object({
+            label: z.string().min(1).max(80),
+            value: z.string().min(1).max(500),
+            tone: z.enum(['neutral', 'positive', 'warning']),
+          })
+          .strict(),
+      )
+      .max(16),
+    missingEvidence: z.array(z.string().min(1).max(300)).max(20),
+    caveats: z.array(z.string().min(1).max(500)).min(1).max(12),
+    /** What this answer was built from. Never empty on an answered question. */
+    reads: z
+      .array(z.object({ tool: z.string().min(1).max(40), detail: z.string().min(1).max(300) }).strict())
+      .max(8),
+    serverTime: z.string().datetime(),
+  })
+  .strict();
+
+export type B20ConsoleAskRequestV1 = z.infer<typeof B20ConsoleAskRequestV1Schema>;
+export type B20ConsoleAskResponseV1 = z.infer<typeof B20ConsoleAskResponseV1Schema>;
+
 export type B20PipelineStatusV1Wire = z.infer<typeof B20PipelineStatusV1Schema>;
 export type B20OpportunityCardV1Wire = z.infer<typeof B20OpportunityCardV1Schema>;
 export type B20OpportunityFeedResponseV1 = z.infer<typeof B20OpportunityFeedResponseV1Schema>;

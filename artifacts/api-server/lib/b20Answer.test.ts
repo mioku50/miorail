@@ -229,4 +229,32 @@ describe('the bundle is the model’s only context', () => {
       assert.match(B20_NARRATOR_SYSTEM_V1, rule);
     }
   });
+
+  test('a bundle too wide to check is not sent at all', async () => {
+    // The global console can be asked about the whole universe, and a bundle
+    // of two hundred figures makes "every number must be in the evidence"
+    // accept almost anything while still reporting itself as passing. The
+    // provider is not called: the deterministic answer already states every
+    // one of those figures exactly.
+    let called = false;
+    const result = await narrateB20AnswerV1({
+      question: 'summarise everything',
+      bundle: {
+        intent: 'universe_counts',
+        facts: Array.from({ length: 60 }, (_value, index) => ({ label: `row ${index}`, value: `${index * 3}` })),
+        missing: [],
+        caveats: ['This is a read of stored measurements.'],
+      },
+      deterministic: 'The deterministic sentence.',
+      provider: {
+        generate: async () => {
+          called = true;
+          return { message: { role: 'assistant' as const, content: 'anything' } };
+        },
+      },
+    });
+    assert.equal(called, false);
+    assert.equal(result.answer, 'The deterministic sentence.');
+    assert.match((result.narrationRejectedBecause ?? []).join(' '), /distinct figures/);
+  });
 });

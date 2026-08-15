@@ -119,6 +119,44 @@ export function numbersInV1(text: string): string[] {
 }
 
 /**
+ * How many distinct figures a narrator is allowed to be trusted with.
+ *
+ * The check above is only as strong as the bundle is small. "Every number must
+ * be in the evidence" refuses an invented figure because the allowed set is
+ * ten or twenty values; hand it a bundle of two hundred and the same rule
+ * starts accepting almost any two-digit number a model cares to write, while
+ * still reporting itself as passing.
+ *
+ * Stage 07 is what forced this: a card carries one token's measurements, and a
+ * global console can be asked about the whole universe. So the ceiling is on
+ * the EVIDENCE, checked before the provider is called — a bundle this wide is
+ * not narrated at all, and the reader gets the deterministic answer, which was
+ * built from every one of those figures and states them exactly.
+ *
+ * Measured 2026-08-15 against the widest bundle each scope can produce:
+ * card 8, explore with five named cards 15, investigate with five tokens 16,
+ * changes with eight movers 11. The ceiling sits at roughly 2.5x the worst of
+ * those — loose enough that adding a fact row never silently disables
+ * narration, tight enough to fire long before the check has degraded into a
+ * formality. It is a guard against a future bundle, not a limit on today's.
+ */
+export const B20_NARRATION_MAX_EVIDENCE_NUMBERS_V1 = 40;
+
+export function b20NarrationEvidenceStrengthV1(evidence: readonly string[]): {
+  distinctNumbers: number;
+  strongEnough: boolean;
+} {
+  const distinct = new Set<string>();
+  for (const item of evidence) {
+    for (const value of numbersInV1(item)) distinct.add(value);
+  }
+  return {
+    distinctNumbers: distinct.size,
+    strongEnough: distinct.size <= B20_NARRATION_MAX_EVIDENCE_NUMBERS_V1,
+  };
+}
+
+/**
  * Checks a narration against the evidence it was given.
  *
  * `evidence` is every string the bundle contains — labels, values, caveats.

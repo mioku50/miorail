@@ -19,9 +19,16 @@ import {
   consolePipelineProgressV1,
   type ConsolePipelineStateV1,
   type OpportunityFilterV1,
+  type B20ConsoleScopeViewV1,
   type OpportunityStandingFilterV1,
 } from '@mioagent/ui';
-import { useB20CopilotAsk, useB20MarketRails, useB20Opportunities, useStatus } from '@mioagent/api-client-react';
+import {
+  useB20ConsoleAsk,
+  useB20CopilotAsk,
+  useB20MarketRails,
+  useB20Opportunities,
+  useStatus,
+} from '@mioagent/api-client-react';
 import { useConsoleNav } from '../console/useConsoleNav';
 
 // ---------------------------------------------------------------------------
@@ -54,6 +61,8 @@ export function OpportunitiesPage() {
   const [freshOnly, setFreshOnly] = useState(false);
   const [railExpanded, setRailExpanded] = useState(false);
   const [copilotToken, setCopilotToken] = useState<string | null>(null);
+  const [consoleScope, setConsoleScope] = useState<B20ConsoleScopeViewV1>('explore');
+  const [consoleTokens, setConsoleTokens] = useState<readonly string[]>([]);
 
   const discoverOn = status.data?.productMigration?.b20ControlV1 === true;
   const marketRails = useB20MarketRails({ enabled: discoverOn });
@@ -65,6 +74,12 @@ export function OpportunitiesPage() {
     { enabled: discoverOn },
   );
   const copilot = useB20CopilotAsk();
+  const b20Console = useB20ConsoleAsk({
+    // The scope the SERVER answered in wins. An address in the question moves
+    // the answer to that token, and leaving the tab where it was would label
+    // the answer wrongly.
+    onSuccess: (answer) => setConsoleScope(answer.scope),
+  });
 
   // A transport failure is NOT an empty feed. The pipeline is unknown, and
   // `consoleHomeSectionV1` turns that into the unreachable sentence rather than
@@ -194,6 +209,26 @@ export function OpportunitiesPage() {
         // simulation and the clearance; Discover owns none of them.
         onOpenToken={(token) => navigate(`${consoleSectionPathV1('portfolio')}?token=${encodeURIComponent(token)}`)}
         onRefresh={() => void feed.refetch()}
+        console={{
+          scope: consoleScope,
+          tokenAddresses: consoleTokens,
+          loading: b20Console.isPending,
+          answer: b20Console.data ?? null,
+          error: b20Console.error?.message ?? null,
+          onScopeChange: setConsoleScope,
+          onTokensChange: setConsoleTokens,
+          onAsk: (input) => {
+            b20Console.mutate({
+              schemaVersion: 'b20-console-ask/v1',
+              scope: input.scope,
+              question: input.question,
+              // Omitted rather than sent empty: the schema treats an absent
+              // list and an empty one the same, and an empty array on the wire
+              // reads as "the reader chose none" rather than "none chosen".
+              ...(input.tokenAddresses.length > 0 ? { tokenAddresses: [...input.tokenAddresses] } : {}),
+            });
+          },
+        }}
         copilot={{
           tokenAddress: copilotToken,
           loading: copilot.isPending,

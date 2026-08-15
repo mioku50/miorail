@@ -1,7 +1,13 @@
 import type { LlmProvider } from '@mioagent/llm';
 
-import { verifyB20NarrationV1, B20_NARRATION_MAX_CHARS_V1 } from './b20AnswerVerify.js';
+import {
+  verifyB20NarrationV1,
+  b20NarrationEvidenceStrengthV1,
+  B20_NARRATION_MAX_CHARS_V1,
+  B20_NARRATION_MAX_EVIDENCE_NUMBERS_V1,
+} from './b20AnswerVerify.js';
 import type { B20AnswerPlanV1 } from './b20AnswerPlan.js';
+import type { B20ConsoleIntentV1 } from './b20ConsolePlan.js';
 
 // ---------------------------------------------------------------------------
 // Plan → evidence → narration → verification, in that order and no other.
@@ -24,8 +30,10 @@ export interface B20EvidenceFactV1 {
 }
 
 export interface B20EvidenceBundleV1 {
-  /** What the planner decided the question was. */
-  intent: B20AnswerPlanV1['intent'];
+  /** What the planner decided the question was. Either planner's vocabulary:
+   * one narrator serves the card and the global console, and it is given the
+   * same bundle shape by both. */
+  intent: B20AnswerPlanV1['intent'] | B20ConsoleIntentV1;
   /** The measured facts, already formatted. A narrator may quote these and
    * nothing else. */
   facts: B20EvidenceFactV1[];
@@ -111,6 +119,17 @@ export async function narrateB20AnswerV1(input: {
 
   if (!input.provider) return keep(['no language provider is configured']);
 
+  // Checked BEFORE the call, because a bundle too wide to verify is a bundle
+  // not worth paying to narrate. The deterministic answer already states every
+  // figure in it.
+  const evidence = bundleEvidenceStringsV1(input.bundle);
+  const strength = b20NarrationEvidenceStrengthV1(evidence);
+  if (!strength.strongEnough) {
+    return keep([
+      `the evidence carries ${strength.distinctNumbers} distinct figures, over the ${B20_NARRATION_MAX_EVIDENCE_NUMBERS_V1} a narration can be checked against`,
+    ]);
+  }
+
   let narration: string;
   try {
     const response = await Promise.race([
@@ -134,10 +153,7 @@ export async function narrateB20AnswerV1(input: {
     return keep([`the narrator did not answer (${error instanceof Error ? error.name : 'unknown'})`]);
   }
 
-  const verdict = verifyB20NarrationV1({
-    narration,
-    evidence: bundleEvidenceStringsV1(input.bundle),
-  });
+  const verdict = verifyB20NarrationV1({ narration, evidence });
   if (!verdict.ok) return keep(verdict.violations);
 
   // The VERIFIED string, not the raw one. Verifying one text and displaying

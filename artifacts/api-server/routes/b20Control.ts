@@ -30,6 +30,8 @@ import {
   B20UniverseSummaryV1Schema,
   B20OpportunityDetailResponseV1Schema,
   B20MarketRailsResponseV1Schema,
+  B20ConsoleAskRequestV1Schema,
+  B20ConsoleAskResponseV1Schema,
   B20CopilotAskRequestV1Schema,
   B20CopilotAskResponseV1Schema,
 } from '@mioagent/api-zod';
@@ -139,6 +141,15 @@ import {
 import { answerB20CopilotV1, b20ObservationRefMatchesV1 } from '../lib/b20Copilot.js';
 import { narrateB20AnswerV1 } from '../lib/b20Answer.js';
 import { planB20AnswerV1 } from '../lib/b20AnswerPlan.js';
+import { planB20ConsoleAnswerV1, type B20ConsolePlanV1 } from '../lib/b20ConsolePlan.js';
+import {
+  B20_CONSOLE_BASE_CAVEATS_V1,
+  b20ChangesAnswerV1,
+  b20ExploreAnswerV1,
+  b20InvestigateAnswerV1,
+  type B20ConsoleDeterministicV1,
+  type B20ConsoleTokenReadV1,
+} from '../lib/b20ConsoleAnswer.js';
 
 // ---------------------------------------------------------------------------
 // T67C/T68F — the B20 Control and explicit entry rail.
@@ -1213,6 +1224,226 @@ b20ControlRouter.post('/opportunities/b20/copilot/ask', async (req: Request, res
     );
   } catch (error) {
     storageFailure(res, error, 'b20-copilot-ask');
+  }
+});
+
+/**
+ * Stage 07 — runs a console plan.
+ *
+ * Every branch here is a call this file already makes for a public read, with
+ * the plan's own bounded arguments. That is deliberate and is the whole reason
+ * the planner emits four step kinds and not a query language: a console that
+ * could express a read the rest of the product cannot is a second Discover,
+ * with its own idea of what a launch means.
+ */
+export async function runB20ConsolePlanV1(plan: B20ConsolePlanV1): Promise<B20ConsoleDeterministicV1> {
+  const summaryStep = plan.steps.find((step) => step.tool === 'summary');
+  const listStep = plan.steps.find((step) => step.tool === 'list');
+  const cardsStep = plan.steps.find((step) => step.tool === 'cards');
+  const changesStep = plan.steps.find((step) => step.tool === 'changes');
+
+  if (cardsStep && cardsStep.tool === 'cards') {
+    const observations = b20RouteRuntime.observations();
+    const now = b20RouteRuntime.now();
+    const pipeline = await pipelineStatusV1(observations, now, true);
+    const reads: B20ConsoleTokenReadV1[] = [];
+    for (const tokenAddress of cardsStep.tokenAddresses) {
+      const found = await observations.getFeedRowForToken({ tokenAddress, historyLimit: cardsStep.historyLimit });
+      if (!found) {
+        reads.push({ tokenAddress, card: null, profile: null, historyCount: 0 });
+        continue;
+      }
+      const raw = found.row.observation;
+      reads.push({
+        tokenAddress,
+        card: b20OpportunityCardV1({
+          launch: {
+            tokenAddress: found.row.launch.tokenAddress,
+            name: found.row.launch.name,
+            symbol: found.row.launch.symbol,
+            variant: found.row.launch.variant,
+            decimals: found.row.launch.decimals,
+            blockNumber: found.row.launch.blockNumber,
+            transactionHash: found.row.launch.transactionHash,
+            logIndex: found.row.launch.logIndex,
+            detectedAt: found.row.launch.detectedAt,
+            blockTimestamp: found.row.launch.blockTimestamp,
+            canonical: found.row.launch.canonical,
+          },
+          observation: raw,
+          launchBuyers: found.row.launchBuyers,
+          launchBuyerWindow: b20LaunchBuyerWindowV1({
+            launchBlock: found.row.launch.blockNumber,
+            observedHead: pipeline.facts.confirmedHead,
+            windowBlocks: B20_BUYER_WINDOW_BLOCKS_V1,
+            measured: found.row.launchBuyers !== null,
+            measuredToBlock: found.row.launchBuyers?.toBlock ?? null,
+          }),
+          now,
+        }),
+        // The four fields the comparability rule reads, taken from the stored
+        // observation rather than from the card: a card is a projection for a
+        // screen and deliberately does not carry the measurement's identity.
+        profile: raw
+          ? {
+              profileIdentity: raw.profileIdentity,
+              referenceQuoteAsset: raw.referenceQuoteAsset,
+              referencePositionAtomic: raw.referencePositionAtomic,
+              measurementVersion: raw.measurementVersion,
+            }
+          : null,
+        historyCount: found.history.length,
+      });
+    }
+    return b20InvestigateAnswerV1({ reads });
+  }
+
+  if (changesStep && changesStep.tool === 'changes') {
+    const observations = b20RouteRuntime.observations();
+    const now = b20RouteRuntime.now();
+    const pairs = await observations.listMoverPairs({
+      limit: MARKET_RAIL_ACTIVE_OBSERVATION_LIMIT_V1,
+      now: now.toISOString(),
+      baselineAgeMs: MARKET_RAIL_BASELINE_AGE_MS_V1,
+      baselineToleranceMs: MARKET_RAIL_BASELINE_TOLERANCE_MS_V1,
+      maxLaunchAgeMs: DISCOVER_FEED_WINDOW_MS_V1,
+    });
+    const result = measuredMoversV1({
+      pairs: pairs.map((pair) => ({
+        launch: {
+          tokenAddress: pair.launch.tokenAddress,
+          symbol: pair.launch.symbol,
+          name: pair.launch.name,
+          decimals: pair.launch.decimals,
+          canonical: pair.launch.canonical,
+        },
+        latest: pair.latest,
+        baseline: pair.baseline,
+      })),
+      now,
+      baselineAgeMs: MARKET_RAIL_BASELINE_AGE_MS_V1,
+      baselineToleranceMs: MARKET_RAIL_BASELINE_TOLERANCE_MS_V1,
+      minExitCoverageBps: MARKET_RAIL_MIN_EXIT_COVERAGE_BPS_V1,
+      limit: changesStep.limit,
+    });
+    return b20ChangesAnswerV1({
+      changes: {
+        movers: result.movers,
+        excluded: result.excluded,
+        collectingHistory: moversCollectingHistoryV1(result),
+        baselineAgeMs: MARKET_RAIL_BASELINE_AGE_MS_V1,
+        pairsConsidered: pairs.length,
+      },
+    });
+  }
+
+  const summary = await readB20UniverseSummaryV1({
+    maxLaunchAgeMs: summaryStep && summaryStep.tool === 'summary'
+      ? summaryStep.launchAgeHours * 60 * 60 * 1000
+      : DISCOVER_FEED_WINDOW_MS_V1,
+  });
+  const cards = listStep && listStep.tool === 'list'
+    ? (
+        await readDiscoverFeedV1({
+          limit: listStep.limit,
+          cursor: null,
+          state: 'all',
+          freshness: 'all',
+          standing: listStep.standing ?? 'all',
+          standingKind: listStep.standingKind ?? null,
+          bothRoutes: listStep.bothRoutes === true,
+          minBuyers: listStep.minBuyers ?? null,
+        })
+      ).cards
+    : undefined;
+  return b20ExploreAnswerV1({ summary, cards, intent: plan.intent });
+}
+
+/**
+ * Ask about the universe, about named tokens, or about what changed.
+ *
+ * Read-only by the same construction as the per-card copilot: no wallet, no
+ * calldata, no payment, no tool name from the client. What differs is what a
+ * client may reference — nothing. There is no observation id to pin here, so
+ * the response reports which reads ran instead, and a reader can see what the
+ * answer was built from.
+ */
+b20ControlRouter.post('/opportunities/b20/console/ask', async (req: Request, res: Response) => {
+  const guard = b20Guard(req, res);
+  if (!guard) return;
+  const parsed = B20ConsoleAskRequestV1Schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_b20_console_request', code: 'invalid_b20_console_request' });
+    return;
+  }
+
+  try {
+    if (!(await b20RouteRuntime.discoverAvailable())) {
+      res.status(503).json({ error: 'discover_unavailable', code: 'discover_unavailable' });
+      return;
+    }
+    const now = b20RouteRuntime.now();
+    const plan = planB20ConsoleAnswerV1({
+      question: parsed.data.question,
+      scope: parsed.data.scope,
+      tokenAddresses: parsed.data.tokenAddresses,
+    });
+
+    if (plan.refusal) {
+      // Refused before any read, so an out-of-scope question costs nothing.
+      res.json(
+        B20ConsoleAskResponseV1Schema.parse({
+          schemaVersion: 'b20-console-answer/v1',
+          scope: plan.scope,
+          intent: plan.intent,
+          answerSource: 'deterministic_evidence',
+          answer: plan.refusal,
+          facts: [],
+          missingEvidence: [],
+          caveats: [...B20_CONSOLE_BASE_CAVEATS_V1],
+          reads: [],
+          serverTime: now.toISOString(),
+        }),
+      );
+      return;
+    }
+
+    const deterministic = await runB20ConsolePlanV1(plan);
+    const narrated = await narrateB20AnswerV1({
+      question: parsed.data.question,
+      bundle: {
+        intent: plan.intent,
+        facts: deterministic.facts.map((fact) => ({ label: fact.label, value: fact.value })),
+        missing: deterministic.missingEvidence,
+        caveats: deterministic.caveats,
+      },
+      deterministic: deterministic.answer,
+      provider: b20RouteRuntime.narrator(),
+    });
+    if (narrated.narrationRejectedBecause) {
+      logger.info('b20 console narration not used', {
+        scope: plan.scope,
+        intent: plan.intent,
+        because: narrated.narrationRejectedBecause,
+      });
+    }
+
+    res.json(
+      B20ConsoleAskResponseV1Schema.parse({
+        schemaVersion: 'b20-console-answer/v1',
+        scope: plan.scope,
+        intent: plan.intent,
+        answerSource: narrated.answerSource,
+        answer: narrated.answer,
+        facts: deterministic.facts,
+        missingEvidence: deterministic.missingEvidence,
+        caveats: deterministic.caveats,
+        reads: deterministic.reads,
+        serverTime: now.toISOString(),
+      }),
+    );
+  } catch (error) {
+    storageFailure(res, error, 'b20-console-ask');
   }
 });
 

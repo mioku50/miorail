@@ -1,4 +1,5 @@
 export * from './navigation';
+export * from './B20ConsolePanel';
 export * from './OpportunitiesScreen';
 export * from './opportunityCardView';
 export * from './SettingsScreen';

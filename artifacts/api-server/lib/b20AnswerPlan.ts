@@ -80,7 +80,7 @@ function allOfV1(value: string, patterns: readonly RegExp[]): boolean {
  * pipeline that read evidence first and then declined would burn a metered
  * call to say so. Russian is first-class here: the console is used in it.
  */
-const UNSUPPORTED_V1: readonly { patterns: readonly RegExp[]; refusal: string }[] = [
+export const B20_UNSUPPORTED_QUESTIONS_V1: readonly { patterns: readonly RegExp[]; refusal: string }[] = [
   {
     patterns: [/\bprice\b.*\b(predict|forecast|will|target)/i, /\bmoon\b/i, /прогноз/iu, /предскаж/iu, /вырастет/iu],
     refusal: 'Miorail does not measure price or predict it. It measures what it cost to get in and out of a pool at one block.',
@@ -100,6 +100,20 @@ const UNSUPPORTED_V1: readonly { patterns: readonly RegExp[]; refusal: string }[
 ];
 
 /**
+ * The refusal a question earns, or null.
+ *
+ * Shared by both planners on purpose. "Is it a scam" is out of scope whether it
+ * is asked about one card or about the whole universe, and a scope that answered
+ * it would be the only place in the product where it is answerable.
+ */
+export function b20UnsupportedRefusalV1(question: string): string | null {
+  for (const rule of B20_UNSUPPORTED_QUESTIONS_V1) {
+    if (matchesV1(question, rule.patterns)) return rule.refusal;
+  }
+  return null;
+}
+
+/**
  * Reads a question into a plan.
  *
  * The order matters and is the same reasoning as everywhere else in this rail:
@@ -115,11 +129,8 @@ export function planB20AnswerV1(input: {
   const question = input.question.trim();
   const value = question.toLowerCase();
 
-  for (const rule of UNSUPPORTED_V1) {
-    if (matchesV1(question, rule.patterns)) {
-      return { intent: 'unsupported', steps: [], refusal: rule.refusal };
-    }
-  }
+  const unsupported = b20UnsupportedRefusalV1(question);
+  if (unsupported) return { intent: 'unsupported', steps: [], refusal: unsupported };
 
   if (input.tokenAddress) {
     return {
@@ -129,61 +140,65 @@ export function planB20AnswerV1(input: {
     };
   }
 
+  const universe = b20UniverseIntentV1(value);
+  return {
+    intent: universe.intent,
+    steps: [
+      { tool: 'summary', launchAgeHours: DEFAULT_WINDOW_HOURS_V1 },
+      ...(universe.list ? [{ tool: 'list' as const, limit: LIST_LIMIT_V1, ...universe.list }] : []),
+    ],
+    refusal: null,
+  };
+}
+
+/**
+ * What a question about the WHOLE universe is asking for.
+ *
+ * Shared by both planners, and shared because the copies drifted the moment
+ * there were two: this matcher missed "buy but cannot sell" — the most natural
+ * English phrasing of the product's own headline finding — and fixing it in one
+ * file would have left the other console answering the same sentence with the
+ * counts.
+ *
+ * `value` must already be lowercased. `\b` is ASCII-only, so the Russian
+ * patterns carry no word boundaries — a Cyrillic regex written with `\b`
+ * matches nothing, silently.
+ */
+export function b20UniverseIntentV1(value: string): {
+  intent: 'count_universe' | 'find_bought_not_sellable' | 'find_two_sided' | 'find_not_searched';
+  /** The narrowing to apply to the feed page, when the intent names one. */
+  list: { standingKind?: (typeof B20_EXIT_STANDING_KINDS_V1)[number]; bothRoutes?: boolean } | null;
+} {
   // "How many" is the question Stage 05 exists for, and the one that used to
-  // cost 46 pages. `\b` is ASCII-only, so the Russian patterns carry no word
-  // boundaries — a Cyrillic regex written with \b matches nothing, silently.
+  // cost 46 pages.
   if (matchesV1(value, [/how many/, /how much of/, /count/, /breakdown/, /сколько/u, /распределен/u, /статистик/u])) {
-    return {
-      intent: 'count_universe',
-      steps: [{ tool: 'summary', launchAgeHours: DEFAULT_WINDOW_HOURS_V1 }],
-      refusal: null,
-    };
+    return { intent: 'count_universe', list: null };
   }
 
   // The product's own finding, asked for in words. The summary comes with it
   // so the answer can say how many there are as well as naming a few.
   const boughtNotSellable =
-    matchesV1(value, [/bought.*(not|can.?t|cannot|could not).*(sell|sold|exit)/, /trapped/, /stuck/, /не выйти/u])
+    matchesV1(value, [
+      /(bought|buy|bought into|got in).*(not|can.?t|cannot|could not|unable).*(sell|sold|sell out|exit|get out)/,
+      /trapped/,
+      /stuck/,
+      /не выйти/u,
+    ])
     || allOfV1(value, [/купил/u, /(продать|продаж|выйти)/u, /(нельзя|невозможно|не\s|без)/u]);
   if (boughtNotSellable) {
-    return {
-      intent: 'find_bought_not_sellable',
-      steps: [
-        { tool: 'summary', launchAgeHours: DEFAULT_WINDOW_HOURS_V1 },
-        { tool: 'list', limit: LIST_LIMIT_V1, standingKind: 'bought_not_sellable' },
-      ],
-      refusal: null,
-    };
+    return { intent: 'find_bought_not_sellable', list: { standingKind: 'bought_not_sellable' } };
   }
 
   if (matchesV1(value, [/both (directions|routes|legs)/, /round trip/, /priced both/, /оба маршрута/u, /туда и обратно/u])) {
-    return {
-      intent: 'find_two_sided',
-      steps: [
-        { tool: 'summary', launchAgeHours: DEFAULT_WINDOW_HOURS_V1 },
-        { tool: 'list', limit: LIST_LIMIT_V1, bothRoutes: true },
-      ],
-      refusal: null,
-    };
+    return { intent: 'find_two_sided', list: { bothRoutes: true } };
   }
 
   if (matchesV1(value, [/not (searched|looked)/, /never looked/, /coverage/, /не искал/u, /не смотрел/u, /покрыти/u])) {
-    return {
-      intent: 'find_not_searched',
-      steps: [
-        { tool: 'summary', launchAgeHours: DEFAULT_WINDOW_HOURS_V1 },
-        { tool: 'list', limit: LIST_LIMIT_V1, standingKind: 'venue_not_searched' },
-      ],
-      refusal: null,
-    };
+    return { intent: 'find_not_searched', list: { standingKind: 'venue_not_searched' } };
   }
 
   // Anything else about the universe gets the counts. They are cheap, cached,
   // and they are the honest answer to a question this planner did not
   // recognise: here is the shape of what Miorail has measured.
-  return {
-    intent: 'count_universe',
-    steps: [{ tool: 'summary', launchAgeHours: DEFAULT_WINDOW_HOURS_V1 }],
-    refusal: null,
-  };
+  return { intent: 'count_universe', list: null };
 }

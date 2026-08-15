@@ -930,6 +930,34 @@ export function useB20CopilotAsk(
   });
 }
 
+/**
+ * Ask about the universe, about named tokens, or about what changed.
+ *
+ * The global console, and read-only by the same construction as the per-card
+ * one: no wallet hook, no x402 header, no execution. The request carries a
+ * scope, a question and — at most — addresses the reader themselves named.
+ */
+export function useB20ConsoleAsk(
+  options?: Omit<
+    UseMutationOptions<apiSpec.B20ConsoleAskResponseV1, Error, apiSpec.B20ConsoleAskRequestV1>,
+    'mutationFn' | 'retry'
+  >,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const request = apiSpec.B20ConsoleAskRequestV1Schema.parse(input);
+      const response = await fetchApi<unknown>('/api/route-intelligence/opportunities/b20/console/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+      return apiSpec.B20ConsoleAskResponseV1Schema.parse(response);
+    },
+  });
+}
+
 export function useAddB20Watch(
   options?: Omit<UseMutationOptions<apiSpec.B20WatchlistResponseV1, Error, { tokenAddress: string }>, 'mutationFn'>,
 ) {

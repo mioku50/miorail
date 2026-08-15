@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
-import { numbersInV1, verifyB20NarrationV1, B20_NARRATION_MAX_CHARS_V1 } from './b20AnswerVerify.js';
+import {
+  b20NarrationEvidenceStrengthV1,
+  numbersInV1,
+  verifyB20NarrationV1,
+  B20_NARRATION_MAX_CHARS_V1,
+  B20_NARRATION_MAX_EVIDENCE_NUMBERS_V1,
+} from './b20AnswerVerify.js';
 
 // ---------------------------------------------------------------------------
 // The one component whose job is to be wrong in the safe direction.
@@ -150,6 +156,35 @@ describe('formatting a card cannot render is stripped, not rejected', () => {
     const verdict = verify('The round trip was **2.4%**.');
     assert.equal(verdict.ok, false);
     assert.match(verdict.violations.join(' '), /2\.4/);
+  });
+});
+
+describe('the check is only as strong as the bundle is small', () => {
+  test('an ordinary card bundle is checkable', () => {
+    const strength = b20NarrationEvidenceStrengthV1(EVIDENCE);
+    assert.equal(strength.strongEnough, true);
+    // Stated rather than merely asserted: if a change to the fact rows pushes
+    // this near the ceiling, the number in this assertion is what moves first.
+    assert.ok(strength.distinctNumbers < 15, `card bundle carries ${strength.distinctNumbers} figures`);
+  });
+
+  test('a bundle wide enough to admit anything is not narrated at all', () => {
+    // "Every number must be in the evidence" refuses an invented figure only
+    // because the allowed set is small. Two hundred figures and the same rule
+    // accepts almost any two-digit number a model writes, while still
+    // reporting itself as passing — which is worse than not checking, because
+    // it looks checked.
+    const wide = Array.from({ length: B20_NARRATION_MAX_EVIDENCE_NUMBERS_V1 + 1 }, (_value, index) => `row ${index}`);
+    const strength = b20NarrationEvidenceStrengthV1(wide);
+    assert.equal(strength.strongEnough, false);
+    assert.equal(strength.distinctNumbers, B20_NARRATION_MAX_EVIDENCE_NUMBERS_V1 + 1);
+  });
+
+  test('repeating one figure does not make a bundle wide', () => {
+    // The measure is DISTINCT values: a bundle that states the same block in
+    // eight places has not become less checkable.
+    const repeated = Array.from({ length: 80 }, () => 'measured at block 49929328');
+    assert.equal(b20NarrationEvidenceStrengthV1(repeated).distinctNumbers, 1);
   });
 });
 

@@ -333,6 +333,38 @@ function assertComparableMarketMeasurementV1(
   }
 }
 
+/**
+ * The four fields that decide whether two measurements may be set beside each
+ * other at all.
+ *
+ * Extracted because the rule has two axes and only ever had one implementation.
+ * A mover compares ONE token across time; Miorail's console compares SEVERAL
+ * tokens at one time. Both are the same question — was this measured the same
+ * way — and a second copy of the answer is how the two axes start disagreeing
+ * about what "comparable" means.
+ *
+ * `profile` and `version` stay distinguishable because both are already on the
+ * wire as separate exclusion reasons, and they mean different things to a
+ * reader: one is a different reference position, the other is a different
+ * definition of the measurement itself.
+ */
+export type MeasurementProfileMismatchV1 = 'profile' | 'version' | null;
+
+export function measurementProfileMismatchV1(
+  left: Pick<MarketObservationV1, 'profileIdentity' | 'referenceQuoteAsset' | 'referencePositionAtomic' | 'measurementVersion'>,
+  right: Pick<MarketObservationV1, 'profileIdentity' | 'referenceQuoteAsset' | 'referencePositionAtomic' | 'measurementVersion'>,
+): MeasurementProfileMismatchV1 {
+  if (
+    left.profileIdentity !== right.profileIdentity
+    || left.referenceQuoteAsset !== right.referenceQuoteAsset
+    || left.referencePositionAtomic !== right.referencePositionAtomic
+  ) {
+    return 'profile';
+  }
+  if (left.measurementVersion !== right.measurementVersion) return 'version';
+  return null;
+}
+
 /** Both observations must describe the same measurement, or the difference
  * between them is a difference in method rather than in the market. */
 export function moverCompatibilityV1(pair: MoverPairV1, input: MeasuredMoversInputV1): MoverExclusionV1 | null {
@@ -351,14 +383,9 @@ export function moverCompatibilityV1(pair: MoverPairV1, input: MeasuredMoversInp
   if (!isComparableMarketMeasurementV1(baseline)) return 'not_measured';
   if (baseline.capacityStable !== true) return 'unstable_ladder';
 
-  if (
-    baseline.profileIdentity !== latest.profileIdentity ||
-    baseline.referenceQuoteAsset !== latest.referenceQuoteAsset ||
-    baseline.referencePositionAtomic !== latest.referencePositionAtomic
-  ) {
-    return 'incompatible_profile';
-  }
-  if (baseline.measurementVersion !== latest.measurementVersion) return 'incompatible_version';
+  const mismatch = measurementProfileMismatchV1(baseline, latest);
+  if (mismatch === 'profile') return 'incompatible_profile';
+  if (mismatch === 'version') return 'incompatible_version';
   if (latest.entryOutputAtomic === null || baseline.entryOutputAtomic === null) return 'not_measured';
   // A zero entry output would be a division by zero AND a nonsense quote.
   if (BigInt(baseline.entryOutputAtomic) === BigInt(0) || BigInt(latest.entryOutputAtomic) === BigInt(0)) {

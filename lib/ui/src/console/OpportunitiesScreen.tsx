@@ -10,6 +10,7 @@ import {
   type ConsoleOperationalLabelV1,
   type ConsolePipelineStateV1,
 } from './navigation';
+import { B20ConsolePanel, type B20ConsolePanelModelV1 } from './B20ConsolePanel';
 
 void React;
 
@@ -223,6 +224,15 @@ export interface OpportunitiesScreenModelV1 {
   onOpenToken: (tokenAddress: string) => void;
   /** Optional while older deployments roll forward. It is read-only. */
   copilot?: B20CopilotPanelModelV1;
+  /**
+   * Stage 07 — the global console, rendered above the feed.
+   *
+   * Optional for the same reason the per-card copilot is: a surface that has
+   * not wired it yet renders the feed exactly as before rather than an empty
+   * panel. The per-card copilot is unchanged by its presence — that one stays
+   * pinned to one observation, and this one cannot pin anything.
+   */
+  console?: B20ConsolePanelModelV1;
   onRefresh?: () => void;
 }
 
@@ -579,6 +589,13 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
           </div>
         </div>
       )}
+
+      {/* Above the feed, because the question a reader arrives with is about
+          the whole list rather than about the first card in it. Rendered even
+          when the feed is not: "how many were measured" is answerable while
+          the pipeline is catching up, and the counts are the honest answer to
+          a screen that has nothing to list yet. */}
+      {model.console && <B20ConsolePanel {...model.console} />}
 
       {model.feedRenderable && (
         <div className="panel">

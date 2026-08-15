@@ -85,12 +85,21 @@ function formatAtomicV1(atomic: string, decimals: number): string {
  * two numbers twelve orders of magnitude apart. */
 const quoteAssetV1 = b20QuoteAssetDisplayV1;
 
-function amountLabelV1(atomic: string, asset: { symbol: string; decimals: number | null }): string {
+/**
+ * One atomic amount, in the reader's units.
+ *
+ * Exported so the global console prints a capacity the same way a card does.
+ * The two surfaces quoting one stored figure differently is precisely the bug
+ * the shared quote-asset table above was written to end.
+ */
+export function b20AmountLabelV1(atomic: string, asset: { symbol: string; decimals: number | null }): string {
   // Null decimals means this build does not know the asset's scale. The atomic
   // figure is stated as atomic rather than divided by a guess.
   if (asset.decimals === null) return `${atomic} (atomic, ${asset.symbol})`;
   return `${formatAtomicV1(atomic, asset.decimals)} ${asset.symbol}`;
 }
+
+const amountLabelV1 = b20AmountLabelV1;
 
 function bpsV1(value: number): string {
   return `${trimDecimalV1((value / 100).toFixed(2))}%`;
