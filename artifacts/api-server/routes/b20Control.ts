@@ -138,6 +138,11 @@ import {
   ensureB20EntryRouteProofV1,
   syncB20EntryRouteProofV1,
 } from '../lib/b20EntryRouteProof.js';
+// Imported for the TYPE, and for the `express-session` augmentation that comes
+// with it. `req.session.user` below reads as `any` without it — this file was
+// relying on the augmentation being loaded by whatever else the api-server
+// program happened to compile, which held only inside that one tsconfig.
+import type { TenantUser } from '../middleware/tenantAuth.js';
 import { answerB20CopilotV1, b20ObservationRefMatchesV1 } from '../lib/b20Copilot.js';
 import { narrateB20AnswerV1 } from '../lib/b20Answer.js';
 import { planB20AnswerV1 } from '../lib/b20AnswerPlan.js';
@@ -321,7 +326,7 @@ export const b20RouteRuntime = {
   now: () => new Date(),
 };
 
-function sessionUser(req: Request) {
+function sessionUser(req: Request): TenantUser | null {
   const user = req.session?.user;
   if (
     !user ||
