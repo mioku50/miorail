@@ -105,6 +105,13 @@ function rowToObservationV1(row: Record<string, unknown>): B20OpportunityObserva
     routeCoverage: row.route_coverage,
     viableRouteConfirmed: Boolean(row.viable_route_confirmed),
     bestRouteConfirmed: Boolean(row.best_route_confirmed),
+    // Null on every row written before the column existed, and null is
+    // UNKNOWN — never an empty search. An empty array from the driver means
+    // the same thing and is normalised to null so one shape reaches the rail.
+    venuesConsulted:
+      Array.isArray(row.venues_consulted) && row.venues_consulted.length > 0
+        ? (row.venues_consulted as unknown[]).map((venue) => String(venue))
+        : null,
     controlsSnapshotHash: row.controls_snapshot_hash ?? null,
     controlsBlockNumber: digitsOrNullV1(row.controls_block_number),
     transfersPaused: boolOrNullV1(row.transfers_paused),
@@ -226,7 +233,7 @@ export function createDatabaseB20ObservationRepository(
           entry_output_atomic, optimistic_exit_return_atomic, optimistic_round_trip_bps,
           largest_passing_size_atomic, first_failing_size_atomic, capacity_probe_count,
           capacity_tolerance_bps, capacity_stable, capacity_samples_hash,
-          route_coverage, viable_route_confirmed, best_route_confirmed,
+          route_coverage, viable_route_confirmed, best_route_confirmed, venues_consulted,
           controls_snapshot_hash, controls_block_number, transfers_paused,
           transfer_policy_state, controls_complete,
           observation_block_number, observation_block_hash, quote_alignment,
@@ -245,6 +252,7 @@ export function createDatabaseB20ObservationRepository(
           ${parsed.capacityProbeCount}, ${parsed.capacityToleranceBps}, ${parsed.capacityStable},
           ${parsed.capacitySamplesHash},
           ${parsed.routeCoverage}, ${parsed.viableRouteConfirmed}, ${parsed.bestRouteConfirmed},
+          ${parsed.venuesConsulted}::text[],
           ${parsed.controlsSnapshotHash}, ${parsed.controlsBlockNumber}::numeric(78,0), ${parsed.transfersPaused},
           ${parsed.transferPolicyState}, ${parsed.controlsComplete},
           ${parsed.observationBlockNumber}::numeric(78,0), ${parsed.observationBlockHash}, ${parsed.quoteAlignment},

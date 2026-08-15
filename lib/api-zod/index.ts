@@ -3536,6 +3536,7 @@ const B20CardObservationV1Schema = z
       kind: z.enum([
         'not_measured',
         'measurement_incomplete',
+        'venue_not_searched',
         'venue_not_found',
         'no_buyers_yet',
         'bought_not_sellable',
@@ -3597,6 +3598,12 @@ const B20CardObservationV1Schema = z
     optimisticReturnAtomic: z.string().regex(/^\d+$/).nullable(),
     optimisticRoundTripBps: z.number().int().min(0).nullable(),
     routeCoverage: z.enum(['complete', 'partial']),
+    /** Which venue families this reading actually asked. Null means the row
+     * does not record it. `routeCoverage` says whether the candidates a search
+     * generated all answered; it cannot say which venues the search covered,
+     * and 1,581 stored observations claim complete coverage over a search that
+     * never included Uniswap v4. */
+    venuesConsulted: z.array(z.string().min(1).max(64)).max(8).nullable(),
     viableRouteConfirmed: z.boolean(),
     bestRouteConfirmed: z.boolean(),
     largestPassingSizeAtomic: z.string().regex(/^\d+$/).nullable(),

@@ -70,6 +70,7 @@ function card(overrides: Partial<NonNullable<B20OpportunityCardV1['observation']
       optimisticReturnAtomic: null,
       optimisticRoundTripBps: null,
       routeCoverage: 'complete',
+      venuesConsulted: ['uniswap-v4'],
       viableRouteConfirmed: false,
       bestRouteConfirmed: false,
       largestPassingSizeAtomic: null,

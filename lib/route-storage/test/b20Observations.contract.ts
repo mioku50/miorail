@@ -77,6 +77,9 @@ export function observationFixtureV1(
     capacityStable: true,
     capacitySamplesHash: observationHashV1('c'),
     routeCoverage: 'complete' as const,
+    // The default fixture is an Aerodrome-only measurement, which is exactly
+    // the shape 1,662 stored launches are frozen in.
+    venuesConsulted: ['aerodrome'] as string[] | null,
     viableRouteConfirmed: true,
     bestRouteConfirmed: true,
     controlsSnapshotHash: observationHashV1('d'),

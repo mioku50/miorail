@@ -115,6 +115,16 @@ export interface RouteMeasurementV1 {
   poolHookAddress: string | null;
   /** The exit-capacity ladder, already priced. Sizes are in the TOKEN. */
   probes: { sizeAtomic: string; slippageBps: number | null }[];
+  /**
+   * Which venue families this reading actually asked, in order.
+   *
+   * `routeCoverage` says whether the candidates a search generated all
+   * answered. It cannot say which venues the search covered — and for 1,662
+   * stored launches the answer is "not the one where B20 tokens trade", while
+   * the row claims complete coverage. This records the set so a card can state
+   * it instead of implying it.
+   */
+  venuesConsulted: string[];
   routerCalls: number;
   /** What was ACTUALLY spent, and in what.
    *
@@ -593,6 +603,9 @@ async function measureOneV1(context: {
     capacityStable,
     capacitySamplesHash: probes.length > 0 ? capacitySamplesHashV1(probes) : null,
     routeCoverage: coverage.coverage,
+    // Empty stays empty ONLY when no route work happened at all; the storage
+    // layer normalises that to null, which reads as "not recorded".
+    venuesConsulted: routes?.venuesConsulted?.length ? routes.venuesConsulted : null,
     viableRouteConfirmed: coverage.viableRouteConfirmed,
     bestRouteConfirmed: coverage.bestRouteConfirmed,
     controlsSnapshotHash: controlMeasurement?.snapshotHash ?? null,

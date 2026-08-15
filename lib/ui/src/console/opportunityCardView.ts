@@ -4,6 +4,7 @@ import {
   type B20ExitStandingV1,
 } from '@mioagent/opportunity-rail/exitStanding';
 import { b20QuoteAssetDisplayV1 } from '@mioagent/opportunity-rail/quoteAsset';
+import { b20VenueCoverageV1, b20VenueLabelV1 } from '@mioagent/opportunity-rail/venues';
 import { formatAtomicAmount } from '../formatAtomicAmount';
 import { bpsLabelV1 } from './B20ExitCard';
 import type { OpportunityCardViewV1, OpportunityStateV1 } from './OpportunitiesScreen';
@@ -57,6 +58,10 @@ export interface OpportunityCardWireV1 {
     entrySourceKey: string | null;
     exitSourceKey: string | null;
     routeCoverage: 'complete' | 'partial';
+    /** Which venue families the reading actually asked. Null means the row
+     * does not record it — and 1,662 stored launches are frozen at a verdict
+     * produced before Uniswap v4 was in the search at all. */
+    venuesConsulted?: readonly string[] | null;
     optimisticRoundTripBps: number | null;
     largestPassingSizeAtomic: string | null;
     firstFailingSizeAtomic: string | null;
@@ -218,6 +223,7 @@ export function cardStandingV1(observation: OpportunityCardWireV1['observation']
       reasonCode: observation.reasonCode ?? null,
       entryRouteFound: observation.entryRouteFound,
       exitRouteFound: observation.exitRouteFound,
+      venuesConsulted: observation.venuesConsulted ?? null,
     },
     buyerCount,
   });
@@ -306,6 +312,7 @@ export function opportunityCardViewV1(card: OpportunityCardWireV1): OpportunityC
     notMeasured: card.notMeasured,
     ...hookLabelsV1(card.observation?.poolHook ?? null),
     ...routeLabelsV1(card.observation ?? null),
+    ...venueLabelsV1(card.observation?.venuesConsulted ?? null),
     // The API contract nests launch buyers in the observation. Reading a
     // top-level field silently discarded every stored buyer row while all
     // fixtures still passed because they tested the helper in isolation.
@@ -366,6 +373,41 @@ export function routeLabelsV1(
     routeLabel: 'No priced route',
     routeNote: `No configured venue returned either route leg in this pass. No cost or capacity is inferred from that absence.${coverage}`,
     routeTone: 'warn',
+  };
+}
+
+/**
+ * Which venues this reading actually asked, in words.
+ *
+ * The card already shows `routeCoverage`, which says whether the candidates a
+ * search generated all answered. It cannot say which VENUES the search
+ * covered, and 1,581 stored observations claim complete coverage over a search
+ * that never included Uniswap v4 — where 2,161 of 2,171 resolved B20 pools
+ * live. A row that does not record the set says exactly that; it does not fill
+ * in a plausible one.
+ */
+export function venueLabelsV1(
+  venues: readonly string[] | null | undefined,
+): { venueLabel: string | null; venueNote: string | null } {
+  const coverage = b20VenueCoverageV1(venues);
+  if (coverage.unknown) {
+    return {
+      venueLabel: 'Not recorded',
+      venueNote:
+        'This reading does not say which venues it searched, and it predates Uniswap v4 entering Miorail’s route search. Treat its route findings as unmeasured rather than negative.',
+    };
+  }
+  const label = b20VenueLabelV1(venues);
+  if (coverage.searchedPrimary) {
+    return {
+      venueLabel: label,
+      venueNote: null,
+    };
+  }
+  return {
+    venueLabel: label,
+    venueNote:
+      'Uniswap v4 was not searched, and that is where B20 tokens trade. This reading cannot support a statement about where this token can be bought or sold.',
   };
 }
 

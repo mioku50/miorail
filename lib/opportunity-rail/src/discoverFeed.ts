@@ -339,6 +339,10 @@ export interface B20CardObservationV1 {
   optimisticReturnAtomic: string | null;
   optimisticRoundTripBps: number | null;
   routeCoverage: 'complete' | 'partial';
+  /** Which venue families the reading actually asked. Null means the row does
+   * not record it — every observation written before the field existed, of
+   * which 1,662 predate Uniswap v4 entering the search at all. */
+  venuesConsulted: readonly string[] | null;
   viableRouteConfirmed: boolean;
   bestRouteConfirmed: boolean;
   largestPassingSizeAtomic: string | null;
@@ -489,6 +493,7 @@ export interface B20CardInputV1 {
     optimisticExitReturnAtomic: string | null;
     optimisticRoundTripBps: number | null;
     routeCoverage: 'complete' | 'partial';
+    venuesConsulted?: readonly string[] | null;
     viableRouteConfirmed: boolean;
     bestRouteConfirmed: boolean;
     largestPassingSizeAtomic: string | null;
@@ -698,6 +703,10 @@ export function b20OpportunityCardV1(input: B20CardInputV1): B20OpportunityCardV
       reasonCode: source.reasonCode,
       entryRouteFound: source.entryRouteFound,
       exitRouteFound: source.exitRouteFound,
+      // Null on every observation written before the field existed. The
+      // standing then says the search cannot support a claim about where the
+      // token trades, rather than reporting a venue gap as a finding.
+      venuesConsulted: source.venuesConsulted ?? null,
     },
     buyerCount,
   });
@@ -744,6 +753,8 @@ export function b20OpportunityCardV1(input: B20CardInputV1): B20OpportunityCardV
       optimisticReturnAtomic: source.optimisticExitReturnAtomic,
       optimisticRoundTripBps: source.optimisticRoundTripBps,
       routeCoverage: source.routeCoverage,
+      // What `routeCoverage` cannot say: WHICH venues the search covered.
+      venuesConsulted: source.venuesConsulted ?? null,
       viableRouteConfirmed: source.viableRouteConfirmed,
       bestRouteConfirmed: source.bestRouteConfirmed,
       largestPassingSizeAtomic: source.largestPassingSizeAtomic,

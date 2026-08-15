@@ -126,6 +126,11 @@ export interface OpportunityCardViewV1 {
   routeLabel: string | null;
   routeNote: string | null;
   routeTone: 'ok' | 'warn';
+  /** Which venues the reading actually asked. "Not recorded" on every
+   * observation written before the field existed — which is not the same
+   * statement as "none", and the note says so. */
+  venueLabel: string | null;
+  venueNote: string | null;
   /** Who bought out of the pool in the launch's own window, in words. Null
    * when nobody measured that window — never rendered as "0 buyers", which
    * would be a claim nobody made. */
@@ -360,6 +365,18 @@ function OpportunityCard({
             </div>
           )}
           {card.routeNote && <p className="lnote">{card.routeNote}</p>}
+
+          {/* Which venues were ASKED. Distinct from route coverage, which only
+              says whether the candidates a search generated answered — and
+              1,581 stored observations claim complete coverage over a search
+              that never included the venue where B20 tokens trade. */}
+          {card.venueLabel && (
+            <div className="kv">
+              <span className="k">Venues searched</span>
+              <span className={card.venueNote ? 'v warn' : 'v'}>{card.venueLabel}</span>
+            </div>
+          )}
+          {card.venueNote && <p className="lnote">{card.venueNote}</p>}
 
           {/* Concentration of launch-window buying. The exit-first reading: if
               one wallet took everything that left the pool, an exit depends on

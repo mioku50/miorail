@@ -121,6 +121,8 @@ export interface McpOpportunityV1 {
     quoteAlignment: string;
     quoteAlignmentNote: string | null;
     routeCoverage: 'complete' | 'partial';
+    venuesConsulted: readonly string[] | null;
+    venuesNote: string;
     routeCoverageNote: string;
     entryRouteFound: boolean;
     exitRouteFound: boolean;
@@ -214,6 +216,16 @@ function opportunityFromCardV1(card: B20OpportunityCardV1): McpOpportunityV1 {
           quoteAlignment: observation.quoteAlignment,
           quoteAlignmentNote: observation.quoteAlignmentNotice,
           routeCoverage: observation.routeCoverage,
+          // WHICH venues were asked, beside whether the candidates answered.
+          // Null means the row does not record it, and 1,662 stored launches
+          // are frozen at a verdict produced before Uniswap v4 — where B20
+          // tokens actually trade — was in the search at all. A model must not
+          // read those as "this token has no route".
+          venuesConsulted: observation.venuesConsulted ?? null,
+          venuesNote:
+            observation.venuesConsulted && observation.venuesConsulted.includes('uniswap-v4')
+              ? 'This reading searched the venue where B20 tokens trade.'
+              : 'This reading did NOT search Uniswap v4, where B20 tokens trade. Its route findings are unmeasured, not negative — do not report them as a property of the token.',
           routeCoverageNote:
             observation.routeCoverage === 'complete'
               ? MIORAIL_MCP_CAVEATS_V1.routeCoverage

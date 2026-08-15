@@ -226,3 +226,54 @@ describe('the screen separates a finding from a failure to measure', () => {
     assert.match(markup, /Bought, no sale/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Which venues a reading asked, on the card.
+//
+// `routeCoverage` says whether the candidates a search generated all answered.
+// It cannot say which VENUES the search covered, and 1,581 stored observations
+// claim complete coverage over a search that never included Uniswap v4 — where
+// 2,161 of 2,171 resolved B20 pools live.
+// ---------------------------------------------------------------------------
+
+describe('a card states which venues were searched', () => {
+  const withVenues = (venues: readonly string[] | null) =>
+    opportunityCardViewV1(
+      (() => {
+        const card = wire({ token: `0x${'9'.repeat(40)}`, symbol: 'VEN', reasonCode: 'no_entry_route', entryRouteFound: false, buyerCount: 0 });
+        delete card.observation!.standing;
+        card.observation!.venuesConsulted = venues;
+        return card;
+      })(),
+    );
+
+  test('a row that records nothing says so, and is not read as "searched nothing"', () => {
+    const view = withVenues(null);
+    assert.equal(view.venueLabel, 'Not recorded');
+    assert.match(view.venueNote!, /does not say which venues/i);
+    assert.equal(view.standingKind, 'venue_not_searched');
+  });
+
+  test('an Aerodrome-only reading is named, and told it cannot support the finding', () => {
+    const view = withVenues(['aerodrome']);
+    assert.equal(view.venueLabel, 'Aerodrome');
+    assert.match(view.venueNote!, /Uniswap v4 was not searched/);
+    assert.equal(view.standingKind, 'venue_not_searched');
+    assert.equal(view.aboutToken, false);
+  });
+
+  test('a reading that did search v4 names both venues and carries no warning', () => {
+    const view = withVenues(['uniswap-v4', 'aerodrome']);
+    assert.equal(view.venueLabel, 'Uniswap v4 + Aerodrome');
+    assert.equal(view.venueNote, null);
+    assert.equal(view.standingKind, 'venue_not_found');
+  });
+
+  test('the venue row renders inside the evidence fold, and its warning with it', () => {
+    const markup = render([withVenues(['aerodrome'])]);
+    assert.match(markup, /Venues searched/);
+    assert.match(markup, /Uniswap v4 was not searched/);
+    // Still filed under Miorail's own limits, never as a finding.
+    assert.match(markup, /Miorail could not measure these/);
+  });
+});

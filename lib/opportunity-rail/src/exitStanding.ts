@@ -23,9 +23,16 @@
 // MIORAIL could not do. A card that cannot tell the two apart says so.
 // ---------------------------------------------------------------------------
 
+import { b20VenueCoverageV1 } from './venues.js';
+
 export type B20ExitStandingKindV1 =
   | 'not_measured'
   | 'measurement_incomplete'
+  /** The search never asked the venue where these tokens trade. A stronger
+   * statement about Miorail's limits than `venue_not_found`, and it must not
+   * be collapsed into it: one says "we looked and found nothing", the other
+   * says "we did not look". */
+  | 'venue_not_searched'
   | 'venue_not_found'
   | 'no_buyers_yet'
   | 'bought_not_sellable'
@@ -51,6 +58,11 @@ export interface B20ExitStandingInputV1 {
     reasonCode: string | null;
     entryRouteFound: boolean;
     exitRouteFound: boolean;
+    /** Which venue families this reading actually asked. Null or absent on
+     * every observation written before the field existed — 1,662 of which are
+     * frozen at a verdict produced before Uniswap v4 was in the pipeline at
+     * all. Null means UNKNOWN, never "none". */
+    venuesConsulted?: readonly string[] | null;
   } | null;
   /** The completed launch-window buyer aggregate, or null when the window has
    * not closed or was never measured. Null is NOT zero. */
@@ -190,6 +202,21 @@ export function b20ExitStandingV1(input: B20ExitStandingInputV1): B20ExitStandin
   }
 
   if (!observation.entryRouteFound) {
+    // "We looked and found nothing" and "we did not look" are different
+    // sentences, and only one of them was ever being said. 1,581 stored
+    // observations claim complete route coverage over a venue set that did not
+    // include Uniswap v4 — where 2,161 of 2,171 resolved B20 pools live.
+    const venues = b20VenueCoverageV1(observation.venuesConsulted);
+    if (!venues.searchedPrimary) {
+      return {
+        kind: 'venue_not_searched',
+        headline: 'Miorail has not looked where this trades.',
+        detail: venues.unknown
+          ? 'This reading does not record which venues it searched, and it predates Uniswap v4 entering Miorail’s route search — which is where B20 tokens trade. It cannot support any statement about where this token can be bought or sold. Nothing here is about the token.'
+          : `This reading searched ${venues.venues.join(', ')} and not Uniswap v4, which is where B20 tokens trade. It cannot support any statement about where this token can be bought or sold. Nothing here is about the token.`,
+        aboutToken: false,
+      };
+    }
     return {
       kind: 'venue_not_found',
       headline: 'Miorail has not found where this trades.',

@@ -27,11 +27,16 @@ const measured = (over: Partial<{
   reasonCode: string | null;
   entryRouteFound: boolean;
   exitRouteFound: boolean;
+  venuesConsulted: readonly string[] | null | undefined;
 }>) => ({
   state: 'rejected' as const,
   reasonCode: null,
   entryRouteFound: true,
   exitRouteFound: false,
+  // The default is a reading that DID search the venue where B20 tokens trade.
+  // Tests about the venue gap say so explicitly, because the difference
+  // between "looked and found nothing" and "did not look" is the whole point.
+  venuesConsulted: ['uniswap-v4', 'aerodrome'] as readonly string[] | null | undefined,
   ...over,
 });
 
@@ -299,5 +304,91 @@ describe('a section header states what it found without recommending it', () => 
       B20_STANDING_GROUP_COPY_V1.miorail_limit.note,
       /Nothing in this section is a statement about the token/i,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// "We looked and found nothing" is not "we did not look".
+//
+// Measured 2026-08-15: 1,891 stored launches carry a USDC-denominated verdict
+// while only TEN USDC pools exist. A USDC-denominated observation is the
+// fingerprint of the Aerodrome fallback — and 1,662 of them were last measured
+// before 2026-08-10, when Uniswap v4 entered the route search at all. 1,581
+// claim `routeCoverage: 'complete'` over a search that never included the
+// venue where B20 tokens trade.
+// ---------------------------------------------------------------------------
+
+describe('a verdict is only as wide as the venues behind it', () => {
+  test('a search that skipped Uniswap v4 says so instead of blaming the token', () => {
+    const standing = b20ExitStandingV1({
+      observation: measured({ entryRouteFound: false, reasonCode: 'no_entry_route', venuesConsulted: ['aerodrome'] }),
+      buyerCount: 0,
+    });
+    assert.equal(standing.kind, 'venue_not_searched');
+    assert.equal(standing.aboutToken, false);
+    assert.match(standing.headline, /has not looked where this trades/i);
+    assert.match(standing.detail, /aerodrome/i);
+    assert.match(standing.detail, /cannot support any statement/i);
+  });
+
+  test('a row that records no venues at all is unknown, never "searched nothing"', () => {
+    // Every observation written before the field existed. Silence is not a
+    // measurement in either direction.
+    for (const venuesConsulted of [null, undefined, []]) {
+      const standing = b20ExitStandingV1({
+        observation: measured({ entryRouteFound: false, venuesConsulted }),
+        buyerCount: 0,
+      });
+      assert.equal(standing.kind, 'venue_not_searched');
+      assert.equal(standing.aboutToken, false);
+      assert.match(standing.detail, /does not record which venues/i);
+    }
+  });
+
+  test('a search that DID include Uniswap v4 keeps the ordinary venue verdict', () => {
+    const standing = b20ExitStandingV1({
+      observation: measured({
+        entryRouteFound: false,
+        reasonCode: 'no_entry_route',
+        venuesConsulted: ['uniswap-v4', 'aerodrome'],
+      }),
+      buyerCount: 0,
+    });
+    assert.equal(standing.kind, 'venue_not_found');
+    assert.equal(standing.aboutToken, false);
+  });
+
+  test('both venue verdicts are filed under Miorail’s own limits', () => {
+    for (const venuesConsulted of [null, ['aerodrome'], ['uniswap-v4']]) {
+      const standing = b20ExitStandingV1({
+        observation: measured({ entryRouteFound: false, venuesConsulted }),
+        buyerCount: 0,
+      });
+      assert.equal(b20StandingGroupV1(standing), 'miorail_limit');
+    }
+  });
+
+  test('the venue set changes nothing once an entry actually priced', () => {
+    // The gap only bounds a NEGATIVE finding. A priced entry is evidence in
+    // itself, whatever else was or was not searched.
+    const standing = b20ExitStandingV1({
+      observation: measured({ entryRouteFound: true, venuesConsulted: ['aerodrome'] }),
+      buyerCount: 62,
+    });
+    assert.equal(standing.kind, 'bought_not_sellable');
+    assert.equal(standing.aboutToken, true);
+  });
+
+  test('neither venue verdict reads as advice or as an accusation', () => {
+    for (const venuesConsulted of [null, ['aerodrome'], ['uniswap-v4']]) {
+      const standing = b20ExitStandingV1({
+        observation: measured({ entryRouteFound: false, venuesConsulted }),
+        buyerCount: 0,
+      });
+      assert.doesNotMatch(
+        `${standing.headline} ${standing.detail}`,
+        /\b(safe|unsafe|scam|rug|honeypot|buy now|opportunity|promising|gem|moon)\b/i,
+      );
+    }
   });
 });

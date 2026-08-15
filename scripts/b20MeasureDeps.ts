@@ -15,6 +15,8 @@ import {
 import {
   b20MeasurementQuoteAssetV1,
   b20QuoteAssetIsEthScaledV1,
+  B20_VENUE_AERODROME_V1,
+  B20_VENUE_UNISWAP_V4_V1,
   OPPORTUNITY_QUOTE_ASSET_V1,
   exitProbeLadderV1,
   priceImpactLadderV1,
@@ -321,7 +323,15 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
 
     async analyseRoutes({ tokenAddress, launchBlock, profile, anchor }) {
       const quotes = createV4QuoteContextV1(controlReader.call, anchor.blockTag);
-      const lookup = Number.isSafeInteger(launchBlock) && launchBlock > 0
+      // Every venue this reading actually asks, in order. Recorded because
+      // `routeCoverage` cannot express it: 1,581 stored observations claim
+      // complete coverage over a search that never included Uniswap v4.
+      const venuesConsulted: string[] = [];
+      const searchable = Number.isSafeInteger(launchBlock) && launchBlock > 0;
+      // A launch with no usable block number is NOT a v4 search that found
+      // nothing — the search never ran, and the venue list says so by omission.
+      if (searchable) venuesConsulted.push(B20_VENUE_UNISWAP_V4_V1);
+      const lookup = searchable
         ? await v4Pools.lookup(tokenAddress, launchBlock)
         : ({ ok: false, refusal: 'no_pool_initialized' } as const);
       // The endpoint not answering is not evidence about the token. Carried
@@ -428,6 +438,7 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
             quoteAssetUsed: measuredAsset,
             positionAtomicUsed: positionAtomic,
             quoteAlignment: quotes.alignment(),
+            venuesConsulted,
           };
         }
         // No entry on v4 — fall through to Aerodrome, but remember whether the
@@ -435,6 +446,9 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
         v4Unreadable = v4Unreadable || trip.endpointDegraded;
         }
       }
+      // Aerodrome, the fallback. Recorded whether or not it finds anything —
+      // the point of the list is what was ASKED, not what answered.
+      venuesConsulted.push(B20_VENUE_AERODROME_V1);
       const analysis = await analyseExitV1({
         reader: aerodromeReader,
         tokenAddress: tokenAddress as `0x${string}`,
@@ -479,6 +493,7 @@ export function createB20MeasureDepsV1(input: B20MeasureDepsInputV1): Measuremen
         // through to it is genuinely mixed-block. This is the case the caveat
         // was written for, and the only one that should still carry it.
         quoteAlignment: 'latest_not_anchored',
+        venuesConsulted,
       };
     },
 

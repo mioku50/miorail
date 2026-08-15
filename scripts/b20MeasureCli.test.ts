@@ -77,6 +77,7 @@ const GOOD_ROUTES: RouteMeasurementV1 = {
   quoteAssetUsed: OPPORTUNITY_QUOTE_ASSET_V1,
   positionAtomicUsed: '100000000',
   quoteAlignment: 'latest_not_anchored',
+  venuesConsulted: ['uniswap-v4', 'aerodrome'],
   entryRouteHash: null,
   exitRouteHash: null,
   entrySourceKey: 'aerodrome|usdc>token:volatile',

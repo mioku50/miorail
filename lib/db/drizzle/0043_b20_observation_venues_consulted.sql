@@ -1,0 +1,30 @@
+-- A verdict is only as wide as the venues behind it.
+--
+-- Measured 2026-08-15 across every stored latest observation:
+--
+--   2,622  denominated in native ETH  — the Uniswap v4 path
+--   1,891  denominated in USDC        — and only TEN USDC pools exist
+--
+-- A USDC-denominated observation is therefore not a USDC pool. It is the
+-- fingerprint of the Aerodrome fallback: the v4 lookup found nothing, so the
+-- measurement asked Aerodrome, whose profile is denominated in USDC. That much
+-- is honest, and "entry priced on 19 of 1,891" is Aerodrome genuinely having no
+-- route to a B20 launch, not a defect.
+--
+-- What is not honest is what those rows CLAIM. 1,581 of them carry
+-- route_coverage = 'complete' — every configured venue answered — and 1,662 of
+-- them were last measured before 2026-08-10, which is when Uniswap v4 entered
+-- the route search at all. For those launches Miorail never asked the venue
+-- where B20 tokens trade, and nothing in the row said so: measurement_version
+-- is the same string 'b20-observation/v1' for both paths.
+--
+-- NULL means UNKNOWN, not "none". Every existing row is null because nobody
+-- recorded the answer then, and reading that silence as "searched no venues"
+-- would invent a fact in the other direction.
+--
+-- Deliberately outside observationEvidenceHashV1. That hash covers what was
+-- measured about the TOKEN and doubles as the idempotency key, so folding a
+-- new field into it would turn any block measured across a deploy into an
+-- integrity conflict rather than a repeat.
+ALTER TABLE "b20_opportunity_observations"
+	ADD COLUMN IF NOT EXISTS "venues_consulted" text[];

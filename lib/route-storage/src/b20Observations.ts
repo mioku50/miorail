@@ -110,6 +110,22 @@ export const B20OpportunityObservationV1Schema = z
     routeCoverage: z.enum(['complete', 'partial']),
     viableRouteConfirmed: z.boolean(),
     bestRouteConfirmed: z.boolean(),
+    /**
+     * Which venue families this reading actually asked.
+     *
+     * Null on every row written before the field existed, and null means
+     * UNKNOWN rather than "none" — 1,662 stored launches carry a verdict from
+     * before Uniswap v4 was in the route search at all, and 1,581 of them
+     * claim `routeCoverage: 'complete'` over a venue set that did not include
+     * the venue where B20 tokens trade.
+     *
+     * Deliberately NOT part of `observationEvidenceHashV1`. That hash covers
+     * what was measured about the token, and it is also the idempotency key:
+     * folding a new field into it would turn any block measured across a
+     * deploy into an integrity conflict rather than a repeat. This is a
+     * property of the reading's coverage, recorded so a card can state it.
+     */
+    venuesConsulted: z.array(z.string().min(1).max(64)).max(8).nullable(),
 
     controlsSnapshotHash: HexHash.nullable(),
     controlsBlockNumber: Uint.nullable(),

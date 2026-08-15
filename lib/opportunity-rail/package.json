@@ -8,7 +8,8 @@
     ".": "./src/index.ts",
     "./marketRails": "./src/marketRails.ts",
     "./exitStanding": "./src/exitStanding.ts",
-    "./quoteAsset": "./src/quoteAsset.ts"
+    "./quoteAsset": "./src/quoteAsset.ts",
+    "./venues": "./src/venues.ts"
   },
   "scripts": {
     "test": "NODE_ENV=test node --import tsx --test test/*.test.ts",
