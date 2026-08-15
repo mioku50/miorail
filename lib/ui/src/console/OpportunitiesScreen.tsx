@@ -142,7 +142,10 @@ export interface OpportunityCardViewV1 {
 
 export interface B20CopilotAnswerViewV1 {
   schemaVersion: 'b20-copilot-answer/v1';
-  answerSource: 'deterministic_evidence';
+  /** Which answer the reader is looking at. `verified_narration` is a model's
+   * rephrasing of the SAME evidence, kept only after every number in it was
+   * found in that evidence; anything else falls back to the first. */
+  answerSource: 'deterministic_evidence' | 'verified_narration';
   questionKind:
     | 'summary'
     | 'why_rejected'
@@ -471,6 +474,15 @@ function OpportunityCard({
           {answer && (
             <div className="b20-answer" aria-live="polite">
               <p>{answer.answer}</p>
+              {/* Which answer this is. A rephrasing by a model is kept only
+                  after every number in it was found in the evidence below, and
+                  a reader is entitled to know which of the two they are
+                  reading rather than inferring it from the prose. */}
+              <p className="lnote">
+                {answer.answerSource === 'verified_narration'
+                  ? 'Rephrased from the evidence below. Every figure in it was checked against that evidence.'
+                  : 'Built directly from the stored observation.'}
+              </p>
               {answer.facts.length > 0 && (
                 <dl className="b20-answer-facts">
                   {answer.facts.map((fact) => (

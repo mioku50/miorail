@@ -3949,7 +3949,17 @@ const B20CopilotFactV1Schema = z
 export const B20CopilotAskResponseV1Schema = z
   .object({
     schemaVersion: z.literal('b20-copilot-answer/v1'),
-    answerSource: z.literal('deterministic_evidence'),
+    /**
+     * Which of the two answers the reader got.
+     *
+     * `deterministic_evidence` is the sentence this rail builds from the stored
+     * observation. `verified_narration` is a model's rephrasing of the SAME
+     * evidence bundle, kept only after every number in it was found in that
+     * bundle and no recommendation vocabulary was used. The distinction is on
+     * the wire because a reader deserves to know which one they are reading,
+     * and because a surface may choose to show only the first.
+     */
+    answerSource: z.enum(['deterministic_evidence', 'verified_narration']),
     questionKind: B20CopilotQuestionKindV1Schema,
     subject: z
       .object({

@@ -5,6 +5,7 @@ import {
   resolvePaidB20SimulationPricingV1,
 } from '../lib/paidIntelligenceConfig.js';
 import { logger } from '@mioagent/utils';
+import { createLlmProvider, type LlmProvider } from '@mioagent/llm';
 import { safeZodIssuesV1 } from '../lib/safeZodIssues.js';
 import {
   B20InspectRequestV1Schema,
@@ -136,6 +137,8 @@ import {
   syncB20EntryRouteProofV1,
 } from '../lib/b20EntryRouteProof.js';
 import { answerB20CopilotV1, b20ObservationRefMatchesV1 } from '../lib/b20Copilot.js';
+import { narrateB20AnswerV1 } from '../lib/b20Answer.js';
+import { planB20AnswerV1 } from '../lib/b20AnswerPlan.js';
 
 // ---------------------------------------------------------------------------
 // T67C/T68F — the B20 Control and explicit entry rail.
@@ -212,6 +215,22 @@ export const b20RouteRuntime = {
     createDatabaseB20EntryRouteProofRepository(client),
   receiptReader: createViemBaseReceiptReader,
   observations: (): B20ObservationRepositoryV1 => createDatabaseB20ObservationRepository(client),
+  /**
+   * The narrator, or null when none is configured.
+   *
+   * A seam rather than a direct call, so a test can hand in a provider that
+   * says something wrong and assert that the reader never sees it. Null is an
+   * ordinary state: without a provider this rail answers exactly as it did
+   * before Stage 06, and `answerSource` says which one the reader got.
+   */
+  narrator: (): LlmProvider | null => {
+    try {
+      return createLlmProvider();
+    } catch {
+      // A misconfigured provider is not a reason to fail a read-only answer.
+      return null;
+    }
+  },
   launchPools: (): B20LaunchPoolRepositoryV1 => createDatabaseB20LaunchPoolRepository(client),
   /** Checked separately again: a server without 0028/0029 can still inspect,
    * watch and certify — it simply has no Discover feed, and says so rather
@@ -1142,10 +1161,55 @@ b20ControlRouter.post('/opportunities/b20/copilot/ask', async (req: Request, res
       }),
       now,
     });
+    // Stage 06 — the deterministic answer is built FIRST and remains the
+    // answer. The narrator is offered the same evidence and replaces that
+    // sentence only by passing every check; anything else and the reader gets
+    // exactly what shipped before a model was involved.
+    const deterministic = answerB20CopilotV1({
+      card,
+      history: found.history,
+      question: parsed.data.question,
+    });
+    const plan = planB20AnswerV1({ question: parsed.data.question, tokenAddress: parsed.data.tokenAddress });
+    if (plan.refusal) {
+      // Out of scope, and refused without spending a narration on it. The
+      // evidence the deterministic answer gathered still ships, because the
+      // question being unanswerable does not make the card less true.
+      res.json(
+        B20CopilotAskResponseV1Schema.parse({
+          ...deterministic,
+          answer: plan.refusal,
+          answerSource: 'deterministic_evidence',
+        }),
+      );
+      return;
+    }
+
+    const narrated = await narrateB20AnswerV1({
+      question: parsed.data.question,
+      bundle: {
+        intent: plan.intent,
+        facts: deterministic.facts.map((fact) => ({ label: fact.label, value: fact.value })),
+        missing: deterministic.missingEvidence,
+        caveats: deterministic.caveats,
+      },
+      deterministic: deterministic.answer,
+      provider: b20RouteRuntime.narrator(),
+    });
+    if (narrated.narrationRejectedBecause) {
+      // Operator-facing only. A reader is never shown why a sentence they
+      // cannot see was discarded.
+      logger.info('b20 copilot narration not used', {
+        intent: plan.intent,
+        because: narrated.narrationRejectedBecause,
+      });
+    }
     res.json(
-      B20CopilotAskResponseV1Schema.parse(
-        answerB20CopilotV1({ card, history: found.history, question: parsed.data.question }),
-      ),
+      B20CopilotAskResponseV1Schema.parse({
+        ...deterministic,
+        answer: narrated.answer,
+        answerSource: narrated.answerSource,
+      }),
     );
   } catch (error) {
     storageFailure(res, error, 'b20-copilot-ask');

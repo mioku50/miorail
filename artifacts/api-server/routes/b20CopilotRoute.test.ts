@@ -121,6 +121,10 @@ beforeEach(() => {
   b20RouteRuntime.discoverAvailable = async () => true;
   b20RouteRuntime.observations = repository;
   b20RouteRuntime.now = () => new Date('2026-08-13T19:10:00.000Z');
+  // No narrator unless a test hands one in. Left to the real factory, a unit
+  // test would reach a provider over the network the moment a key happened to
+  // be in the environment.
+  b20RouteRuntime.narrator = () => null;
 });
 
 afterEach(() => {
@@ -179,5 +183,102 @@ describe('B20 Ask-this-card HTTP boundary', () => {
     }, false);
     assert.equal(unauthenticated.status, 401);
     assert.equal(unauthenticated.body.code, 'authentication_required');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stage 06 — a model may rephrase this answer, and may not change it.
+//
+// The deterministic sentence is built first and stays the answer. A narration
+// replaces it only by passing the verifier, so these tests are written from the
+// outside: whatever the provider says, what does the HTTP response contain?
+// ---------------------------------------------------------------------------
+
+function narrator(content: string) {
+  return () => ({ generate: async () => ({ message: { role: 'assistant' as const, content } }) });
+}
+
+const ASK_V1 = {
+  schemaVersion: 'b20-copilot-ask/v1',
+  tokenAddress: TOKEN,
+  observationId: OBSERVATION_ID,
+  evidenceHash: EVIDENCE_HASH,
+  question: 'What happened here?',
+};
+
+describe('the narrator is walled in on both sides', () => {
+  test('with no provider the answer is exactly what shipped before', async () => {
+    const response = await ask(ASK_V1);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.answerSource, 'deterministic_evidence');
+  });
+
+  test('a narration that only rephrases the evidence is used, and is labelled', async () => {
+    b20RouteRuntime.narrator = narrator(
+      'Miorail priced a purchase against the measured pool and could not price a sale back.',
+    ) as never;
+    const response = await ask(ASK_V1);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.answerSource, 'verified_narration');
+    assert.match(response.body.answer, /could not price a sale/);
+  });
+
+  test('a narration with an invented number never reaches the response', async () => {
+    // The failure this whole stage exists to prevent: a fluent sentence
+    // carrying a figure nobody measured, published under Miorail's name.
+    b20RouteRuntime.narrator = narrator('The round trip came in at 2.4% across 812 wallets.') as never;
+    const response = await ask(ASK_V1);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.answerSource, 'deterministic_evidence');
+    assert.doesNotMatch(response.body.answer, /2\.4|812/);
+  });
+
+  test('a narration that recommends never reaches the response', async () => {
+    b20RouteRuntime.narrator = narrator('No exit route found — this looks like a scam, avoid it.') as never;
+    const response = await ask(ASK_V1);
+    assert.equal(response.body.answerSource, 'deterministic_evidence');
+    assert.doesNotMatch(response.body.answer, /scam/i);
+  });
+
+  test('the evidence beside the answer is the deterministic one either way', async () => {
+    // The model rephrases the sentence. It does not get to touch the facts,
+    // the named absences or the caveats a reader checks it against.
+    const plain = await ask(ASK_V1);
+    b20RouteRuntime.narrator = narrator('A purchase priced and a sale did not.') as never;
+    const narrated = await ask(ASK_V1);
+    assert.equal(narrated.body.answerSource, 'verified_narration');
+    assert.deepEqual(narrated.body.facts, plain.body.facts);
+    assert.deepEqual(narrated.body.missingEvidence, plain.body.missingEvidence);
+    assert.deepEqual(narrated.body.caveats, plain.body.caveats);
+  });
+
+  test('an out-of-scope question is refused without asking a model at all', async () => {
+    let called = 0;
+    b20RouteRuntime.narrator = (() => ({
+      generate: async () => {
+        called += 1;
+        return { message: { role: 'assistant' as const, content: 'anything' } };
+      },
+    })) as never;
+    const response = await ask({ ...ASK_V1, question: 'Should I buy this?' });
+    assert.equal(response.status, 200);
+    assert.equal(called, 0, 'a refused question must not spend a narration');
+    assert.equal(response.body.answerSource, 'deterministic_evidence');
+    assert.match(response.body.answer, /does not recommend/i);
+    // The card's evidence still ships: the question being unanswerable does
+    // not make the measurement less true.
+    assert.ok(response.body.facts.length > 0);
+  });
+
+  test('a provider that throws leaves the answer intact', async () => {
+    b20RouteRuntime.narrator = (() => ({
+      generate: async () => {
+        throw new Error('connect ECONNREFUSED https://api.example.com/v1?key=sk-secret');
+      },
+    })) as never;
+    const response = await ask(ASK_V1);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.answerSource, 'deterministic_evidence');
+    assert.doesNotMatch(JSON.stringify(response.body), /sk-secret/);
   });
 });
