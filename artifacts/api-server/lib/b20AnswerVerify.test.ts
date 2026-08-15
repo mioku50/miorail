@@ -126,3 +126,55 @@ describe('shape', () => {
     assert.ok(verdict.violations.length >= 3, `expected several violations, got ${verdict.violations.length}`);
   });
 });
+
+describe('formatting a card cannot render is stripped, not rejected', () => {
+  test('bold survives as its own words', () => {
+    // Observed live: the provider returned "found an **entry route**", and the
+    // Discover card renders plain text, so the asterisks would have shipped.
+    const verdict = verify('Miorail found an **entry route** and no sale priced.');
+    assert.equal(verdict.ok, true);
+    assert.equal(verdict.narration, 'Miorail found an entry route and no sale priced.');
+  });
+
+  test('inline code and headings go too', () => {
+    assert.equal(verify('## Summary\nThe reason is `no_exit_route`.').narration, 'Summary\nThe reason is no_exit_route.');
+  });
+
+  test('a bullet keeps its line rather than losing it', () => {
+    assert.match(verify('- Round trip 1.3%\n- 62 wallets').narration, /• Round trip 1\.3%/);
+  });
+
+  test('stripping cannot smuggle a number past the check', () => {
+    // The verdict carries the string that will be SHOWN, so a caller cannot
+    // verify one text and display another.
+    const verdict = verify('The round trip was **2.4%**.');
+    assert.equal(verdict.ok, false);
+    assert.match(verdict.violations.join(' '), /2\.4/);
+  });
+});
+
+describe('a Russian-formatted number is one number', () => {
+  test('a space-separated thousands group is joined', () => {
+    // Measured live 2026-08-15: the provider answered in Russian and wrote
+    // "49 929 328". It arrived as 49, 929 and 328 — none of them in the
+    // evidence — so a correct answer was rejected for its punctuation.
+    assert.deepEqual(numbersInV1('блок 49 929 328'), ['49929328']);
+    assert.deepEqual(numbersInV1('1 139 запусков'), ['1139']);
+  });
+
+  test('a non-breaking and a thin space count too', () => {
+    assert.deepEqual(numbersInV1('49 929 328'), ['49929328']);
+    assert.deepEqual(numbersInV1('49 929 328'), ['49929328']);
+  });
+
+  test('separate small numbers are NOT merged', () => {
+    // The joining rule is exact groups of three, so ordinary prose keeps its
+    // numbers apart. Merging here would be the dangerous direction.
+    assert.deepEqual(numbersInV1('3 4 5'), ['3', '4', '5']);
+    assert.deepEqual(numbersInV1('62 wallets and 12 more'), ['62', '12']);
+  });
+
+  test('a Russian answer quoting the block verifies', () => {
+    assert.equal(verify('Измерено на блоке 49 929 328, продажа не оценена.').ok, true);
+  });
+});

@@ -23,17 +23,50 @@
 //      is not a guarantee, and a sentence saying "you will be able to sell" is
 //      wrong however true the numbers around it are.
 //
+// A deliberate over-rejection, so a later reader does not "fix" it: a number
+// from the QUESTION is not evidence either. Asked "can I get out with a 100
+// USDC position", a narrator that answers with 100 in it is refused, because
+// nothing distinguishes quoting the reader from asserting the figure as a
+// measurement — and the bundle for an ETH-quoted pool has nothing to do with
+// 100 USDC. That prompt falls back to the deterministic answer, which handles
+// it well. Measured live 2026-08-15.
+//
 // Over-rejection is safe: a rejected narration falls back to the deterministic
 // answer, which is what shipped before any of this existed. Under-rejection is
 // not. So the rules are strict on purpose, and the tests below the fold pin
 // exactly which paraphrases are refused.
 // ---------------------------------------------------------------------------
 
+/**
+ * Removes formatting a card cannot render.
+ *
+ * Observed against the live provider on 2026-08-15: a narration came back as
+ * "found an **entry route but no supported exit route**", and the Discover card
+ * renders plain text — so the asterisks would have shipped. Stripped rather
+ * than rejected: it is a cosmetic defect, and falling back to the
+ * deterministic sentence over one is the wrong trade.
+ *
+ * Bold, italics, inline code and heading markers only. Nothing that could
+ * change a number or delete a qualifier.
+ */
+export function stripNarrationFormattingV1(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/gs, '$1')
+    .replace(/(^|[\s(])_(.+?)_(?=[\s.,;:!?)]|$)/gs, '$1$2')
+    .replace(/`+/g, '')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*[-*]\s+/gm, '• ')
+    .trim();
+}
+
 export interface B20NarrationVerdictV1 {
   ok: boolean;
   /** Human-readable, one per rule broken. Logged, never shown to a user —
    * the user gets the deterministic answer instead. */
   violations: string[];
+  /** The narration as it would be SHOWN: formatting stripped. Returned so the
+   * caller cannot verify one string and display another. */
+  narration: string;
 }
 
 /** Longest a narration may be. A model that starts explaining the product
@@ -64,7 +97,16 @@ const OVERCLAIM_V1 =
  */
 export function numbersInV1(text: string): string[] {
   const found: string[] = [];
-  for (const match of text.matchAll(/-?(?:\d[\d,]*)?\.?\d+/g)) {
+  // Russian writes thousands with a space: 49 929 328. Measured live
+  // 2026-08-15, that arrived as three separate numbers — 49, 929, 328 — none
+  // of which was in the evidence, so a correct Russian answer was rejected for
+  // its punctuation. Only exact groups of three are joined, so "in 3 4 5"
+  // stays three numbers rather than becoming 345.
+  const normalised = text.replace(
+    /(\d{1,3})((?:[\u0020\u00a0\u202f\u2009]\d{3})+)/g,
+    (_whole, head: string, rest: string) => head + rest.replace(/[\u0020\u00a0\u202f\u2009]/g, ''),
+  );
+  for (const match of normalised.matchAll(/-?(?:\d[\d,]*)?\.?\d+/g)) {
     const raw = match[0].replace(/,/g, '');
     if (raw === '' || raw === '-' || raw === '.') continue;
     const value = Number(raw);
@@ -88,10 +130,10 @@ export function verifyB20NarrationV1(input: {
   evidence: readonly string[];
 }): B20NarrationVerdictV1 {
   const violations: string[] = [];
-  const narration = input.narration.trim();
+  const narration = stripNarrationFormattingV1(input.narration);
 
   if (narration.length === 0) {
-    return { ok: false, violations: ['the narration is empty'] };
+    return { ok: false, violations: ['the narration is empty'], narration };
   }
   if (narration.length > B20_NARRATION_MAX_CHARS_V1) {
     violations.push(`the narration is ${narration.length} characters, over the ${B20_NARRATION_MAX_CHARS_V1} limit`);
@@ -116,5 +158,5 @@ export function verifyB20NarrationV1(input: {
     violations.push(`claims an outcome the measurement cannot carry: "${overclaim[0].trim()}"`);
   }
 
-  return { ok: violations.length === 0, violations };
+  return { ok: violations.length === 0, violations, narration };
 }

@@ -140,5 +140,7 @@ export async function narrateB20AnswerV1(input: {
   });
   if (!verdict.ok) return keep(verdict.violations);
 
-  return { answer: narration, answerSource: 'verified_narration', narrationRejectedBecause: null };
+  // The VERIFIED string, not the raw one. Verifying one text and displaying
+  // another is how a check stops checking what ships.
+  return { answer: verdict.narration, answerSource: 'verified_narration', narrationRejectedBecause: null };
 }

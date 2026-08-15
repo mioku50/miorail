@@ -27,6 +27,7 @@
     "proofs:publish-share": "tsx scripts/publish_route_proof_share.ts",
     "b20:probe-exit-size": "tsx scripts/probe_b20_exit_size.ts",
     "b20:probe-pool-window": "tsx scripts/probe_b20_pool_window.ts",
+    "b20:probe-narrator": "tsx scripts/probe_b20_narrator.ts",
     "outcomes:backfill": "tsx scripts/outcomes_backfill.ts",
     "reliability:rebuild": "tsx scripts/reliability_rebuild.ts",
     "o1:compat": "tsx scripts/o1_compat.ts",

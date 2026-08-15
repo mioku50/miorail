@@ -1335,6 +1335,9 @@ importers:
       '@mioagent/intent-engine':
         specifier: workspace:*
         version: link:../lib/intent-engine
+      '@mioagent/llm':
+        specifier: workspace:*
+        version: link:../lib/llm
       '@mioagent/nft-engine':
         specifier: workspace:*
         version: link:../lib/nft-engine
