@@ -3,7 +3,10 @@ import {
   B20_OBSERVATION_UNMEASURED_COPY_V1,
   B20_NOT_MEASURED_DIMENSIONS_V1,
   b20PipelineCopyV1,
+  b20CardStandingGroupV1,
+  B20_STANDING_GROUP_COPY_V1,
   type B20OpportunityCardV1,
+  type B20StandingGroupV1,
 } from '@mioagent/opportunity-rail';
 import { readDiscoverFeedV1, pipelineStatusV1, b20RouteRuntime } from '../b20Control.js';
 
@@ -100,6 +103,17 @@ export interface McpOpportunityV1 {
     reasonCode: string | null;
     headline: string;
     detail: string;
+    /** What the measurement concluded, beside what it recorded. `aboutToken`
+     * is false when the card describes Miorail's own limits, and a reader that
+     * paraphrases such a card as a property of the token is wrong. */
+    standing: {
+      kind: string;
+      headline: string;
+      detail: string;
+      aboutToken: boolean;
+      section: B20StandingGroupV1;
+      sectionLabel: string;
+    };
     freshness: 'fresh' | 'stale';
     measuredAt: string;
     staleAfter: string;
@@ -181,6 +195,18 @@ function opportunityFromCardV1(card: B20OpportunityCardV1): McpOpportunityV1 {
           reasonCode: observation.reasonCode,
           headline: observation.headline,
           detail: observation.detail,
+          // What the measurement CONCLUDED, beside what it recorded. `state`
+          // and `reasonCode` are the evidence vocabulary; a model asked "is
+          // this token any good" will reach for a conclusion, so the one that
+          // exists is here rather than left to be improvised from a reason
+          // code. `aboutToken: false` is the load-bearing half: it marks a card
+          // that describes Miorail's own limits, which must never be
+          // paraphrased into a finding about the token.
+          standing: {
+            ...observation.standing,
+            section: b20CardStandingGroupV1(card),
+            sectionLabel: B20_STANDING_GROUP_COPY_V1[b20CardStandingGroupV1(card)].label,
+          },
           freshness: observation.freshness,
           measuredAt: observation.measuredAt,
           staleAfter: observation.staleAfter,
@@ -286,6 +312,7 @@ export async function miorailDiscoverStatusV1(): Promise<Record<string, unknown>
 export async function miorailListOpportunitiesV1(input: {
   state?: 'all' | 'candidate' | 'provisional' | 'rejected' | 'unmeasured';
   freshness?: 'all' | 'fresh' | 'stale';
+  standing?: B20StandingGroupV1 | 'all';
   limit?: number;
   cursor?: string | null;
 }): Promise<Record<string, unknown>> {
@@ -299,6 +326,7 @@ export async function miorailListOpportunitiesV1(input: {
       cursor: input.cursor ?? null,
       state: input.state === undefined || input.state === 'all' ? 'all' : input.state,
       freshness: input.freshness ?? 'all',
+      standing: input.standing ?? 'all',
     });
     return {
       pipeline: { state: feed.pipeline.state, summary: feed.pipeline.message },

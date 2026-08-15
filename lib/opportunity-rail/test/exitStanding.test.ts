@@ -1,7 +1,14 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { b20ExitStandingV1 } from '../src/exitStanding.js';
+import {
+  B20_STANDING_GROUPS_V1,
+  B20_STANDING_GROUP_COPY_V1,
+  b20CardStandingGroupV1,
+  b20ExitStandingV1,
+  b20StandingGroupV1,
+  type B20ExitStandingKindV1,
+} from '../src/exitStanding.js';
 
 // ---------------------------------------------------------------------------
 // One sentence used to cover four different situations.
@@ -165,5 +172,118 @@ describe('no branch reads as advice', () => {
     assert.equal(aboutToken({ observation: measured({}), buyerCount: null }), false);
     assert.equal(aboutToken({ observation: measured({}), buyerCount: 0 }), true);
     assert.equal(aboutToken({ observation: measured({}), buyerCount: 5 }), true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The four sections.
+//
+// Eight kinds is the right resolution for a measurement and the wrong one for a
+// screen. What must survive the collapse is the one property the split exists
+// for: a card describing MIORAIL never lands in a section a reader would take
+// as a finding about a token.
+// ---------------------------------------------------------------------------
+
+const EVERY_KIND_V1: readonly B20ExitStandingKindV1[] = [
+  'not_measured',
+  'measurement_incomplete',
+  'venue_not_found',
+  'no_buyers_yet',
+  'bought_not_sellable',
+  'sale_unpriced',
+  'ruled_out',
+  'two_sided',
+];
+
+describe('every card lands in exactly one section', () => {
+  test('a standing about Miorail can never reach a token section', () => {
+    for (const kind of EVERY_KIND_V1) {
+      assert.equal(
+        b20StandingGroupV1({ kind, aboutToken: false }),
+        'miorail_limit',
+        `${kind} escaped the Miorail section when aboutToken was false`,
+      );
+    }
+  });
+
+  test('the three kinds that measure the token get their own sections', () => {
+    assert.equal(b20StandingGroupV1({ kind: 'bought_not_sellable', aboutToken: true }), 'bought_not_sellable');
+    assert.equal(b20StandingGroupV1({ kind: 'no_buyers_yet', aboutToken: true }), 'no_buyers_yet');
+    // A rejection and a provisional pass are one section: both mean a purchase
+    // AND a sale priced against the same pool, which is the evidence. The
+    // verdict that followed is on the card, in its own headline.
+    assert.equal(b20StandingGroupV1({ kind: 'ruled_out', aboutToken: true }), 'two_sided');
+    assert.equal(b20StandingGroupV1({ kind: 'two_sided', aboutToken: true }), 'two_sided');
+  });
+
+  test('the real standings agree with the flag they were built with', () => {
+    // Run through the ACTUAL constructor rather than hand-made pairs: if a
+    // branch ever flips its `aboutToken`, its section must move with it.
+    const cases: { input: Parameters<typeof b20ExitStandingV1>[0]; group: string }[] = [
+      { input: { observation: null, buyerCount: null }, group: 'miorail_limit' },
+      { input: { observation: measured({ reasonCode: 'route_search_degraded' }), buyerCount: 3 }, group: 'miorail_limit' },
+      { input: { observation: measured({ entryRouteFound: false }), buyerCount: 3 }, group: 'miorail_limit' },
+      { input: { observation: measured({}), buyerCount: null }, group: 'miorail_limit' },
+      { input: { observation: measured({}), buyerCount: 0 }, group: 'no_buyers_yet' },
+      { input: { observation: measured({}), buyerCount: 62 }, group: 'bought_not_sellable' },
+      { input: { observation: measured({ exitRouteFound: true }), buyerCount: 62 }, group: 'two_sided' },
+      {
+        input: { observation: measured({ state: 'provisional', exitRouteFound: true }), buyerCount: 62 },
+        group: 'two_sided',
+      },
+    ];
+    for (const { input, group } of cases) {
+      const standing = b20ExitStandingV1(input);
+      assert.equal(b20StandingGroupV1(standing), group, `${standing.kind} was filed under the wrong section`);
+    }
+  });
+
+  test('a launch nobody has measured is Miorail’s gap, not a finding', () => {
+    // 1,220 stored launches had no observation at all on 2026-08-15. Filing
+    // them anywhere else would publish a backlog as a verdict.
+    assert.equal(b20CardStandingGroupV1({ observation: null }), 'miorail_limit');
+  });
+
+  test('a card carries its observation’s own section', () => {
+    assert.equal(
+      b20CardStandingGroupV1({
+        observation: { standing: b20ExitStandingV1({ observation: measured({}), buyerCount: 62 }) },
+      }),
+      'bought_not_sellable',
+    );
+  });
+});
+
+describe('a section header states what it found without recommending it', () => {
+  test('every section has copy, in the declared order', () => {
+    assert.deepEqual(
+      [...B20_STANDING_GROUPS_V1],
+      ['bought_not_sellable', 'two_sided', 'no_buyers_yet', 'miorail_limit'],
+    );
+    for (const group of B20_STANDING_GROUPS_V1) {
+      const copy = B20_STANDING_GROUP_COPY_V1[group];
+      assert.ok(copy.label.length > 0 && copy.chip.length > 0 && copy.note.length > 0, `${group} has empty copy`);
+      // The chip sits in a filter row, so it has to stay short enough to read.
+      assert.ok(copy.chip.length <= 18, `${group} chip is too long for a filter: ${copy.chip}`);
+    }
+  });
+
+  test('no section header reads as advice or as an accusation', () => {
+    for (const group of B20_STANDING_GROUPS_V1) {
+      const copy = B20_STANDING_GROUP_COPY_V1[group];
+      assert.doesNotMatch(
+        `${copy.label} ${copy.chip} ${copy.note}`,
+        /\b(safe|unsafe|scam|rug|honeypot|buy now|opportunity|promising|gem|moon|avoid)\b/i,
+        `${group} used recommendation or accusation vocabulary`,
+      );
+    }
+  });
+
+  test('the Miorail section says outright that it is not about the token', () => {
+    // The whole reason the section exists. 346 of 1,139 live cards sit in it.
+    assert.match(
+      B20_STANDING_GROUP_COPY_V1.miorail_limit.note,
+      /Nothing in this section is a statement about the token/i,
+    );
   });
 });

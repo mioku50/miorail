@@ -60,6 +60,107 @@ export interface B20ExitStandingInputV1 {
 const NOT_A_RECOMMENDATION_V1 =
   'This describes one stored measurement, not a recommendation.';
 
+// ---------------------------------------------------------------------------
+// The four sections a reader actually needs.
+//
+// Eight kinds is the right resolution for a measurement and the wrong one for a
+// screen. Measured against the live 48-hour feed on 2026-08-15 (1,139 canonical
+// launches):
+//
+//   715  no_buyers_yet           nobody has bought it
+//   278  venue_not_found     ─┐
+//    51  sale_unpriced        ├─ 346 cards describing MIORAIL, not a token
+//    17  measurement_incomplete ─┘
+//    70  bought_not_sellable     buyers exist and a sale would not price
+//     8  ruled_out               both directions priced, reference check failed
+//     0  two_sided
+//
+// Two facts follow from those numbers and both shape the grouping. Thirty per
+// cent of the feed is Miorail talking about itself, and it belongs in a section
+// that says so. And the 70 cards that carry the product's actual finding are
+// spread across roughly 46 pages of 25, so a section header alone would never
+// put one in front of anybody — which is why the feed read takes a group filter
+// rather than leaving the split to the client.
+//
+// The order is not a ranking of tokens. It is how much of the card is about the
+// token at all, strongest first.
+// ---------------------------------------------------------------------------
+
+export type B20StandingGroupV1 =
+  | 'bought_not_sellable'
+  | 'two_sided'
+  | 'no_buyers_yet'
+  | 'miorail_limit';
+
+/** Display order. Exported so a screen cannot invent its own. */
+export const B20_STANDING_GROUPS_V1 = [
+  'bought_not_sellable',
+  'two_sided',
+  'no_buyers_yet',
+  'miorail_limit',
+] as const;
+
+/**
+ * Which section a standing belongs to.
+ *
+ * `aboutToken` is checked FIRST and decides the answer on its own. A kind that
+ * describes Miorail's own limits can never reach a token section, whatever else
+ * is true of it — that is the property the whole split exists to guarantee, and
+ * putting the check anywhere else would make it depend on the kind list staying
+ * in sync by hand.
+ */
+export function b20StandingGroupV1(standing: {
+  kind: B20ExitStandingKindV1;
+  aboutToken: boolean;
+}): B20StandingGroupV1 {
+  if (!standing.aboutToken) return 'miorail_limit';
+  if (standing.kind === 'bought_not_sellable') return 'bought_not_sellable';
+  if (standing.kind === 'no_buyers_yet') return 'no_buyers_yet';
+  // `ruled_out` and `two_sided` are one section: both mean a purchase AND a
+  // sale priced against the same pool. They differ in the verdict, which the
+  // card's own headline states.
+  return 'two_sided';
+}
+
+/**
+ * The same answer for a whole card, including one that has no observation.
+ *
+ * A stored launch nobody has measured is `not_measured`, which is a limit of
+ * Miorail's own coverage — so it belongs in the section that says so, never in
+ * a section a reader would take as a finding.
+ */
+export function b20CardStandingGroupV1(card: {
+  observation: { standing: { kind: B20ExitStandingKindV1; aboutToken: boolean } } | null;
+}): B20StandingGroupV1 {
+  if (!card.observation) return 'miorail_limit';
+  return b20StandingGroupV1(card.observation.standing);
+}
+
+export const B20_STANDING_GROUP_COPY_V1: Readonly<
+  Record<B20StandingGroupV1, { label: string; chip: string; note: string }>
+> = {
+  bought_not_sellable: {
+    label: 'Bought, and a sale would not price',
+    chip: 'Bought, no sale',
+    note: 'Wallets bought these in the launch window, and Miorail could not price a sale back at its reference size. This is the measurement Exit-First exists to make. It is not an accusation about the token and not a recommendation about it.',
+  },
+  two_sided: {
+    label: 'Both directions priced',
+    chip: 'Both priced',
+    note: 'Miorail quoted a purchase and a sale against the same measured pool. Every quote here was taken before an entry moved that pool, so none of them is an executable quote.',
+  },
+  no_buyers_yet: {
+    label: 'No buyer yet',
+    chip: 'No buyer yet',
+    note: 'Nobody bought in the measured launch window, so the pool holds no quote asset to sell into and a sale cannot be priced. That is an absent market, not a defect found in the token.',
+  },
+  miorail_limit: {
+    label: 'Miorail could not measure these',
+    chip: 'Not measurable',
+    note: 'Every card below describes a limit of Miorail’s own measurement — a venue it did not find, a call that did not answer, a buyer window still counting. Nothing in this section is a statement about the token.',
+  },
+};
+
 export function b20ExitStandingV1(input: B20ExitStandingInputV1): B20ExitStandingV1 {
   const observation = input.observation;
 
@@ -67,7 +168,11 @@ export function b20ExitStandingV1(input: B20ExitStandingInputV1): B20ExitStandin
     return {
       kind: 'not_measured',
       headline: 'Not measured yet.',
-      detail: 'Miorail has stored this launch but has not measured it. Nothing here is a statement about the token.',
+      // Deliberately not an echo of the headline. The sentence under a verdict
+      // has to add something; one unmeasured card once said "not measured"
+      // five separate times, and a card that repeats itself reads as a card
+      // with nothing to say.
+      detail: 'Miorail has stored this launch and has taken no reading of it yet. Nothing here is a statement about the token.',
       aboutToken: false,
     };
   }

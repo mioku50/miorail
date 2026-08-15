@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { B20_STANDING_GROUPS_V1 } from '@mioagent/opportunity-rail';
 import {
   MCP_DEFAULT_PAGE_V1,
   MCP_LEADER_DIMENSIONS_V1,
@@ -102,12 +103,20 @@ export function createMiorailMcpServerV1(): McpServer {
 
 Each result carries a state you must keep: "provisional" (measured, but before any entry moved the pool — NOT qualified, NOT a recommendation), "rejected" (a specific measured condition was not met — not a safety verdict), or "unmeasured" (Miorail could not complete a reading — says nothing about the token).
 
-Numbers may be null. A null round-trip cost means it was not measured; it does not mean zero, free or cheap. Results also include the exact display-safe Discover Card plus measured route sources, pool-hook permissions and completed launch-window buying evidence. Hook permissions are not behavior, and launch-window buying is not current holdings.`,
+Numbers may be null. A null round-trip cost means it was not measured; it does not mean zero, free or cheap. Results also include the exact display-safe Discover Card plus measured route sources, pool-hook permissions and completed launch-window buying evidence. Hook permissions are not behavior, and launch-window buying is not current holdings.
+
+Every measurement also carries a "standing": what the reading CONCLUDED, with an "aboutToken" flag. When aboutToken is false the card is describing a limit of Miorail's own measurement — a venue it did not find, a call that did not answer — and you must not report it as a property of the token. Use the "standing" filter to ask for one section instead of reading the whole feed: most launches sit in "no_buyers_yet" and "miorail_limit".`,
       inputSchema: {
         state: z
           .enum(['all', 'candidate', 'provisional', 'rejected', 'unmeasured'])
           .optional()
           .describe('Filter by measurement state. Default "all".'),
+        standing: z
+          .enum(['all', ...B20_STANDING_GROUPS_V1])
+          .optional()
+          .describe(
+            'Filter by what the measurement concluded. "bought_not_sellable": wallets bought and Miorail could not price a sale. "two_sided": a purchase and a sale both priced. "no_buyers_yet": nobody bought, so there is nothing to sell into. "miorail_limit": the card describes Miorail\'s own measurement failing, not the token. Default "all".',
+          ),
         freshness: z
           .enum(['all', 'fresh', 'stale'])
           .optional()

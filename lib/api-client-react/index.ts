@@ -849,16 +849,26 @@ export function useB20Watchlist(options?: { enabled?: boolean }) {
  * one it is. Retrying just delays that sentence reaching the screen.
  */
 export function useB20Opportunities(
-  input?: { state?: 'all' | 'candidate' | 'provisional' | 'rejected' | 'unmeasured'; freshness?: 'all' | 'fresh' | 'stale'; limit?: number },
+  input?: {
+    state?: 'all' | 'candidate' | 'provisional' | 'rejected' | 'unmeasured';
+    freshness?: 'all' | 'fresh' | 'stale';
+    /** The verdict section. The server owns the split, because the group a card
+     * belongs to is decided by the same projection that writes its headline —
+     * and because one page of 25 launches holds too few of any one section for
+     * a client to group its way to a useful screen. */
+    standing?: 'all' | 'bought_not_sellable' | 'two_sided' | 'no_buyers_yet' | 'miorail_limit';
+    limit?: number;
+  },
   options?: { enabled?: boolean; refetchInterval?: number | false },
 ) {
   const state = input?.state ?? 'all';
   const freshness = input?.freshness ?? 'all';
+  const standing = input?.standing ?? 'all';
   const limit = input?.limit ?? 25;
   return useQuery({
-    queryKey: ['b20-opportunities', state, freshness, limit],
+    queryKey: ['b20-opportunities', state, freshness, standing, limit],
     queryFn: async () => {
-      const query = new URLSearchParams({ state, freshness, limit: String(limit) });
+      const query = new URLSearchParams({ state, freshness, standing, limit: String(limit) });
       const response = await fetchApi<unknown>(`/api/route-intelligence/opportunities/b20?${query.toString()}`);
       return apiSpec.B20OpportunityFeedResponseV1Schema.parse(response);
     },

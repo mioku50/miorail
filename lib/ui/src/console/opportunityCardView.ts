@@ -1,3 +1,8 @@
+import {
+  b20CardStandingGroupV1,
+  b20ExitStandingV1,
+  type B20ExitStandingV1,
+} from '@mioagent/opportunity-rail/exitStanding';
 import { formatAtomicAmount } from '../formatAtomicAmount';
 import { bpsLabelV1 } from './B20ExitCard';
 import type { OpportunityCardViewV1, OpportunityStateV1 } from './OpportunitiesScreen';
@@ -33,6 +38,12 @@ export interface OpportunityCardWireV1 {
     observationId?: string;
     evidenceHash?: string;
     state: OpportunityStateV1;
+    /** The typed reason, when there is one. Carried so this file can rebuild
+     * the standing itself against a server that predates it. */
+    reasonCode?: string | null;
+    /** What the measurement concluded, and whether that conclusion is about the
+     * token at all. Optional only for the rollout window below. */
+    standing?: B20ExitStandingV1;
     headline: string;
     detail: string;
     referencePositionAtomic: string;
@@ -194,9 +205,39 @@ export const OPPORTUNITY_UNMEASURED_ACTION_COPY_V1 =
 export const OPPORTUNITY_SUPERSEDED_ACTION_COPY_V1 =
   'A chain reorganisation replaced this launch, so it is no longer current.';
 
+/**
+ * The card's verdict, taken from the server or rebuilt from the same fields.
+ *
+ * `b20ExitStandingV1` is the ONE implementation, and this calls it rather than
+ * approximating it — a screen that guessed the standing from a state and a
+ * reason code would be a second answer to what a card means, which is precisely
+ * the split this whole feature exists to remove. The rebuild matters during a
+ * rollout: a browser tab open against an older server would otherwise group
+ * every card under "not measured".
+ */
+export function cardStandingV1(observation: OpportunityCardWireV1['observation']): B20ExitStandingV1 {
+  if (!observation) return b20ExitStandingV1({ observation: null, buyerCount: null });
+  if (observation.standing) return observation.standing;
+  // Null is not zero, and a window that has not closed has counted nobody.
+  const buyerCount =
+    observation.launchBuyerWindow && observation.launchBuyerWindow.status !== 'measured'
+      ? null
+      : observation.launchBuyers?.buyerCount ?? null;
+  return b20ExitStandingV1({
+    observation: {
+      state: observation.state,
+      reasonCode: observation.reasonCode ?? null,
+      entryRouteFound: observation.entryRouteFound,
+      exitRouteFound: observation.exitRouteFound,
+    },
+    buyerCount,
+  });
+}
+
 export function opportunityCardViewV1(card: OpportunityCardWireV1): OpportunityCardViewV1 {
   const { launch, observation } = card;
   const symbol = launch.symbol || launch.tokenAddress.slice(0, 8);
+  const standing = cardStandingV1(observation);
 
   const notices: string[] = [];
   if (observation?.preEntryNotice) notices.push(observation.preEntryNotice);
@@ -221,8 +262,21 @@ export function opportunityCardViewV1(card: OpportunityCardWireV1): OpportunityC
     observationId: (observation?.observationId as `0x${string}` | undefined) ?? null,
     evidenceHash: (observation?.evidenceHash as `0x${string}` | undefined) ?? null,
     observationBlockNumber: observation?.observationBlockNumber ?? null,
-    headline: observation?.headline ?? OPPORTUNITY_UNMEASURED_COPY_V1.headline,
+    // The STANDING's sentence, not the wire's. They are the same thing on a
+    // current server; against an older one the wire still carries the old state
+    // copy, and rendering "Ruled out by public evidence" under a "Bought, and a
+    // sale would not price" heading would be the card disagreeing with its own
+    // section. One source for the verdict, all the way down.
+    headline: standing.headline,
     detail: observation?.detail ?? OPPORTUNITY_UNMEASURED_COPY_V1.detail,
+    standingKind: standing.kind,
+    // Read straight off the standing rather than recomputed from the kind: the
+    // flag is the guarantee, and a screen that re-derived it could disagree.
+    aboutToken: standing.aboutToken,
+    standingGroup: b20CardStandingGroupV1({ observation: { standing } }),
+    // The conclusion in its own words, above the evidence. The card's `detail`
+    // is the measured specifics, and those go behind the fold.
+    standingDetail: standing.detail,
     // Null stays null the whole way. There is no `?? 0` anywhere in this file.
     costLabel:
       observation && observation.optimisticRoundTripBps !== null

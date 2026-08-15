@@ -74,6 +74,7 @@ import {
   createDatabaseB20ObservationRepository,
   createDatabaseB20LaunchPoolRepository,
   decodeFeedCursorV1,
+  encodeFeedCursorV1,
   type B20ObservationRepositoryV1,
   type B20FeedRowV1,
   type B20OpportunityObservationV1,
@@ -96,6 +97,9 @@ import {
   MEASURED_MOVE_NOTE_V1,
   b20PipelineStatusV1,
   profileRefusalV1,
+  B20_STANDING_GROUPS_V1,
+  b20CardStandingGroupV1,
+  type B20StandingGroupV1,
 } from '@mioagent/opportunity-rail';
 import {
   AERODROME_USDC_V1,
@@ -497,6 +501,9 @@ export async function readDiscoverFeedV1(input: {
   cursor: string | null;
   state: (typeof FEED_STATES_V1)[number] | 'all';
   freshness: 'fresh' | 'stale' | 'all';
+  /** The verdict section, not the measurement state. `all` keeps the feed in
+   * launch order and reads exactly one page, as it always has. */
+  standing?: B20StandingGroupV1 | 'all';
   maxLaunchAgeMs?: number;
 }): Promise<{
   pipeline: B20PipelineStatusV1 & { message: string };
@@ -515,6 +522,30 @@ export async function readDiscoverFeedV1(input: {
     return { pipeline, cards: [], nextCursor: null, serverTime: now.toISOString() };
   }
 
+  // Freshness is computed against SERVER time, so a client with a skewed clock
+  // cannot promote a stale observation into an actionable one.
+  const freshEnough = (card: ReturnType<typeof b20OpportunityCardV1>) => {
+    if (input.freshness === 'all') return true;
+    if (!card.observation) return false;
+    return card.observation.freshness === input.freshness;
+  };
+
+  const standing = input.standing ?? 'all';
+  if (standing !== 'all') {
+    const filtered = await readStandingSectionV1({
+      observations,
+      pipeline,
+      now,
+      maxLaunchAgeMs,
+      states: input.state === 'all' ? undefined : [input.state],
+      cursor: input.cursor,
+      limit: input.limit,
+      standing,
+      freshEnough,
+    });
+    return { pipeline, ...filtered, serverTime: now.toISOString() };
+  }
+
   const page = await observations.listFeed({
     limit: input.limit,
     cursor: input.cursor,
@@ -523,17 +554,87 @@ export async function readDiscoverFeedV1(input: {
     now: now.toISOString(),
   });
 
-  const cards = page.rows
-    .map((row) => b20DiscoverCardFromRowV1(row, pipeline, now))
-    // Freshness is computed against SERVER time, so a client with a skewed
-    // clock cannot promote a stale observation into an actionable one.
-    .filter((card) => {
-      if (input.freshness === 'all') return true;
-      if (!card.observation) return false;
-      return card.observation.freshness === input.freshness;
-    });
+  const cards = page.rows.map((row) => b20DiscoverCardFromRowV1(row, pipeline, now)).filter(freshEnough);
 
   return { pipeline, cards, nextCursor: page.nextCursor, serverTime: now.toISOString() };
+}
+
+/**
+ * How many launches ONE filtered page may read before it stops and hands back
+ * a cursor.
+ *
+ * The live 48-hour window held 1,139 canonical launches on 2026-08-15, so this
+ * covers it whole today. The point of the bound is not the number: it is that
+ * a growing window makes the read return a cursor rather than quietly serving a
+ * truncated section that looks complete.
+ */
+export const DISCOVER_STANDING_SCAN_LIMIT_V1 = 1_200;
+const DISCOVER_STANDING_PAGE_V1 = 100;
+
+/**
+ * One verdict section of the feed.
+ *
+ * The section is decided by `b20CardStandingGroupV1` — the SAME function the
+ * screen groups with, run over the SAME card projection. It is deliberately not
+ * a SQL predicate: `bought_not_sellable` and `no_buyers_yet` are separated by
+ * whether a buyer window closed, `sale_unpriced` by whether it was counted at
+ * all, and a second implementation of that rule in SQL would be a second answer
+ * to what a card means. Six of this repository's production bugs were exactly
+ * that shape.
+ *
+ * The cursor it returns points at the last row it CONSUMED, not at the end of
+ * the page it was reading. Rows after that were never examined and come back on
+ * the next call, so a section pages without skipping.
+ */
+async function readStandingSectionV1(input: {
+  observations: B20ObservationRepositoryV1;
+  pipeline: B20PipelineStatusV1 & { message: string };
+  now: Date;
+  maxLaunchAgeMs: number;
+  states: (typeof FEED_STATES_V1)[number][] | undefined;
+  cursor: string | null;
+  limit: number;
+  standing: B20StandingGroupV1;
+  freshEnough: (card: ReturnType<typeof b20OpportunityCardV1>) => boolean;
+}): Promise<{ cards: ReturnType<typeof b20OpportunityCardV1>[]; nextCursor: string | null }> {
+  const cards: ReturnType<typeof b20OpportunityCardV1>[] = [];
+  let cursor = input.cursor;
+  let scanned = 0;
+
+  while (scanned < DISCOVER_STANDING_SCAN_LIMIT_V1) {
+    const page = await input.observations.listFeed({
+      limit: Math.min(DISCOVER_STANDING_PAGE_V1, DISCOVER_STANDING_SCAN_LIMIT_V1 - scanned),
+      cursor,
+      states: input.states,
+      maxLaunchAgeMs: input.maxLaunchAgeMs,
+      now: input.now.toISOString(),
+    });
+
+    for (const row of page.rows) {
+      scanned += 1;
+      const card = b20DiscoverCardFromRowV1(row, input.pipeline, input.now);
+      if (!input.freshEnough(card)) continue;
+      if (b20CardStandingGroupV1(card) !== input.standing) continue;
+      cards.push(card);
+      if (cards.length >= input.limit) {
+        return {
+          cards,
+          nextCursor: encodeFeedCursorV1({
+            launchBlockNumber: row.launch.blockNumber,
+            measuredAt: row.observation?.measuredAt ?? null,
+            launchId: row.launch.id,
+          }),
+        };
+      }
+    }
+
+    // No further page exists, so the section is complete rather than paused.
+    if (!page.nextCursor) return { cards, nextCursor: null };
+    cursor = page.nextCursor;
+  }
+
+  // The scan budget ran out with the section still open. The cursor says so.
+  return { cards, nextCursor: cursor };
 }
 
 // ---------------------------------------------------------------------------
@@ -662,6 +763,15 @@ b20ControlRouter.get('/opportunities/b20', async (req: Request, res: Response) =
     res.status(400).json({ error: 'unknown_freshness_filter', code: 'unknown_freshness_filter' });
     return;
   }
+  // The verdict section. Refused rather than ignored when unknown: silently
+  // serving the whole feed for a filter the caller believed in is how a client
+  // comes to show "Bought, not sellable" above cards that are nothing of the
+  // kind.
+  const standing = String(req.query.standing ?? 'all');
+  if (standing !== 'all' && !(B20_STANDING_GROUPS_V1 as readonly string[]).includes(standing)) {
+    res.status(400).json({ error: 'unknown_standing_filter', code: 'unknown_standing_filter' });
+    return;
+  }
   const cursor = typeof req.query.cursor === 'string' && req.query.cursor.length > 0 ? req.query.cursor : null;
   if (cursor && !decodeFeedCursorV1(cursor)) {
     // Refused rather than treated as "start from the top": silently restarting
@@ -681,6 +791,7 @@ b20ControlRouter.get('/opportunities/b20', async (req: Request, res: Response) =
       cursor,
       state: stateParam as (typeof FEED_STATES_V1)[number] | 'all',
       freshness: freshness as 'fresh' | 'stale' | 'all',
+      standing: standing as B20StandingGroupV1 | 'all',
       maxLaunchAgeMs,
     });
     res.json(B20OpportunityFeedResponseV1Schema.parse(feed));

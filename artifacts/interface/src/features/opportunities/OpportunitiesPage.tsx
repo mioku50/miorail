@@ -19,6 +19,7 @@ import {
   consolePipelineProgressV1,
   type ConsolePipelineStateV1,
   type OpportunityFilterV1,
+  type OpportunityStandingFilterV1,
 } from '@mioagent/ui';
 import { useB20CopilotAsk, useB20MarketRails, useB20Opportunities, useStatus } from '@mioagent/api-client-react';
 import { useConsoleNav } from '../console/useConsoleNav';
@@ -49,6 +50,7 @@ export function OpportunitiesPage() {
   const nav = useConsoleNav('opportunities');
 
   const [filter, setFilter] = useState<OpportunityFilterV1>('all');
+  const [standingFilter, setStandingFilter] = useState<OpportunityStandingFilterV1>('all');
   const [freshOnly, setFreshOnly] = useState(false);
   const [railExpanded, setRailExpanded] = useState(false);
   const [copilotToken, setCopilotToken] = useState<string | null>(null);
@@ -56,7 +58,10 @@ export function OpportunitiesPage() {
   const discoverOn = status.data?.productMigration?.b20ControlV1 === true;
   const marketRails = useB20MarketRails({ enabled: discoverOn });
   const feed = useB20Opportunities(
-    { state: filter, freshness: freshOnly ? 'fresh' : 'all' },
+    // The verdict section is a SERVER filter. Grouping only what one page
+    // returned would have put the 70 launches that were bought and could not be
+    // sold behind roughly 46 pages of 25, which is the same as not having them.
+    { state: filter, standing: standingFilter, freshness: freshOnly ? 'fresh' : 'all' },
     { enabled: discoverOn },
   );
   const copilot = useB20CopilotAsk();
@@ -179,9 +184,11 @@ export function OpportunitiesPage() {
         feedRenderable={discoverOn && (feed.isPending || home.feedRenderable)}
         cards={cards}
         filter={filter}
+        standingFilter={standingFilter}
         freshOnly={freshOnly}
         loading={feed.isPending && discoverOn}
         onFilterChange={setFilter}
+        onStandingFilterChange={setStandingFilter}
         onFreshOnlyChange={setFreshOnly}
         // The handoff. Portfolio owns the wallet-bound exit check, the
         // simulation and the clearance; Discover owns none of them.

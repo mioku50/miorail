@@ -40,6 +40,7 @@ import {
   type ConsolePipelineStateV1,
   type ConsoleSectionV1,
   type OpportunityFilterV1,
+  type OpportunityStandingFilterV1,
   ConsoleStepperCompact,
   MiniScorePanel,
   PlanScreen,
@@ -909,10 +910,13 @@ export function MiniConsole() {
   // own — the whole point of §4 is that there is one of each.
 
   const [feedFilter, setFeedFilter] = useState<OpportunityFilterV1>("all");
+  const [feedStanding, setFeedStanding] = useState<OpportunityStandingFilterV1>("all");
   const [feedFresh, setFeedFresh] = useState(false);
   const [copilotToken, setCopilotToken] = useState<string | null>(null);
   const opportunities = useB20Opportunities(
-    { state: feedFilter, freshness: feedFresh ? "fresh" : "all" },
+    // The verdict section is filtered by the server, so Base App gets the same
+    // sections the web console does without a second grouping rule of its own.
+    { state: feedFilter, standing: feedStanding, freshness: feedFresh ? "fresh" : "all" },
     { enabled: b20GateOn && section === "opportunities" },
   );
   const copilot = useB20CopilotAsk();
@@ -1896,9 +1900,11 @@ export function MiniConsole() {
         feedRenderable={b20GateOn && (opportunities.isPending || feedHome.feedRenderable)}
         cards={(opportunities.data?.cards ?? []).map((card) => opportunityCardViewV1(card))}
         filter={feedFilter}
+        standingFilter={feedStanding}
         freshOnly={feedFresh}
         loading={opportunities.isPending && b20GateOn}
         onFilterChange={setFeedFilter}
+        onStandingFilterChange={setFeedStanding}
         onFreshOnlyChange={setFeedFresh}
         // Hands the token to the B20 tab, which owns the wallet-bound checks.
         // Discover creates no clearance here either.

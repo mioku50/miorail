@@ -6,7 +6,8 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./marketRails": "./src/marketRails.ts"
+    "./marketRails": "./src/marketRails.ts",
+    "./exitStanding": "./src/exitStanding.ts"
   },
   "scripts": {
     "test": "NODE_ENV=test node --import tsx --test test/*.test.ts",

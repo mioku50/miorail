@@ -191,6 +191,21 @@ describe('the phone header cannot overlap or overflow', () => {
     assert.match(phone, /\.crumb\s*\{\s*display:\s*none/);
   });
 
+  test('only the HEADER breadcrumb is removed, not every .crumb on the page', () => {
+    // The unscoped rule also matched Discover's filter row, which is a `.crumb`
+    // too — so every filter on the one screen built for choosing between
+    // measured launches was invisible below 900px, which is every phone and all
+    // of Base App. Nothing rendered wrong; the controls were simply not there.
+    for (const rule of phone.matchAll(/([^{}]*\.crumb[^{}]*)\{([^{}]*)\}/g)) {
+      if (!/display:\s*none/.test(rule[2] ?? '')) continue;
+      assert.match(
+        rule[1] ?? '',
+        /header/,
+        `a hide rule for .crumb must be scoped to the header, got: ${(rule[1] ?? '').trim()}`,
+      );
+    }
+  });
+
   test('the network chip is dropped by its own class, not by "not .mono"', () => {
     // `:not(.mono)` also matched the "not connected" chip — the one message
     // that has to survive on a phone.

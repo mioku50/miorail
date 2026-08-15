@@ -1,5 +1,11 @@
 import React from 'react';
 import {
+  B20_STANDING_GROUPS_V1,
+  B20_STANDING_GROUP_COPY_V1,
+  type B20ExitStandingKindV1,
+  type B20StandingGroupV1,
+} from '@mioagent/opportunity-rail/exitStanding';
+import {
   CONSOLE_NO_ANALYSIS_COPY_V1,
   type ConsoleOperationalLabelV1,
   type ConsolePipelineStateV1,
@@ -27,6 +33,18 @@ void React;
 /** T69-C §12 — the filters, in order. `fresh` is a modifier on the others. */
 export const OPPORTUNITY_FILTERS_V1 = ['all', 'provisional', 'rejected', 'unmeasured'] as const;
 export type OpportunityFilterV1 = (typeof OPPORTUNITY_FILTERS_V1)[number];
+
+/**
+ * The verdict filter, which is the one a person actually wants.
+ *
+ * `rejected` covered four different things at once — 4,067 launches under one
+ * sentence — so a filter on the measurement STATE could not express "show me
+ * the tokens somebody bought and Miorail could not sell". This one can, and the
+ * server applies it, because the section a card belongs to is spread thinly
+ * enough through the feed that no client could group its way to it.
+ */
+export const OPPORTUNITY_STANDING_FILTERS_V1 = ['all', ...B20_STANDING_GROUPS_V1] as const;
+export type OpportunityStandingFilterV1 = (typeof OPPORTUNITY_STANDING_FILTERS_V1)[number];
 
 export const OPPORTUNITY_FILTER_LABEL_V1: Readonly<Record<OpportunityFilterV1, string>> = {
   all: 'All',
@@ -65,6 +83,19 @@ export interface OpportunityCardViewV1 {
   headline: string;
   /** The sentence under it. */
   detail: string;
+  /** Which of the eight measured conclusions this card reached. */
+  standingKind: B20ExitStandingKindV1;
+  /**
+   * FALSE when the card is describing a limit of Miorail's own measurement
+   * rather than anything about the token. Thirty per cent of the live feed is
+   * in that position, and a screen that mixes those cards in with findings is
+   * publishing Miorail's failures under a token's name.
+   */
+  aboutToken: boolean;
+  /** The section this card is filed under. Decided by the shared projection. */
+  standingGroup: B20StandingGroupV1;
+  /** What the conclusion rests on and what it does not claim. */
+  standingDetail: string;
   /** Round-trip cost, already formatted. Null means it was not measured. */
   costLabel: string | null;
   /**
@@ -172,9 +203,13 @@ export interface OpportunitiesScreenModelV1 {
   feedRenderable: boolean;
   cards: readonly OpportunityCardViewV1[];
   filter: OpportunityFilterV1;
+  /** The verdict section being asked for. Optional while a caller rolls
+   * forward; absent behaves as `all`. */
+  standingFilter?: OpportunityStandingFilterV1;
   freshOnly: boolean;
   loading: boolean;
   onFilterChange: (filter: OpportunityFilterV1) => void;
+  onStandingFilterChange?: (filter: OpportunityStandingFilterV1) => void;
   onFreshOnlyChange: (freshOnly: boolean) => void;
   /** Hands the token to the surface that owns wallet-bound checks. */
   onOpenToken: (tokenAddress: string) => void;
@@ -227,7 +262,11 @@ function OpportunityCard({
     });
   };
   return (
-    <article className={'cardrow' + (measurementMissing ? ' metrics-unavailable-card' : '')}>
+    // No amber rail for a card with no numbers. It used to mark every card
+    // whose round trip and capacity were null, which after the verdict split is
+    // mostly "nobody has bought this yet" — an absent market, not a fault. The
+    // section a card sits in now carries that meaning honestly.
+    <article className="cardrow">
       <div className="cr-top">
         <span className="cr-name">
           {card.symbol} <span className="sub">{card.name}</span>
@@ -235,93 +274,113 @@ function OpportunityCard({
         <span className={`pill ${pill.tone}`}>{pill.label}</span>
       </div>
 
-      {measurementMissing ? (
-        <div className="measurement-missing">
-          <span>Round trip + exit capacity</span>
-          <strong className="mono">{measurementState}</strong>
-        </div>
-      ) : (
-        <div className="cr-nums">
-          <div>
-            <span className="cr-k">Round trip</span>
-            {/* Null renders the words, never a zero. */}
-            <span className={'cr-v mono' + (card.costLabel ? '' : ' warn')}>{card.costLabel ?? 'not measured'}</span>
-          </div>
-          <div>
-            <span className="cr-k">Exit capacity</span>
-            <span className={'cr-v mono' + (card.capacityLabel ? '' : ' warn')}>
-              {card.capacityLabel ?? 'not measured'}
-            </span>
-          </div>
-        </div>
-      )}
+      {/* The conclusion first, in the card's largest voice, and the evidence
+          under a control. The old card opened with two metric tiles reading
+          "not measured" on four cards in five, so the first thing a reader met
+          was an absence — and the sentence that explained it was two sizes
+          smaller, below the fold of the eye. */}
+      <p className="cr-verdict">{card.headline}</p>
+      <p className="lnote">{card.standingDetail}</p>
 
-      <p className="cr-why">{card.headline}</p>
-      <p className="lnote">{card.detail}</p>
-
+      {/* Never behind the fold. A pre-entry, quote-alignment or transfer-policy
+          sentence is a warning about what the numbers below are worth, and a
+          warning a reader has to open something to see is not a warning. */}
       {card.notices.map((notice) => (
         <p key={notice} className="note warn">
           {notice}
         </p>
       ))}
 
-      {/* Hidden rather than printed as "not measured". A row whose whole job is
-          to name the profile a measurement used says nothing when there was no
-          measurement, and repeating the words is how one unmeasured card came
-          to say "not measured" five times. */}
-      {card.profileLabel && (
-        <div className="kv">
-          <span className="k">Measured against</span>
-          <span className="v mono">{card.profileLabel}</span>
-        </div>
-      )}
-      <div className="kv">
-        <span className="k">{card.timeLabel}</span>
-        <span className="v mono">{card.timeValue}</span>
-      </div>
-      <div className="kv">
-        <span className="k">Variant</span>
-        <span className="v">{card.variantLabel}</span>
-      </div>
+      <details className="card-evidence">
+        <summary>What was measured</summary>
+        <div className="card-evidence-body">
+          {measurementMissing ? (
+            <div className="measurement-missing">
+              <span>Round trip + exit capacity</span>
+              <strong className="mono">{measurementState}</strong>
+            </div>
+          ) : (
+            <div className="cr-nums">
+              <div>
+                <span className="cr-k">Round trip</span>
+                {/* Null renders the words, never a zero. */}
+                <span className={'cr-v mono' + (card.costLabel ? '' : ' warn')}>
+                  {card.costLabel ?? 'not measured'}
+                </span>
+              </div>
+              <div>
+                <span className="cr-k">Exit capacity</span>
+                <span className={'cr-v mono' + (card.capacityLabel ? '' : ' warn')}>
+                  {card.capacityLabel ?? 'not measured'}
+                </span>
+              </div>
+            </div>
+          )}
 
-      {/* The one part of a B20 venue that can be verified by inspection: v4
-          spells a hook's permissions in the low bits of its own address, and a
-          B20 token's own code cannot be read at all. Shown as permission, not
-          behaviour — the sentence says so explicitly. */}
-      {card.hookLabel && (
-        <div className="kv">
-          <span className="k">Pool hook</span>
-          <span className="v">{card.hookLabel}</span>
-        </div>
-      )}
-      {card.hookNote && <p className="lnote">{card.hookNote}</p>}
+          {/* The typed measurement sentence. It stays under the fold because it
+              speaks the evidence vocabulary — `no_exit_route` and its copy —
+              while the verdict above says what that amounted to. */}
+          <p className="lnote">{card.detail}</p>
 
-      {card.routeLabel && (
-        <div className="kv">
-          <span className="k">Route liquidity</span>
-          <span className={`v ${card.routeTone}`}>{card.routeLabel}</span>
-        </div>
-      )}
-      {card.routeNote && <p className="lnote">{card.routeNote}</p>}
+          {/* Hidden rather than printed as "not measured". A row whose whole job
+              is to name the profile a measurement used says nothing when there
+              was no measurement, and repeating the words is how one unmeasured
+              card came to say "not measured" five times. */}
+          {card.profileLabel && (
+            <div className="kv">
+              <span className="k">Measured against</span>
+              <span className="v mono">{card.profileLabel}</span>
+            </div>
+          )}
+          <div className="kv">
+            <span className="k">{card.timeLabel}</span>
+            <span className="v mono">{card.timeValue}</span>
+          </div>
+          <div className="kv">
+            <span className="k">Variant</span>
+            <span className="v">{card.variantLabel}</span>
+          </div>
 
-      {/* Concentration of launch-window buying. The exit-first reading: if one
-          wallet took everything that left the pool, an exit depends on that
-          wallet not selling first. */}
-      {card.buyersLabel && (
-        <div className="kv">
-          <span className="k">Bought at launch</span>
-          <span className="v">{card.buyersLabel}</span>
-        </div>
-      )}
-      {card.buyersNote && <p className="lnote">{card.buyersNote}</p>}
+          {/* The one part of a B20 venue that can be verified by inspection: v4
+              spells a hook's permissions in the low bits of its own address, and
+              a B20 token's own code cannot be read at all. Shown as permission,
+              not behaviour — the sentence says so explicitly. */}
+          {card.hookLabel && (
+            <div className="kv">
+              <span className="k">Pool hook</span>
+              <span className="v">{card.hookLabel}</span>
+            </div>
+          )}
+          {card.hookNote && <p className="lnote">{card.hookNote}</p>}
 
-      {/* Only beside a real measurement. The list exists to bound what a
-          measurement CLAIMS; on a card where nothing was measured it is seven
-          more negations under a sentence that already said nothing was
-          checked. */}
-      {card.notMeasured.length > 0 && card.profileLabel && (
-        <p className="lnote">Not measured: {card.notMeasured.join(', ')}.</p>
-      )}
+          {card.routeLabel && (
+            <div className="kv">
+              <span className="k">Route liquidity</span>
+              <span className={`v ${card.routeTone}`}>{card.routeLabel}</span>
+            </div>
+          )}
+          {card.routeNote && <p className="lnote">{card.routeNote}</p>}
+
+          {/* Concentration of launch-window buying. The exit-first reading: if
+              one wallet took everything that left the pool, an exit depends on
+              that wallet not selling first. */}
+          {card.buyersLabel && (
+            <div className="kv">
+              <span className="k">Bought at launch</span>
+              <span className="v">{card.buyersLabel}</span>
+            </div>
+          )}
+          {card.buyersNote && <p className="lnote">{card.buyersNote}</p>}
+
+          {/* Only beside a real measurement. The list exists to bound what a
+              measurement CLAIMS; on a card where nothing was measured it is
+              seven more negations under a sentence that already said nothing
+              was checked. */}
+          {card.notMeasured.length > 0 && card.profileLabel && (
+            <p className="lnote">Not measured: {card.notMeasured.join(', ')}.</p>
+          )}
+        </div>
+      </details>
 
       {/* T69-C.1 §2/§3 — the reason is always shown, and the button appears
           only when there is something a user could usefully do. A fresh
@@ -436,8 +495,27 @@ function OpportunityCard({
   );
 }
 
+/**
+ * The feed, split into the sections a reader can act on.
+ *
+ * Order comes from `B20_STANDING_GROUPS_V1`, so the screen cannot invent its
+ * own — and an empty section is dropped rather than drawn with a zero, because
+ * "0 tokens were bought and could not be sold" is a claim about this page, not
+ * about the feed.
+ */
+export function opportunitySectionsV1(
+  cards: readonly OpportunityCardViewV1[],
+): { group: B20StandingGroupV1; cards: OpportunityCardViewV1[] }[] {
+  return B20_STANDING_GROUPS_V1.map((group) => ({
+    group,
+    cards: cards.filter((card) => card.standingGroup === group),
+  })).filter((section) => section.cards.length > 0);
+}
+
 export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
   const filters = OPPORTUNITY_FILTERS_V1;
+  const standingFilter = model.standingFilter ?? 'all';
+  const sections = opportunitySectionsV1(model.cards);
   return (
     <>
       {(model.pipelineNotice || model.pipelineLabel) && (
@@ -486,27 +564,52 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
               Every card is built around a B20 token found through Miorail’s pinned B20 factory feed on Base.
               This is B20 route intelligence, not a general token scanner.
             </p>
-            <nav className="crumb" aria-label="Filter opportunities">
-              {filters.map((filter) => (
+            {/* The verdict filter leads, because it is the question people
+                arrive with. The measurement state stays available underneath —
+                it is the vocabulary the evidence and the x402 seller speak, and
+                removing it would cost a real capability. */}
+            {model.onStandingFilterChange && (
+              <div className="filter-row">
+                <span className="filter-row-k">What was found</span>
+                <nav className="crumb" aria-label="Filter by what the measurement found">
+                  {OPPORTUNITY_STANDING_FILTERS_V1.map((filter) => (
+                    <button
+                      key={filter}
+                      type="button"
+                      className={`btn sec${standingFilter === filter ? ' on' : ''}`}
+                      aria-pressed={standingFilter === filter}
+                      onClick={() => model.onStandingFilterChange?.(filter)}
+                    >
+                      {filter === 'all' ? 'Everything' : B20_STANDING_GROUP_COPY_V1[filter].chip}
+                    </button>
+                  ))}
+                </nav>
+              </div>
+            )}
+            <div className="filter-row">
+              <span className="filter-row-k">Measurement state</span>
+              <nav className="crumb" aria-label="Filter opportunities">
+                {filters.map((filter) => (
+                  <button
+                    key={filter}
+                    type="button"
+                    className={`btn sec${model.filter === filter ? ' on' : ''}`}
+                    aria-pressed={model.filter === filter}
+                    onClick={() => model.onFilterChange(filter)}
+                  >
+                    {OPPORTUNITY_FILTER_LABEL_V1[filter]}
+                  </button>
+                ))}
                 <button
-                  key={filter}
                   type="button"
-                  className={`btn sec${model.filter === filter ? ' on' : ''}`}
-                  aria-pressed={model.filter === filter}
-                  onClick={() => model.onFilterChange(filter)}
+                  className={`btn sec${model.freshOnly ? ' on' : ''}`}
+                  aria-pressed={model.freshOnly}
+                  onClick={() => model.onFreshOnlyChange(!model.freshOnly)}
                 >
-                  {OPPORTUNITY_FILTER_LABEL_V1[filter]}
+                  Fresh only
                 </button>
-              ))}
-              <button
-                type="button"
-                className={`btn sec${model.freshOnly ? ' on' : ''}`}
-                aria-pressed={model.freshOnly}
-                onClick={() => model.onFreshOnlyChange(!model.freshOnly)}
-              >
-                Fresh only
-              </button>
-            </nav>
+              </nav>
+            </div>
             <details className="discover-guide">
               <summary>How to read a B20 card</summary>
               <dl>
@@ -544,16 +647,34 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
                 No measured B20 opportunities match this filter. Both workers are current.
               </p>
             ) : (
-              <div className="cardrows">
-                {model.cards.map((card) => (
-                  <OpportunityCard
-                    key={card.tokenAddress}
-                    card={card}
-                    onOpen={model.onOpenToken}
-                    copilot={model.copilot}
-                  />
-                ))}
-              </div>
+              sections.map((section) => {
+                const copy = B20_STANDING_GROUP_COPY_V1[section.group];
+                return (
+                  <section className="feed-section" key={section.group} aria-label={copy.label}>
+                    <div className="feed-section-head">
+                      <h4>{copy.label}</h4>
+                      <span className="pill n">{section.cards.length}</span>
+                    </div>
+                    {/* The section says what the whole group does and does not
+                        claim, once, rather than every card repeating it. The
+                        Miorail-limit section is the one that has to exist:
+                        thirty per cent of the live feed describes a measurement
+                        that did not complete, and those cards were sitting in
+                        the same list as findings. */}
+                    <p className="lnote">{copy.note}</p>
+                    <div className="cardrows">
+                      {section.cards.map((card) => (
+                        <OpportunityCard
+                          key={card.tokenAddress}
+                          card={card}
+                          onOpen={model.onOpenToken}
+                          copilot={model.copilot}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                );
+              })
             )}
           </div>
         </div>
