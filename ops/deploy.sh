@@ -221,4 +221,8 @@ printf '%s' "$mcp_tools" | jq -e '
 printf '  mcp tools/list %-28s %s\n' "$MCP_PUBLIC_URL" '6 read-only tools'
 
 echo
-echo "Deployed. Served entry: $served_entry · Base App: HTTP $miniapp_status · Miorail MCP: 5 tools"
+# Counted from the response, not typed in. The literal said "5 tools" for a
+# deploy whose own check had just verified six, which is how a summary line
+# stops being read at all.
+mcp_tool_count=$(printf '%s' "$mcp_tools" | jq -r '.result.tools | length')
+echo "Deployed. Served entry: $served_entry · Base App: HTTP $miniapp_status · Miorail MCP: $mcp_tool_count tools"
