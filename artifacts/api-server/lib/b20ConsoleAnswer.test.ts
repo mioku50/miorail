@@ -268,7 +268,21 @@ describe('Portfolio orders what was measured, and says whose size it was', () =>
       { symbol: 'b', assessment: measured(1200) },
       { symbol: 'c', assessment: measured(4500) },
     ]);
-    assert.match(result.answer, /hardest to close first by measured exit capacity: b at 12%, c at 45%, a at 90%/);
+    assert.match(result.answer, /^Hardest to close first/);
+    assert.match(result.answer, /a smaller share is a harder exit: b at 12%, c at 45%, a at 90%/);
+  });
+
+  test('"of the rest" is only said when there WAS a preceding group', () => {
+    // Observed live 2026-08-15: with no unsellable position the answer opened
+    // on a phrase referring back to nothing.
+    const alone = portfolio([{ symbol: 'a', assessment: measured(9000) }]);
+    assert.doesNotMatch(alone.answer, /Of the rest/);
+
+    const after = portfolio([
+      { symbol: 'a', assessment: { status: 'no_supported_exit_route' } },
+      { symbol: 'b', assessment: measured(9000) },
+    ]);
+    assert.match(after.answer, /Of the rest, hardest to close first/);
   });
 
   test('no sale priced is its own group, and is not a cost', () => {

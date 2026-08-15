@@ -465,16 +465,21 @@ export function b20PortfolioAnswerV1(input: {
     );
   }
   if (ranked.length > 0) {
+    // "Of the rest" only when there WAS a preceding group. Observed live
+    // 2026-08-15: with no unsellable position the answer opened on a phrase
+    // referring back to nothing.
+    const rest = noSale.length > 0 ? 'Of the rest, hardest' : 'Hardest';
+    // The figure is coverage, so a bigger number is an easier exit. Spelling
+    // out what it is a share OF keeps 50% from reading as a cost.
+    const list = ranked
+      .map((entry) => `${entry.symbol} at ${bpsV1(entry.coverageBps)}`)
+      .join(', ');
     sentences.push(
       orderable
-        ? `Of the rest, hardest to close first by measured exit capacity: ${ranked
-            .map((entry) => `${entry.symbol} at ${bpsV1(entry.coverageBps)}`)
-            .join(', ')}.`
+        ? `${rest} to close first — the figure is how much of the reference entry could be sold, so a smaller share is a harder exit: ${list}.`
         // Not ordered, because ordering incomparable measurements is the exact
         // mistake the figures make easy.
-        : `The rest were each measured, but not against the same reference position, so they are stated rather than ordered: ${ranked
-            .map((entry) => `${entry.symbol} at ${bpsV1(entry.coverageBps)}`)
-            .join(', ')}.`,
+        : `${noSale.length > 0 ? 'The rest were' : 'These were'} each measured, but not against the same reference position, so they are stated rather than ordered: ${list}.`,
     );
   }
   if (unranked.length > 0) {
