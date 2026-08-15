@@ -99,12 +99,26 @@ describe('the buyer aggregate is what splits an absent market from a trapped one
     assert.match(standing.detail, /did not establish why/i);
   });
 
-  test('one buyer is not pluralised into a crowd', () => {
+  test('one buyer is not pluralised into a crowd, and is not left to imply a market', () => {
+    // 44 of the 61 launches in this position in the live 48-hour window had
+    // exactly one buyer. The count alone reads as far stronger evidence than
+    // one wallet is.
     const standing = b20ExitStandingV1({
       observation: measured({ reasonCode: 'no_exit_route' }),
       buyerCount: 1,
     });
     assert.match(standing.headline, /^1 wallet bought this/);
+    assert.match(standing.detail, /thinnest form this evidence takes/);
+    // And it says what it did NOT check, rather than guessing at a deployer.
+    assert.match(standing.detail, /did not check whose wallet it is/);
+  });
+
+  test('a real crowd is not given the single-wallet caveat', () => {
+    const standing = b20ExitStandingV1({
+      observation: measured({ reasonCode: 'no_exit_route' }),
+      buyerCount: 62,
+    });
+    assert.doesNotMatch(standing.detail, /thinnest form/);
   });
 
   test('an uncounted window is not read as zero', () => {

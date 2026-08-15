@@ -216,10 +216,18 @@ export function b20ExitStandingV1(input: B20ExitStandingInputV1): B20ExitStandin
       };
     }
     const wallets = input.buyerCount === 1 ? '1 wallet' : `${input.buyerCount} wallets`;
+    // 44 of the 61 launches in this position in the live 48-hour window had
+    // exactly ONE buyer. "1 wallet bought this" carries far more weight in a
+    // reader's head than one wallet deserves, so the card says how thin it is
+    // rather than leaving the count to imply a market.
+    const thin =
+      input.buyerCount === 1
+        ? ' One wallet is the thinnest form this evidence takes, and Miorail did not check whose wallet it is.'
+        : '';
     return {
       kind: 'bought_not_sellable',
       headline: `${wallets} bought this, and Miorail could not price a sale.`,
-      detail: `A purchase priced against the measured pool and a sale did not, while the launch window recorded real buyers. Miorail measured that it could not sell at the reference size; it did not establish why, and a sale may still be possible at another venue or another size. ${NOT_A_RECOMMENDATION_V1}`,
+      detail: `A purchase priced against the measured pool and a sale did not, while the launch window recorded real buyers.${thin} Miorail measured that it could not sell at the reference size; it did not establish why, and a sale may still be possible at another venue or another size. ${NOT_A_RECOMMENDATION_V1}`,
       aboutToken: true,
     };
   }
