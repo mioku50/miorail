@@ -193,16 +193,36 @@ export function b20ProjectContractV1(
       );
     });
 
-    test('a reference may only be an https URL or a bare address', async () => {
+    test('the claiming domain is a valid reference, and a scheme-bearing string is not', async () => {
+      // The identity finding's reference is the DOMAIN — `miorail.xyz`, not
+      // `https://miorail.xyz`, which would name the project's website. Caught
+      // by this constraint on the first production write.
       const { repository } = await open();
-      for (const reference of ['http://miorail.xyz', 'file:///etc/passwd', 'postgres://user:pw@host/db', 'anything']) {
+      await repository.recordVerification({
+        claim: claimFixtureV1(),
+        evidence: [
+          evidenceFixtureV1({
+            dimension: 'project_identity',
+            state: 'verified',
+            provenance: 'domain_claim_file',
+            reference: 'miorail.xyz',
+          }),
+        ],
+      });
+      const record = await repository.readProject({ chainId: 8453, tokenAddress: TOKEN });
+      assert.equal(record?.evidence[0]?.reference, 'miorail.xyz');
+    });
+
+    test('a reference may only be an https URL, a bare address or a bare domain', async () => {
+      const { repository } = await open();
+      for (const reference of ['http://miorail.xyz', 'file:///etc/passwd', 'postgres://user:pw@host/db', 'anything', 'MIORAIL.XYZ']) {
         await assert.rejects(
           () =>
             repository.recordVerification({
               claim: claimFixtureV1(),
               evidence: [evidenceFixtureV1({ reference })],
             }),
-          /https URL or a bare address/,
+          /https URL, a bare address or a bare domain/,
           `"${reference}" was stored as a reference`,
         );
       }

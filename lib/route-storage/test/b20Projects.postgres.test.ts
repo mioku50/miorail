@@ -35,8 +35,12 @@ before(async () => {
   sql = postgres(url!, { max: 1, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS b20_project_evidence CASCADE');
   await sql.unsafe('DROP TABLE IF EXISTS b20_project_claims CASCADE');
-  const migration = await readFile(resolve(drizzleDir(), '0046_b20_project_claims.sql'), 'utf8');
-  await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));
+  // Both migrations, in order. 0047 widens the reference constraint, and a
+  // contract run against 0046 alone would pass on a shape production refuses.
+  for (const file of ['0046_b20_project_claims.sql', '0047_b20_project_evidence_domain_reference.sql']) {
+    const migration = await readFile(resolve(drizzleDir(), file), 'utf8');
+    await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));
+  }
 });
 
 after(async () => {

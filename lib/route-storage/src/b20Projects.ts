@@ -129,12 +129,21 @@ export const B20ProjectEvidenceRowV1Schema = z
         message: `only project_before_token may store a negative state, not ${row.dimension}`,
       });
     }
-    // A reference with a secret in it is the failure mode this bounds: the only
-    // schemes a stored reference may carry are https and a bare address.
-    if (row.reference !== null && !/^(https:\/\/|0x[0-9a-fA-F]{40}$)/.test(row.reference)) {
+    // A reference with a secret in it is the failure mode this bounds. Three
+    // shapes and no others: an https URL (a probe), a bare address (a contract
+    // Miorail read), and a bare hostname — the domain the identity was proven
+    // against, which is `miorail.xyz` and NOT `https://miorail.xyz`. Writing it
+    // as a URL would name the project's website, and the identity finding is
+    // not about a website.
+    const referenceOk =
+      row.reference === null ||
+      /^https:\/\//.test(row.reference) ||
+      /^0x[0-9a-fA-F]{40}$/.test(row.reference) ||
+      /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(row.reference);
+    if (!referenceOk) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'a reference must be an https URL or a bare address',
+        message: 'a reference must be an https URL, a bare address or a bare domain',
       });
     }
   });
