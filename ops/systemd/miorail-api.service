@@ -1,0 +1,51 @@
+[Unit]
+Description=Miorail API
+Documentation=https://github.com/mioku50/mioagent
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=miorail
+Group=miorail
+WorkingDirectory=/home/miorail/mioagent
+EnvironmentFile=/home/miorail/mioagent/.env
+Environment=NODE_ENV=production
+Environment=PORT=8080
+Environment=NODE_OPTIONS=--dns-result-order=ipv4first
+Environment=PATH=/home/miorail/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx artifacts/api-server/index.ts
+
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=always
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# No ReadWritePaths. The API writes nothing to disk: it holds no file open for
+# writing at runtime, and the source contains no writeFile/appendFile/mkdir/
+# createWriteStream call outside tests — every mutation it performs goes to
+# Postgres. The unit previously granted /home/miorail/mioagent, i.e. the whole
+# checkout, which is what an attacker needs to persist. On 2026-08-16 a Next.js
+# RCE gave an attacker code execution as `miorail` in the MiniApp; that service
+# survived without persistence only because its ReadWritePaths was one
+# directory. This service had no such limit. With the grant removed the entire
+# filesystem is read-only here, and PrivateTmp keeps even /tmp private.
+#
+# If a future feature genuinely needs to write, add the narrowest path that
+# feature needs — never the checkout root.
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=miorail-api
+
+[Install]
+WantedBy=multi-user.target

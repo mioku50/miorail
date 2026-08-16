@@ -24,6 +24,8 @@ SERVICES=(miorail-api miorail-miniapp miorail-b20-discover miorail-b20-measure)
 MCP_PUBLIC_URL=${MCP_PUBLIC_URL:-https://miorail.xyz/mcp}
 NGINX_SNIPPET_SOURCE="$REPO/ops/nginx/miorail-app.conf"
 NGINX_SNIPPET_TARGET=/etc/nginx/snippets/miorail-app.conf
+API_UNIT_SOURCE="$REPO/ops/systemd/miorail-api.service"
+API_UNIT_TARGET=/etc/systemd/system/miorail-api.service
 MINIAPP_UNIT_SOURCE="$REPO/ops/systemd/miorail-miniapp.service"
 MINIAPP_UNIT_TARGET=/etc/systemd/system/miorail-miniapp.service
 B20_DISCOVER_UNIT_SOURCE="$REPO/ops/systemd/miorail-b20-discover.service"
@@ -127,6 +129,12 @@ systemctl reload nginx
 # in the repository and install it on every deploy so a rebuilt Base App cannot
 # silently remain offline behind a healthy-looking build.
 install -m 0644 "$MINIAPP_UNIT_SOURCE" "$MINIAPP_UNIT_TARGET"
+# The API unit lived only on the server until 2026-08-16, so its sandboxing was
+# invisible to review and drifted unnoticed: it granted write access to the whole
+# checkout. It is installed from the repository now for the same reason as the
+# drop-ins below — service state that decides what an intruder can write must
+# live in the same commit as the service.
+install -m 0644 "$API_UNIT_SOURCE" "$API_UNIT_TARGET"
 install -m 0644 "$B20_DISCOVER_UNIT_SOURCE" "$B20_DISCOVER_UNIT_TARGET"
 install -m 0644 "$B20_MEASURE_UNIT_SOURCE" "$B20_MEASURE_UNIT_TARGET"
 # A 2026-08-13 incident came from an out-of-repo drop-in that silently replaced
