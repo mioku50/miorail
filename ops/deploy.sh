@@ -16,6 +16,38 @@
 
 set -euo pipefail
 
+# --- run from an immutable copy of ourselves ---------------------------------
+# Step 1 pulls, and a pull that touches this file corrupts bash's own read of
+# it (see the note there). Nothing below is safe until the file being executed
+# is one git will not rewrite, so this has to come before every other line.
+#
+# DEPLOY_SOURCE stays pointed at the repository copy: it is what gets compared
+# across the pull, and it is what a re-snapshot re-reads.
+DEPLOY_SOURCE=${MIORAIL_DEPLOY_SOURCE:-$(cd "$(dirname "$0")" && pwd)/$(basename "$0")}
+export MIORAIL_DEPLOY_SOURCE="$DEPLOY_SOURCE"
+
+file_digest() { sha256sum "$1" | cut -d' ' -f1; }
+
+# Copy the repository script to a private temp file and run that instead,
+# forwarding its exit code. `set +e` around the call because a failed deploy
+# must reach the cleanup and the explicit exit, not trip `set -e` first.
+run_from_snapshot() {
+  local snapshot code
+  snapshot=$(mktemp /tmp/miorail-deploy.XXXXXXXX.sh)
+  cat "$DEPLOY_SOURCE" > "$snapshot"
+  set +e
+  bash "$snapshot" "$@"
+  code=$?
+  set -e
+  rm -f "$snapshot"
+  exit "$code"
+}
+
+if [ -z "${MIORAIL_DEPLOY_SNAPSHOT:-}" ]; then
+  export MIORAIL_DEPLOY_SNAPSHOT=1
+  run_from_snapshot "$@"
+fi
+
 REPO=${REPO:-/home/miorail/mioagent}
 SERVE_ROOT=${SERVE_ROOT:-/var/www/miorail}
 SERVICE_USER=${SERVICE_USER:-miorail}
@@ -44,7 +76,33 @@ step() { printf '\n=== %s ===\n' "$1"; }
 
 step "1/7  source"
 cd "$REPO"
+# `git pull` rewrites this very file while bash is executing it, and bash reads
+# a script by byte offset rather than into memory. Every read after the pull
+# then lands at the wrong place in the new text. On 2026-08-16 that run
+# installed the new commit and dependencies, skipped the systemd unit install
+# entirely, and exited after step 7's MiniApp check printing neither
+# `Deployed.` nor `FAILED`. A deploy that half-applies without saying so is the
+# thing this script exists to prevent, and it could not detect the failure in
+# itself.
+#
+# Comparing digests *after* the pull does not fix it: the very next statement
+# bash reads is already corrupt, so the check never runs as written. The file
+# being executed has to be one that git cannot touch. `deploy_self_snapshot`
+# above put us on an immutable copy; all that is left is to notice that the
+# repository copy moved and hand over to a fresh snapshot of it.
+digest_before_pull=$(file_digest "$DEPLOY_SOURCE")
 as_service_user git pull --ff-only
+if [ "$(file_digest "$DEPLOY_SOURCE")" != "$digest_before_pull" ]; then
+  # A second change can only mean something other than this pull is writing to
+  # the working tree. Looping would hide that; stop instead.
+  if [ "${MIORAIL_DEPLOY_REEXECED:-}" = 1 ]; then
+    echo 'FAILED: deploy.sh changed again after re-exec; refusing to loop'
+    exit 1
+  fi
+  printf '  deploy.sh changed in this pull — continuing with the pulled version\n'
+  export MIORAIL_DEPLOY_REEXECED=1
+  run_from_snapshot "$@"
+fi
 
 step "2/7  dependencies"
 # --frozen-lockfile: a deploy that silently resolves a different tree is not a
