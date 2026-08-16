@@ -3,6 +3,7 @@ import {
   b20ExitStandingV1,
   type B20ExitStandingV1,
 } from '@mioagent/opportunity-rail/exitStanding';
+import { b20ConsumerCardV1 } from '@mioagent/opportunity-rail/consumerCard';
 import { b20QuoteAssetDisplayV1 } from '@mioagent/opportunity-rail/quoteAsset';
 import { b20VenueCoverageV1, b20VenueLabelV1 } from '@mioagent/opportunity-rail/venues';
 import { formatAtomicAmount } from '../formatAtomicAmount';
@@ -229,6 +230,15 @@ export function cardStandingV1(observation: OpportunityCardWireV1['observation']
   });
 }
 
+/** The buyer count the standing was decided on. Null is a window still
+ * counting; zero is a window that closed with nobody in it, and the two must
+ * not be collapsed anywhere. */
+function completedBuyerCountV1(observation: OpportunityCardWireV1['observation']): number | null {
+  if (!observation) return null;
+  if (observation.launchBuyerWindow && observation.launchBuyerWindow.status !== 'measured') return null;
+  return observation.launchBuyers?.buyerCount ?? null;
+}
+
 export function opportunityCardViewV1(card: OpportunityCardWireV1): OpportunityCardViewV1 {
   const { launch, observation } = card;
   const symbol = launch.symbol || launch.tokenAddress.slice(0, 8);
@@ -272,6 +282,32 @@ export function opportunityCardViewV1(card: OpportunityCardWireV1): OpportunityC
     // The conclusion in its own words, above the evidence. The card's `detail`
     // is the measured specifics, and those go behind the fold.
     standingDetail: standing.detail,
+    // The consumer reading of exactly the same evidence. Built here rather than
+    // in the component so it can be asserted without rendering, and so the
+    // component has no branch of its own that could disagree with it.
+    //
+    // The engineering fields above are untouched and still on this object:
+    // `state`, `standingKind`, `standingDetail` and the rest feed the technical
+    // evidence section, the API and MCP. Nothing was removed to make this.
+    consumer: b20ConsumerCardV1({
+      standing,
+      roundTripBps: observation?.optimisticRoundTripBps ?? null,
+      referenceBps: observation?.maxRoundTripBps ?? null,
+      buyerCount: completedBuyerCountV1(observation),
+      exitCapacityLabel: observation
+        ? capacityLabelV1({
+            largestPassingSizeAtomic: observation.largestPassingSizeAtomic,
+            firstFailingSizeAtomic: observation.firstFailingSizeAtomic,
+            decimals: launch.decimals,
+            symbol,
+            capacityStable: observation.capacityStable,
+          })
+        : null,
+      // The card wire carries no measurement timestamp, only a freshness flag.
+      measuredAgeLabel: null,
+      fresh: observation?.freshness === 'fresh',
+      hasObservation: observation !== null && observation !== undefined,
+    }),
     // Null stays null the whole way. There is no `?? 0` anywhere in this file.
     costLabel:
       observation && observation.optimisticRoundTripBps !== null

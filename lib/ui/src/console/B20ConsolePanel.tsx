@@ -95,6 +95,7 @@ const SHORT_ADDRESS_V1 = (address: string) => `${address.slice(0, 6)}…${addres
 
 export function B20ConsolePanel(model: B20ConsolePanelModelV1) {
   const [question, setQuestion] = useState('');
+  const [expanded, setExpanded] = useState(false);
   const held = model.heldTokenAddresses ?? [];
   // Offered only when a surface actually read a wallet. A Portfolio tab above
   // a disconnected wallet would answer "nothing held", which is a claim
@@ -118,11 +119,28 @@ export function B20ConsolePanel(model: B20ConsolePanelModelV1) {
     });
   };
 
+  // Collapsed by default. The full panel — scope blurb, four example questions,
+  // the input label — stood between the reader and the first B20 card, so
+  // Discover opened on an explanation of itself. Everything is one focus away
+  // and nothing was removed.
+  //
+  // It opens on focus, on a submitted question, and on the explicit control, so
+  // a reader who starts typing gets the hints without having asked for them.
+  const hintsOpen = expanded || Boolean(answer) || model.loading;
+
   return (
     <div className="panel">
       <div className="ph">
         <h3>Ask Miorail</h3>
         <span className="rt">
+          <button
+            type="button"
+            className="btn sec"
+            aria-expanded={hintsOpen}
+            onClick={() => setExpanded((open) => !open)}
+          >
+            {hintsOpen ? 'Less' : 'Examples'}
+          </button>
           <span className="sub">read-only</span>
         </span>
       </div>
@@ -143,6 +161,11 @@ export function B20ConsolePanel(model: B20ConsolePanelModelV1) {
             ))}
           </nav>
         </div>
+        {/* ALWAYS visible, never behind the fold. This is not a hint — it is
+            what the scope reads, and Portfolio's version carries the sentence
+            saying the ranking uses a reference size nobody holds. A disclosure
+            a reader has to expand is not a disclosure. Only the four example
+            questions collapse. */}
         <p className="lnote">{copy.blurb}</p>
 
         {scope === 'investigate' && (
@@ -169,13 +192,15 @@ export function B20ConsolePanel(model: B20ConsolePanelModelV1) {
           </div>
         )}
 
-        <div className="b20-prompt-chips" aria-label="Example questions">
-          {copy.prompts.map((prompt) => (
-            <button key={prompt} type="button" onClick={() => { setQuestion(prompt); ask(prompt); }}>
-              {prompt}
-            </button>
-          ))}
-        </div>
+        {hintsOpen && (
+          <div className="b20-prompt-chips" aria-label="Example questions">
+            {copy.prompts.map((prompt) => (
+              <button key={prompt} type="button" onClick={() => { setQuestion(prompt); ask(prompt); }}>
+                {prompt}
+              </button>
+            ))}
+          </div>
+        )}
 
         <form
           className="b20-ask-form"
@@ -184,13 +209,16 @@ export function B20ConsolePanel(model: B20ConsolePanelModelV1) {
             ask(question);
           }}
         >
-          <label htmlFor="b20-console-ask">Ask about measured B20 launches</label>
+          <label htmlFor="b20-console-ask" className={hintsOpen ? undefined : 'sr-only'}>
+            Ask about measured B20 launches
+          </label>
           <div>
             <input
               id="b20-console-ask"
               value={question}
               maxLength={500}
               placeholder={copy.prompts[0]}
+              onFocus={() => setExpanded(true)}
               onChange={(event) => setQuestion(event.currentTarget.value)}
             />
             <button type="submit" className="btn" disabled={!question.trim() || model.loading}>

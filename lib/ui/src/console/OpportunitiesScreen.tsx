@@ -5,6 +5,7 @@ import {
   type B20ExitStandingKindV1,
   type B20StandingGroupV1,
 } from '@mioagent/opportunity-rail/exitStanding';
+import type { B20ConsumerCardV1 } from '@mioagent/opportunity-rail/consumerCard';
 import {
   CONSOLE_NO_ANALYSIS_COPY_V1,
   type ConsoleOperationalLabelV1,
@@ -98,6 +99,16 @@ export interface OpportunityCardViewV1 {
   standingGroup: B20StandingGroupV1;
   /** What the conclusion rests on and what it does not claim. */
   standingDetail: string;
+  /**
+   * The same evidence, said to a reader who has never heard of a reason code.
+   *
+   * This is what the collapsed card renders. Everything beside it on this
+   * object — `state`, `standingKind`, `standingDetail`, the hashes, the blocks —
+   * is untouched and still feeds the technical evidence section, the API and
+   * MCP. Nothing was simplified away; the engineering vocabulary moved down a
+   * level.
+   */
+  consumer: B20ConsumerCardV1;
   /** Round-trip cost, already formatted. Null means it was not measured. */
   costLabel: string | null;
   /**
@@ -186,16 +197,6 @@ export interface B20CopilotPanelModelV1 {
   onOpenRoutes: (goal: string) => void;
 }
 
-const STATE_PILL_V1: Readonly<Record<OpportunityStateV1, { tone: 'g' | 'a' | 'n' | 'br'; label: string }>> = {
-  // `br` and not `g`: a provisional pass is the strongest thing background
-  // measurement can say, and it is still not a confirmation. Green would read
-  // as one.
-  provisional: { tone: 'br', label: 'provisional' },
-  rejected: { tone: 'a', label: 'rejected' },
-  unmeasured: { tone: 'n', label: 'not measured' },
-  candidate: { tone: 'n', label: 'queued' },
-};
-
 export interface OpportunitiesScreenModelV1 {
   /** The pipeline's own sentence. Rendered ABOVE the list, always, when set. */
   pipelineNotice: string | null;
@@ -268,7 +269,6 @@ function OpportunityCard({
 }) {
   const [askOpen, setAskOpen] = React.useState(false);
   const [question, setQuestion] = React.useState('');
-  const pill = STATE_PILL_V1[card.state];
   // A failed route read is still a stored observation with a profile. The
   // values decide whether the metric block has something to show; profile
   // presence does not. This is the production shape of route_search_degraded.
@@ -301,7 +301,13 @@ function OpportunityCard({
         <span className="cr-name">
           {card.symbol} <span className="sub">{card.name}</span>
         </span>
-        <span className={`pill ${pill.tone}`}>{pill.label}</span>
+        {/* What was MEASURED, not what state the measurement profile reached.
+            This used to be the raw `rejected` pill, which is a verdict about a
+            reference threshold and read on screen as a verdict about the token.
+            The state itself is still here — in Technical evidence below. */}
+        <span className="pill cr-status" data-tone={card.consumer.tone}>
+          {card.consumer.status}
+        </span>
       </div>
 
       {/* The conclusion first, in the card's largest voice, and the evidence
@@ -309,8 +315,26 @@ function OpportunityCard({
           "not measured" on four cards in five, so the first thing a reader met
           was an absence — and the sentence that explained it was two sizes
           smaller, below the fold of the eye. */}
-      <p className="cr-verdict">{card.headline}</p>
-      <p className="lnote">{card.standingDetail}</p>
+      <p className="cr-verdict">{card.consumer.headline}</p>
+      <p className="lnote">{card.consumer.body}</p>
+
+      {/* Two to four facts, above any control. This is what a reader came for
+          and it used to be behind "What was measured": the round-trip number
+          that makes a card different from its neighbour was one click away
+          while a reason code nobody can read was in the body copy. */}
+      {card.consumer.facts.length > 0 && (
+        <dl className="cr-facts">
+          {card.consumer.facts.map((fact) => (
+            <div key={fact.label}>
+              <dt>{fact.label}</dt>
+              <dd>
+                <strong className="mono">{fact.value}</strong>
+                {fact.note ? <span className="cr-fact-note"> · {fact.note}</span> : null}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
 
       {/* Never behind the fold. A pre-entry, quote-alignment or transfer-policy
           sentence is a warning about what the numbers below are worth, and a
@@ -421,6 +445,53 @@ function OpportunityCard({
           {card.notMeasured.length > 0 && card.profileLabel && (
             <p className="lnote">Not measured: {card.notMeasured.join(', ')}.</p>
           )}
+        </div>
+      </details>
+
+      {/* Technical evidence.
+
+          Everything the engineering vocabulary owns, in one place a power user
+          can open and nobody else has to read: the measurement state, the typed
+          reason, the profile, the observation block and the append-only
+          references. None of it was removed — it stopped being the first thing
+          on the card. A reader who wants `round_trip_above_tolerance` finds it
+          here, spelled exactly as the API and MCP return it. */}
+      <details className="card-evidence">
+        <summary>Technical evidence</summary>
+        <div className="card-evidence-body">
+          <div className="kv">
+            <span className="k">Measurement state</span>
+            <span className="v mono">{card.state}</span>
+          </div>
+          <div className="kv">
+            <span className="k">Standing</span>
+            <span className="v mono">{card.standingKind}</span>
+          </div>
+          {/* The typed sentence the measurement itself produced, reason code and
+              all. Above, the card says what that amounted to. */}
+          <p className="lnote">{card.standingDetail}</p>
+          {card.observationBlockNumber && (
+            <div className="kv">
+              <span className="k">Observation block</span>
+              <span className="v mono">{card.observationBlockNumber}</span>
+            </div>
+          )}
+          {card.observationId && (
+            <div className="kv">
+              <span className="k">Observation</span>
+              <span className="v mono">{card.observationId}</span>
+            </div>
+          )}
+          {card.evidenceHash && (
+            <div className="kv">
+              <span className="k">Evidence hash</span>
+              <span className="v mono">{card.evidenceHash}</span>
+            </div>
+          )}
+          <p className="lnote">
+            These are the exact values the API and MCP return for this card. The words above are a
+            reading of them, not a replacement.
+          </p>
         </div>
       </details>
 
@@ -649,20 +720,15 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
                 </nav>
               </div>
             )}
+            {/* Freshness is a question a reader has; `provisional` and
+                `rejected` are not. So the freshness toggle stays out here beside
+                what was found, and the measurement states move behind Advanced —
+                still one click away, still the vocabulary the evidence, the API
+                and the x402 seller speak. Removing them would cost a real
+                capability; leading with them cost every reader. */}
             <div className="filter-row">
-              <span className="filter-row-k">Measurement state</span>
-              <nav className="crumb" aria-label="Filter opportunities">
-                {filters.map((filter) => (
-                  <button
-                    key={filter}
-                    type="button"
-                    className={`btn sec${model.filter === filter ? ' on' : ''}`}
-                    aria-pressed={model.filter === filter}
-                    onClick={() => model.onFilterChange(filter)}
-                  >
-                    {OPPORTUNITY_FILTER_LABEL_V1[filter]}
-                  </button>
-                ))}
+              <span className="filter-row-k">Evidence</span>
+              <nav className="crumb" aria-label="Filter by evidence freshness">
                 <button
                   type="button"
                   className={`btn sec${model.freshOnly ? ' on' : ''}`}
@@ -673,6 +739,30 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
                 </button>
               </nav>
             </div>
+            <details className="discover-guide">
+              <summary>Advanced · measurement state</summary>
+              <div className="filter-row">
+                <span className="filter-row-k">Measurement state</span>
+                <nav className="crumb" aria-label="Filter opportunities">
+                  {filters.map((filter) => (
+                    <button
+                      key={filter}
+                      type="button"
+                      className={`btn sec${model.filter === filter ? ' on' : ''}`}
+                      aria-pressed={model.filter === filter}
+                      onClick={() => model.onFilterChange(filter)}
+                    >
+                      {OPPORTUNITY_FILTER_LABEL_V1[filter]}
+                    </button>
+                  ))}
+                </nav>
+              </div>
+              <p className="lnote">
+                The measurement profile’s own states. `provisional` is the strongest thing background
+                measurement says and is still not a confirmation; `rejected` means a reference check did
+                not pass, which is a threshold this product set rather than a fault found in a token.
+              </p>
+            </details>
             <details className="discover-guide">
               <summary>How to read a B20 card</summary>
               <dl>

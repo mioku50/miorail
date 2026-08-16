@@ -10,7 +10,8 @@
     "./exitStanding": "./src/exitStanding.ts",
     "./quoteAsset": "./src/quoteAsset.ts",
     "./venues": "./src/venues.ts",
-    "./launchContext": "./src/launchContext.ts"
+    "./launchContext": "./src/launchContext.ts",
+    "./consumerCard": "./src/consumerCard.ts"
   },
   "scripts": {
     "test": "NODE_ENV=test node --import tsx --test test/*.test.ts",

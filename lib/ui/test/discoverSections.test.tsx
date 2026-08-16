@@ -199,9 +199,16 @@ describe('the screen separates a finding from a failure to measure', () => {
 
   test('the conclusion is on the card and the evidence is behind a control', () => {
     const markup = render([BOUGHT]);
-    const verdict = markup.indexOf('62 wallets bought this');
+    // The buyer count used to be inside the headline sentence — "62 wallets
+    // bought this". It is now a labelled fact on the same collapsed card, which
+    // is where a reader looks for a number. Both the conclusion and the count
+    // still come before the evidence control.
+    const verdict = markup.indexOf('Buyers were observed');
+    const count = markup.indexOf('62');
     const control = markup.indexOf('What was measured');
-    assert.ok(verdict >= 0 && control > verdict, 'the verdict must come before the evidence control');
+    assert.ok(verdict >= 0, 'the card must state what was measured');
+    assert.ok(count >= 0, 'the buyer count must survive on the collapsed card');
+    assert.ok(control > verdict && control > count, 'the verdict must come before the evidence control');
     // The measured rows still exist — folded, not deleted.
     assert.match(markup, /Round trip/);
     assert.match(markup, /<details class="card-evidence">/);

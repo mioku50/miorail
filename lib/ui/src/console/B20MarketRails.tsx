@@ -61,6 +61,25 @@ export function signedBpsLabelV1(bps: number): string {
   return `${bps > 0 ? '+' : ''}${bpsLabelV1(bps)}`;
 }
 
+/**
+ * A 24h change in ROUND-TRIP COST, in percentage points.
+ *
+ * `+1.97%` beside a token symbol is read as "this token is up 1.97%". It is
+ * not: it is the change in what a measured round trip COSTS, so a positive
+ * number is worse rather than better, and it is a difference between two
+ * percentages — which makes its unit a percentage point, not a percent.
+ *
+ * The arrow carries the direction because a leading `+` is the one character a
+ * reader most associates with a price going up. The calculation is untouched;
+ * `signedBpsLabelV1` stays for anything that really is a signed percentage.
+ */
+export function roundTripChangeLabelV1(bps: number): string {
+  if (bps === 0) return 'no change';
+  const points = Math.abs(bps) / 100;
+  const rendered = Number.isInteger(points) ? String(points) : points.toFixed(2);
+  return `${bps > 0 ? '↑' : '↓'} ${rendered} pp`;
+}
+
 export type MarketRailStateV1 = 'loading' | 'ready' | 'unavailable' | 'collecting_history';
 
 export interface B20MarketRailsModelV1 {
@@ -171,7 +190,7 @@ export function B20MeasuredMoversCard(model: B20MarketRailsModelV1) {
   return (
     <div className="rp">
       <div className="rph">
-        24h Measured Movers
+        24h Route Cost Changes
         <span className="rt">Miorail quotes</span>
       </div>
       <div className="rpb">
@@ -208,10 +227,10 @@ export function B20MeasuredMoversCard(model: B20MarketRailsModelV1) {
                 </span>
                 <span
                   className={`v mono${
-                    mover.profileStatus === 'outside_round_trip_reference' ? ' warn' : mover.changeBps > 0 ? ' ok' : ''
+                    mover.profileStatus === 'outside_round_trip_reference' || mover.changeBps > 0 ? ' warn' : ''
                   }`}
                 >
-                  {signedBpsLabelV1(mover.changeBps)}
+                  {roundTripChangeLabelV1(mover.changeBps)}
                   <span className="rail-reference">
                     {bpsLabelV1(mover.optimisticRoundTripBps)} round trip ·{' '}
                     {mover.profileStatus === 'outside_round_trip_reference' ? 'outside' : 'within'}{' '}

@@ -619,6 +619,43 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
    the one sentence a reader needs — the measured evidence sits under the
    `.card-evidence` control below it. */
 .mio-console .cr-verdict { margin: 10px 0 0; color: var(--ink); font-size: 13px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+
+/* The consumer status chip and its facts.
+
+   The chip replaces the raw measurement state, which was rendered as an amber
+   `rejected` pill. That state is a verdict about a REFERENCE THRESHOLD and read
+   on screen as a verdict about the token; it now lives in Technical evidence.
+
+   Tone is a data attribute rather than a class name built by template, so the
+   stylesheet guard can see every class this component actually asks for. Note
+   that `measured` deliberately shares its look whether the round trip sat above
+   or below the reference: what was MEASURED is identical, and the number beside
+   it carries the difference. */
+/* Visible to a screen reader, not to the eye. The console's input keeps its
+   label when the panel is collapsed — removing the label to save vertical space
+   would make the field unlabelled for anyone not looking at it. */
+.mio-console .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+.mio-console .cr-status { font-weight: 600; letter-spacing: 0.01em; }
+.mio-console .cr-status[data-tone='finding'] { color: var(--br-text); background: var(--gsoft); box-shadow: inset 0 0 0 1px var(--br-line); }
+.mio-console .cr-status[data-tone='measured'] { color: var(--g-text); background: var(--g-bg); box-shadow: inset 0 0 0 1px var(--g-line); }
+.mio-console .cr-status[data-tone='absent'] { color: var(--muted); background: var(--n-bg); box-shadow: inset 0 0 0 1px var(--line); font-weight: 500; }
+.mio-console .cr-status[data-tone='gap'] { color: var(--muted); background: var(--n-bg); box-shadow: inset 0 0 0 1px var(--line); font-weight: 500; font-style: italic; }
+
+/* Two to four rows, above any control. Grid rather than flex so the labels line
+   up down the card, and `minmax(0, …)` so a long capacity figure wraps instead
+   of widening the whole feed. */
+.mio-console .cr-facts { display: grid; gap: 6px; margin: 10px 0 0; }
+.mio-console .cr-facts > div { display: grid; grid-template-columns: minmax(0, 140px) minmax(0, 1fr); gap: 10px; align-items: baseline; }
+.mio-console .cr-facts dt { color: var(--muted); font-size: 11.5px; }
+.mio-console .cr-facts dd { margin: 0; color: var(--ink); font-size: 12.5px; overflow-wrap: anywhere; }
+.mio-console .cr-fact-note { color: var(--muted); font-weight: 400; }
+
+@media (max-width: 720px) {
+  /* Base App width. The label/value split becomes two lines rather than a
+     140px column squeezing every value into a ragged strip. */
+  .mio-console .cr-facts > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+}
 .mio-console .card-evidence { margin-top: 10px; border-radius: var(--r); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
 .mio-console .card-evidence summary { cursor: pointer; padding: 8px 10px; color: var(--muted); font-size: 11.5px; font-weight: 650; }
 .mio-console .card-evidence[open] summary { color: var(--ink); border-bottom: 1px solid var(--line); }

@@ -12,6 +12,7 @@ import {
   defaultRailLeadersV1,
   measuredAgoLabelV1,
   signedBpsLabelV1,
+  roundTripChangeLabelV1,
   type B20MarketRailsModelV1,
 } from '../src/console/B20MarketRails';
 
@@ -225,6 +226,20 @@ describe('§6 — measured views, stated as such', () => {
     assert.equal(signedBpsLabelV1(0), '0%');
   });
 
+  test('a 24h round-trip change is percentage POINTS, never a percent return', () => {
+    // `HUMAN +1.97%` reads as "this token is up 1.97%". It is the change in
+    // what a measured round trip costs — a difference between two percentages,
+    // so the unit is a percentage point, and up is worse.
+    assert.equal(roundTripChangeLabelV1(197), '↑ 1.97 pp');
+    assert.equal(roundTripChangeLabelV1(-40), '↓ 0.40 pp');
+    assert.equal(roundTripChangeLabelV1(300), '↑ 3 pp');
+    assert.equal(roundTripChangeLabelV1(0), 'no change');
+    // The one character a reader most associates with a price going up must
+    // not appear.
+    assert.ok(!roundTripChangeLabelV1(197).includes('+'));
+    assert.ok(!roundTripChangeLabelV1(197).includes('%'));
+  });
+
   test('measurement age is whole units, never seconds', () => {
     assert.equal(measuredAgoLabelV1('2026-08-05T11:50:00.000Z', NOW), 'measured 10 min ago');
     assert.equal(measuredAgoLabelV1('2026-08-05T11:59:40.000Z', NOW), 'measured just now');
@@ -241,7 +256,9 @@ describe('§6 — measured views, stated as such', () => {
       assert.match(markup, /measured 10 min ago/);
     }
     assert.match(leaders, /≥ 4000 S/);
-    assert.match(movers, /\+25%/);
+    // Percentage POINTS, and no leading plus: this is the change in what a
+    // round trip costs, not a return anybody earned.
+    assert.match(movers, /↑ 25 pp/);
   });
 
   test('no card says safe, recommended, best or predicted', () => {

@@ -605,9 +605,17 @@ describe('a card never turns a missing measurement into a number', () => {
         onOpenToken={() => undefined}
       />,
     );
-    assert.match(markup, /not measured/);
+    // Case-insensitive: the old amber pill said "not measured" in lower case,
+    // the consumer status chip says "Not measured yet". The assertion is that
+    // the screen SAYS it, not how it capitalises it.
+    assert.match(markup, /not measured/i);
     assert.match(markup, /Round trip \+ exit capacity/);
-    assert.equal((markup.match(/not measured/gi) ?? []).length, 3);
+    // A BOUND, not an exact count. The point of this assertion is that one
+    // unmeasured card must not say "not measured" five separate times; pinning
+    // the exact number made a change that says it LESS fail the test. The
+    // consumer card says it twice — a status chip and the missing-metric row.
+    const repeats = (markup.match(/not measured/gi) ?? []).length;
+    assert.ok(repeats >= 1 && repeats <= 3, `"not measured" appears ${repeats} times`);
     assert.ok(!/0\.00%/.test(markup), 'an unmeasured token rendered a zero cost');
   });
 
