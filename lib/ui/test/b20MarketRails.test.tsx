@@ -10,6 +10,7 @@ import {
   B20MeasuredMoversCard,
   MARKET_RAIL_DISCLAIMER_V1,
   defaultRailLeadersV1,
+  measuredAgeLabelV1,
   measuredAgoLabelV1,
   signedBpsLabelV1,
   roundTripChangeLabelV1,
@@ -123,8 +124,9 @@ describe('§4 — measured profile misses remain visible and are said plainly', 
         }),
       ],
     });
-    assert.match(markup, /4\.36% round trip · outside 3% reference/);
-    assert.match(markup, /class="v mono warn"/);
+    assert.match(markup, /4\.36%/);
+    assert.match(markup, /above 3% reference/);
+    assert.match(markup, /rail-fact-v warn/);
     assert.match(markup, /1 measured profile exceeds the configured round-trip reference and remains visible in amber/);
   });
 
@@ -244,6 +246,10 @@ describe('§6 — measured views, stated as such', () => {
     assert.equal(measuredAgoLabelV1('2026-08-05T11:50:00.000Z', NOW), 'measured 10 min ago');
     assert.equal(measuredAgoLabelV1('2026-08-05T11:59:40.000Z', NOW), 'measured just now');
     assert.equal(measuredAgoLabelV1('2026-08-04T12:00:00.000Z', NOW), 'measured 1 d ago');
+    // The same clock as a field value, for a row that already says "Freshness".
+    assert.equal(measuredAgeLabelV1('2026-08-05T11:50:00.000Z', NOW), '10 min old');
+    assert.equal(measuredAgeLabelV1('2026-08-05T11:59:40.000Z', NOW), 'just measured');
+    assert.equal(measuredAgeLabelV1('2026-08-04T12:00:00.000Z', NOW), '1 d old');
   });
 
   test('stale market measurements keep their numbers and say they are past the window', () => {
@@ -253,7 +259,9 @@ describe('§6 — measured views, stated as such', () => {
     });
     for (const markup of [leaders, movers]) {
       assert.match(markup, /past freshness window/);
-      assert.match(markup, /measured 10 min ago/);
+      // The AGE survives the stale mark. A reader has to be able to tell a
+      // ten-minute-old reading from a week-old one.
+      assert.match(markup, /10 min old/);
     }
     assert.match(leaders, /≥ 4000 S/);
     // Percentage POINTS, and no leading plus: this is the change in what a
@@ -273,6 +281,72 @@ describe('§6 — measured views, stated as such', () => {
     for (const banned of ['safe', 'recommend', 'best', 'predict', 'should buy', 'opportunity to']) {
       assert.ok(!new RegExp(banned, 'i').test(markup), `a rail says "${banned}"`);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §8 — the rail row is labelled, and loses nothing by being readable.
+//
+// The old row was `≥ 1.026B BWIF / 100% of reference entry / 4.11% round trip /
+// outside 3% reference / past freshness window` in one right-aligned strip. The
+// facts are the same facts; what changed is that each one now sits under the
+// name of what it is.
+// ---------------------------------------------------------------------------
+describe('§8 — every rail figure is named, and every bound survives', () => {
+  test('the leaders row names its three facts', () => {
+    const markup = renderLeaders({ leaders: [leader(ADDRESSES[0]!)] });
+    assert.match(markup, /Largest tested exit/);
+    assert.match(markup, /Round-trip cost/);
+    assert.match(markup, /Freshness/);
+    // The bound is stated twice on purpose: in the glyph, and in words for a
+    // reader who does not read `≥` as "at least".
+    assert.match(markup, /≥ 4000 S/);
+    assert.match(markup, /lower bound/);
+    assert.match(markup, /100% of reference entry/);
+    // The reference the cost was judged against travels with the cost.
+    assert.match(markup, /within 3% reference/);
+  });
+
+  test('an unmeasured round trip says so rather than showing a number', () => {
+    // A rail row has no field for an interpolated figure and no zero fallback:
+    // "0%" beside a token would read as a free exit.
+    const markup = renderLeaders({
+      leaders: [leader(ADDRESSES[0]!, { optimisticRoundTripBps: null })],
+    });
+    assert.match(markup, /Round-trip cost/);
+    assert.match(markup, /not measured/);
+    assert.ok(!/>0%</.test(markup), 'an unmeasured round trip rendered as zero');
+  });
+
+  test('the movers row names the change instead of leaving it beside a symbol', () => {
+    const markup = renderMovers({ movers: [mover(ADDRESSES[0]!, 197)] });
+    assert.match(markup, /24h route cost change/);
+    assert.match(markup, /↑ 1\.97 pp/);
+    // A rising exit cost is not good news, so it is never green.
+    assert.ok(!/rail-fact-v ok/.test(markup));
+  });
+
+  test('the measurement behind a row is reachable, and only when a host wired it', () => {
+    const wired = renderLeaders({
+      leaders: [leader(ADDRESSES[0]!)],
+      onOpenToken: () => undefined,
+    });
+    assert.match(wired, /View measurement/);
+    // No control at all when the host wired no handler — rather than a dead
+    // button that looks like it opens something.
+    assert.ok(!/View measurement/.test(renderLeaders({ leaders: [leader(ADDRESSES[0]!)] })));
+  });
+
+  test('the rail still never claims liquidity is available or safe', () => {
+    const markup = renderLeaders({ leaders: [leader(ADDRESSES[0]!)] }).replaceAll(
+      MARKET_RAIL_DISCLAIMER_V1,
+      '',
+    );
+    for (const banned of ['safe liquidity', 'available liquidity', 'you can sell', 'guaranteed']) {
+      assert.ok(!new RegExp(banned, 'i').test(markup), `the rail says "${banned}"`);
+    }
+    // And the sentence that bounds the ladder stays on the card.
+    assert.match(markup, /Nothing between the largest passing and first failing size/);
   });
 });
 

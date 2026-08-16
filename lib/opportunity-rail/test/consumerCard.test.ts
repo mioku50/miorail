@@ -193,8 +193,11 @@ describe('the nine cases a reader actually meets', () => {
     const stale = card({ measuredAgeLabel: null, fresh: false });
     const row = stale.facts.find((fact) => fact.label === 'Freshness');
     assert.equal(row?.value, 'Past the freshness window');
-    assert.match(row?.note ?? '', /re-measure/i);
-    assert.equal(card({ measuredAgeLabel: null, fresh: true }).facts.find((f) => f.label === 'Freshness')?.note, null);
+    // The value is the whole statement. What to do about it is the card's
+    // action reason, one line below — saying it in both places made every stale
+    // card print the same sentence twice.
+    assert.equal(row?.note, null);
+    assert.equal(card({ measuredAgeLabel: null, fresh: true }).facts.find((f) => f.label === 'Freshness')?.value, 'Within the freshness window');
   });
 });
 

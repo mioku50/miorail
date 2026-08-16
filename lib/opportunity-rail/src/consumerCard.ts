@@ -215,7 +215,12 @@ export function b20ConsumerCardV1(input: B20ConsumerCardInputV1): B20ConsumerCar
     facts.push({
       label: 'Freshness',
       value: input.fresh ? 'Within the freshness window' : 'Past the freshness window',
-      note: input.fresh ? null : 're-measure before drawing anything from it',
+      // No note. The value is the whole statement here, and the card's own
+      // action reason sits directly under these facts saying what to do about
+      // a stale measurement — printing "re-measure before drawing anything from
+      // it" above a sentence that says the same thing is how a card comes to
+      // repeat itself.
+      note: null,
     });
   }
 

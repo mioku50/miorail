@@ -11,6 +11,7 @@ import {
   type ConsoleOperationalLabelV1,
   type ConsolePipelineStateV1,
 } from './navigation';
+import { factValueClassV1 } from './opportunityCardView';
 import { B20ConsolePanel, type B20ConsolePanelModelV1 } from './B20ConsolePanel';
 import { B20LaunchContextCard, type B20LaunchContextModelV1 } from './B20LaunchContextCard';
 
@@ -328,7 +329,7 @@ function OpportunityCard({
             <div key={fact.label}>
               <dt>{fact.label}</dt>
               <dd>
-                <strong className="mono">{fact.value}</strong>
+                <strong className={factValueClassV1(fact.value)}>{fact.value}</strong>
                 {fact.note ? <span className="cr-fact-note"> · {fact.note}</span> : null}
               </dd>
             </div>
@@ -688,7 +689,10 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
       {model.feedRenderable && (
         <div className="panel">
           <div className="ph">
-            <h3>Opportunities</h3>
+            {/* What the panel IS. "Opportunities" is a promise this surface
+                does not make — every card here is a measurement, and four in
+                five of them are a measurement that found no way out. */}
+            <h3>Discover B20</h3>
             <span className="rt">
               <span className="sub">{model.cards.length} shown</span>
             </span>
@@ -739,6 +743,59 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
                 </button>
               </nav>
             </div>
+          </div>
+          <div className="pb">
+            {model.loading ? (
+              <p className="empty">Reading measured launches…</p>
+            ) : model.cards.length === 0 ? (
+              // Reachable only when the pipeline is healthy: `feedRenderable`
+              // is false in every other state, so this sentence cannot be shown
+              // about a product that was never switched on.
+              <p className="empty">
+                No measured B20 opportunities match this filter. Both workers are current.
+              </p>
+            ) : (
+              sections.map((section) => {
+                const copy = B20_STANDING_GROUP_COPY_V1[section.group];
+                return (
+                  <section className="feed-section" key={section.group} aria-label={copy.label}>
+                    <div className="feed-section-head">
+                      <h4>{copy.label}</h4>
+                      <span className="pill n">{section.cards.length}</span>
+                    </div>
+                    {/* The section says what the whole group does and does not
+                        claim, once, rather than every card repeating it. The
+                        Miorail-limit section is the one that has to exist:
+                        thirty per cent of the live feed describes a measurement
+                        that did not complete, and those cards were sitting in
+                        the same list as findings. */}
+                    <p className="lnote">{copy.note}</p>
+                    <div className="cardrows">
+                      {section.cards.map((card) => (
+                        <OpportunityCard
+                          key={card.tokenAddress}
+                          card={card}
+                          onOpen={model.onOpenToken}
+                          copilot={model.copilot}
+                          launchContext={model.launchContext}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                );
+              })
+            )}
+          </div>
+
+          {/* Reference material, below the findings.
+              These two used to sit between the filters and the first card, so
+              the last thing a reader passed before meeting a token was a
+              glossary and a list of measurement states. Neither is an answer to
+              a question anybody arrives with; both are things a reader reaches
+              for once a card has raised one. Nothing was removed — the
+              measurement-state filter is the vocabulary the evidence, the API
+              and the x402 seller speak, and it still works exactly as before. */}
+          <div className="pb tight">
             <details className="discover-guide">
               <summary>Advanced · measurement state</summary>
               <div className="filter-row">
@@ -787,8 +844,7 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
                 A card measures exit conditions. It does not predict returns, recommend a token, or produce a
                 combined rating. “Past freshness window” means historical evidence, not a current quote.
               </p>
-              {/* The one thing a reader has to understand about the sections,
-                  stated where they are looking when they first meet them. */}
+              {/* The one thing a reader has to understand about the sections. */}
               <p>
                 Cards are grouped by what the measurement found. The last group is different from the others: it
                 holds cards where Miorail’s own reading did not complete — a venue it did not find, a call that did
@@ -796,55 +852,13 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
               </p>
             </details>
           </div>
-          <div className="pb">
-            {model.loading ? (
-              <p className="empty">Reading measured launches…</p>
-            ) : model.cards.length === 0 ? (
-              // Reachable only when the pipeline is healthy: `feedRenderable`
-              // is false in every other state, so this sentence cannot be shown
-              // about a product that was never switched on.
-              <p className="empty">
-                No measured B20 opportunities match this filter. Both workers are current.
-              </p>
-            ) : (
-              sections.map((section) => {
-                const copy = B20_STANDING_GROUP_COPY_V1[section.group];
-                return (
-                  <section className="feed-section" key={section.group} aria-label={copy.label}>
-                    <div className="feed-section-head">
-                      <h4>{copy.label}</h4>
-                      <span className="pill n">{section.cards.length}</span>
-                    </div>
-                    {/* The section says what the whole group does and does not
-                        claim, once, rather than every card repeating it. The
-                        Miorail-limit section is the one that has to exist:
-                        thirty per cent of the live feed describes a measurement
-                        that did not complete, and those cards were sitting in
-                        the same list as findings. */}
-                    <p className="lnote">{copy.note}</p>
-                    <div className="cardrows">
-                      {section.cards.map((card) => (
-                        <OpportunityCard
-                          key={card.tokenAddress}
-                          card={card}
-                          onOpen={model.onOpenToken}
-                          copilot={model.copilot}
-                          launchContext={model.launchContext}
-                        />
-                      ))}
-                    </div>
-                  </section>
-                );
-              })
-            )}
-          </div>
         </div>
       )}
 
       {!model.feedRenderable && !model.pipelineNotice && (
         <div className="panel">
           <div className="ph">
-            <h3>Opportunities</h3>
+            <h3>Discover B20</h3>
           </div>
           <div className="pb">
             <p className="empty">{CONSOLE_NO_ANALYSIS_COPY_V1}</p>

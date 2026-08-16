@@ -366,13 +366,31 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .qrow > span { min-width: 0; }
 .mio-console .qrow .rail-token .btn { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .mio-console .qrow .v { color: var(--ink); font-weight: 500; text-align: right; }
-.mio-console .qrow .rail-amount { display: block; font-size: 12.5px; line-height: 1.35; }
 .mio-console .qrow .v.ok { color: var(--green); }
 .mio-console .qrow .v.warn { color: var(--amber); }
 .mio-console .qrow .v.off { color: var(--dim); }
-.mio-console .qrow .rail-reference { display: block; margin-top: 2px; color: currentColor; font-size: 10px; font-weight: 500; opacity: .82; }
-.mio-console .qrow .rail-freshness.off { color: var(--dim); }
 .mio-console .empty { font-size: 12px; color: var(--faint); padding: 4px 0; }
+
+/* A market-rail row. The two-column `qrow` grid is what forced five measured
+   facts into one right-aligned strip; a rail row is a small labelled block
+   instead, so every figure sits under the name of what it is. */
+.mio-console .qrow.rail-row { display: block; padding: 10px 0; }
+.mio-console .qrow.rail-row .rail-token { display: block; color: var(--ink); font-weight: 650; font-size: 12.5px; }
+.mio-console .rail-facts { display: grid; gap: 4px; margin: 6px 0 0; }
+.mio-console .rail-facts > div { display: grid; grid-template-columns: minmax(0, 116px) minmax(0, 1fr); gap: 8px; align-items: baseline; }
+.mio-console .rail-facts dt { color: var(--muted); font-size: 10.5px; }
+.mio-console .rail-facts dd { margin: 0; color: var(--ink); font-size: 12px; overflow-wrap: anywhere; }
+.mio-console .rail-fact-v { font-weight: 600; }
+.mio-console .rail-fact-v.warn { color: var(--amber); }
+.mio-console .rail-fact-v.off { color: var(--dim); }
+.mio-console .rail-fact-note { display: block; margin-top: 1px; color: var(--muted); font-weight: 400; font-size: 10.5px; line-height: 1.35; }
+.mio-console .rail-open { margin-top: 8px; }
+
+@media (max-width: 720px) {
+  /* Base App width. The rail folds under the feed at this size, where a 116px
+     label column would squeeze "≥ 1.03B BWIF" into a ragged strip. */
+  .mio-console .rail-facts > div { grid-template-columns: minmax(0, 1fr); gap: 1px; }
+}
 
 /* An unanswered measurement is a compact, directed state — not a large card
    containing two empty metric columns that looks unfinished. */

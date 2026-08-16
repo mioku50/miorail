@@ -7,6 +7,7 @@ import {
 } from '@mioagent/opportunity-rail/marketRails';
 import { formatCompactAtomicAmount } from '../formatAtomicAmount';
 import { bpsLabelV1 } from './B20ExitCard';
+import { factValueClassV1 } from './opportunityCardView';
 
 void React;
 
@@ -54,6 +55,21 @@ export function measuredAgoLabelV1(measuredAt: string, now: Date): string {
   if (seconds < 3600) return `measured ${Math.floor(seconds / 60)} min ago`;
   if (seconds < 86_400) return `measured ${Math.floor(seconds / 3600)} h ago`;
   return `measured ${Math.floor(seconds / 86_400)} d ago`;
+}
+
+/**
+ * The same clock, worded as a VALUE rather than a sentence.
+ *
+ * The rail rows now sit under a `Freshness` label, and "Freshness · measured
+ * 4 h ago" says the same word twice. Same thresholds as `measuredAgoLabelV1`,
+ * which stays because Your Exit Coverage renders a sentence, not a field.
+ */
+export function measuredAgeLabelV1(measuredAt: string, now: Date): string {
+  const seconds = Math.max(0, Math.floor((now.getTime() - Date.parse(measuredAt)) / 1000));
+  if (seconds < 60) return 'just measured';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min old`;
+  if (seconds < 86_400) return `${Math.floor(seconds / 3600)} h old`;
+  return `${Math.floor(seconds / 86_400)} d old`;
 }
 
 /** Basis points as a signed percentage, for a 24h move. */
@@ -106,6 +122,101 @@ function RailEmpty({ children }: { children: React.ReactNode }) {
   return <p className="empty">{children}</p>;
 }
 
+// ---------------------------------------------------------------------------
+// A rail row, as a reader meets it.
+//
+// It used to be one right-aligned stack:
+//
+//   ≥ 1.026B BWIF / 100% of reference entry / 4.11% round trip /
+//   outside 3% reference / past freshness window
+//
+// — five measured facts run together with nothing saying which was which, so
+// the only way to read it was to already know the vocabulary. Every one of
+// those facts is still here, each under the name of what it is. Nothing was
+// dropped, rounded differently or turned into a word: `≥` still marks a lower
+// bound, an unmeasured round trip still says so instead of showing a number,
+// and a stale row still carries its window.
+// ---------------------------------------------------------------------------
+
+interface RailFactV1 {
+  label: string;
+  value: string;
+  /** The qualifier the value is meaningless without — a reference, a bound. */
+  note: string | null;
+  tone: 'plain' | 'warn' | 'off';
+}
+
+function RailRow({
+  symbol,
+  tokenAddress,
+  facts,
+  onOpenToken,
+}: {
+  symbol: string;
+  tokenAddress: string;
+  facts: readonly RailFactV1[];
+  onOpenToken?: (tokenAddress: string) => void;
+}) {
+  return (
+    <div className="qrow rail-row" key={tokenAddress}>
+      <span className="rail-token">{symbol}</span>
+      <dl className="rail-facts">
+        {facts.map((fact) => (
+          <div key={fact.label}>
+            <dt>{fact.label}</dt>
+            <dd>
+              <strong className={`rail-fact-v ${fact.tone} ${factValueClassV1(fact.value)}`}>
+                {fact.value}
+              </strong>
+              {/* Its own line, with no separator glyph. A rail column is narrow
+                  enough that an inline "· lower bound · 100% of reference entry"
+                  wraps, and a wrapped separator leaves a dot dangling at the end
+                  of the line above it. */}
+              {fact.note ? <span className="rail-fact-note">{fact.note}</span> : null}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {onOpenToken && (
+        <button type="button" className="btn sec rail-open" onClick={() => onOpenToken(tokenAddress)}>
+          View measurement
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Freshness as a fact. Stale keeps its age — a measurement past its window is
+ * still the measurement that was taken, and hiding the age would leave a reader
+ * unable to tell an hour-old reading from a week-old one. */
+function freshnessFactV1(measuredAt: string, freshness: 'fresh' | 'stale', now: Date): RailFactV1 {
+  return {
+    label: 'Freshness',
+    value: measuredAgeLabelV1(measuredAt, now),
+    note: freshness === 'stale' ? 'past freshness window' : null,
+    tone: freshness === 'stale' ? 'off' : 'plain',
+  };
+}
+
+/** The round-trip cost against the profile it was judged by. Null renders the
+ * words: a round trip that did not measure is not a round trip of zero. */
+function roundTripFactV1(input: {
+  optimisticRoundTripBps: number | null;
+  roundTripReferenceBps: number;
+  profileStatus: string;
+}): RailFactV1 {
+  if (input.optimisticRoundTripBps === null) {
+    return { label: 'Round-trip cost', value: 'not measured', note: null, tone: 'off' };
+  }
+  const outside = input.profileStatus === 'outside_round_trip_reference';
+  return {
+    label: 'Round-trip cost',
+    value: bpsLabelV1(input.optimisticRoundTripBps),
+    note: `${outside ? 'above' : 'within'} ${bpsLabelV1(input.roundTripReferenceBps)} reference`,
+    tone: outside ? 'warn' : 'plain',
+  };
+}
+
 export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
   const { shown, outsideReference } = defaultRailLeadersV1(model.leaders);
   const visible = shown.slice(0, model.expanded ? RAIL_FULL_V1 : RAIL_TOP_V1);
@@ -113,7 +224,10 @@ export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
   return (
     <div className="rp">
       <div className="rph">
-        Measured Exit Capacity
+        {/* "Capacity" is the measurement's word. "Exit liquidity" is the thing
+            it measures, and "Measured" stays in front of it because the whole
+            rail is a claim about what was tested, not about what is available. */}
+        Measured exit liquidity
         <span className="rt">{bpsLabelV1(model.toleranceBps)} exit slippage</span>
       </div>
       <div className="rpb">
@@ -129,36 +243,25 @@ export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
         ) : (
           <>
             {visible.map((leader) => (
-              <div className="qrow" key={leader.tokenAddress}>
-                <span className="rail-token">
-                  {model.onOpenToken ? (
-                    <button type="button" className="btn sec" onClick={() => model.onOpenToken?.(leader.tokenAddress)}>
-                      {leader.symbol}
-                    </button>
-                  ) : (
-                    leader.symbol
-                  )}
-                </span>
-                <span className={`v mono${leader.profileStatus === 'outside_round_trip_reference' ? ' warn' : ''}`}>
-                  {/* The BOUND. "at least" is not decoration: the ladder knows
-                      the largest size that passed and nothing above it. */}
-                  <span className="rail-amount">
-                    ≥ {amountLabelV1(leader.largestPassingSizeAtomic, leader.decimals, leader.symbol)}
-                  </span>
-                  <span className="rail-reference">
-                    {bpsLabelV1(leader.capacityCoverageBps)} of reference entry ·{' '}
-                    {leader.optimisticRoundTripBps === null
-                      ? 'round trip not measured'
-                      : `${bpsLabelV1(leader.optimisticRoundTripBps)} round trip · ${
-                          leader.profileStatus === 'outside_round_trip_reference' ? 'outside' : 'within'
-                        } ${bpsLabelV1(leader.roundTripReferenceBps)} reference`}
-                  </span>
-                  <span className={`rail-reference rail-freshness${leader.freshness === 'stale' ? ' off' : ''}`}>
-                    {leader.freshness === 'stale' ? 'past freshness window · ' : ''}
-                    {measuredAgoLabelV1(leader.measuredAt, model.now)}
-                  </span>
-                </span>
-              </div>
+              <RailRow
+                key={leader.tokenAddress}
+                symbol={leader.symbol}
+                tokenAddress={leader.tokenAddress}
+                onOpenToken={model.onOpenToken}
+                facts={[
+                  {
+                    label: 'Largest tested exit',
+                    // The BOUND. "at least" is not decoration: the ladder knows
+                    // the largest size that passed and nothing above it, and the
+                    // note says that in words as well as in the glyph.
+                    value: `≥ ${amountLabelV1(leader.largestPassingSizeAtomic, leader.decimals, leader.symbol)}`,
+                    note: `lower bound · ${bpsLabelV1(leader.capacityCoverageBps)} of reference entry`,
+                    tone: 'plain',
+                  },
+                  roundTripFactV1(leader),
+                  freshnessFactV1(leader.measuredAt, leader.freshness, model.now),
+                ]}
+              />
             ))}
             <p className="lnote">
               Ordered only by measured exit coverage relative to one Miorail reference entry, within{' '}
@@ -215,33 +318,26 @@ export function B20MeasuredMoversCard(model: B20MarketRailsModelV1) {
         ) : (
           <>
             {visible.map((mover) => (
-              <div className="qrow" key={mover.tokenAddress}>
-                <span>
-                  {model.onOpenToken ? (
-                    <button type="button" className="btn sec" onClick={() => model.onOpenToken?.(mover.tokenAddress)}>
-                      {mover.symbol}
-                    </button>
-                  ) : (
-                    mover.symbol
-                  )}
-                </span>
-                <span
-                  className={`v mono${
-                    mover.profileStatus === 'outside_round_trip_reference' || mover.changeBps > 0 ? ' warn' : ''
-                  }`}
-                >
-                  {roundTripChangeLabelV1(mover.changeBps)}
-                  <span className="rail-reference">
-                    {bpsLabelV1(mover.optimisticRoundTripBps)} round trip ·{' '}
-                    {mover.profileStatus === 'outside_round_trip_reference' ? 'outside' : 'within'}{' '}
-                    {bpsLabelV1(mover.roundTripReferenceBps)} reference
-                  </span>
-                  <span className={`rail-reference rail-freshness${mover.freshness === 'stale' ? ' off' : ''}`}>
-                    {mover.freshness === 'stale' ? 'past freshness window · ' : ''}
-                    {measuredAgoLabelV1(mover.measuredAt, model.now)}
-                  </span>
-                </span>
-              </div>
+              <RailRow
+                key={mover.tokenAddress}
+                symbol={mover.symbol}
+                tokenAddress={mover.tokenAddress}
+                onOpenToken={model.onOpenToken}
+                facts={[
+                  {
+                    // Named in full. `↑ 1.97 pp` beside a symbol with no label
+                    // is the shape a price return takes, and this is the change
+                    // in what an exit COSTS — so up is worse, and the label has
+                    // to say which number this is.
+                    label: '24h route cost change',
+                    value: roundTripChangeLabelV1(mover.changeBps),
+                    note: null,
+                    tone: mover.changeBps > 0 ? 'warn' : 'plain',
+                  },
+                  roundTripFactV1(mover),
+                  freshnessFactV1(mover.measuredAt, mover.freshness, model.now),
+                ]}
+              />
             ))}
             {/* The label is the server's, verbatim. Shortening it to "24h" is
                 exactly the paraphrase this metric must not suffer. */}

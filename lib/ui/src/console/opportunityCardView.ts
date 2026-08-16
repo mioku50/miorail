@@ -6,7 +6,7 @@ import {
 import { b20ConsumerCardV1 } from '@mioagent/opportunity-rail/consumerCard';
 import { b20QuoteAssetDisplayV1 } from '@mioagent/opportunity-rail/quoteAsset';
 import { b20VenueCoverageV1, b20VenueLabelV1 } from '@mioagent/opportunity-rail/venues';
-import { formatAtomicAmount } from '../formatAtomicAmount';
+import { formatAtomicAmount, formatCompactAtomicAmount } from '../formatAtomicAmount';
 import { bpsLabelV1 } from './B20ExitCard';
 import type { OpportunityCardViewV1, OpportunityStateV1 } from './OpportunitiesScreen';
 
@@ -185,6 +185,30 @@ export function capacityLabelV1(input: {
   return `${head} · fails by ${amountLabelV1(input.firstFailingSizeAtomic, input.decimals, input.symbol)}`;
 }
 
+/**
+ * The same bound, at a width a person can read.
+ *
+ * `at least 6048839.73523961386157531 BUILDING` is the exact evidence and an
+ * unreadable one: twenty-six digits of a figure whose whole meaning is "more
+ * than this was never tried". `formatCompactAtomicAmount` TRUNCATES rather than
+ * rounds, so a compacted at-least bound still never claims more than the ladder
+ * measured. The exact figure and the first failing size both stay on
+ * `capacityLabelV1`, which is what the evidence section renders.
+ */
+export function consumerCapacityLabelV1(input: {
+  largestPassingSizeAtomic: string | null;
+  decimals: number | null;
+  symbol: string;
+  capacityStable: boolean | null;
+}): string | null {
+  if (input.largestPassingSizeAtomic === null) return null;
+  const amount =
+    input.decimals === null
+      ? `${input.largestPassingSizeAtomic} (atomic)`
+      : `${formatCompactAtomicAmount(input.largestPassingSizeAtomic, input.decimals)} ${input.symbol}`;
+  return input.capacityStable === false ? `at least ${amount} (unstable)` : `at least ${amount}`;
+}
+
 export const OPPORTUNITY_UNMEASURED_COPY_V1 = {
   headline: 'Not measured yet.',
   detail:
@@ -295,9 +319,8 @@ export function opportunityCardViewV1(card: OpportunityCardWireV1): OpportunityC
       referenceBps: observation?.maxRoundTripBps ?? null,
       buyerCount: completedBuyerCountV1(observation),
       exitCapacityLabel: observation
-        ? capacityLabelV1({
+        ? consumerCapacityLabelV1({
             largestPassingSizeAtomic: observation.largestPassingSizeAtomic,
-            firstFailingSizeAtomic: observation.firstFailingSizeAtomic,
             decimals: launch.decimals,
             symbol,
             capacityStable: observation.capacityStable,
@@ -532,4 +555,17 @@ export function hookLabelsV1(
     ? `This pool charges no fee of its own, so the hook is what sets the cost of exiting. It may ${may.join(', ')}. What it actually does is not stated here — only the measured round trip is.`
     : 'This hook claims none of the permissions that affect a swap.';
   return { hookLabel: label, hookNote: note };
+}
+
+/**
+ * Monospace for a measurement, proportional for a sentence.
+ *
+ * Consumer facts carry both — `4.35%` and `Past the freshness window` sit in
+ * the same column — and rendering the sentence in the number face makes it look
+ * like a machine token, which is the exact register this surface moved away
+ * from. The presence of a digit is the test: every measured value has one and
+ * no fallback sentence does.
+ */
+export function factValueClassV1(value: string): string {
+  return /\d/.test(value) ? 'mono' : '';
 }

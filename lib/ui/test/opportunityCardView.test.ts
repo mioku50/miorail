@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
-import { buyerLabelsV1, hookLabelsV1 } from '../src/console/opportunityCardView';
+import {
+  buyerLabelsV1,
+  capacityLabelV1,
+  consumerCapacityLabelV1,
+  factValueClassV1,
+  hookLabelsV1,
+} from '../src/console/opportunityCardView';
 
 // ---------------------------------------------------------------------------
 // The pool hook is the one part of a B20 venue that can be verified by
@@ -141,5 +147,90 @@ describe('launch-window buying, in words', () => {
         assert.ok(!text.includes(forbidden), `must not say "${forbidden}": ${text}`);
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Exit capacity, at two resolutions.
+//
+// The collapsed card was rendering `at least 6048839.73523961386157531 BUILDING`
+// — twenty-six digits of a figure whose whole meaning is "nothing above this
+// was tried". The exact value is evidence and stays; it just stopped being the
+// first thing a reader has to parse.
+// ---------------------------------------------------------------------------
+describe('exit capacity is exact below the fold and readable above it', () => {
+  const LARGE = '6048839735239613861575313';
+
+  test('the consumer bound is compact and the technical one is exact', () => {
+    const consumer = consumerCapacityLabelV1({
+      largestPassingSizeAtomic: LARGE,
+      decimals: 18,
+      symbol: 'BUILDING',
+      capacityStable: true,
+    });
+    const technical = capacityLabelV1({
+      largestPassingSizeAtomic: LARGE,
+      firstFailingSizeAtomic: '12097679470479227723150626',
+      decimals: 18,
+      symbol: 'BUILDING',
+      capacityStable: true,
+    });
+    assert.equal(consumer, 'at least 6.048M BUILDING');
+    assert.match(technical ?? '', /6048839\.73523961386157531[0-9]* BUILDING/);
+    assert.match(technical ?? '', /fails by/);
+  });
+
+  test('compacting a lower bound never claims more than was tested', () => {
+    // `formatCompactAtomicAmount` truncates. A bound that rounded UP would
+    // assert a size the ladder never priced.
+    const compact = consumerCapacityLabelV1({
+      largestPassingSizeAtomic: '6048999999999999999999999',
+      decimals: 18,
+      symbol: 'B',
+      capacityStable: true,
+    });
+    assert.equal(compact, 'at least 6.048M B');
+  });
+
+  test('an unstable ladder keeps saying so, and unknown decimals are not divided', () => {
+    assert.match(
+      consumerCapacityLabelV1({
+        largestPassingSizeAtomic: LARGE,
+        decimals: 18,
+        symbol: 'B',
+        capacityStable: false,
+      }) ?? '',
+      /\(unstable\)$/,
+    );
+    assert.match(
+      consumerCapacityLabelV1({
+        largestPassingSizeAtomic: '1234',
+        decimals: null,
+        symbol: 'B',
+        capacityStable: true,
+      }) ?? '',
+      /1234 \(atomic\)/,
+    );
+  });
+
+  test('nothing measured stays null rather than becoming a zero bound', () => {
+    assert.equal(
+      consumerCapacityLabelV1({
+        largestPassingSizeAtomic: null,
+        decimals: 18,
+        symbol: 'B',
+        capacityStable: true,
+      }),
+      null,
+    );
+  });
+});
+
+describe('a fact value is monospaced only when it is a measurement', () => {
+  test('figures get the number face and sentences do not', () => {
+    assert.equal(factValueClassV1('4.35%'), 'mono');
+    assert.equal(factValueClassV1('at least 6.048M BUILDING'), 'mono');
+    assert.equal(factValueClassV1('Past the freshness window'), '');
+    assert.equal(factValueClassV1('not measured'), '');
   });
 });
