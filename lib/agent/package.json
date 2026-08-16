@@ -14,7 +14,7 @@
     "@mioagent/memory": "workspace:*",
     "@mioagent/tools": "workspace:*",
     "@mioagent/utils": "workspace:*",
-    "drizzle-orm": "^0.36.4"
+    "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {
     "@types/node": "^20.0.0"

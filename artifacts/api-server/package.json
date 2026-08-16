@@ -46,7 +46,7 @@
     "@mioagent/x402-parser": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cors": "^2.8.6",
-    "drizzle-orm": "^0.36.4",
+    "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",
     "express-request-context": "^1.0.1",
     "express-session": "^1.19.0",

@@ -10,7 +10,7 @@
   "dependencies": {
     "@mioagent/db": "workspace:*",
     "@mioagent/utils": "workspace:*",
-    "drizzle-orm": "^0.36.4"
+    "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {
     "@types/node": "^26.0.0",

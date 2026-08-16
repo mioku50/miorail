@@ -11,7 +11,7 @@
     "@mioagent/crypto": "workspace:*",
     "@mioagent/db": "workspace:*",
     "@mioagent/x402-parser": "workspace:*",
-    "drizzle-orm": "^0.36.4"
+    "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {
     "typescript": "^5.6.3"
