@@ -14,7 +14,9 @@ import {
   CONSOLE_SECTION_TABLE_V1,
   CONSOLE_NO_ANALYSIS_TITLE_V1,
   consoleHomeSectionV1,
+  consoleIndexStatusV1,
   consoleNavModelV1,
+  consolePipelineNoticeLeadsV1,
   consoleSectionFromPathV1,
   discoverFailureCopyV1,
   CONSOLE_DISCOVER_UNREACHABLE_COPY_V1,
@@ -25,6 +27,7 @@ import {
 import { ConsoleRightRail } from '../src/console/ConsoleScreens';
 import { OpportunitiesScreen, type OpportunityCardViewV1 } from '../src/console/OpportunitiesScreen';
 import { opportunityCardViewV1 } from '../src/console/opportunityCardView';
+import { B20_STANDING_GROUP_COPY_V1 } from '@mioagent/opportunity-rail/exitStanding';
 
 // The JSX below compiles to React.createElement.
 void React;
@@ -981,5 +984,165 @@ describe('T69-C.1 §2/§3 — the card renders the server’s action, and only t
     // No local rule about freshness, reasons or wallets: the field is copied.
     assert.ok(!source.includes('canCheckProfile ?'), 'the view re-derives the action');
     assert.ok(!/no_exit_route|transfers_paused/.test(source), 'the view knows rejection reasons');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Index coverage is not measurement coverage.
+//
+// After the historical backfill, Discover opened with "22,265 launches have
+// been found and are waiting for Exit-First measurement" — true, and read as
+// "Miorail found 22k tokens and did nothing with them". What had actually
+// happened is that the index reached B20 genesis.
+// ---------------------------------------------------------------------------
+describe('the index says what it covers, and never divides one count by another', () => {
+  const facts = {
+    canonicalLaunchCount: 28_806,
+    launchesAwaitingMeasurement: 22_265,
+    observationCount: 6_931,
+    ingestionCursorBlock: '50054269',
+    confirmedHead: '50054269',
+  };
+
+  test('a measurement backlog does not make the index look unfinished', () => {
+    const status = consoleIndexStatusV1({ state: 'measurement_pending', facts })!;
+    assert.equal(status.headline, 'B20 index synced');
+    assert.match(status.tracked ?? '', /28,806 launches tracked/);
+    assert.match(status.cursor ?? '', /Caught up to Base block 50,054,269/);
+    // And the backlog is still there, exactly, one level down.
+    assert.equal(
+      status.details.find((row) => row.label === 'Awaiting first measurement')?.value,
+      '22,265',
+    );
+  });
+
+  test('the pipeline sentence stops leading only for the backlog state', () => {
+    assert.equal(consolePipelineNoticeLeadsV1('measurement_pending'), false);
+    for (const state of CONSOLE_PIPELINE_STATES_V1) {
+      if (state === 'measurement_pending') continue;
+      assert.equal(consolePipelineNoticeLeadsV1(state), true, `${state} must keep its sentence on top`);
+    }
+    // Unknown state: the sentence leads. A surface that has not resolved the
+    // pipeline may not decide a message is unimportant.
+    assert.equal(consolePipelineNoticeLeadsV1(null), true);
+  });
+
+  test('no percentage, no share and no arithmetic between the two counts', () => {
+    const status = consoleIndexStatusV1({ state: 'measurement_pending', facts })!;
+    const surface = [
+      status.headline,
+      status.tracked ?? '',
+      status.cursor ?? '',
+      status.detailNote,
+      ...status.details.flatMap((row) => [row.label, row.value]),
+    ].join(' | ');
+    assert.ok(!/%/.test(surface), 'the index status printed a percentage');
+    // 28,806 − 22,265 = 6,541. It is not a measured-launch count: the awaiting
+    // figure is scoped to the measurement worker's own window and the launch
+    // count is not, so the difference is a number nobody counted.
+    assert.ok(!/6,541/.test(surface), 'the index status invented a measured count');
+    assert.ok(!/covered|complete|all b20|fully measured/i.test(surface));
+    // The sentence that stops the four counts being read as a coverage ratio.
+    assert.match(status.detailNote, /separate stages/i);
+    assert.match(status.detailNote, /observations rather than launches/i);
+  });
+
+  test('every state gets an index headline, and only current ones say synced', () => {
+    const synced = new Set(['healthy', 'measurement_pending', 'degraded']);
+    for (const state of CONSOLE_PIPELINE_STATES_V1) {
+      const status = consoleIndexStatusV1({ state, facts })!;
+      assert.ok(status.headline.length > 0, `${state} has no headline`);
+      assert.equal(
+        /synced/.test(status.headline),
+        synced.has(state),
+        `${state} claims the wrong thing about the index`,
+      );
+    }
+  });
+
+  test('a behind or stopped index never claims to be caught up to a block', () => {
+    for (const state of ['ingestion_catching_up', 'worker_stale', 'ingestion_not_started'] as const) {
+      assert.equal(consoleIndexStatusV1({ state, facts })!.cursor, null, `${state} claimed a caught-up block`);
+    }
+  });
+
+  test('no pipeline state and no facts produce no index status at all', () => {
+    // Claiming coverage from an unanswered request is the guess this whole
+    // surface exists to stop making.
+    assert.equal(consoleIndexStatusV1({ state: null, facts }), null);
+    assert.equal(consoleIndexStatusV1({ state: 'healthy', facts: null }), null);
+  });
+
+  test('an empty feed keeps the backlog sentence on top, where it explains the emptiness', () => {
+    const markup = renderToStaticMarkup(
+      <OpportunitiesScreen
+        pipelineNotice="22,265 launches have been found and are waiting for Exit-First measurement."
+        pipelineState="measurement_pending"
+        pipelineNoticeLeads={false}
+        indexStatus={consoleIndexStatusV1({ state: 'measurement_pending', facts })}
+        feedRenderable
+        cards={[]}
+        filter="all"
+        freshOnly={false}
+        loading={false}
+        onFilterChange={() => undefined}
+        onFreshOnlyChange={() => undefined}
+        onOpenToken={() => undefined}
+      />,
+    );
+    // With nothing in the feed it is the only sentence explaining an empty
+    // screen, and an explanation a reader must expand is not one.
+    assert.match(markup, /class="note">22,265 launches have been found/);
+    assert.match(markup, /B20 index synced/);
+  });
+});
+
+describe('what the sections say about a gap', () => {
+  test('a measurement gap is not presented as a list of errors', () => {
+    // 25 of 25 cards on the live first page sat under "Miorail could not
+    // measure these", which turns the product into a list of its own failures.
+    // The invariant is unchanged: the sentence is still about Miorail.
+    const copy = B20_STANDING_GROUP_COPY_V1.miorail_limit;
+    assert.equal(copy.label, 'Needs more evidence');
+    assert.ok(!/could not measure/i.test(copy.label));
+    assert.match(copy.note, /Miorail could not fully establish/);
+    assert.match(copy.note, /measurement gaps, not findings about the tokens/);
+    // And it still never reads as a verdict on a token.
+    for (const word of ['failed', 'bad', 'rejected', 'unsafe', 'avoid']) {
+      assert.ok(!new RegExp(`\\b${word}\\b`, 'i').test(copy.label + ' ' + copy.note), `the section says "${word}"`);
+    }
+  });
+
+  test('a feed with cards moves the backlog sentence under Index details', () => {
+    const markup = renderToStaticMarkup(
+      <OpportunitiesScreen
+        pipelineNotice="22,265 launches have been found and are waiting for Exit-First measurement."
+        pipelineState="measurement_pending"
+        pipelineNoticeLeads={false}
+        indexStatus={consoleIndexStatusV1({
+          state: 'measurement_pending',
+          facts: {
+            canonicalLaunchCount: 28_806,
+            launchesAwaitingMeasurement: 22_265,
+            observationCount: 6_931,
+            ingestionCursorBlock: '50054269',
+            confirmedHead: '50054269',
+          },
+        })}
+        feedRenderable
+        cards={[opportunityCardViewV1(wireCard())]}
+        filter="all"
+        freshOnly={false}
+        loading={false}
+        onFilterChange={() => undefined}
+        onFreshOnlyChange={() => undefined}
+        onOpenToken={() => undefined}
+      />,
+    );
+    // Present, and not in the panel's leading position.
+    assert.match(markup, /22,265 launches have been found/);
+    assert.ok(!/class="note">22,265 launches/.test(markup), 'the backlog still leads the panel');
+    assert.match(markup, /Index details/);
+    assert.match(markup, /B20 index synced/);
   });
 });

@@ -15,7 +15,9 @@ import {
   discoverFailureCopyV1,
   opportunityCardViewV1,
   useConsoleTheme,
+  consoleIndexStatusV1,
   consoleOperationalLabelV1,
+  consolePipelineNoticeLeadsV1,
   consolePipelineProgressV1,
   type ConsolePipelineStateV1,
   type OpportunityFilterV1,
@@ -201,6 +203,26 @@ export function OpportunitiesPage() {
               })
             : null
         }
+        // Index coverage, which is a different question from measurement
+        // coverage and the one that is finished. Both counts come straight off
+        // the pipeline facts the API already sends.
+        indexStatus={
+          pipeline
+            ? consoleIndexStatusV1({
+                state: pipeline.state as ConsolePipelineStateV1,
+                facts: {
+                  canonicalLaunchCount: pipeline.facts.canonicalLaunchCount,
+                  launchesAwaitingMeasurement: pipeline.facts.launchesAwaitingMeasurement,
+                  observationCount: pipeline.facts.observationCount,
+                  ingestionCursorBlock: pipeline.facts.ingestionCursorBlock,
+                  confirmedHead: pipeline.facts.confirmedHead,
+                },
+              })
+            : null
+        }
+        pipelineNoticeLeads={consolePipelineNoticeLeadsV1(
+          (pipeline?.state as ConsolePipelineStateV1 | undefined) ?? null,
+        )}
         feedRenderable={discoverOn && (feed.isPending || home.feedRenderable)}
         cards={cards}
         filter={filter}

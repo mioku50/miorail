@@ -8,6 +8,7 @@ import {
 import type { B20ConsumerCardV1 } from '@mioagent/opportunity-rail/consumerCard';
 import {
   CONSOLE_NO_ANALYSIS_COPY_V1,
+  type ConsoleIndexStatusV1,
   type ConsoleOperationalLabelV1,
   type ConsolePipelineStateV1,
 } from './navigation';
@@ -208,6 +209,20 @@ export interface OpportunitiesScreenModelV1 {
   pipelineLabel?: ConsoleOperationalLabelV1 | null;
   /** `Block X of Y · N behind`, or null when either block is unknown. */
   pipelineProgress?: string | null;
+  /**
+   * What the INDEX has covered, as distinct from what has been measured.
+   *
+   * Optional while a caller rolls forward; absent renders exactly as before.
+   * It never carries a percentage or a derived figure — the two counts it
+   * shows are scoped differently and do not divide into each other.
+   */
+  indexStatus?: ConsoleIndexStatusV1 | null;
+  /**
+   * False when the pipeline's own sentence describes a backlog rather than a
+   * fault, and so belongs under Index details instead of above the feed.
+   * Absent behaves as true, which is the old behaviour.
+   */
+  pipelineNoticeLeads?: boolean;
   /**
    * False when the pipeline has something to say instead of a list. The empty
    * state below is then never drawn — that is the whole point of §9.2.
@@ -644,9 +659,13 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
   const filters = OPPORTUNITY_FILTERS_V1;
   const standingFilter = model.standingFilter ?? 'all';
   const sections = opportunitySectionsV1(model.cards);
+  // A backlog sentence may move under Index details only while there are cards
+  // to read instead. With nothing in the feed it is the ONLY thing explaining
+  // an empty screen, and an explanation a reader has to expand is not one.
+  const noticeLeads = model.pipelineNoticeLeads !== false || model.cards.length === 0;
   return (
     <>
-      {(model.pipelineNotice || model.pipelineLabel) && (
+      {(model.pipelineNotice || model.pipelineLabel || model.indexStatus) && (
         <div className="panel">
           <div className="ph">
             <h3>Discover</h3>
@@ -662,14 +681,53 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
             )}
           </div>
           <div className="pb tight">
+            {/* What the INDEX is doing, first.
+                The measurement backlog used to lead here — "22,265 launches
+                have been found and are waiting for Exit-First measurement" —
+                which is true and reads as "Miorail found 22k tokens and did
+                almost nothing with them". What actually happened is that the
+                index reached B20 genesis. The backlog keeps its exact number,
+                one level down. */}
+            {model.indexStatus && (
+              <div className="index-status">
+                <p className="index-headline">{model.indexStatus.headline}</p>
+                {model.indexStatus.tracked && <p className="lnote">{model.indexStatus.tracked}</p>}
+                {model.indexStatus.cursor && <p className="lnote mono">{model.indexStatus.cursor}</p>}
+              </div>
+            )}
             {/* §9 — where the cursor actually is. An operator and a user read
                 the same two numbers, and neither has to infer them from the
-                length of the list below. */}
-            {model.pipelineProgress && <p className="lnote mono">{model.pipelineProgress}</p>}
+                length of the list below. Suppressed only when the index status
+                above already says the cursor is caught up, which is the one
+                case where both blocks are the same number. */}
+            {model.pipelineProgress && !model.indexStatus?.cursor && (
+              <p className="lnote mono">{model.pipelineProgress}</p>
+            )}
             {/* The pipeline's sentence, verbatim from the shared copy table.
                 This is the line that stops "nothing has run" being read as
-                "nothing is out there". */}
-            {model.pipelineNotice && <p className="note">{model.pipelineNotice}</p>}
+                "nothing is out there" — so it still leads for every state that
+                names a fault. `measurement_pending` is the exception: its
+                message is a backlog, and it moves into Index details. */}
+            {model.pipelineNotice && noticeLeads && <p className="note">{model.pipelineNotice}</p>}
+            {model.indexStatus && (
+              <details className="discover-guide">
+                <summary>Index details</summary>
+                <dl className="cr-facts">
+                  {model.indexStatus.details.map((row) => (
+                    <div key={row.label}>
+                      <dt>{row.label}</dt>
+                      <dd>
+                        <strong className="mono">{row.value}</strong>
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+                {/* The backlog sentence, verbatim, where it is an answer rather
+                    than a headline. */}
+                {model.pipelineNotice && !noticeLeads && <p className="lnote">{model.pipelineNotice}</p>}
+                <p className="lnote">{model.indexStatus.detailNote}</p>
+              </details>
+            )}
             {model.onRefresh && (
               <button type="button" className="btn sec" onClick={model.onRefresh}>
                 Check again

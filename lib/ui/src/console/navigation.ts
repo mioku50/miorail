@@ -288,6 +288,130 @@ export function consolePipelineProgressV1(input: {
   ).toLocaleString('en-US')}${behind}`;
 }
 
+// ---------------------------------------------------------------------------
+// Index coverage is not measurement coverage.
+//
+// After the historical backfill the top of Discover read:
+//
+//   22,265 launches have been found and are waiting for Exit-First measurement.
+//
+// True, and the wrong first impression: it reads as "Miorail found 22k tokens
+// and did almost nothing with them" when what actually happened is that the
+// index reached B20 genesis. Two different stages, and the one a reader should
+// meet first is the one that is finished.
+//
+// So the panel leads with what the INDEX is doing and keeps the measurement
+// backlog available underneath — a real number, never a percentage, and never
+// arithmetic between the two counts. `launchesAwaitingMeasurement` is scoped to
+// the measurement worker's own age window while `canonicalLaunchCount` is every
+// canonical launch ever stored, so subtracting one from the other would invent
+// a "measured" figure nothing counted.
+// ---------------------------------------------------------------------------
+
+export interface ConsoleIndexFactsV1 {
+  canonicalLaunchCount: number;
+  launchesAwaitingMeasurement: number;
+  observationCount: number;
+  ingestionCursorBlock: string | null;
+  confirmedHead: string | null;
+}
+
+export interface ConsoleIndexStatusV1 {
+  /** What the INDEX is doing. Never a measurement count. */
+  headline: string;
+  /** The tracked corpus, or null when nothing has been indexed yet. */
+  tracked: string | null;
+  /** Where the ingestion cursor is, in words. */
+  cursor: string | null;
+  /** The expandable. Label/value pairs, each an exact stored count. */
+  details: readonly { label: string; value: string }[];
+  /** What those counts do and do not mean, in one sentence. */
+  detailNote: string;
+}
+
+const INDEX_HEADLINE_V1: Readonly<Record<ConsolePipelineStateV1, string>> = {
+  // Ingestion is current in both. `measurement_pending` is only reached after
+  // the staleness and catching-up checks have already passed, so saying the
+  // index is synced here is exactly true.
+  healthy: 'B20 index synced',
+  measurement_pending: 'B20 index synced',
+  // The worker runs and the cursor moves; some reads came back incomplete.
+  degraded: 'B20 index synced · some reads incomplete',
+  ingestion_catching_up: 'B20 index catching up',
+  worker_stale: 'B20 index not advancing',
+  ingestion_not_started: 'B20 index not started',
+  configuration_required: 'B20 index not configured',
+  decoder_mismatch: 'B20 index stopped',
+  storage_unavailable: 'B20 index unavailable',
+};
+
+const INDEX_LIVE_STATE_V1: Readonly<Record<ConsolePipelineStateV1, string>> = {
+  healthy: 'caught up',
+  measurement_pending: 'caught up',
+  degraded: 'reading, some reads incomplete',
+  ingestion_catching_up: 'catching up',
+  worker_stale: 'not advancing',
+  ingestion_not_started: 'never run',
+  configuration_required: 'not configured',
+  decoder_mismatch: 'stopped',
+  storage_unavailable: 'unavailable',
+};
+
+/**
+ * The one state whose pipeline message describes a BACKLOG rather than a fault.
+ *
+ * Every other message names something wrong or something to do, and those still
+ * lead the panel. This one is replaced by the index status above it, and its
+ * number reappears in the details as `Awaiting first measurement`.
+ */
+export function consolePipelineNoticeLeadsV1(state: ConsolePipelineStateV1 | null): boolean {
+  return state !== 'measurement_pending';
+}
+
+export function consoleIndexStatusV1(input: {
+  state: ConsolePipelineStateV1 | null;
+  facts: ConsoleIndexFactsV1 | null;
+}): ConsoleIndexStatusV1 | null {
+  // No state means the feed request itself did not answer. Claiming an index
+  // status from no data is the guess this surface exists to stop making.
+  if (input.state === null || input.facts === null) return null;
+  const facts = input.facts;
+  const count = (value: number) => value.toLocaleString('en-US');
+
+  const tracked =
+    facts.canonicalLaunchCount > 0
+      ? `${count(facts.canonicalLaunchCount)} launch${
+          facts.canonicalLaunchCount === 1 ? '' : 'es'
+        } tracked from the pinned B20 factory feed`
+      : null;
+
+  const cursor =
+    facts.ingestionCursorBlock === null
+      ? null
+      : consolePipelineNoticeLeadsV1(input.state) || facts.confirmedHead === null
+        ? // Behind, stopped or unknown: the honest line is both blocks, which
+          // `consolePipelineProgressV1` already renders above.
+          null
+        : `Caught up to Base block ${Number(facts.ingestionCursorBlock).toLocaleString('en-US')}`;
+
+  return {
+    headline: INDEX_HEADLINE_V1[input.state],
+    tracked,
+    cursor,
+    details: [
+      { label: 'Canonical launches', value: count(facts.canonicalLaunchCount) },
+      { label: 'Stored measurements', value: count(facts.observationCount) },
+      { label: 'Awaiting first measurement', value: count(facts.launchesAwaitingMeasurement) },
+      { label: 'Live index', value: INDEX_LIVE_STATE_V1[input.state] },
+    ],
+    // The sentence that stops these four numbers being read as a coverage
+    // percentage. A stored measurement is an observation, and one launch can
+    // carry several over time, so the counts do not divide into each other.
+    detailNote:
+      'Indexing and measuring are separate stages. Stored measurements counts observations rather than launches, and launches awaiting a first measurement is counted over the measurement worker’s own window — so these figures are exact counts and not shares of one another.',
+  };
+}
+
 export interface ConsoleHomeInputV1 {
   /** Null when the feed endpoint itself could not be reached. */
   pipeline: { state: ConsolePipelineStateV1; message: string } | null;

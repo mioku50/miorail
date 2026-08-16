@@ -17,7 +17,11 @@ import {
 import {
   changedTokensV1,
   shortAddressV1,
+  trackedOutcomeLabelV1,
+  trackedReadAtLabelV1,
+  trackedReadLabelV1,
   trackedStatusLineV1,
+  trackedTokenSymbolV1,
   type B20WatchedTokenLikeV1,
 } from '../src/console/B20WatchScreen';
 
@@ -290,7 +294,11 @@ describe('a B20 token can be tracked by hand', () => {
   test('the page claims background watching, and each row makes the claim checkable', () => {
     assert.match(screen, /Miorail reads these on its own/);
     assert.match(screen, /Opening this page is not what\s*\n?\s*makes that happen/);
-    assert.match(screen, /trackedStatusLineV1/);
+    // The ROW renders the timestamp. `trackedStatusLineV1` is still exported
+    // for one-line contexts, so matching its name would pass on the definition
+    // alone — the row has to be the thing asserted.
+    assert.match(screen, /trackedReadAtLabelV1\(entry\)/);
+    assert.match(screen, /trackedReadLabelV1\(entry\)/);
   });
 
   test('never read is not the same sentence as nothing changed', () => {
@@ -636,5 +644,89 @@ describe('the price is on the control, not in a footnote', () => {
 
   test('a running simulation shows progress, not a price to press again', () => {
     assert.equal(simulateLabelV1('0.0002', true), 'Simulating both legs…');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A watched token is a ROW, not a run-together string.
+//
+// Observed in production: `0xb20000…0101read 2026-08-15 20:33 UTC Remove`. The
+// three children sat in a two-column `.kv` grid, so the address, the timestamp
+// and the button had nothing between them. The facts were all correct and none
+// of them was legible.
+// ---------------------------------------------------------------------------
+describe('a watched token row keeps its parts apart', () => {
+  const entry = (over: Partial<{ lastSweptAt: string | null; lastOutcome: 'read' | 'not_b20' | 'unreadable' | null }> = {}) => ({
+    tokenAddress: '0xb2000000000000000000000578f3ae29d9e6e0101',
+    lastSweptAt: '2026-08-15T20:33:12.000Z' as string | null,
+    lastOutcome: 'read' as 'read' | 'not_b20' | 'unreadable' | null,
+    ...over,
+  });
+
+  test('the timestamp is a value, not a sentence glued to an address', () => {
+    assert.equal(trackedReadAtLabelV1(entry()), 'Aug 15 · 20:33 UTC');
+    assert.equal(trackedReadLabelV1(entry()), 'Last read');
+  });
+
+  test('a failed reading is not a reading, and the label says so', () => {
+    // The distinction `trackedStatusLineV1` carried in the word "tried" now
+    // lives in the label, so the row can put the two on separate lines.
+    assert.equal(trackedReadLabelV1(entry({ lastOutcome: 'unreadable' })), 'Last tried');
+    assert.equal(trackedOutcomeLabelV1(entry({ lastOutcome: 'unreadable' })), 'could not be read');
+  });
+
+  test('not a B20 token is an ordinary answer and keeps its date', () => {
+    assert.equal(trackedOutcomeLabelV1(entry({ lastOutcome: 'not_b20' })), 'not a B20 token');
+    assert.equal(trackedReadAtLabelV1(entry({ lastOutcome: 'not_b20' })), 'Aug 15 · 20:33 UTC');
+  });
+
+  test('an ordinary reading carries no outcome line, so the row stays two deep', () => {
+    assert.equal(trackedOutcomeLabelV1(entry()), null);
+  });
+
+  test('never read says so rather than borrowing a blank', () => {
+    assert.equal(trackedReadAtLabelV1(entry({ lastSweptAt: null, lastOutcome: null })), 'not read yet');
+    assert.equal(trackedOutcomeLabelV1(entry({ lastSweptAt: null, lastOutcome: null })), null);
+  });
+
+  test('the stamp is read as UTC, never through a browser timezone', () => {
+    // A date near midnight is where a local-time render would show a different
+    // day, and the value stored is UTC.
+    assert.equal(
+      trackedReadAtLabelV1({ tokenAddress: '0xa', lastSweptAt: '2026-01-01T23:50:00.000Z', lastOutcome: 'read' }),
+      'Jan 1 · 23:50 UTC',
+    );
+  });
+
+  test('an unparseable stamp is shown verbatim rather than guessed at', () => {
+    assert.equal(
+      trackedReadAtLabelV1({ tokenAddress: '0xa', lastSweptAt: 'whenever', lastOutcome: 'read' }),
+      'whenever',
+    );
+  });
+});
+
+describe('a watched token is named from data already on the screen', () => {
+  const source = {
+    tokens: [
+      { tokenAddress: '0xB2000000000000000000000578F3AE29D9E6E0101', displaySymbol: 'MIO', displayName: 'Mio' },
+      { tokenAddress: '0xb200000000000000000000000000000000000002', displaySymbol: null, displayName: 'Second' },
+    ],
+    holdings: [{ tokenAddress: '0xb200000000000000000000000000000000000003', symbol: 'HELD' }],
+  };
+
+  test('the control watch names it, whatever case the address arrived in', () => {
+    assert.equal(trackedTokenSymbolV1('0xb2000000000000000000000578f3ae29d9e6e0101', source), 'MIO');
+  });
+
+  test('a name is used when there is no symbol', () => {
+    assert.equal(trackedTokenSymbolV1('0xb200000000000000000000000000000000000002', source), 'Second');
+  });
+
+  test('the portfolio is the fallback, and an unknown address stays an address', () => {
+    assert.equal(trackedTokenSymbolV1('0xb200000000000000000000000000000000000003', source), 'HELD');
+    // The row then renders the address the user pasted. Inventing a name for an
+    // address nothing has read would be worse than showing the address.
+    assert.equal(trackedTokenSymbolV1('0xb2000000000000000000000000000000000000ff', source), null);
   });
 });

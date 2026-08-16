@@ -181,9 +181,14 @@ export const B20_STANDING_GROUP_COPY_V1: Readonly<
     note: 'Nobody bought in the measured launch window, so the pool holds no quote asset to sell into and a sale cannot be priced. That is an absent market, not a defect found in the token.',
   },
   miorail_limit: {
-    label: 'Miorail could not measure these',
-    chip: 'Not measurable',
-    note: 'Every card below describes a limit of Miorail’s own measurement — a venue it did not find, a call that did not answer, a buyer window still counting. Nothing in this section is a statement about the token.',
+    // "Miorail could not measure these" is accurate and, at 25 cards on a
+    // page, turns the product into a list of its own errors. The section is
+    // about what is MISSING from the evidence, and saying that keeps the
+    // invariant intact — the sentence below is still explicitly about Miorail,
+    // and still refuses to be read as a verdict on a token.
+    label: 'Needs more evidence',
+    chip: 'Needs evidence',
+    note: 'Miorail could not fully establish the market conditions for these launches yet — a venue it did not find, a call that did not answer, a buyer window still counting. These are measurement gaps, not findings about the tokens.',
   },
 };
 

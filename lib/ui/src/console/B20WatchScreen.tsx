@@ -62,6 +62,66 @@ export function trackedStatusLineV1(entry: B20TrackedTokenLikeV1): string {
   return `read ${when} UTC`;
 }
 
+// ---------------------------------------------------------------------------
+// The same facts, split so a row can lay them out.
+//
+// `trackedStatusLineV1` packs outcome and timestamp into one string, and the
+// row rendered it beside a short address and a button with nothing between
+// them: `0xb20000…0101read 2026-08-15 20:33 UTC Remove`. It stays — the MCP and
+// the compact contexts still want one line — but a row now asks for the pieces.
+// ---------------------------------------------------------------------------
+
+const MONTHS_V1 = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
+
+/** "Aug 15 · 20:33 UTC", from the stored ISO instant. Parsed rather than
+ * localised: the value is UTC and a browser timezone would silently move it. */
+export function trackedReadAtLabelV1(entry: B20TrackedTokenLikeV1): string {
+  if (entry.lastSweptAt === null) return 'not read yet';
+  const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(entry.lastSweptAt);
+  // An unparseable stamp is shown verbatim. Guessing at one would be the same
+  // class of error as showing a detection time as a launch time.
+  if (!parts) return entry.lastSweptAt;
+  return `${MONTHS_V1[Number(parts[2]) - 1] ?? parts[2]} ${Number(parts[3])} · ${parts[4]}:${parts[5]} UTC`;
+}
+
+/** "Last read" — or "Last tried", because a failed reading is not a reading. */
+export function trackedReadLabelV1(entry: B20TrackedTokenLikeV1): string {
+  return entry.lastOutcome === 'unreadable' ? 'Last tried' : 'Last read';
+}
+
+/** What the last reading concluded, when that is not simply "it was read".
+ * Null keeps the row to two lines in the ordinary case. */
+export function trackedOutcomeLabelV1(entry: B20TrackedTokenLikeV1): string | null {
+  if (entry.lastSweptAt === null) return null;
+  if (entry.lastOutcome === 'not_b20') return 'not a B20 token';
+  if (entry.lastOutcome === 'unreadable') return 'could not be read';
+  return null;
+}
+
+/**
+ * A display symbol for a watched address, from data already on this screen.
+ *
+ * The control watch reads the token's own name; the portfolio panel carries one
+ * for anything a provider reported. Neither is fetched for this row, and an
+ * address that appears in neither keeps the address as its label — a watchlist
+ * entry is an address the user typed, and inventing a name for it would be
+ * worse than showing the thing they pasted.
+ */
+export function trackedTokenSymbolV1(
+  tokenAddress: string,
+  source: {
+    tokens: readonly { tokenAddress: string; displaySymbol: string | null; displayName: string | null }[];
+    holdings: readonly { tokenAddress: string; symbol: string | null }[];
+  },
+): string | null {
+  const address = tokenAddress.toLowerCase();
+  const watched = source.tokens.find((token) => token.tokenAddress.toLowerCase() === address);
+  if (watched?.displaySymbol) return watched.displaySymbol;
+  if (watched?.displayName) return watched.displayName;
+  const held = source.holdings.find((holding) => holding.tokenAddress.toLowerCase() === address);
+  return held?.symbol ?? null;
+}
+
 export interface B20WatchScreenModelV1 {
   tokens: readonly B20WatchedTokenLikeV1[];
   /** T68 — addresses the user added by hand, persisted between visits.
@@ -232,7 +292,7 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
 
       <div className="panel">
         <div className="ph">
-          <h3>Watched tokens</h3>
+          <h3>Track B20 tokens</h3>
           <span className="sub">
             {model.trackedTokens.length === 0
               ? 'none added'
@@ -242,17 +302,26 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
           </span>
         </div>
         <div className="pb">
-          <p className="note">
-            Balance providers do not index B20 — the tokens are precompiles, and a wallet holding one
-            is reported as holding nothing. Paste a token address to watch it regardless.
-          </p>
-          {/* The retention claim, and the only one this page is allowed to
-              make: Miorail reads these when nobody is here. Each row says when
-              it last did, so the claim is checkable rather than reassuring. */}
-          <p className="lnote">
-            Miorail reads these on its own and records what changed. Opening this page is not what
-            makes that happen.
-          </p>
+          {/* What to do, in one line. The reason a B20 address has to be typed
+              at all is a real and non-obvious fact, but it is the answer to a
+              question rather than the first thing to read — so it sits under
+              the question a reader would actually ask. */}
+          <p className="note">Add a B20 address to monitor its controls and changes.</p>
+          <details className="discover-guide">
+            <summary>Why do I need to add an address?</summary>
+            <p>
+              Balance providers do not index B20 — the tokens are precompiles, and a wallet holding one
+              is reported as holding nothing. Miorail never receives the address from a balance
+              lookup, so pasting it here is the only complete path.
+            </p>
+            {/* The retention claim, and the only one this page is allowed to
+                make: Miorail reads these when nobody is here. Each row says when
+                it last did, so the claim is checkable rather than reassuring. */}
+            <p>
+              Miorail reads these on its own and records what changed. Opening this page is not what
+              makes that happen.
+            </p>
+          </details>
           {model.trackError && <p className="note warn">{model.trackError}</p>}
           <form
             className="goalline"
@@ -277,23 +346,47 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
             </button>
           </form>
           {model.trackedTokens.length > 0 && (
-            <div className="kv">
-              {model.trackedTokens.map((entry) => (
-                <div key={entry.tokenAddress}>
-                  <span className="v mono">{shortAddressV1(entry.tokenAddress)}</span>
-                  <span className={entry.lastOutcome === 'unreadable' ? 'warn' : undefined}>
-                    {trackedStatusLineV1(entry)}
-                  </span>
-                  <button
-                    type="button"
-                    className="btn sec"
-                    onClick={() => model.onUntrackToken(entry.tokenAddress)}
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-            </div>
+            <ul className="watchrows">
+              {model.trackedTokens.map((entry) => {
+                // A symbol only if one is already on this screen. Nothing here
+                // fetches: the control watch and the portfolio both carry
+                // display names for addresses they have read, and an address
+                // neither has seen keeps the address as its own name.
+                const symbol = trackedTokenSymbolV1(entry.tokenAddress, model);
+                const outcome = trackedOutcomeLabelV1(entry);
+                return (
+                  <li className="watchrow" key={entry.tokenAddress}>
+                    <div className="watchrow-id">
+                      {symbol ? (
+                        <>
+                          <strong className="watchrow-name">{symbol}</strong>
+                          <span className="watchrow-addr mono">{shortAddressV1(entry.tokenAddress)}</span>
+                        </>
+                      ) : (
+                        <strong className="watchrow-name mono">{shortAddressV1(entry.tokenAddress)}</strong>
+                      )}
+                    </div>
+                    <div className="watchrow-read">
+                      <span className="watchrow-k">{trackedReadLabelV1(entry)}</span>
+                      <span className={entry.lastOutcome === 'unreadable' ? 'watchrow-v warn' : 'watchrow-v'}>
+                        {trackedReadAtLabelV1(entry)}
+                      </span>
+                      {/* "not a B20 token" and "could not be read" are answers,
+                          and neither is the same as a reading that found no
+                          change. Only shown when there is one. */}
+                      {outcome && <span className="watchrow-note">{outcome}</span>}
+                    </div>
+                    <button
+                      type="button"
+                      className="btn sec watchrow-remove"
+                      onClick={() => model.onUntrackToken(entry.tokenAddress)}
+                    >
+                      Remove
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
           )}
         </div>
       </div>

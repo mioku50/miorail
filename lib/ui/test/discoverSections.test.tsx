@@ -184,15 +184,19 @@ function render(cards: readonly ReturnType<typeof opportunityCardViewV1>[]) {
 describe('the screen separates a finding from a failure to measure', () => {
   test('the Miorail section is drawn, and says the cards in it are not about the token', () => {
     const markup = render([BOUGHT, NO_VENUE]);
-    assert.match(markup, /Miorail could not measure these/);
-    assert.match(markup, /Nothing in this section is a statement about the token/);
+    // The header names the GAP rather than the failure — 25 cards under
+    // "Miorail could not measure these" read as a list of the product's own
+    // errors. The sentence under it still carries the invariant.
+    assert.match(markup, /Needs more evidence/);
+    assert.match(markup, /Miorail could not fully establish/);
+    assert.match(markup, /measurement gaps, not findings about the tokens/);
   });
 
   test('the finding is rendered above Miorail’s own limits', () => {
     const markup = render([NO_VENUE, BOUGHT]);
     // Order in the DOM, not order in the input array.
     assert.ok(
-      markup.indexOf('Bought, and a sale would not price') < markup.indexOf('Miorail could not measure these'),
+      markup.indexOf('Bought, and a sale would not price') < markup.indexOf('Needs more evidence'),
       'the section carrying the product’s finding was rendered below Miorail’s failures',
     );
   });
@@ -281,6 +285,6 @@ describe('a card states which venues were searched', () => {
     assert.match(markup, /Venues searched/);
     assert.match(markup, /Uniswap v4 was not searched/);
     // Still filed under Miorail's own limits, never as a finding.
-    assert.match(markup, /Miorail could not measure these/);
+    assert.match(markup, /Needs more evidence/);
   });
 });

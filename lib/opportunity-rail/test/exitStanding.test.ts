@@ -301,10 +301,18 @@ describe('a section header states what it found without recommending it', () => 
 
   test('the Miorail section says outright that it is not about the token', () => {
     // The whole reason the section exists. 346 of 1,139 live cards sit in it.
-    assert.match(
-      B20_STANDING_GROUP_COPY_V1.miorail_limit.note,
-      /Nothing in this section is a statement about the token/i,
-    );
+    //
+    // Asserted as the PROPERTY rather than one sentence: the header stopped
+    // being "Miorail could not measure these" because 25 cards under it turn
+    // the product into a list of its own errors, and a test pinned to the old
+    // wording would have made that change look like a broken invariant.
+    const note = B20_STANDING_GROUP_COPY_V1.miorail_limit.note;
+    // Miorail is the subject of the sentence.
+    assert.match(note, /Miorail/);
+    // And it denies, in words, being a finding about the token.
+    assert.match(note, /not (a statement|findings?) about the tokens?/i);
+    // The label may be gentler; the note may not become vague.
+    assert.match(note, /measurement gaps|could not/i);
   });
 });
 

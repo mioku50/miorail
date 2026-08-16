@@ -674,6 +674,33 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
      140px column squeezing every value into a ragged strip. */
   .mio-console .cr-facts > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 }
+/* Index coverage, above the feed. The headline is what the INDEX is doing; the
+   measurement backlog keeps its exact number one level down, under a control. */
+.mio-console .index-status { margin-bottom: 8px; }
+.mio-console .index-headline { margin: 0 0 2px; color: var(--ink); font-size: 13.5px; font-weight: 650; }
+
+/* A watched token. It used to be three children of a two-column `.kv` grid, so
+   the address, the timestamp and the button ran together as one string:
+   `0xb20000…0101read 2026-08-15 20:33 UTC Remove`. */
+.mio-console .watchrows { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+.mio-console .watchrow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 12px; border-radius: var(--r); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
+.mio-console .watchrow-id { min-width: 0; display: grid; gap: 1px; }
+.mio-console .watchrow-name { color: var(--ink); font-size: 13px; font-weight: 650; overflow-wrap: anywhere; }
+.mio-console .watchrow-addr { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.mio-console .watchrow-read { min-width: 0; display: grid; gap: 1px; }
+.mio-console .watchrow-k { color: var(--muted); font-size: 10.5px; }
+.mio-console .watchrow-v { color: var(--ink); font-size: 12px; }
+.mio-console .watchrow-v.warn { color: var(--amber); }
+.mio-console .watchrow-note { color: var(--muted); font-size: 11px; }
+.mio-console .watchrow-remove { justify-self: end; }
+
+@media (max-width: 720px) {
+  /* Base App width. Three columns become one stack; the button keeps its own
+     line rather than being squeezed against a timestamp. */
+  .mio-console .watchrow { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .mio-console .watchrow-remove { justify-self: start; }
+}
+
 .mio-console .card-evidence { margin-top: 10px; border-radius: var(--r); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
 .mio-console .card-evidence summary { cursor: pointer; padding: 8px 10px; color: var(--muted); font-size: 11.5px; font-weight: 650; }
 .mio-console .card-evidence[open] summary { color: var(--ink); border-bottom: 1px solid var(--line); }
