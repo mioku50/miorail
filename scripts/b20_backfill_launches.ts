@@ -273,10 +273,20 @@ async function main(): Promise<number> {
 
   console.log(`  inserted               ${insertedTotal}`);
   console.log(`  already present        ${duplicateTotal}`);
+  // The cursor is expected to have MOVED FORWARD during a long run: the live
+  // worker keeps going while this reads history. Reporting "unchanged: false"
+  // for that read as though the backfill had touched it, which it never can —
+  // `insertHistoricalLaunches` has no cursor write at all. What matters is that
+  // it did not go BACKWARDS, so that is what is checked.
   const after = await repository.getCursor(B20_DISCOVER_LANE_V1);
-  console.log(
-    `  cursor after           ${after?.lastProcessedBlock} (unchanged: ${after?.lastProcessedBlock === cursor.lastProcessedBlock})`,
-  );
+  const before = BigInt(cursor.lastProcessedBlock);
+  const now = BigInt(after?.lastProcessedBlock ?? cursor.lastProcessedBlock);
+  console.log(`  cursor before          ${before}`);
+  console.log(`  cursor after           ${now}${now > before ? '  (advanced by the live worker)' : ''}`);
+  if (now < before) {
+    console.error('✗ the cursor moved BACKWARDS during this run — the live lane will re-read blocks');
+    return 7;
+  }
   return windowsFailed > 0 ? 6 : 0;
 }
 
