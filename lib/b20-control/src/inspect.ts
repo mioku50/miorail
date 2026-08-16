@@ -3,6 +3,7 @@ import {
   B20ControlEvidenceV1Schema,
   B20ControlSnapshotV1Schema,
   B20DetectionResultV1Schema,
+  type B20DetectionOutcomeV1,
   b20TokenIdentityHashV1,
   hashB20CardV1,
   hashB20EvidenceV1,
@@ -24,6 +25,7 @@ import {
   B20_SELECTORS_V1,
   decodeBytes32V1,
   decodeStringV1,
+  B20_CHAIN_ID_V1,
   decodeUint8ArrayV1,
   decodeUint8V1,
   decodeUintV1,
@@ -838,4 +840,45 @@ export function buildB20CardV1(snapshot: B20ControlSnapshotV1): B20ControlCardV1
     boundaries: [...B20_CARD_BOUNDARIES_V1],
   };
   return B20ControlCardV1Schema.parse({ ...draft, cardHash: hashB20CardV1(draft) });
+}
+
+/**
+ * Identity only: is this address a B20 token, and is it initialised.
+ *
+ * `inspectB20TokenV1` answers the same question on its way to a full control
+ * card, but it then reads every field the card shows — name, supply, pauses,
+ * policies, variant activation. Measured against production, that is ~36s for
+ * one address. A console fallback that only needs to know whether the factory
+ * confirms the token was paying for a card nobody asked for.
+ *
+ * Three reads: the block anchor, `isB20`, and `isB20Initialized`. The outcome
+ * mapping is deliberately identical to the one inside `inspectB20TokenV1`, and
+ * `inspect.test.ts` pins the two together — a divergence here would mean the
+ * console and the card disagree about what a token is.
+ */
+export async function detectB20IdentityV1(
+  deps: B20InspectDepsV1,
+  input: { chainId: number; tokenAddress: string },
+): Promise<B20DetectionOutcomeV1> {
+  if (validateB20InspectRequestV1(input.chainId, input.tokenAddress)) {
+    // Same refusals as the full inspection, reported rather than thrown: the
+    // caller is a fallback and a malformed address must not become an
+    // exception it has to catch to stay honest.
+    return input.chainId === B20_CHAIN_ID_V1 ? 'invalid_address' : 'unsupported_chain';
+  }
+  const address = input.tokenAddress.toLowerCase();
+
+  const anchor = await deps.reader.readBlockAnchor();
+  if (!anchor.ok) return 'rpc_failure';
+
+  const isB20 = await deps.reader.readIsB20(address, anchor.value.blockTag);
+  if (!isB20.ok) {
+    // An empty return from the factory means B20 was not active at this block,
+    // which is not the factory saying no.
+    return isB20.reason === 'empty_result' ? 'unavailable_at_block' : 'rpc_failure';
+  }
+  if (!isB20.value) return 'not_b20';
+
+  const initialised = await deps.reader.readIsB20Initialized(address, anchor.value.blockTag);
+  return initialised.ok && initialised.value === false ? 'b20_uninitialised' : 'b20';
 }

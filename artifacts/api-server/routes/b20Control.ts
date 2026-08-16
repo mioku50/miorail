@@ -45,6 +45,7 @@ import {
   b20DecimalsFromSnapshotV1,
   decodeB20BalanceV1,
   inspectB20TokenV1,
+  detectB20IdentityV1,
   buildB20CardV1,
   isWellFormedAddressV1,
   refusalDetailV1,
@@ -1263,27 +1264,21 @@ export async function b20IdentityForMissingRowV1(
   tokenAddress: string,
   now: Date,
 ): Promise<B20DetectionOutcomeV1 | null> {
+  void now;
   try {
-    const result = await inspectB20TokenV1(
+    // Identity only — three reads. The full `inspectB20TokenV1` answers the
+    // same question but then reads every field a control card shows, which
+    // measured 36 seconds for one address against production. A console
+    // fallback does not need a card, and a reader waiting half a minute for
+    // "we have no row for this" is its own defect.
+    return await detectB20IdentityV1(
       { reader: b20RouteRuntime.reader() },
-      {
-        // Not a tenant read: this is the public console, and the snapshot is
-        // never stored from here. Nothing about the caller reaches the chain.
-        tenantId: B20_CONSOLE_IDENTITY_TENANT_V1,
-        chainId: B20_CHAIN_ID_V1,
-        tokenAddress,
-        now,
-      },
+      { chainId: B20_CHAIN_ID_V1, tokenAddress },
     );
-    return result.snapshot.detection.outcome;
   } catch {
     return null;
   }
 }
-
-/** Marks the identity probe in logs as belonging to no tenant. The console is
- * public and this read is not attributable to a user. */
-const B20_CONSOLE_IDENTITY_TENANT_V1 = 'b20-console-identity';
 
 /**
  * Stage 07 — runs a console plan.

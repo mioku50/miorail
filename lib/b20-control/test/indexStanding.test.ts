@@ -5,6 +5,8 @@ import {
   B20_TOKEN_INDEX_STANDINGS_V1,
   b20IdentityWasEstablishedV1,
   b20TokenIndexStandingV1,
+  detectB20IdentityV1,
+  inspectB20TokenV1,
   type B20DetectionOutcomeV1,
 } from '../src/index.js';
 
@@ -94,5 +96,83 @@ describe('b20IdentityWasEstablishedV1', () => {
     assert.equal(b20IdentityWasEstablishedV1('confirmed_b20_not_indexed'), true);
     assert.equal(b20IdentityWasEstablishedV1('not_b20'), true);
     assert.equal(b20IdentityWasEstablishedV1('identity_check_unavailable'), false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The console fallback reads identity with `detectB20IdentityV1`, not with the
+// full `inspectB20TokenV1`. That is a performance decision — three reads rather
+// than a whole control card — and it is only safe while the two agree about
+// what a token IS. These pin them together on the same reader responses.
+// ---------------------------------------------------------------------------
+describe('detectB20IdentityV1 agrees with the full inspection', () => {
+  const ADDRESS = '0xb200000000000000000000578f3ae29d9e6e0101';
+  const ANCHOR = {
+    ok: true as const,
+    value: { blockNumber: '50044247', blockHash: `0x${'a'.repeat(64)}`, blockTag: '0x2fb9f14' },
+    raw: `0x${'a'.repeat(64)}`,
+  };
+  const readerV1 = (over: Record<string, unknown>) =>
+    ({
+      readBlockAnchor: async () => ANCHOR,
+      readIsB20: async () => ({ ok: true as const, value: true }),
+      readIsB20Initialized: async () => ({ ok: true as const, value: true }),
+      readVariantActivated: async () => ({ ok: true as const, value: true }),
+      call: async () => ({ ok: false as const, reason: 'transport' as const }),
+      callMany: async () => [{ ok: false as const, reason: 'transport' as const }],
+      ...over,
+    }) as never;
+
+  const cases: readonly [string, Record<string, unknown>, string][] = [
+    ['confirmed and initialised', {}, 'b20'],
+    [
+      'confirmed but not initialised',
+      { readIsB20Initialized: async () => ({ ok: true as const, value: false }) },
+      'b20_uninitialised',
+    ],
+    ['factory says no', { readIsB20: async () => ({ ok: true as const, value: false }) }, 'not_b20'],
+    [
+      'factory returned nothing at this block',
+      { readIsB20: async () => ({ ok: false as const, reason: 'empty_result' as const }) },
+      'unavailable_at_block',
+    ],
+    [
+      'endpoint failed on the identity call',
+      { readIsB20: async () => ({ ok: false as const, reason: 'transport' as const }) },
+      'rpc_failure',
+    ],
+    [
+      'endpoint failed before any read',
+      { readBlockAnchor: async () => ({ ok: false as const, reason: 'transport' as const }) },
+      'rpc_failure',
+    ],
+  ];
+
+  for (const [name, over, expected] of cases) {
+    test(`${name} → ${expected}, both ways`, async () => {
+      const reader = readerV1(over);
+      const light = await detectB20IdentityV1({ reader }, { chainId: 8453, tokenAddress: ADDRESS });
+      assert.equal(light, expected);
+
+      const full = await inspectB20TokenV1(
+        { reader },
+        { tenantId: 'test', chainId: 8453, tokenAddress: ADDRESS, now: new Date('2026-08-16T00:00:00.000Z') },
+      );
+      assert.equal(
+        full.snapshot.detection.outcome,
+        light,
+        'the cheap identity read and the full inspection must not disagree about what a token is',
+      );
+    });
+  }
+
+  test('an unsupported chain is reported, not thrown', async () => {
+    const outcome = await detectB20IdentityV1({ reader: readerV1({}) }, { chainId: 1, tokenAddress: ADDRESS });
+    assert.equal(outcome, 'unsupported_chain');
+  });
+
+  test('a malformed address is reported, not thrown', async () => {
+    const outcome = await detectB20IdentityV1({ reader: readerV1({}) }, { chainId: 8453, tokenAddress: '0xnope' });
+    assert.equal(outcome, 'invalid_address');
   });
 });
