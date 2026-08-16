@@ -2,7 +2,29 @@ import { app } from './app';
 import { getMiorailProductMigrationFlags } from './lib/productMigrationConfig';
 import { resolveEarnContractPreflightV1 } from './lib/earnPreflight';
 
-const port = process.env.PORT || 3000;
+// Bind to loopback unless an operator asks for otherwise. Nginx terminates TLS
+// and proxies to 127.0.0.1, so nothing needs to reach this process over the
+// network directly. A default of `0.0.0.0` published every route on the public
+// interface beside the proxy — same routes, but without the proxy's
+// Strict-Transport-Security, X-Forwarded-Proto or rate limiting, and reachable
+// on a port no certificate covers.
+//
+// Read at call time rather than at import: the bind is part of what a caller
+// chooses, and a module-load read cannot be exercised by a test.
+export function resolveBindV1(env: NodeJS.ProcessEnv = process.env): {
+  host: string;
+  port: number;
+} {
+  // An empty value is treated as absent for both: `listen(port, '')` binds every
+  // interface, and `Number('')` is 0, which asks the OS for a random port. A
+  // blank line in an env file must not silently change either one.
+  const rawPort = (env.PORT ?? '').trim();
+  const parsedPort = Number(rawPort);
+  return {
+    host: env.HOST && env.HOST.trim().length > 0 ? env.HOST.trim() : '127.0.0.1',
+    port: rawPort.length > 0 && Number.isInteger(parsedPort) && parsedPort > 0 ? parsedPort : 3000,
+  };
+}
 
 // T62.1 §1 — prime the cached earn contract preflight at startup so the first
 // earn request consults an in-memory result. Only runs when the earn flag is
@@ -25,8 +47,9 @@ async function warmEarnContractPreflight(): Promise<void> {
 }
 
 export function startServer() {
-  const server = app.listen(port, () => {
-    console.log(`API Server listening on port ${port}`);
+  const { host, port } = resolveBindV1();
+  const server = app.listen(port, host, () => {
+    console.log(`API Server listening on ${host}:${port}`);
     console.log(`API CHAIN_ENV=${process.env.CHAIN_ENV || 'sepolia'}`);
     void warmEarnContractPreflight();
   });
