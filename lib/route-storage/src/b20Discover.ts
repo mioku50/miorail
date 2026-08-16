@@ -382,6 +382,50 @@ export function discoverCommitRefusalV1(input: {
   return null;
 }
 
+/**
+ * The mirror of `discoverCommitRefusalV1`, for filling history.
+ *
+ * A commit writes launches the cursor is moving ONTO and refuses anything it
+ * has already passed. A backfill is the opposite: it writes only what the
+ * cursor has already passed, and never moves it. Miorail's own token, MIO,
+ * launched at block 48,661,648 and production Discover began scanning at
+ * 49,401,132, so no commit could ever have reached it — the range is behind the
+ * cursor by construction, which is the one thing `commitRange` refuses.
+ *
+ * Keeping the two rules apart is what stops a backfill from becoming a way to
+ * write anywhere: the live lane owns everything at or beyond the cursor, and
+ * blocks nobody has finished reading are not history.
+ */
+export function discoverBackfillRefusalV1(input: {
+  cursor: B20DiscoverCursorV1;
+  launches: readonly B20StoredLaunchV1[];
+  fromBlock: string;
+  toBlock: string;
+}): string | null {
+  if (BigInt(input.fromBlock) > BigInt(input.toBlock)) {
+    return 'A backfill range must not run backwards';
+  }
+  if (BigInt(input.toBlock) >= BigInt(input.cursor.lastProcessedBlock)) {
+    return 'A backfill may only cover blocks the cursor has already passed';
+  }
+  for (const launch of input.launches) {
+    if (launch.chainId !== input.cursor.chainId || launch.factoryAddress !== input.cursor.factoryAddress) {
+      return 'A launch from another lane cannot be backfilled against this cursor';
+    }
+    if (launch.decoderVersion !== input.cursor.decoderVersion) {
+      return 'A launch decoded by another decoder version cannot be backfilled against this cursor';
+    }
+    const block = BigInt(launch.blockNumber);
+    if (block < BigInt(input.fromBlock) || block > BigInt(input.toBlock)) {
+      // The caller declares the range it read. A launch outside it means the
+      // reader returned something the caller did not ask for, and storing it
+      // would record coverage that was never established.
+      return 'A launch outside the declared backfill range cannot be written';
+    }
+  }
+  return null;
+}
+
 export function discoverConflictV1(message: string): RouteStorageConflictError {
   return new RouteStorageConflictError(message);
 }
@@ -446,6 +490,25 @@ export interface B20DiscoverRepositoryV1 {
     run: B20DiscoverRunV1;
     now: string;
   }): Promise<B20DiscoverCommitResultV1>;
+
+  /**
+   * Canonical launches for a range BEHIND the cursor, without touching it.
+   *
+   * The only way to repair a historical gap. `commitRange` cannot: it refuses
+   * launches from blocks the cursor has already passed, and moving the cursor
+   * backwards to reach them would make the lane re-read everything since.
+   *
+   * Idempotent on (chain, transaction, log index) — the same range may be run
+   * repeatedly and the second run inserts nothing. An existing canonical row is
+   * never rewritten, so a backfill cannot revise history it disagrees with.
+   */
+  insertHistoricalLaunches(input: {
+    key: B20DiscoverCursorKeyV1;
+    fromBlock: string;
+    toBlock: string;
+    launches: readonly B20StoredLaunchV1[];
+    now: string;
+  }): Promise<{ inserted: number; duplicates: number }>;
 
   /** A run that changed nothing, recorded so that "the endpoint was down" and
    * "the chain was quiet" are different rows. */

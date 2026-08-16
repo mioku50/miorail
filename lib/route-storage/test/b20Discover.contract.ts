@@ -616,4 +616,153 @@ export function describeB20DiscoverRepositoryV1(
       assert.equal((await repository.listRecentRuns({ key: LANE, limit: 10 })).length, 1);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Historical backfill. `commitRange` refuses a launch from a block the cursor
+  // has already passed, which is every launch that predates the scan window —
+  // MIO among them. This is the only path that can repair such a gap, and the
+  // rules on it are the mirror image: behind the cursor only, cursor never
+  // moved.
+  // -------------------------------------------------------------------------
+  describe(`${name}: a backfill repairs history without rewriting it`, () => {
+    /** A lane whose cursor is well past the range being backfilled. */
+    async function advanced(): Promise<B20DiscoverHarnessV1> {
+      const harness = await leased();
+      await harness.repository.commitRange({
+        key: LANE,
+        owner: OWNER,
+        launches: [],
+        nextBlock: '2000',
+        nextBlockHash: hashV1('c'),
+        run: runFixtureV1({ launchesRead: 0, launchesInserted: 0 }),
+        now: T0,
+      });
+      return harness;
+    }
+
+    test('a launch behind the cursor is stored and the cursor does not move', async () => {
+      const { repository } = await advanced();
+      const before = await repository.getCursor(LANE);
+      const result = await repository.insertHistoricalLaunches({
+        key: LANE,
+        fromBlock: '1200',
+        toBlock: '1300',
+        launches: [launchFixtureV1({ blockNumber: '1250', transactionHash: hashV1('7') })],
+        now: T0,
+      });
+      assert.equal(result.inserted, 1);
+      assert.equal(result.duplicates, 0);
+      const after = await repository.getCursor(LANE);
+      assert.equal(after?.lastProcessedBlock, before?.lastProcessedBlock);
+      assert.equal(after?.lastProcessedBlockHash, before?.lastProcessedBlockHash);
+      assert.equal((await repository.listLaunches({ key: LANE, limit: 10 })).length, 1);
+    });
+
+    test('running the same range twice inserts nothing the second time', async () => {
+      const { repository } = await advanced();
+      const launches = [launchFixtureV1({ blockNumber: '1250', transactionHash: hashV1('7') })];
+      const first = await repository.insertHistoricalLaunches({
+        key: LANE, fromBlock: '1200', toBlock: '1300', launches, now: T0,
+      });
+      const second = await repository.insertHistoricalLaunches({
+        key: LANE, fromBlock: '1200', toBlock: '1300', launches, now: T0,
+      });
+      assert.equal(first.inserted, 1);
+      assert.equal(second.inserted, 0);
+      assert.equal(second.duplicates, 1);
+      assert.equal((await repository.listLaunches({ key: LANE, limit: 10 })).length, 1);
+    });
+
+    test('a launch repeated inside one batch counts once', async () => {
+      // ON CONFLICT DO NOTHING treats a log repeated within one statement as a
+      // single insert. The fake has to agree or its counts drift from the real
+      // ones exactly where an operator is reading them.
+      const { repository } = await advanced();
+      const one = launchFixtureV1({ blockNumber: '1250', transactionHash: hashV1('7') });
+      const result = await repository.insertHistoricalLaunches({
+        key: LANE, fromBlock: '1200', toBlock: '1300', launches: [one, one], now: T0,
+      });
+      assert.equal(result.inserted, 1);
+      assert.equal(result.duplicates, 1);
+    });
+
+    test('an existing canonical row is never rewritten', async () => {
+      const { repository } = await advanced();
+      const stored = launchFixtureV1({ blockNumber: '1250', transactionHash: hashV1('7'), symbol: 'REAL' });
+      await repository.insertHistoricalLaunches({
+        key: LANE, fromBlock: '1200', toBlock: '1300', launches: [stored], now: T0,
+      });
+      // Same identity, different content — a re-read that disagrees must not be
+      // able to revise what is already recorded.
+      await repository.insertHistoricalLaunches({
+        key: LANE,
+        fromBlock: '1200',
+        toBlock: '1300',
+        launches: [{ ...stored, symbol: 'CHANGED', name: 'Changed' }],
+        now: T0,
+      });
+      const rows = await repository.listLaunches({ key: LANE, limit: 10 });
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0]?.symbol, 'REAL');
+    });
+
+    test('a range that reaches the cursor is refused', async () => {
+      // At or beyond the cursor is the live lane's, and those blocks are not
+      // history — nobody has finished reading them.
+      const { repository } = await advanced();
+      await assert.rejects(
+        repository.insertHistoricalLaunches({
+          key: LANE,
+          fromBlock: '1900',
+          toBlock: '2000',
+          launches: [launchFixtureV1({ blockNumber: '1950', transactionHash: hashV1('7') })],
+          now: T0,
+        }),
+        RouteStorageConflictError,
+      );
+      assert.equal((await repository.listLaunches({ key: LANE, limit: 10 })).length, 0);
+    });
+
+    test('a launch outside the declared range is refused', async () => {
+      const { repository } = await advanced();
+      await assert.rejects(
+        repository.insertHistoricalLaunches({
+          key: LANE,
+          fromBlock: '1200',
+          toBlock: '1300',
+          launches: [launchFixtureV1({ blockNumber: '1400', transactionHash: hashV1('7') })],
+          now: T0,
+        }),
+        RouteStorageConflictError,
+      );
+      assert.equal((await repository.listLaunches({ key: LANE, limit: 10 })).length, 0);
+    });
+
+    test('a backfill against a lane with no cursor is refused', async () => {
+      const harness = await createHarness();
+      await assert.rejects(
+        harness.repository.insertHistoricalLaunches({
+          key: LANE, fromBlock: '1200', toBlock: '1300', launches: [], now: T0,
+        }),
+        RouteStorageConflictError,
+      );
+    });
+
+    test('a failed write leaves nothing behind', async () => {
+      const harness = await advanced();
+      await harness.breakWrites();
+      await assert.rejects(
+        harness.repository.insertHistoricalLaunches({
+          key: LANE,
+          fromBlock: '1200',
+          toBlock: '1300',
+          launches: [launchFixtureV1({ blockNumber: '1250', transactionHash: hashV1('7') })],
+          now: T0,
+        }),
+      );
+      await harness.healWrites();
+      assert.equal((await harness.repository.listLaunches({ key: LANE, limit: 10 })).length, 0);
+      assert.equal((await harness.repository.getCursor(LANE))?.lastProcessedBlock, '2000');
+    });
+  });
 }

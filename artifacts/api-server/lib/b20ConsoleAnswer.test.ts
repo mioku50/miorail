@@ -174,6 +174,8 @@ const readV1 = (
     ...profile,
   },
   historyCount: 3,
+  indexStanding: 'indexed_b20',
+  detection: null,
 });
 
 describe('Investigate refuses to compare what was not measured the same way', () => {
@@ -203,12 +205,92 @@ describe('Investigate refuses to compare what was not measured the same way', ()
 });
 
 describe('Investigate says what it does not have', () => {
-  test('an address that is not a canonical launch is a real answer, not an error', () => {
+  // ---------------------------------------------------------------------
+  // The MIO defect. A missing Discover row was reported as
+  // "Not a canonical B20 launch in Miorail" — a sentence about the token,
+  // built from a fact about our index. MIO (0xb200…0101) is confirmed by the
+  // factory and launched 739,484 blocks before Discover began scanning, so
+  // Miorail was denying its own token.
+  //
+  // Four states, four different sentences. The assertions below are written to
+  // fail if any two of them are ever collapsed again.
+  // ---------------------------------------------------------------------
+  const MIO_V1 = '0xb200000000000000000000578f3ae29d9e6e0101';
+  const missingRowV1 = (
+    indexStanding: B20ConsoleTokenReadV1['indexStanding'],
+    detection: B20ConsoleTokenReadV1['detection'] = null,
+    tokenAddress = MIO_V1,
+  ): B20ConsoleTokenReadV1 => ({
+    tokenAddress, card: null, profile: null, historyCount: 0, indexStanding, detection,
+  });
+
+  // A — indexed: the fallback is not consulted and the existing answer stands.
+  test('A · an indexed launch answers exactly as before', () => {
+    const result = b20InvestigateAnswerV1({ reads: [readV1('a')] });
+    // None of the three fallback branches may appear for a token we hold.
+    assert.doesNotMatch(result.answer, /not indexed|could not be completed|not confirmed|confirmed onchain/i);
+    assert.doesNotMatch(result.answer, /B20 identity/i);
+    // The answer is still about the measurement, keyed by the token's symbol.
+    assert.match(result.answer, /^a: /);
+  });
+
+  // B — confirmed by the factory, absent from the index. The regression that
+  // matters: this answer must not contain a denial of the token.
+  test('B · confirmed B20 with no index row is never called "not a B20"', () => {
+    const result = b20InvestigateAnswerV1({ reads: [missingRowV1('confirmed_b20_not_indexed', 'b20')] });
+    assert.doesNotMatch(result.answer, /not a canonical B20/i);
+    assert.doesNotMatch(result.answer, /not a B20/i);
+    assert.doesNotMatch(result.answer, /was not confirmed/i);
+    assert.match(result.answer, /confirmed onchain/i);
+    assert.match(result.answer, /not present in Miorail’s Discover index/i);
+    // Identity and index are separate rows, and only the index one is a warning.
+    const identity = result.facts.find((fact) => /B20 identity/.test(fact.label));
+    const index = result.facts.find((fact) => /Discover index/.test(fact.label));
+    assert.equal(identity?.value, 'Confirmed by factory');
+    assert.equal(identity?.tone, 'positive');
+    assert.equal(index?.value, 'Launch not indexed');
+    assert.equal(index?.tone, 'warning');
+    assert.ok(result.missingEvidence.some((entry) => /has not been ingested into Miorail Discover/.test(entry)));
+  });
+
+  test('B · created-but-uninitialised is reported without denying the identity', () => {
     const result = b20InvestigateAnswerV1({
-      reads: [{ tokenAddress: '0x' + '9'.repeat(40), card: null, profile: null, historyCount: 0 }],
+      reads: [missingRowV1('confirmed_b20_not_indexed', 'b20_uninitialised')],
     });
-    assert.match(result.answer, /not a canonical B20 launch/);
-    assert.equal(result.facts[0]?.tone, 'warning');
+    assert.doesNotMatch(result.answer, /not a B20/i);
+    assert.ok(result.facts.some((fact) => fact.value === 'Created, not initialised'));
+  });
+
+  // C — the factory answered no. This is the only branch entitled to a denial.
+  test('C · a factory negative is stated as the factory’s answer', () => {
+    const result = b20InvestigateAnswerV1({ reads: [missingRowV1('not_b20', 'not_b20')] });
+    assert.match(result.answer, /was not confirmed as a B20 token by the B20 factory/i);
+    assert.doesNotMatch(result.answer, /confirmed onchain/i);
+    // Must not claim anything about the index, which was never the question.
+    assert.doesNotMatch(result.answer, /Historical Discover measurements/i);
+  });
+
+  // D — nothing was established. An outage must not read as either verdict.
+  test('D · an unavailable identity check concludes nothing about the token', () => {
+    const result = b20InvestigateAnswerV1({
+      reads: [missingRowV1('identity_check_unavailable', 'rpc_failure')],
+    });
+    assert.match(result.answer, /could not be completed/i);
+    assert.match(result.answer, /not evidence either way/i);
+    assert.doesNotMatch(result.answer, /is not a B20/i);
+    assert.doesNotMatch(result.answer, /was not confirmed as a B20/i);
+    assert.doesNotMatch(result.answer, /confirmed onchain/i);
+    assert.ok(result.missingEvidence.some((entry) => /completed B20 factory identity check/.test(entry)));
+  });
+
+  test('the four states never produce the same sentence', () => {
+    const answers = [
+      b20InvestigateAnswerV1({ reads: [readV1('a')] }).answer,
+      b20InvestigateAnswerV1({ reads: [missingRowV1('confirmed_b20_not_indexed', 'b20')] }).answer,
+      b20InvestigateAnswerV1({ reads: [missingRowV1('not_b20', 'not_b20')] }).answer,
+      b20InvestigateAnswerV1({ reads: [missingRowV1('identity_check_unavailable', null)] }).answer,
+    ];
+    assert.equal(new Set(answers).size, 4);
   });
 
   test('a finding about Miorail is never reported as a property of the token', () => {

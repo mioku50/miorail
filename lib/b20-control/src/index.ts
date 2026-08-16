@@ -6,3 +6,4 @@ export * from './watch.js';
 export * from './launches.js';
 export * from './launchReader.js';
 export * from './launchSource.js';
+export * from './indexStanding.js';

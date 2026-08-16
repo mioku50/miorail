@@ -49,8 +49,11 @@ import {
   isWellFormedAddressV1,
   refusalDetailV1,
   validateB20InspectRequestV1,
+  b20TokenIndexStandingV1,
+  B20_CHAIN_ID_V1,
   type B20ControlSnapshotV1,
   type B20ControlWatchV1,
+  type B20DetectionOutcomeV1,
   type B20ReaderV1,
 } from '@mioagent/b20-control';
 import {
@@ -1245,6 +1248,44 @@ b20ControlRouter.post('/opportunities/b20/copilot/ask', async (req: Request, res
 });
 
 /**
+ * What the B20 factory says about an address Discover has no row for.
+ *
+ * Returns the raw detection outcome, or null when the check could not be run at
+ * all. Both feed `b20TokenIndexStandingV1`, which is the only place allowed to
+ * turn them into words — and which has no branch that reads silence as
+ * `not_b20`.
+ *
+ * Read-only and fail-closed. A thrown reader, an unset RPC URL and a refused
+ * request all produce null rather than an exception, because an identity check
+ * that could not run must not take down an answer the rest of which is fine.
+ */
+export async function b20IdentityForMissingRowV1(
+  tokenAddress: string,
+  now: Date,
+): Promise<B20DetectionOutcomeV1 | null> {
+  try {
+    const result = await inspectB20TokenV1(
+      { reader: b20RouteRuntime.reader() },
+      {
+        // Not a tenant read: this is the public console, and the snapshot is
+        // never stored from here. Nothing about the caller reaches the chain.
+        tenantId: B20_CONSOLE_IDENTITY_TENANT_V1,
+        chainId: B20_CHAIN_ID_V1,
+        tokenAddress,
+        now,
+      },
+    );
+    return result.snapshot.detection.outcome;
+  } catch {
+    return null;
+  }
+}
+
+/** Marks the identity probe in logs as belonging to no tenant. The console is
+ * public and this read is not attributable to a user. */
+const B20_CONSOLE_IDENTITY_TENANT_V1 = 'b20-console-identity';
+
+/**
  * Stage 07 — runs a console plan.
  *
  * Every branch here is a call this file already makes for a public read, with
@@ -1269,7 +1310,20 @@ export async function runB20ConsolePlanV1(plan: B20ConsolePlanV1): Promise<B20Co
     for (const tokenAddress of cardsStep.tokenAddresses) {
       const found = await observations.getFeedRowForToken({ tokenAddress, historyLimit: cardsStep.historyLimit });
       if (!found) {
-        reads.push({ tokenAddress, card: null, profile: null, historyCount: 0 });
+        // A missing index row is a fact about Miorail, not about the token. Ask
+        // the factory before saying anything: MIO is confirmed onchain and
+        // predates the Discover scan window, and calling it "not a canonical
+        // B20 launch" was Miorail denying its own token. Bounded by the
+        // planner's five-token cap and only ever reached on a miss.
+        const identity = await b20IdentityForMissingRowV1(tokenAddress, now);
+        reads.push({
+          tokenAddress,
+          card: null,
+          profile: null,
+          historyCount: 0,
+          indexStanding: b20TokenIndexStandingV1({ indexed: false, detection: identity }),
+          detection: identity,
+        });
         continue;
       }
       const raw = found.row.observation;
@@ -1312,6 +1366,11 @@ export async function runB20ConsolePlanV1(plan: B20ConsolePlanV1): Promise<B20Co
             }
           : null,
         historyCount: found.history.length,
+        // A row in the index settles identity on its own; the factory is not
+        // consulted, and an observation may still be absent. Those stay three
+        // separate statements.
+        indexStanding: 'indexed_b20',
+        detection: null,
       });
       if (raw) assessments[tokenAddress] = referenceExitAssessmentV1(raw, null);
     }

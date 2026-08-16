@@ -2,6 +2,7 @@ import {
   assertDiscoverCursorV1,
   assertDiscoverRunV1,
   assertStoredLaunchV1,
+  discoverBackfillRefusalV1,
   discoverCommitRefusalV1,
   discoverConflictV1,
   discoverCursorIdV1,
@@ -187,6 +188,50 @@ export class InMemoryB20DiscoverRepositoryV1 implements B20DiscoverRepositoryV1 
       ),
     );
     return { committed: true, inserted: fresh.length, duplicates: launches.length - fresh.length, cursor: next };
+  }
+
+  /**
+   * Backfill of a range behind the cursor. No lease, no cursor movement.
+   *
+   * Refuses exactly what the database refuses — same rule function, same
+   * self-dedupe. A fake that accepted a range the real repository rejects is
+   * how three T65 bugs reached production: the tests passed against a twin that
+   * was more permissive than Postgres.
+   */
+  async insertHistoricalLaunches(input: {
+    key: { chainId: 8453; factoryAddress: string; decoderVersion: string };
+    fromBlock: string;
+    toBlock: string;
+    launches: readonly B20StoredLaunchV1[];
+    now: string;
+  }): Promise<{ inserted: number; duplicates: number }> {
+    const id = discoverCursorIdV1(input.key);
+    const cursor = this.cursors.get(id);
+    if (!cursor) throw discoverConflictV1('No discover cursor exists for this lane');
+
+    const launches = input.launches.map((launch) => assertStoredLaunchV1(launch, 'write'));
+    const refusal = discoverBackfillRefusalV1({
+      cursor,
+      launches,
+      fromBlock: input.fromBlock,
+      toBlock: input.toBlock,
+    });
+    if (refusal) throw discoverConflictV1(refusal);
+
+    const fresh: B20StoredLaunchV1[] = [];
+    const batch = new Set<string>();
+    for (const launch of launches) {
+      if (this.launches.has(launch.id) || batch.has(launch.id)) continue;
+      batch.add(launch.id);
+      fresh.push(launch);
+    }
+    if (this.failNextWrite) {
+      const reason = this.failNextWrite;
+      this.failNextWrite = null;
+      throw new Error(reason);
+    }
+    for (const launch of fresh) this.launches.set(launch.id, launch);
+    return { inserted: fresh.length, duplicates: launches.length - fresh.length };
   }
 
   async recordFailedRun(input: {

@@ -2,6 +2,7 @@ import {
   assertDiscoverCursorV1,
   assertDiscoverRunV1,
   assertStoredLaunchV1,
+  discoverBackfillRefusalV1,
   discoverCommitRefusalV1,
   discoverConflictV1,
   discoverCursorIdV1,
@@ -299,6 +300,48 @@ export function createDatabaseB20DiscoverRepository(sql: SqlTemplateExecutor): B
         duplicates: launches.length - inserted,
         cursor: await readCursor(id),
       };
+    },
+
+    async insertHistoricalLaunches(input): Promise<{ inserted: number; duplicates: number }> {
+      const id = discoverCursorIdV1(input.key);
+      const launches = input.launches.map((launch) => assertStoredLaunchV1(launch, 'write'));
+      const cursor = await readCursor(id);
+      if (!cursor) throw discoverConflictV1('No discover cursor exists for this lane');
+      const refusal = discoverBackfillRefusalV1({
+        cursor,
+        launches,
+        fromBlock: input.fromBlock,
+        toBlock: input.toBlock,
+      });
+      if (refusal) throw discoverConflictV1(refusal);
+      if (launches.length === 0) return { inserted: 0, duplicates: 0 };
+
+      // No cursor CTE and no lease: this range is behind the cursor, so there
+      // is no worker to race and nothing to advance. The INSERT is the same one
+      // `commitRange` runs, including ON CONFLICT DO NOTHING — a launch already
+      // stored keeps the row it has, whatever this read produced.
+      const rows = await sql`
+        INSERT INTO b20_launches (
+          id, chain_id, factory_address, token_address, variant, name, symbol, decimals,
+          block_number, block_hash, transaction_hash, transaction_index, log_index, block_timestamp,
+          detected_at, confirmation_count, decoder_version, canonical, non_canonical_at, created_at
+        )
+        SELECT j.id, j.chain_id, j.factory_address, j.token_address, j.variant, j.name, j.symbol,
+               j.decimals, j.block_number::numeric(78,0), j.block_hash, j.transaction_hash,
+               j.transaction_index, j.log_index, j.block_timestamp::timestamptz,
+               j.detected_at::timestamptz, j.confirmation_count,
+               j.decoder_version, true, NULL::timestamptz, j.created_at::timestamptz
+        FROM jsonb_to_recordset(${launchesPayloadV1(launches)}::text::jsonb) AS j(
+          id text, chain_id integer, factory_address text, token_address text, variant text,
+          name text, symbol text, decimals integer, block_number text, block_hash text,
+          transaction_hash text, transaction_index integer, log_index integer, block_timestamp text,
+          detected_at text, confirmation_count integer, decoder_version text, created_at text
+        )
+        ON CONFLICT (chain_id, transaction_hash, log_index) DO NOTHING
+        RETURNING id`;
+
+      const inserted = rows.length;
+      return { inserted, duplicates: launches.length - inserted };
     },
 
     async recordFailedRun(input) {

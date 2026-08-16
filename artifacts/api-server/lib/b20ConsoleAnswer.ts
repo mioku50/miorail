@@ -5,6 +5,7 @@ import {
   type MoverExclusionV1,
 } from '@mioagent/opportunity-rail';
 import { b20QuoteAssetDisplayV1 } from '@mioagent/opportunity-rail/quoteAsset';
+import type { B20DetectionOutcomeV1, B20TokenIndexStandingV1 } from '@mioagent/b20-control';
 
 import { b20AmountLabelV1 } from './b20Copilot.js';
 import type { B20ExitAssessmentV1 } from './b20ExitAssessment.js';
@@ -72,6 +73,19 @@ export interface B20ConsoleTokenReadV1 {
     measurementVersion: string;
   } | null;
   historyCount: number;
+  /**
+   * Which of the three separate questions this read actually answered.
+   *
+   * Required rather than optional: the whole defect was a missing index row
+   * being read as a fact about the token, and a field that can be left out
+   * would let a new call site reintroduce exactly that by saying nothing.
+   * `indexed_b20` whenever `card` is present.
+   */
+  indexStanding: B20TokenIndexStandingV1;
+  /** The factory outcome behind the standing, when one was obtained. Kept so
+   * copy can distinguish a finished token from one created but uninitialised
+   * without widening the standing enum. */
+  detection: B20DetectionOutcomeV1 | null;
 }
 
 export interface B20ConsoleChangesReadV1 {
@@ -344,8 +358,56 @@ export function b20InvestigateAnswerV1(input: {
   }
 
   for (const read of unknown) {
-    facts.push({ label: read.tokenAddress, value: 'Not a canonical B20 launch in Miorail', tone: 'warning' });
-    sentences.push(`${read.tokenAddress} is not a canonical B20 launch Miorail has ingested, so there is nothing stored to read.`);
+    const address = read.tokenAddress;
+    switch (read.indexStanding) {
+      case 'confirmed_b20_not_indexed': {
+        // Two facts, because two different things are true and only one of them
+        // is a shortcoming of ours. Saying "not a canonical B20 launch" here
+        // was Miorail denying its own token: MIO is confirmed by the factory
+        // and launched before Discover began scanning.
+        facts.push({ label: `${address} — B20 identity`, value: 'Confirmed by factory', tone: 'positive' });
+        facts.push({ label: `${address} — Discover index`, value: 'Launch not indexed', tone: 'warning' });
+        sentences.push(
+          `${address} is a B20 token confirmed onchain, but its launch is not present in Miorail’s Discover index. Historical Discover measurements are unavailable for this token.`,
+        );
+        if (read.detection === 'b20_uninitialised') {
+          facts.push({
+            label: `${address} — factory state`,
+            value: 'Created, not initialised',
+            tone: 'warning',
+          });
+        }
+        missingEvidence.push(`The canonical launch event for ${address} has not been ingested into Miorail Discover.`);
+        break;
+      }
+      case 'not_b20': {
+        // The factory answered. This is the only branch entitled to a negative,
+        // and it is phrased as what the factory said rather than as what
+        // Miorail holds.
+        facts.push({ label: `${address} — B20 identity`, value: 'Not confirmed by factory', tone: 'warning' });
+        sentences.push(`${address} was not confirmed as a B20 token by the B20 factory.`);
+        break;
+      }
+      case 'identity_check_unavailable': {
+        // Nothing was established. The sentence says both halves so it cannot
+        // be read as either verdict.
+        facts.push({ label: `${address} — B20 identity`, value: 'Check could not be completed', tone: 'warning' });
+        facts.push({ label: `${address} — Discover index`, value: 'Launch not indexed', tone: 'warning' });
+        sentences.push(
+          `Miorail has no Discover launch for ${address}, and the B20 identity check could not be completed. This is not evidence either way about the token.`,
+        );
+        missingEvidence.push(`A completed B20 factory identity check for ${address}.`);
+        break;
+      }
+      case 'indexed_b20': {
+        // Unreachable by construction — `unknown` is the reads with no card.
+        // Stated rather than assumed, so a future change that sets the standing
+        // without a card produces a sentence instead of silence.
+        facts.push({ label: `${address} — Discover index`, value: 'Launch not indexed', tone: 'warning' });
+        sentences.push(`Miorail has no stored Discover launch for ${address}.`);
+        break;
+      }
+    }
   }
 
   const comparability = b20ComparabilityV1(known);
@@ -412,7 +474,12 @@ export function b20PortfolioAnswerV1(input: {
   for (const read of input.reads) {
     const card = read.card;
     if (!card) {
-      unranked.push({ symbol: read.tokenAddress, because: 'is not a canonical B20 launch Miorail has ingested' });
+      // Phrased as what Miorail holds, not as what the token is. Portfolio does
+      // NOT run the factory fallback that Investigate does: this scope is
+      // private, and a per-holding onchain lookup would leak the shape of a
+      // wallet to an RPC endpoint. Absent a check, the honest claim is the
+      // narrow one.
+      unranked.push({ symbol: read.tokenAddress, because: 'has no ingested Discover launch in Miorail' });
       continue;
     }
     const symbol = symbolV1(card);
@@ -489,7 +556,7 @@ export function b20PortfolioAnswerV1(input: {
         .join(', ')}.`,
     );
   }
-  if (sentences.length === 0) sentences.push('None of these tokens is a canonical B20 launch Miorail has measured.');
+  if (sentences.length === 0) sentences.push('Miorail has no measured Discover launch for any of these tokens.');
   sentences.push(B20_PORTFOLIO_SIZE_CAVEAT_V1);
 
   return {

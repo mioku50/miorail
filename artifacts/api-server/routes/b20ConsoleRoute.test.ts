@@ -146,7 +146,36 @@ beforeEach(() => {
   // Left to the real factory a unit test reaches a provider over the network
   // the moment a key happens to be in the environment.
   b20RouteRuntime.narrator = () => null;
+  // Same reasoning for the identity fallback: without a stub this would open a
+  // socket to Base the moment an RPC URL is configured. `not_b20` is the
+  // default so a test that means to assert a confirmation has to say so.
+  b20RouteRuntime.reader = () => fakeReaderV1({ isB20: false });
 });
+
+/**
+ * The narrow slice of B20ReaderV1 the identity fallback touches: an anchor and
+ * two factory calls. Anything else throwing is correct — it would mean the
+ * fallback grew a read this test does not know about.
+ */
+function fakeReaderV1(options: { isB20: boolean; initialised?: boolean; fail?: boolean }) {
+  const fail = { ok: false as const, reason: 'transport' as const };
+  const anchor = options.fail
+    ? fail
+    : {
+        ok: true as const,
+        value: { blockNumber: '50044247', blockHash: `0x${'a'.repeat(64)}`, blockTag: '0x2fb9f14' },
+        raw: `0x${'a'.repeat(64)}`,
+      };
+  return {
+    readBlockAnchor: async () => anchor,
+    readIsB20: async () => (options.fail ? fail : { ok: true as const, value: options.isB20 }),
+    readIsB20Initialized: async () =>
+      options.fail ? fail : { ok: true as const, value: options.initialised ?? true },
+    readVariantActivated: async () => (options.fail ? fail : { ok: true as const, value: true }),
+    call: async () => fail,
+    callMany: async () => [fail],
+  } as never;
+}
 
 afterEach(() => {
   resetB20SummaryCacheV1();
@@ -230,7 +259,55 @@ describe('the console answers about named tokens', () => {
       question: `what about 0x${'9'.repeat(40)}`,
     });
     assert.equal(response.status, 200);
-    assert.match(response.body.answer, /not a canonical B20 launch/);
+    // The factory answered no, so the answer is the factory's, not a claim
+    // about what Miorail happens to hold.
+    assert.match(response.body.answer, /not confirmed as a B20 token by the B20 factory/i);
+  });
+
+  // The MIO defect, end to end through the route. An address the index does not
+  // have but the factory confirms must not be denied.
+  const MIO_V1 = '0xb200000000000000000000578f3ae29d9e6e0101';
+
+  test('a factory-confirmed address missing from the index is not called a non-B20', async () => {
+    b20RouteRuntime.reader = () => fakeReaderV1({ isB20: true });
+    const response = await ask({
+      schemaVersion: 'b20-console-ask/v1',
+      scope: 'investigate',
+      question: `check mio token ${MIO_V1}`,
+    });
+    assert.equal(response.status, 200);
+    assert.doesNotMatch(response.body.answer, /not a canonical B20/i);
+    assert.doesNotMatch(response.body.answer, /not a B20/i);
+    assert.match(response.body.answer, /confirmed onchain/i);
+    assert.match(response.body.answer, /Discover index/i);
+  });
+
+  test('an identity check that cannot run concludes nothing', async () => {
+    b20RouteRuntime.reader = () => fakeReaderV1({ isB20: true, fail: true });
+    const response = await ask({
+      schemaVersion: 'b20-console-ask/v1',
+      scope: 'investigate',
+      question: `check ${MIO_V1}`,
+    });
+    assert.equal(response.status, 200);
+    assert.match(response.body.answer, /could not be completed/i);
+    assert.doesNotMatch(response.body.answer, /not a B20/i);
+    assert.doesNotMatch(response.body.answer, /confirmed onchain/i);
+  });
+
+  test('a reader that throws does not fail the answer', async () => {
+    // Fail-closed means the request still succeeds with an honest uncertainty,
+    // not a 500. The rest of an Investigate answer may be perfectly good.
+    b20RouteRuntime.reader = () => {
+      throw new Error('BASE_MAINNET_RPC_URL is not set');
+    };
+    const response = await ask({
+      schemaVersion: 'b20-console-ask/v1',
+      scope: 'investigate',
+      question: `check ${MIO_V1}`,
+    });
+    assert.equal(response.status, 200);
+    assert.match(response.body.answer, /could not be completed/i);
   });
 });
 
