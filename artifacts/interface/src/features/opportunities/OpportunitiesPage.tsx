@@ -22,6 +22,7 @@ import {
   type ConsolePipelineStateV1,
   type OpportunityFilterV1,
   type B20ConsoleScopeViewV1,
+  type B20ProjectFilterV1,
   type OpportunityStandingFilterV1,
 } from '@mioagent/ui';
 import {
@@ -61,6 +62,7 @@ export function OpportunitiesPage() {
 
   const [filter, setFilter] = useState<OpportunityFilterV1>('all');
   const [standingFilter, setStandingFilter] = useState<OpportunityStandingFilterV1>('all');
+  const [projectFilter, setProjectFilter] = useState<B20ProjectFilterV1>('all');
   const [freshOnly, setFreshOnly] = useState(false);
   const [railExpanded, setRailExpanded] = useState(false);
   const [copilotToken, setCopilotToken] = useState<string | null>(null);
@@ -76,7 +78,15 @@ export function OpportunitiesPage() {
     // The verdict section is a SERVER filter. Grouping only what one page
     // returned would have put the 70 launches that were bought and could not be
     // sold behind roughly 46 pages of 25, which is the same as not having them.
-    { state: filter, standing: standingFilter, freshness: freshOnly ? 'fresh' : 'all' },
+    {
+      state: filter,
+      standing: standingFilter,
+      freshness: freshOnly ? 'fresh' : 'all',
+      // A different axis from what was measured, and a SERVER filter for the
+      // same reason the standing one is: a verified claim is rare enough that
+      // grouping one page would be the same as not having the filter.
+      project: projectFilter,
+    },
     { enabled: discoverOn },
   );
   const copilot = useB20CopilotAsk();
@@ -227,6 +237,8 @@ export function OpportunitiesPage() {
         cards={cards}
         filter={filter}
         standingFilter={standingFilter}
+        projectFilter={projectFilter}
+        onProjectFilterChange={setProjectFilter}
         freshOnly={freshOnly}
         loading={feed.isPending && discoverOn}
         onFilterChange={setFilter}

@@ -152,6 +152,12 @@ Every measurement also carries a "standing": what the reading CONCLUDED, with an
           .describe(
             'Lower bound on COMPLETED launch-window buying. A window that has not closed has counted nobody and is excluded, never read as zero.',
           ),
+        project: z
+          .enum(['all', 'product_backed', 'verified_project', 'unknown'])
+          .optional()
+          .describe(
+            'Filter by PROJECT CONTEXT, which is a different axis from anything measured. "verified_project": a project proved a link to this token by serving a file on a domain it controls. "product_backed": that, plus a product endpoint the domain declared answered a real request. "unknown": no project has proven a link — where almost every launch on this chain belongs, and NOT a negative finding. A verified link is a check on publication, never a review of the project.',
+          ),
         limit: z.number().int().min(1).max(MCP_MAX_PAGE_V1).optional(),
         cursor: z.string().max(500).optional().describe('Opaque; from a previous call.'),
       },

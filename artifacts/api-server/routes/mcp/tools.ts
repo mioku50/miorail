@@ -5,6 +5,7 @@ import {
   b20PipelineCopyV1,
   b20CardStandingGroupV1,
   B20_STANDING_GROUP_COPY_V1,
+  type B20FundamentalProfileV1,
   type B20OpportunityCardV1,
   type B20StandingGroupV1,
 } from '@mioagent/opportunity-rail';
@@ -45,6 +46,8 @@ export const MIORAIL_MCP_CAVEATS_V1 = {
     'POOL HOOK PERMISSIONS ARE NOT BEHAVIOR. Address bits say which callbacks a Uniswap v4 hook may run; they do not prove that it used them. Only measured route results state an observed outcome.',
   launchBuying:
     'LAUNCH-WINDOW BUYING IS NOT CURRENT HOLDINGS. Counts and shares describe gross buying during the complete launch window; wallets may have sold since. They do not identify snipers, bots, insiders, related wallets or intent.',
+  projectContext:
+    'A VERIFIED PROJECT LINK IS NOT A REVIEW. It means a project served a file on a domain it controls naming this token, and Miorail checked what that file declared. Miorail did not read the project’s code, assess its team, or form any view about its token. `product: live` means a declared endpoint answered a real request — not that the product is useful, correct, safe or maintained. An unverified project is the ORDINARY case on this chain and is never a negative finding: absence of a claim is absence of evidence, not evidence of absence.',
 } as const;
 
 /** §6 — bounded, and not by the caller. */
@@ -82,6 +85,8 @@ export function publicFailureV1(error: unknown): McpPublicError {
 /** The card, flattened for a reader that has no schema in front of it. Every
  * measured number keeps the qualifier that makes it honest. */
 export interface McpOpportunityV1 {
+  /** Project context. Null when this server does not run the layer. */
+  project: B20FundamentalProfileV1 | null;
   /** The exact display-safe object returned to Discover Card consumers. This
    * is the parity anchor: a new card field reaches MCP without a second manual
    * projection having to remember it. */
@@ -179,6 +184,17 @@ function opportunityFromCardV1(card: B20OpportunityCardV1): McpOpportunityV1 {
   const observation = card.observation;
   return {
     discoverCard: card,
+    /**
+     * Whether a project proved a link to this token, and what its own
+     * declarations turned out to be.
+     *
+     * Kept beside `measurement` rather than inside it because the two answer
+     * different questions from different evidence: a measurement is what
+     * Miorail priced against a pool, and this is what a project published
+     * about itself and Miorail then checked. Null means this server does not
+     * run the layer — which is not the same as "nobody claimed it".
+     */
+    project: card.project,
     token: {
       address: card.launch.tokenAddress,
       symbol: card.launch.symbol,
@@ -345,6 +361,7 @@ export async function miorailListOpportunitiesV1(input: {
   bothRoutes?: boolean;
   maxRoundTripBps?: number;
   minBuyers?: number;
+  project?: 'all' | 'product_backed' | 'verified_project' | 'unknown';
   limit?: number;
   cursor?: string | null;
 }): Promise<Record<string, unknown>> {
@@ -366,6 +383,7 @@ export async function miorailListOpportunitiesV1(input: {
       // free, which is a question somebody may legitimately ask.
       maxRoundTripBps: input.maxRoundTripBps ?? null,
       minBuyers: input.minBuyers ?? null,
+      project: input.project ?? 'all',
     });
     return {
       pipeline: { state: feed.pipeline.state, summary: feed.pipeline.message },

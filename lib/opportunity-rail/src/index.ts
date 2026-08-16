@@ -11,3 +11,4 @@ export * from './consumerCard.js';
 export * from './quoteAsset.js';
 export * from './venues.js';
 export * from './launchContext.js';
+export * from './fundamentals.js';

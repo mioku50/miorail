@@ -82,11 +82,14 @@ import {
   type B20WatchlistRepositoryV1,
   createDatabaseB20ObservationRepository,
   createDatabaseB20LaunchDeployerRepository,
+  createDatabaseB20ProjectRepository,
   createDatabaseB20LaunchPoolRepository,
   decodeFeedCursorV1,
   encodeFeedCursorV1,
   type B20ObservationRepositoryV1,
   type B20LaunchDeployerRepositoryV1,
+  type B20ProjectRepositoryV1,
+  type B20ProjectRecordV1,
   type B20FeedRowV1,
   type B20OpportunityObservationV1,
   type B20LaunchPoolRepositoryV1,
@@ -113,6 +116,12 @@ import {
   B20_EXIT_STANDING_KINDS_V1,
   b20CardStandingGroupV1,
   b20LaunchContextV1,
+  b20ProjectFilterMatchesV1,
+  B20_PROJECT_FILTERS_V1,
+  type B20ProjectFilterV1,
+  b20ClaimStandingV1,
+  b20FundamentalProfileFromStoredV1,
+  type B20FundamentalProfileV1,
   b20SenderRelationV1,
   b20SenderSupportsCountingV1,
   type B20DeployerCorpusV1,
@@ -247,6 +256,17 @@ export const b20RouteRuntime = {
   receiptReader: createViemBaseReceiptReader,
   observations: (): B20ObservationRepositoryV1 => createDatabaseB20ObservationRepository(client),
   deployers: (): B20LaunchDeployerRepositoryV1 => createDatabaseB20LaunchDeployerRepository(client),
+  projects: (): B20ProjectRepositoryV1 => createDatabaseB20ProjectRepository(client),
+  /** Whether this server has the project-claim tables. A server without 0046
+   * serves the same cards with `project: null` rather than failing a read. */
+  projectsAvailable: async (): Promise<boolean> => {
+    const rows = await client`
+      SELECT
+        to_regclass('public.b20_project_claims') AS claims,
+        to_regclass('public.b20_project_evidence') AS evidence`;
+    const row = rows[0];
+    return Boolean(row && row.claims && row.evidence);
+  },
   /**
    * The narrator, or null when none is configured.
    *
@@ -447,8 +467,13 @@ export function b20DiscoverCardFromRowV1(
   row: B20FeedRowV1,
   pipeline: B20PipelineStatusV1,
   now: Date,
+  /** The stored project profile for this token. Undefined on a server without
+   * the claim tables, which puts `project: null` on the card — distinct from
+   * the unverified profile, which is a real answer. */
+  project?: B20FundamentalProfileV1 | null,
 ) {
   return b20OpportunityCardV1({
+    project: project ?? null,
     launch: {
       tokenAddress: row.launch.tokenAddress,
       name: row.launch.name,
@@ -475,6 +500,80 @@ export function b20DiscoverCardFromRowV1(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Fundamental Intelligence, on the read path.
+//
+// The stored rows ARE the findings — they were decided once by a verification
+// pass and are re-rendered here through the same copy table, so the API, the
+// MCP and the card cannot drift into three readings of one row.
+//
+// A server without the claim tables answers `undefined` and every card carries
+// `project: null`. That is deliberately not the unverified profile: "this
+// server does not run the layer" and "nobody has claimed this token" are
+// different statements, and only the second is about the token.
+// ---------------------------------------------------------------------------
+
+export function b20ProjectProfileFromRecordV1(record: B20ProjectRecordV1): B20FundamentalProfileV1 {
+  return b20FundamentalProfileFromStoredV1({
+    claim: b20ClaimStandingV1({
+      claimantDomain: record.claim.claimantDomain,
+      status: record.claim.status,
+      verifiedLinks: record.claim.verifiedLinks,
+      refutedLinks: record.claim.refutedLinks,
+      lastCheckedAt: record.claim.lastCheckedAt,
+    }),
+    claimantDomain: record.claim.claimantDomain,
+    rows: record.evidence.map((row) => ({
+      dimension: row.dimension,
+      state: row.state,
+      provenance: row.provenance,
+      reference: row.reference,
+      observedAt: row.observedAt,
+    })),
+  });
+}
+
+/** The profile for a token with no claim: the ordinary answer on this chain,
+ * and a real one rather than an absence. */
+export function b20UnclaimedProjectProfileV1(): B20FundamentalProfileV1 {
+  return b20FundamentalProfileFromStoredV1({
+    claim: b20ClaimStandingV1(null),
+    claimantDomain: null,
+    rows: [],
+  });
+}
+
+/**
+ * Profiles for a page of tokens, in one read.
+ *
+ * Returns null when this server has no claim tables — the caller then leaves
+ * `project` off the cards entirely rather than asserting that nothing is
+ * claimed.
+ */
+export async function readB20ProjectProfilesV1(
+  tokenAddresses: readonly string[],
+): Promise<Map<string, B20FundamentalProfileV1> | null> {
+  if (tokenAddresses.length === 0) return new Map();
+  // A server without the claim tables, or one whose read failed, answers null —
+  // and every card then carries `project: null`. Narrow on purpose: the ONLY
+  // thing this swallows is "the layer is not available here", and the caller
+  // renders nothing rather than asserting that nobody claimed anything. A feed
+  // must not 500 because an optional layer is absent.
+  let records: B20ProjectRecordV1[];
+  try {
+    if (!(await b20RouteRuntime.projectsAvailable())) return null;
+    records = await b20RouteRuntime.projects().readProjects({ chainId: 8453, tokenAddresses });
+  } catch {
+    return null;
+  }
+  const byToken = new Map<string, B20FundamentalProfileV1>();
+  for (const address of tokenAddresses) byToken.set(address.toLowerCase(), b20UnclaimedProjectProfileV1());
+  for (const record of records) {
+    byToken.set(record.claim.tokenAddress.toLowerCase(), b20ProjectProfileFromRecordV1(record));
+  }
+  return byToken;
+}
+
 export async function readB20EvidenceForTokenV1(tokenAddress: string): Promise<{
   card: ReturnType<typeof b20OpportunityCardV1>;
   history: B20OpportunityObservationV1[];
@@ -486,8 +585,14 @@ export async function readB20EvidenceForTokenV1(tokenAddress: string): Promise<{
   const result = await observations.getFeedRowForToken({ tokenAddress, historyLimit: 12 });
   if (!result) return null;
   const pipeline = await pipelineStatusV1(observations, now, true);
+  const profiles = await readB20ProjectProfilesV1([result.row.launch.tokenAddress]);
   return {
-    card: b20DiscoverCardFromRowV1(result.row, pipeline, now),
+    card: b20DiscoverCardFromRowV1(
+      result.row,
+      pipeline,
+      now,
+      profiles?.get(result.row.launch.tokenAddress.toLowerCase()) ?? null,
+    ),
     history: result.history,
   };
 }
@@ -571,6 +676,14 @@ export async function readDiscoverFeedV1(input: {
   /** A lower bound on completed launch-window buying. A window that has not
    * closed has counted nobody, so it is excluded rather than read as zero. */
   minBuyers?: number | null;
+  /**
+   * Project context, which is a different axis from everything above.
+   *
+   * Every other filter narrows what was MEASURED about a market. This one
+   * narrows by whether a project proved a link to the token — and `unknown` is
+   * where almost every launch on this chain belongs, not a failing grade.
+   */
+  project?: B20ProjectFilterV1;
   maxLaunchAgeMs?: number;
 }): Promise<{
   pipeline: B20PipelineStatusV1 & { message: string };
@@ -635,6 +748,51 @@ export async function readDiscoverFeedV1(input: {
   const narrowed =
     standing !== 'all' || standingKind !== null || bothRoutes || maxRoundTripBps !== null || minBuyers !== null;
 
+  // Project context is attached AFTER a page is chosen, in one read, so a feed
+  // that nobody filtered by project pays one query rather than one per row.
+  const attachProjects = async (
+    cards: ReturnType<typeof b20OpportunityCardV1>[],
+  ): Promise<ReturnType<typeof b20OpportunityCardV1>[]> => {
+    const profiles = await readB20ProjectProfilesV1(cards.map((card) => card.launch.tokenAddress));
+    if (profiles === null) return cards;
+    return cards.map((card) => ({
+      ...card,
+      project: profiles.get(card.launch.tokenAddress.toLowerCase()) ?? null,
+    }));
+  };
+
+  const project = input.project ?? 'all';
+
+  // A verified claim is rare, so the two positive project filters are answered
+  // by reading the CLAIMED tokens rather than by paging the corpus looking for
+  // them. The same reasoning as the standing filter: a section spread thinly
+  // through 28,000 launches is, from a page of 25, the same as not having it.
+  if (project === 'product_backed' || project === 'verified_project') {
+    const claimed = (await b20RouteRuntime.projectsAvailable())
+      ? await b20RouteRuntime.projects().verifiedTokenAddresses({ chainId: 8453, limit: 200 })
+      : [];
+    const cards: ReturnType<typeof b20OpportunityCardV1>[] = [];
+    for (const tokenAddress of claimed) {
+      const found = await observations.getFeedRowForToken({ tokenAddress, historyLimit: 1 });
+      if (!found) continue;
+      const card = b20DiscoverCardFromRowV1(found.row, pipeline, now);
+      if (!matches(card)) continue;
+      cards.push(card);
+      if (cards.length >= input.limit) break;
+    }
+    const withProjects = await attachProjects(cards);
+    return {
+      pipeline,
+      cards: withProjects.filter(
+        (card) => card.project !== null && b20ProjectFilterMatchesV1(project, card.project.standing),
+      ),
+      // One bounded read. There is no second page of verified projects yet, and
+      // a cursor implying one would be a promise this read cannot keep.
+      nextCursor: null,
+      serverTime: now.toISOString(),
+    };
+  }
+
   if (narrowed) {
     const filtered = await readNarrowedFeedV1({
       observations,
@@ -646,7 +804,13 @@ export async function readDiscoverFeedV1(input: {
       limit: input.limit,
       matches,
     });
-    return { pipeline, ...filtered, serverTime: now.toISOString() };
+    const cards = await attachProjects(filtered.cards);
+    return {
+      pipeline,
+      cards: project === 'unknown' ? cards.filter(unclaimedV1) : cards,
+      nextCursor: filtered.nextCursor,
+      serverTime: now.toISOString(),
+    };
   }
 
   const page = await observations.listFeed({
@@ -657,9 +821,22 @@ export async function readDiscoverFeedV1(input: {
     now: now.toISOString(),
   });
 
-  const cards = page.rows.map((row) => b20DiscoverCardFromRowV1(row, pipeline, now)).filter(freshEnough);
+  const cards = await attachProjects(
+    page.rows.map((row) => b20DiscoverCardFromRowV1(row, pipeline, now)).filter(freshEnough),
+  );
 
-  return { pipeline, cards, nextCursor: page.nextCursor, serverTime: now.toISOString() };
+  return {
+    pipeline,
+    cards: project === 'unknown' ? cards.filter(unclaimedV1) : cards,
+    nextCursor: page.nextCursor,
+    serverTime: now.toISOString(),
+  };
+}
+
+/** A card nobody has claimed. `project: null` counts — a server that does not
+ * run the layer has not established that anybody claimed anything. */
+function unclaimedV1(card: ReturnType<typeof b20OpportunityCardV1>): boolean {
+  return card.project === null || card.project.standing === 'unverified';
 }
 
 /**
@@ -1100,6 +1277,17 @@ b20ControlRouter.get('/opportunities/b20', async (req: Request, res: Response) =
   }
   const bothRoutes = String(req.query.bothRoutes ?? '') === 'true';
 
+  // Project context. Refused when unknown rather than silently widened: a
+  // caller who asked for verified projects and got the whole feed would read
+  // every card as one.
+  const projectRaw = typeof req.query.project === 'string' && req.query.project.length > 0
+    ? req.query.project
+    : 'all';
+  if (!(B20_PROJECT_FILTERS_V1 as readonly string[]).includes(projectRaw)) {
+    res.status(400).json({ error: 'unknown_project_filter', code: 'unknown_project_filter' });
+    return;
+  }
+
   // Held outside the try so the failure log can say what SHAPE arrived at the
   // schema, not merely that something did.
   let feed: Awaited<ReturnType<typeof readDiscoverFeedV1>> | undefined;
@@ -1114,6 +1302,7 @@ b20ControlRouter.get('/opportunities/b20', async (req: Request, res: Response) =
       bothRoutes,
       maxRoundTripBps,
       minBuyers,
+      project: projectRaw as B20ProjectFilterV1,
       maxLaunchAgeMs,
     });
     res.json(B20OpportunityFeedResponseV1Schema.parse(feed));
@@ -1300,6 +1489,10 @@ export async function runB20ConsolePlanV1(plan: B20ConsolePlanV1): Promise<B20Co
     const observations = b20RouteRuntime.observations();
     const now = b20RouteRuntime.now();
     const pipeline = await pipelineStatusV1(observations, now, true);
+    // One read for the whole plan. Project context answers "does MIO have a
+    // live product" and "did this project exist before its token", and both are
+    // questions about a card the console is already reading.
+    const projects = await readB20ProjectProfilesV1(cardsStep.tokenAddresses);
     const reads: B20ConsoleTokenReadV1[] = [];
     const assessments: Record<string, B20ExitAssessmentV1> = {};
     for (const tokenAddress of cardsStep.tokenAddresses) {
@@ -1347,6 +1540,7 @@ export async function runB20ConsolePlanV1(plan: B20ConsolePlanV1): Promise<B20Co
             measured: found.row.launchBuyers !== null,
             measuredToBlock: found.row.launchBuyers?.toBlock ?? null,
           }),
+          project: projects?.get(found.row.launch.tokenAddress.toLowerCase()) ?? null,
           now,
         }),
         // The four fields the comparability rule reads, taken from the stored
@@ -1431,6 +1625,7 @@ export async function runB20ConsolePlanV1(plan: B20ConsolePlanV1): Promise<B20Co
           standingKind: listStep.standingKind ?? null,
           bothRoutes: listStep.bothRoutes === true,
           minBuyers: listStep.minBuyers ?? null,
+          project: listStep.project ?? 'all',
         })
       ).cards
     : undefined;

@@ -187,6 +187,10 @@ export interface B20ClaimStandingV1 {
   uncheckedLinks: readonly B20ClaimLinkV1[];
   /** `1 of 3`. A fraction, never a percentage and never a rating. */
   verifiedLabel: string;
+  /** When the links were last checked. Null when there is no claim to check.
+   * A verified link is only as current as the check that verified it, and the
+   * fundamental layer hangs its identity timestamp off exactly this. */
+  lastCheckedAt: string | null;
 }
 
 export function b20ClaimStandingV1(claim: B20TokenClaimV1 | null): B20ClaimStandingV1 {
@@ -204,6 +208,7 @@ export function b20ClaimStandingV1(claim: B20TokenClaimV1 | null): B20ClaimStand
       refutedLinks: [],
       uncheckedLinks: B20_CLAIM_LINKS_V1,
       verifiedLabel: `0 of ${total}`,
+      lastCheckedAt: null,
     };
   }
 
@@ -223,6 +228,7 @@ export function b20ClaimStandingV1(claim: B20TokenClaimV1 | null): B20ClaimStand
       refutedLinks: refuted,
       uncheckedLinks: unchecked,
       verifiedLabel,
+      lastCheckedAt: claim.lastCheckedAt,
     };
   }
   if (claim.status === 'verified') {
@@ -238,6 +244,7 @@ export function b20ClaimStandingV1(claim: B20TokenClaimV1 | null): B20ClaimStand
       refutedLinks: refuted,
       uncheckedLinks: unchecked,
       verifiedLabel,
+      lastCheckedAt: claim.lastCheckedAt,
     };
   }
   return {
@@ -248,6 +255,7 @@ export function b20ClaimStandingV1(claim: B20TokenClaimV1 | null): B20ClaimStand
     refutedLinks: refuted,
     uncheckedLinks: unchecked,
     verifiedLabel,
+    lastCheckedAt: claim.lastCheckedAt,
   };
 }
 

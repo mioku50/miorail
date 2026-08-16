@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "miorail-b20-claim/v1",
+  "tokens": [
+    { "chainId": 8453, "address": "0xb200000000000000000000578f3ae29d9e6e0101" }
+  ],
+  "launchSender": "0x8e525bfce1ef40aa8075ef64e45421b5855c8909",
+  "project": {
+    "name": "Miorail",
+    "website": "https://miorail.xyz",
+    "product": "https://miorail.xyz/mcp",
+    "repository": "https://github.com/mioku50/mioagent",
+    "docs": null,
+    "publication": null,
+    "baseContract": null
+  }
+}

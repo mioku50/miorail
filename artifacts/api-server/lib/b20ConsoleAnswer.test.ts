@@ -142,6 +142,7 @@ const cardV1 = (overrides: {
 }) =>
   ({
     schemaVersion: 'b20-opportunity-card/v1',
+    project: null,
     launch: { tokenAddress: `0x${overrides.symbol.repeat(40).slice(0, 40)}`, symbol: overrides.symbol },
     observation: {
       standing: {

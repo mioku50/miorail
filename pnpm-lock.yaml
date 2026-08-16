@@ -524,6 +524,22 @@ importers:
         specifier: ^5.4.5
         version: 5.9.3
 
+  lib/b20-projects:
+    dependencies:
+      '@mioagent/opportunity-rail':
+        specifier: workspace:*
+        version: link:../opportunity-rail
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+
   lib/commerce-engine:
     dependencies:
       '@mioagent/route-domain':
@@ -1326,6 +1342,9 @@ importers:
       '@mioagent/b20-control':
         specifier: workspace:*
         version: link:../lib/b20-control
+      '@mioagent/b20-projects':
+        specifier: workspace:*
+        version: link:../lib/b20-projects
       '@mioagent/commerce-engine':
         specifier: workspace:*
         version: link:../lib/commerce-engine

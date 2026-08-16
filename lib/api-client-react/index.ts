@@ -857,6 +857,10 @@ export function useB20Opportunities(
      * and because one page of 25 launches holds too few of any one section for
      * a client to group its way to a useful screen. */
     standing?: 'all' | 'bought_not_sellable' | 'two_sided' | 'no_buyers_yet' | 'miorail_limit';
+    /** Project context, a different axis from what was measured. Also a server
+     * filter: a verified claim is rare, so a client narrowing one page would
+     * almost always narrow it to nothing. */
+    project?: 'all' | 'product_backed' | 'verified_project' | 'unknown';
     limit?: number;
   },
   options?: { enabled?: boolean; refetchInterval?: number | false },
@@ -864,11 +868,12 @@ export function useB20Opportunities(
   const state = input?.state ?? 'all';
   const freshness = input?.freshness ?? 'all';
   const standing = input?.standing ?? 'all';
+  const project = input?.project ?? 'all';
   const limit = input?.limit ?? 25;
   return useQuery({
-    queryKey: ['b20-opportunities', state, freshness, standing, limit],
+    queryKey: ['b20-opportunities', state, freshness, standing, project, limit],
     queryFn: async () => {
-      const query = new URLSearchParams({ state, freshness, standing, limit: String(limit) });
+      const query = new URLSearchParams({ state, freshness, standing, project, limit: String(limit) });
       const response = await fetchApi<unknown>(`/api/route-intelligence/opportunities/b20?${query.toString()}`);
       return apiSpec.B20OpportunityFeedResponseV1Schema.parse(response);
     },

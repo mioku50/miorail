@@ -178,3 +178,56 @@ describe('no step can carry an argument the planner did not choose', () => {
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// The four fundamental questions the console has to answer.
+//
+// Three of them are about ONE token and are answered by the card read that
+// already exists — the card now carries its project profile, so no new step is
+// needed and none was added. The fourth is about the corpus, and it is the only
+// one that needed a plan of its own.
+// ---------------------------------------------------------------------------
+describe('project questions', () => {
+  test('"which launches are connected to verified projects" reads the claimed ones', () => {
+    const plan = planB20ConsoleAnswerV1({
+      question: 'Which B20 launches are connected to verified projects?',
+      scope: 'explore',
+    });
+    assert.equal(plan.intent, 'find_verified_projects');
+    const list = plan.steps.find((step) => step.tool === 'list');
+    assert.equal(list?.tool === 'list' ? list.project : undefined, 'verified_project');
+  });
+
+  test('the same question in Russian reaches the same plan', () => {
+    // `\b` is ASCII-only, so a Cyrillic pattern carries no word boundary — the
+    // reason an earlier Russian matcher died silently.
+    const plan = planB20ConsoleAnswerV1({
+      question: 'у каких токенов есть проверенный проект?',
+      scope: 'explore',
+    });
+    assert.equal(plan.intent, 'find_verified_projects');
+  });
+
+  test('a question about ONE token stays an investigate read, and needs no new step', () => {
+    // "Does MIO have a live product?" and "did this project exist before its
+    // token launch?" are both answered from the card, which carries the
+    // profile. An address in the question moves the scope, as it always has.
+    for (const question of [
+      'Does 0xb200000000000000000000578f3ae29d9e6e0101 have a live product?',
+      'Did 0xb200000000000000000000578f3ae29d9e6e0101 exist before its token launch?',
+      'What fundamental evidence is missing for 0xb200000000000000000000578f3ae29d9e6e0101?',
+    ]) {
+      const plan = planB20ConsoleAnswerV1({ question, scope: 'explore' });
+      assert.equal(plan.scope, 'investigate', question);
+      assert.equal(plan.steps[0]?.tool, 'cards', question);
+      assert.deepEqual(plan.tokenAddresses, ['0xb200000000000000000000578f3ae29d9e6e0101']);
+    }
+  });
+
+  test('a question about project quality is not a question this planner answers', () => {
+    // "Which project is good" has no plan, and must not be quietly answered by
+    // the verified-project read — a list of verified links is not a ranking.
+    const plan = planB20ConsoleAnswerV1({ question: 'Which B20 project is the best investment?', scope: 'explore' });
+    assert.notEqual(plan.intent, 'find_verified_projects');
+  });
+});

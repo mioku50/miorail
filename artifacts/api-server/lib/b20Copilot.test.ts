@@ -17,6 +17,7 @@ const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 function card(overrides: Partial<NonNullable<B20OpportunityCardV1['observation']>> = {}): B20OpportunityCardV1 {
   return {
     schemaVersion: 'b20-opportunity-card/v1',
+    project: null,
     launch: {
       tokenAddress: TOKEN,
       name: 'AVANTIS',

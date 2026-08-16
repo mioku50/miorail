@@ -11,7 +11,8 @@
     "./quoteAsset": "./src/quoteAsset.ts",
     "./venues": "./src/venues.ts",
     "./launchContext": "./src/launchContext.ts",
-    "./consumerCard": "./src/consumerCard.ts"
+    "./consumerCard": "./src/consumerCard.ts",
+    "./fundamentals": "./src/fundamentals.ts"
   },
   "scripts": {
     "test": "NODE_ENV=test node --import tsx --test test/*.test.ts",

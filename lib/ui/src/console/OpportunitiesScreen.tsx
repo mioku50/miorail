@@ -7,6 +7,15 @@ import {
 } from '@mioagent/opportunity-rail/exitStanding';
 import type { B20ConsumerCardV1 } from '@mioagent/opportunity-rail/consumerCard';
 import {
+  B20_FUNDAMENTAL_DIMENSION_LABEL_V1,
+  B20_FUNDAMENTAL_STANDING_COPY_V1,
+  B20_PROJECT_FILTERS_V1,
+  B20_PROJECT_FILTER_COPY_V1,
+  b20FundamentalHighlightsV1,
+  type B20FundamentalProfileV1,
+  type B20ProjectFilterV1,
+} from '@mioagent/opportunity-rail/fundamentals';
+import {
   CONSOLE_NO_ANALYSIS_COPY_V1,
   type ConsoleIndexStatusV1,
   type ConsoleOperationalLabelV1,
@@ -50,6 +59,10 @@ export type OpportunityFilterV1 = (typeof OPPORTUNITY_FILTERS_V1)[number];
  */
 export const OPPORTUNITY_STANDING_FILTERS_V1 = ['all', ...B20_STANDING_GROUPS_V1] as const;
 export type OpportunityStandingFilterV1 = (typeof OPPORTUNITY_STANDING_FILTERS_V1)[number];
+
+/** Re-exported so a host wires the project filter without reaching past
+ * `@mioagent/ui` into the domain package. */
+export type { B20FundamentalProfileV1, B20ProjectFilterV1 };
 
 export const OPPORTUNITY_FILTER_LABEL_V1: Readonly<Record<OpportunityFilterV1, string>> = {
   all: 'All',
@@ -111,6 +124,14 @@ export interface OpportunityCardViewV1 {
    * level.
    */
   consumer: B20ConsumerCardV1;
+  /**
+   * Whether a project proved a link to this token.
+   *
+   * Null when this server does not run the layer — which is NOT the same as
+   * "nobody claimed it", and the card renders nothing at all rather than
+   * asserting the second from the first.
+   */
+  project: B20FundamentalProfileV1 | null;
   /** Round-trip cost, already formatted. Null means it was not measured. */
   costLabel: string | null;
   /**
@@ -233,6 +254,11 @@ export interface OpportunitiesScreenModelV1 {
   /** The verdict section being asked for. Optional while a caller rolls
    * forward; absent behaves as `all`. */
   standingFilter?: OpportunityStandingFilterV1;
+  /** Project context, which is a different axis from what was measured. Also
+   * a SERVER filter: a verified claim is rare enough that grouping one page
+   * would be the same as not having the filter. */
+  projectFilter?: B20ProjectFilterV1;
+  onProjectFilterChange?: (filter: B20ProjectFilterV1) => void;
   freshOnly: boolean;
   loading: boolean;
   onFilterChange: (filter: OpportunityFilterV1) => void;
@@ -271,6 +297,95 @@ const B20_COPILOT_PROMPTS_V1 = [
   'Can I get out with a 100 USDC position?',
   'What changed since the previous measurement?',
 ] as const;
+
+// ---------------------------------------------------------------------------
+// Project context.
+//
+// A different axis from everything else on the card: the rest of it is what
+// Miorail MEASURED about a market, and this is what a project PUBLISHED about
+// itself and Miorail then checked. Rendered as its own block for that reason —
+// folding the two together would let a verified project read as a measured exit
+// or the reverse.
+//
+// Three renderings, and the quiet one is the common case. Almost every launch
+// on this chain is unclaimed, so an unverified project gets ONE muted line
+// rather than a section of empty rows: a column of unknowns invites a reader to
+// wonder what would fill it in, when the honest answer is that nothing may be
+// attached to this token at all.
+// ---------------------------------------------------------------------------
+function ProjectContext({ project }: { project: B20FundamentalProfileV1 | null }) {
+  // Null means this server does not run the layer. That is not a statement
+  // about the token, so the card says nothing rather than saying "unverified".
+  if (project === null) return null;
+
+  if (!project.identityVerified) {
+    return (
+      <p className="lnote project-unverified">
+        Project context — {B20_FUNDAMENTAL_STANDING_COPY_V1.unverified.label}. {project.detail}
+      </p>
+    );
+  }
+
+  const highlights = b20FundamentalHighlightsV1(project);
+  return (
+    <section className="project-context" aria-label="Project context">
+      <div className="project-head">
+        <span className="project-name">{project.projectDomain}</span>
+        <span className="pill cr-status" data-tone="measured">
+          {B20_FUNDAMENTAL_STANDING_COPY_V1[project.standing].label}
+        </span>
+      </div>
+      {highlights.length > 0 && (
+        <dl className="cr-facts">
+          {highlights.map((finding) => (
+            <div key={finding.dimension}>
+              <dt>{B20_FUNDAMENTAL_DIMENSION_LABEL_V1[finding.dimension]}</dt>
+              <dd>
+                <strong>{finding.label}</strong>
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      <details className="card-evidence">
+        <summary>View evidence</summary>
+        <div className="card-evidence-body">
+          {/* What the whole block does and does not claim, before any of it. */}
+          <p className="lnote">{project.detail}</p>
+          {project.findings.map((finding) => (
+            <div key={finding.dimension} className="project-evidence-row">
+              <div className="kv">
+                <span className="k">{B20_FUNDAMENTAL_DIMENSION_LABEL_V1[finding.dimension]}</span>
+                <span className="v">{finding.label}</span>
+              </div>
+              {/* Provenance and time on every state. A state with neither is an
+                  assertion, and this layer publishes no assertions. */}
+              <p className="lnote mono">
+                {finding.provenance.replaceAll('_', ' ')}
+                {finding.observedAt ? ` · ${finding.observedAt.slice(0, 16).replace('T', ' ')} UTC` : ''}
+                {finding.reference ? ` · ${finding.reference}` : ''}
+              </p>
+              <p className="lnote">{finding.note}</p>
+            </div>
+          ))}
+          {project.missing.length > 0 && (
+            // Named rather than omitted. A dimension that is simply absent reads
+            // as "nothing to report"; a named one reads as "nobody established
+            // this", which is what it means.
+            <p className="lnote">
+              Not established:{' '}
+              {project.missing.map((dimension) => B20_FUNDAMENTAL_DIMENSION_LABEL_V1[dimension].toLowerCase()).join(', ')}.
+            </p>
+          )}
+          <p className="lnote">
+            Project context comes from a file this project serves on its own domain, and from probes of the
+            things that file declared. It is not a review, not a rating and not a statement about price.
+          </p>
+        </div>
+      </details>
+    </section>
+  );
+}
 
 function OpportunityCard({
   card,
@@ -360,6 +475,9 @@ function OpportunityCard({
           {notice}
         </p>
       ))}
+
+      <ProjectContext project={card.project} />
+
 
       <details className="card-evidence">
         <summary>What was measured</summary>
@@ -777,6 +895,27 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
                       onClick={() => model.onStandingFilterChange?.(filter)}
                     >
                       {filter === 'all' ? 'Everything' : B20_STANDING_GROUP_COPY_V1[filter].chip}
+                    </button>
+                  ))}
+                </nav>
+              </div>
+            )}
+            {/* A different axis from what was measured, so its own row. The
+                third option is where almost every launch on this chain belongs,
+                and it is worded as a state rather than as a shortfall. */}
+            {model.onProjectFilterChange && (
+              <div className="filter-row">
+                <span className="filter-row-k">Project context</span>
+                <nav className="crumb" aria-label="Filter by project context">
+                  {B20_PROJECT_FILTERS_V1.map((filter) => (
+                    <button
+                      key={filter}
+                      type="button"
+                      className={`btn sec${(model.projectFilter ?? 'all') === filter ? ' on' : ''}`}
+                      aria-pressed={(model.projectFilter ?? 'all') === filter}
+                      onClick={() => model.onProjectFilterChange?.(filter)}
+                    >
+                      {B20_PROJECT_FILTER_COPY_V1[filter]}
                     </button>
                   ))}
                 </nav>

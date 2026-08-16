@@ -4,6 +4,7 @@ import {
   type B20ExitStandingV1,
 } from '@mioagent/opportunity-rail/exitStanding';
 import { b20ConsumerCardV1 } from '@mioagent/opportunity-rail/consumerCard';
+import type { B20FundamentalProfileV1 } from '@mioagent/opportunity-rail/fundamentals';
 import { b20QuoteAssetDisplayV1 } from '@mioagent/opportunity-rail/quoteAsset';
 import { b20VenueCoverageV1, b20VenueLabelV1 } from '@mioagent/opportunity-rail/venues';
 import { formatAtomicAmount, formatCompactAtomicAmount } from '../formatAtomicAmount';
@@ -98,6 +99,11 @@ export interface OpportunityCardWireV1 {
     observationBlockNumber?: string;
     freshness: 'fresh' | 'stale';
   } | null;
+  /** Project context, straight from the server. Optional so a client on this
+   * build reads a response from a server that predates the layer; absent then
+   * means "this server does not run it", which the card renders as nothing at
+   * all rather than as "nobody claimed this token". */
+  project?: B20FundamentalProfileV1 | null;
   canCheckProfile: boolean;
   /** T69-C.1 §2 — the server decided this from the rejection reason. The view
    * renders it; it does not re-derive it, because two implementations of "may
@@ -313,6 +319,10 @@ export function opportunityCardViewV1(card: OpportunityCardWireV1): OpportunityC
     // The engineering fields above are untouched and still on this object:
     // `state`, `standingKind`, `standingDetail` and the rest feed the technical
     // evidence section, the API and MCP. Nothing was removed to make this.
+    // Straight through from the wire. This surface does not decide project
+    // context and cannot: the gate is a verified claim, and the client has no
+    // way to verify anything.
+    project: card.project ?? null,
     consumer: b20ConsumerCardV1({
       standing,
       roundTripBps: observation?.optimisticRoundTripBps ?? null,

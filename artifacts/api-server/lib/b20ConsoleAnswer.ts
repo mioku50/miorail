@@ -1,4 +1,6 @@
 import {
+  B20_FUNDAMENTAL_DIMENSION_LABEL_V1,
+  B20_FUNDAMENTAL_STANDING_COPY_V1,
   measurementProfileMismatchV1,
   type B20OpportunityCardV1,
   type MeasuredMoverV1,
@@ -245,6 +247,46 @@ export function b20ExploreAnswerV1(input: {
   // reads were right and the sentence answered a different question.
   const finding = FINDING_COPY_V1[input.intent as keyof typeof FINDING_COPY_V1] ?? null;
   let lead = `${context}${sectionSentence}${limitSentence}`;
+
+  // Project context is not one of the measured findings, and it has no count in
+  // the universe summary — the summary counts what was MEASURED, and a claim is
+  // not a measurement. So it answers from the cards the list step returned and
+  // says what that list is, rather than borrowing a number about something else.
+  if (input.intent === 'find_verified_projects') {
+    const backed = named.filter((card) => card.project?.standing === 'product_backed');
+    for (const card of named) {
+      if (!card.project?.identityVerified) continue;
+      facts.push({
+        label: `${symbolV1(card)} — project`,
+        value: `${card.project.projectDomain} · ${B20_FUNDAMENTAL_STANDING_COPY_V1[card.project.standing].label}`,
+        tone: 'neutral',
+      });
+    }
+    lead =
+      named.length === 0
+        ? 'No launch Miorail has stored carries a verified project link yet. A project claims a token by serving a file on a domain it controls, and almost no launch on this chain ever does — that is the ordinary case, not a finding about any token.'
+        : `${named.length} stored ${named.length === 1 ? 'launch carries' : 'launches carry'} a verified project link: ${named
+            .map((card) => symbolV1(card))
+            .join(', ')}. ${
+            backed.length > 0
+              ? `${backed.length} of ${named.length === 1 ? 'them has' : 'those have'} a product endpoint that answered a real request. `
+              : 'None of them has a product endpoint that answered a real request. '
+          }A verified link says Miorail checked who published the token, not that the project is good.`;
+    caveats.push(
+      'A verified project link is a check on publication, not a review. Miorail did not read the project’s code, assess its team, or form any view about its token.',
+    );
+    return {
+      answer: lead,
+      facts: facts.slice(0, 16),
+      missingEvidence: missingEvidence.slice(0, 20),
+      caveats: caveats.slice(0, 12),
+      reads: [
+        { tool: 'summary', detail: `${summary.window.launches} launches, window ${window}, computed ${summary.computedAt}` },
+        { tool: 'list', detail: `${(input.cards ?? []).length} launches with a verified project claim` },
+      ],
+    };
+  }
+
   if (finding) {
     const count = finding.standingKind
       ? summary.standing.find((entry) => entry.kind === finding.standingKind)?.count ?? 0
@@ -309,6 +351,69 @@ export function b20ComparabilityV1(reads: readonly B20ConsoleTokenReadV1[]): {
   return { comparable: true, reason: null };
 }
 
+/**
+ * Project context, as console facts.
+ *
+ * The four questions this answers — is there a live product, is anyone working
+ * on it, did the project exist first, what is missing — are all questions about
+ * ONE card, so they are answered from the card the console already read rather
+ * than from a second lookup.
+ *
+ * Two rules the fact shape enforces. An unverified identity produces exactly
+ * one fact and no dimensions, because there is nothing attached to report. And
+ * every missing dimension is named in `missingEvidence`, so "what fundamental
+ * evidence is missing" is answerable without a special question kind.
+ */
+function projectFactsV1(
+  card: B20OpportunityCardV1,
+  symbol: string,
+  facts: B20ConsoleFactV1[],
+  sentences: string[],
+  missingEvidence: string[],
+  caveats: string[],
+): void {
+  const project = card.project;
+  // Null means this server does not run the layer. Saying "unverified" from
+  // that would be Miorail reporting its own configuration as a fact about a
+  // project.
+  if (!project) return;
+
+  if (!project.identityVerified) {
+    facts.push({ label: `${symbol} — project`, value: 'No verified project link', tone: 'neutral' });
+    sentences.push(
+      `No project has proven a link to ${symbol}, so Miorail attaches no project information to it. Most launches are never claimed.`,
+    );
+    return;
+  }
+
+  facts.push({
+    label: `${symbol} — project`,
+    value: `${project.projectDomain} · ${B20_FUNDAMENTAL_STANDING_COPY_V1[project.standing].label}`,
+    tone: 'positive',
+  });
+  for (const finding of project.findings) {
+    if (finding.dimension === 'project_identity') continue;
+    facts.push({
+      label: `${symbol} — ${B20_FUNDAMENTAL_DIMENSION_LABEL_V1[finding.dimension].toLowerCase()}`,
+      value: `${finding.label} · ${finding.provenance.replaceAll('_', ' ')}${
+        finding.observedAt ? ` · ${finding.observedAt.slice(0, 10)}` : ''
+      }`,
+      // Never `positive`: a fundamental state is not a good outcome, it is a
+      // thing that was established. The measured rail owns tone; this does not.
+      tone: 'neutral',
+    });
+  }
+  sentences.push(`${symbol}: ${project.detail}`);
+  for (const dimension of project.missing) {
+    missingEvidence.push(
+      `${B20_FUNDAMENTAL_DIMENSION_LABEL_V1[dimension]} for ${symbol} — the project declared nothing Miorail could check, or the check did not complete.`,
+    );
+  }
+  caveats.push(
+    'Project context comes from a file the project serves on its own domain and from probes of what that file declared. It is not a review of the project and not a statement about price.',
+  );
+}
+
 export function b20InvestigateAnswerV1(input: {
   reads: readonly B20ConsoleTokenReadV1[];
 }): B20ConsoleDeterministicV1 {
@@ -348,6 +453,7 @@ export function b20InvestigateAnswerV1(input: {
           : 'neutral',
     });
     sentences.push(`${symbol}: ${observation.standing.detail}`);
+    projectFactsV1(card, symbol, facts, sentences, missingEvidence, caveats);
     if (!observation.exitRouteFound) missingEvidence.push(`A supported exit route for ${symbol}.`);
     if (read.historyCount < 2) missingEvidence.push(`A second comparable observation for ${symbol}.`);
     if (observation.standing.aboutToken === false) {

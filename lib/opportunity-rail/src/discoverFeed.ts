@@ -10,6 +10,7 @@ import {
 } from './observation.js';
 import { b20HookAssessmentV1, type B20HookAssessmentV1 } from './poolHook.js';
 import { b20ExitStandingV1, type B20ExitStandingV1 } from './exitStanding.js';
+import type { B20FundamentalProfileV1 } from './fundamentals.js';
 
 // ---------------------------------------------------------------------------
 // T69-C §1/§5/§6/§18 — what the Discover feed is allowed to show, and what an
@@ -370,6 +371,20 @@ export interface B20CardObservationV1 {
 export interface B20OpportunityCardV1 {
   schemaVersion: 'b20-opportunity-card/v1';
   launch: B20CardLaunchV1;
+  /**
+   * Whether a project proved a link to this token, and what that project's own
+   * declarations turned out to be.
+   *
+   * Separate from `observation` on purpose: an observation is what Miorail
+   * MEASURED about a market, and this is what a project PUBLISHED about itself
+   * and Miorail then checked. Neither says anything about the other, and a card
+   * that folded them together would let a verified project read as a measured
+   * exit or the reverse.
+   *
+   * Null means this server did not run the projection at all — distinct from
+   * the unverified profile, which is the answer for almost every launch.
+   */
+  project: B20FundamentalProfileV1 | null;
   /** Null when the launch has never been measured — a real state, and not the
    * same as a measurement that found nothing. */
   observation: B20CardObservationV1 | null;
@@ -450,6 +465,9 @@ export function b20LaunchBuyerWindowV1(input: {
 }
 
 export interface B20CardInputV1 {
+  /** The stored project profile, already assembled. Absent on a server that
+   * does not read claims; the card then carries `project: null`. */
+  project?: B20FundamentalProfileV1 | null;
   /** Launch-window buying, when it has been measured. Optional and separate
    * from `observation` because it is context about a launch rather than part
    * of a measurement of it — it has its own window and its own freshness. */
@@ -669,6 +687,7 @@ export function b20OpportunityCardV1(input: B20CardInputV1): B20OpportunityCardV
     return {
       schemaVersion: 'b20-opportunity-card/v1',
       launch,
+      project: input.project ?? null,
       observation: null,
       // Nothing has been measured, so there is nothing to check a profile
       // against yet. The feed says so rather than offering an action that
@@ -725,6 +744,7 @@ export function b20OpportunityCardV1(input: B20CardInputV1): B20OpportunityCardV
   return {
     schemaVersion: 'b20-opportunity-card/v1',
     launch,
+    project: input.project ?? null,
     observation: {
       observationId: source.id,
       evidenceHash: source.evidenceHash,

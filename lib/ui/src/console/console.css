@@ -701,6 +701,17 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   .mio-console .watchrow-remove { justify-self: start; }
 }
 
+/* Project context — a different axis from what was measured, so it reads as its
+   own block rather than as another row of evidence. */
+.mio-console .project-context { margin-top: 12px; padding: 10px 12px; border-radius: var(--r); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
+.mio-console .project-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.mio-console .project-name { color: var(--ink); font-size: 13px; font-weight: 650; overflow-wrap: anywhere; }
+.mio-console .project-evidence-row { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.mio-console .project-evidence-row:last-of-type { border-bottom: 0; }
+/* The common case, and deliberately the quietest thing on the card: almost
+   every launch on this chain is unclaimed, and that is not a shortfall. */
+.mio-console .project-unverified { margin-top: 10px; color: var(--faint); }
+
 .mio-console .card-evidence { margin-top: 10px; border-radius: var(--r); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
 .mio-console .card-evidence summary { cursor: pointer; padding: 8px 10px; color: var(--muted); font-size: 11.5px; font-weight: 650; }
 .mio-console .card-evidence[open] summary { color: var(--ink); border-bottom: 1px solid var(--line); }

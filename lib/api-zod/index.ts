@@ -3652,11 +3652,98 @@ const B20CardObservationV1Schema = z
     }
   });
 
+/**
+ * Fundamental Intelligence, on the wire.
+ *
+ * Every finding carries its provenance and the time it was collected, because
+ * a state with neither is an assertion. There is no numeric field anywhere in
+ * this shape and none may be added: a number here would be sorted, and a feed
+ * ranked by "fundamentals" is an investment signal whatever it is called.
+ *
+ * `.optional()` on the card rather than required, so a client on this build
+ * reads a response from a server that predates the layer without failing.
+ */
+const B20FundamentalFindingV1Schema = z
+  .object({
+    dimension: z.enum([
+      'project_identity', 'website', 'product', 'repository',
+      'base_presence', 'docs', 'project_before_token', 'development_activity',
+    ]),
+    state: z.enum(['verified', 'unverified', 'live', 'found', 'active', 'quiet', 'yes', 'no', 'unknown']),
+    provenance: z.enum([
+      'domain_claim_file', 'https_probe', 'functional_probe',
+      'repository_api', 'onchain_read', 'timestamp_comparison', 'not_collected',
+    ]),
+    observedAt: z.string().datetime().nullable(),
+    /** Only ever something the PROJECT published. */
+    reference: z.string().max(2048).nullable(),
+    label: z.string().min(1).max(64),
+    /** What the state does not claim. Required — a finding with no bound on it
+     * is the thing this whole layer exists not to publish. */
+    note: z.string().min(1).max(1000),
+  })
+  .strict();
+
+export const B20FundamentalProfileV1Schema = z
+  .object({
+    identityVerified: z.boolean(),
+    projectDomain: z.string().max(253).nullable(),
+    standing: z.enum(['product_backed', 'verified_project', 'unverified']),
+    headline: z.string().min(1).max(200),
+    detail: z.string().min(1).max(1000),
+    findings: z.array(B20FundamentalFindingV1Schema).max(8),
+    missing: z
+      .array(
+        z.enum([
+          'project_identity', 'website', 'product', 'repository',
+          'base_presence', 'docs', 'project_before_token', 'development_activity',
+        ]),
+      )
+      .max(8),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    // The gate, on the wire. A profile that is not verified may not carry a
+    // finding or a domain — which is the copycat case, refused by the schema
+    // rather than by every surface remembering to check.
+    if (!value.identityVerified && (value.findings.length > 0 || value.projectDomain !== null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'an unverified project profile may not carry findings or a domain',
+      });
+    }
+    if (value.identityVerified && value.standing === 'unverified') {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'a verified identity cannot stand as unverified' });
+    }
+    // `product_backed` requires a product SHOWN TO RUN, not a page that loaded.
+    const productLive = value.findings.some(
+      (finding) => finding.dimension === 'product' && finding.state === 'live',
+    );
+    if (value.standing === 'product_backed' && !productLive) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'product_backed requires a product finding in the `live` state',
+      });
+    }
+    // Absence of evidence is never evidence of absence.
+    for (const finding of value.findings) {
+      if (finding.state === 'no' && finding.dimension !== 'project_before_token') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `only project_before_token may carry a negative state, not ${finding.dimension}`,
+        });
+      }
+    }
+  });
+
 export const B20OpportunityCardV1Schema = z
   .object({
     schemaVersion: z.literal('b20-opportunity-card/v1'),
     launch: B20CardLaunchV1Schema,
     observation: B20CardObservationV1Schema.nullable(),
+    /** Null means this server did not run the projection — distinct from the
+     * unverified profile, which is the answer for almost every launch. */
+    project: B20FundamentalProfileV1Schema.nullable().optional(),
     canCheckProfile: z.boolean(),
     action: B20CardActionV1Schema,
     notMeasured: z.array(z.string()).max(20),
@@ -4051,6 +4138,7 @@ export const B20ConsoleAskResponseV1Schema = z
       'find_bought_not_sellable',
       'find_two_sided',
       'find_not_searched',
+      'find_verified_projects',
       'compare_tokens',
       'measured_changes',
       'rank_positions',
@@ -4142,6 +4230,10 @@ export const B20LaunchContextResponseV1Schema = z
         refutedLinks: z.array(B20ClaimLinkV1Schema).max(3),
         uncheckedLinks: z.array(B20ClaimLinkV1Schema).max(3),
         verifiedLabel: z.string().regex(/^\d+ of \d+$/),
+        /** When the links were last checked. A verified link is only as current
+         * as the check that verified it, and the fundamental layer hangs its
+         * identity timestamp off exactly this. */
+        lastCheckedAt: z.string().datetime().nullable(),
       })
       .strict(),
     caveats: z.array(z.string().min(1).max(500)).min(1).max(10),
