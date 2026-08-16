@@ -256,7 +256,15 @@ mcp_data_json() {
 # check being softened.
 mcp_ready=''
 for attempt in $(seq 1 20); do
-  mcp_ready=$(mcp_post '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"miorail-deploy-smoke","version":"1.0.0"}}}' 2>/dev/null | mcp_data_json)
+  # `|| mcp_ready=''` is what makes the loop above a loop. curl runs with
+  # --fail-with-body, pipefail propagates its non-zero status through the pipe,
+  # and under `set -e` a failed command substitution aborts the script — so the
+  # FIRST attempt, made while the API is still binding, killed the deploy
+  # instead of retrying. It exited 22 with no message, which is why two runs on
+  # 2026-08-16 stopped here after printing the MiniApp check and never printed
+  # `Deployed.` or `FAILED`. The wait was written to be bounded and explicit;
+  # it was neither, because it never ran twice.
+  mcp_ready=$(mcp_post '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"miorail-deploy-smoke","version":"1.0.0"}}}' 2>/dev/null | mcp_data_json) || mcp_ready=''
   [ -n "$mcp_ready" ] && break
   [ "$attempt" = 1 ] && printf '  waiting for the API to bind'
   printf '.'
@@ -270,7 +278,12 @@ printf '%s' "$mcp_initialize" | jq -e \
   >/dev/null || { echo 'FAILED: public MCP initialize response is not Miorail'; exit 1; }
 printf '  mcp initialize %-28s %s\n' "$MCP_PUBLIC_URL" 'Miorail 1.1.0'
 
-mcp_tools=$(mcp_post '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | mcp_data_json)
+# Same hazard as the readiness probe, one line down: a failed request here would
+# abort under `set -e` with no message at all. The request failing IS a deploy
+# failure — it just has to say so, because a script that exits silently is
+# indistinguishable from one that was killed.
+mcp_tools=$(mcp_post '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | mcp_data_json) \
+  || { echo 'FAILED: the public MCP endpoint did not answer tools/list'; exit 1; }
 printf '%s' "$mcp_tools" | jq -e '
   .result.tools
   | map(.name)
