@@ -25,7 +25,7 @@ describe('parseBackfillArgsV1', () => {
 });
 
 describe('validateBackfillRangeV1', () => {
-  const base = { fromBlock: 100, toBlock: 200, window: 500, write: false, help: false };
+  const base = { fromBlock: 100, toBlock: 200, window: 500, chunk: 50_000, write: false, help: false };
 
   test('accepts a well-formed range', () => {
     assert.equal(validateBackfillRangeV1(base), null);
@@ -38,6 +38,13 @@ describe('validateBackfillRangeV1', () => {
 
   test('a backwards range is refused', () => {
     assert.match(validateBackfillRangeV1({ ...base, fromBlock: 300 }) ?? '', /must not be below/);
+  });
+
+  test('a chunk must not be smaller than one read window', () => {
+    // Otherwise a chunk would commit part of a window it had not finished
+    // reading, and the range it declares would not be the range it covered.
+    assert.match(validateBackfillRangeV1({ ...base, chunk: 100, window: 500 }) ?? '', /not be smaller/);
+    assert.equal(validateBackfillRangeV1({ ...base, chunk: 500, window: 500 }), null);
   });
 
   test('a window must be a positive integer', () => {

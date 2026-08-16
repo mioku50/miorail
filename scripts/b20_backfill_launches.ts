@@ -48,16 +48,29 @@ import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
  * what is possible, and guessing wrong wastes an operator's afternoon. */
 const DEFAULT_WINDOW = 500;
 
+/**
+ * Blocks per durable write. The whole 2026-08-16 gap is 1,027,007 blocks and
+ * about 21,400 launches; accumulating all of them for one final statement makes
+ * a multi-megabyte jsonb payload, gives no progress until the end, and loses
+ * everything if the endpoint fails on the last window. Chunking makes the run
+ * resumable — a re-run of the same range inserts nothing for what already
+ * landed.
+ */
+const DEFAULT_CHUNK = 50_000;
+
 interface Settings {
   fromBlock: number;
   toBlock: number;
   window: number;
+  chunk: number;
   write: boolean;
   help: boolean;
 }
 
 export function parseBackfillArgsV1(argv: readonly string[]): Settings {
-  const settings: Settings = { fromBlock: -1, toBlock: -1, window: DEFAULT_WINDOW, write: false, help: false };
+  const settings: Settings = {
+    fromBlock: -1, toBlock: -1, window: DEFAULT_WINDOW, chunk: DEFAULT_CHUNK, write: false, help: false,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') { settings.help = true; continue; }
@@ -65,6 +78,7 @@ export function parseBackfillArgsV1(argv: readonly string[]): Settings {
     if (arg === '--from') { settings.fromBlock = Number(argv[++i]); continue; }
     if (arg === '--to') { settings.toBlock = Number(argv[++i]); continue; }
     if (arg === '--window') { settings.window = Number(argv[++i]); continue; }
+    if (arg === '--chunk') { settings.chunk = Number(argv[++i]); continue; }
     throw new Error(`Unknown argument: ${arg}`);
   }
   return settings;
@@ -81,6 +95,8 @@ export function validateBackfillRangeV1(settings: Settings): string | null {
   }
   if (settings.toBlock < settings.fromBlock) return '--to must not be below --from';
   if (!Number.isSafeInteger(settings.window) || settings.window < 1) return '--window must be a positive integer';
+  if (!Number.isSafeInteger(settings.chunk) || settings.chunk < 1) return '--chunk must be a positive integer';
+  if (settings.chunk < settings.window) return '--chunk must not be smaller than --window';
   return null;
 }
 
@@ -93,6 +109,8 @@ pnpm b20:backfill --from <block> --to <block> [--write] [--window N]
   --from   first block, inclusive (required)
   --to     last block, inclusive (required)
   --window blocks per eth_getLogs call (default ${DEFAULT_WINDOW})
+  --chunk  blocks per durable write (default ${DEFAULT_CHUNK}); a long run makes
+           progress it can resume from rather than one statement at the end
   --write  actually store. Without it this is a dry run and prints what would
            be added.
 `;
@@ -140,97 +158,125 @@ async function main(): Promise<number> {
 
   const source = createLaunchLogSourceV1({ rpcUrl, timeoutMs: 30_000 });
 
-  const decoded: B20StoredLaunchV1[] = [];
   const refusals = new Map<string, number>();
   let windowsRead = 0;
   let windowsFailed = 0;
+  let decodedTotal = 0;
+  let freshTotal = 0;
+  let insertedTotal = 0;
+  let duplicateTotal = 0;
+  let printed = 0;
   const detectedAt = new Date().toISOString();
 
-  for (let start = settings.fromBlock; start <= settings.toBlock; start += settings.window) {
-    const end = Math.min(start + settings.window - 1, settings.toBlock);
-    const logs = await source.getLogs({ fromBlock: start, toBlock: end });
-    if (logs === null) {
-      // Null is "the endpoint did not answer", which is not "no launches here".
-      // Counted and reported, never silently treated as a covered range.
-      windowsFailed += 1;
-      continue;
-    }
-    windowsRead += 1;
-    for (const log of logs as RawLogV1[]) {
-      const result = decodeB20CreatedV1(log);
-      if (!result.ok) {
-        refusals.set(result.refusal, (refusals.get(result.refusal) ?? 0) + 1);
+  // One chunk at a time: read its windows, decide what is new, write it, move
+  // on. Over a million blocks this is the difference between a run that reports
+  // as it goes and can be resumed, and one multi-megabyte statement at the end
+  // that loses everything if the last window fails.
+  for (let chunkStart = settings.fromBlock; chunkStart <= settings.toBlock; chunkStart += settings.chunk) {
+    const chunkEnd = Math.min(chunkStart + settings.chunk - 1, settings.toBlock);
+    const decoded: B20StoredLaunchV1[] = [];
+
+    for (let start = chunkStart; start <= chunkEnd; start += settings.window) {
+      const end = Math.min(start + settings.window - 1, chunkEnd);
+      const logs = await source.getLogs({ fromBlock: start, toBlock: end });
+      if (logs === null) {
+        // Null is "the endpoint did not answer", which is not "no launches
+        // here". Counted and reported, never silently treated as covered.
+        windowsFailed += 1;
         continue;
       }
-      decoded.push(
-        storedLaunchFromDecodedV1({
-          launch: result.launch,
-          detectedAt,
-          transactionIndex: result.launch.transactionIndex,
-          // These blocks are far behind the head by definition; the exact depth
-          // is not knowable from a historical read, so the confirmation count
-          // records the distance from the cursor rather than a guess.
-          confirmationCount: Math.max(0, Number(BigInt(cursor.lastProcessedBlock) - BigInt(result.launch.blockNumber))),
-        }),
+      windowsRead += 1;
+      for (const log of logs as RawLogV1[]) {
+        const result = decodeB20CreatedV1(log);
+        if (!result.ok) {
+          refusals.set(result.refusal, (refusals.get(result.refusal) ?? 0) + 1);
+          continue;
+        }
+        decoded.push(
+          storedLaunchFromDecodedV1({
+            launch: result.launch,
+            detectedAt,
+            transactionIndex: result.launch.transactionIndex,
+            // These blocks are far behind the head by definition; the exact
+            // depth is not knowable from a historical read, so the count
+            // records the distance from the cursor rather than a guess.
+            confirmationCount: Math.max(
+              0,
+              Number(BigInt(cursor.lastProcessedBlock) - BigInt(result.launch.blockNumber)),
+            ),
+          }),
+        );
+      }
+    }
+
+    decodedTotal += decoded.length;
+    if (decoded.length === 0) {
+      console.log(`  ${chunkStart}-${chunkEnd}  nothing`);
+      continue;
+    }
+
+    // Which of these are actually new. Asked by id rather than by listing the
+    // corpus: `listLaunches({ limit: 10_000 })` was exact only while fewer than
+    // ten thousand launches existed, and after this backfill the corpus is
+    // ~28,000 — at which point a dry run would start calling rows new that the
+    // write then skips, breaking the one promise a dry run makes.
+    const existing = new Set(
+      await repository.storedLaunchIds({
+        key: B20_DISCOVER_LANE_V1,
+        ids: decoded.map((launch) => launch.id),
+      }),
+    );
+    const fresh = decoded.filter((launch) => !existing.has(launch.id));
+    freshTotal += fresh.length;
+
+    // The first fifty rows in full, then counts. An operator needs to see that
+    // real transaction hashes are coming back, not twenty thousand lines.
+    for (const launch of fresh) {
+      if (printed >= 50) break;
+      printed += 1;
+      console.log(
+        `    block ${launch.blockNumber.padStart(9)}  ${launch.tokenAddress}  ${(launch.symbol || '—').padEnd(12)} ${launch.transactionHash}#${launch.logIndex}`,
       );
     }
+
+    if (!settings.write) {
+      console.log(`  ${chunkStart}-${chunkEnd}  decoded ${decoded.length}, would add ${fresh.length}`);
+      continue;
+    }
+
+    const result = await repository.insertHistoricalLaunches({
+      key: B20_DISCOVER_LANE_V1,
+      fromBlock: String(chunkStart),
+      toBlock: String(chunkEnd),
+      launches: decoded,
+      now: new Date().toISOString(),
+    });
+    insertedTotal += result.inserted;
+    duplicateTotal += result.duplicates;
+    console.log(`  ${chunkStart}-${chunkEnd}  decoded ${decoded.length}, inserted ${result.inserted}, already present ${result.duplicates}`);
   }
 
   console.log(`\n  windows read           ${windowsRead}`);
   if (windowsFailed > 0) {
     console.log(`  windows FAILED         ${windowsFailed}  ← these blocks were NOT read; re-run to cover them`);
   }
-  console.log(`  launches decoded       ${decoded.length}`);
+  console.log(`  launches decoded       ${decodedTotal}`);
   for (const [refusal, count] of [...refusals].sort()) {
     console.log(`  refused: ${refusal.padEnd(24)} ${count}`);
   }
 
-  if (decoded.length === 0) {
-    console.log('\nNothing to add.');
+  if (!settings.write) {
+    console.log(`  would be added         ${freshTotal}`);
+    console.log('\nDry run — nothing was written. Re-run with --write to store these.');
     return windowsFailed > 0 ? 6 : 0;
   }
 
-  // Which of these are actually new. Printed before any write so the dry run
-  // and the write agree about what is about to happen — the only promise a dry
-  // run makes.
-  //
-  // Asked by id rather than by listing the corpus. `listLaunches({ limit:
-  // 10_000 })` was exact only while fewer than ten thousand launches existed;
-  // once the historical gap is filled the corpus is ~18,000, and the dry run
-  // would silently start calling rows new that the write then skips.
-  const existing = new Set(
-    await repository.storedLaunchIds({
-      key: B20_DISCOVER_LANE_V1,
-      ids: decoded.map((launch) => launch.id),
-    }),
-  );
-  const fresh = decoded.filter((launch) => !existing.has(launch.id));
-
-  console.log(`\n  already indexed        ${decoded.length - fresh.length}`);
-  console.log(`  would be added         ${fresh.length}`);
-  for (const launch of fresh.slice(0, 50)) {
-    console.log(
-      `    block ${launch.blockNumber.padStart(9)}  ${launch.tokenAddress}  ${(launch.symbol || '—').padEnd(12)} ${launch.transactionHash}#${launch.logIndex}`,
-    );
-  }
-  if (fresh.length > 50) console.log(`    … and ${fresh.length - 50} more`);
-
-  if (!settings.write) {
-    console.log('\nDry run — nothing was written. Re-run with --write to store these.');
-    return 0;
-  }
-
-  const result = await repository.insertHistoricalLaunches({
-    key: B20_DISCOVER_LANE_V1,
-    fromBlock: String(settings.fromBlock),
-    toBlock: String(settings.toBlock),
-    launches: decoded,
-    now: new Date().toISOString(),
-  });
-  console.log(`\n  inserted               ${result.inserted}`);
-  console.log(`  already present        ${result.duplicates}`);
+  console.log(`  inserted               ${insertedTotal}`);
+  console.log(`  already present        ${duplicateTotal}`);
   const after = await repository.getCursor(B20_DISCOVER_LANE_V1);
-  console.log(`  cursor after           ${after?.lastProcessedBlock} (unchanged: ${after?.lastProcessedBlock === cursor.lastProcessedBlock})`);
+  console.log(
+    `  cursor after           ${after?.lastProcessedBlock} (unchanged: ${after?.lastProcessedBlock === cursor.lastProcessedBlock})`,
+  );
   return windowsFailed > 0 ? 6 : 0;
 }
 
