@@ -191,9 +191,18 @@ async function main(): Promise<number> {
   }
 
   // Which of these are actually new. Printed before any write so the dry run
-  // and the write agree about what is about to happen.
+  // and the write agree about what is about to happen — the only promise a dry
+  // run makes.
+  //
+  // Asked by id rather than by listing the corpus. `listLaunches({ limit:
+  // 10_000 })` was exact only while fewer than ten thousand launches existed;
+  // once the historical gap is filled the corpus is ~18,000, and the dry run
+  // would silently start calling rows new that the write then skips.
   const existing = new Set(
-    (await repository.listLaunches({ key: B20_DISCOVER_LANE_V1, limit: 10_000 })).map((row) => row.id),
+    await repository.storedLaunchIds({
+      key: B20_DISCOVER_LANE_V1,
+      ids: decoded.map((launch) => launch.id),
+    }),
   );
   const fresh = decoded.filter((launch) => !existing.has(launch.id));
 

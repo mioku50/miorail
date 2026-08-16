@@ -93,6 +93,7 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
         blockNumber: launch.blockNumber,
         blockHash: launch.blockHash,
         detectedAt: launch.detectedAt,
+        ingestionSource: launch.ingestionSource,
         lastMeasuredAt,
       });
     }
@@ -111,8 +112,17 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
     // up is the very oldest unmeasured launches, which now age out of
     // `maxLaunchAgeMs` unmeasured — an acceptable trade, because a six-day-old
     // launch nobody measured is not what a Discover feed is for.
+    // Live first, then newest found — the same two keys, in the same order, as
+    // the Postgres query. A backfill sets detectedAt to now, so without the
+    // first key a repaired gap would push every historical launch ahead of the
+    // live feed the worker exists to serve.
     return rows
-      .sort((left, right) => Date.parse(right.detectedAt) - Date.parse(left.detectedAt))
+      .sort((left, right) => {
+        const priority = (row: B20MeasurableLaunchV1) => (row.ingestionSource === 'live' ? 0 : 1);
+        const bySource = priority(left) - priority(right);
+        if (bySource !== 0) return bySource;
+        return Date.parse(right.detectedAt) - Date.parse(left.detectedAt);
+      })
       .slice(0, Math.max(1, Math.min(500, input.limit)));
   }
 

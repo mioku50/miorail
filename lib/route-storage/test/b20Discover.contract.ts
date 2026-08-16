@@ -46,6 +46,9 @@ export function launchFixtureV1(overrides: Partial<B20StoredLaunchV1> = {}): B20
     factoryAddress: LANE.factoryAddress,
     tokenAddress: '0xb200000000000000000000d6f666fe8b27595c01',
     variant: 'asset',
+    // Live unless a test says otherwise: the repository overrides it per write
+    // path anyway, so this only decides what the fixture claims before storage.
+    ingestionSource: 'live',
     name: 'o1 mascot',
     symbol: 'DINo1',
     decimals: 18,
@@ -746,6 +749,42 @@ export function describeB20DiscoverRepositoryV1(
         }),
         RouteStorageConflictError,
       );
+    });
+
+    test('a backfilled row is labelled backfill, and a committed one live', async () => {
+      // The label is decided by which write path ran, not by what the caller
+      // put on the record — so a mislabelled input cannot make history look
+      // live and jump the measurement queue.
+      const { repository } = await advanced();
+      await repository.insertHistoricalLaunches({
+        key: LANE,
+        fromBlock: '1200',
+        toBlock: '1300',
+        // Deliberately claiming to be live. The repository must overrule it.
+        launches: [launchFixtureV1({ blockNumber: '1250', transactionHash: hashV1('7'), ingestionSource: 'live' })],
+        now: T0,
+      });
+      const rows = await repository.listLaunches({ key: LANE, limit: 10 });
+      assert.equal(rows.find((row) => row.blockNumber === '1250')?.ingestionSource, 'backfill');
+    });
+
+    test('storedLaunchIds answers by id, not by paging the corpus', async () => {
+      // The dry run's promise — "these are the rows the write will add" — used
+      // to rest on listing 10,000 launches. Past that the corpus outgrows the
+      // page and the promise quietly breaks.
+      const { repository } = await advanced();
+      const stored = launchFixtureV1({ blockNumber: '1250', transactionHash: hashV1('7') });
+      await repository.insertHistoricalLaunches({
+        key: LANE, fromBlock: '1200', toBlock: '1300', launches: [stored], now: T0,
+      });
+      const absent = launchFixtureV1({ blockNumber: '1260', transactionHash: hashV1('8') });
+      const found = await repository.storedLaunchIds({ key: LANE, ids: [stored.id, absent.id] });
+      assert.deepEqual(found, [stored.id]);
+    });
+
+    test('storedLaunchIds on an empty list asks the database nothing', async () => {
+      const { repository } = await advanced();
+      assert.deepEqual(await repository.storedLaunchIds({ key: LANE, ids: [] }), []);
     });
 
     test('a failed write leaves nothing behind', async () => {

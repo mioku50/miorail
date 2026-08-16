@@ -154,7 +154,7 @@ export function createDatabaseB20ObservationRepository(
       // forgotten.
       const rows = await sql`
         SELECT l.id, l.token_address, l.block_number, l.block_hash, l.detected_at,
-               o.last_measured_at
+               l.ingestion_source, o.last_measured_at
         FROM b20_launches l
         LEFT JOIN LATERAL (
           SELECT last.measured_at AS last_measured_at,
@@ -202,10 +202,20 @@ export function createDatabaseB20ObservationRepository(
               END
             )
           )
-        -- NEWEST first; see the in-memory repository for why this flipped.
-        -- Discover lists launches newest-first, so oldest-first made the top of
-        -- the home screen the part the worker would reach last.
-        ORDER BY l.detected_at DESC, l.id DESC
+        -- Live first, then newest FOUND within each group.
+        --
+        -- The second key is the original one: Discover lists launches
+        -- newest-first, so oldest-first made the top of the home screen the
+        -- part the worker reached last.
+        --
+        -- The first key exists because a backfill writes detected_at = now()
+        -- — truthfully, since that is when Miorail found the row — which makes
+        -- a launch from July indistinguishable from one a minute old. The
+        -- historical gap is ~740,000 blocks, about 11,000-12,000 launches. On
+        -- detected_at alone, filling it would put all of them ahead of every
+        -- live launch and starve the thing the worker exists for. Repairing
+        -- history must not cost the present.
+        ORDER BY (l.ingestion_source = 'live') DESC, l.detected_at DESC, l.id DESC
         LIMIT ${Math.max(1, Math.min(500, input.limit))}`;
       return rows.map((row): B20MeasurableLaunchV1 => {
         const record = row as Record<string, unknown>;
@@ -215,6 +225,7 @@ export function createDatabaseB20ObservationRepository(
           blockNumber: String(record.block_number),
           blockHash: String(record.block_hash),
           detectedAt: isoV1(record.detected_at),
+          ingestionSource: record.ingestion_source === 'backfill' ? 'backfill' : 'live',
           lastMeasuredAt: isoOrNullV1(record.last_measured_at),
         };
       });

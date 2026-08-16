@@ -112,6 +112,7 @@ function rowToLaunchV1(row: Record<string, unknown>): B20StoredLaunchV1 {
         : new Date(String(row.block_timestamp)).toISOString(),
     logIndex: Number(row.log_index),
     detectedAt: isoV1(row.detected_at),
+    ingestionSource: row.ingestion_source ?? 'live',
     confirmationCount: Number(row.confirmation_count),
     decoderVersion: row.decoder_version,
     canonical: Boolean(row.canonical),
@@ -151,6 +152,7 @@ function launchesPayloadV1(launches: readonly B20StoredLaunchV1[]): string {
       block_timestamp: launch.blockTimestamp,
       log_index: launch.logIndex,
       detected_at: launch.detectedAt,
+      ingestion_source: launch.ingestionSource,
       confirmation_count: launch.confirmationCount,
       decoder_version: launch.decoderVersion,
       created_at: launch.createdAt,
@@ -215,7 +217,12 @@ export function createDatabaseB20DiscoverRepository(sql: SqlTemplateExecutor): B
     async commitRange(input): Promise<B20DiscoverCommitResultV1> {
       const id = discoverCursorIdV1(input.key);
       const run = assertDiscoverRunV1(input.run, 'write');
-      const launches = input.launches.map((launch) => assertStoredLaunchV1(launch, 'write'));
+      // The source is decided by WHICH WRITE PATH ran, not by what the caller
+      // put on the record. A commit is the live lane by definition, so a
+      // mislabelled input cannot make historical rows look live.
+      const launches = input.launches.map((launch) =>
+        assertStoredLaunchV1({ ...launch, ingestionSource: 'live' }, 'write'),
+      );
       const cursor = await readCursor(id);
       if (!cursor) throw discoverConflictV1('No discover cursor exists for this lane');
       const refusal = discoverCommitRefusalV1({
@@ -246,18 +253,18 @@ export function createDatabaseB20DiscoverRepository(sql: SqlTemplateExecutor): B
           INSERT INTO b20_launches (
             id, chain_id, factory_address, token_address, variant, name, symbol, decimals,
             block_number, block_hash, transaction_hash, transaction_index, log_index, block_timestamp,
-            detected_at, confirmation_count, decoder_version, canonical, non_canonical_at, created_at
+            detected_at, ingestion_source, confirmation_count, decoder_version, canonical, non_canonical_at, created_at
           )
           SELECT j.id, j.chain_id, j.factory_address, j.token_address, j.variant, j.name, j.symbol,
                  j.decimals, j.block_number::numeric(78,0), j.block_hash, j.transaction_hash,
                  j.transaction_index, j.log_index, j.block_timestamp::timestamptz,
-                 j.detected_at::timestamptz, j.confirmation_count,
+                 j.detected_at::timestamptz, j.ingestion_source, j.confirmation_count,
                  j.decoder_version, true, NULL::timestamptz, j.created_at::timestamptz
           FROM jsonb_to_recordset(${launchesPayloadV1(launches)}::text::jsonb) AS j(
             id text, chain_id integer, factory_address text, token_address text, variant text,
             name text, symbol text, decimals integer, block_number text, block_hash text,
             transaction_hash text, transaction_index integer, log_index integer, block_timestamp text,
-            detected_at text, confirmation_count integer, decoder_version text, created_at text
+            detected_at text, ingestion_source text, confirmation_count integer, decoder_version text, created_at text
           )
           CROSS JOIN moved
           ON CONFLICT (chain_id, transaction_hash, log_index) DO NOTHING
@@ -304,7 +311,10 @@ export function createDatabaseB20DiscoverRepository(sql: SqlTemplateExecutor): B
 
     async insertHistoricalLaunches(input): Promise<{ inserted: number; duplicates: number }> {
       const id = discoverCursorIdV1(input.key);
-      const launches = input.launches.map((launch) => assertStoredLaunchV1(launch, 'write'));
+      // Same rule the other way: everything this path writes is history.
+      const launches = input.launches.map((launch) =>
+        assertStoredLaunchV1({ ...launch, ingestionSource: 'backfill' }, 'write'),
+      );
       const cursor = await readCursor(id);
       if (!cursor) throw discoverConflictV1('No discover cursor exists for this lane');
       const refusal = discoverBackfillRefusalV1({
@@ -324,24 +334,37 @@ export function createDatabaseB20DiscoverRepository(sql: SqlTemplateExecutor): B
         INSERT INTO b20_launches (
           id, chain_id, factory_address, token_address, variant, name, symbol, decimals,
           block_number, block_hash, transaction_hash, transaction_index, log_index, block_timestamp,
-          detected_at, confirmation_count, decoder_version, canonical, non_canonical_at, created_at
+          detected_at, ingestion_source, confirmation_count, decoder_version, canonical, non_canonical_at, created_at
         )
         SELECT j.id, j.chain_id, j.factory_address, j.token_address, j.variant, j.name, j.symbol,
                j.decimals, j.block_number::numeric(78,0), j.block_hash, j.transaction_hash,
                j.transaction_index, j.log_index, j.block_timestamp::timestamptz,
-               j.detected_at::timestamptz, j.confirmation_count,
+               j.detected_at::timestamptz, j.ingestion_source, j.confirmation_count,
                j.decoder_version, true, NULL::timestamptz, j.created_at::timestamptz
         FROM jsonb_to_recordset(${launchesPayloadV1(launches)}::text::jsonb) AS j(
           id text, chain_id integer, factory_address text, token_address text, variant text,
           name text, symbol text, decimals integer, block_number text, block_hash text,
           transaction_hash text, transaction_index integer, log_index integer, block_timestamp text,
-          detected_at text, confirmation_count integer, decoder_version text, created_at text
+          detected_at text, ingestion_source text, confirmation_count integer, decoder_version text, created_at text
         )
         ON CONFLICT (chain_id, transaction_hash, log_index) DO NOTHING
         RETURNING id`;
 
       const inserted = rows.length;
       return { inserted, duplicates: launches.length - inserted };
+    },
+
+    async storedLaunchIds(input): Promise<string[]> {
+      if (input.ids.length === 0) return [];
+      // Scoped to the lane as well as the ids: two lanes could in principle
+      // carry the same transaction, and a caller asking about one must not be
+      // told a row exists because the other has it.
+      const rows = await sql`
+        SELECT id FROM b20_launches
+         WHERE chain_id = ${input.key.chainId}
+           AND factory_address = ${input.key.factoryAddress}
+           AND id = ANY(${[...input.ids]}::text[])`;
+      return rows.map((row) => String((row as Record<string, unknown>).id));
     },
 
     async recordFailedRun(input) {

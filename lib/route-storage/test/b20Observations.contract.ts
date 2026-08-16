@@ -30,6 +30,9 @@ export interface B20ObservationHarnessV1 {
     tokenAddress: string;
     detectedAt: string;
     blockNumber?: string;
+    /** Defaults to 'live'. A backfilled row carries `detectedAt = now`, so the
+     * queue can only tell it apart by this. */
+    ingestionSource?: 'live' | 'backfill';
   }): Promise<void>;
 }
 
@@ -298,6 +301,63 @@ export function describeB20ObservationRepositoryV1(
       assert.equal(due.length, 2);
       assert.equal(due[0]?.tokenAddress, `0xb2${'1'.repeat(38)}`, 'the newer launch comes first');
       assert.equal(due[1]?.tokenAddress, TOKEN);
+    });
+
+    test('a live launch outranks a backfilled one detected later', async () => {
+      // The starvation case. A backfill writes `detectedAt = now()` — honestly,
+      // since that IS when Miorail found the row — so on discovery time alone a
+      // token from July sorts ahead of a launch from an hour ago. The 2026-08-16
+      // historical gap is ~740,000 blocks, roughly 12,000 launches: filling it
+      // would put all of them in front of the live feed the worker exists for.
+      const harness = await seeded();
+      await harness.seedLaunch({
+        id: `${observationHashV1('4')}:0`,
+        tokenAddress: `0xb2${'3'.repeat(38)}`,
+        // Detected AFTER the live launch below, and still second.
+        detectedAt: '2026-08-04T00:59:00.000Z',
+        blockNumber: '48661648',
+        ingestionSource: 'backfill',
+      });
+      await harness.seedLaunch({
+        id: `${observationHashV1('5')}:0`,
+        tokenAddress: `0xb2${'4'.repeat(38)}`,
+        detectedAt: '2026-08-04T00:30:00.000Z',
+        blockNumber: '49500300',
+        ingestionSource: 'live',
+      });
+      const due = await harness.repository.selectMeasurableLaunches({
+        limit: 10,
+        maxLaunchAgeMs: 48 * 3_600_000,
+        minReMeasureIntervalMs: 20 * 60_000,
+        now: '2026-08-04T01:00:00.000Z',
+      });
+      const backfilled = due.findIndex((row) => row.tokenAddress === `0xb2${'3'.repeat(38)}`);
+      const live = due.findIndex((row) => row.tokenAddress === `0xb2${'4'.repeat(38)}`);
+      assert.ok(backfilled >= 0 && live >= 0, 'both launches must still be eligible');
+      assert.ok(live < backfilled, 'a live launch must be offered before a backfilled one');
+      // Historical rows are DEFERRED, never dropped: the gap still gets measured.
+      assert.equal(due.at(-1)?.tokenAddress, `0xb2${'3'.repeat(38)}`);
+    });
+
+    test('a budget of one spends it on the newest live launch', async () => {
+      // With `--max-candidates=1` the ordering IS the product: one backfilled
+      // token at the head would cost the pass its only live measurement.
+      const harness = await seeded();
+      await harness.seedLaunch({
+        id: `${observationHashV1('6')}:0`,
+        tokenAddress: `0xb2${'5'.repeat(38)}`,
+        detectedAt: '2026-08-04T00:59:30.000Z',
+        blockNumber: '48661649',
+        ingestionSource: 'backfill',
+      });
+      const due = await harness.repository.selectMeasurableLaunches({
+        limit: 1,
+        maxLaunchAgeMs: 48 * 3_600_000,
+        minReMeasureIntervalMs: 20 * 60_000,
+        now: '2026-08-04T01:00:00.000Z',
+      });
+      assert.equal(due.length, 1);
+      assert.equal(due[0]?.ingestionSource, 'live');
     });
 
     test('a budget of one spends it on the newest, not the oldest', async () => {

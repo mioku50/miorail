@@ -115,6 +115,16 @@ export const B20StoredLaunchV1Schema = z
     logIndex: z.number().int().min(0),
     /** When this process read it, not when the chain produced it. */
     detectedAt: Timestamp,
+    /**
+     * Which write put this row here: the live lane, or a historical backfill.
+     *
+     * Needed because `detectedAt` on a backfilled row is `now` — truthfully, it
+     * IS when Miorail found it — which makes a launch from July look exactly
+     * like one a minute old to a queue ordered by discovery. Measurement
+     * scheduling reads this so repairing history cannot starve the present.
+     * Defaulted to 'live' so every existing caller and row keeps its meaning.
+     */
+    ingestionSource: z.enum(['live', 'backfill']).default('live'),
     /** How far behind the head it was when ingested, so a shallow read is
      * visible after the fact. */
     confirmationCount: z.number().int().min(0),
@@ -509,6 +519,24 @@ export interface B20DiscoverRepositoryV1 {
     launches: readonly B20StoredLaunchV1[];
     now: string;
   }): Promise<{ inserted: number; duplicates: number }>;
+
+  /**
+   * Which of these launch ids are already stored.
+   *
+   * Exists so a caller can tell "new" from "already present" WITHOUT paging the
+   * whole corpus. The backfill's dry run used `listLaunches({ limit: 10_000 })`
+   * for this, which is exact only while fewer than ten thousand launches exist.
+   * After the 2026-08-16 gap is filled the corpus is ~18,000, and the dry run
+   * would start reporting rows as new that the write then skips — the one
+   * promise a dry run has to keep.
+   *
+   * Bounded by the batch, not by the table: the query is an `= ANY` over the
+   * ids handed in, so its cost does not grow as the index does.
+   */
+  storedLaunchIds(input: {
+    key: B20DiscoverCursorKeyV1;
+    ids: readonly string[];
+  }): Promise<string[]>;
 
   /** A run that changed nothing, recorded so that "the endpoint was down" and
    * "the chain was quiet" are different rows. */

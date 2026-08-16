@@ -121,7 +121,13 @@ async function reset(): Promise<void> {
 
 /** A launch for the foreign key to point at. */
 async function seedLaunchRow(
-  overrides: { id?: string; blockNumber?: string; tokenAddress?: string; detectedAt?: string } = {},
+  overrides: {
+    id?: string;
+    blockNumber?: string;
+    tokenAddress?: string;
+    detectedAt?: string;
+    ingestionSource?: 'live' | 'backfill';
+  } = {},
 ): Promise<void> {
   // `tokenAddress` and `detectedAt` used to be ignored here while the harness
   // interface promised them, which made any contract test that depended on
@@ -143,6 +149,7 @@ async function seedLaunchRow(
     transaction_hash: transactionHash,
     log_index: 0,
     detected_at: overrides.detectedAt ?? T0,
+    ingestion_source: overrides.ingestionSource ?? 'live',
     confirmation_count: 12,
     decoder_version: 'b20-created/v1',
   })} ON CONFLICT (id) DO NOTHING`;
@@ -311,6 +318,7 @@ if (throwaway) {
           blockNumber: input.blockNumber,
           tokenAddress: input.tokenAddress,
           detectedAt: input.detectedAt,
+          ingestionSource: input.ingestionSource,
         });
       },
     };

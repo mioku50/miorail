@@ -139,6 +139,7 @@ function launchFixture(overrides: Partial<B20StoredLaunchV1> = {}): B20StoredLau
     factoryAddress: LANE.factoryAddress,
     tokenAddress: TOKEN,
     variant: 'asset',
+    ingestionSource: 'live',
     name: 'o1 mascot',
     symbol: 'DINo1',
     decimals: 18,

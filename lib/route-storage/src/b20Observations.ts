@@ -309,6 +309,16 @@ export interface B20MeasurableLaunchV1 {
   blockNumber: string;
   blockHash: string;
   detectedAt: string;
+  /**
+   * Whether the live lane found this launch or a historical backfill did.
+   *
+   * Carried here because the queue is ordered on it. A backfill writes
+   * `detectedAt = now()` — truthfully; that IS when Miorail found the row — so
+   * on discovery time alone a launch from July is indistinguishable from one a
+   * minute old, and filling a 740,000-block gap would push ~12,000 historical
+   * tokens ahead of every live launch.
+   */
+  ingestionSource: 'live' | 'backfill';
   /** When this launch was last observed at all, so a caller can honour the
    * minimum re-measurement interval. Null when never. */
   lastMeasuredAt: string | null;

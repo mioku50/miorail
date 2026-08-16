@@ -130,7 +130,11 @@ export class InMemoryB20DiscoverRepositoryV1 implements B20DiscoverRepositoryV1 
     if (!cursor) throw discoverConflictV1('No discover cursor exists for this lane');
 
     const run = assertDiscoverRunV1(input.run, 'write');
-    const launches = input.launches.map((launch) => assertStoredLaunchV1(launch, 'write'));
+    // The source is decided by WHICH WRITE PATH ran, exactly as Postgres does
+    // it. A commit is the live lane by definition.
+    const launches = input.launches.map((launch) =>
+      assertStoredLaunchV1({ ...launch, ingestionSource: 'live' }, 'write'),
+    );
     const refusal = discoverCommitRefusalV1({
       cursor,
       launches,
@@ -209,7 +213,10 @@ export class InMemoryB20DiscoverRepositoryV1 implements B20DiscoverRepositoryV1 
     const cursor = this.cursors.get(id);
     if (!cursor) throw discoverConflictV1('No discover cursor exists for this lane');
 
-    const launches = input.launches.map((launch) => assertStoredLaunchV1(launch, 'write'));
+    // Same rule the other way: everything this path writes is history.
+    const launches = input.launches.map((launch) =>
+      assertStoredLaunchV1({ ...launch, ingestionSource: 'backfill' }, 'write'),
+    );
     const refusal = discoverBackfillRefusalV1({
       cursor,
       launches,
@@ -232,6 +239,22 @@ export class InMemoryB20DiscoverRepositoryV1 implements B20DiscoverRepositoryV1 
     }
     for (const launch of fresh) this.launches.set(launch.id, launch);
     return { inserted: fresh.length, duplicates: launches.length - fresh.length };
+  }
+
+  /** Same answer as Postgres, from the same identity map the unique index
+   * mirrors. */
+  async storedLaunchIds(input: {
+    key: { chainId: 8453; factoryAddress: string; decoderVersion: string };
+    ids: readonly string[];
+  }): Promise<string[]> {
+    const found: string[] = [];
+    for (const id of input.ids) {
+      const launch = this.launches.get(id);
+      if (!launch) continue;
+      if (launch.chainId !== input.key.chainId || launch.factoryAddress !== input.key.factoryAddress) continue;
+      found.push(id);
+    }
+    return found;
   }
 
   async recordFailedRun(input: {

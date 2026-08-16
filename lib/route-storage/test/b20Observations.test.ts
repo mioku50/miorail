@@ -238,6 +238,46 @@ describeB20ObservationRepositoryV1('in-memory', async () => {
         ttlMs: 600_000,
       });
       const [transactionHash] = input.id.split(':');
+      // A backfilled row cannot be created by a commit — `commitRange` labels
+      // everything it writes `live`, and refuses blocks the cursor has passed.
+      // Seeding it through the real backfill path is the point: the test would
+      // be vacuous against a row this repository could not actually produce.
+      if (input.ingestionSource === 'backfill') {
+        const historical = String(BigInt(input.blockNumber ?? '1050'));
+        await launches.commitRange({
+          key: LANE,
+          owner: 'seed',
+          launches: [],
+          nextBlock: String(BigInt(historical) + 1n),
+          nextBlockHash: observationHashV1('b'),
+          run: runFixtureV1({
+            id: `seed-cursor-${input.id}`,
+            startCursorBlock: '999',
+            endCursorBlock: String(BigInt(historical) + 1n),
+            launchesRead: 0,
+            launchesInserted: 0,
+          }),
+          now: '2026-08-04T00:00:00.000Z',
+        });
+        await launches.insertHistoricalLaunches({
+          key: LANE,
+          fromBlock: historical,
+          toBlock: historical,
+          launches: [
+            launchFixtureV1({
+              blockNumber: historical,
+              transactionHash: transactionHash!,
+              logIndex: 0,
+              tokenAddress: input.tokenAddress,
+              detectedAt: input.detectedAt,
+              createdAt: input.detectedAt,
+            }),
+          ],
+          now: '2026-08-04T00:00:00.000Z',
+        });
+        await launches.releaseWorkerLease({ key: LANE, owner: 'seed', now: '2026-08-04T00:00:00.000Z' });
+        return;
+      }
       await launches.commitRange({
         key: LANE,
         owner: 'seed',
