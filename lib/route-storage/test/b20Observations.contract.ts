@@ -483,10 +483,46 @@ export function describeB20ObservationRepositoryV1(
       assert.equal((await remeasurable(repository, IN_BAND)).length, 1);
     });
 
-    test('a launch whose newest reading is NOT comparable is refused', async () => {
-      // The newest observation of ANY state decides. If the last thing Miorail
-      // saw was a route failure, its market profile is not what a pair would
-      // compare, and this queue must not claim otherwise.
+    test('a launch with no comparable observation at all is refused', async () => {
+      // A route failure is not a market profile, so there is nothing for a
+      // second measurement to pair with.
+      const { repository } = await seeded();
+      await repository.insertObservation(
+        observationFixtureV1({
+          state: 'rejected',
+          reasonCode: 'no_exit_route',
+          exitRouteFound: false,
+        }),
+      );
+      assert.equal((await remeasurable(repository, IN_BAND)).length, 0);
+    });
+
+    test('a later read that did not complete does not evict the launch from the queue', async () => {
+      // Production, the first pass after this queue shipped: two candidates
+      // came back `route_search_degraded` — Miorail's own read not completing,
+      // not a fact about the token — and under the first version of this query
+      // that reading evicted both permanently, because it looked at the newest
+      // observation of ANY state. The pairing reads through to the last
+      // comparable observation, so this must too.
+      const { repository } = await seeded();
+      await repository.insertObservation(observationFixtureV1());
+      await repository.insertObservation(
+        observationFixtureV1({
+          state: 'unmeasured',
+          reasonCode: 'route_search_degraded',
+          observationBlockNumber: '49500002',
+          measuredAt: '2026-08-04T20:30:00.000Z',
+          staleAfter: '2026-08-04T21:00:00.000Z',
+        }),
+      );
+      const due = await remeasurable(repository, IN_BAND);
+      assert.equal(due.length, 1);
+      // And the band is still measured from the COMPARABLE observation, not
+      // from the degraded read that came after it.
+      assert.equal(due[0]?.lastMeasuredAt, T0);
+    });
+
+    test('a route failure after a comparable observation is treated the same way', async () => {
       const { repository } = await seeded();
       await repository.insertObservation(observationFixtureV1());
       await repository.insertObservation(
@@ -495,26 +531,11 @@ export function describeB20ObservationRepositoryV1(
           reasonCode: 'no_exit_route',
           exitRouteFound: false,
           observationBlockNumber: '49500001',
-          measuredAt: '2026-08-04T01:00:00.000Z',
-          staleAfter: '2026-08-04T01:30:00.000Z',
+          measuredAt: '2026-08-04T20:00:00.000Z',
+          staleAfter: '2026-08-04T20:30:00.000Z',
         }),
       );
-      assert.equal((await remeasurable(repository, IN_BAND)).length, 0);
-    });
-
-    test('an unmeasured newest reading is refused, however comparable the one before it was', async () => {
-      const { repository } = await seeded();
-      await repository.insertObservation(observationFixtureV1());
-      await repository.insertObservation(
-        observationFixtureV1({
-          state: 'unmeasured',
-          reasonCode: 'route_search_degraded',
-          observationBlockNumber: '49500002',
-          measuredAt: '2026-08-04T02:00:00.000Z',
-          staleAfter: '2026-08-04T02:30:00.000Z',
-        }),
-      );
-      assert.equal((await remeasurable(repository, IN_BAND)).length, 0);
+      assert.equal((await remeasurable(repository, IN_BAND)).length, 1);
     });
 
     test('the band is closed at both ends', async () => {

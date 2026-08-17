@@ -135,10 +135,9 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
    * The other queue: launches one measurement away from a comparable pair.
    *
    * Mirrors the Postgres version exactly, including the two things that are
-   * easy to get kinder here — the newest observation of ANY state decides
-   * eligibility (not the newest COMPARABLE one), and the band is closed at both
-   * ends. A fake that admitted a token whose newest reading is `no_exit_route`
-   * would let a test pass on a launch the real queue never returns.
+   * easy to get wrong here — the band is measured from the newest COMPARABLE
+   * observation, which is the same one the mover projection pairs against, and
+   * it is closed at both ends.
    */
   async selectRemeasurableLaunches(input: {
     limit: number;
@@ -163,13 +162,15 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
     for (const launch of canonical) {
       if (now - Date.parse(launch.detectedAt) > input.maxLaunchAgeMs) continue;
       const latest = [...this.observations.values()]
-        .filter((row) => row.launchId === launch.id && versions.includes(row.measurementVersion))
+        .filter(
+          (row) =>
+            row.launchId === launch.id &&
+            versions.includes(row.measurementVersion) &&
+            (row.state === 'provisional' ||
+              (row.state === 'rejected' && row.reasonCode === 'round_trip_above_tolerance')),
+        )
         .sort((left, right) => Date.parse(right.measuredAt) - Date.parse(left.measuredAt))[0];
       if (!latest) continue;
-      const comparable =
-        latest.state === 'provisional' ||
-        (latest.state === 'rejected' && latest.reasonCode === 'round_trip_above_tolerance');
-      if (!comparable) continue;
       const age = now - Date.parse(latest.measuredAt);
       if (age < input.pairAgeMs - input.pairToleranceMs) continue;
       if (age > input.pairAgeMs + input.pairToleranceMs) continue;

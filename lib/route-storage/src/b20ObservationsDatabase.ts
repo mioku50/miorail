@@ -242,31 +242,37 @@ export function createDatabaseB20ObservationRepository(
       const youngest = new Date(Date.parse(input.now) - (input.pairAgeMs - input.pairToleranceMs)).toISOString();
       const oldestInBand = new Date(Date.parse(input.now) - (input.pairAgeMs + input.pairToleranceMs)).toISOString();
 
-      // The LATERAL takes the newest observation of ANY state, not the newest
-      // comparable one. That is the point: if the token's newest reading is a
-      // route failure, its market profile is not what a pair would compare, and
-      // this queue must not claim otherwise. The mover projection reads the
-      // newest comparable observation, so the two agree only when the newest IS
-      // comparable — which is the condition below.
+      // The LATERAL takes the newest COMPARABLE observation, which is exactly
+      // what `listMoverPairs` uses as the later half of a pair — so this queue
+      // and the projection are asking the same question.
+      //
+      // It selected the newest observation of ANY state at first, on the
+      // reasoning that a token whose last reading was a route failure has no
+      // current market profile. Production disagreed within one pass: two
+      // candidates came back `route_search_degraded`, which is Miorail's read
+      // not completing rather than anything about the token, and that reading
+      // then evicted both from this queue permanently. The pairing does not
+      // care — it still reads through to the last comparable observation — so
+      // neither does this.
       const rows = await sql`
         SELECT l.id, l.token_address, l.block_number, l.block_hash, l.detected_at,
                l.ingestion_source, o.measured_at AS last_measured_at
         FROM b20_launches l
         JOIN LATERAL (
-          SELECT last.measured_at, last.state, last.reason_code
+          SELECT last.measured_at
           FROM b20_opportunity_observations last
           WHERE last.launch_id = l.id
             AND last.measurement_version = ANY(${versions}::text[])
+            AND (
+              last.state = 'provisional'
+              OR (last.state = 'rejected' AND last.reason_code = 'round_trip_above_tolerance')
+            )
           ORDER BY last.measured_at DESC, last.id DESC
           LIMIT 1
         ) o ON true
         WHERE l.canonical
           AND l.chain_id = 8453
           AND l.detected_at >= ${oldest}::timestamptz
-          AND (
-            o.state = 'provisional'
-            OR (o.state = 'rejected' AND o.reason_code = 'round_trip_above_tolerance')
-          )
           AND o.measured_at <= ${youngest}::timestamptz
           AND o.measured_at >= ${oldestInBand}::timestamptz
         -- Oldest first. A queue ordered the other way is the one that starved.
