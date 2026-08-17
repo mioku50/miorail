@@ -103,7 +103,12 @@ export function OpportunitiesPage() {
   // can write. An address that is not one focuses nothing at all.
   const focus = useMemo(() => parseDiscoverFocusV1(search), [search]);
   const focusedInFeed = useMemo(
-    () => (feed.data?.cards ?? []).find((card) => card.tokenAddress.toLowerCase() === focus.tokenAddress) ?? null,
+    () =>
+      (feed.data?.cards ?? []).find(
+        // The WIRE card, where the address lives on the launch. The view model
+        // built from it is the one with a flat `tokenAddress`.
+        (card) => card.launch.tokenAddress.toLowerCase() === focus.tokenAddress,
+      ) ?? null,
     [feed.data, focus.tokenAddress],
   );
   // Only when the feed's own page does not already hold it. A token on page one
