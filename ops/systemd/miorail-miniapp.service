@@ -25,7 +25,14 @@ Environment=PATH=/home/miorail/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/u
 # A fixed port shared with a neighbour is a race the loser cannot win by
 # retrying, so this moved rather than gained a retry. 3020 is Miorail's and is
 # listened on by nothing else.
-ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/pnpm exec next start -H 127.0.0.1 -p 3020
+# Next is invoked directly rather than through `pnpm exec`.
+#
+# The server had carried an out-of-repo drop-in doing exactly this since before
+# 2026-08-17 — which is how the port stayed 3010 no matter what this file said,
+# because a drop-in's ExecStart wins over the unit's. The working invocation
+# belongs in the commit, and the deploy now deletes that override directory so
+# no server-only edit can decide how this service starts again.
+ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node /home/miorail/mioagent/artifacts/miniapp/node_modules/next/dist/bin/next start -H 127.0.0.1 -p 3020
 
 KillSignal=SIGTERM
 TimeoutStopSec=30

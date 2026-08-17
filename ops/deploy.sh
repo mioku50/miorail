@@ -193,6 +193,16 @@ systemctl reload nginx
 # is built and served locally, and reaching it from the internet still needs a
 # host and a server block that do not exist yet.
 install -m 0644 "$MINIAPP_UNIT_SOURCE" "$MINIAPP_UNIT_TARGET"
+# Delete any server-only drop-in for this unit.
+#
+# One had existed since 2026-08-13 resetting ExecStart and pinning port 3010,
+# so the unit file above decided nothing about how the service started — the
+# port stayed 3010 through a deploy that installed a unit saying 3020, and the
+# override was invisible in `git diff` and in the unit file alike. The working
+# invocation it carried now lives in the unit itself. This is the same rule the
+# worker drop-ins already follow, applied to the one service that had escaped
+# it: what decides how a service starts lives in the commit.
+rm -rf "$MINIAPP_UNIT_TARGET.d"
 # The API unit lived only on the server until 2026-08-16, so its sandboxing was
 # invisible to review and drifted unnoticed: it granted write access to the whole
 # checkout. It is installed from the repository now for the same reason as the
