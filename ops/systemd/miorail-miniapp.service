@@ -14,7 +14,18 @@ WorkingDirectory=/home/miorail/mioagent/artifacts/miniapp
 Environment=NODE_ENV=production
 Environment=NEXT_TELEMETRY_DISABLED=1
 Environment=PATH=/home/miorail/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/pnpm exec next start -H 127.0.0.1 -p 3010
+# Port 3020, not 3010.
+#
+# 3010 is claimed by an unrelated application on this host — a PM2-managed
+# Next 14 app in a restart loop, which re-binds the port every few seconds. On
+# 2026-08-17 it took 3010 during the one second this unit was down for its
+# deploy restart, and the whole deploy then failed on a health check for a
+# surface no Nginx site routes to.
+#
+# A fixed port shared with a neighbour is a race the loser cannot win by
+# retrying, so this moved rather than gained a retry. 3020 is Miorail's and is
+# listened on by nothing else.
+ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/pnpm exec next start -H 127.0.0.1 -p 3020
 
 KillSignal=SIGTERM
 TimeoutStopSec=30

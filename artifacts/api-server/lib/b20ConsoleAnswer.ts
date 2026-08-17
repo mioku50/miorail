@@ -435,7 +435,18 @@ export function b20FundamentalAnswerV1(input: {
 
   const answer =
     input.matches.length === 0
-      ? `None of the ${pluralV1(input.corpus, 'verified project claim', 'verified project claims')} Miorail holds has ${rule.label}. ${corpusSentence}`
+      // "None of them has a repository" asserts an ABSENCE, and Miorail does
+      // not know that — it knows it did not establish one. The distinction is
+      // the whole subject of this layer, and it has to survive into the
+      // sentence a reader actually gets when nothing matched.
+      ? `Miorail has not established ${rule.label} for ${
+          // "any of the 1 verified project claim" is what a plural helper
+          // produces and not what anybody says. The corpus is one claim today,
+          // so this is the branch production actually renders.
+          input.corpus === 1
+            ? 'the one verified project claim it holds'
+            : `any of the ${input.corpus} verified project claims it holds`
+        }. ${corpusSentence}`
       : `${input.matches.length} matched among ${pluralV1(input.corpus, 'verified project claim', 'verified project claims')}: ${input.matches
           .map((match) => matchNameV1(match))
           .join(', ')} ${input.matches.length === 1 ? 'has' : 'have'} ${rule.label}. ${corpusSentence}`;

@@ -1,9 +1,21 @@
 # Production units
 
-`miorail-miniapp.service` serves the built Base App on `127.0.0.1:3010`, where
-the production Nginx MiniApp host proxies. The `miorail-b20-*` units are the
-canonical ritual-vps workers. `ops/deploy.sh` installs all three on every
-deploy, including their checked-in runtime drop-ins.
+`miorail-miniapp.service` serves the built Base App on `127.0.0.1:3020`. The
+`miorail-b20-*` units are the canonical ritual-vps workers. `ops/deploy.sh`
+installs all three on every deploy, including their checked-in runtime
+drop-ins.
+
+**Nothing proxies to the Base App yet.** This file used to say the production
+Nginx MiniApp host pointed at `3010`; that routing lives in a
+`sites-available/ritual-familiars` server block which is not enabled, so the
+sentence had become false without anything failing. Two consequences worth
+knowing before changing either:
+
+* the surface is built and health-checked on every deploy but is unreachable
+  from the internet, and reaching it needs a hostname and a server block that
+  do not exist;
+* `3010` is held by an unrelated PM2 application on this host, in a restart
+  loop. Port 3020 moved Miorail off a port it was contesting and losing.
 
 Those drop-ins deliberately reset `EnvironmentFile` to the project `.env`.
 Do not add a second, unmanaged RPC environment file: an endpoint that answers

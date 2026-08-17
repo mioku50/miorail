@@ -247,7 +247,7 @@ describe('the other predicates read their own dimension', () => {
 
   test('a repository question matches nobody, and says so against the corpus', async () => {
     const response = await ask('Which B20 projects have a repository?');
-    assert.match(response.body.answer, /None of the 2 verified project claims/);
+    assert.match(response.body.answer, /Miorail has not established a repository for any of the 2 verified project claims/);
     assert.match(response.body.answer, /outside this fundamental corpus and remain unknown/);
   });
 

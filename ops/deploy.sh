@@ -183,9 +183,15 @@ fi
 rm -f "$nginx_backup"
 systemctl reload nginx
 
-# Nginx has always routed the public MiniApp host to port 3010. Keep the unit
-# in the repository and install it on every deploy so a rebuilt Base App cannot
-# silently remain offline behind a healthy-looking build.
+# Keep the unit in the repository and install it on every deploy so a rebuilt
+# Base App cannot silently remain offline behind a healthy-looking build.
+#
+# It listens on 127.0.0.1:3020 and NO enabled Nginx site proxies to it. The
+# comment here used to say Nginx routed "the public MiniApp host" to 3010; that
+# was true of an `nginx/sites-available/ritual-familiars` server block which is
+# not enabled, so the statement had quietly become false. The Base App surface
+# is built and served locally, and reaching it from the internet still needs a
+# host and a server block that do not exist yet.
 install -m 0644 "$MINIAPP_UNIT_SOURCE" "$MINIAPP_UNIT_TARGET"
 # The API unit lived only on the server until 2026-08-16, so its sandboxing was
 # invisible to review and drifted unnoticed: it granted write access to the whole
@@ -230,9 +236,21 @@ served_entry=$(grep -o 'assets/[A-Za-z0-9_-]*\.js' "$SERVE_ROOT/index.html" | he
 printf '  built  %s\n  served %s\n' "$built_entry" "$served_entry"
 [ "$built_entry" = "$served_entry" ] || { echo 'FAILED: the served bundle is not the built one'; exit 1; }
 
-miniapp_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' http://127.0.0.1:3010/)
-printf '  miniapp http://127.0.0.1:3010/  %s\n' "$miniapp_status"
-[ "$miniapp_status" = 200 ] || { echo 'FAILED: the Base App service is not serving its production build'; exit 1; }
+MINIAPP_PORT=3020
+miniapp_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:$MINIAPP_PORT/")
+printf '  miniapp http://127.0.0.1:%s/  %s\n' "$MINIAPP_PORT" "$miniapp_status"
+if [ "$miniapp_status" != 200 ]; then
+  # Name the process holding the port. The previous message said only that the
+  # service was not serving its build, which is the symptom of a bind failure
+  # and of a crashed app alike — and on 2026-08-17 the cause was a NEIGHBOUR
+  # process holding the port, which no amount of reading Miorail's logs would
+  # have revealed.
+  holder=$(ss -lptnH "sport = :$MINIAPP_PORT" 2>/dev/null | head -1)
+  [ -n "$holder" ] && echo "  port $MINIAPP_PORT is held by: $holder"
+  journalctl -u miorail-miniapp -n 5 --no-pager 2>/dev/null | sed 's/^/  /'
+  echo 'FAILED: the Base App service is not serving its production build'
+  exit 1
+fi
 
 MCP_ACCEPT='application/json, text/event-stream'
 mcp_post() {

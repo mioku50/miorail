@@ -174,7 +174,10 @@ describe('zero is a real answer, and it is not a negative one', () => {
       corpus: 3,
       available: true,
     });
-    assert.match(answer.answer, /None of the 3 verified project claims Miorail holds has a repository\./);
+    // Not "none of them HAS a repository" — that asserts an absence Miorail
+    // never established. The sentence is about what was established.
+    assert.match(answer.answer, /Miorail has not established a repository for any of the 3 verified project claims it holds\./);
+    assert.ok(!/none of (them|the)/i.test(answer.answer), 'the answer asserts an absence');
     assert.match(answer.answer, /outside this fundamental corpus and remain unknown/);
     const text = everySentenceOf(answer);
     for (const word of MARKET_VOCABULARY) assert.ok(!text.includes(word), `said "${word}"`);
@@ -258,5 +261,22 @@ describe('every predicate produces an answer, and none of them ranks', () => {
     for (const word of ['best', 'top', 'strongest', 'score', 'rank', 'better', 'leading', 'promising']) {
       assert.ok(!text.includes(word), `a fundamental answer said "${word}"`);
     }
+  });
+});
+
+describe('the singular corpus reads like a sentence', () => {
+  test('one claim is "the one verified project claim", never "any of the 1"', () => {
+    // The branch production renders today: the corpus is one claim.
+    const answer = b20FundamentalAnswerV1({
+      predicate: 'repository_found',
+      matches: [],
+      corpus: 1,
+      available: true,
+    });
+    assert.match(
+      answer.answer,
+      /^Miorail has not established a repository for the one verified project claim it holds\./,
+    );
+    assert.ok(!/any of the 1 /.test(answer.answer), 'a plural helper leaked into a singular sentence');
   });
 });
