@@ -141,8 +141,15 @@ function RailEmpty({ children }: { children: React.ReactNode }) {
 interface RailFactV1 {
   label: string;
   value: string;
-  /** The qualifier the value is meaningless without — a reference, a bound. */
-  note: string | null;
+  /**
+   * A one-word state marker beside the value, or null.
+   *
+   * Reserved for the one thing a reader must not read wrongly at a glance: a
+   * measurement past its freshness window sitting in what looks like a live
+   * ranking. Every other qualifier — what the bound means, what the reference
+   * is — is said once under "How this is ranked" instead of on every row.
+   */
+  mark: string | null;
   tone: 'plain' | 'warn' | 'off';
 }
 
@@ -168,11 +175,7 @@ function RailRow({
               <strong className={`rail-fact-v ${fact.tone} ${factValueClassV1(fact.value)}`}>
                 {fact.value}
               </strong>
-              {/* Its own line, with no separator glyph. A rail column is narrow
-                  enough that an inline "· lower bound · 100% of reference entry"
-                  wraps, and a wrapped separator leaves a dot dangling at the end
-                  of the line above it. */}
-              {fact.note ? <span className="rail-fact-note">{fact.note}</span> : null}
+              {fact.mark ? <span className="pill n rail-fact-mark">{fact.mark}</span> : null}
             </dd>
           </div>
         ))}
@@ -186,35 +189,63 @@ function RailRow({
   );
 }
 
-/** Freshness as a fact. Stale keeps its age — a measurement past its window is
- * still the measurement that was taken, and hiding the age would leave a reader
- * unable to tell an hour-old reading from a week-old one. */
+/**
+ * Freshness as a fact, with the one marker that stays on the row.
+ *
+ * Stale keeps its age — a measurement past its window is still the measurement
+ * that was taken, and hiding the age would leave a reader unable to tell an
+ * hour-old reading from a week-old one. The `stale` chip is what stops that age
+ * being read as part of a current ranking.
+ */
 function freshnessFactV1(measuredAt: string, freshness: 'fresh' | 'stale', now: Date): RailFactV1 {
   return {
     label: 'Freshness',
     value: measuredAgeLabelV1(measuredAt, now),
-    note: freshness === 'stale' ? 'past freshness window' : null,
+    mark: freshness === 'stale' ? 'stale' : null,
     tone: freshness === 'stale' ? 'off' : 'plain',
   };
 }
 
-/** The round-trip cost against the profile it was judged by. Null renders the
- * words: a round trip that did not measure is not a round trip of zero. */
+/** The round-trip cost. Null renders the words: a round trip that did not
+ * measure is not a round trip of zero. Amber says it is above the configured
+ * reference; what that reference is, is stated once under the header. */
 function roundTripFactV1(input: {
   optimisticRoundTripBps: number | null;
   roundTripReferenceBps: number;
   profileStatus: string;
 }): RailFactV1 {
   if (input.optimisticRoundTripBps === null) {
-    return { label: 'Round-trip cost', value: 'not measured', note: null, tone: 'off' };
+    return { label: 'Round-trip cost', value: 'not measured', mark: null, tone: 'off' };
   }
-  const outside = input.profileStatus === 'outside_round_trip_reference';
   return {
     label: 'Round-trip cost',
     value: bpsLabelV1(input.optimisticRoundTripBps),
-    note: `${outside ? 'above' : 'within'} ${bpsLabelV1(input.roundTripReferenceBps)} reference`,
-    tone: outside ? 'warn' : 'plain',
+    mark: null,
+    tone: input.profileStatus === 'outside_round_trip_reference' ? 'warn' : 'plain',
   };
+}
+
+// ---------------------------------------------------------------------------
+// The qualifiers, said once.
+//
+// Every rail row used to carry its own explanation: "lower bound · 100% of
+// reference entry" under the size, "above 3% reference" under the cost, "past
+// freshness window" under the age. Five rows meant fifteen repetitions of three
+// sentences, and the numbers a reader came for were the smallest thing in the
+// column.
+//
+// Nothing was dropped. Each of those sentences is here, in full, under the
+// header — where a reader meets it once and can return to it. The one qualifier
+// that stays on the row is the `stale` chip, because that one changes what the
+// row IS rather than explaining what it means.
+// ---------------------------------------------------------------------------
+function RailGuide({ children, summary }: { summary: string; children: React.ReactNode }) {
+  return (
+    <details className="discover-guide rail-guide">
+      <summary>{summary}</summary>
+      {children}
+    </details>
+  );
 }
 
 export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
@@ -231,6 +262,20 @@ export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
         <span className="rt">{bpsLabelV1(model.toleranceBps)} exit slippage</span>
       </div>
       <div className="rpb">
+        <RailGuide summary="How this is ranked">
+          <p>
+            Ordered only by measured exit coverage relative to one Miorail reference entry, within{' '}
+            {bpsLabelV1(model.toleranceBps)} slippage. Largest tested exit is a lower bound: it is the biggest
+            size that passed, nothing above it was tested, and nothing between it and the first failing size was
+            measured either. Round-trip cost in amber is above the feed’s {bpsLabelV1(model.toleranceBps)}{' '}
+            reference; the measurement stays on the rail rather than being hidden by it.
+            {outsideReference > 0
+              ? ` ${outsideReference} of the measured profiles here ${outsideReference === 1 ? 'is' : 'are'} above that reference.`
+              : ''}{' '}
+            A row marked stale is past its freshness window: historical evidence, not a current quote.{' '}
+            {MARKET_RAIL_DISCLAIMER_V1}
+          </p>
+        </RailGuide>
         {model.loading ? (
           <RailEmpty>Reading measured exits…</RailEmpty>
         ) : model.unavailableReason ? (
@@ -251,11 +296,11 @@ export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
                 facts={[
                   {
                     label: 'Largest tested exit',
-                    // The BOUND. "at least" is not decoration: the ladder knows
-                    // the largest size that passed and nothing above it, and the
-                    // note says that in words as well as in the glyph.
+                    // The BOUND. `≥` is not decoration: the ladder knows the
+                    // largest size that passed and nothing above it. What that
+                    // means is stated once, under the header.
                     value: `≥ ${amountLabelV1(leader.largestPassingSizeAtomic, leader.decimals, leader.symbol)}`,
-                    note: `lower bound · ${bpsLabelV1(leader.capacityCoverageBps)} of reference entry`,
+                    mark: null,
                     tone: 'plain',
                   },
                   roundTripFactV1(leader),
@@ -263,18 +308,6 @@ export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
                 ]}
               />
             ))}
-            <p className="lnote">
-              Ordered only by measured exit coverage relative to one Miorail reference entry, within{' '}
-              {bpsLabelV1(model.toleranceBps)} slippage. Nothing between the largest passing and first failing size
-              was measured. {MARKET_RAIL_DISCLAIMER_V1}
-            </p>
-            {outsideReference > 0 && (
-              <p className="lnote">
-                {outsideReference} measured profile{outsideReference === 1 ? '' : 's'} exceed
-                {outsideReference === 1 ? 's' : ''} the configured round-trip reference and remain
-                {outsideReference === 1 ? 's' : ''} visible in amber.
-              </p>
-            )}
             {shown.length > RAIL_TOP_V1 && (
               <button type="button" className="btn sec" onClick={model.onToggleExpanded}>
                 {model.expanded ? 'Show top 5' : `View top ${Math.min(RAIL_FULL_V1, shown.length)}`}
@@ -297,6 +330,18 @@ export function B20MeasuredMoversCard(model: B20MarketRailsModelV1) {
         <span className="rt">Miorail quotes</span>
       </div>
       <div className="rpb">
+        {/* The server's own label and note, said once and verbatim. Shortening
+            "24h change from Miorail measured quotes" to "24h" is exactly the
+            paraphrase this metric must not suffer. */}
+        <RailGuide summary="How this is measured">
+          {model.moveLabel ? <p>{model.moveLabel}</p> : null}
+          {model.moveNote ? <p>{model.moveNote}</p> : null}
+          <p>
+            A rise means the exit got MORE expensive, which is why it is amber, and the unit is percentage
+            points because it is the difference between two percentages. A row marked stale is past its
+            freshness window: historical evidence, not a current quote. {MARKET_RAIL_DISCLAIMER_V1}
+          </p>
+        </RailGuide>
         {model.loading ? (
           <RailEmpty>Reading measured quotes…</RailEmpty>
         ) : model.unavailableReason ? (
@@ -331,7 +376,7 @@ export function B20MeasuredMoversCard(model: B20MarketRailsModelV1) {
                     // to say which number this is.
                     label: '24h route cost change',
                     value: roundTripChangeLabelV1(mover.changeBps),
-                    note: null,
+                    mark: null,
                     tone: mover.changeBps > 0 ? 'warn' : 'plain',
                   },
                   roundTripFactV1(mover),
@@ -339,11 +384,6 @@ export function B20MeasuredMoversCard(model: B20MarketRailsModelV1) {
                 ]}
               />
             ))}
-            {/* The label is the server's, verbatim. Shortening it to "24h" is
-                exactly the paraphrase this metric must not suffer. */}
-            <p className="lnote">{model.moveLabel}</p>
-            <p className="lnote">{model.moveNote}</p>
-            <p className="lnote">{MARKET_RAIL_DISCLAIMER_V1}</p>
             {model.movers.length > RAIL_TOP_V1 && (
               <button type="button" className="btn sec" onClick={model.onToggleExpanded}>
                 {model.expanded ? 'Show top 5' : `View top ${Math.min(RAIL_FULL_V1, model.movers.length)}`}

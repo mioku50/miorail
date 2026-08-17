@@ -46,6 +46,21 @@ export const B20_MEASURE_DEFAULTS_V1 = {
   observationStaleMs: 30 * 60 * 1000,
   /** Leave a token alone for this long after measuring it. */
   minReMeasureIntervalMs: 20 * 60 * 1000,
+  /**
+   * Deep candidates per pass reserved for the pair-forming queue.
+   *
+   * The primary queue is newest-first, and it has to be: Discover lists the
+   * newest launches and the worker exists to serve them. What that ordering
+   * cannot do is come back. In production the head of that queue was never
+   * older than forty minutes, so a token measured once was never measured
+   * again, and the movers rail asked for two comparable observations 24 hours
+   * apart that nothing in the system could produce.
+   *
+   * Two slots, and only for launches that are ONE measurement away from a
+   * pair — so the queue is short by construction and the reservation is
+   * usually unspent. It never exceeds the pass's own candidate budget.
+   */
+  pairRemeasureCandidates: 2,
   /** Launches older than this are past the active-measurement window. */
   maxLaunchAgeMs: 48 * 60 * 60 * 1000,
   leaseTtlMs: 20 * 60 * 1000,
@@ -117,6 +132,11 @@ export function parseB20MeasureArgsV1(argv: readonly string[]): B20MeasureArgsV1
         break;
       case 'max-launch-age':
         args.maxLaunchAgeMs = parseDurationMsV1('--max-launch-age', value);
+        break;
+      case 'pair-remeasures':
+        // Zero is allowed and meaningful: it turns the reservation off and
+        // restores the old single-queue behaviour exactly.
+        args.pairRemeasureCandidates = nonNegativeIntV1('--pair-remeasures', value);
         break;
       case 'lease-ttl':
         args.leaseTtlMs = parseDurationMsV1('--lease-ttl', value);
@@ -231,6 +251,9 @@ Options:
   --stale-after=<dur>       How long an observation stays current (default 30m)
   --min-interval=<dur>      Leave a token alone this long after measuring (default 20m)
   --max-launch-age=<dur>    Stop measuring launches older than this (default 48h)
+  --pair-remeasures=<n>     Candidates per pass reserved for launches one
+                            measurement away from a 24h comparison; 0 turns the
+                            reservation off (default ${B20_MEASURE_DEFAULTS_V1.pairRemeasureCandidates})
   --lease-ttl=<dur>         How long a crashed worker holds the lease (default 20m)
   --position=<atomic>       Reference position, atomic USDC (default 100000000)
   --max-round-trip-bps=<n>  Reference round-trip tolerance (default 300)

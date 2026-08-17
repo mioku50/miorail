@@ -380,6 +380,26 @@ export function describeB20ObservationRepositoryV1(
       assert.equal(due[0]?.tokenAddress, `0xb2${'2'.repeat(38)}`);
     });
 
+    test('a launch stamped in the future is not a candidate', async () => {
+      // Postgres has always carried `AND l.detected_at <= now`; the in-memory
+      // repository did not, so it offered a candidate the real queue never
+      // returns — and offered it FIRST, since the queue is newest-first.
+      const harness = await seeded();
+      await harness.seedLaunch({
+        id: `${observationHashV1('9')}:0`,
+        tokenAddress: `0xb2${'9'.repeat(38)}`,
+        detectedAt: '2026-08-04T02:00:00.000Z',
+        blockNumber: '49500900',
+      });
+      const due = await harness.repository.selectMeasurableLaunches({
+        limit: 10,
+        maxLaunchAgeMs: 48 * 3_600_000,
+        minReMeasureIntervalMs: 20 * 60_000,
+        now: '2026-08-04T01:00:00.000Z',
+      });
+      assert.deepEqual(due.map((launch) => launch.tokenAddress), [TOKEN]);
+    });
+
     test('a launch older than the window is left alone', async () => {
       const { repository } = await seeded();
       const due = await repository.selectMeasurableLaunches({
@@ -412,6 +432,170 @@ export function describeB20ObservationRepositoryV1(
       });
       assert.equal(later.length, 1);
       assert.equal(later[0]?.lastMeasuredAt, T0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // The other queue: launches one measurement away from a 24h comparison.
+  //
+  // The primary queue is newest-first, and has to be. What it cannot do is come
+  // back. Production on 2026-08-17: 153 tokens carrying a comparable
+  // measurement were overdue, 79 of them by more than twelve hours, and the
+  // whole 48-hour window held no launch with two comparable observations more
+  // than 15.5 hours apart — so the movers rail asked for a pair the cadence
+  // could never produce.
+  //
+  // Everything below is about what this queue REFUSES, because the in-memory
+  // repository must not be kinder than Postgres about any of it.
+  // -------------------------------------------------------------------------
+  describe(`${name}: the pair-forming queue returns launches one measurement from a pair`, () => {
+    const PAIR_AGE_MS = 24 * 3_600_000;
+    const PAIR_TOLERANCE_MS = 4 * 3_600_000;
+    /** 24h after T0: measuring at this instant pairs with the T0 observation. */
+    const IN_BAND = '2026-08-05T00:00:00.000Z';
+
+    const remeasurable = (repository: B20ObservationHarnessV1['repository'], now: string, limit = 10) =>
+      repository.selectRemeasurableLaunches({
+        limit,
+        maxLaunchAgeMs: 96 * 3_600_000,
+        pairAgeMs: PAIR_AGE_MS,
+        pairToleranceMs: PAIR_TOLERANCE_MS,
+        now,
+      });
+
+    test('a comparable observation inside the band is offered', async () => {
+      const { repository } = await seeded();
+      await repository.insertObservation(observationFixtureV1());
+      const due = await remeasurable(repository, IN_BAND);
+      assert.equal(due.length, 1);
+      assert.equal(due[0]?.tokenAddress, TOKEN);
+      assert.equal(due[0]?.lastMeasuredAt, T0);
+    });
+
+    test('a measured profile miss is comparable evidence and is offered too', async () => {
+      // `round_trip_above_tolerance` is a measurement, and the movers
+      // projection pairs it. A queue that skipped it would starve exactly the
+      // rows the live rail is made of.
+      const { repository } = await seeded();
+      await repository.insertObservation(
+        observationFixtureV1({ state: 'rejected', reasonCode: 'round_trip_above_tolerance' }),
+      );
+      assert.equal((await remeasurable(repository, IN_BAND)).length, 1);
+    });
+
+    test('a launch whose newest reading is NOT comparable is refused', async () => {
+      // The newest observation of ANY state decides. If the last thing Miorail
+      // saw was a route failure, its market profile is not what a pair would
+      // compare, and this queue must not claim otherwise.
+      const { repository } = await seeded();
+      await repository.insertObservation(observationFixtureV1());
+      await repository.insertObservation(
+        observationFixtureV1({
+          state: 'rejected',
+          reasonCode: 'no_exit_route',
+          exitRouteFound: false,
+          observationBlockNumber: '49500001',
+          measuredAt: '2026-08-04T01:00:00.000Z',
+          staleAfter: '2026-08-04T01:30:00.000Z',
+        }),
+      );
+      assert.equal((await remeasurable(repository, IN_BAND)).length, 0);
+    });
+
+    test('an unmeasured newest reading is refused, however comparable the one before it was', async () => {
+      const { repository } = await seeded();
+      await repository.insertObservation(observationFixtureV1());
+      await repository.insertObservation(
+        observationFixtureV1({
+          state: 'unmeasured',
+          reasonCode: 'route_search_degraded',
+          observationBlockNumber: '49500002',
+          measuredAt: '2026-08-04T02:00:00.000Z',
+          staleAfter: '2026-08-04T02:30:00.000Z',
+        }),
+      );
+      assert.equal((await remeasurable(repository, IN_BAND)).length, 0);
+    });
+
+    test('the band is closed at both ends', async () => {
+      const { repository } = await seeded();
+      await repository.insertObservation(observationFixtureV1());
+      // Too young: measuring now would produce a pair 19 hours apart, which the
+      // movers projection refuses as `baseline_outside_window`.
+      assert.equal((await remeasurable(repository, '2026-08-04T19:00:00.000Z')).length, 0);
+      // Inside, at each edge.
+      assert.equal((await remeasurable(repository, '2026-08-04T20:00:00.000Z')).length, 1);
+      assert.equal((await remeasurable(repository, '2026-08-05T04:00:00.000Z')).length, 1);
+      // Too old: a pair from here would be 29 hours apart. The launch is not
+      // skipped forever — the primary queue still holds it — but this queue
+      // makes no claim it can produce a pair.
+      assert.equal((await remeasurable(repository, '2026-08-05T05:00:00.000Z')).length, 0);
+    });
+
+    test('a launch past the measurement window is refused', async () => {
+      const { repository } = await seeded();
+      await repository.insertObservation(observationFixtureV1());
+      const due = await repository.selectRemeasurableLaunches({
+        limit: 10,
+        maxLaunchAgeMs: 60_000,
+        pairAgeMs: PAIR_AGE_MS,
+        pairToleranceMs: PAIR_TOLERANCE_MS,
+        now: IN_BAND,
+      });
+      assert.equal(due.length, 0);
+    });
+
+    test('a never-measured launch is not in this queue at all', async () => {
+      const { repository } = await seeded();
+      assert.equal((await remeasurable(repository, IN_BAND)).length, 0);
+    });
+
+    test('oldest measurement first — the ordering the newest-first queue could not do', async () => {
+      const harness = await seeded();
+      const second = `${observationHashV1('2')}:0`;
+      await harness.seedLaunch({
+        id: second,
+        tokenAddress: `0xb2${'1'.repeat(38)}`,
+        detectedAt: T0,
+        blockNumber: '49500100',
+      });
+      // The SECOND launch was measured later, so it must come second here even
+      // though it is the newer launch — the whole point of this queue.
+      await harness.repository.insertObservation(observationFixtureV1());
+      await harness.repository.insertObservation(
+        observationFixtureV1({
+          launchId: second,
+          tokenAddress: `0xb2${'1'.repeat(38)}`,
+          measuredAt: '2026-08-04T02:00:00.000Z',
+          staleAfter: '2026-08-04T02:30:00.000Z',
+          observationBlockNumber: '49500100',
+        }),
+      );
+      const due = await remeasurable(harness.repository, '2026-08-05T01:00:00.000Z');
+      assert.deepEqual(
+        due.map((launch) => launch.lastMeasuredAt),
+        [T0, '2026-08-04T02:00:00.000Z'],
+      );
+    });
+
+    test('the limit bounds the reservation', async () => {
+      const harness = await seeded();
+      await harness.seedLaunch({
+        id: `${observationHashV1('3')}:0`,
+        tokenAddress: `0xb2${'3'.repeat(38)}`,
+        detectedAt: T0,
+        blockNumber: '49500200',
+      });
+      await harness.repository.insertObservation(observationFixtureV1());
+      await harness.repository.insertObservation(
+        observationFixtureV1({
+          launchId: `${observationHashV1('3')}:0`,
+          tokenAddress: `0xb2${'3'.repeat(38)}`,
+          observationBlockNumber: '49500200',
+        }),
+      );
+      assert.equal((await remeasurable(harness.repository, IN_BAND)).length, 2);
+      assert.equal((await remeasurable(harness.repository, IN_BAND, 1)).length, 1);
     });
   });
 

@@ -504,6 +504,117 @@ describe('a background pass can never certify', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// The reserved queue, and why it exists.
+//
+// The primary queue is newest-first, and has to be: Discover lists the newest
+// launches. What that ordering cannot do is come back. In production the pass
+// selected 25 and measured 5 while ~83 launches arrived an hour, so the head of
+// the queue was never older than forty minutes: a token measured once was never
+// measured again. On 2026-08-17 that meant 153 tokens with a comparable
+// measurement overdue, 79 of them by more than twelve hours, and no launch in
+// the 48-hour window with two comparable observations more than 15.5 hours
+// apart — while the movers rail asked for a pair 24 hours apart.
+//
+// Nothing about a MEASUREMENT changed. What changed is which eligible launch
+// the budget is spent on first.
+// ---------------------------------------------------------------------------
+describe('the pair-forming queue is spent before the newest-first one', () => {
+  /** 24h after T0: a launch measured at T0 is now one measurement from a pair. */
+  const IN_BAND = '2026-08-05T00:00:00.000Z';
+  /** Launches that arrived AFTER the one measured at T0. This is the shape
+   * that starves it: the newest-first queue puts them in front of it forever. */
+  const LATER = '2026-08-04T23:00:00.000Z';
+
+  /** One old launch, then two newer ones — production in miniature. */
+  const arrivals = () => [
+    launchFixture({ transactionHash: hashOf('1'), detectedAt: T0 }),
+    launchFixture({ transactionHash: hashOf('2'), detectedAt: LATER }),
+    launchFixture({ transactionHash: hashOf('3'), detectedAt: LATER }),
+  ];
+
+  test('a token measured a day ago is reached again, ahead of newer candidates', async () => {
+    const { observations } = await seed(arrivals());
+    // One pass at T0 with a budget of one: exactly the production shape, where
+    // the pass measures a fraction of what it selected. Only the old launch
+    // exists yet, so it is the one measured.
+    const first = await pass(observations, fakeDeps(), { maxDeepCandidates: 1 }, 'worker-a', T0);
+    assert.equal(first.attempted, 1);
+    assert.equal(first.pairRemeasures, 0, 'nothing can be pair-forming on the first pass');
+    const measuredFirst = first.candidates[0]!.launchId;
+
+    // A day later, with two newer launches in front of it and the same budget
+    // of one. Under the single queue this pass measured a newer launch and the
+    // token that could have carried a pair was never seen again.
+    const second = await pass(observations, fakeDeps(), { maxDeepCandidates: 1 }, 'worker-a', IN_BAND);
+    assert.equal(second.pairRemeasures, 1);
+    assert.equal(second.attempted, 1);
+    assert.equal(second.candidates[0]?.launchId, measuredFirst);
+  });
+
+  test('the reservation is skipped entirely when nothing is due', async () => {
+    const { observations } = await seed([
+      launchFixture({ transactionHash: hashOf('1') }),
+      launchFixture({ transactionHash: hashOf('2') }),
+    ]);
+    const outcome = await pass(observations, fakeDeps(), { maxDeepCandidates: 1 });
+    assert.equal(outcome.pairRemeasures, 0);
+    // And the primary queue is untouched: the reservation costs nothing on a
+    // pass where no token is one measurement from a pair.
+    assert.equal(outcome.eligible, 2);
+  });
+
+  test('a launch due on both counts is measured once, not twice', async () => {
+    const { observations } = await seed([launchFixture({ transactionHash: hashOf('1') })]);
+    await pass(observations, fakeDeps(), {}, 'worker-a', T0);
+    const second = await pass(observations, fakeDeps(), {}, 'worker-a', IN_BAND);
+    assert.equal(second.pairRemeasures, 1);
+    // Both queries read the same table and both would return it.
+    assert.equal(second.eligible, 1);
+    assert.equal(second.attempted, 1);
+  });
+
+  test('a zero reservation restores the old single-queue pass — and its starvation', async () => {
+    // The control. Without the reservation the day-old token is behind two
+    // never-measured launches in a newest-first queue with a budget of one, so
+    // it is not reached — which is precisely the production behaviour this
+    // change exists to end. If this test ever stops showing a DIFFERENT launch,
+    // the one above proves nothing.
+    const { observations } = await seed(arrivals());
+    const first = await pass(observations, fakeDeps(), { maxDeepCandidates: 1 }, 'worker-a', T0);
+    const outcome = await pass(
+      observations,
+      fakeDeps(),
+      { maxDeepCandidates: 1, pairRemeasureCandidates: 0 },
+      'worker-a',
+      IN_BAND,
+    );
+    assert.equal(outcome.pairRemeasures, 0);
+    assert.notEqual(outcome.candidates[0]?.launchId, first.candidates[0]!.launchId);
+  });
+
+  test('the reservation can never exceed the pass’s own candidate budget', async () => {
+    const { observations } = await seed([
+      launchFixture({ transactionHash: hashOf('1') }),
+      launchFixture({ transactionHash: hashOf('2') }),
+      launchFixture({ transactionHash: hashOf('3') }),
+    ]);
+    // All three measured a day ago, so all three are pair-forming now.
+    await pass(observations, fakeDeps(), { maxDeepCandidates: 3 }, 'worker-a', T0);
+    const outcome = await pass(
+      observations,
+      fakeDeps(),
+      // A reservation larger than the budget would be a promise the pass cannot
+      // keep, and would read as "the primary queue got nothing".
+      { maxDeepCandidates: 1, pairRemeasureCandidates: 9 },
+      'worker-a',
+      IN_BAND,
+    );
+    assert.equal(outcome.pairRemeasures, 1);
+    assert.equal(outcome.eligible, 3, 'the other two are still in the primary queue behind it');
+  });
+});
+
 describe('budgets bound the pass without inventing observations', () => {
   test('a launch the budget never reached gets no observation', async () => {
     // §16.28. `not_checked` is a different fact from `unmeasured`: one means

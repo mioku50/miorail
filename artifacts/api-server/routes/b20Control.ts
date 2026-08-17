@@ -109,6 +109,8 @@ import {
   moversCollectingHistoryV1,
   MEASURED_MOVE_LABEL_V1,
   MEASURED_MOVE_NOTE_V1,
+  MEASURED_MOVE_BASELINE_AGE_MS_V1,
+  MEASURED_MOVE_BASELINE_TOLERANCE_MS_V1,
   b20PipelineStatusV1,
   profileRefusalV1,
   B20_STANDING_GROUPS_V1,
@@ -1209,11 +1211,12 @@ export async function readB20UniverseSummaryV1(input: {
  * produces a larger passing size for the same pool and is excluded, not
  * ranked beside these. Matches the measurement worker's reference profile. */
 export const MARKET_RAIL_TOLERANCE_BPS_V1 = 300;
-export const MARKET_RAIL_BASELINE_AGE_MS_V1 = 24 * 60 * 60 * 1000;
-/** A measurement pass is not on a precise timer, so "about 24 hours" needs a
- * window. Four hours either side: wide enough to survive a slow pass, narrow
- * enough that the label is not a fiction. */
-export const MARKET_RAIL_BASELINE_TOLERANCE_MS_V1 = 4 * 60 * 60 * 1000;
+/** The rail's 24 hours, and its window, from the shared projection. Declared
+ * there rather than here because the measurement worker has to schedule against
+ * the same two numbers — a route and a worker that each own a copy is how the
+ * rail came to ask for pairs the cadence could never produce. */
+export const MARKET_RAIL_BASELINE_AGE_MS_V1 = MEASURED_MOVE_BASELINE_AGE_MS_V1;
+export const MARKET_RAIL_BASELINE_TOLERANCE_MS_V1 = MEASURED_MOVE_BASELINE_TOLERANCE_MS_V1;
 /** §3 — a mover needs a measured exit for at least 25% of the tokens returned
  * by the reference entry. A ratio is intentional: a raw atomic threshold
  * silently treats 6-decimal and 18-decimal B20s as different markets. */

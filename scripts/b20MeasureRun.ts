@@ -21,6 +21,8 @@ import {
   type B20QuoteAlignmentV1,
   type B20TransferPolicyStateV1,
   type OpportunityProfileV2,
+  MEASURED_MOVE_BASELINE_AGE_MS_V1,
+  MEASURED_MOVE_BASELINE_TOLERANCE_MS_V1,
 } from '@mioagent/opportunity-rail';
 
 // ---------------------------------------------------------------------------
@@ -73,6 +75,12 @@ export interface MeasurePassConfigV1 {
   observationStaleMs: number;
   minReMeasureIntervalMs: number;
   maxLaunchAgeMs: number;
+  /**
+   * Deep candidates reserved for the pair-forming queue. Optional while a
+   * caller rolls forward; absent behaves as zero, which is exactly the old
+   * single-queue pass.
+   */
+  pairRemeasureCandidates?: number;
   leaseTtlMs: number;
   /** The feed's reference measurement parameters. NOT a user qualification. */
   profile: OpportunityProfileV2;
@@ -225,6 +233,10 @@ export interface MeasurePassOutcomeV1 {
   budgetExhausted: boolean;
   byState: Record<string, number>;
   candidates: MeasuredCandidateV1[];
+  /** How many of `eligible` came from the pair-forming queue. Logged on every
+   * pass, because "the movers rail is filling" is otherwise unobservable until
+   * a day later. */
+  pairRemeasures: number;
 }
 
 export interface MeasurePassInputV1 {
@@ -337,6 +349,7 @@ export async function runB20MeasurePassV1(input: MeasurePassInputV1): Promise<Me
     budgetExhausted: false,
     byState: {},
     candidates: [],
+    pairRemeasures: 0,
   };
 
   // §13 — a lease of its own. The ingestion worker must keep reading launches
@@ -349,13 +362,44 @@ export async function runB20MeasurePassV1(input: MeasurePassInputV1): Promise<Me
   if (!lease) return { ...outcome, result: 'run_already_active' };
 
   try {
-    const eligible = await input.observations.selectMeasurableLaunches({
+    // ── Two queues, and the order between them is the whole fix ─────────────
+    //
+    // The primary queue is newest-first and stays that way. What it cannot do
+    // is come back: with launches arriving faster than the pass can measure
+    // them, its head was never older than forty minutes, so a token measured
+    // once was never measured again and no pair 24 hours apart could form.
+    //
+    // The reserved queue holds launches that are ONE measurement away from such
+    // a pair, oldest measurement first. It goes FIRST in `eligible` because the
+    // budget is spent from the front — a reservation that sits behind 25 newer
+    // candidates is not a reservation. It is short by construction, so this
+    // costs the primary queue nothing on a pass where nothing is due.
+    const pairBudget = Math.max(
+      0,
+      Math.min(input.config.pairRemeasureCandidates ?? 0, input.config.maxDeepCandidates),
+    );
+    const pairQueue =
+      pairBudget === 0
+        ? []
+        : await input.observations.selectRemeasurableLaunches({
+            limit: pairBudget,
+            maxLaunchAgeMs: input.config.maxLaunchAgeMs,
+            pairAgeMs: MEASURED_MOVE_BASELINE_AGE_MS_V1,
+            pairToleranceMs: MEASURED_MOVE_BASELINE_TOLERANCE_MS_V1,
+            now: startedAt.toISOString(),
+          });
+    const primary = await input.observations.selectMeasurableLaunches({
       limit: input.config.maxLaunches,
       maxLaunchAgeMs: input.config.maxLaunchAgeMs,
       minReMeasureIntervalMs: input.config.minReMeasureIntervalMs,
       now: startedAt.toISOString(),
     });
+    // De-duplicated on launch id: both queries read the same table, and a
+    // launch that is due on both counts must not be measured twice in one pass.
+    const seen = new Set(pairQueue.map((launch) => launch.launchId));
+    const eligible = [...pairQueue, ...primary.filter((launch) => !seen.has(launch.launchId))];
     outcome.eligible = eligible.length;
+    outcome.pairRemeasures = pairQueue.length;
     if (eligible.length === 0) return { ...outcome, result: 'nothing_eligible' };
 
     const chunk = Math.max(1, Math.min(8, input.config.maxConcurrentCandidates));

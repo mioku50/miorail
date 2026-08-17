@@ -231,6 +231,62 @@ export function createDatabaseB20ObservationRepository(
       });
     },
 
+    async selectRemeasurableLaunches(input) {
+      const versions = [...(input.measurementVersions ?? [B20_MEASUREMENT_VERSION_V1])];
+      const limit = Math.max(1, Math.min(100, input.limit));
+      const oldest = new Date(Date.parse(input.now) - input.maxLaunchAgeMs).toISOString();
+      // The band, expressed as the AGE of the newest comparable observation.
+      // Measuring now writes an observation `age` after it, so an age inside
+      // [pairAge - tolerance, pairAge + tolerance] is exactly the set where one
+      // more measurement produces a pair the movers rail will accept.
+      const youngest = new Date(Date.parse(input.now) - (input.pairAgeMs - input.pairToleranceMs)).toISOString();
+      const oldestInBand = new Date(Date.parse(input.now) - (input.pairAgeMs + input.pairToleranceMs)).toISOString();
+
+      // The LATERAL takes the newest observation of ANY state, not the newest
+      // comparable one. That is the point: if the token's newest reading is a
+      // route failure, its market profile is not what a pair would compare, and
+      // this queue must not claim otherwise. The mover projection reads the
+      // newest comparable observation, so the two agree only when the newest IS
+      // comparable — which is the condition below.
+      const rows = await sql`
+        SELECT l.id, l.token_address, l.block_number, l.block_hash, l.detected_at,
+               l.ingestion_source, o.measured_at AS last_measured_at
+        FROM b20_launches l
+        JOIN LATERAL (
+          SELECT last.measured_at, last.state, last.reason_code
+          FROM b20_opportunity_observations last
+          WHERE last.launch_id = l.id
+            AND last.measurement_version = ANY(${versions}::text[])
+          ORDER BY last.measured_at DESC, last.id DESC
+          LIMIT 1
+        ) o ON true
+        WHERE l.canonical
+          AND l.chain_id = 8453
+          AND l.detected_at >= ${oldest}::timestamptz
+          AND (
+            o.state = 'provisional'
+            OR (o.state = 'rejected' AND o.reason_code = 'round_trip_above_tolerance')
+          )
+          AND o.measured_at <= ${youngest}::timestamptz
+          AND o.measured_at >= ${oldestInBand}::timestamptz
+        -- Oldest first. A queue ordered the other way is the one that starved.
+        ORDER BY o.measured_at ASC, l.id ASC
+        LIMIT ${limit}`;
+
+      return rows.map((row): B20MeasurableLaunchV1 => {
+        const record = row as Record<string, unknown>;
+        return {
+          launchId: String(record.id),
+          tokenAddress: String(record.token_address),
+          blockNumber: String(record.block_number),
+          blockHash: String(record.block_hash),
+          detectedAt: isoV1(record.detected_at),
+          ingestionSource: record.ingestion_source === 'backfill' ? 'backfill' : 'live',
+          lastMeasuredAt: isoOrNullV1(record.last_measured_at),
+        };
+      });
+    },
+
     async insertObservation(observation) {
       const parsed = assertObservationV1(observation, 'write');
       const inserted = await sql`

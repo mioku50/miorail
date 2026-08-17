@@ -511,6 +511,42 @@ export interface B20ObservationRepositoryV1 {
   }): Promise<B20MeasurableLaunchV1[]>;
 
   /**
+   * Launches one measurement away from carrying a 24h comparison.
+   *
+   * `selectMeasurableLaunches` orders newest-first, which is right for finding
+   * what just launched and fatal for keeping any history. Production ran a
+   * queue where 25 candidates were selected and 5 measured per pass while ~83
+   * launches arrived an hour: the head of that queue was never older than forty
+   * minutes, so a token measured once was never reached again. 153 tokens with
+   * a comparable measurement were overdue, 79 of them by more than twelve
+   * hours, and no launch in the whole 48-hour window had two comparable
+   * observations more than 15.5 hours apart. The movers rail was empty because
+   * nothing could pair, not because nothing moved.
+   *
+   * This is the other queue: launches whose NEWEST observation already carries
+   * a comparable market profile and is now old enough that measuring again puts
+   * the two inside the pairing window. Ordered oldest-measurement first, so it
+   * cannot starve the way a newest-first queue does, and bounded by the caller
+   * so the primary queue keeps most of the budget.
+   *
+   * It changes WHICH eligible launch is measured, never what a measurement
+   * means: same profile, same tolerances, same idempotency.
+   *
+   * NON-CANONICAL LAUNCHES ARE NEVER RETURNED.
+   */
+  selectRemeasurableLaunches(input: {
+    limit: number;
+    /** Launches older than this are past the active-measurement window. */
+    maxLaunchAgeMs: number;
+    /** Target distance between the two measurements — the rail's own 24h. */
+    pairAgeMs: number;
+    /** How far from that distance a pair may still sit. */
+    pairToleranceMs: number;
+    now: string;
+    measurementVersions?: readonly string[];
+  }): Promise<B20MeasurableLaunchV1[]>;
+
+  /**
    * Idempotent on identity. Identical evidence returns the stored row;
    * DIFFERENT evidence under the same identity is a conflict, never a silent
    * overwrite — two disagreeing measurements of one block are two facts and

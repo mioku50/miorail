@@ -112,7 +112,7 @@ describe('§4 — measured profile misses remain visible and are said plainly', 
     assert.equal(result.outsideReference, 1);
   });
 
-  test('the card shows the measurement in amber and names the reference', () => {
+  test('the card shows the measurement in amber and names the reference once', () => {
     const markup = renderLeaders({
       leaders: [
         leader(ADDRESSES[0]!),
@@ -125,13 +125,18 @@ describe('§4 — measured profile misses remain visible and are said plainly', 
       ],
     });
     assert.match(markup, /4\.36%/);
-    assert.match(markup, /above 3% reference/);
     assert.match(markup, /rail-fact-v warn/);
-    assert.match(markup, /1 measured profile exceeds the configured round-trip reference and remains visible in amber/);
+    // The reference is named once, under the header, and the count of measured
+    // profiles above it comes with it. It used to be repeated under every
+    // value, which is what made a five-row rail unreadable.
+    assert.match(markup, /Round-trip cost in amber is above the feed’s 3% reference/);
+    assert.match(markup, /1 of the measured profiles here is above that reference/);
+    assert.equal((markup.match(/above the feed’s 3% reference/g) ?? []).length, 1);
   });
 
-  test('nothing is said when every profile is within reference', () => {
-    assert.ok(!/remain.*visible in amber/.test(renderLeaders({ leaders: [leader(ADDRESSES[0]!)] })));
+  test('nothing is said about the reference count when every profile is within it', () => {
+    assert.ok(!/of the measured profiles here is above/.test(renderLeaders({ leaders: [leader(ADDRESSES[0]!)] })));
+    assert.ok(!/are above that reference/.test(renderLeaders({ leaders: [leader(ADDRESSES[0]!)] })));
   });
 
   test('the client labels but never re-ranks', () => {
@@ -210,8 +215,10 @@ describe('§6 — measured views, stated as such', () => {
   test('capacity renders as a bound, never a bare figure', () => {
     const markup = renderLeaders({ leaders: [leader(ADDRESSES[0]!)] });
     assert.match(markup, /≥ 4000 S/);
-    assert.match(markup, /100% of reference entry/);
-    assert.match(markup, /Nothing between the largest passing and first failing size/);
+    // What the glyph means, and what the ladder did not measure, said once
+    // under the header rather than under every row.
+    assert.match(markup, /Largest tested exit is a lower bound/);
+    assert.match(markup, /nothing between it and the first failing size was measured either/);
   });
 
   test('large capacity remains inside the rail as a conservative compact bound', () => {
@@ -252,17 +259,25 @@ describe('§6 — measured views, stated as such', () => {
     assert.equal(measuredAgeLabelV1('2026-08-04T12:00:00.000Z', NOW), '1 d old');
   });
 
-  test('stale market measurements keep their numbers and say they are past the window', () => {
+  test('stale market measurements keep their numbers and are marked on the row', () => {
     const leaders = renderLeaders({ leaders: [leader(ADDRESSES[0]!, { freshness: 'stale' })] });
     const movers = renderMovers({
       movers: [{ ...mover(ADDRESSES[0]!, 2500), freshness: 'stale' }],
     });
     for (const markup of [leaders, movers]) {
-      assert.match(markup, /past freshness window/);
+      // The ONE qualifier that stays on the row. Everything else moved under
+      // the header; this one does not explain the number, it says the number is
+      // not current — so a stale row can never read as part of a live ranking.
+      assert.match(markup, /rail-fact-mark">stale</);
+      assert.match(markup, /rail-fact-v off/);
+      // And what "stale" means is spelled out, once.
+      assert.match(markup, /past its freshness window: historical evidence, not a current quote/);
       // The AGE survives the stale mark. A reader has to be able to tell a
       // ten-minute-old reading from a week-old one.
       assert.match(markup, /10 min old/);
     }
+    // A fresh row carries no marker at all, so the chip means something.
+    assert.ok(!/rail-fact-mark/.test(renderLeaders({ leaders: [leader(ADDRESSES[0]!)] })));
     assert.match(leaders, /≥ 4000 S/);
     // Percentage POINTS, and no leading plus: this is the change in what a
     // round trip costs, not a return anybody earned.
@@ -293,18 +308,28 @@ describe('§6 — measured views, stated as such', () => {
 // name of what it is.
 // ---------------------------------------------------------------------------
 describe('§8 — every rail figure is named, and every bound survives', () => {
-  test('the leaders row names its three facts', () => {
-    const markup = renderLeaders({ leaders: [leader(ADDRESSES[0]!)] });
+  test('the leaders row names its three facts and repeats no explanation', () => {
+    const markup = renderLeaders({
+      leaders: [leader(ADDRESSES[0]!), leader(ADDRESSES[1]!), leader(ADDRESSES[2]!)],
+    });
     assert.match(markup, /Largest tested exit/);
     assert.match(markup, /Round-trip cost/);
     assert.match(markup, /Freshness/);
-    // The bound is stated twice on purpose: in the glyph, and in words for a
-    // reader who does not read `≥` as "at least".
     assert.match(markup, /≥ 4000 S/);
-    assert.match(markup, /lower bound/);
-    assert.match(markup, /100% of reference entry/);
-    // The reference the cost was judged against travels with the cost.
-    assert.match(markup, /within 3% reference/);
+    // Three rows, one explanation. The rail used to carry a qualifier under
+    // every value — five rows meant fifteen repetitions of three sentences, and
+    // the numbers a reader came for were the smallest thing in the column.
+    assert.equal((markup.match(/rail-row/g) ?? []).length, 3);
+    assert.equal((markup.match(/lower bound/g) ?? []).length, 1);
+    assert.equal((markup.match(/A measured view, not a recommendation/g) ?? []).length, 1);
+    assert.ok(!/rail-fact-note/.test(markup), 'a per-value note came back');
+  });
+
+  test('the shared block is a control, not a wall of text above the rows', () => {
+    const markup = renderLeaders({ leaders: [leader(ADDRESSES[0]!)] });
+    assert.match(markup, /<details class="discover-guide rail-guide"><summary>How this is ranked<\/summary>/);
+    // The rows come after it, so the rail still opens on measurements.
+    assert.ok(markup.indexOf('How this is ranked') < markup.indexOf('rail-row'));
   });
 
   test('an unmeasured round trip says so rather than showing a number', () => {
@@ -346,7 +371,7 @@ describe('§8 — every rail figure is named, and every bound survives', () => {
       assert.ok(!new RegExp(banned, 'i').test(markup), `the rail says "${banned}"`);
     }
     // And the sentence that bounds the ladder stays on the card.
-    assert.match(markup, /Nothing between the largest passing and first failing size/);
+    assert.match(markup, /nothing between it and the first failing size was measured either/);
   });
 });
 

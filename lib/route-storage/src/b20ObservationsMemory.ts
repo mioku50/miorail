@@ -64,6 +64,11 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
     for (const launch of canonical) {
       const detected = Date.parse(launch.detectedAt);
       if (now - detected > input.maxLaunchAgeMs) continue;
+      // The Postgres query carries `AND l.detected_at <= now`, and this did
+      // not. A launch stamped in the future sorted to the very front of a
+      // newest-first queue, so the fake happily offered a candidate the real
+      // one never returns — the exact asymmetry this package forbids.
+      if (detected > now) continue;
       // Newest first, so [0] is the observation the backoff is decided on and
       // the run of matching rows after it is the consecutive repeat count.
       const observations = [...this.observations.values()]
@@ -124,6 +129,73 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
         return Date.parse(right.detectedAt) - Date.parse(left.detectedAt);
       })
       .slice(0, Math.max(1, Math.min(500, input.limit)));
+  }
+
+  /**
+   * The other queue: launches one measurement away from a comparable pair.
+   *
+   * Mirrors the Postgres version exactly, including the two things that are
+   * easy to get kinder here — the newest observation of ANY state decides
+   * eligibility (not the newest COMPARABLE one), and the band is closed at both
+   * ends. A fake that admitted a token whose newest reading is `no_exit_route`
+   * would let a test pass on a launch the real queue never returns.
+   */
+  async selectRemeasurableLaunches(input: {
+    limit: number;
+    maxLaunchAgeMs: number;
+    pairAgeMs: number;
+    pairToleranceMs: number;
+    now: string;
+    measurementVersions?: readonly string[];
+  }): Promise<B20MeasurableLaunchV1[]> {
+    const now = Date.parse(input.now);
+    const versions = input.measurementVersions ?? [B20_MEASUREMENT_VERSION_V1];
+    const canonical = await this.launches.listLaunches({
+      key: {
+        chainId: 8453,
+        factoryAddress: '0xb20f000000000000000000000000000000000000',
+        decoderVersion: 'b20-created/v1',
+      },
+      limit: 1_000,
+    });
+
+    const rows: (B20MeasurableLaunchV1 & { measuredAtMs: number })[] = [];
+    for (const launch of canonical) {
+      if (now - Date.parse(launch.detectedAt) > input.maxLaunchAgeMs) continue;
+      const latest = [...this.observations.values()]
+        .filter((row) => row.launchId === launch.id && versions.includes(row.measurementVersion))
+        .sort((left, right) => Date.parse(right.measuredAt) - Date.parse(left.measuredAt))[0];
+      if (!latest) continue;
+      const comparable =
+        latest.state === 'provisional' ||
+        (latest.state === 'rejected' && latest.reasonCode === 'round_trip_above_tolerance');
+      if (!comparable) continue;
+      const age = now - Date.parse(latest.measuredAt);
+      if (age < input.pairAgeMs - input.pairToleranceMs) continue;
+      if (age > input.pairAgeMs + input.pairToleranceMs) continue;
+      rows.push({
+        launchId: launch.id,
+        tokenAddress: launch.tokenAddress,
+        blockNumber: launch.blockNumber,
+        blockHash: launch.blockHash,
+        detectedAt: launch.detectedAt,
+        ingestionSource: launch.ingestionSource,
+        lastMeasuredAt: latest.measuredAt,
+        measuredAtMs: Date.parse(latest.measuredAt),
+      });
+    }
+
+    // Oldest measurement first, then launch id — the same total order the
+    // Postgres query produces, so a test cannot pass on one and fail on the
+    // other.
+    return rows
+      .sort((left, right) =>
+        left.measuredAtMs !== right.measuredAtMs
+          ? left.measuredAtMs - right.measuredAtMs
+          : left.launchId.localeCompare(right.launchId),
+      )
+      .slice(0, Math.max(1, Math.min(100, input.limit)))
+      .map(({ measuredAtMs: _measuredAtMs, ...row }) => row);
   }
 
   async insertObservation(observation: B20OpportunityObservationV1): Promise<B20ObservationInsertResultV1> {

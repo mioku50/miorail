@@ -24,6 +24,7 @@ import {
 import { factValueClassV1 } from './opportunityCardView';
 import { B20ConsolePanel, type B20ConsolePanelModelV1 } from './B20ConsolePanel';
 import { B20LaunchContextCard, type B20LaunchContextModelV1 } from './B20LaunchContextCard';
+import { discoverCardDomIdV1 } from './discoverFocus';
 
 void React;
 
@@ -286,7 +287,36 @@ export interface OpportunitiesScreenModelV1 {
    * for.
    */
   launchContext?: B20LaunchContextModelV1;
+  /**
+   * One token, opened by name from the URL.
+   *
+   * Optional while a host rolls forward; absent renders the feed exactly as
+   * before. The card may come from the page the feed already loaded or from a
+   * detail read by address — this screen does not care which, and deliberately
+   * cannot tell, so a token outside the current page is not a second code path.
+   */
+  focus?: B20DiscoverFocusModelV1;
   onRefresh?: () => void;
+}
+
+/**
+ * The focused measurement, as this screen meets it.
+ *
+ * `card` is null while it loads and null when the address is not in the feed at
+ * all. Those two are different sentences on screen, which is why `loading` and
+ * `notFound` are separate fields rather than inferred from a null card.
+ */
+export interface B20DiscoverFocusModelV1 {
+  /** Lowercased address, or null when nothing is focused. */
+  tokenAddress: string | null;
+  loading: boolean;
+  card: OpportunityCardViewV1 | null;
+  /** True when the feed knows no canonical launch at this address. */
+  notFound: boolean;
+  /** A transport failure, which is not the same as "no such launch". */
+  error: string | null;
+  /** Returns to the whole feed. The host drops the query parameter. */
+  onClear: () => void;
 }
 
 const B20_COPILOT_PROMPTS_V1 = [
@@ -392,11 +422,15 @@ function OpportunityCard({
   onOpen,
   copilot,
   launchContext,
+  measurementOpen,
 }: {
   card: OpportunityCardViewV1;
   onOpen: (tokenAddress: string) => void;
   copilot?: B20CopilotPanelModelV1;
   launchContext?: B20LaunchContextModelV1;
+  /** Opens "What was measured" on render. Set only by the focused view, which
+   * exists because a reader asked for this token's measurement by name. */
+  measurementOpen?: boolean;
 }) {
   const [askOpen, setAskOpen] = React.useState(false);
   const [question, setQuestion] = React.useState('');
@@ -427,7 +461,10 @@ function OpportunityCard({
     // whose round trip and capacity were null, which after the verdict split is
     // mostly "nobody has bought this yet" — an absent market, not a fault. The
     // section a card sits in now carries that meaning honestly.
-    <article className="cardrow">
+    // The id is the scroll target for a deep link. It is derived from the token
+    // address by the same helper the link builder uses, so a URL and the element
+    // it points at cannot drift apart.
+    <article className="cardrow" id={discoverCardDomIdV1(card.tokenAddress)}>
       <div className="cr-top">
         <span className="cr-name">
           {card.symbol} <span className="sub">{card.name}</span>
@@ -479,7 +516,7 @@ function OpportunityCard({
       <ProjectContext project={card.project} />
 
 
-      <details className="card-evidence">
+      <details className="card-evidence" open={measurementOpen === true}>
         <summary>What was measured</summary>
         <div className="card-evidence-body">
           {measurementMissing ? (
@@ -756,6 +793,80 @@ function OpportunityCard({
   );
 }
 
+// ---------------------------------------------------------------------------
+// The focused measurement.
+//
+// Rendered above the feed rather than by scrolling to a card, because the card
+// a reader asked for is frequently not on the page: the feed shows 25 of ~26,000
+// launches in the window, and the rails rank over 1,000. Loading the detail by
+// address is the only way "View measurement" can mean the same thing for a token
+// on page one and a token on page forty.
+//
+// It shows the SAME card component as the feed. A second rendering of a
+// measurement is a second place for it to disagree with itself.
+// ---------------------------------------------------------------------------
+function FocusedMeasurement({
+  focus,
+  onOpenToken,
+  copilot,
+  launchContext,
+}: {
+  focus: B20DiscoverFocusModelV1;
+  onOpenToken: (tokenAddress: string) => void;
+  copilot?: B20CopilotPanelModelV1;
+  launchContext?: B20LaunchContextModelV1;
+}) {
+  const anchor = React.useRef<HTMLDivElement | null>(null);
+  const token = focus.tokenAddress;
+  React.useEffect(() => {
+    if (!token || !anchor.current) return;
+    // Only when the browser can honour it. `scrollIntoView` is missing in the
+    // static-render path the tests use and in older Base App webviews.
+    anchor.current.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  }, [token]);
+
+  if (!token) return null;
+
+  return (
+    <div className="panel" ref={anchor} aria-label="Focused measurement">
+      <div className="ph">
+        <h3>Measurement</h3>
+        <span className="rt">
+          <button type="button" className="btn sec" onClick={focus.onClear}>
+            Back to all
+          </button>
+        </span>
+      </div>
+      <div className="pb">
+        {focus.loading ? (
+          <p className="empty">Reading this token’s measurement…</p>
+        ) : focus.error ? (
+          <p className="note warn">{focus.error}</p>
+        ) : focus.notFound ? (
+          // Not "this is not a B20 token". Discover knows what it ingested, and
+          // an address it has no canonical launch for is a gap in this index.
+          <p className="empty">
+            Miorail has no canonical B20 launch at <span className="mono">{token}</span> in this index, so there
+            is no measurement to open.
+          </p>
+        ) : focus.card ? (
+          <div className="cardrows">
+            <OpportunityCard
+              card={focus.card}
+              onOpen={onOpenToken}
+              copilot={copilot}
+              launchContext={launchContext}
+              measurementOpen
+            />
+          </div>
+        ) : (
+          <p className="empty">Reading this token’s measurement…</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /**
  * The feed, split into the sections a reader can act on.
  *
@@ -853,6 +964,17 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
             )}
           </div>
         </div>
+      )}
+
+      {/* One token, opened by name. Above everything else: a reader who clicked
+          "View measurement" asked for this card and nothing else on the page. */}
+      {model.focus?.tokenAddress && (
+        <FocusedMeasurement
+          focus={model.focus}
+          onOpenToken={model.onOpenToken}
+          copilot={model.copilot}
+          launchContext={model.launchContext}
+        />
       )}
 
       {/* Above the feed, because the question a reader arrives with is about

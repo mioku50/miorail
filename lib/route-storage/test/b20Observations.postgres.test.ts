@@ -93,7 +93,10 @@ before(async () => {
   if (!throwaway) return;
   sql = postgres(url!, { max: 1, onnotice: () => {} });
   await sql.unsafe(
-    'DROP TABLE IF EXISTS b20_opportunity_observations, b20_measure_leases, b20_launches, b20_discover_cursors, b20_discover_runs CASCADE',
+    // `b20_launch_buyers` belongs here too: without it the second run against
+    // the same throwaway database fails at `CREATE TABLE`, which reads as a
+    // broken test rather than as a stale schema.
+    'DROP TABLE IF EXISTS b20_opportunity_observations, b20_measure_leases, b20_launch_buyers, b20_launches, b20_discover_cursors, b20_discover_runs CASCADE',
   );
   await sql.unsafe('DROP FUNCTION IF EXISTS b20_launches_immutable_identity() CASCADE');
   await sql.unsafe('DROP FUNCTION IF EXISTS b20_observations_immutable() CASCADE');
@@ -105,6 +108,15 @@ before(async () => {
     // narrower than production's since the day ETH-quoted pools were allowed.
     '0032_b20_observation_quote_assets.sql',
     '0033_b20_observation_pool_hook.sql',
+    // 0043 and 0045 were missing for the same reason 0032 was, and with the
+    // same effect: this suite ran against a schema narrower than production's,
+    // so every contract test that touches `venues_consulted` or the live/
+    // backfill split failed against Postgres the moment anybody pointed a
+    // throwaway database at it. Nobody saw it, because with no
+    // MIOAGENT_MIGRATION_TEST_URL the whole file skips.
+    '0035_b20_launch_buyers.sql',
+    '0043_b20_observation_venues_consulted.sql',
+    '0045_b20_launch_ingestion_source.sql',
   ]) {
     const migration = await readFile(resolve(drizzleDir(), file), 'utf8');
     await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));

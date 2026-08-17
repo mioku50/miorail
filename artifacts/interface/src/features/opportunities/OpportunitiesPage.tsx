@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useLocation } from 'wouter';
+import { useLocation, useSearch } from 'wouter';
 import { useAccount } from 'wagmi';
 import {
   B20ExitCapacityLeadersCard,
@@ -11,6 +11,8 @@ import {
   chainLabelV1,
   consoleHomeSectionV1,
   consoleSectionPathV1,
+  discoverFocusHrefV1,
+  parseDiscoverFocusV1,
   GOAL_HANDOFF_KEY_V1,
   discoverFailureCopyV1,
   opportunityCardViewV1,
@@ -31,9 +33,11 @@ import {
   useB20LaunchContext,
   useB20MarketRails,
   useB20Opportunities,
+  useB20Opportunity,
   useStatus,
 } from '@mioagent/api-client-react';
 import { useConsoleNav } from '../console/useConsoleNav';
+import { discoverFocusStateV1 } from './discoverFocusState';
 
 // ---------------------------------------------------------------------------
 // T70 §1 — the product's home.
@@ -55,6 +59,11 @@ function shortAddress(address: string | undefined): string | null {
 
 export function OpportunitiesPage() {
   const [, navigate] = useLocation();
+  // The focused token lives in the URL, so a refresh and a Back press both
+  // restore it. Read through wouter's own search hook rather than
+  // `window.location.search`: the latter does not re-render when the same page
+  // navigates, which is exactly what opening a token from the rail does.
+  const search = useSearch();
   const { address } = useAccount();
   const { theme, setTheme } = useConsoleTheme();
   const status = useStatus();
@@ -89,6 +98,25 @@ export function OpportunitiesPage() {
     },
     { enabled: discoverOn },
   );
+  // ── The focused token ────────────────────────────────────────────────────
+  // Validated in `parseDiscoverFocusV1`, because `?token=` is text a stranger
+  // can write. An address that is not one focuses nothing at all.
+  const focus = useMemo(() => parseDiscoverFocusV1(search), [search]);
+  const focusedInFeed = useMemo(
+    () => (feed.data?.cards ?? []).find((card) => card.tokenAddress.toLowerCase() === focus.tokenAddress) ?? null,
+    [feed.data, focus.tokenAddress],
+  );
+  // Only when the feed's own page does not already hold it. A token on page one
+  // costs no extra request; a token on page forty is read by address.
+  const focusDetail = useB20Opportunity(focus.tokenAddress, {
+    enabled: discoverOn && focus.tokenAddress !== null && focusedInFeed === null,
+  });
+  const focusCard = useMemo(() => {
+    if (focus.tokenAddress === null) return null;
+    const card = focusedInFeed ?? focusDetail.data?.card ?? null;
+    return card ? opportunityCardViewV1(card) : null;
+  }, [focus.tokenAddress, focusedInFeed, focusDetail.data]);
+
   const copilot = useB20CopilotAsk();
   const launchContext = useB20LaunchContext(contextToken);
   const b20Console = useB20ConsoleAsk({
@@ -153,9 +181,12 @@ export function OpportunitiesPage() {
     now: new Date(),
     expanded: railExpanded,
     onToggleExpanded: () => setRailExpanded((open) => !open),
-    // Opening a token from the rail goes where that token can be acted on.
+    // A rail row opens THIS token's measurement, and stays on Discover. It used
+    // to navigate to Portfolio, which owns the wallet-bound exit check and no
+    // Discover measurement at all — and which has never read `?token=`, so the
+    // address was dropped on the way as well.
     onOpenToken: (token: string) =>
-      navigate(`${consoleSectionPathV1('portfolio')}?token=${encodeURIComponent(token)}`),
+      navigate(discoverFocusHrefV1({ sectionPath: consoleSectionPathV1('opportunities'), tokenAddress: token })),
   };
 
   const marketRail = (
@@ -248,6 +279,21 @@ export function OpportunitiesPage() {
         // simulation and the clearance; Discover owns none of them.
         onOpenToken={(token) => navigate(`${consoleSectionPathV1('portfolio')}?token=${encodeURIComponent(token)}`)}
         onRefresh={() => void feed.refetch()}
+        focus={{
+          tokenAddress: focus.tokenAddress,
+          card: focusCard,
+          ...discoverFocusStateV1({
+            tokenAddress: focus.tokenAddress,
+            discoverOn,
+            inFeed: focusedInFeed !== null,
+            detailPending: focusDetail.isPending,
+            detailError: focusDetail.error?.message ?? null,
+            hasCard: focusCard !== null,
+          }),
+          // Back to the whole feed. A plain navigation rather than a state
+          // reset, so Back and Forward keep working through the selection.
+          onClear: () => navigate(consoleSectionPathV1('opportunities')),
+        }}
         launchContext={{
           tokenAddress: contextToken,
           loading: launchContext.isPending && contextToken !== null,

@@ -31,13 +31,22 @@ import {
 // §3 is why the cadence matters more here than it looks. T73's 24h Measured
 // Movers needs TWO comparable observations about a day apart for the same
 // token. That pairing is not something the card can manufacture — it is a
-// property of how often this worker ran, and of `minReMeasureIntervalMs`
-// letting a token be measured again. A worker that measures each token once and
-// never returns produces a Movers rail that is empty forever, and correctly so.
+// property of how often this worker ran. A worker that measures each token once
+// and never returns produces a Movers rail that is empty forever.
 //
-// So the re-measure interval is the load-bearing setting, and it is left where
-// it already lived — in the CLI defaults, overridable by flag — rather than
-// re-decided here.
+// That is what happened, and `minReMeasureIntervalMs` was not the reason: at 20
+// minutes, and an hour for a repriceable rejection, every comparable token was
+// long overdue. The reason was ORDERING. The queue is newest-first and the pass
+// measures a handful of it, so with launches arriving faster than the pass can
+// measure them the head was never older than forty minutes and a token measured
+// once was never reached again. Production on 2026-08-17: 153 tokens with a
+// comparable measurement overdue, 79 of them by more than twelve hours, and no
+// launch in the 48-hour window with two comparable observations more than 15.5
+// hours apart.
+//
+// So the load-bearing setting is `pairRemeasureCandidates`: a small reservation,
+// spent first, on launches that are one measurement away from a pair. Both stay
+// in the CLI defaults, overridable by flag, rather than being re-decided here.
 //
 // Concurrency is the `b20_measure_leases` row: an owner and an expiry, taken by
 // a conditional UPDATE, separate from the discovery lease so quotes never block
@@ -86,8 +95,9 @@ async function main(): Promise<number> {
       event: 'b20_measure_worker_started',
       owner: OWNER,
       maxLaunches: args.maxLaunches,
-      // The number that decides whether a 24h pair can ever exist.
+      // The two numbers that decide whether a 24h pair can ever exist.
       minReMeasureIntervalMs: args.minReMeasureIntervalMs,
+      pairRemeasureCandidates: args.pairRemeasureCandidates,
       maxLaunchAgeMs: args.maxLaunchAgeMs,
       idleMs: B20_MEASURE_CADENCE_V1.idleMs,
     }),
@@ -116,6 +126,10 @@ async function main(): Promise<number> {
           event: 'b20_measure_pass',
           result: outcome.result,
           eligible: outcome.eligible,
+          // How many of them came from the pair-forming queue. Without this the
+          // only way to see whether the movers rail can ever fill is to wait a
+          // day and look at the rail.
+          pairRemeasures: outcome.pairRemeasures,
           attempted: outcome.attempted,
           observationsWritten: outcome.observationsWritten,
           idempotentRepeats: outcome.idempotentRepeats,

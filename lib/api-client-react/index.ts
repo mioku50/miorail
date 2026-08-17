@@ -907,6 +907,31 @@ export function useB20MarketRails(options?: { enabled?: boolean; limit?: number 
 }
 
 /**
+ * One Discover card, read by address.
+ *
+ * The feed answers "what is newest" 25 at a time, so a token a reader opened
+ * from a rail or a deep link is usually not on the page they are looking at.
+ * This is the read that makes "View measurement" mean the same thing for a
+ * token on page one and a token on page forty.
+ *
+ * `retry: false` for the same reason the feed uses it, and a 404 here is a fact
+ * about the index rather than a fault: the caller renders that sentence.
+ */
+export function useB20Opportunity(tokenAddress: string | null, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['b20-opportunity', tokenAddress],
+    queryFn: async () => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/opportunities/b20/${String(tokenAddress)}`,
+      );
+      return apiSpec.B20OpportunityDetailResponseV1Schema.parse(response);
+    },
+    retry: false,
+    enabled: options?.enabled !== false && Boolean(tokenAddress),
+  });
+}
+
+/**
  * Ask about one exact Discover card. This is a read-only evidence projection:
  * no wallet hook, no x402 header and no automatic route execution.
  */

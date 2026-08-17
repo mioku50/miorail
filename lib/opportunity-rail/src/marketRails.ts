@@ -230,6 +230,23 @@ export function exitCapacityLeadersV1(input: ExitCapacityLeadersInputV1): {
 // §3 — 24h Measured Movers
 // ---------------------------------------------------------------------------
 
+/**
+ * The rail's own 24 hours, and how far from it a pair may sit.
+ *
+ * ONE definition, because three things have to agree about it or the rail is
+ * empty and nobody can say why: the projection that pairs two observations, the
+ * route that serves the rail, and the measurement worker whose cadence decides
+ * whether a pair can exist at all. It did not agree before — the worker had no
+ * notion of this window, measured newest-first, and no launch in the 48-hour
+ * feed ever accumulated two comparable observations more than 15.5 hours apart.
+ *
+ * A measurement pass is not on a precise timer, so "about 24 hours" needs a
+ * window. Four hours either side: wide enough to survive a slow pass, narrow
+ * enough that the label is not a fiction.
+ */
+export const MEASURED_MOVE_BASELINE_AGE_MS_V1 = 24 * 60 * 60 * 1000;
+export const MEASURED_MOVE_BASELINE_TOLERANCE_MS_V1 = 4 * 60 * 60 * 1000;
+
 /** The exact words. Not "performance", not "gainers", not "market". */
 export const MEASURED_MOVE_LABEL_V1 = '24h change from Miorail measured quotes';
 

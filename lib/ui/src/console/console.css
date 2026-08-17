@@ -384,7 +384,18 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .rail-fact-v.warn { color: var(--amber); }
 .mio-console .rail-fact-v.off { color: var(--dim); }
 .mio-console .rail-fact-note { display: block; margin-top: 1px; color: var(--muted); font-weight: 400; font-size: 10.5px; line-height: 1.35; }
+/* The one qualifier that stays on a row. Everything else a value needs to be
+   read correctly is said once, under the header, in .rail-guide — five rows
+   used to carry fifteen repetitions of three sentences. This one is different:
+   it does not explain the number, it says the number is not current. */
+.mio-console .rail-fact-mark { margin-left: 6px; vertical-align: middle; font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; }
 .mio-console .rail-open { margin-top: 8px; }
+/* The shared qualifier block, in the narrow rail column: tighter than the same
+   control on the feed, and with no two-up definition grid to collapse. */
+.mio-console .rail-guide { margin: 0 0 10px; }
+.mio-console .rail-guide summary { padding: 7px 10px; font-size: 11px; }
+.mio-console .rail-guide p { padding: 8px 10px 10px; font-size: 10.5px; line-height: 1.5; }
+.mio-console .rail-guide p + p { border-top: 1px solid var(--line); }
 
 @media (max-width: 720px) {
   /* Base App width. The rail folds under the feed at this size, where a 116px
