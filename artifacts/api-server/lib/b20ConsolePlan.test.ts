@@ -188,14 +188,21 @@ describe('no step can carry an argument the planner did not choose', () => {
 // one that needed a plan of its own.
 // ---------------------------------------------------------------------------
 describe('project questions', () => {
+  /** The predicate a question planned to, or null when it planned to something
+   * else entirely. */
+  function predicateFor(question: string): string | null {
+    const plan = planB20ConsoleAnswerV1({ question, scope: 'explore' });
+    const step = plan.steps.find((entry) => entry.tool === 'projects');
+    return step?.tool === 'projects' ? step.predicate : null;
+  }
+
   test('"which launches are connected to verified projects" reads the claimed ones', () => {
     const plan = planB20ConsoleAnswerV1({
       question: 'Which B20 launches are connected to verified projects?',
       scope: 'explore',
     });
     assert.equal(plan.intent, 'find_verified_projects');
-    const list = plan.steps.find((step) => step.tool === 'list');
-    assert.equal(list?.tool === 'list' ? list.project : undefined, 'verified_project');
+    assert.equal(predicateFor('Which B20 launches are connected to verified projects?'), 'verified_project');
   });
 
   test('the same question in Russian reaches the same plan', () => {
@@ -206,6 +213,110 @@ describe('project questions', () => {
       scope: 'explore',
     });
     assert.equal(plan.intent, 'find_verified_projects');
+  });
+
+  // Every predicate, in both languages the console is asked in. Written as one
+  // table because the failure that matters is a question reaching the WRONG
+  // predicate, and that is only visible when they are compared side by side.
+  const PREDICATE_QUESTIONS: readonly [string, readonly string[]][] = [
+    [
+      'live_product',
+      [
+        'Show B20 launches with a live product',
+        'Which B20 are connected to a working product?',
+        'Покажи B20 с реально работающим продуктом',
+        'какие B20 связаны с работающим продуктом?',
+      ],
+    ],
+    [
+      'verified_website',
+      [
+        'Which B20 have a verified website?',
+        'show me launches whose site is verified',
+        'Какие B20 имеют проверенный сайт?',
+        'у каких токенов есть сайт?',
+      ],
+    ],
+    [
+      'repository_found',
+      [
+        'Which B20 projects have a repository?',
+        'show me the ones with github',
+        'у каких B20 есть репозиторий?',
+        'покажи проекты с открытым кодом',
+      ],
+    ],
+    [
+      'docs_found',
+      ['Which B20 projects have documentation?', 'какие проекты имеют документацию?'],
+    ],
+    [
+      'development_active',
+      [
+        'Which B20 projects are under active development?',
+        'which ones are still being built?',
+        'у каких проектов активная разработка?',
+        'где разработка идёт до сих пор?',
+      ],
+    ],
+    [
+      'project_before_token',
+      [
+        'Which B20 projects existed before their token?',
+        'show launches whose project predates the launch',
+        'какие проекты существовали до запуска токена?',
+        'кто старше токена?',
+      ],
+    ],
+    [
+      'verified_base_presence',
+      ['Which B20 projects have a verified Base presence?', 'у каких проектов есть присутствие на base?'],
+    ],
+  ];
+
+  for (const [predicate, questions] of PREDICATE_QUESTIONS) {
+    test(`${predicate} is reached from EN and RU`, () => {
+      for (const question of questions) {
+        assert.equal(predicateFor(question), predicate, question);
+      }
+    });
+  }
+
+  test('a fundamental question reads the claimed corpus and NOTHING else', () => {
+    // The bug this replaces: the plan ran a 48-hour universe summary first, so
+    // every project answer opened with how many launches were measured — a
+    // number about a different corpus, printed as though it were the
+    // denominator.
+    for (const question of ['Show B20 launches with a live product', 'Покажи B20 с работающим продуктом']) {
+      const plan = planB20ConsoleAnswerV1({ question, scope: 'explore' });
+      assert.equal(plan.steps.length, 1, question);
+      assert.equal(plan.steps[0]?.tool, 'projects', question);
+      assert.ok(
+        !plan.steps.some((step) => step.tool === 'summary' || step.tool === 'list'),
+        `${question} still reads the measurement universe`,
+      );
+    }
+  });
+
+  test('a question for the ABSENCE of a fundamental is refused, not answered', () => {
+    // Miorail probes only what a project declared, so it can show a product
+    // answered and can never show a project has none. Answering these from the
+    // same rows as their positive twin would publish "not checked" as "nothing
+    // there" for every launch outside the corpus.
+    for (const question of [
+      'Which B20 have no product?',
+      'show me launches without a website',
+      'which projects are missing documentation?',
+      'какие B20 без продукта?',
+      'у каких проектов нет сайта?',
+      'покажи токены, у которых нет репозитория',
+    ]) {
+      const plan = planB20ConsoleAnswerV1({ question, scope: 'explore' });
+      assert.equal(plan.intent, 'unsupported', question);
+      assert.deepEqual(plan.steps, [], question);
+      assert.match(plan.refusal ?? '', /cannot answer which projects lack something/i);
+      assert.match(plan.refusal ?? '', /unknown/i);
+    }
   });
 
   test('a question about ONE token stays an investigate read, and needs no new step', () => {

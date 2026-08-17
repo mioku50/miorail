@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { after, before, describe } from 'node:test';
-import { decodeFeedCursorV1 } from '@mioagent/route-storage';
+import { createMemoryB20ProjectRepository, decodeFeedCursorV1 } from '@mioagent/route-storage';
 
 import {
   DISCOVER_STANDING_SCAN_LIMIT_V1,
@@ -38,7 +38,9 @@ function launch(index: number) {
   const suffix = index.toString(16).padStart(4, '0');
   return {
     id: `0x${'cd'.repeat(30)}${suffix}:0`,
-    tokenAddress: `0xb2000000000000000000000000000000000${suffix}`,
+    // A real 20-byte address. It was one nibble short, which nothing here had
+    // ever validated — the project claim schema does, and caught it.
+    tokenAddress: `0xb20000000000000000000000000000000000${suffix}`,
     name: `T${index}`,
     symbol: `T${index}`,
     variant: 'asset' as const,
@@ -149,6 +151,12 @@ function stubObservations(rows: Row[]) {
               ).toString('base64url')
             : null,
       };
+    },
+    getFeedRowForToken: async (input: { tokenAddress: string }) => {
+      const row = rows.find(
+        (entry) => entry.launch.tokenAddress.toLowerCase() === input.tokenAddress.toLowerCase(),
+      );
+      return row ? { row, history: [] } : null;
     },
     pipelineCounts: async () => ({
       ingestionCursorBlock: '50000000',
@@ -397,5 +405,116 @@ describe('the universe is counted rather than paged', () => {
     listFeedCalls = 0;
     await readB20UniverseSummaryV1({ now: NOW, maxLaunchAgeMs: 60 * 60 * 1000 });
     assert.ok(listFeedCalls > 0, 'a narrower window was answered with a wider window’s counts');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The project filter, and the order the two bounds are applied in.
+//
+// The bug: a page of `limit` CLAIMED tokens was gathered first and filtered by
+// project standing afterwards. With thirty verified claims of which two are
+// product-backed, that returned nothing at all — twenty-five cards were
+// collected, none of them product-backed, and the filter emptied the page. A
+// reader would have seen "no product-backed launches" and had no way to tell a
+// short page from a short world.
+//
+// A bound applied to an unfiltered set is a bound on the wrong thing.
+// ---------------------------------------------------------------------------
+
+const CLAIM_COUNT = 30;
+
+/** The two product-backed claims are the LAST two by address, so a read that
+ * bounds before it filters cannot reach them. */
+function claimedProjectsV1() {
+  const repository = createMemoryB20ProjectRepository();
+  const claimed: Promise<unknown>[] = [];
+  for (let index = 0; index < CLAIM_COUNT; index += 1) {
+    const tokenAddress = launch(index).tokenAddress;
+    const productBacked = index >= CLAIM_COUNT - 2;
+    claimed.push(
+      repository.recordVerification({
+        claim: {
+          chainId: 8453,
+          tokenAddress,
+          claimantDomain: `p${index}.xyz`,
+          status: 'verified',
+          verifiedLinks: ['domain_file'],
+          refutedLinks: [],
+          lastCheckedAt: '2026-08-15T11:00:00.000Z',
+        },
+        evidence: [
+          {
+            chainId: 8453,
+            tokenAddress,
+            dimension: 'project_identity',
+            state: 'verified',
+            provenance: 'domain_claim_file',
+            reference: `p${index}.xyz`,
+            observedAt: '2026-08-15T11:00:00.000Z',
+          },
+          ...(productBacked
+            ? ([
+                {
+                  chainId: 8453,
+                  tokenAddress,
+                  dimension: 'product',
+                  state: 'live',
+                  provenance: 'functional_probe',
+                  reference: `https://p${index}.xyz/api`,
+                  observedAt: '2026-08-15T11:00:00.000Z',
+                },
+              ] as const)
+            : []),
+        ],
+      }),
+    );
+  }
+  return Promise.all(claimed).then(() => repository);
+}
+
+describe('the project filter runs before the page bound', () => {
+  const projectOriginal = {
+    projects: b20RouteRuntime.projects,
+    projectsAvailable: b20RouteRuntime.projectsAvailable,
+  };
+
+  before(async () => {
+    const repository = await claimedProjectsV1();
+    b20RouteRuntime.projects = () => repository;
+    b20RouteRuntime.projectsAvailable = async () => true;
+  });
+
+  after(() => {
+    b20RouteRuntime.projects = projectOriginal.projects;
+    b20RouteRuntime.projectsAvailable = projectOriginal.projectsAvailable;
+  });
+
+  test('product-backed returns the product-backed launches, not an empty page', async () => {
+    const feed = await read({ project: 'product_backed', limit: 25 });
+    assert.equal(feed.cards.length, 2, 'the bound was applied before the filter again');
+    for (const card of feed.cards) {
+      assert.equal(card.project?.standing, 'product_backed');
+    }
+  });
+
+  test('the wider filter includes them, because product-backed is verified plus one more thing', async () => {
+    const feed = await read({ project: 'verified_project', limit: 25 });
+    assert.equal(feed.cards.length, 25);
+    for (const card of feed.cards) {
+      assert.notEqual(card.project?.standing, 'unverified');
+    }
+  });
+
+  test('every card in a filtered page carries the profile it was filtered on', async () => {
+    // The filter reads one bulk profile lookup and the cards are built from the
+    // same map, so a card cannot be selected by a profile it does not show.
+    const feed = await read({ project: 'product_backed', limit: 25 });
+    for (const card of feed.cards) {
+      assert.ok(card.project?.identityVerified, 'a filtered card lost its profile');
+      assert.ok(
+        card.project?.findings.some((finding) => finding.dimension === 'product' && finding.state === 'live'),
+        'a product-backed card carries no live product finding',
+      );
+    }
   });
 });

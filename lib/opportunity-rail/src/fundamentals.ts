@@ -545,6 +545,174 @@ export function b20ProjectFilterMatchesV1(
 }
 
 // ---------------------------------------------------------------------------
+// Predicates — the questions a console may ask of the claimed corpus.
+//
+// A predicate is a DIMENSION plus the set of states that satisfy it. A set and
+// not a single state, because the states of one dimension are not independent:
+// a repository whose host reported a recent push is `active`, and a reader
+// asking "which projects have a repository" means that one too. Writing the
+// satisfying states out is what stops `repository_found` quietly excluding
+// every repository that is being worked on.
+//
+// Two rules bound the whole table, and both exist because a predicate is
+// ultimately a WHERE clause, and a WHERE clause silently turns "no row" into
+// "excluded":
+//
+//   EVERY PREDICATE IS POSITIVE. There is no `no_product` and there never may
+//   be. Miorail can prove that a declared product answered; it cannot prove
+//   that a project has none, because it only ever probes what a project itself
+//   declared. A negative predicate would publish "Miorail did not look" as
+//   "there is nothing there" — asserted below and pinned by a test.
+//
+//   THE DENOMINATOR IS THE CLAIMED CORPUS. A match count is only meaningful
+//   against the number of VERIFIED CLAIMS, never against the launch universe.
+//   28,000 launches were not checked and failed; they were never in the
+//   corpus, and the answer has to say so in those words.
+// ---------------------------------------------------------------------------
+
+export const B20_FUNDAMENTAL_PREDICATES_V1 = [
+  'verified_project',
+  'verified_website',
+  'live_product',
+  'verified_base_presence',
+  'repository_found',
+  'docs_found',
+  'development_active',
+  'project_before_token',
+] as const;
+
+export type B20FundamentalPredicateV1 = (typeof B20_FUNDAMENTAL_PREDICATES_V1)[number];
+
+/**
+ * States that assert an ABSENCE rather than a presence.
+ *
+ * No predicate may be satisfied by one of these. `unknown` is the absence of a
+ * row; `unverified`, `quiet` and `no` are all readings that a reader would take
+ * as a verdict on the project when they are readings of what Miorail could
+ * reach. Exported so the rule is testable rather than a comment.
+ */
+export const B20_FUNDAMENTAL_ABSENCE_STATES_V1 = ['unknown', 'unverified', 'quiet', 'no'] as const;
+
+export interface B20FundamentalPredicateRuleV1 {
+  /**
+   * The evidence dimension this predicate reads, or null when it reads the
+   * CLAIM itself rather than a finding hanging off one.
+   *
+   * Only `verified_project` is null: it asks whether the gate opened at all,
+   * which is a property of the claim and true even for a claim whose probes all
+   * came back empty.
+   */
+  dimension: B20FundamentalDimensionV1 | null;
+  /** Every state that satisfies the predicate. Never an absence state. */
+  states: readonly B20FundamentalStateV1[];
+  /** What the reader asked for, in their words. */
+  label: string;
+  /** What a match establishes — and, the half that carries the weight, what a
+   * NON-match does not. */
+  note: string;
+}
+
+export const B20_FUNDAMENTAL_PREDICATE_RULES_V1: Readonly<
+  Record<B20FundamentalPredicateV1, B20FundamentalPredicateRuleV1>
+> = {
+  verified_project: {
+    dimension: null,
+    states: [],
+    label: 'a verified project link',
+    note: 'A verified link means Miorail checked who published the token against a domain that claimed it. It is not a review of the project, and a launch with no claim was never checked rather than checked and rejected.',
+  },
+  verified_website: {
+    dimension: 'website',
+    states: ['verified'],
+    label: 'a verified website',
+    note: 'The site the project declared answered a request. A reachable site is not a working product, and a project whose site is absent from this list may simply never have declared one.',
+  },
+  live_product: {
+    dimension: 'product',
+    states: ['live'],
+    label: 'a live product',
+    note: 'A declared product endpoint answered a real request with structured data. That is evidence the product runs — not that it is useful, correct, safe or maintained. A project not listed here has no product Miorail got an answer out of, which is not the same as having none.',
+  },
+  verified_base_presence: {
+    dimension: 'base_presence',
+    states: ['verified'],
+    label: 'a verified presence on Base',
+    note: 'A surface the project declared on Base answered, or a contract it declared exists. Presence is not endorsement by Base or anyone else.',
+  },
+  repository_found: {
+    // `active` is a repository that also moved recently. A reader asking which
+    // projects have a repository means those too, and a predicate that excluded
+    // them would drop precisely the ones being worked on.
+    dimension: 'repository',
+    states: ['found', 'active'],
+    label: 'a repository',
+    note: 'The repository the project declared exists on its host. Miorail read no code and counted no commits. A private repository answers nothing, so a project missing here may still have one.',
+  },
+  docs_found: {
+    dimension: 'docs',
+    states: ['found'],
+    label: 'documentation',
+    note: 'Documentation the project declared was reachable. Miorail did not read it and makes no claim about what it says.',
+  },
+  development_active: {
+    dimension: 'development_activity',
+    states: ['active'],
+    label: `a push inside the last ${B20_DEVELOPMENT_ACTIVE_WINDOW_DAYS_V1} days`,
+    note: `A push landed in the declared repository inside the last ${B20_DEVELOPMENT_ACTIVE_WINDOW_DAYS_V1} days. Miorail did not read what changed, and a project absent from this list may be working somewhere Miorail cannot see.`,
+  },
+  project_before_token: {
+    dimension: 'project_before_token',
+    states: ['yes'],
+    label: 'work that predates the token',
+    note: 'The declared repository was created before this token launched. It establishes that work existed first, not that the token was part of it.',
+  },
+};
+
+/** Whether a predicate is expressed only in states that assert presence. True
+ * for every rule above, and a test holds it that way. */
+export function b20PredicateIsPositiveV1(predicate: B20FundamentalPredicateV1): boolean {
+  const rule = B20_FUNDAMENTAL_PREDICATE_RULES_V1[predicate];
+  const absence: readonly string[] = B20_FUNDAMENTAL_ABSENCE_STATES_V1;
+  return rule.states.every((state) => !absence.includes(state));
+}
+
+/**
+ * Whether a profile satisfies a predicate.
+ *
+ * Pure, and deliberately re-applied after the storage read even though the
+ * query already filtered: a profile whose claim is not verified carries NO
+ * findings at all, so re-checking here is what makes an evidence row orphaned
+ * by a downgraded claim unable to answer a question. Cheap, and it is the lock
+ * that does not depend on a JOIN being written correctly.
+ */
+export function b20PredicateMatchesProfileV1(
+  predicate: B20FundamentalPredicateV1,
+  profile: B20FundamentalProfileV1,
+): boolean {
+  if (!profile.identityVerified) return false;
+  const rule = B20_FUNDAMENTAL_PREDICATE_RULES_V1[predicate];
+  if (rule.dimension === null) return true;
+  return profile.findings.some(
+    (finding) => finding.dimension === rule.dimension && rule.states.includes(finding.state),
+  );
+}
+
+/** The finding a match was made on, for an answer that has to show its
+ * evidence. Null for `verified_project`, whose evidence is the claim itself. */
+export function b20PredicateFindingV1(
+  predicate: B20FundamentalPredicateV1,
+  profile: B20FundamentalProfileV1,
+): B20FundamentalFindingV1 | null {
+  const rule = B20_FUNDAMENTAL_PREDICATE_RULES_V1[predicate];
+  if (rule.dimension === null) return null;
+  return (
+    profile.findings.find(
+      (finding) => finding.dimension === rule.dimension && rule.states.includes(finding.state),
+    ) ?? null
+  );
+}
+
+// ---------------------------------------------------------------------------
 // The read path.
 //
 // A profile is written once by a collector and read back on every card, so the

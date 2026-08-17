@@ -121,6 +121,9 @@ import {
   type B20ProjectFilterV1,
   b20ClaimStandingV1,
   b20FundamentalProfileFromStoredV1,
+  B20_FUNDAMENTAL_PREDICATE_RULES_V1,
+  b20PredicateMatchesProfileV1,
+  type B20FundamentalPredicateV1,
   type B20FundamentalProfileV1,
   b20SenderRelationV1,
   b20SenderSupportsCountingV1,
@@ -173,9 +176,11 @@ import {
   B20_CONSOLE_BASE_CAVEATS_V1,
   b20ChangesAnswerV1,
   b20ExploreAnswerV1,
+  b20FundamentalAnswerV1,
   b20InvestigateAnswerV1,
   b20PortfolioAnswerV1,
   type B20ConsoleDeterministicV1,
+  type B20ConsoleProjectMatchV1,
   type B20ConsoleTokenReadV1,
 } from '../lib/b20ConsoleAnswer.js';
 import { referenceExitAssessmentV1, type B20ExitAssessmentV1 } from '../lib/b20ExitAssessment.js';
@@ -574,6 +579,87 @@ export async function readB20ProjectProfilesV1(
   return byToken;
 }
 
+/**
+ * The claimed corpus, matched on one fundamental predicate.
+ *
+ * Reads in the order the question is actually about:
+ *
+ *   1. the addresses whose stored evidence satisfies the predicate,
+ *   2. their profiles,
+ *   3. and only then a launch row, for a symbol and to say whether Discover
+ *      has one at all.
+ *
+ * Step 3 never removes a match. A verified project whose launch Miorail has not
+ * ingested is a fact about Miorail's index, and the earlier version of this
+ * path dropped exactly that token with a silent `continue` — which would have
+ * answered "which B20 have a live product" with "none" while the claim sat
+ * verified in the database. Identity, ingestion and measurement are three axes,
+ * and only the first one decides this answer.
+ *
+ * The predicate is re-checked against the rebuilt PROFILE even though the query
+ * already filtered. That is not belt-and-braces: `b20FundamentalProfileFromStoredV1`
+ * drops every finding when a claim is not verified, so re-checking is the lock
+ * that holds even if the query's JOIN were ever written wrongly.
+ */
+export async function readB20FundamentalMatchesV1(input: {
+  predicate: B20FundamentalPredicateV1;
+  limit: number;
+}): Promise<{ matches: B20ConsoleProjectMatchV1[]; corpus: number; available: boolean }> {
+  const rule = B20_FUNDAMENTAL_PREDICATE_RULES_V1[input.predicate];
+  let addresses: string[];
+  let corpus: number;
+  try {
+    if (!(await b20RouteRuntime.projectsAvailable())) {
+      return { matches: [], corpus: 0, available: false };
+    }
+    const projects = b20RouteRuntime.projects();
+    [addresses, corpus] = await Promise.all([
+      // `verified_project` asks whether the gate opened at all, which is a
+      // property of the claim — true even for a claim whose every probe came
+      // back empty. Every other predicate reads a finding.
+      rule.dimension === null
+        ? projects.verifiedTokenAddresses({ chainId: B20_CHAIN_ID_V1, limit: input.limit })
+        : projects.tokensMatchingEvidence({
+            chainId: B20_CHAIN_ID_V1,
+            dimension: rule.dimension,
+            states: rule.states,
+            limit: input.limit,
+          }),
+      projects.verifiedClaimCount({ chainId: B20_CHAIN_ID_V1 }),
+    ]);
+  } catch {
+    // Same narrow swallow as the card read: the ONLY thing this hides is "the
+    // layer is not available here", and the answer says so rather than
+    // reporting an empty corpus, which would be a claim about the world.
+    return { matches: [], corpus: 0, available: false };
+  }
+
+  const profiles = await readB20ProjectProfilesV1(addresses);
+  if (profiles === null) return { matches: [], corpus, available: false };
+
+  const observations = b20RouteRuntime.observations();
+  const matches: B20ConsoleProjectMatchV1[] = [];
+  for (const address of addresses) {
+    const profile = profiles.get(address.toLowerCase());
+    if (!profile) continue;
+    if (!b20PredicateMatchesProfileV1(input.predicate, profile)) continue;
+    let symbol: string | null = null;
+    let indexed = false;
+    try {
+      const found = await observations.getFeedRowForToken({ tokenAddress: address, historyLimit: 1 });
+      if (found) {
+        indexed = true;
+        symbol = found.row.launch.symbol;
+      }
+    } catch {
+      // A launch read that failed leaves the match standing with no symbol.
+      // The project evidence is what was asked for and it is already in hand.
+    }
+    matches.push({ tokenAddress: address, symbol, profile, indexed });
+  }
+  return { matches, corpus, available: true };
+}
+
 export async function readB20EvidenceForTokenV1(tokenAddress: string): Promise<{
   card: ReturnType<typeof b20OpportunityCardV1>;
   history: B20OpportunityObservationV1[];
@@ -771,21 +857,43 @@ export async function readDiscoverFeedV1(input: {
     const claimed = (await b20RouteRuntime.projectsAvailable())
       ? await b20RouteRuntime.projects().verifiedTokenAddresses({ chainId: 8453, limit: 200 })
       : [];
+
+    // The project filter runs FIRST, on one bulk read, and the page is filled
+    // afterwards.
+    //
+    // The earlier order filled a page of `limit` claimed tokens, then filtered
+    // it by standing — so asking for product-backed launches could return three
+    // cards out of a page of twenty-five and look like there were only three,
+    // with no way for a reader to tell a short page from a short world. Filter
+    // before the bound, always: a bound applied to an unfiltered set is a bound
+    // on the wrong thing.
+    const claimedProfiles = await readB20ProjectProfilesV1(claimed);
+    const wanted = claimed.filter((tokenAddress) => {
+      const profile = claimedProfiles?.get(tokenAddress.toLowerCase()) ?? null;
+      return profile !== null && b20ProjectFilterMatchesV1(project, profile.standing);
+    });
+
     const cards: ReturnType<typeof b20OpportunityCardV1>[] = [];
-    for (const tokenAddress of claimed) {
+    for (const tokenAddress of wanted) {
+      // A claimed token Discover has no canonical launch row for cannot become
+      // a card — a card IS a launch — so it is absent from this FEED. The
+      // console answers the same question without a card and does not drop it;
+      // see `readB20FundamentalMatchesV1`.
       const found = await observations.getFeedRowForToken({ tokenAddress, historyLimit: 1 });
       if (!found) continue;
-      const card = b20DiscoverCardFromRowV1(found.row, pipeline, now);
+      const card = b20DiscoverCardFromRowV1(
+        found.row,
+        pipeline,
+        now,
+        claimedProfiles?.get(tokenAddress.toLowerCase()) ?? null,
+      );
       if (!matches(card)) continue;
       cards.push(card);
       if (cards.length >= input.limit) break;
     }
-    const withProjects = await attachProjects(cards);
     return {
       pipeline,
-      cards: withProjects.filter(
-        (card) => card.project !== null && b20ProjectFilterMatchesV1(project, card.project.standing),
-      ),
+      cards,
       // One bounded read. There is no second page of verified projects yet, and
       // a cursor implying one would be a promise this read cannot keep.
       nextCursor: null,
@@ -1481,6 +1589,7 @@ export async function b20IdentityForMissingRowV1(
 export async function runB20ConsolePlanV1(plan: B20ConsolePlanV1): Promise<B20ConsoleDeterministicV1> {
   const summaryStep = plan.steps.find((step) => step.tool === 'summary');
   const listStep = plan.steps.find((step) => step.tool === 'list');
+  const projectsStep = plan.steps.find((step) => step.tool === 'projects');
   const positionsStep = plan.steps.find((step) => step.tool === 'positions');
   const cardsStep = plan.steps.find((step) => step.tool === 'cards') ?? positionsStep;
   const changesStep = plan.steps.find((step) => step.tool === 'changes');
@@ -1568,6 +1677,24 @@ export async function runB20ConsolePlanV1(plan: B20ConsolePlanV1): Promise<B20Co
     return positionsStep
       ? b20PortfolioAnswerV1({ reads, assessments })
       : b20InvestigateAnswerV1({ reads });
+  }
+
+  // Fundamentals answer BEFORE the summary fallback and without reading it.
+  // The universe summary counts what was measured in a 48-hour window; a
+  // question about which projects have a live product is asked of the claimed
+  // corpus, and quoting the other one at the reader was the defect this branch
+  // removes rather than works around.
+  if (projectsStep && projectsStep.tool === 'projects') {
+    const found = await readB20FundamentalMatchesV1({
+      predicate: projectsStep.predicate,
+      limit: projectsStep.limit,
+    });
+    return b20FundamentalAnswerV1({
+      predicate: projectsStep.predicate,
+      matches: found.matches,
+      corpus: found.corpus,
+      available: found.available,
+    });
   }
 
   if (changesStep && changesStep.tool === 'changes') {

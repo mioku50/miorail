@@ -2,8 +2,14 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
 import {
+  B20_FUNDAMENTAL_ABSENCE_STATES_V1,
   B20_FUNDAMENTAL_COPY_V1,
   B20_FUNDAMENTAL_DIMENSIONS_V1,
+  B20_FUNDAMENTAL_PREDICATES_V1,
+  B20_FUNDAMENTAL_PREDICATE_RULES_V1,
+  b20PredicateFindingV1,
+  b20PredicateIsPositiveV1,
+  b20PredicateMatchesProfileV1,
   B20_PROJECT_FILTERS_V1,
   b20FundamentalProfileFromStoredV1,
   fundamentalCopyKeyV1,
@@ -489,5 +495,140 @@ describe('a stored profile reads back identical to the one that was written', ()
       assert.ok(B20_FUNDAMENTAL_COPY_V1[key], `no copy for ${key}`);
       assert.ok(B20_FUNDAMENTAL_COPY_V1[key]!.note.length > 20, `${key} has no bound on its claim`);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Predicates.
+//
+// A predicate is a WHERE clause, and a WHERE clause turns "no row" into
+// "excluded" without saying so. Everything below is about keeping that
+// conversion honest: only positive predicates exist, and the ones that do are
+// expressed in the full set of states that satisfy them.
+// ---------------------------------------------------------------------------
+
+describe('a predicate can only ever ask for the presence of something', () => {
+  test('no rule is satisfied by a state that asserts an absence', () => {
+    // `unknown` is the absence of a row; `unverified`, `quiet` and `no` are
+    // readings of what Miorail could reach. A predicate satisfied by one of
+    // them would publish "did not look" as "there is nothing there".
+    for (const predicate of B20_FUNDAMENTAL_PREDICATES_V1) {
+      assert.ok(b20PredicateIsPositiveV1(predicate), `${predicate} accepts an absence state`);
+      const rule = B20_FUNDAMENTAL_PREDICATE_RULES_V1[predicate];
+      for (const state of rule.states) {
+        assert.ok(
+          !(B20_FUNDAMENTAL_ABSENCE_STATES_V1 as readonly string[]).includes(state),
+          `${predicate} accepts ${state}`,
+        );
+      }
+    }
+  });
+
+  test('every rule names a dimension that exists, and bounds its own claim', () => {
+    for (const predicate of B20_FUNDAMENTAL_PREDICATES_V1) {
+      const rule = B20_FUNDAMENTAL_PREDICATE_RULES_V1[predicate];
+      if (rule.dimension !== null) {
+        assert.ok(B20_FUNDAMENTAL_DIMENSIONS_V1.includes(rule.dimension), `${predicate} names no real dimension`);
+        assert.ok(rule.states.length > 0, `${predicate} matches no state`);
+      }
+      assert.ok(rule.note.length > 40, `${predicate} does not bound what a match means`);
+    }
+  });
+
+  test('only the claim predicate reads the claim itself', () => {
+    const claimScoped = B20_FUNDAMENTAL_PREDICATES_V1.filter(
+      (predicate) => B20_FUNDAMENTAL_PREDICATE_RULES_V1[predicate].dimension === null,
+    );
+    assert.deepEqual(claimScoped, ['verified_project']);
+  });
+
+  test('there is no numeric field a caller could sort projects by', () => {
+    // The whole layer refuses to rank. A predicate table with a weight on it
+    // would be a ranking with a technical name.
+    for (const predicate of B20_FUNDAMENTAL_PREDICATES_V1) {
+      const rule = B20_FUNDAMENTAL_PREDICATE_RULES_V1[predicate] as unknown as Record<string, unknown>;
+      for (const value of Object.values(rule)) {
+        assert.notEqual(typeof value, 'number', `${predicate} carries a number`);
+      }
+    }
+  });
+});
+
+describe('a predicate matches a profile, and never an unverified one', () => {
+  const productBacked = b20FundamentalProfileV1(
+    evidence({ product: { url: 'https://miorail.xyz/mcp', reachable: true, functional: true, observedAt: NOW } }),
+  );
+
+  test('a live product matches the product predicate and nothing else’s', () => {
+    assert.equal(b20PredicateMatchesProfileV1('live_product', productBacked), true);
+    assert.equal(b20PredicateMatchesProfileV1('repository_found', productBacked), false);
+    assert.equal(b20PredicateMatchesProfileV1('docs_found', productBacked), false);
+  });
+
+  test('a reachable page is NOT a live product', () => {
+    // The distinction the whole layer exists for, asserted at the predicate
+    // level too: a landing page cannot answer "which have a live product".
+    const pageOnly = b20FundamentalProfileV1(
+      evidence({ product: { url: 'https://miorail.xyz', reachable: true, functional: false, observedAt: NOW } }),
+    );
+    assert.equal(b20PredicateMatchesProfileV1('live_product', pageOnly), false);
+  });
+
+  test('an active repository still answers "has a repository"', () => {
+    // `active` is `found` plus a recent push. A predicate pinned to one state
+    // would drop exactly the projects being worked on.
+    const active = b20FundamentalProfileV1(
+      evidence({
+        repository: {
+          url: 'https://github.com/mioku50/mioagent',
+          createdAt: '2025-01-01T00:00:00.000Z',
+          lastCommitAt: '2026-08-10T00:00:00.000Z',
+          observedAt: NOW,
+        },
+      }),
+    );
+    assert.equal(active.findings.find((finding) => finding.dimension === 'repository')?.state, 'active');
+    assert.equal(b20PredicateMatchesProfileV1('repository_found', active), true);
+    assert.equal(b20PredicateMatchesProfileV1('development_active', active), true);
+  });
+
+  test('a quiet repository has one and is not under active development', () => {
+    const quiet = b20FundamentalProfileV1(
+      evidence({
+        repository: {
+          url: 'https://github.com/mioku50/mioagent',
+          createdAt: '2025-01-01T00:00:00.000Z',
+          lastCommitAt: '2025-02-01T00:00:00.000Z',
+          observedAt: NOW,
+        },
+      }),
+    );
+    assert.equal(b20PredicateMatchesProfileV1('repository_found', quiet), true);
+    assert.equal(b20PredicateMatchesProfileV1('development_active', quiet), false);
+  });
+
+  test('an unverified profile satisfies NO predicate, including the claim one', () => {
+    // The gate, restated where a query would bypass it. An unverified profile
+    // carries no findings at all, so this is the lock that holds even if a
+    // storage query returned an orphaned row.
+    const unverified = b20FundamentalProfileV1(
+      evidence({
+        claim: NO_CLAIM,
+        claimantDomain: null,
+        product: { url: 'https://impostor.xyz/mcp', reachable: true, functional: true, observedAt: NOW },
+      }),
+    );
+    for (const predicate of B20_FUNDAMENTAL_PREDICATES_V1) {
+      assert.equal(b20PredicateMatchesProfileV1(predicate, unverified), false, predicate);
+    }
+  });
+
+  test('the matching finding is retrievable, so an answer can show its evidence', () => {
+    const finding = b20PredicateFindingV1('live_product', productBacked);
+    assert.equal(finding?.state, 'live');
+    assert.equal(finding?.provenance, 'functional_probe');
+    assert.equal(finding?.reference, 'https://miorail.xyz/mcp');
+    // The claim predicate's evidence is the claim, which is not a finding.
+    assert.equal(b20PredicateFindingV1('verified_project', productBacked), null);
   });
 });

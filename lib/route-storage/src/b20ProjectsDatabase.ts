@@ -147,5 +147,32 @@ export function createDatabaseB20ProjectRepository(sql: SqlTemplateExecutor): B2
          LIMIT ${input.limit}`;
       return (rows as Record<string, unknown>[]).map((row) => String(row.token_address));
     },
+
+    async tokensMatchingEvidence(input) {
+      if (input.states.length === 0) return [];
+      const rows = await sql`
+        SELECT DISTINCT e.token_address
+          FROM b20_project_evidence e
+          -- The JOIN is the point of the query, not an optimisation. Evidence
+          -- may only answer a question while the claim that permitted it is
+          -- still verified; a refuted claim's rows are excluded here even if
+          -- they somehow outlived the write path that replaces them.
+          JOIN b20_project_claims c
+            ON c.chain_id = e.chain_id AND c.token_address = e.token_address
+         WHERE e.chain_id = ${input.chainId}
+           AND e.dimension = ${input.dimension}
+           AND e.state = ANY(${[...input.states]}::text[])
+           AND c.status = 'verified'
+         ORDER BY e.token_address
+         LIMIT ${input.limit}`;
+      return (rows as Record<string, unknown>[]).map((row) => String(row.token_address));
+    },
+
+    async verifiedClaimCount(input) {
+      const rows = await sql`
+        SELECT COUNT(*)::int AS count FROM b20_project_claims
+         WHERE chain_id = ${input.chainId} AND status = 'verified'`;
+      return Number((rows as Record<string, unknown>[])[0]?.count ?? 0);
+    },
   };
 }

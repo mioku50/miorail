@@ -2,6 +2,7 @@ import {
   B20_EXIT_STANDING_KINDS_V1,
   B20_PROJECT_FILTERS_V1,
   B20_STANDING_GROUPS_V1,
+  type B20FundamentalPredicateV1,
 } from '@mioagent/opportunity-rail';
 
 import { b20UniverseIntentV1, b20UnsupportedRefusalV1 } from './b20AnswerPlan.js';
@@ -62,6 +63,17 @@ export type B20ConsoleStepV1 =
       /** Project context, a different axis from what was measured. */
       project?: (typeof B20_PROJECT_FILTERS_V1)[number];
     }
+  /**
+   * The CLAIMED corpus, matched on one fundamental predicate.
+   *
+   * A separate step from `list` and not a filter on it, because it reads a
+   * different corpus. `list` pages the measured universe; this one starts from
+   * the verified claims and only then looks for a launch row, which is what
+   * lets a verified project be found before Discover has ingested its launch.
+   * Folding it into `list` would put the measurement window between a reader
+   * and an answer that has nothing to do with measurement.
+   */
+  | { tool: 'projects'; predicate: B20FundamentalPredicateV1; limit: number }
   /** The exact stored cards for named tokens, with bounded history. */
   | { tool: 'cards'; tokenAddresses: readonly string[]; historyLimit: number }
   /** The measured-movement rail: latest and ~24h baseline, already paired. */
@@ -153,6 +165,135 @@ const PROJECT_QUESTION_V1 = [
   /есть .*проект/u,
   /связан\p{L}* с проект/u,
 ] as const;
+
+/**
+ * Questions that ask for the ABSENCE of a fundamental.
+ *
+ * Refused, and refused loudly rather than answered with an empty list. Miorail
+ * probes only what a project itself declared, so it can show that a declared
+ * product answered — and can never show that a project has none. "Which B20
+ * have no product" would be answered from the same rows as "which have one",
+ * and every launch outside the claimed corpus would arrive in the reader's
+ * hands as a token that failed a check nobody ran.
+ *
+ * This is the same distinction the measurement layer already draws between a
+ * finding and a gap, moved onto the fundamental corpus.
+ */
+const FUNDAMENTAL_ABSENCE_QUESTION_V1 = [
+  /\b(no|without|missing|lacks?|lacking)\b[^?]{0,40}\b(product|website|site|repositor|github|docs|documentation|project)/,
+  /\b(don'?t|do not|does ?n[o']t) have\b[^?]{0,40}\b(product|website|site|repositor|github|docs|documentation|project)/,
+  /\b(product|website|site|repositor|github|docs|documentation|project)s?\b[^?]{0,30}\b(is |are )?(missing|absent|unverified|not verified)/,
+  /без (продукт|сайт|репозитор|проект|документац|github)/u,
+  /(нет|отсутству\p{L}*) (продукт|сайт|репозитор|проект|документац|github)/u,
+  /у котор\p{L}* нет/u,
+  /не проверен\p{L}* (сайт|продукт|проект)/u,
+] as const;
+
+/**
+ * The predicate a question asks for, in priority order.
+ *
+ * Ordered, first match wins, and the order is load-bearing: the generic
+ * project patterns below would swallow "which launches have a live product",
+ * so every specific predicate is tried before them. Russian is first-class
+ * throughout — the console is asked in it, and these patterns are written with
+ * `\p{L}` for the same reason the ones above are.
+ */
+const FUNDAMENTAL_PREDICATE_QUESTION_V1: readonly {
+  predicate: B20FundamentalPredicateV1;
+  patterns: readonly RegExp[];
+}[] = [
+  {
+    predicate: 'live_product',
+    patterns: [
+      /live product/,
+      /working product/,
+      /real product/,
+      /product that (works|runs)/,
+      /product is (live|running)/,
+      /which .*(launch|token|b20)\S* .*(have|has|with) .*product/,
+      /работающ\p{L}* продукт/u,
+      /рабочи\p{L}* продукт/u,
+      /живо\p{L}* продукт/u,
+      /реальн\p{L}* продукт/u,
+      /есть .*продукт/u,
+      /с продуктом/u,
+    ],
+  },
+  {
+    predicate: 'verified_website',
+    patterns: [
+      /verified (web ?)?site/,
+      /confirmed (web ?)?site/,
+      /(web ?)?site is verified/,
+      /which .*(launch|token|b20)\S* .*(have|has|with) .*(web ?)?site/,
+      /проверенн\p{L}* (веб-?)?сайт/u,
+      /подтвержд\p{L}* (веб-?)?сайт/u,
+      /есть .*сайт/u,
+      /с сайтом/u,
+    ],
+  },
+  {
+    predicate: 'development_active',
+    patterns: [
+      /active(ly)? (development|developed|maintained)/,
+      /still (being )?(built|developed|maintained)/,
+      /development is active/,
+      /активн\p{L}* (разработ|развива)/u,
+      /разработка (идет|идёт|активна|ведется|ведётся)/u,
+      /продолжа\p{L}* разрабат/u,
+      /кто (еще|ещё) разрабат/u,
+    ],
+  },
+  {
+    predicate: 'project_before_token',
+    patterns: [
+      /before (its|the|their) (token|launch)/,
+      /existed before/,
+      /predates? (its|the) (token|launch)/,
+      /pre-?dates/,
+      /до (запуска )?токена/u,
+      /существовал\p{L}* до/u,
+      /раньше (своего )?токена/u,
+      /старше токена/u,
+    ],
+  },
+  {
+    predicate: 'repository_found',
+    patterns: [
+      /repositor(y|ies)/,
+      /github/,
+      /open ?source/,
+      /source code/,
+      /репозитор/u,
+      /исходн\p{L}* код/u,
+      /открыт\p{L}* код/u,
+    ],
+  },
+  {
+    predicate: 'docs_found',
+    patterns: [/documentation/, /\bdocs\b/, /документац/u, /с документац/u],
+  },
+  {
+    predicate: 'verified_base_presence',
+    patterns: [
+      /base presence/,
+      /present on base/,
+      /(deployed|live) on base/,
+      /on base mainnet/,
+      /присутстви\p{L}* на base/u,
+      /есть .*на base/u,
+      /развернут\p{L}* на base/u,
+    ],
+  },
+  { predicate: 'verified_project', patterns: PROJECT_QUESTION_V1 },
+];
+
+function fundamentalPredicateV1(value: string): B20FundamentalPredicateV1 | null {
+  for (const entry of FUNDAMENTAL_PREDICATE_QUESTION_V1) {
+    if (matchesV1(value, entry.patterns)) return entry.predicate;
+  }
+  return null;
+}
 
 /** Questions that are about movement in time however they are scoped. */
 const CHANGE_QUESTION_V1 = [
@@ -275,17 +416,34 @@ export function planB20ConsoleAnswerV1(input: {
     };
   }
 
-  // A question about project context is answered by the feed read narrowed to
-  // verified projects. The counts cannot see a claim, so answering it from the
-  // summary would answer a different question.
-  if (matchesV1(value, PROJECT_QUESTION_V1)) {
+  // A question for the ABSENCE of a fundamental is refused before it can be
+  // answered from the same rows as its positive twin. Checked first, so that
+  // "which B20 have no product" cannot fall through to the product predicate
+  // and come back as a list of the ones that do.
+  if (matchesV1(value, FUNDAMENTAL_ABSENCE_QUESTION_V1)) {
+    return {
+      scope,
+      intent: 'unsupported',
+      steps: [],
+      tokenAddresses: [],
+      refusal:
+        'Miorail cannot answer which projects lack something. It probes only what a project itself published, so it can show that a declared product answered a request — never that a project has none. Ask for what a project HAS (a live product, a verified website, a repository), and everything outside that answer stays unknown rather than becoming a negative finding.',
+    };
+  }
+
+  // A question about project context is answered from the CLAIMED corpus, not
+  // from the measurement window. The counts cannot see a claim, and a launch
+  // universe cannot be the denominator for a question none of it was asked.
+  const predicate = fundamentalPredicateV1(value);
+  if (predicate) {
     return {
       scope,
       intent: 'find_verified_projects',
-      steps: [
-        { tool: 'summary', launchAgeHours: DEFAULT_WINDOW_HOURS_V1 },
-        { tool: 'list', limit: LIST_LIMIT_V1, project: 'verified_project' },
-      ],
+      // One step, and deliberately no `summary`. A fundamental answer that
+      // opened with 3,000 launches read would be quoting a number about a
+      // different corpus, which is the shape of answer this console exists to
+      // stop producing.
+      steps: [{ tool: 'projects', predicate, limit: LIST_LIMIT_V1 }],
       tokenAddresses: [],
       refusal: null,
     };

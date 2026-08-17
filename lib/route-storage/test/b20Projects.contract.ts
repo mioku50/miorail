@@ -244,6 +244,157 @@ export function b20ProjectContractV1(
       assert.deepEqual(verified, [TOKEN]);
     });
 
+    test('a predicate read finds the tokens whose evidence matches, and only those', async () => {
+      const { repository } = await open();
+      await repository.recordVerification({
+        claim: claimFixtureV1(),
+        evidence: [evidenceFixtureV1()],
+      });
+      await repository.recordVerification({
+        claim: claimFixtureV1({ tokenAddress: OTHER, claimantDomain: 'other.xyz' }),
+        evidence: [
+          evidenceFixtureV1({
+            tokenAddress: OTHER,
+            dimension: 'website',
+            state: 'verified',
+            provenance: 'https_probe',
+            reference: 'https://other.xyz',
+          }),
+        ],
+      });
+
+      assert.deepEqual(
+        await repository.tokensMatchingEvidence({
+          chainId: 8453,
+          dimension: 'product',
+          states: ['live'],
+          limit: 10,
+        }),
+        [TOKEN],
+      );
+      assert.deepEqual(
+        await repository.tokensMatchingEvidence({
+          chainId: 8453,
+          dimension: 'website',
+          states: ['verified'],
+          limit: 10,
+        }),
+        [OTHER],
+      );
+      // A dimension nobody collected is an empty result, never every token.
+      assert.deepEqual(
+        await repository.tokensMatchingEvidence({
+          chainId: 8453,
+          dimension: 'docs',
+          states: ['found'],
+          limit: 10,
+        }),
+        [],
+      );
+    });
+
+    test('a predicate takes a SET of states, because `active` is also `found`', async () => {
+      // A reader asking which projects have a repository means the ones being
+      // worked on too. A predicate pinned to a single state would drop exactly
+      // those.
+      const { repository } = await open();
+      await repository.recordVerification({
+        claim: claimFixtureV1(),
+        evidence: [
+          evidenceFixtureV1({
+            dimension: 'repository',
+            state: 'active',
+            provenance: 'repository_api',
+            reference: 'https://github.com/x/y',
+          }),
+        ],
+      });
+      assert.deepEqual(
+        await repository.tokensMatchingEvidence({
+          chainId: 8453,
+          dimension: 'repository',
+          states: ['found'],
+          limit: 10,
+        }),
+        [],
+      );
+      assert.deepEqual(
+        await repository.tokensMatchingEvidence({
+          chainId: 8453,
+          dimension: 'repository',
+          states: ['found', 'active'],
+          limit: 10,
+        }),
+        [TOKEN],
+      );
+    });
+
+    test('evidence stops answering when its claim stops being verified', async () => {
+      // The write path replaces evidence on every pass, so a refuted claim
+      // should have none left. This asserts the READ refuses anyway: a query
+      // that leans on the writer having been careful publishes an orphan the
+      // day the writer changes.
+      const { repository } = await open();
+      await repository.recordVerification({ claim: claimFixtureV1(), evidence: [evidenceFixtureV1()] });
+      assert.equal(
+        (await repository.tokensMatchingEvidence({ chainId: 8453, dimension: 'product', states: ['live'], limit: 10 }))
+          .length,
+        1,
+      );
+      await repository.recordVerification({
+        claim: claimFixtureV1({ status: 'refuted', verifiedLinks: [], refutedLinks: ['launch_sender'] }),
+        evidence: [],
+      });
+      assert.deepEqual(
+        await repository.tokensMatchingEvidence({ chainId: 8453, dimension: 'product', states: ['live'], limit: 10 }),
+        [],
+      );
+    });
+
+    test('an empty state set matches nothing rather than everything', async () => {
+      const { repository } = await open();
+      await repository.recordVerification({ claim: claimFixtureV1(), evidence: [evidenceFixtureV1()] });
+      assert.deepEqual(
+        await repository.tokensMatchingEvidence({ chainId: 8453, dimension: 'product', states: [], limit: 10 }),
+        [],
+      );
+    });
+
+    test('the predicate read honours its bound', async () => {
+      const { repository } = await open();
+      for (const address of [TOKEN, OTHER]) {
+        await repository.recordVerification({
+          claim: claimFixtureV1({ tokenAddress: address }),
+          evidence: [evidenceFixtureV1({ tokenAddress: address })],
+        });
+      }
+      const bounded = await repository.tokensMatchingEvidence({
+        chainId: 8453,
+        dimension: 'product',
+        states: ['live'],
+        limit: 1,
+      });
+      assert.equal(bounded.length, 1);
+    });
+
+    test('the corpus count is the verified claims, not the claims', async () => {
+      // The denominator a fundamental answer states. A refuted claim is a
+      // stored fact and is not part of the corpus a question is asked of.
+      const { repository } = await open();
+      assert.equal(await repository.verifiedClaimCount({ chainId: 8453 }), 0);
+      await repository.recordVerification({ claim: claimFixtureV1(), evidence: [] });
+      await repository.recordVerification({
+        claim: claimFixtureV1({
+          tokenAddress: OTHER,
+          status: 'refuted',
+          verifiedLinks: [],
+          refutedLinks: ['launch_sender'],
+        }),
+        evidence: [],
+      });
+      assert.equal(await repository.verifiedClaimCount({ chainId: 8453 }), 1);
+    });
+
     test('a bulk read returns only the tokens that have a claim', async () => {
       const { repository } = await open();
       await repository.recordVerification({ claim: claimFixtureV1(), evidence: [evidenceFixtureV1()] });

@@ -88,6 +88,9 @@ export const B20_FUNDAMENTAL_STATE_KEYS_V1 = [
   'unknown',
 ] as const;
 
+export type B20FundamentalDimensionKeyV1 = (typeof B20_FUNDAMENTAL_DIMENSION_KEYS_V1)[number];
+export type B20FundamentalStateKeyV1 = (typeof B20_FUNDAMENTAL_STATE_KEYS_V1)[number];
+
 export const B20_FUNDAMENTAL_PROVENANCE_KEYS_V1 = [
   'domain_claim_file',
   'https_probe',
@@ -214,6 +217,40 @@ export interface B20ProjectRepositoryV1 {
   /** Token addresses whose claim is verified, for the Discover filter. Bounded,
    * because an unbounded list of every claimed token is a query nobody needs. */
   verifiedTokenAddresses(input: { chainId: number; limit: number }): Promise<string[]>;
+
+  /**
+   * Token addresses carrying a finding in one dimension with one of the given
+   * states — the read behind a fundamental predicate.
+   *
+   * Two properties this method owes its callers:
+   *
+   * A row is only returned when its claim is STILL VERIFIED. `recordVerification`
+   * already refuses to write evidence under a claim that is not, and replaces
+   * the whole set on every pass, so an orphan should be impossible — but a read
+   * that leans on the writer having been careful is one refactor away from
+   * publishing an evidence row whose claim was later refuted. The check belongs
+   * on the read.
+   *
+   * `states` is a set because the states of a dimension are not independent: an
+   * `active` repository is also a repository that exists, and a caller asking
+   * which projects have one means that row too.
+   */
+  tokensMatchingEvidence(input: {
+    chainId: number;
+    dimension: B20FundamentalDimensionKeyV1;
+    states: readonly B20FundamentalStateKeyV1[];
+    limit: number;
+  }): Promise<string[]>;
+
+  /**
+   * How many claims on this chain are verified.
+   *
+   * The denominator a fundamental answer states, and the reason it exists as
+   * its own read: a match count means nothing beside the launch universe, whose
+   * tokens were never checked. Counted rather than derived from a page, so a
+   * bounded list cannot masquerade as the corpus.
+   */
+  verifiedClaimCount(input: { chainId: number }): Promise<number>;
 }
 
 /** Whether a claim permits evidence to be attached. The single place that

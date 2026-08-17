@@ -77,5 +77,29 @@ export function createMemoryB20ProjectRepository(): B20ProjectRepositoryV1 {
         .sort()
         .slice(0, input.limit);
     },
+
+    async tokensMatchingEvidence(input) {
+      const matched: string[] = [];
+      for (const claim of claims.values()) {
+        if (claim.chainId !== input.chainId) continue;
+        // The same condition the database expresses as a JOIN on the claim.
+        // Written here too rather than assumed from the write path, because a
+        // read that trusts the writer publishes an orphaned row the day the
+        // writer changes.
+        if (claim.status !== 'verified') continue;
+        const rows = evidence.get(key(claim.chainId, claim.tokenAddress)) ?? [];
+        const hit = rows.some(
+          (row) => row.dimension === input.dimension && input.states.includes(row.state),
+        );
+        if (hit) matched.push(claim.tokenAddress);
+      }
+      return matched.sort().slice(0, input.limit);
+    },
+
+    async verifiedClaimCount(input) {
+      return [...claims.values()].filter(
+        (claim) => claim.chainId === input.chainId && claim.status === 'verified',
+      ).length;
+    },
   };
 }

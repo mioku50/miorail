@@ -1,7 +1,11 @@
 import {
   B20_FUNDAMENTAL_DIMENSION_LABEL_V1,
+  B20_FUNDAMENTAL_PREDICATE_RULES_V1,
   B20_FUNDAMENTAL_STANDING_COPY_V1,
+  b20PredicateFindingV1,
   measurementProfileMismatchV1,
+  type B20FundamentalPredicateV1,
+  type B20FundamentalProfileV1,
   type B20OpportunityCardV1,
   type MeasuredMoverV1,
   type MoverExclusionV1,
@@ -248,45 +252,6 @@ export function b20ExploreAnswerV1(input: {
   const finding = FINDING_COPY_V1[input.intent as keyof typeof FINDING_COPY_V1] ?? null;
   let lead = `${context}${sectionSentence}${limitSentence}`;
 
-  // Project context is not one of the measured findings, and it has no count in
-  // the universe summary — the summary counts what was MEASURED, and a claim is
-  // not a measurement. So it answers from the cards the list step returned and
-  // says what that list is, rather than borrowing a number about something else.
-  if (input.intent === 'find_verified_projects') {
-    const backed = named.filter((card) => card.project?.standing === 'product_backed');
-    for (const card of named) {
-      if (!card.project?.identityVerified) continue;
-      facts.push({
-        label: `${symbolV1(card)} — project`,
-        value: `${card.project.projectDomain} · ${B20_FUNDAMENTAL_STANDING_COPY_V1[card.project.standing].label}`,
-        tone: 'neutral',
-      });
-    }
-    lead =
-      named.length === 0
-        ? 'No launch Miorail has stored carries a verified project link yet. A project claims a token by serving a file on a domain it controls, and almost no launch on this chain ever does — that is the ordinary case, not a finding about any token.'
-        : `${named.length} stored ${named.length === 1 ? 'launch carries' : 'launches carry'} a verified project link: ${named
-            .map((card) => symbolV1(card))
-            .join(', ')}. ${
-            backed.length > 0
-              ? `${backed.length} of ${named.length === 1 ? 'them has' : 'those have'} a product endpoint that answered a real request. `
-              : 'None of them has a product endpoint that answered a real request. '
-          }A verified link says Miorail checked who published the token, not that the project is good.`;
-    caveats.push(
-      'A verified project link is a check on publication, not a review. Miorail did not read the project’s code, assess its team, or form any view about its token.',
-    );
-    return {
-      answer: lead,
-      facts: facts.slice(0, 16),
-      missingEvidence: missingEvidence.slice(0, 20),
-      caveats: caveats.slice(0, 12),
-      reads: [
-        { tool: 'summary', detail: `${summary.window.launches} launches, window ${window}, computed ${summary.computedAt}` },
-        { tool: 'list', detail: `${(input.cards ?? []).length} launches with a verified project claim` },
-      ],
-    };
-  }
-
   if (finding) {
     const count = finding.standingKind
       ? summary.standing.find((entry) => entry.kind === finding.standingKind)?.count ?? 0
@@ -308,6 +273,183 @@ export function b20ExploreAnswerV1(input: {
     reads: [
       { tool: 'summary', detail: `${summary.window.launches} launches, window ${window}, computed ${summary.computedAt}` },
       ...(input.cards ? [{ tool: 'list', detail: `${input.cards.length} cards matching the question’s filter` }] : []),
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Fundamental — the claimed corpus, matched on one predicate.
+//
+// A separate answer shape from Explore, and that separation IS the feature. A
+// fundamental question was previously answered by the explore builder, which
+// opens every answer with how many launches were measured in a 48-hour window
+// and which sections they fall into. None of that was read to answer the
+// question, none of it bears on it, and printing it made a claim about a
+// project look like a market statistic.
+//
+// So this function takes no summary. It cannot mention the measured universe,
+// because it was never handed one.
+//
+// What it must say instead is the denominator, and say it in the reader's
+// terms: a match count is against the VERIFIED CLAIMS, and the launches with no
+// claim were never checked. Every branch below carries that sentence, including
+// the one where nothing matched.
+// ---------------------------------------------------------------------------
+
+/** One token the predicate matched. The card is optional on purpose — see
+ * `indexed`. */
+export interface B20ConsoleProjectMatchV1 {
+  tokenAddress: string;
+  /** From the launch row when Discover has one. Null otherwise, and the answer
+   * then names the token by address rather than inventing a symbol. */
+  symbol: string | null;
+  profile: B20FundamentalProfileV1;
+  /**
+   * Whether Discover holds a canonical launch row for this token.
+   *
+   * A verified project whose launch is not indexed is STILL a match. Identity,
+   * ingestion and measurement are three axes, and dropping a claim because the
+   * index has not caught up would publish a fact about Miorail as a fact about
+   * the project.
+   */
+  indexed: boolean;
+}
+
+function matchNameV1(match: B20ConsoleProjectMatchV1): string {
+  return match.symbol || match.tokenAddress;
+}
+
+/**
+ * The corpus sentence, which every fundamental answer carries.
+ *
+ * Worded against the claims and not against the chain: a reader who is told
+ * "1 of 28,806" will hear that 28,805 launches were examined and failed. They
+ * were not examined at all — they are outside the corpus, and outside is not
+ * below.
+ */
+/**
+ * The base caveat for a fundamental answer, which is NOT the console's.
+ *
+ * `B20_CONSOLE_BASE_CAVEATS_V1` opens "this is a read of stored measurements",
+ * and a fundamental answer reads no measurement at all — it reads project
+ * evidence. Carrying the shared sentence would have told a reader the project
+ * findings came out of the Exit-First layer, which is the exact confusion the
+ * two-axis card design exists to prevent.
+ */
+export const B20_FUNDAMENTAL_BASE_CAVEAT_V1 =
+  'This is a read of stored project evidence, not of market data. Nothing here is a recommendation, a valuation, or a claim about what a project will do next.';
+
+function fundamentalCorpusSentenceV1(corpus: number): string {
+  return `Launches without a verified project claim are outside this fundamental corpus and remain unknown — Miorail never checked them, and nothing here is a negative finding about them. The corpus is ${pluralV1(corpus, 'verified project claim', 'verified project claims')}.`;
+}
+
+export function b20FundamentalAnswerV1(input: {
+  predicate: B20FundamentalPredicateV1;
+  matches: readonly B20ConsoleProjectMatchV1[];
+  /** Verified claims on this chain. The denominator, counted rather than
+   * derived from the bounded page above. */
+  corpus: number;
+  /** False when this server does not run the claim layer at all — a different
+   * statement from an empty corpus, and it must not be reported as one. */
+  available: boolean;
+}): B20ConsoleDeterministicV1 {
+  const rule = B20_FUNDAMENTAL_PREDICATE_RULES_V1[input.predicate];
+  const facts: B20ConsoleFactV1[] = [];
+  const missingEvidence: string[] = [];
+  const caveats = [
+    rule.note,
+    'A verified project link is a check on publication, not a review. Miorail did not read the project’s code, assess its team, or form any view about its token.',
+    B20_FUNDAMENTAL_BASE_CAVEAT_V1,
+  ];
+
+  if (!input.available) {
+    return {
+      answer:
+        'This server does not run the project-claim layer, so it cannot answer questions about project fundamentals. That is a fact about this deployment and not about any token.',
+      facts: [],
+      missingEvidence: ['The project-claim store this question reads.'],
+      caveats: [B20_FUNDAMENTAL_BASE_CAVEAT_V1],
+      reads: [],
+    };
+  }
+
+  // The denominator is a fact and not only a sentence, so a narrator has it in
+  // the bundle: the verifier rejects any figure that is not, and an answer
+  // whose corpus could not be quoted would fall back for every question.
+  facts.push({
+    label: 'Fundamental corpus',
+    value: pluralV1(input.corpus, 'verified project claim', 'verified project claims'),
+    tone: 'neutral',
+  });
+
+  for (const match of input.matches) {
+    const name = matchNameV1(match);
+    facts.push({
+      label: `${name} — project`,
+      value: `${match.profile.projectDomain} · ${B20_FUNDAMENTAL_STANDING_COPY_V1[match.profile.standing].label}`,
+      tone: 'neutral',
+    });
+    const finding = b20PredicateFindingV1(input.predicate, match.profile);
+    if (finding) {
+      facts.push({
+        label: `${name} — ${B20_FUNDAMENTAL_DIMENSION_LABEL_V1[finding.dimension].toLowerCase()}`,
+        value: [
+          finding.label,
+          finding.provenance.replaceAll('_', ' '),
+          // Minute precision, the same as the card's evidence fold. Seconds on
+          // a probe timestamp imply a resolution the reading does not have.
+          finding.observedAt ? finding.observedAt.replace('T', ' ').replace(/:\d{2}\.\d+Z$/, ' UTC') : null,
+        ]
+          .filter((part): part is string => part !== null)
+          .join(' · '),
+        tone: 'neutral',
+      });
+    }
+    if (match.profile.missing.length > 0) {
+      missingEvidence.push(
+        `${name} — not established: ${match.profile.missing
+          .map((dimension) => B20_FUNDAMENTAL_DIMENSION_LABEL_V1[dimension].toLowerCase())
+          .join(', ')}.`,
+      );
+    }
+    // Named per token rather than as a caveat, because it is a gap in ONE
+    // answer and a reader needs to know which token it applies to.
+    if (!match.indexed) {
+      missingEvidence.push(
+        `${name} — Miorail holds no canonical launch row for this token, so no measurement is shown beside its project evidence. The project claim is unaffected.`,
+      );
+    }
+  }
+
+  const corpusSentence = fundamentalCorpusSentenceV1(input.corpus);
+
+  if (input.corpus === 0) {
+    return {
+      answer: `No project has verified a claim to a B20 token yet, so this question has an empty corpus rather than a negative answer. A project claims a token by serving a file on a domain it controls; until one does, there is nothing here to match against ${rule.label}.`,
+      facts,
+      missingEvidence,
+      caveats,
+      reads: [{ tool: 'projects', detail: `${rule.label}, matched 0 of an empty corpus` }],
+    };
+  }
+
+  const answer =
+    input.matches.length === 0
+      ? `None of the ${pluralV1(input.corpus, 'verified project claim', 'verified project claims')} Miorail holds has ${rule.label}. ${corpusSentence}`
+      : `${input.matches.length} matched among ${pluralV1(input.corpus, 'verified project claim', 'verified project claims')}: ${input.matches
+          .map((match) => matchNameV1(match))
+          .join(', ')} ${input.matches.length === 1 ? 'has' : 'have'} ${rule.label}. ${corpusSentence}`;
+
+  return {
+    answer,
+    facts: facts.slice(0, 16),
+    missingEvidence: missingEvidence.slice(0, 20),
+    caveats: caveats.slice(0, 12),
+    reads: [
+      {
+        tool: 'projects',
+        detail: `${rule.label}, matched ${input.matches.length} of ${pluralV1(input.corpus, 'verified project claim', 'verified project claims')}`,
+      },
     ],
   };
 }

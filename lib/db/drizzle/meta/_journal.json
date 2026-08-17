@@ -337,6 +337,13 @@
       "when": 1787504400000,
       "tag": "0047_b20_project_evidence_domain_reference",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1787587200000,
+      "tag": "0048_b20_project_evidence_predicate_index",
+      "breakpoints": true
     }
   ]
 }
