@@ -335,6 +335,15 @@ export interface BaseMcpRailModelV1 {
   plugins: readonly BaseMcpPluginRowV1[];
   drift: BaseMcpPluginDriftRowV1 | null;
   generatedAt: string | null;
+  /**
+   * Read the tool list again. Optional so a surface that has no way to refetch
+   * simply shows no button rather than one that does nothing.
+   *
+   * Without this the disconnected rail was a status and a dead end: it said the
+   * list had not been read and left the reader with nowhere to press.
+   */
+  onRefresh?: () => void;
+  refreshing?: boolean;
 }
 
 const CONNECTION_TONE_V1: Readonly<Record<string, string>> = {
@@ -361,7 +370,13 @@ export function BaseMcpSummaryRail(model: BaseMcpRailModelV1) {
             <span className={`pill ${model.connection ? CONNECTION_TONE_V1[model.connection] ?? 'n' : 'n'}`}>
               {model.enabled ? (model.connection ?? 'not connected').replace(/_/g, ' ') : 'switched off'}
             </span>
-            <span className="v mono">{counts ? counts.readOnly + counts.userConfirmed + counts.forbidden + counts.unknown : '—'}</span>
+            {/* The number used to sit here alone, so "15" beside "connected"
+                could have been tools, plugins or minutes. */}
+            <span className="v mono">
+              {counts
+                ? `${counts.readOnly + counts.userConfirmed + counts.forbidden + counts.unknown} tools`
+                : 'no tools read'}
+            </span>
           </div>
           {counts ? (
             <>
@@ -384,7 +399,23 @@ export function BaseMcpSummaryRail(model: BaseMcpRailModelV1) {
               </p>
             </>
           ) : (
-            <p className="empty">The tool list has not been read yet.</p>
+            <>
+              <p className="empty">
+                {model.enabled
+                  ? 'The tool list has not been read yet.'
+                  : 'Base MCP is switched off on this server, so there is no tool list to read.'}
+              </p>
+              {model.enabled && model.onRefresh && (
+                <button
+                  type="button"
+                  className="btn sec"
+                  onClick={model.onRefresh}
+                  disabled={model.refreshing === true}
+                >
+                  {model.refreshing === true ? 'Reading…' : 'Read the tool list'}
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -405,7 +436,10 @@ export function BaseMcpSummaryRail(model: BaseMcpRailModelV1) {
               </div>
             ))
           )}
-          <p className="lnote">{baseMcpPluginDriftCopyV1(model.drift, model.generatedAt)}</p>
+          {/* The drift sentence is NOT repeated here. It sits in the main card
+              beside the drift pill it explains, and printing it twice on one
+              screen made the rail look like a second, independent reading. The
+              rail keeps what it is for: how many plugins, reachable how. */}
         </div>
       </div>
     </>

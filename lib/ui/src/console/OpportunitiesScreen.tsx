@@ -375,10 +375,19 @@ function ProjectContext({ project }: { project: B20FundamentalProfileV1 | null }
   if (project === null) return null;
 
   if (!project.identityVerified) {
+    // The verdict stays on the card; the paragraph explaining it moves under a
+    // disclosure. Unverified is the ORDINARY case — most launches are never
+    // claimed — so this text appeared in full on nearly every card in the feed,
+    // which is how a careful sentence turns into noise a reader learns to skip.
+    // The verified branch below already worked this way; this is the same
+    // treatment for the case that occurs far more often.
     return (
-      <p className="lnote project-unverified">
-        Project context — {B20_FUNDAMENTAL_STANDING_COPY_V1.unverified.label}. {project.detail}
-      </p>
+      <details className="card-evidence project-unverified">
+        <summary>Project context — {B20_FUNDAMENTAL_STANDING_COPY_V1.unverified.label}</summary>
+        <div className="card-evidence-body">
+          <p className="lnote">{project.detail}</p>
+        </div>
+      </details>
     );
   }
 

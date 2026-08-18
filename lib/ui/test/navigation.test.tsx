@@ -183,6 +183,23 @@ describe('§9.5/§9.6 — the drawer is navigation, not a control panel', () => 
     }
   });
 
+  test('the header carries one navigation, not a shorter copy of the rail', () => {
+    // The header used to render the three primary sections as pills beside a
+    // breadcrumb. The rail lists all six and is on screen at every width — a
+    // column above 900px, the drawer below it — so the pills were a second,
+    // shorter copy of the same navigation. On Discover they put the active
+    // pill directly beside a breadcrumb reading the same word.
+    assert.ok(
+      !shell.includes('className="crumb" aria-label="Sections"'),
+      'the header still renders section pills',
+    );
+    assert.ok(shell.includes('aria-label="Breadcrumb"'), 'the breadcrumb went with them');
+    // The rail's own Sections nav stays — that is the navigation that remained.
+    assert.ok(shell.includes('className="railnav" aria-label="Sections"'));
+    // `header.nav` is still accepted: the rail falls back to it.
+    assert.ok(shell.includes('left.nav ?? header.nav'), 'the rail lost its fallback');
+  });
+
   test('the adapter list and the usage bars are gone from the shell', () => {
     // §3 — they were the two largest blocks in the drawer, and neither is
     // something a user acts on while planning a route.

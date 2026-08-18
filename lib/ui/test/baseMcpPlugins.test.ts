@@ -31,6 +31,61 @@ test('the summary rail exposes released ACTION tools instead of calling the cons
   assert.doesNotMatch(html, /Only the readable ones are offered/);
 });
 
+// ---------------------------------------------------------------------------
+// The disconnected rail, and the number nobody could name.
+//
+// It read "connected  15" — fifteen of what? — and, before the tool list was
+// fetched, "The tool list has not been read yet." with nowhere to press. A
+// status with no action is a dead end on the one page whose whole job is to
+// show what this console can reach.
+// ---------------------------------------------------------------------------
+describe('the rail says what its numbers count, and offers the read', () => {
+  const rail = (overrides: Record<string, unknown> = {}) =>
+    renderToStaticMarkup(
+      BaseMcpSummaryRail({
+        connection: 'connected',
+        enabled: true,
+        endpointHost: 'mcp.base.org',
+        toolCounts: { readOnly: 8, userConfirmed: 7, forbidden: 0, unknown: 0 },
+        routingCounts: { read: 8, action: 4, routable: 1, blocked: 2, releasedActions: 3 },
+        plugins: [],
+        drift: null,
+        generatedAt: null,
+        ...overrides,
+      } as Parameters<typeof BaseMcpSummaryRail>[0]),
+    );
+
+  test('the total carries its noun', () => {
+    assert.match(rail(), /15 tools/);
+  });
+
+  test('an unread tool list offers the read, and says so when it cannot', () => {
+    const unread = rail({ toolCounts: null, onRefresh: () => {} });
+    assert.match(unread, /The tool list has not been read yet/);
+    assert.match(unread, /Read the tool list/);
+    assert.match(unread, /no tools read/);
+
+    // Switched off is a different sentence and offers nothing, because there
+    // is nothing on the other end of the button.
+    const off = rail({ toolCounts: null, enabled: false, onRefresh: () => {} });
+    assert.match(off, /Base MCP is switched off on this server/);
+    assert.doesNotMatch(off, /Read the tool list/);
+
+    // A surface with no way to refetch shows no button rather than a dead one.
+    assert.doesNotMatch(rail({ toolCounts: null }), /Read the tool list/);
+  });
+
+  test('the catalogue sentence is not printed twice on one screen', () => {
+    // It belongs beside the drift pill in the main card. The rail repeating it
+    // read as a second, independent reading of the catalogue.
+    const html = rail({
+      drift: { status: 'in_sync', knownCount: 20, publishedCount: 20 } as BaseMcpPluginDriftRowV1,
+      generatedAt: '2026-08-09',
+    });
+    assert.doesNotMatch(html, /Base publishes/);
+  });
+});
+
 const plugin = (overrides: Partial<BaseMcpPluginRowV1>): BaseMcpPluginRowV1 => ({
   id: 'example',
   title: 'Example Plugin',

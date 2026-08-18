@@ -136,12 +136,19 @@ describe('a verified project reads as project context, never as a measurement', 
 });
 
 describe('an unverified project is one quiet line, and a missing layer is silence', () => {
-  test('an unclaimed token gets a single muted sentence and no rows', () => {
+  test('the verdict stays on the card and the explanation folds away', () => {
     const markup = render([opportunityCardViewV1(wireCard(UNVERIFIED))]);
-    assert.match(markup, /Project context — Unverified/);
+    // Unverified is the ORDINARY case, so this text appeared in full on nearly
+    // every card in the feed — forty words of caveat repeated down the page,
+    // which is how a careful sentence becomes something a reader skips. The
+    // verdict is still stated; only the paragraph moved behind a disclosure,
+    // the same treatment the verified branch already used.
+    assert.match(markup, /<summary>Project context — Unverified<\/summary>/);
     assert.match(markup, /most launches are never claimed/i);
-    // No section, no facts, no control. A column of unknowns invites a reader
-    // to wonder what would fill it in.
+    // Closed until asked for: `<details>` without `open`.
+    assert.ok(!/<details[^>]*\bopen\b[^>]*class="card-evidence project-unverified"/.test(markup));
+    // Still no facts and no control — a column of unknowns invites a reader to
+    // wonder what would fill it in.
     assert.ok(!/project-context/.test(markup));
     assert.ok(!/View evidence/.test(markup));
   });

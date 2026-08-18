@@ -25,6 +25,7 @@ import {
   chainBlockNumberV1,
   chainGasLabelV1,
   chainLabelV1,
+  consoleSectionLabelV1,
   useConsoleTheme,
 } from '@mioagent/ui';
 import {
@@ -746,7 +747,10 @@ export function B20WatchPage() {
   return (
     <ConsoleShell
       header={{
-        crumb: ['Portfolio', 'Control watch'],
+        // The section's OWN label, not a second name for it. The rail said
+        // "B20", the breadcrumb said "Portfolio" and the page title said
+        // "Control watch" — three names for one place, on one screen.
+        crumb: [consoleSectionLabelV1('portfolio'), 'Control watch'],
         nav: consoleNav.header,
         onNavigate: consoleNav.navigate,
         blockNumber: chainBlockNumberV1(status.data ?? null),

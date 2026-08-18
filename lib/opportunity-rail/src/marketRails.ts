@@ -122,6 +122,16 @@ export interface ExitCapacityLeaderV1 {
   state: B20ObservationStateV1;
   reasonCode: string | null;
   measuredAt: string;
+  /**
+   * When this measurement stops counting as current.
+   *
+   * Carried so the screen can say how long the window IS, rather than only
+   * which side of it a row fell on. The length is the worker's `--stale-after`
+   * and no screen may assume a value for it: a reader asking why 46 minutes is
+   * already stale has to be able to read the answer, and a number typed into
+   * the UI would be a guess that goes wrong the moment an operator changes it.
+   */
+  staleAfter: string;
   observationBlockNumber: string;
   /** Freshness classifies the age of this measured bound; it does not erase
    * the bound. Stale rows remain read-only evidence and are labelled as such. */
@@ -211,6 +221,7 @@ export function exitCapacityLeadersV1(input: ExitCapacityLeadersInputV1): {
       state: row.observation.state,
       reasonCode: row.observation.reasonCode,
       measuredAt: row.observation.measuredAt,
+      staleAfter: row.observation.staleAfter,
       observationBlockNumber: row.observation.observationBlockNumber,
       freshness: Date.parse(row.observation.staleAfter) > input.now.getTime() ? 'fresh' : 'stale',
     });

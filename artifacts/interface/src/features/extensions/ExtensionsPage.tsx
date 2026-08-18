@@ -139,6 +139,11 @@ export function ExtensionsPage() {
       // already loaded, so the rail costs no request.
       right={
         <BaseMcpSummaryRail
+          // The disconnected rail was a status with nowhere to press. This is
+          // the same read the page already makes, run again on request — no new
+          // endpoint and nothing executed.
+          onRefresh={readCatalogue}
+          refreshing={probe.isPending}
           connection={probe.data?.status ?? null}
           enabled={enabled}
           endpointHost={probe.data?.endpointHost ?? null}

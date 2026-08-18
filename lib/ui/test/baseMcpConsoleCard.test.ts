@@ -6,6 +6,7 @@ import {
   BASE_MCP_CONSOLE_PROMPTS_V1,
   BaseMcpConsoleCard,
   baseMcpConsoleStatusCopyV1,
+  baseMcpToolSummaryV1,
   baseMcpConsoleTraceSummaryV1,
   type BaseMcpConsoleAnswerV1,
 } from '../src/console/BaseMcpConsoleCard';
@@ -200,5 +201,31 @@ describe('the trace summary says where the words came from', () => {
 
   test('a single call is not called "1 tool calls"', () => {
     assert.match(baseMcpConsoleTraceSummaryV1(answer()), /1 Base MCP tool call\./);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The header read `— READ · — ACTION` before the tool list was fetched: two
+// machine words and two em-dashes standing in for numbers. The rail beside it
+// was already saying the same counts in words a person uses, so the header was
+// both the cryptic version AND the duplicate.
+// ---------------------------------------------------------------------------
+describe('the console header counts tools in words', () => {
+  test('it says what a reader would say', () => {
+    assert.equal(
+      baseMcpToolSummaryV1({ readTools: 8, actionTools: 7 }),
+      '8 readable · 7 require approval',
+    );
+    assert.equal(
+      baseMcpToolSummaryV1({ readTools: 8, actionTools: 7, releasedActionTools: 3, routableTools: 1 }),
+      '8 readable · 3 of 7 requiring approval are released · 1 hand off to Routes AI',
+    );
+  });
+
+  test('an unread list is a sentence, not an em-dash', () => {
+    assert.equal(baseMcpToolSummaryV1({}), 'tool list not read yet');
+    // A dash where a number belongs reads as a count of nothing rather than as
+    // an absence of counting.
+    assert.doesNotMatch(baseMcpToolSummaryV1({}), /—/);
   });
 });

@@ -185,29 +185,17 @@ export function ConsoleShell(props: ConsoleShellProps) {
             </span>
             Miorail
           </div>
-          {(header.nav ?? []).length > 0 && (
-            <nav className="crumb" aria-label="Sections">
-              {(header.nav ?? []).map((item) =>
-                // T70 §4/§9.8 — a section that cannot be reached gets no
-                // button. It states why, in words, and is not clickable.
-                item.available ? (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={`btn sec${item.active ? ' on' : ''}`}
-                    aria-current={item.active ? 'page' : undefined}
-                    onClick={() => header.onNavigate?.(item.id)}
-                  >
-                    {item.label}
-                  </button>
-                ) : (
-                  <span key={item.id} className="chip" title={item.unavailableReason ?? undefined}>
-                    {item.label}
-                  </span>
-                ),
-              )}
-            </nav>
-          )}
+          {/* The section pills that used to sit here are gone.
+              They listed three of the six sections the left rail lists, and the
+              rail is on screen at every width — as a column above 900px and as
+              the drawer below it. So the header showed a second, shorter copy
+              of the same navigation, and on Discover it put the active pill
+              directly beside a breadcrumb reading the same word: "Discover
+              Discover".
+
+              `header.nav` is still accepted and still used: `railNav` falls
+              back to it when a page passes no rail nav of its own. What was
+              removed is the duplicate rendering, not the navigation. */}
           <nav className="crumb" aria-label="Breadcrumb">
             {header.crumb.map((entry, index) => (
               <React.Fragment key={entry}>

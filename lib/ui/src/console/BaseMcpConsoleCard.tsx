@@ -171,6 +171,34 @@ export function baseMcpConsoleTraceSummaryV1(answer: BaseMcpConsoleAnswerV1): st
   return `${calls}${failures}. Everything below came from these, or from nowhere.${took}`;
 }
 
+/**
+ * The tool counts, in the words the rail beside this card already uses.
+ *
+ * Null counts mean the tool list has not been read, and that is said as a
+ * sentence rather than as an em-dash standing in for a number.
+ */
+export function baseMcpToolSummaryV1(model: {
+  readTools?: number;
+  actionTools?: number;
+  releasedActionTools?: number;
+  routableTools?: number;
+}): string {
+  if (model.readTools === undefined && model.actionTools === undefined) {
+    return 'tool list not read yet';
+  }
+  const parts: string[] = [];
+  if (model.readTools !== undefined) parts.push(`${model.readTools} readable`);
+  if (model.actionTools !== undefined) {
+    parts.push(
+      model.releasedActionTools === undefined
+        ? `${model.actionTools} require approval`
+        : `${model.releasedActionTools} of ${model.actionTools} requiring approval are released`,
+    );
+  }
+  if (model.routableTools) parts.push(`${model.routableTools} hand off to Routes AI`);
+  return parts.join(' · ');
+}
+
 export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
   const answer = model.answer;
   const statusCopy = baseMcpConsoleStatusCopyV1(answer);
@@ -180,13 +208,11 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
     <div className="rp">
       <div className="rph">
         <b>Base MCP Extensions</b>
-        <span className="rt mono">
-          {model.readTools ?? '—'} READ ·{' '}
-          {model.releasedActionTools === undefined
-            ? `${model.actionTools ?? '—'} ACTION`
-            : `${model.releasedActionTools}/${model.actionTools ?? '—'} ACTION RELEASED`}
-          {model.routableTools ? ` · ${model.routableTools} ROUTABLE` : ''}
-        </span>
+        {/* This read `— READ · — ACTION` before the tool list was fetched:
+            machine words, and two em-dashes where a reader expects a count.
+            The rail beside it was already saying the same numbers in words a
+            person uses, so the two now agree and only the header is shorter. */}
+        <span className="rt">{baseMcpToolSummaryV1(model)}</span>
       </div>
       <div className="rpb">
         <p className="lnote">

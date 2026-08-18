@@ -41,10 +41,35 @@ export function defaultRailLeadersV1(leaders: readonly ExitCapacityLeaderV1[]): 
   };
 }
 
-function amountLabelV1(atomic: string, decimals: number | null, symbol: string): string {
+function amountLabelV1(atomic: string, decimals: number | null, unit: string): string {
   // Unknown decimals are stated, never divided by an assumed 18.
   if (decimals === null) return `${atomic} (atomic)`;
-  return formatCompactAtomicAmount(atomic, decimals) + ' ' + symbol;
+  return formatCompactAtomicAmount(atomic, decimals) + ' ' + unit;
+}
+
+/**
+ * How long a measurement counts as current, read off the data.
+ *
+ * The window is the worker's `--stale-after` and this file may not assume it:
+ * a number typed here becomes a lie the first time an operator changes the
+ * flag. Null when there is nothing to read, or when the rows disagree — then
+ * the screen says nothing rather than picking one of them to state as the rule.
+ */
+export function freshnessWindowLabelV1(
+  leaders: readonly { measuredAt: string; staleAfter: string }[],
+): string | null {
+  const windows = new Set<number>();
+  for (const leader of leaders) {
+    const span = Date.parse(leader.staleAfter) - Date.parse(leader.measuredAt);
+    if (!Number.isFinite(span) || span <= 0) return null;
+    windows.add(span);
+  }
+  if (windows.size !== 1) return null;
+  const ms = [...windows][0]!;
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = ms / 3_600_000;
+  return `${Number.isInteger(hours) ? hours : hours.toFixed(1)} h`;
 }
 
 /** "measured 4 min ago". Whole minutes: a measurement age to the second
@@ -251,6 +276,10 @@ function RailGuide({ children, summary }: { summary: string; children: React.Rea
 export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
   const { shown, outsideReference } = defaultRailLeadersV1(model.leaders);
   const visible = shown.slice(0, model.expanded ? RAIL_FULL_V1 : RAIL_TOP_V1);
+  // Of what is ON SCREEN. A note about rows the reader cannot see would be
+  // about a different list than the one they are reading.
+  const allStale = visible.length > 0 && visible.every((leader) => leader.freshness === 'stale');
+  const freshnessWindow = freshnessWindowLabelV1(shown);
 
   return (
     <div className="rp">
@@ -272,10 +301,24 @@ export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
             {outsideReference > 0
               ? ` ${outsideReference} of the measured profiles here ${outsideReference === 1 ? 'is' : 'are'} above that reference.`
               : ''}{' '}
-            A row marked stale is past its freshness window: historical evidence, not a current quote.{' '}
+            A row marked stale is past its freshness window: historical evidence, not a current quote.
+            {freshnessWindow
+              ? ` A measurement counts as current for ${freshnessWindow} after it was taken, so a reading older than that is marked stale even when nothing about the token changed.`
+              : ''}{' '}
             {MARKET_RAIL_DISCLAIMER_V1}
           </p>
         </RailGuide>
+        {/* Marking each row stale understates it when EVERY row is stale: the
+            reader is then looking at a list that is historical as a whole, and
+            five identical chips read as a property of the rows rather than of
+            the ranking. Said once, above them, and only when it is true of all
+            of them. */}
+        {allStale && (
+          <p className="note warn">
+            Every row below is past its freshness window. This is a ranking of past measurements, not
+            of what the market looks like now.
+          </p>
+        )}
         {model.loading ? (
           <RailEmpty>Reading measured exits…</RailEmpty>
         ) : model.unavailableReason ? (
@@ -299,7 +342,10 @@ export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
                     // The BOUND. `≥` is not decoration: the ladder knows the
                     // largest size that passed and nothing above it. What that
                     // means is stated once, under the header.
-                    value: `≥ ${amountLabelV1(leader.largestPassingSizeAtomic, leader.decimals, leader.symbol)}`,
+                    // "tokens", not the symbol: the row is already headed by
+                    // the symbol, and repeating it made the number the second
+                    // thing on its own line.
+                    value: `≥ ${amountLabelV1(leader.largestPassingSizeAtomic, leader.decimals, 'tokens')}`,
                     mark: null,
                     tone: 'plain',
                   },

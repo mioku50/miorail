@@ -10,6 +10,7 @@ import {
   B20MeasuredMoversCard,
   MARKET_RAIL_DISCLAIMER_V1,
   defaultRailLeadersV1,
+  freshnessWindowLabelV1,
   measuredAgeLabelV1,
   measuredAgoLabelV1,
   signedBpsLabelV1,
@@ -43,6 +44,9 @@ function leader(address: string, overrides: Record<string, unknown> = {}) {
     state: 'provisional' as const,
     reasonCode: 'quoted_pre_entry',
     measuredAt: '2026-08-05T11:50:00.000Z',
+    // 30 minutes, which is the worker's default window. The screen reads the
+    // length off this pair rather than being told it.
+    staleAfter: '2026-08-05T12:20:00.000Z',
     observationBlockNumber: '49531075',
     freshness: 'fresh' as const,
     ...overrides,
@@ -214,7 +218,7 @@ describe('§6 — measured views, stated as such', () => {
 
   test('capacity renders as a bound, never a bare figure', () => {
     const markup = renderLeaders({ leaders: [leader(ADDRESSES[0]!)] });
-    assert.match(markup, /≥ 4000 S/);
+    assert.match(markup, /≥ 4000 tokens/);
     // What the glyph means, and what the ladder did not measure, said once
     // under the header rather than under every row.
     assert.match(markup, /Largest tested exit is a lower bound/);
@@ -225,7 +229,7 @@ describe('§6 — measured views, stated as such', () => {
     const markup = renderLeaders({
       leaders: [leader(ADDRESSES[0]!, { largestPassingSizeAtomic: '11952475734632944328073399' })],
     });
-    assert.match(markup, /≥ 11\.95M S/);
+    assert.match(markup, /≥ 11\.95M tokens/);
     assert.ok(!markup.includes('11952475.734632944328073399'));
   });
 
@@ -278,7 +282,7 @@ describe('§6 — measured views, stated as such', () => {
     }
     // A fresh row carries no marker at all, so the chip means something.
     assert.ok(!/rail-fact-mark/.test(renderLeaders({ leaders: [leader(ADDRESSES[0]!)] })));
-    assert.match(leaders, /≥ 4000 S/);
+    assert.match(leaders, /≥ 4000 tokens/);
     // Percentage POINTS, and no leading plus: this is the change in what a
     // round trip costs, not a return anybody earned.
     assert.match(movers, /↑ 25 pp/);
@@ -315,7 +319,7 @@ describe('§8 — every rail figure is named, and every bound survives', () => {
     assert.match(markup, /Largest tested exit/);
     assert.match(markup, /Round-trip cost/);
     assert.match(markup, /Freshness/);
-    assert.match(markup, /≥ 4000 S/);
+    assert.match(markup, /≥ 4000 tokens/);
     // Three rows, one explanation. The rail used to carry a qualifier under
     // every value — five rows meant fifteen repetitions of three sentences, and
     // the numbers a reader came for were the smallest thing in the column.
@@ -452,5 +456,73 @@ describe('§5 — Your Exit Coverage', () => {
     const markup = render('2000000000000000000000', { staleAfter: '2026-08-05T11:00:00.000Z' });
     assert.match(markup, /past its window/);
     assert.match(markup, /≥ 4000 DINo1/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A rail where EVERY row is stale is a different object than a rail with a
+// stale row in it. Production had four of four leaders past their window —
+// including one a full day old — under a header reading "Measured exit
+// liquidity", which is how a list of history reads as a ranking of now.
+// ---------------------------------------------------------------------------
+describe('a ranking that is entirely historical says so once, above the rows', () => {
+  const stale = (address: string) =>
+    leader(address, { freshness: 'stale' as const, measuredAt: '2026-08-05T11:00:00.000Z' });
+
+  test('every row stale puts the sentence on the ranking, not on each row', () => {
+    const markup = renderLeaders({ leaders: [stale(ADDRESSES[0]!), stale(ADDRESSES[1]!)] });
+    assert.match(markup, /Every row below is past its freshness window/);
+    assert.match(markup, /not of what the market looks like now/);
+  });
+
+  test('one fresh row is enough for the sentence to be untrue, so it is absent', () => {
+    const markup = renderLeaders({ leaders: [stale(ADDRESSES[0]!), leader(ADDRESSES[1]!)] });
+    assert.ok(!/Every row below is past/.test(markup));
+    // The per-row marker still does its own job.
+    assert.match(markup, /rail-fact-mark/);
+  });
+
+  test('an empty rail claims nothing about rows it does not have', () => {
+    assert.ok(!/Every row below is past/.test(renderLeaders({ leaders: [] })));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// "46 min old · stale" is unreadable without the length of the window, and the
+// length is the worker's `--stale-after` flag. It is derived from the data for
+// exactly that reason: a number typed into the UI becomes a lie the first time
+// an operator changes the flag.
+// ---------------------------------------------------------------------------
+describe('the freshness window is stated, and only when it can be read', () => {
+  test('it is computed from the measurement, not typed into the screen', () => {
+    assert.equal(
+      freshnessWindowLabelV1([
+        { measuredAt: '2026-08-05T11:50:00.000Z', staleAfter: '2026-08-05T12:20:00.000Z' },
+      ]),
+      '30 min',
+    );
+    assert.equal(
+      freshnessWindowLabelV1([
+        { measuredAt: '2026-08-05T11:00:00.000Z', staleAfter: '2026-08-05T13:00:00.000Z' },
+      ]),
+      '2 h',
+    );
+    assert.match(renderLeaders({ leaders: [leader(ADDRESSES[0]!)] }), /counts as current for 30 min/);
+  });
+
+  test('rows that disagree produce no rule at all', () => {
+    // Picking one of them would state a rule the other row disproves.
+    assert.equal(
+      freshnessWindowLabelV1([
+        { measuredAt: '2026-08-05T11:50:00.000Z', staleAfter: '2026-08-05T12:20:00.000Z' },
+        { measuredAt: '2026-08-05T11:50:00.000Z', staleAfter: '2026-08-05T12:50:00.000Z' },
+      ]),
+      null,
+    );
+    assert.equal(freshnessWindowLabelV1([]), null);
+    assert.equal(
+      freshnessWindowLabelV1([{ measuredAt: 'not a date', staleAfter: '2026-08-05T12:20:00.000Z' }]),
+      null,
+    );
   });
 });

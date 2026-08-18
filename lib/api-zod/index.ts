@@ -3788,6 +3788,7 @@ const B20CapacityLeaderV1Schema = z
     state: z.enum(['candidate', 'provisional', 'rejected', 'unmeasured']),
     reasonCode: z.string().max(64).nullable(),
     measuredAt: z.string().datetime(),
+    staleAfter: z.string().datetime(),
     observationBlockNumber: z.string().regex(/^\d+$/),
     freshness: z.enum(['fresh', 'stale']),
   })
