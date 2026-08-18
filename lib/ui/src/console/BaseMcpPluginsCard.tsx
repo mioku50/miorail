@@ -252,10 +252,13 @@ export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
         ) : (
           groups.map((group) => (
             <div key={group.reach}>
-              <div className="qrow">
-                <span className={`pill ${REACH_TONE_V1[group.reach]}`}>{REACH_LABEL_V1[group.reach]}</span>
-                <span className="v mono">{group.plugins.length}</span>
-              </div>
+              <details className="mcp-group">
+                <summary>
+                  <span className="qrow">
+                    <span className={`pill ${REACH_TONE_V1[group.reach]}`}>{REACH_LABEL_V1[group.reach]}</span>
+                    <span className="v mono">{group.plugins.length}</span>
+                  </span>
+                </summary>
               <p className="lnote">{BASE_MCP_PLUGIN_REACH_COPY_V1[group.reach]}</p>
               {group.plugins.map((plugin) => (
                 // Three lines each, the same three every time. Uniform rows
@@ -270,12 +273,17 @@ export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
                   </div>
                   <p className="lnote">{baseMcpPluginSummaryLineV1(plugin.summary || plugin.title)}</p>
                   <p className="lnote">{baseMcpPluginMetaLineV1(plugin)}</p>
-                  <p className="lnote">
-                    Owner: <span className="mono">{plugin.productSurface === 'routes' ? 'Routes AI' : 'Base MCP Extensions'}</span>
-                    {' · '}stage: <span className="mono">{plugin.lifecycleStage}</span>
-                  </p>
                   <details>
-                    <summary className="lnote">Example questions ({plugin.examples.length})</summary>
+                    <summary className="lnote">Details and example questions ({plugin.examples.length})</summary>
+                    {/* Which Miorail surface owns the plugin, and how far along
+                        our own pipeline it is. Both true and both OURS: a
+                        reader asking what this console can reach does not need
+                        "stage: documented" on the fourth line of every one of
+                        twenty rows. Kept, one fold down. */}
+                    <p className="lnote">
+                      Owner: <span className="mono">{plugin.productSurface === 'routes' ? 'Routes AI' : 'Base MCP Extensions'}</span>
+                      {' · '}stage: <span className="mono">{plugin.lifecycleStage}</span>
+                    </p>
                     <div className="ctarow">
                       {plugin.examples.map((example) => (
                         <button
@@ -293,6 +301,7 @@ export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
                   </details>
                 </div>
               ))}
+              </details>
             </div>
           ))
         )}

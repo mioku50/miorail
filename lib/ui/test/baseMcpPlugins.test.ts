@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import url from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import {
@@ -270,3 +273,28 @@ describe('twenty plugins have to be scannable, not a wall of prose', () => {
     assert.match(baseMcpPluginMetaLineV1(plugin({ chains: [] })), /no chain stated/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// P2 — twenty plugins at five lines each.
+// ---------------------------------------------------------------------------
+describe('the plugin catalogue folds, and keeps our own vocabulary one level down', () => {
+  const here = path.dirname(url.fileURLToPath(import.meta.url));
+  const card = readFileSync(path.join(here, '../src/console/BaseMcpPluginsCard.tsx'), 'utf8');
+
+  test('each reach group folds', () => {
+    assert.match(card, /<details className="mcp-group">/);
+    assert.ok(!/className="mcp-group" open/.test(card));
+  });
+
+  test('owner and stage moved inside the row disclosure', () => {
+    // Both are true and both are OURS: which Miorail surface owns the plugin,
+    // and how far along our pipeline it is. Neither answers "what can this
+    // console reach", which is the question the page exists for — so they are
+    // kept, one fold down, rather than being the fourth line of twenty rows.
+    const disclosureAt = card.indexOf('Details and example questions');
+    const ownerAt = card.indexOf('Owner: <span className="mono">');
+    assert.ok(disclosureAt > 0 && ownerAt > disclosureAt, 'owner/stage is still a top-level row');
+    assert.match(card, /stage: <span className="mono">/);
+  });
+});
+

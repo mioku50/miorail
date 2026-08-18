@@ -884,3 +884,32 @@ describe('the copy names the control it is talking about', () => {
     assert.match(panelSource, /'Read B20 controls'/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// P2 — the exit form, and the two emptinesses that read as one.
+// ---------------------------------------------------------------------------
+describe('the exit form is sized for what it holds', () => {
+  const card = readFileSync(path.join(here, '../src/console/B20ExitCard.tsx'), 'utf8');
+  const css = readFileSync(path.join(here, '../src/console/console.css'), 'utf8');
+
+  test('a three-character number does not use the write-a-sentence box', () => {
+    // `.goalinput` is 16px type with 14px padding and `width:100%`, so
+    // "100", "3" and "3" each stood ~50px tall and pushed their own labels
+    // onto a second line.
+    assert.ok(!/className="goalinput"/.test(card), 'the exit form is back on the goal input');
+    assert.equal((card.match(/className="numinput"/g) ?? []).length, 3);
+    assert.match(css, /\.mio-console \.numinput \{/);
+    // Digits in a column line up.
+    assert.match(css, /\.numinput[^}]*tabular-nums/);
+  });
+
+  test('the wallet and the token have different emptinesses, and say so', () => {
+    // Both panels used to print "Nothing has been checked yet." — one about a
+    // wallet nobody swept, one about a token nobody measured. Identical words
+    // for two different absences read as the same absence twice.
+    assert.ok(!/Nothing has been checked yet\./.test(card));
+    assert.match(card, /No token selected, so there is no exit to measure yet/);
+    assert.match(card, /No exit measured for \$\{tokenLabel\} yet/);
+  });
+});
+

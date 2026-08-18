@@ -402,7 +402,7 @@ export function B20ExitCard({
           <div className="kv">
             <span className="k">Position (USDC)</span>
             <input
-              className="goalinput"
+              className="numinput"
               aria-label="Position size in USDC"
               inputMode="numeric"
               value={profile.position}
@@ -412,7 +412,7 @@ export function B20ExitCard({
           <div className="kv">
             <span className="k">Max round trip (%)</span>
             <input
-              className="goalinput"
+              className="numinput"
               aria-label="Maximum round-trip cost in percent"
               inputMode="decimal"
               value={profile.maxRoundTrip}
@@ -422,7 +422,7 @@ export function B20ExitCard({
           <div className="kv">
             <span className="k">Max exit slippage (%)</span>
             <input
-              className="goalinput"
+              className="numinput"
               aria-label="Maximum exit slippage in percent"
               inputMode="decimal"
               value={profile.maxSlippage}
@@ -434,7 +434,16 @@ export function B20ExitCard({
         {unavailableReason ? (
           <p className="note warn">{unavailableReason}</p>
         ) : check === null ? (
-          <p className="empty">Nothing has been checked yet.</p>
+          // Not the same sentence the holdings panel above uses. That one is
+          // about the WALLET — nothing swept yet — and this one is about the
+          // exit for one token. Printing identical words for two different
+          // absences told a reader they were looking at the same emptiness
+          // twice.
+          <p className="empty">
+            {tokenLabel === null
+              ? 'No token selected, so there is no exit to measure yet.'
+              : `No exit measured for ${tokenLabel} yet.`}
+          </p>
         ) : (
           <>
             <p className={check.status === 'qualified' ? 'nm' : 'nm warn'}>

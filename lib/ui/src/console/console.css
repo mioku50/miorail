@@ -339,6 +339,16 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .goalinput { width: 100%; border: 0; outline: 0; resize: none; background: var(--field); color: var(--ink);
   font: inherit; font-size: 16px; line-height: 1.5; padding: 14px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--line); }
 
+/* A number, not a goal.
+   `.goalinput` is the full-width box a person writes a sentence into: 16px
+   type, 14px padding, `width:100%`. Three of them held "100", "3" and "3" on
+   the exit form, so a one-character field stood ~50px tall and its own label
+   wrapped to two lines beside it. Same field, same mechanic, sized for what it
+   holds — and tabular figures so the column of numbers lines up. */
+.mio-console .numinput { width: 108px; flex: none; border: 0; outline: 0; background: var(--field); color: var(--ink);
+  font: inherit; font-size: 14px; line-height: 1.4; padding: 7px 10px; border-radius: 8px; text-align: right;
+  font-variant-numeric: tabular-nums; box-shadow: inset 0 0 0 1px var(--line); }
+
 .mio-console .tl { list-style: none; margin: 0; padding: 0 0 0 4px; }
 .mio-console .tl li { position: relative; padding: 0 0 16px 22px; border-left: 1px solid var(--line); }
 .mio-console .tl li:last-child { border-left-color: transparent; padding-bottom: 0; }
@@ -392,6 +402,19 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
    it does not explain the number, it says the number is not current. */
 .mio-console .rail-fact-mark { margin-left: 6px; vertical-align: middle; font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; }
 .mio-console .rail-open { margin-top: 8px; }
+/* A foldable group on Base MCP Extensions.
+   Twenty plugins and fifteen tools rendered flat made that page the most
+   developer-looking surface in the product: five lines per plugin, three
+   headings, and a reader scrolling past all of it. The headings and their
+   counts are what is being scanned; the members open when one of them is the
+   question. `<summary>` is display:list-item by default, so the row inside it
+   is a span rather than a block — a div there collapses the marker onto its
+   own line. */
+.mio-console .mcp-group { margin-top: 6px; }
+.mio-console .mcp-group > summary { cursor: pointer; padding: 6px 0; color: var(--ink); font-size: 12px; }
+.mio-console .mcp-group > summary .qrow { display: inline-flex; width: calc(100% - 18px); vertical-align: middle;
+  border-bottom: 0; padding: 0; }
+.mio-console .mcp-group[open] > summary { border-bottom: 1px solid var(--line); }
 /* The shared qualifier block, in the narrow rail column: tighter than the same
    control on the feed, and with no two-up definition grid to collapse. */
 .mio-console .rail-guide { margin: 0 0 10px; }

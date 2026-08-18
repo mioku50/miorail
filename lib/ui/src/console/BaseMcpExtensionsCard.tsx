@@ -165,16 +165,33 @@ export function BaseMcpExtensionsCard(model: BaseMcpExtensionsModelV1) {
             No tools have been read yet. Connect your Base Account to see what is available.
           </p>
         ) : (
-          groups.map((group) => (
-            <div key={group.capability}>
-              <div className="qrow">
-                <span>
-                  <span className={`pill ${CAPABILITY_TONE_V1[group.capability]}`}>
-                    {group.capability.replace(/_/g, ' ')}
+          <>
+            {/* The right-hand word used to stand alone: `wallet`, `protocol`,
+                fifteen times, with nothing anywhere saying what the column was.
+                Once, for the whole list — putting it inside the group loop
+                reprints it under every heading, which is the thing being
+                fixed. */}
+            <p className="lnote">
+              The word beside each tool is what it touches: <span className="mono">wallet</span> needs
+              your Base Account, <span className="mono">protocol</span> reads public chain or service
+              data.
+            </p>
+            {groups.map((group) => (
+            // Each group folds. Fifteen tool names under three headings is a
+            // page you scroll past rather than read; the headings and their
+            // counts are what a reader is actually scanning for, and the names
+            // are there the moment one of them is the question.
+            <details key={group.capability} className="mcp-group">
+              <summary>
+                <span className="qrow">
+                  <span>
+                    <span className={`pill ${CAPABILITY_TONE_V1[group.capability]}`}>
+                      {group.capability.replace(/_/g, ' ')}
+                    </span>
                   </span>
+                  <span className="v mono">{group.tools.length}</span>
                 </span>
-                <span className="v mono">{group.tools.length}</span>
-              </div>
+              </summary>
               <p className="lnote">{BASE_MCP_CAPABILITY_COPY_V1[group.capability]}</p>
               {group.tools.map((tool) => (
                 <div className="qrow" key={tool.name}>
@@ -182,24 +199,29 @@ export function BaseMcpExtensionsCard(model: BaseMcpExtensionsModelV1) {
                   <span className="v">{tool.scope}</span>
                 </div>
               ))}
-            </div>
-          ))
+            </details>
+            ))}
+          </>
         )}
 
         {model.enabled && groups.length > 0 && (
           <>
+            {/* The same counts the card header and the rail state, so they use
+                the same words. `READ` / `ACTION` / `ROUTABLE` were the wire's
+                names for these, printed in caps as though the reader shared
+                our vocabulary. The classification is unchanged. */}
             <div className="qrow">
-              <span>READ</span>
+              <span>Readable here</span>
               <span className="v mono">{model.tools.filter((tool) => tool.surface === 'read').length}</span>
             </div>
             <div className="qrow">
-              <span>ACTION</span>
+              <span>Need your approval</span>
               <span className="v mono">
-                {releasedActions}/{classifiedActions.length} released
+                {releasedActions} of {classifiedActions.length} released
               </span>
             </div>
             <div className="qrow">
-              <span>ROUTABLE</span>
+              <span>Hand off to Routes AI</span>
               <span className="v mono">{model.tools.filter((tool) => tool.surface === 'routable').length}</span>
             </div>
             <p className="lnote">
