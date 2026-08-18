@@ -29,7 +29,8 @@ export interface B20PublicContextModelV1 {
   context: B20PublicContextV1 | null;
   /** Why there is no answer. Never a claim about the token. */
   error: string | null;
-  onLook: (tokenAddress: string) => void;
+  /** `domain` is a hostname a reader typed. Absent runs the search instead. */
+  onLook: (tokenAddress: string, domain?: string) => void;
 }
 
 const GROUND_TONE_V1: Record<string, string> = {
@@ -70,6 +71,35 @@ export function B20PublicContextCard({
             Search public accounts
           </button>
         ) : null}
+
+        {/* The better half of the layer, and the cheaper one. A search has to
+            guess which page on the web is this project; a reader who already
+            knows the domain has supplied the one thing it cannot. Miorail
+            believes it no more than it believes a ranked result — it fetches it
+            and looks for this token's address. */}
+        <form
+          className="b20-ask-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const field = event.currentTarget.elements.namedItem('b20-public-domain');
+            const value = field instanceof HTMLInputElement ? field.value.trim() : '';
+            if (value.length === 0) return;
+            model.onLook(tokenAddress, value);
+          }}
+        >
+          <label htmlFor={`b20-public-domain-${tokenAddress}`}>Or check a domain you already know</label>
+          <div>
+            <input
+              id={`b20-public-domain-${tokenAddress}`}
+              name="b20-public-domain"
+              maxLength={253}
+              placeholder="orbitlab.xyz"
+            />
+            <button type="submit" className="btn">
+              Check
+            </button>
+          </div>
+        </form>
 
         {owns && model.loading && <p className="empty">Searching, then reading each result…</p>}
         {owns && model.error && <p className="note warn">{model.error}</p>}

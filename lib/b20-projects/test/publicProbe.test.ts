@@ -6,6 +6,7 @@ import type { B20PublicContextCandidateV1 } from '@mioagent/opportunity-rail';
 
 import {
   B20_PUBLIC_PROBE_FETCH_LIMIT_V1,
+  candidateFromLinkV1,
   linksBackToHostV1,
   linksToHostsV1,
   pageNamesAddressV1,
@@ -193,5 +194,76 @@ describe('the probe tells the real project from the copycat', () => {
       });
       assert.ok(asked.length <= B20_PUBLIC_PROBE_FETCH_LIMIT_V1);
     })();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A named domain, and the accounts the site itself declares.
+//
+// This is the better evidence of the two. A ranked result is a search engine's
+// opinion about which page is the project; a link in the project's own footer
+// is the project saying which accounts are theirs. Neither is a link to the
+// TOKEN — only the address on the page is that.
+// ---------------------------------------------------------------------------
+describe('accounts are discovered from the site the reader named', () => {
+  const site = 'https://orbitlab.xyz/';
+  const repo = 'https://github.com/orbitlab/os';
+  const social = 'https://x.com/orbitlab';
+
+  const supplied = {
+    kind: 'website' as const,
+    url: site,
+    host: 'orbitlab.xyz',
+    origin: 'operator_supplied' as const,
+    fetched: false,
+  };
+
+  test('a link in the page becomes a candidate, marked as coming from there', async () => {
+    const { http } = pages({
+      [site]: `<footer><a href="${repo}">code</a><a href="${social}">x</a></footer> ${TOKEN}`,
+      [repo]: `OrbitLab https://orbitlab.xyz`,
+      [social]: `OrbitLab https://orbitlab.xyz`,
+    });
+    const evidence = await probePublicContextV1({
+      chainId: 8453,
+      tokenAddress: TOKEN,
+      candidates: [supplied],
+      deps: { http, now: () => '2026-08-18T10:00:00.000Z' },
+    });
+    assert.deepEqual(
+      evidence.candidates.map((c) => `${c.kind}:${c.origin}`),
+      ['website:operator_supplied', 'repository:linked_from_website', 'social:linked_from_website'],
+    );
+    const context = b20PublicContextV1(evidence);
+    // The address is on the page, so this is the strongest standing — and it
+    // still says Unverified.
+    assert.equal(context.standing, 'names_this_token');
+    assert.match(context.headline, /Unverified/);
+    assert.equal(context.findings.find((f) => f.ground === 'repository_links_site')!.state, 'found');
+    assert.equal(context.findings.find((f) => f.ground === 'social_links_site')!.state, 'found');
+  });
+
+  test('a named domain that says nothing about the token stays a candidate', async () => {
+    // Somebody naming the wrong domain — or a domain that simply has not
+    // published the address — must not turn into a link.
+    const { http } = pages({ [site]: '<h1>OrbitLab</h1> nothing about any token here' });
+    const evidence = await probePublicContextV1({
+      chainId: 8453,
+      tokenAddress: TOKEN,
+      candidates: [supplied],
+      deps: { http, now: () => '2026-08-18T10:00:00.000Z' },
+    });
+    const context = b20PublicContextV1(evidence);
+    assert.equal(context.standing, 'candidates_only');
+    assert.equal(context.findings.find((f) => f.ground === 'page_names_token')!.state, 'absent');
+  });
+
+  test('a link is classified by the same rule a search result is', () => {
+    // A footer link to a blog cannot become a "repository" because the site
+    // put it there.
+    assert.equal(candidateFromLinkV1('https://github.com/orbitlab/os', 'repository')?.origin, 'linked_from_website');
+    assert.equal(candidateFromLinkV1('https://orbitlab.substack.com', 'repository'), null);
+    assert.equal(candidateFromLinkV1('http://github.com/orbitlab/os', 'repository'), null);
+    assert.equal(candidateFromLinkV1('https://x.com/orbitlab', 'social')?.host, 'x.com');
   });
 });

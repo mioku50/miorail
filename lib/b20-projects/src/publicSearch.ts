@@ -1,5 +1,7 @@
 import type { B20PublicContextSourceKindV1 } from '@mioagent/opportunity-rail';
 
+import { isNonPublicHostV1 } from './claimFile.js';
+
 // ---------------------------------------------------------------------------
 // Candidates, from a public search.
 //
@@ -81,6 +83,45 @@ export function publicSearchQueryV1(input: {
   // string, and repeating it narrows nothing.
   if (name && name.toLowerCase() !== (symbol ?? '').toLowerCase()) terms.push(name);
   return `${terms.join(' ')} official website github x.com`;
+}
+
+/**
+ * A domain a person typed, made into a candidate — or refused.
+ *
+ * This is the better half of the layer and the cheaper one. A search has to
+ * guess which of the web's pages is about a token nobody has indexed; a person
+ * naming `orbitlab.xyz` has supplied the one thing the search cannot: which
+ * domain to believe is the project's. Miorail still believes nothing — it
+ * fetches that domain and looks for this token's address, exactly as it would
+ * for a ranked result.
+ *
+ * Refused rather than repaired. A scheme, a path, a port or a private host is
+ * somebody asking for something other than "look at this project's site", and
+ * quietly stripping the parts that do not fit would be answering a question
+ * nobody asked.
+ */
+export type B20SuppliedDomainRefusalV1 =
+  | 'not_a_bare_domain'
+  | 'non_public_host'
+  | 'excluded_host';
+
+export function suppliedDomainCandidateV1(
+  raw: string,
+): { ok: true; host: string; url: string } | { ok: false; refusal: B20SuppliedDomainRefusalV1 } {
+  const value = String(raw ?? '').trim().toLowerCase().replace(/\.$/, '');
+  // A bare hostname: labels, dots, at least one dot, nothing else. No scheme,
+  // no path, no port, no credentials, no query.
+  if (!/^(?=.{4,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/.test(value)) {
+    return { ok: false, refusal: 'not_a_bare_domain' };
+  }
+  if (isNonPublicHostV1(value)) return { ok: false, refusal: 'non_public_host' };
+  const bare = value.replace(/^www\./, '');
+  // The same list a ranked result is measured against. A person naming
+  // basescan.org is naming a token explorer, not a project.
+  if (EXCLUDED_HOSTS_V1.some((excluded) => bare === excluded || bare.endsWith(`.${excluded}`))) {
+    return { ok: false, refusal: 'excluded_host' };
+  }
+  return { ok: true, host: bare, url: `https://${value}/` };
 }
 
 const SOCIAL_HOSTS_V1: readonly string[] = ['x.com', 'twitter.com'];

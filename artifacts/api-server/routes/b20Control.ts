@@ -99,6 +99,7 @@ import { stableHashV1 } from '@mioagent/route-domain';
 import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
 import { reconcileB20EntryFromBaseV1 } from '../lib/b20EntryChainReconciler.js';
 import {
+  B20SuppliedDomainRefusedError,
   b20PublicContextSearchFromEnv,
   readB20PublicContextV1,
 } from '../lib/b20PublicContextRead.js';
@@ -1939,8 +1940,16 @@ b20ControlRouter.get('/opportunities/b20/:tokenAddress/public-context', async (r
     res.status(503).json({ error: 'public_context_disabled', code: 'public_context_disabled' });
     return;
   }
+
+  // A reader may name the domain themselves. That path needs no vendor at all:
+  // the question stops being "which page on the web is this project" — which is
+  // the part a search is for — and becomes "does THIS page name this token",
+  // which Miorail answers with its own fetch.
+  const domain = typeof req.query.domain === 'string' && req.query.domain.trim().length > 0
+    ? req.query.domain.trim()
+    : null;
   const search = b20PublicContextSearchFromEnv();
-  if (search === null) {
+  if (search === null && domain === null) {
     // "This server cannot look" is not "nothing was found". Only the second is
     // a statement about the token, and it is not this one.
     res.status(503).json({ error: 'public_search_unconfigured', code: 'public_search_unconfigured' });
@@ -1965,7 +1974,13 @@ b20ControlRouter.get('/opportunities/b20/:tokenAddress/public-context', async (r
       tokenAddress,
       symbol: found.row.launch.symbol ?? null,
       name: found.row.launch.name ?? null,
-      deps: { search, now: () => b20RouteRuntime.now() },
+      domain,
+      // Never reached when a domain was named, and a refusal rather than a
+      // silent no-op when it is missing and needed.
+      deps: {
+        search: search ?? (async () => { throw new Error('no search provider'); }),
+        now: () => b20RouteRuntime.now(),
+      },
     });
     res.json({
       schemaVersion: 'b20-public-context/v1',
@@ -1973,6 +1988,12 @@ b20ControlRouter.get('/opportunities/b20/:tokenAddress/public-context', async (r
       serverTime: b20RouteRuntime.now().toISOString(),
     });
   } catch (error) {
+    if (error instanceof B20SuppliedDomainRefusedError) {
+      // A named domain Miorail will not fetch. Refused with the reason, rather
+      // than repaired into something the caller did not ask for.
+      res.status(400).json({ error: 'invalid_domain', code: 'invalid_domain', detail: error.refusal });
+      return;
+    }
     storageFailure(res, error, 'b20-public-context');
   }
 });

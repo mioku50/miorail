@@ -8,6 +8,7 @@ import {
   mistralSearchResultsV1,
   publicSearchQueryV1,
   searchTermV1,
+  suppliedDomainCandidateV1,
 } from '../src/publicSearch.js';
 import { candidatesFromSearchV1 } from '../src/publicProbe.js';
 
@@ -185,5 +186,72 @@ describe('a search result is classified or dropped, never guessed', () => {
       { url: 'https://www.orbitlab.xyz/docs', title: null, rank: 2, source: 'brave' },
     ]);
     assert.equal(candidates.length, 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A domain somebody typed.
+//
+// This is the path that needs no vendor at all: the question stops being
+// "which page on the web is this project", which is what a search is for, and
+// becomes "does THIS page name this token", which Miorail answers itself.
+// Believing the domain is not part of it — it is fetched and read exactly as a
+// ranked result would be.
+// ---------------------------------------------------------------------------
+describe('a named domain is accepted or refused, never repaired', () => {
+  test('a bare hostname becomes the website candidate', () => {
+    assert.deepEqual(suppliedDomainCandidateV1('orbitlab.xyz'), {
+      ok: true,
+      host: 'orbitlab.xyz',
+      url: 'https://orbitlab.xyz/',
+    });
+    // Case, trailing dot and a leading www are normalisation, not repair.
+    assert.deepEqual(suppliedDomainCandidateV1('  OrbitLab.XYZ.  '), {
+      ok: true,
+      host: 'orbitlab.xyz',
+      url: 'https://orbitlab.xyz/',
+    });
+    assert.equal(
+      (suppliedDomainCandidateV1('www.orbitlab.xyz') as { host: string }).host,
+      'orbitlab.xyz',
+    );
+  });
+
+  test('anything that is not a bare hostname is refused with a reason', () => {
+    // Quietly stripping the parts that do not fit would answer a question
+    // nobody asked — and a path or a port is somebody asking for something
+    // other than "look at this project's site".
+    for (const value of [
+      'https://orbitlab.xyz',
+      'orbitlab.xyz/path',
+      'orbitlab.xyz:8443',
+      'user@orbitlab.xyz',
+      'orbitlab',
+      '',
+      'a.b c',
+      '../../etc/passwd',
+    ]) {
+      assert.deepEqual(
+        suppliedDomainCandidateV1(value),
+        { ok: false, refusal: 'not_a_bare_domain' },
+        value,
+      );
+    }
+  });
+
+  test('a host inside this machine or a private network is refused', () => {
+    // The fetch would refuse it too, and does so again after every redirect.
+    // Refusing here as well means the caller gets a reason rather than a
+    // probe that quietly established nothing.
+    for (const value of ['127.0.0.1', '10.0.0.5', '192.168.1.1', '169.254.169.254', '172.16.0.9']) {
+      assert.deepEqual(suppliedDomainCandidateV1(value), { ok: false, refusal: 'non_public_host' }, value);
+    }
+  });
+
+  test('a token explorer is refused even when a person names it', () => {
+    // It is about this token and it is not the project, whoever typed it.
+    for (const value of ['basescan.org', 'www.dexscreener.com', 'api.coingecko.com']) {
+      assert.deepEqual(suppliedDomainCandidateV1(value), { ok: false, refusal: 'excluded_host' }, value);
+    }
   });
 });

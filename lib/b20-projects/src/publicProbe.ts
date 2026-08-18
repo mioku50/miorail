@@ -114,6 +114,31 @@ export function candidatesFromSearchV1(
   return candidates;
 }
 
+/**
+ * A link found on a fetched page, turned into a candidate of a known kind.
+ *
+ * Classified by the same rule a search result is, so a footer link to a blog
+ * cannot become a "repository" just because the site put it there. Null when
+ * the URL is not one of the kinds this layer reads.
+ */
+export function candidateFromLinkV1(
+  url: string,
+  expected: B20PublicContextCandidateV1['kind'],
+): B20PublicContextCandidateV1 | null {
+  if (classifyCandidateV1(url) !== expected) return null;
+  try {
+    return {
+      kind: expected,
+      url,
+      host: new URL(url).hostname.toLowerCase().replace(/^www\./, ''),
+      origin: 'linked_from_website',
+      fetched: false,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function readPageV1(
   http: B20HttpFetchV1,
   url: string,
@@ -169,6 +194,9 @@ export async function probePublicContextV1(input: {
     observedAt,
   };
 
+  let discoveredRepository: B20PublicContextCandidateV1 | null = null;
+  let discoveredSocial: B20PublicContextCandidateV1 | null = null;
+
   const siteBody = website ? await budgeted(website.url) : null;
   if (website && siteBody !== null) {
     website.fetched = true;
@@ -180,11 +208,29 @@ export async function probePublicContextV1(input: {
     evidence.siteLinksRepository = { found: repoLinks.length > 0, reference: repoLinks[0] ?? null };
     const socialLinks = linksToHostsV1(siteBody, ['x.com', 'twitter.com']);
     evidence.siteLinksSocial = { found: socialLinks.length > 0, reference: socialLinks[0] ?? null };
+
+    // Accounts the SITE ITSELF declares, when the caller did not name them and
+    // a search did not rank them. This is better evidence than either: a link
+    // in the project's own footer is the project saying which accounts are
+    // theirs, where a ranked result is a search engine's opinion. It is still
+    // only half a cluster until the account links back.
+    if (!repository && repoLinks[0]) {
+      discoveredRepository = candidateFromLinkV1(repoLinks[0], 'repository');
+      if (discoveredRepository) candidates.push(discoveredRepository);
+    }
+    if (!social && socialLinks[0]) {
+      discoveredSocial = candidateFromLinkV1(socialLinks[0], 'social');
+      if (discoveredSocial) candidates.push(discoveredSocial);
+    }
   }
+
+  const repositoryToRead = repository ?? discoveredRepository;
+  const socialToRead = social ?? discoveredSocial;
 
   // The back-links. Only worth a request when there is a site host to look for:
   // "does this repository mention some website" is not a ground.
-  if (website && repository) {
+  if (website && repositoryToRead) {
+    const repository = repositoryToRead;
     const repoBody = await budgeted(repository.url);
     if (repoBody !== null) {
       repository.fetched = true;
@@ -198,7 +244,8 @@ export async function probePublicContextV1(input: {
     }
   }
 
-  if (website && social) {
+  if (website && socialToRead) {
+    const social = socialToRead;
     const socialBody = await budgeted(social.url);
     if (socialBody !== null) {
       social.fetched = true;

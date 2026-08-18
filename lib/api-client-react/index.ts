@@ -1019,14 +1019,21 @@ export function useB20LaunchContext(tokenAddress: string | null, options?: { ena
  * search that retried would spend it twice.
  */
 export function useB20PublicContext(
-  options?: Omit<UseMutationOptions<unknown, Error, { tokenAddress: string }>, 'mutationFn' | 'retry'>,
+  options?: Omit<
+    UseMutationOptions<unknown, Error, { tokenAddress: string; domain?: string }>,
+    'mutationFn' | 'retry'
+  >,
 ) {
   return useMutation({
     ...options,
     retry: false,
     mutationFn: async (input) => {
+      // The domain is a hostname a reader typed. Encoded, and validated by
+      // the server — a client-side check would be a second spelling of the
+      // rule that decides what Miorail is willing to fetch.
+      const query = input.domain ? `?domain=${encodeURIComponent(input.domain)}` : '';
       return fetchApi<unknown>(
-        `/api/route-intelligence/opportunities/b20/${input.tokenAddress.toLowerCase()}/public-context`,
+        `/api/route-intelligence/opportunities/b20/${input.tokenAddress.toLowerCase()}/public-context${query}`,
       );
     },
   });

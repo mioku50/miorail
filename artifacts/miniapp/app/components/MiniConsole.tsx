@@ -1944,9 +1944,9 @@ export function MiniConsole() {
           error: publicContext.error
             ? 'Miorail could not complete a public search for this token. That is about the search, not about the token.'
             : null,
-          onLook: (token: string) => {
+          onLook: (token: string, domain?: string) => {
             setPublicContextToken(token);
-            publicContext.mutate({ tokenAddress: token });
+            publicContext.mutate({ tokenAddress: token, ...(domain ? { domain } : {}) });
           },
         }}
         launchContext={{
