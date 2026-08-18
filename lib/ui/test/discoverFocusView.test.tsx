@@ -75,8 +75,21 @@ function wire(token: string, symbol: string): OpportunityCardWireV1 {
 
 const FOCUSED_CARD = opportunityCardViewV1(wire(FOCUSED, 'MIO'));
 const FEED_CARD = opportunityCardViewV1(wire(OTHER, 'QUIET'));
+/** A card the SERVER offers a wallet-bound action on. */
+const ACTIONABLE_CARD = opportunityCardViewV1({
+  ...wire(OTHER, 'QUIET'),
+  action: {
+    action: 'check_wallet',
+    label: 'Check against my wallet',
+    reason: 'Measured before any entry moved the pool.',
+  },
+});
 
-function render(focus: Parameters<typeof OpportunitiesScreen>[0]['focus'], cards = [FEED_CARD]) {
+function render(
+  focus: Parameters<typeof OpportunitiesScreen>[0]['focus'],
+  cards = [FEED_CARD],
+  extra: Partial<Parameters<typeof OpportunitiesScreen>[0]> = {},
+) {
   return renderToStaticMarkup(
     <OpportunitiesScreen
       pipelineNotice={null}
@@ -92,6 +105,7 @@ function render(focus: Parameters<typeof OpportunitiesScreen>[0]['focus'], cards
       onFreshOnlyChange={() => undefined}
       onOpenToken={() => undefined}
       focus={focus}
+      {...extra}
     />,
   );
 }
@@ -144,6 +158,60 @@ describe('a focused token opens its measurement without leaving Discover', () =>
   test('a host that has not wired focus at all is unaffected', () => {
     const markup = render({ tokenAddress: null, card: null, loading: false, notFound: false, error: null, onClear: CLEAR });
     assert.ok(!/<h3>Measurement<\/h3>/.test(markup));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// An ordinary feed card, and where each of its buttons goes.
+//
+// The card had ONE control, the server's action, and the host pointed it at
+// `/portfolio?token=…`. So the only thing a reader could do with a measurement
+// was leave Discover to a surface that owns the wallet-bound exit check — and
+// which did not read the token anyway. Reading a measurement needs no wallet,
+// so it now has its own control and stays here.
+// ---------------------------------------------------------------------------
+describe('a feed card separates reading a measurement from handing over the token', () => {
+  test('View measurement is on every card once a host wires it', () => {
+    const markup = render(undefined, [FEED_CARD, ACTIONABLE_CARD], {
+      onOpenMeasurement: () => undefined,
+    });
+    assert.equal((markup.match(/View measurement/g) ?? []).length, 2);
+  });
+
+  test('the wallet-bound action stays a separate, separately labelled control', () => {
+    const markup = render(undefined, [ACTIONABLE_CARD], { onOpenMeasurement: () => undefined });
+    assert.match(markup, /View measurement/);
+    assert.match(markup, /Check against my wallet/);
+    // And the measurement comes first: it is the one a reader can always use.
+    assert.ok(markup.indexOf('View measurement') < markup.indexOf('Check against my wallet'));
+  });
+
+  test('a card with no server action still offers its measurement', () => {
+    // Four cards in five carry no action at all — a fresh, wallet-independent
+    // rejection is final, and offering a wallet check would suggest otherwise.
+    // Those cards used to have no control whatsoever.
+    const markup = render(undefined, [FEED_CARD], { onOpenMeasurement: () => undefined });
+    assert.match(markup, /View measurement/);
+    assert.ok(!/Check against my wallet/.test(markup));
+  });
+
+  test('a host that has not wired it renders no such button', () => {
+    // Rather than a control that leads nowhere.
+    const markup = render(undefined, [ACTIONABLE_CARD]);
+    assert.ok(!/View measurement/.test(markup));
+    assert.match(markup, /Check against my wallet/);
+  });
+
+  test('the focused card offers no link to itself', () => {
+    const markup = render(
+      { tokenAddress: FOCUSED, card: FOCUSED_CARD, loading: false, notFound: false, error: null, onClear: CLEAR },
+      [],
+      { onOpenMeasurement: () => undefined },
+    );
+    assert.match(markup, /<h3>Measurement<\/h3>/);
+    // The panel IS the measurement. A "View measurement" button inside it would
+    // point at the page it is already on.
+    assert.ok(!/View measurement/.test(markup));
   });
 });
 

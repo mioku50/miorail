@@ -59,19 +59,27 @@ export function parseDiscoverFocusV1(search: string | null | undefined): Discove
 }
 
 /**
- * The deep link for one token's measurement.
+ * The link that hands one token to a console surface.
  *
  * Built from the section path the caller passes rather than from a literal, so
- * this module cannot become a second place where a console path is decided.
+ * this module cannot become a second place where a console path is decided —
+ * and it is the ONLY builder, so `?token=` cannot be spelled one way by the
+ * surface that writes it and read another way by the surface that receives it.
+ * That is exactly how Discover came to point at `/portfolio?token=…` for years
+ * while Portfolio read nothing.
+ *
+ * `view: null` omits the parameter, for a surface that has only one thing to do
+ * with a token. Omitting `view` entirely keeps the measurement default.
  */
 export function discoverFocusHrefV1(input: {
   sectionPath: string;
   tokenAddress: string;
-  view?: DiscoverFocusViewV1;
+  view?: DiscoverFocusViewV1 | null;
 }): string {
   const token = discoverFocusTokenV1(input.tokenAddress);
   if (token === null) return input.sectionPath;
-  const params = new URLSearchParams({ token, view: input.view ?? 'measurement' });
+  const view = input.view === undefined ? 'measurement' : input.view;
+  const params = new URLSearchParams(view === null ? { token } : { token, view });
   return `${input.sectionPath}?${params.toString()}`;
 }
 

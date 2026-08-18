@@ -107,6 +107,24 @@ describe('the link is built from the section path, never from a literal', () => 
     assert.equal(discoverFocusHrefV1({ sectionPath: '/opportunities', tokenAddress: 'MIO' }), '/opportunities');
   });
 
+  test('a surface with one thing to do with a token names no view', () => {
+    // Portfolio. It owns the wallet-bound exit check and nothing else a token
+    // could be "viewed" as, so a `view=` there would name something that does
+    // not exist.
+    assert.equal(
+      discoverFocusHrefV1({ sectionPath: '/portfolio', tokenAddress: TOKEN, view: null }),
+      `/portfolio?token=${TOKEN}`,
+    );
+  });
+
+  test('the Portfolio handoff round-trips through the same parser', () => {
+    // The defect this closes: Discover spelled the link by hand and Portfolio
+    // read nothing, so every wallet-bound action on the feed arrived at a
+    // generic page with the selection dropped. One builder, one parser.
+    const href = discoverFocusHrefV1({ sectionPath: '/portfolio', tokenAddress: TOKEN, view: null });
+    assert.equal(parseDiscoverFocusV1(href.slice(href.indexOf('?'))).tokenAddress, TOKEN);
+  });
+
   test('only the views this build has can be named', () => {
     assert.deepEqual([...DISCOVER_FOCUS_VIEWS_V1], ['measurement']);
   });

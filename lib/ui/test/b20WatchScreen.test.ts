@@ -1,6 +1,6 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { simulateLabelV1 } from '../src/console/B20ExitCard';
+import { exitMeasureLabelV1, simulateLabelV1 } from '../src/console/B20ExitCard';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
@@ -307,7 +307,7 @@ describe('a B20 token can be tracked by hand', () => {
 
   test('a full watchlist is its own message, not the sweep\u2019s banner', () => {
     // A full list and an unreadable chain are different problems, and only one
-    // of them is fixed by pressing Check now again.
+    // of them is fixed by pressing Read B20 controls again.
     assert.match(page, /b20_watchlist_full/);
     assert.match(page, /trackError/);
   });
@@ -723,10 +723,164 @@ describe('a watched token is named from data already on the screen', () => {
     assert.equal(trackedTokenSymbolV1('0xb200000000000000000000000000000000000002', source), 'Second');
   });
 
-  test('the portfolio is the fallback, and an unknown address stays an address', () => {
+  test('the portfolio is the next fallback, and an unknown address stays an address', () => {
     assert.equal(trackedTokenSymbolV1('0xb200000000000000000000000000000000000003', source), 'HELD');
     // The row then renders the address the user pasted. Inventing a name for an
     // address nothing has read would be worse than showing the address.
     assert.equal(trackedTokenSymbolV1('0xb2000000000000000000000000000000000000ff', source), null);
+  });
+
+  // -------------------------------------------------------------------------
+  // The wallet balances, which are the source that actually has the name.
+  //
+  // The two above are both EMPTY until a sweep runs. The balances card at the
+  // top of the same page is populated on load — so a wallet showing
+  // "MIO 19210.9481" still had a bare `0xb200…0101` in its watchlist below.
+  // -------------------------------------------------------------------------
+  const beforeAnySweep = {
+    tokens: [] as typeof source.tokens,
+    holdings: [] as typeof source.holdings,
+    walletTokens: [
+      { address: '0xB2000000000000000000000578F3AE29D9E6E0101', symbol: 'MIO', name: 'Mio' },
+      { address: 'native', symbol: 'ETH' },
+      { address: '0xb200000000000000000000000000000000000004', symbol: null, name: 'Fourth' },
+    ],
+  };
+
+  test('a balance the page already shows names the watched address', () => {
+    assert.equal(trackedTokenSymbolV1('0xb2000000000000000000000578f3ae29d9e6e0101', beforeAnySweep), 'MIO');
+  });
+
+  test('a balance with only a name still beats showing an address', () => {
+    assert.equal(trackedTokenSymbolV1('0xb200000000000000000000000000000000000004', beforeAnySweep), 'Fourth');
+  });
+
+  test('an address no source has seen keeps the address, balances or not', () => {
+    assert.equal(trackedTokenSymbolV1('0xb2000000000000000000000000000000000000ff', beforeAnySweep), null);
+    // `native` has no contract address to match, and must never be mistaken for
+    // one — an address-keyed lookup against it would be a silent wrong name.
+    assert.equal(trackedTokenSymbolV1('native', beforeAnySweep), null);
+  });
+
+  test('the sources are ordered by how much this page knows', () => {
+    // The control watch read the token itself; a provider only reported a
+    // ticker. When both have an opinion the token's own name wins.
+    const both = {
+      tokens: [{ tokenAddress: '0xb200000000000000000000000000000000000005', displaySymbol: 'FROMCHAIN', displayName: null }],
+      holdings: [{ tokenAddress: '0xb200000000000000000000000000000000000005', symbol: 'FROMSWEEP' }],
+      walletTokens: [{ address: '0xb200000000000000000000000000000000000005', symbol: 'FROMPROVIDER' }],
+    };
+    assert.equal(trackedTokenSymbolV1('0xb200000000000000000000000000000000000005', both), 'FROMCHAIN');
+  });
+
+  test('a host that wires no balances behaves exactly as before', () => {
+    assert.equal(trackedTokenSymbolV1('0xb2000000000000000000000578f3ae29d9e6e0101', source), 'MIO');
+    assert.equal(trackedTokenSymbolV1('0xb2000000000000000000000000000000000000ff', source), null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The screen names the button that is actually on it.
+//
+// The empty state said "press Check now"; the control is called "Read B20
+// controls", and has been for long enough that the sentence was sending people
+// looking for a button that is not on the page.
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Portfolio reads the token Discover hands it.
+//
+// Discover has pointed `/portfolio?token=0x…` at this page for as long as the
+// feed has had actions, and this page never read the parameter — so every one
+// of those clicks arrived at a generic Portfolio with the selection dropped.
+// ---------------------------------------------------------------------------
+describe('the token Discover hands over is consumed', () => {
+  const page = readFileSync(
+    path.join(here, '../../../artifacts/interface/src/features/b20/B20WatchPage.tsx'),
+    'utf8',
+  );
+  const code = page.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+  test('it is read through the same validated parser Discover writes it with', () => {
+    // Not a hand-rolled `searchParams.get('token')`: a query parameter is text
+    // a stranger can choose, and two spellings of one parameter is how it came
+    // to be written by one surface and read by none.
+    assert.ok(code.includes('parseDiscoverFocusV1('), 'the page does not use the shared parser');
+    assert.ok(code.includes('useSearch()'), 'the page does not react to the query string');
+  });
+
+  test('it selects the exit subject and takes the reader to it', () => {
+    assert.ok(code.includes('setExitToken(handedOverToken)'), 'the handed-over token selects nothing');
+    assert.ok(code.includes('revealAnchor(B20_EXIT_ANCHOR_V1)'), 'the reader is not taken to the card');
+  });
+
+  test('a URL never spends the router budget', () => {
+    // One exit check is a dozen-odd metered router calls. A link is not a
+    // press, and a page that measured on arrival would let anybody spend an
+    // operator's endpoint by sending a URL.
+    const handoff = /consumedToken\.current = handedOverToken;[\s\S]{0,400}?\}, \[handedOverToken/.exec(code);
+    assert.ok(handoff, 'the handoff effect could not be found — this test has gone stale');
+    assert.ok(!/runExitCheck\(|exitCheck\.mutate\(/.test(handoff[0]), 'a URL started a metered check');
+  });
+
+  test('no surface builds a token link by hand any more', () => {
+    const opportunities = readFileSync(
+      path.join(here, '../../../artifacts/interface/src/features/opportunities/OpportunitiesPage.tsx'),
+      'utf8',
+    ).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    assert.ok(!/\?token=\$\{/.test(opportunities), 'a hand-spelled ?token= link came back');
+    assert.ok(opportunities.includes('discoverFocusHrefV1('), 'the links are not built by the shared builder');
+  });
+});
+
+describe('the exit card offers to measure before it offers to re-measure', () => {
+  test('a selected but unmeasured token is offered a first measurement', () => {
+    // The state a deep link arrives in. "Re-measure" here offers to redo
+    // something that has not happened.
+    assert.equal(
+      exitMeasureLabelV1({ tokenLabel: 'MIO', checked: false, loading: false }),
+      'Measure price & exit',
+    );
+  });
+
+  test('once measured it offers to do it again', () => {
+    assert.equal(exitMeasureLabelV1({ tokenLabel: 'MIO', checked: true, loading: false }), 'Re-measure');
+  });
+
+  test('no token still says which control to use first', () => {
+    assert.equal(
+      exitMeasureLabelV1({ tokenLabel: null, checked: false, loading: false }),
+      'Select a B20 token above',
+    );
+  });
+
+  test('in flight it says what it is doing, whatever the other two are', () => {
+    for (const checked of [false, true]) {
+      assert.equal(
+        exitMeasureLabelV1({ tokenLabel: 'MIO', checked, loading: true }),
+        'Quoting supported venues…',
+      );
+    }
+  });
+});
+
+describe('the copy names the control it is talking about', () => {
+  const screenSource = readFileSync(path.join(here, '..', 'src', 'console', 'B20WatchScreen.tsx'), 'utf8');
+  const panelSource = readFileSync(path.join(here, '..', 'src', 'console', 'B20PortfolioPanel.tsx'), 'utf8');
+
+  test('the empty state points at "Read B20 controls"', () => {
+    assert.match(screenSource, /press Read B20 controls to read this wallet’s tokens/);
+  });
+
+  test('no rendered string on either surface says "Check now"', () => {
+    for (const [name, source] of [['B20WatchScreen', screenSource], ['B20PortfolioPanel', panelSource]] as const) {
+      // Comments legitimately discuss the old name; rendered strings must not.
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+      assert.ok(!/Check now/.test(code), `${name} still renders "Check now"`);
+    }
+  });
+
+  test('both surfaces spell the button the same way', () => {
+    assert.match(screenSource, /'Read B20 controls'/);
+    assert.match(panelSource, /'Read B20 controls'/);
   });
 });

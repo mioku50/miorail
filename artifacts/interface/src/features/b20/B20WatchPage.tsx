@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'wouter';
+import { useLocation, useSearch } from 'wouter';
 import { useAccount } from 'wagmi';
 import {
   B20EntryReviewCard,
@@ -10,6 +10,7 @@ import {
   B20_EXIT_ANCHOR_V1,
   B20_PORTFOLIO_ANCHOR_V1,
   EXIT_PROFILE_DEFAULTS_V1,
+  parseDiscoverFocusV1,
   GOAL_HANDOFF_KEY_V1,
   shouldRevealResultV1,
   type ResultRevealStateV1,
@@ -192,6 +193,12 @@ export function positiveAtomicBalanceV1(value: string | null | undefined): boole
 
 export function B20WatchPage() {
   const [, navigate] = useLocation();
+  // Discover hands a token over in the URL. This page has carried a `?token=`
+  // link pointed at it since the feed had actions at all, and never read it —
+  // so every one of those clicks arrived here and lost the selection. Read
+  // through the same validated parser Discover writes it with: a query
+  // parameter is text a stranger can choose.
+  const search = useSearch();
   const { address } = useAccount();
   const { theme, setTheme } = useConsoleTheme();
   // T70 §8 — the shared section table. Portfolio is a primary surface now, not
@@ -583,7 +590,7 @@ export function B20WatchPage() {
     if (message.includes('b20_controls_unread')) {
       // Refused rather than assumed open: an exit check that skipped the
       // controls would clear a token whose transfers are paused.
-      return 'This token’s controls have not been read yet. Press Check now first — an exit check that skipped them could clear a token that cannot be sold.';
+      return 'This token’s controls have not been read yet. Press Read B20 controls first — an exit check that skipped them could clear a token that cannot be sold.';
     }
     if (message.includes('b20_rpc_unavailable') || message.includes('b20_rpc_no_answer')) {
       return 'The Base endpoint did not answer, so no quote was taken. This says nothing about the token.';
@@ -595,7 +602,7 @@ export function B20WatchPage() {
 
   // Watchlist failures are stated on the watchlist card, not in the sweep's
   // banner. A full list and an unreadable chain are different problems and only
-  // one of them is fixed by pressing Check now again.
+  // one of them is fixed by pressing Read B20 controls again.
   const trackError = (() => {
     const error = addWatch.error ?? removeWatch.error ?? watchlist.error;
     if (!error) return null;
@@ -665,7 +672,7 @@ export function B20WatchPage() {
   // -------------------------------------------------------------------------
   // Taking the user to the answer.
   //
-  // "Check now" is at the bottom of the page and fills in the portfolio panel
+  // "Read B20 controls" is at the bottom of the page and fills in the portfolio panel
   // at the top. "Can I get out?" is on a holding card and answers in the exit
   // card below it. Both worked; both read as doing nothing, because a user who
   // presses a button looks where the button is.
@@ -693,6 +700,19 @@ export function B20WatchPage() {
     }
     sweepReveal.current = current;
   }, [sweep.isPending, sweep.data, revealAnchor]);
+
+  // The token Discover handed over. It selects the exit subject and scrolls to
+  // it — and does NOT run the check: a URL is not a press, and one exit check
+  // is a dozen-odd metered router calls. The user presses the button that is
+  // now pointed at the right token.
+  const handedOverToken = useMemo(() => parseDiscoverFocusV1(search).tokenAddress, [search]);
+  const consumedToken = useRef<string | null>(null);
+  useEffect(() => {
+    if (handedOverToken === null || consumedToken.current === handedOverToken) return;
+    consumedToken.current = handedOverToken;
+    setExitToken(handedOverToken);
+    revealAnchor(B20_EXIT_ANCHOR_V1);
+  }, [handedOverToken, revealAnchor]);
 
   const exitReveal = useRef<ResultRevealStateV1 | null>(null);
   const exitRequested = useRef(false);
@@ -805,6 +825,11 @@ export function B20WatchPage() {
           },
         }}
         otherTokenCount={otherTokenCount}
+        // The balances already on this page, for naming a watched address and
+        // nothing else. They are populated on load, while the portfolio panel
+        // and the control watch are both empty until a sweep runs — which is
+        // why a wallet showing "MIO" at the top still had a bare address below.
+        walletTokens={portfolio.data?.tokens ?? []}
         trackedTokens={watchlist.data?.tokens ?? []}
         trackRemaining={watchlist.data?.remaining ?? null}
         trackError={trackError}

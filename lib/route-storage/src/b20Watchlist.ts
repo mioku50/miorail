@@ -28,7 +28,7 @@ import { RouteStorageConflictError } from './types.js';
  * How many tokens one account may keep under background watch.
  *
  * Matched to the interactive sweep's budget on purpose: a user should not be
- * able to build a watchlist the "Check now" button cannot read in one request,
+ * able to build a watchlist the "Read B20 controls" button cannot read in one request,
  * or the two surfaces would disagree about what is being watched.
  */
 export const B20_WATCHLIST_CAPACITY_V1 = 25;

@@ -265,8 +265,24 @@ export interface OpportunitiesScreenModelV1 {
   onFilterChange: (filter: OpportunityFilterV1) => void;
   onStandingFilterChange?: (filter: OpportunityStandingFilterV1) => void;
   onFreshOnlyChange: (freshOnly: boolean) => void;
-  /** Hands the token to the surface that owns wallet-bound checks. */
+  /**
+   * Hands the token to the surface that owns wallet-bound checks.
+   *
+   * This is the SERVER's action — "Check against my wallet", "Try another
+   * profile", "Refresh measurement" — and all three of them need the exit
+   * profile and the wallet, which live on Portfolio. It is never the card's
+   * default click: reading a measurement must not require leaving Discover.
+   */
   onOpenToken: (tokenAddress: string) => void;
+  /**
+   * Opens this token's measurement, on this surface.
+   *
+   * Optional while a host rolls forward; absent renders no such control rather
+   * than a button that leads nowhere. Wiring it is what makes a card's primary
+   * action Discover-local — the wallet-bound handoff stays a separate, labelled
+   * control beside it.
+   */
+  onOpenMeasurement?: (tokenAddress: string) => void;
   /** Optional while older deployments roll forward. It is read-only. */
   copilot?: B20CopilotPanelModelV1;
   /**
@@ -420,12 +436,15 @@ function ProjectContext({ project }: { project: B20FundamentalProfileV1 | null }
 function OpportunityCard({
   card,
   onOpen,
+  onOpenMeasurement,
   copilot,
   launchContext,
   measurementOpen,
 }: {
   card: OpportunityCardViewV1;
   onOpen: (tokenAddress: string) => void;
+  /** Absent inside the focused view, where the card IS the measurement. */
+  onOpenMeasurement?: (tokenAddress: string) => void;
   copilot?: B20CopilotPanelModelV1;
   launchContext?: B20LaunchContextModelV1;
   /** Opens "What was measured" on render. Set only by the focused view, which
@@ -678,6 +697,17 @@ function OpportunityCard({
           a fact about the token. */}
       <p className="note">{card.actionReason}</p>
       <div className="card-actions">
+        {/* First, and on every card. Opening what Miorail measured about this
+            token is the one thing a reader can always do here, it needs no
+            wallet, and it stays on Discover. The card's only control used to be
+            the server's action, which hands the token to Portfolio — so a
+            reader who wanted to read a measurement was sent to a different
+            product area to do it. */}
+        {onOpenMeasurement && (
+          <button type="button" className="btn sec" onClick={() => onOpenMeasurement(card.tokenAddress)}>
+            View measurement
+          </button>
+        )}
         {card.actionLabel && (
           <button type="button" className="btn sec" onClick={() => onOpen(card.tokenAddress)}>
             {card.actionLabel}
@@ -1095,6 +1125,7 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
                           key={card.tokenAddress}
                           card={card}
                           onOpen={model.onOpenToken}
+                          onOpenMeasurement={model.onOpenMeasurement}
                           copilot={model.copilot}
                           launchContext={model.launchContext}
                         />

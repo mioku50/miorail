@@ -3,6 +3,7 @@ import { B20ControlWatchPanel, type B20WatchLikeV1 } from './B20Panels';
 import { B20ExitCard, type ExitCheckLikeV1, type ExitProfileV1 } from './B20ExitCard';
 import { B20PortfolioPanel, type B20HoldingV1 } from './B20PortfolioPanel';
 import { B20ConsolePanel, type B20ConsolePanelModelV1 } from './B20ConsolePanel';
+import { isNativeBalanceV1 } from './WalletBalancesCard';
 
 void React;
 
@@ -101,17 +102,28 @@ export function trackedOutcomeLabelV1(entry: B20TrackedTokenLikeV1): string | nu
 /**
  * A display symbol for a watched address, from data already on this screen.
  *
- * The control watch reads the token's own name; the portfolio panel carries one
- * for anything a provider reported. Neither is fetched for this row, and an
- * address that appears in neither keeps the address as its label — a watchlist
- * entry is an address the user typed, and inventing a name for it would be
- * worse than showing the thing they pasted.
+ * Three sources, in the order of how much this page knows about the token: the
+ * control watch reads the token's own name, the portfolio panel carries one for
+ * every B20 holding it joined, and the wallet balances carry one for everything
+ * a token provider reported.
+ *
+ * The third was the one missing, and it is the one that matters most: the
+ * portfolio and the control watch are both EMPTY until a sweep runs, while the
+ * balances card is populated on load — so a wallet showing "MIO 19210.9481" at
+ * the top of the page still had a bare `0xb200…0101` in its watchlist below.
+ *
+ * Nothing here fetches. An address none of the three has seen keeps the address
+ * as its label: a watchlist entry is something the user typed, and inventing a
+ * name for it would be worse than showing what they pasted.
  */
 export function trackedTokenSymbolV1(
   tokenAddress: string,
   source: {
     tokens: readonly { tokenAddress: string; displaySymbol: string | null; displayName: string | null }[];
     holdings: readonly { tokenAddress: string; symbol: string | null }[];
+    /** Wallet balances, keyed by the provider's `address` field. Optional so a
+     * host that has not wired it behaves exactly as before. */
+    walletTokens?: readonly { address: string; symbol?: string | null; name?: string | null }[];
   },
 ): string | null {
   const address = tokenAddress.toLowerCase();
@@ -119,7 +131,19 @@ export function trackedTokenSymbolV1(
   if (watched?.displaySymbol) return watched.displaySymbol;
   if (watched?.displayName) return watched.displayName;
   const held = source.holdings.find((holding) => holding.tokenAddress.toLowerCase() === address);
-  return held?.symbol ?? null;
+  if (held?.symbol) return held.symbol;
+  // `native` is the provider's pseudo-address for ETH, not a contract. Guarded
+  // rather than relied upon to never collide: this function takes a string, and
+  // a lookup that can return "ETH" for anything but a real ETH row is a wrong
+  // name printed with confidence.
+  if (isNativeBalanceV1(address)) return null;
+  const balance = (source.walletTokens ?? []).find(
+    (token) =>
+      typeof token.address === 'string' &&
+      !isNativeBalanceV1(token.address) &&
+      token.address.toLowerCase() === address,
+  );
+  return balance?.symbol ?? balance?.name ?? null;
 }
 
 export interface B20WatchScreenModelV1 {
@@ -153,6 +177,15 @@ export interface B20WatchScreenModelV1 {
   console?: B20ConsolePanelModelV1;
   /** Non-B20 tokens in the wallet, counted rather than listed. */
   otherTokenCount: number;
+  /**
+   * The wallet balances this page already renders above, used ONLY to name a
+   * watched address. Optional while a host rolls forward.
+   *
+   * No request is made for it and none should be: this is the label, and a
+   * label is not worth an RPC. An address the provider never reported keeps the
+   * address as its name.
+   */
+  walletTokens?: readonly { address: string; symbol?: string | null; name?: string | null }[];
   onOpenToken?: (tokenAddress: string, amountDecimal: string | null) => void;
   /** T68C — the exit check, for the one token it was last run on. One at a
    * time on purpose: each check is a dozen-odd metered router calls, and a
@@ -232,7 +265,10 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
         otherTokenCount={model.otherTokenCount}
         emptyReason={
           model.checkedAt === null
-            ? 'Nothing has been checked yet — press Check now to read this wallet’s tokens.'
+            // The button is called "Read B20 controls". It has been for a
+            // while; this sentence still sent people looking for a "Check now"
+            // that is not on the page.
+            ? 'Nothing has been checked yet — press Read B20 controls to read this wallet’s tokens.'
             : model.unavailableReason
         }
         checked={model.checkedAt !== null}

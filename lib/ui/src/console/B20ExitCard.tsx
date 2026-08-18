@@ -315,6 +315,26 @@ export function exitHeadlineV1(
   return base;
 }
 
+/**
+ * What the card's own button offers.
+ *
+ * "Re-measure" was the only word here, so a token that was selected but never
+ * measured offered to redo something that had not happened. That used to be a
+ * rare state — the button on a holding card ran the check and filled this card
+ * in one press. It is the ordinary state now: Discover hands a token over in
+ * the URL, and a link must not spend the router budget, so the reader arrives
+ * with a subject selected and nothing measured.
+ */
+export function exitMeasureLabelV1(input: {
+  tokenLabel: string | null;
+  checked: boolean;
+  loading: boolean;
+}): string {
+  if (input.loading) return 'Quoting supported venues…';
+  if (input.tokenLabel === null) return 'Select a B20 token above';
+  return input.checked ? 'Re-measure' : 'Measure price & exit';
+}
+
 /** "Run full simulation · $0.0002", or the bare label when it is free. */
 export function simulateLabelV1(priceUsdc: string | null | undefined, busy: boolean): string {
   if (busy) return 'Simulating both legs…';
@@ -366,7 +386,7 @@ export function B20ExitCard({
             onClick={onCheck}
             disabled={tokenLabel === null || loading || simulating}
           >
-            {loading ? 'Quoting supported venues…' : tokenLabel === null ? 'Select a B20 token above' : 'Re-measure'}
+            {exitMeasureLabelV1({ tokenLabel, checked: check !== null, loading })}
           </button>
         </span>
       </div>

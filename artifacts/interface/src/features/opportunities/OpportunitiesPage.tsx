@@ -280,9 +280,26 @@ export function OpportunitiesPage() {
         onFilterChange={setFilter}
         onStandingFilterChange={setStandingFilter}
         onFreshOnlyChange={setFreshOnly}
-        // The handoff. Portfolio owns the wallet-bound exit check, the
-        // simulation and the clearance; Discover owns none of them.
-        onOpenToken={(token) => navigate(`${consoleSectionPathV1('portfolio')}?token=${encodeURIComponent(token)}`)}
+        // The card's own action, which is always wallet-bound: "Check against
+        // my wallet", "Try another profile" and "Refresh measurement" all need
+        // the exit profile and the wallet, and both live on Portfolio — which
+        // now reads this token rather than dropping it.
+        onOpenToken={(token) =>
+          navigate(
+            // The same builder the measurement link uses, so the parameter
+            // Portfolio parses cannot drift from the one Discover writes.
+            discoverFocusHrefV1({
+              sectionPath: consoleSectionPathV1('portfolio'),
+              tokenAddress: token,
+              // Portfolio has one thing to do with a token, so it names no view.
+              view: null,
+            }),
+          )
+        }
+        // Reading what was measured needs no wallet, so it never leaves here.
+        onOpenMeasurement={(token) =>
+          navigate(discoverFocusHrefV1({ sectionPath: consoleSectionPathV1('opportunities'), tokenAddress: token }))
+        }
         onRefresh={() => void feed.refetch()}
         focus={{
           tokenAddress: focus.tokenAddress,

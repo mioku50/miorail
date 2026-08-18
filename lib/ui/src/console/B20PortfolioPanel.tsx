@@ -122,7 +122,7 @@ export function B20PortfolioPanel({
   exitCheckedToken,
 }: B20PortfolioPanelProps): React.ReactElement {
   return (
-    // The anchor "Check now" scrolls to. `tabIndex` so focus can land here as
+    // The anchor "Read B20 controls" scrolls to. `tabIndex` so focus can land here as
     // well as the viewport — a sighted user sees the panel, and a screen reader
     // is told it is now the thing being read.
     <div className="panel" id={B20_PORTFOLIO_ANCHOR_V1} tabIndex={-1}>
