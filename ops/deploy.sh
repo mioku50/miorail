@@ -228,6 +228,20 @@ rsync -a --delete "$REPO/artifacts/interface/dist/" "$SERVE_ROOT/"
 find "$SERVE_ROOT" -type d -exec chmod 755 {} \;
 find "$SERVE_ROOT" -type f -exec chmod 644 {} \;
 
+# Pre-compress what nginx would otherwise compress on every request. `gzip -9`
+# is slower than nginx can afford per response and cheaper than every response
+# put together, because `gzip_static on` then serves the file straight off disk.
+# `-k` keeps the original: a client that sent no `Accept-Encoding` still has to
+# be served, and `--delete` above means these are rebuilt from scratch anyway.
+compressed=0
+while IFS= read -r asset; do
+  gzip -9 -k -f "$asset"
+  chmod 644 "$asset.gz"
+  compressed=$((compressed + 1))
+done < <(find "$SERVE_ROOT" -type f \( -name '*.js' -o -name '*.css' -o -name '*.svg' -o -name '*.json' -o -name '*.wasm' -o -name '*.html' \) -size +1k)
+raw=$(du -sb "$SERVE_ROOT" 2>/dev/null | cut -f1)
+printf '  pre-compressed %s assets (tree now %s KB including .gz)\n' "$compressed" "$((raw / 1024))"
+
 step "6/7  restart"
 systemctl restart "${SERVICES[@]}"
 sleep 5

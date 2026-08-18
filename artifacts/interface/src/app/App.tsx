@@ -1,29 +1,67 @@
-import { useEffect, useMemo } from 'react';
+import { lazy, Suspense, useEffect, useMemo } from 'react';
 import { Route, Switch, Redirect } from 'wouter';
 import { useStatus } from '@mioagent/api-client-react';
 import { useUiStore } from '../lib/state';
 import { CHAIN_ENV } from '../lib/chain';
 import { CommandPalette } from '../shell/CommandPalette';
 import { Toaster } from '../shell/Toast';
-import { ActionsPage } from '../features/actions/ActionsPage';
-import { ActionsBuilder } from '../features/inbox/ActionsBuilder';
-import { HistoryPage } from '../features/history/HistoryPage';
 import { BaseMcpOAuthBridge } from './BaseMcpOAuthBridge';
 import {
   baseMcpPopupMessageV1,
   deliverBaseMcpPopupResultV1,
   type BaseMcpOAuthMessageV1,
 } from './baseMcpPopupHandoff';
-import { ExtensionsPage } from '../features/extensions/ExtensionsPage';
 import { RequireSession } from './RequireSession';
-import { RouteHistoryPage } from '../features/plan/RouteHistoryPage';
-import { RouteIntelligenceConsole } from '../features/console/RouteIntelligenceConsole';
-import { PublicProofPage } from '../features/proof/PublicProofPage';
-import { B20WatchPage } from '../features/b20/B20WatchPage';
-import { OpportunitiesPage } from '../features/opportunities/OpportunitiesPage';
-import { SettingsPage } from '../features/settings/SettingsPage';
 import { HomeRoute } from '../features/console/HomeRoute';
-import { PublicMetricsPage } from '../features/metrics/PublicMetricsPage';
+
+
+// ---------------------------------------------------------------------------
+// Every screen behind the router is loaded when its route is entered.
+//
+// This was one 1.14 MB chunk holding every page in the product, so a visitor
+// reading the public metrics page downloaded the settings screen, the console,
+// the B20 watch page and the wallet-confirm flow before anything rendered. On a
+// good connection that is invisible; on a bad one it is the whole experience,
+// and the people most likely to be on a bad one are the ones we have never met.
+//
+// `HomeRoute` stays eager on purpose: it is a redirect resolver, not a screen,
+// and making it lazy would put a network round trip in front of every visit to
+// "/" before we even know where the visitor is going.
+// ---------------------------------------------------------------------------
+
+const ActionsPage = lazy(() =>
+  import('../features/actions/ActionsPage').then((m) => ({ default: m.ActionsPage })),
+);
+const ActionsBuilder = lazy(() =>
+  import('../features/inbox/ActionsBuilder').then((m) => ({ default: m.ActionsBuilder })),
+);
+const HistoryPage = lazy(() =>
+  import('../features/history/HistoryPage').then((m) => ({ default: m.HistoryPage })),
+);
+const ExtensionsPage = lazy(() =>
+  import('../features/extensions/ExtensionsPage').then((m) => ({ default: m.ExtensionsPage })),
+);
+const RouteHistoryPage = lazy(() =>
+  import('../features/plan/RouteHistoryPage').then((m) => ({ default: m.RouteHistoryPage })),
+);
+const RouteIntelligenceConsole = lazy(() =>
+  import('../features/console/RouteIntelligenceConsole').then((m) => ({ default: m.RouteIntelligenceConsole })),
+);
+const PublicProofPage = lazy(() =>
+  import('../features/proof/PublicProofPage').then((m) => ({ default: m.PublicProofPage })),
+);
+const B20WatchPage = lazy(() =>
+  import('../features/b20/B20WatchPage').then((m) => ({ default: m.B20WatchPage })),
+);
+const OpportunitiesPage = lazy(() =>
+  import('../features/opportunities/OpportunitiesPage').then((m) => ({ default: m.OpportunitiesPage })),
+);
+const SettingsPage = lazy(() =>
+  import('../features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })),
+);
+const PublicMetricsPage = lazy(() =>
+  import('../features/metrics/PublicMetricsPage').then((m) => ({ default: m.PublicMetricsPage })),
+);
 
 // ---------------------------------------------------------------------------
 // The Route Intelligence console IS the app.
@@ -41,6 +79,19 @@ import { PublicMetricsPage } from '../features/metrics/PublicMetricsPage';
 // the same way it states every other missing source — rather than falling back
 // to a product that no longer exists.
 // ---------------------------------------------------------------------------
+
+/**
+ * What sits there while a screen's own chunk arrives.
+ *
+ * Deliberately quiet and deliberately NOT a spinner: on a fast connection it is
+ * never seen, and on a slow one a spinner claims progress it cannot measure.
+ * `aria-busy` is what actually carries the state to anyone not looking at it.
+ */
+function RoutePending() {
+  // No class: `console.css` owns the console vocabulary, and inventing a name
+  // here would ship an element no stylesheet knows about.
+  return <div aria-busy="true" aria-live="polite" />;
+}
 
 function ChainEnvMismatchBanner() {
   const { data: sd } = useStatus();
@@ -105,6 +156,7 @@ export function App() {
   return (
     <>
       <ChainEnvMismatchBanner />
+      <Suspense fallback={<RoutePending />}>
       <Switch>
         {/* Public aggregate telemetry. No tenant, wallet or session: grant
             reviewers and builders can inspect what Miorail has actually
@@ -232,6 +284,7 @@ export function App() {
           </RequireSession>
         </Route>
       </Switch>
+      </Suspense>
       <CommandPalette />
       <Toaster />
       <BaseMcpOAuthBridge />
