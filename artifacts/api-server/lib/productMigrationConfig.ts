@@ -39,6 +39,16 @@ export interface MiorailProductMigrationFlags {
    * nothing — but it is gated until a live smoke run has confirmed the
    * interface against mainnet. */
   b20ControlV1: boolean;
+  /**
+   * Unverified public context: a search for a token's public accounts, run
+   * ONLY when a reader asks about that token.
+   *
+   * Gated because it is the one B20 surface that reaches a third party on a
+   * user's behalf and spends a metered search doing it — and because a card
+   * about "possible" accounts is the one a reader is most likely to over-read.
+   * Nothing it produces can reach the verified project layer.
+   */
+  b20PublicContextV1: boolean;
   /** T67C.2: submission recovery — reading back an already-sent batch after a
    * reload. It signs nothing and sends nothing; the gate exists so the recovery
    * card cannot appear before a live smoke run has exercised it. */
@@ -149,6 +159,7 @@ export function getMiorailProductMigrationFlags(
     hydrexExecutionV1: readBooleanFlag(env, 'MIORAIL_HYDREX_EXECUTION_V1', false),
     balancerExecutionV1: readBooleanFlag(env, 'MIORAIL_BALANCER_EXECUTION_V1', false),
     b20ControlV1: readBooleanFlag(env, 'MIORAIL_B20_CONTROL_V1', false),
+    b20PublicContextV1: readBooleanFlag(env, 'MIORAIL_B20_PUBLIC_CONTEXT_V1', false),
     submissionRecoveryV1: readBooleanFlag(env, 'MIORAIL_SUBMISSION_RECOVERY_V1', false),
     publicProofV1: readBooleanFlag(env, 'MIORAIL_PUBLIC_PROOF_V1', false),
     mcpPrivateV1: readBooleanFlag(env, 'MIORAIL_MCP_PRIVATE_V1', false),

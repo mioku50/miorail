@@ -117,6 +117,7 @@ import {
   useB20ConsoleAsk,
   useB20CopilotAsk,
   useB20LaunchContext,
+  useB20PublicContext,
   useB20Opportunities,
   useB20Watch,
   useB20Watchlist,
@@ -932,6 +933,11 @@ export function MiniConsole() {
   );
   const copilot = useB20CopilotAsk();
   const launchContext = useB20LaunchContext(contextToken);
+  // Unverified public context, on request. Base App renders the same
+  // shared card as the web console, so the two surfaces cannot drift on
+  // what the layer claims.
+  const [publicContextToken, setPublicContextToken] = useState<string | null>(null);
+  const publicContext = useB20PublicContext();
   // The scope the SERVER answered in wins: an address in the question moves the
   // answer to that token, and leaving the tab where it was would label it wrongly.
   const b20Console = useB20ConsoleAsk({ onSuccess: (answer) => setConsoleScope(answer.scope) });
@@ -1928,6 +1934,21 @@ export function MiniConsole() {
           setSection("portfolio");
         }}
         onRefresh={() => void opportunities.refetch()}
+        // The same card as the web console, from the same shared screen —
+        // Base App gets the layer by construction rather than by a second
+        // implementation that could disagree about what "unverified" means.
+        publicContext={{
+          tokenAddress: publicContextToken,
+          loading: publicContext.isPending,
+          context: (publicContext.data as never) ?? null,
+          error: publicContext.error
+            ? 'Miorail could not complete a public search for this token. That is about the search, not about the token.'
+            : null,
+          onLook: (token: string) => {
+            setPublicContextToken(token);
+            publicContext.mutate({ tokenAddress: token });
+          },
+        }}
         launchContext={{
           tokenAddress: contextToken,
           loading: launchContext.isPending && contextToken !== null,

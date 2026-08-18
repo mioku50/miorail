@@ -1993,6 +1993,7 @@ export const StatusResponseSchema = z.object({
     balancerExecutionV1: z.boolean().optional(),
     // T67C: same additive treatment.
     b20ControlV1: z.boolean().optional(),
+    b20PublicContextV1: z.boolean().optional(),
     // T67C.2: same additive treatment.
     submissionRecoveryV1: z.boolean().optional(),
     publicProofV1: z.boolean().optional(),

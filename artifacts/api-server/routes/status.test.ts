@@ -119,7 +119,7 @@ describe('Status API', () => {
       nftRouteV1: false,
       nftExecutionV1: false,
       privateAiRouteV1: false,
-      privateAiExecutionV1: false, aerodromeExecutionV1: false, o1ExecutionV1: false, hydrexExecutionV1: false, balancerExecutionV1: false, b20ControlV1: false, submissionRecoveryV1: false, publicProofV1: false, routeOutcomeFeedbackV1: false,
+      privateAiExecutionV1: false, aerodromeExecutionV1: false, o1ExecutionV1: false, hydrexExecutionV1: false, balancerExecutionV1: false, b20ControlV1: false, b20PublicContextV1: false, submissionRecoveryV1: false, publicProofV1: false, routeOutcomeFeedbackV1: false,
       // T74 `tokenIdentityV1` is deliberately absent: naming a token by address
       // is decided server-side, and the api-zod status schema drops flags the
       // client has no decision to make with — the same treatment mcpPrivateV1
@@ -130,6 +130,7 @@ describe('Status API', () => {
       [
         'aerodromeExecutionV1',
         'b20ControlV1',
+        'b20PublicContextV1',
         'balancerExecutionV1',
         'commerceExecutionV1',
         'commerceRouteV1',

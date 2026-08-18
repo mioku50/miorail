@@ -1010,6 +1010,28 @@ export function useB20LaunchContext(tokenAddress: string | null, options?: { ena
   });
 }
 
+/**
+ * Unverified public context for one token, fetched when a reader asks for it.
+ *
+ * A mutation rather than a query on purpose: this is the one B20 read that
+ * reaches a third party and spends a metered search, so it must never run
+ * because a component mounted. `retry: false` for the same reason — a failed
+ * search that retried would spend it twice.
+ */
+export function useB20PublicContext(
+  options?: Omit<UseMutationOptions<unknown, Error, { tokenAddress: string }>, 'mutationFn' | 'retry'>,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      return fetchApi<unknown>(
+        `/api/route-intelligence/opportunities/b20/${input.tokenAddress.toLowerCase()}/public-context`,
+      );
+    },
+  });
+}
+
 export function useAddB20Watch(
   options?: Omit<UseMutationOptions<apiSpec.B20WatchlistResponseV1, Error, { tokenAddress: string }>, 'mutationFn'>,
 ) {

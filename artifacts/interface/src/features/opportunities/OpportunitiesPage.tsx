@@ -34,6 +34,7 @@ import {
   useB20MarketRails,
   useB20Opportunities,
   useB20Opportunity,
+  useB20PublicContext,
   useStatus,
 } from '@mioagent/api-client-react';
 import { useConsoleNav } from '../console/useConsoleNav';
@@ -121,6 +122,11 @@ export function OpportunitiesPage() {
     const card = focusedInFeed ?? focusDetail.data?.card ?? null;
     return card ? opportunityCardViewV1(card) : null;
   }, [focus.tokenAddress, focusedInFeed, focusDetail.data]);
+
+  // Unverified public context. A mutation, so it runs when a reader presses
+  // the control and never because a card rendered.
+  const [publicContextToken, setPublicContextToken] = useState<string | null>(null);
+  const publicContext = useB20PublicContext();
 
   const copilot = useB20CopilotAsk();
   const launchContext = useB20LaunchContext(contextToken);
@@ -315,6 +321,20 @@ export function OpportunitiesPage() {
           // Back to the whole feed. A plain navigation rather than a state
           // reset, so Back and Forward keep working through the selection.
           onClear: () => navigate(consoleSectionPathV1('opportunities')),
+        }}
+        publicContext={{
+          tokenAddress: publicContextToken,
+          loading: publicContext.isPending,
+          context: (publicContext.data as never) ?? null,
+          // Never the server's message: it can name a provider. The card
+          // says this is about the request, not about the token.
+          error: publicContext.error
+            ? 'Miorail could not complete a public search for this token. That is about the search, not about the token.'
+            : null,
+          onLook: (token) => {
+            setPublicContextToken(token);
+            publicContext.mutate({ tokenAddress: token });
+          },
         }}
         launchContext={{
           tokenAddress: contextToken,

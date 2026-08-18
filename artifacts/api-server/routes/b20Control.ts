@@ -99,6 +99,10 @@ import { stableHashV1 } from '@mioagent/route-domain';
 import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
 import { reconcileB20EntryFromBaseV1 } from '../lib/b20EntryChainReconciler.js';
 import {
+  b20PublicContextSearchFromEnv,
+  readB20PublicContextV1,
+} from '../lib/b20PublicContextRead.js';
+import {
   OPPORTUNITY_QUOTE_ASSET_V1,
   type B20PipelineStatusV1,
   b20OpportunityCardV1,
@@ -1912,6 +1916,66 @@ export async function readB20LaunchContextV1(tokenAddress: string): Promise<B20L
   // standing — which is the resting state for almost every launch anyway.
   return b20LaunchContextV1({ reading, corpus, claim: null });
 }
+
+// ---------------------------------------------------------------------------
+// Unverified public context, for one token, when a reader asks.
+//
+// Separate route from every other B20 read, and gated separately, because it is
+// the only one that reaches a third party on a user's behalf. It never runs on
+// a feed render and never in the background: a search costs money and a false
+// link costs more, and both are bounded by somebody actually asking.
+// ---------------------------------------------------------------------------
+b20ControlRouter.get('/opportunities/b20/:tokenAddress/public-context', async (req: Request, res: Response) => {
+  const guard = b20Guard(req, res);
+  if (!guard) return;
+
+  const tokenAddress = String(req.params.tokenAddress ?? '').toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(tokenAddress)) {
+    res.status(400).json({ error: 'invalid_token_address', code: 'invalid_token_address' });
+    return;
+  }
+
+  if (b20RouteRuntime.flags().b20PublicContextV1 !== true) {
+    res.status(503).json({ error: 'public_context_disabled', code: 'public_context_disabled' });
+    return;
+  }
+  const search = b20PublicContextSearchFromEnv();
+  if (search === null) {
+    // "This server cannot look" is not "nothing was found". Only the second is
+    // a statement about the token, and it is not this one.
+    res.status(503).json({ error: 'public_search_unconfigured', code: 'public_search_unconfigured' });
+    return;
+  }
+
+  try {
+    if (!(await b20RouteRuntime.discoverAvailable())) {
+      res.status(503).json({ error: 'discover_unavailable', code: 'discover_unavailable' });
+      return;
+    }
+    // The name and symbol come from the launch Miorail ingested, never from the
+    // request: a caller who could supply them would be choosing what Miorail
+    // asks the internet.
+    const found = await b20RouteRuntime.observations().getFeedRowForToken({ tokenAddress, historyLimit: 1 });
+    if (!found) {
+      res.status(404).json({ error: 'launch_not_found', code: 'launch_not_found' });
+      return;
+    }
+    const context = await readB20PublicContextV1({
+      chainId: 8453,
+      tokenAddress,
+      symbol: found.row.launch.symbol ?? null,
+      name: found.row.launch.name ?? null,
+      deps: { search, now: () => b20RouteRuntime.now() },
+    });
+    res.json({
+      schemaVersion: 'b20-public-context/v1',
+      ...context,
+      serverTime: b20RouteRuntime.now().toISOString(),
+    });
+  } catch (error) {
+    storageFailure(res, error, 'b20-public-context');
+  }
+});
 
 b20ControlRouter.get('/opportunities/b20/:tokenAddress/context', async (req: Request, res: Response) => {
   const guard = b20Guard(req, res);

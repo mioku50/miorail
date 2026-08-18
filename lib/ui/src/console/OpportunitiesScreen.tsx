@@ -24,6 +24,7 @@ import {
 import { factValueClassV1 } from './opportunityCardView';
 import { B20ConsolePanel, type B20ConsolePanelModelV1 } from './B20ConsolePanel';
 import { B20LaunchContextCard, type B20LaunchContextModelV1 } from './B20LaunchContextCard';
+import { B20PublicContextCard, type B20PublicContextModelV1 } from './B20PublicContextCard';
 import { discoverCardDomIdV1 } from './discoverFocus';
 
 void React;
@@ -304,6 +305,14 @@ export interface OpportunitiesScreenModelV1 {
    */
   launchContext?: B20LaunchContextModelV1;
   /**
+   * Unverified public context, opened per card.
+   *
+   * Optional, and absent renders no such control at all rather than one
+   * that leads to a refusal: this surface is flag-gated and needs a search
+   * provider, and a button that cannot work is worse than no button.
+   */
+  publicContext?: B20PublicContextModelV1;
+  /**
    * One token, opened by name from the URL.
    *
    * Optional while a host rolls forward; absent renders the feed exactly as
@@ -439,6 +448,7 @@ function OpportunityCard({
   onOpenMeasurement,
   copilot,
   launchContext,
+  publicContext,
   measurementOpen,
 }: {
   card: OpportunityCardViewV1;
@@ -447,6 +457,7 @@ function OpportunityCard({
   onOpenMeasurement?: (tokenAddress: string) => void;
   copilot?: B20CopilotPanelModelV1;
   launchContext?: B20LaunchContextModelV1;
+  publicContext?: B20PublicContextModelV1;
   /** Opens "What was measured" on render. Set only by the focused view, which
    * exists because a reader asked for this token's measurement by name. */
   measurementOpen?: boolean;
@@ -690,6 +701,12 @@ function OpportunityCard({
           unasked would put an address on every card. */}
       {launchContext && <B20LaunchContextCard tokenAddress={card.tokenAddress} model={launchContext} />}
 
+      {/* Below the verified project block and below the launch context, so
+          a reader meets what Miorail PROVED before what it merely found. */}
+      {publicContext && (
+        <B20PublicContextCard tokenAddress={card.tokenAddress} symbol={card.symbol} model={publicContext} />
+      )}
+
       {/* T69-C.1 §2/§3 — the reason is always shown, and the button appears
           only when there is something a user could usefully do. A fresh
           rejection that holds for every wallet gets the sentence and no
@@ -840,11 +857,13 @@ function FocusedMeasurement({
   onOpenToken,
   copilot,
   launchContext,
+  publicContext,
 }: {
   focus: B20DiscoverFocusModelV1;
   onOpenToken: (tokenAddress: string) => void;
   copilot?: B20CopilotPanelModelV1;
   launchContext?: B20LaunchContextModelV1;
+  publicContext?: B20PublicContextModelV1;
 }) {
   const anchor = React.useRef<HTMLDivElement | null>(null);
   const token = focus.tokenAddress;
@@ -886,6 +905,7 @@ function FocusedMeasurement({
               onOpen={onOpenToken}
               copilot={copilot}
               launchContext={launchContext}
+              publicContext={publicContext}
               measurementOpen
             />
           </div>
@@ -1004,6 +1024,7 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
           onOpenToken={model.onOpenToken}
           copilot={model.copilot}
           launchContext={model.launchContext}
+          publicContext={model.publicContext}
         />
       )}
 
@@ -1128,6 +1149,7 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
                           onOpenMeasurement={model.onOpenMeasurement}
                           copilot={model.copilot}
                           launchContext={model.launchContext}
+                          publicContext={model.publicContext}
                         />
                       ))}
                     </div>
