@@ -141,17 +141,32 @@ const original = {
   observations: b20RouteRuntime.observations,
   discoverAvailable: b20RouteRuntime.discoverAvailable,
   now: b20RouteRuntime.now,
+  projectsAvailable: b20RouteRuntime.projectsAvailable,
+  reader: b20RouteRuntime.reader,
 };
 
 before(() => {
   b20RouteRuntime.observations = () => stubObservations([MEASURED_ROW]);
   b20RouteRuntime.discoverAvailable = async () => true;
+  // Compare reads several tokens the way the console does. Two of the runtime's
+  // accessors are on that path and must be stubbed, or a miss reaches the chain:
+  // the project layer (absent here, which is `layer_unavailable` rather than
+  // "nobody claimed it") and the factory identity read a missing index row
+  // triggers.
+  b20RouteRuntime.projectsAvailable = async () => false;
+  b20RouteRuntime.reader = (() => ({
+    readContract: async () => {
+      throw new Error('the identity read is not exercised by these tests');
+    },
+  })) as never;
   b20RouteRuntime.now = () => new Date('2026-08-05T12:00:00.000Z');
 });
 
 after(() => {
   b20RouteRuntime.observations = original.observations;
   b20RouteRuntime.discoverAvailable = original.discoverAvailable;
+  b20RouteRuntime.projectsAvailable = original.projectsAvailable;
+  b20RouteRuntime.reader = original.reader;
   b20RouteRuntime.now = original.now;
 });
 
@@ -174,13 +189,15 @@ function payloadOf(result: unknown): Record<string, unknown> {
 }
 
 describe('§8 — tool discovery', () => {
-  test('a client sees exactly the six tools, with usable descriptions', async () => {
+  test('a client sees exactly the eight tools, with usable descriptions', async () => {
     const client = await connectedClient();
     const { tools } = await client.listTools();
     assert.deepEqual(tools.map((tool) => tool.name).sort(), [
       'miorail_b20_market_rails',
+      'miorail_compare_b20_tokens',
       'miorail_discover_status',
       'miorail_explain_b20_rejection',
+      'miorail_find_b20_projects',
       'miorail_get_b20_opportunity',
       'miorail_list_b20_opportunities',
       'miorail_summarise_b20_universe',
@@ -669,3 +686,152 @@ describe('the market rails are the server’s, not the MCP’s', () => {
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// V2 pass 2 — Compare, Fundamental predicates, and opt-in public context.
+//
+// All three are ways an agent could be handed something stronger than the
+// evidence: a subtraction between incomparable numbers, a predicate answered
+// against the wrong denominator, and a search result sitting where a verified
+// claim goes.
+// ---------------------------------------------------------------------------
+describe('compare answers comparability before it answers anything', () => {
+  test('it refuses fewer than two and more than five', async () => {
+    const client = await connectedClient();
+    for (const addresses of [
+      [LAUNCH.tokenAddress],
+      Array.from({ length: 6 }, (_, index) => `0x${String(index).repeat(40)}`),
+    ]) {
+      const result = await client.callTool({
+        name: 'miorail_compare_b20_tokens',
+        arguments: { tokenAddresses: addresses },
+      });
+      assert.equal((result as { isError?: boolean }).isError, true);
+    }
+    await client.close();
+  });
+
+  test('the same address twice is refused', async () => {
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: 'miorail_compare_b20_tokens',
+      arguments: { tokenAddresses: [LAUNCH.tokenAddress, LAUNCH.tokenAddress] },
+    });
+    assert.match(JSON.stringify(result), /duplicate_token_address/);
+    await client.close();
+  });
+
+  test('an unindexed address is not_in_index, not a zero', async () => {
+    const client = await connectedClient();
+    const other = `0x${'d'.repeat(40)}`;
+    const payload = payloadOf(
+      await client.callTool({
+        name: 'miorail_compare_b20_tokens',
+        arguments: { tokenAddresses: [LAUNCH.tokenAddress, other] },
+      }),
+    );
+    assert.ok('comparable' in payload);
+    assert.match(String(payload.comparabilityRule), /profile identity/);
+    assert.match(String(payload.ordering), /no aggregate, no winner and no score/);
+    assert.match(String(payload.unknownMeaning), /UNKNOWN, never zero/);
+
+    const dimensions = payload.dimensions as {
+      key: string;
+      note: string;
+      values: { token: string; value: unknown; state: string }[];
+    }[];
+    const roundTrip = dimensions.find((dimension) => dimension.key === 'round_trip_bps')!;
+    const missing = roundTrip.values.find((value) => value.token === other)!;
+    assert.equal(missing.value, null);
+    assert.equal(missing.state, 'not_in_index');
+    assert.deepEqual(roundTrip.values.map((value) => value.token), [LAUNCH.tokenAddress, other]);
+    await client.close();
+  });
+
+  test('project context is its own dimension, never folded into a measurement', async () => {
+    const client = await connectedClient();
+    const payload = payloadOf(
+      await client.callTool({
+        name: 'miorail_compare_b20_tokens',
+        arguments: { tokenAddresses: [LAUNCH.tokenAddress, `0x${'d'.repeat(40)}`] },
+      }),
+    );
+    const dimensions = payload.dimensions as { key: string; note: string }[];
+    const project = dimensions.find((dimension) => dimension.key === 'project_standing')!;
+    assert.match(project.note, /different question from anything measured against a pool/);
+    assert.match(project.note, /never a search result/);
+    await client.close();
+  });
+});
+
+describe('a fundamental predicate answers over the claims, not the chain', () => {
+  test('every predicate it offers is positive, and the denominator is stated', async () => {
+    const client = await connectedClient();
+    const { tools } = await client.listTools();
+    const tool = tools.find((entry) => entry.name === 'miorail_find_b20_projects')!;
+    const predicates =
+      (tool.inputSchema as { properties?: { predicate?: { enum?: string[] } } }).properties?.predicate?.enum ?? [];
+    assert.ok(predicates.length >= 8);
+    for (const predicate of predicates) {
+      assert.ok(!/^no_|_missing$|lacks/.test(predicate), `${predicate} is a negative predicate`);
+    }
+    assert.match(tool.description ?? '', /denominator is NOT the launch universe/);
+    assert.match(tool.description ?? '', /remain UNKNOWN/);
+    assert.match(tool.description ?? '', /no way to ask which projects LACK something/);
+    await client.close();
+  });
+
+  test('an unknown predicate is refused rather than widened', async () => {
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: 'miorail_find_b20_projects',
+      arguments: { predicate: 'has_a_good_vibe' },
+    });
+    assert.equal((result as { isError?: boolean }).isError, true);
+    await client.close();
+  });
+});
+
+describe('public context is opt-in and never sits inside the verified layer', () => {
+  test('absent by default — not null, which would read as "looked and found nothing"', async () => {
+    const client = await connectedClient();
+    const payload = payloadOf(
+      await client.callTool({
+        name: 'miorail_get_b20_opportunity',
+        arguments: { tokenAddress: LAUNCH.tokenAddress },
+      }),
+    );
+    assert.ok(!('possiblePublicContext' in payload));
+    await client.close();
+  });
+
+  test('the opt-in field is a sibling of the verified layer, never inside it', async () => {
+    const client = await connectedClient();
+    const payload = payloadOf(
+      await client.callTool({
+        name: 'miorail_get_b20_opportunity',
+        arguments: { tokenAddress: LAUNCH.tokenAddress, includePublicContext: true },
+      }),
+    );
+    const context = payload.possiblePublicContext as Record<string, unknown> | undefined;
+    assert.ok(context, 'the opt-in field is missing');
+    if (typeof context!.unavailableReason === 'string') {
+      // No provider in the test environment: it must say it could not look.
+      assert.match(context!.unavailableReason, /not a statement about the token/);
+    }
+    const opportunity = payload.opportunity as Record<string, unknown>;
+    assert.ok(!JSON.stringify(opportunity.project ?? {}).includes('possiblePublicContext'));
+    await client.close();
+  });
+
+  test('the tool tells an agent the two layers are different', async () => {
+    const client = await connectedClient();
+    const { tools } = await client.listTools();
+    const tool = tools.find((entry) => entry.name === 'miorail_get_b20_opportunity')!;
+    assert.match(tool.description ?? '', /Looked up DIRECTLY by address/);
+    const schema = tool.inputSchema as { properties?: Record<string, { description?: string }> };
+    assert.match(schema.properties?.includePublicContext?.description ?? '', /NOTHING it returns is verified/);
+    assert.match(schema.properties?.publicContextDomain?.description ?? '', /NO SEARCH RUNS/);
+    await client.close();
+  });
+});

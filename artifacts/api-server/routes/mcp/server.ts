@@ -1,7 +1,13 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { B20_EXIT_STANDING_KINDS_V1, B20_STANDING_GROUPS_V1 } from '@mioagent/opportunity-rail';
 import {
+  B20_EXIT_STANDING_KINDS_V1,
+  B20_FUNDAMENTAL_PREDICATES_V1,
+  B20_STANDING_GROUPS_V1,
+} from '@mioagent/opportunity-rail';
+import {
+  MCP_COMPARE_MAX_V1,
+  MCP_COMPARE_MIN_V1,
   MCP_DEFAULT_PAGE_V1,
   MCP_LEADER_DIMENSIONS_V1,
   MCP_MAX_PAGE_V1,
@@ -11,12 +17,14 @@ import {
   miorailExplainRejectionV1,
   miorailGetOpportunityV1,
   miorailListOpportunitiesV1,
+  miorailCompareTokensV1,
+  miorailFindProjectsV1,
   miorailMarketRailsV1,
   miorailSummariseUniverseV1,
 } from './tools.js';
 
 // ---------------------------------------------------------------------------
-// T72 — the Miorail MCP server: six read-only tools over stored evidence.
+// T72 — the Miorail MCP server: eight read-only tools over stored evidence.
 //
 // It cannot execute anything. There is no signer, no wallet_sendCalls, no
 // clearance, no entry plan, no submission and no x402 payment on this surface,
@@ -224,6 +232,19 @@ Counts may be up to a minute old; "computedAt" says when they were taken.`,
           .describe(
             'summary (default) omits the duplicated discoverCard and the per-item caveat block, which together are ~73% of a full payload. full keeps the old shape for a caller that reads discoverCard directly.',
           ),
+        includePublicContext: z
+          .boolean()
+          .optional()
+          .describe(
+            'Opt-in. Runs a public search for a website, repository or social account and fetches each result to look for this token address. NOTHING it returns is verified. Omit it and the field is absent entirely — which is not the same as an empty result.',
+          ),
+        publicContextDomain: z
+          .string()
+          .max(253)
+          .optional()
+          .describe(
+            'A bare hostname you already know, e.g. orbitlab.xyz — no scheme, no path, no port. When present NO SEARCH RUNS: Miorail fetches that domain and looks for this token address on it. It believes the domain no more than it believes a ranked search result.',
+          ),
       },
     },
     async (args) => {
@@ -278,6 +299,61 @@ Replaces miorail_get_b20_market_leaders, which sorted a page of the feed inside 
     async (args) => {
       try {
         return reply(await miorailMarketRailsV1(args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'miorail_compare_b20_tokens',
+    {
+      title: 'Two to five B20 tokens, side by side, on measured dimensions only',
+      description: `Compares between ${MCP_COMPARE_MIN_V1} and ${MCP_COMPARE_MAX_V1} Base token addresses on the dimensions Miorail actually measured.
+
+It answers "comparable" FIRST, and you must read that before the numbers. Two measurements may be set beside each other only when they share a profile identity, a quote asset, a reference position and a measurement version — two tokens measured against different reference positions produce round trips that LOOK comparable and are not. When they are not comparable the figures still come back, each stated on its own, with the reason; do not subtract them from one another.
+
+There is no aggregate, no winner, no score and no ordering. Values come back in the order you asked. A null value is UNKNOWN and never zero: "not_measured" means Miorail has no reading of that dimension, and "not_in_index" means it has no canonical launch at that address at all.
+
+Project context is included as its own dimension because it answers a different question from anything measured against a pool — what a project published about itself on a domain it controls, and what Miorail then checked.`,
+      inputSchema: {
+        tokenAddresses: z
+          .array(z.string().regex(/^0x[0-9a-fA-F]{40}$/))
+          .min(MCP_COMPARE_MIN_V1)
+          .max(MCP_COMPARE_MAX_V1)
+          .describe('Distinct Base token addresses. The order is preserved in the answer.'),
+      },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailCompareTokensV1(args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'miorail_find_b20_projects',
+    {
+      title: 'B20 launches a project has proven a link to',
+      description: `Answers questions like "which B20 tokens have a live product" or "which have a verified website" from Miorail's project-claim corpus.
+
+The denominator is NOT the launch universe. A project claims a token by serving a file on a domain it controls; this searches the VERIFIED CLAIMS, and the answer says so — "1 matched among 1 verified project claim". Launches without a verified claim are outside the corpus and remain UNKNOWN. They are not negative results, and most launches on this chain are never claimed.
+
+Every predicate is positive. There is deliberately no way to ask which projects LACK something: Miorail cannot tell a project with no website from one that never claimed a token, and reporting the second as the first would be inventing a finding.
+
+Evidence older than a day is labelled stale and describes what was true when it was checked, not what is true now.`,
+      inputSchema: {
+        predicate: z
+          .enum(B20_FUNDAMENTAL_PREDICATES_V1)
+          .describe('Required. There is no default question.'),
+        limit: z.number().int().min(1).max(MCP_MAX_PAGE_V1).optional(),
+      },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailFindProjectsV1(args));
       } catch (error) {
         return refuse(error);
       }

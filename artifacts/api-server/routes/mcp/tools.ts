@@ -8,15 +8,26 @@ import {
   type B20FundamentalProfileV1,
   type B20OpportunityCardV1,
   type B20StandingGroupV1,
+  B20_FUNDAMENTAL_PREDICATES_V1,
+  B20_FUNDAMENTAL_PREDICATE_RULES_V1,
+  type B20FundamentalPredicateV1,
 } from '@mioagent/opportunity-rail';
 import {
   readB20UniverseSummaryV1,
   readDiscoverFeedV1,
   readB20CardForTokenV1,
+  readB20FundamentalMatchesV1,
   readB20MarketRailsV1,
+  readB20TokenReadsV1,
   pipelineStatusV1,
   b20RouteRuntime,
 } from '../b20Control.js';
+import { b20ComparabilityV1 } from '../../lib/b20ConsoleAnswer.js';
+import {
+  B20SuppliedDomainRefusedError,
+  b20PublicContextSearchFromEnv,
+  readB20PublicContextV1,
+} from '../../lib/b20PublicContextRead.js';
 
 // ---------------------------------------------------------------------------
 // T72 — the read-only tool layer.
@@ -429,6 +440,12 @@ export async function miorailListOpportunitiesV1(input: {
 export async function miorailGetOpportunityV1(input: {
   tokenAddress: string;
   verbosity?: McpVerbosityV1;
+  /** Opt-in. Absent means the field is not on the response at all — not null,
+   * because an absent field cannot be read as "Miorail looked and found
+   * nothing". */
+  includePublicContext?: boolean;
+  /** A bare hostname the caller already knows. When present NO SEARCH RUNS. */
+  publicContextDomain?: string;
 }): Promise<Record<string, unknown>> {
   const tokenAddress = String(input.tokenAddress ?? '').toLowerCase();
   if (!ADDRESS_V1.test(tokenAddress)) {
@@ -456,9 +473,54 @@ export async function miorailGetOpportunityV1(input: {
       b20RouteRuntime.now(),
       await b20RouteRuntime.discoverAvailable(),
     );
+    // Unverified public context, and ONLY when asked for. It is a separate
+    // field beside `project`, never inside it: one comes from a file a project
+    // serves on a domain it controls, the other from a public search, and the
+    // two have different types, different standings and no code path between
+    // them. A search also costs money and a false link costs more, so nothing
+    // here runs because a card was fetched.
+    const wantsPublicContext = input.includePublicContext === true || Boolean(input.publicContextDomain);
+    let possiblePublicContext: Record<string, unknown> | undefined;
+    if (wantsPublicContext) {
+      const search = b20PublicContextSearchFromEnv();
+      if (search === null && !input.publicContextDomain) {
+        possiblePublicContext = {
+          unavailableReason:
+            'This Miorail server has no public search provider configured, so it could not look. That is not a statement about the token, and it is not "nothing was found".',
+        };
+      } else {
+        try {
+          const context = await readB20PublicContextV1({
+            chainId: 8453,
+            tokenAddress,
+            symbol: found.card.launch.symbol ?? null,
+            name: found.card.launch.name ?? null,
+            domain: input.publicContextDomain ?? null,
+            deps: {
+              search: search ?? (async () => { throw new Error('no search provider'); }),
+              now: () => b20RouteRuntime.now(),
+            },
+          });
+          possiblePublicContext = {
+            ...context,
+            boundary:
+              'Candidates from a public search or from a domain you named. NOTHING here is verified: a matching name or symbol is not a link, and 61.7% of B20 launches share their symbol with another launch. This can never become the verified project layer above.',
+          };
+        } catch (error) {
+          possiblePublicContext = {
+            unavailableReason:
+              error instanceof B20SuppliedDomainRefusedError
+                ? `Miorail will not fetch that domain (${error.refusal}), so it read nothing.`
+                : 'The public lookup did not complete, so Miorail read nothing. That is about the lookup, not about the token.',
+          };
+        }
+      }
+    }
+
     return {
       pipeline: { state: status.state, summary: status.message },
       opportunity: opportunityFromCardV1(found.card, input.verbosity ?? 'summary'),
+      ...(possiblePublicContext ? { possiblePublicContext } : {}),
       // Bounded history, so an agent can see that a second comparable
       // observation exists before asking what changed.
       history: found.history.map((entry) => ({
@@ -609,3 +671,224 @@ export async function miorailMarketRailsV1(input: {
     throw publicFailureV1(error);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Compare, for two to five tokens.
+//
+// The rule is NOT this file's. `b20ComparabilityV1` decides whether two
+// measurements may be set beside each other — same profile identity, same quote
+// asset, same reference position, same measurement version — and it is the same
+// rule the market rails pair observations with. Two tokens measured against
+// different reference positions produce round trips that look comparable and
+// are not.
+//
+// When they are not comparable this returns the numbers anyway, each stated on
+// its own, with the reason. Refusing outright would push a caller to fetch two
+// cards and compare them itself, which is the failure with the loud version
+// removed.
+//
+// Every dimension is a MEASURED one. There is no aggregate, no winner, no score
+// and no ordering: the values come back in the order the caller asked for them.
+// `null` is `unknown` and carries its own state, because a zero here would read
+// as "measured, and it was nothing".
+// ---------------------------------------------------------------------------
+
+export const MCP_COMPARE_MIN_V1 = 2;
+export const MCP_COMPARE_MAX_V1 = 5;
+
+interface CompareDimensionV1 {
+  key: string;
+  label: string;
+  unit: string;
+  note: string;
+  read: (card: B20OpportunityCardV1) => { value: string | number | null; state: string };
+}
+
+const COMPARE_DIMENSIONS_V1: readonly CompareDimensionV1[] = [
+  {
+    key: 'round_trip_bps',
+    label: 'Pre-entry round trip',
+    unit: 'basis points',
+    note: 'What entering and leaving immediately cost at the reference position, quoted before the entry moved the pool. A smaller number is not a better token.',
+    read: (card) => {
+      const value = card.observation?.optimisticRoundTripBps ?? null;
+      return { value, state: value === null ? 'not_measured' : 'measured' };
+    },
+  },
+  {
+    key: 'largest_passing_exit_atomic',
+    label: 'Largest tested exit',
+    unit: 'atomic units of the token',
+    note: 'A LOWER BOUND: the largest probe that passed within the slippage tolerance. Nothing above it was tested, and nothing between it and the first failing size was measured either.',
+    read: (card) => {
+      const value = card.observation?.largestPassingSizeAtomic ?? null;
+      return { value, state: value === null ? 'not_measured' : 'measured' };
+    },
+  },
+  {
+    key: 'exit_route_found',
+    label: 'Exit route found',
+    unit: 'boolean',
+    note: 'Whether the allowlisted venue search priced a way out at all. False is a statement about the venues searched at that moment.',
+    read: (card) => {
+      const observation = card.observation;
+      if (!observation) return { value: null, state: 'not_measured' };
+      return { value: observation.exitRouteFound ? 'yes' : 'no', state: 'measured' };
+    },
+  },
+  {
+    key: 'launch_window_buyers',
+    label: 'Buyers in the launch window',
+    unit: 'wallets',
+    note: 'Unique buyers in the launch’s own block window, counted only after that window closed. Not current holders and not trading volume.',
+    read: (card) => {
+      const buyers = card.observation?.launchBuyers ?? null;
+      if (!buyers) return { value: null, state: 'not_measured' };
+      return { value: buyers.buyerCount, state: 'measured' };
+    },
+  },
+  {
+    key: 'project_standing',
+    label: 'Project context',
+    unit: 'standing',
+    note: 'What a project PUBLISHED about itself and Miorail then checked, from a file on a domain the project controls. A different question from anything measured against a pool, and never a search result.',
+    read: (card) => {
+      const project = card.project;
+      if (!project) return { value: null, state: 'layer_unavailable' };
+      return { value: project.standing, state: project.identityVerified ? 'verified' : 'unverified' };
+    },
+  },
+];
+
+export async function miorailCompareTokensV1(input: {
+  tokenAddresses: readonly string[];
+}): Promise<Record<string, unknown>> {
+  const wanted = (input.tokenAddresses ?? []).map((address) => String(address ?? '').toLowerCase());
+  if (wanted.length < MCP_COMPARE_MIN_V1 || wanted.length > MCP_COMPARE_MAX_V1) {
+    throw new McpPublicError(
+      'invalid_token_count',
+      `Compare takes between ${MCP_COMPARE_MIN_V1} and ${MCP_COMPARE_MAX_V1} token addresses.`,
+    );
+  }
+  for (const address of wanted) {
+    if (!ADDRESS_V1.test(address)) {
+      throw new McpPublicError('invalid_token_address', `${address} is not a Base token address.`);
+    }
+  }
+  if (new Set(wanted).size !== wanted.length) {
+    throw new McpPublicError('duplicate_token_address', 'Compare takes distinct addresses.');
+  }
+
+  try {
+    const { reads } = await readB20TokenReadsV1({ tokenAddresses: wanted, historyLimit: 2 });
+    const comparability = b20ComparabilityV1(reads);
+
+    const tokens = reads.map((read) => ({
+      address: read.tokenAddress,
+      symbol: read.card?.launch.symbol ?? null,
+      // Three separate statements, never collapsed: indexed, measured, and
+      // what the measurement found.
+      indexStanding: read.indexStanding,
+      measured: read.card?.observation != null,
+      comparableObservations: read.historyCount,
+    }));
+
+    const dimensions = COMPARE_DIMENSIONS_V1.map((dimension) => ({
+      key: dimension.key,
+      label: dimension.label,
+      unit: dimension.unit,
+      note: dimension.note,
+      values: reads.map((read) => ({
+        token: read.tokenAddress,
+        ...(read.card ? dimension.read(read.card) : { value: null, state: 'not_in_index' }),
+      })),
+    }));
+
+    return {
+      // First, because everything below is only meaningful when it is true.
+      comparable: comparability.comparable,
+      incomparableReason: comparability.reason,
+      comparabilityRule:
+        'Two measurements may be set beside each other only when they share a profile identity, a quote asset, a reference position and a measurement version. When they do not, the figures below are each stated on their own and must not be subtracted from one another.',
+      tokens,
+      dimensions,
+      ordering:
+        'The order is the order you asked in. Miorail computes no aggregate, no winner and no score across tokens, and there is nothing here to sort by.',
+      unknownMeaning:
+        'A null value is UNKNOWN, never zero. `not_measured` means Miorail has no reading of that dimension; `not_in_index` means it has no canonical launch at that address at all.',
+      caveats: MIORAIL_MCP_CAVEATS_V1,
+    };
+  } catch (error) {
+    throw publicFailureV1(error);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Fundamental Intelligence, as a question an agent can ask.
+//
+// Deliberately NOT a filter on the opportunity list, and the reason is the
+// denominator. The list answers over the measured launch window and carries a
+// pipeline state and a cursor; a predicate answers over the VERIFIED PROJECT
+// CLAIMS, which is a different and much smaller corpus. Bolting it onto the
+// feed would hand an agent a response saying "3,000 launches read" beside an
+// answer that read none of them, and the market framing is exactly what the
+// fundamental answer had to have removed from it once already.
+//
+// So the corpus travels with the answer: "1 matched among 1 verified project
+// claim; launches without a verified claim are outside this corpus and remain
+// unknown." Every predicate is positive-only. There is no `no_website`, because
+// Miorail cannot distinguish a project that has no website from one that never
+// claimed a token — and `unknown` is not `false`.
+// ---------------------------------------------------------------------------
+
+export async function miorailFindProjectsV1(input: {
+  predicate: B20FundamentalPredicateV1;
+  limit?: number;
+}): Promise<Record<string, unknown>> {
+  if (!(B20_FUNDAMENTAL_PREDICATES_V1 as readonly string[]).includes(input.predicate)) {
+    throw new McpPublicError(
+      'unknown_predicate',
+      `predicate must be one of: ${B20_FUNDAMENTAL_PREDICATES_V1.join(', ')}. All of them are positive: Miorail has no way to ask which projects LACK something.`,
+    );
+  }
+  try {
+    const limit = Math.max(1, Math.min(MCP_MAX_PAGE_V1, Math.floor(input.limit ?? MCP_DEFAULT_PAGE_V1)));
+    const found = await readB20FundamentalMatchesV1({ predicate: input.predicate, limit });
+    if (!found.available) {
+      // "This server does not run the layer" is not "nothing matched".
+      throw new McpPublicError(
+        'project_layer_unavailable',
+        'This Miorail server does not run the project-claim layer, so it cannot answer. That is not a statement about any project.',
+      );
+    }
+    const rule = B20_FUNDAMENTAL_PREDICATE_RULES_V1[input.predicate];
+    return {
+      predicate: input.predicate,
+      asks: rule.label,
+      matched: found.matches.length,
+      // The denominator, and the sentence that stops it being read as a share
+      // of the chain.
+      corpus: found.corpus,
+      corpusMeaning: `${found.matches.length} matched among ${found.corpus} verified project claim${found.corpus === 1 ? '' : 's'}. Launches without a verified claim are outside this corpus and remain unknown — they are not negative results.`,
+      projects: found.matches.map((match) => ({
+        tokenAddress: match.tokenAddress,
+        symbol: match.symbol,
+        // Whether Discover has also ingested it. A verified claim can exist for
+        // a launch older than the measurement window, and that is not a fault.
+        indexedByDiscover: match.indexed,
+        projectDomain: match.profile.projectDomain,
+        standing: match.profile.standing,
+        freshness: match.profile.freshness ?? 'unknown',
+        oldestEvidenceAt: match.profile.oldestObservedAt ?? null,
+        findings: match.profile.findings,
+        notEstablished: match.profile.missing,
+      })),
+      evidenceBoundary:
+        'Every state here came from a file the project serves on a domain it controls, plus probes of only what that file declared. It is not a review, not a rating and not a statement about price. Evidence older than a day is labelled stale and describes what was true when it was checked.',
+      caveats: MIORAIL_MCP_CAVEATS_V1,
+    };
+  } catch (error) {
+    throw publicFailureV1(error);
+  }
+}
+

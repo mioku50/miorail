@@ -318,14 +318,16 @@ printf '%s' "$mcp_tools" | jq -e '
   | sort
   == [
     "miorail_b20_market_rails",
+    "miorail_compare_b20_tokens",
     "miorail_discover_status",
     "miorail_explain_b20_rejection",
+    "miorail_find_b20_projects",
     "miorail_get_b20_opportunity",
     "miorail_list_b20_opportunities",
     "miorail_summarise_b20_universe"
   ]
-' >/dev/null || { echo 'FAILED: public MCP tool registry is not the reviewed six-tool surface'; exit 1; }
-printf '  mcp tools/list %-28s %s\n' "$MCP_PUBLIC_URL" '6 read-only tools'
+' >/dev/null || { echo 'FAILED: public MCP tool registry is not the reviewed eight-tool surface'; exit 1; }
+printf '  mcp tools/list %-28s %s\n' "$MCP_PUBLIC_URL" '8 read-only tools'
 
 echo
 # Counted from the response, not typed in. The literal said "5 tools" for a

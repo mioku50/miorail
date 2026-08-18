@@ -1297,6 +1297,109 @@ export const MARKET_RAIL_ACTIVE_OBSERVATION_LIMIT_V1 = 1_000;
  * carries the typed exclusion reasons, which is what lets a reader tell "not on
  * the rail" from "measured and worse".
  */
+/**
+ * Several tokens, read the way the console reads them.
+ *
+ * Extracted so the agent-facing Compare uses the SAME reads as Investigate,
+ * including the three separate statements a miss produces: a missing index row
+ * is a fact about Miorail, not about the token, and the factory is asked before
+ * anything is said. Bounded by the caller — every call site so far caps at five.
+ */
+export async function readB20TokenReadsV1(input: {
+  tokenAddresses: readonly string[];
+  historyLimit: number;
+  /**
+   * The holder-facing exit assessment, computed only when asked.
+   *
+   * It answers "which of MY positions is hardest to close", which is a question
+   * only the Portfolio scope has. Compare does not, and computing it there was
+   * both work nobody asked for and the one thing on this path that can throw on
+   * a partial observation.
+   */
+  includeAssessments?: boolean;
+}): Promise<{
+  reads: B20ConsoleTokenReadV1[];
+  assessments: Record<string, B20ExitAssessmentV1>;
+}> {
+  const observations = b20RouteRuntime.observations();
+  const now = b20RouteRuntime.now();
+  const pipeline = await pipelineStatusV1(observations, now, true);
+  const projects = await readB20ProjectProfilesV1(input.tokenAddresses);
+  const reads: B20ConsoleTokenReadV1[] = [];
+  const assessments: Record<string, B20ExitAssessmentV1> = {};
+  for (const tokenAddress of input.tokenAddresses) {
+    const found = await observations.getFeedRowForToken({ tokenAddress, historyLimit: input.historyLimit });
+      if (!found) {
+        // A missing index row is a fact about Miorail, not about the token. Ask
+        // the factory before saying anything: MIO is confirmed onchain and
+        // predates the Discover scan window, and calling it "not a canonical
+        // B20 launch" was Miorail denying its own token. Bounded by the
+        // planner's five-token cap and only ever reached on a miss.
+        const identity = await b20IdentityForMissingRowV1(tokenAddress, now);
+        reads.push({
+          tokenAddress,
+          card: null,
+          profile: null,
+          historyCount: 0,
+          indexStanding: b20TokenIndexStandingV1({ indexed: false, detection: identity }),
+          detection: identity,
+        });
+        continue;
+      }
+      const raw = found.row.observation;
+      reads.push({
+        tokenAddress,
+        card: b20OpportunityCardV1({
+          launch: {
+            tokenAddress: found.row.launch.tokenAddress,
+            name: found.row.launch.name,
+            symbol: found.row.launch.symbol,
+            variant: found.row.launch.variant,
+            decimals: found.row.launch.decimals,
+            blockNumber: found.row.launch.blockNumber,
+            transactionHash: found.row.launch.transactionHash,
+            logIndex: found.row.launch.logIndex,
+            detectedAt: found.row.launch.detectedAt,
+            blockTimestamp: found.row.launch.blockTimestamp,
+            canonical: found.row.launch.canonical,
+          },
+          observation: raw,
+          launchBuyers: found.row.launchBuyers,
+          launchBuyerWindow: b20LaunchBuyerWindowV1({
+            launchBlock: found.row.launch.blockNumber,
+            observedHead: pipeline.facts.confirmedHead,
+            windowBlocks: B20_BUYER_WINDOW_BLOCKS_V1,
+            measured: found.row.launchBuyers !== null,
+            measuredToBlock: found.row.launchBuyers?.toBlock ?? null,
+          }),
+          project: projects?.get(found.row.launch.tokenAddress.toLowerCase()) ?? null,
+          now,
+        }),
+        // The four fields the comparability rule reads, taken from the stored
+        // observation rather than from the card: a card is a projection for a
+        // screen and deliberately does not carry the measurement's identity.
+        profile: raw
+          ? {
+              profileIdentity: raw.profileIdentity,
+              referenceQuoteAsset: raw.referenceQuoteAsset,
+              referencePositionAtomic: raw.referencePositionAtomic,
+              measurementVersion: raw.measurementVersion,
+            }
+          : null,
+        historyCount: found.history.length,
+        // A row in the index settles identity on its own; the factory is not
+        // consulted, and an observation may still be absent. Those stay three
+        // separate statements.
+        indexStanding: 'indexed_b20',
+        detection: null,
+      });
+    if (raw && input.includeAssessments === true) {
+      assessments[tokenAddress] = referenceExitAssessmentV1(raw, null);
+    }
+    }
+  return { reads, assessments };
+}
+
 export async function readB20MarketRailsV1(input: { limit: number }): Promise<{
   pipeline: B20PipelineStatusV1;
   capacityLeaders: ReturnType<typeof exitCapacityLeadersV1>['leaders'];
@@ -1743,83 +1846,15 @@ export async function runB20ConsolePlanV1(plan: B20ConsolePlanV1): Promise<B20Co
   const changesStep = plan.steps.find((step) => step.tool === 'changes');
 
   if (cardsStep && (cardsStep.tool === 'cards' || cardsStep.tool === 'positions')) {
-    const observations = b20RouteRuntime.observations();
-    const now = b20RouteRuntime.now();
-    const pipeline = await pipelineStatusV1(observations, now, true);
     // One read for the whole plan. Project context answers "does MIO have a
     // live product" and "did this project exist before its token", and both are
     // questions about a card the console is already reading.
-    const projects = await readB20ProjectProfilesV1(cardsStep.tokenAddresses);
-    const reads: B20ConsoleTokenReadV1[] = [];
-    const assessments: Record<string, B20ExitAssessmentV1> = {};
-    for (const tokenAddress of cardsStep.tokenAddresses) {
-      const found = await observations.getFeedRowForToken({ tokenAddress, historyLimit: cardsStep.historyLimit });
-      if (!found) {
-        // A missing index row is a fact about Miorail, not about the token. Ask
-        // the factory before saying anything: MIO is confirmed onchain and
-        // predates the Discover scan window, and calling it "not a canonical
-        // B20 launch" was Miorail denying its own token. Bounded by the
-        // planner's five-token cap and only ever reached on a miss.
-        const identity = await b20IdentityForMissingRowV1(tokenAddress, now);
-        reads.push({
-          tokenAddress,
-          card: null,
-          profile: null,
-          historyCount: 0,
-          indexStanding: b20TokenIndexStandingV1({ indexed: false, detection: identity }),
-          detection: identity,
-        });
-        continue;
-      }
-      const raw = found.row.observation;
-      reads.push({
-        tokenAddress,
-        card: b20OpportunityCardV1({
-          launch: {
-            tokenAddress: found.row.launch.tokenAddress,
-            name: found.row.launch.name,
-            symbol: found.row.launch.symbol,
-            variant: found.row.launch.variant,
-            decimals: found.row.launch.decimals,
-            blockNumber: found.row.launch.blockNumber,
-            transactionHash: found.row.launch.transactionHash,
-            logIndex: found.row.launch.logIndex,
-            detectedAt: found.row.launch.detectedAt,
-            blockTimestamp: found.row.launch.blockTimestamp,
-            canonical: found.row.launch.canonical,
-          },
-          observation: raw,
-          launchBuyers: found.row.launchBuyers,
-          launchBuyerWindow: b20LaunchBuyerWindowV1({
-            launchBlock: found.row.launch.blockNumber,
-            observedHead: pipeline.facts.confirmedHead,
-            windowBlocks: B20_BUYER_WINDOW_BLOCKS_V1,
-            measured: found.row.launchBuyers !== null,
-            measuredToBlock: found.row.launchBuyers?.toBlock ?? null,
-          }),
-          project: projects?.get(found.row.launch.tokenAddress.toLowerCase()) ?? null,
-          now,
-        }),
-        // The four fields the comparability rule reads, taken from the stored
-        // observation rather than from the card: a card is a projection for a
-        // screen and deliberately does not carry the measurement's identity.
-        profile: raw
-          ? {
-              profileIdentity: raw.profileIdentity,
-              referenceQuoteAsset: raw.referenceQuoteAsset,
-              referencePositionAtomic: raw.referencePositionAtomic,
-              measurementVersion: raw.measurementVersion,
-            }
-          : null,
-        historyCount: found.history.length,
-        // A row in the index settles identity on its own; the factory is not
-        // consulted, and an observation may still be absent. Those stay three
-        // separate statements.
-        indexStanding: 'indexed_b20',
-        detection: null,
-      });
-      if (raw) assessments[tokenAddress] = referenceExitAssessmentV1(raw, null);
-    }
+    const { reads, assessments } = await readB20TokenReadsV1({
+      tokenAddresses: cardsStep.tokenAddresses,
+      historyLimit: cardsStep.historyLimit,
+      // Only the holder-facing answer needs it.
+      includeAssessments: positionsStep !== undefined,
+    });
     // Same reads, two answers. A holder is asking which of THEIR positions is
     // hardest to close, and a side-by-side of cards does not answer that.
     return positionsStep
