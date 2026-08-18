@@ -317,9 +317,9 @@ printf '%s' "$mcp_tools" | jq -e '
   | map(.name)
   | sort
   == [
+    "miorail_b20_market_rails",
     "miorail_discover_status",
     "miorail_explain_b20_rejection",
-    "miorail_get_b20_market_leaders",
     "miorail_get_b20_opportunity",
     "miorail_list_b20_opportunities",
     "miorail_summarise_b20_universe"
