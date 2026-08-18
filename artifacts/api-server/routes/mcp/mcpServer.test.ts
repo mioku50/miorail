@@ -11,6 +11,7 @@ import {
   MIORAIL_MCP_VERSION_V1,
 } from './server.js';
 import { b20RouteRuntime, readDiscoverFeedV1 } from '../b20Control.js';
+import { compareNothingToCompareReasonV1 } from './tools.js';
 
 // ---------------------------------------------------------------------------
 // T72 §8 — driven through a REAL MCP client over a real transport.
@@ -746,6 +747,47 @@ describe('compare answers comparability before it answers anything', () => {
     assert.equal(missing.state, 'not_in_index');
     assert.deepEqual(roundTrip.values.map((value) => value.token), [LAUNCH.tokenAddress, other]);
     await client.close();
+  });
+
+  // -------------------------------------------------------------------------
+  // The regression. `b20ComparabilityV1` answers "may these be set beside each
+  // other", so with fewer than two measurements it returns false with a NULL
+  // reason — correct, and read by an agent as "Miorail compared them and they
+  // did not match". That sentence is about the tokens. The truth is about
+  // Miorail: it held nothing to compare.
+  // -------------------------------------------------------------------------
+  test('nothing to compare says so, instead of looking like a verdict', async () => {
+    const client = await connectedClient();
+    const payload = payloadOf(
+      await client.callTool({
+        name: 'miorail_compare_b20_tokens',
+        arguments: { tokenAddresses: [`0x${'d'.repeat(40)}`, `0x${'e'.repeat(40)}`] },
+      }),
+    );
+    assert.equal(payload.comparable, false);
+    const reason = String(payload.incomparableReason ?? '');
+    assert.notEqual(reason, '', 'comparable:false must never travel without a reason');
+    assert.match(reason, /nothing was set side by side/);
+    assert.match(reason, /gap in Miorail's coverage/);
+    assert.match(reason, /not a finding about the tokens/);
+    // The per-token states still say WHICH gap, and are not flattened by it.
+    const dimensions = payload.dimensions as { key: string; values: { state: string }[] }[];
+    const roundTrip = dimensions.find((dimension) => dimension.key === 'round_trip_bps')!;
+    assert.deepEqual(roundTrip.values.map((value) => value.state), ['not_in_index', 'not_in_index']);
+    await client.close();
+  });
+
+  test('the two shortfalls are worded apart, and neither blames the tokens', () => {
+    const none = compareNothingToCompareReasonV1({ requested: 3, withComparableMeasurement: 0 });
+    const one = compareNothingToCompareReasonV1({ requested: 3, withComparableMeasurement: 1 });
+    assert.match(none, /None of the 3 tokens/);
+    assert.match(one, /Only 1 of the 3 tokens/);
+    assert.match(one, /a comparison needs two/);
+    for (const reason of [none, one]) {
+      assert.match(reason, /not a verdict that they are incompatible/);
+      assert.match(reason, /not_measured/);
+      assert.match(reason, /not_in_index/);
+    }
   });
 
   test('project context is its own dimension, never folded into a measurement', async () => {

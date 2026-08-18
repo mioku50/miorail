@@ -760,6 +760,36 @@ const COMPARE_DIMENSIONS_V1: readonly CompareDimensionV1[] = [
   },
 ];
 
+/**
+ * Why nothing was compared, when the rule itself had nothing to say.
+ *
+ * `b20ComparabilityV1` answers "may these measurements be set beside each
+ * other", so with fewer than two measurements in hand it returns `false` with
+ * no reason — correct, and unreadable at the top of an agent-facing answer.
+ * `comparable: false` beside a null reason reads as "Miorail compared them and
+ * they did not match", which is a statement about the tokens. The truth is a
+ * statement about Miorail: there was nothing to compare.
+ *
+ * The rule is not touched. This only words the case the rule declines to word.
+ */
+export function compareNothingToCompareReasonV1(input: {
+  requested: number;
+  withComparableMeasurement: number;
+}): string {
+  const requested = input.requested;
+  const held = input.withComparableMeasurement;
+  const opening =
+    held === 0
+      ? `None of the ${requested} tokens you asked about carries a measurement Miorail can compare`
+      : `Only ${held} of the ${requested} tokens you asked about carries a measurement Miorail can compare, and a comparison needs two`;
+  return (
+    `${opening}, so nothing was set side by side. This is a gap in Miorail's coverage, ` +
+    'not a finding about the tokens and not a verdict that they are incompatible. Each ' +
+    "token's state below says which gap it is: `not_measured` is a launch Miorail has no " +
+    'reading of, `not_in_index` is an address with no canonical B20 launch at all.'
+  );
+}
+
 export async function miorailCompareTokensV1(input: {
   tokenAddresses: readonly string[];
 }): Promise<Record<string, unknown>> {
@@ -782,6 +812,17 @@ export async function miorailCompareTokensV1(input: {
   try {
     const { reads } = await readB20TokenReadsV1({ tokenAddresses: wanted, historyLimit: 2 });
     const comparability = b20ComparabilityV1(reads);
+    // The rule returns a null reason when it never got to apply — fewer than two
+    // measurements to hold beside each other. Left null, `comparable: false`
+    // would read as a verdict about the tokens.
+    const withComparableMeasurement = reads.filter((read) => read.profile !== null).length;
+    const incomparableReason =
+      comparability.comparable || comparability.reason !== null
+        ? comparability.reason
+        : compareNothingToCompareReasonV1({
+            requested: reads.length,
+            withComparableMeasurement,
+          });
 
     const tokens = reads.map((read) => ({
       address: read.tokenAddress,
@@ -807,7 +848,7 @@ export async function miorailCompareTokensV1(input: {
     return {
       // First, because everything below is only meaningful when it is true.
       comparable: comparability.comparable,
-      incomparableReason: comparability.reason,
+      incomparableReason,
       comparabilityRule:
         'Two measurements may be set beside each other only when they share a profile identity, a quote asset, a reference position and a measurement version. When they do not, the figures below are each stated on their own and must not be subtracted from one another.',
       tokens,
