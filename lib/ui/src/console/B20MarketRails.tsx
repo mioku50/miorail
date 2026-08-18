@@ -8,6 +8,7 @@ import {
 import { formatCompactAtomicAmount } from '../formatAtomicAmount';
 import { bpsLabelV1 } from './B20ExitCard';
 import { factValueClassV1 } from './opportunityCardView';
+import { TokenIdentityV1 } from './TokenIdentity';
 
 void React;
 
@@ -191,7 +192,11 @@ function RailRow({
 }) {
   return (
     <div className="qrow rail-row" key={tokenAddress}>
-      <span className="rail-token">{symbol}</span>
+      {/* Symbol AND address. Two rows reading `CHEESEBURGE` were two different
+          contracts with different numbers, and nothing on the rail said so. */}
+      <span className="rail-token">
+        <TokenIdentityV1 symbol={symbol} tokenAddress={tokenAddress} />
+      </span>
       <dl className="rail-facts">
         {facts.map((fact) => (
           <div key={fact.label}>

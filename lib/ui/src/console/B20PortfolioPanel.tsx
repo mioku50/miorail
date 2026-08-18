@@ -1,5 +1,5 @@
 import React from 'react';
-import { shortAddressV1 } from './B20WatchScreen';
+import { TokenIdentityV1 } from './TokenIdentity';
 import { B20_PORTFOLIO_ANCHOR_V1 } from './resultAnchors';
 
 void React;
@@ -152,8 +152,15 @@ export function B20PortfolioPanel({
                 <div className="cardrow" key={holding.tokenAddress}>
                   <div className="cr-top">
                     <span className="cr-name">
-                      {holding.symbol ?? shortAddressV1(holding.tokenAddress)}
-                      {holding.name ? ` · ${holding.name}` : ''}
+                      {/* Two holdings can share a symbol as easily as two
+                          launches can. The address was only shown when the
+                          symbol was MISSING, which is the case where confusion
+                          was least likely. */}
+                      <TokenIdentityV1
+                        symbol={holding.symbol ?? null}
+                        name={holding.name ?? null}
+                        tokenAddress={holding.tokenAddress}
+                      />
                     </span>
                     {/* An acute change is the one thing that earns a pill here.
                         Everything else is a row below. */}

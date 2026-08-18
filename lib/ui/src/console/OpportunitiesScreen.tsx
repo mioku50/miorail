@@ -27,6 +27,7 @@ import { B20ConsolePanel, type B20ConsolePanelModelV1 } from './B20ConsolePanel'
 import { B20LaunchContextCard, type B20LaunchContextModelV1 } from './B20LaunchContextCard';
 import { B20PublicContextCard, type B20PublicContextModelV1 } from './B20PublicContextCard';
 import { discoverCardDomIdV1 } from './discoverFocus';
+import { TokenIdentityV1 } from './TokenIdentity';
 
 void React;
 
@@ -513,7 +514,7 @@ function OpportunityCard({
     <article className="cardrow" id={discoverCardDomIdV1(card.tokenAddress)}>
       <div className="cr-top">
         <span className="cr-name">
-          {card.symbol} <span className="sub">{card.name}</span>
+          <TokenIdentityV1 symbol={card.symbol} name={card.name} tokenAddress={card.tokenAddress} />
         </span>
         {/* What was MEASURED, not what state the measurement profile reached.
             This used to be the raw `rejected` pill, which is a verdict about a
