@@ -121,6 +121,63 @@ export interface B20FundamentalFindingV1 {
  * would fill it in, when the honest answer is that nothing may be attached to
  * this token at all.
  */
+/**
+ * How long a fundamental reading stays current.
+ *
+ * The verified layer had no expiry at all, and that is the one thing in it that
+ * can quietly become false. `Product — Live` means an endpoint answered a real
+ * request AT A MOMENT; the endpoint can be gone an hour later and the card
+ * would still say Live, forever, because nothing re-reads it. Production on
+ * 2026-08-18 was showing evidence observed 36 hours earlier with no sign of it.
+ *
+ * One window rather than eight. A per-dimension window would be more precise —
+ * a repository moves slower than a product endpoint — but it would also be
+ * eight numbers a reader has to hold, and the honest simple rule is that a
+ * reading older than a day is history rather than a current statement.
+ *
+ * This does NOT weaken a finding. A stale `live` is still the reading that was
+ * taken; it is labelled, exactly as a stale measurement is on the exit rails.
+ */
+export const B20_FUNDAMENTAL_FRESHNESS_MS_V1 = 24 * 60 * 60 * 1000;
+
+export type B20FundamentalFreshnessV1 = 'fresh' | 'stale' | 'unknown';
+
+/** A finding's own age. `unknown` when nothing recorded when it was observed —
+ * which is not the same as stale, and must not be shown as current either. */
+export function b20FindingFreshnessV1(
+  observedAt: string | null,
+  now: Date,
+  windowMs: number = B20_FUNDAMENTAL_FRESHNESS_MS_V1,
+): B20FundamentalFreshnessV1 {
+  if (observedAt === null) return 'unknown';
+  const at = Date.parse(observedAt);
+  if (Number.isNaN(at)) return 'unknown';
+  return now.getTime() - at <= windowMs ? 'fresh' : 'stale';
+}
+
+/**
+ * The whole profile's freshness: the OLDEST finding decides.
+ *
+ * Not the newest, and not an average. A profile is a set of claims shown
+ * together, and one of them being a day out of date is the fact a reader needs
+ * — taking the newest would let a fresh website reading vouch for a product
+ * check nobody has repeated in a week.
+ */
+export function b20ProfileFreshnessV1(
+  findings: readonly { observedAt: string | null }[],
+  now: Date,
+  windowMs: number = B20_FUNDAMENTAL_FRESHNESS_MS_V1,
+): B20FundamentalFreshnessV1 {
+  const stamps = findings.map((finding) => finding.observedAt).filter((at): at is string => at !== null);
+  if (stamps.length === 0) return 'unknown';
+  const oldest = stamps.reduce((left, right) => (Date.parse(left) <= Date.parse(right) ? left : right));
+  return b20FindingFreshnessV1(oldest, now, windowMs);
+}
+
+/** Said on any profile whose oldest reading is past the window. */
+export const B20_FUNDAMENTAL_STALE_COPY_V1 =
+  'This project evidence is more than a day old. Miorail has not re-read it since, so it describes what was true when it was checked rather than what is true now.';
+
 export interface B20FundamentalProfileV1 {
   identityVerified: boolean;
   /** The domain the identity was proven against. Null when unverified. */
@@ -133,6 +190,14 @@ export interface B20FundamentalProfileV1 {
   /** Dimensions with nothing collected, named so a reader sees the whole
    * checklist rather than only what happened to pass. */
   missing: readonly B20FundamentalDimensionV1[];
+  /**
+   * Whether the OLDEST reading behind this profile is still inside the
+   * freshness window. Optional while a caller rolls forward; absent renders
+   * exactly as before, which is the behaviour that had no expiry at all.
+   */
+  freshness?: B20FundamentalFreshnessV1;
+  /** The oldest reading's timestamp, so a card can say how old. */
+  oldestObservedAt?: string | null;
 }
 
 /**
@@ -504,16 +569,34 @@ export function b20FundamentalProfileV1(evidence: B20FundamentalEvidenceV1): B20
   );
   const standing: B20FundamentalStandingV1 = productLive ? 'product_backed' : 'verified_project';
 
+  // The oldest reading decides. `evidence.now` is the pass's own clock, so a
+  // profile built from stored evidence ages exactly as the evidence does.
+  const freshness = b20ProfileFreshnessV1(findings, new Date(evidence.now));
+  const stamps = findings
+    .map((finding) => finding.observedAt)
+    .filter((observedAt): observedAt is string => observedAt !== null);
+  const oldestObservedAt = stamps.length === 0
+    ? null
+    : stamps.reduce((left, right) => (Date.parse(left) <= Date.parse(right) ? left : right));
+
+  const detail = productLive
+    ? productBackedDetailV1(domain, evidence.claim.verifiedLabel)
+    : verifiedProjectDetailV1(domain, evidence.claim.verifiedLabel);
+
   return {
     identityVerified: true,
     projectDomain: domain,
     standing,
     headline: `Project context — ${domain}`,
-    detail: productLive
-      ? productBackedDetailV1(domain, evidence.claim.verifiedLabel)
-      : verifiedProjectDetailV1(domain, evidence.claim.verifiedLabel),
+    // A stale profile says so in its own body. The findings are unchanged —
+    // `live` stays `live`, because it is the reading that was taken — but a
+    // card that presented a day-old product probe as a current fact would be
+    // the one thing in this layer that can quietly become false.
+    detail: freshness === 'stale' ? `${detail} ${B20_FUNDAMENTAL_STALE_COPY_V1}` : detail,
     findings,
     missing,
+    freshness,
+    oldestObservedAt,
   };
 }
 

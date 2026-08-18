@@ -1,6 +1,7 @@
 import type {
   B20PublicContextCandidateV1,
   B20PublicContextEvidenceV1,
+  B20PublicContextLookupV1,
 } from '@mioagent/opportunity-rail';
 
 import type { B20HttpFetchV1 } from './collect.js';
@@ -164,6 +165,9 @@ async function readPageV1(
 export async function probePublicContextV1(input: {
   chainId: number;
   tokenAddress: string;
+  /** How the candidates were obtained, and whether that step completed. The
+   * projection cannot word an answer honestly without it. */
+  lookup: B20PublicContextLookupV1;
   candidates: readonly B20PublicContextCandidateV1[];
   deps: B20PublicProbeDepsV1;
 }): Promise<B20PublicContextEvidenceV1> {
@@ -185,6 +189,7 @@ export async function probePublicContextV1(input: {
   const evidence: B20PublicContextEvidenceV1 = {
     chainId: input.chainId,
     tokenAddress: input.tokenAddress.toLowerCase(),
+    lookup: input.lookup,
     candidates,
     pageNamesToken: null,
     siteLinksRepository: null,

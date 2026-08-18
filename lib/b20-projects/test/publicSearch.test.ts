@@ -9,6 +9,7 @@ import {
   publicSearchQueryV1,
   searchTermV1,
   suppliedDomainCandidateV1,
+  widenedSearchQueryV1,
 } from '../src/publicSearch.js';
 import { candidatesFromSearchV1 } from '../src/publicProbe.js';
 
@@ -255,3 +256,23 @@ describe('a named domain is accepted or refused, never repaired', () => {
     }
   });
 });
+
+describe('the widened query drops the address and says nothing about it', () => {
+  test('it asks about the name', () => {
+    const query = widenedSearchQueryV1({ symbol: 'OrbitLab', name: 'Bunny Operating System' });
+    assert.ok(!query!.includes('0x'));
+    assert.ok(query!.includes('OrbitLab'));
+    assert.ok(query!.includes('Bunny Operating System'));
+  });
+
+  test('a name identical to the symbol is not repeated', () => {
+    assert.equal(widenedSearchQueryV1({ symbol: 'MIO', name: 'mio' })!.match(/mio/gi)?.length, 1);
+  });
+
+  test('no usable name means no widened search at all', () => {
+    // Nothing to widen to. The pass then stays at "found nothing".
+    assert.equal(widenedSearchQueryV1({ symbol: null, name: null }), null);
+    assert.equal(widenedSearchQueryV1({ symbol: '  ', name: '"""' }), null);
+  });
+});
+

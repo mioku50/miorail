@@ -148,6 +148,30 @@ export function createDatabaseB20ProjectRepository(sql: SqlTemplateExecutor): B2
       return (rows as Record<string, unknown>[]).map((row) => String(row.token_address));
     },
 
+    async claimsDueForReverification(input) {
+      // LEFT JOIN, and the ordering puts NULL first: a verified claim with no
+      // evidence at all is as un-current as one whose evidence expired, and it
+      // is the shape a half-finished pass leaves behind.
+      const rows = await sql`
+        SELECT c.token_address, c.claimant_domain, min(e.observed_at) AS oldest_observed_at
+          FROM b20_project_claims c
+          LEFT JOIN b20_project_evidence e
+            ON e.chain_id = c.chain_id AND e.token_address = c.token_address
+         WHERE c.chain_id = ${input.chainId} AND c.status = 'verified'
+         GROUP BY c.token_address, c.claimant_domain
+        HAVING min(e.observed_at) IS NULL
+            OR min(e.observed_at) < ${input.observedBefore}::timestamptz
+         ORDER BY min(e.observed_at) ASC NULLS FIRST, c.token_address ASC
+         LIMIT ${Math.max(1, Math.min(200, input.limit))}`;
+      return (rows as Record<string, unknown>[]).map((row) => ({
+        tokenAddress: String(row.token_address),
+        projectDomain: String(row.claimant_domain),
+        oldestObservedAt: row.oldest_observed_at === null || row.oldest_observed_at === undefined
+          ? null
+          : new Date(row.oldest_observed_at as string).toISOString(),
+      }));
+    },
+
     async tokensMatchingEvidence(input) {
       if (input.states.length === 0) return [];
       const rows = await sql`

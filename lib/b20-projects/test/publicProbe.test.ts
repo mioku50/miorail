@@ -24,6 +24,9 @@ import type { B20HttpFetchV1 } from '../src/collect.js';
 
 const TOKEN = '0xb200000000000000000000578f3ae29d9e6e0101';
 
+/** A completed search, which is what most of these fixtures describe. */
+const SEARCHED = { kind: 'search' as const, completed: true };
+
 function pages(map: Record<string, string>): { http: B20HttpFetchV1; asked: string[] } {
   const asked: string[] = [];
   const http: B20HttpFetchV1 = async ({ url }) => {
@@ -98,6 +101,7 @@ describe('the probe tells the real project from the copycat', () => {
       const evidence = await probePublicContextV1({
         chainId: 8453,
         tokenAddress: TOKEN,
+        lookup: SEARCHED,
         candidates: [candidate('website', real), candidate('repository', repo), candidate('social', social)],
         deps: { http, now: () => '2026-08-18T10:00:00.000Z' },
       });
@@ -118,6 +122,7 @@ describe('the probe tells the real project from the copycat', () => {
       const evidence = await probePublicContextV1({
         chainId: 8453,
         tokenAddress: TOKEN,
+        lookup: SEARCHED,
         candidates: [candidate('website', fake)],
         deps: { http, now: () => '2026-08-18T10:00:00.000Z' },
       });
@@ -139,6 +144,7 @@ describe('the probe tells the real project from the copycat', () => {
       const evidence = await probePublicContextV1({
         chainId: 8453,
         tokenAddress: TOKEN,
+        lookup: SEARCHED,
         candidates: [candidate('website', real), candidate('repository', repo)],
         deps: { http, now: () => '2026-08-18T10:00:00.000Z' },
       });
@@ -153,6 +159,7 @@ describe('the probe tells the real project from the copycat', () => {
       const evidence = await probePublicContextV1({
         chainId: 8453,
         tokenAddress: TOKEN,
+        lookup: SEARCHED,
         candidates: [candidate('website', real), candidate('repository', repo)],
         deps: { http, now: () => '2026-08-18T10:00:00.000Z' },
       });
@@ -170,6 +177,7 @@ describe('the probe tells the real project from the copycat', () => {
       const evidence = await probePublicContextV1({
         chainId: 8453,
         tokenAddress: TOKEN,
+        lookup: SEARCHED,
         candidates: [candidate('repository', repo)],
         deps: { http, now: () => '2026-08-18T10:00:00.000Z' },
       });
@@ -185,6 +193,7 @@ describe('the probe tells the real project from the copycat', () => {
       await probePublicContextV1({
         chainId: 8453,
         tokenAddress: TOKEN,
+        lookup: SEARCHED,
         candidates: [
           candidate('website', real),
           candidate('repository', repo),
@@ -227,6 +236,7 @@ describe('accounts are discovered from the site the reader named', () => {
     const evidence = await probePublicContextV1({
       chainId: 8453,
       tokenAddress: TOKEN,
+      lookup: { kind: 'supplied_domain', completed: true, suppliedDomain: 'orbitlab.xyz' },
       candidates: [supplied],
       deps: { http, now: () => '2026-08-18T10:00:00.000Z' },
     });
@@ -250,6 +260,7 @@ describe('accounts are discovered from the site the reader named', () => {
     const evidence = await probePublicContextV1({
       chainId: 8453,
       tokenAddress: TOKEN,
+      lookup: { kind: 'supplied_domain', completed: true, suppliedDomain: 'orbitlab.xyz' },
       candidates: [supplied],
       deps: { http, now: () => '2026-08-18T10:00:00.000Z' },
     });

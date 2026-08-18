@@ -402,5 +402,121 @@ export function b20ProjectContractV1(
       assert.equal(records.length, 1);
       assert.equal(records[0]?.claim.tokenAddress, TOKEN);
     });
+
+    // -----------------------------------------------------------------------
+    // The re-verification queue.
+    //
+    // The verified layer shipped with no expiry at all: `Product — Live` meant
+    // an endpoint answered a real request AT A MOMENT, and nothing ever asked
+    // again. This is the read that finds what has gone un-current.
+    // -----------------------------------------------------------------------
+    describe('claims whose evidence has aged out are queued for another look', () => {
+      const CUTOFF = '2026-08-17T11:00:00.000Z';
+
+      test('a claim whose evidence predates the cutoff is due', async () => {
+        const { repository } = await open();
+        await repository.recordVerification({
+          claim: claimFixtureV1(),
+          evidence: [evidenceFixtureV1({ observedAt: '2026-08-16T11:00:00.000Z' })],
+        });
+        const due = await repository.claimsDueForReverification({
+          chainId: 8453,
+          observedBefore: CUTOFF,
+          limit: 10,
+        });
+        assert.deepEqual(due, [
+          { tokenAddress: TOKEN, projectDomain: 'miorail.xyz', oldestObservedAt: '2026-08-16T11:00:00.000Z' },
+        ]);
+      });
+
+      test('a claim read after the cutoff is not', async () => {
+        const { repository } = await open();
+        await repository.recordVerification({
+          claim: claimFixtureV1(),
+          evidence: [evidenceFixtureV1({ observedAt: '2026-08-17T12:00:00.000Z' })],
+        });
+        assert.deepEqual(
+          await repository.claimsDueForReverification({ chainId: 8453, observedBefore: CUTOFF, limit: 10 }),
+          [],
+        );
+      });
+
+      test('the OLDEST row decides, not the newest', async () => {
+        // A fresh website reading must not vouch for a product probe nobody has
+        // repeated. One stale dimension makes the claim due.
+        const { repository } = await open();
+        await repository.recordVerification({
+          claim: claimFixtureV1(),
+          evidence: [
+            evidenceFixtureV1({ observedAt: '2026-08-17T12:00:00.000Z' }),
+            evidenceFixtureV1({ dimension: 'website', state: 'verified', provenance: 'https_probe', observedAt: '2026-08-15T09:00:00.000Z' }),
+          ],
+        });
+        const due = await repository.claimsDueForReverification({
+          chainId: 8453,
+          observedBefore: CUTOFF,
+          limit: 10,
+        });
+        assert.equal(due.length, 1);
+        assert.equal(due[0]?.oldestObservedAt, '2026-08-15T09:00:00.000Z');
+      });
+
+      test('a verified claim with no evidence at all is due, and comes first', async () => {
+        // The shape a half-finished pass leaves. It is as un-current as one
+        // whose evidence expired.
+        const { repository } = await open();
+        await repository.recordVerification({
+          claim: claimFixtureV1({ tokenAddress: OTHER, claimantDomain: 'other.example' }),
+          evidence: [],
+        });
+        await repository.recordVerification({
+          claim: claimFixtureV1(),
+          evidence: [evidenceFixtureV1({ observedAt: '2026-08-16T11:00:00.000Z' })],
+        });
+        const due = await repository.claimsDueForReverification({
+          chainId: 8453,
+          observedBefore: CUTOFF,
+          limit: 10,
+        });
+        assert.deepEqual(
+          due.map((entry) => [entry.tokenAddress, entry.oldestObservedAt]),
+          [[OTHER, null], [TOKEN, '2026-08-16T11:00:00.000Z']],
+        );
+      });
+
+      test('a claim that is not verified is never queued', async () => {
+        // Re-reading a refuted claim would be spending a request to re-learn
+        // something already settled, and would put its domain back on a card.
+        const { repository } = await open();
+        await repository.recordVerification({
+          claim: claimFixtureV1(),
+          evidence: [evidenceFixtureV1({ observedAt: '2026-08-16T11:00:00.000Z' })],
+        });
+        await repository.recordVerification({
+          claim: claimFixtureV1({ status: 'refuted', verifiedLinks: [], refutedLinks: ['domain_file'] }),
+          evidence: [],
+        });
+        assert.deepEqual(
+          await repository.claimsDueForReverification({ chainId: 8453, observedBefore: CUTOFF, limit: 10 }),
+          [],
+        );
+      });
+
+      test('the queue is bounded', async () => {
+        const { repository } = await open();
+        for (const [token, domain] of [[TOKEN, 'miorail.xyz'], [OTHER, 'other.example']] as const) {
+          await repository.recordVerification({
+            claim: claimFixtureV1({ tokenAddress: token, claimantDomain: domain }),
+            evidence: [evidenceFixtureV1({ tokenAddress: token, observedAt: '2026-08-16T11:00:00.000Z' })],
+          });
+        }
+        const due = await repository.claimsDueForReverification({
+          chainId: 8453,
+          observedBefore: CUTOFF,
+          limit: 1,
+        });
+        assert.equal(due.length, 1);
+      });
+    });
   });
 }

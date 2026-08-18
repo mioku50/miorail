@@ -73,9 +73,17 @@ export interface B20PublicContextCandidateV1 {
   url: string;
   /** Hostname, for a card that must not print a full third-party URL inline. */
   host: string;
-  /** Where this candidate came from. `search_result` is the weakest: nobody
-   * asserted it, a ranking did. */
-  origin: 'search_result' | 'linked_from_website' | 'operator_supplied';
+  /**
+   * Where this candidate came from, weakest first.
+   *
+   * `symbol_search` is weaker still than `search_result`: the address search
+   * found nothing, so Miorail asked about the NAME — and a name identifies
+   * almost nothing here. 61.7% of launches share their symbol; `usdc` is worn
+   * by twelve of them. A candidate found that way is very likely somebody
+   * else's project, and the card has to say so rather than let a reader
+   * discover it.
+   */
+  origin: 'search_result' | 'symbol_search' | 'linked_from_website' | 'operator_supplied';
   /** True when Miorail fetched it and got an answer. False means every ground
    * that depended on it stays `unchecked`. */
   fetched: boolean;
@@ -101,6 +109,7 @@ export const B20_PUBLIC_CONTEXT_STANDINGS_V1 = [
   'linked_cluster',
   'candidates_only',
   'nothing_found',
+  'lookup_unavailable',
 ] as const;
 export type B20PublicContextStandingV1 = (typeof B20_PUBLIC_CONTEXT_STANDINGS_V1)[number];
 
@@ -112,8 +121,13 @@ export const B20_PUBLIC_CONTEXT_STANDING_COPY_V1: Readonly<
   // which is what the verified layer requires and what this layer never does.
   names_this_token: { label: 'Possible public context · Unverified', chip: 'Names this token' },
   linked_cluster: { label: 'Possible public context · Unverified', chip: 'Linked accounts' },
-  candidates_only: { label: 'Possible public context · Unverified', chip: 'Search results only' },
+  candidates_only: { label: 'Possible public context · Unverified', chip: 'Candidates only' },
   nothing_found: { label: 'No public context found', chip: 'Nothing found' },
+  // NOT `nothing_found`. A provider that timed out, rate-limited or errored
+  // means Miorail could not look, and "could not look" said as "found nothing"
+  // is a failure of ours wearing a token's name — the exact defect this
+  // codebase has shipped three times before.
+  lookup_unavailable: { label: 'Miorail could not look', chip: 'Lookup incomplete' },
 };
 
 export const B20_PUBLIC_CONTEXT_GROUND_LABEL_V1: Readonly<Record<B20PublicContextGroundV1, string>> = {
@@ -140,6 +154,9 @@ export const B20_PUBLIC_CONTEXT_PATH_TO_VERIFIED_V1 =
 export interface B20PublicContextV1 {
   chainId: number;
   tokenAddress: string;
+  /** Carried onto the card so a reader can tell a search from a domain they
+   * named, and a completed lookup from one that failed. */
+  lookup: B20PublicContextLookupV1;
   standing: B20PublicContextStandingV1;
   headline: string;
   detail: string;
@@ -150,10 +167,32 @@ export interface B20PublicContextV1 {
   observedAt: string;
 }
 
+/**
+ * How the candidates were obtained, and whether that step completed.
+ *
+ * The projection cannot word an answer honestly without this. A reader who
+ * named `orbitlab.xyz` was told "a public search returned 1 result" — there was
+ * no search. And a provider timeout produced "a public search returned
+ * nothing", which is Miorail's failure stated as a fact about the token.
+ */
+export interface B20PublicContextLookupV1 {
+  kind: 'search' | 'supplied_domain';
+  /** True when the address search found nothing and Miorail asked about the
+   * name instead. The copy must say this: it is why a card about a token
+   * called `usdc` can show a page belonging to Circle. */
+  widenedToSymbol?: boolean;
+  /** False when the step did not complete: a timeout, a 429, a 500, a socket
+   * error. Never conflated with completing and returning nothing. */
+  completed: boolean;
+  /** The domain a reader named, for `supplied_domain`. */
+  suppliedDomain?: string | null;
+}
+
 /** What a probe pass hands in. Every field is something that was READ. */
 export interface B20PublicContextEvidenceV1 {
   chainId: number;
   tokenAddress: string;
+  lookup: B20PublicContextLookupV1;
   candidates: readonly B20PublicContextCandidateV1[];
   /** True only when a fetched page contained this token's address. */
   pageNamesToken: { found: boolean; reference: string | null } | null;
@@ -231,26 +270,61 @@ export function b20PublicContextV1(evidence: B20PublicContextEvidenceV1): B20Pub
     (evidence.siteLinksRepository?.found === true && evidence.repositoryLinksSite?.found === true) ||
     (evidence.siteLinksSocial?.found === true && evidence.socialLinksSite?.found === true);
 
+  // The lookup itself is checked FIRST, and only when it produced nothing.
+  // A provider that failed after returning candidates has still told us
+  // something; a provider that failed and returned nothing has not, and the
+  // difference between that and an empty result is the whole point.
+  const lookupFailed = !evidence.lookup.completed && evidence.candidates.length === 0;
+
   const standing: B20PublicContextStandingV1 = namesToken
     ? 'names_this_token'
     : linkedCluster
       ? 'linked_cluster'
       : evidence.candidates.length > 0
         ? 'candidates_only'
-        : 'nothing_found';
+        : lookupFailed
+          ? 'lookup_unavailable'
+          : 'nothing_found';
 
-  const detail =
-    standing === 'nothing_found'
-      ? 'A public search returned nothing Miorail could fetch for this token. That is a statement about the search, not about the token.'
-      : standing === 'candidates_only'
-        ? `A public search returned ${evidence.candidates.length} result${evidence.candidates.length === 1 ? '' : 's'}. Miorail established none of the grounds below, so these are search results and nothing more. ${B20_PUBLIC_CONTEXT_DISCLAIMER_V1}`
-        : standing === 'linked_cluster'
-          ? `${B20_PUBLIC_CONTEXT_CLUSTER_ONLY_V1} ${B20_PUBLIC_CONTEXT_DISCLAIMER_V1}`
-          : `A page Miorail fetched names this token’s address. ${B20_PUBLIC_CONTEXT_DISCLAIMER_V1}`;
+  const supplied = evidence.lookup.suppliedDomain ?? null;
+  const bySearch = evidence.lookup.kind === 'search';
+
+  const detail = ((): string => {
+    if (standing === 'lookup_unavailable') {
+      // Never a sentence about the token. Nothing was read.
+      return bySearch
+        ? 'The public search did not complete, so Miorail looked at nothing. This says nothing about the token — try again in a moment.'
+        : `Miorail could not fetch ${supplied ?? 'that domain'}, so it read nothing. This says nothing about the token.`;
+    }
+    if (standing === 'nothing_found') {
+      return bySearch
+        ? 'A public search completed and returned nothing Miorail could fetch for this token. That is a statement about the search, not about the token.'
+        : `You supplied ${supplied ?? 'a domain'}. Miorail found nothing on it to read.`;
+    }
+    if (standing === 'candidates_only') {
+      // The defect this replaces: a reader who named a domain was told "a
+      // public search returned 1 result", and no search had run.
+      const widened = evidence.lookup.widenedToSymbol === true
+        ? ' Searching for the address found nothing, so Miorail searched for the name instead — and a name identifies almost nothing here, so these may well belong to a different project entirely.'
+        : '';
+      const opening = bySearch
+        ? `A public search returned ${evidence.candidates.length} result${evidence.candidates.length === 1 ? '' : 's'}. Miorail established none of the grounds below, so these are search results and nothing more.${widened}`
+        : `You supplied ${supplied ?? 'a domain'}. Miorail fetched it and did not find this token's address on the page. The domain is shown only as possible public context.`;
+      return `${opening} ${B20_PUBLIC_CONTEXT_DISCLAIMER_V1}`;
+    }
+    if (standing === 'linked_cluster') {
+      return `${B20_PUBLIC_CONTEXT_CLUSTER_ONLY_V1} ${B20_PUBLIC_CONTEXT_DISCLAIMER_V1}`;
+    }
+    const opening = bySearch
+      ? 'A page Miorail fetched names this token’s address.'
+      : `You supplied ${supplied ?? 'a domain'}. Miorail fetched it and the page names this token’s address.`;
+    return `${opening} ${B20_PUBLIC_CONTEXT_DISCLAIMER_V1}`;
+  })();
 
   return {
     chainId: evidence.chainId,
     tokenAddress: evidence.tokenAddress.toLowerCase(),
+    lookup: evidence.lookup,
     standing,
     headline: B20_PUBLIC_CONTEXT_STANDING_COPY_V1[standing].label,
     detail,

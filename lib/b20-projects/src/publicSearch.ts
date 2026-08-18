@@ -124,6 +124,30 @@ export function suppliedDomainCandidateV1(
   return { ok: true, host: bare, url: `https://${value}/` };
 }
 
+/**
+ * The widened query, used ONLY when the address found nothing.
+ *
+ * It drops the address and asks about the name. That is a real loss of
+ * precision and the reason it is a fallback rather than the query: 61.7% of
+ * canonical launches share their symbol, `b20` is worn by 950 of them and
+ * `my token` names 899. What keeps it honest is that widening changes nothing
+ * about the GROUNDS — a page found this way still has to carry this token's
+ * address to establish anything — and the card says the search was widened.
+ *
+ * Null when there is no usable name, which is when the fallback is skipped.
+ */
+export function widenedSearchQueryV1(input: {
+  symbol?: string | null;
+  name?: string | null;
+}): string | null {
+  const symbol = searchTermV1(input.symbol);
+  const name = searchTermV1(input.name);
+  const terms = [symbol, name && name.toLowerCase() !== (symbol ?? '').toLowerCase() ? name : null]
+    .filter((term): term is string => term !== null);
+  if (terms.length === 0) return null;
+  return `${terms.join(' ')} crypto token base official website github x.com`;
+}
+
 const SOCIAL_HOSTS_V1: readonly string[] = ['x.com', 'twitter.com'];
 const REPOSITORY_HOSTS_V1: readonly string[] = ['github.com'];
 

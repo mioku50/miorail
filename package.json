@@ -42,7 +42,8 @@
     "smoke:b20-exit": "tsx scripts/smoke_b20_exit.ts",
     "smoke:mcp": "tsx scripts/smoke_mcp.ts",
     "smoke:mcp-private": "tsx scripts/smoke_mcp_private.ts",
-    "smoke:paid-intelligence": "tsx scripts/smoke_paid_intelligence.ts"
+    "smoke:paid-intelligence": "tsx scripts/smoke_paid_intelligence.ts",
+    "b20:reverify-projects": "node --import tsx scripts/b20_reverify_projects.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

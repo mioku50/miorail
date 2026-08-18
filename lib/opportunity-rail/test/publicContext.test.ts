@@ -25,6 +25,7 @@ function evidence(over: Partial<B20PublicContextEvidenceV1> = {}): B20PublicCont
   return {
     chainId: 8453,
     tokenAddress: TOKEN,
+    lookup: { kind: 'search', completed: true },
     candidates: [],
     pageNamesToken: null,
     siteLinksRepository: null,
@@ -206,3 +207,144 @@ describe('the card never overstates what a search returned', () => {
     assert.match(B20_PUBLIC_CONTEXT_DISCLAIMER_V1, /Sharing a name or a symbol with a known project is not a link/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Two defects this layer shipped with, both of the same kind: a sentence that
+// described something that had not happened.
+//
+//   a provider timeout became "a public search returned nothing";
+//   a domain the reader typed became "a public search returned 1 result".
+//
+// The first is Miorail's failure wearing a token's name. The second describes
+// a search that never ran.
+// ---------------------------------------------------------------------------
+describe('a lookup that did not complete is not an empty result', () => {
+  test('a failed search reaches its own standing, never nothing_found', () => {
+    const context = b20PublicContextV1(
+      evidence({ lookup: { kind: 'search', completed: false } }),
+    );
+    assert.equal(context.standing, 'lookup_unavailable');
+    assert.notEqual(context.standing, 'nothing_found');
+    assert.match(context.headline, /could not look/i);
+    assert.match(context.detail, /did not complete/);
+    assert.match(context.detail, /says nothing about the token/);
+    // The old sentence claimed the search happened and found nothing.
+    assert.ok(!/returned nothing/.test(context.detail));
+  });
+
+  test('a completed search that found nothing keeps saying so', () => {
+    const context = b20PublicContextV1(evidence({ lookup: { kind: 'search', completed: true } }));
+    assert.equal(context.standing, 'nothing_found');
+    assert.match(context.detail, /completed and returned nothing/);
+    assert.match(context.detail, /statement about the search, not about the token/);
+  });
+
+  test('a provider that failed AFTER returning candidates still shows them', () => {
+    // It told us something. Only a failure that produced nothing is a failure
+    // to look.
+    const context = b20PublicContextV1(
+      evidence({
+        lookup: { kind: 'search', completed: false },
+        candidates: [candidate('website', 'maybe.example')],
+      }),
+    );
+    assert.equal(context.standing, 'candidates_only');
+  });
+
+  test('a domain Miorail could not fetch says that, not "nothing found"', () => {
+    const context = b20PublicContextV1(
+      evidence({ lookup: { kind: 'supplied_domain', completed: false, suppliedDomain: 'orbitlab.xyz' } }),
+    );
+    assert.equal(context.standing, 'lookup_unavailable');
+    assert.match(context.detail, /could not fetch orbitlab\.xyz/);
+  });
+});
+
+describe('the copy describes what actually happened', () => {
+  const supplied = { kind: 'supplied_domain' as const, completed: true, suppliedDomain: 'miorail.xyz' };
+
+  test('a named domain is never described as a public search', () => {
+    const context = b20PublicContextV1(
+      evidence({
+        lookup: supplied,
+        candidates: [{ ...candidate('website', 'miorail.xyz'), origin: 'operator_supplied' as const }],
+        pageNamesToken: { found: false, reference: 'https://miorail.xyz/' },
+      }),
+    );
+    assert.equal(context.standing, 'candidates_only');
+    assert.match(context.detail, /You supplied miorail\.xyz/);
+    assert.match(context.detail, /did not find this token's address on the page/);
+    assert.match(context.detail, /shown only as possible public context/);
+    // The defect: this said "A public search returned 1 result".
+    assert.ok(!/public search/i.test(context.detail));
+  });
+
+  test('a named domain that DOES name the token says which domain it was', () => {
+    const context = b20PublicContextV1(
+      evidence({
+        lookup: supplied,
+        candidates: [{ ...candidate('website', 'miorail.xyz'), origin: 'operator_supplied' as const }],
+        pageNamesToken: { found: true, reference: 'https://miorail.xyz/' },
+      }),
+    );
+    assert.equal(context.standing, 'names_this_token');
+    assert.match(context.detail, /You supplied miorail\.xyz/);
+    assert.match(context.detail, /names this token/);
+    assert.ok(!/public search/i.test(context.detail));
+  });
+
+  test('the search path still says search', () => {
+    const context = b20PublicContextV1(
+      evidence({ candidates: [candidate('website', 'maybe.example')] }),
+    );
+    assert.match(context.detail, /A public search returned 1 result/);
+  });
+
+  test('the lookup travels onto the card, so a surface can tell them apart', () => {
+    assert.deepEqual(b20PublicContextV1(evidence({ lookup: supplied })).lookup, supplied);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The widened search: what it costs, and what the card must say about it.
+//
+// Asking about the NAME is a real loss of precision — 61.7% of launches share
+// their symbol — so it runs only when the address found nothing, and the card
+// has to explain why an unrelated brand is on it.
+// ---------------------------------------------------------------------------
+describe('a search widened to the name says so', () => {
+  test('the copy explains why these may belong to someone else entirely', () => {
+    const context = b20PublicContextV1(
+      evidence({
+        lookup: { kind: 'search', completed: true, widenedToSymbol: true },
+        candidates: [{ ...candidate('website', 'circle.com'), origin: 'symbol_search' as const }],
+      }),
+    );
+    assert.equal(context.standing, 'candidates_only');
+    assert.match(context.detail, /searched for the name instead/);
+    assert.match(context.detail, /may well belong to a different project entirely/);
+  });
+
+  test('an unwidened search says nothing of the kind', () => {
+    const context = b20PublicContextV1(
+      evidence({ candidates: [candidate('website', 'maybe.example')] }),
+    );
+    assert.ok(!/searched for the name instead/.test(context.detail));
+  });
+
+  test('widening changes no ground — the address still has to be on the page', () => {
+    // The whole safety of the fallback. A page found by name that does not
+    // carry this address establishes nothing, exactly as before.
+    const context = b20PublicContextV1(
+      evidence({
+        lookup: { kind: 'search', completed: true, widenedToSymbol: true },
+        candidates: [{ ...candidate('website', 'circle.com'), origin: 'symbol_search' as const }],
+        pageNamesToken: { found: false, reference: 'https://circle.com/' },
+      }),
+    );
+    assert.equal(context.findings.find((f) => f.ground === 'page_names_token')!.state, 'absent');
+    assert.equal(context.standing, 'candidates_only');
+    assert.match(context.headline, /Unverified/);
+  });
+});
+

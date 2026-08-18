@@ -11,6 +11,7 @@ import {
   B20_FUNDAMENTAL_STANDING_COPY_V1,
   B20_PROJECT_FILTERS_V1,
   B20_PROJECT_FILTER_COPY_V1,
+  B20_FUNDAMENTAL_STALE_COPY_V1,
   b20FundamentalHighlightsV1,
   type B20FundamentalProfileV1,
   type B20ProjectFilterV1,
@@ -382,6 +383,10 @@ function ProjectContext({ project }: { project: B20FundamentalProfileV1 | null }
   }
 
   const highlights = b20FundamentalHighlightsV1(project);
+  // Past its window. The findings are unchanged and still say what they said;
+  // this is the marker that stops a day-old product probe reading as a current
+  // fact — the same treatment, and the same word, the exit rails use.
+  const stale = project.freshness === 'stale';
   return (
     <section className="project-context" aria-label="Project context">
       <div className="project-head">
@@ -389,7 +394,9 @@ function ProjectContext({ project }: { project: B20FundamentalProfileV1 | null }
         <span className="pill cr-status" data-tone="measured">
           {B20_FUNDAMENTAL_STANDING_COPY_V1[project.standing].label}
         </span>
+        {stale && <span className="pill n rail-fact-mark">stale</span>}
       </div>
+      {stale && <p className="note warn">{B20_FUNDAMENTAL_STALE_COPY_V1}</p>}
       {highlights.length > 0 && (
         <dl className="cr-facts">
           {highlights.map((finding) => (

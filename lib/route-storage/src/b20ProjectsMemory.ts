@@ -78,6 +78,40 @@ export function createMemoryB20ProjectRepository(): B20ProjectRepositoryV1 {
         .slice(0, input.limit);
     },
 
+    async claimsDueForReverification(input) {
+      const due: { tokenAddress: string; projectDomain: string; oldestObservedAt: string | null }[] = [];
+      for (const claim of claims.values()) {
+        if (claim.chainId !== input.chainId) continue;
+        if (claim.status !== 'verified') continue;
+        const rows = evidence.get(key(claim.chainId, claim.tokenAddress)) ?? [];
+        const stamps = rows
+          .map((row) => row.observedAt)
+          .filter((observedAt): observedAt is string => typeof observedAt === 'string');
+        // No evidence at all is due, exactly as Postgres treats it.
+        const oldest = stamps.length === 0
+          ? null
+          : stamps.reduce((left, right) => (Date.parse(left) <= Date.parse(right) ? left : right));
+        if (oldest !== null && Date.parse(oldest) >= Date.parse(input.observedBefore)) continue;
+        due.push({
+          tokenAddress: claim.tokenAddress,
+          projectDomain: claim.claimantDomain,
+          oldestObservedAt: oldest,
+        });
+      }
+      // Oldest first, nulls before everything, then the address — the same
+      // total order the database produces.
+      return due
+        .sort((left, right) => {
+          if (left.oldestObservedAt === right.oldestObservedAt) {
+            return left.tokenAddress.localeCompare(right.tokenAddress);
+          }
+          if (left.oldestObservedAt === null) return -1;
+          if (right.oldestObservedAt === null) return 1;
+          return Date.parse(left.oldestObservedAt) - Date.parse(right.oldestObservedAt);
+        })
+        .slice(0, Math.max(1, Math.min(200, input.limit)));
+    },
+
     async tokensMatchingEvidence(input) {
       const matched: string[] = [];
       for (const claim of claims.values()) {

@@ -1,5 +1,6 @@
 import {
   b20PublicContextV1,
+  type B20PublicContextLookupV1,
   type B20PublicContextV1,
 } from '@mioagent/opportunity-rail';
 import {
@@ -11,6 +12,7 @@ import {
   createMistralPublicSearchV1,
   probePublicContextV1,
   publicSearchQueryV1,
+  widenedSearchQueryV1,
   type B20PublicSearchV1,
 } from '@mioagent/b20-projects';
 
@@ -103,6 +105,7 @@ export async function readB20PublicContextV1(input: {
   if (cached && now.getTime() - cached.at < PUBLIC_CONTEXT_CACHE_MS_V1) return cached.value;
 
   let candidates;
+  let lookup: B20PublicContextLookupV1;
   if (supplied?.ok) {
     // The named domain is the whole starting point. Its repository and
     // social accounts are discovered from the site's own links, which is
@@ -117,22 +120,63 @@ export async function readB20PublicContextV1(input: {
         fetched: false,
       },
     ];
+    // The domain was named, so obtaining a candidate cannot fail. Whether the
+    // PAGE could be fetched is a separate fact the probe records.
+    lookup = { kind: 'supplied_domain', completed: true, suppliedDomain: supplied.host };
   } else {
     const query = publicSearchQueryV1({ tokenAddress, symbol: input.symbol, name: input.name });
-    // A search that fails is an absence. The projection then says the
-    // sentence about the search rather than one about the token.
-    let results: Awaited<ReturnType<B20PublicSearchV1>>;
+    // A search that FAILED and a search that completed and returned nothing are
+    // different facts, and only the second is about the token. A timeout, a 429
+    // or a 500 used to become "a public search returned nothing", which is
+    // Miorail's failure wearing a token's name.
+    let results: Awaited<ReturnType<B20PublicSearchV1>> = [];
+    let completed = true;
     try {
       results = await input.deps.search(query);
     } catch {
-      results = [];
+      completed = false;
     }
     candidates = candidatesFromSearchV1(results);
+    lookup = { kind: 'search', completed };
+
+    // The fallback, and only when the precise query found NOTHING usable. A
+    // widened search asks about the name, which identifies almost nothing on
+    // this chain — so it never runs alongside a result that came from the
+    // address, and the card says the search was widened when it does.
+    //
+    // Widening changes no ground: a page found this way still has to carry
+    // this token's address to establish anything.
+    if (completed && candidates.length === 0) {
+      const widened = widenedSearchQueryV1({ symbol: input.symbol, name: input.name });
+      if (widened !== null) {
+        let widenedResults: Awaited<ReturnType<B20PublicSearchV1>> = [];
+        let widenedCompleted = true;
+        try {
+          widenedResults = await input.deps.search(widened);
+        } catch {
+          widenedCompleted = false;
+        }
+        const found = candidatesFromSearchV1(widenedResults).map((candidate) => ({
+          ...candidate,
+          origin: 'symbol_search' as const,
+        }));
+        if (found.length > 0) {
+          candidates = found;
+          lookup = { kind: 'search', completed: widenedCompleted, widenedToSymbol: true };
+        } else if (!widenedCompleted) {
+          // The precise search completed and found nothing; the widened one
+          // failed. "Found nothing" is still the honest headline, so the
+          // completed flag stays true and only the log loses a line.
+          lookup = { kind: 'search', completed: true };
+        }
+      }
+    }
   }
 
   const evidence = await probePublicContextV1({
     chainId: input.chainId,
     tokenAddress,
+    lookup,
     candidates,
     deps: {
       // The SAME guarded fetch the verified layer uses. It matters more here:

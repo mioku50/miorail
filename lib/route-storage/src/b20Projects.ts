@@ -219,6 +219,28 @@ export interface B20ProjectRepositoryV1 {
   verifiedTokenAddresses(input: { chainId: number; limit: number }): Promise<string[]>;
 
   /**
+   * Verified claims whose evidence is older than a window, oldest first.
+   *
+   * The verified layer shipped with no expiry: `Product — Live` meant an
+   * endpoint answered a real request AT A MOMENT, and nothing ever asked again.
+   * Production on 2026-08-18 was serving a product probe observed 36 hours
+   * earlier with no sign of its age. This is the queue that closes that.
+   *
+   * Oldest first, so the reading most likely to have gone false is re-read
+   * first, and bounded so a pass cannot spend an unbounded number of outbound
+   * requests on somebody else's servers.
+   *
+   * A claim with NO evidence at all is included: it is as un-current as a claim
+   * whose evidence expired, and it is the shape a half-finished pass leaves.
+   */
+  claimsDueForReverification(input: {
+    chainId: number;
+    /** Evidence observed before this instant is due. */
+    observedBefore: string;
+    limit: number;
+  }): Promise<{ tokenAddress: string; projectDomain: string; oldestObservedAt: string | null }[]>;
+
+  /**
    * Token addresses carrying a finding in one dimension with one of the given
    * states — the read behind a fundamental predicate.
    *
