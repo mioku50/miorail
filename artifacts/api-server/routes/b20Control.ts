@@ -108,6 +108,7 @@ import {
   type B20PipelineStatusV1,
   b20OpportunityCardV1,
   b20LaunchBuyerWindowV1,
+  type B20OpportunityCardV1,
   b20PipelineCopyV1,
   exitCapacityLeadersV1,
   measuredMoversV1,
@@ -748,6 +749,62 @@ export async function pipelineStatusV1(
  *
  * Returns the same body the HTTP feed returns, already schema-parsed.
  */
+/**
+ * One Discover card, by address, through a DIRECT lookup.
+ *
+ * Extracted because the public MCP had its own answer to this question and the
+ * answer was wrong: it read the newest 25 cards and searched the page, so
+ * `miorail_get_b20_opportunity` returned `not_in_feed` for any launch outside
+ * that page — 33,516 of the 33,541 canonical launches on 2026-08-18. It was
+ * proven live against a measured, canonical token whose card the HTTP route
+ * returned without difficulty.
+ *
+ * The project layer is populated here too. The detail route was building the
+ * card without it, so reading a token by address quietly dropped its
+ * fundamental profile while the list kept it.
+ *
+ * Null means NO CANONICAL LAUNCH. It is not "not a B20 token": this feed knows
+ * what it ingested, and saying more would be a claim nothing measured.
+ */
+export async function readB20CardForTokenV1(tokenAddress: string): Promise<{
+  card: B20OpportunityCardV1;
+  history: readonly B20OpportunityObservationV1[];
+} | null> {
+  const observations = b20RouteRuntime.observations();
+  const now = b20RouteRuntime.now();
+  const found = await observations.getFeedRowForToken({ tokenAddress, historyLimit: 20 });
+  if (!found) return null;
+  const pipeline = await pipelineStatusV1(observations, now, true);
+  const profiles = await readB20ProjectProfilesV1([found.row.launch.tokenAddress]);
+  const card = b20OpportunityCardV1({
+    launch: {
+      tokenAddress: found.row.launch.tokenAddress,
+      name: found.row.launch.name,
+      symbol: found.row.launch.symbol,
+      variant: found.row.launch.variant,
+      decimals: found.row.launch.decimals,
+      blockNumber: found.row.launch.blockNumber,
+      transactionHash: found.row.launch.transactionHash,
+      logIndex: found.row.launch.logIndex,
+      detectedAt: found.row.launch.detectedAt,
+      blockTimestamp: found.row.launch.blockTimestamp,
+      canonical: found.row.launch.canonical,
+    },
+    observation: found.row.observation,
+    launchBuyers: found.row.launchBuyers,
+    launchBuyerWindow: b20LaunchBuyerWindowV1({
+      launchBlock: found.row.launch.blockNumber,
+      observedHead: pipeline.facts.confirmedHead,
+      windowBlocks: B20_BUYER_WINDOW_BLOCKS_V1,
+      measured: found.row.launchBuyers !== null,
+      measuredToBlock: found.row.launchBuyers?.toBlock ?? null,
+    }),
+    project: profiles?.get(found.row.launch.tokenAddress.toLowerCase()) ?? null,
+    now,
+  });
+  return { card, history: found.history };
+}
+
 export async function readDiscoverFeedV1(input: {
   limit: number;
   cursor: string | null;
@@ -1230,6 +1287,89 @@ export const MARKET_RAIL_MIN_EXIT_COVERAGE_BPS_V1 = 2_500;
  * bounded above that population so a market rail is not accidentally a
  * projection of only the first Discover page. */
 export const MARKET_RAIL_ACTIVE_OBSERVATION_LIMIT_V1 = 1_000;
+
+/**
+ * Both market rails, ranked by the server.
+ *
+ * Extracted so the public MCP reads the SAME projection the UI rail does. It
+ * had its own answer to "largest measured exit capacity": the newest 25 cards,
+ * sorted inside the MCP. This one ranks over the bounded active window and
+ * carries the typed exclusion reasons, which is what lets a reader tell "not on
+ * the rail" from "measured and worse".
+ */
+export async function readB20MarketRailsV1(input: { limit: number }): Promise<{
+  pipeline: B20PipelineStatusV1;
+  capacityLeaders: ReturnType<typeof exitCapacityLeadersV1>['leaders'];
+  movers: ReturnType<typeof measuredMoversV1>['movers'];
+  collectingHistory: boolean;
+  toleranceBps: number;
+  moveLabel: string;
+  moveNote: string;
+  serverTime: string;
+}> {
+  const available = await b20RouteRuntime.discoverAvailable();
+  const observations = b20RouteRuntime.observations();
+  const now = b20RouteRuntime.now();
+  const pipeline = await pipelineStatusV1(observations, now, available);
+  const limit = Math.max(1, Math.min(10, input.limit));
+
+  if (!available) {
+    return {
+      pipeline,
+      capacityLeaders: [],
+      movers: [],
+      collectingHistory: false,
+      toleranceBps: MARKET_RAIL_TOLERANCE_BPS_V1,
+      moveLabel: MEASURED_MOVE_LABEL_V1,
+      moveNote: MEASURED_MOVE_NOTE_V1,
+      serverTime: now.toISOString(),
+    };
+  }
+
+  const pairs = await observations.listMoverPairs({
+    limit: MARKET_RAIL_ACTIVE_OBSERVATION_LIMIT_V1,
+    now: now.toISOString(),
+    baselineAgeMs: MARKET_RAIL_BASELINE_AGE_MS_V1,
+    baselineToleranceMs: MARKET_RAIL_BASELINE_TOLERANCE_MS_V1,
+    maxLaunchAgeMs: DISCOVER_FEED_WINDOW_MS_V1,
+  });
+  const marketPairs = pairs.map((pair) => ({
+    launch: {
+      tokenAddress: pair.launch.tokenAddress,
+      symbol: pair.launch.symbol,
+      name: pair.launch.name,
+      decimals: pair.launch.decimals,
+      canonical: pair.launch.canonical,
+    },
+    latest: pair.latest,
+    baseline: pair.baseline,
+  }));
+  const leaders = exitCapacityLeadersV1({
+    rows: marketPairs.map((pair) => ({ launch: pair.launch, observation: pair.latest })),
+    toleranceBps: MARKET_RAIL_TOLERANCE_BPS_V1,
+    now,
+    limit,
+  });
+  const movers = measuredMoversV1({
+    pairs: marketPairs,
+    now,
+    baselineAgeMs: MARKET_RAIL_BASELINE_AGE_MS_V1,
+    baselineToleranceMs: MARKET_RAIL_BASELINE_TOLERANCE_MS_V1,
+    minExitCoverageBps: MARKET_RAIL_MIN_EXIT_COVERAGE_BPS_V1,
+    limit,
+  });
+
+  return {
+    pipeline,
+    capacityLeaders: leaders.leaders,
+    movers: movers.movers,
+    collectingHistory: moversCollectingHistoryV1(movers),
+    toleranceBps: MARKET_RAIL_TOLERANCE_BPS_V1,
+    moveLabel: MEASURED_MOVE_LABEL_V1,
+    moveNote: MEASURED_MOVE_NOTE_V1,
+    serverTime: now.toISOString(),
+  };
+}
 
 b20ControlRouter.get('/opportunities/b20/market/rails', async (req: Request, res: Response) => {
   const guard = b20Guard(req, res);
@@ -2042,13 +2182,15 @@ b20ControlRouter.get('/opportunities/b20/:tokenAddress', async (req: Request, re
 
   try {
     const available = await b20RouteRuntime.discoverAvailable();
-    const observations = b20RouteRuntime.observations();
     const now = b20RouteRuntime.now();
     if (!available) {
       res.status(503).json({ error: 'discover_unavailable', code: 'discover_unavailable' });
       return;
     }
-    const found = await observations.getFeedRowForToken({ tokenAddress, historyLimit: 20 });
+    const pipeline = await pipelineStatusV1(b20RouteRuntime.observations(), now, true);
+    // The one by-address read, shared with the public MCP. It also populates
+    // the project layer, which this route was dropping while the list kept it.
+    const found = await readB20CardForTokenV1(tokenAddress);
     if (!found) {
       // No CANONICAL launch for this address. Not "not a B20 token" — this
       // feed only knows what it ingested, and saying more would be a claim
@@ -2056,39 +2198,10 @@ b20ControlRouter.get('/opportunities/b20/:tokenAddress', async (req: Request, re
       res.status(404).json({ error: 'launch_not_found', code: 'launch_not_found' });
       return;
     }
-    const pipeline = await pipelineStatusV1(observations, now, true);
-    const card = b20OpportunityCardV1({
-      launch: {
-        tokenAddress: found.row.launch.tokenAddress,
-        name: found.row.launch.name,
-        symbol: found.row.launch.symbol,
-        variant: found.row.launch.variant,
-        decimals: found.row.launch.decimals,
-        blockNumber: found.row.launch.blockNumber,
-        transactionHash: found.row.launch.transactionHash,
-        logIndex: found.row.launch.logIndex,
-        detectedAt: found.row.launch.detectedAt,
-        blockTimestamp: found.row.launch.blockTimestamp,
-        canonical: found.row.launch.canonical,
-      },
-      observation: found.row.observation,
-      // The list endpoint already carries this joined row. The detail endpoint
-      // must not make the same token lose its launch-window evidence when a
-      // user opens it.
-      launchBuyers: found.row.launchBuyers,
-      launchBuyerWindow: b20LaunchBuyerWindowV1({
-        launchBlock: found.row.launch.blockNumber,
-        observedHead: pipeline.facts.confirmedHead,
-        windowBlocks: B20_BUYER_WINDOW_BLOCKS_V1,
-        measured: found.row.launchBuyers !== null,
-        measuredToBlock: found.row.launchBuyers?.toBlock ?? null,
-      }),
-      now,
-    });
 
     res.json(
       B20OpportunityDetailResponseV1Schema.parse({
-        card,
+        card: found.card,
         history: found.history.map((entry) => ({
           state: entry.state,
           reasonCode: entry.reasonCode,

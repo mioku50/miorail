@@ -112,6 +112,16 @@ const MEASURED_ROW: StubFeedRowV1 = {
 function stubObservations(rows: StubFeedRowV1[]) {
   return {
     listFeed: async () => ({ rows, nextCursor: null }),
+    // `miorail_get_b20_opportunity` reads by address DIRECTLY now, rather than
+    // searching the newest page — which is the whole point of the fix, and the
+    // reason this fake has to answer the same question the feed does.
+    getFeedRowForToken: async ({ tokenAddress }: { tokenAddress: string }) => {
+      const row = rows.find(
+        (entry) => entry.launch.tokenAddress.toLowerCase() === tokenAddress.toLowerCase(),
+      );
+      return row ? { row, history: row.observation ? [row.observation] : [] } : null;
+    },
+    listMoverPairs: async () => [],
     pipelineCounts: async () => ({
       ingestionCursorBlock: '49531000',
       lastIngestionConfirmedHead: '49531010',
@@ -168,9 +178,9 @@ describe('§8 — tool discovery', () => {
     const client = await connectedClient();
     const { tools } = await client.listTools();
     assert.deepEqual(tools.map((tool) => tool.name).sort(), [
+      'miorail_b20_market_rails',
       'miorail_discover_status',
       'miorail_explain_b20_rejection',
-      'miorail_get_b20_market_leaders',
       'miorail_get_b20_opportunity',
       'miorail_list_b20_opportunities',
       'miorail_summarise_b20_universe',
@@ -199,23 +209,30 @@ describe('§8 — tool discovery', () => {
     assert.match(MIORAIL_MCP_INSTRUCTIONS_V1, /READ-ONLY/);
   });
 
-  test('the market-leaders tool refuses to present itself as a ranking', async () => {
+  test('the market-rails tool refuses to present itself as a ranking', async () => {
     const client = await connectedClient();
     const { tools } = await client.listTools();
-    const leaders = tools.find((tool) => tool.name === 'miorail_get_b20_market_leaders')!;
+    const rails = tools.find((tool) => tool.name === 'miorail_b20_market_rails')!;
     assert.match(
-      leaders.description ?? '',
+      rails.description ?? '',
       /NOT a ranking, a score, a recommendation or a prediction/,
     );
-    // `orderBy` has no default on purpose: there is no default notion of
-    // "leading", and inventing one is the interpretation layer §3 forbids.
-    assert.deepEqual((leaders.inputSchema as { required?: string[] }).required, ['orderBy']);
+    // Absence from a rail has to be readable as an absence of the NUMBER, not
+    // as a finding about the token.
+    assert.match(rails.description ?? '', /Absence from a rail is not a negative finding/);
+    // A rise in route cost means the exit got more expensive, and the unit is
+    // percentage points. Both are said where the agent will read them.
+    assert.match(rails.description ?? '', /percentage POINTS/);
+    assert.match(rails.description ?? '', /20-28 hours/);
+    // `orderBy` is no longer required, because the server returns both rails
+    // and the ordering is no longer computed here.
+    assert.deepEqual((rails.inputSchema as { required?: string[] }).required ?? [], []);
     await client.close();
   });
 });
 
 describe('§4 — every distinction survives the trip', () => {
-  test('Discover Card parity survives list, get and market-leaders projections', async () => {
+  test('Discover Card parity survives the list and get projections', async () => {
     const feed = await readDiscoverFeedV1({
       limit: 10,
       cursor: null,
@@ -225,26 +242,26 @@ describe('§4 — every distinction survives the trip', () => {
     const expected = feed.cards[0]!;
     const client = await connectedClient();
 
+    // `full` on purpose: the parity anchor IS `discoverCard`, and it is the
+    // thing `summary` drops.
     const list = payloadOf(
-      await client.callTool({ name: 'miorail_list_b20_opportunities', arguments: {} }),
+      await client.callTool({
+        name: 'miorail_list_b20_opportunities',
+        arguments: { verbosity: 'full' },
+      }),
     );
     const get = payloadOf(
       await client.callTool({
         name: 'miorail_get_b20_opportunity',
-        arguments: { tokenAddress: LAUNCH.tokenAddress },
+        arguments: { tokenAddress: LAUNCH.tokenAddress, verbosity: 'full' },
       }),
     );
-    const leaders = payloadOf(
-      await client.callTool({
-        name: 'miorail_get_b20_market_leaders',
-        arguments: { orderBy: 'lowest_measured_round_trip' },
-      }),
-    );
-
+    // The rails tool is deliberately NOT here any more. It returns the server's
+    // own rail rows — the ones the UI rail renders — rather than Discover
+    // cards, which is the point of replacing it: one projection, one answer.
     const projected = [
       (list.opportunities as Record<string, unknown>[])[0],
       get.opportunity as Record<string, unknown>,
-      (leaders.results as Record<string, unknown>[])[0],
     ];
     for (const opportunity of projected) {
       assert.deepEqual(opportunity.discoverCard, expected);
@@ -388,7 +405,7 @@ describe('§8 — malformed input', () => {
   test('an unknown ordering is refused rather than defaulted', async () => {
     const client = await connectedClient();
     const result = await client.callTool({
-      name: 'miorail_get_b20_market_leaders',
+      name: 'miorail_b20_market_rails',
       arguments: { orderBy: 'best' },
     });
     assert.equal((result as { isError?: boolean }).isError, true);
@@ -532,3 +549,123 @@ describe('§5/§8 — what this surface cannot do, and cannot leak', () => {
     assert.ok(!tools.includes('b20OpportunityCardV1('), 'the tools build their own cards');
   });
 });
+
+// ---------------------------------------------------------------------------
+// V2 pass 1 — the three things an agent hit first.
+//
+//   a by-address read that only saw the newest page;
+//   a payload that was 73% duplication;
+//   a "leaders" tool that sorted a page inside the MCP while the server had
+//   already ranked the same dimension over a much larger window.
+// ---------------------------------------------------------------------------
+describe('an agent asking by address is not bounded by a page', () => {
+  test('a launch outside the newest page still resolves', async () => {
+    // The defect: `get` read the newest 25 cards and searched them, so it
+    // answered "not in feed" for 33,516 of 33,541 canonical launches — a
+    // sentence that sounds like a fact about the token and is a fact about the
+    // page size. The stub answers `getFeedRowForToken` and NOT `listFeed` for
+    // this address, which is exactly the shape the old code could not read.
+    const client = await connectedClient();
+    const payload = payloadOf(
+      await client.callTool({
+        name: 'miorail_get_b20_opportunity',
+        arguments: { tokenAddress: LAUNCH.tokenAddress },
+      }),
+    );
+    const opportunity = payload.opportunity as Record<string, unknown>;
+    assert.equal((opportunity.token as Record<string, unknown>).address, LAUNCH.tokenAddress);
+    // And the bounded history travels with it, so an agent can see whether a
+    // second comparable observation exists before asking what changed.
+    assert.ok(Array.isArray(payload.history));
+    await client.close();
+  });
+
+  test('an address with no canonical launch says that about the index', async () => {
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: 'miorail_get_b20_opportunity',
+      arguments: { tokenAddress: `0x${'c'.repeat(40)}` },
+    });
+    const text = JSON.stringify(result);
+    assert.match(text, /launch_not_found/);
+    // Never "this is not a B20 token".
+    assert.match(text, /what Miorail has ingested, not about the token/);
+    await client.close();
+  });
+});
+
+describe('the default payload is not mostly duplication', () => {
+  test('summary drops the restated card and the per-item caveats', async () => {
+    const client = await connectedClient();
+    const summary = payloadOf(
+      await client.callTool({ name: 'miorail_list_b20_opportunities', arguments: {} }),
+    );
+    const first = (summary.opportunities as Record<string, unknown>[])[0]!;
+    assert.equal(first.discoverCard, undefined);
+    assert.equal(first.caveats, undefined);
+    // The caveats are still there — once, on the response, where they read as
+    // a statement rather than as boilerplate.
+    assert.ok(summary.caveats);
+    // Everything an agent needs is still projected.
+    assert.ok(first.token && first.launch && 'measurement' in first && first.notMeasured);
+    await client.close();
+  });
+
+  test('full keeps the old shape for a caller that read discoverCard', async () => {
+    const client = await connectedClient();
+    const full = payloadOf(
+      await client.callTool({
+        name: 'miorail_list_b20_opportunities',
+        arguments: { verbosity: 'full' },
+      }),
+    );
+    const first = (full.opportunities as Record<string, unknown>[])[0]!;
+    assert.ok(first.discoverCard);
+    assert.ok(first.caveats);
+    await client.close();
+  });
+
+  test('summary is materially smaller than full', async () => {
+    const client = await connectedClient();
+    const summary = payloadOf(
+      await client.callTool({ name: 'miorail_list_b20_opportunities', arguments: {} }),
+    );
+    const full = payloadOf(
+      await client.callTool({
+        name: 'miorail_list_b20_opportunities',
+        arguments: { verbosity: 'full' },
+      }),
+    );
+    const bytes = (value: unknown) => JSON.stringify(value).length;
+    assert.ok(
+      bytes(summary.opportunities) < bytes(full.opportunities) / 2,
+      'summary saved less than half, so the duplication is still there',
+    );
+    await client.close();
+  });
+});
+
+describe('the market rails are the server’s, not the MCP’s', () => {
+  test('the tool no longer sorts anything itself', () => {
+    // The old one ran `.sort()` and `BigInt` comparisons in this file, which is
+    // how one product came to have two answers to "largest measured exit
+    // capacity". The rails projection is the only ranking now.
+    const source = readFileSync(path.join(here, 'tools.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    assert.ok(!/\.sort\(/.test(code), 'the MCP sorts a ranking itself');
+    assert.ok(!/BigInt\(/.test(code), 'the MCP compares measured amounts itself');
+  });
+
+  test('both rails come back, with the pairing window stated', async () => {
+    const client = await connectedClient();
+    const payload = payloadOf(
+      await client.callTool({ name: 'miorail_b20_market_rails', arguments: {} }),
+    );
+    assert.ok(payload.exitCapacityLeaders);
+    assert.ok(payload.routeCostChanges);
+    // Absence from a rail must be readable as an absence of the NUMBER.
+    assert.match(String(payload.eligibility), /Absence is not a negative finding/);
+    await client.close();
+  });
+});
+

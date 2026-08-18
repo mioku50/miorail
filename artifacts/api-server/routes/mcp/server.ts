@@ -11,7 +11,7 @@ import {
   miorailExplainRejectionV1,
   miorailGetOpportunityV1,
   miorailListOpportunitiesV1,
-  miorailMarketLeadersV1,
+  miorailMarketRailsV1,
   miorailSummariseUniverseV1,
 } from './tools.js';
 
@@ -160,6 +160,12 @@ Every measurement also carries a "standing": what the reading CONCLUDED, with an
           ),
         limit: z.number().int().min(1).max(MCP_MAX_PAGE_V1).optional(),
         cursor: z.string().max(500).optional().describe('Opaque; from a previous call.'),
+        verbosity: z
+          .enum(['summary', 'full'])
+          .optional()
+          .describe(
+            'summary (default) omits the duplicated discoverCard and the per-item caveat block, which together are ~73% of a full payload. full keeps the old shape for a caller that reads discoverCard directly.',
+          ),
       },
     },
     async (args) => {
@@ -206,12 +212,18 @@ Counts may be up to a minute old; "computedAt" says when they were taken.`,
     {
       title: 'One measured B20 launch',
       description:
-        'Returns Miorail’s latest Exit-First measurement for one Base token address, with its exact display-safe Discover Card, controls, route sources, pool-hook permissions, completed launch-window buying evidence and capacity bounds. Hook permissions are not behavior, and launch-window buying is not current holdings. "Not in feed" means Miorail has not measured that address inside its current window — a statement about what Miorail has read, not about the token.',
+        'Returns Miorail’s latest Exit-First measurement for one Base token address, with its exact display-safe Discover Card, controls, route sources, pool-hook permissions, completed launch-window buying evidence and capacity bounds. Hook permissions are not behavior, and launch-window buying is not current holdings. Looked up DIRECTLY by address, so it is not bounded by a feed page. "Launch not found" means Miorail has ingested no canonical B20 launch at that address — a statement about what Miorail has read, not about the token.',
       inputSchema: {
         tokenAddress: z
           .string()
           .regex(/^0x[0-9a-fA-F]{40}$/)
           .describe('The B20 token contract address on Base mainnet.'),
+        verbosity: z
+          .enum(['summary', 'full'])
+          .optional()
+          .describe(
+            'summary (default) omits the duplicated discoverCard and the per-item caveat block, which together are ~73% of a full payload. full keeps the old shape for a caller that reads discoverCard directly.',
+          ),
       },
     },
     async (args) => {
@@ -243,26 +255,29 @@ Counts may be up to a minute old; "computedAt" says when they were taken.`,
   );
 
   server.registerTool(
-    'miorail_get_b20_market_leaders',
+    'miorail_b20_market_rails',
     {
-      title: 'Fresh provisional launches, sorted by one measured dimension',
-      description: `Sorts fresh PROVISIONAL measurements by a single measured dimension that you must name. This is NOT a ranking, a score, a recommendation or a prediction — Miorail computes no overall rating, and there is no "best" list to ask for.
+      title: 'Both measured market rails, as the server ranked them',
+      description: `Returns Miorail's two market rails over the bounded active window: measured exit liquidity, and the change in what a measured round trip COSTS between two observations about 24 hours apart.
 
-"${MCP_LEADER_DIMENSIONS_V1[0]}" orders by the largest exit size that stayed within the reference slippage tolerance. "${MCP_LEADER_DIMENSIONS_V1[1]}" orders by measured pre-entry round-trip cost, cheapest first.
+This is NOT a ranking, a score, a recommendation or a prediction. Miorail computes no overall rating and there is no "best" list to ask for. A token's position says only that one measured number is larger or smaller than another's, at ONE reference profile.
 
-A token’s position here says only that one number is larger or smaller than another’s. Absence from the list is not a negative finding: rejected, unmeasured and stale tokens are excluded because they do not carry the number being sorted on. Each result retains its exact display-safe Discover Card, including pool-hook, route-source and completed launch-window buying evidence when measured.`,
+Absence from a rail is not a negative finding. A launch appears only when its measurement carries the number the rail is about — rejected, unmeasured and stale readings do not, and a route-cost change needs a second comparable observation that may simply not exist yet.
+
+The cost change is in percentage POINTS and a rise means the exit got MORE expensive. Every row carries the exact interval between its two observations, because "24h" is a window of 20-28 hours rather than a measurement.
+
+Replaces miorail_get_b20_market_leaders, which sorted a page of the feed inside the MCP and could disagree with the same rail on Miorail's own screens.`,
       inputSchema: {
         orderBy: z
           .enum(MCP_LEADER_DIMENSIONS_V1)
-          .describe(
-            'Required. There is no default, because there is no default notion of "leading".',
-          ),
+          .optional()
+          .describe('Accepted for compatibility. Both rails are returned either way.'),
         limit: z.number().int().min(1).max(MCP_MAX_PAGE_V1).optional(),
       },
     },
     async (args) => {
       try {
-        return reply(await miorailMarketLeadersV1(args));
+        return reply(await miorailMarketRailsV1(args));
       } catch (error) {
         return refuse(error);
       }

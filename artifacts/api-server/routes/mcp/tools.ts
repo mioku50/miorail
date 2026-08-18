@@ -12,6 +12,8 @@ import {
 import {
   readB20UniverseSummaryV1,
   readDiscoverFeedV1,
+  readB20CardForTokenV1,
+  readB20MarketRailsV1,
   pipelineStatusV1,
   b20RouteRuntime,
 } from '../b20Control.js';
@@ -89,8 +91,8 @@ export interface McpOpportunityV1 {
   project: B20FundamentalProfileV1 | null;
   /** The exact display-safe object returned to Discover Card consumers. This
    * is the parity anchor: a new card field reaches MCP without a second manual
-   * projection having to remember it. */
-  discoverCard: B20OpportunityCardV1;
+   * projection having to remember it. Present only in `full`. */
+  discoverCard?: B20OpportunityCardV1;
   token: {
     address: string;
     symbol: string;
@@ -177,13 +179,36 @@ export interface McpOpportunityV1 {
   } | null;
   /** §7 — what this server will not tell you, named rather than left blank. */
   notMeasured: readonly string[];
-  caveats: typeof MIORAIL_MCP_CAVEATS_V1;
+  /** Only in `full`. In `summary` the caveats are on the RESPONSE, once — the
+   * same block repeated per item is 40% of a page and reads as boilerplate,
+   * which is the one thing a caveat must not become. */
+  caveats?: typeof MIORAIL_MCP_CAVEATS_V1;
 }
 
-function opportunityFromCardV1(card: B20OpportunityCardV1): McpOpportunityV1 {
+/**
+ * How much of a card an agent gets.
+ *
+ * `summary` is the default because the full shape is 7.4 KB per opportunity,
+ * of which 40.6% is the caveat block and 32% is `discoverCard` restating
+ * `token`, `launch` and `measurement`. At a page of 25 that is ~184 KB with the
+ * same 1,750-byte disclaimer 26 times — and an agent handed that will summarise
+ * it, which is exactly where `aboutToken: false` and `unknown` turn into
+ * statements about a token.
+ *
+ * `full` keeps the old shape byte for byte, for a caller that was reading
+ * `discoverCard` directly.
+ */
+export type McpVerbosityV1 = 'summary' | 'full';
+
+function opportunityFromCardV1(
+  card: B20OpportunityCardV1,
+  verbosity: McpVerbosityV1 = 'full',
+): McpOpportunityV1 {
   const observation = card.observation;
   return {
-    discoverCard: card,
+    // Dropped in `summary`: every field of it is already projected below, and
+    // a reader that has both will quote whichever it met first.
+    ...(verbosity === 'full' ? { discoverCard: card } : {}),
     /**
      * Whether a project proved a link to this token, and what its own
      * declarations turned out to be.
@@ -303,7 +328,7 @@ function opportunityFromCardV1(card: B20OpportunityCardV1): McpOpportunityV1 {
         }
       : null,
     notMeasured: card.notMeasured,
-    caveats: MIORAIL_MCP_CAVEATS_V1,
+    ...(verbosity === 'full' ? { caveats: MIORAIL_MCP_CAVEATS_V1 } : {}),
   };
 }
 
@@ -364,6 +389,7 @@ export async function miorailListOpportunitiesV1(input: {
   project?: 'all' | 'product_backed' | 'verified_project' | 'unknown';
   limit?: number;
   cursor?: string | null;
+  verbosity?: McpVerbosityV1;
 }): Promise<Record<string, unknown>> {
   try {
     const limit = Math.max(
@@ -390,8 +416,9 @@ export async function miorailListOpportunitiesV1(input: {
       // Stated even when the list is long: a reader that sees ten cards should
       // not conclude ten is all there is.
       pagination: { returned: feed.cards.length, limit, nextCursor: feed.nextCursor },
-      opportunities: feed.cards.map(opportunityFromCardV1),
+      opportunities: feed.cards.map((card) => opportunityFromCardV1(card, input.verbosity ?? 'summary')),
       serverTime: feed.serverTime,
+      // Once, on the response. Never once per opportunity.
       caveats: MIORAIL_MCP_CAVEATS_V1,
     };
   } catch (error) {
@@ -401,6 +428,7 @@ export async function miorailListOpportunitiesV1(input: {
 
 export async function miorailGetOpportunityV1(input: {
   tokenAddress: string;
+  verbosity?: McpVerbosityV1;
 }): Promise<Record<string, unknown>> {
   const tokenAddress = String(input.tokenAddress ?? '').toLowerCase();
   if (!ADDRESS_V1.test(tokenAddress)) {
@@ -409,26 +437,40 @@ export async function miorailGetOpportunityV1(input: {
     throw new McpPublicError('invalid_token_address', 'That is not a Base token address.');
   }
   try {
-    // Read through the same feed, filtered — no second lookup path.
-    const feed = await readDiscoverFeedV1({
-      limit: MCP_MAX_PAGE_V1,
-      cursor: null,
-      state: 'all',
-      freshness: 'all',
-    });
-    const found = feed.cards.find(
-      (card) => card.launch.tokenAddress.toLowerCase() === tokenAddress,
-    );
+    // A DIRECT lookup, shared with the HTTP detail route.
+    //
+    // This used to read the newest 25 cards and search the page, so it answered
+    // `not_in_feed` for 33,516 of the 33,541 canonical launches — including
+    // measured ones whose card the HTTP route returned without difficulty. An
+    // agent asking about a token by address got a sentence that sounded like a
+    // fact about the token and was a fact about the page size.
+    const found = await readB20CardForTokenV1(tokenAddress);
     if (!found) {
       throw new McpPublicError(
-        'not_in_feed',
-        'Miorail has no measured launch for that address in its current window. That is a statement about what Miorail has read, not about the token.',
+        'launch_not_found',
+        'Miorail has no canonical B20 launch at that address. That is a statement about what Miorail has ingested, not about the token.',
       );
     }
+    const status = await pipelineStatusV1(
+      b20RouteRuntime.observations(),
+      b20RouteRuntime.now(),
+      await b20RouteRuntime.discoverAvailable(),
+    );
     return {
-      pipeline: { state: feed.pipeline.state, summary: feed.pipeline.message },
-      opportunity: opportunityFromCardV1(found),
-      serverTime: feed.serverTime,
+      pipeline: { state: status.state, summary: status.message },
+      opportunity: opportunityFromCardV1(found.card, input.verbosity ?? 'summary'),
+      // Bounded history, so an agent can see that a second comparable
+      // observation exists before asking what changed.
+      history: found.history.map((entry) => ({
+        state: entry.state,
+        reasonCode: entry.reasonCode,
+        observationBlockNumber: entry.observationBlockNumber,
+        optimisticRoundTripBps: entry.optimisticRoundTripBps,
+        largestPassingSizeAtomic: entry.largestPassingSizeAtomic,
+        measuredAt: entry.measuredAt,
+        staleAfter: entry.staleAfter,
+      })),
+      serverTime: b20RouteRuntime.now().toISOString(),
       caveats: MIORAIL_MCP_CAVEATS_V1,
     };
   } catch (error) {
@@ -511,55 +553,56 @@ export const MCP_LEADER_DIMENSIONS_V1 = [
 ] as const;
 export type McpLeaderDimensionV1 = (typeof MCP_LEADER_DIMENSIONS_V1)[number];
 
-export async function miorailMarketLeadersV1(input: {
-  orderBy: McpLeaderDimensionV1;
+/**
+ * The market rails, as the server already ranked them.
+ *
+ * This tool used to read the newest 25 cards and sort them INSIDE the MCP —
+ * `BigInt` comparisons and a `.sort()` right here. Beside it lives
+ * `exitCapacityLeadersV1`, a server projection over a 1,000-row window with
+ * typed exclusion reasons, which the UI rail obeys under a rule saying the
+ * client sorts nothing. One product, two different answers to "largest measured
+ * exit capacity", and the agent-facing one was the weaker of the two.
+ *
+ * So the ordering is no longer computed here. `orderBy` selects which rail to
+ * return, and the exclusions come with it: absence from a rail has a reason,
+ * and an agent that cannot see the reason will read absence as a negative
+ * finding.
+ */
+export async function miorailMarketRailsV1(input: {
+  orderBy?: McpLeaderDimensionV1;
   limit?: number;
 }): Promise<Record<string, unknown>> {
-  if (!(MCP_LEADER_DIMENSIONS_V1 as readonly string[]).includes(input.orderBy)) {
+  if (input.orderBy !== undefined && !(MCP_LEADER_DIMENSIONS_V1 as readonly string[]).includes(input.orderBy)) {
     throw new McpPublicError(
       'unknown_ordering',
       `orderBy must be one of: ${MCP_LEADER_DIMENSIONS_V1.join(', ')}. Miorail has no overall ranking to fall back on.`,
     );
   }
   try {
-    const limit = Math.max(
-      1,
-      Math.min(MCP_MAX_PAGE_V1, Math.floor(input.limit ?? MCP_DEFAULT_PAGE_V1)),
-    );
-    const feed = await readDiscoverFeedV1({
-      limit: MCP_MAX_PAGE_V1,
-      cursor: null,
-      state: 'provisional',
-      freshness: 'fresh',
-    });
-
-    const eligible = feed.cards.filter((card) =>
-      input.orderBy === 'largest_measured_exit_capacity'
-        ? card.observation?.largestPassingSizeAtomic != null
-        : card.observation?.optimisticRoundTripBps != null,
-    );
-    const ordered = [...eligible].sort((left, right) => {
-      if (input.orderBy === 'largest_measured_exit_capacity') {
-        const a = BigInt(left.observation!.largestPassingSizeAtomic!);
-        const b = BigInt(right.observation!.largestPassingSizeAtomic!);
-        return a === b ? 0 : a > b ? -1 : 1;
-      }
-      return left.observation!.optimisticRoundTripBps! - right.observation!.optimisticRoundTripBps!;
-    });
-
+    const limit = Math.max(1, Math.min(MCP_MAX_PAGE_V1, Math.floor(input.limit ?? MCP_DEFAULT_PAGE_V1)));
+    const rails = await readB20MarketRailsV1({ limit });
     return {
-      orderedBy: input.orderBy,
-      // Said in the payload, not only in the tool description, because the
-      // payload is what gets quoted.
-      orderingMeaning:
-        input.orderBy === 'largest_measured_exit_capacity'
-          ? 'Sorted by the largest exit size that stayed within the reference slippage tolerance. This is one measured dimension, not a ranking, a score or a recommendation. A larger measured capacity does not mean a better token.'
-          : 'Sorted by the measured pre-entry round-trip cost, cheapest first. This is one measured dimension, not a ranking, a score or a recommendation. A cheaper round trip does not mean a better token.',
+      // Both rails, because they answer different questions and an agent asking
+      // for one usually wants to know the other exists.
+      exitCapacityLeaders: {
+        orderedBy: 'largest_measured_exit_capacity',
+        orderingMeaning:
+          'Ordered by measured exit coverage relative to ONE Miorail reference entry, within the stated slippage tolerance. One measured dimension, not a ranking, not a score and not a recommendation. Nothing between the largest passing and the first failing size was measured.',
+        toleranceBps: rails.toleranceBps,
+        results: rails.capacityLeaders,
+      },
+      routeCostChanges: {
+        label: rails.moveLabel,
+        note: rails.moveNote,
+        // A pair 20-28 hours apart, and the exact interval travels with each
+        // row: "24h" is a window, not a measurement.
+        results: rails.movers,
+        collectingHistory: rails.collectingHistory,
+      },
       eligibility:
-        'Only fresh provisional measurements appear here, because they are the only ones carrying this number. Absence from this list is not a negative finding.',
-      pipeline: { state: feed.pipeline.state, summary: feed.pipeline.message },
-      results: ordered.slice(0, limit).map(opportunityFromCardV1),
-      serverTime: feed.serverTime,
+        'A launch appears on a rail only when its measurement carries the number the rail is about, at the one comparable reference profile. Absence is not a negative finding about the token.',
+      pipeline: { state: rails.pipeline.state, summary: b20PipelineCopyV1(rails.pipeline) },
+      serverTime: rails.serverTime,
       caveats: MIORAIL_MCP_CAVEATS_V1,
     };
   } catch (error) {
