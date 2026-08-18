@@ -1,0 +1,17 @@
+[Unit]
+# Every six hours, against a 24-hour freshness window.
+#
+# Four passes per window rather than one: a claim that ages out just after a
+# pass would otherwise sit stale for a whole extra day, and the card would say
+# so for that whole day. The pass costs one outbound request per due claim and
+# does nothing at all when none is due.
+Description=Re-verify B20 project claims whose evidence has aged out
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=6h
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target
