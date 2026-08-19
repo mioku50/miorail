@@ -1,6 +1,7 @@
 import { b20RouteRuntime, runB20ConsolePlanV1 } from '../artifacts/api-server/routes/b20Control.js';
 import { b20ScopeIsPrivateV1, planB20ConsoleAnswerV1, type B20ConsoleScopeV1 } from '../artifacts/api-server/lib/b20ConsolePlan.js';
 import { b20NarrationEvidenceStrengthV1 } from '../artifacts/api-server/lib/b20AnswerVerify.js';
+import { narrateB20AnswerV1 } from '../artifacts/api-server/lib/b20Answer.js';
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 
@@ -27,16 +28,46 @@ import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 // ---------------------------------------------------------------------------
 
 const QUESTIONS_V1: readonly { scope: B20ConsoleScopeV1; question: string; tokenAddresses?: string[] }[] = [
-  { scope: 'explore', question: 'How many launches were measured?' },
-  { scope: 'explore', question: 'Which tokens did people buy but cannot sell?' },
-  { scope: 'explore', question: 'Where was coverage incomplete?' },
-  { scope: 'changes', question: 'What changed in the last day?' },
-  // Russian is first-class on this console; the same reading has to hold.
+  // ── The acceptance prompts, typed the way a reader types them ────────────
+  //
+  // Every line below is a sentence somebody actually wrote into the live
+  // console, not a phrasing chosen to fit a pattern. That distinction is the
+  // whole point: the matcher used to recognise Miorail's own vocabulary and
+  // almost nothing else, so a question in plain English fell through to the
+  // universe counts and looked like the console misunderstanding it.
+  { scope: 'explore', question: 'How many B20 launches were measured in the last 48 hours?' },
+  { scope: 'explore', question: 'Which B20 tokens were bought but a sale could not be priced?' },
+  { scope: 'explore', question: 'Show B20 tokens where both entry and exit were priced' },
+  { scope: 'explore', question: 'Which B20 launches need more evidence, and why?' },
+  { scope: 'explore', question: 'What changed among B20 tokens in the last 24 hours?' },
+  { scope: 'explore', question: 'Find me B20 projects with a live product' },
+  // Asked from Investigate on purpose: this used to be refused with "paste an
+  // address", which reads as a console that cannot parse a plain sentence.
+  { scope: 'investigate', question: 'Find me the most interesting B20 tokens to investigate' },
+
+  // ── Russian is first-class; the same readings have to hold ───────────────
   { scope: 'explore', question: 'Какие токены купили, а продать нельзя?' },
   { scope: 'explore', question: 'что изменилось за сутки' },
-  // Must be refused before any read.
+  { scope: 'explore', question: 'Какие запуски требуют больше доказательств?' },
+
+  // ── Refused before any read ──────────────────────────────────────────────
   { scope: 'explore', question: 'Which of these will moon?' },
   { scope: 'investigate', question: 'tell me about it' },
+];
+
+/**
+ * The four acceptance tokens: indexed, canonical, and never measured.
+ *
+ * Each one is a launch that missed the worker's 48-hour window, which is the
+ * state 820 launches were in when this was written. Asked about here in the
+ * plainest four ways somebody would ask, because "What was measured here?" is
+ * Miorail's phrasing and nobody else's.
+ */
+const ACCEPTANCE_TOKENS_V1: readonly { symbol: string; address: string; question: string }[] = [
+  { symbol: 'FLAG', address: '0xb20000000000000000000047f57bc93d7f130101', question: 'Investigate 0xb20000000000000000000047f57bc93d7f130101' },
+  { symbol: 'B420', address: '0xb200000000000000000000231d6c1f1ce455ba32', question: 'Check 0xb200000000000000000000231d6c1f1ce455ba32' },
+  { symbol: 'BPEPE', address: '0xb2000000000000000000008eeba3a477300c5601', question: 'What do we know about 0xb2000000000000000000008eeba3a477300c5601?' },
+  { symbol: 'RWAGMI', address: '0xb200000000000000000000bf0548ab2ebd00ba5e', question: 'Does this B20 token have a working market? 0xb200000000000000000000bf0548ab2ebd00ba5e' },
 ];
 
 function summariseV1(text: string, width = 220): string {
@@ -51,13 +82,17 @@ async function main(): Promise<void> {
   const questions = tokenArgs.length > 0
     ? [
         ...QUESTIONS_V1,
+        ...ACCEPTANCE_TOKENS_V1.map((token) => ({ scope: 'investigate' as const, question: token.question })),
         { scope: 'investigate' as const, question: 'Compare these.', tokenAddresses: tokenArgs },
         // The private scope, exercised with addresses an operator supplied.
         // Nothing here reaches a provider and nothing is logged; the controls
         // below check the second half of that.
         { scope: 'portfolio' as const, question: 'Which of my positions is hardest to close?', tokenAddresses: tokenArgs },
       ]
-    : QUESTIONS_V1;
+    : [
+        ...QUESTIONS_V1,
+        ...ACCEPTANCE_TOKENS_V1.map((token) => ({ scope: 'investigate' as const, question: token.question })),
+      ];
 
   if (!(await b20RouteRuntime.discoverAvailable())) {
     console.error('Discover storage is unavailable — nothing to read.');
@@ -87,7 +122,34 @@ async function main(): Promise<void> {
     widest = Math.max(widest, strength.distinctNumbers);
 
     console.log(`   answered in ${plan.scope} as ${plan.intent} · ${Date.now() - started}ms`);
-    console.log(`   ${summariseV1(answer.answer)}`);
+    console.log(`   deterministic: ${summariseV1(answer.answer)}`);
+
+    // The narrated answer, which is what a reader is actually shown — and where
+    // the failure this gate exists for lived: a fluent, figure-free sentence
+    // saying the opposite of the evidence under it. Private scopes are never
+    // narrated, so the provider is withheld exactly as the route withholds it.
+    const narrated = await narrateB20AnswerV1({
+      question: input.question,
+      bundle: {
+        intent: plan.intent,
+        facts: answer.facts.map((fact) => ({ label: fact.label, value: fact.value })),
+        missing: answer.missingEvidence,
+        caveats: answer.caveats,
+        assertions: answer.assertions,
+      },
+      deterministic: answer.answer,
+      provider: b20ScopeIsPrivateV1(plan.scope) ? null : b20RouteRuntime.narrator(),
+    });
+    console.log(`   source: ${narrated.answerSource}`);
+    if (narrated.narrationRejectedBecause) {
+      console.log(`   narration not used: ${narrated.narrationRejectedBecause.join('; ')}`);
+    }
+    console.log(`   shown: ${summariseV1(narrated.answer)}`);
+    console.log(
+      `   assertions: state=${answer.assertions.state} matched=${answer.assertions.matched}` +
+        ` complete=${answer.assertions.complete} about=${answer.assertions.about}` +
+        ` subjects=${answer.assertions.subjects.length}`,
+    );
     console.log(
       `   evidence: ${answer.facts.length} facts · ${strength.distinctNumbers} distinct figures · narratable=${strength.strongEnough}`,
     );
