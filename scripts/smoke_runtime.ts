@@ -1,6 +1,5 @@
-import { createLlmProvider, providerLabelV1 } from '../lib/llm/src/factory.js';
+import { createLlmProvider, fallbackLinkV1, providerLabelV1 } from '../lib/llm/src/factory.js';
 import { FallbackLlmProvider } from '../lib/llm/src/fallback.js';
-import { OpenAiCompatibleClient } from '../lib/llm/src/openai.js';
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 
 // Checks the LLM router this deployment is actually configured with, and — when
@@ -52,9 +51,14 @@ async function run() {
 
     // The primary answered, so the chain never exercised the fallback. Check it
     // on its own: a fallback that has never served a request is untested.
-    if (fallbackBaseUrl) {
-      console.log(`⏳ Checking the fallback (${providerLabelV1(fallbackBaseUrl)}) on its own...`);
-      const ok = await checkFallbackDirectly();
+    // Both spares, each on its own. A spare that has never served a request is
+    // untested, and the second one is the last thing standing on the day the
+    // other two are out.
+    for (const prefix of ['LLM_FALLBACK', 'LLM_FALLBACK_2']) {
+      const baseUrl = (process.env[`${prefix}_BASE_URL`] || '').trim();
+      if (!baseUrl) continue;
+      console.log(`⏳ Checking ${prefix} (${providerLabelV1(baseUrl)}) on its own...`);
+      const ok = await checkFallbackDirectly(prefix);
       if (!ok) process.exit(1);
     }
 
@@ -65,17 +69,23 @@ async function run() {
   }
 }
 
-/** Forces a fallover by pairing a primary that always fails with the CONFIGURED
- * fallback, then confirms the fallback answered. */
-async function checkFallbackDirectly(): Promise<boolean> {
-  const baseUrl = (process.env.LLM_FALLBACK_BASE_URL || '').trim();
-  const model = (process.env.LLM_FALLBACK_MODEL || '').trim();
-  const apiKey = (
-    process.env.LLM_FALLBACK_API_KEY ||
-    process.env.OPENROUTER_API_KEY ||
-    process.env.OPENROUTER_KEY ||
-    ''
-  ).trim();
+/**
+ * Forces a fallover by pairing a primary that always fails with the CONFIGURED
+ * fallback, then confirms the fallback answered.
+ *
+ * The link comes from `fallbackLinkV1` — the same function production uses.
+ * This built its own client with its own key lookup, and the copy drifted:
+ * it sent no gateway headers, so AgentRouter refused it 401 while the real
+ * chain worked, and it resolved an OpenRouter key for whatever host was
+ * configured. A smoke test that reports a working fallback broken is worse
+ * than none, because an operator acts on it.
+ */
+async function checkFallbackDirectly(prefix: string): Promise<boolean> {
+  const link = fallbackLinkV1(prefix);
+  if (!link) {
+    console.error(`❌ ${prefix} is not configured`);
+    return false;
+  }
 
   const chain = new FallbackLlmProvider(
     {
@@ -86,7 +96,7 @@ async function checkFallbackDirectly(): Promise<boolean> {
         },
       },
     },
-    { label: providerLabelV1(baseUrl), provider: new OpenAiCompatibleClient({ apiKey, baseUrl, defaultModel: model }) },
+    link,
     { onFallover: () => {} },
   );
 

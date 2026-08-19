@@ -84,8 +84,15 @@ function fallbackApiKeyV1(baseUrl: string, prefix: string): string {
  * `prefix` is `LLM_FALLBACK` for the first spare and `LLM_FALLBACK_2` for the
  * second. A second spare exists because the primary here answers 429 on most
  * requests, which makes a single spare the provider rather than the spare.
+ *
+ * Exported so `pnpm smoke:llm` can check the SAME link production builds. It
+ * used to construct its own client with its own key lookup, and the copy
+ * drifted twice over: no gateway headers, and an OpenRouter key resolved for
+ * whatever host happened to be configured. The smoke test reported the
+ * fallback broken while the fallback was fine — which is worse than no smoke
+ * test, because an operator acts on it.
  */
-function fallbackLinkV1(prefix: string): (NamedLlmProviderV1 & { model: string }) | null {
+export function fallbackLinkV1(prefix: string): (NamedLlmProviderV1 & { model: string }) | null {
   const baseUrl = trimmed(`${prefix}_BASE_URL`);
   const model = trimmed(`${prefix}_MODEL`);
   const apiKey = baseUrl
