@@ -31,11 +31,14 @@ export const B20_CONSOLE_SCOPE_COPY_V1: Readonly<
   explore: {
     label: 'Explore',
     blurb: 'Counts across every B20 launch Miorail measured in the last 48 hours.',
+    // Written the way a reader would ask, not the way the schema is spelled.
+    // The matcher no longer needs "both routes" or "coverage" — those were
+    // Miorail's words for its own fields, and a reader had no way to guess them.
     prompts: [
       'How many launches were measured?',
-      'Which tokens did people buy but cannot sell?',
-      'Where was coverage incomplete?',
-      'Which ones priced both routes?',
+      'Which tokens were bought but a sale could not be priced?',
+      'Which launches need more evidence, and why?',
+      'What is worth looking at?',
     ],
   },
   investigate: {
@@ -73,6 +76,16 @@ export interface B20ConsoleAnswerViewV1 {
 }
 
 export interface B20ConsolePanelModelV1 {
+  /**
+   * How this console sits on the page.
+   *
+   * `panel` is a card of its own, which is what a screen whose subject IS the
+   * console needs. `inline` is a strip inside another panel's body, used on
+   * Discover so the order a reader meets is: what this page lists, one row to
+   * ask, the filters, the cards. One component, two placements — a separate
+   * mobile console would be a second set of copy to keep true.
+   */
+  variant?: 'panel' | 'inline';
   scope: B20ConsoleScopeViewV1;
   /** Tokens the reader put in the Investigate scope. Addresses only. */
   tokenAddresses: readonly string[];
@@ -96,6 +109,7 @@ const SHORT_ADDRESS_V1 = (address: string) => `${address.slice(0, 6)}…${addres
 export function B20ConsolePanel(model: B20ConsolePanelModelV1) {
   const [question, setQuestion] = useState('');
   const [expanded, setExpanded] = useState(false);
+  const [dismissedAnswer, setDismissedAnswer] = useState<string | null>(null);
   const held = model.heldTokenAddresses ?? [];
   // Offered only when a surface actually read a wallet. A Portfolio tab above
   // a disconnected wallet would answer "nothing held", which is a claim
@@ -110,6 +124,7 @@ export function B20ConsolePanel(model: B20ConsolePanelModelV1) {
   const ask = (value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return;
+    setDismissedAnswer(null);
     model.onAsk({
       scope,
       question: trimmed,
@@ -119,14 +134,219 @@ export function B20ConsolePanel(model: B20ConsolePanelModelV1) {
     });
   };
 
+  const inline = model.variant === 'inline';
+
   // Collapsed by default. The full panel — scope blurb, four example questions,
   // the input label — stood between the reader and the first B20 card, so
   // Discover opened on an explanation of itself. Everything is one focus away
   // and nothing was removed.
   //
-  // It opens on focus, on a submitted question, and on the explicit control, so
-  // a reader who starts typing gets the hints without having asked for them.
-  const hintsOpen = expanded || Boolean(answer) || model.loading;
+  // It opens on focus and on the explicit control, so a reader who starts
+  // typing gets the hints without having asked for them. It no longer opens
+  // because an ANSWER arrived: the answer is the thing to read then, and
+  // reprinting the mode's description above it pushed the answer down a screen.
+  const hintsOpen = expanded || model.loading;
+
+  // An answer is dismissable, and it is open when it arrives.
+  //
+  // On a 390px screen a five-fact answer with three folds runs longer than the
+  // viewport, and it sits between the reader and the cards Discover exists to
+  // show. Collapsing does not discard it — the same answer reopens — and the
+  // dismissal is keyed to the answer, so the next question always opens.
+  const answerHidden = answer !== null && dismissedAnswer === answer.serverTime;
+
+  const body = (
+    <>
+      <div className="filter-row">
+        <span className="filter-row-k">Scope</span>
+        <nav className="crumb" aria-label="What to ask about">
+          {scopes.map((entry) => (
+            <button
+              key={entry}
+              type="button"
+              className={`btn sec${scope === entry ? ' on' : ''}`}
+              aria-pressed={scope === entry}
+              onClick={() => model.onScopeChange(entry)}
+            >
+              {B20_CONSOLE_SCOPE_COPY_V1[entry].label}
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      {/* ALWAYS visible, never behind the fold. This is not a hint — it is
+          what the scope reads, and Portfolio's version carries the sentence
+          saying the ranking uses a reference size nobody holds. A disclosure a
+          reader has to expand is not a disclosure. */}
+      <p className="lnote">{copy.blurb}</p>
+
+      {scope === 'investigate' && (
+        <div className="b20-token-chips" aria-label="Tokens in this comparison">
+          {model.tokenAddresses.length === 0
+            ? // Named rather than left blank: a symbol is not an identifier on
+              // Base, and Miorail will not choose which token one means. The
+              // second sentence is what changed: a pasted address no longer
+              // only reads a stored measurement, it causes one when there is
+              // none, and a reader waiting on a request deserves to know that
+              // before they wait.
+              (
+                <p className="lnote">
+                  No token selected. Paste a Base token address into the question, or open a card below and add it.
+                  If Miorail holds no current reading of it, it takes one.
+                </p>
+              )
+            : model.tokenAddresses.map((address) => (
+                <button
+                  key={address}
+                  type="button"
+                  className="mono"
+                  aria-label={`Remove ${address}`}
+                  onClick={() => model.onTokensChange(model.tokenAddresses.filter((entry) => entry !== address))}
+                >
+                  {SHORT_ADDRESS_V1(address)} ×
+                </button>
+              ))}
+        </div>
+      )}
+
+      {hintsOpen && (
+        <div className="b20-prompt-chips" aria-label="Example questions">
+          {copy.prompts.map((prompt) => (
+            <button key={prompt} type="button" onClick={() => { setQuestion(prompt); ask(prompt); }}>
+              {prompt}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <form
+        className="b20-ask-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          ask(question);
+        }}
+      >
+        <label htmlFor="b20-console-ask" className={hintsOpen ? undefined : 'sr-only'}>
+          Ask about measured B20 launches
+        </label>
+        <div>
+          <input
+            id="b20-console-ask"
+            value={question}
+            maxLength={500}
+            placeholder={copy.prompts[0]}
+            onFocus={() => setExpanded(true)}
+            onChange={(event) => setQuestion(event.currentTarget.value)}
+          />
+          <button type="submit" className="btn" disabled={!question.trim() || model.loading}>
+            {model.loading ? 'Reading…' : 'Ask'}
+          </button>
+        </div>
+      </form>
+
+      {model.error && <p className="note warn">{model.error}</p>}
+
+      {answer && (
+        <div className="b20-answer" aria-live="polite">
+          <div className="b20-answer-head">
+            {/* The scope that answered, when it is not the one on the tab. A
+                token answer under an "Explore" heading would be mislabelled,
+                and a universe answer under "Investigate" doubly so now that
+                Investigate routes those questions instead of refusing them. */}
+            {answer.scope !== scope ? (
+              <span className="lnote">
+                Answered in {B20_CONSOLE_SCOPE_COPY_V1[answer.scope].label} — the question named something more
+                specific than the scope.
+              </span>
+            ) : (
+              <span className="lnote">Answer</span>
+            )}
+            <button
+              type="button"
+              className="btn sec"
+              aria-expanded={!answerHidden}
+              onClick={() => setDismissedAnswer(answerHidden ? null : answer.serverTime)}
+            >
+              {answerHidden ? 'Show' : 'Hide'}
+            </button>
+          </div>
+          {!answerHidden && (
+            <>
+              <p>{answer.answer}</p>
+              <p className="lnote">
+                {answer.answerSource === 'verified_narration'
+                  ? 'Rephrased from the evidence below. Every figure in it was checked against that evidence.'
+                  : 'Built directly from the stored measurements below.'}
+              </p>
+              {answer.facts.length > 0 && (
+                <dl className="b20-answer-facts">
+                  {answer.facts.map((fact) => (
+                    <div key={`${fact.label}:${fact.value}`}>
+                      <dt>{fact.label}</dt>
+                      <dd className={fact.tone === 'warning' ? 'warn' : fact.tone === 'positive' ? 'ok' : ''}>
+                        {fact.value}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+              {answer.missingEvidence.length > 0 && (
+                <details className="b20-answer-unknowns">
+                  <summary>{answer.missingEvidence.length} evidence gaps</summary>
+                  <ul>{answer.missingEvidence.map((item) => <li key={item}>{item}</li>)}</ul>
+                </details>
+              )}
+              {/* This panel's replacement for the card's observation stamp. A
+                  global answer has no single measurement to pin, so what it owes
+                  a reader instead is which reads produced it. */}
+              {answer.reads.length > 0 && (
+                <details className="b20-answer-reads">
+                  <summary>What was read</summary>
+                  <ul>
+                    {answer.reads.map((read) => (
+                      <li key={`${read.tool}:${read.detail}`}>
+                        <span className="mono">{read.tool}</span> — {read.detail}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+              <details className="b20-answer-caveats">
+                <summary>Evidence boundaries</summary>
+                <ul>{answer.caveats.map((item) => <li key={item}>{item}</li>)}</ul>
+              </details>
+            </>
+          )}
+        </div>
+      )}
+    </>
+  );
+
+  // Inline: a strip inside another panel's body, with no card chrome of its
+  // own. It keeps the heading — a reader has to know what the input is — but
+  // as a row rather than as a panel header, so Discover's own header stays the
+  // top of the page.
+  if (inline) {
+    return (
+      <section className="ask-inline" aria-label="Ask Miorail">
+        <div className="ask-inline-head">
+          <h4>Ask Miorail</h4>
+          <span className="rt">
+            <button
+              type="button"
+              className="btn sec"
+              aria-expanded={hintsOpen}
+              onClick={() => setExpanded((open) => !open)}
+            >
+              {hintsOpen ? 'Less' : 'Examples'}
+            </button>
+            <span className="sub">read-only</span>
+          </span>
+        </div>
+        {body}
+      </section>
+    );
+  }
 
   return (
     <div className="panel">
@@ -144,147 +364,7 @@ export function B20ConsolePanel(model: B20ConsolePanelModelV1) {
           <span className="sub">read-only</span>
         </span>
       </div>
-      <div className="pb tight">
-        <div className="filter-row">
-          <span className="filter-row-k">Scope</span>
-          <nav className="crumb" aria-label="What to ask about">
-            {scopes.map((entry) => (
-              <button
-                key={entry}
-                type="button"
-                className={`btn sec${scope === entry ? ' on' : ''}`}
-                aria-pressed={scope === entry}
-                onClick={() => model.onScopeChange(entry)}
-              >
-                {B20_CONSOLE_SCOPE_COPY_V1[entry].label}
-              </button>
-            ))}
-          </nav>
-        </div>
-        {/* ALWAYS visible, never behind the fold. This is not a hint — it is
-            what the scope reads, and Portfolio's version carries the sentence
-            saying the ranking uses a reference size nobody holds. A disclosure
-            a reader has to expand is not a disclosure. Only the four example
-            questions collapse. */}
-        <p className="lnote">{copy.blurb}</p>
-
-        {scope === 'investigate' && (
-          <div className="b20-token-chips" aria-label="Tokens in this comparison">
-            {model.tokenAddresses.length === 0 ? (
-              // Named rather than left blank: a symbol is not an identifier on
-              // Base, and Miorail will not choose which token one means.
-              <p className="lnote">
-                No token selected. Paste a Base token address into the question, or open a card below and add it.
-              </p>
-            ) : (
-              model.tokenAddresses.map((address) => (
-                <button
-                  key={address}
-                  type="button"
-                  className="mono"
-                  aria-label={`Remove ${address}`}
-                  onClick={() => model.onTokensChange(model.tokenAddresses.filter((entry) => entry !== address))}
-                >
-                  {SHORT_ADDRESS_V1(address)} ×
-                </button>
-              ))
-            )}
-          </div>
-        )}
-
-        {hintsOpen && (
-          <div className="b20-prompt-chips" aria-label="Example questions">
-            {copy.prompts.map((prompt) => (
-              <button key={prompt} type="button" onClick={() => { setQuestion(prompt); ask(prompt); }}>
-                {prompt}
-              </button>
-            ))}
-          </div>
-        )}
-
-        <form
-          className="b20-ask-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            ask(question);
-          }}
-        >
-          <label htmlFor="b20-console-ask" className={hintsOpen ? undefined : 'sr-only'}>
-            Ask about measured B20 launches
-          </label>
-          <div>
-            <input
-              id="b20-console-ask"
-              value={question}
-              maxLength={500}
-              placeholder={copy.prompts[0]}
-              onFocus={() => setExpanded(true)}
-              onChange={(event) => setQuestion(event.currentTarget.value)}
-            />
-            <button type="submit" className="btn" disabled={!question.trim() || model.loading}>
-              {model.loading ? 'Reading…' : 'Ask'}
-            </button>
-          </div>
-        </form>
-
-        {model.error && <p className="note warn">{model.error}</p>}
-
-        {answer && (
-          <div className="b20-answer" aria-live="polite">
-            {/* The scope that answered, when it is not the one on the tab. A
-                token answer under an "Explore" heading would be mislabelled. */}
-            {answer.scope !== scope && (
-              <p className="lnote">
-                Answered in {B20_CONSOLE_SCOPE_COPY_V1[answer.scope].label} — the question named something more
-                specific than the scope.
-              </p>
-            )}
-            <p>{answer.answer}</p>
-            <p className="lnote">
-              {answer.answerSource === 'verified_narration'
-                ? 'Rephrased from the evidence below. Every figure in it was checked against that evidence.'
-                : 'Built directly from the stored measurements below.'}
-            </p>
-            {answer.facts.length > 0 && (
-              <dl className="b20-answer-facts">
-                {answer.facts.map((fact) => (
-                  <div key={`${fact.label}:${fact.value}`}>
-                    <dt>{fact.label}</dt>
-                    <dd className={fact.tone === 'warning' ? 'warn' : fact.tone === 'positive' ? 'ok' : ''}>
-                      {fact.value}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            )}
-            {answer.missingEvidence.length > 0 && (
-              <details className="b20-answer-unknowns">
-                <summary>{answer.missingEvidence.length} evidence gaps</summary>
-                <ul>{answer.missingEvidence.map((item) => <li key={item}>{item}</li>)}</ul>
-              </details>
-            )}
-            {/* This panel's replacement for the card's observation stamp. A
-                global answer has no single measurement to pin, so what it owes
-                a reader instead is which reads produced it. */}
-            {answer.reads.length > 0 && (
-              <details className="b20-answer-reads">
-                <summary>What was read</summary>
-                <ul>
-                  {answer.reads.map((read) => (
-                    <li key={`${read.tool}:${read.detail}`}>
-                      <span className="mono">{read.tool}</span> — {read.detail}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
-            <details className="b20-answer-caveats">
-              <summary>Evidence boundaries</summary>
-              <ul>{answer.caveats.map((item) => <li key={item}>{item}</li>)}</ul>
-            </details>
-          </div>
-        )}
-      </div>
+      <div className="pb tight">{body}</div>
     </div>
   );
 }

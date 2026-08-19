@@ -809,7 +809,25 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   background: var(--panel2); color: var(--ink); font: inherit; font-size: 12px; box-shadow: inset 0 0 0 1px var(--line2); }
 .mio-console .b20-ask-form input:focus { outline: 2px solid var(--accent-line); outline-offset: 1px; }
 .mio-console .b20-ask-form .btn { margin-top: 0; }
+/* The console as a strip inside the Discover panel, rather than as a panel of
+   its own above it. Same component: the placement is a prop, so there is no
+   second console to keep true. The rail is what tells a reader this block is
+   an aside inside the feed panel and not the feed itself. */
+.mio-console .ask-inline { margin: 11px 0 12px; padding: 10px 0 0 11px;
+  border-top: 1px solid var(--line); border-left: 2px solid var(--line2); }
+.mio-console .ask-inline-head { display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.mio-console .ask-inline-head h4 { margin: 0; color: var(--ink); font-size: 12px; font-weight: 700;
+  letter-spacing: .01em; }
+.mio-console .ask-inline-head .rt { display: flex; align-items: center; gap: 8px; }
+/* The first control inside the strip already carries the top gap. */
+.mio-console .ask-inline > .filter-row:first-of-type { margin-top: 0; }
 .mio-console .b20-answer { margin-top: 11px; padding-top: 11px; border-top: 1px solid var(--line); }
+/* An answer can be put away. On a narrow screen it runs longer than the
+   viewport and sits between the reader and the cards. */
+.mio-console .b20-answer-head { display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-bottom: 7px; }
+.mio-console .b20-answer-head .lnote { margin: 0; min-width: 0; }
 .mio-console .b20-answer > p { margin: 0; color: var(--ink); font-size: 12.5px; line-height: 1.55; }
 .mio-console .b20-answer-facts { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; margin: 10px 0 0; }
 .mio-console .b20-answer-facts > div { min-width: 0; padding: 8px; border-radius: 7px; background: var(--panel2);

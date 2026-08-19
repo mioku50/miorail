@@ -1045,12 +1045,11 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
         />
       )}
 
-      {/* Above the feed, because the question a reader arrives with is about
-          the whole list rather than about the first card in it. Rendered even
-          when the feed is not: "how many were measured" is answerable while
-          the pipeline is catching up, and the counts are the honest answer to
-          a screen that has nothing to list yet. */}
-      {model.console && <B20ConsolePanel {...model.console} />}
+      {/* With no feed to sit inside, the console is a panel of its own. Still
+          rendered: "how many were measured" is answerable while the pipeline is
+          catching up, and the counts are the honest answer to a screen that has
+          nothing to list yet. */}
+      {model.console && !model.feedRenderable && <B20ConsolePanel {...model.console} />}
 
       {model.feedRenderable && (
         <div className="panel">
@@ -1068,6 +1067,17 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
               Every card is built around a B20 token found through Miorail’s pinned B20 factory feed on Base.
               This is B20 route intelligence, not a general token scanner.
             </p>
+            {/* Inside the feed panel, between what this page lists and how to
+                narrow it.
+
+                It used to be a full panel above the feed, and on a 390px screen
+                that put the scope pills, a two-line blurb, four example chips
+                and — after one question — a multi-screen answer between the
+                reader and the first B20 card. Discover opened on a console
+                about Discover. The cards are the page; asking about them is a
+                row on it. One component, one placement decision, no separate
+                mobile build. */}
+            {model.console && <B20ConsolePanel {...model.console} variant="inline" />}
             {/* The verdict filter leads, because it is the question people
                 arrive with. The measurement state stays available underneath —
                 it is the vocabulary the evidence and the x402 seller speak, and

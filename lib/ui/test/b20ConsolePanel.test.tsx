@@ -186,3 +186,54 @@ describe('a component a test renders can actually render', () => {
     assert.deepEqual(offenders, []);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Where the console sits, and how much of the screen it takes.
+//
+// Measured in Base App on a 390px screen: after one question, Discover's first
+// B20 card was more than a screen below the fold. The console was a full panel
+// above the feed, and asking anything expanded the scope blurb, four example
+// chips and a multi-fold answer — so the page a reader opened to see B20
+// launches opened on a console explaining itself.
+// ---------------------------------------------------------------------------
+
+describe('the console is a row on Discover, not the top of it', () => {
+  test('inline drops the panel chrome and keeps the heading', () => {
+    const html = renderToStaticMarkup(<B20ConsolePanel {...model({ variant: 'inline' })} />);
+    assert.match(html, /class="ask-inline"/);
+    assert.match(html, /Ask Miorail/);
+    // No card of its own: the feed panel it sits inside already is one.
+    assert.ok(!html.startsWith('<div class="panel">'), html.slice(0, 80));
+  });
+
+  test('the default placement is still a panel, for screens whose subject IS the console', () => {
+    assert.match(render(), /^<div class="panel">/);
+  });
+
+  test('an answer no longer forces the examples open', () => {
+    // This was the mechanism. `hintsOpen` included `Boolean(answer)`, so the
+    // first question permanently unfolded the blurb, the four chips and the
+    // input label — above the answer, and above every card.
+    const html = render({ answer: answerV1() });
+    assert.ok(!html.includes('aria-label="Example questions"'), 'examples must stay folded');
+  });
+
+  test('an answer arrives open and can be put away', () => {
+    const html = render({ answer: answerV1() });
+    assert.match(html, /aria-expanded="true"[^>]*>Hide/);
+    // Open on arrival: an answer a reader has to expand has not been given.
+    assert.ok(html.includes(answerV1().answer));
+  });
+
+  test('the scope that answered is still labelled when it is not the tab', () => {
+    const html = render({ scope: 'investigate', answer: answerV1({ scope: 'explore' }) });
+    assert.match(html, /Answered in Explore/);
+  });
+
+  test('Investigate says a pasted address will be measured, not only read', () => {
+    // Targeted measurement changed what pasting an address does: with no
+    // current reading, Miorail takes one, and a reader about to wait for a
+    // request deserves to know that before they wait.
+    assert.match(render({ scope: 'investigate' }), /If Miorail holds no current reading of it, it takes one/);
+  });
+});

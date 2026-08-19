@@ -258,3 +258,57 @@ describe('loading, absent and failed stay three different sentences', () => {
     assert.ok(!/no canonical B20 launch/.test(markup));
   });
 });
+
+// ---------------------------------------------------------------------------
+// The order a reader meets the page.
+// ---------------------------------------------------------------------------
+
+const CONSOLE_MODEL = {
+  scope: 'explore' as const,
+  tokenAddresses: [],
+  loading: false,
+  answer: null,
+  error: null,
+  onScopeChange: () => undefined,
+  onTokensChange: () => undefined,
+  onAsk: () => undefined,
+};
+
+describe('Discover leads with what it lists', () => {
+  test('the console sits inside the feed panel, after the header and before the filters', () => {
+    const html = render(undefined, [FEED_CARD], { console: CONSOLE_MODEL });
+    const header = html.indexOf('Discover B20');
+    const ask = html.indexOf('class="ask-inline"');
+    const filters = html.indexOf('aria-label="Filter by what the measurement found"');
+    const card = html.indexOf('CHEESE');
+    assert.ok(header >= 0 && ask >= 0 && filters >= 0, `${header} ${ask} ${filters}`);
+    // Discover header → ask row → filters → cards. Measured as positions in the
+    // rendered markup, because the defect was an ORDER and every component in
+    // it rendered correctly on its own.
+    assert.ok(header < ask, 'the page must open on what it lists');
+    assert.ok(ask < filters, 'the ask row comes before the filters');
+    assert.ok(filters < card || card === -1, 'the filters come before the cards');
+  });
+
+  test('with no feed to sit inside, the console is still shown as a panel', () => {
+    // "How many were measured" is answerable while the pipeline is catching up,
+    // and the counts are the honest answer to a screen with nothing to list.
+    const html = renderToStaticMarkup(
+      <OpportunitiesScreen
+        pipelineNotice={null}
+        pipelineState="healthy"
+        feedRenderable={false}
+        cards={[]}
+        filter="all"
+        freshOnly={false}
+        loading={false}
+        onFilterChange={() => undefined}
+        onFreshOnlyChange={() => undefined}
+        onOpenToken={() => undefined}
+        console={CONSOLE_MODEL}
+      />,
+    );
+    assert.match(html, /Ask Miorail/);
+    assert.ok(!html.includes('class="ask-inline"'));
+  });
+});
