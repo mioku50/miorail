@@ -49,6 +49,17 @@ export interface MiorailProductMigrationFlags {
    * Nothing it produces can reach the verified project layer.
    */
   b20PublicContextV1: boolean;
+  /**
+   * Targeted measurement: an Exit-First reading taken because a reader asked
+   * about a token, rather than because a background queue reached it.
+   *
+   * Gated because it is the first B20 read that spends metered router and
+   * control calls inside an HTTP request. Everything it runs is the same
+   * read-only pass the worker runs — no signer, no wallet, no allowance, no
+   * broadcast — but the SPEND is now user-triggered, and that is a decision an
+   * operator makes rather than one a deploy makes for them.
+   */
+  b20TargetedMeasureV1: boolean;
   /** T67C.2: submission recovery — reading back an already-sent batch after a
    * reload. It signs nothing and sends nothing; the gate exists so the recovery
    * card cannot appear before a live smoke run has exercised it. */
@@ -160,6 +171,7 @@ export function getMiorailProductMigrationFlags(
     balancerExecutionV1: readBooleanFlag(env, 'MIORAIL_BALANCER_EXECUTION_V1', false),
     b20ControlV1: readBooleanFlag(env, 'MIORAIL_B20_CONTROL_V1', false),
     b20PublicContextV1: readBooleanFlag(env, 'MIORAIL_B20_PUBLIC_CONTEXT_V1', false),
+    b20TargetedMeasureV1: readBooleanFlag(env, 'MIORAIL_B20_TARGETED_MEASURE_V1', false),
     submissionRecoveryV1: readBooleanFlag(env, 'MIORAIL_SUBMISSION_RECOVERY_V1', false),
     publicProofV1: readBooleanFlag(env, 'MIORAIL_PUBLIC_PROOF_V1', false),
     mcpPrivateV1: readBooleanFlag(env, 'MIORAIL_MCP_PRIVATE_V1', false),

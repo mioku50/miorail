@@ -38,7 +38,7 @@ const FLAGS = {
   privateAiRouteV1: false,
   privateAiExecutionV1: false,
   aerodromeExecutionV1: false,
-  b20ControlV1: false, b20PublicContextV1: false,
+  b20ControlV1: false, b20PublicContextV1: false, b20TargetedMeasureV1: false,
   submissionRecoveryV1: false,
   publicProofV1: true,
   mcpPrivateV1: false,

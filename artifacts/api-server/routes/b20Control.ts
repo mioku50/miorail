@@ -83,6 +83,7 @@ import {
   createDatabaseB20ObservationRepository,
   createDatabaseB20LaunchDeployerRepository,
   createDatabaseB20ProjectRepository,
+  createDatabaseB20LaunchBuyersRepository,
   createDatabaseB20LaunchPoolRepository,
   decodeFeedCursorV1,
   encodeFeedCursorV1,
@@ -92,6 +93,7 @@ import {
   type B20ProjectRecordV1,
   type B20FeedRowV1,
   type B20OpportunityObservationV1,
+  type B20LaunchBuyersRepositoryV1,
   type B20LaunchPoolRepositoryV1,
 } from '@mioagent/route-storage';
 import { client } from '@mioagent/db';
@@ -186,12 +188,29 @@ import {
   b20ExploreAnswerV1,
   b20FundamentalAnswerV1,
   b20InvestigateAnswerV1,
+  b20NeedsEvidenceAnswerV1,
   b20PortfolioAnswerV1,
+  b20ResearchCandidatesAnswerV1,
+  type B20ReadingAttemptV1,
   type B20ConsoleDeterministicV1,
   type B20ConsoleProjectMatchV1,
   type B20ConsoleTokenReadV1,
 } from '../lib/b20ConsoleAnswer.js';
 import { referenceExitAssessmentV1, type B20ExitAssessmentV1 } from '../lib/b20ExitAssessment.js';
+import {
+  b20ObservationNeedsRefreshV1,
+  b20TargetedMeasureBudgetMsV1,
+  measureB20TokenOnDemandV1,
+  B20_TARGETED_MEASURE_MAX_PER_REQUEST_V1,
+  type B20TargetedMeasureResultV1,
+} from '../lib/b20TargetedMeasure.js';
+// The measurement pass and its wiring, imported rather than reimplemented. A
+// second copy would be a second definition of what an observation is, and the
+// first thing to drift would be which block the factory read and the control
+// read were anchored at.
+import { B20_MEASURE_DEFAULTS_V1, B20_MEASURE_REFERENCE_PROFILE_V1 } from '../../../scripts/b20MeasureCli.js';
+import { B20_NATIVE_POSITION_ATOMIC_V1, createB20MeasureDepsV1 } from '../../../scripts/b20MeasureDeps.js';
+import { createB20PoolStoreV1 } from '../../../scripts/b20PoolStore.js';
 
 // ---------------------------------------------------------------------------
 // T67C/T68F — the B20 Control and explicit entry rail.
@@ -297,6 +316,11 @@ export const b20RouteRuntime = {
     }
   },
   launchPools: (): B20LaunchPoolRepositoryV1 => createDatabaseB20LaunchPoolRepository(client),
+  /** Launch-window buying, cached per token. A targeted reading needs it for
+   * the same reason the worker does: it is what separates "nobody bought" from
+   * "people bought and could not sell", and without it an old launch would be
+   * measured into the wrong section. */
+  launchBuyers: (): B20LaunchBuyersRepositoryV1 => createDatabaseB20LaunchBuyersRepository(client),
   /** Checked separately again: a server without 0028/0029 can still inspect,
    * watch and certify — it simply has no Discover feed, and says so rather
    * than answering with an empty one. */
@@ -363,6 +387,21 @@ export const b20RouteRuntime = {
     const row = rows[0];
     return Boolean(row && row.plans && row.executions);
   },
+  /**
+   * One targeted reading, injected for the same reason `runOpportunity` is: the
+   * budgeting, freshness and cap logic around it is the part worth testing, and
+   * it must be testable without a chain.
+   */
+  measureOnDemand: (input: {
+    launch: { launchId: string; tokenAddress: string; blockNumber: string };
+    budgetMs: number;
+  }): Promise<B20TargetedMeasureResultV1> =>
+    measureB20TokenOnDemandV1({
+      launch: input.launch,
+      pass: b20TargetedMeasurePassV1(),
+      monotonicMs: b20RouteRuntime.monotonicMs,
+      budgetMs: input.budgetMs,
+    }),
   /** Injected so a test can run the whole route without a chain or a provider. */
   runOpportunity: runOpportunityV1,
   prepareEntry: prepareB20EntryV1,
@@ -1772,6 +1811,18 @@ b20ControlRouter.post('/opportunities/b20/copilot/ask', async (req: Request, res
         facts: deterministic.facts.map((fact) => ({ label: fact.label, value: fact.value })),
         missing: deterministic.missingEvidence,
         caveats: deterministic.caveats,
+        // One card, so the assertions are read straight off it. The card
+        // console is the surface where "not measured" is most often the true
+        // answer, which is exactly why it needs the check: a narration must be
+        // able to say it when the card has no observation, and must not be
+        // able to say it when the card has one.
+        assertions: {
+          state: card.observation ? 'measured' : 'not_measured',
+          matched: card.observation ? 1 : 0,
+          complete: true,
+          subjects: [card.launch.symbol || card.launch.tokenAddress],
+          about: card.observation?.standing.aboutToken === false ? 'miorail' : 'token',
+        },
       },
       deterministic: deterministic.answer,
       provider: b20RouteRuntime.narrator(),
@@ -1829,6 +1880,144 @@ export async function b20IdentityForMissingRowV1(
 }
 
 /**
+ * Readings taken because a reader named a token, before the cards are read.
+ *
+ * The gap this closes: Discover's worker measures launches inside a 48-hour
+ * age window, which is right for a background pass over 33,000 launches and
+ * wrong for a person who has just pasted an address. A launch that missed its
+ * window was never measured and never would be, and Investigate answered "No
+ * stored measurement" — technically true, and read by everyone as a finding
+ * about the token.
+ *
+ * Three bounds, all of them here rather than inside the pass:
+ *
+ *   The FLAG. Off, this returns nothing and Investigate behaves exactly as it
+ *   did — a stored measurement or its absence. This is the first B20 read that
+ *   spends metered calls inside an HTTP request, and that is an operator's
+ *   decision.
+ *
+ *   The BUDGET, wall-clock and shared across the request, and a cap on how
+ *   many tokens one question may cause a reading of. Tokens past either are
+ *   reported as `not_attempted`, never silently dropped.
+ *
+ *   FRESHNESS. A current observation is used as it stands. Only an absent or
+ *   stale one causes a reading, which is the same policy the freshness window
+ *   already states on every card.
+ *
+ * What it deliberately does NOT do is take the measure lease. That lease
+ * exists so two workers do not walk the same queue; this walks no queue, and
+ * holding it would stop the feed for as long as one reader waited.
+ */
+export async function refreshB20ReadingsV1(input: {
+  tokenAddresses: readonly string[];
+}): Promise<B20ReadingAttemptV1[]> {
+  if (b20RouteRuntime.flags(process.env).b20TargetedMeasureV1 !== true) return [];
+
+  const targets = input.tokenAddresses.slice(0, B20_TARGETED_MEASURE_MAX_PER_REQUEST_V1);
+  const skipped = input.tokenAddresses.slice(B20_TARGETED_MEASURE_MAX_PER_REQUEST_V1);
+
+  if (!b20RouteRuntime.rpcConfigured()) {
+    // Enabled and unable is a different statement from disabled, and only the
+    // first one belongs in a reader's answer.
+    return input.tokenAddresses.map((tokenAddress) => ({
+      tokenAddress,
+      outcome: 'unavailable_here' as const,
+      reason: null,
+    }));
+  }
+
+  const observations = b20RouteRuntime.observations();
+  const now = b20RouteRuntime.now();
+  const budgetMs = b20TargetedMeasureBudgetMsV1();
+  const startedAt = b20RouteRuntime.monotonicMs();
+
+  const attempts: B20ReadingAttemptV1[] = [];
+  for (const tokenAddress of targets) {
+    const remaining = budgetMs - (b20RouteRuntime.monotonicMs() - startedAt);
+    if (remaining <= 0) {
+      attempts.push({ tokenAddress, outcome: 'not_attempted', reason: null });
+      continue;
+    }
+    const found = await observations.getFeedRowForToken({ tokenAddress, historyLimit: 1 });
+    if (!found) {
+      // No canonical launch row, so there is nothing to measure. Whether the
+      // address is a B20 token at all is a separate question, asked and
+      // answered separately by the identity read.
+      attempts.push({ tokenAddress, outcome: 'not_indexed', reason: null });
+      continue;
+    }
+    if (!b20ObservationNeedsRefreshV1({ observation: found.row.observation, now })) continue;
+
+    const result = await b20RouteRuntime.measureOnDemand({
+      launch: {
+        launchId: found.row.launch.id,
+        tokenAddress: found.row.launch.tokenAddress,
+        blockNumber: found.row.launch.blockNumber,
+      },
+      budgetMs: remaining,
+    });
+    logger.info('b20 targeted measurement', {
+      // The token address is public — it is on a Discover card — and the
+      // outcome is what an operator needs to see the cost of this path. No
+      // endpoint, no key, no wallet.
+      tokenAddress: result.tokenAddress,
+      outcome: result.outcome,
+      elapsedMs: result.elapsedMs,
+    });
+    attempts.push({ tokenAddress, outcome: result.outcome, reason: result.reason });
+  }
+
+  for (const tokenAddress of skipped) {
+    // Only the ones that would actually have needed a reading. A token past the
+    // cap whose measurement is already current was not "not reached" — it was
+    // not needed, and saying otherwise would name a gap that does not exist.
+    const found = await observations.getFeedRowForToken({ tokenAddress, historyLimit: 1 });
+    if (!found) {
+      attempts.push({ tokenAddress, outcome: 'not_indexed', reason: null });
+      continue;
+    }
+    if (!b20ObservationNeedsRefreshV1({ observation: found.row.observation, now })) continue;
+    attempts.push({ tokenAddress, outcome: 'not_attempted', reason: null });
+  }
+  return attempts;
+}
+
+/**
+ * The measurement pass's dependencies, built per request.
+ *
+ * The same wiring the worker uses and the same reference profile — a second
+ * profile here would be a second definition of what an observation means, and
+ * the two would produce figures that look comparable and are not.
+ *
+ * Both stores are passed for cost rather than for correctness: a resolved pool
+ * is fixed at launch, and a closed buying window never reopens, so without them
+ * every reading would re-pay the most expensive calls in the pass to relearn
+ * facts already in Postgres.
+ */
+function b20TargetedMeasurePassV1() {
+  return {
+    observations: b20RouteRuntime.observations(),
+    deps: createB20MeasureDepsV1({
+      rpcUrl: baseMainnetRpcUrlV1(),
+      maxRetries: B20_MEASURE_DEFAULTS_V1.maxRetries,
+      nativePositionAtomic: B20_NATIVE_POSITION_ATOMIC_V1,
+      poolStore: createB20PoolStoreV1(b20RouteRuntime.launchPools()),
+      buyerRepository: b20RouteRuntime.launchBuyers(),
+    }),
+    config: {
+      ...B20_MEASURE_DEFAULTS_V1,
+      profile: { ...B20_MEASURE_REFERENCE_PROFILE_V1 },
+      // Deliberately not applied and deliberately left in place: the pass reads
+      // neither of these — they select the QUEUE — and a reader asking about a
+      // token from three weeks ago must not be refused for its age.
+      maxLaunchAgeMs: B20_MEASURE_DEFAULTS_V1.maxLaunchAgeMs,
+      minReMeasureIntervalMs: B20_MEASURE_DEFAULTS_V1.minReMeasureIntervalMs,
+    },
+    now: b20RouteRuntime.now,
+  };
+}
+
+/**
  * Stage 07 — runs a console plan.
  *
  * Every branch here is a call this file already makes for a public read, with
@@ -1844,8 +2033,19 @@ export async function runB20ConsolePlanV1(plan: B20ConsolePlanV1): Promise<B20Co
   const positionsStep = plan.steps.find((step) => step.tool === 'positions');
   const cardsStep = plan.steps.find((step) => step.tool === 'cards') ?? positionsStep;
   const changesStep = plan.steps.find((step) => step.tool === 'changes');
+  const researchStep = plan.steps.find((step) => step.tool === 'research');
 
   if (cardsStep && (cardsStep.tool === 'cards' || cardsStep.tool === 'positions')) {
+    // A reading is taken BEFORE the cards are read, and only for Investigate.
+    //
+    // Not for Portfolio: that scope's token list is a wallet's holdings, and
+    // spending a metered reading per holding on every question would turn a
+    // ranking into a measurement run. A holder's answer is about what Miorail
+    // already measured, and it says so.
+    const attempts = positionsStep
+      ? []
+      : await refreshB20ReadingsV1({ tokenAddresses: cardsStep.tokenAddresses });
+
     // One read for the whole plan. Project context answers "does MIO have a
     // live product" and "did this project exist before its token", and both are
     // questions about a card the console is already reading.
@@ -1859,7 +2059,7 @@ export async function runB20ConsolePlanV1(plan: B20ConsolePlanV1): Promise<B20Co
     // hardest to close, and a side-by-side of cards does not answer that.
     return positionsStep
       ? b20PortfolioAnswerV1({ reads, assessments })
-      : b20InvestigateAnswerV1({ reads });
+      : b20InvestigateAnswerV1({ reads, attempts });
   }
 
   // Fundamentals answer BEFORE the summary fallback and without reading it.
@@ -1877,6 +2077,87 @@ export async function runB20ConsolePlanV1(plan: B20ConsolePlanV1): Promise<B20Co
       matches: found.matches,
       corpus: found.corpus,
       available: found.available,
+    });
+  }
+
+  if (researchStep && researchStep.tool === 'research') {
+    // Four bounded pages and the movers rail, read together. Each one is a
+    // measured property that already has a section on the feed, so this cannot
+    // invent a category the rest of the product does not publish — and it
+    // cannot rank across them, because there is nothing here that orders one
+    // category above another.
+    const limit = researchStep.limit;
+    const page = async (input: {
+      standing?: (typeof B20_STANDING_GROUPS_V1)[number];
+      standingKind?: (typeof B20_EXIT_STANDING_KINDS_V1)[number];
+      project?: (typeof B20_PROJECT_FILTERS_V1)[number];
+    }) =>
+      (
+        await readDiscoverFeedV1({
+          limit,
+          cursor: null,
+          state: 'all',
+          freshness: 'all',
+          standing: input.standing ?? 'all',
+          standingKind: input.standingKind ?? null,
+          bothRoutes: false,
+          minBuyers: null,
+          project: input.project ?? 'all',
+        })
+      ).cards;
+
+    const [boughtNotSellable, twoSided, verifiedProject, moverPairs] = await Promise.all([
+      page({ standingKind: 'bought_not_sellable' }),
+      page({ standing: 'two_sided' }),
+      page({ project: 'verified_project' }),
+      b20RouteRuntime.observations().listMoverPairs({
+        limit: MARKET_RAIL_ACTIVE_OBSERVATION_LIMIT_V1,
+        now: b20RouteRuntime.now().toISOString(),
+        baselineAgeMs: MARKET_RAIL_BASELINE_AGE_MS_V1,
+        baselineToleranceMs: MARKET_RAIL_BASELINE_TOLERANCE_MS_V1,
+        maxLaunchAgeMs: DISCOVER_FEED_WINDOW_MS_V1,
+      }),
+    ]);
+    const movers = measuredMoversV1({
+      pairs: moverPairs.map((pair) => ({
+        launch: {
+          tokenAddress: pair.launch.tokenAddress,
+          symbol: pair.launch.symbol,
+          name: pair.launch.name,
+          decimals: pair.launch.decimals,
+          canonical: pair.launch.canonical,
+        },
+        latest: pair.latest,
+        baseline: pair.baseline,
+      })),
+      now: b20RouteRuntime.now(),
+      baselineAgeMs: MARKET_RAIL_BASELINE_AGE_MS_V1,
+      baselineToleranceMs: MARKET_RAIL_BASELINE_TOLERANCE_MS_V1,
+      minExitCoverageBps: MARKET_RAIL_MIN_EXIT_COVERAGE_BPS_V1,
+      limit,
+    });
+    return b20ResearchCandidatesAnswerV1({
+      categories: [
+        {
+          label: 'Bought, and a sale would not price',
+          because:
+            'wallets bought in the launch window and Miorail could not price a sale back at its reference size. This is the measurement Exit-First exists to make.',
+          cards: boughtNotSellable,
+        },
+        {
+          label: 'Both directions priced',
+          because:
+            'a purchase and a sale were both quoted against the same measured pool, so the round-trip cost and the tested exit capacity are on the card.',
+          cards: twoSided,
+        },
+        {
+          label: 'Carries a verified project claim',
+          because:
+            'a project proved control of a domain and claimed the token there, so there is published project evidence to read beside the measurement.',
+          cards: verifiedProject,
+        },
+      ],
+      movers: movers.movers,
     });
   }
 
@@ -1939,7 +2220,14 @@ export async function runB20ConsolePlanV1(plan: B20ConsolePlanV1): Promise<B20Co
         })
       ).cards
     : undefined;
-  return b20ExploreAnswerV1({ summary, cards, intent: plan.intent });
+  // Same two reads, a different answer — because the SUBJECT is different. The
+  // explore builder opens every answer with how the universe looks; a reader
+  // who asked which launches need more evidence is asking about a measurement
+  // Miorail did not finish, and that answer has to attribute the gap in its
+  // own first sentence rather than in a caveat.
+  return plan.intent === 'find_needs_evidence'
+    ? b20NeedsEvidenceAnswerV1({ summary, cards })
+    : b20ExploreAnswerV1({ summary, cards, intent: plan.intent });
 }
 
 /**
@@ -2003,6 +2291,10 @@ b20ControlRouter.post('/opportunities/b20/console/ask', async (req: Request, res
         facts: deterministic.facts.map((fact) => ({ label: fact.label, value: fact.value })),
         missing: deterministic.missingEvidence,
         caveats: deterministic.caveats,
+        // What the deterministic answer MEANT. The verifier holds the narration
+        // to it, so a fluent sentence that reverses the conclusion is discarded
+        // rather than published.
+        assertions: deterministic.assertions,
       },
       deterministic: deterministic.answer,
       provider: b20ScopeIsPrivateV1(plan.scope) ? null : b20RouteRuntime.narrator(),

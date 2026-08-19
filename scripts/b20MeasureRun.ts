@@ -239,12 +239,24 @@ export interface MeasurePassOutcomeV1 {
   pairRemeasures: number;
 }
 
-export interface MeasurePassInputV1 {
+/**
+ * Everything one measurement needs, and nothing a PASS needs.
+ *
+ * Split out from `MeasurePassInputV1` so a single launch can be measured
+ * without a queue, a lease or a budget spread across candidates — which is
+ * what a reader pasting an address into Investigate is asking for. The lease
+ * belongs to the pass: it exists so two WORKERS do not walk the same queue,
+ * and a targeted read walks no queue at all.
+ */
+export interface B20MeasureOneInputV1 {
   observations: B20ObservationRepositoryV1;
   deps: MeasurementDepsV1;
   config: MeasurePassConfigV1;
-  owner: string;
   now: () => Date;
+}
+
+export interface MeasurePassInputV1 extends B20MeasureOneInputV1 {
+  owner: string;
 }
 
 /**
@@ -424,7 +436,7 @@ export async function runB20MeasurePassV1(input: MeasurePassInputV1): Promise<Me
       const measured = await Promise.all(
         slice.map(async (launch) => {
           try {
-            return await measureOneV1({ launch, input, deadline });
+            return await measureOneV1({ launch, input });
           } catch (error) {
             // §16.29 — one broken token must not starve the rest. The failure
             // is counted and the pass moves on; nothing is written, because
@@ -472,16 +484,49 @@ export async function runB20MeasurePassV1(input: MeasurePassInputV1): Promise<Me
   }
 }
 
-interface MeasuredOneV1 {
+export interface MeasuredOneV1 {
   candidate: MeasuredCandidateV1 | null;
   routerCalls: number;
   controlCalls: number;
 }
 
+/**
+ * The three fields a measurement reads off a launch.
+ *
+ * Narrower than `B20MeasurableLaunchV1` on purpose: the rest of that record —
+ * ingestion source, last measurement, detection time — is how the QUEUE picks
+ * what to look at next, and a caller who already knows which token they want
+ * should not have to fabricate any of it.
+ */
+export type B20MeasureTargetV1 = Pick<
+  B20MeasurableLaunchV1,
+  'launchId' | 'tokenAddress' | 'blockNumber'
+>;
+
+/**
+ * One launch, measured once, through the pipeline that measures every other.
+ *
+ * Exported so the console can measure a token a reader named. That is the
+ * whole point of exporting it: the alternative — a second measurement path
+ * next to this one — would be a second definition of what an observation IS,
+ * and the first thing to drift would be which block the factory read and the
+ * control read were anchored at.
+ *
+ * Everything this function refuses still holds when it is called from a
+ * request: nothing is stored without an anchor, a provider that did not answer
+ * is never a verdict, and an identical observation at the same block is read
+ * rather than re-measured.
+ */
+export async function measureB20LaunchOnceV1(context: {
+  launch: B20MeasureTargetV1;
+  input: B20MeasureOneInputV1;
+}): Promise<MeasuredOneV1> {
+  return measureOneV1(context);
+}
+
 async function measureOneV1(context: {
-  launch: B20MeasurableLaunchV1;
-  input: MeasurePassInputV1;
-  deadline: number;
+  launch: B20MeasureTargetV1;
+  input: B20MeasureOneInputV1;
 }): Promise<MeasuredOneV1> {
   const { launch, input } = context;
   const { config, deps } = input;

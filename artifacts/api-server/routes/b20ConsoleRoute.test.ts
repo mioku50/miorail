@@ -460,3 +460,211 @@ describe('refusals cost nothing and reveal nothing', () => {
     assert.equal(response.status, 400);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Targeted measurement — a reading taken because a reader asked.
+//
+// The gap: Discover's worker measures launches inside a 48-hour age window, so
+// a launch that missed its window was never measured and never would be.
+// Investigate answered "No stored measurement", which is true of Miorail and
+// reads as a finding about the token. Every test here is about telling those
+// two apart.
+// ---------------------------------------------------------------------------
+
+const UNMEASURED = '0xb200000000000000000000195a5f43905160ee03';
+const THIRD = '0xb200000000000000000000195a5f43905160ee04';
+
+function unmeasuredRepository() {
+  return {
+    ...(repository() as unknown as Record<string, unknown>),
+    getFeedRowForToken: async ({ tokenAddress }: { tokenAddress: string }) => {
+      if (tokenAddress === TOKEN) return { row: rowV1(TOKEN, observationV1()), history: [observationV1()] };
+      // Indexed, canonical, and never measured — the state 820 launches were in
+      // on the day this was written.
+      if (tokenAddress === UNMEASURED) return { row: rowV1(UNMEASURED, null), history: [] };
+      if (tokenAddress === THIRD) return { row: rowV1(THIRD, null), history: [] };
+      return null;
+    },
+  } as never;
+}
+
+function investigate(question: string) {
+  return ask({ schemaVersion: 'b20-console-ask/v1', scope: 'investigate', question });
+}
+
+describe('Investigate measures a token it was asked about', () => {
+  beforeEach(() => {
+    b20RouteRuntime.observations = () => unmeasuredRepository();
+    b20RouteRuntime.rpcConfigured = () => true;
+    b20RouteRuntime.flags = () =>
+      ({ routeIntelligenceV1: true, b20ControlV1: true, b20TargetedMeasureV1: true }) as never;
+  });
+
+  test('with the flag off nothing is measured and the answer is what shipped before', async () => {
+    b20RouteRuntime.flags = () => ({ routeIntelligenceV1: true, b20ControlV1: true }) as never;
+    let called = 0;
+    b20RouteRuntime.measureOnDemand = (async () => {
+      called += 1;
+      throw new Error('must not be reached');
+    }) as never;
+    const response = await investigate(`What was measured here? ${UNMEASURED}`);
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(called, 0);
+    assert.match(response.body.answer, /no stored observation/);
+  });
+
+  test('an unmeasured launch is measured now, and the answer says the reading was taken', async () => {
+    let measured: string[] = [];
+    b20RouteRuntime.measureOnDemand = (async (input: { launch: { tokenAddress: string } }) => {
+      measured.push(input.launch.tokenAddress);
+      return { tokenAddress: input.launch.tokenAddress, outcome: 'measured', reason: null, elapsedMs: 900 };
+    }) as never;
+    const response = await investigate(`What was measured here? ${UNMEASURED}`);
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.deepEqual(measured, [UNMEASURED]);
+    assert.match(response.body.answer, /took an Exit-First reading/);
+  });
+
+  test('a launch age of any size is measurable — the 48-hour window is the QUEUE’s, not the reader’s', async () => {
+    // MIO launched 739,000 blocks before Discover started. The worker will
+    // never reach a launch like that, and a reader asking about one must not be
+    // refused for the age of a row.
+    b20RouteRuntime.observations = () =>
+      ({
+        ...(unmeasuredRepository() as unknown as Record<string, unknown>),
+        getFeedRowForToken: async ({ tokenAddress }: { tokenAddress: string }) =>
+          tokenAddress === UNMEASURED
+            ? {
+                row: {
+                  ...rowV1(UNMEASURED, null),
+                  launch: { ...rowV1(UNMEASURED, null).launch, detectedAt: '2026-01-01T00:00:00.000Z' },
+                },
+                history: [],
+              }
+            : null,
+      }) as never;
+    let called = 0;
+    b20RouteRuntime.measureOnDemand = (async (input: { launch: { tokenAddress: string } }) => {
+      called += 1;
+      return { tokenAddress: input.launch.tokenAddress, outcome: 'measured', reason: null, elapsedMs: 5 };
+    }) as never;
+    await investigate(`Check ${UNMEASURED}`);
+    assert.equal(called, 1);
+  });
+
+  test('a fresh observation is used as it stands, and costs nothing', async () => {
+    let called = 0;
+    b20RouteRuntime.measureOnDemand = (async () => {
+      called += 1;
+      return { tokenAddress: TOKEN, outcome: 'measured', reason: null, elapsedMs: 5 };
+    }) as never;
+    const response = await investigate(`What was measured here? ${TOKEN}`);
+    assert.equal(response.status, 200);
+    assert.equal(called, 0, 'a current measurement must not be re-taken');
+  });
+
+  test('an endpoint that did not answer is Miorail’s fact, never the token’s', async () => {
+    b20RouteRuntime.measureOnDemand = (async (input: { launch: { tokenAddress: string } }) => ({
+      tokenAddress: input.launch.tokenAddress,
+      outcome: 'provider_unavailable',
+      reason: null,
+      elapsedMs: 4000,
+    })) as never;
+    const response = await investigate(`Check ${UNMEASURED}`);
+    assert.match(response.body.answer, /endpoint did not answer/);
+    assert.match(response.body.answer, /establishes nothing either way about the token/);
+    // And the absence is NAMED, so a reader can see what is missing rather than
+    // inferring it from a sentence.
+    assert.ok(
+      response.body.missingEvidence.some((entry: string) => /attempted one now and the endpoint did not answer/.test(entry)),
+      JSON.stringify(response.body.missingEvidence),
+    );
+  });
+
+  test('a reading still running is said to be running, not reported as absent', async () => {
+    b20RouteRuntime.measureOnDemand = (async (input: { launch: { tokenAddress: string } }) => ({
+      tokenAddress: input.launch.tokenAddress,
+      outcome: 'timed_out',
+      reason: null,
+      elapsedMs: 25_000,
+    })) as never;
+    const response = await investigate(`Check ${UNMEASURED}`);
+    assert.match(response.body.answer, /still running/);
+    assert.ok(!/has no measurement$/.test(response.body.answer));
+  });
+
+  test('an incomplete reading names its gap in the measurement’s own words', async () => {
+    b20RouteRuntime.measureOnDemand = (async (input: { launch: { tokenAddress: string } }) => ({
+      tokenAddress: input.launch.tokenAddress,
+      outcome: 'measurement_incomplete',
+      reason: 'route_search_degraded',
+      elapsedMs: 3000,
+    })) as never;
+    const response = await investigate(`Check ${UNMEASURED}`);
+    const fact = response.body.facts.find((entry: { value: string }) => /route search degraded/.test(entry.value));
+    assert.ok(fact, JSON.stringify(response.body.facts));
+  });
+
+  test('a request may cause at most two readings, and says which it did not reach', async () => {
+    const seen: string[] = [];
+    b20RouteRuntime.measureOnDemand = (async (input: { launch: { tokenAddress: string } }) => {
+      seen.push(input.launch.tokenAddress);
+      return { tokenAddress: input.launch.tokenAddress, outcome: 'measured', reason: null, elapsedMs: 5 };
+    }) as never;
+    // Three unmeasured launches, so the cap is the only thing that can stop
+    // the third. TOKEN would be skipped for being current, which proves
+    // nothing about the cap.
+    b20RouteRuntime.observations = () =>
+      ({
+        ...(unmeasuredRepository() as unknown as Record<string, unknown>),
+        getFeedRowForToken: async ({ tokenAddress }: { tokenAddress: string }) =>
+          [UNMEASURED, THIRD, OTHER].includes(tokenAddress)
+            ? { row: rowV1(tokenAddress, null), history: [] }
+            : null,
+      }) as never;
+    const response = await investigate(`Compare ${UNMEASURED} ${THIRD} ${OTHER}`);
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.deepEqual(seen, [UNMEASURED, THIRD]);
+    assert.match(response.body.answer, /did not reach/);
+  });
+
+  test('a token past the cap whose measurement is current is not reported as unreached', async () => {
+    // "Not reached" is a gap, and a token that needed nothing has none. Naming
+    // one would be the same defect this whole path exists to remove, in
+    // miniature.
+    b20RouteRuntime.measureOnDemand = (async (input: { launch: { tokenAddress: string } }) => ({
+      tokenAddress: input.launch.tokenAddress,
+      outcome: 'measured',
+      reason: null,
+      elapsedMs: 5,
+    })) as never;
+    const response = await investigate(`Compare ${UNMEASURED} ${THIRD} ${TOKEN}`);
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.ok(!/did not reach/.test(response.body.answer), response.body.answer);
+  });
+
+  test('an enabled server with no endpoint says so about itself', async () => {
+    b20RouteRuntime.rpcConfigured = () => false;
+    const response = await investigate(`Check ${UNMEASURED}`);
+    assert.match(response.body.answer, /no Base endpoint configured/);
+    assert.match(response.body.answer, /fact about this server, not about the token/);
+  });
+
+  test('Portfolio never causes a reading, whatever the flag says', async () => {
+    // A holder's token list is a wallet's holdings. Spending a metered reading
+    // per holding on every question would turn a ranking into a measurement run.
+    let called = 0;
+    b20RouteRuntime.measureOnDemand = (async () => {
+      called += 1;
+      return { tokenAddress: UNMEASURED, outcome: 'measured', reason: null, elapsedMs: 5 };
+    }) as never;
+    const response = await ask({
+      schemaVersion: 'b20-console-ask/v1',
+      scope: 'portfolio',
+      question: 'Which of my positions is hardest to close?',
+      tokenAddresses: [UNMEASURED],
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(called, 0);
+  });
+});

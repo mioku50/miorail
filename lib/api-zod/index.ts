@@ -1994,6 +1994,10 @@ export const StatusResponseSchema = z.object({
     // T67C: same additive treatment.
     b20ControlV1: z.boolean().optional(),
     b20PublicContextV1: z.boolean().optional(),
+    // Targeted measurement is deliberately absent, the same treatment
+    // `tokenIdentityV1` gets: whether a named token is measured on demand is
+    // decided server-side, and the ANSWER says what happened. A client with the
+    // boolean would have nothing to decide with it.
     // T67C.2: same additive treatment.
     submissionRecoveryV1: z.boolean().optional(),
     publicProofV1: z.boolean().optional(),
