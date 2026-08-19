@@ -32,6 +32,24 @@ const OPENROUTER_HOSTS_V1: readonly string[] = ['openrouter.ai'];
  * for an unrelated base URL would hand it to whoever that host is. */
 const AGENTROUTER_HOSTS_V1: readonly string[] = ['agentrouter.org'];
 
+/**
+ * Headers a gateway needs before it will route a request at all.
+ *
+ * AgentRouter routes on `User-Agent`: a valid key sent with Node's default one
+ * comes back 401 `unauthorized_client_error`, which reads as a bad credential
+ * and is not one. That kept it unusable here for months. The value is
+ * configurable because it is a routing token for somebody else's gateway and
+ * can change without warning; the default is the one measured working.
+ *
+ * Host-scoped, like the key resolution below and for the same reason: a header
+ * meant for one gateway must not be sent to another.
+ */
+export function providerHeadersV1(baseUrl: string, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  if (!AGENTROUTER_HOSTS_V1.includes(providerLabelV1(baseUrl))) return {};
+  const agent = (env.AGENTROUTER_USER_AGENT || '').trim() || 'cline/3.1.0';
+  return { 'User-Agent': agent };
+}
+
 function fallbackApiKeyV1(baseUrl: string, prefix: string): string {
   const explicit = trimmed(`${prefix}_API_KEY`);
   if (explicit) return explicit;
@@ -88,7 +106,12 @@ function fallbackLinkV1(prefix: string): (NamedLlmProviderV1 & { model: string }
   return {
     label: providerLabelV1(baseUrl),
     model,
-    provider: new OpenAiCompatibleClient({ apiKey, baseUrl, defaultModel: model }),
+    provider: new OpenAiCompatibleClient({
+      apiKey,
+      baseUrl,
+      defaultModel: model,
+      headers: providerHeadersV1(baseUrl),
+    }),
   };
 }
 
@@ -173,6 +196,7 @@ export function createLlmProvider(): LlmProvider {
         apiKey,
         baseUrl,
         defaultModel: model,
+        headers: providerHeadersV1(baseUrl),
         fetchImpl: fetchForPaymentMode()
       })
     });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { createLlmProvider, providerLabelV1 } from './factory.js';
+import { createLlmProvider, providerHeadersV1, providerLabelV1 } from './factory.js';
 import { LlmProviderChainV1 } from './fallback.js';
 import { OpenAiCompatibleClient } from './openai.js';
 
@@ -289,4 +289,72 @@ test('two links on the same host are told apart in the log', async (t) => {
   assert.match(hops, /openrouter\.ai \(nvidia\/nemotron-3-nano-30b-a3b:free\)/);
   // The unique host keeps its short, familiar name.
   assert.match(hops, /^\[llm\] api\.airforce failed/m);
+});
+
+// ---------------------------------------------------------------------------
+// AgentRouter routes on User-Agent.
+//
+// Measured against the live gateway from the production host on 2026-08-19,
+// with the same valid key both times:
+//
+//   User-Agent: cline/3.1.0   → HTTP 200, a real completion
+//   no User-Agent             → HTTP 401 unauthorized_client_error
+//
+// The 401 is what made this look like a bad credential for months. It is not:
+// the key is fine and the request is refused before the key is consulted.
+// ---------------------------------------------------------------------------
+
+test('AgentRouter gets the User-Agent it routes on, and nobody else does', () => {
+  assert.deepEqual(providerHeadersV1('https://agentrouter.org/v1', {} as NodeJS.ProcessEnv), {
+    'User-Agent': 'cline/3.1.0',
+  });
+  // Host-scoped, the same rule the key resolution follows: a header meant for
+  // one gateway must not be sent to another.
+  assert.deepEqual(providerHeadersV1('https://openrouter.ai/api', {} as NodeJS.ProcessEnv), {});
+  assert.deepEqual(providerHeadersV1('https://api.mistral.ai', {} as NodeJS.ProcessEnv), {});
+});
+
+test('the routing token is an operator setting, because it is somebody else’s', () => {
+  assert.deepEqual(
+    providerHeadersV1('https://agentrouter.org/v1', { AGENTROUTER_USER_AGENT: 'cline/3.2.0' } as NodeJS.ProcessEnv),
+    { 'User-Agent': 'cline/3.2.0' },
+  );
+  // Blank falls back to the measured-working default rather than sending an
+  // empty header, which is the same as sending none.
+  assert.deepEqual(
+    providerHeadersV1('https://agentrouter.org/v1', { AGENTROUTER_USER_AGENT: '  ' } as NodeJS.ProcessEnv),
+    { 'User-Agent': 'cline/3.1.0' },
+  );
+});
+
+test('a configured header cannot replace the credential or the content type', async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  let sent: Record<string, string> = {};
+  globalThis.fetch = (async (_url: string, init: RequestInit) => {
+    sent = init.headers as Record<string, string>;
+    return {
+      ok: true,
+      json: async () => ({ choices: [{ message: { role: 'assistant', content: 'ok' } }] }),
+    };
+  }) as unknown as typeof fetch;
+
+  const client = new OpenAiCompatibleClient({
+    apiKey: 'real-key',
+    baseUrl: 'https://agentrouter.org/v1',
+    defaultModel: 'gpt-5.6-sol',
+    headers: {
+      'User-Agent': 'cline/3.1.0',
+      // A header map is configuration. Configuration must not be able to
+      // redirect the credential or change what the body claims to be.
+      Authorization: 'Bearer attacker-key',
+      'Content-Type': 'text/plain',
+    },
+  });
+  await client.generate({ messages: [{ role: 'user', content: 'hi' }] });
+  assert.equal(sent['User-Agent'], 'cline/3.1.0');
+  assert.equal(sent.Authorization, 'Bearer real-key');
+  assert.equal(sent['Content-Type'], 'application/json');
 });

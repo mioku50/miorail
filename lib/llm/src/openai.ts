@@ -5,6 +5,19 @@ export interface OpenAiConfig {
   apiKey: string;
   defaultModel: string;
   fetchImpl?: typeof fetch;
+  /**
+   * Extra request headers this gateway requires.
+   *
+   * Added because AgentRouter routes on `User-Agent` and answers 401
+   * `unauthorized_client_error` to a valid key sent without one it recognises —
+   * so an OpenAI-compatible client that sends none is unusable there whatever
+   * the credential says.
+   *
+   * `Content-Type` and `Authorization` are applied AFTER these and cannot be
+   * replaced by them: a header map is configuration, and configuration must not
+   * be able to redirect the credential or change the body's declared type.
+   */
+  headers?: Readonly<Record<string, string>>;
 }
 
 /** How much of a provider's error body is kept. A gateway that answers with an
@@ -52,6 +65,8 @@ export class OpenAiCompatibleClient implements LlmProvider {
     const response = await fetchImpl(url, {
       method: 'POST',
       headers: {
+        ...(this.config.headers ?? {}),
+        // Last, so a configured header can never replace either of these.
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${this.config.apiKey}`
       },
