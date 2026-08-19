@@ -5,6 +5,7 @@ import {
   b20NarrationEvidenceStrengthV1,
   B20_NARRATION_MAX_CHARS_V1,
   B20_NARRATION_MAX_EVIDENCE_NUMBERS_V1,
+  type B20AnswerAssertionsV1,
 } from './b20AnswerVerify.js';
 import type { B20AnswerPlanV1 } from './b20AnswerPlan.js';
 import type { B20ConsoleIntentV1 } from './b20ConsolePlan.js';
@@ -37,11 +38,21 @@ export interface B20EvidenceBundleV1 {
   /** The measured facts, already formatted. A narrator may quote these and
    * nothing else. */
   facts: B20EvidenceFactV1[];
-  /** Named absences. As load-bearing as the facts: "not measured" is the
-   * answer to most questions this product is asked. */
+  /** Named absences. As load-bearing as the facts, and the ONLY absences a
+   * narration may state — see rule 4. */
   missing: string[];
   /** Sentences that must survive any paraphrase. */
   caveats: string[];
+  /**
+   * What the deterministic answer MEANT, for the verifier to hold a narration
+   * to.
+   *
+   * Not part of the prompt — the narrator is told the same things in words,
+   * and this is what checks that it listened. Optional so a caller that has
+   * not been taught to compute it still narrates as before, with the number
+   * and vocabulary rules alone.
+   */
+  assertions?: B20AnswerAssertionsV1;
 }
 
 export type B20AnswerSourceV1 = 'deterministic_evidence' | 'verified_narration';
@@ -77,9 +88,10 @@ Rules, all enforced automatically after you answer:
 1. Use ONLY numbers that appear verbatim in the bundle. Do not round, convert, sum, average or derive. If a figure is not in the bundle, do not write a figure.
 2. Never recommend, warn about, or characterise a token. No "safe", "unsafe", "scam", "rug", "opportunity", "promising". Miorail measures exit conditions; none of those are measurements.
 3. Never claim an outcome. A measured quote is not a promise that a trade will fill.
-4. State absences as plainly as presences. "Not measured" is the honest answer to most questions here and it is never a zero.
+4. State absences as plainly as presences — but ONLY the absences the bundle lists under NOT MEASURED. "Not measured" is never a general fallback. If the bundle contains measured facts, the answer states them; answering "not measured" over a bundle that measured something is the one failure that makes this whole surface untrustworthy. An absence is also never a zero.
 5. When the bundle says a finding is about MIORAIL rather than about the token — a venue it did not search, a call that did not answer — say so. Do not report it as a property of the token.
-6. Answer in the language of the question. Be brief: a few sentences, under ${B20_NARRATION_MAX_CHARS_V1} characters.
+6. Do not change what the answer is. You are rephrasing a conclusion that has already been reached: if it names tokens, name them; if it counts matches, keep the count; if it says a scan hit its limit, keep that. You may shorten, explain or translate. You may not replace it with a different conclusion.
+7. Answer in the language of the question. Be brief: a few sentences, under ${B20_NARRATION_MAX_CHARS_V1} characters.
 
 Write only the answer. No preamble, no headings, no lists unless the bundle is a list.`;
 
@@ -153,7 +165,7 @@ export async function narrateB20AnswerV1(input: {
     return keep([`the narrator did not answer (${error instanceof Error ? error.name : 'unknown'})`]);
   }
 
-  const verdict = verifyB20NarrationV1({ narration, evidence });
+  const verdict = verifyB20NarrationV1({ narration, evidence, assertions: input.bundle.assertions });
   if (!verdict.ok) return keep(verdict.violations);
 
   // The VERIFIED string, not the raw one. Verifying one text and displaying

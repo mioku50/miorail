@@ -342,3 +342,116 @@ describe('project questions', () => {
     assert.notEqual(plan.intent, 'find_verified_projects');
   });
 });
+
+// ---------------------------------------------------------------------------
+// The production prompts.
+//
+// Every line below was typed into the live console in Base App on 2026-08-19,
+// and most of them went to the wrong read. They are pinned here as sentences a
+// person actually wrote, not as phrasings chosen to fit a pattern — which was
+// the original defect: the matcher recognised Miorail's own vocabulary ("both
+// directions", "round trip") and almost nothing a reader would say.
+// ---------------------------------------------------------------------------
+
+describe('a reader may ask in their own words', () => {
+  test('a "bought but no sale" question in any of its natural phrasings', () => {
+    // The first of these came back as the universe counts in production: the
+    // old pattern required the sale word AFTER the negation, and English puts
+    // it before as often as not.
+    for (const question of [
+      'Which B20 tokens were bought but a sale could not be priced?',
+      "entry worked but exit didn't",
+      "could buy but couldn't sell",
+      "buy route exists but sale doesn't",
+      'Which tokens did people buy and then not manage to sell?',
+      'Какие токены купили, а продать не смогли?',
+      'Какие токены купили, а продать нельзя?',
+    ]) {
+      const result = plan(question);
+      assert.equal(result.intent, 'find_bought_not_sellable', question);
+      assert.deepEqual(result.steps.map((step) => step.tool), ['summary', 'list'], question);
+    }
+  });
+
+  test('a "both directions" question without Miorail’s own words for it', () => {
+    for (const question of [
+      'Show B20 tokens where both entry and exit were priced',
+      'which ones can be bought and sold',
+      'Which B20 priced in both directions?',
+      'Какие токены можно и купить и продать?',
+    ]) {
+      const result = plan(question);
+      assert.equal(result.intent, 'find_two_sided', question);
+    }
+  });
+
+  test('a negation keeps a two-legged question out of the two-sided read', () => {
+    // The one thing that separates the two: "bought and could not be sold"
+    // carries an entry word, an exit word and a join word, exactly like the
+    // question above it.
+    assert.equal(plan('tokens that were bought and could not be sold').intent, 'find_bought_not_sellable');
+  });
+
+  test('"which launches need more evidence, and why" has its own read', () => {
+    for (const question of [
+      'Which B20 launches need more evidence, and why?',
+      'Where is the measurement incomplete?',
+      'Какие запуски требуют больше доказательств?',
+    ]) {
+      const result = plan(question);
+      assert.equal(result.intent, 'find_needs_evidence', question);
+      const list = result.steps.find((step) => step.tool === 'list');
+      assert.ok(list && list.tool === 'list' && list.standing === 'miorail_limit', question);
+    }
+  });
+
+  test('"what is worth looking at" is answered, not refused', () => {
+    // It used to be refused from Investigate, which read as the console being
+    // unable to understand a plain English sentence.
+    for (const [question, scope] of [
+      ['Find me the most interesting B20 tokens to investigate', 'investigate'],
+      ['What should I look at?', 'explore'],
+      ['Самые интересные токены', 'investigate'],
+    ] as const) {
+      const result = plan(question, scope);
+      assert.equal(result.intent, 'find_research_candidates', question);
+      assert.equal(result.refusal, null, question);
+      // Answered in Explore, and the plan SAYS so, so the panel can relabel
+      // itself instead of putting a universe answer under an Investigate tab.
+      assert.equal(result.scope, 'explore', question);
+      assert.deepEqual(result.steps.map((step) => step.tool), ['research'], question);
+    }
+  });
+
+  test('an address anywhere in the sentence still wins', () => {
+    for (const question of [
+      `Check ${TOKEN_A}`,
+      `Investigate ${TOKEN_A}`,
+      `What do we know about ${TOKEN_A}?`,
+      `Does this B20 token have a working market? ${TOKEN_A}`,
+    ]) {
+      const result = plan(question, 'explore');
+      assert.equal(result.scope, 'investigate', question);
+      assert.equal(result.intent, 'compare_tokens', question);
+      assert.deepEqual(result.tokenAddresses, [TOKEN_A], question);
+    }
+  });
+
+  test('Investigate still refuses a question that really is about unnamed tokens', () => {
+    // The refusal is right here and stays. What changed is that it no longer
+    // catches every sentence typed under this tab.
+    for (const question of ['What was measured here?', 'How do these compare?']) {
+      const result = plan(question, 'investigate');
+      assert.equal(result.intent, 'unsupported', question);
+      assert.equal(result.scope, 'investigate', question);
+      // And it points somewhere, rather than only saying no.
+      assert.match(result.refusal ?? '', /Explore/);
+    }
+  });
+
+  test('a universe question asked from Investigate is answered in Explore', () => {
+    const result = plan('How many launches were measured?', 'investigate');
+    assert.equal(result.scope, 'explore');
+    assert.equal(result.intent, 'universe_counts');
+  });
+});

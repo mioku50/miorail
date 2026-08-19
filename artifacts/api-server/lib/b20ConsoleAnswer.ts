@@ -1,4 +1,5 @@
 import {
+  B20_CONSUMER_STANDING_COPY_V1,
   B20_FUNDAMENTAL_DIMENSION_LABEL_V1,
   B20_FUNDAMENTAL_PREDICATE_RULES_V1,
   B20_FUNDAMENTAL_STANDING_COPY_V1,
@@ -13,6 +14,7 @@ import {
 import { b20QuoteAssetDisplayV1 } from '@mioagent/opportunity-rail/quoteAsset';
 import type { B20DetectionOutcomeV1, B20TokenIndexStandingV1 } from '@mioagent/b20-control';
 
+import type { B20AnswerAssertionsV1 } from './b20AnswerVerify.js';
 import { b20AmountLabelV1 } from './b20Copilot.js';
 import type { B20ExitAssessmentV1 } from './b20ExitAssessment.js';
 import type { B20ConsolePlanV1 } from './b20ConsolePlan.js';
@@ -53,6 +55,14 @@ export interface B20ConsoleDeterministicV1 {
   missingEvidence: string[];
   caveats: string[];
   reads: B20ConsoleReadV1[];
+  /**
+   * What this answer MEANS, for the narrator to be held to.
+   *
+   * Every builder below produces it, and it is not derived from the sentence:
+   * it is what the builder already knew while writing the sentence. A narration
+   * that contradicts it is discarded — see `verifyB20NarrationSemanticsV1`.
+   */
+  assertions: B20AnswerAssertionsV1;
 }
 
 /** The counts a plan's `summary` step returned. Structurally the universe
@@ -123,6 +133,19 @@ function symbolV1(card: B20OpportunityCardV1): string {
   return card.launch.symbol || card.launch.tokenAddress;
 }
 
+/**
+ * What a capped scan actually established.
+ *
+ * The summary reads the NEWEST launches up to a scan limit. When that limit is
+ * reached before the window runs out, "3000 in the last 48 hours" is not the
+ * number of launches in the window — it is the number Miorail looked at. The
+ * two were indistinguishable on screen, and a reader had no way to tell a total
+ * from a ceiling. Every surface that quotes the figure now carries this
+ * sentence with it.
+ */
+export const SCAN_CAP_CAVEAT_V1 =
+  'The scan limit was reached before the window ran out, so these are counts of the newest launches Miorail read rather than of every launch in the window.';
+
 /** The caveat every scope carries. Stated once, at the end, in the reader's
  * words rather than the schema's. */
 export const B20_CONSOLE_BASE_CAVEATS_V1 = [
@@ -176,11 +199,17 @@ export function b20ExploreAnswerV1(input: {
 }): B20ConsoleDeterministicV1 {
   const { summary } = input;
   const window = windowLabelV1(summary.window.maxLaunchAgeMs);
+  const capped = !summary.window.complete;
   const facts: B20ConsoleFactV1[] = [
     {
       label: 'Launches read',
-      value: `${summary.window.launches} in the last ${window}`,
-      tone: 'neutral',
+      // "3000 in the last 48 hours" reads as the total. It is the ceiling: the
+      // scan stopped there. The distinction goes in the value itself, because
+      // a caveat under the fold does not travel with the number.
+      value: capped
+        ? `${summary.window.launches} newest in the last ${window} — scan cap reached, not the total`
+        : `${summary.window.launches} in the last ${window}`,
+      tone: capped ? 'warning' : 'neutral',
     },
   ];
 
@@ -216,13 +245,15 @@ export function b20ExploreAnswerV1(input: {
   }
 
   const caveats = [...summary.caveats, ...B20_CONSOLE_BASE_CAVEATS_V1];
-  if (!summary.window.complete) {
-    caveats.push(
-      'The scan limit was reached before the window ran out, so these are counts of the newest launches rather than of every launch in the window.',
-    );
-  }
+  if (capped) caveats.push(SCAN_CAP_CAVEAT_V1);
 
-  const context = `Miorail has stored measurements for ${pluralV1(summary.window.launches, 'B20 launch', 'B20 launches')} detected in the last ${window}.`;
+  // The lead sentence says which of the two numbers this is. Asked "how many
+  // B20 launches were measured in the last 48 hours", the console answered
+  // "3000 in the last 48 hours" — true of what it read, and read by everyone
+  // as the total.
+  const context = capped
+    ? `Miorail read the newest ${pluralV1(summary.window.launches, 'B20 launch', 'B20 launches')} detected in the last ${window}. The scan cap was reached, so this does not establish the total number of launches in that window.`
+    : `Miorail has stored measurements for ${pluralV1(summary.window.launches, 'B20 launch', 'B20 launches')} detected in the last ${window}.`;
   const sectionSentence = summary.sections.length === 0
     ? ' None of them has reached a stored conclusion yet.'
     : ` They fall into ${pluralV1(summary.sections.length, 'group', 'groups')}: ${summary.sections
@@ -252,10 +283,12 @@ export function b20ExploreAnswerV1(input: {
   const finding = FINDING_COPY_V1[input.intent as keyof typeof FINDING_COPY_V1] ?? null;
   let lead = `${context}${sectionSentence}${limitSentence}`;
 
+  let matched = summary.window.launches;
   if (finding) {
     const count = finding.standingKind
       ? summary.standing.find((entry) => entry.kind === finding.standingKind)?.count ?? 0
       : summary.sections.find((section) => section.group === finding.group)?.count ?? 0;
+    matched = count;
     lead = named.length === 0
       // Zero is a real answer here and it is NOT the universe counts. Opening
       // with those would read as an evasion of a question with a plain answer.
@@ -274,6 +307,201 @@ export function b20ExploreAnswerV1(input: {
       { tool: 'summary', detail: `${summary.window.launches} launches, window ${window}, computed ${summary.computedAt}` },
       ...(input.cards ? [{ tool: 'list', detail: `${input.cards.length} cards matching the question’s filter` }] : []),
     ],
+    assertions: {
+      // A summary that read launches HAS measured something, whatever the
+      // finding count turns out to be. Zero matches is a result, not an
+      // absence of one — which is why `matched` and `state` are separate.
+      state: summary.window.launches > 0 ? 'measured' : 'not_measured',
+      matched,
+      complete: summary.window.complete,
+      subjects: named.map((card) => symbolV1(card)),
+      about: input.intent === 'find_not_searched' ? 'miorail' : 'token',
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Needs more evidence — the gaps, stated as Miorail's.
+//
+// Its own builder rather than a fourth `FINDING_COPY_V1` row, because the
+// SUBJECT is different from every other answer in this console. "Which
+// launches were bought and would not price a sale" is about tokens; "which
+// launches need more evidence" is about a measurement Miorail did not finish,
+// and the tokens named in it are named as places where that gap shows.
+//
+// So every sentence here attributes the gap, and the per-kind reasons come
+// from the same table the Discover card renders — a second list of reasons
+// would drift, and the two surfaces would then disagree about what
+// `venue_not_searched` means.
+// ---------------------------------------------------------------------------
+
+export function b20NeedsEvidenceAnswerV1(input: {
+  summary: B20ConsoleSummaryV1;
+  /** The bounded page of `miorail_limit` cards, so the answer can name a few. */
+  cards?: readonly B20OpportunityCardV1[];
+}): B20ConsoleDeterministicV1 {
+  const { summary } = input;
+  const window = windowLabelV1(summary.window.maxLaunchAgeMs);
+  // `aboutToken === false` is the definition of this section, and reading it
+  // off the flag rather than off a hand-kept list of kinds is what stops a new
+  // kind from silently landing in the token sections instead.
+  const gaps = summary.standing
+    .filter((entry) => entry.aboutToken === false && entry.count > 0)
+    .slice()
+    .sort((left, right) => right.count - left.count);
+  const total = gaps.reduce((sum, entry) => sum + entry.count, 0);
+
+  const facts: B20ConsoleFactV1[] = [];
+  const missingEvidence: string[] = [];
+  for (const gap of gaps) {
+    const copy = B20_CONSUMER_STANDING_COPY_V1[gap.kind as keyof typeof B20_CONSUMER_STANDING_COPY_V1];
+    facts.push({
+      label: copy ? copy.headline : gap.kind.replaceAll('_', ' '),
+      value: pluralV1(gap.count, 'launch', 'launches'),
+      tone: 'warning',
+    });
+    if (copy) missingEvidence.push(`${copy.status}: ${copy.body}`);
+  }
+
+  const named = (input.cards ?? []).slice(0, 5);
+  for (const card of named) {
+    facts.push({
+      label: symbolV1(card),
+      value: card.observation?.standing.headline ?? 'Not measured',
+      tone: 'warning',
+    });
+  }
+
+  const caveats = [
+    ...summary.caveats,
+    // The sentence this whole answer exists to carry. Stated as a caveat AND in
+    // the lead, because a reader who skims one will read the other.
+    'Every line above is a gap in Miorail\u2019s own measurement. None of it is a finding about the tokens named, and none of it is evidence that they cannot be sold.',
+    ...B20_CONSOLE_BASE_CAVEATS_V1,
+  ];
+  if (!summary.window.complete) caveats.push(SCAN_CAP_CAVEAT_V1);
+
+  const answer =
+    total === 0
+      ? `Every B20 launch Miorail read in the last ${window} carries a completed reading, so there is no evidence gap to report in this window.`
+      : `${pluralV1(total, 'launch', 'launches')} in the last ${window} carry a reading Miorail did not finish. ${
+          gaps.length === 1 ? 'The reason is' : `The ${gaps.length} reasons are`
+        }: ${gaps
+          .map((gap) => {
+            const copy = B20_CONSUMER_STANDING_COPY_V1[gap.kind as keyof typeof B20_CONSUMER_STANDING_COPY_V1];
+            return `${copy ? copy.status.toLowerCase() : gap.kind.replaceAll('_', ' ')} (${gap.count})`;
+          })
+          .join(', ')}. These are limits of Miorail\u2019s measurement, not properties of the tokens${
+          named.length > 0 ? `, and the ones below are where they currently show: ${named.map((card) => symbolV1(card)).join(', ')}` : ''
+        }.`;
+
+  return {
+    answer,
+    facts: facts.slice(0, 16),
+    missingEvidence: missingEvidence.slice(0, 20),
+    caveats: caveats.slice(0, 12),
+    reads: [
+      { tool: 'summary', detail: `${summary.window.launches} launches, window ${window}, computed ${summary.computedAt}` },
+      ...(input.cards ? [{ tool: 'list', detail: `${input.cards.length} cards in the incomplete-reading section` }] : []),
+    ],
+    assertions: {
+      state: summary.window.launches > 0 ? 'measured' : 'not_measured',
+      matched: total,
+      complete: summary.window.complete,
+      subjects: named.map((card) => symbolV1(card)),
+      // The whole answer is about a reading Miorail did not finish, so a
+      // narration that does not say whose limit it is has changed the subject.
+      about: 'miorail',
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Research candidates — "what is worth looking at", without a ranking.
+//
+// The question this answers used to be refused, and the refusal read as the
+// console not understanding a plain sentence. It IS answerable: not as a list
+// of good tokens, which this product does not know and will not guess, but as
+// named categories of already-measured properties a reader can go and inspect.
+//
+// The words that are absent are the design. There is no "best", no "top", no
+// "promising" and no ordering across categories — each category is one measured
+// property, stated in the same vocabulary the feed uses, and the reader decides
+// what is interesting. Miorail supplies the evidence, not the shortlist.
+// ---------------------------------------------------------------------------
+
+export interface B20ResearchCategoryV1 {
+  /** Reader-facing. Never a superlative. */
+  label: string;
+  /** What was measured to put a token in this category. */
+  because: string;
+  cards: readonly B20OpportunityCardV1[];
+}
+
+export function b20ResearchCandidatesAnswerV1(input: {
+  categories: readonly B20ResearchCategoryV1[];
+  /** Tokens with two comparable observations about 24h apart, already paired. */
+  movers: readonly MeasuredMoverV1[];
+}): B20ConsoleDeterministicV1 {
+  const facts: B20ConsoleFactV1[] = [];
+  const missingEvidence: string[] = [];
+  const sentences: string[] = [];
+  const reads: B20ConsoleReadV1[] = [];
+
+  for (const category of input.categories) {
+    reads.push({ tool: 'list', detail: `${category.cards.length} cards \u2014 ${category.label.toLowerCase()}` });
+    if (category.cards.length === 0) {
+      missingEvidence.push(`${category.label} \u2014 no launch in the current window carries this measurement.`);
+      continue;
+    }
+    facts.push({
+      label: category.label,
+      value: category.cards.map((card) => symbolV1(card)).join(', '),
+      tone: 'neutral',
+    });
+    sentences.push(`${category.label}: ${category.because}`);
+  }
+
+  reads.push({ tool: 'changes', detail: `${input.movers.length} launches with two comparable observations` });
+  if (input.movers.length === 0) {
+    missingEvidence.push(
+      'Measured movement \u2014 no launch yet carries two comparable observations about 24 hours apart, so nothing can be shown as having moved.',
+    );
+  } else {
+    facts.push({
+      label: 'Measured movement',
+      value: input.movers.map((mover) => mover.symbol || mover.tokenAddress).join(', '),
+      tone: 'neutral',
+    });
+    sentences.push(
+      'Measured movement: two Miorail quotes about 24 hours apart differ. The difference is between two measurements, not a price.',
+    );
+  }
+
+  const lead = facts.length === 0
+    ? 'Miorail has nothing to put forward for inspection in the current window: none of the measured categories it can offer has a launch in it right now. That is a state of the measurement, not a statement about any token.'
+    : `Here is what Miorail measured that is worth inspecting, grouped by what the measurement found. This is not a ranking, not a score and not a shortlist to buy \u2014 each group is one measured property, and which of them is interesting is your call. ${sentences.join(' ')}`;
+
+  const subjects = [
+    ...input.categories.flatMap((category) => category.cards.map((card) => symbolV1(card))),
+    ...input.movers.map((mover) => mover.symbol || mover.tokenAddress),
+  ];
+  return {
+    answer: lead,
+    facts: facts.slice(0, 16),
+    missingEvidence: missingEvidence.slice(0, 20),
+    caveats: [
+      'These groups are measured properties, not a judgement of quality. Miorail does not rank tokens, score them, or hold a view about which is worth owning.',
+      ...B20_CONSOLE_BASE_CAVEATS_V1,
+    ],
+    reads,
+    assertions: {
+      state: subjects.length > 0 ? 'measured' : 'not_measured',
+      matched: subjects.length,
+      complete: true,
+      subjects,
+      about: 'token',
+    },
   };
 }
 
@@ -370,6 +598,9 @@ export function b20FundamentalAnswerV1(input: {
       missingEvidence: ['The project-claim store this question reads.'],
       caveats: [B20_FUNDAMENTAL_BASE_CAVEAT_V1],
       reads: [],
+      // Nothing was read, so `not_measured` is the truth here and a narration
+      // saying so is correct rather than a replacement.
+      assertions: { state: 'not_measured', matched: 0, complete: true, subjects: [], about: 'miorail' },
     };
   }
 
@@ -430,6 +661,7 @@ export function b20FundamentalAnswerV1(input: {
       missingEvidence,
       caveats,
       reads: [{ tool: 'projects', detail: `${rule.label}, matched 0 of an empty corpus` }],
+      assertions: { state: 'not_measured', matched: 0, complete: true, subjects: [], about: 'token' },
     };
   }
 
@@ -462,6 +694,16 @@ export function b20FundamentalAnswerV1(input: {
         detail: `${rule.label}, matched ${input.matches.length} of ${pluralV1(input.corpus, 'verified project claim', 'verified project claims')}`,
       },
     ],
+    assertions: {
+      // A non-empty corpus WAS read, whether or not the predicate matched. The
+      // distinction matters: "none of the claims has a repository" is a result
+      // and "nothing was measured" is not the same statement.
+      state: 'measured',
+      matched: input.matches.length,
+      complete: true,
+      subjects: input.matches.map((match) => matchNameV1(match)),
+      about: 'token',
+    },
   };
 }
 
@@ -567,8 +809,78 @@ function projectFactsV1(
   );
 }
 
+/**
+ * What happened when Miorail tried to take a reading for a named token.
+ *
+ * One sentence per outcome, and the split between them is the whole reason
+ * this exists. "No stored measurement" was true of a token Miorail had never
+ * once attempted, of a token whose endpoint did not answer, and of a token
+ * whose reading was still running — three different facts wearing one
+ * sentence, and a reader had no way to tell which they were being shown.
+ *
+ * None of these is a statement about the token. Every one of them names
+ * Miorail as the subject, because Miorail is the subject.
+ */
+export const B20_READING_ATTEMPT_COPY_V1: Readonly<
+  Record<string, { fact: string; sentence: (symbol: string) => string; missing: ((symbol: string) => string) | null }>
+> = {
+  measured: {
+    fact: 'Reading taken for this question',
+    sentence: (symbol) => `Miorail took an Exit-First reading of ${symbol} for this question, so the measurement below is current rather than stored from a background pass.`,
+    missing: null,
+  },
+  measurement_incomplete: {
+    fact: 'Reading taken, did not complete',
+    sentence: (symbol) => `Miorail took a reading of ${symbol} for this question and could not complete it. What is stated below is what that reading established, and the gap is named beside it.`,
+    missing: (symbol) => `A completed Exit-First reading for ${symbol} — the one Miorail just took did not finish, and the reason is on the card.`,
+  },
+  provider_unavailable: {
+    fact: 'Reading attempted, endpoint did not answer',
+    sentence: (symbol) => `Miorail tried to measure ${symbol} for this question and its Base endpoint did not answer, so nothing was stored. That is a fact about Miorail's reading, and it establishes nothing either way about the token.`,
+    missing: (symbol) => `An Exit-First measurement for ${symbol}. Miorail attempted one now and the endpoint did not answer.`,
+  },
+  timed_out: {
+    fact: 'Reading still running',
+    sentence: (symbol) => `Miorail started a reading of ${symbol} for this question and it did not finish inside this request. It is still running, and the measurement will be here shortly — this is not a statement that ${symbol} has no measurement.`,
+    missing: (symbol) => `An Exit-First measurement for ${symbol}. Miorail is taking one now; ask again in a moment.`,
+  },
+  failed: {
+    fact: 'Reading attempted, did not complete',
+    sentence: (symbol) => `Miorail attempted a reading of ${symbol} for this question and it did not complete. Nothing was stored, and nothing about the token was established.`,
+    missing: (symbol) => `An Exit-First measurement for ${symbol}. Miorail attempted one now and it did not complete.`,
+  },
+  not_attempted: {
+    fact: 'Not reached in this request',
+    sentence: (symbol) => `Miorail did not reach ${symbol} in this request — the reading budget went to the tokens before it. Ask about ${symbol} on its own and it will be measured.`,
+    missing: (symbol) => `An Exit-First measurement for ${symbol}. Miorail did not reach it in this request.`,
+  },
+  unavailable_here: {
+    fact: 'This server cannot take readings',
+    sentence: (symbol) => `Miorail cannot take a reading of ${symbol} on this deployment — it has no Base endpoint configured. That is a fact about this server, not about the token.`,
+    missing: (symbol) => `An Exit-First measurement for ${symbol}. This deployment cannot take one.`,
+  },
+};
+
+/** One attempt, as the console needs it. Structurally the targeted-measurement
+ * result, restated so this module does not depend on the route it came from. */
+export interface B20ReadingAttemptV1 {
+  tokenAddress: string;
+  outcome: string;
+  /** The measurement's own reason code for an incomplete reading. */
+  reason: string | null;
+}
+
 export function b20InvestigateAnswerV1(input: {
   reads: readonly B20ConsoleTokenReadV1[];
+  /**
+   * Readings Miorail took BECAUSE of this question, keyed by token.
+   *
+   * Absent when the server does not take them, and then this answer reads
+   * exactly as it did before: a stored measurement or its absence. Present, it
+   * is what lets "no stored measurement" stop covering for "the endpoint did
+   * not answer" and "the reading is still running".
+   */
+  attempts?: readonly B20ReadingAttemptV1[];
 }): B20ConsoleDeterministicV1 {
   const facts: B20ConsoleFactV1[] = [];
   const missingEvidence: string[] = [];
@@ -577,15 +889,52 @@ export function b20InvestigateAnswerV1(input: {
 
   const unknown = input.reads.filter((read) => read.card === null);
   const known = input.reads.filter((read) => read.card !== null);
+  const attemptFor = new Map(
+    (input.attempts ?? []).map((attempt) => [attempt.tokenAddress.toLowerCase(), attempt] as const),
+  );
+
+  /**
+   * What Miorail did about this token's measurement, said before the
+   * measurement itself.
+   *
+   * Returns whether an attempt was reported, so the caller can tell "Miorail
+   * did not try" from "Miorail tried and this is what happened" — which is the
+   * distinction the old single sentence collapsed.
+   */
+  const reportAttempt = (tokenAddress: string, symbol: string): boolean => {
+    const attempt = attemptFor.get(tokenAddress.toLowerCase());
+    if (!attempt) return false;
+    const copy = B20_READING_ATTEMPT_COPY_V1[attempt.outcome];
+    if (!copy) return false;
+    facts.push({
+      label: `${symbol} — reading`,
+      value: attempt.reason ? `${copy.fact} · ${attempt.reason.replaceAll('_', ' ')}` : copy.fact,
+      tone: attempt.outcome === 'measured' ? 'neutral' : 'warning',
+    });
+    sentences.push(copy.sentence(symbol));
+    if (copy.missing) missingEvidence.push(copy.missing(symbol));
+    return true;
+  };
 
   for (const read of known) {
     const card = read.card!;
     const observation = card.observation;
     const symbol = symbolV1(card);
+    const attempted = reportAttempt(read.tokenAddress, symbol);
     if (!observation) {
-      facts.push({ label: symbol, value: 'No stored measurement', tone: 'warning' });
-      missingEvidence.push(`An Exit-First measurement for ${symbol}.`);
-      sentences.push(`${symbol} is a canonical B20 launch with no stored observation.`);
+      // "No stored measurement" is only the whole truth when nothing was
+      // attempted. When a reading WAS taken, `reportAttempt` has already said
+      // what happened to it, and repeating this sentence would put Miorail's
+      // outcome and Miorail's silence side by side as if they were the same.
+      facts.push({
+        label: symbol,
+        value: attempted ? 'No measurement stored yet' : 'No stored measurement',
+        tone: 'warning',
+      });
+      if (!attempted) {
+        missingEvidence.push(`An Exit-First measurement for ${symbol}.`);
+        sentences.push(`${symbol} is a canonical B20 launch with no stored observation.`);
+      }
       continue;
     }
     const quote = b20QuoteAssetDisplayV1(observation.referenceQuoteAsset);
@@ -618,6 +967,7 @@ export function b20InvestigateAnswerV1(input: {
 
   for (const read of unknown) {
     const address = read.tokenAddress;
+    reportAttempt(address, address);
     switch (read.indexStanding) {
       case 'confirmed_b20_not_indexed': {
         // Two facts, because two different things are true and only one of them
@@ -672,6 +1022,10 @@ export function b20InvestigateAnswerV1(input: {
   const comparability = b20ComparabilityV1(known);
   if (comparability.reason) caveats.push(comparability.reason);
 
+  // Three counts, because the three states an Investigate read can be in are
+  // exactly the three the narrator must not blur: measured, indexed but never
+  // measured, and not in the index at all.
+  const withObservation = known.filter((read) => read.card?.observation).length;
   return {
     answer: sentences.join(' '),
     facts: facts.slice(0, 16),
@@ -681,6 +1035,23 @@ export function b20InvestigateAnswerV1(input: {
       tool: 'card',
       detail: `${read.tokenAddress} · ${read.card ? `${read.historyCount} stored observations` : 'no canonical launch'}`,
     })),
+    assertions: {
+      state:
+        withObservation === 0
+          ? 'not_measured'
+          : withObservation === input.reads.length
+            ? 'measured'
+            : 'mixed',
+      matched: withObservation,
+      complete: true,
+      subjects: [
+        ...known.map((read) => symbolV1(read.card!)),
+        ...unknown.map((read) => read.tokenAddress),
+      ],
+      about: known.some((read) => read.card?.observation?.standing.aboutToken === false)
+        ? 'mixed'
+        : 'token',
+    },
   };
 }
 
@@ -818,8 +1189,20 @@ export function b20PortfolioAnswerV1(input: {
   if (sentences.length === 0) sentences.push('Miorail has no measured Discover launch for any of these tokens.');
   sentences.push(B20_PORTFOLIO_SIZE_CAVEAT_V1);
 
+  // Never narrated — the route withholds the provider for this scope — so the
+  // assertions here exist for one reason: to keep the shape total, so a future
+  // caller cannot enable narration for Portfolio by forgetting a field. The
+  // subjects are deliberately EMPTY: a holding list is the reader's, and it
+  // does not go into a structure that travels beside a language provider.
   return {
     answer: sentences.join(' '),
+    assertions: {
+      state: facts.length > 0 ? 'measured' : 'not_measured',
+      matched: facts.length,
+      complete: true,
+      subjects: [],
+      about: 'token',
+    },
     facts: facts.slice(0, 16),
     missingEvidence: [...new Set(missingEvidence)].slice(0, 20),
     caveats: caveats.slice(0, 12),
@@ -905,5 +1288,16 @@ export function b20ChangesAnswerV1(input: { changes: B20ConsoleChangesReadV1 }):
         detail: `${changes.pairsConsidered} launch pairs, baseline about ${hours}h before the latest measurement`,
       },
     ],
+    assertions: {
+      // A rail with no comparable pair has measured nothing about movement,
+      // and saying so is the correct answer rather than a replacement for one.
+      state: changes.movers.length > 0 ? 'measured' : 'not_measured',
+      matched: changes.movers.length,
+      complete: true,
+      subjects: changes.movers.map((mover) => mover.symbol || mover.tokenAddress),
+      // An empty rail is a fact about what Miorail could pair, not about the
+      // tokens — the same distinction the answer's own last branch draws.
+      about: changes.movers.length > 0 ? 'token' : 'miorail',
+    },
   };
 }

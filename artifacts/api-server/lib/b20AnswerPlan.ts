@@ -61,18 +61,6 @@ function matchesV1(value: string, patterns: readonly RegExp[]): boolean {
 }
 
 /**
- * Every pattern present, in any order.
- *
- * Russian puts the negation where English puts it least: «купили, а продать
- * нельзя» is verb-object-negation, and a single ordered regex written from the
- * English phrasing matches nothing. A conjunction is order-free and reads as
- * what it is — three ideas that must all be in the sentence.
- */
-function allOfV1(value: string, patterns: readonly RegExp[]): boolean {
-  return patterns.every((pattern) => pattern.test(value));
-}
-
-/**
  * Questions this product will not answer, refused BEFORE any read.
  *
  * Not a safety filter — a scope one. Miorail measures exit conditions at a
@@ -157,6 +145,78 @@ export function planB20AnswerV1(input: {
 }
 
 /**
+ * The three word groups a "bought but could not sell" question is built from.
+ *
+ * Written as three sets rather than as one ordered sentence, and that IS the
+ * fix. The original pattern read `bought .* not .* sell`, which is one English
+ * word order out of many: "were bought but a sale could not be priced" puts the
+ * sale BEFORE the negation and matched nothing, so the product's own headline
+ * finding — asked in the most natural phrasing there is — came back as the
+ * universe counts. Measured in production 2026-08-19.
+ *
+ * A conjunction cannot have that bug. It says what the question actually is:
+ * an entry word, an exit word, and a negation, in any order, in any of the two
+ * languages this console is used in.
+ */
+// Deliberately without a bare `in`: it appears in almost every English
+// sentence, and an entry word that is always present turns the conjunction
+// below into a two-word rule.
+const ENTRY_WORD_V1 = /\b(bought|buy|buys|buying|purchase[ds]?|got in|entry|entered|enter|entering)\b|(купи|покуп|приобре|вошл|вход|заход)/u;
+const EXIT_WORD_V1 = /\b(sell|sells|selling|sold|sale|sales|exit|exits|exiting|get out|got out|cash out|unload|dump)\b|(прода|выход|выйти|вышел|сбро)/u;
+const NEGATION_WORD_V1 = /\b(not|cannot|can'?t|could ?n'?t|could not|would ?n'?t|would not|did ?n'?t|did not|does ?n'?t|does not|is ?n'?t|are ?n'?t|no|none|never|unable|without|fail|failed|fails|unpriced|impossible|stuck|trapped)\b|(нельзя|невозможно|не смог|не удал|не получ|нет|без|застрял)/u;
+
+/**
+ * Whether the question asks for the product's headline finding.
+ *
+ * The negation is REQUIRED, and that requirement is what keeps this apart from
+ * the two-sided question below: "both entry and exit were priced" carries an
+ * entry word and an exit word and must not be answered with the tokens that
+ * could not be sold.
+ */
+function boughtNotSellableQuestionV1(value: string): boolean {
+  if (matchesV1(value, [/trapped/, /\bstuck\b/, /не выйти/u, /can.?t get out/, /one.?way/])) return true;
+  return (
+    ENTRY_WORD_V1.test(value) && EXIT_WORD_V1.test(value) && NEGATION_WORD_V1.test(value)
+  );
+}
+
+/**
+ * Whether the question asks which launches priced in BOTH directions.
+ *
+ * "both directions" and "round trip" are Miorail's own words for it, and a
+ * reader has no way to know that. The general form is an entry word and an exit
+ * word with no negation and something that joins them — which is how anyone
+ * would phrase it who had never read the schema.
+ */
+function twoSidedQuestionV1(value: string): boolean {
+  if (NEGATION_WORD_V1.test(value)) return false;
+  if (
+    matchesV1(value, [
+      /both (directions|routes|legs|sides|ways|priced)/,
+      /round.?trip/,
+      /priced both/,
+      /two.?sided/,
+      /in and out/,
+      /оба маршрута/u,
+      /обе стороны/u,
+      /туда и обратно/u,
+      /и вход и выход/u,
+    ])
+  ) {
+    return true;
+  }
+  // "where both entry and exit were priced", "which ones can be bought and
+  // sold" — a join word and both legs, with no negation. The negation check at
+  // the top of this function is what makes that safe: without it, "bought and
+  // could not be sold" carries the same three parts.
+  return (
+    /\b(both|and|as well as)\b|(и |оба|обе)/u.test(value) &&
+    ENTRY_WORD_V1.test(value) &&
+    EXIT_WORD_V1.test(value)
+  );
+}
+
+/**
  * What a question about the WHOLE universe is asking for.
  *
  * Shared by both planners, and shared because the copies drifted the moment
@@ -167,39 +227,36 @@ export function planB20AnswerV1(input: {
  *
  * `value` must already be lowercased. `\b` is ASCII-only, so the Russian
  * patterns carry no word boundaries — a Cyrillic regex written with `\b`
- * matches nothing, silently.
+ * matches nothing, silently, which is why every Cyrillic alternative below is
+ * written without one.
  */
 export function b20UniverseIntentV1(value: string): {
   intent: 'count_universe' | 'find_bought_not_sellable' | 'find_two_sided' | 'find_not_searched';
   /** The narrowing to apply to the feed page, when the intent names one. */
   list: { standingKind?: (typeof B20_EXIT_STANDING_KINDS_V1)[number]; bothRoutes?: boolean } | null;
 } {
-  // "How many" is the question Stage 05 exists for, and the one that used to
-  // cost 46 pages.
-  if (matchesV1(value, [/how many/, /how much of/, /count/, /breakdown/, /сколько/u, /распределен/u, /статистик/u])) {
-    return { intent: 'count_universe', list: null };
-  }
-
-  // The product's own finding, asked for in words. The summary comes with it
-  // so the answer can say how many there are as well as naming a few.
-  const boughtNotSellable =
-    matchesV1(value, [
-      /(bought|buy|bought into|got in).*(not|can.?t|cannot|could not|unable).*(sell|sold|sell out|exit|get out)/,
-      /trapped/,
-      /stuck/,
-      /не выйти/u,
-    ])
-    || allOfV1(value, [/купил/u, /(продать|продаж|выйти)/u, /(нельзя|невозможно|не\s|без)/u]);
-  if (boughtNotSellable) {
+  // The NAMED findings are read before "how many", and the order is the fix
+  // rather than an accident of it. "How many tokens were bought but cannot be
+  // sold" is a question about the finding that happens to open with a counting
+  // word, and the finding answer leads with the count anyway — so nothing is
+  // lost by preferring it, and a question that names the product's own
+  // headline result is no longer answered with a table of section totals.
+  if (boughtNotSellableQuestionV1(value)) {
     return { intent: 'find_bought_not_sellable', list: { standingKind: 'bought_not_sellable' } };
   }
 
-  if (matchesV1(value, [/both (directions|routes|legs)/, /round trip/, /priced both/, /оба маршрута/u, /туда и обратно/u])) {
+  if (twoSidedQuestionV1(value)) {
     return { intent: 'find_two_sided', list: { bothRoutes: true } };
   }
 
   if (matchesV1(value, [/not (searched|looked)/, /never looked/, /coverage/, /не искал/u, /не смотрел/u, /покрыти/u])) {
     return { intent: 'find_not_searched', list: { standingKind: 'venue_not_searched' } };
+  }
+
+  // "How many" is the question Stage 05 exists for, and the one that used to
+  // cost 46 pages.
+  if (matchesV1(value, [/how many/, /how much of/, /count/, /breakdown/, /сколько/u, /распределен/u, /статистик/u])) {
+    return { intent: 'count_universe', list: null };
   }
 
   // Anything else about the universe gets the counts. They are cheap, cached,

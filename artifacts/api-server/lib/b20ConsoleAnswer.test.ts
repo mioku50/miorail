@@ -7,7 +7,9 @@ import {
   b20ComparabilityV1,
   b20ExploreAnswerV1,
   b20InvestigateAnswerV1,
+  b20NeedsEvidenceAnswerV1,
   b20PortfolioAnswerV1,
+  b20ResearchCandidatesAnswerV1,
   type B20ConsoleSummaryV1,
   type B20ConsoleTokenReadV1,
 } from './b20ConsoleAnswer.js';
@@ -78,7 +80,26 @@ describe('Explore states whose limit a count describes', () => {
       summary: { ...SUMMARY, window: { ...SUMMARY.window, complete: false } },
       intent: 'universe_counts',
     });
-    assert.ok(result.caveats.some((entry) => /counts of the newest launches rather than of every launch/.test(entry)));
+    assert.ok(result.caveats.some((entry) => /counts of the newest launches/.test(entry)));
+    // The number itself, and the sentence that leads with it, must both say
+    // which of the two figures it is. Asked "how many B20 launches were
+    // measured in the last 48 hours", production answered "3000 in the last 48
+    // hours" — true of what was read, and read by everyone as the total.
+    assert.match(result.answer, /read the newest/);
+    assert.match(result.answer, /does not establish the total/);
+    const read = result.facts.find((fact) => fact.label === 'Launches read');
+    assert.ok(read, 'the launches-read fact is present');
+    assert.match(read.value, /scan cap reached, not the total/);
+  });
+
+  test('a complete scan states a total without a hedge', () => {
+    // The other half. A caveat that fires on every answer teaches a reader to
+    // skip it, so the complete window must not carry the capped wording.
+    const result = b20ExploreAnswerV1({ summary: SUMMARY, intent: 'universe_counts' });
+    assert.ok(!/scan cap/i.test(result.answer));
+    assert.ok(!result.caveats.some((entry) => /scan limit was reached/.test(entry)));
+    const read = result.facts.find((fact) => fact.label === 'Launches read');
+    assert.equal(read?.value, `${SUMMARY.window.launches} in the last 48 hours`);
   });
 
   test('a question that named a finding is answered with that finding first', () => {
@@ -514,5 +535,87 @@ describe('Changes never reports an absence of comparison as an absence of moveme
     });
     assert.match(result.answer, /Of 12 launches with stored history, 1 could be compared/);
     assert.ok(result.facts.some((fact) => fact.label === 'Pairs considered' && fact.value === '12'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The two answers added for questions readers actually asked.
+// ---------------------------------------------------------------------------
+
+describe('"which launches need more evidence" answers about the measurement', () => {
+  test('the gaps are attributed in the leading sentence, and broken down by reason', () => {
+    const result = b20NeedsEvidenceAnswerV1({ summary: SUMMARY });
+    // 193 + 44 — every standing whose `aboutToken` is false, read off the flag
+    // rather than off a hand-kept list of kinds.
+    assert.match(result.answer, /^237 launches in the last 48 hours carry a reading Miorail did not finish/);
+    assert.match(result.answer, /limits of Miorail’s measurement, not properties of the tokens/);
+    assert.match(result.answer, /market not fully measured \(193\)/);
+    assert.match(result.answer, /not measured yet \(44\)/);
+  });
+
+  test('the assertions say the subject is Miorail, so a narration must attribute it', () => {
+    const result = b20NeedsEvidenceAnswerV1({ summary: SUMMARY });
+    assert.equal(result.assertions.about, 'miorail');
+    assert.equal(result.assertions.matched, 237);
+  });
+
+  test('a window with no gaps says so rather than printing an empty breakdown', () => {
+    const result = b20NeedsEvidenceAnswerV1({
+      summary: {
+        ...SUMMARY,
+        standing: [{ kind: 'two_sided', group: 'two_sided', count: 112, aboutToken: true }],
+      },
+    });
+    assert.match(result.answer, /carries a completed reading/);
+    assert.equal(result.assertions.matched, 0);
+  });
+});
+
+describe('"what is worth looking at" answers without ranking anything', () => {
+  const CATEGORIES = [
+    {
+      label: 'Bought, and a sale would not price',
+      because: 'wallets bought in the launch window and Miorail could not price a sale back.',
+      cards: [cardV1({ symbol: 'WORM' })],
+    },
+    {
+      label: 'Both directions priced',
+      because: 'a purchase and a sale were both quoted against the same measured pool.',
+      cards: [cardV1({ symbol: 'MOSS' })],
+    },
+  ];
+
+  test('the categories are named, and none of them is a superlative', () => {
+    const result = b20ResearchCandidatesAnswerV1({ categories: CATEGORIES, movers: [] });
+    assert.match(result.answer, /not a ranking, not a score and not a shortlist to buy/);
+    assert.ok(!/\b(best|top|promising|recommend)\b/i.test(result.answer), result.answer);
+    assert.deepEqual(
+      result.facts.map((fact) => fact.label),
+      ['Bought, and a sale would not price', 'Both directions priced'],
+    );
+    assert.deepEqual(result.assertions.subjects, ['WORM', 'MOSS']);
+  });
+
+  test('an empty category is a named absence, not a silent omission', () => {
+    const result = b20ResearchCandidatesAnswerV1({
+      categories: [{ ...CATEGORIES[0]!, cards: [] }],
+      movers: [],
+    });
+    assert.ok(
+      result.missingEvidence.some((entry) => /Bought, and a sale would not price — no launch/.test(entry)),
+      result.missingEvidence.join(' | '),
+    );
+    // Nothing to put forward is a state of the measurement, and the answer
+    // says which. A refusal here would be the defect this intent replaced.
+    assert.match(result.answer, /not a statement about any token/);
+    assert.equal(result.assertions.matched, 0);
+  });
+
+  test('no comparable pair is reported as an absence of comparison, never of movement', () => {
+    const result = b20ResearchCandidatesAnswerV1({ categories: CATEGORIES, movers: [] });
+    assert.ok(
+      result.missingEvidence.some((entry) => /two comparable observations about 24 hours apart/.test(entry)),
+      result.missingEvidence.join(' | '),
+    );
   });
 });

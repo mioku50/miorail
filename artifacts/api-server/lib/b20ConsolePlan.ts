@@ -78,6 +78,15 @@ export type B20ConsoleStepV1 =
   | { tool: 'cards'; tokenAddresses: readonly string[]; historyLimit: number }
   /** The measured-movement rail: latest and ~24h baseline, already paired. */
   | { tool: 'changes'; limit: number }
+  /**
+   * Three bounded pages, read together, for "what is worth looking at".
+   *
+   * Its own step rather than three `list` steps, because the ANSWER is a set of
+   * named categories and a planner that emitted three lists would leave the
+   * runner to guess which page was which. Nothing here ranks or scores: each
+   * category is one already-published measured property, and the copy says so.
+   */
+  | { tool: 'research'; limit: number }
   /** The same stored cards, read for a wallet's own holdings and ranked by
    * measured exit difficulty. Separate from `cards` because the ANSWER is
    * different — and because this step's arguments are the reader's position. */
@@ -101,6 +110,8 @@ export type B20ConsoleIntentV1 =
   | 'find_bought_not_sellable'
   | 'find_two_sided'
   | 'find_not_searched'
+  | 'find_needs_evidence'
+  | 'find_research_candidates'
   | 'compare_tokens'
   | 'measured_changes'
   | 'rank_positions'
@@ -117,6 +128,9 @@ export const B20_CONSOLE_MAX_POSITIONS_V1 = 25;
 const CARD_HISTORY_LIMIT_V1 = 12;
 const LIST_LIMIT_V1 = 10;
 const CHANGES_LIMIT_V1 = 10;
+/** Per category, and three categories. Small because this answer is READ, and
+ * a reader asked what is worth looking at, not for a page of everything. */
+const RESEARCH_LIMIT_V1 = 5;
 const DEFAULT_WINDOW_HOURS_V1 = 48;
 
 /**
@@ -295,6 +309,90 @@ function fundamentalPredicateV1(value: string): B20FundamentalPredicateV1 | null
   return null;
 }
 
+/**
+ * Questions that ask which launches Miorail has not finished reading.
+ *
+ * A whole intent rather than a filter, because the ANSWER has a different
+ * subject from every other one in this console: the gaps belong to Miorail. A
+ * reader who asks "which launches need more evidence" is asking about the
+ * measurement, and an answer that listed the tokens without saying whose limit
+ * it is would publish Miorail's own incompleteness as a property of them.
+ */
+const NEEDS_EVIDENCE_QUESTION_V1 = [
+  /need (more )?(evidence|measurement|data|reading)/,
+  /needs? (more )?(evidence|measurement|data|reading)/,
+  /missing (evidence|measurement|data)/,
+  /(incomplete|unfinished|partial) (evidence|measurement|reading|observation)/,
+  // Both orders. English puts the adjective either side of the noun — "the
+  // measurement is incomplete" and "incomplete measurement" are the same
+  // question, and only one of them was recognised.
+  /(evidence|measurement|reading|observation)s?( is| are| was| were)? (incomplete|unfinished|partial)/,
+  /(what|which|where).{0,40}(not|never) (measured|read|completed)/,
+  /evidence gaps?/,
+  /measurement gaps?/,
+  /не хватает (доказательств|данных|измерен)/u,
+  /(нужн\p{L}*|требу\p{L}*) (больше )?(доказательств|данных|измерен)/u,
+  /(неполн\p{L}*|незавершенн\p{L}*|незавершённ\p{L}*) (измерен|данн|чтени)/u,
+  /пробел\p{L}* в (данных|доказательств|измерен)/u,
+] as const;
+
+/**
+ * "What is worth looking at" — asked plainly, and answerable without ranking.
+ *
+ * This used to be refused. A reader in Investigate who typed "find me the most
+ * interesting B20 tokens to investigate" was told to paste an address, which
+ * reads as the console failing to understand a perfectly ordinary sentence.
+ *
+ * It is answerable, and the shape of the answer is what keeps it honest: named
+ * categories of ALREADY-MEASURED properties, each one a thing a reader can go
+ * and inspect. It is not a ranking, not a score and not a buy list — the words
+ * "best", "top" and "promising" appear nowhere in what it returns, because
+ * none of them is a measurement.
+ */
+const RESEARCH_CANDIDATES_QUESTION_V1 = [
+  /(most|more) interesting/,
+  /worth (a )?(look|looking|investigating|inspecting|checking)/,
+  /worth (my )?time/,
+  /what should i (look at|investigate|inspect|check|research)/,
+  /(find|show|give) me .{0,30}(interesting|notable|worth|unusual|remarkable)/,
+  /(notable|noteworthy|unusual|standout) (cases?|tokens?|launches|examples?)/,
+  /research candidates?/,
+  /where (should i|to) (start|look)/,
+  /(самы\p{L}*|наиболее) интересн/u,
+  /стоит (посмотреть|изучить|исследовать|проверить)/u,
+  /на что (посмотреть|обратить внимание)/u,
+  /с чего начать/u,
+  /(интересн\p{L}*|примечательн\p{L}*|необычн\p{L}*) (случа|токен|запуск|пример)/u,
+] as const;
+
+/**
+ * Whether a question is asking about the measured universe at all.
+ *
+ * Only consulted from the Investigate scope, and only as the last step: the
+ * universe matcher returns `count_universe` for anything it does not recognise,
+ * so without this a reader in Investigate would get the section totals for
+ * every sentence they typed — which is the fallback Explore wants and the
+ * wrong answer under a tab that is about named tokens.
+ */
+const UNIVERSE_QUESTION_V1 = [
+  /how many/,
+  /how much/,
+  /\bcount\b/,
+  /breakdown/,
+  /\bsummar(y|ise|ize)/,
+  /overview/,
+  /universe/,
+  /(all|every|each) (the )?(b20 )?(launch|token)/,
+  /\bstats?\b/,
+  /statistics/,
+  /сколько/u,
+  /распределен/u,
+  /статистик/u,
+  /обзор/u,
+  /сводк/u,
+  /все (запуск|токен)/u,
+] as const;
+
 /** Questions that are about movement in time however they are scoped. */
 const CHANGE_QUESTION_V1 = [
   /what changed/,
@@ -373,17 +471,7 @@ export function planB20ConsoleAnswerV1(input: {
     };
   }
 
-  if (scope === 'investigate') {
-    if (tokenAddresses.length === 0) {
-      return {
-        scope,
-        intent: 'unsupported',
-        steps: [],
-        tokenAddresses: [],
-        refusal:
-          'Investigate answers about named tokens. Paste one or more Base token addresses, or open a card from Discover — Miorail will not guess which token a symbol means.',
-      };
-    }
+  if (scope === 'investigate' && tokenAddresses.length > 0) {
     return {
       scope,
       intent: 'compare_tokens',
@@ -393,9 +481,22 @@ export function planB20ConsoleAnswerV1(input: {
     };
   }
 
-  if (scope === 'changes') {
+  // Investigate with nothing named is NOT automatically a refusal any more.
+  //
+  // It used to be. A reader standing in Investigate who typed "find me the most
+  // interesting B20 tokens to investigate" — a sentence with an obvious,
+  // answerable reading — was told to paste an address, which looks exactly like
+  // a console that cannot understand a question. The refusal is right only for
+  // questions whose subject really is "these tokens", and those are the ones
+  // that reach the bottom of this function. Everything the explore reading
+  // recognises is answered, in the scope that answered it, and the panel
+  // relabels itself from `plan.scope`.
+  const investigateWithoutTokens = scope === 'investigate';
+  const effectiveScope: B20ConsoleScopeV1 = investigateWithoutTokens ? 'explore' : scope;
+
+  if (effectiveScope === 'changes') {
     return {
-      scope,
+      scope: effectiveScope,
       intent: 'measured_changes',
       steps: [{ tool: 'changes', limit: CHANGES_LIMIT_V1 }],
       tokenAddresses: [],
@@ -422,7 +523,7 @@ export function planB20ConsoleAnswerV1(input: {
   // and come back as a list of the ones that do.
   if (matchesV1(value, FUNDAMENTAL_ABSENCE_QUESTION_V1)) {
     return {
-      scope,
+      scope: effectiveScope,
       intent: 'unsupported',
       steps: [],
       tokenAddresses: [],
@@ -437,7 +538,7 @@ export function planB20ConsoleAnswerV1(input: {
   const predicate = fundamentalPredicateV1(value);
   if (predicate) {
     return {
-      scope,
+      scope: effectiveScope,
       intent: 'find_verified_projects',
       // One step, and deliberately no `summary`. A fundamental answer that
       // opened with 3,000 launches read would be quoting a number about a
@@ -449,11 +550,53 @@ export function planB20ConsoleAnswerV1(input: {
     };
   }
 
+  // "What is worth looking at", answered with measured categories instead of a
+  // refusal. Before the universe fallback, because the counts would swallow it.
+  if (matchesV1(value, RESEARCH_CANDIDATES_QUESTION_V1)) {
+    return {
+      scope: effectiveScope,
+      intent: 'find_research_candidates',
+      steps: [{ tool: 'research', limit: RESEARCH_LIMIT_V1 }],
+      tokenAddresses: [],
+      refusal: null,
+    };
+  }
+
+  // The gaps are Miorail's, so they get their own intent rather than a filter
+  // on the feed: the answer has to name whose limit it is in its own sentence.
+  if (matchesV1(value, NEEDS_EVIDENCE_QUESTION_V1)) {
+    return {
+      scope: effectiveScope,
+      intent: 'find_needs_evidence',
+      steps: [
+        { tool: 'summary', launchAgeHours: DEFAULT_WINDOW_HOURS_V1 },
+        { tool: 'list', limit: LIST_LIMIT_V1, standing: 'miorail_limit' },
+      ],
+      tokenAddresses: [],
+      refusal: null,
+    };
+  }
+
   // The same reading of a universe question the card console uses. One matcher,
   // because two drifted the first time they existed.
   const universe = b20UniverseIntentV1(value);
+
+  // A reader in Investigate whose question matched NONE of the above really was
+  // asking about tokens they have not named. That is the one case the refusal
+  // was written for, and it keeps it.
+  if (investigateWithoutTokens && universe.intent === 'count_universe' && !matchesV1(value, UNIVERSE_QUESTION_V1)) {
+    return {
+      scope: 'investigate',
+      intent: 'unsupported',
+      steps: [],
+      tokenAddresses: [],
+      refusal:
+        'Investigate answers about named tokens. Paste one or more Base token addresses, or open a card from Discover — Miorail will not guess which token a symbol means. To ask about the measured universe instead, try Explore: how many launches were measured, which were bought but would not price a sale, which priced both directions, or which still need evidence.',
+    };
+  }
+
   return {
-    scope,
+    scope: effectiveScope,
     intent: universe.intent === 'count_universe' ? 'universe_counts' : universe.intent,
     steps: [
       { tool: 'summary', launchAgeHours: DEFAULT_WINDOW_HOURS_V1 },

@@ -4,9 +4,11 @@ import test, { describe } from 'node:test';
 import {
   b20NarrationEvidenceStrengthV1,
   numbersInV1,
+  verifyB20NarrationSemanticsV1,
   verifyB20NarrationV1,
   B20_NARRATION_MAX_CHARS_V1,
   B20_NARRATION_MAX_EVIDENCE_NUMBERS_V1,
+  type B20AnswerAssertionsV1,
 } from './b20AnswerVerify.js';
 
 // ---------------------------------------------------------------------------
@@ -211,5 +213,110 @@ describe('a Russian-formatted number is one number', () => {
 
   test('a Russian answer quoting the block verifies', () => {
     assert.equal(verify('Измерено на блоке 49 929 328, продажа не оценена.').ok, true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The semantic rules — the failure the other three are blind to.
+//
+// Asked "how many B20 launches were measured in the last 48 hours", over a
+// bundle stating 3,000 launches read and five section counts, the production
+// narrator answered "Not measured." It invented no figure, used no forbidden
+// word and claimed no outcome, so every rule above passed it, and the reader
+// got the exact opposite of the evidence under it.
+// ---------------------------------------------------------------------------
+
+const MEASURED_V1: B20AnswerAssertionsV1 = {
+  state: 'measured',
+  matched: 26,
+  complete: true,
+  subjects: ['WDUCK', 'HGOB', 'FLAG'],
+  about: 'token',
+};
+
+function semantics(narration: string, override: Partial<B20AnswerAssertionsV1> = {}): string[] {
+  return verifyB20NarrationSemanticsV1({ narration, assertions: { ...MEASURED_V1, ...override } });
+}
+
+describe('a narration may not change what the answer means', () => {
+  test('"Not measured" over a measured bundle is refused', () => {
+    // The exact production string, and the exact production bundle state. It
+    // breaks two rules at once — it reverses the state AND drops every subject
+    // the answer named — which is what a two-word replacement of a real answer
+    // looks like.
+    const violations = semantics('Not measured');
+    assert.ok(violations.some((entry) => /says nothing was measured/.test(entry)), violations.join(' | '));
+  });
+
+  test('the same reversal in Russian and inside a longer sentence is refused too', () => {
+    assert.ok(semantics('Данных нет, поэтому сказать нечего. WDUCK').length > 0);
+    assert.ok(
+      semantics('Across the window Miorail has no stored measurements for WDUCK, HGOB or FLAG.').length > 0,
+    );
+  });
+
+  test('"not measured" over a bundle that measured nothing is the correct answer', () => {
+    // The rule must not make the honest answer unsayable. This is the state
+    // most of this product is in most of the time.
+    assert.deepEqual(semantics('Not measured.', { state: 'not_measured', matched: 0, subjects: [] }), []);
+  });
+
+  test('an enumeration that names none of its subjects is refused', () => {
+    assert.match(semantics('26 launches.')[0]!, /names none of them/);
+    assert.deepEqual(semantics('26 launches: WDUCK, HGOB and FLAG.'), []);
+  });
+
+  test('a single subject need not be repeated back', () => {
+    // The card copilot's whole context is one card on screen. Requiring the
+    // symbol in the sentence there would refuse correct paraphrases for
+    // saying "this token" the way a person would.
+    assert.deepEqual(semantics('Miorail priced a purchase and did not price a sale back.', {
+      subjects: ['WDUCK'],
+      matched: 1,
+    }), []);
+  });
+
+  test('a non-empty result reported as empty is refused', () => {
+    assert.match(semantics('None of them matched. WDUCK')[0]!, /reports none/);
+    // And zero really being zero stays sayable.
+    assert.deepEqual(semantics('No launch was bought and then failed to price a sale.', {
+      matched: 0,
+      subjects: [],
+    }), []);
+  });
+
+  test('a capped scan may not have its ceiling quoted as a total', () => {
+    assert.match(
+      semantics('Miorail measured 3000 launches in the last 48 hours. WDUCK', { complete: false })[0]!,
+      /without saying it is a ceiling/,
+    );
+    assert.deepEqual(
+      semantics('Miorail read the newest 3000 launches; the scan cap was reached. WDUCK', { complete: false }),
+      [],
+    );
+    // A narration that quotes no figure cannot misstate one.
+    assert.deepEqual(semantics('Miorail read the newest launches it could. WDUCK', { complete: false }), []);
+  });
+
+  test('a gap that belongs to Miorail must say so', () => {
+    assert.match(
+      semantics('These launches carry no route to sell into. WDUCK', { about: 'miorail' })[0]!,
+      /does not attribute it/,
+    );
+    assert.deepEqual(
+      semantics('Miorail did not search the venue where these trade. WDUCK', { about: 'miorail' }),
+      [],
+    );
+  });
+
+  test('the semantic rules run inside the main verifier, not beside it', () => {
+    // A caller cannot check numbers and forget meaning: there is one entry
+    // point, and it takes the assertions.
+    const verdict = verifyB20NarrationV1({
+      narration: 'Not measured',
+      evidence: ['Launches read: 3000 in the last 48 hours'],
+      assertions: MEASURED_V1,
+    });
+    assert.equal(verdict.ok, false);
   });
 });

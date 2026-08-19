@@ -244,12 +244,36 @@ describe('the narrator is walled in on both sides', () => {
     // The model rephrases the sentence. It does not get to touch the facts,
     // the named absences or the caveats a reader checks it against.
     const plain = await ask(ASK_V1);
-    b20RouteRuntime.narrator = narrator('A purchase priced and a sale did not.') as never;
+    b20RouteRuntime.narrator = narrator(
+      'Miorail priced a purchase and did not price a sale back.',
+    ) as never;
     const narrated = await ask(ASK_V1);
     assert.equal(narrated.body.answerSource, 'verified_narration');
     assert.deepEqual(narrated.body.facts, plain.body.facts);
     assert.deepEqual(narrated.body.missingEvidence, plain.body.missingEvidence);
     assert.deepEqual(narrated.body.caveats, plain.body.caveats);
+  });
+
+  test('a narration that reports Miorail’s own gap as the token’s never ships', async () => {
+    // This card's standing is `aboutToken: false` — entry priced, the sale did
+    // not, and the launch-buying window has not closed, so nothing is
+    // established about the token at all. "A purchase priced and a sale did
+    // not" is a fluent, figure-free sentence that states it as a property of
+    // the token, and every number and vocabulary rule passes it.
+    b20RouteRuntime.narrator = narrator('A purchase priced and a sale did not.') as never;
+    const response = await ask(ASK_V1);
+    assert.equal(response.body.answerSource, 'deterministic_evidence');
+  });
+
+  test('a narration that says nothing was measured over a measured card never ships', async () => {
+    // The production failure, reproduced at the card. Asked over a bundle full
+    // of measurements, the narrator answered "Not measured." No figure was
+    // invented, no forbidden word appeared, no outcome was claimed — and the
+    // answer was the opposite of its evidence.
+    b20RouteRuntime.narrator = narrator('Not measured.') as never;
+    const response = await ask(ASK_V1);
+    assert.equal(response.body.answerSource, 'deterministic_evidence');
+    assert.doesNotMatch(response.body.answer, /^Not measured\.$/);
   });
 
   test('an out-of-scope question is refused without asking a model at all', async () => {

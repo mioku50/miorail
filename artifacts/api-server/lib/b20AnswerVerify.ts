@@ -23,6 +23,12 @@
 //      is not a guarantee, and a sentence saying "you will be able to sell" is
 //      wrong however true the numbers around it are.
 //
+//   4. THE MEANING OF THE DETERMINISTIC ANSWER MUST SURVIVE. Rules 1–3 are
+//      about the tokens on the page and are all blind to a narration that is
+//      fluent, figure-free and simply says the opposite of its evidence —
+//      which is the failure production produced. See the semantic section
+//      below the fold.
+//
 // A deliberate over-rejection, so a later reader does not "fix" it: a number
 // from the QUESTION is not evidence either. Asked "can I get out with a 100
 // USDC position", a narrator that answers with 100 in it is refused, because
@@ -156,16 +162,149 @@ export function b20NarrationEvidenceStrengthV1(evidence: readonly string[]): {
   };
 }
 
+
+// ---------------------------------------------------------------------------
+// The semantic check: what the narration was allowed to have MEANT.
+//
+// The three rules above are about tokens on the page — figures, vocabulary,
+// claims of certainty. They are blind to the one failure production actually
+// produced: asked "how many B20 launches were measured in the last 48 hours",
+// with a bundle stating 3,000 launches read and five section counts, the
+// narrator answered "Not measured." Every number rule passed, because there
+// were no numbers. No forbidden word appeared. No outcome was claimed. The
+// answer was simply the opposite of the evidence it was built from.
+//
+// So the deterministic answer now travels with a small set of assertions about
+// its own MEANING, and a narration has to preserve them. This is deliberately
+// not a second language model judging the first: every rule below is a
+// mechanical check against a structure the deterministic builder already knew,
+// and a narration that fails one is discarded for the answer that shipped
+// before any model was involved.
+//
+// The principle, stated once: THE DETERMINISTIC ANSWER OWNS THE VERDICT. A
+// narrator may explain it, shorten it, or translate it. It may not change what
+// state it is in.
+// ---------------------------------------------------------------------------
+
+export interface B20AnswerAssertionsV1 {
+  /**
+   * What the deterministic answer concluded about evidence.
+   *
+   * `measured` — the read produced findings, whatever they were. A zero match
+   * is still `measured`: "no launch was bought and then failed to price a
+   * sale" is a result, not an absence of one.
+   * `not_measured` — the read found nothing stored to report.
+   * `mixed` — some subjects carry a measurement and some do not.
+   */
+  state: 'measured' | 'not_measured' | 'mixed';
+  /** How many subjects the answer is about. Zero is a real, sayable answer. */
+  matched: number;
+  /** Whether the read behind the answer covered everything it was asked
+   * about. False for a scan that hit its cap. */
+  complete: boolean;
+  /** The subjects the answer named, in the order it named them. */
+  subjects: readonly string[];
+  /** Whose the leading finding is. `miorail` when the answer is about a
+   * reading that did not complete rather than about any token. */
+  about: 'token' | 'miorail' | 'mixed';
+}
+
+/**
+ * A narration claiming nothing was measured.
+ *
+ * Matched anywhere, not only at the start: the observed failure was a
+ * two-word answer, but the same replacement inside a longer paraphrase is the
+ * same defect. Both languages, because both are used here.
+ */
+const NOT_MEASURED_CLAIM_V1 =
+  /\b(not measured|no measurement|nothing (was )?measured|no (stored )?measurements?|has not been measured|hasn'?t been measured|no data)\b|(не измер|нет измерен|измерений нет|ничего не измер|нет данных|данных нет)/iu;
+
+/** A narration claiming the answer is empty. */
+const EMPTY_CLAIM_V1 =
+  /^\s*(no|none|nothing|zero)\b|\bnone (of them|of the|were|are|matched|found)\b|\bnothing (was )?found\b|(^\s*(нет|ничего|ни один)|ничего не найден|не найден)/iu;
+
+/** Words that mark a figure as a ceiling rather than a total. */
+const SCAN_CAP_VOCABULARY_V1 =
+  /\b(cap|capped|ceiling|limit|limited|newest|most recent|not the total|does not establish|partial|prefix)\b|(предел|лимит|ограничен|новейш|последн|не (все|общ)|не устанавлива)/iu;
+
+/** The brand, which is how an answer attributes a gap to Miorail. Latin in
+ * both languages, because that is how it is written in both. */
+const ATTRIBUTION_V1 = /miorail|миорейл/iu;
+
+/**
+ * Checks a narration against what the deterministic answer MEANT.
+ *
+ * Returns the violations, empty when the narration preserved every assertion.
+ * Separate from `verifyB20NarrationV1` so each can be read and tested on its
+ * own, and called by it so no caller can run one without the other.
+ */
+export function verifyB20NarrationSemanticsV1(input: {
+  narration: string;
+  assertions: B20AnswerAssertionsV1;
+}): string[] {
+  const { narration, assertions } = input;
+  const violations: string[] = [];
+
+  // S1 — the failure this whole section exists for.
+  if (assertions.state === 'measured' && NOT_MEASURED_CLAIM_V1.test(narration)) {
+    violations.push(
+      'the deterministic answer reports a completed measurement and the narration says nothing was measured',
+    );
+  }
+
+  // S2 — an ENUMERATION must still name one of the things it enumerated. A
+  // "which tokens" question answered with section totals has silently become a
+  // different answer.
+  //
+  // Two or more, deliberately. An answer about a single subject is read beside
+  // that subject — the card copilot's whole context is one card on screen — and
+  // requiring the symbol back in the sentence there would reject correct
+  // paraphrases for saying "this token" like a person would.
+  if (assertions.subjects.length >= 2) {
+    const lowered = narration.toLowerCase();
+    const named = assertions.subjects.some((subject) => lowered.includes(subject.toLowerCase()));
+    if (!named) {
+      violations.push(
+        `the deterministic answer names ${assertions.subjects.length} subject(s) and the narration names none of them`,
+      );
+    }
+  }
+
+  // S3 — a non-empty result reported as empty.
+  if (assertions.matched > 0 && EMPTY_CLAIM_V1.test(narration.trim())) {
+    violations.push(`the deterministic answer matched ${assertions.matched} and the narration reports none`);
+  }
+
+  // S4 — a ceiling reported as a total. Only when the narration actually
+  // quotes a figure: a narration that states no count cannot misstate one.
+  if (!assertions.complete && numbersInV1(narration).length > 0 && !SCAN_CAP_VOCABULARY_V1.test(narration)) {
+    violations.push('the scan did not complete and the narration quotes a count without saying it is a ceiling');
+  }
+
+  // S5 — a gap of Miorail's, reported without saying whose it is. The same
+  // rule the standing layer enforces on the card, applied to the sentence.
+  if (assertions.about === 'miorail' && !ATTRIBUTION_V1.test(narration)) {
+    violations.push('the finding is about Miorail\u2019s own reading and the narration does not attribute it');
+  }
+
+  return violations;
+}
+
 /**
  * Checks a narration against the evidence it was given.
  *
  * `evidence` is every string the bundle contains — labels, values, caveats.
  * Numbers are drawn from ALL of it rather than from a curated subset, because
  * a curated subset is a second place to get the bundle wrong.
+ *
+ * `assertions` is what the deterministic answer MEANT. Optional only because
+ * one caller predates it; when present, a narration that changed the meaning
+ * is refused however well-formed its numbers are.
  */
 export function verifyB20NarrationV1(input: {
   narration: string;
   evidence: readonly string[];
+  assertions?: B20AnswerAssertionsV1;
 }): B20NarrationVerdictV1 {
   const violations: string[] = [];
   const narration = stripNarrationFormattingV1(input.narration);
@@ -194,6 +333,10 @@ export function verifyB20NarrationV1(input: {
   const overclaim = OVERCLAIM_V1.exec(narration);
   if (overclaim) {
     violations.push(`claims an outcome the measurement cannot carry: "${overclaim[0].trim()}"`);
+  }
+
+  if (input.assertions) {
+    violations.push(...verifyB20NarrationSemanticsV1({ narration, assertions: input.assertions }));
   }
 
   return { ok: violations.length === 0, violations, narration };

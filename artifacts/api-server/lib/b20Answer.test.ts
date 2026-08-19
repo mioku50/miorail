@@ -52,11 +52,28 @@ describe('the planner emits only reads from its own list', () => {
   test('"how many" reads the counts rather than paging the feed', () => {
     // The whole reason Stage 05 exists. A planner that answered this with the
     // list would spend 46 round trips computing a number.
-    for (const question of ['How many launches were bought and could not be sold?', 'Сколько запусков без выхода?']) {
+    for (const question of [
+      'How many B20 launches were measured in the last 48 hours?',
+      'Сколько запусков без выхода?',
+    ]) {
       const plan = planB20AnswerV1({ question, tokenAddress: null });
-      assert.equal(plan.intent, 'count_universe');
+      assert.equal(plan.intent, 'count_universe', question);
       assert.deepEqual(plan.steps.map((step) => step.tool), ['summary']);
     }
+  });
+
+  test('a counting word does not outrank a question that names the finding', () => {
+    // "How many tokens were bought and could not be sold" opens with a
+    // counting word and is still a question about the finding. It used to be
+    // answered with the section totals; the finding answer LEADS with the same
+    // count and then names the tokens, so preferring it loses nothing and
+    // stops the console replying to its own headline result with a table.
+    const plan = planB20AnswerV1({
+      question: 'How many launches were bought and could not be sold?',
+      tokenAddress: null,
+    });
+    assert.equal(plan.intent, 'find_bought_not_sellable');
+    assert.deepEqual(plan.steps.map((step) => step.tool), ['summary', 'list']);
   });
 
   test('the product’s own finding is asked for in words, in either language', () => {

@@ -84,7 +84,16 @@ export interface B20ConsumerCardInputV1 {
   hasObservation: boolean;
 }
 
-const COPY_V1: Readonly<
+/**
+ * One sentence per conclusion, in reader words, exported so nothing has to
+ * write a second set.
+ *
+ * The console's "which launches need more evidence" answer has to say WHY each
+ * gap is a gap, and the only honest source for that is the same table the card
+ * renders. A parallel list would drift, and the two surfaces would then
+ * disagree about what `venue_not_searched` means.
+ */
+export const B20_CONSUMER_STANDING_COPY_V1: Readonly<
   Record<B20ExitStandingKindV1, { status: string; tone: B20ConsumerToneV1; headline: string; body: string }>
 > = {
   two_sided: {
@@ -160,11 +169,12 @@ export function b20PercentLabelV1(bps: number): string {
 /**
  * The consumer projection.
  *
- * Total over the standing kinds by construction: `COPY_V1` is a Record, so a
- * new kind fails to compile until it has words.
+ * Total over the standing kinds by construction:
+ * `B20_CONSUMER_STANDING_COPY_V1` is a Record, so a new kind fails to compile
+ * until it has words.
  */
 export function b20ConsumerCardV1(input: B20ConsumerCardInputV1): B20ConsumerCardV1 {
-  const copy = COPY_V1[input.standing.kind];
+  const copy = B20_CONSUMER_STANDING_COPY_V1[input.standing.kind];
   const facts: B20ConsumerFactV1[] = [];
 
   // Round-trip first when it exists: it is the number the reader came for, and
