@@ -124,7 +124,7 @@ test('createLlmProvider', async (t) => {
 
   await t.test('no fallback variables means no chain — the fallback is optional', () => {
     process.env.LLM_PROVIDER = 'openai-compatible';
-    process.env.LLM_BASE_URL = 'https://api.airforce';
+    process.env.LLM_BASE_URL = 'https://primary.example/v1';
     process.env.LLM_API_KEY = 'test';
     process.env.LLM_MODEL = 'gpt-4o-mini';
     assert.ok(createLlmProvider() instanceof OpenAiCompatibleClient);
@@ -132,7 +132,7 @@ test('createLlmProvider', async (t) => {
 
   await t.test('a fully configured fallback wraps the primary in a chain', () => {
     process.env.LLM_PROVIDER = 'openai-compatible';
-    process.env.LLM_BASE_URL = 'https://api.airforce';
+    process.env.LLM_BASE_URL = 'https://primary.example/v1';
     process.env.LLM_API_KEY = 'test';
     process.env.LLM_MODEL = 'gpt-4o-mini';
     process.env.LLM_FALLBACK_BASE_URL = 'https://openrouter.ai/api';
@@ -145,7 +145,7 @@ test('createLlmProvider', async (t) => {
     // Ignoring this would mean the fallback is discovered missing on the one
     // day it was supposed to matter.
     process.env.LLM_PROVIDER = 'openai-compatible';
-    process.env.LLM_BASE_URL = 'https://api.airforce';
+    process.env.LLM_BASE_URL = 'https://primary.example/v1';
     process.env.LLM_API_KEY = 'test';
     process.env.LLM_MODEL = 'gpt-4o-mini';
     process.env.LLM_FALLBACK_BASE_URL = 'https://openrouter.ai/api';
@@ -158,7 +158,7 @@ test('createLlmProvider', async (t) => {
 
   await t.test('OPENROUTER_KEY is accepted when the fallback IS OpenRouter', () => {
     process.env.LLM_PROVIDER = 'openai-compatible';
-    process.env.LLM_BASE_URL = 'https://api.airforce';
+    process.env.LLM_BASE_URL = 'https://primary.example/v1';
     process.env.LLM_API_KEY = 'test';
     process.env.LLM_MODEL = 'gpt-4o-mini';
     process.env.LLM_FALLBACK_BASE_URL = 'https://openrouter.ai/api';
@@ -171,7 +171,7 @@ test('createLlmProvider', async (t) => {
     // A bearer token is a credential for one host. Resolving it for an
     // unrelated base URL would hand it to whoever that host turns out to be.
     process.env.LLM_PROVIDER = 'openai-compatible';
-    process.env.LLM_BASE_URL = 'https://api.airforce';
+    process.env.LLM_BASE_URL = 'https://primary.example/v1';
     process.env.LLM_API_KEY = 'test';
     process.env.LLM_MODEL = 'gpt-4o-mini';
     process.env.LLM_FALLBACK_BASE_URL = 'https://someone-elses-gateway.example';
@@ -182,9 +182,9 @@ test('createLlmProvider', async (t) => {
 
   await t.test('a second spare joins the chain after the first', () => {
     // One spare stops being a spare when the primary answers 429 on most
-    // requests, which is what api.airforce does here.
+    // requests; a second spare keeps that failure from redefining the chain.
     process.env.LLM_PROVIDER = 'openai-compatible';
-    process.env.LLM_BASE_URL = 'https://api.airforce';
+    process.env.LLM_BASE_URL = 'https://primary.example/v1';
     process.env.LLM_API_KEY = 'test';
     process.env.LLM_MODEL = 'gpt-4o-mini';
     process.env.LLM_FALLBACK_BASE_URL = 'https://openrouter.ai/api';
@@ -198,7 +198,7 @@ test('createLlmProvider', async (t) => {
 
   await t.test('a HALF configured second spare throws, exactly like the first', () => {
     process.env.LLM_PROVIDER = 'openai-compatible';
-    process.env.LLM_BASE_URL = 'https://api.airforce';
+    process.env.LLM_BASE_URL = 'https://primary.example/v1';
     process.env.LLM_API_KEY = 'test';
     process.env.LLM_MODEL = 'gpt-4o-mini';
     process.env.LLM_FALLBACK_2_BASE_URL = 'https://agentrouter.org';
@@ -210,7 +210,7 @@ test('createLlmProvider', async (t) => {
 
   await t.test('an AgentRouter key is NEVER sent to a different host', () => {
     process.env.LLM_PROVIDER = 'openai-compatible';
-    process.env.LLM_BASE_URL = 'https://api.airforce';
+    process.env.LLM_BASE_URL = 'https://primary.example/v1';
     process.env.LLM_API_KEY = 'test';
     process.env.LLM_MODEL = 'gpt-4o-mini';
     process.env.LLM_FALLBACK_2_BASE_URL = 'https://someone-elses-gateway.example';
@@ -221,7 +221,7 @@ test('createLlmProvider', async (t) => {
 
   await t.test('a second spare alone is a chain, with no first spare configured', () => {
     process.env.LLM_PROVIDER = 'openai-compatible';
-    process.env.LLM_BASE_URL = 'https://api.airforce';
+    process.env.LLM_BASE_URL = 'https://primary.example/v1';
     process.env.LLM_API_KEY = 'test';
     process.env.LLM_MODEL = 'gpt-4o-mini';
     process.env.LLM_FALLBACK_2_BASE_URL = 'https://agentrouter.org';
@@ -241,7 +241,7 @@ test('createLlmProvider', async (t) => {
 });
 
 test('providerLabelV1 reports the host and never a path or credential', () => {
-  assert.equal(providerLabelV1('https://api.airforce'), 'api.airforce');
+  assert.equal(providerLabelV1('https://primary.example/v1'), 'primary.example');
   assert.equal(providerLabelV1('https://openrouter.ai/api'), 'openrouter.ai');
   // Some gateways carry a token in the path; the label must not.
   assert.equal(providerLabelV1('https://gateway.example/v1/sk-secret-token'), 'gateway.example');
@@ -255,7 +255,7 @@ test('two links on the same host are told apart in the log', async (t) => {
   });
   clearFallbackEnv();
   process.env.LLM_PROVIDER = 'openai-compatible';
-  process.env.LLM_BASE_URL = 'https://api.airforce';
+  process.env.LLM_BASE_URL = 'https://primary.example/v1';
   process.env.LLM_API_KEY = 'test';
   process.env.LLM_MODEL = 'gpt-4o-mini';
   // Both spares are OpenRouter, on different models. Production logged
@@ -288,7 +288,7 @@ test('two links on the same host are told apart in the log', async (t) => {
   assert.match(hops, /openrouter\.ai \(qwen\/qwen3\.7-flash\)/);
   assert.match(hops, /openrouter\.ai \(nvidia\/nemotron-3-nano-30b-a3b:free\)/);
   // The unique host keeps its short, familiar name.
-  assert.match(hops, /^\[llm\] api\.airforce failed/m);
+  assert.match(hops, /^\[llm\] primary\.example failed/m);
 });
 
 // ---------------------------------------------------------------------------

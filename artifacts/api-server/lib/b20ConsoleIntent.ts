@@ -37,11 +37,18 @@ export interface B20ConsolePlanResolutionV1 {
 }
 
 const OUTPUT_KEYS_V1 = ['intent', 'confidence'] as const;
-const SEMANTIC_TIMEOUT_MS_V1 = 6_000;
+// Grok 4.5 is the production primary. Its hidden reasoning makes even this
+// small classification take 10–16 seconds in ordinary runs (measured against
+// TokenForge on 2026-08-20), so the old six-second ceiling turned correct
+// answers into `semantic_classifier_invalid_or_timed_out`. Known phrases and
+// every address bypass the classifier; this budget is spent only on the old
+// silent-fallback path.
+const SEMANTIC_TIMEOUT_MS_V1 = 20_000;
 const MIN_CONFIDENCE_V1 = 0.72;
 
 const SYSTEM_PROMPT_V1 = `You classify multilingual questions for Miorail's read-only B20 evidence console.
 Return exactly one JSON object with exactly two keys: intent and confidence. No markdown, prose, tool calls or extra keys.
+confidence MUST be a JSON decimal number from 0 to 1 (example: 0.95). Never use a percentage or a 0-100 scale.
 intent must be one of: ${B20_SEMANTIC_INTENTS_V1.join(', ')}.
 
 Meanings:

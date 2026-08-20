@@ -177,7 +177,7 @@ test('an exhausted three-link chain names every provider that failed', async () 
     },
   });
   const chain = new LlmProviderChainV1([
-    failing('api.airforce', 429),
+    failing('primary.example', 429),
     failing('openrouter.ai', 402),
     failing('agentrouter.org', 401),
   ]);
@@ -188,7 +188,7 @@ test('an exhausted three-link chain names every provider that failed', async () 
       assert.equal(error.failures.length, 3);
       // All three, because "agentrouter returned 401" alone sends the operator
       // to investigate the link that was never the primary.
-      for (const host of ['api.airforce', 'openrouter.ai', 'agentrouter.org']) {
+      for (const host of ['primary.example', 'openrouter.ai', 'agentrouter.org']) {
         assert.match(error.message, new RegExp(host));
       }
       return true;

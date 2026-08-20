@@ -29,6 +29,7 @@ describe('the semantic classifier has a closed, data-only output', () => {
   test('rejects unknown intents and invalid confidence', () => {
     assert.equal(parseB20SemanticIntentV1('{"intent":"buy_token","confidence":1}'), null);
     assert.equal(parseB20SemanticIntentV1('{"intent":"find_two_sided","confidence":2}'), null);
+    assert.equal(parseB20SemanticIntentV1('{"intent":"find_two_sided","confidence":80}'), null);
   });
 });
 
