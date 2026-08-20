@@ -73,6 +73,9 @@ function objectArrayV1(value: unknown, depth = 0): Record<string, unknown>[] | n
       if (nested) return nested;
     }
   }
+  if (['asset', 'symbol', 'mToken', 'agentId', 'agent_id', 'agentName', 'agent_name'].some((key) => key in record)) {
+    return [record];
+  }
   return null;
 }
 
@@ -96,9 +99,9 @@ function moonwellMarketsReplyV1(payload: unknown, asset: string): string {
   });
   const shown = (matched.length > 0 ? matched : rows).slice(0, 12).map((row, index) => {
     const name = firstDisplayV1(row, ['symbol', 'asset', 'underlyingSymbol', 'marketSymbol', 'name']) ?? `market ${index + 1}`;
-    const supply = firstDisplayV1(row, ['supplyApy', 'supplyAPY', 'supplyApr', 'supplyAPR', 'supplyRate']);
-    const borrow = firstDisplayV1(row, ['borrowApy', 'borrowAPY', 'borrowApr', 'borrowAPR', 'borrowRate']);
-    const liquidity = firstDisplayV1(row, ['liquidity', 'availableLiquidity', 'cash']);
+    const supply = firstDisplayV1(row, ['baseSupplyApy', 'supplyApy', 'supplyAPY', 'totalSupplyApr', 'supplyApr', 'supplyAPR', 'supplyRate']);
+    const borrow = firstDisplayV1(row, ['baseBorrowApy', 'borrowApy', 'borrowAPY', 'totalBorrowApr', 'borrowApr', 'borrowAPR', 'borrowRate']);
+    const liquidity = firstDisplayV1(row, ['liquidityUsd', 'liquidity', 'availableLiquidity', 'cash']);
     const facts = [supply ? `supply ${supply}` : null, borrow ? `borrow ${borrow}` : null, liquidity ? `liquidity ${liquidity}` : null]
       .filter(Boolean)
       .join(' · ');

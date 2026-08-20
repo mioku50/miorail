@@ -54,6 +54,39 @@ test('Moonwell market example runs the pinned reviewed recipe without an LLM', a
   assert.match(result.reply ?? '', /4\.2%/);
 });
 
+test('Moonwell renders the live single-market data envelope', async () => {
+  const calls: string[] = [];
+  const liveEnvelopeExecutor = executor(calls);
+  liveEnvelopeExecutor.request = async (input) => {
+    calls.push(input.path);
+    return {
+      status: 200,
+      data: {
+        success: true,
+        data: {
+          asset: 'USDC',
+          baseSupplyApy: 3.72,
+          baseBorrowApy: 5.06,
+          liquidityUsd: 2_750_163,
+        },
+      },
+    };
+  };
+  reviewedBaseMcpPluginRuntimeV1.loadSkillExecutor = () => liveEnvelopeExecutor;
+
+  const result = await runReviewedBaseMcpPluginReadV1({
+    providerId: 'moonwell',
+    exampleId: 'markets',
+    message: 'Show Moonwell USDC supply markets on Base',
+    walletAddress: '0x1111111111111111111111111111111111111111',
+  });
+
+  assert.equal(result?.status, 'answered');
+  assert.match(result?.reply ?? '', /USDC/);
+  assert.match(result?.reply ?? '', /supply 3\.72/);
+  assert.match(result?.reply ?? '', /liquidity 2750163/);
+});
+
 test('Moonwell account recipe reads positions and health from the same reviewed host', async () => {
   const calls: string[] = [];
   reviewedBaseMcpPluginRuntimeV1.loadSkillExecutor = () => executor(calls);
