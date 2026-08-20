@@ -43,6 +43,9 @@ import { tenantUserId, tenantWalletAddress } from '../middleware/tenantAuth';
 import { resolveBaseNameV1 } from '../lib/baseNameResolver.js';
 
 export const mcpBaseRouter = Router();
+/** Public, read-only catalogue surface. Kept separate so mounting it before
+ * tenant auth cannot accidentally expose OAuth, console or action routes. */
+export const mcpBasePublicRouter = Router();
 
 export const mcpBaseRouteRuntime = {
   auth,
@@ -329,7 +332,7 @@ mcpBaseRouter.get('/probe', handleToolsProbe);
 // that does not change when a token expires. Hiding it behind the connection
 // is what produced the screenshot where a disconnected user saw a page about
 // Base MCP with no plugins on it.
-mcpBaseRouter.get('/plugins', async (_req: Request, res: Response, next: NextFunction) => {
+mcpBasePublicRouter.get('/plugins', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const drift = await mcpBaseRouteRuntime.baseMcpPluginDriftV1();
     return res.json(BaseMcpPluginCatalogueResponseSchema.parse({

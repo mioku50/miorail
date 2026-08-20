@@ -576,6 +576,38 @@ test('GET /api/mcp/base/plugins lists the catalogue without a Base MCP session',
   restoreEnv('BASE_MCP_ENABLED', originalEnabled);
 });
 
+test('the public catalogue does not make OAuth, console or actions public', async () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalDevSingleUser = process.env.DEV_SINGLE_USER;
+  process.env.NODE_ENV = 'production';
+  delete process.env.DEV_SINGLE_USER;
+  mcpBaseRouteRuntime.baseMcpPluginDriftV1 = async () => ({
+    status: 'unchecked' as const,
+    knownCount: 20,
+    publishedCount: null,
+    added: [],
+    removed: [],
+    checkedAt: null,
+    reason: 'check_disabled',
+  });
+
+  try {
+    const catalogue = await request(app).get('/api/mcp/base/plugins');
+    const probe = await request(app).get('/api/mcp/base/probe');
+    const consoleAnswer = await request(app).post('/api/mcp/base/console').send({ message: 'What do I hold?' });
+    const actions = await request(app).get('/api/mcp/base/actions');
+
+    assert.strictEqual(catalogue.status, 200);
+    assert.ok(catalogue.body.plugins.length >= 20);
+    assert.strictEqual(probe.status, 401);
+    assert.strictEqual(consoleAnswer.status, 401);
+    assert.strictEqual(actions.status, 401);
+  } finally {
+    restoreEnv('NODE_ENV', originalNodeEnv);
+    restoreEnv('DEV_SINGLE_USER', originalDevSingleUser);
+  }
+});
+
 test('GET /api/mcp/base/plugins still lists the catalogue when the drift check fails', async () => {
   // A failed drift check must degrade the INDICATOR, never the list. Returning
   // no plugins because github was unreachable would be the same defect as

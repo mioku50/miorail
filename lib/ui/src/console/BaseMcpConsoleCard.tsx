@@ -121,6 +121,9 @@ export interface BaseMcpConsoleModelV1 {
   actionTools?: number;
   releasedActionTools?: number;
   routableTools?: number;
+  /** Keeps the command surface discoverable while making execution state
+   * explicit, for example before a Base App wallet session exists. */
+  disabledReason?: string | null;
 }
 
 export interface BaseMcpQuickExampleV1 {
@@ -227,7 +230,7 @@ export function baseMcpToolSummaryV1(model: {
 export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
   const answer = model.answer;
   const statusCopy = baseMcpConsoleStatusCopyV1(answer);
-  const canAsk = model.question.trim().length > 0 && !model.pending;
+  const canAsk = model.question.trim().length > 0 && !model.pending && !model.disabledReason;
 
   return (
     <div className="rp">
@@ -245,6 +248,7 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
           Base Account approval, and routable intents move to Routes AI for comparison and Safety
           Kernel checks.
         </p>
+        {model.disabledReason && <p className="empty">{model.disabledReason}</p>}
 
         <textarea
           id={BASE_MCP_CONSOLE_INPUT_ID_V1}

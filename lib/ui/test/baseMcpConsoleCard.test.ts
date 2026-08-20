@@ -180,6 +180,22 @@ describe('the console never borrows the routers’ authority', () => {
     assert.deepEqual(selected, []);
   });
 
+  test('a disconnected Base App can explore and fill prompts but cannot Ask', () => {
+    const html = renderToStaticMarkup(BaseMcpConsoleCard({
+      question: 'Show the models available from Venice AI',
+      onQuestionChange: () => undefined,
+      onAsk: () => assert.fail('a disabled console must not execute'),
+      pending: false,
+      unavailableReason: null,
+      answer: null,
+      disabledReason: 'Connect your Base wallet to ask or run a plugin prompt.',
+    }));
+    assert.match(html, /Connect your Base wallet/);
+    assert.match(html, /Ask Base MCP<\/button>/);
+    assert.match(html, /<button type="button" class="btn" disabled=""/);
+    assert.match(html, /Show the models available from Venice AI/);
+  });
+
   test('an empty Base MCP inventory is stated as a connection fact', () => {
     const copy = baseMcpConsoleStatusCopyV1(answer({ status: 'no_tools' }))!;
     assert.match(copy, /not about Base/i);

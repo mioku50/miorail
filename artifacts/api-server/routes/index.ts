@@ -11,7 +11,7 @@ import { protocolsRouter } from './protocols';
 import { statusRouter } from './status';
 import { marketRouter } from './market';
 import { autonomyRouter } from './autonomy';
-import { mcpBaseRouter } from './mcpBase';
+import { mcpBasePublicRouter, mcpBaseRouter } from './mcpBase';
 import { mcpHandoffRouter } from './mcpHandoff';
 import { authRouter } from './auth';
 import { routeIntelligenceRouter } from './routeIntelligence';
@@ -31,6 +31,9 @@ routes.use('/public', publicMetricsRouter);
 // Public agents have no Miorail session. The fixed x402 middleware is the
 // access boundary for these read-only paid resources.
 routes.use('/x402/intelligence/v1', x402IntelligenceRouterV1);
+// The committed plugin catalogue is public documentation. Only this dedicated
+// read router sits before tenant auth; OAuth, console and actions remain below.
+routes.use('/mcp/base', mcpBasePublicRouter);
 routes.use(requireTenant, enforceTenantBinding);
 routes.use('/memory', memoryRouter);
 routes.use('/settings', settingsRouter);
