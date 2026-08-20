@@ -343,6 +343,46 @@ describe('Investigate says what it does not have', () => {
     assert.equal(result.reads.length, 2);
     assert.ok(result.reads.every((read) => read.tool === 'card'));
   });
+
+  test('a targeted timeout is incomplete and attributed to Miorail', () => {
+    const base = readV1('a');
+    const result = b20InvestigateAnswerV1({
+      reads: [{ ...base, card: { ...base.card!, observation: null } as never, historyCount: 0 }],
+      attempts: [{ tokenAddress: base.tokenAddress, outcome: 'timed_out', reason: null }],
+    });
+    assert.equal(result.assertions.state, 'not_measured');
+    assert.equal(result.assertions.complete, false);
+    assert.equal(result.assertions.incompleteReason, 'targeted_read');
+    assert.equal(result.assertions.about, 'miorail');
+  });
+
+  test('an incomplete stored finding is not re-labelled as a completed read', () => {
+    const base = readV1('a');
+    const result = b20InvestigateAnswerV1({
+      reads: [base],
+      attempts: [{ tokenAddress: base.tokenAddress, outcome: 'measurement_incomplete', reason: 'route_search_degraded' }],
+    });
+    assert.equal(result.assertions.state, 'measured');
+    assert.equal(result.assertions.complete, false);
+    assert.equal(result.assertions.incompleteReason, 'targeted_read');
+  });
+
+  test('exit capacity is displayed in the B20 token, not the reference quote asset', () => {
+    const base = readV1('a');
+    const result = b20InvestigateAnswerV1({
+      reads: [{
+        ...base,
+        card: {
+          ...base.card!,
+          launch: { ...base.card!.launch, symbol: 'BPEPE', decimals: 18 },
+          observation: { ...base.card!.observation!, largestPassingSizeAtomic: '352640000000000000000000' },
+        } as never,
+      }],
+    });
+    const fact = result.facts.find((entry) => entry.label === 'BPEPE');
+    assert.match(fact?.value ?? '', /exit capacity at least 352640 BPEPE/);
+    assert.doesNotMatch(fact?.value ?? '', /ETH|USDC/);
+  });
 });
 
 // ---------------------------------------------------------------------------

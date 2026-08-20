@@ -46,6 +46,7 @@ import {
   decodeB20BalanceV1,
   inspectB20TokenV1,
   detectB20IdentityV1,
+  decodeB20CreatedV1,
   buildB20CardV1,
   isWellFormedAddressV1,
   refusalDetailV1,
@@ -85,6 +86,9 @@ import {
   createDatabaseB20ProjectRepository,
   createDatabaseB20LaunchBuyersRepository,
   createDatabaseB20LaunchPoolRepository,
+  createDatabaseB20DiscoverRepository,
+  B20_DISCOVER_LANE_V1,
+  storedLaunchFromDecodedV1,
   decodeFeedCursorV1,
   encodeFeedCursorV1,
   type B20ObservationRepositoryV1,
@@ -181,7 +185,8 @@ import type { TenantUser } from '../middleware/tenantAuth.js';
 import { answerB20CopilotV1, b20ObservationRefMatchesV1 } from '../lib/b20Copilot.js';
 import { narrateB20AnswerV1 } from '../lib/b20Answer.js';
 import { planB20AnswerV1 } from '../lib/b20AnswerPlan.js';
-import { b20ScopeIsPrivateV1, planB20ConsoleAnswerV1, type B20ConsolePlanV1 } from '../lib/b20ConsolePlan.js';
+import { b20ScopeIsPrivateV1, type B20ConsolePlanV1 } from '../lib/b20ConsolePlan.js';
+import { resolveB20ConsolePlanV1 } from '../lib/b20ConsoleIntent.js';
 import {
   B20_CONSOLE_BASE_CAVEATS_V1,
   b20ChangesAnswerV1,
@@ -204,6 +209,10 @@ import {
   B20_TARGETED_MEASURE_MAX_PER_REQUEST_V1,
   type B20TargetedMeasureResultV1,
 } from '../lib/b20TargetedMeasure.js';
+import {
+  locateB20LaunchByCodeV1,
+  type B20TargetedLaunchLookupV1,
+} from '../lib/b20TargetedLaunch.js';
 // The measurement pass and its wiring, imported rather than reimplemented. A
 // second copy would be a second definition of what an observation is, and the
 // first thing to drift would be which block the factory read and the control
@@ -287,6 +296,7 @@ export const b20RouteRuntime = {
     createDatabaseB20EntryRouteProofRepository(client),
   receiptReader: createViemBaseReceiptReader,
   observations: (): B20ObservationRepositoryV1 => createDatabaseB20ObservationRepository(client),
+  discover: () => createDatabaseB20DiscoverRepository(client),
   deployers: (): B20LaunchDeployerRepositoryV1 => createDatabaseB20LaunchDeployerRepository(client),
   projects: (): B20ProjectRepositoryV1 => createDatabaseB20ProjectRepository(client),
   /** Whether this server has the project-claim tables. A server without 0046
@@ -401,6 +411,16 @@ export const b20RouteRuntime = {
       pass: b20TargetedMeasurePassV1(),
       monotonicMs: b20RouteRuntime.monotonicMs,
       budgetMs: input.budgetMs,
+    }),
+  locateLaunchOnDemand: (input: {
+    tokenAddress: string;
+    budgetMs: number;
+  }): Promise<B20TargetedLaunchLookupV1> =>
+    locateB20LaunchByCodeV1({
+      rpcUrl: baseMainnetRpcUrlV1(),
+      tokenAddress: input.tokenAddress,
+      budgetMs: input.budgetMs,
+      monotonicMs: b20RouteRuntime.monotonicMs,
     }),
   /** Injected so a test can run the whole route without a chain or a provider. */
   runOpportunity: runOpportunityV1,
@@ -1879,6 +1899,77 @@ export async function b20IdentityForMissingRowV1(
   }
 }
 
+type B20TargetedIndexOutcomeV1 =
+  | { indexed: true }
+  | {
+      indexed: false;
+      outcome: 'launch_lookup_unavailable' | 'launch_lookup_timed_out' | 'launch_event_not_found' | 'not_indexed';
+      reason: string | null;
+    };
+
+/**
+ * Recover one factory-confirmed launch that the Discover cursor never stored.
+ *
+ * The chain side is bounded by `locateB20LaunchByCodeV1`: binary-search the
+ * token's first code block, then read one exact B20Created log. The storage
+ * side is the existing historical-ingestion method, so the same schema,
+ * provenance and conflict rules apply; this route does not invent a launch
+ * row from token metadata.
+ */
+export async function indexMissingB20LaunchV1(input: {
+  tokenAddress: string;
+  budgetMs: number;
+}): Promise<B20TargetedIndexOutcomeV1> {
+  const lookup = await b20RouteRuntime.locateLaunchOnDemand(input);
+  if (lookup.outcome === 'provider_unavailable') {
+    return { indexed: false, outcome: 'launch_lookup_unavailable', reason: null };
+  }
+  if (lookup.outcome === 'timed_out') {
+    return { indexed: false, outcome: 'launch_lookup_timed_out', reason: null };
+  }
+  if (lookup.outcome === 'not_found') {
+    return { indexed: false, outcome: 'launch_event_not_found', reason: 'canonical_launch_event_not_found' };
+  }
+
+  const decoded = decodeB20CreatedV1(lookup.log);
+  if (
+    !decoded.ok ||
+    decoded.launch.tokenAddress !== input.tokenAddress.toLowerCase() ||
+    BigInt(decoded.launch.blockNumber) !== BigInt(lookup.creationBlock)
+  ) {
+    return { indexed: false, outcome: 'launch_event_not_found', reason: 'canonical_launch_event_unreadable' };
+  }
+
+  const repository = b20RouteRuntime.discover();
+  const cursor = await repository.getCursor(B20_DISCOVER_LANE_V1);
+  if (!cursor || BigInt(decoded.launch.blockNumber) >= BigInt(cursor.lastProcessedBlock)) {
+    // The live cursor owns this range. A targeted read never moves it or writes
+    // ahead of it; the next worker pass will ingest the launch atomically with
+    // the cursor that claims to have covered it.
+    return { indexed: false, outcome: 'not_indexed', reason: 'live_ingestion_pending' };
+  }
+
+  const now = b20RouteRuntime.now().toISOString();
+  const transactionIndex = lookup.log.transactionIndex && /^0x[0-9a-fA-F]+$/.test(lookup.log.transactionIndex)
+    ? Number(BigInt(lookup.log.transactionIndex))
+    : null;
+  const launch = storedLaunchFromDecodedV1({
+    launch: decoded.launch,
+    detectedAt: now,
+    confirmationCount: Math.max(0, lookup.headBlock - lookup.creationBlock),
+    transactionIndex: Number.isSafeInteger(transactionIndex) ? transactionIndex : null,
+    blockTimestamp: decoded.launch.blockTimestamp,
+  });
+  await repository.insertHistoricalLaunches({
+    key: B20_DISCOVER_LANE_V1,
+    fromBlock: decoded.launch.blockNumber,
+    toBlock: decoded.launch.blockNumber,
+    launches: [launch],
+    now,
+  });
+  return { indexed: true };
+}
+
 /**
  * Readings taken because a reader named a token, before the cards are read.
  *
@@ -1938,23 +2029,50 @@ export async function refreshB20ReadingsV1(input: {
       attempts.push({ tokenAddress, outcome: 'not_attempted', reason: null });
       continue;
     }
-    const found = await observations.getFeedRowForToken({ tokenAddress, historyLimit: 1 });
+    let found = await observations.getFeedRowForToken({ tokenAddress, historyLimit: 1 });
     if (!found) {
-      // No canonical launch row, so there is nothing to measure. Whether the
-      // address is a B20 token at all is a separate question, asked and
-      // answered separately by the identity read.
-      attempts.push({ tokenAddress, outcome: 'not_indexed', reason: null });
-      continue;
+      // Ask the canonical factory before spending the bounded historical
+      // lookup. A random contract address never causes the binary search.
+      const identity = await b20IdentityForMissingRowV1(tokenAddress, now);
+      if (identity !== 'b20' && identity !== 'b20_uninitialised') {
+        attempts.push({ tokenAddress, outcome: 'not_indexed', reason: null });
+        continue;
+      }
+      const lookupRemaining = budgetMs - (b20RouteRuntime.monotonicMs() - startedAt);
+      if (lookupRemaining <= 0) {
+        attempts.push({ tokenAddress, outcome: 'not_attempted', reason: null });
+        continue;
+      }
+      const indexed = await indexMissingB20LaunchV1({
+        tokenAddress,
+        // Leave most of the request budget for the actual Exit-First pass. A
+        // managed endpoint normally finishes the ~26 lookups far below this.
+        budgetMs: Math.min(10_000, Math.max(1, Math.floor(lookupRemaining * 0.45))),
+      });
+      if (!indexed.indexed) {
+        attempts.push({ tokenAddress, outcome: indexed.outcome, reason: indexed.reason });
+        continue;
+      }
+      found = await observations.getFeedRowForToken({ tokenAddress, historyLimit: 1 });
+      if (!found) {
+        attempts.push({ tokenAddress, outcome: 'not_indexed', reason: 'launch_insert_not_visible' });
+        continue;
+      }
     }
     if (!b20ObservationNeedsRefreshV1({ observation: found.row.observation, now })) continue;
 
+    const measureRemaining = budgetMs - (b20RouteRuntime.monotonicMs() - startedAt);
+    if (measureRemaining <= 0) {
+      attempts.push({ tokenAddress, outcome: 'not_attempted', reason: null });
+      continue;
+    }
     const result = await b20RouteRuntime.measureOnDemand({
       launch: {
         launchId: found.row.launch.id,
         tokenAddress: found.row.launch.tokenAddress,
         blockNumber: found.row.launch.blockNumber,
       },
-      budgetMs: remaining,
+      budgetMs: measureRemaining,
     });
     logger.info('b20 targeted measurement', {
       // The token address is public — it is on a Discover card — and the
@@ -2254,11 +2372,21 @@ b20ControlRouter.post('/opportunities/b20/console/ask', async (req: Request, res
       return;
     }
     const now = b20RouteRuntime.now();
-    const plan = planB20ConsoleAnswerV1({
+    const resolution = await resolveB20ConsolePlanV1({
       question: parsed.data.question,
       scope: parsed.data.scope,
       tokenAddresses: parsed.data.tokenAddresses,
+      provider: b20RouteRuntime.narrator(),
     });
+    const plan = resolution.plan;
+    if (resolution.source !== 'deterministic') {
+      logger.info('b20 console semantic intent resolution', {
+        source: resolution.source,
+        scope: parsed.data.scope,
+        intent: plan.intent,
+        reason: resolution.reason,
+      });
+    }
 
     if (plan.refusal) {
       // Refused before any read, so an out-of-scope question costs nothing.

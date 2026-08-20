@@ -171,7 +171,7 @@ test('missing evidence stays missing and is never rendered as a zero', () => {
   assert.doesNotMatch(answer.answer, /0\.00%/);
 });
 
-test('a dollar exit question compares only against a USDC ladder and still opens Routes', () => {
+test('a dollar exit question cannot be compared against the ladder (no price feed) and still opens Routes', () => {
   const measured = card({
     state: 'provisional',
     reasonCode: 'quoted_pre_entry',
@@ -187,7 +187,7 @@ test('a dollar exit question compares only against a USDC ladder and still opens
     preEntryNotice: 'Measured before entry moved the pool.',
   });
   const answer = answerB20CopilotV1({ card: measured, history: [history()], question: 'Can I get out with $100?' });
-  assert.match(answer.answer, /100 USDC is not greater than the largest passing probe/);
+  assert.match(answer.answer, /The stored ladder is denominated in AVANTIS, not in dollars, and Miorail reads no price — so 100 USDC cannot be compared against it here/);
   assert.match(answer.answer, /not an executable quote/);
   assert.equal(answer.routeHandoff?.label, 'Open in Routes');
   assert.match(answer.routeHandoff?.goal ?? '', /to USDC/);
@@ -218,6 +218,8 @@ test('previous-measurement comparison is a deterministic delta', () => {
   assert.match(answer.answer, /state rejected → provisional/);
   assert.match(answer.answer, /exit route missing → found/);
   assert.match(answer.answer, /block 49920000/);
+  assert.match(answer.answer, /0\.00000000018 AVANTIS/);
+  assert.doesNotMatch(answer.answer, /USDC/);
 });
 
 test('previous-measurement comparison refuses a different profile', () => {

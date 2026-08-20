@@ -202,6 +202,11 @@ export interface B20AnswerAssertionsV1 {
   /** Whether the read behind the answer covered everything it was asked
    * about. False for a scan that hit its cap. */
   complete: boolean;
+  /** Why an incomplete answer is incomplete. A bounded universe scan needs a
+   * ceiling qualifier; a targeted token read needs attribution to Miorail
+   * instead. Keeping those states separate prevents the scan-cap verifier
+   * from demanding the word "cap" in a token-level timeout. */
+  incompleteReason?: 'scan_cap' | 'targeted_read';
   /** The subjects the answer named, in the order it named them. */
   subjects: readonly string[];
   /** Whose the leading finding is. `miorail` when the answer is about a
@@ -248,7 +253,7 @@ export function verifyB20NarrationSemanticsV1(input: {
   // S1 — the failure this whole section exists for.
   if (assertions.state === 'measured' && NOT_MEASURED_CLAIM_V1.test(narration)) {
     violations.push(
-      'the deterministic answer reports a completed measurement and the narration says nothing was measured',
+      'the deterministic answer reports stored measurement findings and the narration says nothing was measured',
     );
   }
 
@@ -277,7 +282,12 @@ export function verifyB20NarrationSemanticsV1(input: {
 
   // S4 — a ceiling reported as a total. Only when the narration actually
   // quotes a figure: a narration that states no count cannot misstate one.
-  if (!assertions.complete && numbersInV1(narration).length > 0 && !SCAN_CAP_VOCABULARY_V1.test(narration)) {
+  if (
+    !assertions.complete &&
+    assertions.incompleteReason !== 'targeted_read' &&
+    numbersInV1(narration).length > 0 &&
+    !SCAN_CAP_VOCABULARY_V1.test(narration)
+  ) {
     violations.push('the scan did not complete and the narration quotes a count without saying it is a ceiling');
   }
 

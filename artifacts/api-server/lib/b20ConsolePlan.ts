@@ -606,3 +606,31 @@ export function planB20ConsoleAnswerV1(input: {
     refusal: null,
   };
 }
+
+/**
+ * Whether the deterministic vocabulary did not actually identify the reader's
+ * intent.
+ *
+ * The legacy Explore default is the universe summary. It is useful when a
+ * reader explicitly asks for a count or overview, but dangerous as a language
+ * fallback: an unfamiliar sentence would silently become a different
+ * question. The semantic resolver only runs for that fallback (or the matching
+ * unnamed-Investigate refusal); known questions, addresses and safety refusals
+ * never pay for classification.
+ */
+export function b20ConsolePlanNeedsSemanticResolutionV1(input: {
+  question: string;
+  scope: B20ConsoleScopeV1;
+  tokenAddresses?: readonly string[];
+}, plan: B20ConsolePlanV1): boolean {
+  if (b20UnsupportedRefusalV1(input.question)) return false;
+  if (b20AddressesInV1(input.question).length > 0 || (input.tokenAddresses?.length ?? 0) > 0) return false;
+  const value = input.question.trim().toLowerCase();
+  if (plan.intent === 'universe_counts') return !matchesV1(value, UNIVERSE_QUESTION_V1);
+  return (
+    input.scope === 'investigate' &&
+    plan.intent === 'unsupported' &&
+    plan.steps.length === 0 &&
+    plan.refusal?.startsWith('Investigate answers about named tokens.') === true
+  );
+}

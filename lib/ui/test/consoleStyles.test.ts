@@ -305,6 +305,16 @@ describe('a long hash cannot widen the page', () => {
   });
 });
 
+describe('the inline B20 answer stays inside a Base App viewport', () => {
+  test('the strip and answer can shrink, while every free-text line wraps', () => {
+    assert.match(rulesFor(/\.mio-console \.ask-inline\s*$/).join(' '), /min-width:\s*0/);
+    assert.match(rulesFor(/\.mio-console \.ask-inline\s*$/).join(' '), /max-width:\s*100%/);
+    assert.match(rulesFor(/\.mio-console \.b20-answer\s*$/).join(' '), /min-width:\s*0/);
+    assert.match(rulesFor(/\.mio-console \.b20-answer > p\s*$/).join(' '), /overflow-wrap:\s*anywhere/);
+    assert.match(rulesFor(/\.mio-console \.b20-prompt-chips button\s*$/).join(' '), /overflow-wrap:\s*anywhere/);
+  });
+});
+
 describe('dense Route KPIs stay inside their cards', () => {
   test('a KPI track can shrink and both value lines wrap long financial text', () => {
     assert.match(rulesFor(/\.mio-console \.kpi\s*$/).join(' '), /min-width:\s*0/);

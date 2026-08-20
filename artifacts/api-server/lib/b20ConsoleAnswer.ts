@@ -11,11 +11,10 @@ import {
   type MeasuredMoverV1,
   type MoverExclusionV1,
 } from '@mioagent/opportunity-rail';
-import { b20QuoteAssetDisplayV1 } from '@mioagent/opportunity-rail/quoteAsset';
 import type { B20DetectionOutcomeV1, B20TokenIndexStandingV1 } from '@mioagent/b20-control';
 
 import type { B20AnswerAssertionsV1 } from './b20AnswerVerify.js';
-import { b20AmountLabelV1 } from './b20Copilot.js';
+import { b20AmountLabelV1, b20ExitCapacityAssetV1 } from './b20Copilot.js';
 import type { B20ExitAssessmentV1 } from './b20ExitAssessment.js';
 import type { B20ConsolePlanV1 } from './b20ConsolePlan.js';
 
@@ -859,6 +858,26 @@ export const B20_READING_ATTEMPT_COPY_V1: Readonly<
     sentence: (symbol) => `Miorail cannot take a reading of ${symbol} on this deployment — it has no Base endpoint configured. That is a fact about this server, not about the token.`,
     missing: (symbol) => `An Exit-First measurement for ${symbol}. This deployment cannot take one.`,
   },
+  launch_lookup_unavailable: {
+    fact: 'Canonical launch lookup did not answer',
+    sentence: (symbol) => `The B20 factory confirmed ${symbol}, but Miorail's bounded launch-event lookup did not answer. No launch row or measurement was invented from token metadata.`,
+    missing: (symbol) => `The canonical B20Created event for ${symbol}. Miorail's lookup endpoint did not answer.`,
+  },
+  launch_lookup_timed_out: {
+    fact: 'Canonical launch lookup timed out',
+    sentence: (symbol) => `The B20 factory confirmed ${symbol}, but Miorail could not locate its canonical launch event inside this request's time budget. This is a limit of Miorail's reading, not a finding about the token.`,
+    missing: (symbol) => `The canonical B20Created event for ${symbol}. The bounded lookup timed out.`,
+  },
+  launch_event_not_found: {
+    fact: 'Canonical launch event not established',
+    sentence: (symbol) => `The B20 factory confirmed ${symbol}, but Miorail did not establish a decodable canonical launch event, so it did not create a launch row or run a measurement.`,
+    missing: (symbol) => `A decodable canonical B20Created event for ${symbol}.`,
+  },
+  not_indexed: {
+    fact: 'Canonical launch not indexed yet',
+    sentence: (symbol) => `${symbol} is factory-confirmed, but its canonical launch is not available to the measurement pipeline yet. Miorail did not substitute token metadata for launch evidence.`,
+    missing: (symbol) => `The canonical launch row for ${symbol}.`,
+  },
 };
 
 /** One attempt, as the console needs it. Structurally the targeted-measurement
@@ -937,13 +956,17 @@ export function b20InvestigateAnswerV1(input: {
       }
       continue;
     }
-    const quote = b20QuoteAssetDisplayV1(observation.referenceQuoteAsset);
     const parts: string[] = [observation.standing.headline];
     if (observation.optimisticRoundTripBps !== null) {
       parts.push(`round trip ${bpsV1(observation.optimisticRoundTripBps)}`);
     }
     if (observation.largestPassingSizeAtomic !== null) {
-      parts.push(`exit capacity at least ${b20AmountLabelV1(observation.largestPassingSizeAtomic, quote)}`);
+      parts.push(
+        `exit capacity at least ${b20AmountLabelV1(
+          observation.largestPassingSizeAtomic,
+          b20ExitCapacityAssetV1(card.launch),
+        )}`,
+      );
     }
     facts.push({
       label: symbol,
@@ -1026,6 +1049,38 @@ export function b20InvestigateAnswerV1(input: {
   // exactly the three the narrator must not blur: measured, indexed but never
   // measured, and not in the index at all.
   const withObservation = known.filter((read) => read.card?.observation).length;
+  const incompleteAttemptOutcomes = new Set([
+    'measurement_incomplete',
+    'provider_unavailable',
+    'timed_out',
+    'failed',
+    'not_attempted',
+    'unavailable_here',
+    'launch_lookup_unavailable',
+    'launch_lookup_timed_out',
+    'launch_event_not_found',
+    'not_indexed',
+  ]);
+  const hasIncompleteAttempt = (input.attempts ?? []).some((attempt) =>
+    incompleteAttemptOutcomes.has(attempt.outcome),
+  );
+  const hasIncompleteIdentityRead = unknown.some((read) => read.indexStanding !== 'not_b20');
+  const hasTokenFinding = known.some(
+    (read) =>
+      read.card?.observation !== null &&
+      read.card?.observation !== undefined &&
+      read.card.observation.standing.aboutToken !== false,
+  );
+  const hasMiorailFinding =
+    hasIncompleteAttempt ||
+    hasIncompleteIdentityRead ||
+    known.some((read) => !read.card?.observation) ||
+    known.some((read) => read.card?.observation?.standing.aboutToken === false);
+  const about = hasMiorailFinding
+    ? hasTokenFinding
+      ? 'mixed'
+      : 'miorail'
+    : 'token';
   return {
     answer: sentences.join(' '),
     facts: facts.slice(0, 16),
@@ -1043,14 +1098,19 @@ export function b20InvestigateAnswerV1(input: {
             ? 'measured'
             : 'mixed',
       matched: withObservation,
-      complete: true,
+      complete:
+        !hasIncompleteAttempt &&
+        !hasIncompleteIdentityRead &&
+        known.every((read) => Boolean(read.card?.observation)),
+      incompleteReason:
+        hasIncompleteAttempt || hasIncompleteIdentityRead || known.some((read) => !read.card?.observation)
+          ? 'targeted_read'
+          : undefined,
       subjects: [
         ...known.map((read) => symbolV1(read.card!)),
         ...unknown.map((read) => read.tokenAddress),
       ],
-      about: known.some((read) => read.card?.observation?.standing.aboutToken === false)
-        ? 'mixed'
-        : 'token',
+      about,
     },
   };
 }

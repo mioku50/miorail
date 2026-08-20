@@ -777,7 +777,7 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
    be read as one undifferentiated strip of chips. */
 .mio-console .filter-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .mio-console .filter-row-k { flex: none; font-size: 10.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
-.mio-console .filter-row .crumb { flex-wrap: wrap; gap: 6px; }
+.mio-console .filter-row .crumb { min-width: 0; max-width: 100%; flex-wrap: wrap; gap: 6px; }
 .mio-console.mini .filter-row { flex-direction: column; align-items: flex-start; gap: 5px; }
 .mio-console .cardrow .btn { margin-top: 10px; }
 .mio-console .card-actions { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -799,7 +799,7 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .b20-prompt-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .mio-console .b20-prompt-chips button { border: 0; border-radius: 999px; padding: 5px 8px; cursor: pointer;
   background: var(--panel2); color: var(--muted); font: inherit; font-size: 10.5px; text-align: left;
-  box-shadow: inset 0 0 0 1px var(--line2); }
+  max-width: 100%; overflow-wrap: anywhere; box-shadow: inset 0 0 0 1px var(--line2); }
 .mio-console .b20-prompt-chips button:hover,
 .mio-console .b20-prompt-chips button:focus-visible { color: var(--ink); box-shadow: inset 0 0 0 1px var(--accent-line); }
 .mio-console .b20-ask-form { margin-top: 11px; }
@@ -814,7 +814,7 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
    second console to keep true. The rail is what tells a reader this block is
    an aside inside the feed panel and not the feed itself. */
 .mio-console .ask-inline { margin: 11px 0 12px; padding: 10px 0 0 11px;
-  border-top: 1px solid var(--line); border-left: 2px solid var(--line2); }
+  min-width: 0; max-width: 100%; border-top: 1px solid var(--line); border-left: 2px solid var(--line2); }
 .mio-console .ask-inline-head { display: flex; align-items: center; justify-content: space-between;
   gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .mio-console .ask-inline-head h4 { margin: 0; color: var(--ink); font-size: 12px; font-weight: 700;
@@ -822,13 +822,13 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .ask-inline-head .rt { display: flex; align-items: center; gap: 8px; }
 /* The first control inside the strip already carries the top gap. */
 .mio-console .ask-inline > .filter-row:first-of-type { margin-top: 0; }
-.mio-console .b20-answer { margin-top: 11px; padding-top: 11px; border-top: 1px solid var(--line); }
+.mio-console .b20-answer { min-width: 0; max-width: 100%; margin-top: 11px; padding-top: 11px; border-top: 1px solid var(--line); }
 /* An answer can be put away. On a narrow screen it runs longer than the
    viewport and sits between the reader and the cards. */
 .mio-console .b20-answer-head { display: flex; align-items: center; justify-content: space-between;
   gap: 8px; margin-bottom: 7px; }
 .mio-console .b20-answer-head .lnote { margin: 0; min-width: 0; }
-.mio-console .b20-answer > p { margin: 0; color: var(--ink); font-size: 12.5px; line-height: 1.55; }
+.mio-console .b20-answer > p { margin: 0; color: var(--ink); font-size: 12.5px; line-height: 1.55; overflow-wrap: anywhere; }
 .mio-console .b20-answer-facts { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; margin: 10px 0 0; }
 .mio-console .b20-answer-facts > div { min-width: 0; padding: 8px; border-radius: 7px; background: var(--panel2);
   box-shadow: inset 0 0 0 1px var(--line); }
@@ -845,6 +845,9 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .b20-answer-unknowns ul,
 .mio-console .b20-answer-reads ul,
 .mio-console .b20-answer-caveats ul { margin: 7px 0 0; padding-left: 18px; line-height: 1.5; }
+.mio-console .b20-answer-unknowns li,
+.mio-console .b20-answer-reads li,
+.mio-console .b20-answer-caveats li { overflow-wrap: anywhere; }
 /* Stage 09 — the identity checklist and the context caveats. A list, never a
    grade: every link is named with what happened to it, so "0 of 3" reads as a
    checklist rather than as a score. */
@@ -869,6 +872,7 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   .mio-console .b20-copilot-head { flex-direction: column; }
   .mio-console .b20-ask-form > div { grid-template-columns: minmax(0,1fr); }
   .mio-console .b20-answer-facts { grid-template-columns: minmax(0,1fr); }
+  .mio-console .ask-inline { padding-left: 8px; }
 }
 
 /* Commerce used these two from the day it shipped and neither had a rule, so

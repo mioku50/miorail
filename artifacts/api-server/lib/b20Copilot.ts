@@ -1,4 +1,4 @@
-import { b20QuoteAssetDisplayV1, type B20OpportunityCardV1 } from '@mioagent/opportunity-rail';
+import type { B20OpportunityCardV1 } from '@mioagent/opportunity-rail';
 import type { B20OpportunityObservationV1 } from '@mioagent/route-storage';
 
 export type B20CopilotQuestionKindV1 =
@@ -75,15 +75,17 @@ function formatAtomicV1(atomic: string, decimals: number): string {
   const raw = BigInt(atomic);
   const base = BigInt(10) ** BigInt(decimals);
   const whole = raw / base;
-  const fraction = (raw % base).toString().padStart(decimals, '0').replace(/0+$/, '').slice(0, 6);
+  const fullFraction = (raw % base).toString().padStart(decimals, '0').replace(/0+$/, '');
+  // Keep six significant fractional digits for a sub-unit amount. Slicing the
+  // first six decimal PLACES rendered a real 0.00000000018-token capacity as
+  // "0.000000", which is another invented zero. For ordinary values the
+  // compact six-decimal display stays unchanged.
+  const firstNonZero = fullFraction.search(/[1-9]/);
+  const fraction = firstNonZero >= 6
+    ? fullFraction.slice(0, firstNonZero + 6)
+    : fullFraction.slice(0, 6);
   return fraction ? `${whole}.${fraction}` : whole.toString();
 }
-
-/** The ONE table. This file used to hold its own, defaulting an unrecognised
- * asset to eighteen decimals while the Discover card defaulted the same asset
- * to six — so a single stored observation could be quoted back to a user as
- * two numbers twelve orders of magnitude apart. */
-const quoteAssetV1 = b20QuoteAssetDisplayV1;
 
 /**
  * One atomic amount, in the reader's units.
@@ -101,17 +103,39 @@ export function b20AmountLabelV1(atomic: string, asset: { symbol: string; decima
 
 const amountLabelV1 = b20AmountLabelV1;
 
+/**
+ * The units the exit-capacity ladder is actually denominated in: THE TOKEN.
+ *
+ * Every text surface was labelling it with the observation's reference QUOTE
+ * asset, which is the asset the position was spent in — a different thing. The
+ * ladder is built from `entryOutputAtomic`, which is what the entry bought, so
+ * a stored capacity of 352640884487741150852057 is ~352,640 BPEPE and was being
+ * printed as "352640.884487 ETH".
+ *
+ * The unit was wrong on every observation. The NUMBER was wrong wherever the
+ * two scales differ — a USDC-quoted reading (6 decimals) against an 18-decimal
+ * token was out by twelve orders of magnitude, which is the same failure the
+ * shared quote-asset table was written to end, one field along.
+ *
+ * The market rail has always had this right (`≥ N tokens`, the launch's own
+ * decimals). This makes the sentences agree with it.
+ */
+export function b20ExitCapacityAssetV1(launch: {
+  symbol: string | null;
+  decimals: number | null;
+}): { symbol: string; decimals: number | null } {
+  return { symbol: launch.symbol || 'tokens', decimals: launch.decimals };
+}
+
 function bpsV1(value: number): string {
   return `${trimDecimalV1((value / 100).toFixed(2))}%`;
 }
 
-function requestedUsdcAtomicV1(question: string): { display: string; atomic: bigint } | null {
+function requestedUsdcV1(question: string): { display: string } | null {
   const match = question.match(/(?:\$\s*([0-9]+(?:[.,][0-9]{1,6})?)|([0-9]+(?:[.,][0-9]{1,6})?)\s*(?:usdc|usd|dollars?))/iu);
   const decimal = (match?.[1] ?? match?.[2] ?? '').replace(',', '.');
   if (!decimal) return null;
-  const [whole, fraction = ''] = decimal.split('.');
-  const atomic = BigInt(whole) * BigInt(1_000_000) + BigInt(fraction.padEnd(6, '0'));
-  return { display: `${trimDecimalV1(decimal)} USDC`, atomic };
+  return { display: `${trimDecimalV1(decimal)} USDC` };
 }
 
 function missingEvidenceV1(
@@ -146,7 +170,6 @@ function factRowsV1(card: B20OpportunityCardV1): B20CopilotAnswerV1['facts'] {
       { label: 'Measurement', value: 'Not measured', tone: 'warning' },
     ];
   }
-  const quote = quoteAssetV1(observation.referenceQuoteAsset);
   const rows: B20CopilotAnswerV1['facts'] = [
     { label: 'State', value: observation.state, tone: observation.state === 'rejected' ? 'warning' : 'neutral' },
     {
@@ -168,12 +191,14 @@ function factRowsV1(card: B20OpportunityCardV1): B20CopilotAnswerV1['facts'] {
     });
   }
   if (observation.largestPassingSizeAtomic !== null) {
+    // In the TOKEN, never in the quote asset — see `b20ExitCapacityAssetV1`.
+    const size = b20ExitCapacityAssetV1(card.launch);
     const failure = observation.firstFailingSizeAtomic
-      ? ` · first failure by ${amountLabelV1(observation.firstFailingSizeAtomic, quote)}`
+      ? ` · first failure by ${amountLabelV1(observation.firstFailingSizeAtomic, size)}`
       : '';
     rows.push({
       label: 'Exit-capacity bound',
-      value: `at least ${amountLabelV1(observation.largestPassingSizeAtomic, quote)}${failure}`,
+      value: `at least ${amountLabelV1(observation.largestPassingSizeAtomic, size)}${failure}`,
       tone: observation.capacityStable === false ? 'warning' : 'neutral',
     });
   }
@@ -251,28 +276,24 @@ function exitAnswerV1(card: B20OpportunityCardV1, question: string): string {
   if (observation.largestPassingSizeAtomic === null) {
     return 'An exit route was seen, but no passing capacity probe was stored, so Miorail will not invent a size.';
   }
-  const quote = quoteAssetV1(observation.referenceQuoteAsset);
-  const passing = BigInt(observation.largestPassingSizeAtomic);
-  const failing = observation.firstFailingSizeAtomic === null ? null : BigInt(observation.firstFailingSizeAtomic);
-  const requested = requestedUsdcAtomicV1(question);
-  let comparison = '';
-  if (requested && quote.symbol === 'USDC') {
-    if (requested.atomic <= passing) {
-      comparison = ` ${requested.display} is not greater than the largest passing probe.`;
-    } else if (failing !== null && requested.atomic >= failing) {
-      comparison = ` ${requested.display} is at or above the first failing probe.`;
-    } else if (failing !== null) {
-      comparison = ` ${requested.display} falls between the passing and failing probes, so that interval was not measured.`;
-    } else {
-      comparison = ` ${requested.display} is larger than the largest passing probe and was not assessed.`;
-    }
-  } else if (requested) {
-    comparison = ` The stored ladder is denominated in ${quote.symbol}, so a dollar amount cannot be compared without fresh price evidence.`;
-  }
+  const size = b20ExitCapacityAssetV1(card.launch);
+  const requested = requestedUsdcV1(question);
+  // A dollar figure is never compared against this ladder, whatever the
+  // reference quote asset happens to be.
+  //
+  // The ladder's rungs are amounts of the TOKEN — they are built from what the
+  // entry bought. The old branch compared a USDC atomic amount against them
+  // whenever the observation's quote asset was USDC, which is comparing
+  // dollars to a token balance and printing the result as a measurement. There
+  // is no price feed here, and inventing one is the one thing this rail never
+  // does.
+  const comparison = requested
+    ? ` The stored ladder is denominated in ${size.symbol}, not in dollars, and Miorail reads no price — so ${requested.display} cannot be compared against it here.`
+    : '';
   const freshness = observation.freshness === 'fresh'
     ? 'The observation is inside its freshness window, but it is still not an executable quote.'
     : 'The observation is stale and is historical evidence only.';
-  return `At block ${observation.observationBlockNumber}, at least ${amountLabelV1(observation.largestPassingSizeAtomic, quote)} passed the ${bpsV1(observation.capacityToleranceBps)} exit reference${observation.firstFailingSizeAtomic ? `, and the ladder failed by ${amountLabelV1(observation.firstFailingSizeAtomic, quote)}` : ''}.${comparison} ${freshness} Routes must obtain fresh quotes before any approval.`;
+  return `At block ${observation.observationBlockNumber}, at least ${amountLabelV1(observation.largestPassingSizeAtomic, size)} passed the ${bpsV1(observation.capacityToleranceBps)} exit reference${observation.firstFailingSizeAtomic ? `, and the ladder failed by ${amountLabelV1(observation.firstFailingSizeAtomic, size)}` : ''}.${comparison} ${freshness} Routes must obtain fresh quotes before any approval.`;
 }
 
 function comparePreviousAnswerV1(
@@ -301,8 +322,8 @@ function comparePreviousAnswerV1(
     changes.push(`round trip ${previous.optimisticRoundTripBps === null ? 'not measured' : bpsV1(previous.optimisticRoundTripBps)} → ${current.optimisticRoundTripBps === null ? 'not measured' : bpsV1(current.optimisticRoundTripBps)}`);
   }
   if (previous.largestPassingSizeAtomic !== current.largestPassingSizeAtomic) {
-    const quote = quoteAssetV1(current.referenceQuoteAsset);
-    changes.push(`largest passing probe ${previous.largestPassingSizeAtomic === null ? 'not measured' : amountLabelV1(previous.largestPassingSizeAtomic, quote)} → ${current.largestPassingSizeAtomic === null ? 'not measured' : amountLabelV1(current.largestPassingSizeAtomic, quote)}`);
+    const size = b20ExitCapacityAssetV1(card.launch);
+    changes.push(`largest passing probe ${previous.largestPassingSizeAtomic === null ? 'not measured' : amountLabelV1(previous.largestPassingSizeAtomic, size)} → ${current.largestPassingSizeAtomic === null ? 'not measured' : amountLabelV1(current.largestPassingSizeAtomic, size)}`);
   }
   if (changes.length === 0) {
     return `No displayed measurement changed between blocks ${previous.observationBlockNumber} and ${current.observationBlockNumber}. This does not mean every pool or token property was unchanged.`;

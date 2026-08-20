@@ -3,6 +3,8 @@ import test, { afterEach, beforeEach, describe } from 'node:test';
 import express from 'express';
 import request from 'supertest';
 
+import { B20_CREATED_TOPIC_V1, B20_FACTORY_V1 } from '@mioagent/b20-control';
+
 import { b20ControlRouter, b20RouteRuntime, resetB20SummaryCacheV1 } from './b20Control.js';
 
 // ---------------------------------------------------------------------------
@@ -416,6 +418,38 @@ describe('the console answers about change', () => {
   });
 });
 
+describe('the console resolves unfamiliar language before it reads', () => {
+  test('a semantic intent becomes the same bounded plan as a known phrase', async () => {
+    let calls = 0;
+    b20RouteRuntime.narrator = () => ({
+      generate: async () => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            message: {
+              role: 'assistant' as const,
+              content: '{"intent":"find_bought_not_sellable","confidence":0.96}',
+            },
+          };
+        }
+        return {
+          message: { role: 'assistant' as const, content: 'Miorail found the stored cases described in the evidence.' },
+        };
+      },
+    }) as never;
+
+    const response = await ask({
+      schemaVersion: 'b20-console-ask/v1',
+      scope: 'explore',
+      question: 'Surface assets where acquisition worked but disposal could not be established',
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.intent, 'find_bought_not_sellable');
+    assert.ok(response.body.reads.some((read: { tool: string }) => read.tool === 'list'));
+    assert.ok(calls >= 1);
+  });
+});
+
 describe('refusals cost nothing and reveal nothing', () => {
   test('an out-of-scope question is refused without a read', async () => {
     const response = await ask({
@@ -474,6 +508,18 @@ describe('refusals cost nothing and reveal nothing', () => {
 const UNMEASURED = '0xb200000000000000000000195a5f43905160ee03';
 const THIRD = '0xb200000000000000000000195a5f43905160ee04';
 
+const B20_CREATED_DATA_V1 =
+  '0x' +
+  '0000000000000000000000000000000000000000000000000000000000000080' +
+  '00000000000000000000000000000000000000000000000000000000000000c0' +
+  '0000000000000000000000000000000000000000000000000000000000000012' +
+  '0000000000000000000000000000000000000000000000000000000000000100' +
+  '0000000000000000000000000000000000000000000000000000000000000009' +
+  '6f31206d6173636f740000000000000000000000000000000000000000000000' +
+  '0000000000000000000000000000000000000000000000000000000000000005' +
+  '44494e6f31000000000000000000000000000000000000000000000000000000' +
+  '0000000000000000000000000000000000000000000000000000000000000000';
+
 function unmeasuredRepository() {
   return {
     ...(repository() as unknown as Record<string, unknown>),
@@ -514,7 +560,7 @@ describe('Investigate measures a token it was asked about', () => {
   });
 
   test('an unmeasured launch is measured now, and the answer says the reading was taken', async () => {
-    let measured: string[] = [];
+    const measured: string[] = [];
     b20RouteRuntime.measureOnDemand = (async (input: { launch: { tokenAddress: string } }) => {
       measured.push(input.launch.tokenAddress);
       return { tokenAddress: input.launch.tokenAddress, outcome: 'measured', reason: null, elapsedMs: 900 };
@@ -522,6 +568,61 @@ describe('Investigate measures a token it was asked about', () => {
     const response = await investigate(`What was measured here? ${UNMEASURED}`);
     assert.equal(response.status, 200, JSON.stringify(response.body));
     assert.deepEqual(measured, [UNMEASURED]);
+    assert.match(response.body.answer, /took an Exit-First reading/);
+  });
+
+  test('a factory-confirmed launch absent from Discover is indexed through the immutable historical path, then measured', async () => {
+    let indexed = false;
+    let historicalWrites = 0;
+    let measured = 0;
+    const missing = {
+      ...(unmeasuredRepository() as unknown as Record<string, unknown>),
+      getFeedRowForToken: async ({ tokenAddress }: { tokenAddress: string }) =>
+        tokenAddress === UNMEASURED && indexed
+          ? { row: rowV1(UNMEASURED, null), history: [] }
+          : null,
+    };
+    b20RouteRuntime.observations = () => missing as never;
+    b20RouteRuntime.reader = () => fakeReaderV1({ isB20: true });
+    b20RouteRuntime.locateLaunchOnDemand = (async () => ({
+      outcome: 'found',
+      headBlock: 49_500_000,
+      creationBlock: 49_401_482,
+      calls: 27,
+      log: {
+        address: B20_FACTORY_V1,
+        topics: [
+          B20_CREATED_TOPIC_V1,
+          `0x${'0'.repeat(24)}${UNMEASURED.slice(2)}`,
+          `0x${'0'.repeat(64)}`,
+        ],
+        data: B20_CREATED_DATA_V1,
+        blockNumber: '0x2f1ce8a',
+        blockHash: `0x${'a'.repeat(64)}`,
+        transactionHash: `0x${'b'.repeat(64)}`,
+        transactionIndex: '0x1',
+        logIndex: '0x3',
+        removed: false,
+      },
+    })) as never;
+    b20RouteRuntime.discover = () => ({
+      getCursor: async () => ({ lastProcessedBlock: '49500000' }),
+      insertHistoricalLaunches: async (input: { launches: Array<{ tokenAddress: string }> }) => {
+        historicalWrites += 1;
+        assert.equal(input.launches[0]?.tokenAddress, UNMEASURED);
+        indexed = true;
+        return { inserted: 1, duplicates: 0 };
+      },
+    }) as never;
+    b20RouteRuntime.measureOnDemand = (async (input: { launch: { tokenAddress: string } }) => {
+      measured += 1;
+      return { tokenAddress: input.launch.tokenAddress, outcome: 'measured', reason: null, elapsedMs: 12 };
+    }) as never;
+
+    const response = await investigate(`Please investigate ${UNMEASURED}`);
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(historicalWrites, 1);
+    assert.equal(measured, 1);
     assert.match(response.body.answer, /took an Exit-First reading/);
   });
 

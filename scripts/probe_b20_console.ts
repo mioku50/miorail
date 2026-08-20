@@ -1,5 +1,6 @@
 import { b20RouteRuntime, runB20ConsolePlanV1 } from '../artifacts/api-server/routes/b20Control.js';
-import { b20ScopeIsPrivateV1, planB20ConsoleAnswerV1, type B20ConsoleScopeV1 } from '../artifacts/api-server/lib/b20ConsolePlan.js';
+import { b20ScopeIsPrivateV1, type B20ConsoleScopeV1 } from '../artifacts/api-server/lib/b20ConsolePlan.js';
+import { resolveB20ConsolePlanV1 } from '../artifacts/api-server/lib/b20ConsoleIntent.js';
 import { b20NarrationEvidenceStrengthV1 } from '../artifacts/api-server/lib/b20AnswerVerify.js';
 import { narrateB20AnswerV1 } from '../artifacts/api-server/lib/b20Answer.js';
 
@@ -49,6 +50,9 @@ const QUESTIONS_V1: readonly { scope: B20ConsoleScopeV1; question: string; token
   { scope: 'explore', question: 'Какие токены купили, а продать нельзя?' },
   { scope: 'explore', question: 'что изменилось за сутки' },
   { scope: 'explore', question: 'Какие запуски требуют больше доказательств?' },
+  // Deliberately avoids the product's own words. This exercises semantic
+  // intent resolution rather than one more phrase added to a regex list.
+  { scope: 'explore', question: 'Surface assets where acquisition worked but disposal could not be established' },
 
   // ── Refused before any read ──────────────────────────────────────────────
   { scope: 'explore', question: 'Which of these will moon?' },
@@ -102,11 +106,15 @@ async function main(): Promise<void> {
 
   let widest = 0;
   for (const input of questions) {
-    const plan = planB20ConsoleAnswerV1(input);
+    const resolution = await resolveB20ConsolePlanV1({
+      ...input,
+      provider: b20RouteRuntime.narrator(),
+    });
+    const plan = resolution.plan;
     console.log('');
     console.log(`Q  [${input.scope}] ${input.question}`);
     if (plan.refusal) {
-      console.log(`   refused before any read (${plan.intent})`);
+      console.log(`   refused before any read (${plan.intent} · ${resolution.source}${resolution.reason ? ` · ${resolution.reason}` : ''})`);
       console.log(`   ${summariseV1(plan.refusal)}`);
       continue;
     }
@@ -121,7 +129,7 @@ async function main(): Promise<void> {
     const strength = b20NarrationEvidenceStrengthV1(evidence);
     widest = Math.max(widest, strength.distinctNumbers);
 
-    console.log(`   answered in ${plan.scope} as ${plan.intent} · ${Date.now() - started}ms`);
+    console.log(`   answered in ${plan.scope} as ${plan.intent} · ${resolution.source} · ${Date.now() - started}ms`);
     console.log(`   deterministic: ${summariseV1(answer.answer)}`);
 
     // The narrated answer, which is what a reader is actually shown — and where
