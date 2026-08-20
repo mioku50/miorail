@@ -26,6 +26,7 @@ import {
   type BaseMcpActionReceiptRepositoryV1,
   type BaseMcpSendActionIntentV1,
   type BaseMcpX402ActionIntentV1,
+  type BaseMcpVirtualsActionIntentV1,
   type StoredBaseMcpActionReceiptV1,
 } from './baseMcpActionReceipts.js';
 import { sanitizedToolErrorCode } from './streamReadRouting.js';
@@ -34,13 +35,14 @@ import {
   matchBaseMcpProviderIntentV1,
   type AvantisProviderHandoffV1,
 } from './baseMcpProviderRouting.js';
+import { reconcileBaseMcpVirtualsActionV1 } from './baseMcpVirtualsAction.js';
 
 const ADDRESS_V1 = /^0x[a-fA-F0-9]{40}$/;
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const TRANSFER_TOPIC_V1 = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 
 export type BaseMcpExtensionIntentV1 =
-  | { kind: 'read'; providerId?: string; providerPrompt?: string }
+  | { kind: 'read'; providerId?: string; exampleId?: string | null; providerPrompt?: string }
   | { kind: 'handoff'; originalMessage: string; provider: string | null }
   | { kind: 'provider_handoff'; handoff: AvantisProviderHandoffV1 }
   | {
@@ -49,6 +51,7 @@ export type BaseMcpExtensionIntentV1 =
     }
   | { kind: 'send'; intent: BaseMcpSendActionIntentV1 }
   | { kind: 'x402'; intent: BaseMcpX402ActionIntentV1 }
+  | { kind: 'virtuals_create'; intent: BaseMcpVirtualsActionIntentV1 }
   | { kind: 'needs_input'; errorCode: string; reply: string };
 
 export interface BaseMcpExtensionActionResultV1 {
@@ -106,6 +109,26 @@ export function classifyBaseMcpExtensionIntentV1(message: string): BaseMcpExtens
       reply: `${provider.pluginId} uses a provider-specific prepare response before x402 payment. The question is recognized, but Miorail will not substitute a generic URL for those quoted payment requirements.`,
     };
   }
+  if (provider?.disposition === 'action_in_extensions' && provider.pluginId === 'virtuals') {
+    const match = trimmed.match(
+      /\bcreate\s+(?:a\s+)?(?:virtuals\s+)?agent\s+(?:called|named)\s+(.+?)\s+(?:to|for)\s+(.+)$/iu,
+    );
+    if (!match) {
+      return {
+        kind: 'needs_input',
+        errorCode: 'virtuals_agent_facts_required',
+        reply: 'Give the Virtuals agent both an explicit name and purpose, for example: “Create a Virtuals agent called Mio Researcher to summarize Base research.” Email and payment-card setup are separate PII-sensitive actions.',
+      };
+    }
+    return {
+      kind: 'virtuals_create',
+      intent: {
+        operation: 'agent_create',
+        agentName: match[1].trim(),
+        agentDescription: match[2].trim(),
+      },
+    };
+  }
   if (provider?.disposition === 'adapter_required') {
     return {
       kind: 'needs_input',
@@ -114,7 +137,12 @@ export function classifyBaseMcpExtensionIntentV1(message: string): BaseMcpExtens
     };
   }
   if (provider?.disposition === 'read_in_extensions') {
-    return { kind: 'read', providerId: provider.pluginId, providerPrompt: provider.providerPrompt };
+    return {
+      kind: 'read',
+      providerId: provider.pluginId,
+      exampleId: provider.exampleId,
+      providerPrompt: provider.providerPrompt,
+    };
   }
 
   const x402Marker = /\bx402\b|paid\s+(?:api|endpoint|resource)|платн(?:ый|ого|ому)\s+(?:api|эндпоинт|ресурс)/iu;
@@ -959,6 +987,9 @@ export async function reconcileBaseMcpActionV1(input: {
 }): Promise<BaseMcpExtensionActionResultV1> {
   const found = await baseMcpExtensionActionRuntime.repository.get(input.receiptId, input.userId);
   if (!found) return failedWithoutReceipt('That Action Receipt was not found for this account.', 'base_mcp_action_receipt_not_found');
+  if (found.actionType === 'virtuals') {
+    return reconcileBaseMcpVirtualsActionV1({ ...input, receipt: found });
+  }
   const stored = await expireStaleBaseMcpX402ReceiptV1(found, baseMcpExtensionActionRuntime.now());
   if (['completed', 'rejected', 'failed'].includes(stored.status)) {
     return publicResult(stored, null, 'This Action Receipt is already final.', stored.errorCode);

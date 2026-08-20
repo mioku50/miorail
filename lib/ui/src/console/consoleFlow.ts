@@ -120,12 +120,15 @@ export type RouteFamilyV1 = 'swap' | 'earn' | 'commerce' | 'nft' | 'private_ai' 
 // before a Cyrillic letter — the RU alternatives are matched without it.
 const EARN_PATTERN_V1 = /\b(earn|yield|apy|deposit|supply|lend|lending|stake|staking|moonwell|morpho|yield optimizer)|\byo\s+(?:protocol|vaults?)\b/i;
 const EARN_PATTERN_RU_V1 = /(разме|доход|застейк|вклад|депозит)/i;
-const SWAP_PATTERN_V1 = /\b(swap|trade|exchange|convert)/i;
-const SWAP_PATTERN_RU_V1 = /(обмен|своп|поменя)/i;
+// Commerce is checked before swap, so an explicit gift-card/top-up noun still
+// owns "buy". A bare buy/sell, however, is a token route — the verb alone must
+// never send BRETT, DEGEN or a Flaunch token into the Bitrefill catalogue.
+const SWAP_PATTERN_V1 = /\b(swap|trade|exchange|convert|buy|purchase|sell)/i;
+const SWAP_PATTERN_RU_V1 = /(обмен|своп|поменя|купи|купить|прода)/i;
 const LIQUIDITY_ROUTE_PATTERN_V1 = /\b(liquidity|liquidity position|lp position|add liquidity|remove liquidity)\b|\bhydrex\b.{0,24}\bpositions?\b/i;
 const LIQUIDITY_ROUTE_PATTERN_RU_V1 = /(ликвидност|lp[- ]?позици)/i;
-const COMMERCE_PATTERN_V1 = /\b(buy|gift ?card|top ?up|voucher|bitrefill)/i;
-const COMMERCE_PATTERN_RU_V1 = /(купить|подар)/i;
+const COMMERCE_PATTERN_V1 = /\b(gift ?cards?|giftcards?|top ?up|topup|voucher|esim|bitrefill)\b|\b(?:buy|purchase|get|find|order)\b.{0,48}\bcards?\b/i;
+const COMMERCE_PATTERN_RU_V1 = /(подароч|подарк|сертификат|ваучер|пополн|есим)/i;
 // NFT is checked FIRST because it shares its verb with commerce: "Buy NFT
 // BasePaint #123" and "Купи NFT" both match the commerce pattern, and a gift
 // card engine handed an NFT goal would search a gift-card catalogue for it.
@@ -645,6 +648,10 @@ export interface ComparingProgressInputV1 {
   adapters: readonly { name: string; label: string; live: boolean; usable: boolean }[];
   /** Adapter display names that answered on this run. */
   answered: readonly string[];
+  /** A provider may answer without producing a candidate. This preserves the
+   * real observation (for example, catalogue reached / no matching product)
+   * instead of rewriting it as "not reached". */
+  answeredDetails?: Readonly<Record<string, string>>;
   /** Non-null once the run is over WITHOUT a route card: needs_clarification,
    * unsupported, a blocked gate, or a transport error. */
   terminalReason: string | null;
@@ -673,7 +680,12 @@ export function comparingProgressV1(input: ComparingProgressInputV1): ComparingP
   for (const adapter of familyAdapters) {
     const answered = input.answered.includes(adapter.name);
     if (answered) {
-      rows.push({ label: labels.adapter(adapter.name), state: 'done', value: 'answered', latencyPercent: 45 });
+      rows.push({
+        label: labels.adapter(adapter.name),
+        state: 'done',
+        value: input.answeredDetails?.[adapter.name] ?? 'answered',
+        latencyPercent: 45,
+      });
       continue;
     }
     if (!adapter.usable) {

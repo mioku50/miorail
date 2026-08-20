@@ -82,6 +82,26 @@ test('an earn request is not routed to commerce', () => {
   assert.ok(resolution.issues.includes('not_commerce_goal'));
 });
 
+test('a token buy is not routed to commerce merely because it says buy', () => {
+  for (const message of [
+    'Buy this Flaunch token with 0.001 ETH',
+    'Buy BRETT with 50 USDC',
+    'Buy DEGEN with ETH',
+  ]) {
+    const resolution = resolve(message);
+    assert.equal(resolution.status, 'unsupported', message);
+    assert.ok(resolution.issues.includes('not_commerce_goal'), message);
+  }
+});
+
+test('the Base registry Bitrefill example extracts only the product brand', () => {
+  const extraction = extractCommerceIntentV1('Find a 25 USD Amazon US gift card on Bitrefill');
+  assert.equal(extraction.goal, 'commerce');
+  assert.equal(extraction.query, 'Amazon');
+  assert.equal(extraction.country, 'US');
+  assert.equal(extraction.denominationDecimal, '25');
+});
+
 test('the product kind comes from the words used', () => {
   assert.equal(mapCommerceKindV1('buy an eSIM for 1GB').value, 'esim');
   assert.equal(mapCommerceKindV1('top up my phone').value, 'topup');

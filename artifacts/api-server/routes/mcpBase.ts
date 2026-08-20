@@ -16,6 +16,7 @@ import {
 } from '@mioagent/security';
 import { baseMcpPluginDriftV1 } from '../lib/baseMcpPluginDrift.js';
 import { runBaseMcpConsoleV1 } from '../lib/baseMcpConsole.js';
+import { runReviewedBaseMcpPluginReadV1 } from '../lib/baseMcpReviewedPluginRuntime.js';
 import {
   classifyBaseMcpExtensionIntentV1,
   listBaseMcpActionReceiptsV1,
@@ -23,6 +24,9 @@ import {
   prepareBaseMcpX402ActionV1,
   reconcileBaseMcpActionV1,
 } from '../lib/baseMcpExtensionActions.js';
+import {
+  prepareBaseMcpVirtualsAgentCreateV1,
+} from '../lib/baseMcpVirtualsAction.js';
 import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
 import {
   baseMcpEnabledFromEnv,
@@ -54,11 +58,13 @@ export const mcpBaseRouteRuntime = {
   verifyBaseMcpWalletMatchViaOAuth,
   baseMcpPluginDriftV1,
   runBaseMcpConsoleV1,
+  runReviewedBaseMcpPluginReadV1,
   classifyBaseMcpExtensionIntentV1,
   resolveBaseNameV1,
   prepareBaseMcpSendActionV1,
   prepareBaseMcpX402ActionV1,
   reconcileBaseMcpActionV1,
+  prepareBaseMcpVirtualsAgentCreateV1,
   listBaseMcpActionReceiptsV1,
 };
 
@@ -358,8 +364,9 @@ mcpBasePublicRouter.get('/plugins', async (_req: Request, res: Response, next: N
 // tools here belong to third parties, and mixing them with Miorail's measured
 // routes in one thread erases the difference between "we verified this" and
 // "somebody's API said so". Deterministic routing intercepts routable and
-// direct-action intent before the read-only agent runs. Only exact typed send
-// and x402 verticals can reach a write; see baseMcpExtensionActions.ts.
+// direct-action intent before the read-only agent runs. Only exact typed send,
+// x402 and reviewed Virtuals verticals can reach an action; see the typed
+// action modules. The generic model still receives read-only tools only.
 mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { message, requestId } = BaseMcpConsoleRequestV1Schema.parse(req.body);
@@ -520,8 +527,47 @@ mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFun
           : null,
       }));
     }
+    if (decision.kind === 'virtuals_create') {
+      if (!baseMcpEnabledFromEnv() || !baseMcpServerUrlFromEnv()) {
+        return res.json(BaseMcpConsoleResponseV1Schema.parse({
+          status: 'disabled', reply: null, trace: [], toolsAvailable: 0, truncated: false,
+          elapsedMs: 0, errorCode: 'base_mcp_disabled', checkedAt: new Date().toISOString(),
+        }));
+      }
+      const startedAt = Date.now();
+      const result = await mcpBaseRouteRuntime.prepareBaseMcpVirtualsAgentCreateV1({
+        req,
+        userId: tenantUserId(req),
+        walletAddress: tenantWalletAddress(req),
+        sessionSecret: secret,
+        idempotencyKey: requestId,
+        intent: decision.intent,
+      });
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json(BaseMcpConsoleResponseV1Schema.parse({
+        status: result.kind,
+        reply: result.reply,
+        trace: [],
+        toolsAvailable: result.toolsAvailable,
+        truncated: false,
+        elapsedMs: Date.now() - startedAt,
+        errorCode: result.errorCode,
+        checkedAt: new Date().toISOString(),
+        action: result.receipt
+          ? { receipt: result.receipt, approvalUrl: result.approvalUrl, resultPreview: result.resultPreview }
+          : null,
+      }));
+    }
 
-    const result = await mcpBaseRouteRuntime.runBaseMcpConsoleV1({
+    const reviewed = await mcpBaseRouteRuntime.runReviewedBaseMcpPluginReadV1({
+      providerId: decision.providerId,
+      exampleId: decision.exampleId,
+      message,
+      walletAddress: tenantWalletAddress(req),
+      userId: tenantUserId(req),
+      sessionSecret: secret,
+    });
+    const result = reviewed ?? await mcpBaseRouteRuntime.runBaseMcpConsoleV1({
       req,
       userId: tenantUserId(req),
       sessionSecret: secret,

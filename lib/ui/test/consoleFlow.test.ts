@@ -118,7 +118,19 @@ describe('route family dispatch', () => {
     assert.equal(routeFamilyForGoalV1('Deposit 250 USDC into Moonwell'), 'earn');
     assert.equal(routeFamilyForGoalV1('Show YO Protocol vaults on Base'), 'earn');
     assert.equal(routeFamilyForGoalV1('Buy a gift card'), 'commerce');
+    assert.equal(routeFamilyForGoalV1('Find a 25 USD Amazon US gift card on Bitrefill'), 'commerce');
     assert.equal(routeFamilyForGoalV1(''), 'unknown');
+  });
+
+  test('a token buy is a swap even when it uses the same verb as commerce', () => {
+    for (const goal of [
+      'Buy this Flaunch token with 0.001 ETH',
+      'Buy BRETT with 50 USDC',
+      'Buy DEGEN with ETH',
+      'Купить BRETT за 50 USDC',
+    ]) {
+      assert.equal(routeFamilyForGoalV1(goal), 'swap', goal);
+    }
   });
 
   test('an earn goal never reaches the swap engine', () => {
@@ -423,6 +435,21 @@ describe('Comparing is route-family aware and terminal', () => {
     assert.equal(rows.some((row) => row.state === 'pending'), false, 'nothing may stay pending after the run ends');
     assert.equal(rows.every((row) => row.state === 'failed'), true);
     assert.equal(rows.find((row) => row.label === 'Bitrefill catalogue')?.value, 'not reached');
+  });
+
+  test('a catalogue that answered with no match is never shown as not reached', () => {
+    const rows = comparingProgressV1({
+      family: 'commerce',
+      adapters: ALL_ADAPTERS,
+      answered: ['Bitrefill'],
+      answeredDetails: { Bitrefill: 'reached / no matching product' },
+      terminalReason: 'Product not found',
+      evidenceCount: null,
+      scored: false,
+    });
+    const bitrefill = rows.find((row) => row.label === 'Bitrefill catalogue');
+    assert.equal(bitrefill?.state, 'done');
+    assert.equal(bitrefill?.value, 'reached / no matching product');
   });
 
   test('a disabled adapter states the reason instead of spinning', () => {

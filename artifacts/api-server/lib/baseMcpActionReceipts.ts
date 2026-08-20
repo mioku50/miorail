@@ -42,8 +42,14 @@ export interface BaseMcpX402ActionIntentV1 {
   };
 }
 
-export type BaseMcpActionIntentV1 = BaseMcpSendActionIntentV1 | BaseMcpX402ActionIntentV1;
-export type BaseMcpActionTypeV1 = 'send' | 'x402';
+export interface BaseMcpVirtualsActionIntentV1 {
+  operation: 'agent_create';
+  agentName: string;
+  agentDescription: string;
+}
+
+export type BaseMcpActionIntentV1 = BaseMcpSendActionIntentV1 | BaseMcpX402ActionIntentV1 | BaseMcpVirtualsActionIntentV1;
+export type BaseMcpActionTypeV1 = 'send' | 'x402' | 'virtuals';
 
 export function baseMcpActionHashV1(input: {
   tenantId: string;
@@ -503,7 +509,7 @@ export function publicBaseMcpActionReceiptV1(receipt: StoredBaseMcpActionReceipt
     walletAddress: receipt.walletAddress,
     status: receipt.status,
     capabilityPolicy: 'passed',
-    approvalRequired: true,
+    approvalRequired: receipt.actionType === 'virtuals' ? receipt.providerRequestId !== null : true,
     reconciliationState: receipt.reconciliationState,
     transactionHash: receipt.transactionHash,
     blockNumber: receipt.blockNumber,
@@ -524,6 +530,22 @@ export function publicBaseMcpActionReceiptV1(receipt: StoredBaseMcpActionReceipt
       paymentAsset: intent.paymentAsset,
       responseHash: receipt.responseHash,
       reconciliationBasis: 'x402_endpoint_response',
+    });
+  }
+  if (receipt.actionType === 'virtuals') {
+    const intent = receipt.intent as BaseMcpVirtualsActionIntentV1;
+    const providerObjectId = typeof receipt.durableProof?.providerObjectId === 'string'
+      ? receipt.durableProof.providerObjectId
+      : null;
+    return BaseMcpActionReceiptV1Schema.parse({
+      ...common,
+      actionType: 'virtuals',
+      extensionProvider: 'virtuals',
+      operation: intent.operation,
+      agentName: intent.agentName,
+      agentDescription: intent.agentDescription,
+      providerObjectId,
+      reconciliationBasis: 'virtuals_provider_response',
     });
   }
   const intent = receipt.intent as BaseMcpSendActionIntentV1;

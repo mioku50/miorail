@@ -62,8 +62,10 @@ function normalize(message: string): string {
 
 /** `\b` is an ASCII word boundary and never matches before a Cyrillic letter,
  * so each family keeps an ASCII pattern and a separate Cyrillic one. */
-const COMMERCE_EN_V1 = /\b(buy|purchase|gift\s?card|giftcard|top\s?up|topup|voucher|esim|bitrefill)\b/iu;
-const COMMERCE_RU_V1 = /(купи|куплю|покупк|подароч|подарк|пополн|ваучер|есим)/iu;
+// A purchase verb is not a commerce product. "Buy BRETT with USDC" is a swap;
+// commerce requires a gift-card/top-up/eSIM/Bitrefill noun.
+const COMMERCE_EN_V1 = /\b(gift\s?cards?|giftcards?|top\s?up|topup|voucher|esim|bitrefill)\b|\b(?:buy|purchase|get|find|order)\b.{0,48}\bcards?\b/iu;
+const COMMERCE_RU_V1 = /(подароч|подарк|сертификат|пополн|ваучер|есим)/iu;
 
 export function detectCommerceGoalV1(message: string): boolean {
   const text = normalize(message);
@@ -248,7 +250,7 @@ export function extractCommerceRecipientV1(message: string): string | null {
 }
 
 const NOISE_PATTERNS_V1: RegExp[] = [
-  /\b(?:buy|purchase|get|order|please|for|me|a|an|the|on|with|using|worth|of)\b/giu,
+  /\b(?:buy|purchase|get|find|order|please|for|me|a|an|the|on|with|using|worth|of|bitrefill)\b/giu,
   /(?:купи|куплю|купить|пожалуйста|мне|на|за|для|через)/giu,
   /\bgift\s?card\b|\bgiftcard\b|\bvoucher\b|\besim\b|\btop\s?up\b|\btopup\b|\brefill\b/giu,
   /подароч\p{L}*|подарк\p{L}*|сертификат\p{L}*|ваучер\p{L}*|пополн\p{L}*|есим/giu,

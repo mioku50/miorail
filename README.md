@@ -239,6 +239,8 @@ Miorail reads the live `mcp.base.org` registry and classifies tools as `READ`, `
 - `READ` tools may answer scoped Base questions.
 - `ROUTABLE` swap/yield requests are handed to Routes; they cannot bypass provider comparison or Route Proof.
 - An `ACTION` is released only through a typed input policy, wallet binding, safety checks, explicit approval, idempotency, persistence, and reconciliation.
+- Reviewed HTTP recipes bypass generic prompting: Moonwell market/health reads use pinned hosts and exact paths.
+- Virtuals agent creation is a typed action: Miorail requests an exact SIWE challenge, pauses for `Approve Sign-In`, keeps the authenticated provider session encrypted, creates the named agent, and records a provider-confirmed Action Receipt. Generic signing, email, OTP, and card actions are not implied.
 - Unknown tools, arbitrary calls, and documentation-only plugins remain blocked. Dynamic discovery never grants execution.
 
 Action Receipts are deliberately separate from Route Proofs.

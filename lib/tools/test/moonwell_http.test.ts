@@ -48,6 +48,17 @@ test('Moonwell read tool builds the documented URL and returns the payload', asy
   assert.deepEqual(JSON.parse(result.content), { markets: [{ symbol: 'USDC', supplyApy: 4.2 }] });
 });
 
+test('Moonwell asset-scoped market read uses the reviewed per-asset endpoint', async () => {
+  let requestedUrl: string | undefined;
+  const provider = new MoonwellHttpToolProvider(async (url: unknown) => {
+    requestedUrl = String(url);
+    return new Response(JSON.stringify({ markets: [{ symbol: 'USDC' }] }), { status: 200 });
+  });
+  const result = await provider.callTool('moonwell_get_markets', { chain: 'base', asset: 'USDC' });
+  assert.equal(result.isError, false);
+  assert.equal(requestedUrl, 'https://api.moonwell.fi/v1/markets/USDC?chain=base');
+});
+
 test('Moonwell positions/health reads validate the wallet address and build per-address URLs', async () => {
   let requestedUrl: string | undefined;
   const provider = new MoonwellHttpToolProvider(async (url: unknown) => {

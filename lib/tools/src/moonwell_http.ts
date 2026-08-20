@@ -14,7 +14,10 @@ const READ_TOOLS = new Map<string, ToolDef>([
     description: 'Get live Moonwell lending markets on Base. Read-only; never prepares transactions.',
     inputSchema: {
       type: 'object',
-      properties: { chain: { type: 'string', enum: ['base'] } },
+      properties: {
+        chain: { type: 'string', enum: ['base'] },
+        asset: { type: 'string', description: 'Optional asset symbol, for example USDC.' },
+      },
       required: ['chain'],
       additionalProperties: false,
     },
@@ -216,7 +219,9 @@ export class MoonwellHttpToolProvider implements ToolProvider {
   private async callRead(name: string, args: Record<string, unknown>): Promise<{ content: string; isError: boolean }> {
     switch (name) {
       case 'moonwell_get_markets': {
-        const payload = await this.fetchJson(`${BASE_URL}/v1/markets?chain=base`);
+        const asset = String(args.asset || '').trim();
+        const path = asset ? `/v1/markets/${encodeURIComponent(asset)}` : '/v1/markets';
+        const payload = await this.fetchJson(`${BASE_URL}${path}?chain=base`);
         return { content: JSON.stringify(sanitize(payload)), isError: false };
       }
       case 'moonwell_get_rates': {

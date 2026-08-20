@@ -48,6 +48,10 @@ function inferredDisposition(
     return 'typed_x402_required';
   }
 
+  if (provider.pluginId === 'virtuals' && /\bcreate\b.{0,40}\bagent\b/iu.test(lower)) {
+    return 'action_in_extensions';
+  }
+
   const write = /\b(launch|create|claim|set|send|register|mint|approve|cancel|запусти|создай|отправ|установ|зарегистр)\b/iu;
   return write.test(lower) ? 'adapter_required' : 'read_in_extensions';
 }

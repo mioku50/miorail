@@ -36,6 +36,9 @@ export interface CreateToolAggregatorOptions {
    * plugin adapter from live discovery.
    */
   baseMcpAllowedActionTools?: readonly string[];
+  /** Exact typed action tools whose sensitive result is consumed in-memory by
+   * the vertical. Generic agents must never set this. */
+  baseMcpSensitiveResultTools?: readonly string[];
   /**
    * T74: register NOTHING but Base MCP.
    *
@@ -162,6 +165,7 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
             allowUserConfirmedSwap: !baseMcpOnly && options.includeBaseMcpSwap,
             allowUserConfirmedSend: !baseMcpOnly && options.includeBaseMcpSend,
             allowedUserConfirmedTools: options.baseMcpAllowedActionTools,
+            sensitiveResultTools: options.baseMcpSensitiveResultTools,
           }));
         }
       } catch (error) {

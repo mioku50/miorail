@@ -76,7 +76,12 @@ export const EarnCompareResponseV1Schema = z.discriminatedUnion('outcome', [
       issues: z.array(z.string().min(1).max(120)),
     })
     .strict(),
-  z.object({ outcome: z.literal('unsupported'), reason: z.string().min(1).max(200) }).strict(),
+  z
+    .object({
+      outcome: z.literal('unsupported'),
+      reason: z.string().min(1).max(200),
+    })
+    .strict(),
 ]);
 
 // T62 — Persisted Earn Execution. `earn/prepare` turns the persisted Earn Route
@@ -219,7 +224,15 @@ export const CommerceCompareResponseV1Schema = z.discriminatedUnion('outcome', [
       issues: z.array(z.string().min(1).max(120)),
     })
     .strict(),
-  z.object({ outcome: z.literal('unsupported'), reason: z.string().min(1).max(200) }).strict(),
+  z
+    .object({
+      outcome: z.literal('unsupported'),
+      reason: z.string().min(1).max(200),
+      /** Whether the reviewed catalogue request happened before the terminal
+       * result. This is observability, not a candidate or success claim. */
+      catalogueStatus: z.enum(['not_reached', 'request_failed', 'reached_no_match', 'reached']),
+    })
+    .strict(),
 ]);
 
 // `commerce/orders` opens a price-locked checkout at the storefront and returns
@@ -1739,6 +1752,7 @@ export const BaseMcpPluginCatalogueResponseSchema = z.object({
               'handoff_to_routes',
               'handoff_to_provider_ui',
               'typed_x402_required',
+              'action_in_extensions',
               'adapter_required',
             ]),
           }),
@@ -1803,7 +1817,7 @@ const BaseMcpActionReceiptCommonV1Schema = z.object({
   walletAddress: AddressV1Schema,
   status: BaseMcpActionReceiptStatusV1Schema,
   capabilityPolicy: z.literal('passed'),
-  approvalRequired: z.literal(true),
+  approvalRequired: z.boolean(),
   reconciliationState: BaseMcpActionReconciliationStateV1Schema,
   transactionHash: HashV1Schema.nullable(),
   blockNumber: z.string().regex(/^\d+$/).nullable(),
@@ -1816,6 +1830,7 @@ const BaseMcpActionReceiptCommonV1Schema = z.object({
 });
 
 export const BaseMcpSendActionReceiptV1Schema = BaseMcpActionReceiptCommonV1Schema.extend({
+  approvalRequired: z.literal(true),
   actionType: z.literal('send'),
   asset: z.object({
     symbol: z.literal('USDC'),
@@ -1829,6 +1844,7 @@ export const BaseMcpSendActionReceiptV1Schema = BaseMcpActionReceiptCommonV1Sche
 });
 
 export const BaseMcpX402ActionReceiptV1Schema = BaseMcpActionReceiptCommonV1Schema.extend({
+  approvalRequired: z.literal(true),
   actionType: z.literal('x402'),
   method: z.literal('GET'),
   url: z.string().url().startsWith('https://').max(2000),
@@ -1842,9 +1858,21 @@ export const BaseMcpX402ActionReceiptV1Schema = BaseMcpActionReceiptCommonV1Sche
   reconciliationBasis: z.literal('x402_endpoint_response'),
 });
 
+export const BaseMcpVirtualsActionReceiptV1Schema = BaseMcpActionReceiptCommonV1Schema.extend({
+  approvalRequired: z.boolean(),
+  actionType: z.literal('virtuals'),
+  extensionProvider: z.literal('virtuals'),
+  operation: z.literal('agent_create'),
+  agentName: z.string().min(1).max(80),
+  agentDescription: z.string().min(1).max(500),
+  providerObjectId: z.string().min(1).max(200).nullable(),
+  reconciliationBasis: z.literal('virtuals_provider_response'),
+});
+
 export const BaseMcpActionReceiptV1Schema = z.discriminatedUnion('actionType', [
   BaseMcpSendActionReceiptV1Schema,
   BaseMcpX402ActionReceiptV1Schema,
+  BaseMcpVirtualsActionReceiptV1Schema,
 ]);
 
 export const BaseMcpActionEnvelopeV1Schema = z.object({

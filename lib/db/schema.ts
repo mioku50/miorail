@@ -160,6 +160,27 @@ export const baseMcpOauthStates = pgTable(
   ],
 );
 
+/** Encrypted, user-scoped sessions for reviewed Base plugin runtimes.
+ * Tokens and pending SIWE challenges never enter Action Receipts or traces. */
+export const baseMcpPluginSessions = pgTable(
+  'base_mcp_plugin_sessions',
+  {
+    userId: text('user_id')
+      .references(() => users.id)
+      .notNull(),
+    provider: text('provider').notNull(),
+    walletAddress: text('wallet_address').notNull(),
+    encryptedSession: text('encrypted_session').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('base_mcp_plugin_sessions_user_provider_unique').on(table.userId, table.provider),
+    index('base_mcp_plugin_sessions_expires_idx').on(table.expiresAt),
+  ],
+);
+
 export const spendPermissions = pgTable(
   'spend_permissions',
   {

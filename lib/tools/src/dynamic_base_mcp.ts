@@ -143,19 +143,19 @@ function toToolDef(tool: DynamicBaseMcpTool): ToolDef {
  */
 const MAX_REDACT_DEPTH_V1 = 12;
 
-function redactSecrets(value: unknown, depth = 0, transactionResult = false): unknown {
+function redactSecrets(value: unknown, depth = 0, transactionResult = false, allowSignature = false): unknown {
   // The cap belongs on CONTAINERS only. A string or a number cannot recurse,
   // so cutting one buys no safety and deletes the answer. That ordering is
   // what turned every leaf of a legitimate result into "[truncated]".
   if (Array.isArray(value)) {
     if (depth > MAX_REDACT_DEPTH_V1) return '[truncated]';
-    return value.slice(0, 100).map((item) => redactSecrets(item, depth + 1, transactionResult));
+    return value.slice(0, 100).map((item) => redactSecrets(item, depth + 1, transactionResult, allowSignature));
   }
   if (typeof value === 'string') {
     const plain = value.replace(/Bearer\s+[A-Za-z0-9._~+/-]+/gi, 'Bearer [redacted]').slice(0, 20_000);
     if (depth > MAX_REDACT_DEPTH_V1) return plain;
     try {
-      return JSON.stringify(redactSecrets(JSON.parse(value), depth + 1, transactionResult));
+      return JSON.stringify(redactSecrets(JSON.parse(value), depth + 1, transactionResult, allowSignature));
     } catch {
       return plain;
     }
@@ -165,19 +165,20 @@ function redactSecrets(value: unknown, depth = 0, transactionResult = false): un
 
   const output: Record<string, unknown> = {};
   for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
-    if (/^(access_?token|refresh_?token|id_?token|api_?token|secret|authorization|cookie|password|private_?key|credential|signature)$/i.test(key)
+    if (/^(access_?token|refresh_?token|id_?token|api_?token|secret|authorization|cookie|password|private_?key|credential)$/i.test(key)
+      || (!allowSignature && /^signature$/i.test(key))
       || (transactionResult && (/^(calldata|raw_?transaction|signed_?transaction|permit|permit_?data|signature_?data)$/i.test(key)
         || (/^data$/i.test(key) && typeof inner === 'string' && /^0x[0-9a-f]+$/i.test(inner))))) {
       output[key] = '[redacted]';
     } else {
-      output[key] = redactSecrets(inner, depth + 1, transactionResult);
+      output[key] = redactSecrets(inner, depth + 1, transactionResult, allowSignature);
     }
   }
   return output;
 }
 
-function serializeToolResult(value: unknown, transactionResult = false): string {
-  return JSON.stringify(redactSecrets(value, 0, transactionResult));
+function serializeToolResult(value: unknown, transactionResult = false, allowSignature = false): string {
+  return JSON.stringify(redactSecrets(value, 0, transactionResult, allowSignature));
 }
 
 function safeCallErrorCode(error: unknown): string {
@@ -235,6 +236,9 @@ export class DynamicBaseMcpToolProvider implements ToolProvider {
       allowUserConfirmedSend?: boolean;
       /** Exact, normalized action tool names released by a vertical adapter. */
       allowedUserConfirmedTools?: readonly string[];
+      /** Only a typed SIWE adapter may receive a signature. It must consume it
+       * in memory and never copy it to a trace, model context or receipt. */
+      sensitiveResultTools?: readonly string[];
     } = {},
   ) {
     this.toolMap = new Map(tools.map((tool) => [tool.name, tool]));
@@ -280,7 +284,10 @@ export class DynamicBaseMcpToolProvider implements ToolProvider {
       if (allowedProtectedTool) {
         try {
           const result = await this.client.getClient().callTool({ name, arguments: args });
-          return { content: serializeToolResult(result, true), isError: false };
+          const sensitiveResultAllowed = (this.options.sensitiveResultTools || [])
+            .map(normalizeToolName)
+            .includes(normalizeToolName(tool.name));
+          return { content: serializeToolResult(result, true, sensitiveResultAllowed), isError: false };
         } catch (error) {
           return { content: JSON.stringify({ errorCode: safeCallErrorCode(error) }), isError: true };
         }
@@ -314,7 +321,10 @@ export class DynamicBaseMcpToolProvider implements ToolProvider {
 
     try {
       const result = await this.client.getClient().callTool({ name, arguments: args });
-      return { content: serializeToolResult(result), isError: false };
+      const sensitiveResultAllowed = (this.options.sensitiveResultTools || [])
+        .map(normalizeToolName)
+        .includes(normalizeToolName(tool.name));
+      return { content: serializeToolResult(result, false, sensitiveResultAllowed), isError: false };
     } catch (error) {
       return { content: JSON.stringify({ errorCode: safeCallErrorCode(error) }), isError: true };
     }

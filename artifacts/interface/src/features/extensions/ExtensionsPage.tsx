@@ -6,6 +6,7 @@ import {
   BaseMcpExtensionsCard,
   BaseMcpPluginsCard,
   BaseMcpSummaryRail,
+  baseMcpToolsWithReviewedAdaptersV1,
   ConsoleShell,
   GOAL_HANDOFF_KEY_V1,
   chainBlockNumberV1,
@@ -66,6 +67,14 @@ export function ExtensionsPage() {
   const enabled = status.data?.baseMcp?.enabled === true;
   const [askedOnce, setAskedOnce] = useState(false);
 
+  const projectedTools = baseMcpToolsWithReviewedAdaptersV1(
+    (probe.data?.tools ?? []) as readonly BaseMcpToolRowV1[],
+    catalogue.data?.plugins ?? [],
+  );
+  const releasedActionTools = projectedTools.filter(
+    (tool) => tool.surface === 'action' && tool.surfaceEnabled,
+  ).length;
+
   const readCatalogue = useCallback(() => {
     if (!enabled) return;
     setAskedOnce(true);
@@ -84,7 +93,7 @@ export function ExtensionsPage() {
     loading: probe.isPending,
     status: probe.data?.status ?? null,
     endpointHost: probe.data?.endpointHost ?? null,
-    tools: (probe.data?.tools ?? []) as readonly BaseMcpToolRowV1[],
+    tools: projectedTools,
     unavailableReason: probe.error
       // Never the error's own message: a transport failure can carry the
       // endpoint, and the endpoint can carry a token.
@@ -166,9 +175,7 @@ export function ExtensionsPage() {
             probe.data
               ? {
                   ...probe.data.routing,
-                  releasedActions: probe.data.tools.filter(
-                    (tool) => tool.surface === 'action' && tool.surfaceEnabled,
-                  ).length,
+                  releasedActions: releasedActionTools,
                 }
               : null
           }
@@ -210,9 +217,7 @@ export function ExtensionsPage() {
             }
             readTools={probe.data?.routing.read}
             actionTools={probe.data?.routing.action}
-            releasedActionTools={probe.data?.tools.filter(
-              (tool) => tool.surface === 'action' && tool.surfaceEnabled,
-            ).length}
+            releasedActionTools={probe.data ? releasedActionTools : undefined}
             routableTools={probe.data?.routing.routable}
             reconcilingAction={reconcileAction.isPending}
             onOpenRoutes={(message) => {

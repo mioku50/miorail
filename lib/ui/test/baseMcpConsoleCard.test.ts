@@ -60,6 +60,45 @@ test('an ACTION renders an approval card and states that it is not a Route Proof
   assert.doesNotMatch(html, /Execution proof/);
 });
 
+test('a reviewed Virtuals action labels the approval as sign-in and shows agent facts', () => {
+  const html = renderToStaticMarkup(BaseMcpConsoleCard({
+    question: 'Create a Virtuals agent called Mio Researcher to summarize Base research',
+    onQuestionChange: () => undefined,
+    onAsk: () => undefined,
+    pending: false,
+    unavailableReason: null,
+    answer: answer({
+      status: 'action',
+      trace: [],
+      action: {
+        approvalUrl: 'https://keys.coinbase.com/approve/virtuals-sign-1',
+        receipt: {
+          id: 'virtuals-1',
+          status: 'approval_required',
+          actionType: 'virtuals',
+          extensionProvider: 'virtuals',
+          provider: 'base-mcp',
+          chainId: 8453,
+          operation: 'agent_create',
+          agentName: 'Mio Researcher',
+          agentDescription: 'summarize Base research',
+          providerObjectId: null,
+          reconciliationState: 'not_started',
+          transactionHash: null,
+          blockNumber: null,
+          errorCode: null,
+          routeVerified: false,
+          reconciliationBasis: 'virtuals_provider_response',
+        },
+      },
+    }),
+  }));
+  assert.match(html, /Approve Sign-In/);
+  assert.match(html, /Mio Researcher/);
+  assert.match(html, /summarize Base research/);
+  assert.doesNotMatch(html, /Approve in Base Account/);
+});
+
 test('a failed deterministic action still renders its immutable receipt', () => {
   const failedWithReceipt = answer({
     status: 'failed',

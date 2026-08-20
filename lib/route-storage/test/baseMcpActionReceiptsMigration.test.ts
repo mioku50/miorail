@@ -66,3 +66,22 @@ test('the migration journal registers 0038 through 0040 in append-only order', a
   assert.equal(journal.entries[41]?.tag, '0041_intelligence_charge_attempts');
   assert.equal(journal.entries[41]?.idx, 41);
 });
+
+test('migration 0049 releases only typed Virtuals receipts and encrypted provider sessions', async () => {
+  const sql = await readFile(drizzlePath('0049_base_mcp_reviewed_plugin_runtime.sql'), 'utf8');
+
+  assert.match(sql, /"action_type" IN \('send', 'x402', 'virtuals'\)/);
+  assert.match(sql, /"action_type" IN \('x402', 'virtuals'\).*"reconciliation_state" = 'provider_confirmed'/s);
+  assert.match(sql, /CREATE TABLE "base_mcp_plugin_sessions"/);
+  assert.match(sql, /"encrypted_session" text NOT NULL/);
+  assert.match(sql, /FOREIGN KEY \("user_id"\)[\s\S]*REFERENCES "public"\."users"/);
+  assert.match(sql, /CHECK \("provider" = 'virtuals'\)/);
+  assert.match(sql, /base_mcp_plugin_sessions_user_provider_unique/);
+  assert.doesNotMatch(sql, /access_token|refresh_token|signature|jwt/i);
+
+  const journal = JSON.parse(await readFile(drizzlePath('meta/_journal.json'), 'utf8')) as {
+    entries: Array<{ idx: number; tag: string }>;
+  };
+  assert.equal(journal.entries[49]?.idx, 49);
+  assert.equal(journal.entries[49]?.tag, '0049_base_mcp_reviewed_plugin_runtime');
+});

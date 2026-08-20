@@ -15,6 +15,7 @@ interface BaseMcpActivityReceiptCommonV1 {
 export type BaseMcpActivityReceiptV1 = BaseMcpActivityReceiptCommonV1 & (
   | { actionType: 'send'; amount: string; asset: { symbol: string }; recipient: string; recipientName?: string | null }
   | { actionType: 'x402'; method: 'GET'; url: string; maxPayment: string; paymentAsset: { symbol: string }; responseHash: string | null }
+  | { actionType: 'virtuals'; operation: 'agent_create'; agentName: string; providerObjectId: string | null }
 );
 
 function tone(status: string): string {
@@ -53,13 +54,19 @@ export function BaseMcpActionReceiptsCard(model: {
                 <span className="v mono">
                   {receipt.actionType === 'send'
                     ? `${receipt.amount} ${receipt.asset.symbol}`
-                    : `x402 ≤ ${receipt.maxPayment} ${receipt.paymentAsset.symbol}`}
+                    : receipt.actionType === 'x402'
+                      ? `x402 ≤ ${receipt.maxPayment} ${receipt.paymentAsset.symbol}`
+                      : `Virtuals · ${receipt.agentName}`}
                 </span>
               </div>
               <p className="lnote mono">
                 {receipt.actionType === 'send'
                   ? `to ${receipt.recipientName ?? receipt.recipient}${receipt.recipientName ? ` · ${receipt.recipient}` : ''}`
-                  : receipt.url}
+                  : receipt.actionType === 'x402'
+                    ? receipt.url
+                    : receipt.providerObjectId
+                      ? `agent ID ${receipt.providerObjectId}`
+                      : 'agent creation'}
               </p>
               <p className="lnote">
                 Base MCP · {receipt.reconciliationState} · {new Date(receipt.createdAt).toLocaleString()}

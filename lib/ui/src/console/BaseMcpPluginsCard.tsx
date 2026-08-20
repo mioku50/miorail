@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import type { BaseMcpToolRowV1 } from './BaseMcpExtensionsCard';
 
 // The app uses the automatic JSX runtime; the node render suite uses the
 // classic transform and needs this binding.
@@ -52,7 +53,7 @@ export interface BaseMcpPluginRowV1 {
     id: string;
     prompt: string;
     surface: 'read' | 'action' | 'routable';
-    disposition: 'read_in_extensions' | 'handoff_to_routes' | 'handoff_to_provider_ui' | 'typed_x402_required' | 'adapter_required';
+    disposition: 'read_in_extensions' | 'handoff_to_routes' | 'handoff_to_provider_ui' | 'typed_x402_required' | 'action_in_extensions' | 'adapter_required';
   }[];
 }
 
@@ -78,6 +79,33 @@ export interface BaseMcpPluginsModelV1 {
   onSelectPrompt?: (prompt: string) => void;
 }
 
+/**
+ * The live Base MCP inventory classifies `sign` as blocked in the generic
+ * console, correctly. A reviewed provider adapter may release that primitive
+ * only inside its own exact state machine. Project that narrower truth into
+ * the catalogue/tool UI without making arbitrary signing look callable.
+ */
+export function baseMcpToolsWithReviewedAdaptersV1(
+  tools: readonly BaseMcpToolRowV1[],
+  plugins: readonly BaseMcpPluginRowV1[],
+): BaseMcpToolRowV1[] {
+  const virtualsSignInReleased = plugins.some((plugin) =>
+    plugin.id === 'virtuals'
+    && plugin.examples.some((example) => example.disposition === 'action_in_extensions'),
+  );
+  if (!virtualsSignInReleased) return [...tools];
+  const signNames = new Set(['sign', 'personalsign', 'signmessage']);
+  return tools.map((tool) => {
+    const normalizedName = tool.name.toLowerCase().replace(/[^a-z0-9]/gu, '');
+    if (tool.surface !== 'action' || !signNames.has(normalizedName)) return tool;
+    return {
+      ...tool,
+      surfaceEnabled: true,
+      surfaceReason: 'released_only_inside_reviewed_virtuals_sign_in',
+    };
+  });
+}
+
 /** How a plugin would be reached from here — which is not the same question as
  * what it can do, and is the one that decides whether it works in Miorail. */
 export type BaseMcpPluginReachV1 = 'http' | 'base_tools' | 'external_mcp' | 'shell_required';
@@ -90,9 +118,7 @@ export type BaseMcpPluginFilterV1 =
   | 'external_ui'
   | 'shell_required';
 
-export type BaseMcpExampleDispositionUiV1 =
-  | BaseMcpPluginRowV1['examples'][number]['disposition']
-  | 'action_in_extensions';
+export type BaseMcpExampleDispositionUiV1 = BaseMcpPluginRowV1['examples'][number]['disposition'];
 
 export interface BaseMcpExampleBadgeV1 {
   label: 'READ' | 'ROUTES AI' | 'ACTION' | 'PROVIDER UI' | 'ADAPTER REQUIRED' | 'x402';

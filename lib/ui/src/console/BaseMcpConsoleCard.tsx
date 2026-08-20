@@ -57,6 +57,7 @@ interface BaseMcpActionReceiptCommonUiV1 {
   blockNumber: string | null;
   errorCode: string | null;
   routeVerified: false;
+  approvalRequired?: boolean;
 }
 
 export type BaseMcpActionReceiptUiV1 = BaseMcpActionReceiptCommonUiV1 & (
@@ -76,6 +77,15 @@ export type BaseMcpActionReceiptUiV1 = BaseMcpActionReceiptCommonUiV1 & (
       paymentAsset: { symbol: 'USDC'; address: string; decimals: 6 };
       responseHash: string | null;
       reconciliationBasis: 'x402_endpoint_response';
+    }
+  | {
+      actionType: 'virtuals';
+      extensionProvider: 'virtuals';
+      operation: 'agent_create';
+      agentName: string;
+      agentDescription: string;
+      providerObjectId: string | null;
+      reconciliationBasis: 'virtuals_provider_response';
     }
 );
 
@@ -359,13 +369,28 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
                       </div>
                     )}
                   </>
-                ) : (
+                ) : answer.action.receipt.actionType === 'x402' ? (
                   <>
                     <div className="qrow">
                       <span>x402 GET cap</span>
                       <span className="v mono">{answer.action.receipt.maxPayment} USDC</span>
                     </div>
                     <p className="lnote mono">{answer.action.receipt.url}</p>
+                  </>
+                ) : (
+                  <>
+                    <div className="qrow">
+                      <span>Virtuals action</span>
+                      <span className="v mono">agent_create</span>
+                    </div>
+                    <div className="qrow">
+                      <span>Agent</span>
+                      <span className="v">{answer.action.receipt.agentName}</span>
+                    </div>
+                    <p className="lnote">{answer.action.receipt.agentDescription}</p>
+                    {answer.action.receipt.providerObjectId && (
+                      <p className="lnote mono">agent ID {answer.action.receipt.providerObjectId}</p>
+                    )}
                   </>
                 )}
                 <div className="qrow">
@@ -392,7 +417,7 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
                       target="_blank"
                       rel="noopener noreferrer"
                     >
-                      Approve in Base Account
+                      {answer.action.receipt.actionType === 'virtuals' ? 'Approve Sign-In' : 'Approve in Base Account'}
                     </a>
                   )}
                   {model.onReconcileAction && !['completed', 'failed', 'rejected'].includes(answer.action.receipt.status) && (

@@ -149,6 +149,33 @@ describe('DynamicBaseMcpToolProvider', () => {
     assert.deepStrictEqual(allDisabled, []);
   });
 
+  test('signatures stay redacted unless an exact typed adapter releases the status result', async () => {
+    const tools = classifyDynamicBaseMcpTools([
+      { name: 'get_request_status', description: 'Read approval state', inputSchema: { type: 'object' } },
+    ]);
+    const client = {
+      getClient() {
+        return {
+          callTool: async () => ({
+            content: [{
+              type: 'text',
+              text: JSON.stringify({ status: 'signed', signature: '0xsensitive-signature', access_token: 'never-visible' }),
+            }],
+          }),
+        };
+      },
+    };
+
+    const generic = await new DynamicBaseMcpToolProvider(client, tools).callTool('get_request_status', {});
+    assert.doesNotMatch(generic.content, /0xsensitive-signature|never-visible/);
+
+    const typed = await new DynamicBaseMcpToolProvider(client, tools, {
+      sensitiveResultTools: ['get_request_status'],
+    }).callTool('get_request_status', {});
+    assert.match(typed.content, /0xsensitive-signature/);
+    assert.doesNotMatch(typed.content, /never-visible/);
+  });
+
   test('T47 wallet mismatch disables wallet tools but preserves Moonwell and Morpho reads', async () => {
     const tools = classifyDynamicBaseMcpTools([
       { name: 'get_wallets', inputSchema: { type: 'object' } },

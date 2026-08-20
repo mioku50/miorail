@@ -176,6 +176,58 @@ describe('T64.2 durable commerce compare', () => {
     const compared = await compare();
     assert.equal(await repository.getCommerceRouteRun(compared.routeRunId, OTHER_USER.id), null);
   });
+
+  test('the Base plugin example reaches Bitrefill with an Amazon-only query', async () => {
+    const seenUrls: string[] = [];
+    const amazonSearch = {
+      products: [{ slug: 'amazon-usa', name: 'Amazon US', country_code: 'US', currency: 'USD', in_stock: true }],
+    };
+    const amazonDetail = {
+      slug: 'amazon-usa',
+      name: 'Amazon US',
+      country_code: 'US',
+      currency: 'USD',
+      in_stock: true,
+      recipient_required: false,
+      packages: [{ package_value: '25', value: '25', usdc_price: '25', in_stock: true }],
+    };
+    const catalog = createBitrefillCatalogSourceV1({
+      fetchImpl: (async (input: RequestInfo | URL) => {
+        seenUrls.push(String(input));
+        return new Response(JSON.stringify(String(input).includes('detail') ? amazonDetail : amazonSearch), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }) as typeof fetch,
+    });
+    commerceRouteRuntime.compare = (input) => compareCommerceRoutesV1({ catalog }, input);
+
+    const response = await request(routeApp())
+      .post('/api/route-intelligence/commerce/compare')
+      .send({
+        message: 'Find a 25 USD Amazon US gift card on Bitrefill',
+        walletAddress: WALLET,
+        requestId: 'base-plugin-bitrefill-example',
+      });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.outcome, 'compared');
+    assert.match(seenUrls[0] ?? '', /[?&]q=Amazon(?:&|$)/);
+    assert.doesNotMatch(seenUrls[0] ?? '', /Find|Bitrefill/);
+  });
+
+  test('product_not_found records that the catalogue was reached', async () => {
+    commerceRouteRuntime.compare = async () => ({ ok: false, reason: 'product_not_found' });
+    const response = await request(routeApp())
+      .post('/api/route-intelligence/commerce/compare')
+      .send(COMPARE_BODY);
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, {
+      outcome: 'unsupported',
+      reason: 'product_not_found',
+      catalogueStatus: 'reached_no_match',
+    });
+  });
 });
 
 describe('T64.2 idempotent invoice creation', () => {

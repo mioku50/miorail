@@ -25,6 +25,7 @@ export type BaseMcpProviderExampleDispositionV1 =
   | 'handoff_to_routes'
   | 'handoff_to_provider_ui'
   | 'typed_x402_required'
+  | 'action_in_extensions'
   | 'adapter_required';
 
 export interface BaseMcpProviderExampleV1 {
@@ -183,10 +184,10 @@ export const BASE_MCP_PROVIDER_INTENTS_V1: readonly BaseMcpProviderIntentSpecV1[
     ],
   },
   {
-    pluginId: 'virtuals', aliases: ['virtuals', 'virtuals protocol'], productSurface: 'extensions', lifecycleStage: 'documented', examples: [
+    pluginId: 'virtuals', aliases: ['virtuals', 'virtuals protocol'], productSurface: 'extensions', lifecycleStage: 'adapter', examples: [
       e('agents', 'List my Virtuals agents', 'read', 'read_in_extensions'),
-      e('create', 'Create a Virtuals agent with email and card', 'action', 'adapter_required'),
-      e('otp', 'Check my Virtuals email OTP status', 'read', 'read_in_extensions'),
+      e('create', 'Create a Virtuals agent called Mio Researcher to summarize Base research', 'action', 'action_in_extensions'),
+      e('otp', 'Check my Virtuals email OTP status', 'read', 'adapter_required'),
     ],
   },
   {

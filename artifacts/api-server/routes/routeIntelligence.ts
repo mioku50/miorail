@@ -3011,6 +3011,7 @@ routeIntelligenceRouter.post('/commerce/compare', async (req, res) => {
         CommerceCompareResponseV1Schema.parse({
           outcome: 'unsupported',
           reason: resolution.issues[0] ?? 'unsupported_commerce_request',
+          catalogueStatus: 'not_reached',
         }),
       );
       return;
@@ -3023,7 +3024,29 @@ routeIntelligenceRouter.post('/commerce/compare', async (req, res) => {
     }
     const comparison = await commerceRouteRuntime.compare({ intent: resolution.intent, now });
     if (!comparison.ok) {
-      res.json(CommerceCompareResponseV1Schema.parse({ outcome: 'unsupported', reason: comparison.reason }));
+      const catalogueStatus =
+        comparison.reason === 'product_not_found'
+          ? 'reached_no_match'
+          : comparison.reason.startsWith('provider_')
+            ? 'request_failed'
+            : [
+                  'unsupported_kind',
+                  'unsupported_country',
+                  'unsupported_currency',
+                  'pinned_chain_mismatch',
+                  'pinned_asset_mismatch',
+                  'spend_ceiling_exceeded',
+                  'price_out_of_range',
+                ].includes(comparison.reason)
+              ? 'not_reached'
+              : 'reached';
+      res.json(
+        CommerceCompareResponseV1Schema.parse({
+          outcome: 'unsupported',
+          reason: comparison.reason,
+          catalogueStatus,
+        }),
+      );
       return;
     }
     if (!(await commerceStorageReady(res))) return;

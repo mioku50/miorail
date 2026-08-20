@@ -34,6 +34,7 @@ export async function createApiToolAggregatorForUser(
     includeBaseMcpSwap?: boolean;
     includeBaseMcpSend?: boolean;
     baseMcpAllowedActionTools?: readonly string[];
+    baseMcpSensitiveResultTools?: readonly string[];
     /** Base MCP and nothing else. Read-only unless an exact typed action is allowed. */
     baseMcpOnly?: boolean;
   } = {},
@@ -74,6 +75,7 @@ export async function createApiToolAggregatorForUser(
     includeBaseMcpSwap: options.includeBaseMcpSwap,
     includeBaseMcpSend: options.includeBaseMcpSend,
     baseMcpAllowedActionTools: options.baseMcpAllowedActionTools,
+    baseMcpSensitiveResultTools: options.baseMcpSensitiveResultTools,
     baseMcpOnly: options.baseMcpOnly,
     dynamicToolsCacheVersion,
   });

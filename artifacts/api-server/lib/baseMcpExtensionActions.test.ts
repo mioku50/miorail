@@ -139,6 +139,22 @@ describe('deterministic Base MCP Extensions intent router', () => {
   test('swap and yield never reach an Extensions write tool', () => {
     assert.equal(classifyBaseMcpExtensionIntentV1('Swap 100 USDC to ETH').kind, 'handoff');
     assert.equal(classifyBaseMcpExtensionIntentV1('Find the best yield for USDC').kind, 'handoff');
+    const flaunch = classifyBaseMcpExtensionIntentV1('Buy this Flaunch token with 0.001 ETH');
+    assert.equal(flaunch.kind, 'handoff');
+    if (flaunch.kind === 'handoff') assert.equal(flaunch.provider, 'flaunch');
+  });
+
+  test('only an exact reviewed Virtuals create prompt enters its typed action vertical', () => {
+    const create = classifyBaseMcpExtensionIntentV1(
+      'Create a Virtuals agent called Mio Researcher to summarize Base research',
+    );
+    assert.equal(create.kind, 'virtuals_create');
+    if (create.kind === 'virtuals_create') {
+      assert.equal(create.intent.agentName, 'Mio Researcher');
+      assert.equal(create.intent.agentDescription, 'summarize Base research');
+    }
+    const incomplete = classifyBaseMcpExtensionIntentV1('Create a Virtuals agent');
+    assert.equal(incomplete.kind, 'needs_input');
   });
 
   test('an exact USDC send is normalized to atomic facts', () => {

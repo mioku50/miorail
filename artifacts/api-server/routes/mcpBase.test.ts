@@ -16,10 +16,12 @@ const originalLogger = mcpBaseRouteRuntime.logger;
 const originalProbeBaseMcpTools = mcpBaseRouteRuntime.probeBaseMcpTools;
 const originalPluginDrift = mcpBaseRouteRuntime.baseMcpPluginDriftV1;
 const originalConsole = mcpBaseRouteRuntime.runBaseMcpConsoleV1;
+const originalReviewedConsole = mcpBaseRouteRuntime.runReviewedBaseMcpPluginReadV1;
 const originalClassifyExtension = mcpBaseRouteRuntime.classifyBaseMcpExtensionIntentV1;
 const originalResolveBaseName = mcpBaseRouteRuntime.resolveBaseNameV1;
 const originalPrepareExtension = mcpBaseRouteRuntime.prepareBaseMcpSendActionV1;
 const originalPrepareX402Extension = mcpBaseRouteRuntime.prepareBaseMcpX402ActionV1;
+const originalPrepareVirtualsExtension = mcpBaseRouteRuntime.prepareBaseMcpVirtualsAgentCreateV1;
 const originalReconcileExtension = mcpBaseRouteRuntime.reconcileBaseMcpActionV1;
 const originalListExtension = mcpBaseRouteRuntime.listBaseMcpActionReceiptsV1;
 const originalDb = baseMcpOAuthStoreRuntime.db;
@@ -83,10 +85,12 @@ afterEach(() => {
   mcpBaseRouteRuntime.probeBaseMcpTools = originalProbeBaseMcpTools;
   mcpBaseRouteRuntime.baseMcpPluginDriftV1 = originalPluginDrift;
   mcpBaseRouteRuntime.runBaseMcpConsoleV1 = originalConsole;
+  mcpBaseRouteRuntime.runReviewedBaseMcpPluginReadV1 = originalReviewedConsole;
   mcpBaseRouteRuntime.classifyBaseMcpExtensionIntentV1 = originalClassifyExtension;
   mcpBaseRouteRuntime.resolveBaseNameV1 = originalResolveBaseName;
   mcpBaseRouteRuntime.prepareBaseMcpSendActionV1 = originalPrepareExtension;
   mcpBaseRouteRuntime.prepareBaseMcpX402ActionV1 = originalPrepareX402Extension;
+  mcpBaseRouteRuntime.prepareBaseMcpVirtualsAgentCreateV1 = originalPrepareVirtualsExtension;
   mcpBaseRouteRuntime.reconcileBaseMcpActionV1 = originalReconcileExtension;
   mcpBaseRouteRuntime.listBaseMcpActionReceiptsV1 = originalListExtension;
   baseMcpOAuthStoreRuntime.db = originalDb;
@@ -704,7 +708,7 @@ const ACTION_RECEIPT = {
   reconciliationBasis: 'erc20_transfer_event' as const,
 };
 
-test('POST /api/mcp/base/console hands swap to Routes AI before any Base MCP tool runs', async () => {
+test('POST /api/mcp/base/console hands swaps and Flaunch token buys to Routes AI before any Base MCP tool runs', async () => {
   const originalSecret = process.env.SESSION_SECRET;
   process.env.SESSION_SECRET = 'test-session-secret';
   let consoleCalled = false;
@@ -718,13 +722,19 @@ test('POST /api/mcp/base/console hands swap to Routes AI before any Base MCP too
     throw new Error('must not run');
   };
 
-  const response = await request(app)
-    .post('/api/mcp/base/console')
-    .send({ message: 'Swap 100 USDC to ETH', requestId: 'handoff-1' });
-  assert.equal(response.status, 200);
-  assert.equal(response.body.status, 'handoff');
-  assert.equal(response.body.handoff.target, 'routes');
-  assert.equal(response.body.action, null);
+  for (const [message, provider] of [
+    ['Swap 100 USDC to ETH', null],
+    ['Buy this Flaunch token with 0.001 ETH', 'flaunch'],
+  ] as const) {
+    const response = await request(app)
+      .post('/api/mcp/base/console')
+      .send({ message, requestId: `handoff-${provider ?? 'swap'}` });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.status, 'handoff');
+    assert.equal(response.body.handoff.target, 'routes');
+    assert.equal(response.body.handoff.provider, provider);
+    assert.equal(response.body.action, null);
+  }
   assert.equal(consoleCalled, false);
   assert.equal(actionCalled, false);
   restoreEnv('SESSION_SECRET', originalSecret);
@@ -761,6 +771,63 @@ test('POST /api/mcp/base/console returns an approval Action Receipt for exact se
   assert.equal(response.body.action.receipt.routeVerified, false);
   assert.equal(response.body.action.approvalUrl, 'https://keys.coinbase.com/approve/send-1');
   assert.equal(response.body.handoff, null);
+  restoreEnv('SESSION_SECRET', originalSecret);
+  restoreEnv('BASE_MCP_ENABLED', originalEnabled);
+  restoreEnv('BASE_MCP_SERVER_URL', originalUrl);
+});
+
+test('POST /api/mcp/base/console exposes reviewed Virtuals sign-in as an Action Receipt', async () => {
+  const originalSecret = process.env.SESSION_SECRET;
+  const originalEnabled = process.env.BASE_MCP_ENABLED;
+  const originalUrl = process.env.BASE_MCP_SERVER_URL;
+  process.env.SESSION_SECRET = 'test-session-secret';
+  process.env.BASE_MCP_ENABLED = 'true';
+  process.env.BASE_MCP_SERVER_URL = 'https://mcp.base.org';
+  mcpBaseRouteRuntime.prepareBaseMcpVirtualsAgentCreateV1 = async (input) => ({
+    kind: 'action',
+    reply: 'Approve only this Virtuals sign-in message.',
+    errorCode: null,
+    toolsAvailable: 2,
+    approvalUrl: 'https://keys.coinbase.com/approve/virtuals-sign-1',
+    resultPreview: null,
+    receipt: {
+      schemaVersion: 'base-mcp-action-receipt/v1',
+      id: 'base-mcp-action:virtuals-1',
+      actionHash: `0x${'b'.repeat(64)}`,
+      actionType: 'virtuals',
+      provider: 'base-mcp',
+      chainId: 8453,
+      walletAddress: (input.walletAddress ?? '0x1111111111111111111111111111111111111111').toLowerCase() as `0x${string}`,
+      status: 'approval_required',
+      capabilityPolicy: 'passed',
+      approvalRequired: true,
+      reconciliationState: 'not_started',
+      transactionHash: null,
+      blockNumber: null,
+      errorCode: null,
+      createdAt: '2026-08-20T20:00:00.000Z',
+      updatedAt: '2026-08-20T20:00:00.000Z',
+      finalizedAt: null,
+      routeVerified: false,
+      extensionProvider: 'virtuals',
+      operation: 'agent_create',
+      agentName: input.intent.agentName,
+      agentDescription: input.intent.agentDescription,
+      providerObjectId: null,
+      reconciliationBasis: 'virtuals_provider_response',
+    },
+  });
+
+  const response = await request(app).post('/api/mcp/base/console').send({
+    message: 'Create a Virtuals agent called Mio Researcher to summarize Base research',
+    requestId: 'virtuals-create-1',
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.status, 'action');
+  assert.equal(response.body.action.receipt.actionType, 'virtuals');
+  assert.equal(response.body.action.receipt.agentName, 'Mio Researcher');
+  assert.equal(response.body.action.approvalUrl, 'https://keys.coinbase.com/approve/virtuals-sign-1');
   restoreEnv('SESSION_SECRET', originalSecret);
   restoreEnv('BASE_MCP_ENABLED', originalEnabled);
   restoreEnv('BASE_MCP_SERVER_URL', originalUrl);

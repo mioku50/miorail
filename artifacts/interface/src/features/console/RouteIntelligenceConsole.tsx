@@ -1069,6 +1069,16 @@ export function RouteIntelligenceConsole() {
     );
   } else if (screen === 'comparing') {
     const answered = (projection?.availableRoutes ?? []).map((route) => route.provider.displayName);
+    const answeredDetails: Record<string, string> = {};
+    if (commerceCompare.data?.outcome === 'unsupported' && commerceCompare.data.catalogueStatus !== 'not_reached') {
+      answered.push('Bitrefill');
+      answeredDetails.Bitrefill =
+        commerceCompare.data.catalogueStatus === 'reached_no_match'
+          ? 'reached / no matching product'
+          : commerceCompare.data.catalogueStatus === 'request_failed'
+            ? 'request failed'
+            : 'reached';
+    }
     content = (
       <ComparingScreen
         steps={comparingFailure ? haltStageRailV1(steps) : steps}
@@ -1080,6 +1090,7 @@ export function RouteIntelligenceConsole() {
           family: dispatch.family,
           adapters: adapterRows.rows,
           answered,
+          answeredDetails,
           terminalReason: comparingFailure?.detail ?? null,
           evidenceCount: projection ? evidenceRows.length : null,
           scored: Boolean(projection?.pathScore),

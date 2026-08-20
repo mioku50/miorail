@@ -14,6 +14,7 @@ import {
   baseMcpPluginMetaLineV1,
   baseMcpPluginReachV1,
   baseMcpPluginSummaryLineV1,
+  baseMcpToolsWithReviewedAdaptersV1,
   filterBaseMcpPluginsV1,
   groupBaseMcpPluginsV1,
   selectBaseMcpExampleV1,
@@ -167,6 +168,40 @@ describe('a plugin is grouped by whether it can be reached from here', () => {
   test('a shell plugin says plainly that it does not work on this surface', () => {
     assert.match(BASE_MCP_PLUGIN_REACH_COPY_V1.shell_required, /not on this surface/i);
   });
+});
+
+test('the tool projection releases sign only inside the reviewed Virtuals adapter', () => {
+  const tools = [
+    {
+      name: 'sign',
+      capability: 'user_confirmed_transaction' as const,
+      scope: 'wallet' as const,
+      surface: 'action' as const,
+      surfaceEnabled: false,
+      surfaceReason: 'action_vertical_not_released',
+    },
+    {
+      name: 'arbitrary_write',
+      capability: 'user_confirmed_transaction' as const,
+      scope: 'protocol' as const,
+      surface: 'action' as const,
+      surfaceEnabled: false,
+      surfaceReason: 'action_vertical_not_released',
+    },
+  ];
+  const virtuals = plugin({
+    id: 'virtuals',
+    examples: [{
+      id: 'create',
+      prompt: 'Create a Virtuals agent called Mio Researcher to summarize Base research',
+      surface: 'action',
+      disposition: 'action_in_extensions',
+    }],
+  });
+  const projected = baseMcpToolsWithReviewedAdaptersV1(tools, [virtuals]);
+  assert.equal(projected[0]?.surfaceEnabled, true);
+  assert.equal(projected[0]?.surfaceReason, 'released_only_inside_reviewed_virtuals_sign_in');
+  assert.equal(projected[1]?.surfaceEnabled, false);
 });
 
 describe('the drift line says whether the catalogue is current', () => {
