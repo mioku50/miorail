@@ -56,8 +56,21 @@ export function clearB20PublicContextCacheV1(): void {
 export function b20PublicContextSearchFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): B20PublicSearchV1 | null {
-  const apiKey = (env.B20_PUBLIC_SEARCH_API_KEY || env.LLM_API_KEY || '').trim();
   const baseUrl = (env.B20_PUBLIC_SEARCH_BASE_URL || 'https://api.mistral.ai').trim();
+  let host = '';
+  try {
+    host = new URL(baseUrl).host;
+  } catch {
+    return null;
+  }
+  // A bearer credential belongs to one host. `LLM_API_KEY` is currently a
+  // TokenForge key and must never be used against Mistral merely because this
+  // older feature defaults to api.mistral.ai.
+  const apiKey = (
+    env.B20_PUBLIC_SEARCH_API_KEY ||
+    (host === 'api.mistral.ai' ? env.MISTRAL_API_KEY : '') ||
+    ''
+  ).trim();
   const model = (env.B20_PUBLIC_SEARCH_MODEL || '').trim();
   if (!apiKey) return null;
   return createMistralPublicSearchV1({
