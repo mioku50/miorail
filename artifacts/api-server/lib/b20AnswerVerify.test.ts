@@ -255,6 +255,19 @@ describe('a narration may not change what the answer means', () => {
     );
   });
 
+  test('a targeted timeout does not let narration erase the stale measurement that still exists', () => {
+    const violations = semantics(
+      'Reading still running. FLAG is stale. No Exit-First measurement.',
+      {
+        complete: false,
+        incompleteReason: 'targeted_read',
+        subjects: ['FLAG'],
+        about: 'miorail',
+      },
+    );
+    assert.ok(violations.some((entry) => /says nothing was measured/.test(entry)), violations.join(' | '));
+  });
+
   test('"not measured" over a bundle that measured nothing is the correct answer', () => {
     // The rule must not make the honest answer unsayable. This is the state
     // most of this product is in most of the time.

@@ -222,7 +222,7 @@ export interface B20AnswerAssertionsV1 {
  * same defect. Both languages, because both are used here.
  */
 const NOT_MEASURED_CLAIM_V1 =
-  /\b(not measured|no measurement|nothing (was )?measured|no (stored )?measurements?|has not been measured|hasn'?t been measured|no data)\b|(не измер|нет измерен|измерений нет|ничего не измер|нет данных|данных нет)/iu;
+  /\b(not measured|no measurement|nothing (was )?measured|no (?:stored |exit[- ]first )?measurements?|has not been measured|hasn'?t been measured|no data)\b|(не измер|нет измерен|измерений нет|ничего не измер|нет данных|данных нет)/iu;
 
 /** A narration claiming the answer is empty. */
 const EMPTY_CLAIM_V1 =
