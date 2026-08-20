@@ -5,7 +5,11 @@ import {
   resolvePaidB20SimulationPricingV1,
 } from '../lib/paidIntelligenceConfig.js';
 import { logger } from '@mioagent/utils';
-import { createLlmProvider, type LlmProvider } from '@mioagent/llm';
+import {
+  createLlmProvider,
+  createStructuredLlmProvider,
+  type LlmProvider,
+} from '@mioagent/llm';
 import { safeZodIssuesV1 } from '../lib/safeZodIssues.js';
 import {
   B20InspectRequestV1Schema,
@@ -322,6 +326,16 @@ export const b20RouteRuntime = {
       return createLlmProvider();
     } catch {
       // A misconfigured provider is not a reason to fail a read-only answer.
+      return null;
+    }
+  },
+  /** Closed-enum intent classification is separate from evidence narration.
+   * This keeps the quick Mistral lane away from user-facing conclusions while
+   * Grok remains available to explain the already-built fact bundle. */
+  classifier: (): LlmProvider | null => {
+    try {
+      return createStructuredLlmProvider();
+    } catch {
       return null;
     }
   },
@@ -2376,7 +2390,7 @@ b20ControlRouter.post('/opportunities/b20/console/ask', async (req: Request, res
       question: parsed.data.question,
       scope: parsed.data.scope,
       tokenAddresses: parsed.data.tokenAddresses,
-      provider: b20RouteRuntime.narrator(),
+      provider: b20RouteRuntime.classifier(),
     });
     const plan = resolution.plan;
     if (resolution.source !== 'deterministic') {

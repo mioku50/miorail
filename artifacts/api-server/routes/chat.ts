@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { ChatMessageRequestSchema, ChatHistoryResponseSchema, ChatReconcileResponseSchema } from '@mioagent/api-zod';
 import { Agent } from '@mioagent/agent';
-import { createLlmProvider } from '@mioagent/llm';
+import { createLlmProvider, createStructuredLlmProvider } from '@mioagent/llm';
 import { createApiToolAggregatorForUser } from '../lib/baseMcpTools.js';
 import { db, chats, actions } from '@mioagent/db';
 import { eq, desc, and } from 'drizzle-orm';
@@ -65,6 +65,7 @@ export const chatRouter = Router();
 export const chatRouteRuntime = {
   createApiToolAggregatorForUser,
   createLlmProvider,
+  createStructuredLlmProvider,
   getAutonomyPolicyRepository,
   fetchInternalApprovals,
   routeSemanticIntent,
@@ -311,7 +312,7 @@ chatRouter.post('/', async (req, res, next) => {
         nativePortfolioReader: (address) => fetchInternalPortfolio(address, runtimeChainEnv),
       });
     if (!directRead && !explicitRevokeIntent) {
-      semanticLlm = chatRouteRuntime.createLlmProvider();
+      semanticLlm = chatRouteRuntime.createStructuredLlmProvider();
       semanticDecision = await chatRouteRuntime.routeSemanticIntent({
         llm: semanticLlm,
         message,
@@ -800,7 +801,9 @@ chatRouter.post('/', async (req, res, next) => {
       return res.json(assistantMsg);
     }
 
-    const llm = semanticLlm || chatRouteRuntime.createLlmProvider();
+    // The extractor and the assistant have deliberately different jobs.
+    // Never reuse the fast structured model for the user-facing reasoning turn.
+    const llm = chatRouteRuntime.createLlmProvider();
     console.log("TRACE: llm created");
     const agent = new Agent({
       llmProvider: llm,

@@ -125,6 +125,7 @@ beforeEach(() => {
   // test would reach a provider over the network the moment a key happened to
   // be in the environment.
   b20RouteRuntime.narrator = () => null;
+  b20RouteRuntime.classifier = () => null;
 });
 
 afterEach(() => {

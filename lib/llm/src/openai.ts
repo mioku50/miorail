@@ -18,6 +18,9 @@ export interface OpenAiConfig {
    * be able to redirect the credential or change the body's declared type.
    */
   headers?: Readonly<Record<string, string>>;
+  /** Ask compatible providers to guarantee a JSON object. Exact keys and
+   * financial semantics are still enforced by the caller's strict parser. */
+  jsonMode?: boolean;
 }
 
 /** How much of a provider's error body is kept. A gateway that answers with an
@@ -75,6 +78,7 @@ export class OpenAiCompatibleClient implements LlmProvider {
         model,
         messages: request.messages,
         temperature: request.temperature,
+        ...(this.config.jsonMode ? { response_format: { type: 'json_object' } } : {}),
         ...(request.tools && request.tools.length > 0 ? { tools: request.tools } : {})
       })
     });

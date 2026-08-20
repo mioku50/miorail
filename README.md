@@ -36,6 +36,11 @@ Natural-language request
 
 Miorail is not a thin chat wrapper around Base MCP, a provider directory, or a first-matching-tool router. Base MCP is a wallet and capability rail; Miorail owns the comparison, evidence, transaction composition, validation, and proof layer.
 
+Natural-language processing is role-routed as well: a fast Mistral lane handles
+closed-schema classification and extraction, while Grok 4.5 handles evidence-
+bound investigation and user-facing explanations. TypeScript/Zod contracts,
+not either model, decide which reads and actions are allowed.
+
 ## Product surfaces
 
 | Surface | Web path | What it owns |

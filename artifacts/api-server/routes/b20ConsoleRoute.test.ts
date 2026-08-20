@@ -148,6 +148,7 @@ beforeEach(() => {
   // Left to the real factory a unit test reaches a provider over the network
   // the moment a key happens to be in the environment.
   b20RouteRuntime.narrator = () => null;
+  b20RouteRuntime.classifier = () => null;
   // Same reasoning for the identity fallback: without a stub this would open a
   // socket to Base the moment an RPC URL is configured. `not_b20` is the
   // default so a test that means to assert a confirmation has to say so.
@@ -420,18 +421,22 @@ describe('the console answers about change', () => {
 
 describe('the console resolves unfamiliar language before it reads', () => {
   test('a semantic intent becomes the same bounded plan as a known phrase', async () => {
-    let calls = 0;
+    let classifierCalls = 0;
+    let narratorCalls = 0;
+    b20RouteRuntime.classifier = () => ({
+      generate: async () => {
+        classifierCalls += 1;
+        return {
+          message: {
+            role: 'assistant' as const,
+            content: '{"intent":"find_bought_not_sellable","confidence":0.96}',
+          },
+        };
+      },
+    }) as never;
     b20RouteRuntime.narrator = () => ({
       generate: async () => {
-        calls += 1;
-        if (calls === 1) {
-          return {
-            message: {
-              role: 'assistant' as const,
-              content: '{"intent":"find_bought_not_sellable","confidence":0.96}',
-            },
-          };
-        }
+        narratorCalls += 1;
         return {
           message: { role: 'assistant' as const, content: 'Miorail found the stored cases described in the evidence.' },
         };
@@ -446,7 +451,8 @@ describe('the console resolves unfamiliar language before it reads', () => {
     assert.equal(response.status, 200, JSON.stringify(response.body));
     assert.equal(response.body.intent, 'find_bought_not_sellable');
     assert.ok(response.body.reads.some((read: { tool: string }) => read.tool === 'list'));
-    assert.ok(calls >= 1);
+    assert.equal(classifierCalls, 1);
+    assert.equal(narratorCalls, 1);
   });
 });
 

@@ -76,8 +76,10 @@ describe('Chat API & Recommendation Guardrails', () => {
     aggregator.registerProvider(provider);
     const originalCreateTools = chatRouteRuntime.createApiToolAggregatorForUser;
     const originalCreateLlm = chatRouteRuntime.createLlmProvider;
+    const originalCreateStructuredLlm = chatRouteRuntime.createStructuredLlmProvider;
     chatRouteRuntime.createApiToolAggregatorForUser = async () => aggregator;
     chatRouteRuntime.createLlmProvider = () => { throw new Error('LLM must not run for direct Base reads'); };
+    chatRouteRuntime.createStructuredLlmProvider = () => { throw new Error('structured LLM must not run for direct Base reads'); };
     await request(app).delete('/api/chat/history');
     const beforeActions = (await db.select().from(actions)).length;
 
@@ -97,6 +99,7 @@ describe('Chat API & Recommendation Guardrails', () => {
     } finally {
       chatRouteRuntime.createApiToolAggregatorForUser = originalCreateTools;
       chatRouteRuntime.createLlmProvider = originalCreateLlm;
+      chatRouteRuntime.createStructuredLlmProvider = originalCreateStructuredLlm;
     }
   });
 
@@ -262,10 +265,11 @@ describe('Chat API & Recommendation Guardrails', () => {
     const origExecution = process.env.MAINNET_EXECUTION_ENABLED;
     const originalCreateTools = chatRouteRuntime.createApiToolAggregatorForUser;
     const originalCreateLlm = chatRouteRuntime.createLlmProvider;
+    const originalCreateStructuredLlm = chatRouteRuntime.createStructuredLlmProvider;
     process.env.CHAIN_ENV = 'mainnet';
     process.env.MAINNET_EXECUTION_ENABLED = 'true';
     chatRouteRuntime.createApiToolAggregatorForUser = async () => new ToolAggregator();
-    chatRouteRuntime.createLlmProvider = () => ({
+    chatRouteRuntime.createStructuredLlmProvider = () => ({
       async generate(req: LlmRequest) {
         assert.equal(req.tools, undefined, 'semantic extractor must receive no tools');
         const content = String(req.messages.at(-1)?.content || '');
@@ -299,6 +303,7 @@ describe('Chat API & Recommendation Guardrails', () => {
     } finally {
       chatRouteRuntime.createApiToolAggregatorForUser = originalCreateTools;
       chatRouteRuntime.createLlmProvider = originalCreateLlm;
+      chatRouteRuntime.createStructuredLlmProvider = originalCreateStructuredLlm;
       restoreEnv('CHAIN_ENV', origChain);
       restoreEnv('MAINNET_EXECUTION_ENABLED', origExecution);
     }
@@ -458,13 +463,14 @@ describe('Chat API & Recommendation Guardrails', () => {
     const origPriceProvider = process.env.PRICE_PROVIDER;
     const origApprovalProvider = process.env.APPROVAL_PROVIDER;
     const originalCreateLlm = chatRouteRuntime.createLlmProvider;
+    const originalCreateStructuredLlm = chatRouteRuntime.createStructuredLlmProvider;
     process.env.TOKEN_SECURITY_PROVIDER = 'none';
     process.env.TOKEN_BALANCES_PROVIDER = 'none';
     process.env.PRICE_PROVIDER = 'none';
     process.env.APPROVAL_PROVIDER = 'none';
     process.env.CHAIN_ENV = 'mainnet-readonly';
     process.env.MAINNET_EXECUTION_ENABLED = 'false';
-    chatRouteRuntime.createLlmProvider = () => ({
+    chatRouteRuntime.createStructuredLlmProvider = () => ({
       async generate() {
         return {
           message: {
@@ -514,6 +520,7 @@ describe('Chat API & Recommendation Guardrails', () => {
       assert.deepStrictEqual(payload.calls, []);
     } finally {
       chatRouteRuntime.createLlmProvider = originalCreateLlm;
+      chatRouteRuntime.createStructuredLlmProvider = originalCreateStructuredLlm;
       restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurityProvider);
       restoreEnv('TOKEN_BALANCES_PROVIDER', origBalancesProvider);
       restoreEnv('PRICE_PROVIDER', origPriceProvider);
@@ -587,6 +594,7 @@ describe('Chat API & Recommendation Guardrails', () => {
     const originalFetchInternalApprovals = chatRouteRuntime.fetchInternalApprovals;
     const originalCreateTools = chatRouteRuntime.createApiToolAggregatorForUser;
     const originalCreateLlm = chatRouteRuntime.createLlmProvider;
+    const originalCreateStructuredLlm = chatRouteRuntime.createStructuredLlmProvider;
     const originalRouteSemanticIntent = chatRouteRuntime.routeSemanticIntent;
     process.env.TOKEN_SECURITY_PROVIDER = 'none';
     process.env.TOKEN_BALANCES_PROVIDER = 'none';
@@ -606,6 +614,11 @@ describe('Chat API & Recommendation Guardrails', () => {
     // messages before they reach the transaction gate under test.
     chatRouteRuntime.createApiToolAggregatorForUser = async () => new ToolAggregator();
     chatRouteRuntime.createLlmProvider = () => ({
+      async generate() {
+        throw new Error('semantic routing is stubbed in this transaction-gate test');
+      },
+    });
+    chatRouteRuntime.createStructuredLlmProvider = () => ({
       async generate() {
         throw new Error('semantic routing is stubbed in this transaction-gate test');
       },
@@ -668,6 +681,7 @@ describe('Chat API & Recommendation Guardrails', () => {
     } finally {
       chatRouteRuntime.createApiToolAggregatorForUser = originalCreateTools;
       chatRouteRuntime.createLlmProvider = originalCreateLlm;
+      chatRouteRuntime.createStructuredLlmProvider = originalCreateStructuredLlm;
       chatRouteRuntime.routeSemanticIntent = originalRouteSemanticIntent;
       chatRouteRuntime.fetchInternalApprovals = originalFetchInternalApprovals;
       restoreEnv('TOKEN_SECURITY_PROVIDER', origSecurityProvider);

@@ -108,7 +108,7 @@ async function main(): Promise<void> {
   for (const input of questions) {
     const resolution = await resolveB20ConsolePlanV1({
       ...input,
-      provider: b20RouteRuntime.narrator(),
+      provider: b20RouteRuntime.classifier(),
     });
     const plan = resolution.plan;
     console.log('');

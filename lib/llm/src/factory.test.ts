@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { createLlmProvider, providerHeadersV1, providerLabelV1 } from './factory.js';
+import {
+  createLlmProvider,
+  createStructuredLlmProvider,
+  providerHeadersV1,
+  providerLabelV1,
+} from './factory.js';
 import { LlmProviderChainV1 } from './fallback.js';
 import { OpenAiCompatibleClient } from './openai.js';
 
@@ -17,11 +22,20 @@ function clearFallbackEnv(): void {
   delete process.env.AGENTROUTER_API_KEY;
 }
 
+function clearStructuredEnv(): void {
+  delete process.env.LLM_STRUCTURED_PROVIDER;
+  delete process.env.LLM_STRUCTURED_BASE_URL;
+  delete process.env.LLM_STRUCTURED_API_KEY;
+  delete process.env.LLM_STRUCTURED_MODEL;
+  delete process.env.MISTRAL_API_KEY;
+}
+
 test('createLlmProvider', async (t) => {
   const originalEnv = { ...process.env };
 
   t.beforeEach(() => {
     clearFallbackEnv();
+    clearStructuredEnv();
   });
 
   t.afterEach(() => {
@@ -237,6 +251,66 @@ test('createLlmProvider', async (t) => {
     process.env.LLM_FALLBACK_API_KEY = 'test-fallback';
     process.env.LLM_FALLBACK_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
     assert.ok(createLlmProvider() instanceof LlmProviderChainV1);
+  });
+});
+
+test('createStructuredLlmProvider', async (t) => {
+  const originalEnv = { ...process.env };
+
+  t.beforeEach(() => {
+    clearFallbackEnv();
+    clearStructuredEnv();
+    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENROUTER_KEY;
+  });
+
+  t.afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  await t.test('inherits the primary provider only when the lane is entirely absent', () => {
+    process.env.LLM_PROVIDER = 'openai-compatible';
+    process.env.LLM_BASE_URL = 'https://primary.example/v1';
+    process.env.LLM_API_KEY = 'primary-key';
+    process.env.LLM_MODEL = 'grok-4.5';
+    assert.ok(createStructuredLlmProvider() instanceof OpenAiCompatibleClient);
+  });
+
+  await t.test('builds an independent OpenAI-compatible structured lane', () => {
+    process.env.LLM_STRUCTURED_PROVIDER = 'openai-compatible';
+    process.env.LLM_STRUCTURED_BASE_URL = 'https://structured.example/v1';
+    process.env.LLM_STRUCTURED_API_KEY = 'structured-key';
+    process.env.LLM_STRUCTURED_MODEL = 'mistral-small';
+    assert.ok(createStructuredLlmProvider() instanceof OpenAiCompatibleClient);
+  });
+
+  await t.test('reuses an OpenRouter key only for the OpenRouter host', () => {
+    process.env.LLM_STRUCTURED_PROVIDER = 'openai-compatible';
+    process.env.LLM_STRUCTURED_BASE_URL = 'https://openrouter.ai/api';
+    process.env.LLM_STRUCTURED_MODEL = 'mistralai/mistral-small-2603';
+    process.env.OPENROUTER_KEY = 'sk-or-shared';
+    assert.ok(createStructuredLlmProvider() instanceof OpenAiCompatibleClient);
+
+    process.env.LLM_STRUCTURED_BASE_URL = 'https://unrelated.example/v1';
+    assert.throws(() => createStructuredLlmProvider(), /LLM_STRUCTURED_API_KEY is not set/);
+  });
+
+  await t.test('reuses a Mistral key only for the direct Mistral host', () => {
+    process.env.LLM_STRUCTURED_PROVIDER = 'openai-compatible';
+    process.env.LLM_STRUCTURED_BASE_URL = 'https://api.mistral.ai';
+    process.env.LLM_STRUCTURED_MODEL = 'mistral-small-2603';
+    process.env.MISTRAL_API_KEY = 'mistral-shared-key';
+    assert.ok(createStructuredLlmProvider() instanceof OpenAiCompatibleClient);
+
+    process.env.LLM_STRUCTURED_BASE_URL = 'https://unrelated.example/v1';
+    assert.throws(() => createStructuredLlmProvider(), /LLM_STRUCTURED_API_KEY is not set/);
+  });
+
+  await t.test('a partially configured lane fails explicitly', () => {
+    process.env.LLM_STRUCTURED_BASE_URL = 'https://openrouter.ai/api';
+    process.env.LLM_STRUCTURED_MODEL = 'mistralai/mistral-small-2603';
+    process.env.OPENROUTER_KEY = 'sk-or-shared';
+    assert.throws(() => createStructuredLlmProvider(), /set LLM_STRUCTURED_PROVIDER/);
   });
 });
 

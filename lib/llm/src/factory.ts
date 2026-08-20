@@ -31,6 +31,7 @@ const OPENROUTER_HOSTS_V1: readonly string[] = ['openrouter.ai'];
  * as OpenRouter's: a key is a bearer credential for ONE host, and resolving it
  * for an unrelated base URL would hand it to whoever that host is. */
 const AGENTROUTER_HOSTS_V1: readonly string[] = ['agentrouter.org'];
+const MISTRAL_HOSTS_V1: readonly string[] = ['api.mistral.ai'];
 
 /**
  * Headers a gateway needs before it will route a request at all.
@@ -58,6 +59,27 @@ function fallbackApiKeyV1(baseUrl: string, prefix: string): string {
     return trimmed('OPENROUTER_API_KEY') || trimmed('OPENROUTER_KEY');
   }
   if (AGENTROUTER_HOSTS_V1.includes(host)) return trimmed('AGENTROUTER_API_KEY');
+  if (MISTRAL_HOSTS_V1.includes(host)) return trimmed('MISTRAL_API_KEY');
+  return '';
+}
+
+/**
+ * Resolve the credential for the dedicated structured-output lane.
+ *
+ * A host-specific shared credential is accepted only for that host. This lets
+ * an existing Mistral/OpenRouter deployment add a fast classifier without
+ * duplicating its secret in `.env`, while preserving the rule that a bearer token must
+ * never be sent to an unrelated gateway.
+ */
+function structuredApiKeyV1(baseUrl: string): string {
+  const explicit = trimmed('LLM_STRUCTURED_API_KEY');
+  if (explicit) return explicit;
+  const host = providerLabelV1(baseUrl);
+  if (OPENROUTER_HOSTS_V1.includes(host)) {
+    return trimmed('OPENROUTER_API_KEY') || trimmed('OPENROUTER_KEY');
+  }
+  if (AGENTROUTER_HOSTS_V1.includes(host)) return trimmed('AGENTROUTER_API_KEY');
+  if (MISTRAL_HOSTS_V1.includes(host)) return trimmed('MISTRAL_API_KEY');
   return '';
 }
 
@@ -212,4 +234,71 @@ export function createLlmProvider(): LlmProvider {
   throw new Error(providerType
     ? `Unsupported production LLM_PROVIDER: ${providerType}`
     : 'LLM provider is not configured. Set LLM_PROVIDER to openai or openai-compatible.');
+}
+
+/**
+ * Provider for short, schema-bound extraction and classification calls.
+ *
+ * The lane is opt-in and independently configured. When NONE of its variables
+ * are present we preserve backwards compatibility by using the primary lane.
+ * Once an operator starts configuring it, however, every required value must
+ * resolve: silently falling back because of a typo would make the latency and
+ * cost contract unobservable in production.
+ *
+ * This factory deliberately does not inherit the primary fallback chain. A
+ * structured extractor already has a deterministic rejection/clarification
+ * path, while silently sending the same financial request to a different model
+ * would make role-level metrics lie about which model made the classification.
+ */
+export function createStructuredLlmProvider(): LlmProvider {
+  const providerType = trimmed('LLM_STRUCTURED_PROVIDER').toLowerCase();
+  const baseUrl = trimmed('LLM_STRUCTURED_BASE_URL');
+  const model = trimmed('LLM_STRUCTURED_MODEL');
+  const explicitApiKey = trimmed('LLM_STRUCTURED_API_KEY');
+  const anyConfigured = Boolean(providerType || baseUrl || model || explicitApiKey);
+
+  if (!anyConfigured) return createLlmProvider();
+
+  if (providerType === 'openai') {
+    const apiKey = explicitApiKey || trimmed('OPENAI_API_KEY');
+    if (!apiKey) {
+      throw new Error(
+        'LLM_STRUCTURED_PROVIDER is openai but LLM_STRUCTURED_API_KEY or OPENAI_API_KEY is not set',
+      );
+    }
+    return new OpenAiCompatibleClient({
+      apiKey,
+      baseUrl: 'https://api.openai.com',
+      defaultModel: model || trimmed('OPENAI_MODEL') || 'gpt-4o-mini',
+      jsonMode: true,
+    });
+  }
+
+  if (providerType === 'openai-compatible') {
+    const apiKey = baseUrl ? structuredApiKeyV1(baseUrl) : explicitApiKey;
+    const missing = [
+      baseUrl ? null : 'LLM_STRUCTURED_BASE_URL',
+      apiKey ? null : 'LLM_STRUCTURED_API_KEY',
+      model ? null : 'LLM_STRUCTURED_MODEL',
+    ].filter((name): name is string => name !== null);
+    if (missing.length > 0) {
+      throw new Error(
+        `LLM_STRUCTURED_PROVIDER is openai-compatible but ${missing.join(', ')} is not set` +
+          ' (Mistral, OpenRouter and AgentRouter may reuse only their own host-scoped shared key)',
+      );
+    }
+    return new OpenAiCompatibleClient({
+      apiKey,
+      baseUrl,
+      defaultModel: model,
+      headers: providerHeadersV1(baseUrl),
+      jsonMode: true,
+    });
+  }
+
+  throw new Error(
+    providerType
+      ? `Unsupported LLM_STRUCTURED_PROVIDER: ${providerType}`
+      : 'LLM structured provider is partially configured — set LLM_STRUCTURED_PROVIDER',
+  );
 }

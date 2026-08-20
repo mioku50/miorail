@@ -51,7 +51,7 @@ import {
   SwapPrepareResponseV1Schema,
   UpdateIntelligenceBudgetRequestV1Schema,
 } from '@mioagent/api-zod';
-import { createLlmProvider } from '@mioagent/llm';
+import { createStructuredLlmProvider } from '@mioagent/llm';
 import { createSwapRouteEngine } from '@mioagent/route-engine';
 import { createChainTokenIdentityReaderV1 } from '@mioagent/intent-core';
 import {
@@ -359,7 +359,9 @@ export const routePlanRouteRuntime = {
         return false;
       });
     const coordinator = new RoutePlanCoordinator({
-      llm: createLlmProvider(),
+      // RouteIntentV2 extraction is a short, closed JSON contract. Keep it on
+      // the structured lane; Grok remains the primary narrator/reasoner.
+      llm: createStructuredLlmProvider(),
       // T67C.1 Part 2: supplied ONLY when the flag is on. Absent means the
       // snapshot reader is never called, no reliability evidence is created,
       // and scoring stays byte-compatible with swap-path-score/v1.

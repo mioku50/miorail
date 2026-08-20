@@ -56,8 +56,8 @@ Meanings:
 - find_verified_projects: B20 launches connected to a project, product, website, repository, docs or Base presence.
 - find_bought_not_sellable: entry/purchase priced but a supported sale/exit did not price.
 - find_two_sided: both entry and exit priced.
-- find_not_searched: route or venue coverage was incomplete.
-- find_needs_evidence: measurements are absent/incomplete, or asks what evidence is missing and why.
+- find_not_searched: ONLY an explicit question about incomplete route search, venue search or route coverage.
+- find_needs_evidence: a general question about weak/missing/insufficient evidence, uncertainty, absent or incomplete measurements, or what Miorail has not established. Use this unless the user specifically names route/venue/search coverage.
 - find_research_candidates: notable measured cases worth investigating, without recommendation or ranking.
 - measured_changes: stored measurements changed over time.
 - unsupported: prediction, recommendation, scam/person/intent attribution, execution, payment, wallet or unrelated request.

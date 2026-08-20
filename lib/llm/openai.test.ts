@@ -92,3 +92,29 @@ test('OpenAiCompatibleClient baseUrl normalization', async (t) => {
     global.fetch = originalFetch;
   }
 });
+
+test('structured clients request JSON mode without weakening caller validation', async () => {
+  const originalFetch = global.fetch;
+  let body: Record<string, unknown> = {};
+  global.fetch = (async (_url: RequestInfo | URL, options?: RequestInit) => {
+    body = JSON.parse(String(options?.body || '{}')) as Record<string, unknown>;
+    return {
+      ok: true,
+      status: 200,
+      text: async () => '',
+      json: async () => ({ choices: [{ message: { role: 'assistant', content: '{"intent":"ok"}' } }] }),
+    } as Response;
+  }) as typeof fetch;
+  try {
+    const client = new OpenAiCompatibleClient({
+      baseUrl: 'https://api.mistral.ai',
+      apiKey: 'test',
+      defaultModel: 'mistral-small-2603',
+      jsonMode: true,
+    });
+    await client.generate({ messages: [{ role: 'user', content: 'Return JSON.' }] });
+    assert.deepEqual(body.response_format, { type: 'json_object' });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

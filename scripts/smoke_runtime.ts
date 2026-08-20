@@ -1,5 +1,13 @@
-import { createLlmProvider, fallbackLinkV1, providerLabelV1 } from '../lib/llm/src/factory.js';
+import {
+  createLlmProvider,
+  createStructuredLlmProvider,
+  fallbackLinkV1,
+  providerLabelV1,
+} from '../lib/llm/src/factory.js';
 import { FallbackLlmProvider } from '../lib/llm/src/fallback.js';
+import { resolveB20ConsolePlanV1 } from '../artifacts/api-server/lib/b20ConsoleIntent.js';
+import { extractSemanticIntent } from '../artifacts/api-server/lib/semanticIntent.js';
+import { extractSwapIntentV2 } from '../lib/intent-engine/src/extractor.js';
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 
 // Checks the LLM router this deployment is actually configured with, and — when
@@ -48,6 +56,104 @@ async function run() {
       console.error('❌ LLM returned empty or invalid response:', res);
       process.exit(1);
     }
+
+    const structuredConfigured = Boolean((process.env.LLM_STRUCTURED_PROVIDER || '').trim());
+    console.log(
+      structuredConfigured
+        ? `⏳ Checking structured lane (${process.env.LLM_STRUCTURED_MODEL || 'model unset'})...`
+        : '   · no dedicated structured lane; it inherits primary',
+    );
+    const structured = createStructuredLlmProvider();
+    const structuredResponse = await structured.generate({
+      messages: [
+        {
+          role: 'system',
+          content: 'Return exactly {"intent":"ok","confidence":1} and no other text.',
+        },
+        { role: 'user', content: 'Classify this smoke request.' },
+      ],
+      temperature: 0,
+    });
+    const parsedStructured = JSON.parse(structuredResponse.message.content || '') as Record<string, unknown>;
+    if (
+      Object.keys(parsedStructured).sort().join(',') !== 'confidence,intent' ||
+      parsedStructured.intent !== 'ok' ||
+      parsedStructured.confidence !== 1
+    ) {
+      throw new Error('Structured LLM returned an invalid smoke contract');
+    }
+    console.log('✅ Structured lane returned the exact JSON contract');
+
+    const semanticCases = [
+      {
+        language: 'EN',
+        question: 'Surface assets where acquisition worked but disposal could not be established',
+        expected: 'find_bought_not_sellable',
+      },
+      {
+        language: 'RU',
+        question: 'Где вывод пока слабее из-за того, чего Миорейл ещё не смог установить?',
+        expected: 'find_needs_evidence',
+      },
+      {
+        language: 'RU route coverage',
+        question: 'Где Miorail проверил не все маршруты и площадки?',
+        expected: 'find_not_searched',
+      },
+    ] as const;
+    for (const semanticCase of semanticCases) {
+      const startedAt = Date.now();
+      const resolved = await resolveB20ConsolePlanV1({
+        question: semanticCase.question,
+        scope: 'explore',
+        provider: structured,
+        timeoutMs: 10_000,
+      });
+      if (resolved.source !== 'semantic_classifier' || resolved.plan.intent !== semanticCase.expected) {
+        throw new Error(
+          `Structured LLM failed the ${semanticCase.language} B20 intent contract` +
+            ` (source=${resolved.source}, intent=${resolved.plan.intent}, reason=${resolved.reason ?? 'none'})`,
+        );
+      }
+      console.log(`✅ ${semanticCase.language} B20 intent resolved in ${Date.now() - startedAt}ms`);
+    }
+
+    const financialMessage = 'Пожалуйста, обменяй 0.1 USDC на ETH в сети Base';
+    const semanticIntent = await extractSemanticIntent({
+      llm: structured,
+      message: financialMessage,
+      context: { recentMessages: [], runtimeChainId: 8453 },
+    });
+    if (
+      semanticIntent?.intent !== 'swap' ||
+      semanticIntent.amount !== '0.1' ||
+      semanticIntent.fromAsset?.toUpperCase() !== 'USDC' ||
+      semanticIntent.toAsset?.toUpperCase() !== 'ETH'
+    ) {
+      throw new Error('Structured LLM failed the chat semantic-intent contract');
+    }
+    console.log('✅ Chat semantic-intent contract passed');
+
+    const routeIntent = await extractSwapIntentV2({
+      llm: structured,
+      message: financialMessage,
+      context: {
+        tenantId: 'smoke',
+        walletAddress: '0x1111111111111111111111111111111111111111',
+        runtimeChainId: 8453,
+        requestId: 'structured-smoke',
+        requestedAt: '2026-08-20T00:00:00.000Z',
+      },
+    });
+    if (
+      routeIntent?.goal !== 'swap' ||
+      routeIntent.amount !== '0.1' ||
+      routeIntent.fromAsset?.toUpperCase() !== 'USDC' ||
+      routeIntent.toAsset?.toUpperCase() !== 'ETH'
+    ) {
+      throw new Error('Structured LLM failed the RouteIntentV2 extraction contract');
+    }
+    console.log('✅ RouteIntentV2 extraction contract passed');
 
     // The primary answered, so the chain never exercised the fallback. Check it
     // on its own: a fallback that has never served a request is untested.
@@ -119,7 +225,13 @@ async function checkFallbackDirectly(prefix: string): Promise<boolean> {
 /** Prints an error, refusing to print it at all if it contains a credential. */
 function reportError(err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
-  const secrets = [process.env.LLM_API_KEY, process.env.LLM_FALLBACK_API_KEY, process.env.OPENROUTER_KEY]
+  const secrets = [
+    process.env.LLM_API_KEY,
+    process.env.LLM_STRUCTURED_API_KEY,
+    process.env.LLM_FALLBACK_API_KEY,
+    process.env.OPENROUTER_API_KEY,
+    process.env.OPENROUTER_KEY,
+  ]
     .map((value) => (value || '').trim())
     .filter((value) => value.length >= 8);
   if (secrets.some((secret) => message.includes(secret))) {

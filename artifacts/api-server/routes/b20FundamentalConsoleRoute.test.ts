@@ -175,6 +175,7 @@ beforeEach(async () => {
   b20RouteRuntime.projects = () => projects;
   b20RouteRuntime.now = () => new Date(NOW);
   b20RouteRuntime.narrator = () => null;
+  b20RouteRuntime.classifier = () => null;
 });
 
 afterEach(() => {

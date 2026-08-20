@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "tsx --test *.test.ts"
+    "test": "tsx --test *.test.ts src/*.test.ts"
   },
   "dependencies": {
     "@mioagent/x402-gateway": "workspace:*"
