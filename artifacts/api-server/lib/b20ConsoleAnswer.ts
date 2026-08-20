@@ -67,7 +67,14 @@ export interface B20ConsoleDeterministicV1 {
 /** The counts a plan's `summary` step returned. Structurally the universe
  * summary, restated so this module does not depend on the route it came from. */
 export interface B20ConsoleSummaryV1 {
-  window: { maxLaunchAgeMs: number; launches: number; complete: boolean };
+  window: {
+    maxLaunchAgeMs: number;
+    launches: number;
+    inspected: number;
+    completed: number;
+    incomplete: number;
+    complete: boolean;
+  };
   standing: readonly { kind: string; group: string; count: number; aboutToken: boolean }[];
   sections: readonly { group: string; label: string; count: number }[];
   venues: readonly { venues: string | null; count: number }[];
@@ -143,7 +150,7 @@ function symbolV1(card: B20OpportunityCardV1): string {
  * sentence with it.
  */
 export const SCAN_CAP_CAVEAT_V1 =
-  'The scan limit was reached before the window ran out, so these are counts of the newest launches Miorail read rather than of every launch in the window.';
+  'Storage did not establish the complete launch-age window, so every zero and count is scoped only to the launches Miorail actually read.';
 
 /** The caveat every scope carries. Stated once, at the end, in the reader's
  * words rather than the schema's. */
@@ -185,7 +192,8 @@ const FINDING_COPY_V1 = {
     group: null,
     // Whose limit this is, in the sentence that leads the answer rather than
     // in a caveat under it.
-    headline: 'launches carry a reading that never searched the venue where B20 tokens trade. That is Miorail’s limit, not a property of those tokens.',
+    headline:
+      'launches carry a reading that never searched the venue where B20 tokens trade. That is Miorail’s limit, not a property of those tokens.',
     none: 'is waiting on a venue search Miorail did not perform.',
   },
 } as const;
@@ -201,14 +209,21 @@ export function b20ExploreAnswerV1(input: {
   const capped = !summary.window.complete;
   const facts: B20ConsoleFactV1[] = [
     {
-      label: 'Launches read',
-      // "3000 in the last 48 hours" reads as the total. It is the ceiling: the
-      // scan stopped there. The distinction goes in the value itself, because
-      // a caveat under the fold does not travel with the number.
+      label: 'Launches inspected',
       value: capped
-        ? `${summary.window.launches} newest in the last ${window} — scan cap reached, not the total`
-        : `${summary.window.launches} in the last ${window}`,
+        ? `${summary.window.inspected} read in the last ${window} — incomplete corpus, not the total`
+        : `${summary.window.inspected} in the last ${window}`,
       tone: capped ? 'warning' : 'neutral',
+    },
+    {
+      label: 'Completed readings',
+      value: pluralV1(summary.window.completed, 'launch', 'launches'),
+      tone: 'neutral',
+    },
+    {
+      label: 'Incomplete readings',
+      value: `${pluralV1(summary.window.incomplete, 'launch', 'launches')} (Miorail’s evidence gaps)`,
+      tone: summary.window.incomplete > 0 ? 'warning' : 'neutral',
     },
   ];
 
@@ -219,7 +234,11 @@ export function b20ExploreAnswerV1(input: {
     facts.push({
       label: section.label,
       value: `${pluralV1(section.count, 'launch', 'launches')}${aboutMiorail ? ' (Miorail’s own limit, not the token’s)' : ''}`,
-      tone: aboutMiorail ? 'warning' : section.group === 'bought_not_sellable' ? 'warning' : 'neutral',
+      tone: aboutMiorail
+        ? 'warning'
+        : section.group === 'bought_not_sellable'
+          ? 'warning'
+          : 'neutral',
     });
   }
 
@@ -251,15 +270,38 @@ export function b20ExploreAnswerV1(input: {
   // "3000 in the last 48 hours" — true of what it read, and read by everyone
   // as the total.
   const context = capped
-    ? `Miorail read the newest ${pluralV1(summary.window.launches, 'B20 launch', 'B20 launches')} detected in the last ${window}. The scan cap was reached, so this does not establish the total number of launches in that window.`
-    : `Miorail has stored measurements for ${pluralV1(summary.window.launches, 'B20 launch', 'B20 launches')} detected in the last ${window}.`;
-  const sectionSentence = summary.sections.length === 0
-    ? ' None of them has reached a stored conclusion yet.'
-    : ` They fall into ${pluralV1(summary.sections.length, 'group', 'groups')}: ${summary.sections
-        .map((section) => `${section.label.toLowerCase()} (${section.count})`)
-        .join(', ')}.`;
+    ? `Miorail inspected ${pluralV1(summary.window.inspected, 'B20 launch', 'B20 launches')} detected in the last ${window}, but storage did not establish the complete corpus. Among those readings, ${pluralV1(summary.window.completed, 'reading was', 'readings were')} completed and ${pluralV1(summary.window.incomplete, 'reading was', 'readings were')} incomplete.`
+    : `Miorail inspected all ${pluralV1(summary.window.inspected, 'canonical B20 launch', 'canonical B20 launches')} detected in the last ${window}. ${pluralV1(summary.window.completed, 'reading was', 'readings were')} completed and ${pluralV1(summary.window.incomplete, 'reading was', 'readings were')} incomplete.`;
+  const sectionSentence =
+    summary.sections.length === 0
+      ? ' None of them has reached a stored conclusion yet.'
+      : ` They fall into ${pluralV1(summary.sections.length, 'group', 'groups')}: ${summary.sections
+          .map((section) => `${section.label.toLowerCase()} (${section.count})`)
+          .join(', ')}.`;
 
-  const named = (input.cards ?? []).slice(0, 5);
+  // A named token must prove the predicate on the exact card being returned.
+  // A later incomplete observation may retain route flags from an earlier
+  // partial attempt; flags alone are therefore not enough for "both priced".
+  const named = (input.cards ?? [])
+    .filter((card) => {
+      const observation = card.observation;
+      if (input.intent === 'find_bought_not_sellable') {
+        return observation?.standing.kind === 'bought_not_sellable';
+      }
+      if (input.intent === 'find_two_sided') {
+        return Boolean(
+          observation?.entryRouteFound &&
+          observation.exitRouteFound &&
+          observation.standing.aboutToken &&
+          (observation.standing.kind === 'two_sided' || observation.standing.kind === 'ruled_out'),
+        );
+      }
+      if (input.intent === 'find_not_searched') {
+        return observation?.standing.kind === 'venue_not_searched';
+      }
+      return true;
+    })
+    .slice(0, 5);
   for (const card of named) {
     facts.push({
       label: symbolV1(card),
@@ -285,16 +327,28 @@ export function b20ExploreAnswerV1(input: {
   let matched = summary.window.launches;
   if (finding) {
     const count = finding.standingKind
-      ? summary.standing.find((entry) => entry.kind === finding.standingKind)?.count ?? 0
-      : summary.sections.find((section) => section.group === finding.group)?.count ?? 0;
+      ? (summary.standing.find((entry) => entry.kind === finding.standingKind)?.count ?? 0)
+      : (summary.sections.find((section) => section.group === finding.group)?.count ?? 0);
     matched = count;
-    lead = named.length === 0
-      // Zero is a real answer here and it is NOT the universe counts. Opening
-      // with those would read as an evasion of a question with a plain answer.
-      ? `No launch in the last ${window} ${finding.none} ${context}`
-      : `${count} ${finding.headline} ${named.length === count ? 'They are' : `The first ${named.length} are`}: ${named
-          .map((card) => symbolV1(card))
-          .join(', ')}. ${context}${sectionSentence}`;
+    const findingHeadline =
+      count === 1
+        ? finding.headline
+            .replace(/^launches were /, 'launch was ')
+            .replace(/^launches priced /, 'launch priced ')
+            .replace(/^launches carry /, 'launch carries ')
+        : finding.headline;
+    lead =
+      count === 0
+        ? // Zero is a real answer here and it is NOT the universe counts. Opening
+          // with those would read as an evasion of a question with a plain answer.
+          capped
+          ? `None among the ${pluralV1(summary.window.inspected, 'launch', 'launches')} Miorail read in the last ${window} ${finding.none} ${context}`
+          : `No launch in the last ${window} ${finding.none} ${context}`
+        : named.length === 0
+          ? `${count} ${findingHeadline} The bounded card retrieval did not reach a qualifying card, but the full-window aggregate did; this is not a zero result. ${context}`
+          : `${count} ${findingHeadline} ${named.length === count ? 'They are' : `The first ${named.length} are`}: ${named
+              .map((card) => symbolV1(card))
+              .join(', ')}. ${context}${sectionSentence}`;
   }
 
   return {
@@ -303,8 +357,13 @@ export function b20ExploreAnswerV1(input: {
     missingEvidence: missingEvidence.slice(0, 20),
     caveats: caveats.slice(0, 12),
     reads: [
-      { tool: 'summary', detail: `${summary.window.launches} launches, window ${window}, computed ${summary.computedAt}` },
-      ...(input.cards ? [{ tool: 'list', detail: `${input.cards.length} cards matching the question’s filter` }] : []),
+      {
+        tool: 'summary',
+        detail: `${summary.window.inspected} inspected, ${summary.window.completed} completed, ${summary.window.incomplete} incomplete, window ${window}, computed ${summary.computedAt}`,
+      },
+      ...(input.cards
+        ? [{ tool: 'list', detail: `${input.cards.length} cards matching the question’s filter` }]
+        : []),
     ],
     assertions: {
       // A summary that read launches HAS measured something, whatever the
@@ -353,7 +412,8 @@ export function b20NeedsEvidenceAnswerV1(input: {
   const facts: B20ConsoleFactV1[] = [];
   const missingEvidence: string[] = [];
   for (const gap of gaps) {
-    const copy = B20_CONSUMER_STANDING_COPY_V1[gap.kind as keyof typeof B20_CONSUMER_STANDING_COPY_V1];
+    const copy =
+      B20_CONSUMER_STANDING_COPY_V1[gap.kind as keyof typeof B20_CONSUMER_STANDING_COPY_V1];
     facts.push({
       label: copy ? copy.headline : gap.kind.replaceAll('_', ' '),
       value: pluralV1(gap.count, 'launch', 'launches'),
@@ -362,7 +422,9 @@ export function b20NeedsEvidenceAnswerV1(input: {
     if (copy) missingEvidence.push(`${copy.status}: ${copy.body}`);
   }
 
-  const named = (input.cards ?? []).slice(0, 5);
+  const named = (input.cards ?? [])
+    .filter((card) => card.observation === null || card.observation.standing.aboutToken === false)
+    .slice(0, 5);
   for (const card of named) {
     facts.push({
       label: symbolV1(card),
@@ -387,11 +449,16 @@ export function b20NeedsEvidenceAnswerV1(input: {
           gaps.length === 1 ? 'The reason is' : `The ${gaps.length} reasons are`
         }: ${gaps
           .map((gap) => {
-            const copy = B20_CONSUMER_STANDING_COPY_V1[gap.kind as keyof typeof B20_CONSUMER_STANDING_COPY_V1];
+            const copy =
+              B20_CONSUMER_STANDING_COPY_V1[gap.kind as keyof typeof B20_CONSUMER_STANDING_COPY_V1];
             return `${copy ? copy.status.toLowerCase() : gap.kind.replaceAll('_', ' ')} (${gap.count})`;
           })
-          .join(', ')}. These are limits of Miorail\u2019s measurement, not properties of the tokens${
-          named.length > 0 ? `, and the ones below are where they currently show: ${named.map((card) => symbolV1(card)).join(', ')}` : ''
+          .join(
+            ', ',
+          )}. These are limits of Miorail\u2019s measurement, not properties of the tokens${
+          named.length > 0
+            ? `, and the ones below are where they currently show: ${named.map((card) => symbolV1(card)).join(', ')}`
+            : ''
         }.`;
 
   return {
@@ -400,8 +467,18 @@ export function b20NeedsEvidenceAnswerV1(input: {
     missingEvidence: missingEvidence.slice(0, 20),
     caveats: caveats.slice(0, 12),
     reads: [
-      { tool: 'summary', detail: `${summary.window.launches} launches, window ${window}, computed ${summary.computedAt}` },
-      ...(input.cards ? [{ tool: 'list', detail: `${input.cards.length} cards in the incomplete-reading section` }] : []),
+      {
+        tool: 'summary',
+        detail: `${summary.window.launches} launches, window ${window}, computed ${summary.computedAt}`,
+      },
+      ...(input.cards
+        ? [
+            {
+              tool: 'list',
+              detail: `${input.cards.length} cards in the incomplete-reading section`,
+            },
+          ]
+        : []),
     ],
     assertions: {
       state: summary.window.launches > 0 ? 'measured' : 'not_measured',
@@ -448,9 +525,14 @@ export function b20ResearchCandidatesAnswerV1(input: {
   const reads: B20ConsoleReadV1[] = [];
 
   for (const category of input.categories) {
-    reads.push({ tool: 'list', detail: `${category.cards.length} cards \u2014 ${category.label.toLowerCase()}` });
+    reads.push({
+      tool: 'list',
+      detail: `${category.cards.length} cards \u2014 ${category.label.toLowerCase()}`,
+    });
     if (category.cards.length === 0) {
-      missingEvidence.push(`${category.label} \u2014 no launch in the current window carries this measurement.`);
+      missingEvidence.push(
+        `${category.label} \u2014 no launch in the current window carries this measurement.`,
+      );
       continue;
     }
     facts.push({
@@ -461,7 +543,10 @@ export function b20ResearchCandidatesAnswerV1(input: {
     sentences.push(`${category.label}: ${category.because}`);
   }
 
-  reads.push({ tool: 'changes', detail: `${input.movers.length} launches with two comparable observations` });
+  reads.push({
+    tool: 'changes',
+    detail: `${input.movers.length} launches with two comparable observations`,
+  });
   if (input.movers.length === 0) {
     missingEvidence.push(
       'Measured movement \u2014 no launch yet carries two comparable observations about 24 hours apart, so nothing can be shown as having moved.',
@@ -477,9 +562,10 @@ export function b20ResearchCandidatesAnswerV1(input: {
     );
   }
 
-  const lead = facts.length === 0
-    ? 'Miorail has nothing to put forward for inspection in the current window: none of the measured categories it can offer has a launch in it right now. That is a state of the measurement, not a statement about any token.'
-    : `Here is what Miorail measured that is worth inspecting, grouped by what the measurement found. This is not a ranking, not a score and not a shortlist to buy \u2014 each group is one measured property, and which of them is interesting is your call. ${sentences.join(' ')}`;
+  const lead =
+    facts.length === 0
+      ? 'Miorail has nothing to put forward for inspection in the current window: none of the measured categories it can offer has a launch in it right now. That is a state of the measurement, not a statement about any token.'
+      : `Here is what Miorail measured that is worth inspecting, grouped by what the measurement found. This is not a ranking, not a score and not a shortlist to buy \u2014 each group is one measured property, and which of them is interesting is your call. ${sentences.join(' ')}`;
 
   const subjects = [
     ...input.categories.flatMap((category) => category.cards.map((card) => symbolV1(card))),
@@ -571,7 +657,9 @@ function fundamentalCorpusSentenceV1(corpus: number): string {
 }
 
 export function b20FundamentalAnswerV1(input: {
-  predicate: B20FundamentalPredicateV1;
+  predicate?: B20FundamentalPredicateV1;
+  predicates?: readonly B20FundamentalPredicateV1[];
+  operator?: 'and' | 'or';
   matches: readonly B20ConsoleProjectMatchV1[];
   /** Verified claims on this chain. The denominator, counted rather than
    * derived from the bounded page above. */
@@ -580,11 +668,14 @@ export function b20FundamentalAnswerV1(input: {
    * statement from an empty corpus, and it must not be reported as one. */
   available: boolean;
 }): B20ConsoleDeterministicV1 {
-  const rule = B20_FUNDAMENTAL_PREDICATE_RULES_V1[input.predicate];
+  const predicates = input.predicates ?? (input.predicate ? [input.predicate] : []);
+  const operator = input.operator ?? 'and';
+  const rules = predicates.map((predicate) => B20_FUNDAMENTAL_PREDICATE_RULES_V1[predicate]);
+  const ruleLabel = rules.map((rule) => rule.label).join(operator === 'or' ? ' OR ' : ' AND ');
   const facts: B20ConsoleFactV1[] = [];
   const missingEvidence: string[] = [];
   const caveats = [
-    rule.note,
+    ...new Set(rules.map((rule) => rule.note)),
     'A verified project link is a check on publication, not a review. Miorail did not read the project’s code, assess its team, or form any view about its token.',
     B20_FUNDAMENTAL_BASE_CAVEAT_V1,
   ];
@@ -599,7 +690,13 @@ export function b20FundamentalAnswerV1(input: {
       reads: [],
       // Nothing was read, so `not_measured` is the truth here and a narration
       // saying so is correct rather than a replacement.
-      assertions: { state: 'not_measured', matched: 0, complete: true, subjects: [], about: 'miorail' },
+      assertions: {
+        state: 'not_measured',
+        matched: 0,
+        complete: true,
+        subjects: [],
+        about: 'miorail',
+      },
     };
   }
 
@@ -619,21 +716,25 @@ export function b20FundamentalAnswerV1(input: {
       value: `${match.profile.projectDomain} · ${B20_FUNDAMENTAL_STANDING_COPY_V1[match.profile.standing].label}`,
       tone: 'neutral',
     });
-    const finding = b20PredicateFindingV1(input.predicate, match.profile);
-    if (finding) {
-      facts.push({
-        label: `${name} — ${B20_FUNDAMENTAL_DIMENSION_LABEL_V1[finding.dimension].toLowerCase()}`,
-        value: [
-          finding.label,
-          finding.provenance.replaceAll('_', ' '),
-          // Minute precision, the same as the card's evidence fold. Seconds on
-          // a probe timestamp imply a resolution the reading does not have.
-          finding.observedAt ? finding.observedAt.replace('T', ' ').replace(/:\d{2}\.\d+Z$/, ' UTC') : null,
-        ]
-          .filter((part): part is string => part !== null)
-          .join(' · '),
-        tone: 'neutral',
-      });
+    for (const predicate of predicates) {
+      const finding = b20PredicateFindingV1(predicate, match.profile);
+      if (finding) {
+        facts.push({
+          label: `${name} — ${B20_FUNDAMENTAL_DIMENSION_LABEL_V1[finding.dimension].toLowerCase()}`,
+          value: [
+            finding.label,
+            finding.provenance.replaceAll('_', ' '),
+            // Minute precision, the same as the card's evidence fold. Seconds on
+            // a probe timestamp imply a resolution the reading does not have.
+            finding.observedAt
+              ? finding.observedAt.replace('T', ' ').replace(/:\d{2}\.\d+Z$/, ' UTC')
+              : null,
+          ]
+            .filter((part): part is string => part !== null)
+            .join(' · '),
+          tone: 'neutral',
+        });
+      }
     }
     if (match.profile.missing.length > 0) {
       missingEvidence.push(
@@ -655,22 +756,28 @@ export function b20FundamentalAnswerV1(input: {
 
   if (input.corpus === 0) {
     return {
-      answer: `No project has verified a claim to a B20 token yet, so this question has an empty corpus rather than a negative answer. A project claims a token by serving a file on a domain it controls; until one does, there is nothing here to match against ${rule.label}.`,
+      answer: `No project has verified a claim to a B20 token yet, so this question has an empty corpus rather than a negative answer. A project claims a token by serving a file on a domain it controls; until one does, there is nothing here to match against ${ruleLabel}.`,
       facts,
       missingEvidence,
       caveats,
-      reads: [{ tool: 'projects', detail: `${rule.label}, matched 0 of an empty corpus` }],
-      assertions: { state: 'not_measured', matched: 0, complete: true, subjects: [], about: 'token' },
+      reads: [{ tool: 'projects', detail: `${ruleLabel}, matched 0 of an empty corpus` }],
+      assertions: {
+        state: 'not_measured',
+        matched: 0,
+        complete: true,
+        subjects: [],
+        about: 'token',
+      },
     };
   }
 
   const answer =
     input.matches.length === 0
-      // "None of them has a repository" asserts an ABSENCE, and Miorail does
-      // not know that — it knows it did not establish one. The distinction is
-      // the whole subject of this layer, and it has to survive into the
-      // sentence a reader actually gets when nothing matched.
-      ? `Miorail has not established ${rule.label} for ${
+      ? // "None of them has a repository" asserts an ABSENCE, and Miorail does
+        // not know that — it knows it did not establish one. The distinction is
+        // the whole subject of this layer, and it has to survive into the
+        // sentence a reader actually gets when nothing matched.
+        `Miorail has not established ${ruleLabel} for ${
           // "any of the 1 verified project claim" is what a plural helper
           // produces and not what anybody says. The corpus is one claim today,
           // so this is the branch production actually renders.
@@ -680,7 +787,15 @@ export function b20FundamentalAnswerV1(input: {
         }. ${corpusSentence}`
       : `${input.matches.length} matched among ${pluralV1(input.corpus, 'verified project claim', 'verified project claims')}: ${input.matches
           .map((match) => matchNameV1(match))
-          .join(', ')} ${input.matches.length === 1 ? 'has' : 'have'} ${rule.label}. ${corpusSentence}`;
+          .join(', ')} ${
+          predicates.length === 1
+            ? input.matches.length === 1
+              ? 'has'
+              : 'have'
+            : input.matches.length === 1
+              ? 'matches'
+              : 'match'
+        } ${ruleLabel}. ${corpusSentence}`;
 
   return {
     answer,
@@ -690,7 +805,7 @@ export function b20FundamentalAnswerV1(input: {
     reads: [
       {
         tool: 'projects',
-        detail: `${rule.label}, matched ${input.matches.length} of ${pluralV1(input.corpus, 'verified project claim', 'verified project claims')}`,
+        detail: `${ruleLabel}, matched ${input.matches.length} of ${pluralV1(input.corpus, 'verified project claim', 'verified project claims')}`,
       },
     ],
     assertions: {
@@ -773,7 +888,11 @@ function projectFactsV1(
   if (!project) return;
 
   if (!project.identityVerified) {
-    facts.push({ label: `${symbol} — project`, value: 'No verified project link', tone: 'neutral' });
+    facts.push({
+      label: `${symbol} — project`,
+      value: 'No verified project link',
+      tone: 'neutral',
+    });
     sentences.push(
       `No project has proven a link to ${symbol}, so Miorail attaches no project information to it. Most launches are never claimed.`,
     );
@@ -821,61 +940,87 @@ function projectFactsV1(
  * Miorail as the subject, because Miorail is the subject.
  */
 export const B20_READING_ATTEMPT_COPY_V1: Readonly<
-  Record<string, { fact: string; sentence: (symbol: string) => string; missing: ((symbol: string) => string) | null }>
+  Record<
+    string,
+    {
+      fact: string;
+      sentence: (symbol: string) => string;
+      missing: ((symbol: string) => string) | null;
+    }
+  >
 > = {
   measured: {
     fact: 'Reading taken for this question',
-    sentence: (symbol) => `Miorail took an Exit-First reading of ${symbol} for this question, so the measurement below is current rather than stored from a background pass.`,
+    sentence: (symbol) =>
+      `Miorail took an Exit-First reading of ${symbol} for this question, so the measurement below is current rather than stored from a background pass.`,
     missing: null,
   },
   measurement_incomplete: {
     fact: 'Reading taken, did not complete',
-    sentence: (symbol) => `Miorail took a reading of ${symbol} for this question and could not complete it. What is stated below is what that reading established, and the gap is named beside it.`,
-    missing: (symbol) => `A completed Exit-First reading for ${symbol} — the one Miorail just took did not finish, and the reason is on the card.`,
+    sentence: (symbol) =>
+      `Miorail took a reading of ${symbol} for this question and could not complete it. What is stated below is what that reading established, and the gap is named beside it.`,
+    missing: (symbol) =>
+      `A completed Exit-First reading for ${symbol} — the one Miorail just took did not finish, and the reason is on the card.`,
   },
   provider_unavailable: {
     fact: 'Reading attempted, endpoint did not answer',
-    sentence: (symbol) => `Miorail tried to measure ${symbol} for this question and its Base endpoint did not answer, so nothing was stored. That is a fact about Miorail's reading, and it establishes nothing either way about the token.`,
-    missing: (symbol) => `An Exit-First measurement for ${symbol}. Miorail attempted one now and the endpoint did not answer.`,
+    sentence: (symbol) =>
+      `Miorail tried to measure ${symbol} for this question and its Base endpoint did not answer, so nothing was stored. That is a fact about Miorail's reading, and it establishes nothing either way about the token.`,
+    missing: (symbol) =>
+      `An Exit-First measurement for ${symbol}. Miorail attempted one now and the endpoint did not answer.`,
   },
   timed_out: {
     fact: 'Reading still running',
-    sentence: (symbol) => `Miorail started a reading of ${symbol} for this question and it did not finish inside this request. It is still running, and the measurement will be here shortly — this is not a statement that ${symbol} has no measurement.`,
-    missing: (symbol) => `An Exit-First measurement for ${symbol}. Miorail is taking one now; ask again in a moment.`,
+    sentence: (symbol) =>
+      `Miorail started a reading of ${symbol} for this question and it did not finish inside this request. It is still running, and the measurement will be here shortly — this is not a statement that ${symbol} has no measurement.`,
+    missing: (symbol) =>
+      `An Exit-First measurement for ${symbol}. Miorail is taking one now; ask again in a moment.`,
   },
   failed: {
     fact: 'Reading attempted, did not complete',
-    sentence: (symbol) => `Miorail attempted a reading of ${symbol} for this question and it did not complete. Nothing was stored, and nothing about the token was established.`,
-    missing: (symbol) => `An Exit-First measurement for ${symbol}. Miorail attempted one now and it did not complete.`,
+    sentence: (symbol) =>
+      `Miorail attempted a reading of ${symbol} for this question and it did not complete. Nothing was stored, and nothing about the token was established.`,
+    missing: (symbol) =>
+      `An Exit-First measurement for ${symbol}. Miorail attempted one now and it did not complete.`,
   },
   not_attempted: {
     fact: 'Not reached in this request',
-    sentence: (symbol) => `Miorail did not reach ${symbol} in this request — the reading budget went to the tokens before it. Ask about ${symbol} on its own and it will be measured.`,
-    missing: (symbol) => `An Exit-First measurement for ${symbol}. Miorail did not reach it in this request.`,
+    sentence: (symbol) =>
+      `Miorail did not reach ${symbol} in this request — the reading budget went to the tokens before it. Ask about ${symbol} on its own and it will be measured.`,
+    missing: (symbol) =>
+      `An Exit-First measurement for ${symbol}. Miorail did not reach it in this request.`,
   },
   unavailable_here: {
     fact: 'This server cannot take readings',
-    sentence: (symbol) => `Miorail cannot take a reading of ${symbol} on this deployment — it has no Base endpoint configured. That is a fact about this server, not about the token.`,
-    missing: (symbol) => `An Exit-First measurement for ${symbol}. This deployment cannot take one.`,
+    sentence: (symbol) =>
+      `Miorail cannot take a reading of ${symbol} on this deployment — it has no Base endpoint configured. That is a fact about this server, not about the token.`,
+    missing: (symbol) =>
+      `An Exit-First measurement for ${symbol}. This deployment cannot take one.`,
   },
   launch_lookup_unavailable: {
     fact: 'Canonical launch lookup did not answer',
-    sentence: (symbol) => `The B20 factory confirmed ${symbol}, but Miorail's bounded launch-event lookup did not answer. No launch row or measurement was invented from token metadata.`,
-    missing: (symbol) => `The canonical B20Created event for ${symbol}. Miorail's lookup endpoint did not answer.`,
+    sentence: (symbol) =>
+      `The B20 factory confirmed ${symbol}, but Miorail's bounded launch-event lookup did not answer. No launch row or measurement was invented from token metadata.`,
+    missing: (symbol) =>
+      `The canonical B20Created event for ${symbol}. Miorail's lookup endpoint did not answer.`,
   },
   launch_lookup_timed_out: {
     fact: 'Canonical launch lookup timed out',
-    sentence: (symbol) => `The B20 factory confirmed ${symbol}, but Miorail could not locate its canonical launch event inside this request's time budget. This is a limit of Miorail's reading, not a finding about the token.`,
-    missing: (symbol) => `The canonical B20Created event for ${symbol}. The bounded lookup timed out.`,
+    sentence: (symbol) =>
+      `The B20 factory confirmed ${symbol}, but Miorail could not locate its canonical launch event inside this request's time budget. This is a limit of Miorail's reading, not a finding about the token.`,
+    missing: (symbol) =>
+      `The canonical B20Created event for ${symbol}. The bounded lookup timed out.`,
   },
   launch_event_not_found: {
     fact: 'Canonical launch event not established',
-    sentence: (symbol) => `The B20 factory confirmed ${symbol}, but Miorail did not establish a decodable canonical launch event, so it did not create a launch row or run a measurement.`,
+    sentence: (symbol) =>
+      `The B20 factory confirmed ${symbol}, but Miorail did not establish a decodable canonical launch event, so it did not create a launch row or run a measurement.`,
     missing: (symbol) => `A decodable canonical B20Created event for ${symbol}.`,
   },
   not_indexed: {
     fact: 'Canonical launch not indexed yet',
-    sentence: (symbol) => `${symbol} is factory-confirmed, but its canonical launch is not available to the measurement pipeline yet. Miorail did not substitute token metadata for launch evidence.`,
+    sentence: (symbol) =>
+      `${symbol} is factory-confirmed, but its canonical launch is not available to the measurement pipeline yet. Miorail did not substitute token metadata for launch evidence.`,
     missing: (symbol) => `The canonical launch row for ${symbol}.`,
   },
 };
@@ -971,16 +1116,18 @@ export function b20InvestigateAnswerV1(input: {
     facts.push({
       label: symbol,
       value: `${parts.join(' · ')} · block ${observation.observationBlockNumber} · ${observation.freshness}`,
-      tone: observation.standing.aboutToken === false
-        ? 'warning'
-        : observation.standing.kind === 'two_sided'
-          ? 'positive'
-          : 'neutral',
+      tone:
+        observation.standing.aboutToken === false
+          ? 'warning'
+          : observation.standing.kind === 'two_sided'
+            ? 'positive'
+            : 'neutral',
     });
     sentences.push(`${symbol}: ${observation.standing.detail}`);
     projectFactsV1(card, symbol, facts, sentences, missingEvidence, caveats);
     if (!observation.exitRouteFound) missingEvidence.push(`A supported exit route for ${symbol}.`);
-    if (read.historyCount < 2) missingEvidence.push(`A second comparable observation for ${symbol}.`);
+    if (read.historyCount < 2)
+      missingEvidence.push(`A second comparable observation for ${symbol}.`);
     if (observation.standing.aboutToken === false) {
       caveats.push(
         `The finding for ${symbol} is about Miorail’s reading, not about the token. It is not evidence that the token cannot be sold.`,
@@ -997,8 +1144,16 @@ export function b20InvestigateAnswerV1(input: {
         // is a shortcoming of ours. Saying "not a canonical B20 launch" here
         // was Miorail denying its own token: MIO is confirmed by the factory
         // and launched before Discover began scanning.
-        facts.push({ label: `${address} — B20 identity`, value: 'Confirmed by factory', tone: 'positive' });
-        facts.push({ label: `${address} — Discover index`, value: 'Launch not indexed', tone: 'warning' });
+        facts.push({
+          label: `${address} — B20 identity`,
+          value: 'Confirmed by factory',
+          tone: 'positive',
+        });
+        facts.push({
+          label: `${address} — Discover index`,
+          value: 'Launch not indexed',
+          tone: 'warning',
+        });
         sentences.push(
           `${address} is a B20 token confirmed onchain, but its launch is not present in Miorail’s Discover index. Historical Discover measurements are unavailable for this token.`,
         );
@@ -1009,22 +1164,36 @@ export function b20InvestigateAnswerV1(input: {
             tone: 'warning',
           });
         }
-        missingEvidence.push(`The canonical launch event for ${address} has not been ingested into Miorail Discover.`);
+        missingEvidence.push(
+          `The canonical launch event for ${address} has not been ingested into Miorail Discover.`,
+        );
         break;
       }
       case 'not_b20': {
         // The factory answered. This is the only branch entitled to a negative,
         // and it is phrased as what the factory said rather than as what
         // Miorail holds.
-        facts.push({ label: `${address} — B20 identity`, value: 'Not confirmed by factory', tone: 'warning' });
+        facts.push({
+          label: `${address} — B20 identity`,
+          value: 'Not confirmed by factory',
+          tone: 'warning',
+        });
         sentences.push(`${address} was not confirmed as a B20 token by the B20 factory.`);
         break;
       }
       case 'identity_check_unavailable': {
         // Nothing was established. The sentence says both halves so it cannot
         // be read as either verdict.
-        facts.push({ label: `${address} — B20 identity`, value: 'Check could not be completed', tone: 'warning' });
-        facts.push({ label: `${address} — Discover index`, value: 'Launch not indexed', tone: 'warning' });
+        facts.push({
+          label: `${address} — B20 identity`,
+          value: 'Check could not be completed',
+          tone: 'warning',
+        });
+        facts.push({
+          label: `${address} — Discover index`,
+          value: 'Launch not indexed',
+          tone: 'warning',
+        });
         sentences.push(
           `Miorail has no Discover launch for ${address}, and the B20 identity check could not be completed. This is not evidence either way about the token.`,
         );
@@ -1035,7 +1204,11 @@ export function b20InvestigateAnswerV1(input: {
         // Unreachable by construction — `unknown` is the reads with no card.
         // Stated rather than assumed, so a future change that sets the standing
         // without a card produces a sentence instead of silence.
-        facts.push({ label: `${address} — Discover index`, value: 'Launch not indexed', tone: 'warning' });
+        facts.push({
+          label: `${address} — Discover index`,
+          value: 'Launch not indexed',
+          tone: 'warning',
+        });
         sentences.push(`Miorail has no stored Discover launch for ${address}.`);
         break;
       }
@@ -1076,11 +1249,7 @@ export function b20InvestigateAnswerV1(input: {
     hasIncompleteIdentityRead ||
     known.some((read) => !read.card?.observation) ||
     known.some((read) => read.card?.observation?.standing.aboutToken === false);
-  const about = hasMiorailFinding
-    ? hasTokenFinding
-      ? 'mixed'
-      : 'miorail'
-    : 'token';
+  const about = hasMiorailFinding ? (hasTokenFinding ? 'mixed' : 'miorail') : 'token';
   return {
     answer: sentences.join(' '),
     facts: facts.slice(0, 16),
@@ -1103,7 +1272,9 @@ export function b20InvestigateAnswerV1(input: {
         !hasIncompleteIdentityRead &&
         known.every((read) => Boolean(read.card?.observation)),
       incompleteReason:
-        hasIncompleteAttempt || hasIncompleteIdentityRead || known.some((read) => !read.card?.observation)
+        hasIncompleteAttempt ||
+        hasIncompleteIdentityRead ||
+        known.some((read) => !read.card?.observation)
           ? 'targeted_read'
           : undefined,
       subjects: [
@@ -1169,7 +1340,10 @@ export function b20PortfolioAnswerV1(input: {
       // private, and a per-holding onchain lookup would leak the shape of a
       // wallet to an RPC endpoint. Absent a check, the honest claim is the
       // narrow one.
-      unranked.push({ symbol: read.tokenAddress, because: 'has no ingested Discover launch in Miorail' });
+      unranked.push({
+        symbol: read.tokenAddress,
+        because: 'has no ingested Discover launch in Miorail',
+      });
       continue;
     }
     const symbol = symbolV1(card);
@@ -1184,12 +1358,20 @@ export function b20PortfolioAnswerV1(input: {
       missingEvidence.push(`An Exit-First measurement for ${symbol}.`);
       continue;
     }
-    if (assessment.status === 'capacity_not_measured' || assessment.coverageBps === null || assessment.coverageBps === undefined) {
+    if (
+      assessment.status === 'capacity_not_measured' ||
+      assessment.coverageBps === null ||
+      assessment.coverageBps === undefined
+    ) {
       unranked.push({ symbol, because: 'has no measured exit capacity to order by' });
       missingEvidence.push(`A passing exit-capacity probe for ${symbol}.`);
       continue;
     }
-    ranked.push({ symbol, coverageBps: assessment.coverageBps, capacityStable: assessment.capacityStable ?? null });
+    ranked.push({
+      symbol,
+      coverageBps: assessment.coverageBps,
+      capacityStable: assessment.capacityStable ?? null,
+    });
   }
 
   // The comparability rule, on the same axis Investigate uses it: positions
@@ -1199,7 +1381,10 @@ export function b20PortfolioAnswerV1(input: {
   if (comparability.reason) caveats.push(comparability.reason);
   const orderable = comparability.comparable;
 
-  ranked.sort((left, right) => left.coverageBps - right.coverageBps || left.symbol.localeCompare(right.symbol));
+  ranked.sort(
+    (left, right) =>
+      left.coverageBps - right.coverageBps || left.symbol.localeCompare(right.symbol),
+  );
 
   for (const entry of noSale) {
     facts.push({ label: entry, value: 'No sale priced at the reference size', tone: 'warning' });
@@ -1228,15 +1413,13 @@ export function b20PortfolioAnswerV1(input: {
     const rest = noSale.length > 0 ? 'Of the rest, hardest' : 'Hardest';
     // The figure is coverage, so a bigger number is an easier exit. Spelling
     // out what it is a share OF keeps 50% from reading as a cost.
-    const list = ranked
-      .map((entry) => `${entry.symbol} at ${bpsV1(entry.coverageBps)}`)
-      .join(', ');
+    const list = ranked.map((entry) => `${entry.symbol} at ${bpsV1(entry.coverageBps)}`).join(', ');
     sentences.push(
       orderable
         ? `${rest} to close first — the figure is how much of the reference entry could be sold, so a smaller share is a harder exit: ${list}.`
-        // Not ordered, because ordering incomparable measurements is the exact
-        // mistake the figures make easy.
-        : `${noSale.length > 0 ? 'The rest were' : 'These were'} each measured, but not against the same reference position, so they are stated rather than ordered: ${list}.`,
+        : // Not ordered, because ordering incomparable measurements is the exact
+          // mistake the figures make easy.
+          `${noSale.length > 0 ? 'The rest were' : 'These were'} each measured, but not against the same reference position, so they are stated rather than ordered: ${list}.`,
     );
   }
   if (unranked.length > 0) {
@@ -1246,7 +1429,8 @@ export function b20PortfolioAnswerV1(input: {
         .join(', ')}.`,
     );
   }
-  if (sentences.length === 0) sentences.push('Miorail has no measured Discover launch for any of these tokens.');
+  if (sentences.length === 0)
+    sentences.push('Miorail has no measured Discover launch for any of these tokens.');
   sentences.push(B20_PORTFOLIO_SIZE_CAVEAT_V1);
 
   // Never narrated — the route withholds the provider for this scope — so the
@@ -1269,7 +1453,12 @@ export function b20PortfolioAnswerV1(input: {
     // Deliberately not naming the addresses read: the response goes back to
     // the reader who sent them, and repeating a wallet's holdings into a
     // reads log is the one place this surface could leak them.
-    reads: [{ tool: 'positions', detail: `${input.reads.length} held tokens, read from stored measurements only` }],
+    reads: [
+      {
+        tool: 'positions',
+        detail: `${input.reads.length} held tokens, read from stored measurements only`,
+      },
+    ],
   };
 }
 
@@ -1291,11 +1480,17 @@ const EXCLUSION_COPY_V1: Readonly<Record<MoverExclusionV1, string>> = {
   unstable_ladder: 'has a capacity ladder that disagreed with itself',
 };
 
-export function b20ChangesAnswerV1(input: { changes: B20ConsoleChangesReadV1 }): B20ConsoleDeterministicV1 {
+export function b20ChangesAnswerV1(input: {
+  changes: B20ConsoleChangesReadV1;
+}): B20ConsoleDeterministicV1 {
   const { changes } = input;
   const hours = Math.round(changes.baselineAgeMs / HOUR_MS_V1);
   const facts: B20ConsoleFactV1[] = [
-    { label: 'Comparison', value: `two measurements about ${pluralV1(hours, 'hour', 'hours')} apart`, tone: 'neutral' },
+    {
+      label: 'Comparison',
+      value: `two measurements about ${pluralV1(hours, 'hour', 'hours')} apart`,
+      tone: 'neutral',
+    },
     { label: 'Pairs considered', value: `${changes.pairsConsidered}`, tone: 'neutral' },
     { label: 'Comparable moves', value: `${changes.movers.length}`, tone: 'neutral' },
   ];
@@ -1309,10 +1504,14 @@ export function b20ChangesAnswerV1(input: { changes: B20ConsoleChangesReadV1 }):
   }
 
   const byReason = new Map<MoverExclusionV1, number>();
-  for (const entry of changes.excluded) byReason.set(entry.reason, (byReason.get(entry.reason) ?? 0) + 1);
+  for (const entry of changes.excluded)
+    byReason.set(entry.reason, (byReason.get(entry.reason) ?? 0) + 1);
   const missingEvidence = [...byReason.entries()]
     .sort((left, right) => right[1] - left[1])
-    .map(([reason, count]) => `${pluralV1(count, 'launch', 'launches')}: ${EXCLUSION_COPY_V1[reason]}.`);
+    .map(
+      ([reason, count]) =>
+        `${pluralV1(count, 'launch', 'launches')}: ${EXCLUSION_COPY_V1[reason]}.`,
+    );
 
   const caveats = [
     // The one sentence that keeps this rail from being read as a price feed.

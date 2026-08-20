@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
-import { B20_CONSOLE_MAX_TOKENS_V1, b20AddressesInV1, planB20ConsoleAnswerV1 } from './b20ConsolePlan.js';
+import {
+  B20_CONSOLE_MAX_TOKENS_V1,
+  b20AddressesInV1,
+  planB20ConsoleAnswerV1,
+} from './b20ConsolePlan.js';
 
 // ---------------------------------------------------------------------------
 // The global console's planner.
@@ -12,18 +16,21 @@ import { B20_CONSOLE_MAX_TOKENS_V1, b20AddressesInV1, planB20ConsoleAnswerV1 } f
 // planner, so the set of things a question can cause is fixed and small.
 // ---------------------------------------------------------------------------
 
-const plan = (question: string, scope: 'explore' | 'investigate' | 'changes' = 'explore', tokenAddresses?: string[]) =>
-  planB20ConsoleAnswerV1({ question, scope, tokenAddresses });
+const plan = (
+  question: string,
+  scope: 'explore' | 'investigate' | 'changes' = 'explore',
+  tokenAddresses?: string[],
+) => planB20ConsoleAnswerV1({ question, scope, tokenAddresses });
 
 const TOKEN_A = '0x1111111111111111111111111111111111111111';
 const TOKEN_B = '0x2222222222222222222222222222222222222222';
 
 describe('an address comes from the reader, never from a symbol', () => {
   test('addresses are extracted, lowercased and deduplicated', () => {
-    assert.deepEqual(
-      b20AddressesInV1(`Compare ${TOKEN_A} with ${TOKEN_B} and ${TOKEN_A}`),
-      [TOKEN_A, TOKEN_B],
-    );
+    assert.deepEqual(b20AddressesInV1(`Compare ${TOKEN_A} with ${TOKEN_B} and ${TOKEN_A}`), [
+      TOKEN_A,
+      TOKEN_B,
+    ]);
   });
 
   test('a checksummed address from a block explorer is the same address', () => {
@@ -53,12 +60,18 @@ describe('scope decides which reads may run', () => {
   test('explore defaults to the counts', () => {
     const result = plan('what does the universe look like');
     assert.equal(result.scope, 'explore');
-    assert.deepEqual(result.steps.map((step) => step.tool), ['summary']);
+    assert.deepEqual(
+      result.steps.map((step) => step.tool),
+      ['summary'],
+    );
   });
 
   test('changes reads the movers rail', () => {
     const result = plan('anything at all', 'changes');
-    assert.deepEqual(result.steps.map((step) => step.tool), ['changes']);
+    assert.deepEqual(
+      result.steps.map((step) => step.tool),
+      ['changes'],
+    );
   });
 
   test('investigate with no token refuses, and says what it needs', () => {
@@ -94,7 +107,10 @@ describe('the question can move the scope, and the plan says so', () => {
     // would be answering a different question.
     const result = plan('what changed since yesterday', 'explore');
     assert.equal(result.scope, 'changes');
-    assert.deepEqual(result.steps.map((step) => step.tool), ['changes']);
+    assert.deepEqual(
+      result.steps.map((step) => step.tool),
+      ['changes'],
+    );
   });
 
   test('a Russian question about movement moves too', () => {
@@ -137,7 +153,10 @@ describe('the universe intents survive from the card planner', () => {
   test('bought but not sellable, in English', () => {
     const result = plan('which tokens did people buy but cannot sell');
     assert.equal(result.intent, 'find_bought_not_sellable');
-    assert.deepEqual(result.steps.map((step) => step.tool), ['summary', 'list']);
+    assert.deepEqual(
+      result.steps.map((step) => step.tool),
+      ['summary', 'list'],
+    );
   });
 
   test('bought but not sellable, in Russian word order', () => {
@@ -196,13 +215,21 @@ describe('project questions', () => {
     return step?.tool === 'projects' ? step.predicate : null;
   }
 
+  function projectStepFor(question: string) {
+    const planned = planB20ConsoleAnswerV1({ question, scope: 'explore' });
+    return planned.steps.find((entry) => entry.tool === 'projects');
+  }
+
   test('"which launches are connected to verified projects" reads the claimed ones', () => {
     const plan = planB20ConsoleAnswerV1({
       question: 'Which B20 launches are connected to verified projects?',
       scope: 'explore',
     });
     assert.equal(plan.intent, 'find_verified_projects');
-    assert.equal(predicateFor('Which B20 launches are connected to verified projects?'), 'verified_project');
+    assert.equal(
+      predicateFor('Which B20 launches are connected to verified projects?'),
+      'verified_project',
+    );
   });
 
   test('the same question in Russian reaches the same plan', () => {
@@ -246,10 +273,7 @@ describe('project questions', () => {
         'покажи проекты с открытым кодом',
       ],
     ],
-    [
-      'docs_found',
-      ['Which B20 projects have documentation?', 'какие проекты имеют документацию?'],
-    ],
+    ['docs_found', ['Which B20 projects have documentation?', 'какие проекты имеют документацию?']],
     [
       'development_active',
       [
@@ -270,7 +294,10 @@ describe('project questions', () => {
     ],
     [
       'verified_base_presence',
-      ['Which B20 projects have a verified Base presence?', 'у каких проектов есть присутствие на base?'],
+      [
+        'Which B20 projects have a verified Base presence?',
+        'у каких проектов есть присутствие на base?',
+      ],
     ],
   ];
 
@@ -287,7 +314,10 @@ describe('project questions', () => {
     // every project answer opened with how many launches were measured — a
     // number about a different corpus, printed as though it were the
     // denominator.
-    for (const question of ['Show B20 launches with a live product', 'Покажи B20 с работающим продуктом']) {
+    for (const question of [
+      'Show B20 launches with a live product',
+      'Покажи B20 с работающим продуктом',
+    ]) {
       const plan = planB20ConsoleAnswerV1({ question, scope: 'explore' });
       assert.equal(plan.steps.length, 1, question);
       assert.equal(plan.steps[0]?.tool, 'projects', question);
@@ -296,6 +326,24 @@ describe('project questions', () => {
         `${question} still reads the measurement universe`,
       );
     }
+  });
+
+  test('positive fundamental predicates compose with OR and AND', () => {
+    const union = projectStepFor('Which B20 tokens have a verified website or Base presence?');
+    assert.deepEqual(union?.tool === 'projects' ? union.predicates : null, [
+      'verified_website',
+      'verified_base_presence',
+    ]);
+    assert.equal(union?.tool === 'projects' ? union.operator : null, 'or');
+
+    const intersection = projectStepFor(
+      'Which B20 tokens have a live product and verified website?',
+    );
+    assert.deepEqual(intersection?.tool === 'projects' ? intersection.predicates : null, [
+      'live_product',
+      'verified_website',
+    ]);
+    assert.equal(intersection?.tool === 'projects' ? intersection.operator : null, 'and');
   });
 
   test('a question for the ABSENCE of a fundamental is refused, not answered', () => {
@@ -338,7 +386,10 @@ describe('project questions', () => {
   test('a question about project quality is not a question this planner answers', () => {
     // "Which project is good" has no plan, and must not be quietly answered by
     // the verified-project read — a list of verified links is not a ranking.
-    const plan = planB20ConsoleAnswerV1({ question: 'Which B20 project is the best investment?', scope: 'explore' });
+    const plan = planB20ConsoleAnswerV1({
+      question: 'Which B20 project is the best investment?',
+      scope: 'explore',
+    });
     assert.notEqual(plan.intent, 'find_verified_projects');
   });
 });
@@ -369,7 +420,11 @@ describe('a reader may ask in their own words', () => {
     ]) {
       const result = plan(question);
       assert.equal(result.intent, 'find_bought_not_sellable', question);
-      assert.deepEqual(result.steps.map((step) => step.tool), ['summary', 'list'], question);
+      assert.deepEqual(
+        result.steps.map((step) => step.tool),
+        ['summary', 'list'],
+        question,
+      );
     }
   });
 
@@ -389,7 +444,10 @@ describe('a reader may ask in their own words', () => {
     // The one thing that separates the two: "bought and could not be sold"
     // carries an entry word, an exit word and a join word, exactly like the
     // question above it.
-    assert.equal(plan('tokens that were bought and could not be sold').intent, 'find_bought_not_sellable');
+    assert.equal(
+      plan('tokens that were bought and could not be sold').intent,
+      'find_bought_not_sellable',
+    );
   });
 
   test('"which launches need more evidence, and why" has its own read', () => {
@@ -419,7 +477,11 @@ describe('a reader may ask in their own words', () => {
       // Answered in Explore, and the plan SAYS so, so the panel can relabel
       // itself instead of putting a universe answer under an Investigate tab.
       assert.equal(result.scope, 'explore', question);
-      assert.deepEqual(result.steps.map((step) => step.tool), ['research'], question);
+      assert.deepEqual(
+        result.steps.map((step) => step.tool),
+        ['research'],
+        question,
+      );
     }
   });
 

@@ -94,16 +94,36 @@ const rowV1 = (tokenAddress: string, observation: Record<string, unknown> | null
 function repository(options: { moverPairs?: unknown[] } = {}) {
   return {
     getFeedRowForToken: async ({ tokenAddress }: { tokenAddress: string }) => {
-      if (tokenAddress === TOKEN) return { row: rowV1(TOKEN, observationV1()), history: [observationV1()] };
+      if (tokenAddress === TOKEN)
+        return { row: rowV1(TOKEN, observationV1()), history: [observationV1()] };
       if (tokenAddress === OTHER) {
         return {
-          row: rowV1(OTHER, observationV1({ tokenAddress: OTHER, referencePositionAtomic: '500000000' })),
+          row: rowV1(
+            OTHER,
+            observationV1({ tokenAddress: OTHER, referencePositionAtomic: '500000000' }),
+          ),
           history: [observationV1({ tokenAddress: OTHER })],
         };
       }
       return null;
     },
     listFeed: async () => ({ rows: [rowV1(TOKEN, observationV1())], nextCursor: null }),
+    aggregateFeed: async () => ({
+      inspected: 1,
+      buckets: [
+        {
+          count: 1,
+          observation: {
+            state: 'rejected',
+            reasonCode: 'no_exit_route',
+            entryRouteFound: true,
+            exitRouteFound: false,
+            venuesConsulted: ['uniswap-v4', 'aerodrome'],
+          },
+          buyerCount: null,
+        },
+      ],
+    }),
     listMoverPairs: async () => options.moverPairs ?? [],
     pipelineCounts: async () => ({
       ingestionCursorBlock: '49929340',
@@ -144,6 +164,7 @@ beforeEach(() => {
   b20RouteRuntime.flags = () => ({ routeIntelligenceV1: true, b20ControlV1: true }) as never;
   b20RouteRuntime.discoverAvailable = async () => true;
   b20RouteRuntime.observations = () => repository();
+  b20RouteRuntime.projectsAvailable = async () => false;
   b20RouteRuntime.now = () => new Date('2026-08-13T19:10:00.000Z');
   // Left to the real factory a unit test reaches a provider over the network
   // the moment a key happens to be in the environment.
@@ -186,7 +207,9 @@ afterEach(() => {
 });
 
 function ask(body: object, authenticated = true) {
-  return request(app(authenticated)).post('/api/route-intelligence/opportunities/b20/console/ask').send(body);
+  return request(app(authenticated))
+    .post('/api/route-intelligence/opportunities/b20/console/ask')
+    .send(body);
 }
 
 describe('the console answers about the universe', () => {
@@ -210,10 +233,61 @@ describe('the console answers about the universe', () => {
       question: 'How many launches are there?',
     });
     const body = JSON.stringify(response.body);
-    for (const forbidden of ['calls', 'calldata', 'router', 'permission', 'spender', 'privateKey']) {
-      assert.equal(body.includes(`"${forbidden}"`), false, `${forbidden} appeared in a read-only answer`);
+    for (const forbidden of [
+      'calls',
+      'calldata',
+      'router',
+      'permission',
+      'spender',
+      'privateKey',
+    ]) {
+      assert.equal(
+        body.includes(`"${forbidden}"`),
+        false,
+        `${forbidden} appeared in a read-only answer`,
+      );
     }
     assert.equal(body.includes(WALLET), false);
+  });
+
+  test('the two production intents pass the response contract instead of becoming storage_unavailable', async () => {
+    for (const [question, intent] of [
+      ['Which B20 launches need more evidence, and why?', 'find_needs_evidence'],
+      [
+        'Find me the most interesting B20 tokens to investigate further.',
+        'find_research_candidates',
+      ],
+    ] as const) {
+      const response = await ask({
+        schemaVersion: 'b20-console-ask/v1',
+        scope: 'explore',
+        question,
+      });
+      assert.equal(response.status, 200, `${question}: ${JSON.stringify(response.body)}`);
+      assert.equal(response.body.intent, intent);
+      assert.doesNotMatch(JSON.stringify(response.body), /storage_unavailable/);
+    }
+  });
+
+  test('an answer-composition failure never exposes the legacy raw storage code', async () => {
+    b20RouteRuntime.observations = () =>
+      ({
+        ...(repository() as unknown as Record<string, unknown>),
+        aggregateFeed: async () => {
+          throw new Error('schema drift');
+        },
+      }) as never;
+    const response = await ask({
+      schemaVersion: 'b20-console-ask/v1',
+      scope: 'explore',
+      question: 'How many launches were measured?',
+    });
+    assert.equal(response.status, 500);
+    assert.equal(
+      response.body.error,
+      'Miorail could not verify this B20 answer. Please try again.',
+    );
+    assert.notEqual(response.body.code, 'storage_unavailable');
   });
 });
 
@@ -320,12 +394,13 @@ describe('the private scope is private', () => {
     // a provider for a nicer sentence is a trade nobody agreed to, and the
     // provider is withheld rather than a downstream check being trusted.
     let called = false;
-    b20RouteRuntime.narrator = () => ({
-      generate: async () => {
-        called = true;
-        return { message: { role: 'assistant' as const, content: 'a narration' } };
-      },
-    }) as never;
+    b20RouteRuntime.narrator = () =>
+      ({
+        generate: async () => {
+          called = true;
+          return { message: { role: 'assistant' as const, content: 'a narration' } };
+        },
+      }) as never;
 
     const response = await ask({
       schemaVersion: 'b20-console-ask/v1',
@@ -342,12 +417,18 @@ describe('the private scope is private', () => {
     // The control. Without it, the test above passes whenever the narrator is
     // unreachable for an unrelated reason and proves nothing.
     let called = false;
-    b20RouteRuntime.narrator = () => ({
-      generate: async () => {
-        called = true;
-        return { message: { role: 'assistant' as const, content: 'Miorail could price a purchase but not a sale.' } };
-      },
-    }) as never;
+    b20RouteRuntime.narrator = () =>
+      ({
+        generate: async () => {
+          called = true;
+          return {
+            message: {
+              role: 'assistant' as const,
+              content: 'Miorail could price a purchase but not a sale.',
+            },
+          };
+        },
+      }) as never;
 
     await ask({
       schemaVersion: 'b20-console-ask/v1',
@@ -379,7 +460,9 @@ describe('the private scope is private', () => {
       tokenAddresses: [TOKEN],
     });
     assert.match(response.body.answer, /not at the size you are holding/);
-    assert.ok(response.body.caveats.some((caveat: string) => /never sent to a language model/.test(caveat)));
+    assert.ok(
+      response.body.caveats.some((caveat: string) => /never sent to a language model/.test(caveat)),
+    );
   });
 
   test('portfolio with no tokens says Miorail does not enumerate a wallet', async () => {
@@ -395,11 +478,25 @@ describe('the private scope is private', () => {
   test('Investigate still refuses more than five, and Portfolio takes more', async () => {
     const six = Array.from({ length: 6 }, (_value, index) => `0x${String(index).repeat(40)}`);
     assert.equal(
-      (await ask({ schemaVersion: 'b20-console-ask/v1', scope: 'investigate', question: 'compare', tokenAddresses: six })).status,
+      (
+        await ask({
+          schemaVersion: 'b20-console-ask/v1',
+          scope: 'investigate',
+          question: 'compare',
+          tokenAddresses: six,
+        })
+      ).status,
       400,
     );
     assert.equal(
-      (await ask({ schemaVersion: 'b20-console-ask/v1', scope: 'portfolio', question: 'rank', tokenAddresses: six })).status,
+      (
+        await ask({
+          schemaVersion: 'b20-console-ask/v1',
+          scope: 'portfolio',
+          question: 'rank',
+          tokenAddresses: six,
+        })
+      ).status,
       200,
     );
   });
@@ -423,25 +520,30 @@ describe('the console resolves unfamiliar language before it reads', () => {
   test('a semantic intent becomes the same bounded plan as a known phrase', async () => {
     let classifierCalls = 0;
     let narratorCalls = 0;
-    b20RouteRuntime.classifier = () => ({
-      generate: async () => {
-        classifierCalls += 1;
-        return {
-          message: {
-            role: 'assistant' as const,
-            content: '{"intent":"find_bought_not_sellable","confidence":0.96}',
-          },
-        };
-      },
-    }) as never;
-    b20RouteRuntime.narrator = () => ({
-      generate: async () => {
-        narratorCalls += 1;
-        return {
-          message: { role: 'assistant' as const, content: 'Miorail found the stored cases described in the evidence.' },
-        };
-      },
-    }) as never;
+    b20RouteRuntime.classifier = () =>
+      ({
+        generate: async () => {
+          classifierCalls += 1;
+          return {
+            message: {
+              role: 'assistant' as const,
+              content: '{"intent":"find_bought_not_sellable","confidence":0.96}',
+            },
+          };
+        },
+      }) as never;
+    b20RouteRuntime.narrator = () =>
+      ({
+        generate: async () => {
+          narratorCalls += 1;
+          return {
+            message: {
+              role: 'assistant' as const,
+              content: 'Miorail found the stored cases described in the evidence.',
+            },
+          };
+        },
+      }) as never;
 
     const response = await ask({
       schemaVersion: 'b20-console-ask/v1',
@@ -479,7 +581,11 @@ describe('refusals cost nothing and reveal nothing', () => {
   });
 
   test('a malformed request and an unauthenticated one are distinct', async () => {
-    const malformed = await ask({ schemaVersion: 'b20-console-ask/v1', scope: 'nowhere', question: 'hi there' });
+    const malformed = await ask({
+      schemaVersion: 'b20-console-ask/v1',
+      scope: 'nowhere',
+      question: 'hi there',
+    });
     assert.equal(malformed.status, 400);
     assert.equal(malformed.body.code, 'invalid_b20_console_request');
 
@@ -530,7 +636,8 @@ function unmeasuredRepository() {
   return {
     ...(repository() as unknown as Record<string, unknown>),
     getFeedRowForToken: async ({ tokenAddress }: { tokenAddress: string }) => {
-      if (tokenAddress === TOKEN) return { row: rowV1(TOKEN, observationV1()), history: [observationV1()] };
+      if (tokenAddress === TOKEN)
+        return { row: rowV1(TOKEN, observationV1()), history: [observationV1()] };
       // Indexed, canonical, and never measured — the state 820 launches were in
       // on the day this was written.
       if (tokenAddress === UNMEASURED) return { row: rowV1(UNMEASURED, null), history: [] };
@@ -569,7 +676,12 @@ describe('Investigate measures a token it was asked about', () => {
     const measured: string[] = [];
     b20RouteRuntime.measureOnDemand = (async (input: { launch: { tokenAddress: string } }) => {
       measured.push(input.launch.tokenAddress);
-      return { tokenAddress: input.launch.tokenAddress, outcome: 'measured', reason: null, elapsedMs: 900 };
+      return {
+        tokenAddress: input.launch.tokenAddress,
+        outcome: 'measured',
+        reason: null,
+        elapsedMs: 900,
+      };
     }) as never;
     const response = await investigate(`What was measured here? ${UNMEASURED}`);
     assert.equal(response.status, 200, JSON.stringify(response.body));
@@ -611,18 +723,24 @@ describe('Investigate measures a token it was asked about', () => {
         removed: false,
       },
     })) as never;
-    b20RouteRuntime.discover = () => ({
-      getCursor: async () => ({ lastProcessedBlock: '49500000' }),
-      insertHistoricalLaunches: async (input: { launches: Array<{ tokenAddress: string }> }) => {
-        historicalWrites += 1;
-        assert.equal(input.launches[0]?.tokenAddress, UNMEASURED);
-        indexed = true;
-        return { inserted: 1, duplicates: 0 };
-      },
-    }) as never;
+    b20RouteRuntime.discover = () =>
+      ({
+        getCursor: async () => ({ lastProcessedBlock: '49500000' }),
+        insertHistoricalLaunches: async (input: { launches: Array<{ tokenAddress: string }> }) => {
+          historicalWrites += 1;
+          assert.equal(input.launches[0]?.tokenAddress, UNMEASURED);
+          indexed = true;
+          return { inserted: 1, duplicates: 0 };
+        },
+      }) as never;
     b20RouteRuntime.measureOnDemand = (async (input: { launch: { tokenAddress: string } }) => {
       measured += 1;
-      return { tokenAddress: input.launch.tokenAddress, outcome: 'measured', reason: null, elapsedMs: 12 };
+      return {
+        tokenAddress: input.launch.tokenAddress,
+        outcome: 'measured',
+        reason: null,
+        elapsedMs: 12,
+      };
     }) as never;
 
     const response = await investigate(`Please investigate ${UNMEASURED}`);
@@ -644,7 +762,10 @@ describe('Investigate measures a token it was asked about', () => {
             ? {
                 row: {
                   ...rowV1(UNMEASURED, null),
-                  launch: { ...rowV1(UNMEASURED, null).launch, detectedAt: '2026-01-01T00:00:00.000Z' },
+                  launch: {
+                    ...rowV1(UNMEASURED, null).launch,
+                    detectedAt: '2026-01-01T00:00:00.000Z',
+                  },
                 },
                 history: [],
               }
@@ -653,7 +774,12 @@ describe('Investigate measures a token it was asked about', () => {
     let called = 0;
     b20RouteRuntime.measureOnDemand = (async (input: { launch: { tokenAddress: string } }) => {
       called += 1;
-      return { tokenAddress: input.launch.tokenAddress, outcome: 'measured', reason: null, elapsedMs: 5 };
+      return {
+        tokenAddress: input.launch.tokenAddress,
+        outcome: 'measured',
+        reason: null,
+        elapsedMs: 5,
+      };
     }) as never;
     await investigate(`Check ${UNMEASURED}`);
     assert.equal(called, 1);
@@ -683,7 +809,9 @@ describe('Investigate measures a token it was asked about', () => {
     // And the absence is NAMED, so a reader can see what is missing rather than
     // inferring it from a sentence.
     assert.ok(
-      response.body.missingEvidence.some((entry: string) => /attempted one now and the endpoint did not answer/.test(entry)),
+      response.body.missingEvidence.some((entry: string) =>
+        /attempted one now and the endpoint did not answer/.test(entry),
+      ),
       JSON.stringify(response.body.missingEvidence),
     );
   });
@@ -708,7 +836,9 @@ describe('Investigate measures a token it was asked about', () => {
       elapsedMs: 3000,
     })) as never;
     const response = await investigate(`Check ${UNMEASURED}`);
-    const fact = response.body.facts.find((entry: { value: string }) => /route search degraded/.test(entry.value));
+    const fact = response.body.facts.find((entry: { value: string }) =>
+      /route search degraded/.test(entry.value),
+    );
     assert.ok(fact, JSON.stringify(response.body.facts));
   });
 
@@ -716,7 +846,12 @@ describe('Investigate measures a token it was asked about', () => {
     const seen: string[] = [];
     b20RouteRuntime.measureOnDemand = (async (input: { launch: { tokenAddress: string } }) => {
       seen.push(input.launch.tokenAddress);
-      return { tokenAddress: input.launch.tokenAddress, outcome: 'measured', reason: null, elapsedMs: 5 };
+      return {
+        tokenAddress: input.launch.tokenAddress,
+        outcome: 'measured',
+        reason: null,
+        elapsedMs: 5,
+      };
     }) as never;
     // Three unmeasured launches, so the cap is the only thing that can stop
     // the third. TOKEN would be skipped for being current, which proves

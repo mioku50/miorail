@@ -5,11 +5,7 @@ import {
   resolvePaidB20SimulationPricingV1,
 } from '../lib/paidIntelligenceConfig.js';
 import { logger } from '@mioagent/utils';
-import {
-  createLlmProvider,
-  createStructuredLlmProvider,
-  type LlmProvider,
-} from '@mioagent/llm';
+import { createLlmProvider, createStructuredLlmProvider, type LlmProvider } from '@mioagent/llm';
 import { safeZodIssuesV1 } from '../lib/safeZodIssues.js';
 import {
   B20InspectRequestV1Schema,
@@ -133,6 +129,8 @@ import {
   B20_STANDING_GROUP_COPY_V1,
   B20_EXIT_STANDING_KINDS_V1,
   b20CardStandingGroupV1,
+  b20ExitStandingV1,
+  b20StandingGroupV1,
   b20LaunchContextV1,
   b20ProjectFilterMatchesV1,
   B20_PROJECT_FILTERS_V1,
@@ -221,8 +219,14 @@ import {
 // second copy would be a second definition of what an observation is, and the
 // first thing to drift would be which block the factory read and the control
 // read were anchored at.
-import { B20_MEASURE_DEFAULTS_V1, B20_MEASURE_REFERENCE_PROFILE_V1 } from '../../../scripts/b20MeasureCli.js';
-import { B20_NATIVE_POSITION_ATOMIC_V1, createB20MeasureDepsV1 } from '../../../scripts/b20MeasureDeps.js';
+import {
+  B20_MEASURE_DEFAULTS_V1,
+  B20_MEASURE_REFERENCE_PROFILE_V1,
+} from '../../../scripts/b20MeasureCli.js';
+import {
+  B20_NATIVE_POSITION_ATOMIC_V1,
+  createB20MeasureDepsV1,
+} from '../../../scripts/b20MeasureDeps.js';
 import { createB20PoolStoreV1 } from '../../../scripts/b20PoolStore.js';
 
 // ---------------------------------------------------------------------------
@@ -381,7 +385,8 @@ export const b20RouteRuntime = {
   /** Checked separately again: a server without migration 0025 can still quote
    * and still watch — it simply cannot certify anything. */
   clearanceAvailable: async (): Promise<boolean> => {
-    const rows = await client`SELECT to_regclass('public.b20_opportunity_clearances') AS clearances`;
+    const rows =
+      await client`SELECT to_regclass('public.b20_opportunity_clearances') AS clearances`;
     return Boolean(rows[0]?.clearances);
   },
   /** Checked separately again: a server without migration 0026 can still
@@ -455,12 +460,16 @@ function sessionUser(req: Request): TenantUser | null {
     user.chainId !== 8453 ||
     !/^0x[0-9a-f]{40}$/.test(user.address) ||
     user.id !== `eip155:8453:${user.address}`
-  ) return null;
+  )
+    return null;
   return user;
 }
 
 /** flag + session — the shared head of both routes. */
-function b20Guard(req: Request, res: Response): { user: NonNullable<ReturnType<typeof sessionUser>> } | null {
+function b20Guard(
+  req: Request,
+  res: Response,
+): { user: NonNullable<ReturnType<typeof sessionUser>> } | null {
   const flags = b20RouteRuntime.flags(process.env);
   if (!flags.routeIntelligenceV1 || !flags.b20ControlV1) {
     res.status(404).json({ error: 'b20_control_disabled', code: 'b20_control_disabled' });
@@ -476,7 +485,13 @@ function b20Guard(req: Request, res: Response): { user: NonNullable<ReturnType<t
 
 function storageFailure(res: Response, error: unknown, where: string, input?: unknown): void {
   if (error instanceof RouteStorageConflictError) {
-    res.status(409).json({ error: 'b20_snapshot_conflict', code: 'b20_snapshot_conflict', detail: error.message });
+    res
+      .status(409)
+      .json({
+        error: 'b20_snapshot_conflict',
+        code: 'b20_snapshot_conflict',
+        detail: error.message,
+      });
     return;
   }
   if (error instanceof RouteStorageIntegrityError) {
@@ -500,6 +515,26 @@ function storageFailure(res: Response, error: unknown, where: string, input?: un
     ...(issues ? { issues } : {}),
   });
   res.status(500).json({ error: 'storage_unavailable', code: 'storage_unavailable' });
+}
+
+/**
+ * The console composes storage reads, planning and a response contract. A
+ * failure in any of those layers must not be labelled `storage_unavailable`:
+ * production did exactly that for two newly-added intents whose Zod enum had
+ * drifted, sending a raw infrastructure code to the reader while Postgres was
+ * healthy.
+ */
+function consoleAnswerFailure(res: Response, error: unknown): void {
+  const issues = safeZodIssuesV1(error);
+  logger.error('B20 console answer failed', {
+    where: 'b20-console-ask',
+    name: error instanceof Error ? error.name : 'unknown',
+    ...(issues ? { issues } : {}),
+  });
+  res.status(500).json({
+    error: 'Miorail could not verify this B20 answer. Please try again.',
+    code: 'b20_console_answer_unavailable',
+  });
 }
 
 function respondV1(
@@ -653,7 +688,8 @@ export async function readB20ProjectProfilesV1(
     return null;
   }
   const byToken = new Map<string, B20FundamentalProfileV1>();
-  for (const address of tokenAddresses) byToken.set(address.toLowerCase(), b20UnclaimedProjectProfileV1());
+  for (const address of tokenAddresses)
+    byToken.set(address.toLowerCase(), b20UnclaimedProjectProfileV1());
   for (const record of records) {
     byToken.set(record.claim.tokenAddress.toLowerCase(), b20ProjectProfileFromRecordV1(record));
   }
@@ -683,10 +719,14 @@ export async function readB20ProjectProfilesV1(
  * that holds even if the query's JOIN were ever written wrongly.
  */
 export async function readB20FundamentalMatchesV1(input: {
-  predicate: B20FundamentalPredicateV1;
+  predicate?: B20FundamentalPredicateV1;
+  predicates?: readonly B20FundamentalPredicateV1[];
+  operator?: 'and' | 'or';
   limit: number;
 }): Promise<{ matches: B20ConsoleProjectMatchV1[]; corpus: number; available: boolean }> {
-  const rule = B20_FUNDAMENTAL_PREDICATE_RULES_V1[input.predicate];
+  const predicates = input.predicates ?? (input.predicate ? [input.predicate] : []);
+  const operator = input.operator ?? 'and';
+  if (predicates.length === 0) return { matches: [], corpus: 0, available: false };
   let addresses: string[];
   let corpus: number;
   try {
@@ -694,20 +734,35 @@ export async function readB20FundamentalMatchesV1(input: {
       return { matches: [], corpus: 0, available: false };
     }
     const projects = b20RouteRuntime.projects();
-    [addresses, corpus] = await Promise.all([
-      // `verified_project` asks whether the gate opened at all, which is a
-      // property of the claim — true even for a claim whose every probe came
-      // back empty. Every other predicate reads a finding.
-      rule.dimension === null
-        ? projects.verifiedTokenAddresses({ chainId: B20_CHAIN_ID_V1, limit: input.limit })
-        : projects.tokensMatchingEvidence({
-            chainId: B20_CHAIN_ID_V1,
-            dimension: rule.dimension,
-            states: rule.states,
-            limit: input.limit,
-          }),
-      projects.verifiedClaimCount({ chainId: B20_CHAIN_ID_V1 }),
-    ]);
+    corpus = await projects.verifiedClaimCount({ chainId: B20_CHAIN_ID_V1 });
+    const sets = await Promise.all(
+      predicates.map(async (predicate) => {
+        const rule = B20_FUNDAMENTAL_PREDICATE_RULES_V1[predicate];
+        // Read up to the corpus, not the answer limit. Intersecting two pages of
+        // ten can miss a token that is the 11th result on one side even though
+        // it is the first true AND match.
+        const readLimit = Math.max(1, corpus);
+        const found =
+          rule.dimension === null
+            ? await projects.verifiedTokenAddresses({ chainId: B20_CHAIN_ID_V1, limit: readLimit })
+            : await projects.tokensMatchingEvidence({
+                chainId: B20_CHAIN_ID_V1,
+                dimension: rule.dimension,
+                states: rule.states,
+                limit: readLimit,
+              });
+        return new Set(found.map((address) => address.toLowerCase()));
+      }),
+    );
+    const combined =
+      operator === 'or'
+        ? new Set(sets.flatMap((set) => [...set]))
+        : new Set(
+            [...(sets[0] ?? new Set<string>())].filter((address) =>
+              sets.every((set) => set.has(address)),
+            ),
+          );
+    addresses = [...combined].sort().slice(0, input.limit);
   } catch {
     // Same narrow swallow as the card read: the ONLY thing this hides is "the
     // layer is not available here", and the answer says so rather than
@@ -723,11 +778,19 @@ export async function readB20FundamentalMatchesV1(input: {
   for (const address of addresses) {
     const profile = profiles.get(address.toLowerCase());
     if (!profile) continue;
-    if (!b20PredicateMatchesProfileV1(input.predicate, profile)) continue;
+    const predicateMatches = predicates.map((predicate) =>
+      b20PredicateMatchesProfileV1(predicate, profile),
+    );
+    const qualifies =
+      operator === 'or' ? predicateMatches.some(Boolean) : predicateMatches.every(Boolean);
+    if (!qualifies) continue;
     let symbol: string | null = null;
     let indexed = false;
     try {
-      const found = await observations.getFeedRowForToken({ tokenAddress: address, historyLimit: 1 });
+      const found = await observations.getFeedRowForToken({
+        tokenAddress: address,
+        historyLimit: 1,
+      });
       if (found) {
         indexed = true;
         symbol = found.row.launch.symbol;
@@ -953,23 +1016,36 @@ export async function readDiscoverFeedV1(input: {
     if (standing !== 'all' && b20CardStandingGroupV1(card) !== standing) return false;
     const observation = card.observation;
     if (standingKind !== null && observation?.standing.kind !== standingKind) return false;
-    if (bothRoutes && !(observation?.entryRouteFound && observation.exitRouteFound)) return false;
+    if (
+      bothRoutes &&
+      !(
+        observation?.entryRouteFound &&
+        observation.exitRouteFound &&
+        b20CardStandingGroupV1(card) === 'two_sided'
+      )
+    )
+      return false;
     if (maxRoundTripBps !== null) {
       const measured = observation?.optimisticRoundTripBps ?? null;
       if (measured === null || measured > maxRoundTripBps) return false;
     }
     if (minBuyers !== null) {
       const window = observation?.launchBuyerWindow ?? null;
-      const counted = window && window.status !== 'measured'
-        ? null
-        : observation?.launchBuyers?.buyerCount ?? null;
+      const counted =
+        window && window.status !== 'measured'
+          ? null
+          : (observation?.launchBuyers?.buyerCount ?? null);
       if (counted === null || counted < minBuyers) return false;
     }
     return true;
   };
 
   const narrowed =
-    standing !== 'all' || standingKind !== null || bothRoutes || maxRoundTripBps !== null || minBuyers !== null;
+    standing !== 'all' ||
+    standingKind !== null ||
+    bothRoutes ||
+    maxRoundTripBps !== null ||
+    minBuyers !== null;
 
   // Project context is attached AFTER a page is chosen, in one read, so a feed
   // that nobody filtered by project pays one query rather than one per row.
@@ -1181,19 +1257,22 @@ async function readNarrowedFeedV1(input: {
 // of a minute ago, and it says so rather than implying it is live.
 // ---------------------------------------------------------------------------
 
-/** How many launches one summary may read. Above the ~1,139 the live 48-hour
- * window holds, so the count is currently exhaustive — and when it stops being
- * so, the response says `complete: false` instead of quietly truncating. */
-export const DISCOVER_SUMMARY_SCAN_LIMIT_V1 = 3_000;
 const DISCOVER_SUMMARY_TTL_MS_V1 = 60_000;
 
 export interface B20UniverseSummaryV1 {
   window: {
     maxLaunchAgeMs: number;
-    /** Launches actually read. */
+    /** Backward-compatible alias of `inspected`. */
     launches: number;
-    /** False when the scan limit was reached before the window ran out, so a
-     * reader knows the counts below are of a prefix rather than of everything. */
+    /** Canonical launch rows included by the full storage aggregate. */
+    inspected: number;
+    /** Latest readings whose shared card standing is a completed conclusion
+     * about the measured market condition (`aboutToken: true`). */
+    completed: number;
+    /** No latest reading, or a latest reading that describes an evidence gap
+     * in Miorail rather than a conclusion about the token. */
+    incomplete: number;
+    /** False only when the storage layer could not establish the full window. */
     complete: boolean;
   };
   /** One row per measured conclusion, in the display order of their sections. */
@@ -1214,7 +1293,8 @@ export interface B20UniverseSummaryV1 {
 }
 
 export const B20_SUMMARY_CAVEATS_V1 = [
-  'These are counts of STORED MEASUREMENTS inside a launch-age window, not of every B20 token on Base.',
+  'These are counts of canonical launches and their latest supported stored readings inside a launch-age window, not of every B20 token on Base.',
+  'Inspected is the corpus read. Completed means the latest card standing is a conclusion about the measured market condition; incomplete means Miorail still has an evidence gap. These counts are never interchangeable.',
   'A count under a conclusion whose aboutToken is false is a count of what MIORAIL could not measure. It is not a count of tokens with that property.',
   'Counts are computed from the same card projection the feed serves and may be up to a minute old. computedAt says when.',
 ] as const;
@@ -1242,80 +1322,96 @@ export async function readB20UniverseSummaryV1(input: {
   const maxLaunchAgeMs = input.maxLaunchAgeMs ?? DISCOVER_FEED_WINDOW_MS_V1;
   const now = input.now ?? b20RouteRuntime.now();
   const key = String(maxLaunchAgeMs);
-  if (summaryCacheV1 && summaryCacheV1.key === key && now.getTime() - summaryCacheV1.at < DISCOVER_SUMMARY_TTL_MS_V1) {
+  if (
+    summaryCacheV1 &&
+    summaryCacheV1.key === key &&
+    now.getTime() - summaryCacheV1.at < DISCOVER_SUMMARY_TTL_MS_V1
+  ) {
     return summaryCacheV1.value;
   }
 
   const available = await b20RouteRuntime.discoverAvailable();
   const observations = b20RouteRuntime.observations();
-  const pipeline = await pipelineStatusV1(observations, now, available);
-
-  const standing = new Map<string, { group: B20StandingGroupV1; aboutToken: boolean; count: number }>();
+  const standing = new Map<
+    string,
+    { group: B20StandingGroupV1; aboutToken: boolean; count: number }
+  >();
   const sections = new Map<B20StandingGroupV1, number>();
   const reasonCodes = new Map<string, number>();
   const venues = new Map<string, number>();
   const buyers = new Map<string, number>();
 
   let launches = 0;
-  let complete = true;
+  let completed = 0;
+  let incomplete = 0;
+  let complete = available;
   if (available) {
-    let cursor: string | null = null;
-    for (;;) {
-      const page = await observations.listFeed({
-        limit: Math.min(DISCOVER_STANDING_PAGE_V1, DISCOVER_SUMMARY_SCAN_LIMIT_V1 - launches),
-        cursor,
-        maxLaunchAgeMs,
-        now: now.toISOString(),
+    const aggregate = await observations.aggregateFeed({
+      maxLaunchAgeMs,
+      now: now.toISOString(),
+    });
+    launches = aggregate.inspected;
+    for (const bucket of aggregate.buckets) {
+      const conclusion = b20ExitStandingV1({
+        observation: bucket.observation,
+        buyerCount: bucket.buyerCount,
       });
-      for (const row of page.rows) {
-        launches += 1;
-        const card = b20DiscoverCardFromRowV1(row, pipeline, now);
-        const kind = card.observation?.standing.kind ?? 'not_measured';
-        const group = b20CardStandingGroupV1(card);
-        const aboutToken = card.observation?.standing.aboutToken ?? false;
-        const current = standing.get(kind);
-        if (current) current.count += 1;
-        else standing.set(kind, { group, aboutToken, count: 1 });
-        sections.set(group, (sections.get(group) ?? 0) + 1);
+      const group = b20StandingGroupV1(conclusion);
+      const current = standing.get(conclusion.kind);
+      if (current) current.count += bucket.count;
+      else
+        standing.set(conclusion.kind, {
+          group,
+          aboutToken: conclusion.aboutToken,
+          count: bucket.count,
+        });
+      sections.set(group, (sections.get(group) ?? 0) + bucket.count);
+      if (conclusion.aboutToken) completed += bucket.count;
+      else incomplete += bucket.count;
 
-        const reason = card.observation?.reasonCode ?? 'not_measured';
-        reasonCodes.set(reason, (reasonCodes.get(reason) ?? 0) + 1);
+      const reason = bucket.observation?.reasonCode ?? 'not_measured';
+      reasonCodes.set(reason, (reasonCodes.get(reason) ?? 0) + bucket.count);
 
-        // Null and empty both print as "not recorded": a row written before the
-        // field existed did not search nothing, it did not say.
-        const venueKey = card.observation?.venuesConsulted?.length
-          ? [...card.observation.venuesConsulted].join(',')
-          : 'not recorded';
-        venues.set(venueKey, (venues.get(venueKey) ?? 0) + 1);
+      // Null and empty both print as "not recorded": a row written before the
+      // field existed did not search nothing, it did not say.
+      const venueKey = bucket.observation?.venuesConsulted?.length
+        ? [...bucket.observation.venuesConsulted].join(',')
+        : 'not recorded';
+      venues.set(venueKey, (venues.get(venueKey) ?? 0) + bucket.count);
 
-        const window = card.observation?.launchBuyerWindow ?? null;
-        const buyerCount = window && window.status !== 'measured'
-          ? null
-          : card.observation?.launchBuyers?.buyerCount ?? null;
-        const band = buyerBandV1(buyerCount);
-        buyers.set(band, (buyers.get(band) ?? 0) + 1);
-      }
-      if (!page.nextCursor) break;
-      if (launches >= DISCOVER_SUMMARY_SCAN_LIMIT_V1) {
-        complete = false;
-        break;
-      }
-      cursor = page.nextCursor;
+      const band = buyerBandV1(bucket.buyerCount);
+      buyers.set(band, (buyers.get(band) ?? 0) + bucket.count);
     }
   }
 
   const value: B20UniverseSummaryV1 = {
-    window: { maxLaunchAgeMs, launches, complete },
+    window: {
+      maxLaunchAgeMs,
+      launches,
+      inspected: launches,
+      completed,
+      incomplete,
+      complete,
+    },
     // Ordered by section, then by size within it, so the shape of the answer
     // matches the shape of the screen.
     standing: [...standing.entries()]
-      .map(([kind, entry]) => ({ kind, group: entry.group, count: entry.count, aboutToken: entry.aboutToken }))
-      .sort((left, right) =>
-        B20_STANDING_GROUPS_V1.indexOf(left.group) - B20_STANDING_GROUPS_V1.indexOf(right.group)
-        || right.count - left.count),
-    sections: B20_STANDING_GROUPS_V1
-      .map((group) => ({ group, label: B20_STANDING_GROUP_COPY_V1[group].label, count: sections.get(group) ?? 0 }))
-      .filter((section) => section.count > 0),
+      .map(([kind, entry]) => ({
+        kind,
+        group: entry.group,
+        count: entry.count,
+        aboutToken: entry.aboutToken,
+      }))
+      .sort(
+        (left, right) =>
+          B20_STANDING_GROUPS_V1.indexOf(left.group) -
+            B20_STANDING_GROUPS_V1.indexOf(right.group) || right.count - left.count,
+      ),
+    sections: B20_STANDING_GROUPS_V1.map((group) => ({
+      group,
+      label: B20_STANDING_GROUP_COPY_V1[group].label,
+      count: sections.get(group) ?? 0,
+    })).filter((section) => section.count > 0),
     reasonCodes: [...reasonCodes.entries()]
       .map(([code, count]) => ({ code, count }))
       .sort((left, right) => right.count - left.count),
@@ -1401,75 +1497,78 @@ export async function readB20TokenReadsV1(input: {
   const reads: B20ConsoleTokenReadV1[] = [];
   const assessments: Record<string, B20ExitAssessmentV1> = {};
   for (const tokenAddress of input.tokenAddresses) {
-    const found = await observations.getFeedRowForToken({ tokenAddress, historyLimit: input.historyLimit });
-      if (!found) {
-        // A missing index row is a fact about Miorail, not about the token. Ask
-        // the factory before saying anything: MIO is confirmed onchain and
-        // predates the Discover scan window, and calling it "not a canonical
-        // B20 launch" was Miorail denying its own token. Bounded by the
-        // planner's five-token cap and only ever reached on a miss.
-        const identity = await b20IdentityForMissingRowV1(tokenAddress, now);
-        reads.push({
-          tokenAddress,
-          card: null,
-          profile: null,
-          historyCount: 0,
-          indexStanding: b20TokenIndexStandingV1({ indexed: false, detection: identity }),
-          detection: identity,
-        });
-        continue;
-      }
-      const raw = found.row.observation;
+    const found = await observations.getFeedRowForToken({
+      tokenAddress,
+      historyLimit: input.historyLimit,
+    });
+    if (!found) {
+      // A missing index row is a fact about Miorail, not about the token. Ask
+      // the factory before saying anything: MIO is confirmed onchain and
+      // predates the Discover scan window, and calling it "not a canonical
+      // B20 launch" was Miorail denying its own token. Bounded by the
+      // planner's five-token cap and only ever reached on a miss.
+      const identity = await b20IdentityForMissingRowV1(tokenAddress, now);
       reads.push({
         tokenAddress,
-        card: b20OpportunityCardV1({
-          launch: {
-            tokenAddress: found.row.launch.tokenAddress,
-            name: found.row.launch.name,
-            symbol: found.row.launch.symbol,
-            variant: found.row.launch.variant,
-            decimals: found.row.launch.decimals,
-            blockNumber: found.row.launch.blockNumber,
-            transactionHash: found.row.launch.transactionHash,
-            logIndex: found.row.launch.logIndex,
-            detectedAt: found.row.launch.detectedAt,
-            blockTimestamp: found.row.launch.blockTimestamp,
-            canonical: found.row.launch.canonical,
-          },
-          observation: raw,
-          launchBuyers: found.row.launchBuyers,
-          launchBuyerWindow: b20LaunchBuyerWindowV1({
-            launchBlock: found.row.launch.blockNumber,
-            observedHead: pipeline.facts.confirmedHead,
-            windowBlocks: B20_BUYER_WINDOW_BLOCKS_V1,
-            measured: found.row.launchBuyers !== null,
-            measuredToBlock: found.row.launchBuyers?.toBlock ?? null,
-          }),
-          project: projects?.get(found.row.launch.tokenAddress.toLowerCase()) ?? null,
-          now,
-        }),
-        // The four fields the comparability rule reads, taken from the stored
-        // observation rather than from the card: a card is a projection for a
-        // screen and deliberately does not carry the measurement's identity.
-        profile: raw
-          ? {
-              profileIdentity: raw.profileIdentity,
-              referenceQuoteAsset: raw.referenceQuoteAsset,
-              referencePositionAtomic: raw.referencePositionAtomic,
-              measurementVersion: raw.measurementVersion,
-            }
-          : null,
-        historyCount: found.history.length,
-        // A row in the index settles identity on its own; the factory is not
-        // consulted, and an observation may still be absent. Those stay three
-        // separate statements.
-        indexStanding: 'indexed_b20',
-        detection: null,
+        card: null,
+        profile: null,
+        historyCount: 0,
+        indexStanding: b20TokenIndexStandingV1({ indexed: false, detection: identity }),
+        detection: identity,
       });
+      continue;
+    }
+    const raw = found.row.observation;
+    reads.push({
+      tokenAddress,
+      card: b20OpportunityCardV1({
+        launch: {
+          tokenAddress: found.row.launch.tokenAddress,
+          name: found.row.launch.name,
+          symbol: found.row.launch.symbol,
+          variant: found.row.launch.variant,
+          decimals: found.row.launch.decimals,
+          blockNumber: found.row.launch.blockNumber,
+          transactionHash: found.row.launch.transactionHash,
+          logIndex: found.row.launch.logIndex,
+          detectedAt: found.row.launch.detectedAt,
+          blockTimestamp: found.row.launch.blockTimestamp,
+          canonical: found.row.launch.canonical,
+        },
+        observation: raw,
+        launchBuyers: found.row.launchBuyers,
+        launchBuyerWindow: b20LaunchBuyerWindowV1({
+          launchBlock: found.row.launch.blockNumber,
+          observedHead: pipeline.facts.confirmedHead,
+          windowBlocks: B20_BUYER_WINDOW_BLOCKS_V1,
+          measured: found.row.launchBuyers !== null,
+          measuredToBlock: found.row.launchBuyers?.toBlock ?? null,
+        }),
+        project: projects?.get(found.row.launch.tokenAddress.toLowerCase()) ?? null,
+        now,
+      }),
+      // The four fields the comparability rule reads, taken from the stored
+      // observation rather than from the card: a card is a projection for a
+      // screen and deliberately does not carry the measurement's identity.
+      profile: raw
+        ? {
+            profileIdentity: raw.profileIdentity,
+            referenceQuoteAsset: raw.referenceQuoteAsset,
+            referencePositionAtomic: raw.referencePositionAtomic,
+            measurementVersion: raw.measurementVersion,
+          }
+        : null,
+      historyCount: found.history.length,
+      // A row in the index settles identity on its own; the factory is not
+      // consulted, and an observation may still be absent. Those stay three
+      // separate statements.
+      indexStanding: 'indexed_b20',
+      detection: null,
+    });
     if (raw && input.includeAssessments === true) {
       assessments[tokenAddress] = referenceExitAssessmentV1(raw, null);
     }
-    }
+  }
   return { reads, assessments };
 }
 
@@ -1642,7 +1741,8 @@ b20ControlRouter.get('/opportunities/b20/summary', async (req: Request, res: Res
   if (!guard) return;
 
   const launchAgeRaw = Number.parseInt(String(req.query.launchAge ?? ''), 10);
-  const maxLaunchAgeMs = Number.isFinite(launchAgeRaw) && launchAgeRaw > 0 ? launchAgeRaw : DISCOVER_FEED_WINDOW_MS_V1;
+  const maxLaunchAgeMs =
+    Number.isFinite(launchAgeRaw) && launchAgeRaw > 0 ? launchAgeRaw : DISCOVER_FEED_WINDOW_MS_V1;
   try {
     res.json(B20UniverseSummaryV1Schema.parse(await readB20UniverseSummaryV1({ maxLaunchAgeMs })));
   } catch (error) {
@@ -1675,7 +1775,8 @@ b20ControlRouter.get('/opportunities/b20', async (req: Request, res: Response) =
     res.status(400).json({ error: 'unknown_standing_filter', code: 'unknown_standing_filter' });
     return;
   }
-  const cursor = typeof req.query.cursor === 'string' && req.query.cursor.length > 0 ? req.query.cursor : null;
+  const cursor =
+    typeof req.query.cursor === 'string' && req.query.cursor.length > 0 ? req.query.cursor : null;
   if (cursor && !decodeFeedCursorV1(cursor)) {
     // Refused rather than treated as "start from the top": silently restarting
     // a paginated feed looks to a caller like duplicated results.
@@ -1683,7 +1784,8 @@ b20ControlRouter.get('/opportunities/b20', async (req: Request, res: Response) =
     return;
   }
   const launchAgeRaw = Number.parseInt(String(req.query.launchAge ?? ''), 10);
-  const maxLaunchAgeMs = Number.isFinite(launchAgeRaw) && launchAgeRaw > 0 ? launchAgeRaw : DISCOVER_FEED_WINDOW_MS_V1;
+  const maxLaunchAgeMs =
+    Number.isFinite(launchAgeRaw) && launchAgeRaw > 0 ? launchAgeRaw : DISCOVER_FEED_WINDOW_MS_V1;
 
   // The evidence axis. Each one is REFUSED when unparseable rather than
   // silently dropped: a caller who asked for "at least ten buyers" and got the
@@ -1700,10 +1802,14 @@ b20ControlRouter.get('/opportunities/b20', async (req: Request, res: Response) =
     res.status(400).json({ error: 'invalid_filter_bound', code: 'invalid_filter_bound' });
     return;
   }
-  const standingKind = typeof req.query.standingKind === 'string' && req.query.standingKind.length > 0
-    ? req.query.standingKind
-    : null;
-  if (standingKind !== null && !(B20_EXIT_STANDING_KINDS_V1 as readonly string[]).includes(standingKind)) {
+  const standingKind =
+    typeof req.query.standingKind === 'string' && req.query.standingKind.length > 0
+      ? req.query.standingKind
+      : null;
+  if (
+    standingKind !== null &&
+    !(B20_EXIT_STANDING_KINDS_V1 as readonly string[]).includes(standingKind)
+  ) {
     res.status(400).json({ error: 'unknown_standing_kind', code: 'unknown_standing_kind' });
     return;
   }
@@ -1712,9 +1818,10 @@ b20ControlRouter.get('/opportunities/b20', async (req: Request, res: Response) =
   // Project context. Refused when unknown rather than silently widened: a
   // caller who asked for verified projects and got the whole feed would read
   // every card as one.
-  const projectRaw = typeof req.query.project === 'string' && req.query.project.length > 0
-    ? req.query.project
-    : 'all';
+  const projectRaw =
+    typeof req.query.project === 'string' && req.query.project.length > 0
+      ? req.query.project
+      : 'all';
   if (!(B20_PROJECT_FILTERS_V1 as readonly string[]).includes(projectRaw)) {
     res.status(400).json({ error: 'unknown_project_filter', code: 'unknown_project_filter' });
     return;
@@ -1757,7 +1864,9 @@ b20ControlRouter.post('/opportunities/b20/copilot/ask', async (req: Request, res
   if (!guard) return;
   const parsed = B20CopilotAskRequestV1Schema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: 'invalid_b20_copilot_request', code: 'invalid_b20_copilot_request' });
+    res
+      .status(400)
+      .json({ error: 'invalid_b20_copilot_request', code: 'invalid_b20_copilot_request' });
     return;
   }
 
@@ -1782,7 +1891,8 @@ b20ControlRouter.post('/opportunities/b20/copilot/ask', async (req: Request, res
       res.status(409).json({
         error: 'b20_observation_changed',
         code: 'b20_observation_changed',
-        detail: 'This B20 card changed after it was opened. Refresh Discover before asking about it.',
+        detail:
+          'This B20 card changed after it was opened. Refresh Discover before asking about it.',
       });
       return;
     }
@@ -1823,7 +1933,10 @@ b20ControlRouter.post('/opportunities/b20/copilot/ask', async (req: Request, res
       history: found.history,
       question: parsed.data.question,
     });
-    const plan = planB20AnswerV1({ question: parsed.data.question, tokenAddress: parsed.data.tokenAddress });
+    const plan = planB20AnswerV1({
+      question: parsed.data.question,
+      tokenAddress: parsed.data.tokenAddress,
+    });
     if (plan.refusal) {
       // Out of scope, and refused without spending a narration on it. The
       // evidence the deterministic answer gathered still ships, because the
@@ -1917,7 +2030,11 @@ type B20TargetedIndexOutcomeV1 =
   | { indexed: true }
   | {
       indexed: false;
-      outcome: 'launch_lookup_unavailable' | 'launch_lookup_timed_out' | 'launch_event_not_found' | 'not_indexed';
+      outcome:
+        | 'launch_lookup_unavailable'
+        | 'launch_lookup_timed_out'
+        | 'launch_event_not_found'
+        | 'not_indexed';
       reason: string | null;
     };
 
@@ -1942,7 +2059,11 @@ export async function indexMissingB20LaunchV1(input: {
     return { indexed: false, outcome: 'launch_lookup_timed_out', reason: null };
   }
   if (lookup.outcome === 'not_found') {
-    return { indexed: false, outcome: 'launch_event_not_found', reason: 'canonical_launch_event_not_found' };
+    return {
+      indexed: false,
+      outcome: 'launch_event_not_found',
+      reason: 'canonical_launch_event_not_found',
+    };
   }
 
   const decoded = decodeB20CreatedV1(lookup.log);
@@ -1951,7 +2072,11 @@ export async function indexMissingB20LaunchV1(input: {
     decoded.launch.tokenAddress !== input.tokenAddress.toLowerCase() ||
     BigInt(decoded.launch.blockNumber) !== BigInt(lookup.creationBlock)
   ) {
-    return { indexed: false, outcome: 'launch_event_not_found', reason: 'canonical_launch_event_unreadable' };
+    return {
+      indexed: false,
+      outcome: 'launch_event_not_found',
+      reason: 'canonical_launch_event_unreadable',
+    };
   }
 
   const repository = b20RouteRuntime.discover();
@@ -1964,9 +2089,10 @@ export async function indexMissingB20LaunchV1(input: {
   }
 
   const now = b20RouteRuntime.now().toISOString();
-  const transactionIndex = lookup.log.transactionIndex && /^0x[0-9a-fA-F]+$/.test(lookup.log.transactionIndex)
-    ? Number(BigInt(lookup.log.transactionIndex))
-    : null;
+  const transactionIndex =
+    lookup.log.transactionIndex && /^0x[0-9a-fA-F]+$/.test(lookup.log.transactionIndex)
+      ? Number(BigInt(lookup.log.transactionIndex))
+      : null;
   const launch = storedLaunchFromDecodedV1({
     launch: decoded.launch,
     detectedAt: now,
@@ -2069,7 +2195,11 @@ export async function refreshB20ReadingsV1(input: {
       }
       found = await observations.getFeedRowForToken({ tokenAddress, historyLimit: 1 });
       if (!found) {
-        attempts.push({ tokenAddress, outcome: 'not_indexed', reason: 'launch_insert_not_visible' });
+        attempts.push({
+          tokenAddress,
+          outcome: 'not_indexed',
+          reason: 'launch_insert_not_visible',
+        });
         continue;
       }
     }
@@ -2158,7 +2288,9 @@ function b20TargetedMeasurePassV1() {
  * could express a read the rest of the product cannot is a second Discover,
  * with its own idea of what a launch means.
  */
-export async function runB20ConsolePlanV1(plan: B20ConsolePlanV1): Promise<B20ConsoleDeterministicV1> {
+export async function runB20ConsolePlanV1(
+  plan: B20ConsolePlanV1,
+): Promise<B20ConsoleDeterministicV1> {
   const summaryStep = plan.steps.find((step) => step.tool === 'summary');
   const listStep = plan.steps.find((step) => step.tool === 'list');
   const projectsStep = plan.steps.find((step) => step.tool === 'projects');
@@ -2202,10 +2334,14 @@ export async function runB20ConsolePlanV1(plan: B20ConsolePlanV1): Promise<B20Co
   if (projectsStep && projectsStep.tool === 'projects') {
     const found = await readB20FundamentalMatchesV1({
       predicate: projectsStep.predicate,
+      predicates: projectsStep.predicates ?? [projectsStep.predicate],
+      operator: projectsStep.operator ?? 'and',
       limit: projectsStep.limit,
     });
     return b20FundamentalAnswerV1({
       predicate: projectsStep.predicate,
+      predicates: projectsStep.predicates ?? [projectsStep.predicate],
+      operator: projectsStep.operator ?? 'and',
       matches: found.matches,
       corpus: found.corpus,
       available: found.available,
@@ -2333,25 +2469,27 @@ export async function runB20ConsolePlanV1(plan: B20ConsolePlanV1): Promise<B20Co
   }
 
   const summary = await readB20UniverseSummaryV1({
-    maxLaunchAgeMs: summaryStep && summaryStep.tool === 'summary'
-      ? summaryStep.launchAgeHours * 60 * 60 * 1000
-      : DISCOVER_FEED_WINDOW_MS_V1,
+    maxLaunchAgeMs:
+      summaryStep && summaryStep.tool === 'summary'
+        ? summaryStep.launchAgeHours * 60 * 60 * 1000
+        : DISCOVER_FEED_WINDOW_MS_V1,
   });
-  const cards = listStep && listStep.tool === 'list'
-    ? (
-        await readDiscoverFeedV1({
-          limit: listStep.limit,
-          cursor: null,
-          state: 'all',
-          freshness: 'all',
-          standing: listStep.standing ?? 'all',
-          standingKind: listStep.standingKind ?? null,
-          bothRoutes: listStep.bothRoutes === true,
-          minBuyers: listStep.minBuyers ?? null,
-          project: listStep.project ?? 'all',
-        })
-      ).cards
-    : undefined;
+  const cards =
+    listStep && listStep.tool === 'list'
+      ? (
+          await readDiscoverFeedV1({
+            limit: listStep.limit,
+            cursor: null,
+            state: 'all',
+            freshness: 'all',
+            standing: listStep.standing ?? 'all',
+            standingKind: listStep.standingKind ?? null,
+            bothRoutes: listStep.bothRoutes === true,
+            minBuyers: listStep.minBuyers ?? null,
+            project: listStep.project ?? 'all',
+          })
+        ).cards
+      : undefined;
   // Same two reads, a different answer — because the SUBJECT is different. The
   // explore builder opens every answer with how the universe looks; a reader
   // who asked which launches need more evidence is asking about a measurement
@@ -2376,7 +2514,9 @@ b20ControlRouter.post('/opportunities/b20/console/ask', async (req: Request, res
   if (!guard) return;
   const parsed = B20ConsoleAskRequestV1Schema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: 'invalid_b20_console_request', code: 'invalid_b20_console_request' });
+    res
+      .status(400)
+      .json({ error: 'invalid_b20_console_request', code: 'invalid_b20_console_request' });
     return;
   }
 
@@ -2467,7 +2607,7 @@ b20ControlRouter.post('/opportunities/b20/console/ask', async (req: Request, res
       }),
     );
   } catch (error) {
-    storageFailure(res, error, 'b20-console-ask');
+    consoleAnswerFailure(res, error);
   }
 });
 
@@ -2479,7 +2619,9 @@ b20ControlRouter.post('/opportunities/b20/console/ask', async (req: Request, res
  * for almost every launch is "an address sent a transaction, and Miorail knows
  * nothing else about it". That belongs where somebody asked for it.
  */
-export async function readB20LaunchContextV1(tokenAddress: string): Promise<B20LaunchContextModelV1 | null> {
+export async function readB20LaunchContextV1(
+  tokenAddress: string,
+): Promise<B20LaunchContextModelV1 | null> {
   const observations = b20RouteRuntime.observations();
   const found = await observations.getFeedRowForToken({ tokenAddress, historyLimit: 1 });
   if (!found) return null;
@@ -2512,11 +2654,13 @@ export async function readB20LaunchContextV1(tokenAddress: string): Promise<B20L
       // Grouped by the SAME reason vocabulary the feed speaks, so a context
       // panel cannot invent a second set of words for one conclusion.
       standingSampleSize: counts.launches.length,
-      standingCounts: [...counts.launches.reduce((acc, launch) => {
-        const kind = launch.state === null ? 'not_measured' : launch.reasonCode ?? launch.state;
-        acc.set(kind, (acc.get(kind) ?? 0) + 1);
-        return acc;
-      }, new Map<string, number>())].map(([kind, count]) => ({ kind, count })),
+      standingCounts: [
+        ...counts.launches.reduce((acc, launch) => {
+          const kind = launch.state === null ? 'not_measured' : (launch.reasonCode ?? launch.state);
+          acc.set(kind, (acc.get(kind) ?? 0) + 1);
+          return acc;
+        }, new Map<string, number>()),
+      ].map(([kind, count]) => ({ kind, count })),
       coverage,
     };
   }
@@ -2535,107 +2679,126 @@ export async function readB20LaunchContextV1(tokenAddress: string): Promise<B20L
 // a feed render and never in the background: a search costs money and a false
 // link costs more, and both are bounded by somebody actually asking.
 // ---------------------------------------------------------------------------
-b20ControlRouter.get('/opportunities/b20/:tokenAddress/public-context', async (req: Request, res: Response) => {
-  const guard = b20Guard(req, res);
-  if (!guard) return;
+b20ControlRouter.get(
+  '/opportunities/b20/:tokenAddress/public-context',
+  async (req: Request, res: Response) => {
+    const guard = b20Guard(req, res);
+    if (!guard) return;
 
-  const tokenAddress = String(req.params.tokenAddress ?? '').toLowerCase();
-  if (!/^0x[0-9a-f]{40}$/.test(tokenAddress)) {
-    res.status(400).json({ error: 'invalid_token_address', code: 'invalid_token_address' });
-    return;
-  }
-
-  if (b20RouteRuntime.flags().b20PublicContextV1 !== true) {
-    res.status(503).json({ error: 'public_context_disabled', code: 'public_context_disabled' });
-    return;
-  }
-
-  // A reader may name the domain themselves. That path needs no vendor at all:
-  // the question stops being "which page on the web is this project" — which is
-  // the part a search is for — and becomes "does THIS page name this token",
-  // which Miorail answers with its own fetch.
-  const domain = typeof req.query.domain === 'string' && req.query.domain.trim().length > 0
-    ? req.query.domain.trim()
-    : null;
-  const search = b20PublicContextSearchFromEnv();
-  if (search === null && domain === null) {
-    // "This server cannot look" is not "nothing was found". Only the second is
-    // a statement about the token, and it is not this one.
-    res.status(503).json({ error: 'public_search_unconfigured', code: 'public_search_unconfigured' });
-    return;
-  }
-
-  try {
-    if (!(await b20RouteRuntime.discoverAvailable())) {
-      res.status(503).json({ error: 'discover_unavailable', code: 'discover_unavailable' });
+    const tokenAddress = String(req.params.tokenAddress ?? '').toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(tokenAddress)) {
+      res.status(400).json({ error: 'invalid_token_address', code: 'invalid_token_address' });
       return;
     }
-    // The name and symbol come from the launch Miorail ingested, never from the
-    // request: a caller who could supply them would be choosing what Miorail
-    // asks the internet.
-    const found = await b20RouteRuntime.observations().getFeedRowForToken({ tokenAddress, historyLimit: 1 });
-    if (!found) {
-      res.status(404).json({ error: 'launch_not_found', code: 'launch_not_found' });
-      return;
-    }
-    const context = await readB20PublicContextV1({
-      chainId: 8453,
-      tokenAddress,
-      symbol: found.row.launch.symbol ?? null,
-      name: found.row.launch.name ?? null,
-      domain,
-      // Never reached when a domain was named, and a refusal rather than a
-      // silent no-op when it is missing and needed.
-      deps: {
-        search: search ?? (async () => { throw new Error('no search provider'); }),
-        now: () => b20RouteRuntime.now(),
-      },
-    });
-    res.json({
-      schemaVersion: 'b20-public-context/v1',
-      ...context,
-      serverTime: b20RouteRuntime.now().toISOString(),
-    });
-  } catch (error) {
-    if (error instanceof B20SuppliedDomainRefusedError) {
-      // A named domain Miorail will not fetch. Refused with the reason, rather
-      // than repaired into something the caller did not ask for.
-      res.status(400).json({ error: 'invalid_domain', code: 'invalid_domain', detail: error.refusal });
-      return;
-    }
-    storageFailure(res, error, 'b20-public-context');
-  }
-});
 
-b20ControlRouter.get('/opportunities/b20/:tokenAddress/context', async (req: Request, res: Response) => {
-  const guard = b20Guard(req, res);
-  if (!guard) return;
+    if (b20RouteRuntime.flags().b20PublicContextV1 !== true) {
+      res.status(503).json({ error: 'public_context_disabled', code: 'public_context_disabled' });
+      return;
+    }
 
-  const tokenAddress = String(req.params.tokenAddress ?? '').toLowerCase();
-  if (!/^0x[0-9a-f]{40}$/.test(tokenAddress)) {
-    res.status(400).json({ error: 'invalid_token_address', code: 'invalid_token_address' });
-    return;
-  }
-  try {
-    if (!(await b20RouteRuntime.discoverAvailable())) {
-      res.status(503).json({ error: 'discover_unavailable', code: 'discover_unavailable' });
+    // A reader may name the domain themselves. That path needs no vendor at all:
+    // the question stops being "which page on the web is this project" — which is
+    // the part a search is for — and becomes "does THIS page name this token",
+    // which Miorail answers with its own fetch.
+    const domain =
+      typeof req.query.domain === 'string' && req.query.domain.trim().length > 0
+        ? req.query.domain.trim()
+        : null;
+    const search = b20PublicContextSearchFromEnv();
+    if (search === null && domain === null) {
+      // "This server cannot look" is not "nothing was found". Only the second is
+      // a statement about the token, and it is not this one.
+      res
+        .status(503)
+        .json({ error: 'public_search_unconfigured', code: 'public_search_unconfigured' });
       return;
     }
-    const context = await readB20LaunchContextV1(tokenAddress);
-    if (!context) {
-      res.status(404).json({ error: 'launch_not_found', code: 'launch_not_found' });
+
+    try {
+      if (!(await b20RouteRuntime.discoverAvailable())) {
+        res.status(503).json({ error: 'discover_unavailable', code: 'discover_unavailable' });
+        return;
+      }
+      // The name and symbol come from the launch Miorail ingested, never from the
+      // request: a caller who could supply them would be choosing what Miorail
+      // asks the internet.
+      const found = await b20RouteRuntime
+        .observations()
+        .getFeedRowForToken({ tokenAddress, historyLimit: 1 });
+      if (!found) {
+        res.status(404).json({ error: 'launch_not_found', code: 'launch_not_found' });
+        return;
+      }
+      const context = await readB20PublicContextV1({
+        chainId: 8453,
+        tokenAddress,
+        symbol: found.row.launch.symbol ?? null,
+        name: found.row.launch.name ?? null,
+        domain,
+        // Never reached when a domain was named, and a refusal rather than a
+        // silent no-op when it is missing and needed.
+        deps: {
+          search:
+            search ??
+            (async () => {
+              throw new Error('no search provider');
+            }),
+          now: () => b20RouteRuntime.now(),
+        },
+      });
+      res.json({
+        schemaVersion: 'b20-public-context/v1',
+        ...context,
+        serverTime: b20RouteRuntime.now().toISOString(),
+      });
+    } catch (error) {
+      if (error instanceof B20SuppliedDomainRefusedError) {
+        // A named domain Miorail will not fetch. Refused with the reason, rather
+        // than repaired into something the caller did not ask for.
+        res
+          .status(400)
+          .json({ error: 'invalid_domain', code: 'invalid_domain', detail: error.refusal });
+        return;
+      }
+      storageFailure(res, error, 'b20-public-context');
+    }
+  },
+);
+
+b20ControlRouter.get(
+  '/opportunities/b20/:tokenAddress/context',
+  async (req: Request, res: Response) => {
+    const guard = b20Guard(req, res);
+    if (!guard) return;
+
+    const tokenAddress = String(req.params.tokenAddress ?? '').toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(tokenAddress)) {
+      res.status(400).json({ error: 'invalid_token_address', code: 'invalid_token_address' });
       return;
     }
-    res.json(B20LaunchContextResponseV1Schema.parse({
-      schemaVersion: 'b20-launch-context/v1',
-      tokenAddress,
-      ...context,
-      serverTime: b20RouteRuntime.now().toISOString(),
-    }));
-  } catch (error) {
-    storageFailure(res, error, 'b20-launch-context');
-  }
-});
+    try {
+      if (!(await b20RouteRuntime.discoverAvailable())) {
+        res.status(503).json({ error: 'discover_unavailable', code: 'discover_unavailable' });
+        return;
+      }
+      const context = await readB20LaunchContextV1(tokenAddress);
+      if (!context) {
+        res.status(404).json({ error: 'launch_not_found', code: 'launch_not_found' });
+        return;
+      }
+      res.json(
+        B20LaunchContextResponseV1Schema.parse({
+          schemaVersion: 'b20-launch-context/v1',
+          tokenAddress,
+          ...context,
+          serverTime: b20RouteRuntime.now().toISOString(),
+        }),
+      );
+    } catch (error) {
+      storageFailure(res, error, 'b20-launch-context');
+    }
+  },
+);
 
 b20ControlRouter.get('/opportunities/b20/:tokenAddress', async (req: Request, res: Response) => {
   const guard = b20Guard(req, res);
@@ -2695,7 +2858,9 @@ b20ControlRouter.post('/b20/inspect', async (req: Request, res: Response) => {
 
   const parsed = B20InspectRequestV1Schema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: 'invalid_b20_inspect_request', code: 'invalid_b20_inspect_request' });
+    res
+      .status(400)
+      .json({ error: 'invalid_b20_inspect_request', code: 'invalid_b20_inspect_request' });
     return;
   }
   // Decided with no network access at all, so a malformed address never
@@ -2742,7 +2907,10 @@ b20ControlRouter.post('/b20/inspect', async (req: Request, res: Response) => {
     // A failed read is still recorded: "the endpoint did not answer at this
     // moment" is a fact worth having, and storing it keeps a retry storm from
     // looking like a series of different tokens.
-    const stored = await repository.insertSnapshot({ userId: guard.user.id, snapshot: result.snapshot });
+    const stored = await repository.insertSnapshot({
+      userId: guard.user.id,
+      snapshot: result.snapshot,
+    });
     // T67F — `latest` was read above, before this insert. Reading it afterwards
     // would compare the new snapshot against itself and report no change,
     // forever.
@@ -2871,7 +3039,8 @@ b20ControlRouter.post('/b20/watch', async (req: Request, res: Response) => {
       // Checked before each token rather than mid-token: a half-read card would
       // be stored as a snapshot and diffed against later, so the deadline may
       // only ever fall between tokens.
-      if (!sweepStopped && b20RouteRuntime.monotonicMs() - startedAt >= deadlineMs) sweepStopped = true;
+      if (!sweepStopped && b20RouteRuntime.monotonicMs() - startedAt >= deadlineMs)
+        sweepStopped = true;
       if (sweepStopped) {
         notChecked.push(token);
         continue;
@@ -2941,7 +3110,10 @@ b20ControlRouter.post('/b20/watch', async (req: Request, res: Response) => {
         continue;
       }
       const previous = recent[0] ?? null;
-      const stored = await repository.insertSnapshot({ userId: guard.user.id, snapshot: result.snapshot });
+      const stored = await repository.insertSnapshot({
+        userId: guard.user.id,
+        snapshot: result.snapshot,
+      });
       // An interactive read counts as a read. Without this the background sweep
       // would re-read, minutes later, a token the user just paid to read — and
       // the page would still say "never checked by Miorail" beside it.
@@ -3000,7 +3172,10 @@ b20ControlRouter.post('/b20/watch', async (req: Request, res: Response) => {
 async function watchlistGuard(
   req: Request,
   res: Response,
-): Promise<{ user: NonNullable<ReturnType<typeof sessionUser>>; repository: B20WatchlistRepositoryV1 } | null> {
+): Promise<{
+  user: NonNullable<ReturnType<typeof sessionUser>>;
+  repository: B20WatchlistRepositoryV1;
+} | null> {
   const guard = b20Guard(req, res);
   if (!guard) return null;
   if (!(await b20RouteRuntime.watchlistAvailable())) {
@@ -3087,12 +3262,15 @@ export async function runOpportunitySimulationV1(input: {
   // choose and then answered as if they had.
   const outOfBounds = profileRefusalV1(profile);
   if (outOfBounds) return { ok: false, status: 400, code: outOfBounds };
-  if (!b20RouteRuntime.rpcConfigured()) return { ok: false, status: 503, code: 'b20_rpc_unavailable' };
+  if (!b20RouteRuntime.rpcConfigured())
+    return { ok: false, status: 503, code: 'b20_rpc_unavailable' };
   if (!(await b20RouteRuntime.migrationAvailable())) {
     return { ok: false, status: 503, code: 'b20_storage_unavailable' };
   }
 
-  const recent = await b20RouteRuntime.repository().recentSnapshots(input.tenantId, input.tokenAddress, 1);
+  const recent = await b20RouteRuntime
+    .repository()
+    .recentSnapshots(input.tenantId, input.tokenAddress, 1);
   const snapshot = recent[0]?.snapshot ?? null;
   if (!snapshot) {
     // Controls are prior to price, and prior to simulation. Certifying a
@@ -3102,7 +3280,8 @@ export async function runOpportunitySimulationV1(input: {
       ok: false,
       status: 409,
       code: 'b20_controls_unread',
-      detail: 'This token’s controls have not been read yet. Check it once before simulating an entry.',
+      detail:
+        'This token’s controls have not been read yet. Check it once before simulating an entry.',
     };
   }
   const controls = exitControlsFromSnapshotV1(snapshot);
@@ -3266,35 +3445,41 @@ export const b20SimulatePaymentRuntimeV1 = {
 
 b20ControlRouter.post(
   '/b20/opportunity/simulate',
-  (req: Request, res: Response, next: NextFunction) => b20SimulatePaymentRuntimeV1.middleware(req, res, next),
+  (req: Request, res: Response, next: NextFunction) =>
+    b20SimulatePaymentRuntimeV1.middleware(req, res, next),
   async (req: Request, res: Response) => {
-  const guard = b20Guard(req, res);
-  if (!guard) return;
+    const guard = b20Guard(req, res);
+    if (!guard) return;
 
-  const parsed = B20OpportunitySimulateRequestV1Schema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: 'invalid_b20_opportunity_request', code: 'invalid_b20_opportunity_request' });
-    return;
-  }
-
-  try {
-    const result = await runOpportunitySimulationV1({
-      tenantId: guard.user.id,
-      walletAddress: guard.user.address,
-      chainId: parsed.data.chainId,
-      tokenAddress: parsed.data.tokenAddress,
-      positionAtomic: parsed.data.positionAtomic,
-      maxRoundTripBps: parsed.data.maxRoundTripBps,
-      maxExitSlippageBps: parsed.data.maxExitSlippageBps,
-    });
-    if (!result.ok) {
-      facadeRefusalV1(res, result);
+    const parsed = B20OpportunitySimulateRequestV1Schema.safeParse(req.body);
+    if (!parsed.success) {
+      res
+        .status(400)
+        .json({
+          error: 'invalid_b20_opportunity_request',
+          code: 'invalid_b20_opportunity_request',
+        });
       return;
     }
-    res.json(result.body);
-  } catch (error) {
-    storageFailure(res, error, 'opportunity-simulate');
-  }
+
+    try {
+      const result = await runOpportunitySimulationV1({
+        tenantId: guard.user.id,
+        walletAddress: guard.user.address,
+        chainId: parsed.data.chainId,
+        tokenAddress: parsed.data.tokenAddress,
+        positionAtomic: parsed.data.positionAtomic,
+        maxRoundTripBps: parsed.data.maxRoundTripBps,
+        maxExitSlippageBps: parsed.data.maxExitSlippageBps,
+      });
+      if (!result.ok) {
+        facadeRefusalV1(res, result);
+        return;
+      }
+      res.json(result.body);
+    } catch (error) {
+      storageFailure(res, error, 'opportunity-simulate');
+    }
   },
 );
 
@@ -3330,7 +3515,8 @@ export async function prepareEntryFromClearanceV1(input: {
   profileIdentity: string;
   requestId: string;
 }): Promise<B20FacadeResultV1<Record<string, unknown>>> {
-  if (!b20RouteRuntime.rpcConfigured()) return { ok: false, status: 503, code: 'b20_rpc_unavailable' };
+  if (!b20RouteRuntime.rpcConfigured())
+    return { ok: false, status: 503, code: 'b20_rpc_unavailable' };
   if (!(await b20RouteRuntime.clearanceAvailable())) {
     return { ok: false, status: 503, code: 'b20_clearance_unavailable' };
   }
@@ -3355,33 +3541,33 @@ export async function prepareEntryFromClearanceV1(input: {
     return {
       ok: true,
       body: B20EntryPrepareResponseV1Schema.parse({
-          outcome: 'prepared',
-          refusalReason: null,
-          refusalDetail: null,
-          clearanceId,
-          blueprintHash: replay.blueprintHash,
-          tokenAddress: replay.tokenAddress,
-          positionAtomic: replay.positionAtomic,
-          expectedOutputAtomic: replay.expectedOutputAtomic,
-          minimumOutputAtomic: replay.minimumOutputAtomic,
-          entrySourceKey: replay.entrySourceKey,
-          coverage: replay.coverage,
-          viableRouteConfirmed: replay.viableRouteConfirmed,
-          bestRouteConfirmed: replay.bestRouteConfirmed,
-          certifiedControlBlockNumber: replay.certificationBlockNumber,
-          prepareControlBlockNumber: replay.prepareControlBlockNumber,
-          clearanceExpiresAt: replay.clearanceExpiresAt,
-          // The executable bytes are NOT replayed. They live server-side until
-          // a submission path exists to use them; a Review reads the
-          // projection.
-          calls: null,
-          preparedAt: replay.createdAt,
-          planId: replay.id,
-          review: b20EntryReviewV1(replay, replayCapabilities),
-          executionAvailable: entryExecutionAvailableV1(replayCapabilities),
-          executionUnavailableReason: entryExecutionAvailableV1(replayCapabilities)
-            ? null
-            : 'submission_not_wired',
+        outcome: 'prepared',
+        refusalReason: null,
+        refusalDetail: null,
+        clearanceId,
+        blueprintHash: replay.blueprintHash,
+        tokenAddress: replay.tokenAddress,
+        positionAtomic: replay.positionAtomic,
+        expectedOutputAtomic: replay.expectedOutputAtomic,
+        minimumOutputAtomic: replay.minimumOutputAtomic,
+        entrySourceKey: replay.entrySourceKey,
+        coverage: replay.coverage,
+        viableRouteConfirmed: replay.viableRouteConfirmed,
+        bestRouteConfirmed: replay.bestRouteConfirmed,
+        certifiedControlBlockNumber: replay.certificationBlockNumber,
+        prepareControlBlockNumber: replay.prepareControlBlockNumber,
+        clearanceExpiresAt: replay.clearanceExpiresAt,
+        // The executable bytes are NOT replayed. They live server-side until
+        // a submission path exists to use them; a Review reads the
+        // projection.
+        calls: null,
+        preparedAt: replay.createdAt,
+        planId: replay.id,
+        review: b20EntryReviewV1(replay, replayCapabilities),
+        executionAvailable: entryExecutionAvailableV1(replayCapabilities),
+        executionUnavailableReason: entryExecutionAvailableV1(replayCapabilities)
+          ? null
+          : 'submission_not_wired',
       }),
     };
   }
@@ -3435,66 +3621,71 @@ export async function prepareEntryFromClearanceV1(input: {
   return {
     ok: true,
     body: B20EntryPrepareResponseV1Schema.parse({
-        outcome: prepared.blueprint ? 'prepared' : 'refused',
-        refusalReason: prepared.refusal,
-        refusalDetail: prepared.detail,
-        clearanceId,
-        blueprintHash: prepared.blueprint?.blueprintHash ?? null,
-        tokenAddress: clearance?.tokenAddress ?? prepared.tokenAddress,
-        positionAtomic: clearance?.positionAtomic ?? '1',
-        expectedOutputAtomic: prepared.blueprint?.expectedOutputAtomic ?? null,
-        minimumOutputAtomic: prepared.blueprint?.minimumOutputAtomic ?? null,
-        entrySourceKey: prepared.blueprint?.entrySourceKey ?? null,
-        coverage: prepared.blueprint?.coverage ?? clearance?.coverage ?? null,
-        viableRouteConfirmed: clearance?.viableRouteConfirmed ?? false,
-        bestRouteConfirmed: clearance?.bestRouteConfirmed ?? false,
-        certifiedControlBlockNumber: clearance?.controlBlockNumber ?? null,
-        prepareControlBlockNumber: prepared.blueprint?.prepareControlBlockNumber ?? null,
-        clearanceExpiresAt: clearance?.expiresAt ?? now.toISOString(),
-        // T68F-B §12 — executable bytes leave this server through ONE contract:
-        // the wallet action on begin-submission. Preparation describes a plan;
-        // it does not hand out a transaction, so a card cannot submit directly.
-        calls: null,
-        preparedAt: now.toISOString(),
-        planId: stored?.plan.id ?? null,
-        review: stored ? b20EntryReviewV1(stored.plan, capabilities) : null,
-        // Availability is a fact about this surface, never an inference from
-        // the plan holding unsigned calls. When false it is not a provider
-        // failure and not a token rejection — the plan is sound.
+      outcome: prepared.blueprint ? 'prepared' : 'refused',
+      refusalReason: prepared.refusal,
+      refusalDetail: prepared.detail,
+      clearanceId,
+      blueprintHash: prepared.blueprint?.blueprintHash ?? null,
+      tokenAddress: clearance?.tokenAddress ?? prepared.tokenAddress,
+      positionAtomic: clearance?.positionAtomic ?? '1',
+      expectedOutputAtomic: prepared.blueprint?.expectedOutputAtomic ?? null,
+      minimumOutputAtomic: prepared.blueprint?.minimumOutputAtomic ?? null,
+      entrySourceKey: prepared.blueprint?.entrySourceKey ?? null,
+      coverage: prepared.blueprint?.coverage ?? clearance?.coverage ?? null,
+      viableRouteConfirmed: clearance?.viableRouteConfirmed ?? false,
+      bestRouteConfirmed: clearance?.bestRouteConfirmed ?? false,
+      certifiedControlBlockNumber: clearance?.controlBlockNumber ?? null,
+      prepareControlBlockNumber: prepared.blueprint?.prepareControlBlockNumber ?? null,
+      clearanceExpiresAt: clearance?.expiresAt ?? now.toISOString(),
+      // T68F-B §12 — executable bytes leave this server through ONE contract:
+      // the wallet action on begin-submission. Preparation describes a plan;
+      // it does not hand out a transaction, so a card cannot submit directly.
+      calls: null,
+      preparedAt: now.toISOString(),
+      planId: stored?.plan.id ?? null,
+      review: stored ? b20EntryReviewV1(stored.plan, capabilities) : null,
+      // Availability is a fact about this surface, never an inference from
+      // the plan holding unsigned calls. When false it is not a provider
+      // failure and not a token rejection — the plan is sound.
       executionAvailable: stored ? capabilitiesAvailable : false,
       executionUnavailableReason: stored && !capabilitiesAvailable ? 'submission_not_wired' : null,
     }),
   };
 }
 
-b20ControlRouter.post('/opportunities/:clearanceId/prepare-entry', async (req: Request, res: Response) => {
-  const guard = b20Guard(req, res);
-  if (!guard) return;
+b20ControlRouter.post(
+  '/opportunities/:clearanceId/prepare-entry',
+  async (req: Request, res: Response) => {
+    const guard = b20Guard(req, res);
+    if (!guard) return;
 
-  const parsed = B20EntryPrepareRequestV1Schema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: 'invalid_b20_entry_request', code: 'invalid_b20_entry_request' });
-    return;
-  }
-
-  try {
-    const result = await prepareEntryFromClearanceV1({
-      tenantId: guard.user.id,
-      walletAddress: guard.user.address,
-      clearanceId: String(req.params.clearanceId ?? ''),
-      chainId: parsed.data.chainId,
-      profileIdentity: parsed.data.profileIdentity,
-      requestId: parsed.data.requestId,
-    });
-    if (!result.ok) {
-      facadeRefusalV1(res, result);
+    const parsed = B20EntryPrepareRequestV1Schema.safeParse(req.body);
+    if (!parsed.success) {
+      res
+        .status(400)
+        .json({ error: 'invalid_b20_entry_request', code: 'invalid_b20_entry_request' });
       return;
     }
-    res.json(result.body);
-  } catch (error) {
-    storageFailure(res, error, 'prepare-entry');
-  }
-});
+
+    try {
+      const result = await prepareEntryFromClearanceV1({
+        tenantId: guard.user.id,
+        walletAddress: guard.user.address,
+        clearanceId: String(req.params.clearanceId ?? ''),
+        chainId: parsed.data.chainId,
+        profileIdentity: parsed.data.profileIdentity,
+        requestId: parsed.data.requestId,
+      });
+      if (!result.ok) {
+        facadeRefusalV1(res, result);
+        return;
+      }
+      res.json(result.body);
+    } catch (error) {
+      storageFailure(res, error, 'prepare-entry');
+    }
+  },
+);
 
 /**
  * §9 — the authenticated read.
@@ -3512,7 +3703,9 @@ b20ControlRouter.get('/opportunities/entry-plans/:planId', async (req: Request, 
 
   try {
     if (!(await b20RouteRuntime.entryPlanAvailable())) {
-      res.status(503).json({ error: 'b20_entry_plan_unavailable', code: 'b20_entry_plan_unavailable' });
+      res
+        .status(503)
+        .json({ error: 'b20_entry_plan_unavailable', code: 'b20_entry_plan_unavailable' });
       return;
     }
     const plan = await b20RouteRuntime.entryPlans().getPreparedPlan({
@@ -3529,12 +3722,13 @@ b20ControlRouter.get('/opportunities/entry-plans/:planId', async (req: Request, 
     const attempt = await b20RouteRuntime
       .entrySubmissions()
       .latestForPlan({ planId: plan.id, tenantId: guard.user.id });
-    const proof = capabilities.routeProofWired && attempt
-      ? await b20RouteRuntime.entryProofs().getProofForAttempt({
-          attemptId: attempt.id,
-          tenantId: guard.user.id,
-        })
-      : null;
+    const proof =
+      capabilities.routeProofWired && attempt
+        ? await b20RouteRuntime.entryProofs().getProofForAttempt({
+            attemptId: attempt.id,
+            tenantId: guard.user.id,
+          })
+        : null;
     res.json(
       B20EntryPlanResponseV1Schema.parse({
         review,
@@ -3678,7 +3872,9 @@ export async function beginEntrySubmissionV1(input: {
     };
   }
 
-  const clearance = await b20RouteRuntime.clearances().getClearance(plan.clearanceId, input.tenantId);
+  const clearance = await b20RouteRuntime
+    .clearances()
+    .getClearance(plan.clearanceId, input.tenantId);
   const gate = submitGateRefusalV1({
     plan,
     clearance,
@@ -3735,7 +3931,9 @@ b20ControlRouter.post(
   async (req: Request, res: Response) => {
     const parsedBody = B20EntryBeginSubmissionRequestV1Schema.safeParse(req.body);
     if (!parsedBody.success) {
-      res.status(400).json({ error: 'invalid_b20_submission_request', code: 'invalid_b20_submission_request' });
+      res
+        .status(400)
+        .json({ error: 'invalid_b20_submission_request', code: 'invalid_b20_submission_request' });
       return;
     }
     const guard = await entryPlanGuard(req, res);
@@ -3816,14 +4014,18 @@ b20ControlRouter.post(
   async (req: Request, res: Response) => {
     const parsedBody = B20EntryRecordSubmissionRequestV1Schema.safeParse(req.body);
     if (!parsedBody.success) {
-      res.status(400).json({ error: 'invalid_b20_submission_request', code: 'invalid_b20_submission_request' });
+      res
+        .status(400)
+        .json({ error: 'invalid_b20_submission_request', code: 'invalid_b20_submission_request' });
       return;
     }
     // A batch id belongs to a submission and to nothing else. A rejection that
     // named one would be claiming something reached the chain.
     const body = parsedBody.data;
     if ((body.result === 'submitted') !== (body.batchId !== null)) {
-      res.status(400).json({ error: 'invalid_b20_submission_request', code: 'invalid_b20_submission_request' });
+      res
+        .status(400)
+        .json({ error: 'invalid_b20_submission_request', code: 'invalid_b20_submission_request' });
       return;
     }
     const guard = await entryPlanGuard(req, res);
@@ -3903,7 +4105,12 @@ b20ControlRouter.post(
   async (req: Request, res: Response) => {
     const parsedBody = B20EntryReconcileSubmissionRequestV1Schema.safeParse(req.body);
     if (!parsedBody.success) {
-      res.status(400).json({ error: 'invalid_b20_reconciliation_request', code: 'invalid_b20_reconciliation_request' });
+      res
+        .status(400)
+        .json({
+          error: 'invalid_b20_reconciliation_request',
+          code: 'invalid_b20_reconciliation_request',
+        });
       return;
     }
     const guard = await entryPlanGuard(req, res);
@@ -3938,12 +4145,13 @@ export async function readEntryPlanStatusV1(input: {
   const attempt = await b20RouteRuntime
     .entrySubmissions()
     .latestForPlan({ planId: input.plan.id, tenantId: input.tenantId });
-  const proof = capabilities.routeProofWired && attempt
-    ? await b20RouteRuntime.entryProofs().getProofForAttempt({
-        attemptId: attempt.id,
-        tenantId: input.tenantId,
-      })
-    : null;
+  const proof =
+    capabilities.routeProofWired && attempt
+      ? await b20RouteRuntime.entryProofs().getProofForAttempt({
+          attemptId: attempt.id,
+          tenantId: input.tenantId,
+        })
+      : null;
   return B20EntryStatusResponseV1Schema.parse({
     review: b20EntryReviewV1(input.plan, capabilities),
     status: entryStatusViewV1({ plan: input.plan, attempt, capabilities, now }),
@@ -3983,7 +4191,9 @@ b20ControlRouter.post('/b20/watchlist', async (req: Request, res: Response) => {
 
   const parsed = B20WatchlistAddRequestV1Schema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: 'invalid_b20_watchlist_request', code: 'invalid_b20_watchlist_request' });
+    res
+      .status(400)
+      .json({ error: 'invalid_b20_watchlist_request', code: 'invalid_b20_watchlist_request' });
     return;
   }
   // Refused before any write, for the same reason inspection refuses it: a
@@ -4003,9 +4213,13 @@ b20ControlRouter.post('/b20/watchlist', async (req: Request, res: Response) => {
     // The whole list comes back, not just the new row: the cap and the sweep
     // clock belong to the list, and a surface that patched one entry in would
     // have to recompute both from a state it does not own.
-    res.status(201).json(
-      B20WatchlistResponseV1Schema.parse(watchlistBodyV1(await guard.repository.listForUser(guard.user.id))),
-    );
+    res
+      .status(201)
+      .json(
+        B20WatchlistResponseV1Schema.parse(
+          watchlistBodyV1(await guard.repository.listForUser(guard.user.id)),
+        ),
+      );
   } catch (error) {
     if (error instanceof RouteStorageConflictError) {
       // 409, not 400: the request was well formed and the account is simply
@@ -4034,7 +4248,11 @@ b20ControlRouter.delete('/b20/watchlist/:tokenAddress', async (req: Request, res
     // Removing something that is not there is not an error: the caller wanted
     // it gone, and it is gone. Two tabs must not turn one removal into a 404.
     await guard.repository.removeToken(guard.user.id, address);
-    res.json(B20WatchlistResponseV1Schema.parse(watchlistBodyV1(await guard.repository.listForUser(guard.user.id))));
+    res.json(
+      B20WatchlistResponseV1Schema.parse(
+        watchlistBodyV1(await guard.repository.listForUser(guard.user.id)),
+      ),
+    );
   } catch (error) {
     storageFailure(res, error, 'watchlist');
   }
@@ -4065,20 +4283,23 @@ async function storedV4PoolV1(tokenAddress: string): Promise<{
   const row = await b20RouteRuntime.launchPools().readLaunchPool(tokenAddress);
   if (!row) return { indexed: false, pool: null };
   if (row.outcome !== 'resolved') return { indexed: true, pool: null };
-  return { indexed: true, pool: {
-    poolId: row.poolId,
-    key: {
-      currency0: row.currency0,
-      currency1: row.currency1,
-      fee: row.fee,
-      tickSpacing: row.tickSpacing,
-      hooks: row.hooks,
+  return {
+    indexed: true,
+    pool: {
+      poolId: row.poolId,
+      key: {
+        currency0: row.currency0,
+        currency1: row.currency1,
+        fee: row.fee,
+        tickSpacing: row.tickSpacing,
+        hooks: row.hooks,
+      },
+      token: row.tokenAddress,
+      quoteAsset: row.quoteAsset,
+      tokenIsCurrency0: row.tokenIsCurrency0,
+      blockNumber: Number(row.poolBlockNumber),
     },
-    token: row.tokenAddress,
-    quoteAsset: row.quoteAsset,
-    tokenIsCurrency0: row.tokenIsCurrency0,
-    blockNumber: Number(row.poolBlockNumber),
-  } };
+  };
 }
 
 b20ControlRouter.post('/b20/exit-check', async (req: Request, res: Response) => {
@@ -4087,7 +4308,9 @@ b20ControlRouter.post('/b20/exit-check', async (req: Request, res: Response) => 
 
   const parsed = B20ExitCheckRequestV1Schema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: 'invalid_b20_exit_check_request', code: 'invalid_b20_exit_check_request' });
+    res
+      .status(400)
+      .json({ error: 'invalid_b20_exit_check_request', code: 'invalid_b20_exit_check_request' });
     return;
   }
   const refusal = validateB20InspectRequestV1(parsed.data.chainId, parsed.data.tokenAddress);
@@ -4116,7 +4339,8 @@ b20ControlRouter.post('/b20/exit-check', async (req: Request, res: Response) => 
       res.status(409).json({
         error: 'b20_controls_unread',
         code: 'b20_controls_unread',
-        detail: 'This token’s controls have not been read yet. Check it once before asking whether you can exit.',
+        detail:
+          'This token’s controls have not been read yet. Check it once before asking whether you can exit.',
       });
       return;
     }
@@ -4229,7 +4453,9 @@ b20ControlRouter.get('/b20/snapshots/:id', async (req: Request, res: Response) =
     }
     // Tenant isolation is the QUERY, not a check afterwards: another tenant's
     // snapshot is not found rather than found and refused.
-    const record = await b20RouteRuntime.repository().getSnapshot(String(req.params.id), guard.user.id);
+    const record = await b20RouteRuntime
+      .repository()
+      .getSnapshot(String(req.params.id), guard.user.id);
     if (!record) {
       res.status(404).json({ error: 'b20_snapshot_not_found', code: 'b20_snapshot_not_found' });
       return;

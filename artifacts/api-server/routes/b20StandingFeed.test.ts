@@ -113,6 +113,22 @@ type Row = { launch: ReturnType<typeof launch>; observation: unknown; launchBuye
 function population(): Row[] {
   return Array.from({ length: 100 }, (_, index) => {
     const l = launch(index);
+    if (index === 5) {
+      // A later incomplete attempt may carry route flags copied from work that
+      // happened before the failing check. The current card is still
+      // incomplete; an earlier two-sided history row cannot leak through the
+      // `bothRoutes` predicate under this context.
+      return {
+        launch: l,
+        observation: observation({
+          state: 'unmeasured',
+          reasonCode: 'route_search_degraded',
+          entryRouteFound: true,
+          exitRouteFound: true,
+        }),
+        launchBuyers: buyers(2, l.blockNumber),
+      };
+    }
     if (index % 17 === 3) {
       return { launch: l, observation: observation(), launchBuyers: buyers(62, l.blockNumber) };
     }
@@ -128,6 +144,7 @@ function population(): Row[] {
 }
 
 let listFeedCalls = 0;
+let aggregateFeedCalls = 0;
 
 /** A cursor-honouring stub. The real repository pages by (block, measuredAt,
  * launch id); this one pages by position, which is the same contract at this
@@ -146,10 +163,41 @@ function stubObservations(rows: Row[]) {
         nextCursor:
           nextIndex < rows.length && page.length > 0
             ? Buffer.from(
-                [page[page.length - 1]!.launch.blockNumber, '', page[page.length - 1]!.launch.id].join(' '),
+                [
+                  page[page.length - 1]!.launch.blockNumber,
+                  '',
+                  page[page.length - 1]!.launch.id,
+                ].join(' '),
                 'utf8',
               ).toString('base64url')
             : null,
+      };
+    },
+    aggregateFeed: async (input: { maxLaunchAgeMs: number; now: string }) => {
+      aggregateFeedCalls += 1;
+      const now = Date.parse(input.now);
+      const selected = rows.filter(
+        (row) => now - Date.parse(row.launch.detectedAt) <= input.maxLaunchAgeMs,
+      );
+      return {
+        inspected: selected.length,
+        buckets: selected.map((row) => {
+          const source = row.observation as ReturnType<typeof observation> | null;
+          const launchBuyers = row.launchBuyers as ReturnType<typeof buyers> | null;
+          return {
+            count: 1,
+            observation: source
+              ? {
+                  state: source.state,
+                  reasonCode: source.reasonCode,
+                  entryRouteFound: source.entryRouteFound,
+                  exitRouteFound: source.exitRouteFound,
+                  venuesConsulted: null,
+                }
+              : null,
+            buyerCount: launchBuyers?.buyerCount ?? null,
+          };
+        }),
       };
     },
     getFeedRowForToken: async (input: { tokenAddress: string }) => {
@@ -206,8 +254,13 @@ describe('a verdict section is filled by scanning, not by taking one page', () =
     // The measurement this whole change rests on. Grouping client-side would
     // have produced a heading with one card under it.
     const feed = await read();
-    const bought = feed.cards.filter((card) => card.observation?.standing.kind === 'bought_not_sellable');
-    assert.ok(bought.length <= 2, `expected the finding to be sparse, found ${bought.length} in 25`);
+    const bought = feed.cards.filter(
+      (card) => card.observation?.standing.kind === 'bought_not_sellable',
+    );
+    assert.ok(
+      bought.length <= 2,
+      `expected the finding to be sparse, found ${bought.length} in 25`,
+    );
   });
 
   test('the filtered read returns only that section, gathered across pages', async () => {
@@ -247,7 +300,10 @@ describe('a verdict section is filled by scanning, not by taking one page', () =
     const second = await read({ standing: 'no_buyers_yet', limit: 5, cursor: first.nextCursor });
     const seen = new Set(first.cards.map((card) => card.launch.tokenAddress));
     for (const card of second.cards) {
-      assert.ok(!seen.has(card.launch.tokenAddress), `${card.launch.symbol} was returned on both pages`);
+      assert.ok(
+        !seen.has(card.launch.tokenAddress),
+        `${card.launch.symbol} was returned on both pages`,
+      );
     }
     assert.notEqual(second.cards[0]?.launch.tokenAddress, lastToken);
   });
@@ -260,7 +316,10 @@ describe('a verdict section is filled by scanning, not by taking one page', () =
     const feed = await read({ standing: 'two_sided' });
     assert.deepEqual(feed.cards, []);
     assert.equal(feed.nextCursor, null);
-    assert.ok(listFeedCalls <= DISCOVER_STANDING_SCAN_LIMIT_V1 / 100 + 1, `scan made ${listFeedCalls} reads`);
+    assert.ok(
+      listFeedCalls <= DISCOVER_STANDING_SCAN_LIMIT_V1 / 100 + 1,
+      `scan made ${listFeedCalls} reads`,
+    );
   });
 
   test('an unavailable Discover returns the pipeline sentence, not an empty section', async () => {
@@ -293,7 +352,11 @@ describe('filters on measured evidence exclude what was never measured', () => {
     const feed = await read({ minBuyers: 1, limit: 25 });
     for (const card of feed.cards) {
       const window = card.observation?.launchBuyerWindow ?? null;
-      assert.equal(window?.status, 'measured', `${card.launch.symbol} was counted with an open window`);
+      assert.equal(
+        window?.status,
+        'measured',
+        `${card.launch.symbol} was counted with an open window`,
+      );
       assert.ok((card.observation?.launchBuyers?.buyerCount ?? 0) >= 1);
     }
   });
@@ -322,7 +385,12 @@ describe('filters on measured evidence exclude what was never measured', () => {
     for (const card of feed.cards) {
       assert.equal(card.observation?.entryRouteFound, true);
       assert.equal(card.observation?.exitRouteFound, true);
+      assert.equal(card.observation?.standing.aboutToken, true);
     }
+    assert.ok(
+      !feed.cards.some((card) => card.launch.symbol === 'T5'),
+      'a latest incomplete observation with stale two-route flags was named as both priced',
+    );
   });
 
   test('an exact conclusion is finer than its section', async () => {
@@ -361,8 +429,46 @@ describe('the universe is counted rather than paged', () => {
     const summary = await readB20UniverseSummaryV1({ now: NOW });
     const page = await read({ limit: 25 });
     const bought = summary.standing.find((row) => row.kind === 'bought_not_sellable')?.count ?? 0;
-    const onPage = page.cards.filter((card) => card.observation?.standing.kind === 'bought_not_sellable').length;
+    const onPage = page.cards.filter(
+      (card) => card.observation?.standing.kind === 'bought_not_sellable',
+    ).length;
     assert.ok(bought > onPage, `summary saw ${bought}, one page saw ${onPage}`);
+  });
+
+  test('a 3001st qualifying launch changes the aggregate even when the bounded list cannot reach it', async () => {
+    const rows = Array.from({ length: 3_001 }, (_, index): Row => {
+      const l = launch(index);
+      return {
+        launch: l,
+        observation:
+          index === 3_000
+            ? observation({
+                state: 'provisional',
+                reasonCode: null,
+                exitRouteFound: true,
+                optimisticExitReturnAtomic: '99000000',
+                optimisticRoundTripBps: 100,
+                viableRouteConfirmed: true,
+                bestRouteConfirmed: true,
+              })
+            : observation({ state: 'unmeasured', reasonCode: 'route_search_degraded' }),
+        launchBuyers: buyers(1, l.blockNumber),
+      };
+    });
+    b20RouteRuntime.observations = () => stubObservations(rows);
+    resetB20SummaryCacheV1();
+    try {
+      const [summary, bounded] = await Promise.all([
+        readB20UniverseSummaryV1({ now: NOW }),
+        read({ bothRoutes: true, limit: 25 }),
+      ]);
+      assert.equal(summary.window.inspected, 3_001);
+      assert.equal(summary.standing.find((row) => row.group === 'two_sided')?.count, 1);
+      assert.deepEqual(bounded.cards, [], 'the bounded list unexpectedly reached row 3001');
+    } finally {
+      b20RouteRuntime.observations = () => stubObservations(population());
+      resetB20SummaryCacheV1();
+    }
   });
 
   test('every standing row carries the flag a reader must check before quoting it', async () => {
@@ -395,16 +501,26 @@ describe('the universe is counted rather than paged', () => {
     resetB20SummaryCacheV1();
     await readB20UniverseSummaryV1({ now: NOW });
     listFeedCalls = 0;
+    aggregateFeedCalls = 0;
     await readB20UniverseSummaryV1({ now: new Date(NOW.getTime() + 1_000) });
     assert.equal(listFeedCalls, 0, 'the summary re-read the corpus inside its own cache window');
+    assert.equal(
+      aggregateFeedCalls,
+      0,
+      'the summary re-read the aggregate inside its own cache window',
+    );
   });
 
   test('a different window is a different question and is not served from cache', async () => {
     resetB20SummaryCacheV1();
     await readB20UniverseSummaryV1({ now: NOW });
     listFeedCalls = 0;
+    aggregateFeedCalls = 0;
     await readB20UniverseSummaryV1({ now: NOW, maxLaunchAgeMs: 60 * 60 * 1000 });
-    assert.ok(listFeedCalls > 0, 'a narrower window was answered with a wider window’s counts');
+    assert.ok(
+      aggregateFeedCalls > 0,
+      'a narrower window was answered with a wider window’s counts',
+    );
   });
 });
 
@@ -512,7 +628,9 @@ describe('the project filter runs before the page bound', () => {
     for (const card of feed.cards) {
       assert.ok(card.project?.identityVerified, 'a filtered card lost its profile');
       assert.ok(
-        card.project?.findings.some((finding) => finding.dimension === 'product' && finding.state === 'live'),
+        card.project?.findings.some(
+          (finding) => finding.dimension === 'product' && finding.state === 'live',
+        ),
         'a product-backed card carries no live product finding',
       );
     }

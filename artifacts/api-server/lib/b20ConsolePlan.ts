@@ -73,7 +73,15 @@ export type B20ConsoleStepV1 =
    * Folding it into `list` would put the measurement window between a reader
    * and an answer that has nothing to do with measurement.
    */
-  | { tool: 'projects'; predicate: B20FundamentalPredicateV1; limit: number }
+  | {
+      tool: 'projects';
+      /** Primary/only predicate kept for V1 plan consumers. */
+      predicate: B20FundamentalPredicateV1;
+      /** Present for a compound positive query. */
+      predicates?: readonly B20FundamentalPredicateV1[];
+      operator?: 'and' | 'or';
+      limit: number;
+    }
   /** The exact stored cards for named tokens, with bounded history. */
   | { tool: 'cards'; tokenAddresses: readonly string[]; historyLimit: number }
   /** The measured-movement rail: latest and ~24h baseline, already paired. */
@@ -302,11 +310,39 @@ const FUNDAMENTAL_PREDICATE_QUESTION_V1: readonly {
   { predicate: 'verified_project', patterns: PROJECT_QUESTION_V1 },
 ];
 
-function fundamentalPredicateV1(value: string): B20FundamentalPredicateV1 | null {
+function fundamentalQueryV1(value: string): {
+  predicates: B20FundamentalPredicateV1[];
+  operator: 'and' | 'or';
+} | null {
+  const predicates: B20FundamentalPredicateV1[] = [];
   for (const entry of FUNDAMENTAL_PREDICATE_QUESTION_V1) {
-    if (matchesV1(value, entry.patterns)) return entry.predicate;
+    if (matchesV1(value, entry.patterns) && !predicates.includes(entry.predicate)) {
+      predicates.push(entry.predicate);
+    }
   }
-  return null;
+  // `verified_project` is the broad gate predicate and intentionally contains
+  // the word "product". Once a more specific dimension matched, carrying the
+  // gate as a third operand would turn "product AND website" into a different
+  // query even though every evidence row already requires a verified claim.
+  if (predicates.length > 1) {
+    const gate = predicates.indexOf('verified_project');
+    if (gate >= 0) predicates.splice(gate, 1);
+  }
+  if (predicates.length === 0) return null;
+  if (predicates.length === 1) return { predicates, operator: 'and' };
+
+  // Compound positive predicates are deliberately small: AND and OR only.
+  // The operands are still selected from the closed predicate table above;
+  // this is not a model-authored query language.
+  if (/(^|\s)(or)(\s|$)|(^|\s)или(\s|$)/u.test(value)) {
+    return { predicates, operator: 'or' };
+  }
+  if (/(^|\s)(and)(\s|$)|(^|\s)и(\s|$)/u.test(value)) {
+    return { predicates, operator: 'and' };
+  }
+  // Preserve the pre-compound behaviour for an ambiguous sentence that
+  // happened to match two patterns: the first specific predicate wins.
+  return { predicates: predicates.slice(0, 1), operator: 'and' };
 }
 
 /**
@@ -535,8 +571,8 @@ export function planB20ConsoleAnswerV1(input: {
   // A question about project context is answered from the CLAIMED corpus, not
   // from the measurement window. The counts cannot see a claim, and a launch
   // universe cannot be the denominator for a question none of it was asked.
-  const predicate = fundamentalPredicateV1(value);
-  if (predicate) {
+  const fundamental = fundamentalQueryV1(value);
+  if (fundamental) {
     return {
       scope: effectiveScope,
       intent: 'find_verified_projects',
@@ -544,7 +580,15 @@ export function planB20ConsoleAnswerV1(input: {
       // opened with 3,000 launches read would be quoting a number about a
       // different corpus, which is the shape of answer this console exists to
       // stop producing.
-      steps: [{ tool: 'projects', predicate, limit: LIST_LIMIT_V1 }],
+      steps: [
+        {
+          tool: 'projects',
+          predicate: fundamental.predicates[0]!,
+          predicates: fundamental.predicates,
+          operator: fundamental.operator,
+          limit: LIST_LIMIT_V1,
+        },
+      ],
       tokenAddresses: [],
       refusal: null,
     };
@@ -584,7 +628,11 @@ export function planB20ConsoleAnswerV1(input: {
   // A reader in Investigate whose question matched NONE of the above really was
   // asking about tokens they have not named. That is the one case the refusal
   // was written for, and it keeps it.
-  if (investigateWithoutTokens && universe.intent === 'count_universe' && !matchesV1(value, UNIVERSE_QUESTION_V1)) {
+  if (
+    investigateWithoutTokens &&
+    universe.intent === 'count_universe' &&
+    !matchesV1(value, UNIVERSE_QUESTION_V1)
+  ) {
     return {
       scope: 'investigate',
       intent: 'unsupported',
@@ -618,13 +666,17 @@ export function planB20ConsoleAnswerV1(input: {
  * unnamed-Investigate refusal); known questions, addresses and safety refusals
  * never pay for classification.
  */
-export function b20ConsolePlanNeedsSemanticResolutionV1(input: {
-  question: string;
-  scope: B20ConsoleScopeV1;
-  tokenAddresses?: readonly string[];
-}, plan: B20ConsolePlanV1): boolean {
+export function b20ConsolePlanNeedsSemanticResolutionV1(
+  input: {
+    question: string;
+    scope: B20ConsoleScopeV1;
+    tokenAddresses?: readonly string[];
+  },
+  plan: B20ConsolePlanV1,
+): boolean {
   if (b20UnsupportedRefusalV1(input.question)) return false;
-  if (b20AddressesInV1(input.question).length > 0 || (input.tokenAddresses?.length ?? 0) > 0) return false;
+  if (b20AddressesInV1(input.question).length > 0 || (input.tokenAddresses?.length ?? 0) > 0)
+    return false;
   const value = input.question.trim().toLowerCase();
   if (plan.intent === 'universe_counts') return !matchesV1(value, UNIVERSE_QUESTION_V1);
   return (

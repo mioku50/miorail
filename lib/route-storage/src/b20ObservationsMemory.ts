@@ -81,7 +81,11 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
         // These two disagreeing is how three T65 bugs reached production.
         let repeats = 0;
         for (const row of observations) {
-          if (row.state !== latest.state || (row.reasonCode ?? null) !== (latest.reasonCode ?? null)) break;
+          if (
+            row.state !== latest.state ||
+            (row.reasonCode ?? null) !== (latest.reasonCode ?? null)
+          )
+            break;
           repeats += 1;
         }
         const dueAfterMs = b20ReMeasureIntervalMsV1({
@@ -199,7 +203,9 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
       .map(({ measuredAtMs: _measuredAtMs, ...row }) => row);
   }
 
-  async insertObservation(observation: B20OpportunityObservationV1): Promise<B20ObservationInsertResultV1> {
+  async insertObservation(
+    observation: B20OpportunityObservationV1,
+  ): Promise<B20ObservationInsertResultV1> {
     const parsed = assertObservationV1(observation, 'write');
     const existing = this.observations.get(parsed.id);
     if (existing) {
@@ -269,7 +275,10 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
 
   /** The latest supported observation for a launch, under the same
    * deterministic ordering Postgres uses. */
-  private latestFor(launchId: string, versions: readonly string[]): B20OpportunityObservationV1 | null {
+  private latestFor(
+    launchId: string,
+    versions: readonly string[],
+  ): B20OpportunityObservationV1 | null {
     const candidates = [...this.observations.values()].filter(
       (row) => row.launchId === launchId && versions.includes(row.measurementVersion),
     );
@@ -277,7 +286,9 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
     return candidates.sort((left, right) => {
       const byTime = Date.parse(right.measuredAt) - Date.parse(left.measuredAt);
       if (byTime !== 0) return byTime;
-      const byBlock = Number(BigInt(right.observationBlockNumber) - BigInt(left.observationBlockNumber));
+      const byBlock = Number(
+        BigInt(right.observationBlockNumber) - BigInt(left.observationBlockNumber),
+      );
       if (byBlock !== 0) return byBlock;
       // A total order, so "the latest" is never planner-dependent.
       return right.id.localeCompare(left.id);
@@ -462,6 +473,51 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
     };
   }
 
+  async aggregateFeed(input: {
+    maxLaunchAgeMs: number;
+    now: string;
+    measurementVersions?: readonly string[];
+  }) {
+    const versions = input.measurementVersions ?? [B20_MEASUREMENT_VERSION_V1];
+    const now = Date.parse(input.now);
+    const grouped = new Map<
+      string,
+      {
+        count: number;
+        observation: Pick<
+          B20OpportunityObservationV1,
+          'state' | 'reasonCode' | 'entryRouteFound' | 'exitRouteFound' | 'venuesConsulted'
+        > | null;
+        buyerCount: number | null;
+      }
+    >();
+    for (const launch of await this.canonicalLaunches()) {
+      if (now - Date.parse(launch.detectedAt) > input.maxLaunchAgeMs) continue;
+      const latest = this.latestFor(launch.id, versions);
+      const observation = latest
+        ? {
+            state: latest.state,
+            reasonCode: latest.reasonCode,
+            entryRouteFound: latest.entryRouteFound,
+            exitRouteFound: latest.exitRouteFound,
+            venuesConsulted: latest.venuesConsulted,
+          }
+        : null;
+      // The in-memory feed has no launch-buyers repository. Null is unknown,
+      // exactly as it is on the cards this implementation produces.
+      const buyerCount = null;
+      const key = JSON.stringify({ observation, buyerCount });
+      const current = grouped.get(key);
+      if (current) current.count += 1;
+      else grouped.set(key, { count: 1, observation, buyerCount });
+    }
+    const buckets = [...grouped.values()];
+    return {
+      inspected: buckets.reduce((sum, bucket) => sum + bucket.count, 0),
+      buckets,
+    };
+  }
+
   async getFeedRowForToken(input: {
     tokenAddress: string;
     historyLimit: number;
@@ -475,14 +531,22 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
     if (!launch) return null;
     return {
       row: this.rowFor(launch, versions),
-      history: await this.listObservationsForLaunch({ launchId: launch.id, limit: input.historyLimit }),
+      history: await this.listObservationsForLaunch({
+        launchId: launch.id,
+        limit: input.historyLimit,
+      }),
     };
   }
 
-  async pipelineCounts(input: { now: string; maxLaunchAgeMs: number }): Promise<B20PipelineCountsV1> {
+  async pipelineCounts(input: {
+    now: string;
+    maxLaunchAgeMs: number;
+  }): Promise<B20PipelineCountsV1> {
     const launches = await this.canonicalLaunches();
     const now = Date.parse(input.now);
-    const inWindow = launches.filter((launch) => now - Date.parse(launch.detectedAt) <= input.maxLaunchAgeMs);
+    const inWindow = launches.filter(
+      (launch) => now - Date.parse(launch.detectedAt) <= input.maxLaunchAgeMs,
+    );
     const awaiting = inWindow.filter(
       (launch) => this.latestFor(launch.id, [B20_MEASUREMENT_VERSION_V1]) === null,
     ).length;
@@ -521,7 +585,9 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
       observationsLastRun:
         newest === undefined
           ? 0
-          : measuredAt.filter((at) => Date.parse(newest) - Date.parse(at) <= B20_MEASURE_RUN_WINDOW_MS_V1).length,
+          : measuredAt.filter(
+              (at) => Date.parse(newest) - Date.parse(at) <= B20_MEASURE_RUN_WINDOW_MS_V1,
+            ).length,
     };
   }
 }

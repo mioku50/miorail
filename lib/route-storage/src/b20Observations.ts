@@ -91,7 +91,10 @@ export const B20OpportunityObservationV1Schema = z
      * Not part of the evidence hash on purpose: a v4 pool id is the keccak of
      * its PoolKey, which includes the hook, so `entrySourceKey` already commits
      * to it. This field is for showing, not for proving. */
-    poolHookAddress: z.string().regex(/^0x[0-9a-f]{40}$/).nullable(),
+    poolHookAddress: z
+      .string()
+      .regex(/^0x[0-9a-f]{40}$/)
+      .nullable(),
 
     /** Null when it could not be measured — never zero. "No quote" and "free"
      * are different answers. */
@@ -151,7 +154,10 @@ export const B20OpportunityObservationV1Schema = z
     if (observation.state === 'candidate' && observation.reasonCode !== null) {
       fail('a candidate has nothing to explain yet');
     }
-    if ((observation.state === 'rejected' || observation.state === 'unmeasured') && !observation.reasonCode) {
+    if (
+      (observation.state === 'rejected' || observation.state === 'unmeasured') &&
+      !observation.reasonCode
+    ) {
       // "Rejected" with no reason is an accusation with no evidence, published
       // about somebody's token, unattended.
       fail(`a ${observation.state} observation must name why`);
@@ -163,17 +169,26 @@ export const B20OpportunityObservationV1Schema = z
     }
     if (observation.state === 'rejected' && observation.reasonCode) {
       const rejections = B20_OBSERVATION_REJECTION_REASONS_V1 as readonly string[];
-      if (!rejections.includes(observation.reasonCode)) fail('a rejection must carry a rejection reason');
+      if (!rejections.includes(observation.reasonCode))
+        fail('a rejection must carry a rejection reason');
     }
     if (observation.state === 'unmeasured' && observation.reasonCode) {
       const unmeasured = B20_OBSERVATION_UNMEASURED_REASONS_V1 as readonly string[];
-      if (!unmeasured.includes(observation.reasonCode)) fail('an unmeasured observation must carry an unmeasured reason');
+      if (!unmeasured.includes(observation.reasonCode))
+        fail('an unmeasured observation must carry an unmeasured reason');
     }
     if (observation.state === 'provisional') {
-      if (!observation.entryRouteFound || !observation.exitRouteFound || !observation.factoryConfirmed) {
+      if (
+        !observation.entryRouteFound ||
+        !observation.exitRouteFound ||
+        !observation.factoryConfirmed
+      ) {
         fail('a pass presupposes a confirmed token and both legs');
       }
-      if (observation.optimisticRoundTripBps === null || observation.largestPassingSizeAtomic === null) {
+      if (
+        observation.optimisticRoundTripBps === null ||
+        observation.largestPassingSizeAtomic === null
+      ) {
         fail('a pass must carry the measurements it passed on');
       }
       if (observation.controlsComplete !== true || observation.transfersPaused !== false) {
@@ -186,7 +201,10 @@ export const B20OpportunityObservationV1Schema = z
         fail('a cost that passed cannot exceed the tolerance it was measured against');
       }
     }
-    if (observation.bestRouteConfirmed && (!observation.viableRouteConfirmed || observation.routeCoverage !== 'complete')) {
+    if (
+      observation.bestRouteConfirmed &&
+      (!observation.viableRouteConfirmed || observation.routeCoverage !== 'complete')
+    ) {
       fail('a best-route claim needs a proven route and complete coverage');
     }
     if (Date.parse(observation.staleAfter) <= Date.parse(observation.measuredAt)) {
@@ -201,6 +219,30 @@ export const B20OpportunityObservationV1Schema = z
   });
 
 export type B20OpportunityObservationV1 = z.infer<typeof B20OpportunityObservationV1Schema>;
+
+/**
+ * One equivalence class in the full Discover-universe aggregate.
+ *
+ * Postgres groups only the fields the shared standing projection reads. The
+ * API then runs `b20ExitStandingV1` over these buckets, so the database counts
+ * the whole corpus without growing a second SQL implementation of what a card
+ * means. A bucket is not a card and never leaves the server.
+ */
+export interface B20FeedAggregateBucketV1 {
+  count: number;
+  observation: Pick<
+    B20OpportunityObservationV1,
+    'state' | 'reasonCode' | 'entryRouteFound' | 'exitRouteFound' | 'venuesConsulted'
+  > | null;
+  /** Null means the launch-buying window has no completed aggregate. */
+  buyerCount: number | null;
+}
+
+export interface B20FeedAggregateV1 {
+  /** Every canonical launch in the requested launch-age window. */
+  inspected: number;
+  buckets: B20FeedAggregateBucketV1[];
+}
 
 export interface B20ObservationIdentityV1 {
   launchId: string;
@@ -234,7 +276,8 @@ export function observationIdV1(identity: B20ObservationIdentityV1): string {
  * differ under one identity is a genuine integrity conflict.
  */
 export function observationEvidenceHashV1(
-  observation: Omit<B20OpportunityObservationV1, 'evidenceHash' | 'id' | 'createdAt'> & Record<string, unknown>,
+  observation: Omit<B20OpportunityObservationV1, 'evidenceHash' | 'id' | 'createdAt'> &
+    Record<string, unknown>,
 ): string {
   return stableHashV1('b20-observation-evidence/v1', {
     launchId: observation.launchId,
@@ -293,8 +336,12 @@ export function assertObservationV1(
 ): B20OpportunityObservationV1 {
   const parsed = B20OpportunityObservationV1Schema.safeParse(value);
   if (parsed.success) return parsed.data;
-  const detail = parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ');
-  throw new RouteStorageIntegrityError(`B20 opportunity observation failed validation on ${direction}: ${detail}`);
+  const detail = parsed.error.issues
+    .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+    .join('; ');
+  throw new RouteStorageIntegrityError(
+    `B20 opportunity observation failed validation on ${direction}: ${detail}`,
+  );
 }
 
 export function observationConflictV1(message: string): RouteStorageConflictError {
@@ -552,17 +599,26 @@ export interface B20ObservationRepositoryV1 {
    * overwrite — two disagreeing measurements of one block are two facts and
    * neither wins by arriving second.
    */
-  insertObservation(observation: B20OpportunityObservationV1): Promise<B20ObservationInsertResultV1>;
+  insertObservation(
+    observation: B20OpportunityObservationV1,
+  ): Promise<B20ObservationInsertResultV1>;
 
   getObservation(id: string): Promise<B20OpportunityObservationV1 | null>;
 
   /** Newest first. Historical rows are kept even when their launch was later
    * reorged out — the evidence of what was measured survives. */
-  listObservationsForLaunch(input: { launchId: string; limit: number }): Promise<B20OpportunityObservationV1[]>;
+  listObservationsForLaunch(input: {
+    launchId: string;
+    limit: number;
+  }): Promise<B20OpportunityObservationV1[]>;
 
   listRecentObservations(input: { limit: number }): Promise<B20OpportunityObservationV1[]>;
 
-  acquireMeasureLease(input: { owner: string; now: string; ttlMs: number }): Promise<B20MeasureLeaseV1 | null>;
+  acquireMeasureLease(input: {
+    owner: string;
+    now: string;
+    ttlMs: number;
+  }): Promise<B20MeasureLeaseV1 | null>;
   releaseMeasureLease(input: { owner: string; now: string }): Promise<void>;
 
   /**
@@ -588,6 +644,19 @@ export interface B20ObservationRepositoryV1 {
      * build does not understand is not shown as a current measurement. */
     measurementVersions?: readonly string[];
   }): Promise<B20FeedPageV1>;
+
+  /**
+   * Count the ENTIRE launch-age window in storage.
+   *
+   * Unlike `listFeed`, this is not a retrieval surface and has no card/page
+   * cap. Implementations group the minimal standing inputs and return counts;
+   * callers apply the same shared standing function cards use.
+   */
+  aggregateFeed(input: {
+    maxLaunchAgeMs: number;
+    now: string;
+    measurementVersions?: readonly string[];
+  }): Promise<B20FeedAggregateV1>;
 
   /** §4 — one launch, its latest observation and a bounded history. Null when
    * no canonical launch exists for the address. */

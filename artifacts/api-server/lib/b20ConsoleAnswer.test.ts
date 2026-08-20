@@ -26,7 +26,14 @@ import type { B20ExitAssessmentV1 } from './b20ExitAssessment.js';
 // ---------------------------------------------------------------------------
 
 const SUMMARY: B20ConsoleSummaryV1 = {
-  window: { maxLaunchAgeMs: 48 * 60 * 60 * 1000, launches: 881, complete: true },
+  window: {
+    maxLaunchAgeMs: 48 * 60 * 60 * 1000,
+    launches: 881,
+    inspected: 881,
+    completed: 644,
+    incomplete: 237,
+    complete: true,
+  },
   standing: [
     { kind: 'bought_not_sellable', group: 'bought_not_sellable', count: 60, aboutToken: true },
     { kind: 'two_sided', group: 'two_sided', count: 112, aboutToken: true },
@@ -38,7 +45,10 @@ const SUMMARY: B20ConsoleSummaryV1 = {
     { group: 'two_sided', label: 'Both directions priced', count: 112 },
     { group: 'miorail_limit', label: 'Miorail could not measure', count: 237 },
   ],
-  venues: [{ venues: 'uniswap-v4,aerodrome', count: 600 }, { venues: null, count: 281 }],
+  venues: [
+    { venues: 'uniswap-v4,aerodrome', count: 600 },
+    { venues: null, count: 281 },
+  ],
   buyers: [
     { band: 'not_counted', count: 120 },
     { band: '0', count: 400 },
@@ -65,7 +75,9 @@ describe('Explore states whose limit a count describes', () => {
   test('an unfinished venue search is an ABSENCE, not a property of 193 tokens', () => {
     const result = b20ExploreAnswerV1({ summary: SUMMARY, intent: 'universe_counts' });
     assert.ok(
-      result.missingEvidence.some((entry) => /venue search that included Uniswap v4 for 193/.test(entry)),
+      result.missingEvidence.some((entry) =>
+        /venue search that included Uniswap v4 for 193/.test(entry),
+      ),
       result.missingEvidence.join(' | '),
     );
   });
@@ -80,16 +92,19 @@ describe('Explore states whose limit a count describes', () => {
       summary: { ...SUMMARY, window: { ...SUMMARY.window, complete: false } },
       intent: 'universe_counts',
     });
-    assert.ok(result.caveats.some((entry) => /counts of the newest launches/.test(entry)));
+    assert.ok(
+      result.caveats.some((entry) =>
+        /scoped only to the launches Miorail actually read/.test(entry),
+      ),
+    );
     // The number itself, and the sentence that leads with it, must both say
     // which of the two figures it is. Asked "how many B20 launches were
     // measured in the last 48 hours", production answered "3000 in the last 48
     // hours" — true of what was read, and read by everyone as the total.
-    assert.match(result.answer, /read the newest/);
-    assert.match(result.answer, /does not establish the total/);
-    const read = result.facts.find((fact) => fact.label === 'Launches read');
-    assert.ok(read, 'the launches-read fact is present');
-    assert.match(read.value, /scan cap reached, not the total/);
+    assert.match(result.answer, /did not establish the complete corpus/);
+    const read = result.facts.find((fact) => fact.label === 'Launches inspected');
+    assert.ok(read, 'the launches-inspected fact is present');
+    assert.match(read.value, /incomplete corpus, not the total/);
   });
 
   test('a complete scan states a total without a hedge', () => {
@@ -98,8 +113,16 @@ describe('Explore states whose limit a count describes', () => {
     const result = b20ExploreAnswerV1({ summary: SUMMARY, intent: 'universe_counts' });
     assert.ok(!/scan cap/i.test(result.answer));
     assert.ok(!result.caveats.some((entry) => /scan limit was reached/.test(entry)));
-    const read = result.facts.find((fact) => fact.label === 'Launches read');
-    assert.equal(read?.value, `${SUMMARY.window.launches} in the last 48 hours`);
+    const read = result.facts.find((fact) => fact.label === 'Launches inspected');
+    assert.equal(read?.value, `${SUMMARY.window.inspected} in the last 48 hours`);
+    assert.equal(
+      result.facts.find((fact) => fact.label === 'Completed readings')?.value,
+      '644 launches',
+    );
+    assert.match(
+      result.facts.find((fact) => fact.label === 'Incomplete readings')?.value ?? '',
+      /^237 launches/,
+    );
   });
 
   test('a question that named a finding is answered with that finding first', () => {
@@ -110,7 +133,10 @@ describe('Explore states whose limit a count describes', () => {
     const result = b20ExploreAnswerV1({
       summary: SUMMARY,
       intent: 'find_bought_not_sellable',
-      cards: [cardV1({ symbol: 'WORM' }), cardV1({ symbol: 'MOSS' })],
+      cards: [
+        cardV1({ symbol: 'WORM', kind: 'bought_not_sellable' }),
+        cardV1({ symbol: 'MOSS', kind: 'bought_not_sellable' }),
+      ],
     });
     assert.match(result.answer, /^60 launches were bought and would not price a sale/);
     assert.match(result.answer, /The first 2 are: WORM, MOSS\./);
@@ -129,22 +155,88 @@ describe('Explore states whose limit a count describes', () => {
   test('a find that matched nothing says so plainly', () => {
     // Zero is a real answer. Opening with the universe counts instead would
     // read as an evasion of a question that has a one-sentence answer.
-    const result = b20ExploreAnswerV1({ summary: SUMMARY, intent: 'find_two_sided', cards: [] });
+    const result = b20ExploreAnswerV1({
+      summary: {
+        ...SUMMARY,
+        standing: SUMMARY.standing.map((row) =>
+          row.kind === 'two_sided' ? { ...row, count: 0 } : row,
+        ),
+        sections: SUMMARY.sections.map((row) =>
+          row.group === 'two_sided' ? { ...row, count: 0 } : row,
+        ),
+      },
+      intent: 'find_two_sided',
+      cards: [],
+    });
     assert.match(result.answer, /^No launch in the last 48 hours priced in both directions/);
+  });
+
+  test('an incomplete corpus never produces a global zero claim', () => {
+    const result = b20ExploreAnswerV1({
+      summary: {
+        ...SUMMARY,
+        window: { ...SUMMARY.window, complete: false },
+        standing: SUMMARY.standing.map((row) =>
+          row.kind === 'two_sided' ? { ...row, count: 0 } : row,
+        ),
+        sections: SUMMARY.sections.map((row) =>
+          row.group === 'two_sided' ? { ...row, count: 0 } : row,
+        ),
+      },
+      intent: 'find_two_sided',
+      cards: [],
+    });
+    assert.match(result.answer, /^None among the 881 launches Miorail read/);
+    assert.doesNotMatch(result.answer, /^No launch in the last 48 hours/);
+  });
+
+  test('a match beyond the bounded card scan cannot be rewritten as none', () => {
+    const result = b20ExploreAnswerV1({
+      summary: {
+        ...SUMMARY,
+        window: {
+          ...SUMMARY.window,
+          launches: 3_001,
+          inspected: 3_001,
+          completed: 1,
+          incomplete: 3_000,
+        },
+        standing: [{ kind: 'two_sided', group: 'two_sided', count: 1, aboutToken: true }],
+        sections: [{ group: 'two_sided', label: 'Both directions priced', count: 1 }],
+      },
+      intent: 'find_two_sided',
+      cards: [],
+    });
+    assert.match(result.answer, /^1 launch priced in both directions/);
+    assert.match(result.answer, /bounded card retrieval did not reach a qualifying card/);
+    assert.doesNotMatch(result.answer, /No launch|None among/);
   });
 
   test('all of them is not "the first two of them"', () => {
     const result = b20ExploreAnswerV1({
-      summary: { ...SUMMARY, standing: [{ kind: 'bought_not_sellable', group: 'bought_not_sellable', count: 2, aboutToken: true }] },
+      summary: {
+        ...SUMMARY,
+        standing: [
+          { kind: 'bought_not_sellable', group: 'bought_not_sellable', count: 2, aboutToken: true },
+        ],
+      },
       intent: 'find_bought_not_sellable',
-      cards: [cardV1({ symbol: 'WORM' }), cardV1({ symbol: 'MOSS' })],
+      cards: [
+        cardV1({ symbol: 'WORM', kind: 'bought_not_sellable' }),
+        cardV1({ symbol: 'MOSS', kind: 'bought_not_sellable' }),
+      ],
     });
     assert.match(result.answer, /They are: WORM, MOSS\./);
   });
 
   test('an empty universe is not reported as a shape', () => {
     const result = b20ExploreAnswerV1({
-      summary: { ...SUMMARY, window: { ...SUMMARY.window, launches: 0 }, sections: [], standing: [] },
+      summary: {
+        ...SUMMARY,
+        window: { ...SUMMARY.window, launches: 0, inspected: 0, completed: 0, incomplete: 0 },
+        sections: [],
+        standing: [],
+      },
       intent: 'universe_counts',
     });
     assert.match(result.answer, /None of them has reached a stored conclusion yet/);
@@ -164,7 +256,10 @@ const cardV1 = (overrides: {
   ({
     schemaVersion: 'b20-opportunity-card/v1',
     project: null,
-    launch: { tokenAddress: `0x${overrides.symbol.repeat(40).slice(0, 40)}`, symbol: overrides.symbol },
+    launch: {
+      tokenAddress: `0x${overrides.symbol.repeat(40).slice(0, 40)}`,
+      symbol: overrides.symbol,
+    },
     observation: {
       standing: {
         kind: overrides.kind ?? 'two_sided',
@@ -177,6 +272,7 @@ const cardV1 = (overrides: {
       largestPassingSizeAtomic: null,
       observationBlockNumber: '49929328',
       freshness: 'fresh',
+      entryRouteFound: true,
       exitRouteFound: overrides.exitRouteFound ?? true,
     },
   }) as never;
@@ -206,7 +302,10 @@ describe('Investigate refuses to compare what was not measured the same way', ()
   });
 
   test('a different reference position is not comparable', () => {
-    const verdict = b20ComparabilityV1([readV1('a'), readV1('b', { referencePositionAtomic: '100000000' })]);
+    const verdict = b20ComparabilityV1([
+      readV1('a'),
+      readV1('b', { referencePositionAtomic: '100000000' }),
+    ]);
     assert.equal(verdict.comparable, false);
     assert.match(verdict.reason ?? '', /different reference positions/);
   });
@@ -214,7 +313,10 @@ describe('Investigate refuses to compare what was not measured the same way', ()
   test('a different measurement version is its own reason', () => {
     // Not the same statement: one is a different size, the other is a different
     // definition of the measurement itself.
-    const verdict = b20ComparabilityV1([readV1('a'), readV1('b', { measurementVersion: 'b20-observation/v2' })]);
+    const verdict = b20ComparabilityV1([
+      readV1('a'),
+      readV1('b', { measurementVersion: 'b20-observation/v2' }),
+    ]);
     assert.match(verdict.reason ?? '', /different versions of the measurement/);
   });
 
@@ -243,14 +345,22 @@ describe('Investigate says what it does not have', () => {
     detection: B20ConsoleTokenReadV1['detection'] = null,
     tokenAddress = MIO_V1,
   ): B20ConsoleTokenReadV1 => ({
-    tokenAddress, card: null, profile: null, historyCount: 0, indexStanding, detection,
+    tokenAddress,
+    card: null,
+    profile: null,
+    historyCount: 0,
+    indexStanding,
+    detection,
   });
 
   // A — indexed: the fallback is not consulted and the existing answer stands.
   test('A · an indexed launch answers exactly as before', () => {
     const result = b20InvestigateAnswerV1({ reads: [readV1('a')] });
     // None of the three fallback branches may appear for a token we hold.
-    assert.doesNotMatch(result.answer, /not indexed|could not be completed|not confirmed|confirmed onchain/i);
+    assert.doesNotMatch(
+      result.answer,
+      /not indexed|could not be completed|not confirmed|confirmed onchain/i,
+    );
     assert.doesNotMatch(result.answer, /B20 identity/i);
     // The answer is still about the measurement, keyed by the token's symbol.
     assert.match(result.answer, /^a: /);
@@ -259,7 +369,9 @@ describe('Investigate says what it does not have', () => {
   // B — confirmed by the factory, absent from the index. The regression that
   // matters: this answer must not contain a denial of the token.
   test('B · confirmed B20 with no index row is never called "not a B20"', () => {
-    const result = b20InvestigateAnswerV1({ reads: [missingRowV1('confirmed_b20_not_indexed', 'b20')] });
+    const result = b20InvestigateAnswerV1({
+      reads: [missingRowV1('confirmed_b20_not_indexed', 'b20')],
+    });
     assert.doesNotMatch(result.answer, /not a canonical B20/i);
     assert.doesNotMatch(result.answer, /not a B20/i);
     assert.doesNotMatch(result.answer, /was not confirmed/i);
@@ -272,7 +384,11 @@ describe('Investigate says what it does not have', () => {
     assert.equal(identity?.tone, 'positive');
     assert.equal(index?.value, 'Launch not indexed');
     assert.equal(index?.tone, 'warning');
-    assert.ok(result.missingEvidence.some((entry) => /has not been ingested into Miorail Discover/.test(entry)));
+    assert.ok(
+      result.missingEvidence.some((entry) =>
+        /has not been ingested into Miorail Discover/.test(entry),
+      ),
+    );
   });
 
   test('B · created-but-uninitialised is reported without denying the identity', () => {
@@ -302,7 +418,9 @@ describe('Investigate says what it does not have', () => {
     assert.doesNotMatch(result.answer, /is not a B20/i);
     assert.doesNotMatch(result.answer, /was not confirmed as a B20/i);
     assert.doesNotMatch(result.answer, /confirmed onchain/i);
-    assert.ok(result.missingEvidence.some((entry) => /completed B20 factory identity check/.test(entry)));
+    assert.ok(
+      result.missingEvidence.some((entry) => /completed B20 factory identity check/.test(entry)),
+    );
   });
 
   test('the four states never produce the same sentence', () => {
@@ -318,13 +436,17 @@ describe('Investigate says what it does not have', () => {
   test('a finding about Miorail is never reported as a property of the token', () => {
     const result = b20InvestigateAnswerV1({
       reads: [
-        readV1('c', {}, cardV1({
-          symbol: 'c',
-          kind: 'venue_not_searched',
-          aboutToken: false,
-          headline: 'Miorail has not looked where this trades.',
-          exitRouteFound: false,
-        })),
+        readV1(
+          'c',
+          {},
+          cardV1({
+            symbol: 'c',
+            kind: 'venue_not_searched',
+            aboutToken: false,
+            headline: 'Miorail has not looked where this trades.',
+            exitRouteFound: false,
+          }),
+        ),
       ],
     });
     assert.ok(
@@ -360,7 +482,13 @@ describe('Investigate says what it does not have', () => {
     const base = readV1('a');
     const result = b20InvestigateAnswerV1({
       reads: [base],
-      attempts: [{ tokenAddress: base.tokenAddress, outcome: 'measurement_incomplete', reason: 'route_search_degraded' }],
+      attempts: [
+        {
+          tokenAddress: base.tokenAddress,
+          outcome: 'measurement_incomplete',
+          reason: 'route_search_degraded',
+        },
+      ],
     });
     assert.equal(result.assertions.state, 'measured');
     assert.equal(result.assertions.complete, false);
@@ -370,14 +498,19 @@ describe('Investigate says what it does not have', () => {
   test('exit capacity is displayed in the B20 token, not the reference quote asset', () => {
     const base = readV1('a');
     const result = b20InvestigateAnswerV1({
-      reads: [{
-        ...base,
-        card: {
-          ...base.card!,
-          launch: { ...base.card!.launch, symbol: 'BPEPE', decimals: 18 },
-          observation: { ...base.card!.observation!, largestPassingSizeAtomic: '352640000000000000000000' },
-        } as never,
-      }],
+      reads: [
+        {
+          ...base,
+          card: {
+            ...base.card!,
+            launch: { ...base.card!.launch, symbol: 'BPEPE', decimals: 18 },
+            observation: {
+              ...base.card!.observation!,
+              largestPassingSizeAtomic: '352640000000000000000000',
+            },
+          } as never,
+        },
+      ],
     });
     const fact = result.facts.find((entry) => entry.label === 'BPEPE');
     assert.match(fact?.value ?? '', /exit capacity at least 352640 BPEPE/);
@@ -387,7 +520,10 @@ describe('Investigate says what it does not have', () => {
 
 // ---------------------------------------------------------------------------
 
-const measured = (coverageBps: number | null, over: Partial<B20ExitAssessmentV1> = {}): B20ExitAssessmentV1 => ({
+const measured = (
+  coverageBps: number | null,
+  over: Partial<B20ExitAssessmentV1> = {},
+): B20ExitAssessmentV1 => ({
   status: 'measured_reference_bound',
   requestComparison: 'reference_profile_only',
   coverageBps,
@@ -396,7 +532,11 @@ const measured = (coverageBps: number | null, over: Partial<B20ExitAssessmentV1>
 });
 
 const portfolio = (
-  entries: readonly { symbol: string; assessment: B20ExitAssessmentV1; profile?: Partial<NonNullable<B20ConsoleTokenReadV1['profile']>> }[],
+  entries: readonly {
+    symbol: string;
+    assessment: B20ExitAssessmentV1;
+    profile?: Partial<NonNullable<B20ConsoleTokenReadV1['profile']>>;
+  }[],
 ) =>
   b20PortfolioAnswerV1({
     reads: entries.map((entry) => readV1(entry.symbol, entry.profile ?? {})),
@@ -446,7 +586,10 @@ describe('Portfolio orders what was measured, and says whose size it was', () =>
       { symbol: 'b', assessment: measured(1200), profile: { referencePositionAtomic: '999' } },
     ]);
     assert.doesNotMatch(result.answer, /hardest to close first/);
-    assert.match(result.answer, /not against the same reference position, so they are stated rather than ordered/);
+    assert.match(
+      result.answer,
+      /not against the same reference position, so they are stated rather than ordered/,
+    );
   });
 
   test('the size caveat is in the answer itself, not only under the fold', () => {
@@ -466,17 +609,24 @@ describe('Portfolio orders what was measured, and says whose size it was', () =>
     assert.match(result.answer, /2 positions could not be ordered/);
     assert.match(result.answer, /b has no stored measurement yet/);
     assert.match(result.answer, /c has no measured exit capacity to order by/);
-    assert.ok(result.missingEvidence.some((entry) => /An Exit-First measurement for b/.test(entry)));
+    assert.ok(
+      result.missingEvidence.some((entry) => /An Exit-First measurement for b/.test(entry)),
+    );
   });
 
   test('an unstable ladder is flagged on the position it belongs to', () => {
-    const result = portfolio([{ symbol: 'a', assessment: measured(9000, { capacityStable: false }) }]);
+    const result = portfolio([
+      { symbol: 'a', assessment: measured(9000, { capacityStable: false }) },
+    ]);
     assert.match(result.facts[0]?.value ?? '', /ladder unstable/);
     assert.equal(result.facts[0]?.tone, 'warning');
   });
 
   test('the reads never repeat the wallet’s holdings', () => {
-    const result = portfolio([{ symbol: 'a', assessment: measured(9000) }, { symbol: 'b', assessment: measured(1200) }]);
+    const result = portfolio([
+      { symbol: 'a', assessment: measured(9000) },
+      { symbol: 'b', assessment: measured(1200) },
+    ]);
     assert.deepEqual(result.reads, [
       { tool: 'positions', detail: '2 held tokens, read from stored measurements only' },
     ]);
@@ -574,7 +724,9 @@ describe('Changes never reports an absence of comparison as an absence of moveme
       },
     });
     assert.match(result.answer, /Of 12 launches with stored history, 1 could be compared/);
-    assert.ok(result.facts.some((fact) => fact.label === 'Pairs considered' && fact.value === '12'));
+    assert.ok(
+      result.facts.some((fact) => fact.label === 'Pairs considered' && fact.value === '12'),
+    );
   });
 });
 
@@ -587,7 +739,10 @@ describe('"which launches need more evidence" answers about the measurement', ()
     const result = b20NeedsEvidenceAnswerV1({ summary: SUMMARY });
     // 193 + 44 — every standing whose `aboutToken` is false, read off the flag
     // rather than off a hand-kept list of kinds.
-    assert.match(result.answer, /^237 launches in the last 48 hours carry a reading Miorail did not finish/);
+    assert.match(
+      result.answer,
+      /^237 launches in the last 48 hours carry a reading Miorail did not finish/,
+    );
     assert.match(result.answer, /limits of Miorail’s measurement, not properties of the tokens/);
     assert.match(result.answer, /market not fully measured \(193\)/);
     assert.match(result.answer, /not measured yet \(44\)/);
@@ -642,7 +797,9 @@ describe('"what is worth looking at" answers without ranking anything', () => {
       movers: [],
     });
     assert.ok(
-      result.missingEvidence.some((entry) => /Bought, and a sale would not price — no launch/.test(entry)),
+      result.missingEvidence.some((entry) =>
+        /Bought, and a sale would not price — no launch/.test(entry),
+      ),
       result.missingEvidence.join(' | '),
     );
     // Nothing to put forward is a state of the measurement, and the answer
@@ -654,7 +811,9 @@ describe('"what is worth looking at" answers without ranking anything', () => {
   test('no comparable pair is reported as an absence of comparison, never of movement', () => {
     const result = b20ResearchCandidatesAnswerV1({ categories: CATEGORIES, movers: [] });
     assert.ok(
-      result.missingEvidence.some((entry) => /two comparable observations about 24 hours apart/.test(entry)),
+      result.missingEvidence.some((entry) =>
+        /two comparable observations about 24 hours apart/.test(entry),
+      ),
       result.missingEvidence.join(' | '),
     );
   });

@@ -1,5 +1,9 @@
 import { b20RouteRuntime, runB20ConsolePlanV1 } from '../artifacts/api-server/routes/b20Control.js';
-import { b20ScopeIsPrivateV1, type B20ConsoleScopeV1 } from '../artifacts/api-server/lib/b20ConsolePlan.js';
+import {
+  b20ScopeIsPrivateV1,
+  type B20ConsoleIntentV1,
+  type B20ConsoleScopeV1,
+} from '../artifacts/api-server/lib/b20ConsolePlan.js';
 import { resolveB20ConsolePlanV1 } from '../artifacts/api-server/lib/b20ConsoleIntent.js';
 import { b20NarrationEvidenceStrengthV1 } from '../artifacts/api-server/lib/b20AnswerVerify.js';
 import { narrateB20AnswerV1 } from '../artifacts/api-server/lib/b20Answer.js';
@@ -24,11 +28,19 @@ import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 //      chosen from a measurement and should keep being one.
 //   3. That "no comparison" is never rendered as "no movement".
 //
-// Reads only. No wallet, no key, no calldata, no write. Prints no endpoint and
-// no credential.
+// No wallet, key, calldata or paid action. Investigate may persist the same
+// targeted on-demand observation the product takes for that address. Prints no
+// endpoint and no credential.
 // ---------------------------------------------------------------------------
 
-const QUESTIONS_V1: readonly { scope: B20ConsoleScopeV1; question: string; tokenAddresses?: string[] }[] = [
+interface ProbeQuestionV1 {
+  scope: B20ConsoleScopeV1;
+  question: string;
+  tokenAddresses?: string[];
+  expectedIntent?: B20ConsoleIntentV1;
+}
+
+const QUESTIONS_V1: readonly ProbeQuestionV1[] = [
   // ── The acceptance prompts, typed the way a reader types them ────────────
   //
   // Every line below is a sentence somebody actually wrote into the live
@@ -52,11 +64,66 @@ const QUESTIONS_V1: readonly { scope: B20ConsoleScopeV1; question: string; token
   { scope: 'explore', question: 'Какие запуски требуют больше доказательств?' },
   // Deliberately avoids the product's own words. This exercises semantic
   // intent resolution rather than one more phrase added to a regex list.
-  { scope: 'explore', question: 'Surface assets where acquisition worked but disposal could not be established' },
+  {
+    scope: 'explore',
+    question: 'Surface assets where acquisition worked but disposal could not be established',
+  },
 
   // ── Refused before any read ──────────────────────────────────────────────
   { scope: 'explore', question: 'Which of these will moon?' },
   { scope: 'investigate', question: 'tell me about it' },
+];
+
+/**
+ * The fixed production-consistency gate from the 2026-08-20 B20 repair.
+ * Keep this list stable: adding a ninth "helpful" prompt would make a later
+ * PASS incomparable with the acceptance run that found the original bugs.
+ */
+const CONSISTENCY_QUESTIONS_V1: readonly {
+  scope: B20ConsoleScopeV1;
+  question: string;
+  expectedIntent: B20ConsoleIntentV1;
+}[] = [
+  {
+    scope: 'explore',
+    question: 'How many B20 launches were measured in the last 48 hours?',
+    expectedIntent: 'universe_counts',
+  },
+  {
+    scope: 'explore',
+    question: 'Which B20 tokens were bought but a sale could not be priced?',
+    expectedIntent: 'find_bought_not_sellable',
+  },
+  {
+    scope: 'explore',
+    question: 'Show B20 tokens where both entry and exit were priced.',
+    expectedIntent: 'find_two_sided',
+  },
+  {
+    scope: 'explore',
+    question: 'Which B20 launches need more evidence, and why?',
+    expectedIntent: 'find_needs_evidence',
+  },
+  {
+    scope: 'investigate',
+    question: 'Find me the most interesting B20 tokens to investigate further.',
+    expectedIntent: 'find_research_candidates',
+  },
+  {
+    scope: 'explore',
+    question: 'Which B20 tokens have a verified website or Base presence?',
+    expectedIntent: 'find_verified_projects',
+  },
+  {
+    scope: 'explore',
+    question: 'Which B20 tokens have a live product and verified website?',
+    expectedIntent: 'find_verified_projects',
+  },
+  {
+    scope: 'investigate',
+    question: 'Check MIO token 0xb200000000000000000000578f3ae29d9e6e0101',
+    expectedIntent: 'compare_tokens',
+  },
 ];
 
 /**
@@ -68,10 +135,27 @@ const QUESTIONS_V1: readonly { scope: B20ConsoleScopeV1; question: string; token
  * Miorail's phrasing and nobody else's.
  */
 const ACCEPTANCE_TOKENS_V1: readonly { symbol: string; address: string; question: string }[] = [
-  { symbol: 'FLAG', address: '0xb20000000000000000000047f57bc93d7f130101', question: 'Investigate 0xb20000000000000000000047f57bc93d7f130101' },
-  { symbol: 'B420', address: '0xb200000000000000000000231d6c1f1ce455ba32', question: 'Check 0xb200000000000000000000231d6c1f1ce455ba32' },
-  { symbol: 'BPEPE', address: '0xb2000000000000000000008eeba3a477300c5601', question: 'What do we know about 0xb2000000000000000000008eeba3a477300c5601?' },
-  { symbol: 'RWAGMI', address: '0xb200000000000000000000bf0548ab2ebd00ba5e', question: 'Does this B20 token have a working market? 0xb200000000000000000000bf0548ab2ebd00ba5e' },
+  {
+    symbol: 'FLAG',
+    address: '0xb20000000000000000000047f57bc93d7f130101',
+    question: 'Investigate 0xb20000000000000000000047f57bc93d7f130101',
+  },
+  {
+    symbol: 'B420',
+    address: '0xb200000000000000000000231d6c1f1ce455ba32',
+    question: 'Check 0xb200000000000000000000231d6c1f1ce455ba32',
+  },
+  {
+    symbol: 'BPEPE',
+    address: '0xb2000000000000000000008eeba3a477300c5601',
+    question: 'What do we know about 0xb2000000000000000000008eeba3a477300c5601?',
+  },
+  {
+    symbol: 'RWAGMI',
+    address: '0xb200000000000000000000bf0548ab2ebd00ba5e',
+    question:
+      'Does this B20 token have a working market? 0xb200000000000000000000bf0548ab2ebd00ba5e',
+  },
 ];
 
 function summariseV1(text: string, width = 220): string {
@@ -82,21 +166,35 @@ function summariseV1(text: string, width = 220): string {
 async function main(): Promise<void> {
   reportLoadedEnvFileV1(loadRootEnvFileV1());
 
-  const tokenArgs = process.argv.slice(2).filter((value) => /^0x[0-9a-fA-F]{40}$/.test(value));
-  const questions = tokenArgs.length > 0
-    ? [
-        ...QUESTIONS_V1,
-        ...ACCEPTANCE_TOKENS_V1.map((token) => ({ scope: 'investigate' as const, question: token.question })),
-        { scope: 'investigate' as const, question: 'Compare these.', tokenAddresses: tokenArgs },
-        // The private scope, exercised with addresses an operator supplied.
-        // Nothing here reaches a provider and nothing is logged; the controls
-        // below check the second half of that.
-        { scope: 'portfolio' as const, question: 'Which of my positions is hardest to close?', tokenAddresses: tokenArgs },
-      ]
-    : [
-        ...QUESTIONS_V1,
-        ...ACCEPTANCE_TOKENS_V1.map((token) => ({ scope: 'investigate' as const, question: token.question })),
-      ];
+  const args = process.argv.slice(2);
+  const consistencyMode = args.includes('--consistency');
+  const tokenArgs = args.filter((value) => /^0x[0-9a-fA-F]{40}$/.test(value));
+  const questions: readonly ProbeQuestionV1[] = consistencyMode
+    ? CONSISTENCY_QUESTIONS_V1
+    : tokenArgs.length > 0
+      ? [
+          ...QUESTIONS_V1,
+          ...ACCEPTANCE_TOKENS_V1.map((token) => ({
+            scope: 'investigate' as const,
+            question: token.question,
+          })),
+          { scope: 'investigate' as const, question: 'Compare these.', tokenAddresses: tokenArgs },
+          // The private scope, exercised with addresses an operator supplied.
+          // Nothing here reaches a provider and nothing is logged; the controls
+          // below check the second half of that.
+          {
+            scope: 'portfolio' as const,
+            question: 'Which of my positions is hardest to close?',
+            tokenAddresses: tokenArgs,
+          },
+        ]
+      : [
+          ...QUESTIONS_V1,
+          ...ACCEPTANCE_TOKENS_V1.map((token) => ({
+            scope: 'investigate' as const,
+            question: token.question,
+          })),
+        ];
 
   if (!(await b20RouteRuntime.discoverAvailable())) {
     console.error('Discover storage is unavailable — nothing to read.');
@@ -114,9 +212,17 @@ async function main(): Promise<void> {
     console.log('');
     console.log(`Q  [${input.scope}] ${input.question}`);
     if (plan.refusal) {
-      console.log(`   refused before any read (${plan.intent} · ${resolution.source}${resolution.reason ? ` · ${resolution.reason}` : ''})`);
+      console.log(
+        `   refused before any read (${plan.intent} · ${resolution.source}${resolution.reason ? ` · ${resolution.reason}` : ''})`,
+      );
       console.log(`   ${summariseV1(plan.refusal)}`);
       continue;
+    }
+
+    const expectedIntent = 'expectedIntent' in input ? input.expectedIntent : null;
+    if (expectedIntent && plan.intent !== expectedIntent) {
+      console.error(`   FAIL: expected ${expectedIntent}, planned ${plan.intent}`);
+      process.exitCode = 1;
     }
 
     const started = Date.now();
@@ -129,7 +235,9 @@ async function main(): Promise<void> {
     const strength = b20NarrationEvidenceStrengthV1(evidence);
     widest = Math.max(widest, strength.distinctNumbers);
 
-    console.log(`   answered in ${plan.scope} as ${plan.intent} · ${resolution.source} · ${Date.now() - started}ms`);
+    console.log(
+      `   answered in ${plan.scope} as ${plan.intent} · ${resolution.source} · ${Date.now() - started}ms`,
+    );
     console.log(`   deterministic: ${summariseV1(answer.answer)}`);
 
     // The narrated answer, which is what a reader is actually shown — and where
@@ -163,7 +271,9 @@ async function main(): Promise<void> {
     );
     console.log(`   read: ${answer.reads.map((read) => read.tool).join(', ') || 'nothing'}`);
     if (answer.missingEvidence.length > 0) {
-      console.log(`   absences: ${answer.missingEvidence.length} — ${summariseV1(answer.missingEvidence[0]!, 120)}`);
+      console.log(
+        `   absences: ${answer.missingEvidence.length} — ${summariseV1(answer.missingEvidence[0]!, 120)}`,
+      );
     }
 
     // The control this probe exists for. A count under a conclusion that is
@@ -177,12 +287,43 @@ async function main(): Promise<void> {
       console.error('   FAIL: an absence of comparison was rendered as an absence of movement');
       process.exitCode = 1;
     }
+    if (/storage_unavailable|b20_console_answer_unavailable/i.test(answer.answer)) {
+      console.error('   FAIL: a raw internal availability code reached the answer');
+      process.exitCode = 1;
+    }
+    if (consistencyMode && plan.intent === 'universe_counts') {
+      const labels = new Set(answer.facts.map((fact) => fact.label));
+      for (const required of ['Launches inspected', 'Completed readings', 'Incomplete readings']) {
+        if (!labels.has(required)) {
+          console.error(`   FAIL: the summary omitted ${required}`);
+          process.exitCode = 1;
+        }
+      }
+      if (!answer.assertions.complete && /(^|[.!?]\s+)No (launch|B20)/i.test(answer.answer)) {
+        console.error('   FAIL: an incomplete corpus made a global zero claim');
+        process.exitCode = 1;
+      }
+    }
+    if (consistencyMode && plan.intent === 'find_verified_projects') {
+      const projects = plan.steps.find((step) => step.tool === 'projects');
+      const expectedOperator = /\bor\b/i.test(input.question) ? 'or' : 'and';
+      if (
+        !projects ||
+        projects.operator !== expectedOperator ||
+        (projects.predicates?.length ?? 0) !== 2
+      ) {
+        console.error(`   FAIL: compound project query was not planned as ${expectedOperator}`);
+        process.exitCode = 1;
+      }
+    }
     if (b20ScopeIsPrivateV1(plan.scope)) {
       // The private scope's two obligations, checked rather than trusted: the
       // answer states whose size was measured, and nothing that goes back into
       // a log repeats which tokens the wallet holds.
       if (!/not at the size you are holding/.test(answer.answer)) {
-        console.error('   FAIL: a portfolio answer did not state that the measured size is not the held size');
+        console.error(
+          '   FAIL: a portfolio answer did not state that the measured size is not the held size',
+        );
         process.exitCode = 1;
       }
       const surfaced = JSON.stringify(answer.reads);

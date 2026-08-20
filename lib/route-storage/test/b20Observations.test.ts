@@ -53,31 +53,39 @@ describe('a stored observation cannot claim more than it measured', () => {
     // "Rejected" with no reason is an accusation with no evidence, published
     // about somebody's token, unattended.
     assert.throws(
-      () =>
-        assertObservationV1(
-          observationFixtureV1({ state: 'rejected', reasonCode: null }),
-        ),
+      () => assertObservationV1(observationFixtureV1({ state: 'rejected', reasonCode: null })),
       RouteStorageIntegrityError,
     );
     assert.doesNotThrow(() =>
-      assertObservationV1(observationFixtureV1({ state: 'rejected', reasonCode: 'transfers_paused' })),
+      assertObservationV1(
+        observationFixtureV1({ state: 'rejected', reasonCode: 'transfers_paused' }),
+      ),
     );
   });
 
   test('a rejection cannot carry an unmeasured reason, or the reverse', () => {
     assert.throws(
-      () => assertObservationV1(observationFixtureV1({ state: 'rejected', reasonCode: 'controls_incomplete' })),
+      () =>
+        assertObservationV1(
+          observationFixtureV1({ state: 'rejected', reasonCode: 'controls_incomplete' }),
+        ),
       RouteStorageIntegrityError,
     );
     assert.throws(
-      () => assertObservationV1(observationFixtureV1({ state: 'unmeasured', reasonCode: 'transfers_paused' })),
+      () =>
+        assertObservationV1(
+          observationFixtureV1({ state: 'unmeasured', reasonCode: 'transfers_paused' }),
+        ),
       RouteStorageIntegrityError,
     );
   });
 
   test('a candidate has nothing to explain yet', () => {
     assert.throws(
-      () => assertObservationV1(observationFixtureV1({ state: 'candidate', reasonCode: 'quoted_pre_entry' })),
+      () =>
+        assertObservationV1(
+          observationFixtureV1({ state: 'candidate', reasonCode: 'quoted_pre_entry' }),
+        ),
       RouteStorageIntegrityError,
     );
   });
@@ -111,11 +119,17 @@ describe('a stored observation cannot claim more than it measured', () => {
     // §16.12 at the storage layer: the stronger claim cannot be stored without
     // the weaker one under it.
     assert.throws(
-      () => assertObservationV1(observationFixtureV1({ routeCoverage: 'partial', bestRouteConfirmed: true })),
+      () =>
+        assertObservationV1(
+          observationFixtureV1({ routeCoverage: 'partial', bestRouteConfirmed: true }),
+        ),
       RouteStorageIntegrityError,
     );
     assert.throws(
-      () => assertObservationV1(observationFixtureV1({ viableRouteConfirmed: false, bestRouteConfirmed: true })),
+      () =>
+        assertObservationV1(
+          observationFixtureV1({ viableRouteConfirmed: false, bestRouteConfirmed: true }),
+        ),
       RouteStorageIntegrityError,
     );
     assert.doesNotThrow(() =>
@@ -168,7 +182,11 @@ describe('identity and evidence answer different questions', () => {
     // The property idempotency rests on: a retry a second later must hash the
     // same, or every retry would look like a disagreement.
     const observation = observationFixtureV1();
-    const later = { ...observation, measuredAt: '2026-08-04T00:00:05.000Z', createdAt: '2026-08-04T00:00:05.000Z' };
+    const later = {
+      ...observation,
+      measuredAt: '2026-08-04T00:00:05.000Z',
+      createdAt: '2026-08-04T00:00:05.000Z',
+    };
     assert.equal(observationEvidenceHashV1(later), observation.evidenceHash);
     // But a changed measurement does change it.
     assert.notEqual(
@@ -185,7 +203,10 @@ describe('identity and evidence answer different questions', () => {
     assert.equal(capacitySamplesHashV1(ascending), capacitySamplesHashV1([...ascending].reverse()));
     assert.notEqual(
       capacitySamplesHashV1(ascending),
-      capacitySamplesHashV1([{ sizeAtomic: '1000', slippageBps: 10 }, { sizeAtomic: '2000', slippageBps: null }]),
+      capacitySamplesHashV1([
+        { sizeAtomic: '1000', slippageBps: 10 },
+        { sizeAtomic: '2000', slippageBps: null },
+      ]),
       'an unpriced rung is not the same measurement as a priced one',
     );
   });
@@ -194,7 +215,11 @@ describe('identity and evidence answer different questions', () => {
 describe('nothing in observation storage can reach a wallet', () => {
   test('no signer, no submission, no credentials, no state override', () => {
     // §15/§16.32.
-    for (const file of ['b20Observations.ts', 'b20ObservationsMemory.ts', 'b20ObservationsDatabase.ts']) {
+    for (const file of [
+      'b20Observations.ts',
+      'b20ObservationsMemory.ts',
+      'b20ObservationsDatabase.ts',
+    ]) {
       const source = readFileSync(path.join(here, '..', 'src', file), 'utf8');
       for (const forbidden of [
         'privateKey',
@@ -230,7 +255,11 @@ describeB20ObservationRepositoryV1('in-memory', async () => {
     async seedLaunch(input) {
       // Just below the first launch block the contract seeds, so every commit
       // moves the cursor forward exactly as a real pass would.
-      await launches.initialiseCursor({ key: LANE, startBlock: '999', now: '2026-08-04T00:00:00.000Z' });
+      await launches.initialiseCursor({
+        key: LANE,
+        startBlock: '999',
+        now: '2026-08-04T00:00:00.000Z',
+      });
       await launches.acquireWorkerLease({
         key: LANE,
         owner: 'seed',
@@ -275,7 +304,11 @@ describeB20ObservationRepositoryV1('in-memory', async () => {
           ],
           now: '2026-08-04T00:00:00.000Z',
         });
-        await launches.releaseWorkerLease({ key: LANE, owner: 'seed', now: '2026-08-04T00:00:00.000Z' });
+        await launches.releaseWorkerLease({
+          key: LANE,
+          owner: 'seed',
+          now: '2026-08-04T00:00:00.000Z',
+        });
         return;
       }
       await launches.commitRange({
@@ -303,7 +336,11 @@ describeB20ObservationRepositoryV1('in-memory', async () => {
         }),
         now: '2026-08-04T00:00:00.000Z',
       });
-      await launches.releaseWorkerLease({ key: LANE, owner: 'seed', now: '2026-08-04T00:00:00.000Z' });
+      await launches.releaseWorkerLease({
+        key: LANE,
+        owner: 'seed',
+        now: '2026-08-04T00:00:00.000Z',
+      });
     },
   };
 });
@@ -340,20 +377,25 @@ describe('the mover query cannot lose precision on a large amount', () => {
     const missing = declared.filter(
       (column) => !(B20_OBSERVATION_JSONB_NUMERICS_V1 as readonly string[]).includes(column),
     );
-    assert.deepEqual(missing, [], `these numeric columns would be returned as floats: ${missing.join(', ')}`);
+    assert.deepEqual(
+      missing,
+      [],
+      `these numeric columns would be returned as floats: ${missing.join(', ')}`,
+    );
   });
 });
 
 describe('launch-buyer evidence reaches every Discover read', () => {
   const database = readFileSync(path.join(here, '..', 'src', 'b20ObservationsDatabase.ts'), 'utf8');
 
-  test('market, feed and token-detail queries all join the measured launch window', () => {
+  test('market, feed, aggregate and token-detail queries all join the measured launch window', () => {
     // The row mapper already treats a missing buyer row as honest null. If a
     // read path forgets this join, every measured concentration also becomes
     // null and the UI looks identical to a window nobody measured.
     assert.equal(
-      database.match(/LEFT JOIN b20_launch_buyers lb ON lb\.token_address = l\.token_address/g)?.length,
-      3,
+      database.match(/LEFT JOIN b20_launch_buyers lb ON lb\.token_address = l\.token_address/g)
+        ?.length,
+      4,
     );
     assert.equal(
       database.match(/lb\.buyer_count, lb\.top_buyer_share_bps, lb\.top_three_share_bps/g)?.length,

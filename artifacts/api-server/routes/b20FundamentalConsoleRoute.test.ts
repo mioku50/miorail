@@ -66,6 +66,24 @@ function projectsFixtureV1() {
           reference: 'https://miorail.xyz/mcp',
           observedAt: NOW,
         },
+        {
+          chainId: 8453,
+          tokenAddress: UNINDEXED,
+          dimension: 'website',
+          state: 'verified',
+          provenance: 'https_probe',
+          reference: 'https://miorail.xyz',
+          observedAt: NOW,
+        },
+        {
+          chainId: 8453,
+          tokenAddress: UNINDEXED,
+          dimension: 'base_presence',
+          state: 'verified',
+          provenance: 'functional_probe',
+          reference: 'https://miorail.xyz',
+          observedAt: NOW,
+        },
       ],
     });
     await repository.recordVerification({
@@ -213,7 +231,10 @@ describe('a live-product question is answered from the claimed corpus', () => {
     const line = (response.body.missingEvidence as string[]).find((entry) =>
       entry.includes('no canonical launch row'),
     );
-    assert.ok(line, `the index gap was not reported: ${JSON.stringify(response.body.missingEvidence)}`);
+    assert.ok(
+      line,
+      `the index gap was not reported: ${JSON.stringify(response.body.missingEvidence)}`,
+    );
     assert.match(line!, /The project claim is unaffected/);
   });
 
@@ -238,23 +259,49 @@ describe('a live-product question is answered from the claimed corpus', () => {
 });
 
 describe('the other predicates read their own dimension', () => {
-  test('a website question finds the indexed project and not the product one', async () => {
+  test('a website question finds every project with website evidence', async () => {
     const response = await ask('Какие B20 имеют проверенный сайт?');
     assert.equal(response.status, 200, JSON.stringify(response.body));
-    assert.match(response.body.answer, /1 matched among 2 verified project claims/);
+    assert.match(response.body.answer, /2 matched among 2 verified project claims/);
     assert.match(response.body.answer, /OTH/);
-    assert.ok(!response.body.answer.includes(UNINDEXED), 'the product project answered a website question');
+    assert.match(response.body.answer, new RegExp(UNINDEXED));
   });
 
   test('a repository question matches nobody, and says so against the corpus', async () => {
     const response = await ask('Which B20 projects have a repository?');
-    assert.match(response.body.answer, /Miorail has not established a repository for any of the 2 verified project claims/);
+    assert.match(
+      response.body.answer,
+      /Miorail has not established a repository for any of the 2 verified project claims/,
+    );
     assert.match(response.body.answer, /outside this fundamental corpus and remain unknown/);
   });
 
   test('the claim predicate finds both, because it asks about the gate', async () => {
     const response = await ask('Which B20 launches are connected to verified projects?');
     assert.match(response.body.answer, /2 matched among 2 verified project claims/);
+  });
+});
+
+describe('compound positive fundamentals preserve set semantics', () => {
+  test('website OR Base presence is a union', async () => {
+    const response = await ask('Which B20 tokens have a verified website or Base presence?');
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.match(response.body.answer, new RegExp(UNINDEXED));
+    assert.match(response.body.answer, /OTH/);
+    assert.match(response.body.answer, /2 matched among 2 verified project claims/);
+    assert.match(response.body.answer, /OR/);
+  });
+
+  test('live product AND verified website is an intersection', async () => {
+    const response = await ask('Which B20 tokens have a live product and verified website?');
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.match(response.body.answer, new RegExp(UNINDEXED));
+    assert.ok(
+      !response.body.answer.includes('OTH'),
+      'the website-only project leaked into an AND result',
+    );
+    assert.match(response.body.answer, /1 matched among 2 verified project claims/);
+    assert.match(response.body.answer, /AND/);
   });
 });
 

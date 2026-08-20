@@ -7,6 +7,7 @@ import {
   encodeFeedCursorV1,
   observationConflictV1,
   type B20FeedRowV1,
+  type B20FeedAggregateBucketV1,
   type B20MeasurableLaunchV1,
   type B20MeasureLeaseV1,
   type B20ObservationRepositoryV1,
@@ -239,8 +240,12 @@ export function createDatabaseB20ObservationRepository(
       // Measuring now writes an observation `age` after it, so an age inside
       // [pairAge - tolerance, pairAge + tolerance] is exactly the set where one
       // more measurement produces a pair the movers rail will accept.
-      const youngest = new Date(Date.parse(input.now) - (input.pairAgeMs - input.pairToleranceMs)).toISOString();
-      const oldestInBand = new Date(Date.parse(input.now) - (input.pairAgeMs + input.pairToleranceMs)).toISOString();
+      const youngest = new Date(
+        Date.parse(input.now) - (input.pairAgeMs - input.pairToleranceMs),
+      ).toISOString();
+      const oldestInBand = new Date(
+        Date.parse(input.now) - (input.pairAgeMs + input.pairToleranceMs),
+      ).toISOString();
 
       // The LATERAL takes the newest COMPARABLE observation, which is exactly
       // what `listMoverPairs` uses as the later half of a pair — so this queue
@@ -337,7 +342,8 @@ export function createDatabaseB20ObservationRepository(
 
       if (inserted.length > 0) {
         const stored = await readById(parsed.id);
-        if (!stored) throw observationConflictV1('The observation vanished immediately after insertion');
+        if (!stored)
+          throw observationConflictV1('The observation vanished immediately after insertion');
         return { observation: stored, inserted: true };
       }
 
@@ -508,7 +514,8 @@ export function createDatabaseB20ObservationRepository(
           name: String(row.name),
           symbol: String(row.symbol),
           variant: row.variant as 'asset' | 'stablecoin',
-          decimals: row.decimals === null || row.decimals === undefined ? null : Number(row.decimals),
+          decimals:
+            row.decimals === null || row.decimals === undefined ? null : Number(row.decimals),
           blockNumber: String(row.launch_block),
           canonical: Boolean(row.canonical),
         },
@@ -606,6 +613,66 @@ export function createDatabaseB20ObservationRepository(
                 launchId: last.launch.id,
               })
             : null,
+      };
+    },
+
+    async aggregateFeed(input) {
+      const versions = [...(input.measurementVersions ?? [B20_MEASUREMENT_VERSION_V1])];
+      const oldest = new Date(Date.parse(input.now) - input.maxLaunchAgeMs).toISOString();
+
+      // Full-corpus COUNT, not a card scan. The query groups only the inputs
+      // `b20ExitStandingV1` consumes; the shared TypeScript projection still
+      // decides the standing, so summary and card semantics cannot drift into
+      // separate CASE expressions.
+      const rows = await sql`
+        WITH latest AS (
+          SELECT
+            o.state, o.reason_code, o.entry_route_found, o.exit_route_found,
+            o.venues_consulted, lb.buyer_count
+          FROM b20_launches l
+          LEFT JOIN LATERAL (
+            SELECT state, reason_code, entry_route_found, exit_route_found, venues_consulted
+            FROM b20_opportunity_observations obs
+            WHERE obs.launch_id = l.id
+              AND obs.measurement_version = ANY(${versions}::text[])
+            ORDER BY obs.measured_at DESC, obs.observation_block_number DESC, obs.id DESC
+            LIMIT 1
+          ) o ON true
+          LEFT JOIN b20_launch_buyers lb ON lb.token_address = l.token_address
+          WHERE l.canonical
+            AND l.chain_id = 8453
+            AND l.detected_at >= ${oldest}::timestamptz
+        )
+        SELECT
+          state, reason_code, entry_route_found, exit_route_found,
+          venues_consulted, buyer_count, count(*)::int AS count
+        FROM latest
+        GROUP BY state, reason_code, entry_route_found, exit_route_found, venues_consulted, buyer_count
+        ORDER BY count DESC, state NULLS FIRST, reason_code NULLS FIRST`;
+
+      const buckets = (rows as Record<string, unknown>[]).map(
+        (row): B20FeedAggregateBucketV1 => ({
+          count: Number(row.count),
+          observation:
+            row.state === null || row.state === undefined
+              ? null
+              : {
+                  state: row.state as B20OpportunityObservationV1['state'],
+                  reasonCode:
+                    (row.reason_code as B20OpportunityObservationV1['reasonCode']) ?? null,
+                  entryRouteFound: Boolean(row.entry_route_found),
+                  exitRouteFound: Boolean(row.exit_route_found),
+                  venuesConsulted:
+                    Array.isArray(row.venues_consulted) && row.venues_consulted.length > 0
+                      ? row.venues_consulted.map((venue) => String(venue))
+                      : null,
+                },
+          buyerCount: numberOrNullV1(row.buyer_count),
+        }),
+      );
+      return {
+        inspected: buckets.reduce((sum, bucket) => sum + bucket.count, 0),
+        buckets,
       };
     },
 
@@ -744,14 +811,15 @@ function feedRowV1(row: Record<string, unknown>): B20FeedRowV1 {
     // Null when nobody has measured the window yet — which is NOT the same as
     // "nobody bought". A measured-and-empty window stores a row with a zero
     // count, and only that row means nobody bought.
-    launchBuyers: row.buyer_count === null || row.buyer_count === undefined
-      ? null
-      : {
-          buyerCount: Number(row.buyer_count),
-          topBuyerShareBps: numberOrNullV1(row.top_buyer_share_bps),
-          topThreeShareBps: numberOrNullV1(row.top_three_share_bps),
-          fromBlock: String(row.buyers_from_block),
-          toBlock: String(row.buyers_to_block),
-        },
+    launchBuyers:
+      row.buyer_count === null || row.buyer_count === undefined
+        ? null
+        : {
+            buyerCount: Number(row.buyer_count),
+            topBuyerShareBps: numberOrNullV1(row.top_buyer_share_bps),
+            topThreeShareBps: numberOrNullV1(row.top_three_share_bps),
+            fromBlock: String(row.buyers_from_block),
+            toBlock: String(row.buyers_to_block),
+          },
   };
 }

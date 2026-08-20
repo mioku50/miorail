@@ -71,7 +71,10 @@ export const EarnCompareResponseV1Schema = z.discriminatedUnion('outcome', [
     })
     .strict(),
   z
-    .object({ outcome: z.literal('needs_clarification'), issues: z.array(z.string().min(1).max(120)) })
+    .object({
+      outcome: z.literal('needs_clarification'),
+      issues: z.array(z.string().min(1).max(120)),
+    })
     .strict(),
   z.object({ outcome: z.literal('unsupported'), reason: z.string().min(1).max(200) }).strict(),
 ]);
@@ -106,7 +109,11 @@ export const EarnPrepareResponseV1Schema = z.discriminatedUnion('outcome', [
   z.object({ outcome: z.literal('refresh_required'), reason: z.string().min(1).max(500) }).strict(),
   z.object({ outcome: z.literal('expired'), reason: z.string().min(1).max(500) }).strict(),
   z
-    .object({ outcome: z.literal('blocked'), reason: z.string().min(1).max(500), safety: SafetyKernelResultV1Schema })
+    .object({
+      outcome: z.literal('blocked'),
+      reason: z.string().min(1).max(500),
+      safety: SafetyKernelResultV1Schema,
+    })
     .strict(),
 ]);
 
@@ -168,7 +175,11 @@ export const EarnBlueprintApproveResponseV1Schema = z.discriminatedUnion('outcom
     .strict(),
   z.object({ outcome: z.literal('expired'), reason: z.string().min(1).max(500) }).strict(),
   z
-    .object({ outcome: z.literal('blocked'), reason: z.string().min(1).max(500), safety: SafetyKernelResultV1Schema })
+    .object({
+      outcome: z.literal('blocked'),
+      reason: z.string().min(1).max(500),
+      safety: SafetyKernelResultV1Schema,
+    })
     .strict(),
 ]);
 
@@ -203,7 +214,10 @@ export const CommerceCompareResponseV1Schema = z.discriminatedUnion('outcome', [
     })
     .strict(),
   z
-    .object({ outcome: z.literal('needs_clarification'), issues: z.array(z.string().min(1).max(120)) })
+    .object({
+      outcome: z.literal('needs_clarification'),
+      issues: z.array(z.string().min(1).max(120)),
+    })
     .strict(),
   z.object({ outcome: z.literal('unsupported'), reason: z.string().min(1).max(200) }).strict(),
 ]);
@@ -291,14 +305,22 @@ export const CommerceOrderStatusResponseV1Schema = z.discriminatedUnion('outcome
     })
     .strict(),
   z.object({ outcome: z.literal('unknown_order'), reason: z.string().min(1).max(500) }).strict(),
-  z.object({ outcome: z.literal('provider_unavailable'), reason: z.string().min(1).max(500) }).strict(),
+  z
+    .object({ outcome: z.literal('provider_unavailable'), reason: z.string().min(1).max(500) })
+    .strict(),
 ]);
 
 // T64.3 — the payment rail. `prepare` builds the exact call and returns it for
 // review; `approve` returns the unsigned wallet payload; `submission` records
 // what the wallet did. The server never signs and never broadcasts.
 export const CommercePaymentPrepareRequestV1Schema = z
-  .object({ requestId: z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/) })
+  .object({
+    requestId: z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+  })
   .strict();
 
 export const CommercePaymentPrepareResponseV1Schema = z.discriminatedUnion('outcome', [
@@ -315,7 +337,11 @@ export const CommercePaymentPrepareResponseV1Schema = z.discriminatedUnion('outc
   z.object({ outcome: z.literal('invoice_changed'), reason: z.string().min(1).max(500) }).strict(),
   z.object({ outcome: z.literal('invoice_expired'), reason: z.string().min(1).max(500) }).strict(),
   z
-    .object({ outcome: z.literal('blocked'), reason: z.string().min(1).max(500), safety: SafetyKernelResultV1Schema.nullable() })
+    .object({
+      outcome: z.literal('blocked'),
+      reason: z.string().min(1).max(500),
+      safety: SafetyKernelResultV1Schema.nullable(),
+    })
     .strict(),
 ]);
 
@@ -350,7 +376,11 @@ export const CommercePaymentApproveResponseV1Schema = z.discriminatedUnion('outc
     })
     .strict(),
   z
-    .object({ outcome: z.literal('blocked'), reason: z.string().min(1).max(500), safety: SafetyKernelResultV1Schema.nullable() })
+    .object({
+      outcome: z.literal('blocked'),
+      reason: z.string().min(1).max(500),
+      safety: SafetyKernelResultV1Schema.nullable(),
+    })
     .strict(),
 ]);
 
@@ -415,8 +445,14 @@ export const CommerceHistoryItemV1Schema = z
     packageValue: z.string().min(1).max(80),
     status: z.string().min(1).max(40),
     providerStatus: z.string().min(1).max(40),
-    exactAmountAtomic: z.string().regex(/^(0|[1-9]\d*)$/).nullable(),
-    estimatedAmountAtomic: z.string().regex(/^(0|[1-9]\d*)$/).nullable(),
+    exactAmountAtomic: z
+      .string()
+      .regex(/^(0|[1-9]\d*)$/)
+      .nullable(),
+    estimatedAmountAtomic: z
+      .string()
+      .regex(/^(0|[1-9]\d*)$/)
+      .nullable(),
     proofFinalStatus: z.string().min(1).max(40).nullable(),
     createdAt: z.string().min(1).max(60),
     updatedAt: z.string().min(1).max(60),
@@ -445,12 +481,26 @@ export const RoutePlanRequestV1Schema = z
 export const IntentIssueV1Schema = z
   .object({
     code: z.enum([
-      'amount_required', 'exact_amount_required', 'from_asset_required', 'to_asset_required',
-      'asset_pair_invalid', 'asset_unknown', 'chain_unsupported', 'protocol_conflict',
-      'slippage_invalid', 'intent_ambiguous', 'approval_bypass_forbidden',
-      'prompt_injection_detected', 'server_signing_forbidden', 'asset_address_unsafe',
-      'conflicting_amounts', 'conflicting_protocol_constraints', 'unsupported_goal',
-      'extractor_invalid', 'extractor_field_ungrounded', 'context_ambiguous',
+      'amount_required',
+      'exact_amount_required',
+      'from_asset_required',
+      'to_asset_required',
+      'asset_pair_invalid',
+      'asset_unknown',
+      'chain_unsupported',
+      'protocol_conflict',
+      'slippage_invalid',
+      'intent_ambiguous',
+      'approval_bypass_forbidden',
+      'prompt_injection_detected',
+      'server_signing_forbidden',
+      'asset_address_unsafe',
+      'conflicting_amounts',
+      'conflicting_protocol_constraints',
+      'unsupported_goal',
+      'extractor_invalid',
+      'extractor_field_ungrounded',
+      'context_ambiguous',
     ]),
     field: z.string().min(1).max(120),
     severity: z.enum(['clarification', 'rejection']),
@@ -461,9 +511,16 @@ export const IntentIssueV1Schema = z
 export const ClarificationV1Schema = z
   .object({
     code: z.enum([
-      'amount_required', 'exact_amount_required', 'from_asset_required', 'to_asset_required',
-      'asset_pair_invalid', 'asset_unknown', 'chain_unsupported', 'protocol_conflict',
-      'slippage_invalid', 'intent_ambiguous',
+      'amount_required',
+      'exact_amount_required',
+      'from_asset_required',
+      'to_asset_required',
+      'asset_pair_invalid',
+      'asset_unknown',
+      'chain_unsupported',
+      'protocol_conflict',
+      'slippage_invalid',
+      'intent_ambiguous',
     ]),
     message: z.string().min(1).max(500),
     missingFields: z.array(z.string().min(1).max(120)),
@@ -707,7 +764,10 @@ export const SwapBlueprintSubmissionRequestV1Schema = z
     approvedCallsHash: HashV1Schema,
     batchId: z.string().min(1).max(500).optional(),
     status: z.enum(['submitted', 'confirmed', 'failed', 'cancelled', 'submitted_unknown']),
-    transactionHashes: z.array(z.string().regex(/^0x[0-9a-fA-F]{64}$/)).max(100).optional(),
+    transactionHashes: z
+      .array(z.string().regex(/^0x[0-9a-fA-F]{64}$/))
+      .max(100)
+      .optional(),
     receipts: z.array(z.unknown()).max(100).optional(),
     error: z.string().max(1000).optional(),
     /** T67C.2: the recovery attempt this record belongs to, when one was
@@ -726,7 +786,10 @@ export const SwapBlueprintSubmissionRequestV1Schema = z
   // failed/cancelled record describing a transport failure or wallet refusal
   // that happened before any batch id was assigned.
   .superRefine((value, ctx) => {
-    const batchBound = value.status === 'submitted' || value.status === 'confirmed' || value.status === 'submitted_unknown';
+    const batchBound =
+      value.status === 'submitted' ||
+      value.status === 'confirmed' ||
+      value.status === 'submitted_unknown';
     if (batchBound && (value.batchId === undefined || value.batchId.trim().length === 0)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -790,15 +853,31 @@ export const RouteProofProjectionV1Schema = z
      * output emits no ERC-20 Transfer log, so the amount cannot be read from
      * the receipt and Miorail declines to invent one. Derived server-side from
      * the proof itself — see lib/route-proof/src/projection.ts. */
-    actualOutputUnavailableReason: z.enum(['native_output_unverifiable', 'not_reconciled']).nullable(),
+    actualOutputUnavailableReason: z
+      .enum(['native_output_unverifiable', 'not_reconciled'])
+      .nullable(),
     outputDeviationBps: z.number().int().nullable(),
     minimumSatisfied: z.boolean().nullable(),
     estimatedGas: GasEstimateV1Schema,
     actualGas: GasEstimateV1Schema.nullable(),
     transactionHashes: z.array(HashV1Schema),
     receipts: z.array(TransactionReceiptV1Schema),
-    finalStatus: z.enum(['pending', 'completed', 'partial_failure', 'failed', 'cancelled', 'reconciliation_required']),
-    reconciliationState: z.enum(['pending', 'matched', 'deviated', 'partial', 'failed', 'manual_review']),
+    finalStatus: z.enum([
+      'pending',
+      'completed',
+      'partial_failure',
+      'failed',
+      'cancelled',
+      'reconciliation_required',
+    ]),
+    reconciliationState: z.enum([
+      'pending',
+      'matched',
+      'deviated',
+      'partial',
+      'failed',
+      'manual_review',
+    ]),
     createdAt: z.string().datetime({ offset: true }),
     updatedAt: z.string().datetime({ offset: true }),
   })
@@ -806,7 +885,14 @@ export const RouteProofProjectionV1Schema = z
 
 export const RouteProofReconcileResponseV1Schema = z
   .object({
-    outcome: z.enum(['pending', 'completed', 'partial_failure', 'failed', 'reconciliation_required', 'already_finalized']),
+    outcome: z.enum([
+      'pending',
+      'completed',
+      'partial_failure',
+      'failed',
+      'reconciliation_required',
+      'already_finalized',
+    ]),
     proof: RouteProofProjectionV1Schema,
     lifecycle: BlueprintLifecycleStateV1Schema,
   })
@@ -885,19 +971,36 @@ const SimulateEvidenceSummaryV1Schema = z
   .object({
     evidenceHash: HashV1Schema,
     evidenceSetHash: HashV1Schema,
-    blockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
-    gasUsed: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    blockNumber: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
+    gasUsed: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
     stateChanges: z.array(SimulateStateChangeV1Schema),
     provider: ProviderRefV1Schema,
     paidCostUsdc: z.string().min(1).max(40),
-    x402TxHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/).nullable(),
+    x402TxHash: z
+      .string()
+      .regex(/^0x[0-9a-fA-F]{64}$/)
+      .nullable(),
   })
   .strict();
 
 const SimulateChargeSummaryV1Schema = z
   .object({
     chargeId: z.string().min(1).max(200),
-    status: z.enum(['quoted', 'reserved', 'payment_pending', 'settled', 'failed', 'reconciliation_required', 'released']),
+    status: z.enum([
+      'quoted',
+      'reserved',
+      'payment_pending',
+      'settled',
+      'failed',
+      'reconciliation_required',
+      'released',
+    ]),
     paymentState: z.enum(['not_started', 'reserved', 'pending', 'settled', 'failed']),
     serviceState: z.enum(['not_started', 'pending', 'delivered', 'invalid', 'failed']),
   })
@@ -910,7 +1013,16 @@ const SimulateScoreNoteV1Schema = z
   .object({
     transactionSafety: z.literal('not_scored'),
     missingEvidence: z.array(
-      z.enum(['quote', 'liquidity', 'contract_risk', 'token_risk', 'simulation', 'gas', 'provider_reliability', 'mev_protection']),
+      z.enum([
+        'quote',
+        'liquidity',
+        'contract_risk',
+        'token_risk',
+        'simulation',
+        'gas',
+        'provider_reliability',
+        'mev_protection',
+      ]),
     ),
   })
   .strict();
@@ -992,7 +1104,10 @@ export const CreateIntelligenceBudgetRequestV1Schema = z
     walletAddress: AddressV1Schema,
     periodLimitUsdc: UsdcAmountSchema,
     maxPerCallUsdc: UsdcAmountSchema,
-    allowedCategories: z.array(IntelligenceCategoryV1Schema).min(1).max(IntelligenceCategoryV1Schema.options.length),
+    allowedCategories: z
+      .array(IntelligenceCategoryV1Schema)
+      .min(1)
+      .max(IntelligenceCategoryV1Schema.options.length),
   })
   .strict();
 
@@ -1008,10 +1123,15 @@ export const UpdateIntelligenceBudgetRequestV1Schema = z
   })
   .strict()
   .superRefine((value, ctx) => {
-    if (value.periodLimitUsdc === undefined && value.maxPerCallUsdc === undefined && value.allowedCategories === undefined) {
+    if (
+      value.periodLimitUsdc === undefined &&
+      value.maxPerCallUsdc === undefined &&
+      value.allowedCategories === undefined
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'At least one of periodLimitUsdc, maxPerCallUsdc, or allowedCategories must be provided',
+        message:
+          'At least one of periodLimitUsdc, maxPerCallUsdc, or allowedCategories must be provided',
       });
     }
   });
@@ -1077,7 +1197,10 @@ export const ConfirmSpendPermissionRequestV1Schema = z
   .object({
     permission: z
       .object({
-        signature: z.string().regex(/^0x[0-9a-fA-F]+$/).max(4000),
+        signature: z
+          .string()
+          .regex(/^0x[0-9a-fA-F]+$/)
+          .max(4000),
         chainId: z.number().int(),
         permissionHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
         permission: z
@@ -1100,7 +1223,10 @@ export const ConfirmSpendPermissionRequestV1Schema = z
             // Base Account ever produced could be confirmed — every real grant
             // died in `safeParse` before the chain was asked anything.
             salt: z.string().regex(/^(?:0x[0-9a-fA-F]{1,64}|[0-9]{1,80})$/),
-            extraData: z.string().regex(/^0x[0-9a-fA-F]*$/).max(4000),
+            extraData: z
+              .string()
+              .regex(/^0x[0-9a-fA-F]*$/)
+              .max(4000),
           })
           .strict(),
       })
@@ -1163,8 +1289,13 @@ export const IntelligenceChargeSummaryV1Schema = z
   .object({
     chargeId: z.string().min(1).max(200),
     status: z.enum([
-      'quoted', 'reserved', 'payment_pending', 'settled', 'failed',
-      'reconciliation_required', 'released',
+      'quoted',
+      'reserved',
+      'payment_pending',
+      'settled',
+      'failed',
+      'reconciliation_required',
+      'released',
     ]),
     /** What was bought, in words: "Alchemy simulation", "Contract evidence". */
     service: z.string().min(1).max(200),
@@ -1210,7 +1341,15 @@ export const SimulateWithBudgetRequestV1Schema = z
 const SimulateWithBudgetChargeSummaryV1Schema = z
   .object({
     chargeId: z.string().min(1).max(200),
-    status: z.enum(['quoted', 'reserved', 'payment_pending', 'settled', 'failed', 'reconciliation_required', 'released']),
+    status: z.enum([
+      'quoted',
+      'reserved',
+      'payment_pending',
+      'settled',
+      'failed',
+      'reconciliation_required',
+      'released',
+    ]),
   })
   .strict();
 
@@ -1358,7 +1497,8 @@ export const ProductionActionTypeSchema = z.enum([
   'uniswap_swap',
 ]);
 export type ProductionActionType = z.infer<typeof ProductionActionTypeSchema>;
-export const PRODUCTION_ACTION_TYPES = ProductionActionTypeSchema.options as readonly ProductionActionType[];
+export const PRODUCTION_ACTION_TYPES =
+  ProductionActionTypeSchema.options as readonly ProductionActionType[];
 export function isProductionActionType(t?: string | null): t is ProductionActionType {
   return (PRODUCTION_ACTION_TYPES as readonly string[]).includes(String(t || ''));
 }
@@ -1373,14 +1513,22 @@ export const ExecutionPayloadSchema = z.object({
       to: z.string(),
       value: z.string().optional(),
       data: z.string().optional(),
-    })
+    }),
   ),
 });
 
 export const ActionResponseSchema = z.object({
   id: z.string(),
   kind: z.string(),
-  status: z.enum(['pending', 'pending_confirmation', 'submitted_unknown', 'executed', 'dismissed', 'failed', 'cancelled']),
+  status: z.enum([
+    'pending',
+    'pending_confirmation',
+    'submitted_unknown',
+    'executed',
+    'dismissed',
+    'failed',
+    'cancelled',
+  ]),
   suggestedPrompt: z.string().nullable(),
   tokens: z.array(z.string()).optional(),
   executionPayload: ExecutionPayloadSchema.optional().nullable(),
@@ -1431,20 +1579,27 @@ export const SimulationResultSchema = z.object({
   expectedOutput: z.string().optional(),
   checks: z.array(z.string()),
   method: z.string().optional(),
-  projections: z.array(z.object({
-    kind: z.string(),
-    token: z.string(),
-    spender: z.string().optional(),
-    recipient: z.string().optional(),
-    amountRaw: z.string().optional(),
-    allowanceAfter: z.string().optional(),
-    balanceDelta: z.string().optional(),
-  })).optional(),
+  projections: z
+    .array(
+      z.object({
+        kind: z.string(),
+        token: z.string(),
+        spender: z.string().optional(),
+        recipient: z.string().optional(),
+        amountRaw: z.string().optional(),
+        allowanceAfter: z.string().optional(),
+        balanceDelta: z.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 export const PrepareActionRequestSchema = z.object({
   actionId: z.string(),
-  walletAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
+  walletAddress: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/)
+    .optional(),
 });
 
 export const PrepareActionResponseSchema = z.object({
@@ -1453,11 +1608,13 @@ export const PrepareActionResponseSchema = z.object({
   // EIP-5792 batch target. Base Mainnet = '0x2105'.
   chainId: z.string(),
   from: z.string().nullable().optional(),
-  calls: z.array(z.object({
-    to: z.string(),
-    value: z.string().optional(),
-    data: z.string().optional(),
-  })),
+  calls: z.array(
+    z.object({
+      to: z.string(),
+      value: z.string().optional(),
+      data: z.string().optional(),
+    }),
+  ),
   atomicRequired: z.boolean(),
   // T19.1: the whitelisted action type this batch encodes (revoke_approval |
   // limited_transfer). The client gates the confirm button on this.
@@ -1469,23 +1626,27 @@ export const PrepareActionResponseSchema = z.object({
   builderCodeAttached: z.boolean(),
   executionMode: z.enum(['manual-approval', 'bounded-approval']).optional(),
   requiresUserApproval: z.boolean().optional(),
-  autonomy: z.object({
-    reservationId: z.string(),
-    amountUsdc: z.number(),
-    reservedTodayUsdc: z.number(),
-    dailyLimitUsdc: z.number(),
-    expiresAt: z.string(),
-  }).optional(),
-  guard: z.object({
-    code: z.string(),
-    contractSecurity: z.object({
-      required: z.boolean(),
-      status: z.enum(['passed', 'warning', 'blocked', 'skipped']),
-      provider: z.string(),
-      checkedAddresses: z.array(z.string()),
-      warnings: z.array(z.string()),
-    }),
-  }).optional(),
+  autonomy: z
+    .object({
+      reservationId: z.string(),
+      amountUsdc: z.number(),
+      reservedTodayUsdc: z.number(),
+      dailyLimitUsdc: z.number(),
+      expiresAt: z.string(),
+    })
+    .optional(),
+  guard: z
+    .object({
+      code: z.string(),
+      contractSecurity: z.object({
+        required: z.boolean(),
+        status: z.enum(['passed', 'warning', 'blocked', 'skipped']),
+        provider: z.string(),
+        checkedAddresses: z.array(z.string()),
+        warnings: z.array(z.string()),
+      }),
+    })
+    .optional(),
   error: z.string().optional(),
 });
 
@@ -1518,23 +1679,27 @@ export const BaseMcpToolProbeResponseSchema = z.object({
     forbidden: z.number(),
     unknown: z.number(),
   }),
-  routing: z.object({
-    read: z.number(),
-    action: z.number(),
-    routable: z.number(),
-    blocked: z.number(),
-  }).default({ read: 0, action: 0, routable: 0, blocked: 0 }),
-  tools: z.array(z.object({
-    name: z.string(),
-    description: z.string().optional(),
-    capability: z.enum(['read_only', 'user_confirmed_transaction', 'forbidden', 'unknown']),
-    scope: z.enum(['wallet', 'protocol']),
-    enabled: z.boolean(),
-    reason: z.string(),
-    surface: z.enum(['read', 'action', 'routable', 'blocked']).optional(),
-    surfaceEnabled: z.boolean().optional(),
-    surfaceReason: z.string().optional(),
-  })),
+  routing: z
+    .object({
+      read: z.number(),
+      action: z.number(),
+      routable: z.number(),
+      blocked: z.number(),
+    })
+    .default({ read: 0, action: 0, routable: 0, blocked: 0 }),
+  tools: z.array(
+    z.object({
+      name: z.string(),
+      description: z.string().optional(),
+      capability: z.enum(['read_only', 'user_confirmed_transaction', 'forbidden', 'unknown']),
+      scope: z.enum(['wallet', 'protocol']),
+      enabled: z.boolean(),
+      reason: z.string(),
+      surface: z.enum(['read', 'action', 'routable', 'blocked']).optional(),
+      surfaceEnabled: z.boolean().optional(),
+      surfaceReason: z.string().optional(),
+    }),
+  ),
   checkedAt: z.string(),
   errorCode: z.string().optional(),
   protocolToolsStatus: z.enum(['available', 'unavailable']).optional(),
@@ -1546,35 +1711,42 @@ export const BaseMcpToolProbeResponseSchema = z.object({
 // a live authenticated read of mcp.base.org, the plugins are published specs
 // that exist whether or not this user has ever connected.
 export const BaseMcpPluginCatalogueResponseSchema = z.object({
-  plugins: z.array(z.object({
-    id: z.string(),
-    title: z.string(),
-    summary: z.string(),
-    version: z.string(),
-    integration: z.string(),
-    chains: z.array(z.string()),
-    tags: z.array(z.string()),
-    risk: z.array(z.string()),
-    auth: z.string(),
-    shell: z.string(),
-    hosts: z.array(z.string()),
-    externalMcpHost: z.string().nullable(),
-    cliPackage: z.string().nullable(),
-    productSurface: z.enum(['routes', 'extensions']),
-    lifecycleStage: z.enum(['documented', 'manifested', 'adapter', 'scored', 'proven']),
-    examples: z.array(z.object({
-      id: z.string().min(1).max(80),
-      prompt: z.string().min(1).max(500),
-      surface: z.enum(['read', 'action', 'routable']),
-      disposition: z.enum([
-        'read_in_extensions',
-        'handoff_to_routes',
-        'handoff_to_provider_ui',
-        'typed_x402_required',
-        'adapter_required',
-      ]),
-    })).min(1).max(12),
-  })),
+  plugins: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      summary: z.string(),
+      version: z.string(),
+      integration: z.string(),
+      chains: z.array(z.string()),
+      tags: z.array(z.string()),
+      risk: z.array(z.string()),
+      auth: z.string(),
+      shell: z.string(),
+      hosts: z.array(z.string()),
+      externalMcpHost: z.string().nullable(),
+      cliPackage: z.string().nullable(),
+      productSurface: z.enum(['routes', 'extensions']),
+      lifecycleStage: z.enum(['documented', 'manifested', 'adapter', 'scored', 'proven']),
+      examples: z
+        .array(
+          z.object({
+            id: z.string().min(1).max(80),
+            prompt: z.string().min(1).max(500),
+            surface: z.enum(['read', 'action', 'routable']),
+            disposition: z.enum([
+              'read_in_extensions',
+              'handoff_to_routes',
+              'handoff_to_provider_ui',
+              'typed_x402_required',
+              'adapter_required',
+            ]),
+          }),
+        )
+        .min(1)
+        .max(12),
+    }),
+  ),
   /** The date the committed catalogue was read from Base. */
   generatedAt: z.string(),
   drift: z.object({
@@ -1595,7 +1767,12 @@ export const BaseMcpConsoleRequestV1Schema = z.object({
   message: z.string().min(1).max(2000),
   /** Client-generated idempotency handle. Required for action intents, kept
    * optional so old read-only clients remain wire-compatible. */
-  requestId: z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/).optional(),
+  requestId: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/)
+    .optional(),
 });
 
 export const BaseMcpActionReceiptStatusV1Schema = z.enum([
@@ -1698,15 +1875,26 @@ export const BaseMcpHandoffV1Schema = z.discriminatedUnion('target', [
 ]);
 
 export const BaseMcpConsoleResponseV1Schema = z.object({
-  status: z.enum(['answered', 'handoff', 'action', 'needs_input', 'no_tools', 'needs_reauth', 'disabled', 'failed']),
+  status: z.enum([
+    'answered',
+    'handoff',
+    'action',
+    'needs_input',
+    'no_tools',
+    'needs_reauth',
+    'disabled',
+    'failed',
+  ]),
   reply: z.string().nullable(),
-  trace: z.array(z.object({
-    tool: z.string(),
-    args: z.string(),
-    ok: z.boolean(),
-    result: z.string(),
-    errorCode: z.string().nullable(),
-  })),
+  trace: z.array(
+    z.object({
+      tool: z.string(),
+      args: z.string(),
+      ok: z.boolean(),
+      result: z.string(),
+      errorCode: z.string().nullable(),
+    }),
+  ),
   toolsAvailable: z.number(),
   truncated: z.boolean(),
   elapsedMs: z.number(),
@@ -1799,29 +1987,31 @@ export const ToggleProtocolResponseSchema = z.object({
 
 // Portfolio
 export const PortfolioTokenSecuritySchema = z.object({
-  provider: z.enum(["goplus", "none"]),
-  status: z.enum(["ok", "warning", "high-risk", "unknown", "failed"]),
+  provider: z.enum(['goplus', 'none']),
+  status: z.enum(['ok', 'warning', 'high-risk', 'unknown', 'failed']),
   summary: z.string().optional(),
   riskLabels: z.array(z.string()).optional(),
-  flags: z.object({
-    isHoneypot: z.boolean().optional(),
-    isMintable: z.boolean().optional(),
-    isProxy: z.boolean().optional(),
-    isOpenSource: z.boolean().optional(),
-    hiddenOwner: z.boolean().optional(),
-    canTakeBackOwnership: z.boolean().optional(),
-    ownerCanChangeBalance: z.boolean().optional(),
-    hasBlacklist: z.boolean().optional(),
-    hasWhitelist: z.boolean().optional(),
-    tradingCooldown: z.boolean().optional(),
-    selfdestruct: z.boolean().optional(),
-    externalCall: z.boolean().optional(),
-    buyTax: z.string().optional(),
-    sellTax: z.string().optional(),
-    cannotSellAll: z.boolean().optional(),
-    isInDex: z.boolean().optional(),
-    holderCount: z.string().optional(),
-  }).optional(),
+  flags: z
+    .object({
+      isHoneypot: z.boolean().optional(),
+      isMintable: z.boolean().optional(),
+      isProxy: z.boolean().optional(),
+      isOpenSource: z.boolean().optional(),
+      hiddenOwner: z.boolean().optional(),
+      canTakeBackOwnership: z.boolean().optional(),
+      ownerCanChangeBalance: z.boolean().optional(),
+      hasBlacklist: z.boolean().optional(),
+      hasWhitelist: z.boolean().optional(),
+      tradingCooldown: z.boolean().optional(),
+      selfdestruct: z.boolean().optional(),
+      externalCall: z.boolean().optional(),
+      buyTax: z.string().optional(),
+      sellTax: z.string().optional(),
+      cannotSellAll: z.boolean().optional(),
+      isInDex: z.boolean().optional(),
+      holderCount: z.string().optional(),
+    })
+    .optional(),
 });
 
 export const PortfolioTokenSchema = z.object({
@@ -1833,26 +2023,36 @@ export const PortfolioTokenSchema = z.object({
   decimals: z.number().optional(),
   usdValue: z.string().optional(),
   usdPrice: z.string().optional(),
-  priceConfidence: z.enum(["high", "medium", "low", "unknown"]).optional(),
+  priceConfidence: z.enum(['high', 'medium', 'low', 'unknown']).optional(),
   logoUrl: z.string().optional(),
   verified: z.boolean().optional(),
   possibleSpam: z.boolean().optional(),
   security: PortfolioTokenSecuritySchema.optional(),
-  dataFreshness: z.enum(["live", "cached"]).optional(),
+  dataFreshness: z.enum(['live', 'cached']).optional(),
 });
 
 export const PortfolioProvidersSchema = z.object({
-  rpc: z.enum(["connected", "missing", "failed"]),
-  tokenBalances: z.enum(["connected", "missing", "failed", "stale", "disabled", "rate_limited"]),
-  tokenBalancesProvider: z.enum(["moralis", "alchemy", "none"]).optional(),
-  prices: z.enum(["connected", "missing", "failed", "partial", "disabled"]),
-  priceProvider: z.enum(["coingecko", "moralis", "none"]).optional(),
-  risk: z.enum(["connected", "missing", "failed", "partial", "disabled"]),
-  riskProvider: z.enum(["goplus", "none"]).optional(),
-  approvals: z.enum(["connected", "missing", "failed", "partial", "disabled", "rate_limited", "budget_exhausted", "temporarily_unavailable"]).optional(),
-  approvalProvider: z.enum(["moralis", "alchemy", "none"]).optional(),
+  rpc: z.enum(['connected', 'missing', 'failed']),
+  tokenBalances: z.enum(['connected', 'missing', 'failed', 'stale', 'disabled', 'rate_limited']),
+  tokenBalancesProvider: z.enum(['moralis', 'alchemy', 'none']).optional(),
+  prices: z.enum(['connected', 'missing', 'failed', 'partial', 'disabled']),
+  priceProvider: z.enum(['coingecko', 'moralis', 'none']).optional(),
+  risk: z.enum(['connected', 'missing', 'failed', 'partial', 'disabled']),
+  riskProvider: z.enum(['goplus', 'none']).optional(),
+  approvals: z
+    .enum([
+      'connected',
+      'missing',
+      'failed',
+      'partial',
+      'disabled',
+      'rate_limited',
+      'budget_exhausted',
+      'temporarily_unavailable',
+    ])
+    .optional(),
+  approvalProvider: z.enum(['moralis', 'alchemy', 'none']).optional(),
 });
-
 
 export const ProviderCallSummaryItemSchema = z.object({
   provider: z.string(),
@@ -1878,12 +2078,14 @@ export const PortfolioResponseSchema = z.object({
   tokens: z.array(PortfolioTokenSchema),
   updatedAt: z.string(),
   providerStatus: z.string().optional(),
-  dataFreshness: z.enum(["live", "cached", "stale", "partial", "failed"]).optional(),
+  dataFreshness: z.enum(['live', 'cached', 'stale', 'partial', 'failed']).optional(),
   cacheAgeSeconds: z.number().optional(),
-  providerBudgetStatus: z.object({
-    exhausted: z.boolean(),
-    providers: z.array(z.string()),
-  }).optional(),
+  providerBudgetStatus: z
+    .object({
+      exhausted: z.boolean(),
+      providers: z.array(z.string()),
+    })
+    .optional(),
   providerCallsMade: z.number().optional(),
   providers: PortfolioProvidersSchema.optional(),
   providerCallSummary: z.record(ProviderCallSummaryItemSchema).optional(),
@@ -1906,12 +2108,21 @@ export const TokenApprovalSchema = z.object({
   allowanceUsd: z.number().optional(),
   isUnlimited: z.boolean(),
   lastUpdatedAt: z.string().optional(),
-  source: z.enum(["moralis", "alchemy", "basescan", "none", "unknown"]),
+  source: z.enum(['moralis', 'alchemy', 'basescan', 'none', 'unknown']),
 });
 
 export const ApprovalsResponseSchema = z.object({
   approvals: z.array(TokenApprovalSchema),
-  status: z.enum(["connected", "missing", "failed", "partial", "disabled", "rate_limited", "budget_exhausted", "temporarily_unavailable"]),
+  status: z.enum([
+    'connected',
+    'missing',
+    'failed',
+    'partial',
+    'disabled',
+    'rate_limited',
+    'budget_exhausted',
+    'temporarily_unavailable',
+  ]),
   provider: z.string(),
   tokenCount: z.number(),
   unlimitedCount: z.number(),
@@ -1945,7 +2156,10 @@ export const MarketSnapshotResponseV1Schema = z.discriminatedUnion('outcome', [
       vsCurrency: z.literal('usd'),
       /** A decimal string. Money never crosses this boundary as a float. */
       price: z.string().regex(/^\d+(\.\d+)?$/, 'Expected a decimal price'),
-      changePercent1h: z.string().regex(/^-?\d+(\.\d+)?$/).nullable(),
+      changePercent1h: z
+        .string()
+        .regex(/^-?\d+(\.\d+)?$/)
+        .nullable(),
       points: z.array(z.number().finite()).max(200),
       observedAt: z.string().datetime(),
       provider: z.literal('coingecko'),
@@ -1954,7 +2168,12 @@ export const MarketSnapshotResponseV1Schema = z.discriminatedUnion('outcome', [
   z
     .object({
       outcome: z.literal('unavailable'),
-      reason: z.enum(['not_configured', 'provider_unavailable', 'rate_limited', 'provider_invalid_response']),
+      reason: z.enum([
+        'not_configured',
+        'provider_unavailable',
+        'rate_limited',
+        'provider_invalid_response',
+      ]),
       /** The one sentence a surface shows. Fixed per reason, so an outage is
        * never phrased as a price. */
       detail: z.string().min(1).max(200),
@@ -2007,93 +2226,135 @@ export const StatusResponseSchema = z.object({
     routeOutcomeFeedbackV1: z.boolean().optional(),
   }),
   rpc: z.object({
-    status: z.enum(["connected", "missing", "failed"]),
+    status: z.enum(['connected', 'missing', 'failed']),
     provider: z.string(),
   }),
   tokenBalances: z.object({
-    status: z.enum(["connected", "missing", "failed", "stale", "disabled"]),
+    status: z.enum(['connected', 'missing', 'failed', 'stale', 'disabled']),
     provider: z.string(),
   }),
   prices: z.object({
-    status: z.enum(["connected", "missing", "failed", "partial", "disabled"]),
+    status: z.enum(['connected', 'missing', 'failed', 'partial', 'disabled']),
     provider: z.string(),
   }),
   risk: z.object({
-    status: z.enum(["connected", "missing", "failed", "partial", "disabled"]),
+    status: z.enum(['connected', 'missing', 'failed', 'partial', 'disabled']),
     provider: z.string(),
-    authMode: z.enum(["public", "app_token", "public_fallback", "disabled"]).optional(),
+    authMode: z.enum(['public', 'app_token', 'public_fallback', 'disabled']).optional(),
     errorCode: z.string().max(120).optional(),
   }),
   approvals: z.object({
-    status: z.enum(["connected", "missing", "failed", "partial", "disabled", "rate_limited", "budget_exhausted", "temporarily_unavailable", "auth_or_budget_issue"]),
+    status: z.enum([
+      'connected',
+      'missing',
+      'failed',
+      'partial',
+      'disabled',
+      'rate_limited',
+      'budget_exhausted',
+      'temporarily_unavailable',
+      'auth_or_budget_issue',
+    ]),
     provider: z.string(),
   }),
-  cache: z.object({
-    enabled: z.boolean(),
-    balancesTtlSeconds: z.number(),
-    pricesTtlSeconds: z.number(),
-    securityTtlSeconds: z.number(),
-    approvalsTtlSeconds: z.number(),
-  }).optional(),
-  budgets: z.record(z.string(), z.object({
-    provider: z.string().optional(),
-    status: z.enum(["ok", "rate-limited", "disabled", "rate_limited", "budget_exhausted", "auth_or_budget_issue"]),
-    callsLastMinute: z.number(),
-    callsLastHour: z.number(),
-    budgetExhausted: z.boolean().optional(),
-    lastErrorCode: z.string().optional(),
-    lastErrorAt: z.string().optional(),
-    cooldownUntil: z.string().optional(),
-  })).optional(),
+  cache: z
+    .object({
+      enabled: z.boolean(),
+      balancesTtlSeconds: z.number(),
+      pricesTtlSeconds: z.number(),
+      securityTtlSeconds: z.number(),
+      approvalsTtlSeconds: z.number(),
+    })
+    .optional(),
+  budgets: z
+    .record(
+      z.string(),
+      z.object({
+        provider: z.string().optional(),
+        status: z.enum([
+          'ok',
+          'rate-limited',
+          'disabled',
+          'rate_limited',
+          'budget_exhausted',
+          'auth_or_budget_issue',
+        ]),
+        callsLastMinute: z.number(),
+        callsLastHour: z.number(),
+        budgetExhausted: z.boolean().optional(),
+        lastErrorCode: z.string().optional(),
+        lastErrorAt: z.string().optional(),
+        cooldownUntil: z.string().optional(),
+      }),
+    )
+    .optional(),
   baseMcp: z.object({
-    status: z.enum(["missing", "disabled", "connected", "needs_reauth", "unreachable", "degraded", "unsupported"]),
-    provider: z.literal("base-mcp"),
+    status: z.enum([
+      'missing',
+      'disabled',
+      'connected',
+      'needs_reauth',
+      'unreachable',
+      'degraded',
+      'unsupported',
+    ]),
+    provider: z.literal('base-mcp'),
     configured: z.boolean(),
     enabled: z.boolean(),
     endpointHost: z.string().optional(),
     lastCheckedAt: z.string().optional(),
     errorCode: z.string().optional(),
-    readiness: z.enum(['not_configured', 'configured', 'oauth_connected', 'tools_available', 'degraded']).optional(),
+    readiness: z
+      .enum(['not_configured', 'configured', 'oauth_connected', 'tools_available', 'degraded'])
+      .optional(),
     usable: z.boolean().optional(),
-    capabilities: z.object({
-      toolsCount: z.number().optional(),
-      resourcesCount: z.number().optional(),
-    }).optional(),
+    capabilities: z
+      .object({
+        toolsCount: z.number().optional(),
+        resourcesCount: z.number().optional(),
+      })
+      .optional(),
     toolsCount: z.number().optional(),
     readOnlyToolsCount: z.number().optional(),
     transactionToolsCount: z.number().optional(),
     forbiddenToolsCount: z.number().optional(),
     unknownToolsCount: z.number().optional(),
     lastToolProbeAt: z.string().optional(),
-    auth: z.object({
-      connected: z.boolean(),
-      needsReauth: z.boolean(),
-      userScoped: z.literal(true),
-      expired: z.boolean().optional(),
-      expiresAt: z.string().optional(),
-      connectedAt: z.string().optional(),
-    }).optional(),
-    walletContext: z.object({
-      tenantWallet: z.string(),
-      baseAppWallet: z.string().nullable(),
-      baseMcpWallet: z.string().nullable(),
-      walletMatch: z.boolean().nullable(),
-      executionProvider: z.enum(['baseapp_native', 'base_mcp', 'none']),
-    }).optional(),
+    auth: z
+      .object({
+        connected: z.boolean(),
+        needsReauth: z.boolean(),
+        userScoped: z.literal(true),
+        expired: z.boolean().optional(),
+        expiresAt: z.string().optional(),
+        connectedAt: z.string().optional(),
+      })
+      .optional(),
+    walletContext: z
+      .object({
+        tenantWallet: z.string(),
+        baseAppWallet: z.string().nullable(),
+        baseMcpWallet: z.string().nullable(),
+        walletMatch: z.boolean().nullable(),
+        executionProvider: z.enum(['baseapp_native', 'base_mcp', 'none']),
+      })
+      .optional(),
     protocolToolsStatus: z.enum(['available', 'unavailable']).optional(),
-    walletToolsStatus: z.enum(['available', 'disabled_wallet_mismatch', 'unverified', 'unavailable']).optional(),
+    walletToolsStatus: z
+      .enum(['available', 'disabled_wallet_mismatch', 'unverified', 'unavailable'])
+      .optional(),
   }),
   x402: z.object({
     status: z.enum([
-      "configured",
-      "connected",
-      "missing",
-      "unsupported_network_for_settlement",
-      "facilitator_auth_required",
-      "facilitator_auth_invalid",
-      "facilitator_rate_limited",
-      "facilitator_unreachable",
-      "degraded",
+      'configured',
+      'connected',
+      'missing',
+      'unsupported_network_for_settlement',
+      'facilitator_auth_required',
+      'facilitator_auth_invalid',
+      'facilitator_rate_limited',
+      'facilitator_unreachable',
+      'degraded',
     ]),
     configured: z.boolean().optional(),
     network: z.string().optional(),
@@ -2102,26 +2363,28 @@ export const StatusResponseSchema = z.object({
     payToConfigured: z.boolean().optional(),
     builderCodeConfigured: z.boolean().optional(),
     facilitatorAuthConfigured: z.boolean().optional(),
-    authSource: z.enum(["bearer_token", "cdp_api_key_pair"]).optional(),
+    authSource: z.enum(['bearer_token', 'cdp_api_key_pair']).optional(),
     settleReady: z.boolean().optional(),
     settleBlockedReason: z.string().optional(),
     probeStatus: z.string().optional(),
-    middlewareMode: z.enum(["official", "unavailable"]).optional(),
+    middlewareMode: z.enum(['official', 'unavailable']).optional(),
     officialMiddlewareEnabled: z.boolean().optional(),
     smokeRoute: z.string().optional(),
     smokeRouteAvailable: z.boolean().optional(),
-    builderCodeAttribution: z.enum(["attached", "unavailable"]).optional(),
+    builderCodeAttribution: z.enum(['attached', 'unavailable']).optional(),
     errorCode: z.string().optional(),
     lastCheckedAt: z.string().optional(),
     supportedKindsCount: z.number().optional(),
     supportedNetworks: z.array(z.string()).optional(),
-    fuel: z.object({
-      mode: z.enum(['buyer', 'seller_smoke', 'disabled']).optional(),
-      buyerEnabled: z.boolean().optional(),
-      activePermission: z.boolean().optional(),
-      remainingUsdc: z.string().optional(),
-      smokeResourceConfigured: z.boolean().optional(),
-    }).optional(),
+    fuel: z
+      .object({
+        mode: z.enum(['buyer', 'seller_smoke', 'disabled']).optional(),
+        buyerEnabled: z.boolean().optional(),
+        activePermission: z.boolean().optional(),
+        remainingUsdc: z.string().optional(),
+        smokeResourceConfigured: z.boolean().optional(),
+      })
+      .optional(),
     buyerPayer: X402BuyerPayerSchema.optional(),
     missingConfig: z.array(z.string()).optional(),
     warnings: z.array(z.string()).optional(),
@@ -2129,40 +2392,48 @@ export const StatusResponseSchema = z.object({
   // Current block and gas on the configured chain. Every value is nullable and
   // `reason` says why when it is null — a dash in the header must be able to
   // mean "the RPC did not answer", not just "nobody wired this".
-  chain: z.object({
-    blockNumber: z.string().nullable(),
-    gasPriceWei: z.string().nullable(),
-    gasPriceGwei: z.string().nullable(),
-    observedAt: z.string().nullable(),
-    // Measured samples only, oldest first. A gap here is a real gap.
-    gasPoints: z.array(z.object({ at: z.string(), gwei: z.string() })),
-    reason: z.enum(['ok', 'rpc_unreachable', 'rpc_invalid_response', 'not_configured']),
-  }).optional(),
+  chain: z
+    .object({
+      blockNumber: z.string().nullable(),
+      gasPriceWei: z.string().nullable(),
+      gasPriceGwei: z.string().nullable(),
+      observedAt: z.string().nullable(),
+      // Measured samples only, oldest first. A gap here is a real gap.
+      gasPoints: z.array(z.object({ at: z.string(), gwei: z.string() })),
+      reason: z.enum(['ok', 'rpc_unreachable', 'rpc_invalid_response', 'not_configured']),
+    })
+    .optional(),
   // T67X-A1: MIORAIL_PAID_INTELLIGENCE says an operator wants paid routes.
   // `readiness` says whether the facilitator can settle one. `blocked` means
   // paid features are off while every free capability keeps working.
-  paidIntelligence: z.object({
-    flagEnabled: z.boolean(),
-    settleReady: z.boolean(),
-    readiness: z.enum(['ready', 'blocked', 'disabled']),
-    blockedReason: z.string().optional(),
-    // WHICH operation costs money, and what it costs. A client must be able to
-    // state the price before the user clicks, and it cannot know that from the
-    // flags alone. Absent when nothing here is priced — so a surface with no
-    // entry renders no price and offers no paid control, rather than guessing
-    // a default and charging something else.
-    pricedSurfaces: z.object({
-      b20ExitProof: z.object({ priceUsdc: z.string() }).optional(),
-      swapSimulation: z.object({ priceUsdc: z.string() }).optional(),
-    }).optional(),
-  }).optional(),
-  autonomy: z.object({
-    spendPermissionsPersistence: z.enum(['database']),
-    databaseConfigured: z.boolean(),
-    chainMode: z.string(),
-    mainnetExecutionEnabled: z.boolean(),
-    mainnetRequiresUserOptIn: z.boolean(),
-  }).optional(),
+  paidIntelligence: z
+    .object({
+      flagEnabled: z.boolean(),
+      settleReady: z.boolean(),
+      readiness: z.enum(['ready', 'blocked', 'disabled']),
+      blockedReason: z.string().optional(),
+      // WHICH operation costs money, and what it costs. A client must be able to
+      // state the price before the user clicks, and it cannot know that from the
+      // flags alone. Absent when nothing here is priced — so a surface with no
+      // entry renders no price and offers no paid control, rather than guessing
+      // a default and charging something else.
+      pricedSurfaces: z
+        .object({
+          b20ExitProof: z.object({ priceUsdc: z.string() }).optional(),
+          swapSimulation: z.object({ priceUsdc: z.string() }).optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+  autonomy: z
+    .object({
+      spendPermissionsPersistence: z.enum(['database']),
+      databaseConfigured: z.boolean(),
+      chainMode: z.string(),
+      mainnetExecutionEnabled: z.boolean(),
+      mainnetRequiresUserOptIn: z.boolean(),
+    })
+    .optional(),
   // T19.1: split into explicit flags. The UI may show "Confirm in Base Account"
   // ONLY when userConfirmedEnabled is true, and must never infer "Execute" from
   // a single generic flag. Legacy server-broadcast routes gate on
@@ -2232,7 +2503,9 @@ export const AutonomyStateResponseSchema = z.object({
   contractAddress: z.string().nullable().optional(),
   sessionKey: z.object({
     status: z.enum(['configured', 'unconfigured', 'inactive', 'revoked', 'expired', 'active']),
-    source: z.enum(['database', 'memory', 'onchain', 'base-sepolia-contract', 'missing']).optional(),
+    source: z
+      .enum(['database', 'memory', 'onchain', 'base-sepolia-contract', 'missing'])
+      .optional(),
     isStaleTestMemory: z.boolean().optional(),
     isExpiredMemory: z.boolean().optional(),
     dailyLimitUsdc: z.string().nullable(),
@@ -2271,28 +2544,46 @@ export const AutonomyStateResponseSchema = z.object({
   }),
 });
 
-const UsdcPolicyAmountSchema = z.string().regex(/^\d+(?:\.\d{1,6})?$/, 'Expected a positive USDC amount with at most 6 decimals');
-const AutonomyAddressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/, 'Expected an Ethereum address');
+const UsdcPolicyAmountSchema = z
+  .string()
+  .regex(/^\d+(?:\.\d{1,6})?$/, 'Expected a positive USDC amount with at most 6 decimals');
+const AutonomyAddressSchema = z
+  .string()
+  .regex(/^0x[0-9a-fA-F]{40}$/, 'Expected an Ethereum address');
 
-export const ConfigureAutonomyRequestSchema = z.object({
-  dailyLimitUsdc: UsdcPolicyAmountSchema,
-  maxPerActionUsdc: UsdcPolicyAmountSchema,
-  whitelist: z.array(AutonomyAddressSchema).min(1).max(100),
-  scope: z.string().optional(),
-  ttlSeconds: z.number().int().min(300).max(30 * 24 * 60 * 60),
-  walletAddress: AutonomyAddressSchema,
-  mainnetOptIn: z.boolean().default(false),
-  acknowledgeMainnetRisk: z.boolean().default(false),
-}).superRefine((value, context) => {
-  const daily = Number(value.dailyLimitUsdc);
-  const perAction = Number(value.maxPerActionUsdc);
-  if (!Number.isFinite(daily) || daily <= 0) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ['dailyLimitUsdc'], message: 'Daily limit must be greater than zero' });
-  }
-  if (!Number.isFinite(perAction) || perAction <= 0 || perAction > daily) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ['maxPerActionUsdc'], message: 'Per-action limit must be greater than zero and no higher than the daily limit' });
-  }
-});
+export const ConfigureAutonomyRequestSchema = z
+  .object({
+    dailyLimitUsdc: UsdcPolicyAmountSchema,
+    maxPerActionUsdc: UsdcPolicyAmountSchema,
+    whitelist: z.array(AutonomyAddressSchema).min(1).max(100),
+    scope: z.string().optional(),
+    ttlSeconds: z
+      .number()
+      .int()
+      .min(300)
+      .max(30 * 24 * 60 * 60),
+    walletAddress: AutonomyAddressSchema,
+    mainnetOptIn: z.boolean().default(false),
+    acknowledgeMainnetRisk: z.boolean().default(false),
+  })
+  .superRefine((value, context) => {
+    const daily = Number(value.dailyLimitUsdc);
+    const perAction = Number(value.maxPerActionUsdc);
+    if (!Number.isFinite(daily) || daily <= 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['dailyLimitUsdc'],
+        message: 'Daily limit must be greater than zero',
+      });
+    }
+    if (!Number.isFinite(perAction) || perAction <= 0 || perAction > daily) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['maxPerActionUsdc'],
+        message: 'Per-action limit must be greater than zero and no higher than the daily limit',
+      });
+    }
+  });
 
 export const ConfigureAutonomyResponseSchema = z.object({
   success: z.boolean(),
@@ -2392,7 +2683,7 @@ export const X402PricingResponseSchema = z.object({
       label: z.string(),
       priceUsdc: z.string(),
       description: z.string(),
-    })
+    }),
   ),
 });
 
@@ -2416,7 +2707,12 @@ export const X402FuelPermissionRequestSchema = z.object({
   recurringCharge: UsdcAmountSchema.optional(),
   periodInDays: z.number().int().min(1).max(366).optional(),
   limitUsdc: UsdcAmountSchema,
-  ttlHours: z.number().int().min(1).max(24 * 366).optional(),
+  ttlHours: z
+    .number()
+    .int()
+    .min(1)
+    .max(24 * 366)
+    .optional(),
 });
 
 const X402FuelActivePermissionSchema = z.object({
@@ -2440,15 +2736,25 @@ export const X402FuelPermissionResponseSchema = z.object({
 });
 
 export const X402FuelResponseSchema = z.object({
-  status: z.enum(['ready', 'missing_permission', 'permission_inactive', 'permission_expired', 'limit_exhausted', 'not_configured', 'unavailable']),
+  status: z.enum([
+    'ready',
+    'missing_permission',
+    'permission_inactive',
+    'permission_expired',
+    'limit_exhausted',
+    'not_configured',
+    'unavailable',
+  ]),
   mode: z.literal('buyer'),
   activePermission: X402FuelActivePermissionSchema.nullable(),
-  pendingReservations: z.array(z.object({
-    id: z.string(),
-    amountUsdc: z.string(),
-    category: z.enum(['inference', 'premium_data', 'mcp_tool', 'execution', 'dev_smoke']),
-    createdAt: z.string(),
-  })),
+  pendingReservations: z.array(
+    z.object({
+      id: z.string(),
+      amountUsdc: z.string(),
+      category: z.enum(['inference', 'premium_data', 'mcp_tool', 'execution', 'dev_smoke']),
+      createdAt: z.string(),
+    }),
+  ),
   spendByCategory: z.object({
     inference: z.string(),
     premiumData: z.string(),
@@ -2462,11 +2768,13 @@ export const X402FuelResponseSchema = z.object({
     urlHost: z.string().optional(),
   }),
   buyerPayer: X402BuyerPayerSchema,
-  x402: z.object({
-    settleReady: z.boolean().optional(),
-    status: z.string().optional(),
-    network: z.string().optional(),
-  }).optional(),
+  x402: z
+    .object({
+      settleReady: z.boolean().optional(),
+      status: z.string().optional(),
+      network: z.string().optional(),
+    })
+    .optional(),
 });
 
 // Simulate Action
@@ -2522,7 +2830,10 @@ export const NftCompareResponseV1Schema = z.discriminatedUnion('outcome', [
     })
     .strict(),
   z
-    .object({ outcome: z.literal('needs_clarification'), issues: z.array(z.string().min(1).max(120)) })
+    .object({
+      outcome: z.literal('needs_clarification'),
+      issues: z.array(z.string().min(1).max(120)),
+    })
     .strict(),
   z.object({ outcome: z.literal('unsupported'), reason: z.string().min(1).max(200) }).strict(),
 ]);
@@ -2546,7 +2857,9 @@ export const NftPrepareResponseV1Schema = z.discriminatedUnion('outcome', [
       simulation: SimulationStateV1Schema,
       /** The NFT Safety Kernel's own shape: EVERY violation, not the first.
        * A reviewer reading a refusal deserves the whole picture. */
-      safety: z.object({ ok: z.boolean(), violations: z.array(z.string().min(1).max(60)) }).strict(),
+      safety: z
+        .object({ ok: z.boolean(), violations: z.array(z.string().min(1).max(60)) })
+        .strict(),
       /** Why it cannot be signed, when it cannot. Null exactly when signable. */
       blockedReason: z.string().min(1).max(300).nullable(),
       /** False until every gate passes. A surface must not offer a wallet
@@ -2554,7 +2867,13 @@ export const NftPrepareResponseV1Schema = z.discriminatedUnion('outcome', [
       signable: z.boolean(),
     })
     .strict(),
-  z.object({ outcome: z.literal('rejected'), reason: z.string().min(1).max(60), detail: z.string().min(1).max(200) }).strict(),
+  z
+    .object({
+      outcome: z.literal('rejected'),
+      reason: z.string().min(1).max(60),
+      detail: z.string().min(1).max(200),
+    })
+    .strict(),
 ]);
 
 /**
@@ -2616,7 +2935,9 @@ export const NftApproveResponseV1Schema = z.discriminatedUnion('outcome', [
     .object({
       outcome: z.literal('blocked'),
       reason: z.string().min(1).max(500),
-      safety: z.object({ ok: z.boolean(), violations: z.array(z.string().min(1).max(60)) }).strict(),
+      safety: z
+        .object({ ok: z.boolean(), violations: z.array(z.string().min(1).max(60)) })
+        .strict(),
     })
     .strict(),
 ]);
@@ -2743,7 +3064,10 @@ export const AiCompareResponseV1Schema = z.discriminatedUnion('outcome', [
     })
     .strict(),
   z
-    .object({ outcome: z.literal('needs_clarification'), issues: z.array(z.string().min(1).max(200)) })
+    .object({
+      outcome: z.literal('needs_clarification'),
+      issues: z.array(z.string().min(1).max(200)),
+    })
     .strict(),
   z.object({ outcome: z.literal('unsupported'), reason: z.string().min(1).max(300) }).strict(),
 ]);
@@ -2838,7 +3162,10 @@ const B20FieldV1Schema = z
     ]),
     value: z.string().max(500).nullable(),
     reason: z.string().max(300).nullable(),
-    evidenceHash: z.string().regex(/^0x[0-9a-f]{64}$/).nullable(),
+    evidenceHash: z
+      .string()
+      .regex(/^0x[0-9a-f]{64}$/)
+      .nullable(),
   })
   .strict();
 
@@ -2847,7 +3174,10 @@ const B20StatementV1Schema = z
     key: z.string().min(1).max(60),
     statement: z.string().min(1).max(300),
     observedState: z.enum(['constrained', 'unconstrained', 'unknown']),
-    evidenceHash: z.string().regex(/^0x[0-9a-f]{64}$/).nullable(),
+    evidenceHash: z
+      .string()
+      .regex(/^0x[0-9a-f]{64}$/)
+      .nullable(),
   })
   .strict();
 
@@ -2864,7 +3194,10 @@ const B20EvidenceV1Schema = z
     selector: z.string().regex(/^0x[0-9a-f]{8}$/),
     rawResponseHash: z.string().regex(/^0x[0-9a-f]{64}$/),
     decodedValue: z.string().max(500).nullable(),
-    revertSelector: z.string().regex(/^0x[0-9a-f]{8}$/).nullable(),
+    revertSelector: z
+      .string()
+      .regex(/^0x[0-9a-f]{8}$/)
+      .nullable(),
     observedAt: z.string(),
     verification: z.literal('exact_chain_read'),
     sourceVersion: z.string().min(1).max(120),
@@ -2892,8 +3225,14 @@ export const B20ControlCardResponseV1Schema = z
       'invalid_address',
       'unsupported_chain',
     ]),
-    blockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
-    blockHash: z.string().regex(/^0x[0-9a-f]{64}$/).nullable(),
+    blockNumber: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
+    blockHash: z
+      .string()
+      .regex(/^0x[0-9a-f]{64}$/)
+      .nullable(),
     observedAt: z.string(),
     fields: z.array(B20FieldV1Schema).max(64),
     statements: z.array(B20StatementV1Schema).max(32),
@@ -2936,8 +3275,14 @@ export const B20ObservationGapV1Schema = z
 export const B20ControlWatchV1Schema = z
   .object({
     tokenAddress: AddressV1Schema,
-    fromBlock: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
-    toBlock: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    fromBlock: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
+    toBlock: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
     fromObservedAt: z.string().min(1).max(60).nullable(),
     toObservedAt: z.string().min(1).max(60),
     changes: z.array(B20ControlChangeV1Schema).max(64),
@@ -2977,14 +3322,21 @@ export const B20WatchedTokenV1Schema = z
         transferPolicyActive: z.boolean(),
         controlsFullyRead: z.boolean(),
         supplyCapped: z.boolean(),
-        blockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+        blockNumber: z
+          .string()
+          .regex(/^(0|[1-9][0-9]*)$/)
+          .nullable(),
       })
       .strict()
       .optional(),
     /** The holder's balance, read FROM THE TOKEN at the control block — not
      * from a balance provider, because none of them index B20. Null means the
      * read failed, never that the balance is zero. */
-    balanceAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable().optional(),
+    balanceAtomic: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable()
+      .optional(),
     decimals: z.number().int().min(0).max(36).nullable().optional(),
     /** Why nothing was compared. Never a claim about the token. */
     reason: z.string().max(300).nullable(),
@@ -3113,25 +3465,45 @@ export const B20ExitCheckResponseV1Schema = z
     roundTripCostBps: z.number().int().min(0).max(100_000).nullable(),
     /** Atomic units of the TOKEN, not of USDC: capacity is measured in what is
      * being sold. */
-    exitCapacityAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
-    firstFailingAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    exitCapacityAtomic: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
+    firstFailingAtomic: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
     probeCount: z.number().int().min(0).max(16),
     /** False when the ladder measured a single point. A pass on one probe is
      * not a depth finding and must not be shown as one. */
     capacityInformative: z.boolean(),
     /** What every impact figure is relative to. Impact is measured against the
      * smallest probe that priced, never against a mid price. */
-    referenceSizeAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    referenceSizeAtomic: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
     /** True when a read failed for a reason that is not "no such pool". An
      * all-empty result from a failing endpoint is not "no liquidity". */
     endpointDegraded: z.boolean(),
     /** The block the controls were read at, so the two halves of this answer
      * can be dated independently. */
-    controlsBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    controlsBlockNumber: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
     /** The exact buy quote behind the displayed unit price. Additive and
      * nullable so older clients keep parsing older deployments. */
-    entryInputAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable().optional(),
-    entryOutputAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable().optional(),
+    entryInputAtomic: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable()
+      .optional(),
+    entryOutputAtomic: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable()
+      .optional(),
     quoteAsset: AddressV1Schema.nullable().optional(),
     provider: z.enum(['aerodrome', 'uniswap_v4']).nullable().optional(),
     sourceKey: z.string().min(1).max(200).nullable().optional(),
@@ -3191,10 +3563,22 @@ export const B20OpportunitySimulateResponseV1Schema = z
     expiresAt: z.string().min(1).max(60).nullable(),
     /** What the simulation OBSERVED, not what a quote predicted. */
     simulatedRoundTripBps: z.number().int().min(0).max(100_000).nullable(),
-    simulatedReturnedAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
-    simulatedAcquiredAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
-    simulationBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
-    controlsBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    simulatedReturnedAtomic: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
+    simulatedAcquiredAtomic: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
+    simulationBlockNumber: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
+    controlsBlockNumber: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
     checkedAt: z.string().min(1).max(60),
   })
   .strict();
@@ -3249,14 +3633,20 @@ export const B20EntryReviewV1Schema = z
     approval: z
       .object({
         required: z.boolean(),
-        amountAtomic: z.string().regex(/^[1-9][0-9]*$/).nullable(),
+        amountAtomic: z
+          .string()
+          .regex(/^[1-9][0-9]*$/)
+          .nullable(),
       })
       .strict(),
     clearanceId: z.string().min(1).max(200),
     clearanceCreatedAt: z.string().min(1).max(60),
     clearanceExpiresAt: z.string().min(1).max(60),
     certificationBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/),
-    prepareControlBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    prepareControlBlockNumber: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
     prepareSimulationBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/),
     certificationRoundTripBps: z.number().int().min(0).max(100_000),
     coverage: z.enum(['complete', 'partial']),
@@ -3311,11 +3701,23 @@ export const B20EntryOutcomeV1Schema = z
     /** A short code, never a provider message: those carry endpoints, and
      * endpoints carry keys. */
     errorCode: z.string().min(1).max(80).nullable(),
-    actualSpentAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
-    actualReceivedAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
-    confirmedBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    actualSpentAtomic: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
+    actualReceivedAtomic: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
+    confirmedBlockNumber: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
     transactionHashes: z.array(z.string().regex(/^0x[0-9a-f]{64}$/)).max(16),
-    reconciliationEvidenceHash: z.string().regex(/^0x[0-9a-f]{64}$/).nullable(),
+    reconciliationEvidenceHash: z
+      .string()
+      .regex(/^0x[0-9a-f]{64}$/)
+      .nullable(),
     /** Whether this state may show a button that opens a wallet, and whether
      * it may offer a status refresh. Server-decided so neither surface has to
      * re-derive it. */
@@ -3360,8 +3762,22 @@ export const B20EntryRouteProofSummaryV1Schema = z
   .object({
     proofId: z.string().min(1).max(200),
     proofHash: HashV1Schema,
-    finalStatus: z.enum(['pending', 'completed', 'partial_failure', 'failed', 'cancelled', 'reconciliation_required']),
-    reconciliationState: z.enum(['pending', 'matched', 'deviated', 'partial', 'failed', 'manual_review']),
+    finalStatus: z.enum([
+      'pending',
+      'completed',
+      'partial_failure',
+      'failed',
+      'cancelled',
+      'reconciliation_required',
+    ]),
+    reconciliationState: z.enum([
+      'pending',
+      'matched',
+      'deviated',
+      'partial',
+      'failed',
+      'manual_review',
+    ]),
     approvedCallsHash: HashV1Schema,
     transactionHashes: z.array(HashV1Schema).max(16),
     updatedAt: z.string().datetime(),
@@ -3500,7 +3916,10 @@ const B20CardLaunchV1Schema = z
     // The two must agree: a surface that reads one and not the other cannot be
     // made to show an age it does not have.
     const known = value.launchedAt !== null;
-    if (known !== (value.launchTimeSource === 'onchain_block') || known !== (value.ageSeconds !== null)) {
+    if (
+      known !== (value.launchTimeSource === 'onchain_block') ||
+      known !== (value.ageSeconds !== null)
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['launchTimeSource'],
@@ -3617,7 +4036,9 @@ const B20CardObservationV1Schema = z
     capacityProbeCount: z.number().int().min(0),
     capacityStable: z.boolean().nullable(),
     transfersPaused: z.boolean().nullable(),
-    transferPolicyState: z.enum(['open', 'restricted', 'unavailable', 'unsupported_by_variant']).nullable(),
+    transferPolicyState: z
+      .enum(['open', 'restricted', 'unavailable', 'unsupported_by_variant'])
+      .nullable(),
     transferPolicyNotice: z.string().nullable(),
     controlsComplete: z.boolean().nullable(),
     controlsBlockNumber: z.string().regex(/^\d+$/).nullable(),
@@ -3644,16 +4065,31 @@ const B20CardObservationV1Schema = z
     if (observation.state === 'provisional' && !observation.preEntryNotice) {
       // §6 — the number beside it is a bound, and the sentence saying so is not
       // optional.
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'a provisional card must carry the pre-entry notice' });
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'a provisional card must carry the pre-entry notice',
+      });
     }
-    if ((observation.state === 'rejected' || observation.state === 'unmeasured') && !observation.reasonCode) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'a negative card must name its reason' });
+    if (
+      (observation.state === 'rejected' || observation.state === 'unmeasured') &&
+      !observation.reasonCode
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'a negative card must name its reason',
+      });
     }
     if (observation.quoteAlignment === 'latest_not_anchored' && !observation.quoteAlignmentNotice) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'unanchored quotes must be stated on the card' });
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'unanchored quotes must be stated on the card',
+      });
     }
     if (observation.bestRouteConfirmed && observation.routeCoverage !== 'complete') {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'a best-route claim needs complete coverage' });
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'a best-route claim needs complete coverage',
+      });
     }
   });
 
@@ -3671,13 +4107,34 @@ const B20CardObservationV1Schema = z
 const B20FundamentalFindingV1Schema = z
   .object({
     dimension: z.enum([
-      'project_identity', 'website', 'product', 'repository',
-      'base_presence', 'docs', 'project_before_token', 'development_activity',
+      'project_identity',
+      'website',
+      'product',
+      'repository',
+      'base_presence',
+      'docs',
+      'project_before_token',
+      'development_activity',
     ]),
-    state: z.enum(['verified', 'unverified', 'live', 'found', 'active', 'quiet', 'yes', 'no', 'unknown']),
+    state: z.enum([
+      'verified',
+      'unverified',
+      'live',
+      'found',
+      'active',
+      'quiet',
+      'yes',
+      'no',
+      'unknown',
+    ]),
     provenance: z.enum([
-      'domain_claim_file', 'https_probe', 'functional_probe',
-      'repository_api', 'onchain_read', 'timestamp_comparison', 'not_collected',
+      'domain_claim_file',
+      'https_probe',
+      'functional_probe',
+      'repository_api',
+      'onchain_read',
+      'timestamp_comparison',
+      'not_collected',
     ]),
     observedAt: z.string().datetime().nullable(),
     /** Only ever something the PROJECT published. */
@@ -3700,8 +4157,14 @@ export const B20FundamentalProfileV1Schema = z
     missing: z
       .array(
         z.enum([
-          'project_identity', 'website', 'product', 'repository',
-          'base_presence', 'docs', 'project_before_token', 'development_activity',
+          'project_identity',
+          'website',
+          'product',
+          'repository',
+          'base_presence',
+          'docs',
+          'project_before_token',
+          'development_activity',
         ]),
       )
       .max(8),
@@ -3718,7 +4181,10 @@ export const B20FundamentalProfileV1Schema = z
       });
     }
     if (value.identityVerified && value.standing === 'unverified') {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'a verified identity cannot stand as unverified' });
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'a verified identity cannot stand as unverified',
+      });
     }
     // `product_backed` requires a product SHOWN TO RUN, not a page that loaded.
     const productLive = value.findings.some(
@@ -3853,7 +4319,8 @@ const B20MeasuredMoverV1Schema = z
     }
     if (
       value.state === 'rejected' &&
-      (value.reasonCode !== 'round_trip_above_tolerance' || value.profileStatus !== 'outside_round_trip_reference')
+      (value.reasonCode !== 'round_trip_above_tolerance' ||
+        value.profileStatus !== 'outside_round_trip_reference')
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -3898,11 +4365,13 @@ export const B20MarketRailsResponseV1Schema = z
 /**
  * The universe, counted — the shape a planner asks for instead of paging.
  *
- * Every axis here is a count of STORED MEASUREMENTS in a launch-age window,
- * never a count of tokens on Base. The `aboutToken` flag rides along on each
- * standing row for the same reason it rides on a card: a bucket whose flag is
- * false counts what Miorail could not measure, and a reader that adds it to a
- * finding has produced a number nobody measured.
+ * `inspected` counts canonical launches in the window. `completed` and
+ * `incomplete` partition that corpus by the standing of each launch's latest
+ * supported stored reading. None of these is a count of every token on Base.
+ * The `aboutToken` flag rides along on each standing row for the same reason it
+ * rides on a card: a bucket whose flag is false counts what Miorail could not
+ * measure, and a reader that adds it to a finding has produced a number nobody
+ * measured.
  */
 export const B20UniverseSummaryV1Schema = z
   .object({
@@ -3910,10 +4379,29 @@ export const B20UniverseSummaryV1Schema = z
       .object({
         maxLaunchAgeMs: z.number().int().positive(),
         launches: z.number().int().min(0),
-        /** False when the scan limit was hit before the window ran out. */
+        inspected: z.number().int().min(0),
+        completed: z.number().int().min(0),
+        incomplete: z.number().int().min(0),
+        /** False when storage could not establish the complete window. */
         complete: z.boolean(),
       })
-      .strict(),
+      .strict()
+      .superRefine((window, ctx) => {
+        if (window.launches !== window.inspected) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['launches'],
+            message: 'launches is the compatibility alias of inspected',
+          });
+        }
+        if (window.completed + window.incomplete !== window.inspected) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['completed'],
+            message: 'completed and incomplete must partition inspected',
+          });
+        }
+      }),
     standing: z
       .array(
         z
@@ -4116,7 +4604,10 @@ export const B20ConsoleAskRequestV1Schema = z
      * whatever a wallet holds, bounded at the same 25 the watch endpoint uses
      * because each position is its own read.
      */
-    tokenAddresses: z.array(z.string().regex(/^0x[0-9a-fA-F]{40}$/)).max(25).optional(),
+    tokenAddresses: z
+      .array(z.string().regex(/^0x[0-9a-fA-F]{40}$/))
+      .max(25)
+      .optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -4145,6 +4636,8 @@ export const B20ConsoleAskResponseV1Schema = z
       'find_two_sided',
       'find_not_searched',
       'find_verified_projects',
+      'find_needs_evidence',
+      'find_research_candidates',
       'compare_tokens',
       'measured_changes',
       'rank_positions',
@@ -4167,7 +4660,9 @@ export const B20ConsoleAskResponseV1Schema = z
     caveats: z.array(z.string().min(1).max(500)).min(1).max(12),
     /** What this answer was built from. Never empty on an answered question. */
     reads: z
-      .array(z.object({ tool: z.string().min(1).max(40), detail: z.string().min(1).max(300) }).strict())
+      .array(
+        z.object({ tool: z.string().min(1).max(40), detail: z.string().min(1).max(300) }).strict(),
+      )
       .max(8),
     serverTime: z.string().datetime(),
   })
@@ -4217,7 +4712,11 @@ export const B20LaunchContextResponseV1Schema = z
     corpus: z
       .object({
         launchCount: z.number().int().min(0),
-        standingCounts: z.array(z.object({ kind: z.string().min(1).max(64), count: z.number().int().min(0) }).strict()).max(20),
+        standingCounts: z
+          .array(
+            z.object({ kind: z.string().min(1).max(64), count: z.number().int().min(0) }).strict(),
+          )
+          .max(20),
         /** The breakdown's own denominator. It is NOT `launchCount`: one live
          * sender has 359 launches and the breakdown reads 25 of them. */
         standingSampleSize: z.number().int().min(0),
@@ -4302,18 +4801,33 @@ export const B20EntryPrepareResponseV1Schema = z
     refusalReason: z.string().min(1).max(80).nullable(),
     refusalDetail: z.string().max(400).nullable(),
     clearanceId: z.string().min(1).max(200),
-    blueprintHash: z.string().regex(/^0x[0-9a-f]{64}$/).nullable(),
+    blueprintHash: z
+      .string()
+      .regex(/^0x[0-9a-f]{64}$/)
+      .nullable(),
     tokenAddress: AddressV1Schema,
     /** What the user spends, and what the plan expects back. */
     positionAtomic: z.string().regex(/^[1-9][0-9]{0,17}$/),
-    expectedOutputAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
-    minimumOutputAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    expectedOutputAtomic: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
+    minimumOutputAtomic: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
     entrySourceKey: z.string().max(300).nullable(),
     coverage: z.enum(['complete', 'partial']).nullable(),
     viableRouteConfirmed: z.boolean(),
     bestRouteConfirmed: z.boolean(),
-    certifiedControlBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
-    prepareControlBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable(),
+    certifiedControlBlockNumber: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
+    prepareControlBlockNumber: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)$/)
+      .nullable(),
     clearanceExpiresAt: z.string().min(1).max(60),
     /** Unsigned calls for the user's own wallet to approve. Present only when
      * every gate, the kernel AND the simulation passed. */
@@ -4322,7 +4836,10 @@ export const B20EntryPrepareResponseV1Schema = z
         z
           .object({
             to: AddressV1Schema,
-            data: z.string().regex(/^0x[0-9a-fA-F]*$/).max(20_000),
+            data: z
+              .string()
+              .regex(/^0x[0-9a-fA-F]*$/)
+              .max(20_000),
             value: z.string().regex(/^(0|[1-9][0-9]*)$/),
           })
           .strict(),
@@ -4391,7 +4908,9 @@ export const SubmissionAttemptCreateRequestV1Schema = z
     approvedCallsHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
   })
   .strict();
-export type SubmissionAttemptCreateRequestV1 = z.infer<typeof SubmissionAttemptCreateRequestV1Schema>;
+export type SubmissionAttemptCreateRequestV1 = z.infer<
+  typeof SubmissionAttemptCreateRequestV1Schema
+>;
 
 export const SubmissionAttemptWireV1Schema = z
   .object({
