@@ -4,6 +4,21 @@ import {
   buildAvantisProviderHandoffV1,
   matchBaseMcpProviderIntentV1,
 } from './baseMcpProviderRouting.js';
+import { BASE_MCP_PROVIDER_INTENTS_V1 } from '@mioagent/security';
+
+test('every reviewed catalogue example keeps its exact routing disposition', () => {
+  for (const provider of BASE_MCP_PROVIDER_INTENTS_V1) {
+    for (const example of provider.examples) {
+      const match = matchBaseMcpProviderIntentV1(example.prompt);
+      assert.equal(match?.pluginId, provider.pluginId, example.prompt);
+      assert.equal(match?.exampleId, example.id, example.prompt);
+      assert.equal(match?.disposition, example.disposition, example.prompt);
+      if (example.surface === 'routable') {
+        assert.equal(match?.disposition, 'handoff_to_routes', example.prompt);
+      }
+    }
+  }
+});
 
 test('provider ownership routes Balancer, YO, Hydrex and o1.exchange to Routes', () => {
   for (const prompt of [

@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import {
   BASE_MCP_CONSOLE_PROMPTS_V1,
+  BASE_MCP_QUICK_EXAMPLES_V1,
   BaseMcpConsoleCard,
   baseMcpConsoleStatusCopyV1,
   baseMcpToolSummaryV1,
@@ -148,12 +149,35 @@ test('a ROUTABLE response offers Routes AI and no approval URL', () => {
 });
 
 describe('the console never borrows the routers’ authority', () => {
-  test('starter prompts demonstrate READ, ACTION and ROUTABLE without claiming unreleased actions', () => {
+  test('seven Quick examples demonstrate dispositions without claiming unreleased actions', () => {
+    assert.equal(BASE_MCP_QUICK_EXAMPLES_V1.length, 7);
     assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /hold|transactions/i.test(prompt)));
     assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /send/i.test(prompt)));
-    assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /x402/i.test(prompt)));
     assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /swap/i.test(prompt)));
     assert.equal(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /sign|launch/i.test(prompt)), false);
+    assert.equal(
+      BASE_MCP_CONSOLE_PROMPTS_V1.includes('Pay x402 GET https://api.venice.ai/api/v1/models, max 0.10 USDC'),
+      false,
+    );
+    assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.includes('Show the models available from Venice AI'));
+  });
+
+  test('the global strip is labelled Quick examples and every shortcut only fills the console', () => {
+    const selected: string[] = [];
+    const html = renderToStaticMarkup(BaseMcpConsoleCard({
+      question: '',
+      onQuestionChange: (prompt) => selected.push(prompt),
+      onAsk: () => assert.fail('rendering or selecting a Quick example must not execute'),
+      pending: false,
+      unavailableReason: null,
+      answer: null,
+    }));
+    assert.match(html, /Quick examples/);
+    assert.match(html, /routing demonstrations/);
+    assert.match(html, /ROUTES AI/);
+    assert.match(html, /PROVIDER UI/);
+    assert.match(html, /ACTION/);
+    assert.deepEqual(selected, []);
   });
 
   test('an empty Base MCP inventory is stated as a connection fact', () => {

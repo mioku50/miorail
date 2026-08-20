@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useLocation } from 'wouter';
 import {
   BaseMcpConsoleCard,
+  BASE_MCP_CONSOLE_INPUT_ID_V1,
   BaseMcpExtensionsCard,
   BaseMcpPluginsCard,
   BaseMcpSummaryRail,
@@ -102,7 +103,11 @@ export function ExtensionsPage() {
       : null,
     onSelectPrompt: (prompt: string) => {
       setQuestion(prompt);
-      globalThis.document?.getElementById('base-mcp-console')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      globalThis.requestAnimationFrame?.(() => {
+        globalThis.document?.getElementById('base-mcp-console')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const input = globalThis.document?.getElementById(BASE_MCP_CONSOLE_INPUT_ID_V1) as HTMLTextAreaElement | null;
+        input?.focus({ preventScroll: true });
+      });
     },
   };
 
@@ -189,38 +194,38 @@ export function ExtensionsPage() {
         <div id="base-mcp-console">
           <BaseMcpConsoleCard
             question={question}
-          onQuestionChange={setQuestion}
-          onAsk={() => {
-            const message = question.trim();
-            if (message) {
-              reconcileAction.reset();
-              consoleAsk.mutate(message);
+            onQuestionChange={setQuestion}
+            onAsk={() => {
+              const message = question.trim();
+              if (message) {
+                reconcileAction.reset();
+                consoleAsk.mutate(message);
+              }
+            }}
+            pending={consoleAsk.isPending}
+            answer={
+              reconcileAction.data && consoleAsk.data?.action
+                ? { ...consoleAsk.data, action: reconcileAction.data }
+                : consoleAsk.data ?? null
             }
-          }}
-          pending={consoleAsk.isPending}
-          answer={
-            reconcileAction.data && consoleAsk.data?.action
-              ? { ...consoleAsk.data, action: reconcileAction.data }
-              : consoleAsk.data ?? null
-          }
-          readTools={probe.data?.routing.read}
-          actionTools={probe.data?.routing.action}
-          releasedActionTools={probe.data?.tools.filter(
-            (tool) => tool.surface === 'action' && tool.surfaceEnabled,
-          ).length}
-          routableTools={probe.data?.routing.routable}
-          reconcilingAction={reconcileAction.isPending}
-          onOpenRoutes={(message) => {
-            sessionStorage.setItem(GOAL_HANDOFF_KEY_V1, message);
-            navigate(`${consoleSectionPathV1('routes')}?goal=${encodeURIComponent(message)}`);
-          }}
-          onReconcileAction={(receiptId) => reconcileAction.mutate(receiptId)}
+            readTools={probe.data?.routing.read}
+            actionTools={probe.data?.routing.action}
+            releasedActionTools={probe.data?.tools.filter(
+              (tool) => tool.surface === 'action' && tool.surfaceEnabled,
+            ).length}
+            routableTools={probe.data?.routing.routable}
+            reconcilingAction={reconcileAction.isPending}
+            onOpenRoutes={(message) => {
+              sessionStorage.setItem(GOAL_HANDOFF_KEY_V1, message);
+              navigate(`${consoleSectionPathV1('routes')}?goal=${encodeURIComponent(message)}`);
+            }}
+            onReconcileAction={(receiptId) => reconcileAction.mutate(receiptId)}
             unavailableReason={
-            consoleAsk.error
-              // Never the error's own message: a transport failure can carry
-              // the endpoint, and the endpoint can carry a token.
-              ? 'The console could not reach the server. Nothing here is a statement about Base MCP.'
-              : null
+              consoleAsk.error
+                // Never the error's own message: a transport failure can carry
+                // the endpoint, and the endpoint can carry a token.
+                ? 'The console could not reach the server. Nothing here is a statement about Base MCP.'
+                : null
             }
           />
         </div>

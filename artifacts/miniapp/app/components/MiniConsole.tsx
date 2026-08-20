@@ -23,6 +23,7 @@ import {
   B20ConsolePanel,
   B20PortfolioPanel,
   BaseMcpConsoleCard,
+  BASE_MCP_CONSOLE_INPUT_ID_V1,
   BaseMcpExtensionsCard,
   BaseMcpPluginsCard,
   BaseMcpActionReceiptsCard,
@@ -2184,6 +2185,44 @@ export function MiniConsole() {
   } else if (section === "extensions") {
     sectionContent = (
       <>
+        {status.data?.baseMcp?.enabled === true && (
+          <div id="base-mcp-console">
+            <BaseMcpConsoleCard
+              question={baseMcpQuestion}
+              onQuestionChange={setBaseMcpQuestion}
+              onAsk={() => {
+                const message = baseMcpQuestion.trim();
+                if (message) {
+                  reconcileBaseMcpAction.reset();
+                  baseMcpAsk.mutate(message);
+                }
+              }}
+              pending={baseMcpAsk.isPending}
+              answer={
+                reconcileBaseMcpAction.data && baseMcpAsk.data?.action
+                  ? { ...baseMcpAsk.data, action: reconcileBaseMcpAction.data }
+                  : baseMcpAsk.data ?? null
+              }
+              readTools={baseMcpProbe.data?.routing.read}
+              actionTools={baseMcpProbe.data?.routing.action}
+              releasedActionTools={baseMcpProbe.data?.tools.filter(
+                (tool) => tool.surface === "action" && tool.surfaceEnabled,
+              ).length}
+              routableTools={baseMcpProbe.data?.routing.routable}
+              reconcilingAction={reconcileBaseMcpAction.isPending}
+              onOpenRoutes={(message) => {
+                setGoal(message);
+                setSection("routes");
+              }}
+              onReconcileAction={(receiptId) => reconcileBaseMcpAction.mutate(receiptId)}
+              unavailableReason={
+                baseMcpAsk.error
+                  ? "The console could not reach the server. Nothing here is a statement about Base MCP."
+                  : null
+              }
+            />
+          </div>
+        )}
         <BaseMcpPluginsCard
           loading={baseMcpPlugins.isPending}
           plugins={baseMcpPlugins.data?.plugins ?? []}
@@ -2192,44 +2231,15 @@ export function MiniConsole() {
           unavailableReason={
             baseMcpPlugins.error ? "The plugin catalogue could not be read from this server." : null
           }
-          onSelectPrompt={(prompt) => setBaseMcpQuestion(prompt)}
+          onSelectPrompt={(prompt) => {
+            setBaseMcpQuestion(prompt);
+            globalThis.requestAnimationFrame?.(() => {
+              globalThis.document?.getElementById("base-mcp-console")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              const input = globalThis.document?.getElementById(BASE_MCP_CONSOLE_INPUT_ID_V1) as HTMLTextAreaElement | null;
+              input?.focus({ preventScroll: true });
+            });
+          }}
         />
-        {status.data?.baseMcp?.enabled === true && (
-          <BaseMcpConsoleCard
-            question={baseMcpQuestion}
-            onQuestionChange={setBaseMcpQuestion}
-            onAsk={() => {
-              const message = baseMcpQuestion.trim();
-              if (message) {
-                reconcileBaseMcpAction.reset();
-                baseMcpAsk.mutate(message);
-              }
-            }}
-            pending={baseMcpAsk.isPending}
-            answer={
-              reconcileBaseMcpAction.data && baseMcpAsk.data?.action
-                ? { ...baseMcpAsk.data, action: reconcileBaseMcpAction.data }
-                : baseMcpAsk.data ?? null
-            }
-            readTools={baseMcpProbe.data?.routing.read}
-            actionTools={baseMcpProbe.data?.routing.action}
-            releasedActionTools={baseMcpProbe.data?.tools.filter(
-              (tool) => tool.surface === "action" && tool.surfaceEnabled,
-            ).length}
-            routableTools={baseMcpProbe.data?.routing.routable}
-            reconcilingAction={reconcileBaseMcpAction.isPending}
-            onOpenRoutes={(message) => {
-              setGoal(message);
-              setSection("routes");
-            }}
-            onReconcileAction={(receiptId) => reconcileBaseMcpAction.mutate(receiptId)}
-            unavailableReason={
-              baseMcpAsk.error
-                ? "The console could not reach the server. Nothing here is a statement about Base MCP."
-                : null
-            }
-          />
-        )}
         <BaseMcpExtensionsCard
           enabled={status.data?.baseMcp?.enabled === true}
           loading={baseMcpProbe.isPending}

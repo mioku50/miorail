@@ -1,19 +1,22 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import url from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
+import React from 'react';
 
 import {
+  BASE_MCP_PLUGIN_FILTERS_V1,
   BASE_MCP_PLUGIN_REACH_COPY_V1,
+  BaseMcpPluginsCard,
   BaseMcpSummaryRail,
+  baseMcpExampleBadgeV1,
   baseMcpPluginDriftCopyV1,
   baseMcpPluginHostsLabelV1,
   baseMcpPluginMetaLineV1,
   baseMcpPluginReachV1,
   baseMcpPluginSummaryLineV1,
+  filterBaseMcpPluginsV1,
   groupBaseMcpPluginsV1,
+  selectBaseMcpExampleV1,
   type BaseMcpPluginDriftRowV1,
   type BaseMcpPluginRowV1,
 } from '../src/console/BaseMcpPluginsCard';
@@ -274,27 +277,74 @@ describe('twenty plugins have to be scannable, not a wall of prose', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// P2 — twenty plugins at five lines each.
-// ---------------------------------------------------------------------------
-describe('the plugin catalogue folds, and keeps our own vocabulary one level down', () => {
-  const here = path.dirname(url.fileURLToPath(import.meta.url));
-  const card = readFileSync(path.join(here, '../src/console/BaseMcpPluginsCard.tsx'), 'utf8');
+describe('the plugin catalogue is an immediately usable explorer', () => {
+  const catalogue = [
+    plugin({
+      id: 'morpho', title: 'Morpho Plugin', version: '0.3.0', productSurface: 'routes', lifecycleStage: 'proven',
+      examples: [
+        { id: 'vaults', prompt: 'Show Morpho vaults', surface: 'routable', disposition: 'handoff_to_routes' },
+        { id: 'positions', prompt: 'Show my Morpho positions', surface: 'read', disposition: 'read_in_extensions' },
+        { id: 'deposit', prompt: 'Deposit into Morpho', surface: 'routable', disposition: 'handoff_to_routes' },
+      ],
+    }),
+    plugin({
+      id: 'avantis', title: 'Avantis Plugin', productSurface: 'extensions', lifecycleStage: 'manifested',
+      examples: [
+        { id: 'positions', prompt: 'Show my Avantis positions', surface: 'read', disposition: 'read_in_extensions' },
+        { id: 'open', prompt: 'Open a BTC long on Avantis', surface: 'action', disposition: 'handoff_to_provider_ui' },
+      ],
+    }),
+    plugin({
+      id: 'gmgn', title: 'GMGN Plugin', integration: 'cli-only', shell: 'bash',
+      examples: [
+        { id: 'market', prompt: 'Show GMGN market intelligence', surface: 'read', disposition: 'read_in_extensions' },
+        { id: 'quote', prompt: 'Get a GMGN quote', surface: 'routable', disposition: 'handoff_to_routes' },
+      ],
+    }),
+  ];
 
-  test('each reach group folds', () => {
-    assert.match(card, /<details className="mcp-group">/);
-    assert.ok(!/className="mcp-group" open/.test(card));
+  test('cards expose identity, owner, lifecycle, source/version and two prompts without nested reach groups', () => {
+    const html = renderToStaticMarkup(React.createElement(BaseMcpPluginsCard, {
+      loading: false,
+      plugins: catalogue,
+      drift: null,
+      generatedAt: '2026-08-09',
+      unavailableReason: null,
+      onSelectPrompt: () => undefined,
+    }));
+    assert.match(html, /Explore Base Plugins/);
+    assert.match(html, /Search plugins…/);
+    assert.match(html, /Base plugin spec · v0\.3\.0/);
+    assert.match(html, /Owner<\/dt><dd>Routes AI/);
+    assert.match(html, /Lifecycle<\/dt><dd class="mono">proven/);
+    assert.match(html, /Show Morpho vaults/);
+    assert.match(html, /Show my Morpho positions/);
+    assert.match(html, /Example prompts/);
+    assert.match(html, /adapted from the Base plugin spec/);
+    assert.doesNotMatch(html, /Canonical examples/);
+    assert.doesNotMatch(html, /class="mcp-group"/);
   });
 
-  test('owner and stage moved inside the row disclosure', () => {
-    // Both are true and both are OURS: which Miorail surface owns the plugin,
-    // and how far along our pipeline it is. Neither answers "what can this
-    // console reach", which is the question the page exists for — so they are
-    // kept, one fold down, rather than being the fourth line of twenty rows.
-    const disclosureAt = card.indexOf('Details and example questions');
-    const ownerAt = card.indexOf('Owner: <span className="mono">');
-    assert.ok(disclosureAt > 0 && ownerAt > disclosureAt, 'owner/stage is still a top-level row');
-    assert.match(card, /stage: <span className="mono">/);
+  test('the required filters exist and select from current truth', () => {
+    assert.deepEqual(
+      BASE_MCP_PLUGIN_FILTERS_V1.map((entry) => entry.label),
+      ['All', 'Readable here', 'Routes AI', 'Actions', 'Requires external UI', 'Shell required'],
+    );
+    assert.deepEqual(filterBaseMcpPluginsV1(catalogue, '', 'external_ui').map((row) => row.id), ['avantis']);
+    assert.deepEqual(filterBaseMcpPluginsV1(catalogue, '', 'shell_required').map((row) => row.id), ['gmgn']);
+    assert.deepEqual(filterBaseMcpPluginsV1(catalogue, 'morpho positions', 'all').map((row) => row.id), ['morpho']);
+  });
+
+  test('badges are derived from disposition, including provider UI and x402', () => {
+    assert.equal(baseMcpExampleBadgeV1({ surface: 'routable', disposition: 'handoff_to_routes' }).label, 'ROUTES AI');
+    assert.equal(baseMcpExampleBadgeV1({ surface: 'action', disposition: 'handoff_to_provider_ui' }).label, 'PROVIDER UI');
+    assert.equal(baseMcpExampleBadgeV1({ surface: 'action', disposition: 'typed_x402_required' }).label, 'x402');
+    assert.equal(baseMcpExampleBadgeV1({ surface: 'action', disposition: 'adapter_required' }).label, 'ADAPTER REQUIRED');
+  });
+
+  test('selecting an example has only a fill callback and never an execute callback', () => {
+    const selected: string[] = [];
+    selectBaseMcpExampleV1((prompt) => selected.push(prompt), 'Show my Morpho positions');
+    assert.deepEqual(selected, ['Show my Morpho positions']);
   });
 });
-

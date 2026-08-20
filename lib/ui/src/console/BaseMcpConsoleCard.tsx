@@ -1,3 +1,14 @@
+import React from 'react';
+import {
+  baseMcpExampleBadgeV1,
+  selectBaseMcpExampleV1,
+  type BaseMcpExampleDispositionUiV1,
+} from './BaseMcpPluginsCard';
+
+// The app uses the automatic JSX runtime; the node render suite uses the
+// classic transform and needs this binding.
+void React;
+
 // ---------------------------------------------------------------------------
 // The Base MCP console — a second room, and the reason there are two.
 //
@@ -112,17 +123,31 @@ export interface BaseMcpConsoleModelV1 {
   routableTools?: number;
 }
 
-/** Openers that demonstrate each deterministic disposition: read, exact
- * extension action, provider handoff and Routes handoff. */
-export const BASE_MCP_CONSOLE_PROMPTS_V1: readonly string[] = [
-  'What does my Base Account hold?',
-  'Show my recent Base transactions',
-  'Send 5 USDC to alice.base.eth',
-  'Pay x402 GET https://api.venice.ai/api/v1/models, max 0.10 USDC',
-  'Show my open Avantis positions and PnL',
-  'Open a 10x long BTC/USD with 100 USDC on Avantis',
-  'Swap 100 USDC to ETH',
-];
+export interface BaseMcpQuickExampleV1 {
+  prompt: string;
+  surface: 'read' | 'action' | 'routable';
+  disposition: BaseMcpExampleDispositionUiV1;
+}
+
+/** Seven routing demonstrations, separate from the plugin catalogue. The
+ * Venice public model list is a READ; presenting it as a paid x402 GET caused
+ * production to wait for a durable request ID that this endpoint never owed. */
+export const BASE_MCP_QUICK_EXAMPLES_V1: readonly BaseMcpQuickExampleV1[] = [
+  { prompt: 'What does my Base Account hold?', surface: 'read', disposition: 'read_in_extensions' },
+  { prompt: 'Show my recent Base transactions', surface: 'read', disposition: 'read_in_extensions' },
+  { prompt: 'Send 5 USDC to alice.base.eth', surface: 'action', disposition: 'action_in_extensions' },
+  { prompt: 'Show the models available from Venice AI', surface: 'read', disposition: 'read_in_extensions' },
+  { prompt: 'Show my open Avantis positions and PnL', surface: 'read', disposition: 'read_in_extensions' },
+  { prompt: 'Open a 10x long BTC/USD with 100 USDC on Avantis', surface: 'action', disposition: 'handoff_to_provider_ui' },
+  { prompt: 'Swap 100 USDC to ETH', surface: 'routable', disposition: 'handoff_to_routes' },
+] as const;
+
+/** Kept as a string projection for existing consumers; labels are always
+ * derived from the structured examples above. */
+export const BASE_MCP_CONSOLE_PROMPTS_V1: readonly string[] =
+  BASE_MCP_QUICK_EXAMPLES_V1.map((example) => example.prompt);
+
+export const BASE_MCP_CONSOLE_INPUT_ID_V1 = 'base-mcp-console-input';
 
 /**
  * What the console says about its own outcome.
@@ -222,6 +247,7 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
         </p>
 
         <textarea
+          id={BASE_MCP_CONSOLE_INPUT_ID_V1}
           className="goalinput"
           rows={2}
           value={model.question}
@@ -238,18 +264,27 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
             </button>
           )}
         </div>
-        <div className="ctarow">
-          {BASE_MCP_CONSOLE_PROMPTS_V1.map((prompt) => (
+        <div className="mcp-quick-head">
+          <b>Quick examples</b>
+          <span>routing demonstrations — the full plugin catalogue is below</span>
+        </div>
+        <div className="mcp-quick-examples">
+          {BASE_MCP_QUICK_EXAMPLES_V1.map((example) => {
+            const badge = baseMcpExampleBadgeV1(example);
+            return (
             <button
-              key={prompt}
+              key={example.prompt}
               type="button"
-              className="btn sec"
+              className="mcp-example"
               disabled={model.pending}
-              onClick={() => model.onQuestionChange(prompt)}
+              title="Fill the console — this does not execute the prompt"
+              onClick={() => selectBaseMcpExampleV1(model.onQuestionChange, example.prompt)}
             >
-              {prompt}
+              <span className={`mcp-disposition ${badge.tone}`}>{badge.label}</span>
+              <span>{example.prompt}</span>
             </button>
-          ))}
+            );
+          })}
         </div>
 
         {model.unavailableReason ? (
