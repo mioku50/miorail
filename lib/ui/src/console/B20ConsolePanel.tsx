@@ -276,6 +276,8 @@ export function B20ConsolePanel(model: B20ConsolePanelModelV1) {
               <p className="lnote">
                 {answer.answerSource === 'verified_narration'
                   ? 'Rephrased from the evidence below. Every figure in it was checked against that evidence.'
+                  : answer.intent === 'find_possible_public_context'
+                    ? 'Built from an UNVERIFIED public-context read. Any verified Fundamental evidence is shown separately below and does not upgrade a candidate.'
                   : 'Built directly from the stored measurements below.'}
               </p>
               {answer.facts.length > 0 && (

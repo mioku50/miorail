@@ -4,6 +4,7 @@ import express from 'express';
 import request from 'supertest';
 
 import { B20_CREATED_TOPIC_V1, B20_FACTORY_V1 } from '@mioagent/b20-control';
+import { b20PublicContextV1 } from '@mioagent/opportunity-rail';
 
 import { b20ControlRouter, b20RouteRuntime, resetB20SummaryCacheV1 } from './b20Control.js';
 
@@ -292,6 +293,61 @@ describe('the console answers about the universe', () => {
 });
 
 describe('the console answers about named tokens', () => {
+  test('Possible Public Context runs its own read, stays UNVERIFIED and is never narrated', async () => {
+    let narrated = false;
+    b20RouteRuntime.flags = () => ({
+      routeIntelligenceV1: true,
+      b20ControlV1: true,
+      b20PublicContextV1: true,
+    }) as never;
+    b20RouteRuntime.publicContextSearch = () => async () => [];
+    b20RouteRuntime.publicContextRead = async () =>
+      b20PublicContextV1({
+        chainId: 8453,
+        tokenAddress: TOKEN,
+        lookup: { kind: 'search', completed: true },
+        candidates: [
+          {
+            kind: 'website',
+            url: 'https://candidate.example',
+            host: 'candidate.example',
+            origin: 'search_result',
+            fetched: true,
+          },
+        ],
+        pageNamesToken: { found: true, reference: 'candidate.example' },
+        siteLinksRepository: null,
+        repositoryLinksSite: null,
+        siteLinksSocial: null,
+        socialLinksSite: null,
+        observedAt: '2026-08-13T19:10:00.000Z',
+      });
+    b20RouteRuntime.narrator = () =>
+      ({
+        generate: async () => {
+          narrated = true;
+          return { message: { role: 'assistant' as const, content: 'This website is verified.' } };
+        },
+      }) as never;
+
+    const response = await ask({
+      schemaVersion: 'b20-console-ask/v1',
+      scope: 'explore',
+      question: `Find a possible public website, X, GitHub or domain for B20 ${TOKEN}`,
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.intent, 'find_possible_public_context');
+    assert.equal(response.body.answerSource, 'deterministic_evidence');
+    assert.match(response.body.answer, /UNVERIFIED/);
+    assert.equal(narrated, false);
+    assert.ok(response.body.reads.some((read: { tool: string }) => read.tool === 'public-context'));
+    assert.ok(
+      response.body.reads.every(
+        (read: { tool: string }) => read.tool !== 'cards' && read.tool !== 'projects',
+      ),
+    );
+  });
+
   test('Investigate reads exactly the tokens it was given', async () => {
     const response = await ask({
       schemaVersion: 'b20-console-ask/v1',

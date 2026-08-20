@@ -127,6 +127,21 @@ const CONSISTENCY_QUESTIONS_V1: readonly {
 ];
 
 /**
+ * Ninth acceptance question, intentionally outside `--consistency`.
+ *
+ * The original gate stays eight questions so 8/8 remains comparable with the
+ * production repair that created it. Run this separately with
+ * `--public-context-smoke`; it may perform the same bounded public search the
+ * UI performs when a reader explicitly asks.
+ */
+const PUBLIC_CONTEXT_SMOKE_V1: ProbeQuestionV1 = {
+  scope: 'investigate',
+  question:
+    'Find a possible public website, X, GitHub or domain for B20 0xb200000000000000000000578f3ae29d9e6e0101',
+  expectedIntent: 'find_possible_public_context',
+};
+
+/**
  * The four acceptance tokens: indexed, canonical, and never measured.
  *
  * Each one is a launch that missed the worker's 48-hour window, which is the
@@ -168,9 +183,12 @@ async function main(): Promise<void> {
 
   const args = process.argv.slice(2);
   const consistencyMode = args.includes('--consistency');
+  const publicContextSmokeMode = args.includes('--public-context-smoke');
   const tokenArgs = args.filter((value) => /^0x[0-9a-fA-F]{40}$/.test(value));
   const questions: readonly ProbeQuestionV1[] = consistencyMode
     ? CONSISTENCY_QUESTIONS_V1
+    : publicContextSmokeMode
+      ? [PUBLIC_CONTEXT_SMOKE_V1]
     : tokenArgs.length > 0
       ? [
           ...QUESTIONS_V1,
@@ -254,7 +272,10 @@ async function main(): Promise<void> {
         assertions: answer.assertions,
       },
       deterministic: answer.answer,
-      provider: b20ScopeIsPrivateV1(plan.scope) ? null : b20RouteRuntime.narrator(),
+      provider:
+        b20ScopeIsPrivateV1(plan.scope) || plan.intent === 'find_possible_public_context'
+          ? null
+          : b20RouteRuntime.narrator(),
     });
     console.log(`   source: ${narrated.answerSource}`);
     if (narrated.narrationRejectedBecause) {
@@ -313,6 +334,32 @@ async function main(): Promise<void> {
         (projects.predicates?.length ?? 0) !== 2
       ) {
         console.error(`   FAIL: compound project query was not planned as ${expectedOperator}`);
+        process.exitCode = 1;
+      }
+    }
+    if (publicContextSmokeMode) {
+      const publicStep = plan.steps.find((step) => step.tool === 'public-context');
+      if (
+        !publicStep ||
+        plan.steps.some((step) => step.tool === 'cards' || step.tool === 'projects')
+      ) {
+        console.error('   FAIL: Possible Public Context did not get its isolated planner step');
+        process.exitCode = 1;
+      }
+      if (!/UNVERIFIED/.test(answer.answer)) {
+        console.error('   FAIL: public-context answer is not explicitly UNVERIFIED');
+        process.exitCode = 1;
+      }
+      const candidateFacts = answer.facts.filter((fact) => /candidate/i.test(fact.label));
+      if (candidateFacts.some((fact) => !/^UNVERIFIED /.test(fact.label))) {
+        console.error('   FAIL: a public candidate was presented without the UNVERIFIED boundary');
+        process.exitCode = 1;
+      }
+      const verifiedFacts = answer.facts.filter((fact) =>
+        fact.label.startsWith('Verified Fundamental evidence'),
+      );
+      if (verifiedFacts.some((fact) => /candidate/i.test(fact.label))) {
+        console.error('   FAIL: a public candidate was upgraded into Fundamental evidence');
         process.exitCode = 1;
       }
     }

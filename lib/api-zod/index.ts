@@ -4636,6 +4636,7 @@ export const B20ConsoleAskResponseV1Schema = z
       'find_two_sided',
       'find_not_searched',
       'find_verified_projects',
+      'find_possible_public_context',
       'find_needs_evidence',
       'find_research_candidates',
       'compare_tokens',

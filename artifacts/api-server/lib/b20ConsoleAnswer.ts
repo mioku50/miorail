@@ -3,11 +3,15 @@ import {
   B20_FUNDAMENTAL_DIMENSION_LABEL_V1,
   B20_FUNDAMENTAL_PREDICATE_RULES_V1,
   B20_FUNDAMENTAL_STANDING_COPY_V1,
+  B20_PUBLIC_CONTEXT_DISCLAIMER_V1,
+  B20_PUBLIC_CONTEXT_GROUND_LABEL_V1,
+  B20_PUBLIC_CONTEXT_PATH_TO_VERIFIED_V1,
   b20PredicateFindingV1,
   measurementProfileMismatchV1,
   type B20FundamentalPredicateV1,
   type B20FundamentalProfileV1,
   type B20OpportunityCardV1,
+  type B20PublicContextV1,
   type MeasuredMoverV1,
   type MoverExclusionV1,
 } from '@mioagent/opportunity-rail';
@@ -585,6 +589,149 @@ export function b20ResearchCandidatesAnswerV1(input: {
       matched: subjects.length,
       complete: true,
       subjects,
+      about: 'token',
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Possible Public Context — one explicitly named token, always UNVERIFIED.
+//
+// Search candidates and Fundamental evidence deliberately meet only in this
+// presentation builder. They remain separate fact rows and neither changes the
+// other's state. Even when both name the same host, a candidate is still a
+// candidate; the verified profile is shown beside it, never copied onto it.
+// ---------------------------------------------------------------------------
+
+export function b20PossiblePublicContextAnswerV1(input: {
+  tokenAddress: string;
+  symbol: string | null;
+  context: B20PublicContextV1 | null;
+  unavailableReason: string | null;
+  fundamental: B20FundamentalProfileV1 | null;
+  fundamentalLayerAvailable: boolean;
+}): B20ConsoleDeterministicV1 {
+  const name = input.symbol || input.tokenAddress;
+  const context = input.context;
+  const publicFacts: B20ConsoleFactV1[] = [];
+  const verifiedFacts: B20ConsoleFactV1[] = [];
+  const missingEvidence: string[] = [];
+  const reads: B20ConsoleReadV1[] = [];
+
+  if (context) {
+    publicFacts.push({
+      label: 'Possible Public Context — UNVERIFIED',
+      value: context.headline,
+      tone: 'warning',
+    });
+    for (const candidate of context.candidates) {
+      publicFacts.push({
+        label: `UNVERIFIED ${candidate.kind === 'repository' ? 'GitHub' : candidate.kind === 'social' ? 'X/social' : 'website'} candidate`,
+        value: `${candidate.host} · ${candidate.origin.replaceAll('_', ' ')} · ${candidate.fetched ? 'page read' : 'page not read'}`,
+        tone: 'warning',
+      });
+    }
+    for (const finding of context.findings.filter((entry) => entry.state === 'found')) {
+      publicFacts.push({
+        label: `UNVERIFIED public-context ground — ${B20_PUBLIC_CONTEXT_GROUND_LABEL_V1[finding.ground]}`,
+        value: finding.note,
+        tone: 'warning',
+      });
+    }
+    for (const finding of context.findings.filter((entry) => entry.state === 'unchecked')) {
+      missingEvidence.push(`Public context — ${finding.note}`);
+    }
+    reads.push({
+      tool: 'public-context',
+      detail:
+        context.lookup.kind === 'supplied_domain'
+          ? `supplied domain read as UNVERIFIED context · ${context.observedAt}`
+          : `public search and candidate probes read as UNVERIFIED context · ${context.observedAt}`,
+    });
+  } else {
+    publicFacts.push({
+      label: 'Possible Public Context — UNVERIFIED',
+      value: 'Not read',
+      tone: 'warning',
+    });
+    missingEvidence.push(input.unavailableReason ?? 'The public-context lookup did not complete.');
+    reads.push({
+      tool: 'public-context',
+      detail: `not read · ${input.unavailableReason ?? 'lookup unavailable'}`,
+    });
+  }
+
+  if (!input.fundamentalLayerAvailable) {
+    missingEvidence.push(
+      'Verified Fundamental evidence could not be read on this deployment. This does not change any public candidate.',
+    );
+  } else if (input.fundamental?.identityVerified) {
+    const profile = input.fundamental;
+    verifiedFacts.push({
+      label: 'Verified Fundamental evidence — project link',
+      value: `${profile.projectDomain ?? 'domain not recorded'} · ${B20_FUNDAMENTAL_STANDING_COPY_V1[profile.standing].label}`,
+      tone: 'positive',
+    });
+    for (const finding of profile.findings) {
+      verifiedFacts.push({
+        label: `Verified Fundamental evidence — ${B20_FUNDAMENTAL_DIMENSION_LABEL_V1[finding.dimension]}`,
+        value: [
+          finding.label,
+          finding.provenance.replaceAll('_', ' '),
+          finding.observedAt
+            ? finding.observedAt.replace('T', ' ').replace(/:\d{2}\.\d+Z$/, ' UTC')
+            : null,
+        ]
+          .filter((part): part is string => part !== null)
+          .join(' · '),
+        tone: 'positive',
+      });
+    }
+    reads.push({
+      tool: 'fundamental-profile',
+      detail: 'stored verified Fundamental evidence read separately from public candidates',
+    });
+  } else {
+    missingEvidence.push(
+      'No verified Fundamental project link is stored for this token. Public candidates remain unverified and are not refuted by that absence.',
+    );
+    reads.push({
+      tool: 'fundamental-profile',
+      detail: 'stored profile read separately · no verified project link',
+    });
+  }
+
+  const verifiedSentence = input.fundamental?.identityVerified
+    ? ` Separately, stored Fundamental evidence contains a verified project link for ${input.fundamental.projectDomain ?? 'a declared domain'}. That separate record does not verify, adopt or upgrade any candidate above.`
+    : ' No verified Fundamental record was used to promote any candidate.';
+  const answer = context
+    ? `Possible Public Context for ${name} is UNVERIFIED. ${context.detail}${verifiedSentence}`
+    : `Possible Public Context for ${name} was not read: ${input.unavailableReason ?? 'the lookup was unavailable'}. No website, X, GitHub or domain conclusion was made.${verifiedSentence}`;
+  // Reserve presentation capacity for the separate verified layer. A noisy
+  // public search must never crowd an existing Fundamental record out of the
+  // answer bundle, because that would make the visible trust boundary depend
+  // on search-result count.
+  const facts =
+    verifiedFacts.length > 0
+      ? [...publicFacts.slice(0, 10), ...verifiedFacts.slice(0, 6)]
+      : publicFacts.slice(0, 16);
+
+  return {
+    answer,
+    facts,
+    missingEvidence: missingEvidence.slice(0, 20),
+    caveats: [
+      'Every website, X, GitHub or domain candidate above remains UNVERIFIED. Public context can never create or upgrade verified Fundamental evidence.',
+      B20_PUBLIC_CONTEXT_DISCLAIMER_V1,
+      B20_PUBLIC_CONTEXT_PATH_TO_VERIFIED_V1,
+      'Verified Fundamental evidence, when present, is shown in separate rows from a separate stored claim. It does not change a public candidate’s status.',
+    ],
+    reads,
+    assertions: {
+      state: context ? 'mixed' : 'not_measured',
+      matched: context?.candidates.length ?? 0,
+      complete: context?.lookup.completed ?? false,
+      subjects: [name],
       about: 'token',
     },
   };

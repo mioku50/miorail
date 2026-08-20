@@ -146,6 +146,7 @@ import {
   type B20DeployerCorpusV1,
   type B20DeployerReadingV1,
   type B20LaunchContextV1 as B20LaunchContextModelV1,
+  type B20PublicContextV1,
   type B20StandingGroupV1,
 } from '@mioagent/opportunity-rail';
 import {
@@ -197,6 +198,7 @@ import {
   b20InvestigateAnswerV1,
   b20NeedsEvidenceAnswerV1,
   b20PortfolioAnswerV1,
+  b20PossiblePublicContextAnswerV1,
   b20ResearchCandidatesAnswerV1,
   type B20ReadingAttemptV1,
   type B20ConsoleDeterministicV1,
@@ -307,6 +309,8 @@ export const b20RouteRuntime = {
   discover: () => createDatabaseB20DiscoverRepository(client),
   deployers: (): B20LaunchDeployerRepositoryV1 => createDatabaseB20LaunchDeployerRepository(client),
   projects: (): B20ProjectRepositoryV1 => createDatabaseB20ProjectRepository(client),
+  publicContextSearch: b20PublicContextSearchFromEnv,
+  publicContextRead: readB20PublicContextV1,
   /** Whether this server has the project-claim tables. A server without 0046
    * serves the same cards with `project: null` rather than failing a read. */
   projectsAvailable: async (): Promise<boolean> => {
@@ -2294,10 +2298,100 @@ export async function runB20ConsolePlanV1(
   const summaryStep = plan.steps.find((step) => step.tool === 'summary');
   const listStep = plan.steps.find((step) => step.tool === 'list');
   const projectsStep = plan.steps.find((step) => step.tool === 'projects');
+  const publicContextStep = plan.steps.find((step) => step.tool === 'public-context');
   const positionsStep = plan.steps.find((step) => step.tool === 'positions');
   const cardsStep = plan.steps.find((step) => step.tool === 'cards') ?? positionsStep;
   const changesStep = plan.steps.find((step) => step.tool === 'changes');
   const researchStep = plan.steps.find((step) => step.tool === 'research');
+
+  if (publicContextStep && publicContextStep.tool === 'public-context') {
+    const tokenAddress = publicContextStep.tokenAddress;
+    const found = await b20RouteRuntime
+      .observations()
+      .getFeedRowForToken({ tokenAddress, historyLimit: 1 });
+    const identity = found
+      ? 'b20'
+      : await b20IdentityForMissingRowV1(tokenAddress, b20RouteRuntime.now());
+    const canonical = found ? found.row.launch.canonical === true : identity === 'b20';
+
+    const profiles = await readB20ProjectProfilesV1([tokenAddress]);
+    const fundamentalLayerAvailable = profiles !== null;
+    const fundamental = profiles?.get(tokenAddress.toLowerCase()) ?? null;
+    const symbol = found?.row.launch.symbol ?? null;
+
+    if (!canonical) {
+      const reason = identity === null || identity === 'rpc_failure'
+        ? 'Miorail could not confirm this address against the B20 factory, so it did not search the public web.'
+        : identity === 'b20_uninitialised'
+          ? 'The B20 factory reports this token as not initialized, so Miorail did not search for project accounts.'
+          : 'The B20 factory did not confirm this address as a canonical B20 token, so Miorail did not search the public web.';
+      return b20PossiblePublicContextAnswerV1({
+        tokenAddress,
+        symbol,
+        context: null,
+        unavailableReason: reason,
+        fundamental,
+        fundamentalLayerAvailable,
+      });
+    }
+
+    if (b20RouteRuntime.flags().b20PublicContextV1 !== true) {
+      return b20PossiblePublicContextAnswerV1({
+        tokenAddress,
+        symbol,
+        context: null,
+        unavailableReason: 'Possible Public Context is not enabled on this deployment, so no public source was read.',
+        fundamental,
+        fundamentalLayerAvailable,
+      });
+    }
+
+    const search = b20RouteRuntime.publicContextSearch();
+    if (search === null && publicContextStep.domain === null) {
+      return b20PossiblePublicContextAnswerV1({
+        tokenAddress,
+        symbol,
+        context: null,
+        unavailableReason: 'Public search is not configured on this deployment, so no public source was read.',
+        fundamental,
+        fundamentalLayerAvailable,
+      });
+    }
+
+    let context: B20PublicContextV1 | null = null;
+    let unavailableReason: string | null = null;
+    try {
+      context = await b20RouteRuntime.publicContextRead({
+        chainId: B20_CHAIN_ID_V1,
+        tokenAddress,
+        symbol,
+        name: found?.row.launch.name ?? null,
+        domain: publicContextStep.domain,
+        deps: {
+          search:
+            search ??
+            (async () => {
+              throw new Error('public search unavailable');
+            }),
+          now: b20RouteRuntime.now,
+        },
+      });
+    } catch (error) {
+      unavailableReason =
+        error instanceof B20SuppliedDomainRefusedError
+          ? `The supplied domain was refused: ${error.refusal}`
+          : 'The public-context lookup did not complete, so Miorail makes no claim about public accounts.';
+    }
+
+    return b20PossiblePublicContextAnswerV1({
+      tokenAddress,
+      symbol,
+      context,
+      unavailableReason,
+      fundamental,
+      fundamentalLayerAvailable,
+    });
+  }
 
   if (cardsStep && (cardsStep.tool === 'cards' || cardsStep.tool === 'positions')) {
     // A reading is taken BEFORE the cards are read, and only for Investigate.
@@ -2579,9 +2673,19 @@ b20ControlRouter.post('/opportunities/b20/console/ask', async (req: Request, res
         assertions: deterministic.assertions,
       },
       deterministic: deterministic.answer,
-      provider: b20ScopeIsPrivateV1(plan.scope) ? null : b20RouteRuntime.narrator(),
+      // Public-context candidates must remain exactly UNVERIFIED. Withholding
+      // the narrator makes an accidental candidate → verified rewrite
+      // impossible rather than merely asking a verifier to notice one.
+      provider:
+        b20ScopeIsPrivateV1(plan.scope) || plan.intent === 'find_possible_public_context'
+          ? null
+          : b20RouteRuntime.narrator(),
     });
-    if (narrated.narrationRejectedBecause && !b20ScopeIsPrivateV1(plan.scope)) {
+    if (
+      narrated.narrationRejectedBecause &&
+      !b20ScopeIsPrivateV1(plan.scope) &&
+      plan.intent !== 'find_possible_public_context'
+    ) {
       // Never logged for a private scope: the reason would name the intent and
       // the shape of a wallet's holdings, and nothing about that belongs in an
       // operator log.

@@ -383,6 +383,42 @@ describe('project questions', () => {
     }
   });
 
+  test('an explicit Possible Public Context question overrides the ordinary address card read', () => {
+    const address = '0xb200000000000000000000578f3ae29d9e6e0101';
+    for (const question of [
+      `Find a possible public website, X, GitHub or domain for B20 ${address}`,
+      `Look for unverified GitHub context for ${address}`,
+      `Найди возможный публичный сайт или репозиторий для ${address}`,
+    ]) {
+      const plan = planB20ConsoleAnswerV1({ question, scope: 'explore' });
+      assert.equal(plan.scope, 'investigate', question);
+      assert.equal(plan.intent, 'find_possible_public_context', question);
+      assert.deepEqual(plan.steps, [{ tool: 'public-context', tokenAddress: address, domain: null }]);
+      assert.ok(!plan.steps.some((step) => step.tool === 'cards' || step.tool === 'projects'));
+    }
+  });
+
+  test('an explicitly supplied domain stays an UNVERIFIED public-context input', () => {
+    const address = '0xb200000000000000000000578f3ae29d9e6e0101';
+    const plan = planB20ConsoleAnswerV1({
+      question: `Check possible public domain https://miorail.xyz/about for ${address}`,
+      scope: 'investigate',
+    });
+    assert.deepEqual(plan.steps, [
+      { tool: 'public-context', tokenAddress: address, domain: 'miorail.xyz' },
+    ]);
+  });
+
+  test('verified Fundamental wording does not opt a token into public search', () => {
+    const address = '0xb200000000000000000000578f3ae29d9e6e0101';
+    const plan = planB20ConsoleAnswerV1({
+      question: `Does ${address} have a verified website?`,
+      scope: 'explore',
+    });
+    assert.equal(plan.intent, 'compare_tokens');
+    assert.equal(plan.steps[0]?.tool, 'cards');
+  });
+
   test('a question about project quality is not a question this planner answers', () => {
     // "Which project is good" has no plan, and must not be quietly answered by
     // the verified-project read — a list of verified links is not a ranking.

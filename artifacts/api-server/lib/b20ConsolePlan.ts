@@ -82,6 +82,13 @@ export type B20ConsoleStepV1 =
       operator?: 'and' | 'or';
       limit: number;
     }
+  /**
+   * One explicitly named token, searched only because the reader asked for
+   * possible/public/unverified accounts. This is deliberately not `projects`:
+   * public candidates and verified Fundamental evidence are different trust
+   * layers and may never share a predicate or upgrade path.
+   */
+  | { tool: 'public-context'; tokenAddress: string; domain: string | null }
   /** The exact stored cards for named tokens, with bounded history. */
   | { tool: 'cards'; tokenAddresses: readonly string[]; historyLimit: number }
   /** The measured-movement rail: latest and ~24h baseline, already paired. */
@@ -115,6 +122,7 @@ export interface B20ConsolePlanV1 {
 export type B20ConsoleIntentV1 =
   | 'universe_counts'
   | 'find_verified_projects'
+  | 'find_possible_public_context'
   | 'find_bought_not_sellable'
   | 'find_two_sided'
   | 'find_not_searched'
@@ -157,6 +165,21 @@ export function b20AddressesInV1(text: string): string[] {
   // token, and refusing it would look like Miorail not knowing the address.
   const found = text.match(/0[xX][0-9a-fA-F]{40}/g) ?? [];
   return [...new Set(found.map((address) => address.toLowerCase()))];
+}
+
+/** A domain is an optional input to public-context, never an identity claim.
+ * URLs are reduced to their host because the guarded reader accepts domains;
+ * a bare domain is accepted only when it is actually present in the question. */
+export function b20PublicContextDomainInV1(text: string): string | null {
+  const url = text.match(/https?:\/\/[^\s<>()]+/i)?.[0];
+  if (url) {
+    try {
+      return new URL(url).hostname.toLowerCase();
+    } catch {
+      return null;
+    }
+  }
+  return text.match(/\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\b/i)?.[0]?.toLowerCase() ?? null;
 }
 
 function matchesV1(value: string, patterns: readonly RegExp[]): boolean {
@@ -443,6 +466,29 @@ const CHANGE_QUESTION_V1 = [
 ] as const;
 
 /**
+ * Possible Public Context is opt-in and address-bound.
+ *
+ * The qualifier is required. A question about a "verified website" for one
+ * token must keep reading its stored Fundamental profile; merely mentioning a
+ * website is not permission to search the public web. `X` is bounded as a
+ * whole word, so the x in a 0x address never matches it.
+ */
+const PUBLIC_CONTEXT_QUALIFIER_V1 = [
+  /possible public/,
+  /possible (website|site|domain|github|repository|repo|x|twitter|social)/,
+  /public (context|accounts?|website|site|domain|github|repository|repo|x|twitter|social)/,
+  /unverified (context|accounts?|website|site|domain|github|repository|repo|x|twitter|social)/,
+  /(website|site|domain|github|repository|repo|\bx\b|twitter|social).{0,30}(possible|public|unverified)/,
+  /возможн\p{L}*.{0,30}(сайт|домен|github|репозитор|twitter|соц)/u,
+  /публичн\p{L}*.{0,30}(контекст|аккаунт|сайт|домен|github|репозитор|twitter|соц)/u,
+  /непроверенн\p{L}*.{0,30}(контекст|аккаунт|сайт|домен|github|репозитор|twitter|соц)/u,
+] as const;
+
+function asksForPossiblePublicContextV1(value: string): boolean {
+  return matchesV1(value, PUBLIC_CONTEXT_QUALIFIER_V1);
+}
+
+/**
  * Reads a question and a scope into a plan.
  *
  * Two rules decide the scope, and both are about not surprising the reader:
@@ -486,6 +532,27 @@ export function planB20ConsoleAnswerV1(input: {
     0,
     scope === 'portfolio' ? B20_CONSOLE_MAX_POSITIONS_V1 : B20_CONSOLE_MAX_TOKENS_V1,
   );
+
+  // This override comes before the ordinary address → cards rule. It is
+  // intentionally address-bound and explicit: public search is the only
+  // console read that reaches a third party, so selecting a card or asking for
+  // a verified website never triggers it.
+  if (named.length > 0 && asksForPossiblePublicContextV1(value)) {
+    const tokenAddress = named[0]!;
+    return {
+      scope: 'investigate',
+      intent: 'find_possible_public_context',
+      steps: [
+        {
+          tool: 'public-context',
+          tokenAddress,
+          domain: b20PublicContextDomainInV1(question),
+        },
+      ],
+      tokenAddresses: [tokenAddress],
+      refusal: null,
+    };
+  }
 
   if (scope === 'portfolio') {
     if (tokenAddresses.length === 0) {
