@@ -136,12 +136,26 @@ function prepareInput(requestId = 'request-1') {
 }
 
 describe('deterministic Base MCP Extensions intent router', () => {
-  test('swap and yield never reach an Extensions write tool', () => {
+  test('generic swap/yield hand off, while an unreleased named provider stays out of Routes', () => {
     assert.equal(classifyBaseMcpExtensionIntentV1('Swap 100 USDC to ETH').kind, 'handoff');
     assert.equal(classifyBaseMcpExtensionIntentV1('Find the best yield for USDC').kind, 'handoff');
     const flaunch = classifyBaseMcpExtensionIntentV1('Buy this Flaunch token with 0.001 ETH');
-    assert.equal(flaunch.kind, 'handoff');
-    if (flaunch.kind === 'handoff') assert.equal(flaunch.provider, 'flaunch');
+    assert.equal(flaunch.kind, 'needs_input');
+    if (flaunch.kind === 'needs_input') assert.equal(flaunch.errorCode, 'base_mcp_flaunch_action_adapter_required');
+  });
+
+  test('provider-native reads remain in Extensions and a released Aerodrome swap hands off', () => {
+    const balancer = classifyBaseMcpExtensionIntentV1('Show the best Balancer pool for ETH yield on Base');
+    assert.equal(balancer.kind, 'read');
+    if (balancer.kind === 'read') assert.equal(balancer.providerId, 'balancer');
+
+    const bitrefill = classifyBaseMcpExtensionIntentV1('Find a 20 USD Steam US gift card on Bitrefill');
+    assert.equal(bitrefill.kind, 'read');
+    if (bitrefill.kind === 'read') assert.equal(bitrefill.providerId, 'bitrefill');
+
+    const aerodrome = classifyBaseMcpExtensionIntentV1('Swap 0.001 ETH to USDC on Aerodrome');
+    assert.equal(aerodrome.kind, 'handoff');
+    if (aerodrome.kind === 'handoff') assert.equal(aerodrome.provider, 'aerodrome');
   });
 
   test('only an exact reviewed Virtuals create prompt enters its typed action vertical', () => {

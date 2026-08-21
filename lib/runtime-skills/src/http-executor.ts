@@ -82,6 +82,9 @@ export interface BaseMcpSkillExecutor {
     method: 'GET' | 'POST';
     body?: unknown;
     chainId?: number;
+    /** Per-recipe bound. The caller may shorten the gateway default but can
+     * never remove the timeout entirely. */
+    timeoutMs?: number;
   }): Promise<PluginHttpResponse>;
 }
 
@@ -91,7 +94,7 @@ const SECRET_KEY_PATTERN =
 
 // T53-only explicit adapter manifest. It is deliberately absent from the
 // production message-detection/list registry until the later route cutover.
-const ISOLATED_HTTP_SKILLS: readonly RuntimeSkillDefinition[] = [
+const REVIEWED_HTTP_SKILLS: readonly RuntimeSkillDefinition[] = [
   {
     namespace: 'kyberswap',
     displayName: 'KyberSwap',
@@ -121,13 +124,84 @@ const ISOLATED_HTTP_SKILLS: readonly RuntimeSkillDefinition[] = [
       'Never call token search or send_calls from route adapters.',
     ],
   },
+  {
+    namespace: 'bankr',
+    displayName: 'Bankr',
+    allowedIntents: ['read'],
+    requiredTools: [{ intent: 'read', anyOf: ['bankr_get_launches'] }],
+    argumentMapper: (_intent, input) => ({ ...input, chain: 'base' }),
+    resultScreener: 'bankr_launches',
+    manifest: {
+      integration: 'http-api',
+      chains: [8453],
+      allowlist: {
+        hosts: ['api.bankr.bot'],
+        methods: ['GET'],
+        pathPrefixes: ['/token-launches'],
+      },
+      auth: 'none',
+      risk: ['low-liquidity', 'irreversible'],
+    },
+    instructions: [
+      'Read only the pinned Bankr launch feed or one address-scoped launch.',
+      'Never buy a launch from this read recipe and never follow provider metadata links.',
+    ],
+  },
+  {
+    namespace: 'venice',
+    displayName: 'Venice AI',
+    allowedIntents: ['read'],
+    requiredTools: [{ intent: 'read', anyOf: ['venice_get_models'] }],
+    argumentMapper: (_intent, input) => ({ ...input }),
+    resultScreener: 'venice_models',
+    manifest: {
+      integration: 'http-api',
+      chains: [8453],
+      allowlist: {
+        hosts: ['api.venice.ai'],
+        methods: ['GET'],
+        pathPrefixes: ['/api/v1/models'],
+      },
+      auth: 'none',
+      risk: ['pii', 'irreversible'],
+    },
+    instructions: [
+      'The public model catalogue is a bounded read and requires no x402 payment.',
+      'Do not call inference, wallet, balance or top-up endpoints from this recipe.',
+    ],
+  },
+  {
+    namespace: 'balancer',
+    displayName: 'Balancer',
+    allowedIntents: ['read'],
+    requiredTools: [{ intent: 'read', anyOf: ['balancer_get_pools'] }],
+    argumentMapper: (_intent, input) => ({ ...input, chain: 'base' }),
+    resultScreener: 'balancer_pools',
+    // The upstream plugin is CLI-only for transaction construction. Miorail's
+    // reviewed server runtime releases only this public GraphQL pool READ;
+    // no SDK, calldata or shell execution is exposed through this manifest.
+    manifest: {
+      integration: 'http-api',
+      chains: [8453],
+      allowlist: {
+        hosts: ['api-v3.balancer.fi'],
+        methods: ['POST'],
+        pathPrefixes: ['/'],
+      },
+      auth: 'none',
+      risk: ['slippage', 'low-liquidity'],
+    },
+    instructions: [
+      'Read Base pools only through the pinned poolGetPools GraphQL query.',
+      'Never build or submit Balancer calldata from this HTTP read recipe.',
+    ],
+  },
 ];
 
 function getExecutorSkill(namespace: string): RuntimeSkillDefinition | undefined {
-  return (
-    getRuntimeSkill(namespace) ??
-    ISOLATED_HTTP_SKILLS.find((skill) => skill.namespace === namespace.toLowerCase())
-  );
+  const registered = getRuntimeSkill(namespace);
+  if (registered?.manifest) return registered;
+  return REVIEWED_HTTP_SKILLS.find((skill) => skill.namespace === namespace.toLowerCase()) ?? registered;
 }
 
 function credentialHeaderName(manifest: RuntimeSkillManifest): string | null {
@@ -217,7 +291,7 @@ function buildExecutor(skill: RuntimeSkillDefinition): BaseMcpSkillExecutor | nu
     namespace: skill.namespace,
     manifest,
     allowedPaths: [...manifest.allowlist.pathPrefixes],
-    async request({ path, method, body, chainId }) {
+    async request({ path, method, body, chainId, timeoutMs }) {
       if (!manifest.allowlist.pathPrefixes.some((prefix) => path.startsWith(prefix))) {
         throw new SkillPathNotAllowedError(skill.namespace, path);
       }
@@ -227,6 +301,7 @@ function buildExecutor(skill: RuntimeSkillDefinition): BaseMcpSkillExecutor | nu
         method,
         body,
         chainId,
+        timeoutMs,
       });
     },
   };

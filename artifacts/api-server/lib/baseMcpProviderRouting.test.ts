@@ -20,9 +20,12 @@ test('every reviewed catalogue example keeps its exact routing disposition', () 
   }
 });
 
-test('provider ownership routes Balancer, YO, Hydrex and o1.exchange to Routes', () => {
+test('provider-specific reads stay in Extensions while released adapters alone hand off to Routes', () => {
+  const balancer = matchBaseMcpProviderIntentV1('Show Balancer liquidity on Base');
+  assert.equal(balancer?.productSurface, 'routes');
+  assert.equal(balancer?.disposition, 'read_in_extensions');
+
   for (const prompt of [
-    'Show Balancer liquidity on Base',
     'Show YO Protocol vaults on Base',
     'Swap 5 USDC to ETH on Hydrex',
     'Get an o1.exchange quote on Base',
@@ -30,6 +33,15 @@ test('provider ownership routes Balancer, YO, Hydrex and o1.exchange to Routes',
     const match = matchBaseMcpProviderIntentV1(prompt);
     assert.equal(match?.productSurface, 'routes', prompt);
     assert.equal(match?.disposition, 'handoff_to_routes', prompt);
+  }
+});
+
+test('a named provider with no released route adapter never enters Routes AI', () => {
+  for (const prompt of [
+    'Buy this Flaunch token with 0.001 ETH',
+    'Buy the latest Bankr token with 5 USDC',
+  ]) {
+    assert.equal(matchBaseMcpProviderIntentV1(prompt)?.disposition, 'adapter_required', prompt);
   }
 });
 

@@ -7,6 +7,7 @@ import {
   resolveSimulationProviderConfigV1,
   type SimulationProvider,
 } from '@mioagent/paid-intelligence';
+import { createBaseRpcSwapSimulationProviderFromEnvV1 } from './baseRpcSwapSimulation.js';
 
 // ---------------------------------------------------------------------------
 // T67B.1 §6 — the swap Blueprint's simulation.
@@ -28,6 +29,10 @@ import {
 
 export interface SwapSimulationDepsV1 {
   provider?: SimulationProvider | null;
+  /** A second, narrower provider used only after retryable primary transport
+   * failures. Undefined enables the Base RPC single-call fallback in normal
+   * production wiring; tests may inject/null it explicitly. */
+  fallbackProvider?: SimulationProvider | null;
   now?: () => Date;
 }
 
@@ -54,13 +59,14 @@ export async function simulateSwapCallsV1(
     callsHash: request.callsHash,
   });
 
+  const productionWiring = deps.provider === undefined;
   const provider =
-    deps.provider === undefined
+    productionWiring
       ? createSimulationProviderFromConfigV1(resolveSimulationProviderConfigV1(process.env))
       : deps.provider;
   if (!provider) return unavailable(requestHash, nowIso, 'provider_not_configured');
 
-  const transport = await provider.simulate({
+  const simulationRequest = {
     chainId: 8453,
     walletAddress: request.walletAddress,
     // The Blueprint does not exist yet — its own simulationState is what this
@@ -70,7 +76,8 @@ export async function simulateSwapCallsV1(
     blueprintHash: requestHash,
     callsHash: request.callsHash,
     calls: request.calls,
-  });
+  } as const;
+  let transport = await provider.simulate(simulationRequest);
   if (!transport.ok) {
     // Without this an operator saw an error code on screen and nothing in the
     // log, for the one gate that decides whether a swap may be signed.
@@ -81,7 +88,40 @@ export async function simulateSwapCallsV1(
       blueprintId: request.blueprintId,
       callsHash: request.callsHash,
     });
-    return unavailable(requestHash, nowIso, transport.errorCode);
+    const retryable = new Set([
+      'provider_rate_limited',
+      'provider_timeout',
+      'provider_http_error',
+      'network_error',
+      'timeout',
+      'http_error',
+    ]).has(transport.errorCode);
+    const fallback = deps.fallbackProvider === undefined
+      ? (productionWiring ? createBaseRpcSwapSimulationProviderFromEnvV1(process.env) : null)
+      : deps.fallbackProvider;
+    if (!retryable || !fallback || fallback.providerId === provider.providerId) {
+      return unavailable(requestHash, nowIso, transport.errorCode);
+    }
+    const primaryErrorCode = transport.errorCode;
+    transport = await fallback.simulate(simulationRequest);
+    if (!transport.ok) {
+      logger.warn('Swap fallback simulation did not answer', {
+        primaryErrorCode,
+        fallbackErrorCode: transport.errorCode,
+        detail: transport.detail,
+        providerMessage: transport.providerMessage,
+        fallbackProvider: fallback.providerId,
+        blueprintId: request.blueprintId,
+        callsHash: request.callsHash,
+      });
+      return unavailable(requestHash, nowIso, transport.errorCode);
+    }
+    logger.info('Swap simulation recovered through bounded Base RPC fallback', {
+      primaryErrorCode,
+      fallbackProvider: fallback.providerId,
+      blueprintId: request.blueprintId,
+      callsHash: request.callsHash,
+    });
   }
 
   const parsed = SimulationProviderResponseV1Schema.safeParse(transport.body);

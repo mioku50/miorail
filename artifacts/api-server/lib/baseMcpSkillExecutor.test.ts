@@ -44,6 +44,21 @@ test('KyberSwap executor exposes only the T53 read route path plus the T56 route
   assert.deepEqual(executor.manifest.allowlist.methods, ['GET', 'POST']);
 });
 
+test('reviewed provider-native reads expose only their pinned host paths and methods', () => {
+  const bankr = loadSkillExecutor('bankr')!;
+  assert.deepEqual(bankr.manifest.allowlist, {
+    hosts: ['api.bankr.bot'], methods: ['GET'], pathPrefixes: ['/token-launches'],
+  });
+  const venice = loadSkillExecutor('venice')!;
+  assert.deepEqual(venice.manifest.allowlist, {
+    hosts: ['api.venice.ai'], methods: ['GET'], pathPrefixes: ['/api/v1/models'],
+  });
+  const balancer = loadSkillExecutor('balancer')!;
+  assert.deepEqual(balancer.manifest.allowlist, {
+    hosts: ['api-v3.balancer.fi'], methods: ['POST'], pathPrefixes: ['/'],
+  });
+});
+
 test('Moonwell markets are reachable through the executor (gateway + manifest allowlist, no auth required)', async () => {
   const executor = loadSkillExecutor('moonwell')!;
   let capturedUrl: string | undefined;

@@ -44,6 +44,15 @@ function provider(body: unknown, ok = true): SimulationProvider {
   };
 }
 
+function failedProvider(errorCode: 'provider_rate_limited' | 'provider_timeout'): SimulationProvider {
+  return {
+    providerId: 'primary-provider',
+    async simulate() {
+      return { ok: false, errorCode, detail: 'retryable transport failure' };
+    },
+  };
+}
+
 const SUCCESS_BODY = {
   status: 'success',
   blockNumber: 33_123_456,
@@ -67,6 +76,44 @@ describe('the swap simulation is a precondition, so it is honest about not runni
     const state = await simulateSwapCallsV1(request(), { provider: provider(null, false), now: () => NOW });
     assert.equal(state.status, 'unavailable');
     assert.equal(state.errorCode, 'provider_rpc_error');
+  });
+
+  test('a retryable primary failure uses the explicitly bounded fallback', async () => {
+    let fallbackCalls = 0;
+    const fallback: SimulationProvider = {
+      providerId: 'base-rpc-single-call-v1',
+      async simulate(input) {
+        fallbackCalls += 1;
+        assert.equal(input.calls.length, 1);
+        return { ok: true, body: SUCCESS_BODY };
+      },
+    };
+    const state = await simulateSwapCallsV1(request(), {
+      provider: failedProvider('provider_rate_limited'),
+      fallbackProvider: fallback,
+      now: () => NOW,
+    });
+    assert.equal(state.status, 'passed');
+    assert.equal(fallbackCalls, 1);
+  });
+
+  test('a non-retryable primary failure is never hidden by a fallback', async () => {
+    let fallbackCalls = 0;
+    const fallback: SimulationProvider = {
+      providerId: 'base-rpc-single-call-v1',
+      async simulate() {
+        fallbackCalls += 1;
+        return { ok: true, body: SUCCESS_BODY };
+      },
+    };
+    const state = await simulateSwapCallsV1(request(), {
+      provider: provider(null, false),
+      fallbackProvider: fallback,
+      now: () => NOW,
+    });
+    assert.equal(state.status, 'unavailable');
+    assert.equal(state.errorCode, 'provider_rpc_error');
+    assert.equal(fallbackCalls, 0);
   });
 
   test('an unreadable response is `unavailable`, not `passed`', async () => {

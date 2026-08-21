@@ -33,6 +33,21 @@ function overlapScore(message: string, prompt: string): number {
   return normalized(prompt).split(' ').reduce((score, word) => score + (words.has(word) ? 1 : 0), 0);
 }
 
+type ReviewedRouteFamilyV1 = 'swap' | 'earn' | 'commerce' | 'nft';
+
+const RELEASED_PROVIDER_ROUTES_V1: Readonly<Record<ReviewedRouteFamilyV1, ReadonlySet<string>>> = {
+  swap: new Set(['uniswap', 'kyberswap', 'aerodrome', 'o1-exchange', 'hydrex', 'balancer']),
+  earn: new Set(['moonwell', 'morpho', 'yo']),
+  commerce: new Set(['bitrefill']),
+  nft: new Set(['opensea']),
+};
+
+/** Provider ownership is not execution capability. A named provider may hand
+ * off only when the corresponding route family has a released adapter. */
+export function hasReleasedProviderRouteV1(providerId: string, family: ReviewedRouteFamilyV1): boolean {
+  return RELEASED_PROVIDER_ROUTES_V1[family].has(providerId);
+}
+
 function inferredDisposition(
   message: string,
   provider: BaseMcpProviderIntentSpecV1,
@@ -41,15 +56,38 @@ function inferredDisposition(
   const avantisWrite = /\b(open|close|long|short|take profit|stop loss|tp|sl|margin|leverage|открой|закрой|лонг|шорт|плеч)\b/iu;
   if (provider.pluginId === 'avantis' && avantisWrite.test(lower)) return 'handoff_to_provider_ui';
 
-  const routable = /\b(swap|trade|buy|sell|quote|yield|apy|supply|borrow|deposit|withdraw|liquidity|route|обмен|свап|куп|прод|доходност|депозит|заем|ликвидност)\b/iu;
-  if (provider.productSurface === 'routes' || routable.test(lower)) return 'handoff_to_routes';
-
   if (/\bx402\b/iu.test(lower) || /\b(top up|register my agent|agent nft)\b/iu.test(lower)) {
     return 'typed_x402_required';
   }
 
   if (provider.pluginId === 'virtuals' && /\bcreate\b.{0,40}\bagent\b/iu.test(lower)) {
     return 'action_in_extensions';
+  }
+
+  const readVerb = /\b(show|list|find|browse|inspect|check|what|which|latest|best)\b|\b(покажи|найди|список|проверь)\b/iu;
+  const swap = /\b(swap|trade|buy|sell|quote|route|exchange|обмен|свап|куп|прод)\b/iu;
+  const earn = /\b(yield|apy|supply|borrow|deposit|withdraw|vault|lending|liquidity|доходност|депозит|заем|ликвидност)\b/iu;
+  const commerce = /\b(gift card|esim|top up|bitrefill|voucher)\b/iu;
+  const nft = /\b(nft|listing|collection|opensea)\b/iu;
+
+  // These provider reads are released in Extensions even though adjacent
+  // transaction construction remains owned by Routes or an unreleased SDK.
+  if (provider.pluginId === 'balancer' && readVerb.test(lower) && /\b(pool|yield|apy|liquidity)\b/iu.test(lower)) {
+    return 'read_in_extensions';
+  }
+  if (provider.pluginId === 'bitrefill' && readVerb.test(lower)) return 'read_in_extensions';
+
+  if (commerce.test(lower)) {
+    return hasReleasedProviderRouteV1(provider.pluginId, 'commerce') ? 'handoff_to_routes' : 'adapter_required';
+  }
+  if (swap.test(lower)) {
+    return hasReleasedProviderRouteV1(provider.pluginId, 'swap') ? 'handoff_to_routes' : 'adapter_required';
+  }
+  if (earn.test(lower)) {
+    return hasReleasedProviderRouteV1(provider.pluginId, 'earn') ? 'handoff_to_routes' : 'adapter_required';
+  }
+  if (nft.test(lower)) {
+    return hasReleasedProviderRouteV1(provider.pluginId, 'nft') ? 'handoff_to_routes' : 'adapter_required';
   }
 
   const write = /\b(launch|create|claim|set|send|register|mint|approve|cancel|запусти|создай|отправ|установ|зарегистр)\b/iu;

@@ -708,7 +708,7 @@ const ACTION_RECEIPT = {
   reconciliationBasis: 'erc20_transfer_event' as const,
 };
 
-test('POST /api/mcp/base/console hands swaps and Flaunch token buys to Routes AI before any Base MCP tool runs', async () => {
+test('POST /api/mcp/base/console hands generic swaps to Routes and keeps unreleased Flaunch out', async () => {
   const originalSecret = process.env.SESSION_SECRET;
   process.env.SESSION_SECRET = 'test-session-secret';
   let consoleCalled = false;
@@ -722,21 +722,50 @@ test('POST /api/mcp/base/console hands swaps and Flaunch token buys to Routes AI
     throw new Error('must not run');
   };
 
-  for (const [message, provider] of [
-    ['Swap 100 USDC to ETH', null],
-    ['Buy this Flaunch token with 0.001 ETH', 'flaunch'],
-  ] as const) {
-    const response = await request(app)
-      .post('/api/mcp/base/console')
-      .send({ message, requestId: `handoff-${provider ?? 'swap'}` });
-    assert.equal(response.status, 200);
-    assert.equal(response.body.status, 'handoff');
-    assert.equal(response.body.handoff.target, 'routes');
-    assert.equal(response.body.handoff.provider, provider);
-    assert.equal(response.body.action, null);
-  }
+  const swap = await request(app)
+    .post('/api/mcp/base/console')
+    .send({ message: 'Swap 100 USDC to ETH', requestId: 'handoff-swap' });
+  assert.equal(swap.status, 200);
+  assert.equal(swap.body.status, 'handoff');
+  assert.equal(swap.body.handoff.target, 'routes');
+  assert.equal(swap.body.handoff.provider, null);
+  assert.equal(swap.body.action, null);
+
+  const flaunch = await request(app)
+    .post('/api/mcp/base/console')
+    .send({ message: 'Buy this Flaunch token with 0.001 ETH', requestId: 'flaunch-unreleased' });
+  assert.equal(flaunch.status, 200);
+  assert.equal(flaunch.body.status, 'needs_input');
+  assert.equal(flaunch.body.errorCode, 'base_mcp_flaunch_action_adapter_required');
+  assert.equal(flaunch.body.handoff, null);
   assert.equal(consoleCalled, false);
   assert.equal(actionCalled, false);
+  restoreEnv('SESSION_SECRET', originalSecret);
+});
+
+test('POST /api/mcp/base/console runs a provider-native read before generic Base MCP help', async () => {
+  const originalSecret = process.env.SESSION_SECRET;
+  process.env.SESSION_SECRET = 'test-session-secret';
+  let genericCalled = false;
+  mcpBaseRouteRuntime.runBaseMcpConsoleV1 = async () => {
+    genericCalled = true;
+    throw new Error('must not run');
+  };
+  mcpBaseRouteRuntime.runReviewedBaseMcpPluginReadV1 = async (input) => {
+    assert.equal(input.providerId, 'balancer');
+    assert.equal(input.exampleId, 'yield');
+    return {
+      status: 'answered', reply: 'reviewed Balancer pool read', trace: [], toolsAvailable: 1,
+      truncated: false, elapsedMs: 4, errorCode: null, checkedAt: '2026-08-21T12:00:00.000Z',
+    };
+  };
+  const response = await request(app)
+    .post('/api/mcp/base/console')
+    .send({ message: 'Show the best Balancer pool for ETH yield on Base', requestId: 'balancer-read' });
+  assert.equal(response.status, 200);
+  assert.equal(response.body.status, 'answered');
+  assert.equal(response.body.reply, 'reviewed Balancer pool read');
+  assert.equal(genericCalled, false);
   restoreEnv('SESSION_SECRET', originalSecret);
 });
 

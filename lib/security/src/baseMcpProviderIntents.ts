@@ -73,24 +73,24 @@ export const BASE_MCP_PROVIDER_INTENTS_V1: readonly BaseMcpProviderIntentSpecV1[
     ],
   },
   {
-    pluginId: 'balancer', aliases: ['balancer'], productSurface: 'routes', lifecycleStage: 'manifested', examples: [
+    pluginId: 'balancer', aliases: ['balancer'], productSurface: 'routes', lifecycleStage: 'adapter', examples: [
       e('swap', 'Swap 100 USDC for WETH on Base through Balancer', 'routable', 'handoff_to_routes'),
-      e('yield', 'Show the best Balancer pool for ETH yield on Base', 'routable', 'handoff_to_routes'),
-      e('liquidity', 'Add 500 USDC and 0.2 WETH liquidity on Balancer', 'routable', 'handoff_to_routes'),
+      e('yield', 'Show the best Balancer pool for ETH yield on Base', 'read', 'read_in_extensions'),
+      e('liquidity', 'Add 500 USDC and 0.2 WETH liquidity on Balancer', 'action', 'adapter_required'),
     ],
   },
   {
     pluginId: 'bankr', aliases: ['bankr'], productSurface: 'extensions', lifecycleStage: 'documented', examples: [
       e('latest', 'Show the latest Bankr launches on Base', 'read', 'read_in_extensions'),
       e('inspect', 'Inspect this Bankr token address on Base', 'read', 'read_in_extensions'),
-      e('buy', 'Buy the newest Bankr launch with 0.001 ETH', 'routable', 'handoff_to_routes'),
+      e('buy', 'Buy the newest Bankr launch with 0.001 ETH', 'action', 'adapter_required'),
     ],
   },
   {
-    pluginId: 'bitrefill', aliases: ['bitrefill', 'gift card', 'esim'], productSurface: 'routes', lifecycleStage: 'scored', examples: [
+    pluginId: 'bitrefill', aliases: ['bitrefill', 'gift card', 'esim'], productSurface: 'extensions', lifecycleStage: 'scored', examples: [
+      e('search', 'Find a 20 USD Steam US gift card on Bitrefill', 'read', 'read_in_extensions'),
       e('browse', 'Browse Bitrefill gift cards available in the United States', 'read', 'read_in_extensions'),
-      e('amazon', 'Find a 25 USD Amazon US gift card on Bitrefill', 'routable', 'handoff_to_routes'),
-      e('checkout', 'Buy the selected Bitrefill gift card with USDC on Base', 'action', 'adapter_required'),
+      e('checkout', 'Buy the selected Bitrefill gift card with USDC on Base', 'routable', 'handoff_to_routes'),
     ],
   },
   {
@@ -110,21 +110,21 @@ export const BASE_MCP_PROVIDER_INTENTS_V1: readonly BaseMcpProviderIntentSpecV1[
   {
     pluginId: 'flaunch', aliases: ['flaunch'], productSurface: 'extensions', lifecycleStage: 'documented', examples: [
       e('latest', 'Show the newest Flaunch coins on Base', 'read', 'read_in_extensions'),
-      e('buy', 'Buy this Flaunch token with 0.001 ETH', 'routable', 'handoff_to_routes'),
+      e('buy', 'Buy this Flaunch token with 0.001 ETH', 'action', 'adapter_required'),
       e('launch', 'Launch a memecoin on Flaunch', 'action', 'adapter_required'),
     ],
   },
   {
     pluginId: 'gmgn', aliases: ['gmgn', 'gmgh'], productSurface: 'extensions', lifecycleStage: 'documented', examples: [
       e('market', 'Show GMGN market intelligence for this Base token', 'read', 'read_in_extensions'),
-      e('quote', 'Get a GMGN quote to swap 10 USDC for this Base token', 'routable', 'handoff_to_routes'),
+      e('quote', 'Get a GMGN quote to swap 10 USDC for this Base token', 'action', 'adapter_required'),
     ],
   },
   {
     pluginId: 'hydrex', aliases: ['hydrex'], productSurface: 'routes', lifecycleStage: 'manifested', examples: [
       e('swap', 'Swap 5 USDC to ETH on Hydrex', 'routable', 'handoff_to_routes'),
-      e('positions', 'Show my Hydrex liquidity positions', 'routable', 'handoff_to_routes'),
-      e('liquidity', 'Add 100 USDC and 0.04 ETH liquidity on Hydrex', 'routable', 'handoff_to_routes'),
+      e('positions', 'Show my Hydrex liquidity positions', 'read', 'adapter_required'),
+      e('liquidity', 'Add 100 USDC and 0.04 ETH liquidity on Hydrex', 'action', 'adapter_required'),
     ],
   },
   {
