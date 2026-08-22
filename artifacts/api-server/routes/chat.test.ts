@@ -31,6 +31,31 @@ function restoreEnv(name: string, value: string | undefined) {
   }
 }
 
+/**
+ * T67X-B2 put mainnet user-confirmed execution behind a resolvable Builder
+ * Code: `getExecutionCapabilities` returns `userConfirmedEnabled: false` when
+ * attribution cannot be resolved, and every Base MCP write path then answers
+ * `mainnet_readonly` before it reaches a tool. Tests that exercise that write
+ * path have to supply one; the gate itself is covered in status.test.ts.
+ *
+ * The deprecated aliases are cleared as well — a canonical code that disagrees
+ * with `BUILDER_CODE` resolves to `conflict`, which fails closed exactly like
+ * absence, so leaving one behind would make the outcome depend on the shell.
+ */
+const BUILDER_CODE_ENV_KEYS = [
+  'BASE_BUILDER_CODE', 'VITE_BASE_BUILDER_CODE', 'NEXT_PUBLIC_BASE_BUILDER_CODE',
+  'BUILDER_CODE', 'VITE_BUILDER_CODE', 'NEXT_PUBLIC_BUILDER_CODE',
+] as const;
+
+function enableBuilderCodeAttribution(): () => void {
+  const original = BUILDER_CODE_ENV_KEYS.map((key) => [key, process.env[key]] as const);
+  for (const key of BUILDER_CODE_ENV_KEYS) delete process.env[key];
+  process.env.BASE_BUILDER_CODE = 'bc_a1b2c3d4';
+  return () => {
+    for (const [key, value] of original) restoreEnv(key, value);
+  };
+}
+
 describe('Chat API & Recommendation Guardrails', () => {
   test('DELETE /api/chat/history clears chat history and GET returns empty list', async () => {
     mock.method(db, 'delete', () => ({ where: mock.fn(async () => []) }) as any);
@@ -185,6 +210,7 @@ describe('Chat API & Recommendation Guardrails', () => {
     const originalGetRepository = baseMcpSwapRuntime.getRepository;
     process.env.CHAIN_ENV = 'mainnet';
     process.env.MAINNET_EXECUTION_ENABLED = 'true';
+    const restoreBuilderCode = enableBuilderCodeAttribution();
     delete process.env.UNISWAP_API_KEY;
     executionSecurityRuntime.getProvider = () => ({
       providerName: 'goplus', status: 'partial', statusCode: 'partial',
@@ -229,6 +255,7 @@ describe('Chat API & Recommendation Guardrails', () => {
       baseMcpSwapRuntime.getRepository = originalGetRepository;
       restoreEnv('CHAIN_ENV', origChain);
       restoreEnv('MAINNET_EXECUTION_ENABLED', origExecution);
+      restoreBuilderCode();
       restoreEnv('UNISWAP_API_KEY', origUniswapKey);
     }
   });
@@ -268,6 +295,7 @@ describe('Chat API & Recommendation Guardrails', () => {
     const originalCreateStructuredLlm = chatRouteRuntime.createStructuredLlmProvider;
     process.env.CHAIN_ENV = 'mainnet';
     process.env.MAINNET_EXECUTION_ENABLED = 'true';
+    const restoreBuilderCode = enableBuilderCodeAttribution();
     chatRouteRuntime.createApiToolAggregatorForUser = async () => new ToolAggregator();
     chatRouteRuntime.createStructuredLlmProvider = () => ({
       async generate(req: LlmRequest) {
@@ -306,6 +334,7 @@ describe('Chat API & Recommendation Guardrails', () => {
       chatRouteRuntime.createStructuredLlmProvider = originalCreateStructuredLlm;
       restoreEnv('CHAIN_ENV', origChain);
       restoreEnv('MAINNET_EXECUTION_ENABLED', origExecution);
+      restoreBuilderCode();
     }
   });
 
@@ -314,6 +343,7 @@ describe('Chat API & Recommendation Guardrails', () => {
     const origExecution = process.env.MAINNET_EXECUTION_ENABLED;
     process.env.CHAIN_ENV = 'mainnet';
     process.env.MAINNET_EXECUTION_ENABLED = 'true';
+    const restoreBuilderCode = enableBuilderCodeAttribution();
     const originalCreateTools = chatRouteRuntime.createApiToolAggregatorForUser;
     const originalGetSecurity = executionSecurityRuntime.getProvider;
     const originalGetRepository = baseMcpSendRuntime.getRepository;
@@ -375,6 +405,7 @@ describe('Chat API & Recommendation Guardrails', () => {
       baseMcpSendRuntime.getRepository = originalGetRepository;
       restoreEnv('CHAIN_ENV', origChain);
       restoreEnv('MAINNET_EXECUTION_ENABLED', origExecution);
+      restoreBuilderCode();
     }
   });
 
@@ -387,6 +418,7 @@ describe('Chat API & Recommendation Guardrails', () => {
     const originalGetSecurity = executionSecurityRuntime.getProvider;
     process.env.CHAIN_ENV = 'mainnet';
     process.env.MAINNET_EXECUTION_ENABLED = 'true';
+    const restoreBuilderCode = enableBuilderCodeAttribution();
 
     const repository = new InMemoryAutonomyPolicyRepository();
     await repository.configure({
@@ -451,6 +483,7 @@ describe('Chat API & Recommendation Guardrails', () => {
       executionSecurityRuntime.getProvider = originalGetSecurity;
       restoreEnv('CHAIN_ENV', origChain);
       restoreEnv('MAINNET_EXECUTION_ENABLED', origExecution);
+      restoreBuilderCode();
     }
   });
 
