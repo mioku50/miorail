@@ -11,7 +11,7 @@ import type { AssetRefV1, CommerceProductKindV1, ProviderRefV1 } from '@mioagent
 // one.
 //
 // Source of these values: the vendored Bitrefill capability document
-// (.claude/skills/base-mcp/plugins/bitrefill.md), which is the `documented`
+// (the Bitrefill plugin spec Base publishes at github.com/base/skills), which is the `documented`
 // lifecycle artefact this route family is promoted from.
 // ---------------------------------------------------------------------------
 

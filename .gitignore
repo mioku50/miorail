@@ -12,3 +12,12 @@ dist
 *.tsbuildinfo
 coverage/
 mioku.pem
+
+# Agent scaffolding and working files. Kept on disk, out of the repository:
+# these are one maintainer's prompts and task queues, not part of the product,
+# and publishing them documents a workflow rather than the software.
+.agents/
+.claude/
+scratchpad/
+videos/
+screen/

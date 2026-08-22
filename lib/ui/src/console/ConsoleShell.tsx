@@ -111,6 +111,16 @@ export interface ConsoleHeaderModelV1 {
   walletLabel: string | null;
 }
 
+/**
+ * Where this program's source lives.
+ *
+ * A constant rather than configuration: AGPL §13 obliges the OPERATOR of a
+ * network service to offer the Corresponding Source, and a settable link is
+ * one a deployment can quietly point somewhere else while still shipping this
+ * licence. A fork that moves its source changes this line, in a diff.
+ */
+export const MIORAIL_SOURCE_URL_V1 = 'https://github.com/mioku50/miorail';
+
 export interface ConsoleFooterModelV1 {
   adaptersLabel: string;
   sourcesLabel: string;
@@ -345,6 +355,18 @@ export function ConsoleShell(props: ConsoleShellProps) {
           </span>
           <span className="sp" />
           <a className="metriclink" href="/metrics">Public metrics</a>
+          {/* AGPL-3.0 §13: anyone interacting with this program over a network
+              must be offered its Corresponding Source. A licence file in the
+              repository does not discharge that — the offer has to be reachable
+              from the running service, which is here. */}
+          <a
+            className="metriclink"
+            href={MIORAIL_SOURCE_URL_V1}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Source (AGPL-3.0)
+          </a>
         </footer>
       </div>
     </>

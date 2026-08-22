@@ -18,6 +18,29 @@ The governing rule is simple:
 - Capability truth: [PLUGIN_REGISTRY.md](docs/PLUGIN_REGISTRY.md)
 - Production acceptance: [PRODUCTION_UI_VERIFICATION.md](docs/PRODUCTION_UI_VERIFICATION.md)
 
+## Running it yourself
+
+```bash
+pnpm install
+cp .env.example .env     # every credential is optional; see below
+pnpm test:unit           # the gate
+pnpm dev
+```
+
+Node 22+, pnpm 10+. **Nothing in `.env` is required to start.** Miorail treats a
+missing credential as an absent capability and says so on screen, rather than
+failing or pretending — so a clean checkout runs, and each surface tells you
+what it would need in order to do more. Postgres is needed only for the B20
+Discover feed and the durable receipt store; `pnpm test:unit` runs without it.
+
+- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Security policy: [SECURITY.md](SECURITY.md) — **do not file security bugs as public issues**
+- What Miorail guarantees, and what it does not: [docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md)
+
+Miorail composes transactions; it never signs them. It holds no private key,
+never calls `signTransaction`, and never broadcasts. Every state change is
+submitted by your own Base Account, from calls you approved.
+
 ## Product loop
 
 ```text
@@ -377,6 +400,18 @@ Miorail is experimental software. Evidence, measurements, project verification, 
 
 Do not use Miorail with funds you cannot afford to lose.
 
-# License
+# Licence
 
-TBD.
+Miorail is free software under the **GNU Affero General Public License v3.0**
+(`AGPL-3.0-only`). See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+The practical consequence, since Miorail is normally run as a network service:
+**if you run a modified Miorail and other people use it over a network, they
+are entitled to your modified source.** Using it privately, or reading and
+learning from the code, carries no such obligation.
+
+The hosted instance at [miorail.xyz](https://miorail.xyz) offers its source in
+the console footer, as §13 requires.
+
+"Miorail" is the project's name, and the licence grants no trademark rights.
+Fork it freely; call your fork something else.

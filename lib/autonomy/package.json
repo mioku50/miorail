@@ -1,6 +1,7 @@
 {
   "name": "@mioagent/autonomy",
   "version": "1.0.0",
+  "license": "AGPL-3.0-only",
   "description": "Autonomy engine: session keys / spend permissions",
   "main": "src/index.ts",
   "exports": {
