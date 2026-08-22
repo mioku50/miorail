@@ -8,6 +8,7 @@ import {
 import { classifyBaseMcpExtensionIntentV1 } from '../artifacts/api-server/lib/baseMcpExtensionActions.js';
 import { matchBaseMcpProviderIntentV1 } from '../artifacts/api-server/lib/baseMcpProviderRouting.js';
 import { baseMcpRuntimeSnapshotV1 } from '../artifacts/api-server/lib/baseMcpRuntimeSnapshot.js';
+import { probeSimulationProviderHealthV1 } from '../artifacts/api-server/lib/swapSimulation.js';
 import { runReviewedBaseMcpPluginReadV1 } from '../artifacts/api-server/lib/baseMcpReviewedPluginRuntime.js';
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
@@ -123,11 +124,16 @@ const OPERATIONS_V1: readonly BaseMcpCapabilityOperationV1[] = [
 
 async function main(): Promise<void> {
   reportLoadedEnvFileV1(loadRootEnvFileV1());
+  // The same boot probe the API server runs. Without it this script reports a
+  // batch simulator from the presence of an API key, and a key whose account
+  // is out of monthly capacity is not a capability — which is exactly the
+  // state production was in when this probe was written.
+  const health = await probeSimulationProviderHealthV1();
   const runtime = baseMcpRuntimeSnapshotV1();
 
   console.log('=== Runtime snapshot ===');
   console.log(`single-call simulation : ${runtime.singleCallSimulationAvailable}`);
-  console.log(`batch simulation       : ${runtime.batchSimulationAvailable}`);
+  console.log(`batch simulation       : ${runtime.batchSimulationAvailable}${health.batchProven === false ? ` (demoted: ${health.lastErrorCode})` : ''}`);
   console.log(`reviewed reads         : ${runtime.reviewedReadPlugins.join(', ')}`);
   console.log('');
 
