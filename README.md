@@ -27,11 +27,18 @@ pnpm test:unit           # the gate
 pnpm dev
 ```
 
-Node 22+, pnpm 10+. **Nothing in `.env` is required to start.** Miorail treats a
-missing credential as an absent capability and says so on screen, rather than
-failing or pretending — so a clean checkout runs, and each surface tells you
-what it would need in order to do more. Postgres is needed only for the B20
-Discover feed and the durable receipt store; `pnpm test:unit` runs without it.
+Node 22+, pnpm 10+.
+
+**Nothing in `.env` is required to start.** Measured on a checkout with no
+`.env` file at all: the API boots, `/health` returns 200, `CHAIN_ENV` defaults
+to `sepolia`, and batch transaction simulation is already available — it falls
+back to Base's own public RPC, which serves `eth_simulateV1`, so no paid key is
+a precondition for anything.
+
+Miorail treats a missing credential as an absent capability and says so on
+screen rather than failing or pretending, so each surface tells you what it
+would need in order to do more. Postgres is needed only for the B20 Discover
+feed and the durable receipt store; `pnpm test:unit` runs without it.
 
 - Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Security policy: [SECURITY.md](SECURITY.md) — **do not file security bugs as public issues**
