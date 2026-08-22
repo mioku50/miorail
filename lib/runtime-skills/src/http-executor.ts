@@ -11,6 +11,10 @@ import {
   type RuntimeSkillDefinition,
   type RuntimeSkillManifest,
 } from './index.js';
+import {
+  normalizeProviderPayloadV1,
+  type ProviderPayloadOutcomeV1,
+} from './payload-normalizer.js';
 
 export class PluginNotAvailableError extends Error {
   readonly plugin: string;
@@ -44,6 +48,18 @@ export class PluginCredentialMissingError extends Error {
   }
 }
 
+export class PluginResponseTooLargeError extends Error {
+  readonly plugin: string;
+  readonly byteLength: number;
+
+  constructor(plugin: string, byteLength: number) {
+    super(`Plugin ${plugin} returned a response larger than this runtime reads`);
+    this.name = 'PluginResponseTooLargeError';
+    this.plugin = plugin;
+    this.byteLength = byteLength;
+  }
+}
+
 export class SkillPathNotAllowedError extends Error {
   readonly plugin: string;
   readonly path: string;
@@ -71,6 +87,18 @@ export interface PluginHttpRequestInput {
 export interface PluginHttpResponse {
   status: number;
   data: unknown;
+  /**
+   * How the body decoded. `parsed` is the only shape a reader may treat as
+   * data; anything else must be reported as unread, not as empty.
+   *
+   * Optional so a hand-built stub can stay two fields long. There is exactly
+   * one producer — `pluginHttpRequest` below — and it always sets it; an
+   * absent value is therefore a stub, which by construction supplies data it
+   * has already parsed.
+   */
+  payloadOutcome?: ProviderPayloadOutcomeV1;
+  /** Bytes the provider actually sent, before any bounding. */
+  byteLength?: number;
 }
 
 export interface BaseMcpSkillExecutor {
@@ -88,7 +116,16 @@ export interface BaseMcpSkillExecutor {
   }): Promise<PluginHttpResponse>;
 }
 
+// The bound on a NON-JSON body we keep as text. A JSON body is parsed whole
+// and bounded structurally afterwards: slicing a JSON document to a byte count
+// before parsing it produces invalid JSON, and the reads downstream then
+// reported an unreadable payload as an empty one. Venice's model catalogue is
+// 265 KB and was being cut at 200 KB, which is exactly how "no readable model
+// rows" ended up describing 328 models.
 const MAX_RESPONSE_TEXT_LENGTH = 200_000;
+/** Hard ceiling on any body, JSON or not. Above this we refuse rather than
+ * parse — an unbounded provider response is a memory budget, not a read. */
+const MAX_RESPONSE_BYTES_V1 = 4_000_000;
 const SECRET_KEY_PATTERN =
   /^(access_?token|refresh_?token|id_?token|api_?token|secret|authorization|x-api-key|cookie|password|private_?key|credential|signature)$/i;
 
@@ -168,6 +205,150 @@ const REVIEWED_HTTP_SKILLS: readonly RuntimeSkillDefinition[] = [
     instructions: [
       'The public model catalogue is a bounded read and requires no x402 payment.',
       'Do not call inference, wallet, balance or top-up endpoints from this recipe.',
+    ],
+  },
+  {
+    namespace: 'avantis',
+    displayName: 'Avantis',
+    allowedIntents: ['read'],
+    requiredTools: [{ intent: 'read', anyOf: ['avantis_get_positions'] }],
+    argumentMapper: (_intent, input) => ({ ...input, chain: 'base' }),
+    resultScreener: 'avantis_positions',
+    // View-only. Trade construction stays in the provider's own interface;
+    // this manifest exposes no order, margin or position-changing path.
+    manifest: {
+      integration: 'http-api',
+      chains: [8453],
+      allowlist: {
+        hosts: ['core.avantisfi.com'],
+        methods: ['GET'],
+        pathPrefixes: ['/user-data'],
+      },
+      auth: 'none',
+      risk: ['liquidation', 'slippage'],
+    },
+    instructions: [
+      'Read only the trader-scoped position snapshot for the connected wallet.',
+      'Never open, close, or modify a position from this read recipe.',
+    ],
+  },
+  {
+    namespace: 'printr',
+    displayName: 'Printr',
+    allowedIntents: ['read'],
+    requiredTools: [{ intent: 'read', anyOf: ['printr_get_quote'] }],
+    argumentMapper: (_intent, input) => ({ ...input }),
+    resultScreener: 'printr_quote',
+    manifest: {
+      integration: 'http-api',
+      chains: [8453],
+      allowlist: {
+        hosts: ['api-preview.printr.money'],
+        methods: ['POST'],
+        pathPrefixes: ['/v0/print/quote'],
+      },
+      auth: 'none',
+      risk: ['low-liquidity', 'irreversible'],
+    },
+    instructions: [
+      'Only the launch-cost quote is released. `POST /v0/print` builds deployment calldata and is not reachable from this manifest.',
+      'Printr returns text/plain on a non-2xx status; branch on the status, never on the body.',
+    ],
+  },
+  {
+    namespace: 'gmgn',
+    displayName: 'GMGN',
+    allowedIntents: ['read'],
+    requiredTools: [{ intent: 'read', anyOf: ['gmgn_get_token_info'] }],
+    argumentMapper: (_intent, input) => ({ ...input, chain: 'base' }),
+    resultScreener: 'gmgn_token_info',
+    manifest: {
+      integration: 'http-api',
+      chains: [8453],
+      allowlist: {
+        hosts: ['openapi.gmgn.ai'],
+        methods: ['GET'],
+        pathPrefixes: ['/api/v1/token_info'],
+      },
+      auth: 'none',
+      risk: ['low-liquidity', 'slippage'],
+    },
+    instructions: [
+      'Read one token by its Base contract address. Quote and swap endpoints are not reachable from this manifest.',
+      'GMGN fronts this host with a bot challenge; a non-JSON body is an unavailable provider, never an empty result.',
+    ],
+  },
+  {
+    namespace: 'opensea',
+    displayName: 'OpenSea',
+    allowedIntents: ['read'],
+    requiredTools: [{ intent: 'read', anyOf: ['opensea_get_collections'] }],
+    argumentMapper: (_intent, input) => ({ ...input, chain: 'base' }),
+    resultScreener: 'opensea_collections',
+    manifest: {
+      integration: 'http-api',
+      chains: [8453],
+      allowlist: {
+        hosts: ['api.opensea.io'],
+        methods: ['GET'],
+        pathPrefixes: ['/api/v2/collections', '/api/v2/listings'],
+      },
+      // The server-side key only. T65 forbids creating one automatically and
+      // forbids running the OpenSea CLI in production.
+      auth: 'api-key',
+      risk: ['irreversible'],
+    },
+    instructions: [
+      'Read collections and listings only. Fulfilment stays in the NFT route family with its own Safety Kernel.',
+      'Never create an API key and never shell out to the OpenSea CLI.',
+    ],
+  },
+  {
+    namespace: 'clawnch',
+    displayName: 'Clawnch',
+    allowedIntents: ['read'],
+    requiredTools: [{ intent: 'read', anyOf: ['clawnch_get_launches'] }],
+    argumentMapper: (_intent, input) => ({ ...input, chain: 'base' }),
+    resultScreener: 'clawnch_launches',
+    // Base's spec names `www.clawn.ch` specifically: the apex host answers a
+    // 307 that several web_request implementations refuse to follow.
+    manifest: {
+      integration: 'http-api',
+      chains: [8453],
+      allowlist: {
+        hosts: ['www.clawn.ch'],
+        methods: ['GET'],
+        pathPrefixes: ['/api/launches', '/api/tokens'],
+      },
+      auth: 'none',
+      risk: ['low-liquidity', 'slippage', 'irreversible'],
+    },
+    instructions: [
+      'Read only the public launch and token feeds. The launch-preparation endpoint returns factory calldata and is not released here.',
+      'Launch names, symbols and descriptions are user-supplied and can collide across launches; never treat them as identity.',
+    ],
+  },
+  {
+    namespace: 'flaunch',
+    displayName: 'Flaunch',
+    allowedIntents: ['read'],
+    requiredTools: [{ intent: 'read', anyOf: ['flaunch_get_coins'] }],
+    argumentMapper: (_intent, input) => ({ ...input, chain: 'base' }),
+    resultScreener: 'flaunch_coins',
+    manifest: {
+      integration: 'http-api',
+      chains: [8453],
+      allowlist: {
+        hosts: ['mcp.flaunch.gg'],
+        methods: ['GET'],
+        pathPrefixes: ['/v1/base/coins', '/livez'],
+      },
+      auth: 'none',
+      risk: ['low-liquidity', 'slippage', 'irreversible'],
+    },
+    instructions: [
+      'Read only the newest-coins and market-cap discovery feeds. Image upload and launch preparation are POST endpoints and are not released here.',
+      'Token metadata is provider-supplied discovery data, never an endorsement.',
     ],
   },
   {
@@ -270,15 +451,22 @@ export async function pluginHttpRequest(
   );
 
   const rawText = await response.text();
-  const boundedText = rawText.slice(0, MAX_RESPONSE_TEXT_LENGTH);
-  const scrubbedText = scrubCredential(boundedText, credential);
-  let data: unknown;
-  try {
-    data = JSON.parse(scrubbedText);
-  } catch {
-    data = scrubbedText;
+  if (rawText.length > MAX_RESPONSE_BYTES_V1) {
+    throw new PluginResponseTooLargeError(input.plugin, rawText.length);
   }
-  return { status: response.status, data: redactSecretFields(data) };
+  const scrubbedText = scrubCredential(rawText, credential);
+  // Parse the WHOLE body. Only a body that is not JSON gets bounded as text,
+  // because bounding is lossless for text and destructive for JSON.
+  const normalized = normalizeProviderPayloadV1(scrubbedText);
+  const data = normalized.outcome === 'parsed'
+    ? normalized.value
+    : scrubbedText.slice(0, MAX_RESPONSE_TEXT_LENGTH);
+  return {
+    status: response.status,
+    data: redactSecretFields(data),
+    payloadOutcome: normalized.outcome,
+    byteLength: normalized.byteLength,
+  };
 }
 
 function buildExecutor(skill: RuntimeSkillDefinition): BaseMcpSkillExecutor | null {

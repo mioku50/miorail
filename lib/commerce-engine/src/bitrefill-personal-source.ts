@@ -3,6 +3,7 @@ import { partnerFetch } from '@mioagent/security/httpAllowlist';
 import type { CommerceAvailabilityV1, CommerceFeeBreakdownV1, CommerceProductRefV1 } from '@mioagent/route-domain';
 import {
   BITREFILL_PROVIDER_V1,
+  BITREFILL_V2_PRODUCT_BROWSE_PATH_V1,
   BITREFILL_V2_PRODUCT_SEARCH_PATH_V1,
   buildCommerceUrlV1,
   resolveCommerceFreshnessTtlMsV1,
@@ -22,6 +23,7 @@ import {
 } from './normalization.js';
 import { resolveRecipientRequiredV1 } from './bitrefill-source.js';
 import type {
+  CommerceCatalogBrowseResultV1,
   CommerceCatalogResultV1,
   CommerceCatalogSearchInputV1,
   CommerceCatalogSourceV1,
@@ -167,8 +169,86 @@ export function createBitrefillPersonalCatalogSourceV1(
   const freshnessTtlMs = resolveCommerceFreshnessTtlMsV1(options.freshnessTtlMs);
   const credential: CommerceCredentialV1 = resolveCommerceCredentialV1({ apiKey: options.apiKey });
 
+  /** Shared request path: the credential check, the fetch, and the envelope
+   * parse are identical for search and browse; only the path and query move. */
+  async function readListV1(
+    path: string,
+    query: Record<string, string>,
+  ): Promise<{ ok: true; products: V2Product[] } | { ok: false; reason: CommerceFailureReasonV1 }> {
+    if (credential.kind !== 'personal_api') return { ok: false, reason: 'provider_not_configured' };
+    let headers: Record<string, string>;
+    try {
+      headers = { accept: 'application/json', ...commerceAuthHeadersV1(credential, path) };
+    } catch {
+      return { ok: false, reason: 'provider_not_configured' };
+    }
+    let response: Response;
+    try {
+      response = await partnerFetch(
+        buildCommerceUrlV1(path, query),
+        { method: 'GET', headers },
+        { timeoutMs, fetchImpl: options.fetchImpl },
+      );
+    } catch (error) {
+      return { ok: false, reason: classifyCommerceTransportErrorV1(error) };
+    }
+    if (response.status === 401 || response.status === 403) return { ok: false, reason: 'provider_not_configured' };
+    const statusFailure = classifyCommerceHttpStatusV1(response.status);
+    if (statusFailure !== null) return { ok: false, reason: statusFailure };
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      return { ok: false, reason: 'provider_invalid_response' };
+    }
+    const parsed = V2ListEnvelopeSchema.safeParse(body);
+    if (!parsed.success) return { ok: false, reason: 'provider_invalid_response' };
+    return { ok: true, products: parsed.data.data };
+  }
+
   return {
     id: `${BITREFILL_PROVIDER_V1.id}-personal`,
+
+    /**
+     * What this storefront carries for a country, with no product named.
+     *
+     * Deliberately narrower than `search`: it returns the products and their
+     * denominations, and it prices nothing. A price is only meaningful for a
+     * chosen denomination, and quoting one here would put a number on screen
+     * that no checkout is bound to.
+     */
+    async browse(input): Promise<CommerceCatalogBrowseResultV1> {
+      if (input.kind !== 'gift_card') return { ok: false, reason: 'unsupported_kind' };
+      const country = normalizeCountryV1(input.country);
+      if (country === null) return { ok: false, reason: 'unsupported_country' };
+      const limit = Math.max(1, Math.min(50, Math.trunc(input.limit)));
+      const listed = await readListV1(BITREFILL_V2_PRODUCT_BROWSE_PATH_V1, {
+        country,
+        limit: String(limit),
+      });
+      if (!listed.ok) return listed;
+      const products = listed.products
+        .filter((product) => normalizeCountryV1(product.country_code) === country)
+        .slice(0, limit)
+        .map((product) => ({
+          productId: product.id,
+          name: product.name,
+          country,
+          currency: normalizeCurrencyV1(product.currency) ?? product.currency,
+          availability: availabilityV1(product),
+          packageValues: (product.packages ?? [])
+            .map((pkg) => validatePackageValueV1(pkg.value))
+            .filter((value): value is string => value !== null)
+            .slice(0, 12),
+        }));
+      if (products.length === 0) return { ok: false, reason: 'product_not_found' };
+      return {
+        ok: true,
+        products,
+        observedAt: input.now.toISOString(),
+        providerDisplayName: BITREFILL_PROVIDER_V1.displayName,
+      };
+    },
 
     async search(input: CommerceCatalogSearchInputV1): Promise<CommerceCatalogResultV1> {
       if (input.kind !== 'gift_card') return { ok: false, reason: 'unsupported_kind' };

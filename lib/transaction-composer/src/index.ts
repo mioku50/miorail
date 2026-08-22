@@ -5,6 +5,7 @@ export * from './earnComposition.js';
 export * from './earnSafetyKernel.js';
 export * from './earnExecution.js';
 export * from './reviewProjection.js';
+export * from './simulationOutcome.js';
 export * from './coordinator.js';
 export * from './lifecycle.js';
 export * from './approval.js';

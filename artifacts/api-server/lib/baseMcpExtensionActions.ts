@@ -36,6 +36,9 @@ import {
   type AvantisProviderHandoffV1,
 } from './baseMcpProviderRouting.js';
 import { reconcileBaseMcpVirtualsActionV1 } from './baseMcpVirtualsAction.js';
+import { missingInputsReplyV1, missingProviderInputsV1 } from './baseMcpRequiredInputs.js';
+import { baseMcpRuntimeSnapshotV1 } from './baseMcpRuntimeSnapshot.js';
+import type { BaseMcpRuntimeSnapshotV1 } from '@mioagent/security';
 
 const ADDRESS_V1 = /^0x[a-fA-F0-9]{40}$/;
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -83,13 +86,30 @@ function canonicalUsdcAmount(value: string): { amount: string; amountAtomic: str
  * detected before any tool inventory is created and handed to Routes AI.
  * Only a fully specified canonical-USDC transfer reaches the action runner.
  */
-export function classifyBaseMcpExtensionIntentV1(message: string): BaseMcpExtensionIntentV1 {
+export function classifyBaseMcpExtensionIntentV1(
+  message: string,
+  runtime: BaseMcpRuntimeSnapshotV1 = baseMcpRuntimeSnapshotV1(),
+): BaseMcpExtensionIntentV1 {
   const trimmed = message.trim();
   const lower = trimmed.toLowerCase();
 
-  const provider = matchBaseMcpProviderIntentV1(trimmed);
+  const provider = matchBaseMcpProviderIntentV1(trimmed, runtime);
   if (provider?.disposition === 'handoff_to_routes') {
     return { kind: 'handoff', originalMessage: trimmed, provider: provider.pluginId };
+  }
+  // A Routes adapter exists and this runtime cannot finish the journey. The
+  // user is told exactly that, HERE, rather than being walked into Routes AI
+  // to meet a Safety Kernel refusal at the end of a five-step flow.
+  if (provider?.disposition === 'route_unavailable_here') {
+    return {
+      kind: 'needs_input',
+      errorCode: `base_mcp_${provider.pluginId.replace(/-/g, '_')}_route_unavailable`,
+      reply: [
+        `Miorail compares ${provider.pluginId} routes, and it cannot complete this one on this deployment, so it is not sending you to a Review screen that would refuse to sign.`,
+        provider.routeCapability?.reason ?? 'The end-to-end path for this provider is not released here.',
+        'Comparison against the other released providers still works — ask for the swap without naming a provider.',
+      ].join(' '),
+    };
   }
   if (provider?.disposition === 'handoff_to_provider_ui' && provider.pluginId === 'avantis') {
     const handoff = buildAvantisProviderHandoffV1(trimmed);
@@ -103,10 +123,21 @@ export function classifyBaseMcpExtensionIntentV1(message: string): BaseMcpExtens
     return { kind: 'provider_handoff', handoff };
   }
   if (provider?.disposition === 'typed_x402_required') {
+    // Name the fields, not the architecture. A user who is missing a logo URL
+    // needs to hear "give me a logo URL", not a paragraph about x402 prepare
+    // responses that reads as a refusal.
+    const missing = missingProviderInputsV1(provider.pluginId, provider.exampleId, trimmed);
+    if (missing && missing.missing.length > 0) {
+      return {
+        kind: 'needs_input',
+        errorCode: `base_mcp_${provider.pluginId.replace(/-/g, '_')}_input_required`,
+        reply: missingInputsReplyV1(missing),
+      };
+    }
     return {
       kind: 'needs_input',
       errorCode: `base_mcp_${provider.pluginId.replace(/-/g, '_')}_x402_adapter_required`,
-      reply: `${provider.pluginId} uses a provider-specific prepare response before x402 payment. The question is recognized, but Miorail will not substitute a generic URL for those quoted payment requirements.`,
+      reply: `Every field ${provider.pluginId} needs for this operation is present. Miorail has no typed adapter for its x402 prepare response yet, so it will not substitute a generic URL for the payment terms the provider quotes. Nothing was sent or paid.`,
     };
   }
   if (provider?.disposition === 'action_in_extensions' && provider.pluginId === 'virtuals') {

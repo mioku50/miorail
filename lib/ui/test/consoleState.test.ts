@@ -400,3 +400,68 @@ describe('the proof screen reads the projection the server actually sends', () =
     assert.equal(view.statusLabel, 'completed');
   });
 });
+
+// --- T73: one simulation, one state -----------------------------------------
+//
+// Production put these two sentences on the same Review screen, about the same
+// Aerodrome swap:
+//
+//   "simulation_evidence: This swap reverts in simulation, so it cannot be signed."
+//   "Simulation not available — No simulation provider answered."
+//
+// Neither was a display bug. The kernel read the stored simulation; this block
+// read the separate /simulate response, which is absent whenever preparation is
+// BLOCKED — and absence was rendered as "no provider answered". The server now
+// classifies once and both read the same value.
+
+describe('the Review screen states exactly one simulation outcome', () => {
+  test('never says a provider was silent about a simulation that reverted', () => {
+    const view = deriveSimulationViewV1(
+      { status: 'failed', provider: null, blockNumber: '50298238', ageSeconds: 3, gasUsed: null, outcome: 'simulation_reverted' },
+      false,
+    );
+    assert.match(view.headline, /reverted/i);
+    assert.doesNotMatch(view.detail, /no simulation provider answered/i);
+    assert.equal(view.canSign, false);
+    assert.equal(view.available, true);
+  });
+
+  test('names an empty wallet as an empty wallet, not a broken route', () => {
+    const view = deriveSimulationViewV1(
+      { status: 'failed', provider: null, blockNumber: null, ageSeconds: null, gasUsed: null, outcome: 'insufficient_funds' },
+      false,
+    );
+    assert.match(view.headline, /cannot fund/i);
+    assert.match(view.detail, /not about the route/i);
+    assert.equal(view.canSign, false);
+  });
+
+  test('tells an unsupported call shape apart from an absent provider', () => {
+    const unsupported = deriveSimulationViewV1(
+      { status: 'unavailable', provider: null, blockNumber: null, ageSeconds: null, gasUsed: null, outcome: 'simulation_method_unsupported' },
+      true,
+    );
+    assert.match(unsupported.headline, /call shape/i);
+    // Even with the server allowing signing, a shape nobody could execute is
+    // not evidence; the CTA stays off.
+    assert.equal(unsupported.canSign, false);
+
+    const absent = deriveSimulationViewV1(
+      { status: 'unavailable', provider: null, blockNumber: null, ageSeconds: null, gasUsed: null, outcome: 'simulation_provider_unavailable' },
+      true,
+    );
+    assert.equal(absent.headline, 'Simulation not available');
+    // `prepared` IS the Safety Kernel's verdict; a partner-built route it
+    // allowed stays signable without a fork simulation.
+    assert.equal(absent.canSign, true);
+  });
+
+  test('still falls back to the old derivation when the server sent no outcome', () => {
+    const view = deriveSimulationViewV1(
+      { status: 'passed', provider: 'alchemy', blockNumber: '1', ageSeconds: 4, gasUsed: '21000' },
+      false,
+    );
+    assert.match(view.headline, /passed/i);
+    assert.equal(view.canSign, true);
+  });
+});

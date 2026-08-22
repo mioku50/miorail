@@ -18,6 +18,11 @@ import { atomicToHumanDecimal, routablePairV1 } from '@mioagent/swap-adapters';
 import { assembleExecutionBlueprintV1, blueprintIdV1, classifySwapCallV1 } from './blueprint.js';
 import { routeFromCandidateV1 } from './adapters/aerodrome.js';
 import { buildTransactionReviewProjectionV1 } from './reviewProjection.js';
+import {
+  classifySimulationOutcomeV1,
+  simulationBlockedDetailV1,
+  type SimulationOutcomeV1,
+} from './simulationOutcome.js';
 import { runSafetyKernel, swapTokenSecurityAddressesV1, type RunSafetyKernelInput } from './safetyKernel.js';
 import {
   blockedResultV1,
@@ -158,35 +163,45 @@ export function simulationHonesty(intent: RouteIntentV1): { acceptable: boolean;
 }
 
 /**
+ * Providers whose calldata Miorail will not sign without an executed
+ * simulation. Aerodrome calldata is written locally; o1 returns calls through
+ * an upgradeable proxy with no recipient argument in its swap selector;
+ * Hydrex and Balancer are the same class of server-written or opaque calldata.
+ *
+ * Exported because it is also the SECOND condition on releasing a Routes
+ * handoff: a provider on this list whose call shape no configured simulator
+ * can execute has no end-to-end path, however good its quote adapter is.
+ */
+export const PROVIDERS_REQUIRING_SIMULATION_V1: readonly SwapBuildProviderId[] = [
+  'aerodrome',
+  'o1-exchange',
+  'hydrex',
+  'balancer',
+];
+
+/**
  * T67B.1 — whether the simulation evidence is good enough to sign on.
  *
- * Aerodrome and o1 require a fork simulation. Aerodrome calldata is written
- * locally; o1 returns calls through an upgradeable proxy and exposes no
- * recipient argument in its swap selector. In both cases unavailable is not a
- * pass, and a revert is a refusal rather than a warning.
+ * Unavailable is not a pass, and a revert is a refusal rather than a warning.
+ * The five states are mutually exclusive; see simulationOutcome.ts.
  */
 export function simulationRequirementV1(
   provider: SwapBuildProviderId,
   intent: RouteIntentV1,
   simulationState: SimulationStateV1,
-): { acceptable: boolean; detail: string } {
-  if (provider !== 'aerodrome' && provider !== 'o1-exchange' && provider !== 'hydrex' && provider !== 'balancer') {
-    return simulationHonesty(intent);
+): { acceptable: boolean; detail: string; outcome: SimulationOutcomeV1 | null } {
+  if (!PROVIDERS_REQUIRING_SIMULATION_V1.includes(provider)) {
+    return { ...simulationHonesty(intent), outcome: null };
   }
-  if (simulationState.status === 'passed') {
-    return { acceptable: true, detail: 'Simulated against Base mainnet state and every call succeeded.' };
-  }
-  if (simulationState.status === 'failed') {
-    return {
-      acceptable: false,
-      detail: 'This swap reverts in simulation, so it cannot be signed.',
-    };
-  }
+  // One classification, quoted by the kernel here and by the Review screen
+  // from the same value. The screen used to derive its own sentence from a
+  // separate response and printed "no simulation provider answered" over a
+  // refusal that said the swap had reverted.
+  const outcome = classifySimulationOutcomeV1(simulationState);
   return {
-    acceptable: false,
-    detail: `${provider} calldata must simulate before it can be signed (${
-      simulationState.errorCode ?? 'simulation unavailable'
-    }).`,
+    acceptable: outcome === 'simulation_passed',
+    detail: simulationBlockedDetailV1(provider, outcome),
+    outcome,
   };
 }
 
@@ -342,7 +357,7 @@ export async function reviewStoredBlueprintV1(
   });
 
   if (safety.verdict === 'blocked') {
-    return blockedResultV1(input.routeRunId, safety);
+    return blockedResultV1(input.routeRunId, safety, blueprint.simulationState);
   }
 
   const outputChange = blueprint.expectedAssetChanges.find((change) => change.direction === 'credit')!;
@@ -661,7 +676,7 @@ export class DeterministicTransactionComposer implements TransactionComposer {
     });
 
     if (safety.verdict === 'blocked') {
-      return blockedResultV1(input.routeRunId, safety);
+      return blockedResultV1(input.routeRunId, safety, simulationState);
     }
 
     // --- Assemble + persist blueprint --------------------------------------------

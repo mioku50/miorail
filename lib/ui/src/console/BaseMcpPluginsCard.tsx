@@ -53,7 +53,7 @@ export interface BaseMcpPluginRowV1 {
     id: string;
     prompt: string;
     surface: 'read' | 'action' | 'routable';
-    disposition: 'read_in_extensions' | 'handoff_to_routes' | 'handoff_to_provider_ui' | 'typed_x402_required' | 'action_in_extensions' | 'adapter_required';
+    disposition: 'read_in_extensions' | 'handoff_to_routes' | 'handoff_to_provider_ui' | 'typed_x402_required' | 'action_in_extensions' | 'route_unavailable_here' | 'adapter_required';
   }[];
 }
 
@@ -121,7 +121,7 @@ export type BaseMcpPluginFilterV1 =
 export type BaseMcpExampleDispositionUiV1 = BaseMcpPluginRowV1['examples'][number]['disposition'];
 
 export interface BaseMcpExampleBadgeV1 {
-  label: 'READ' | 'ROUTES AI' | 'ACTION' | 'PROVIDER UI' | 'ADAPTER REQUIRED' | 'x402';
+  label: 'READ' | 'ROUTES AI' | 'ACTION' | 'PROVIDER UI' | 'ADAPTER REQUIRED' | 'NOT AVAILABLE HERE' | 'x402';
   tone: 'read' | 'routes' | 'action' | 'provider' | 'adapter' | 'x402';
 }
 
@@ -142,6 +142,12 @@ export function baseMcpExampleBadgeV1(example: BaseMcpExampleUiV1): BaseMcpExamp
       return { label: 'x402', tone: 'x402' };
     case 'adapter_required':
       return { label: 'ADAPTER REQUIRED', tone: 'adapter' };
+    // A Routes adapter EXISTS and this deployment cannot finish the journey.
+    // Badging it ROUTES AI is what sent users into a Review screen that always
+    // refused; badging it ADAPTER REQUIRED would be a different lie, since the
+    // adapter is written. It gets its own label and its own sentence.
+    case 'route_unavailable_here':
+      return { label: 'NOT AVAILABLE HERE', tone: 'adapter' };
     case 'action_in_extensions':
       return { label: 'ACTION', tone: 'action' };
     default:

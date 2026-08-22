@@ -252,7 +252,9 @@ export function extractCommerceRecipientV1(message: string): string | null {
 const NOISE_PATTERNS_V1: RegExp[] = [
   /\b(?:buy|purchase|get|find|order|please|for|me|a|an|the|on|with|using|worth|of|bitrefill)\b/giu,
   /(?:купи|куплю|купить|пожалуйста|мне|на|за|для|через)/giu,
-  /\bgift\s?card\b|\bgiftcard\b|\bvoucher\b|\besim\b|\btop\s?up\b|\btopup\b|\brefill\b/giu,
+  // Plurals included: `\bgift\s?card\b` does not match "gift cards", which
+  // left a bare "gift" behind and sent it to the storefront as the brand.
+  /\bgift\s?cards?\b|\bgiftcards?\b|\bvouchers?\b|\besims?\b|\btop\s?ups?\b|\btopups?\b|\brefills?\b/giu,
   /подароч\p{L}*|подарк\p{L}*|сертификат\p{L}*|ваучер\p{L}*|пополн\p{L}*|есим/giu,
   /[$€£]\s?\d+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?\s?[$€£]|\b\d+(?:[.,]\d{1,2})?\b/giu,
   /\busdc?\b|\busdt\b|\beur\b|\bgbp\b|\bdollars?\b|\beuros?\b|\bpounds?\b/giu,
@@ -265,9 +267,40 @@ const NOISE_PATTERNS_V1: RegExp[] = [
 ];
 
 /**
+ * Words that belong to the INTERFACE, never to a product.
+ *
+ * The query is built by subtraction — whatever survives the noise filters is
+ * treated as the brand. That is fine while the user names a product, and it
+ * fails loudly when they do not: "Browse Bitrefill gift cards available in the
+ * United States" left `Browse gift available in`, which was then sent to
+ * Bitrefill's catalogue as a search term. The storefront dutifully found no
+ * product called "Browse gift available in" and Miorail reported that as
+ * Bitrefill having nothing for the US.
+ *
+ * So the vocabulary of asking is separated from the vocabulary of buying. A
+ * word here can never reach a provider query, in any language. This list is
+ * about grammar, not about products: no brand is excluded by it.
+ */
+const INTERFACE_WORDS_V1: RegExp[] = [
+  /\b(?:browse|show|list|display|search|see|view|look|looking|available|availability|options?|catalogue|catalog|selection|which|what|whats|what's|any|all|some|are|is|there|here|in|at|to|from|by|and|or|but|near|around|within|via|about|my|your|their|its|it|they|we|you|i)\b/giu,
+  /(?:покажи|показать|посмотр|смотр|список|перечень|выбор|каталог|доступн|какие|какой|что|есть|можно|мне|мой|моя|мои|там|тут|около|через|про|и|или)/giu,
+];
+
+/**
+ * Does the message name a product at all, or is it a request to see what is
+ * available? A broad browse is a legitimate intent with `query === null`; the
+ * caller decides what to do with it and must not search for the words the user
+ * used to ask the question.
+ */
+export function isBroadCatalogueBrowseV1(message: string): boolean {
+  return extractCommerceQueryV1(message) === null;
+}
+
+/**
  * The brand the user named, recovered by removing everything the extractor has
- * already understood. Whatever survives IS the product query — the storefront
- * decides whether it matches anything, not this function.
+ * already understood — including the interface vocabulary above. Whatever
+ * survives IS the product query; when nothing survives, the answer is `null`
+ * (a browse), never the leftovers of the sentence.
  */
 export function extractCommerceQueryV1(message: string): string | null {
   // T64.3.1 — the ceiling clause leaves FIRST. Without this, "never spend more
@@ -277,6 +310,9 @@ export function extractCommerceQueryV1(message: string): string | null {
     remaining = remaining.replace(new RegExp(pattern.source, 'giu'), ' ');
   }
   for (const pattern of NOISE_PATTERNS_V1) remaining = remaining.replace(pattern, ' ');
+  // Last, so a brand containing an ordinary word ("Just Eat") has already been
+  // protected by the more specific filters above.
+  for (const pattern of INTERFACE_WORDS_V1) remaining = remaining.replace(pattern, ' ');
   const words = remaining
     .replace(/[^\p{L}\p{N}\s.+-]/gu, ' ')
     .split(/\s+/u)

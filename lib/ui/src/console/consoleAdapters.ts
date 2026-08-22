@@ -9,6 +9,7 @@ import {
   type CandidateSourceV1,
   type EvidenceSourceRowV1,
   type ScoreDimensionSourceV1,
+  type SimulationOutcomeUiV1,
   type SimulationSourceV1,
 } from './consoleState';
 import {
@@ -537,14 +538,58 @@ export function quoteFreshnessFromRouteV1(route: RoutePlanRouteV1 | null) {
   return quoteFreshnessV1(route ? route.quoteAgeSeconds : null);
 }
 
-/** Simulation, from the T63 adapter's response when present. Until it answers
- * the Review screen shows an honest "not available" — never a green tick. */
+/**
+ * The five outcomes, classified here from a stored `SimulationStateV1` exactly
+ * as `classifySimulationOutcomeV1` does on the server. Kept in step by the
+ * shared vocabulary in consoleState.ts and by a test that pins both lists.
+ */
+const SIMULATION_METHOD_UNSUPPORTED_CODES_UI_V1: readonly string[] = [
+  'provider_method_unsupported',
+  'provider_call_count_mismatch',
+  'provider_invalid_schema',
+  'provider_chain_mismatch',
+  'provider_blueprint_mismatch',
+];
+const SIMULATION_INSUFFICIENT_FUNDS_CODES_UI_V1: readonly string[] = [
+  'provider_insufficient_funds',
+  'insufficient_funds',
+  'insufficient_balance',
+];
+
+export function simulationOutcomeFromStateV1(state: {
+  status?: string | null;
+  errorCode?: string | null;
+} | null | undefined): SimulationOutcomeUiV1 | null {
+  if (!state?.status) return null;
+  if (state.status === 'passed') return 'simulation_passed';
+  const code = (state.errorCode ?? '').trim().toLowerCase();
+  if (SIMULATION_INSUFFICIENT_FUNDS_CODES_UI_V1.includes(code) || /insufficient\s+(?:funds|balance)/u.test(code)) {
+    return 'insufficient_funds';
+  }
+  if (state.status === 'failed') {
+    return SIMULATION_METHOD_UNSUPPORTED_CODES_UI_V1.includes(code)
+      ? 'simulation_method_unsupported'
+      : 'simulation_reverted';
+  }
+  if (SIMULATION_METHOD_UNSUPPORTED_CODES_UI_V1.includes(code)) return 'simulation_method_unsupported';
+  return 'simulation_provider_unavailable';
+}
+
+/**
+ * Simulation, from whichever response actually carries it.
+ *
+ * Three sources, in order: a paid `/simulate` result, a BLOCKED `/prepare`
+ * (which now carries the state the Safety Kernel judged), and finally the bare
+ * outcome. The blocked branch is the one that was missing: a refusal arrived
+ * with no simulation at all, and the screen reported that absence as "no
+ * simulation provider answered" underneath a refusal saying it had reverted.
+ */
 export function simulationSourceFromResponseV1(response: unknown): SimulationSourceV1 | null {
   if (!response || typeof response !== 'object') return null;
   const value = response as {
     outcome?: string;
     reason?: string;
-    simulation?: { status?: string; blockNumber?: string | null; observedAt?: string | null };
+    simulation?: { status?: string; blockNumber?: string | null; observedAt?: string | null; errorCode?: string | null } | null;
     evidence?: { provider?: { displayName?: string }; gasUsed?: string | null };
   };
   if (value.outcome === 'simulated' || value.outcome === 'cached' || value.outcome === 'charged') {
@@ -555,6 +600,21 @@ export function simulationSourceFromResponseV1(response: unknown): SimulationSou
       blockNumber: value.simulation?.blockNumber ?? null,
       ageSeconds: value.simulation?.observedAt ? Math.max(0, Math.round((Date.now() - Date.parse(value.simulation.observedAt)) / 1000)) : null,
       gasUsed: value.evidence?.gasUsed ?? null,
+      outcome: simulationOutcomeFromStateV1(value.simulation),
+    };
+  }
+  if (value.outcome === 'blocked' && value.simulation) {
+    const status = value.simulation.status;
+    return {
+      status: status === 'passed' ? 'passed' : status === 'failed' ? 'failed' : 'unavailable',
+      provider: null,
+      blockNumber: value.simulation.blockNumber ?? null,
+      ageSeconds: value.simulation.observedAt
+        ? Math.max(0, Math.round((Date.now() - Date.parse(value.simulation.observedAt)) / 1000))
+        : null,
+      gasUsed: null,
+      reason: value.simulation.errorCode ?? null,
+      outcome: simulationOutcomeFromStateV1(value.simulation),
     };
   }
   if (value.outcome) {

@@ -804,7 +804,12 @@ export function MiniConsole() {
       }
     />
   );
-  const simulationSource = simulationSourceFromResponseV1(simulateResponse ?? budgetResponse);
+  // A BLOCKED prepare now carries the simulation state the Safety Kernel
+  // judged, so a refusal and this block quote one fact. Preferred over the
+  // paid-simulation responses because it is the state the refusal was about.
+  const simulationSource = simulationSourceFromResponseV1(
+    prepare.data?.outcome === 'blocked' ? prepare.data : (simulateResponse ?? budgetResponse),
+  );
   // Same rule as the web console: `prepared` is the Safety Kernel's verdict.
   const simulation = deriveSimulationViewV1(simulationSource, Boolean(prepared));
   const quoteFreshness = quoteFreshnessFromRouteV1(primaryRoute);

@@ -26,6 +26,17 @@ export type BaseMcpProviderExampleDispositionV1 =
   | 'handoff_to_provider_ui'
   | 'typed_x402_required'
   | 'action_in_extensions'
+  /**
+   * A Routes adapter EXISTS for this provider and this deployment cannot carry
+   * the intent to a signature — typically because the calldata is server-written
+   * and no simulator here can execute its call shape.
+   *
+   * Deliberately not `adapter_required`. That says nobody wrote the adapter,
+   * which sends an operator looking for code that is already there; this says
+   * the runtime is short of something, which is the thing they can fix. The two
+   * were one value, and the console advertised a dead end as released.
+   */
+  | 'route_unavailable_here'
   | 'adapter_required';
 
 export interface BaseMcpProviderExampleV1 {

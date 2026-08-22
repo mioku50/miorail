@@ -88,10 +88,43 @@ export interface CommerceCatalogSearchInputV1 {
   now: Date;
 }
 
-/** Read-only catalogue access. Safe to call for a comparison; never mutates. */
+export interface CommerceCatalogBrowseInputV1 {
+  kind: CommerceProductKindV1;
+  country: string;
+  /** Bounded by the source; a browse is a sample, never the whole catalogue. */
+  limit: number;
+  now: Date;
+}
+
+export interface CommerceBrowseProductV1 {
+  productId: string;
+  name: string;
+  country: string;
+  currency: string;
+  availability: CommerceAvailabilityV1;
+  /** The denominations the storefront lists, as decimal strings. */
+  packageValues: readonly string[];
+}
+
+export type CommerceCatalogBrowseResultV1 =
+  | { ok: true; products: readonly CommerceBrowseProductV1[]; observedAt: string; providerDisplayName: string }
+  | { ok: false; reason: CommerceFailureReasonV1 };
+
+/**
+ * Read-only catalogue access. Safe to call for a comparison; never mutates.
+ *
+ * `browse` is optional and answers a DIFFERENT question from `search`: "what
+ * is available here", with no product named. It exists because the extractor
+ * that turns a sentence into a query correctly returns null for "browse gift
+ * cards available in the United States" — and the only honest things to do
+ * with that are to list the catalogue or to ask which product. Searching the
+ * storefront for the words the user asked the question WITH is neither, and is
+ * what production did: `query="Browse gift available in"`.
+ */
 export interface CommerceCatalogSourceV1 {
   readonly id: string;
   search(input: CommerceCatalogSearchInputV1): Promise<CommerceCatalogResultV1>;
+  browse?(input: CommerceCatalogBrowseInputV1): Promise<CommerceCatalogBrowseResultV1>;
 }
 
 // --- Order gateway (the irreversible half) ---------------------------------

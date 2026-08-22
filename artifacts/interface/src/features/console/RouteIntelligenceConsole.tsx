@@ -916,7 +916,12 @@ export function RouteIntelligenceConsole() {
     : null;
 
   // Simulation comes from whichever paid path actually ran — never invented.
-  const simulationSource = simulationSourceFromResponseV1(simulateResponse ?? budgetResponse);
+  // A BLOCKED prepare now carries the simulation state the Safety Kernel
+  // judged, so a refusal and this block quote one fact. Preferred over the
+  // paid-simulation responses because it is the state the refusal was about.
+  const simulationSource = simulationSourceFromResponseV1(
+    prepare.data?.outcome === 'blocked' ? prepare.data : (simulateResponse ?? budgetResponse),
+  );
   // `prepared` IS the Safety Kernel's verdict: a route it refused comes back
   // `blocked`, never prepared. The screen must not re-run that decision.
   const simulation = deriveSimulationViewV1(simulationSource, Boolean(prepared));

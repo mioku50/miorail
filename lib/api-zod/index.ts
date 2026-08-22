@@ -691,6 +691,11 @@ export const SwapPrepareResponseV1Schema = z.discriminatedUnion('outcome', [
       outcome: z.literal('blocked'),
       routeRunId: z.string().min(1).max(200),
       safety: SafetyKernelResultV1Schema,
+      // The simulation state the kernel judged, so the Review screen renders
+      // the same fact the refusal was based on. Optional: a client reading a
+      // response written before this field existed keeps parsing, and a block
+      // for a non-simulation reason carries null.
+      simulation: SimulationStateV1Schema.nullable().optional(),
     })
     .strict(),
 ]);
@@ -1753,8 +1758,13 @@ export const BaseMcpPluginCatalogueResponseSchema = z.object({
               'handoff_to_provider_ui',
               'typed_x402_required',
               'action_in_extensions',
+              // The adapter exists and this runtime cannot finish the journey.
+              // Distinct from `adapter_required`, which says nobody wrote it.
+              'route_unavailable_here',
               'adapter_required',
             ]),
+            /** Why, when the runtime downgraded a declared disposition. */
+            capabilityReason: z.string().min(1).max(400).nullable().optional(),
           }),
         )
         .min(1)

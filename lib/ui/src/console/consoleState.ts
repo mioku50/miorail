@@ -413,6 +413,18 @@ export function intelligenceSpendLabelV1(sources: readonly EvidenceSourceRowV1[]
 
 // --- Simulation -------------------------------------------------------------
 
+/**
+ * The five states a simulation can be in, mirrored from
+ * @mioagent/transaction-composer so this package keeps no dependency on it.
+ * They are mutually exclusive on purpose — see simulationOutcome.ts for why.
+ */
+export type SimulationOutcomeUiV1 =
+  | 'simulation_passed'
+  | 'simulation_reverted'
+  | 'insufficient_funds'
+  | 'simulation_method_unsupported'
+  | 'simulation_provider_unavailable';
+
 export interface SimulationSourceV1 {
   status: 'passed' | 'failed' | 'unavailable';
   provider: string | null;
@@ -420,7 +432,44 @@ export interface SimulationSourceV1 {
   ageSeconds: number | null;
   gasUsed: string | null;
   reason?: string | null;
+  /** The server's own classification, when it sent one. Preferred over
+   * re-deriving from `status` + `reason`, which is how this screen ended up
+   * printing "no simulation provider answered" under a refusal that said the
+   * swap reverted. */
+  outcome?: SimulationOutcomeUiV1 | null;
 }
+
+/** One sentence per outcome. The same words the server records in the
+ * `simulation_evidence` check, so a refusal and this block cannot disagree. */
+export const SIMULATION_OUTCOME_COPY_UI_V1: Readonly<
+  Record<SimulationOutcomeUiV1, { headline: string; detail: string; subLabel: string }>
+> = {
+  simulation_passed: {
+    headline: 'Simulation passed on Base mainnet 8453',
+    detail: 'These exact calls were executed against live Base state and all of them succeeded.',
+    subLabel: 'passed',
+  },
+  simulation_reverted: {
+    headline: 'Simulation reverted on Base mainnet 8453',
+    detail: 'These exact calls were executed against live Base state and reverted. Nothing was signed — change the route or the amount and try again.',
+    subLabel: 'reverted',
+  },
+  insufficient_funds: {
+    headline: 'Your wallet cannot fund this swap',
+    detail: 'The simulation ran and failed because this wallet does not hold enough to cover the input amount and gas. This is about the balance, not about the route.',
+    subLabel: 'insufficient funds',
+  },
+  simulation_method_unsupported: {
+    headline: 'No simulator supports this call shape',
+    detail: 'A simulator answered but cannot execute this call shape — an ordered approve-and-swap batch needs a provider that simulates a batch against one evolving state. Miorail will not sign calldata it could not simulate.',
+    subLabel: 'not supported',
+  },
+  simulation_provider_unavailable: {
+    headline: 'Simulation not available',
+    detail: 'No simulation provider answered. Route comparison and the calls above are unchanged.',
+    subLabel: 'not available',
+  },
+};
 
 export interface SimulationViewV1 {
   available: boolean;
@@ -460,6 +509,33 @@ export function deriveSimulationViewV1(
   simulation: SimulationSourceV1 | null,
   serverAllowsSigning = false,
 ): SimulationViewV1 {
+  // The server's classification wins whenever it sent one. Two readers deriving
+  // the same fact from different inputs is what put "Simulation not available —
+  // no simulation provider answered" directly beneath "this swap reverts in
+  // simulation, so it cannot be signed" on one production Review screen.
+  if (simulation?.outcome) {
+    const copy = SIMULATION_OUTCOME_COPY_UI_V1[simulation.outcome];
+    const executed = simulation.outcome !== 'simulation_provider_unavailable'
+      && simulation.outcome !== 'simulation_method_unsupported';
+    const passed = simulation.outcome === 'simulation_passed';
+    return {
+      available: executed || simulation.outcome === 'simulation_method_unsupported',
+      passed,
+      headline: copy.headline,
+      detail: passed
+        ? ''
+        : `${copy.detail}${simulation.outcome === 'simulation_provider_unavailable' ? '' : ' Route comparison and the calls above are unchanged.'}`,
+      subLabel: passed && simulation.provider
+        ? `${simulation.provider} · ${ageLabelV1(simulation.ageSeconds)} ago`
+        : copy.subLabel,
+      canSign: passed ? true : serverAllowsSigning && simulation.outcome === 'simulation_provider_unavailable',
+      disabledReason: passed
+        ? null
+        : serverAllowsSigning && simulation.outcome === 'simulation_provider_unavailable'
+          ? null
+          : copy.detail,
+    };
+  }
   if (!simulation || simulation.status === 'unavailable') {
     const reason = simulation?.reason ?? null;
     return {

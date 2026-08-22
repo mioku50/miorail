@@ -232,5 +232,10 @@ export function resolvePluginCredential(plugin: string, mode: BaseMcpPluginMode 
         : (process.env.UNISWAP_MCP_GATEWAY_KEY?.trim() || process.env.UNISWAP_API_KEY);
     return raw?.trim() || undefined;
   }
+  // OpenSea's public API authenticates with a server-side key only. T65 forbids
+  // creating one automatically and forbids running the OpenSea CLI in
+  // production, so there is one source and no fallback: an absent key is an
+  // unavailable read, never a key this process invents.
+  if (plugin === 'opensea') return process.env.OPENSEA_API_KEY?.trim() || undefined;
   return undefined;
 }

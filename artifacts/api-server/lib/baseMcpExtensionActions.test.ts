@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test, { afterEach, describe } from 'node:test';
 import type { Request } from 'express';
 import { canonicalUsdcForBaseChain } from '@mioagent/security/baseGuards';
+import { baseMcpRuntimeSnapshotV1 } from './baseMcpRuntimeSnapshot.js';
 import {
   baseMcpExtensionActionRuntime,
   classifyBaseMcpExtensionIntentV1,
@@ -153,9 +154,36 @@ describe('deterministic Base MCP Extensions intent router', () => {
     assert.equal(bitrefill.kind, 'read');
     if (bitrefill.kind === 'read') assert.equal(bitrefill.providerId, 'bitrefill');
 
-    const aerodrome = classifyBaseMcpExtensionIntentV1('Swap 0.001 ETH to USDC on Aerodrome');
+    // Aerodrome's calldata is written by this server, so the handoff depends on
+    // a simulator being able to execute it. The runtime is stated rather than
+    // read from the machine running the suite.
+    const aerodrome = classifyBaseMcpExtensionIntentV1('Swap 0.001 ETH to USDC on Aerodrome', {
+      ...baseMcpRuntimeSnapshotV1({}),
+      singleCallSimulationAvailable: true,
+      batchSimulationAvailable: true,
+    });
     assert.equal(aerodrome.kind, 'handoff');
     if (aerodrome.kind === 'handoff') assert.equal(aerodrome.provider, 'aerodrome');
+  });
+
+  test('a swap this runtime cannot sign is refused here, not in Routes AI', () => {
+    // The production dead end: the console offered ROUTES AI, the user walked
+    // five screens, and the Safety Kernel refused for want of a simulation
+    // nobody could run. The refusal now arrives at the first screen, with the
+    // reason attached.
+    const decision = classifyBaseMcpExtensionIntentV1('Swap 100 USDC for WETH on Base through Balancer', {
+      ...baseMcpRuntimeSnapshotV1({}),
+      singleCallSimulationAvailable: false,
+      batchSimulationAvailable: false,
+    });
+    assert.equal(decision.kind, 'needs_input');
+    if (decision.kind === 'needs_input') {
+      assert.equal(decision.errorCode, 'base_mcp_balancer_route_unavailable');
+      assert.match(decision.reply, /simulation/i);
+      // It must not read as "nobody built this" — the adapter exists.
+      assert.doesNotMatch(decision.reply, /no typed action adapter/i);
+      assert.match(decision.reply, /without naming a provider/i);
+    }
   });
 
   test('only an exact reviewed Virtuals create prompt enters its typed action vertical', () => {

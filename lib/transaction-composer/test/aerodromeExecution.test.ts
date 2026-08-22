@@ -536,7 +536,14 @@ describe('the composer prepares Aerodrome only under its own conditions', () => 
     if (result.outcome !== 'blocked') return;
     const check = result.safety.checks.find((entry) => entry.id === 'simulation_evidence');
     assert.equal(check?.status, 'failed');
-    assert.match(check?.detail ?? '', /must simulate/);
+    // Exactly one state, and it is the ABSENCE one. It must not borrow the
+    // vocabulary of a revert: production showed both sentences at once.
+    assert.match(check?.detail ?? '', /no simulation provider answered/i);
+    assert.doesNotMatch(check?.detail ?? '', /reverted/i);
+    // The blocked result carries the state the kernel judged, so the Review
+    // screen renders the same fact instead of deriving its own.
+    assert.equal(result.simulation?.status, 'unavailable');
+    assert.equal(result.simulation?.errorCode, 'provider_not_configured');
   });
 
   test('with no simulation provider wired at all it still blocks', async () => {
@@ -568,7 +575,32 @@ describe('the composer prepares Aerodrome only under its own conditions', () => 
     assert.equal(result.outcome, 'blocked');
     if (result.outcome !== 'blocked') return;
     const check = result.safety.checks.find((entry) => entry.id === 'simulation_evidence');
-    assert.match(check?.detail ?? '', /reverts in simulation/);
+    assert.match(check?.detail ?? '', /executed against live Base state and reverted/i);
+    // A revert is evidence, so it must never read as an absent provider.
+    assert.doesNotMatch(check?.detail ?? '', /no simulation provider/i);
+    assert.equal(result.simulation?.status, 'failed');
+  });
+
+  test('a wallet that cannot pay is not reported as a broken route', async () => {
+    // The user held 0.000713 ETH and asked to swap 0.001. The old mapping
+    // called that "this swap reverts in simulation" — a sentence about the
+    // market for a fact about the balance.
+    const s = await scene();
+    const result = await composerFor(s, {
+      simulate: async () => ({
+        status: 'failed',
+        observedAt: NOW.toISOString(),
+        blockNumber: '33123456',
+        requestHash: stableHashV1('test/sim-request', { ok: false }),
+        responseHash: stableHashV1('test/sim-response', { ok: false }),
+        errorCode: 'insufficient_funds',
+      }),
+    }).prepare(prepareInput(s));
+    assert.equal(result.outcome, 'blocked');
+    if (result.outcome !== 'blocked') return;
+    const check = result.safety.checks.find((entry) => entry.id === 'simulation_evidence');
+    assert.match(check?.detail ?? '', /does not hold enough/i);
+    assert.match(check?.detail ?? '', /not about the route/i);
   });
 
   test('a moved route is reported as route_changed, not as an expired quote', async () => {

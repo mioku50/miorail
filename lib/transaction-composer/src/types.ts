@@ -1,6 +1,7 @@
 import {
   ExecutionBlueprintV1Schema,
   SafetyKernelResultV1Schema,
+  SimulationStateV1Schema,
   type ExecutionBlueprintV1,
   type ExecutionCallV1,
   type HashV1,
@@ -92,6 +93,12 @@ export const TransactionPreparationResultV1Schema = z.discriminatedUnion('outcom
       outcome: z.literal('blocked'),
       routeRunId: z.string().min(1).max(200),
       safety: SafetyKernelResultV1Schema,
+      // The simulation the kernel judged. Carried so the Review screen shows
+      // the SAME state the refusal was based on: a blocked prepare used to
+      // arrive with no simulation at all, and the screen rendered that absence
+      // as "no simulation provider answered" directly under a refusal that
+      // said the swap had reverted.
+      simulation: SimulationStateV1Schema.nullable().optional(),
     })
     .strict(),
 ]);
@@ -117,8 +124,12 @@ export function unsupportedResultV1(reason: UnsupportedReasonV1, detail: string)
   return { outcome: 'unsupported', reason, detail };
 }
 
-export function blockedResultV1(routeRunId: string, safety: SafetyKernelResultV1): TransactionPreparationResultV1 {
-  return { outcome: 'blocked', routeRunId, safety };
+export function blockedResultV1(
+  routeRunId: string,
+  safety: SafetyKernelResultV1,
+  simulation: SimulationStateV1 | null = null,
+): TransactionPreparationResultV1 {
+  return { outcome: 'blocked', routeRunId, safety, simulation };
 }
 
 // ---------------------------------------------------------------------------

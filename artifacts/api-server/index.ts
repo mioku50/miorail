@@ -1,6 +1,7 @@
 import { app } from './app';
 import { getMiorailProductMigrationFlags } from './lib/productMigrationConfig';
 import { resolveEarnContractPreflightV1 } from './lib/earnPreflight';
+import { probeSimulationProviderHealthV1 } from './lib/swapSimulation';
 
 // Bind to loopback unless an operator asks for otherwise. Nginx terminates TLS
 // and proxies to 127.0.0.1, so nothing needs to reach this process over the
@@ -52,6 +53,14 @@ export function startServer() {
     console.log(`API Server listening on ${host}:${port}`);
     console.log(`API CHAIN_ENV=${process.env.CHAIN_ENV || 'sepolia'}`);
     void warmEarnContractPreflight();
+    // Learn at boot whether the simulator can serve requests. A key that is
+    // present but out of monthly capacity used to leave every capability read
+    // claiming a batch simulation this deployment could not run.
+    void probeSimulationProviderHealthV1().then((health) => {
+      if (health.batchProven === false) {
+        console.warn(`Simulation provider is not serving requests (${health.lastErrorCode}) — provider routes needing a simulation report unavailable`);
+      }
+    });
   });
   return server;
 }

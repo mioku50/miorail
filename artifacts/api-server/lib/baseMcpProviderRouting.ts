@@ -1,15 +1,22 @@
 import {
   BASE_MCP_PLUGIN_CATALOGUE_V1,
   BASE_MCP_PROVIDER_INTENTS_V1,
+  mayHandOffToRoutesV1,
+  providerRouteCapabilityV1,
+  type BaseMcpCapabilityCellV1,
   type BaseMcpProviderExampleDispositionV1,
   type BaseMcpProviderIntentSpecV1,
+  type BaseMcpRuntimeSnapshotV1,
 } from '@mioagent/security';
+import { baseMcpRuntimeSnapshotV1 } from './baseMcpRuntimeSnapshot.js';
 
 export interface BaseMcpProviderIntentMatchV1 {
   pluginId: string;
   productSurface: 'routes' | 'extensions';
   lifecycleStage: BaseMcpProviderIntentSpecV1['lifecycleStage'];
   disposition: BaseMcpProviderExampleDispositionV1;
+  /** Why the runtime refused a declared handoff, when it did. */
+  routeCapability: BaseMcpCapabilityCellV1 | null;
   exampleId: string | null;
   providerPrompt: string;
 }
@@ -42,15 +49,46 @@ const RELEASED_PROVIDER_ROUTES_V1: Readonly<Record<ReviewedRouteFamilyV1, Readon
   nft: new Set(['opensea']),
 };
 
-/** Provider ownership is not execution capability. A named provider may hand
- * off only when the corresponding route family has a released adapter. */
+/**
+ * Provider ownership is not execution capability, and a released QUOTE adapter
+ * is not a released ROUTE.
+ *
+ * This predicate answers only the first question: is there an adapter for this
+ * provider in this route family at all. It used to be the whole gate, and that
+ * is how a user asking for an Aerodrome swap was sent into Routes AI to reach
+ * a Safety Kernel refusal nobody could clear. The second question — can this
+ * runtime carry the intent to a signature — is `handoffToRoutesReleasedV1`
+ * below, and both must pass before anything hands off.
+ */
 export function hasReleasedProviderRouteV1(providerId: string, family: ReviewedRouteFamilyV1): boolean {
   return RELEASED_PROVIDER_ROUTES_V1[family].has(providerId);
+}
+
+/** Every provider with a released adapter in any route family. */
+export const ROUTE_ADAPTER_PROVIDERS_V1: readonly string[] = [
+  ...new Set(Object.values(RELEASED_PROVIDER_ROUTES_V1).flatMap((set) => [...set])),
+];
+
+/**
+ * The end-to-end gate. A provider-specific intent may be sent to Routes AI
+ * only when the runtime can carry THIS operation to its honest end point, and
+ * the reason is returned alongside so a refusal can name what is missing
+ * instead of stranding the user on a Review screen.
+ */
+export function handoffToRoutesReleasedV1(
+  providerId: string,
+  runtime: BaseMcpRuntimeSnapshotV1 = baseMcpRuntimeSnapshotV1(),
+): { released: boolean; capability: BaseMcpCapabilityCellV1 } {
+  return {
+    released: mayHandOffToRoutesV1(providerId, runtime),
+    capability: providerRouteCapabilityV1(providerId, runtime),
+  };
 }
 
 function inferredDisposition(
   message: string,
   provider: BaseMcpProviderIntentSpecV1,
+  runtime: BaseMcpRuntimeSnapshotV1,
 ): BaseMcpProviderExampleDispositionV1 {
   const lower = normalized(message);
   const avantisWrite = /\b(open|close|long|short|take profit|stop loss|tp|sl|margin|leverage|открой|закрой|лонг|шорт|плеч)\b/iu;
@@ -77,24 +115,32 @@ function inferredDisposition(
   }
   if (provider.pluginId === 'bitrefill' && readVerb.test(lower)) return 'read_in_extensions';
 
-  if (commerce.test(lower)) {
-    return hasReleasedProviderRouteV1(provider.pluginId, 'commerce') ? 'handoff_to_routes' : 'adapter_required';
-  }
-  if (swap.test(lower)) {
-    return hasReleasedProviderRouteV1(provider.pluginId, 'swap') ? 'handoff_to_routes' : 'adapter_required';
-  }
-  if (earn.test(lower)) {
-    return hasReleasedProviderRouteV1(provider.pluginId, 'earn') ? 'handoff_to_routes' : 'adapter_required';
-  }
-  if (nft.test(lower)) {
-    return hasReleasedProviderRouteV1(provider.pluginId, 'nft') ? 'handoff_to_routes' : 'adapter_required';
-  }
+  // `route_unavailable_here` rather than `adapter_required`: an adapter that
+  // exists and cannot finish is a different fact from one that was never
+  // written, and only the first one is fixable by an operator.
+  const routableDisposition = (family: ReviewedRouteFamilyV1): BaseMcpProviderExampleDispositionV1 => {
+    if (!hasReleasedProviderRouteV1(provider.pluginId, family)) return 'adapter_required';
+    return handoffToRoutesReleasedV1(provider.pluginId, runtime).released ? 'handoff_to_routes' : 'route_unavailable_here';
+  };
+  if (commerce.test(lower)) return routableDisposition('commerce');
+  if (swap.test(lower)) return routableDisposition('swap');
+  if (earn.test(lower)) return routableDisposition('earn');
+  if (nft.test(lower)) return routableDisposition('nft');
 
   const write = /\b(launch|create|claim|set|send|register|mint|approve|cancel|запусти|создай|отправ|установ|зарегистр)\b/iu;
   return write.test(lower) ? 'adapter_required' : 'read_in_extensions';
 }
 
-export function matchBaseMcpProviderIntentV1(message: string): BaseMcpProviderIntentMatchV1 | null {
+/**
+ * `runtime` is injectable because the answer DEPENDS on the deployment, and a
+ * function whose verdict changes with an environment variable is one no test
+ * can pin. It defaults to the process snapshot, so production callers pass
+ * nothing and a test states the world it means to describe.
+ */
+export function matchBaseMcpProviderIntentV1(
+  message: string,
+  runtime: BaseMcpRuntimeSnapshotV1 = baseMcpRuntimeSnapshotV1(),
+): BaseMcpProviderIntentMatchV1 | null {
   const clean = normalized(message);
   if (!clean) return null;
   const provider = BASE_MCP_PROVIDER_INTENTS_V1.find((entry) =>
@@ -106,9 +152,14 @@ export function matchBaseMcpProviderIntentV1(message: string): BaseMcpProviderIn
   const closest = exact || [...provider.examples]
     .map((example) => ({ example, score: overlapScore(clean, example.prompt) }))
     .sort((left, right) => right.score - left.score)[0]?.example;
-  const disposition = exact
-    ? exact.disposition
-    : inferredDisposition(clean, provider);
+  // An exact example match still passes the runtime gate. The registry records
+  // the INTENT of an example; whether this deployment can keep it is a runtime
+  // question, and answering it from the registry alone is what advertised a
+  // dead end as a released capability.
+  const declared = exact ? exact.disposition : inferredDisposition(clean, provider, runtime);
+  const routeGate = declared === 'handoff_to_routes' ? handoffToRoutesReleasedV1(provider.pluginId, runtime) : null;
+  const disposition: BaseMcpProviderExampleDispositionV1 =
+    routeGate && !routeGate.released ? 'route_unavailable_here' : declared;
   const plugin = BASE_MCP_PLUGIN_CATALOGUE_V1.find((entry) => entry.id === provider.pluginId);
   const hosts = plugin?.hosts.length ? plugin.hosts.join(', ') : 'Base MCP chain tools';
 
@@ -117,6 +168,8 @@ export function matchBaseMcpProviderIntentV1(message: string): BaseMcpProviderIn
     productSurface: provider.productSurface,
     lifecycleStage: provider.lifecycleStage,
     disposition,
+    /** Present only when the runtime blocked a handoff the registry declared. */
+    routeCapability: routeGate && !routeGate.released ? routeGate.capability : null,
     exampleId: closest?.id ?? null,
     providerPrompt: [
       `The user explicitly selected the ${provider.pluginId} plugin. Do not substitute another provider.`,

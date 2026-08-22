@@ -13,8 +13,10 @@ import {
   BASE_MCP_CATALOGUE_GENERATED_AT_V1,
   BASE_MCP_PLUGIN_CATALOGUE_V1,
   BASE_MCP_PROVIDER_INTENTS_BY_ID_V1,
+  exampleCapabilityStateV1,
 } from '@mioagent/security';
 import { baseMcpPluginDriftV1 } from '../lib/baseMcpPluginDrift.js';
+import { baseMcpRuntimeSnapshotV1 } from '../lib/baseMcpRuntimeSnapshot.js';
 import { runBaseMcpConsoleV1 } from '../lib/baseMcpConsole.js';
 import { runReviewedBaseMcpPluginReadV1 } from '../lib/baseMcpReviewedPluginRuntime.js';
 import {
@@ -341,6 +343,7 @@ mcpBaseRouter.get('/probe', handleToolsProbe);
 mcpBasePublicRouter.get('/plugins', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const drift = await mcpBaseRouteRuntime.baseMcpPluginDriftV1();
+    const runtime = baseMcpRuntimeSnapshotV1();
     return res.json(BaseMcpPluginCatalogueResponseSchema.parse({
       plugins: BASE_MCP_PLUGIN_CATALOGUE_V1.map((plugin) => {
         const intents = BASE_MCP_PROVIDER_INTENTS_BY_ID_V1[plugin.id];
@@ -349,7 +352,19 @@ mcpBasePublicRouter.get('/plugins', async (_req: Request, res: Response, next: N
           ...plugin,
           productSurface: intents.productSurface,
           lifecycleStage: intents.lifecycleStage,
-          examples: intents.examples,
+          // The catalogue records what each example is FOR; the runtime decides
+          // whether this deployment can keep that promise. Sending the declared
+          // disposition alone is what let the card badge a swap ROUTES AI on a
+          // server whose Safety Kernel would always refuse to sign it.
+          examples: intents.examples.map((example) => {
+            const capability = exampleCapabilityStateV1(intents, example, runtime);
+            const downgraded = example.disposition === 'handoff_to_routes' && capability.state !== 'released';
+            return {
+              ...example,
+              disposition: downgraded ? ('route_unavailable_here' as const) : example.disposition,
+              capabilityReason: capability.state === 'released' ? null : capability.reason,
+            };
+          }),
         };
       }),
       generatedAt: BASE_MCP_CATALOGUE_GENERATED_AT_V1,
