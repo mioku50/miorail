@@ -118,8 +118,12 @@ export interface ConsoleHeaderModelV1 {
  * network service to offer the Corresponding Source, and a settable link is
  * one a deployment can quietly point somewhere else while still shipping this
  * licence. A fork that moves its source changes this line, in a diff.
+ *
+ * Deliberately the CURRENT repository name. GitHub redirects an old name to a
+ * new one and not the other way round, so this keeps working across a rename;
+ * pointing it at the intended future name would 404 until the day of.
  */
-export const MIORAIL_SOURCE_URL_V1 = 'https://github.com/mioku50/miorail';
+export const MIORAIL_SOURCE_URL_V1 = 'https://github.com/mioku50/mioagent';
 
 export interface ConsoleFooterModelV1 {
   adaptersLabel: string;
