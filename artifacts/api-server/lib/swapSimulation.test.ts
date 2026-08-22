@@ -3,7 +3,12 @@ import test, { describe } from 'node:test';
 import { hashApprovedCallsV1, type ExecutionCallV1 } from '@mioagent/route-domain';
 import type { SimulationProvider } from '@mioagent/paid-intelligence';
 
-import { simulateSwapCallsV1 } from './swapSimulation.js';
+import {
+  resetSimulationProviderHealthV1,
+  simulateSwapCallsV1,
+  simulationProviderHealthV1,
+  swapSimulationCapabilityV1,
+} from './swapSimulation.js';
 
 const WALLET = '0x1111111111111111111111111111111111111111' as const;
 const ROUTER = '0xcf77a3ba9a5ca399b7c97c74d54e5b1beb874e43' as const;
@@ -181,5 +186,137 @@ describe('the swap simulation is a precondition, so it is honest about not runni
       'chainId',
       'walletAddress',
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The batch chain.
+//
+// Production held a valid Alchemy key whose account was out of monthly
+// capacity. Every eth_simulateV1 came back 429, the batch claim was demoted,
+// and every route whose calldata this server writes reported unavailable —
+// while `mainnet.base.org` was sitting there serving the same method for free.
+// These tests pin the chain that fixes it, and the health accounting that goes
+// with it: one provider's refusal is not the deployment's verdict.
+// ---------------------------------------------------------------------------
+
+function failingProvider(providerId: string, errorCode: string): SimulationProvider {
+  return {
+    providerId,
+    async simulate() {
+      return { ok: false, errorCode, detail: `${providerId} refused` } as Awaited<
+        ReturnType<SimulationProvider['simulate']>
+      >;
+    },
+  };
+}
+
+const PASSING_BODY = {
+  status: 'success',
+  blockNumber: 34_000_001,
+  gasUsed: '120000',
+  stateChanges: [],
+  revertReason: null,
+  callResults: [{ index: 0, status: 'success', gasUsed: '120000', revertReason: null, logCount: 0 }],
+  failedCallIndex: null,
+  assetChanges: { status: 'unavailable', unavailableReason: 'no_logs_emitted', changes: [] },
+};
+
+describe('swap simulation batch chain', () => {
+  test('an exhausted primary does not condemn the batch claim when the Base RPC answers', async () => {
+    resetSimulationProviderHealthV1();
+    const batch = { ...provider(PASSING_BODY), providerId: 'base-rpc-eth-simulate-v1' };
+    const state = await simulateSwapCallsV1(request(), {
+      provider: failingProvider('alchemy-eth-simulate-v1', 'provider_rate_limited'),
+      batchFallbackProvider: batch,
+      fallbackProvider: null,
+      now: () => NOW,
+    });
+    assert.equal(state.status, 'passed');
+    const health = simulationProviderHealthV1();
+    // The whole point: capacity exhaustion on ONE endpoint is not a statement
+    // about what this deployment can prove.
+    assert.equal(health.batchProven, true);
+    assert.equal(health.batchProviderId, 'base-rpc-eth-simulate-v1');
+  });
+
+  test('the batch claim is disproven only when every batch provider refuses', async () => {
+    resetSimulationProviderHealthV1();
+    const state = await simulateSwapCallsV1(request(), {
+      provider: failingProvider('alchemy-eth-simulate-v1', 'provider_rate_limited'),
+      batchFallbackProvider: failingProvider('base-rpc-eth-simulate-v1', 'provider_rate_limited'),
+      fallbackProvider: null,
+      now: () => NOW,
+    });
+    assert.equal(state.status, 'unavailable');
+    assert.equal(simulationProviderHealthV1().batchProven, false);
+  });
+
+  test('an RPC that does not implement eth_simulateV1 falls through to the single-call tier', async () => {
+    resetSimulationProviderHealthV1();
+    // Infura answers -32601 for eth_simulateV1 on Base, which classifies as
+    // provider_method_unsupported. A deployment pointed there still gets its
+    // single-call swaps proven rather than a blanket "no provider answered".
+    const state = await simulateSwapCallsV1(request(), {
+      provider: null,
+      batchFallbackProvider: failingProvider('base-rpc-eth-simulate-v1', 'provider_method_unsupported'),
+      fallbackProvider: { ...provider(PASSING_BODY), providerId: 'base-rpc-single-call-v1' },
+      now: () => NOW,
+    });
+    assert.equal(state.status, 'passed');
+  });
+
+  test('a revert from the first provider is a result, never retried on the next', async () => {
+    resetSimulationProviderHealthV1();
+    let secondCalls = 0;
+    const second: SimulationProvider = {
+      providerId: 'base-rpc-eth-simulate-v1',
+      async simulate() {
+        secondCalls += 1;
+        return { ok: true, body: PASSING_BODY } as Awaited<ReturnType<SimulationProvider['simulate']>>;
+      },
+    };
+    const state = await simulateSwapCallsV1(request(), {
+      provider: provider({ ...PASSING_BODY, status: 'reverted', revertReason: 'STF', failedCallIndex: 0 }),
+      batchFallbackProvider: second,
+      fallbackProvider: null,
+      now: () => NOW,
+    });
+    assert.equal(state.status, 'failed');
+    assert.equal(secondCalls, 0, 'a revert must not be shopped around until some provider likes it');
+  });
+});
+
+describe('swapSimulationCapabilityV1', () => {
+  test('a Base RPC alone is a batch simulator — no paid key required', () => {
+    resetSimulationProviderHealthV1();
+    const capability = swapSimulationCapabilityV1({
+      BASE_MAINNET_RPC_URL: 'https://mainnet.base.org',
+    } as NodeJS.ProcessEnv);
+    assert.equal(capability.batch, true);
+    assert.equal(capability.singleCall, true);
+    // No primary is configured, and that is no longer the same as no batch.
+    assert.equal(capability.primaryProviderId, null);
+  });
+
+  test('with no RPC and no key there is nothing to simulate with', () => {
+    resetSimulationProviderHealthV1();
+    const capability = swapSimulationCapabilityV1({} as NodeJS.ProcessEnv);
+    assert.equal(capability.batch, false);
+    assert.equal(capability.singleCall, false);
+  });
+
+  test('a measured refusal still demotes the claim', async () => {
+    resetSimulationProviderHealthV1();
+    const env = { BASE_MAINNET_RPC_URL: 'https://mainnet.base.org' } as NodeJS.ProcessEnv;
+    assert.equal(swapSimulationCapabilityV1(env).batch, true);
+    // Configuration alone never restores a claim a real attempt disproved.
+    await simulateSwapCallsV1(request(), {
+      provider: failingProvider('alchemy-eth-simulate-v1', 'provider_rate_limited'),
+      batchFallbackProvider: failingProvider('base-rpc-eth-simulate-v1', 'provider_rate_limited'),
+      fallbackProvider: null,
+      now: () => NOW,
+    });
+    assert.equal(swapSimulationCapabilityV1(env).batch, false);
   });
 });

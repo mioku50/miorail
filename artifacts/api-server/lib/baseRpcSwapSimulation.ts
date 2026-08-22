@@ -1,23 +1,37 @@
-import type {
-  SimulationProvider,
-  SimulationProviderErrorCodeV1,
-  SimulationProviderRequestV1,
-  SimulationProviderResultV1,
+import {
+  createEthSimulateV1ProviderV1,
+  type SimulationProvider,
+  type SimulationProviderErrorCodeV1,
+  type SimulationProviderRequestV1,
+  type SimulationProviderResultV1,
 } from '@mioagent/paid-intelligence';
 
 // ---------------------------------------------------------------------------
-// A narrow fallback for the free swap preflight.
+// Base RPC simulation, in two tiers.
 //
-// Alchemy eth_simulateV1 remains the primary provider because it can execute
-// an ordered batch against one evolving state. A normal Base JSON-RPC cannot
-// prove that for approval+swap batches. It can, however, safely execute ONE
-// call from the real wallet against latest state. That is exactly the native
-// ETH Aerodrome case which production was refusing when Alchemy returned 429.
+// This file used to open by asserting that "a normal Base JSON-RPC cannot
+// prove [an ordered batch] for approval+swap batches". That was measured false:
+// `mainnet.base.org` serves `eth_simulateV1`, and it serves it with state
+// evolving across calls — an `approve` followed by an `allowance` read in the
+// same request returns the allowance the approve just set. The premise had
+// made a paid key look mandatory for a capability the chain's own public
+// endpoint already offered, and when that key's account ran out of monthly
+// capacity every server-written-calldata route went dark behind it.
 //
-// This adapter therefore fails closed for callCount !== 1 and never claims
-// asset-change evidence: eth_call has no receipt logs. A passing eth_call plus
-// estimateGas at a checked Base block is enough for the existing transaction
-// safety gate, and no state or balance override is used.
+// So there are two providers here:
+//
+//   createBaseRpcBatchSimulationProviderV1  — eth_simulateV1, ANY call count,
+//     one evolving state. This is a full batch simulator, not a fallback in
+//     capability terms, and it is what proves approve-then-swap.
+//
+//   createBaseRpcSwapSimulationProviderV1   — eth_call + estimateGas, exactly
+//     ONE call. Kept because not every Base RPC exposes eth_simulateV1 (Infura
+//     answers -32601 for it), so a deployment pointed at such an endpoint still
+//     gets its single-call native-ETH swaps proven.
+//
+// Neither uses a state or balance override: balances, allowances and nonces are
+// whatever the chain really holds. The single-call tier additionally never
+// claims asset-change evidence, because eth_call has no receipt logs.
 // ---------------------------------------------------------------------------
 
 const BASE_CHAIN_ID_V1 = 8453;
@@ -182,6 +196,52 @@ export function createBaseRpcSwapSimulationProviderFromEnvV1(
   env: NodeJS.ProcessEnv = process.env,
 ): SimulationProvider | null {
   return createBaseRpcSwapSimulationProviderV1({
+    rpcUrl: env.BASE_MAINNET_RPC_URL || env.BASE_RPC_URL,
+    timeoutMs: Number(env.MIORAIL_RPC_SIMULATION_TIMEOUT_MS || DEFAULT_TIMEOUT_MS_V1),
+  });
+}
+
+// --- Batch tier: eth_simulateV1 over the deployment's own Base RPC ----------
+
+export const BASE_RPC_BATCH_SIMULATION_PROVIDER_ID_V1 = 'base-rpc-eth-simulate-v1';
+
+/**
+ * The same reviewed `eth_simulateV1` adapter the Alchemy provider uses, pointed
+ * at the Base RPC this deployment is already configured with. No key of its
+ * own, no second endpoint to configure, and no new request shape to review.
+ *
+ * The URL is passed as the redaction value as well: an endpoint that embeds a
+ * key must not survive in an upstream error message. Returns null — never a
+ * provider that fails at call time — when the URL is absent or not a plain
+ * https endpoint, so an unusable configuration is absent capability rather
+ * than a runtime surprise.
+ */
+export function createBaseRpcBatchSimulationProviderV1(
+  options: CreateBaseRpcSwapSimulationOptionsV1,
+): SimulationProvider | null {
+  const rawUrl = options.rpcUrl?.trim();
+  if (!rawUrl) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return null;
+  return createEthSimulateV1ProviderV1({
+    providerId: BASE_RPC_BATCH_SIMULATION_PROVIDER_ID_V1,
+    label: 'Base RPC',
+    url: rawUrl,
+    redactValue: rawUrl,
+    timeoutMs: options.timeoutMs,
+    fetchImpl: options.fetchImpl,
+  });
+}
+
+export function createBaseRpcBatchSimulationProviderFromEnvV1(
+  env: NodeJS.ProcessEnv = process.env,
+): SimulationProvider | null {
+  return createBaseRpcBatchSimulationProviderV1({
     rpcUrl: env.BASE_MAINNET_RPC_URL || env.BASE_RPC_URL,
     timeoutMs: Number(env.MIORAIL_RPC_SIMULATION_TIMEOUT_MS || DEFAULT_TIMEOUT_MS_V1),
   });

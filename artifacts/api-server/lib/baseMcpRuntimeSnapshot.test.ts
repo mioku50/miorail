@@ -87,11 +87,21 @@ describe('the snapshot reports the deployment, not a policy', () => {
     assert.equal(snapshot.batchSimulationAvailable, false);
   });
 
-  it('reports a single-call simulator from a Base RPC URL alone', () => {
+  it('reports a BATCH simulator from a Base RPC URL alone', () => {
     const snapshot = baseMcpRuntimeSnapshotV1({ BASE_MAINNET_RPC_URL: 'https://mainnet.base.org' });
     assert.equal(snapshot.singleCallSimulationAvailable, true);
-    // A Base RPC proves one call, never an ordered batch, and claiming
-    // otherwise is what let an approve-then-swap route look signable.
+    // This assertion used to read `false`, on the belief that a Base RPC proves
+    // one call and never an ordered batch. Measured against the real endpoint,
+    // that was wrong: mainnet.base.org serves eth_simulateV1, and state evolves
+    // across calls within one request. The old belief made a paid key look
+    // mandatory, so an exhausted plan took every server-written-calldata route
+    // down with it.
+    assert.equal(snapshot.batchSimulationAvailable, true);
+  });
+
+  it('a deployment with no RPC and no key claims neither shape', () => {
+    const snapshot = baseMcpRuntimeSnapshotV1({ ALCHEMY_BASE_API_KEY: '' });
+    assert.equal(snapshot.singleCallSimulationAvailable, false);
     assert.equal(snapshot.batchSimulationAvailable, false);
   });
 

@@ -467,6 +467,40 @@ describe('Real Providers', () => {
         mock.restoreAll();
     });
 
+    test('an exhausted app key drops the credential and answers from the public tier', async () => {
+        // Measured 2026-08-22: the GoPlus free plan meters app-key traffic
+        // against a monthly credit balance while the unauthenticated tier is
+        // not metered, and both return the identical token_security payload.
+        // A spent quota must therefore cost us nothing — retrying the same
+        // exhausted key twice and giving up is how a credential becomes an
+        // outage.
+        clearTokenSecurityCacheForTests();
+        const originalProvider = process.env.TOKEN_SECURITY_PROVIDER;
+        process.env.TOKEN_SECURITY_PROVIDER = 'goplus';
+        const token = '0x6666666666666666666666666666666666666666';
+        const authorizedAttempts: boolean[] = [];
+        const mockFetch = mock.fn(async (url: string | URL | Request, options?: RequestInit) => {
+            if (String(url).endsWith('/api/v1/token')) {
+                return { ok: true, json: async () => ({ result: { access_token: 'backend-token', expires_in: 3600 } }) } as Response;
+            }
+            const authorized = Boolean((options?.headers as Record<string, string> | undefined)?.Authorization);
+            authorizedAttempts.push(authorized);
+            if (authorized) return { ok: false, status: 429, statusText: 'Too Many Requests' } as Response;
+            return { ok: true, json: async () => ({ result: { [token]: { is_open_source: '1' } } }) } as Response;
+        });
+        global.fetch = mockFetch as unknown as typeof fetch;
+        const provider = new GoPlusTokenSecurityProvider({ appKey: 'app-key', appSecret: 'app-secret' }, 1000);
+        const [security] = await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [token] });
+        assert.equal(security.status, 'ok', 'a throttled key must not become an unavailable verdict');
+        assert.deepEqual(authorizedAttempts, [true, false], 'the retry must drop the credential, not repeat it');
+        const diagnostics = getTokenSecurityProviderFromEnv();
+        assert.equal(diagnostics.authMode, 'public_fallback');
+        assert.equal(diagnostics.errorCode, 'goplus_rate_limited');
+        restoreEnv('TOKEN_SECURITY_PROVIDER', originalProvider);
+        clearTokenSecurityCacheForTests();
+        mock.restoreAll();
+    });
+
     test('GoPlusTokenSecurityProvider failure returns failed results', async () => {
         clearTokenSecurityCacheForTests();
         const originalProvider = process.env.TOKEN_SECURITY_PROVIDER;

@@ -351,23 +351,52 @@ export function redactAlchemyTextV1(text: string, apiKey: string): string {
  * Creates the Alchemy `eth_simulateV1` provider. Base mainnet only: a request
  * for any other chain is refused rather than silently pointed elsewhere.
  */
-export function createAlchemySimulationProviderV1(
-  options: CreateAlchemySimulationProviderOptionsV1,
+// ---------------------------------------------------------------------------
+// The adapter below is a plain `eth_simulateV1` client. Everything in it —
+// request shape, schema validation, revert classification, asset-change
+// decoding — is defined by the METHOD, not by who serves it. Only three things
+// were ever Alchemy's: the endpoint URL, the secret to strip from upstream
+// text, and the name that appears in a typed failure detail. Those are
+// parameters now, so a second reviewed endpoint speaking the same method costs
+// a constructor call instead of a fork of two hundred lines.
+//
+// `label` is a display name and MUST NOT be a URL: it reaches failure details,
+// and failure details reach logs.
+// ---------------------------------------------------------------------------
+
+export interface EthSimulateV1EndpointOptionsV1 {
+  providerId: string;
+  /** Display name for typed failure details. Never a URL. */
+  label: string;
+  /** Full POST endpoint. Null/empty yields provider_not_configured, so the
+   * adapter stays constructible and the failure stays typed rather than thrown. */
+  url: string | null | undefined;
+  /** Secret to strip from upstream text by value, for an endpoint that embeds
+   * one. Every URL is dropped regardless of this. */
+  redactValue?: string;
+  timeoutMs?: number;
+  fetchImpl?: typeof globalThis.fetch;
+}
+
+export function createEthSimulateV1ProviderV1(
+  options: EthSimulateV1EndpointOptionsV1,
 ): SimulationProvider {
-  const apiKey = options.apiKey?.trim() ?? '';
+  const endpointUrl = options.url?.trim() ?? '';
+  const redactValue = options.redactValue?.trim() ?? '';
+  const label = options.label;
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const timeoutMs = Math.min(
     MAX_ALCHEMY_TIMEOUT_MS,
     Math.max(1_000, Math.floor(options.timeoutMs ?? DEFAULT_ALCHEMY_TIMEOUT_MS)),
   );
-  const providerId = options.providerId ?? ALCHEMY_SIMULATION_PROVIDER_ID_V1;
+  const providerId = options.providerId;
 
   return {
     providerId,
     async simulate(request: SimulationProviderRequestV1): Promise<SimulationProviderResultV1> {
-      if (!apiKey) return failureV1('provider_not_configured', 'Alchemy API key is not configured');
+      if (!endpointUrl) return failureV1('provider_not_configured', `${label} endpoint is not configured`);
       if (request.chainId !== BASE_MAINNET_CHAIN_ID_V1) {
-        return failureV1('provider_chain_mismatch', 'Alchemy simulation supports Base mainnet only');
+        return failureV1('provider_chain_mismatch', `${label} simulation supports Base mainnet only`);
       }
       if (request.calls.length === 0) {
         return failureV1('provider_blueprint_mismatch', 'Blueprint contains no calls to simulate');
@@ -419,48 +448,48 @@ export function createAlchemySimulationProviderV1(
 
       let rawBody: string;
       try {
-        const response = await fetchImpl(`https://${ALCHEMY_BASE_MAINNET_HOST_V1}/v2/${apiKey}`, {
+        const response = await fetchImpl(endpointUrl, {
           method: 'POST',
           headers: { 'content-type': 'application/json', accept: 'application/json' },
           body: JSON.stringify(rpcBody),
           signal: AbortSignal.timeout(timeoutMs),
         });
         if (!response.ok) {
-          if (response.status === 429) return failureV1('provider_rate_limited', 'Alchemy rate limited the simulation');
+          if (response.status === 429) return failureV1('provider_rate_limited', `${label} rate limited the simulation`);
           // The status only — an upstream body can echo the request URL.
-          return failureV1('provider_http_error', `Alchemy returned HTTP ${response.status}`);
+          return failureV1('provider_http_error', `${label} returned HTTP ${response.status}`);
         }
         rawBody = await response.text();
       } catch (error) {
-        if (isTimeoutErrorV1(error)) return failureV1('provider_timeout', 'Alchemy simulation timed out');
-        return failureV1('network_error', 'Alchemy simulation transport failed');
+        if (isTimeoutErrorV1(error)) return failureV1('provider_timeout', `${label} simulation timed out`);
+        return failureV1('network_error', `${label} simulation transport failed`);
       }
 
       let payload: unknown;
       try {
         payload = JSON.parse(rawBody);
       } catch {
-        return failureV1('provider_invalid_schema', 'Alchemy response was not valid JSON');
+        return failureV1('provider_invalid_schema', `${label} response was not valid JSON`);
       }
       const parsed = AlchemyRpcResponseSchemaV1.safeParse(payload);
-      if (!parsed.success) return failureV1('provider_invalid_schema', 'Alchemy response failed schema validation');
+      if (!parsed.success) return failureV1('provider_invalid_schema', `${label} response failed schema validation`);
       const envelope = parsed.data;
 
       if (envelope.id !== rpcId) {
-        return failureV1('provider_invalid_schema', 'Alchemy response id does not match the request');
+        return failureV1('provider_invalid_schema', `${label} response id does not match the request`);
       }
       if (envelope.error) {
         if (isRateLimitRpcErrorV1(envelope.error)) {
-          return failureV1('provider_rate_limited', 'Alchemy rate limited the simulation');
+          return failureV1('provider_rate_limited', `${label} rate limited the simulation`);
         }
         return failureV1(
           classifyAlchemyRpcErrorV1(envelope.error),
-          'Alchemy returned a JSON-RPC error',
-          redactAlchemyTextV1(envelope.error.message ?? `code ${envelope.error.code ?? 'unknown'}`, apiKey),
+          `${label} returned a JSON-RPC error`,
+          redactAlchemyTextV1(envelope.error.message ?? `code ${envelope.error.code ?? 'unknown'}`, redactValue),
         );
       }
       if (!envelope.result || envelope.result.length === 0) {
-        return failureV1('provider_invalid_schema', 'Alchemy response carried no simulation result');
+        return failureV1('provider_invalid_schema', `${label} response carried no simulation result`);
       }
 
       const blocks = envelope.result;
@@ -469,10 +498,10 @@ export function createAlchemySimulationProviderV1(
       try {
         blockNumber = Number(BigInt(blockNumberHex));
       } catch {
-        return failureV1('provider_invalid_schema', 'Alchemy block number is not a hex quantity');
+        return failureV1('provider_invalid_schema', `${label} block number is not a hex quantity`);
       }
       if (!Number.isSafeInteger(blockNumber) || blockNumber <= 0) {
-        return failureV1('provider_invalid_schema', 'Alchemy block number is not a positive integer');
+        return failureV1('provider_invalid_schema', `${label} block number is not a positive integer`);
       }
 
       // Calls are read in block order, then call order — the persisted
@@ -481,7 +510,7 @@ export function createAlchemySimulationProviderV1(
       if (simulatedCalls.length !== request.calls.length) {
         return failureV1(
           'provider_call_count_mismatch',
-          `Alchemy simulated ${simulatedCalls.length} of ${request.calls.length} Blueprint calls`,
+          `${label} simulated ${simulatedCalls.length} of ${request.calls.length} Blueprint calls`,
         );
       }
 
@@ -496,16 +525,16 @@ export function createAlchemySimulationProviderV1(
       for (const [index, call] of simulatedCalls.entries()) {
         // Unknown status NEVER becomes success.
         if (call.status !== '0x1' && call.status !== '0x0') {
-          return failureV1('provider_invalid_schema', `Alchemy call ${index} reported an unknown status`);
+          return failureV1('provider_invalid_schema', `${label} call ${index} reported an unknown status`);
         }
         let gasUsed: bigint;
         try {
           gasUsed = BigInt(call.gasUsed);
         } catch {
-          return failureV1('provider_invalid_schema', `Alchemy call ${index} reported an invalid gas quantity`);
+          return failureV1('provider_invalid_schema', `${label} call ${index} reported an invalid gas quantity`);
         }
         if (gasUsed < 0n) {
-          return failureV1('provider_invalid_schema', `Alchemy call ${index} reported a negative gas quantity`);
+          return failureV1('provider_invalid_schema', `${label} call ${index} reported a negative gas quantity`);
         }
         totalGas += gasUsed;
 
@@ -578,9 +607,28 @@ export function createAlchemySimulationProviderV1(
       // than thrown into the paid flow.
       const validated = SimulationProviderResponseV1Schema.safeParse(body);
       if (!validated.success) {
-        return failureV1('provider_invalid_schema', 'Normalized Alchemy result failed contract validation');
+        return failureV1('provider_invalid_schema', `Normalized ${label} result failed contract validation`);
       }
       return { ok: true, body: validated.data };
     },
   };
+}
+
+/**
+ * Alchemy's `eth_simulateV1` endpoint. The host is a pinned constant and the
+ * key travels in the path, so no configuration mistake can point this provider
+ * id at some other server.
+ */
+export function createAlchemySimulationProviderV1(
+  options: CreateAlchemySimulationProviderOptionsV1,
+): SimulationProvider {
+  const apiKey = options.apiKey?.trim() ?? '';
+  return createEthSimulateV1ProviderV1({
+    providerId: options.providerId ?? ALCHEMY_SIMULATION_PROVIDER_ID_V1,
+    label: 'Alchemy',
+    url: apiKey ? `https://${ALCHEMY_BASE_MAINNET_HOST_V1}/v2/${apiKey}` : null,
+    redactValue: apiKey,
+    timeoutMs: options.timeoutMs,
+    fetchImpl: options.fetchImpl,
+  });
 }

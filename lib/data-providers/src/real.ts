@@ -347,19 +347,37 @@ export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
     const url = new URL(`https://api.gopluslabs.io/api/v1/token_security/${chainId}`);
     url.searchParams.set('contract_addresses', addresses.join(','));
     let lastError: unknown;
+    // A refused CREDENTIAL must not cost us the answer.
+    //
+    // GoPlus app keys are metered — the free plan is a fixed monthly credit
+    // balance — while the unauthenticated tier is not, and for this endpoint
+    // both return the identical payload. Retrying a throttled or exhausted key
+    // with the same key twice and then giving up is how a spent quota turns
+    // into "token security unavailable", which is exactly the failure that took
+    // batch simulation down when an Alchemy plan ran out.
+    //
+    // So the second attempt drops the credential. Authentication is an upgrade
+    // here, never a precondition, and the diagnostics say which one answered so
+    // this is visible rather than silent.
+    let forcePublic = false;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         const headers: Record<string, string> = { accept: 'application/json' };
-        const accessToken = await this.getAccessToken();
+        const accessToken = forcePublic ? undefined : await this.getAccessToken();
         if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
         const res = await fetch(url.toString(), { headers, signal: AbortSignal.timeout(this.timeoutMs) });
         if (!res.ok) {
           if (res.status === 401 && accessToken) goPlusAccessToken = null;
-          goPlusDiagnostics.errorCode = res.status === 401 || res.status === 403
+          const errorCode = res.status === 401 || res.status === 403
             ? 'goplus_authorization_failed'
             : res.status === 429
               ? 'goplus_rate_limited'
               : 'goplus_provider_error';
+          goPlusDiagnostics.errorCode = errorCode;
+          if (accessToken && (res.status === 401 || res.status === 403 || res.status === 429)) {
+            forcePublic = true;
+            goPlusDiagnostics = { authMode: 'public_fallback', errorCode };
+          }
           throw new Error(`GoPlus API error: ${res.statusText || res.status}`);
         }
         const data = await res.json() as { result?: Record<string, Record<string, unknown>> };

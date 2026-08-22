@@ -59,6 +59,12 @@ export function startServer() {
     void probeSimulationProviderHealthV1().then((health) => {
       if (health.batchProven === false) {
         console.warn(`Simulation provider is not serving requests (${health.lastErrorCode}) — provider routes needing a simulation report unavailable`);
+        return;
+      }
+      // Which endpoint proved it matters to whoever reads this line: the paid
+      // key and the chain's own RPC go down for entirely different reasons.
+      if (health.batchProven === true) {
+        console.info(`Batch simulation proven by ${health.batchProviderId} — provider routes needing a simulation are available`);
       }
     });
   });
