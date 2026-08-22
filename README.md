@@ -436,3 +436,16 @@ the console footer, as §13 requires.
 
 "Miorail" is the project's name, and the licence grants no trademark rights.
 Fork it freely; call your fork something else.
+
+## Authorship
+
+Miorail is maintainer-directed and developed with extensive AI-assisted
+engineering. Commits carry a single canonical identity, `Miorail Development`,
+because the alternative — a contributor graph of the tools that held the
+keyboard — describes the workflow rather than who is answerable for the code.
+One person directs the work and is accountable for it; the assistants are
+instruments, not contributors.
+
+Every claim this repository makes about what Miorail measured is expected to be
+reproducible from the code and the evidence it stores, whoever or whatever
+typed it.

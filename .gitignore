@@ -26,5 +26,3 @@ agent_tasks.md
 verify_ui.py
 dummy-plan.txt
 frontend-screenshot.png
-docs/AGENT_*.md
-docs/agent_*.md

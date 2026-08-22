@@ -8,8 +8,6 @@ contracts/lib
 lib/runtime-skills/plugins
 # Git-ignored user spec/roadmap docs (not part of the repo; left as-is on purpose).
 agent_tasks.md
-docs/AGENT_*.md
-docs/agent_*.md
 Base Agent — *.md
 Miorail — Release Roadmap от read-only до mainnet.md
 
