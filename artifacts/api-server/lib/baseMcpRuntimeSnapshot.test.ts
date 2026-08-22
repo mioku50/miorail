@@ -81,10 +81,14 @@ const REVIEWED_RECIPE_IDS_V1: ReadonlySet<string> = new Set([
 ]);
 
 describe('the snapshot reports the deployment, not a policy', () => {
-  it('reports no simulation capability when nothing is configured', () => {
+  it('reports Base\'s own endpoint even when nothing is configured', () => {
+    // Both of these used to be `false`. Simulation now falls back to the
+    // chain's canonical public endpoint, which is pinned in code rather than
+    // configured, so a deployment that names no RPC at all can still prove a
+    // batch. What stays true: the claim is demoted by a measured failure.
     const snapshot = baseMcpRuntimeSnapshotV1({});
-    assert.equal(snapshot.singleCallSimulationAvailable, false);
-    assert.equal(snapshot.batchSimulationAvailable, false);
+    assert.equal(snapshot.singleCallSimulationAvailable, true);
+    assert.equal(snapshot.batchSimulationAvailable, true);
   });
 
   it('reports a BATCH simulator from a Base RPC URL alone', () => {
@@ -99,10 +103,14 @@ describe('the snapshot reports the deployment, not a policy', () => {
     assert.equal(snapshot.batchSimulationAvailable, true);
   });
 
-  it('a deployment with no RPC and no key claims neither shape', () => {
-    const snapshot = baseMcpRuntimeSnapshotV1({ ALCHEMY_BASE_API_KEY: '' });
-    assert.equal(snapshot.singleCallSimulationAvailable, false);
-    assert.equal(snapshot.batchSimulationAvailable, false);
+  it('an Infura read RPC does not cost the deployment its batch simulator', () => {
+    // Production's read RPC is Infura, which answers -32601 for eth_simulateV1.
+    // Inheriting it for simulation is what reported "only a single-call
+    // simulator is configured" across four providers' routes.
+    const snapshot = baseMcpRuntimeSnapshotV1({
+      BASE_MAINNET_RPC_URL: 'https://base-mainnet.infura.io/v3/project',
+    });
+    assert.equal(snapshot.batchSimulationAvailable, true);
   });
 
   it('lists every provider whose calldata needs a simulation before signing', () => {

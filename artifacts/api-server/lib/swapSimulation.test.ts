@@ -299,11 +299,16 @@ describe('swapSimulationCapabilityV1', () => {
     assert.equal(capability.primaryProviderId, null);
   });
 
-  test('with no RPC and no key there is nothing to simulate with', () => {
+  test('an unconfigured deployment still has Base\'s own endpoint', () => {
     resetSimulationProviderHealthV1();
+    // This assertion used to read `false` for both. The public Base endpoint is
+    // a code-owned constant now, so simulation capability no longer depends on
+    // an operator having configured anything — and the claim is still measured,
+    // not assumed: the boot probe demotes it the moment a real call fails.
     const capability = swapSimulationCapabilityV1({} as NodeJS.ProcessEnv);
-    assert.equal(capability.batch, false);
-    assert.equal(capability.singleCall, false);
+    assert.equal(capability.batch, true);
+    assert.equal(capability.singleCall, true);
+    assert.equal(capability.primaryProviderId, null);
   });
 
   test('a measured refusal still demotes the claim', async () => {
@@ -318,5 +323,51 @@ describe('swapSimulationCapabilityV1', () => {
       now: () => NOW,
     });
     assert.equal(swapSimulationCapabilityV1(env).batch, false);
+  });
+});
+
+describe('the simulation endpoint is chosen independently of the read endpoint', () => {
+  test('an Infura read RPC still leaves a batch simulator available', () => {
+    resetSimulationProviderHealthV1();
+    // Production's BASE_MAINNET_RPC_URL is Infura on purpose (daily quota reset
+    // beats a monthly one for the user-facing read path). Infura answers -32601
+    // for eth_simulateV1, so inheriting it for simulation reported "only a
+    // single-call simulator is configured" and took four providers' routes down.
+    const capability = swapSimulationCapabilityV1({
+      BASE_MAINNET_RPC_URL: 'https://base-mainnet.infura.io/v3/project',
+    } as NodeJS.ProcessEnv);
+    assert.equal(capability.batch, true);
+  });
+
+  test('an explicit MIORAIL_SIMULATION_RPC_URL is honoured over the read RPC', () => {
+    resetSimulationProviderHealthV1();
+    const capability = swapSimulationCapabilityV1({
+      BASE_MAINNET_RPC_URL: 'https://base-mainnet.infura.io/v3/project',
+      MIORAIL_SIMULATION_RPC_URL: 'https://mainnet.base.org',
+    } as NodeJS.ProcessEnv);
+    assert.equal(capability.batch, true);
+  });
+
+  test('the public endpoint is not added twice when it is already the configured one', async () => {
+    resetSimulationProviderHealthV1();
+    // Same URL, so the chain must hold one provider for it — asking the same
+    // endpoint twice is not a fallback, it is a retry wearing a second name.
+    const seen: string[] = [];
+    const record = (providerId: string): SimulationProvider => ({
+      providerId,
+      async simulate() {
+        seen.push(providerId);
+        return { ok: false, errorCode: 'provider_rate_limited', detail: 'x' } as Awaited<
+          ReturnType<SimulationProvider['simulate']>
+        >;
+      },
+    });
+    await simulateSwapCallsV1(request(), {
+      provider: record('base-rpc-eth-simulate-v1'),
+      batchFallbackProvider: record('base-rpc-eth-simulate-v1'),
+      fallbackProvider: null,
+      now: () => NOW,
+    });
+    assert.deepEqual(seen, ['base-rpc-eth-simulate-v1']);
   });
 });

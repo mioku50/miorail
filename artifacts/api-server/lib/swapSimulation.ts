@@ -9,6 +9,7 @@ import {
   type SimulationProviderResultV1,
 } from '@mioagent/paid-intelligence';
 import {
+  createBasePublicBatchSimulationProviderFromEnvV1,
   createBaseRpcBatchSimulationProviderFromEnvV1,
   createBaseRpcSwapSimulationProviderFromEnvV1,
 } from './baseRpcSwapSimulation.js';
@@ -177,6 +178,7 @@ interface SimulationChainV1 {
 function orderSimulationChainV1(
   configured: SimulationProvider | null,
   batchRpc: SimulationProvider | null,
+  publicBatchRpc: SimulationProvider | null,
   narrowRpc: SimulationProvider | null,
 ): SimulationChainV1 {
   const providers: SimulationProvider[] = [];
@@ -190,6 +192,7 @@ function orderSimulationChainV1(
   };
   push(configured, true);
   push(batchRpc, true);
+  push(publicBatchRpc, true);
   push(narrowRpc, false);
   return { providers, batchCapableIds };
 }
@@ -198,6 +201,7 @@ function buildSimulationChainV1(env: NodeJS.ProcessEnv): SimulationChainV1 {
   return orderSimulationChainV1(
     createSimulationProviderFromConfigV1(resolveSimulationProviderConfigV1(env)),
     createBaseRpcBatchSimulationProviderFromEnvV1(env),
+    createBasePublicBatchSimulationProviderFromEnvV1(env),
     createBaseRpcSwapSimulationProviderFromEnvV1(env),
   );
 }
@@ -331,6 +335,9 @@ export async function simulateSwapCallsV1(
   const batchFallback = deps.batchFallbackProvider === undefined
     ? (productionWiring ? createBaseRpcBatchSimulationProviderFromEnvV1(process.env) : null)
     : deps.batchFallbackProvider;
+  const publicBatchFallback = productionWiring
+    ? createBasePublicBatchSimulationProviderFromEnvV1(process.env)
+    : null;
   const narrowFallback = deps.fallbackProvider === undefined
     ? (productionWiring ? createBaseRpcSwapSimulationProviderFromEnvV1(process.env) : null)
     : deps.fallbackProvider;
@@ -343,6 +350,7 @@ export async function simulateSwapCallsV1(
   const { providers: chain, batchCapableIds } = orderSimulationChainV1(
     configured ?? null,
     batchFallback,
+    publicBatchFallback,
     narrowFallback ?? null,
   );
   if (chain.length === 0) return unavailable(requestHash, nowIso, 'provider_not_configured');

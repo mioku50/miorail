@@ -83,6 +83,9 @@ export interface CreateBaseRpcSwapSimulationOptionsV1 {
   rpcUrl: string | undefined;
   timeoutMs?: number;
   fetchImpl?: typeof globalThis.fetch;
+  /** Overrides the provider id, so two endpoints of the same shape stay
+   * distinguishable in health records and logs. */
+  providerId?: string;
 }
 
 export function createBaseRpcSwapSimulationProviderV1(
@@ -229,7 +232,7 @@ export function createBaseRpcBatchSimulationProviderV1(
   }
   if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return null;
   return createEthSimulateV1ProviderV1({
-    providerId: BASE_RPC_BATCH_SIMULATION_PROVIDER_ID_V1,
+    providerId: options.providerId ?? BASE_RPC_BATCH_SIMULATION_PROVIDER_ID_V1,
     label: 'Base RPC',
     url: rawUrl,
     redactValue: rawUrl,
@@ -242,7 +245,43 @@ export function createBaseRpcBatchSimulationProviderFromEnvV1(
   env: NodeJS.ProcessEnv = process.env,
 ): SimulationProvider | null {
   return createBaseRpcBatchSimulationProviderV1({
-    rpcUrl: env.BASE_MAINNET_RPC_URL || env.BASE_RPC_URL,
+    rpcUrl: env.MIORAIL_SIMULATION_RPC_URL || env.BASE_MAINNET_RPC_URL || env.BASE_RPC_URL,
+    timeoutMs: Number(env.MIORAIL_RPC_SIMULATION_TIMEOUT_MS || DEFAULT_TIMEOUT_MS_V1),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// The simulation endpoint is not the read endpoint.
+//
+// This deployment's BASE_MAINNET_RPC_URL is deliberately Infura: it was moved
+// off Alchemy on 2026-08-10 because the monthly bucket was ~90% spent with 21
+// days left, and Infura's resets daily, so an exhausted bucket costs part of a
+// day instead of three weeks. That is the right call for the user-facing read
+// path — and it is why simulation must not inherit it. Infura does not
+// implement eth_simulateV1; it answers -32601. Alchemy implements it and is out
+// of capacity. So the read RPC and the simulation RPC are chosen for different
+// properties and must be configured separately.
+//
+// Order: an explicit MIORAIL_SIMULATION_RPC_URL, then whatever the read path
+// uses, then Base's own public endpoint. The last one is a code-owned constant
+// rather than configuration — it carries no key, it is the chain's canonical
+// endpoint, and pinning it means no configuration mistake and no injected text
+// can point simulation somewhere else.
+// ---------------------------------------------------------------------------
+
+export const BASE_PUBLIC_RPC_URL_V1 = 'https://mainnet.base.org';
+export const BASE_PUBLIC_BATCH_SIMULATION_PROVIDER_ID_V1 = 'base-public-eth-simulate-v1';
+
+/** The canonical public Base endpoint, used only when the configured RPC is
+ * something else — otherwise it would be the same provider twice. */
+export function createBasePublicBatchSimulationProviderFromEnvV1(
+  env: NodeJS.ProcessEnv = process.env,
+): SimulationProvider | null {
+  const configured = (env.MIORAIL_SIMULATION_RPC_URL || env.BASE_MAINNET_RPC_URL || env.BASE_RPC_URL || '').trim();
+  if (configured === BASE_PUBLIC_RPC_URL_V1) return null;
+  return createBaseRpcBatchSimulationProviderV1({
+    rpcUrl: BASE_PUBLIC_RPC_URL_V1,
+    providerId: BASE_PUBLIC_BATCH_SIMULATION_PROVIDER_ID_V1,
     timeoutMs: Number(env.MIORAIL_RPC_SIMULATION_TIMEOUT_MS || DEFAULT_TIMEOUT_MS_V1),
   });
 }
