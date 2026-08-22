@@ -68,7 +68,6 @@ describe('the order is read, not the summary', () => {
     // 3544200000000000 to the seller + 35800000000000 in fees.
     assert.equal(result.listing.totalWei, '3580000000000000');
     assert.equal(result.listing.feeWei, '35800000000000');
-    assert.equal(result.listing.reservedForTaker, null);
     assert.equal(result.listing.endTimeUnix, 1785152630);
     // OpenSea's standard Base listings are zone-restricted. Recorded, not
     // refused — refusing it would reject every real listing on the chain.

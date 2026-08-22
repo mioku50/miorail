@@ -4,7 +4,6 @@ import { securityCoverageUi } from '../../lib/securityUi';
 
 // Renders analysis.summary + portfolioSnapshot + token findings + next steps +
 // approval analysis. Sub-views keep this file under the ~200-line view budget.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function PortfolioAnalysisView({
   analysis,
   chainMode,

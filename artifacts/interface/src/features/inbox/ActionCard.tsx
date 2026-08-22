@@ -4,7 +4,6 @@ import { useUiStore } from '../../lib/state';
 import { isMainnetReadonly } from '../../lib/chain';
 import { ActionDiffPreview } from './ActionDiffPreview';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 interface ActionCardProps {
   action: any;
   onRefresh: () => void;

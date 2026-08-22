@@ -37,8 +37,21 @@ a precondition for anything.
 
 Miorail treats a missing credential as an absent capability and says so on
 screen rather than failing or pretending, so each surface tells you what it
-would need in order to do more. Postgres is needed only for the B20 Discover
-feed and the durable receipt store; `pnpm test:unit` runs without it.
+would need in order to do more.
+
+Postgres is needed only for the B20 Discover feed, the durable receipt store
+and `pnpm test:db`; `pnpm test:unit` runs without it. When you do want it:
+
+```bash
+pnpm db:up          # Postgres 17 in Docker, on 127.0.0.1 only
+pnpm db:migrate     # applies all 50 migrations
+pnpm test:db
+```
+
+`db:up` creates two databases — `miorail` and `miorail_test`. They have to be
+separate: `pnpm test:db` refuses to run against the same database as
+`DATABASE_URL`, so that a test run can never truncate real data. The
+`DATABASE_URL` and `TEST_DATABASE_URL` in `.env.example` already point at both.
 
 - Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Security policy: [SECURITY.md](SECURITY.md) — **do not file security bugs as public issues**
@@ -99,7 +112,7 @@ The current registry includes provider-neutral Swap and Earn routes, typed Base 
 
 The full provider constraints and promotion gates live in [PLUGIN_REGISTRY.md](docs/PLUGIN_REGISTRY.md).
 
-# B20 Intelligence
+## B20 Intelligence
 
 B20 is an evidence layer around tokens created by the B20 factory and their Base liquidity. It is **not** a generic token screener and does not predict price or profit.
 
@@ -114,7 +127,7 @@ Base B20 launch events
 
 The historical B20 corpus is backfilled from factory genesis while live launches remain prioritized for measurement. Index coverage and measurement coverage are deliberately separate concepts.
 
-## Consumer Discover
+### Consumer Discover
 
 Discover no longer exposes raw engineering states as the primary user verdict. The consumer projection distinguishes things Miorail measured about a token from things Miorail failed to measure itself.
 
@@ -138,7 +151,7 @@ Measurements can preserve:
 
 `provisional` does not mean `qualified`. Hook permissions do not prove hook behaviour. Launch-window buying does not prove buyer intent, current holdings, or future demand. A route miss covers Miorail's configured venues at one observation, not every venue forever.
 
-## Market rails
+### Market rails
 
 The right rail is a measured view, not a token ranking.
 
@@ -154,7 +167,7 @@ The right rail is a measured view, not a token ranking.
 
 The focused view can load a token by address even when it is not present in the current 25-card feed page, and URL state survives refresh/back navigation.
 
-# Fundamental Intelligence
+## Fundamental Intelligence
 
 Fundamental Intelligence is a second evidence axis beside market measurement.
 
@@ -164,7 +177,7 @@ It answers a different question:
 
 It never attaches a project to a token by matching a name or symbol.
 
-## Identity chain
+### Identity chain
 
 ```text
 B20 token
@@ -185,7 +198,7 @@ The claim file convention is:
 
 Project-declared URLs are treated as untrusted input: HTTPS-only rules, host restrictions, redirect limits, private-address rejection, body limits, and timeouts apply before a probe can become evidence.
 
-## Fundamental dimensions
+### Fundamental dimensions
 
 The current evidence model can represent:
 
@@ -212,7 +225,7 @@ There is no overall fundamental score.
 
 A working product and weak market conditions can coexist in the same card. Miorail deliberately keeps those axes independent.
 
-## Fundamental Explore
+### Fundamental Explore
 
 Global `Ask Miorail` supports positive, evidence-backed fundamental predicates such as:
 
@@ -231,11 +244,11 @@ Negative predicates such as “show projects without a product” are intentiona
 
 The answer denominator is the verified project-claim corpus, never the entire B20 universe. Launches without a verified claim remain outside that corpus and remain unknown.
 
-### Current coverage boundary
+#### Current coverage boundary
 
 Project claims are currently operator-registered. There is not yet a public self-serve submission flow, so Fundamental Intelligence coverage is intentionally much smaller than the full B20 index.
 
-# Ask Miorail
+## Ask Miorail
 
 The B20 console has three scopes:
 
@@ -247,7 +260,7 @@ The model is not a source of facts. Deterministic code builds an evidence bundle
 
 Requests to act are handed to Routes for fresh quotes and explicit approval.
 
-# Public Miorail MCP
+## Public Miorail MCP
 
 Miorail MCP `1.1.0` exposes exactly six read-only tools over stored B20 evidence:
 
@@ -262,7 +275,7 @@ miorail_get_b20_market_leaders
 
 The public MCP surface has no wallet, signing, payment, approval, or execution tool. Its Discover projection is parity-tested against the product truth layer.
 
-# Base MCP Extensions
+## Base MCP Extensions
 
 Miorail reads the live `mcp.base.org` registry and classifies tools as `READ`, `ACTION`, `ROUTABLE`, or blocked before an LLM can select them.
 
@@ -275,7 +288,7 @@ Miorail reads the live `mcp.base.org` registry and classifies tools as `READ`, `
 
 Action Receipts are deliberately separate from Route Proofs.
 
-# Paid intelligence and x402
+## Paid intelligence and x402
 
 x402 funds allowlisted evidence, simulation, inference, or compute. It does not fund portfolio asset movement.
 
@@ -290,7 +303,7 @@ external agent
 
 The free catalog is at `/api/x402/intelligence/v1/catalog`. Paid resources are bound to stored evidence; missing/invalid inputs are rejected before payment middleware, and no seller endpoint prepares wallet calls.
 
-## x402 settlement vs Builder Code attribution
+### x402 settlement vs Builder Code attribution
 
 The seller and app-transaction paths are intentionally different.
 
@@ -298,7 +311,7 @@ In a facilitated x402 seller payment, the external payer signs an authorization 
 
 For app-originated user execution, Miorail's wallet-action layer attaches the public Builder Code as an optional `dataSuffix` capability to `wallet_sendCalls` when the connected wallet reports support. Attribution never changes the server-approved calls and never blocks execution when the wallet lacks that capability.
 
-# Execution boundary
+## Execution boundary
 
 - Miorail never stores a user private key, signs for the user, or broadcasts a raw transaction from the server.
 - The server builds exact unsigned calls; the connected Base Account is the signer and submits approved calls client-side.
@@ -309,7 +322,7 @@ For app-originated user execution, Miorail's wallet-action layer attaches the pu
 - Native Base ETH swap legs are reconstructed only from canonical WETH9 evidence for the approved router target.
 - RPC URLs, secrets, approval URLs, paid response bodies, and delivery secrets do not enter public evidence or rendered traces.
 
-# Production acceptance
+## Production acceptance
 
 The shared swap Route Proof lifecycle has completed owner-verified production journeys in both directions:
 
@@ -322,7 +335,7 @@ Production acceptance also includes canonical Base MCP reads/actions and real x4
 
 See [PRODUCTION_UI_VERIFICATION.md](docs/PRODUCTION_UI_VERIFICATION.md) for the detailed rollout ledger.
 
-# Repository map
+## Repository map
 
 This is a pnpm monorepo. The product name is Miorail; the repository name `mioagent` and the `@mioagent/*` package namespace remain for compatibility.
 
@@ -343,13 +356,14 @@ This is a pnpm monorepo. The product name is Miorail; the repository name `mioag
 | `lib/ui`, `lib/api-zod`, `lib/api-client-react` | Shared web/Base App UI and runtime-validated contracts. |
 | `contracts/legacy` | Historical custom Sepolia Spend Permission experiment; production uses the official Base Account Spend Permission flow. |
 
-# Development
+## Development
 
 Requirements:
 
 - Node.js 22.x;
 - pnpm 11.x through Corepack;
-- PostgreSQL.
+- PostgreSQL 17 — `pnpm db:up` runs it in Docker, pinned to the major version
+  production runs.
 
 ```bash
 pnpm install --frozen-lockfile
@@ -373,7 +387,7 @@ git diff --check
 
 Dependencies use `minimumReleaseAge: 7d` in `pnpm-workspace.yaml`. Pin a mature version when pnpm cannot resolve one; do not relax the supply-chain policy. Never commit `.env` files, RPC URLs, private keys, approval URLs, OAuth tokens, or provider credentials.
 
-## Deployment
+### Deployment
 
 Production deployment is managed by `ops/deploy.sh`, which builds the deployables, validates nginx/systemd configuration, publishes the exact served bundle, restarts services, and smoke-tests the Base App and public MCP.
 
@@ -388,7 +402,7 @@ miorail-b20-discover
 miorail-b20-measure
 ```
 
-# Known gaps
+## Known gaps
 
 Miorail is functional but not broadly production-hardened. Important open work includes:
 
@@ -401,13 +415,13 @@ Miorail is functional but not broadly production-hardened. Important open work i
 - replace the default in-process session store before horizontal scaling;
 - complete independent security, backup/restore, rollback, and failure-matrix review.
 
-# Safety notice
+## Safety notice
 
 Miorail is experimental software. Evidence, measurements, project verification, and Route Proofs are not investment recommendations or guarantees of safety, liquidity, execution, or future value.
 
 Do not use Miorail with funds you cannot afford to lose.
 
-# Licence
+## Licence
 
 Miorail is free software under the **GNU Affero General Public License v3.0**
 (`AGPL-3.0-only`). See [LICENSE](LICENSE) and [NOTICE](NOTICE).

@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "license": "AGPL-3.0-only",
   "private": true,
+  "packageManager": "pnpm@10.32.1",
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "typecheck": "pnpm -r exec tsc --noEmit",
@@ -17,6 +18,10 @@
     "smoke:sepolia-action": "tsx scripts/seed_sepolia_action.ts && pnpm smoke:api",
     "smoke:approvals": "tsx scripts/smoke_approvals.ts",
     "smoke:alchemy-sim": "tsx scripts/smoke_alchemy_simulation.ts",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down",
+    "db:migrate": "node --import tsx lib/db/migrate.ts",
+    "db:push": "pnpm --filter @mioagent/db run push",
     "db:probe": "tsx scripts/db_probe.ts",
     "env:doctor": "node --import tsx scripts/env-doctor.mjs",
     "smoke:bitrefill": "tsx scripts/smoke_bitrefill_commerce.ts",

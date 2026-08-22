@@ -27,7 +27,7 @@ is representing the project.
 
 ## Enforcement
 
-Report to **speedhall50@gmail.com**. Reports are read by the maintainer and
+Report to **<speedhall50@gmail.com>**. Reports are read by the maintainer and
 kept confidential. Responses range from a private word to a permanent ban,
 proportionate to what happened and whether it continued after being raised.
 

@@ -58,7 +58,7 @@ export function createB20BuyerMeasurementV1(input: {
         toBlock: launchBlock + B20_BUYER_WINDOW_BLOCKS_V1,
       };
 
-      let cached: B20LaunchBuyersRowV1 | null = null;
+      let cached: B20LaunchBuyersRowV1 | null;
       try {
         cached = await input.repository.readLaunchBuyers(token);
       } catch {

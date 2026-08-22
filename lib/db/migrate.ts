@@ -27,10 +27,23 @@ async function run() {
   // Neon connection strings may intentionally clear search_path. All product
   // tables live in public, while Drizzle keeps its journal in drizzle.
   await migrationClient`set search_path to public`;
-  const [journalState] = await migrationClient<{ count: number }[]>`
-    select count(*)::int as count from drizzle.__drizzle_migrations
+  // On a database that has never been migrated the journal table does not
+  // exist yet — drizzle creates it inside `migrate()` further down. An absent
+  // journal is not an error, it is zero applied migrations, which is exactly
+  // what the legacy-baseline check below needs to know. Reading it
+  // unconditionally made every first run against a fresh database fail with
+  // `42P01 relation "drizzle.__drizzle_migrations" does not exist`.
+  const [journal] = await migrationClient<{ present: boolean }[]>`
+    select to_regclass('drizzle.__drizzle_migrations') is not null as present
   `;
-  if (journalState.count === 0) {
+  const appliedCount = journal.present
+    ? (
+        await migrationClient<{ count: number }[]>`
+          select count(*)::int as count from drizzle.__drizzle_migrations
+        `
+      )[0].count
+    : 0;
+  if (appliedCount === 0) {
     const [legacy] = await migrationClient<{
       users: boolean;
       oauth: boolean;

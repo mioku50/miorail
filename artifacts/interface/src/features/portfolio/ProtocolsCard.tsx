@@ -1,7 +1,6 @@
 import { isMainnetReadonly } from '../../lib/chain';
 import { capabilityLabel, capabilityState, type CapabilityState } from '../../lib/capabilityStatus';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 interface ProtocolsCardProps {
   statusData: any;
   protocolsData: any;

@@ -26,7 +26,7 @@ someone who does not trust this document.
 ## 1. Sources
 
 | Source | Identity |
-|---|---|
+| --- | --- |
 | `https://docs.o1.exchange/llms.txt` | Documentation index, fetched 2026-08-01 |
 | `https://docs.o1.exchange/api/trading` | Trading API specification, fetched 2026-08-01 |
 | `https://docs.o1.exchange/api/dex-aggregator` | DEX Aggregator API — a **different product**, fetched 2026-08-01 |
@@ -128,7 +128,7 @@ on them either way.
 
 Miorail has exactly one execution path:
 
-```
+```text
 provider response → normalisation → full decode → ExecutionBlueprint
 → Safety Kernel → Alchemy simulation → user Review → wallet_sendCalls
 → receipt reconciliation

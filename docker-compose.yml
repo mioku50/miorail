@@ -1,10 +1,45 @@
-version: "3"
+# Postgres for local development and `pnpm test:db`.
+#
+# Miorail runs without a database: the API boots, /health answers, and
+# `pnpm test:unit` passes on a checkout with no .env at all. Postgres is what
+# the B20 Discover feed, the durable receipt store and `pnpm test:db` need.
+#
+#   docker compose up -d --wait      # --wait honours the healthcheck below
+#   pnpm db:migrate
+#
+name: miorail
+
 services:
   postgres:
-    image: postgres:latest
+    # Pinned to production's major version (17.x, measured on the deployment).
+    # `latest` silently moves a development database ahead of the server the
+    # code actually runs against.
+    image: postgres:17-alpine
+    restart: unless-stopped
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=postgres
+      # Development credentials, deliberately trivial and deliberately not
+      # reachable from outside this machine — see the port binding below.
+      POSTGRES_USER: miorail
+      POSTGRES_PASSWORD: miorail
+      POSTGRES_DB: miorail
+      # Deterministic collation, so an index built here matches production.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     ports:
-      - "5432:5432"
+      # Loopback only. Publishing 5432 on every interface puts a
+      # trivially-credentialed database on whatever network the machine
+      # happens to be joined to.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - miorail-pgdata:/var/lib/postgresql/data
+      - ./ops/postgres/init-test-database.sql:/docker-entrypoint-initdb.d/10-test-database.sql:ro
+    healthcheck:
+      # `docker compose up --wait` returns only once this passes, so a migration
+      # run immediately afterwards cannot race the server's first startup.
+      test: ["CMD-SHELL", "pg_isready -U miorail -d miorail"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+volumes:
+  miorail-pgdata:

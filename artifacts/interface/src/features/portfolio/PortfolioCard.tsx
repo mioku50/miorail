@@ -3,7 +3,6 @@ import { isMainnetReadonly, explorerBaseUrl } from '../../lib/chain';
 import { portfolioFreshnessLabel, tokenSecurityIndicator } from '../../lib/format';
 import { PortfolioProviderChips } from './PortfolioProviderChips';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 interface PortfolioCardProps {
   portfolio: any;
   statusData: any;

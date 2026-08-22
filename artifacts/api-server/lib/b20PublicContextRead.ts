@@ -57,7 +57,7 @@ export function b20PublicContextSearchFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): B20PublicSearchV1 | null {
   const baseUrl = (env.B20_PUBLIC_SEARCH_BASE_URL || 'https://api.mistral.ai').trim();
-  let host = '';
+  let host: string;
   try {
     host = new URL(baseUrl).host;
   } catch {

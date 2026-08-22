@@ -74,6 +74,18 @@ const ask = (message = 'what can you read?') =>
 
 const BASE_MCP_INVENTORY = [{ providerId: 'base-mcp-dynamic', tools: [{ name: 'get_portfolio' }] }];
 
+/**
+ * A chat stream that fails once iteration has begun. It has to be a generator,
+ * not a rejecting async function: the console calls `chatStream()` and only
+ * then iterates, so a call-time throw would exercise a path the runtime never
+ * reaches. `yield* []` emits nothing, putting the failure on the first `next()`
+ * — which is where a streaming provider actually breaks.
+ */
+async function* failingChatStreamV1(message: string): AsyncGenerator<string> {
+  yield* [];
+  throw new Error(message);
+}
+
 describe('canonical Base transaction history is deterministic', () => {
   test('the advertised recent-transactions prompt calls the documented Base MCP tool without an address', async () => {
     let agentCreated = false;
@@ -300,9 +312,7 @@ describe('the trace is the answer, and it is bounded', () => {
     const { wasClosed } = stubTools(BASE_MCP_INVENTORY);
     baseMcpConsoleRuntimeV1.createLlmProvider = (() => ({})) as typeof baseMcpConsoleRuntimeV1.createLlmProvider;
     baseMcpConsoleRuntimeV1.createAgent = (() => ({
-      async *chatStream() {
-        throw new Error('llm exploded');
-      },
+      chatStream: () => failingChatStreamV1('llm exploded'),
     })) as unknown as typeof baseMcpConsoleRuntimeV1.createAgent;
 
     const result = await ask();
@@ -314,9 +324,7 @@ describe('the trace is the answer, and it is bounded', () => {
     stubTools(BASE_MCP_INVENTORY);
     baseMcpConsoleRuntimeV1.createLlmProvider = (() => ({})) as typeof baseMcpConsoleRuntimeV1.createLlmProvider;
     baseMcpConsoleRuntimeV1.createAgent = (() => ({
-      async *chatStream() {
-        throw new Error('401 unauthorized from the endpoint');
-      },
+      chatStream: () => failingChatStreamV1('401 unauthorized from the endpoint'),
     })) as unknown as typeof baseMcpConsoleRuntimeV1.createAgent;
 
     const result = await ask();
@@ -328,9 +336,7 @@ describe('the trace is the answer, and it is bounded', () => {
     stubTools(BASE_MCP_INVENTORY);
     baseMcpConsoleRuntimeV1.createLlmProvider = (() => ({})) as typeof baseMcpConsoleRuntimeV1.createLlmProvider;
     baseMcpConsoleRuntimeV1.createAgent = (() => ({
-      async *chatStream() {
-        throw new Error('connect ECONNREFUSED https://mcp.base.org?token=sk-live-secret');
-      },
+      chatStream: () => failingChatStreamV1('connect ECONNREFUSED https://mcp.base.org?token=sk-live-secret'),
     })) as unknown as typeof baseMcpConsoleRuntimeV1.createAgent;
 
     const result = await ask();

@@ -11,7 +11,7 @@ documented → manifested → adapter → scored → proven
 ```
 
 | Stage | Meaning | Allowed product claim |
-|---|---|---|
+| --- | --- | --- |
 | `documented` | External or vendored documentation is known. No trusted runtime integration is implied. | “This service may be considered for a future route family.” |
 | `manifested` | A structured, allowlisted capability definition exists for constrained access. | “Miorail understands and constrains this capability.” No Route Card, recommendation, or execution claim. |
 | `adapter` | A typed provider-neutral adapter returns validated candidates/evidence or builds validated calls. | “Miorail can use this provider inside a scoped route implementation.” |
@@ -23,7 +23,7 @@ Stages are monotonic only after tests and security gates exist. A broken or stal
 ## Current registry
 
 | Capability | Route family | Stage | Execution | Rollout state | Notes |
-|---|---|---:|---|---|---|
+| --- | --- | ---: | --- | --- | --- |
 | Uniswap | Swap | `proven` | User-approved Base Account calls | Feature-gated | Quote, scoring, Blueprint, Safety Kernel, submission, and Route Proof exist. |
 | KyberSwap | Swap | `proven` | User-approved Base Account calls | Feature-gated | Provider-neutral comparison and pinned build path exist. |
 | Moonwell | Earn | `proven` | User-approved Base Account calls | **Production gated** | Live APY/liquidity evidence and persisted Earn proof path exist; pinned-contract startup preflight must pass before enablement. |
@@ -63,7 +63,7 @@ payment settled  ∧  provider order confirmed  ∧  digital good delivered  →
 ```
 
 | Final status | Meaning | Is it a purchase? |
-|---|---|---|
+| --- | --- | --- |
 | `delivered` | All three legs confirmed, every item delivered. | Yes — the only success. |
 | `partial_delivery` | Paid and confirmed; some items outstanding. | No |
 | `order_unconfirmed` | **Money left the wallet and the storefront has confirmed no order.** | No — reconciliation event |
@@ -85,7 +85,7 @@ Two different Bitrefill APIs, two credentials, and the code refuses to cross
 them (`commerceAuthHeadersV1` throws rather than sending the wrong one):
 
 | Variable | Header | API surface | Notes |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `BITREFILL_API_KEY` | `Authorization: Bearer` | Personal API `/v2/*` | Account-backed catalogue; invoices settle with `payment_method=usdc_base`. Preferred when set. |
 | `BITREFILL_ACCESS_TOKEN` | `X-Access-Token` | x402 SIWX `/x402/*` | Short-lived (~2 h) session that waives x402 micro-fees. Used only when no API key is set. |
 
@@ -118,7 +118,7 @@ Verified against real created invoices on 2026-07-25. Three facts a controlled
 smoke had to establish, because the documentation does not state them:
 
 | Field | Reality |
-|---|---|
+| --- | --- |
 | `payment.price` | The exact charge, ALREADY in USDC base units (`5640000` = 5.64 USDC). Not `payment.amount`, and not a decimal. A fractional value is refused rather than rescaled. |
 | `payment.address` | A deposit address issued **per invoice**. Two invoices for the same product returned two different addresses, neither equal to the x402 constant `0x480C…846A`. |
 | order line | A FIXED denomination is ordered by `package_id` (`steam-usa<&>5`); `value` is the field for range-priced products. |
@@ -158,6 +158,7 @@ onchain transfer  ≠  provider payment confirmation  ≠  order confirmation  �
 
   A successful receipt with no matching ERC-20 Transfer log is `unverified` and
   forces reconciliation — never a completed payment.
+
 - **Delivery material is never stored.** Codes, PINs and links are fetched on
   demand, returned once over a `no-store` response to the owning wallet, and
   written to no table, log, audit event or proof. The proof keeps

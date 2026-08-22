@@ -8,7 +8,7 @@ here can cost someone money, so security reports are handled ahead of features.
 **Do not open a public issue for a security bug.**
 
 Use GitHub's private reporting — *Security → Report a vulnerability* on this
-repository — or email **speedhall50@gmail.com** with `SECURITY` in the subject.
+repository — or email **<speedhall50@gmail.com>** with `SECURITY` in the subject.
 
 Please include what you need to make the finding reproducible: the affected
 route or package, the input, what happened, and what you expected. A proof of

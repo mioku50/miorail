@@ -192,10 +192,10 @@ export function extractNftIntentV1(message: string): NftIntentExtractionV1 {
   const tokenFromText = tokenMatch ? (tokenMatch[1] ?? tokenMatch[2] ?? null) : null;
   const contractFromText = BARE_CONTRACT_V1.exec(ceiling.remainder)?.[1] ?? null;
 
-  let inputSource: NftIntentSourceV1 | null = null;
+  let inputSource: NftIntentSourceV1 | null;
   let chainSlug: string | null = null;
   let contractAddress: string | null = null;
-  let tokenId: string | null = null;
+  let tokenId: string | null;
   let collectionSlug: string | null = null;
 
   if (itemUrl) {

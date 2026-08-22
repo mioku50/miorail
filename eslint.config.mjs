@@ -19,7 +19,15 @@ export default tseslint.config(
       },
     },
     rules: {
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      // `ignoreRestSiblings` is not a relaxation: every hash in this codebase is
+      // recomputed by omitting the old one — `const { chargeHash: _chargeHash,
+      // ...rest } = charge` — and the named binding exists only so the rest
+      // spread drops that key. Reporting it asks for the idiom to be rewritten
+      // into something less clear.
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', ignoreRestSiblings: true },
+      ],
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-require-imports': 'off',
       'no-prototype-builtins': 'off',

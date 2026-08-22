@@ -71,13 +71,6 @@ export interface SeaportListingReadV1 {
    * fees. Stated so the Route Card can show a fee policy rather than imply
    * there is none. */
   feeWei: string;
-  /** Non-null when this listing is reserved for one taker.
-   *
-   * Seaport expresses a private listing by putting the NFT ITSELF into the
-   * consideration, directed at the intended buyer. There is no
-   * `restrictedTaker` field on the wire — this is derived, and it is why the
-   * consideration is read item by item instead of summed blindly. */
-  reservedForTaker: string | null;
   /** Unix seconds. The authoritative expiry: `endTime` is what the contract
    * enforces, not any `expiration` string in the summary. */
   endTimeUnix: number;
@@ -139,13 +132,14 @@ export function readSeaportListingV1(parameters: unknown): SeaportReadResultV1 {
   const seller = params.offerer.toLowerCase();
   let total = BigInt(0);
   let fees = BigInt(0);
-  let reservedForTaker: string | null = null;
 
   for (const item of params.consideration) {
     if (item.itemType === SEAPORT_ITEM_TYPE_V1.ERC721 || item.itemType === SEAPORT_ITEM_TYPE_V1.ERC1155) {
-      // The NFT appears on the PAYING side: this listing is reserved for the
-      // named recipient, and anyone else filling it pays without receiving.
-      reservedForTaker = isAddress(item.recipient) ? item.recipient.toLowerCase() : ZERO_ADDRESS_V1;
+      // A private listing. Seaport has no `restrictedTaker` field on the wire —
+      // it expresses one by putting the NFT ITSELF into the consideration,
+      // directed at the intended buyer, which is why the consideration is read
+      // item by item instead of summed blindly. Anyone else filling this pays
+      // and receives nothing, so it is refused rather than described.
       return { ok: false, reason: 'consideration_contains_nft' };
     }
     if (item.itemType !== SEAPORT_ITEM_TYPE_V1.NATIVE) return { ok: false, reason: 'consideration_not_native' };
@@ -176,7 +170,6 @@ export function readSeaportListingV1(parameters: unknown): SeaportReadResultV1 {
       seller,
       totalWei: total.toString(),
       feeWei: fees.toString(),
-      reservedForTaker,
       endTimeUnix,
       startTimeUnix,
       restrictedByZone: params.orderType === 2 || params.orderType === 3,

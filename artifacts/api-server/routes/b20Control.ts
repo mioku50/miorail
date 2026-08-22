@@ -1348,7 +1348,7 @@ export async function readB20UniverseSummaryV1(input: {
   let launches = 0;
   let completed = 0;
   let incomplete = 0;
-  let complete = available;
+  const complete = available;
   if (available) {
     const aggregate = await observations.aggregateFeed({
       maxLaunchAgeMs,

@@ -14,10 +14,17 @@ coverage/
 mioku.pem
 
 # Agent scaffolding and working files. Kept on disk, out of the repository:
-# these are one maintainer's prompts and task queues, not part of the product,
-# and publishing them documents a workflow rather than the software.
+# these are one maintainer's prompts, task queues and throwaway scripts, not
+# part of the product — publishing them documents a workflow rather than the
+# software.
 .agents/
 .claude/
 scratchpad/
 videos/
 screen/
+agent_tasks.md
+verify_ui.py
+dummy-plan.txt
+frontend-screenshot.png
+docs/AGENT_*.md
+docs/agent_*.md

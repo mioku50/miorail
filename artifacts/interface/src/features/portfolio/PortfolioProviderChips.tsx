@@ -3,7 +3,6 @@ import { capabilityLabel, capabilityState, capabilityTone, type CapabilityState 
 
 // The per-provider status chips + refresh control in the Portfolio card header.
 // Extracted to keep PortfolioCard under the ~200-line view budget.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 interface PortfolioProviderChipsProps {
   portfolio: any;
   statusData: any;

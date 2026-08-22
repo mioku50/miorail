@@ -23,7 +23,6 @@ const BUILDER_CODE = builderCodeFromEnvV1({
 // simulation verdicts are read from metadata stored by /recommend + /chat;
 // where the backend genuinely stored none, it renders honest empty states —
 // never fabricated results.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function ActionDiffPreview({
   action,
   onRefresh,
