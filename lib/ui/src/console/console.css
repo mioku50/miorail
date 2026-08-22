@@ -170,6 +170,9 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .tag.g { color: var(--g-text); background: var(--g-bg); }
 .mio-console .tag.b { color: var(--br-text); background: var(--gsoft); }
 .mio-console .tag.n { color: var(--faint); background: var(--n-bg); }
+/* Amber tag, matching .pill.a. A STALE marker beside a value needs the same
+   weight as the pill it echoes, or it reads as decoration. */
+.mio-console .tag.a { color: var(--a-text); background: var(--a-bg); margin-left: 6px; }
 .mio-console .minipanel { margin-top: 18px; border-radius: var(--r); padding: 11px 12px; background: var(--panel);
   box-shadow: inset 0 0 0 1px var(--line), var(--shadow-card); }
 .mio-console .minipanel .row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; padding: 4px 0; color: var(--muted); }
@@ -381,6 +384,9 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .qrow .v.ok { color: var(--green); }
 .mio-console .qrow .v.warn { color: var(--amber); }
 .mio-console .qrow .v.off { color: var(--dim); }
+/* A balance row's dollar figure is a second line, not a second value on the
+   first one. Scoped to .qrow so the inline .usd elsewhere is untouched. */
+.mio-console .qrow .v .usd { display: block; margin-left: 0; padding-bottom: 0; font-size: 11.5px; }
 .mio-console .empty { font-size: 12px; color: var(--faint); padding: 4px 0; }
 
 /* A market-rail row. The two-column `qrow` grid is what forced five measured
@@ -438,6 +444,22 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .mcp-plugin-head b { color: var(--ink); font-size: 13.5px; }
 .mio-console .mcp-plugin-head .mono { color: var(--dim); font-size: 10.5px; }
 .mio-console .mcp-plugin-head .pill { flex: none; }
+/* The card head now carries the capability set instead of one transport pill.
+   Wraps, because a plugin can legitimately be READ + ROUTES AI. */
+.mio-console .mcp-plugin-caps { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; flex: none; }
+/* Technical details: present, foldable, and visually quieter than the answer. */
+.mio-console .mcp-tech { margin: 8px 0 0; }
+.mio-console .mcp-tech > summary { cursor: pointer; font-size: 11px; color: var(--faint); padding: 4px 0; list-style: none; }
+.mio-console .mcp-tech > summary::-webkit-details-marker { display: none; }
+.mio-console .mcp-tech > summary::before { content: '▸ '; }
+.mio-console .mcp-tech[open] > summary::before { content: '▾ '; }
+.mio-console .mcp-tech > summary:hover { color: var(--muted); }
+/* A raw provider payload is evidence, not prose: it keeps its own scroll box so
+   a 265 KB catalogue cannot set the height of the page it is evidence for. */
+.mio-console .mcp-raw { max-height: 240px; overflow: auto; overflow-wrap: anywhere; white-space: pre-wrap; }
+.mio-console .mcp-evidence-open { margin-top: 8px; }
+.mio-console .mcp-cta { margin: 10px 0 0; }
+.mio-console .mcp-cta > a { text-decoration: none; }
 .mio-console .mcp-plugin-summary { min-height: 34px; margin: 9px 0; color: var(--muted); font-size: 11.5px; line-height: 1.45; }
 .mio-console .mcp-plugin-facts { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; margin: 0; }
 .mio-console .mcp-plugin-facts > div { min-width: 0; padding: 7px 8px; border-radius: 7px; background: var(--field); }
@@ -805,12 +827,14 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .watchrow-v { color: var(--ink); font-size: 12px; }
 .mio-console .watchrow-v.warn { color: var(--amber); }
 .mio-console .watchrow-note { color: var(--muted); font-size: 11px; }
+.mio-console .watchrow-acts { display: flex; gap: 6px; justify-self: end; flex-wrap: wrap; }
 .mio-console .watchrow-remove { justify-self: end; }
 
 @media (max-width: 720px) {
   /* Base App width. Three columns become one stack; the button keeps its own
      line rather than being squeezed against a timestamp. */
   .mio-console .watchrow { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .mio-console .watchrow-acts { justify-self: start; }
   .mio-console .watchrow-remove { justify-self: start; }
 }
 

@@ -2207,12 +2207,16 @@ export function MiniConsole() {
                 ? { ...baseMcpAsk.data, action: reconcileBaseMcpAction.data }
                 : baseMcpAsk.data ?? null
             }
-            readTools={baseMcpProbe.data?.routing.read}
-            actionTools={baseMcpProbe.data?.routing.action}
-            releasedActionTools={baseMcpProbe.data?.tools.filter(
-              (tool) => tool.surface === "action" && tool.surfaceEnabled,
-            ).length}
-            routableTools={baseMcpProbe.data?.routing.routable}
+            routing={
+              baseMcpProbe.data
+                ? {
+                    ...baseMcpProbe.data.routing,
+                    releasedActions: baseMcpProbe.data.tools.filter(
+                      (tool) => tool.surface === "action" && tool.surfaceEnabled,
+                    ).length,
+                  }
+                : null
+            }
             disabledReason={
               !address
                 ? "Connect your Base wallet to ask or run a plugin prompt. You can still explore and fill examples below."

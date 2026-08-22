@@ -20,6 +20,7 @@ import {
   trackedOutcomeLabelV1,
   trackedReadAtLabelV1,
   trackedReadLabelV1,
+  trackedReadAgeV1,
   trackedStatusLineV1,
   trackedTokenSymbolV1,
   type B20WatchedTokenLikeV1,
@@ -913,3 +914,53 @@ describe('the exit form is sized for what it holds', () => {
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// A control reading has an age, and the age is the point.
+//
+// The row said `Last read  Aug 15 · 20:33 UTC` while the panel below it said
+// "No control changed". Both true, and together they read as a statement about
+// now — unless the reader knows today's date and does the subtraction. A week
+// old is a different fact from an hour old, and the row has to say which.
+// ---------------------------------------------------------------------------
+describe('a tracked token states how old its reading is', () => {
+  const at = (iso: string) => ({ tokenAddress: '0xb20', lastSweptAt: iso, lastOutcome: 'read' as const });
+
+  test('a week-old reading leads with its age and is marked stale', () => {
+    const age = trackedReadAgeV1(at('2026-08-15T20:33:00.000Z'), new Date('2026-08-22T20:33:00.000Z'));
+    assert.equal(age.label, '7d ago');
+    assert.equal(age.stale, true);
+  });
+
+  test('a reading inside the day is fresh and says so in hours', () => {
+    const age = trackedReadAgeV1(at('2026-08-22T14:33:00.000Z'), new Date('2026-08-22T20:33:00.000Z'));
+    assert.equal(age.label, '6h ago');
+    assert.equal(age.stale, false);
+  });
+
+  test('the boundary is a full day, and it is inclusive', () => {
+    const now = new Date('2026-08-22T20:33:00.000Z');
+    assert.equal(trackedReadAgeV1(at('2026-08-21T20:33:01.000Z'), now).stale, false);
+    assert.equal(trackedReadAgeV1(at('2026-08-21T20:33:00.000Z'), now).stale, true);
+  });
+
+  test('never read is not the same as stale', () => {
+    const age = trackedReadAgeV1({ tokenAddress: '0xb20', lastSweptAt: null, lastOutcome: null }, new Date());
+    assert.equal(age.label, null);
+    // A token nobody has read is not old evidence — it is no evidence, and the
+    // row already says "not read yet" rather than borrowing a staleness chip.
+    assert.equal(age.stale, false);
+  });
+
+  test('an unparseable stamp claims neither freshness nor staleness', () => {
+    const age = trackedReadAgeV1({ tokenAddress: '0xb20', lastSweptAt: 'whenever', lastOutcome: 'read' }, new Date());
+    assert.equal(age.label, null);
+    assert.equal(age.stale, false);
+  });
+
+  test('a future stamp does not produce a negative age', () => {
+    const age = trackedReadAgeV1(at('2026-08-23T00:00:00.000Z'), new Date('2026-08-22T20:33:00.000Z'));
+    assert.equal(age.label, 'just now');
+    assert.equal(age.stale, false);
+  });
+});

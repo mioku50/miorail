@@ -131,8 +131,15 @@ test('Venice model discovery uses one reviewed GET with a bounded timeout', asyn
   assert.equal(request.path, '/api/v1/models?type=all');
   assert.equal(request.method, 'GET');
   assert.equal(request.timeoutMs, 7_000);
-  assert.match(result?.reply ?? '', /Venice public model catalogue: 1 models/);
+  // The answer states the SHAPE of the catalogue and previews five rows. It
+  // used to enumerate twenty-five, which on the real 200-model catalogue is
+  // most of a screen of provider slugs above the raw payload — burying both the
+  // sentence the reader wanted and the next step.
+  assert.match(result?.reply ?? '', /Venice model catalogue/);
+  assert.match(result?.reply ?? '', /1 models available/);
   assert.match(result?.reply ?? '', /No x402 payment/);
+  // And it links to Venice from the registry, not from anything the model wrote.
+  assert.deepEqual(result?.cta, { label: 'Explore models on Venice', url: 'https://venice.ai/models' });
 });
 
 test('Bankr latest launches use the pinned provider feed rather than generic help', async () => {

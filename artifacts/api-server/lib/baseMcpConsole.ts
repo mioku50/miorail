@@ -86,6 +86,10 @@ export interface BaseMcpConsoleResultV1 {
   elapsedMs: number;
   errorCode: string | null;
   checkedAt: string;
+  /** A reviewed link to the provider's own interface. Built by
+   * `baseMcpProviderCtaV1` from the plugin id the ROUTER resolved, never from
+   * anything the model wrote. Null when there is no honest next step there. */
+  cta?: { label: string; url: string } | null;
 }
 
 export const baseMcpConsoleRuntimeV1 = {

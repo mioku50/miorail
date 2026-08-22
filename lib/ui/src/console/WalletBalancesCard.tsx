@@ -121,9 +121,14 @@ export function WalletBalancesCard(model: WalletBalancesModelV1) {
                     {row.symbol}
                     {isNativeBalanceV1(row.address) && <span className="tag">native</span>}
                   </span>
+                  {/* Two numbers on one line read as one broken value:
+                      `0.5925 $0.59` has to be parsed before it can be read.
+                      The holding is the fact; the dollar figure is a
+                      conversion of it, so it goes underneath and carries `≈`
+                      to say it is derived rather than held. */}
                   <span className="v mono">
                     {row.balanceFormatted ?? '—'}
-                    {usd && <span className="usd">{usd}</span>}
+                    {usd && <span className="usd">≈ {usd}</span>}
                   </span>
                 </div>
               );

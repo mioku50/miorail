@@ -33,7 +33,7 @@ test('navigation is exactly Discover, B20 and Routes AI', () => {
   // Activity (was Proofs) moved to the drawer: it is a viewer for records this
   // deployment has never produced, and a bar of three working surfaces beats
   // four where one is empty.
-  assert.deepEqual(tabs.map((route) => route.label), ['Discover', 'B20', 'Routes AI']);
+  assert.deepEqual(tabs.map((route) => route.label), ['Discover B20', 'B20', 'Routes AI']);
 });
 
 test('the web tabs come from the shared table, not from a list typed here', () => {

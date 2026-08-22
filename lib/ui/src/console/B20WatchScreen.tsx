@@ -85,6 +85,49 @@ export function trackedReadAtLabelV1(entry: B20TrackedTokenLikeV1): string {
   return `${MONTHS_V1[Number(parts[2]) - 1] ?? parts[2]} ${Number(parts[3])} · ${parts[4]}:${parts[5]} UTC`;
 }
 
+// ---------------------------------------------------------------------------
+// A control reading has an age, and the age is the point.
+//
+// The row showed `Last read  Aug 15 · 20:33 UTC` — a true, precise, and nearly
+// useless fact, because reading it requires the reader to know today's date and
+// do the subtraction. Meanwhile the panel below says "No control changed", and
+// a reader who has not done that subtraction takes it as a statement about now.
+// It is a statement about August 15.
+//
+// So the age leads. The absolute stamp stays, as the second line, because a
+// control watch is evidence and evidence keeps its timestamp.
+//
+// The threshold is Miorail's, not a server contract: nothing sweeps tracked
+// tokens on a schedule, so there is no `staleAfter` to read. A day is the point
+// past which a control reading should not be presented as current state.
+// ---------------------------------------------------------------------------
+export const TRACKED_READ_STALE_AFTER_MS_V1 = 24 * 60 * 60 * 1000;
+
+export interface TrackedReadAgeV1 {
+  /** "7d ago", or null when it has never been read. */
+  label: string | null;
+  stale: boolean;
+}
+
+export function trackedReadAgeV1(entry: B20TrackedTokenLikeV1, now: Date): TrackedReadAgeV1 {
+  if (entry.lastSweptAt === null) return { label: null, stale: false };
+  const parsed = Date.parse(entry.lastSweptAt);
+  // An unparseable stamp is an unknown age, and an unknown age is not a fresh
+  // one — but it is not evidence of staleness either, so it claims neither.
+  if (!Number.isFinite(parsed)) return { label: null, stale: false };
+  const ms = Math.max(0, now.getTime() - parsed);
+  const minutes = Math.floor(ms / 60_000);
+  const label =
+    minutes < 1
+      ? 'just now'
+      : minutes < 60
+        ? `${minutes}m ago`
+        : ms < 86_400_000
+          ? `${Math.floor(ms / 3_600_000)}h ago`
+          : `${Math.floor(ms / 86_400_000)}d ago`;
+  return { label, stale: ms >= TRACKED_READ_STALE_AFTER_MS_V1 };
+}
+
 /** "Last read" — or "Last tried", because a failed reading is not a reading. */
 export function trackedReadLabelV1(entry: B20TrackedTokenLikeV1): string {
   return entry.lastOutcome === 'unreadable' ? 'Last tried' : 'Last read';
@@ -147,6 +190,8 @@ export function trackedTokenSymbolV1(
 }
 
 export interface B20WatchScreenModelV1 {
+  /** Injected so an age never depends on when a test happens to run. */
+  now: Date;
   tokens: readonly B20WatchedTokenLikeV1[];
   /** T68 — addresses the user added by hand, persisted between visits.
    *
@@ -390,6 +435,7 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
                 // neither has seen keeps the address as its own name.
                 const symbol = trackedTokenSymbolV1(entry.tokenAddress, model);
                 const outcome = trackedOutcomeLabelV1(entry);
+                const age = trackedReadAgeV1(entry, model.now);
                 return (
                   <li className="watchrow" key={entry.tokenAddress}>
                     <div className="watchrow-id">
@@ -404,21 +450,44 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
                     </div>
                     <div className="watchrow-read">
                       <span className="watchrow-k">{trackedReadLabelV1(entry)}</span>
-                      <span className={entry.lastOutcome === 'unreadable' ? 'watchrow-v warn' : 'watchrow-v'}>
-                        {trackedReadAtLabelV1(entry)}
+                      <span
+                        className={
+                          entry.lastOutcome === 'unreadable' || age.stale ? 'watchrow-v warn' : 'watchrow-v'
+                        }
+                      >
+                        {age.label ?? trackedReadAtLabelV1(entry)}
+                        {age.stale && <span className="tag a">STALE</span>}
                       </span>
+                      {/* The exact instant keeps its place underneath: the age
+                          is what the reader needs, the stamp is what the
+                          evidence needs. */}
+                      {age.label && <span className="watchrow-note">{trackedReadAtLabelV1(entry)}</span>}
                       {/* "not a B20 token" and "could not be read" are answers,
                           and neither is the same as a reading that found no
                           change. Only shown when there is one. */}
                       {outcome && <span className="watchrow-note">{outcome}</span>}
                     </div>
-                    <button
-                      type="button"
-                      className="btn sec watchrow-remove"
-                      onClick={() => model.onUntrackToken(entry.tokenAddress)}
-                    >
-                      Remove
-                    </button>
+                    <div className="watchrow-acts">
+                      {/* Re-reads through the same sweep the panel's own button
+                          runs — there is no per-token read endpoint, and
+                          inventing a label for one would promise a narrower
+                          action than actually happens. */}
+                      <button
+                        type="button"
+                        className="btn sec"
+                        onClick={model.onSweep}
+                        disabled={model.loading}
+                      >
+                        {model.loading ? 'Reading…' : 'Read again'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn sec watchrow-remove"
+                        onClick={() => model.onUntrackToken(entry.tokenAddress)}
+                      >
+                        Remove
+                      </button>
+                    </div>
                   </li>
                 );
               })}

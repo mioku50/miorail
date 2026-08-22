@@ -112,6 +112,16 @@ export interface BaseMcpConsoleAnswerV1 {
     approvalUrl: string | null;
     resultPreview?: string | null;
   } | null;
+  /**
+   * A reviewed link to the provider's own interface.
+   *
+   * Built server-side from a code-owned registry keyed by the plugin the router
+   * resolved — never by the model, which is the whole reason this is a field
+   * and not a URL inside `reply`. Absent for routable intents on purpose: a
+   * swap finishes in Routes AI, and offering "go do it on Aerodrome" because
+   * our own simulator fell short hands the user our unfinished work.
+   */
+  cta?: { label: string; url: string } | null;
 }
 
 export interface BaseMcpConsoleModelV1 {
@@ -127,10 +137,8 @@ export interface BaseMcpConsoleModelV1 {
   onOpenRoutes?: (message: string) => void;
   onReconcileAction?: (receiptId: string) => void;
   reconcilingAction?: boolean;
-  readTools?: number;
-  actionTools?: number;
-  releasedActionTools?: number;
-  routableTools?: number;
+  /** One taxonomy for the whole page — see `baseMcpCapabilityTallyV1`. */
+  routing?: BaseMcpRoutingCountsV1 | null;
   /** Keeps the command surface discoverable while making execution state
    * explicit, for example before a Base App wallet session exists. */
   disabledReason?: string | null;
@@ -209,37 +217,103 @@ export function baseMcpConsoleTraceSummaryV1(answer: BaseMcpConsoleAnswerV1): st
   return `${calls}${failures}. Everything below came from these, or from nowhere.${took}`;
 }
 
+// ---------------------------------------------------------------------------
+// ONE way to count a capability on this page.
+//
+// The header said `8 readable · 4 of 5 requiring approval are released · 1 hand
+// off to Routes AI` while the rail beside it said `Readable 8 · Needs your
+// approval 7 · Not callable here 0`. Both were computed correctly, from two
+// different taxonomies over the same fifteen tools: the rail grouped them by
+// SAFETY CLASS (may this be called without approval), the header by ROUTING
+// (where does this intent finish). A reader has no way to know that, and sees
+// 7 next to 5 and concludes one of them is wrong.
+//
+// Routing wins, because it is the one a person can act on. Safety class is a
+// property of our permission model; routing is the answer to "what happens if I
+// ask for this". Both surfaces read `baseMcpCapabilityTallyV1` now, so the two
+// numbers cannot disagree again — there is only one.
+// ---------------------------------------------------------------------------
+
+export interface BaseMcpCapabilityTallyV1 {
+  label: string;
+  count: number;
+}
+
+export interface BaseMcpRoutingCountsV1 {
+  read: number;
+  action: number;
+  routable: number;
+  blocked: number;
+  releasedActions: number;
+}
+
 /**
- * The tool counts, in the words the rail beside this card already uses.
- *
- * Null counts mean the tool list has not been read, and that is said as a
- * sentence rather than as an em-dash standing in for a number.
+ * The five mutually exclusive buckets, in reading order. Rows with a zero count
+ * are dropped by the caller that renders a list, and kept by the caller that
+ * renders a sentence only when they are non-zero — an empty bucket is not a
+ * finding.
+ */
+export function baseMcpCapabilityTallyV1(
+  routing: BaseMcpRoutingCountsV1 | null | undefined,
+): readonly BaseMcpCapabilityTallyV1[] {
+  if (!routing) return [];
+  const actionsBlocked = Math.max(0, routing.action - routing.releasedActions);
+  return [
+    { label: 'Reads', count: routing.read },
+    { label: 'Actions ready', count: routing.releasedActions },
+    { label: 'Actions needing an adapter', count: actionsBlocked },
+    { label: 'Routes AI handoffs', count: routing.routable },
+    { label: 'Not callable here', count: routing.blocked },
+  ];
+}
+
+/**
+ * The same tally as one line. Null counts mean the tool list has not been read,
+ * and that is said as a sentence rather than as an em-dash standing in for a
+ * number.
  */
 export function baseMcpToolSummaryV1(model: {
-  readTools?: number;
-  actionTools?: number;
-  releasedActionTools?: number;
-  routableTools?: number;
+  routing?: BaseMcpRoutingCountsV1 | null;
 }): string {
-  if (model.readTools === undefined && model.actionTools === undefined) {
-    return 'tool list not read yet';
-  }
-  const parts: string[] = [];
-  if (model.readTools !== undefined) parts.push(`${model.readTools} readable`);
-  if (model.actionTools !== undefined) {
-    parts.push(
-      model.releasedActionTools === undefined
-        ? `${model.actionTools} require approval`
-        : `${model.releasedActionTools} of ${model.actionTools} requiring approval are released`,
-    );
-  }
-  if (model.routableTools) parts.push(`${model.routableTools} hand off to Routes AI`);
-  return parts.join(' · ');
+  const tally = baseMcpCapabilityTallyV1(model.routing);
+  if (tally.length === 0) return 'tool list not read yet';
+  const parts = tally
+    .filter((entry) => entry.count > 0)
+    .map((entry) => `${entry.count} ${entry.label.toLowerCase()}`);
+  return parts.length > 0 ? parts.join(' · ') : 'no callable tools';
+}
+
+// ---------------------------------------------------------------------------
+// When the answer names a missing field, the input asks for THAT field.
+//
+// "Paste the Base token contract address (0x…)" is a good answer — honest,
+// specific, and it refuses to resolve a symbol on the user's behalf because two
+// tokens can share one. It is followed by an input box that still says "Ask
+// Base MCP to read or act…", so the reader has to carry the requirement from
+// the answer to the box themselves.
+//
+// Keyed off the ERROR CODE, not the prose: the code is the contract between the
+// reviewed read and this surface, and matching on sentences would break the
+// first time somebody improved the wording.
+// ---------------------------------------------------------------------------
+const MISSING_INPUT_PLACEHOLDER_V1: Readonly<Record<string, string>> = {
+  gmgn_token_address_required: '0x… Base token contract address',
+  printr_token_id_required: 'Printr token id from the launch',
+  bankr_token_address_required: '0x… Base token address',
+  opensea_token_required: '0x… NFT contract address and token id',
+};
+
+export function baseMcpInputPlaceholderV1(answer: BaseMcpConsoleAnswerV1 | null): string {
+  const named = answer?.errorCode ? MISSING_INPUT_PLACEHOLDER_V1[answer.errorCode] : undefined;
+  return named ?? 'Ask Base MCP to read or act…';
 }
 
 export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
   const answer = model.answer;
   const statusCopy = baseMcpConsoleStatusCopyV1(answer);
+  // A failed call is not supporting material — it is the reason the answer says
+  // what it says, so it never goes behind a fold.
+  const failedRows = (answer?.trace ?? []).filter((row) => !row.ok);
   const canAsk = model.question.trim().length > 0 && !model.pending && !model.disabledReason;
 
   return (
@@ -250,7 +324,7 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
             machine words, and two em-dashes where a reader expects a count.
             The rail beside it was already saying the same numbers in words a
             person uses, so the two now agree and only the header is shorter. */}
-        <span className="rt">{baseMcpToolSummaryV1(model)}</span>
+        <span className="rt">{baseMcpToolSummaryV1({ routing: model.routing })}</span>
       </div>
       <div className="rpb">
         <p className="lnote">
@@ -265,7 +339,7 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
           className="goalinput"
           rows={2}
           value={model.question}
-          placeholder="Ask Base MCP to read or act…"
+          placeholder={baseMcpInputPlaceholderV1(answer)}
           onChange={(event) => model.onQuestionChange(event.target.value)}
         />
         <div className="ctarow">
@@ -476,18 +550,66 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
                   </p>
                 )}
 
-                {answer.trace.map((row, index) => (
-                  <div key={`${row.tool}-${index}`}>
-                    <div className="qrow">
-                      <span className="mono">{row.tool}</span>
-                      <span className={`pill ${row.ok ? 'g' : 'n'}`}>
-                        {row.ok ? 'ok' : row.errorCode || 'failed'}
-                      </span>
-                    </div>
-                    <p className="lnote">{row.args}</p>
-                    <p className="lnote">{row.result}</p>
-                  </div>
-                ))}
+                {/* The next step, when there is an honest one. It sits under
+                    the answer and above the evidence: Miorail keeps the finding,
+                    and the provider's own interface is where a reader goes to
+                    act on it. */}
+                {answer.cta && (
+                  <p className="mcp-cta">
+                    <a className="btn sec" href={answer.cta.url} target="_blank" rel="noopener noreferrer">
+                      {answer.cta.label} ↗
+                    </a>
+                  </p>
+                )}
+
+                {/* Evidence stays; it stops dominating.
+                    The written answer used to be followed immediately by every
+                    tool's raw payload — on Venice that is a serialized model
+                    catalogue that fills half a screen and buries the sentence
+                    the reader came for. Nothing is dropped and nothing moves
+                    behind a debug flag: both folds sit directly under the
+                    answer, one click from open, and a FAILED call stays open
+                    because a failure is part of the answer rather than
+                    supporting material for it. */}
+                {answer.trace.length > 0 && (
+                  <>
+                    {failedRows.length > 0 && (
+                      <div className="mcp-evidence-open">
+                        {failedRows.map((row, index) => (
+                          <div key={`failed-${row.tool}-${index}`}>
+                            <div className="qrow">
+                              <span className="mono">{row.tool}</span>
+                              <span className="pill n">{row.errorCode || 'failed'}</span>
+                            </div>
+                            <p className="lnote">{row.result}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <details className="mcp-tech">
+                      <summary>Tool evidence ({answer.trace.length})</summary>
+                      {answer.trace.map((row, index) => (
+                        <div key={`${row.tool}-${index}`}>
+                          <div className="qrow">
+                            <span className="mono">{row.tool}</span>
+                            <span className={`pill ${row.ok ? 'g' : 'n'}`}>
+                              {row.ok ? 'ok' : row.errorCode || 'failed'}
+                            </span>
+                          </div>
+                          <p className="lnote">{row.args}</p>
+                        </div>
+                      ))}
+                    </details>
+                    <details className="mcp-tech">
+                      <summary>Raw provider response</summary>
+                      {answer.trace.map((row, index) => (
+                        <p className="lnote mcp-raw" key={`raw-${row.tool}-${index}`}>
+                          {row.result}
+                        </p>
+                      ))}
+                    </details>
+                  </>
+                )}
               </>
             )}
           </>

@@ -8,6 +8,7 @@ import {
   type BaseMcpSkillExecutor,
   type ProviderPayloadOutcomeV1,
 } from '@mioagent/runtime-skills';
+import { baseMcpProviderCtaV1 } from '@mioagent/security';
 import { extractCommerceIntentV1 } from '@mioagent/intent-engine';
 import type { CommerceCatalogSourceV1 } from '@mioagent/commerce-engine';
 import type { BaseMcpConsoleResultV1 } from './baseMcpConsole.js';
@@ -153,6 +154,16 @@ export function reviewedRowsV1(
   return rows ? { kind: 'read', rows } : { kind: 'no_rows' };
 }
 
+/** A display name for a single-object read, taken from the provider's own
+ * response. Null when the payload named nothing — a CTA is then unlabelled by
+ * object rather than labelled with a guess. */
+function reviewedDisplayNameV1(result: ReviewedCallResultV1 | undefined): string | null {
+  if (!result || result.payloadOutcome !== 'parsed') return null;
+  const record = providerRecordV1(normalizeProviderPayloadV1(result.data).value, ['token', 'data']);
+  if (!record) return null;
+  return firstDisplayV1(record, ['symbol', 'name', 'ticker']);
+}
+
 function firstDisplayV1(record: Record<string, unknown>, keys: readonly string[]): string | null {
   for (const key of keys) {
     const value = record[key];
@@ -217,22 +228,37 @@ function veniceModelsReplyV1(result: ReviewedCallResultV1 | undefined): string {
     const type = firstDisplayV1(row, ['type']) ?? 'unknown';
     counts.set(type, (counts.get(type) ?? 0) + 1);
   }
-  const shown = rows.slice(0, 25).map((row, index) => {
+  // Twenty-five enumerated ids used to follow this sentence, and on a 200-model
+  // catalogue that is most of a screen of provider slugs — below which sat the
+  // raw payload, and below THAT the thing the reader wanted to do next. The
+  // shape of the catalogue is the answer; the roster is evidence, and evidence
+  // now lives in the fold with the payload it came from.
+  const PREVIEW_V1 = 5;
+  const preview = rows.slice(0, PREVIEW_V1).map((row, index) => {
     const spec = row.model_spec && typeof row.model_spec === 'object'
       ? row.model_spec as Record<string, unknown>
       : {};
     const id = firstDisplayV1(row, ['id']) ?? `model ${index + 1}`;
     const name = firstDisplayV1(spec, ['name']);
     const type = firstDisplayV1(row, ['type']) ?? 'unknown';
-    return `${index + 1}. ${id}${name && name !== id ? ` — ${name}` : ''} · ${type}`;
+    return `  ${name && name !== id ? name : id} · ${type}`;
   });
   const summary = [...counts.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
     .map(([type, count]) => `${type} ${count}`)
     .join(' · ');
+  const remaining = rows.length - preview.length;
   return [
-    `Venice public model catalogue: ${rows.length} models (${summary}). Showing the first ${shown.length} in provider order:`,
-    ...shown,
+    'Venice model catalogue',
+    `${rows.length} models available`,
+    summary,
+    '',
+    `First ${preview.length} in provider order:`,
+    ...preview,
+    ...(remaining > 0
+      ? ['', `The remaining ${remaining} are in the raw provider response below.`]
+      : []),
+    '',
     'This was a free public GET /models read. No x402 payment or inference request was made.',
   ].join('\n');
 }
@@ -513,6 +539,14 @@ async function runSimpleReviewedReadV1(input: {
     args: Record<string, unknown>;
   }[];
   reply: (results: readonly ReviewedCallResultV1[]) => string;
+  /** The plugin whose interface this answer can hand off to, and optionally the
+   * object it read, so the CTA can deep-link instead of pointing at a home
+   * page. Both come from THIS module — a reviewed builder that saw the
+   * provider's own response — not from the model. */
+  cta?: {
+    pluginId: string;
+    object?: (results: readonly ReviewedCallResultV1[]) => { id: string | null; name: string | null } | null;
+  };
 }): Promise<BaseMcpConsoleResultV1 | null> {
   const executor = reviewedBaseMcpPluginRuntimeV1.loadSkillExecutor(input.namespace);
   if (!executor) return null;
@@ -539,6 +573,18 @@ async function runSimpleReviewedReadV1(input: {
     elapsedMs: Date.now() - startedAt,
     errorCode,
     checkedAt: reviewedBaseMcpPluginRuntimeV1.now().toISOString(),
+    cta: input.cta
+      ? (() => {
+          // A read that could not be decoded has no object to point at, and a
+          // deep link built from a payload we failed to parse would be a guess.
+          const object = errorCode === null && input.cta.object ? input.cta.object(called.results) : null;
+          return baseMcpProviderCtaV1({
+            pluginId: input.cta.pluginId,
+            objectId: object?.id ?? null,
+            objectName: object?.name ?? null,
+          });
+        })()
+      : null,
   };
 }
 
@@ -779,6 +825,7 @@ export async function runReviewedBaseMcpPluginReadV1(
       namespace: 'venice',
       calls: [{ tool: 'venice_get_models', path: '/api/v1/models?type=all', timeoutMs: 7_000, args: { type: 'all' } }],
       reply: (results) => veniceModelsReplyV1(results[0]),
+      cta: { pluginId: 'venice' },
     });
   }
   if (input.providerId === 'bankr' && ['latest', 'inspect'].includes(input.exampleId ?? '')) {
@@ -799,6 +846,7 @@ export async function runReviewedBaseMcpPluginReadV1(
         args: address ? { chain: 'base', address } : { chain: 'base', limit: 10 },
       }],
       reply: (results) => (address ? bankrLaunchReplyV1(results[0]) : bankrLaunchesReplyV1(results[0])),
+      cta: { pluginId: 'bankr' },
     });
   }
   if (input.providerId === 'avantis' && input.exampleId === 'positions') {
@@ -811,6 +859,7 @@ export async function runReviewedBaseMcpPluginReadV1(
         args: { chain: 'base', trader: input.walletAddress },
       }],
       reply: (results) => avantisPositionsReplyV1(results[0]),
+      cta: { pluginId: 'avantis' },
     });
   }
   if (input.providerId === 'printr' && input.exampleId === 'status') {
@@ -844,6 +893,7 @@ export async function runReviewedBaseMcpPluginReadV1(
         args: { chains: ['eip155:8453'], initial_buy_usd: 10, graduation_threshold_usd: 15_000 },
       }],
       reply: (results) => printrQuoteReplyV1(results[0]),
+      cta: { pluginId: 'printr' },
     });
   }
   if (input.providerId === 'gmgn' && input.exampleId === 'market') {
@@ -866,6 +916,10 @@ export async function runReviewedBaseMcpPluginReadV1(
         args: { chain: 'base', address },
       }],
       reply: (results) => gmgnTokenReplyV1(results[0], address),
+      // The only id here came from the USER's own message and was matched
+      // against a 40-hex address before any request was sent. Deep-linking is
+      // safe precisely because the read was about one object.
+      cta: { pluginId: 'gmgn', object: (results) => ({ id: address, name: reviewedDisplayNameV1(results[0]) }) },
     });
   }
   if (input.providerId === 'opensea' && input.exampleId === 'listing') {
@@ -892,6 +946,10 @@ export async function runReviewedBaseMcpPluginReadV1(
         args: { chain: 'base', limit: 10, orderBy: 'seven_day_volume' },
       }],
       reply: (results) => openseaCollectionsReplyV1(results[0]),
+      // A list answer gets the provider's index, not the first row's page: a
+      // deep link to whichever collection happened to sort first would tell the
+      // reader that row was the point.
+      cta: { pluginId: 'opensea' },
     });
   }
   if (input.providerId === 'clawnch' && ['latest', 'volume'].includes(input.exampleId ?? '')) {
@@ -905,6 +963,7 @@ export async function runReviewedBaseMcpPluginReadV1(
         args: { chain: 'base', limit: 10, ...(byVolume ? { sort: 'volume', prices: 1 } : {}) },
       }],
       reply: (results) => clawnchLaunchesReplyV1(results[0], byVolume),
+      cta: { pluginId: 'clawnch' },
     });
   }
   if (input.providerId === 'flaunch' && input.exampleId === 'latest') {
@@ -912,6 +971,7 @@ export async function runReviewedBaseMcpPluginReadV1(
       namespace: 'flaunch',
       calls: [{ tool: 'flaunch_get_coins', path: '/v1/base/coins/new', timeoutMs: 9_000, args: { chain: 'base', order: 'new' } }],
       reply: (results) => flaunchCoinsReplyV1(results[0]),
+      cta: { pluginId: 'flaunch' },
     });
   }
   if (input.providerId === 'balancer' && input.exampleId === 'yield') {
@@ -924,6 +984,7 @@ export async function runReviewedBaseMcpPluginReadV1(
         args: { chain: 'BASE', first: 25, orderBy: 'apr', minTvl: 100_000, assetFilter: 'ETH' },
       }],
       reply: (results) => balancerPoolsReplyV1(results[0]),
+      cta: { pluginId: 'balancer' },
     });
   }
   if (input.providerId === 'bitrefill' && ['browse', 'search'].includes(input.exampleId ?? '')) {

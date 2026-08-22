@@ -7,6 +7,7 @@ import {
   BASE_MCP_QUICK_EXAMPLES_V1,
   BaseMcpConsoleCard,
   baseMcpConsoleStatusCopyV1,
+  baseMcpCapabilityTallyV1,
   baseMcpToolSummaryV1,
   baseMcpConsoleTraceSummaryV1,
   type BaseMcpConsoleAnswerV1,
@@ -290,15 +291,46 @@ describe('the trace summary says where the words came from', () => {
 // both the cryptic version AND the duplicate.
 // ---------------------------------------------------------------------------
 describe('the console header counts tools in words', () => {
-  test('it says what a reader would say', () => {
+  test('it says what a reader would say, in the rail\'s own words', () => {
+    // These strings used to be `8 readable · 3 of 7 requiring approval are
+    // released · 1 hand off to Routes AI`, counted by safety class, beside a
+    // rail counting the same tools by routing. Two taxonomies, one page, and a
+    // reader with no way to reconcile 7 against 5. One tally now.
     assert.equal(
-      baseMcpToolSummaryV1({ readTools: 8, actionTools: 7 }),
-      '8 readable · 7 require approval',
+      baseMcpToolSummaryV1({
+        routing: { read: 8, action: 7, routable: 1, blocked: 0, releasedActions: 3 },
+      }),
+      '8 reads · 3 actions ready · 4 actions needing an adapter · 1 routes ai handoffs',
     );
+  });
+
+  test('an empty bucket is not a finding, so it is not printed', () => {
     assert.equal(
-      baseMcpToolSummaryV1({ readTools: 8, actionTools: 7, releasedActionTools: 3, routableTools: 1 }),
-      '8 readable · 3 of 7 requiring approval are released · 1 hand off to Routes AI',
+      baseMcpToolSummaryV1({
+        routing: { read: 8, action: 4, routable: 0, blocked: 0, releasedActions: 4 },
+      }),
+      '8 reads · 4 actions ready',
     );
+  });
+
+  test('the rail and the header cannot disagree, because they share one tally', () => {
+    const routing = { read: 8, action: 5, routable: 1, blocked: 2, releasedActions: 4 };
+    const tally = baseMcpCapabilityTallyV1(routing);
+    assert.deepEqual(
+      tally.map((entry) => [entry.label, entry.count]),
+      [
+        ['Reads', 8],
+        ['Actions ready', 4],
+        ['Actions needing an adapter', 1],
+        ['Routes AI handoffs', 1],
+        ['Not callable here', 2],
+      ],
+    );
+    // Every non-zero bucket in the rail appears in the header sentence.
+    const summary = baseMcpToolSummaryV1({ routing });
+    for (const entry of tally.filter((row) => row.count > 0)) {
+      assert.match(summary, new RegExp(`${entry.count} ${entry.label.toLowerCase()}`));
+    }
   });
 
   test('an unread list is a sentence, not an em-dash', () => {

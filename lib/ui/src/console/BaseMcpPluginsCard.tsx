@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import type { BaseMcpToolRowV1 } from './BaseMcpExtensionsCard';
+import { baseMcpCapabilityTallyV1 } from './BaseMcpConsoleCard';
 
 // The app uses the automatic JSX runtime; the node render suite uses the
 // classic transform and needs this binding.
@@ -157,6 +158,91 @@ export function baseMcpExampleBadgeV1(example: BaseMcpExampleUiV1): BaseMcpExamp
   }
 }
 
+// ---------------------------------------------------------------------------
+// What can I actually do with this, here, now?
+//
+// The card used to answer a different question. Its headline badge was the
+// TRANSPORT — "HTTP path", "Base tools", "Shell required" — beside a facts grid
+// of Chain / Owner / Lifecycle. All true, all useful to whoever maintains
+// Miorail, and none of it what a person opening the page wants to know. Worse,
+// "HTTP path" reads as a promise: it says a reviewed host exists, and a reader
+// takes it to mean the plugin does something here. Clawnch and Flaunch carry it
+// while some of their prompts end at `help`, because a transport being
+// described in a spec is not an endpoint being callable.
+//
+// So the headline is now the capability set, derived from the dispositions the
+// router actually returns — the same vocabulary as the badges on the example
+// buttons below, so the card head and its examples agree. A plugin with no
+// released capability on this surface says UNAVAILABLE rather than advertising
+// its transport.
+//
+// The transport did not become untrue. It moved to Technical details, where it
+// belongs, along with lifecycle — which was the worst offender: `scored`,
+// `manifested`, `documented` sat under a heading and read like a quality
+// rating, when they name how far Miorail's own integration has been taken.
+// ---------------------------------------------------------------------------
+
+export type BaseMcpPluginCapabilityV1 = 'read' | 'action' | 'routes' | 'provider_ui' | 'unavailable';
+
+const CAPABILITY_ORDER_V1: readonly BaseMcpPluginCapabilityV1[] = [
+  'read',
+  'action',
+  'routes',
+  'provider_ui',
+];
+
+export const BASE_MCP_CAPABILITY_LABEL_V1: Readonly<Record<BaseMcpPluginCapabilityV1, string>> = {
+  read: 'READ',
+  action: 'ACTION',
+  routes: 'ROUTES AI',
+  provider_ui: 'OPEN PROVIDER',
+  unavailable: 'UNAVAILABLE',
+};
+
+/** Reuses the `.mcp-disposition` tones so the head badges and the example
+ * badges are the same visual vocabulary rather than two parallel ones. */
+export const BASE_MCP_CAPABILITY_TONE_V1: Readonly<Record<BaseMcpPluginCapabilityV1, string>> = {
+  read: 'read',
+  action: 'action',
+  routes: 'routes',
+  provider_ui: 'provider',
+  unavailable: 'adapter',
+};
+
+/**
+ * The capabilities this deployment can actually carry for this plugin.
+ *
+ * Read off the dispositions, so it cannot drift from what the router does.
+ * `adapter_required`, `route_unavailable_here` and `typed_x402_required` add
+ * nothing: each is a reason the intent stops here, and a stopped intent is not
+ * a capability. A plugin whose every example stops gets `unavailable`.
+ */
+export function baseMcpPluginCapabilitiesV1(
+  plugin: BaseMcpPluginRowV1,
+): readonly BaseMcpPluginCapabilityV1[] {
+  const found = new Set<BaseMcpPluginCapabilityV1>();
+  for (const example of plugin.examples) {
+    switch (example.disposition) {
+      case 'read_in_extensions':
+        found.add('read');
+        break;
+      case 'action_in_extensions':
+        found.add('action');
+        break;
+      case 'handoff_to_routes':
+        found.add('routes');
+        break;
+      case 'handoff_to_provider_ui':
+        found.add('provider_ui');
+        break;
+      default:
+        break;
+    }
+  }
+  const ordered = CAPABILITY_ORDER_V1.filter((capability) => found.has(capability));
+  return ordered.length > 0 ? ordered : ['unavailable'];
+}
+
 export function baseMcpPluginReachV1(plugin: BaseMcpPluginRowV1): BaseMcpPluginReachV1 {
   // A CLI-only upstream plugin may still have a narrower Miorail-reviewed
   // server adapter for one read. Balancer is the first such case: pool
@@ -183,7 +269,7 @@ export function baseMcpPluginReachV1(plugin: BaseMcpPluginRowV1): BaseMcpPluginR
 
 export const BASE_MCP_PLUGIN_REACH_COPY_V1: Readonly<Record<BaseMcpPluginReachV1, string>> = {
   http:
-    'A reviewed, host-pinned HTTP path is available on this surface. Runtime support still depends on the lifecycle and disposition shown below; anything it prepares is approved in your Base Account.',
+    'A reviewed, host-pinned HTTP path is available on this surface. Having a path is not the same as being callable — what this plugin can actually do here is the capability set on the card. Anything it prepares is approved in your Base Account.',
   base_tools:
     'Uses Base MCP’s own tools and the chain directly — no API host of its own.',
   external_mcp:
@@ -197,14 +283,6 @@ const REACH_LABEL_V1: Readonly<Record<BaseMcpPluginReachV1, string>> = {
   base_tools: 'Base tools',
   external_mcp: 'External MCP',
   shell_required: 'Shell required',
-};
-
-/** console.css gives `.pill` exactly four tones — br, g, a, n. */
-const REACH_TONE_V1: Readonly<Record<BaseMcpPluginReachV1, string>> = {
-  http: 'g',
-  base_tools: 'br',
-  external_mcp: 'a',
-  shell_required: 'n',
 };
 
 const REACH_ORDER_V1: readonly BaseMcpPluginReachV1[] = [
@@ -465,6 +543,7 @@ export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
               <div className="mcp-plugin-grid">
                 {filtered.map((plugin) => {
                   const reach = baseMcpPluginReachV1(plugin);
+                  const capabilities = baseMcpPluginCapabilitiesV1(plugin);
                   const owner = plugin.productSurface === 'routes' ? 'Routes AI' : 'Base MCP Extensions';
                   const moreCount = Math.max(0, plugin.examples.length - 2);
                   return (
@@ -474,17 +553,35 @@ export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
                           <b>{plugin.title}</b>
                           <span className="mono">{plugin.id}</span>
                         </div>
-                        <span className={`pill ${REACH_TONE_V1[reach]}`}>{REACH_LABEL_V1[reach]}</span>
+                        <span className="mcp-plugin-caps">
+                          {capabilities.map((capability) => (
+                            <span
+                              key={capability}
+                              className={`mcp-disposition ${BASE_MCP_CAPABILITY_TONE_V1[capability]}`}
+                            >
+                              {BASE_MCP_CAPABILITY_LABEL_V1[capability]}
+                            </span>
+                          ))}
+                        </span>
                       </div>
 
                       <p className="mcp-plugin-summary">{baseMcpPluginSummaryLineV1(plugin.summary || plugin.title, 180)}</p>
-                      <dl className="mcp-plugin-facts">
-                        <div><dt>Chain</dt><dd>{chainsLabelV1(plugin.chains)}</dd></div>
-                        <div><dt>Owner</dt><dd>{owner}</dd></div>
-                        <div><dt>Lifecycle</dt><dd className="mono">{plugin.lifecycleStage}</dd></div>
-                      </dl>
-                      <p className="mcp-plugin-reach">{BASE_MCP_PLUGIN_REACH_COPY_V1[reach]}</p>
-                      <p className="mcp-plugin-source">Base plugin spec · v{plugin.version}</p>
+
+                      {/* Transport, ownership and integration stage are facts
+                          about Miorail's plumbing. They stay — an evidence
+                          product does not hide how it reached something — but
+                          they stop being the first thing a reader meets. */}
+                      <details className="mcp-tech">
+                        <summary>Technical details</summary>
+                        <dl className="mcp-plugin-facts">
+                          <div><dt>Chain</dt><dd>{chainsLabelV1(plugin.chains)}</dd></div>
+                          <div><dt>Owner</dt><dd>{owner}</dd></div>
+                          <div><dt>Transport</dt><dd>{REACH_LABEL_V1[reach]}</dd></div>
+                          <div><dt>Integration stage</dt><dd className="mono">{plugin.lifecycleStage}</dd></div>
+                        </dl>
+                        <p className="mcp-plugin-reach">{BASE_MCP_PLUGIN_REACH_COPY_V1[reach]}</p>
+                        <p className="mcp-plugin-source">Base plugin spec · v{plugin.version}</p>
+                      </details>
 
                       <div className="mcp-examples-head">
                         <b>Example prompts</b>
@@ -575,7 +672,7 @@ const CONNECTION_TONE_V1: Readonly<Record<string, string>> = {
 export function BaseMcpSummaryRail(model: BaseMcpRailModelV1) {
   const groups = groupBaseMcpPluginsV1(model.plugins);
   const counts = model.toolCounts;
-  const routing = model.routingCounts;
+  const tally = baseMcpCapabilityTallyV1(model.routingCounts);
 
   return (
     <>
@@ -599,22 +696,21 @@ export function BaseMcpSummaryRail(model: BaseMcpRailModelV1) {
           </div>
           {counts ? (
             <>
-              <div className="qrow">
-                <span>Readable</span>
-                <span className="v mono">{counts.readOnly}</span>
-              </div>
-              <div className="qrow">
-                <span>Needs your approval</span>
-                <span className="v mono">{counts.userConfirmed}</span>
-              </div>
-              <div className="qrow">
-                <span>Not callable here</span>
-                <span className="v mono">{counts.forbidden + counts.unknown}</span>
-              </div>
+              {/* The safety-class breakdown that used to live here — Readable /
+                  Needs your approval / Not callable — counted the same tools by
+                  a different rule than the header above, so the rail and the
+                  header disagreed on screen. One tally now, from
+                  `baseMcpCapabilityTallyV1`, in the routing vocabulary a person
+                  can act on. */}
+              {tally.map((entry) => (
+                <div className="qrow" key={entry.label}>
+                  <span>{entry.label}</span>
+                  <span className="v mono">{entry.count}</span>
+                </div>
+              ))}
               <p className="lnote">
-                The console can read and act. {routing
-                  ? `${routing.releasedActions}/${routing.action} typed ACTION tools are released; ${routing.routable} ROUTABLE tools hand off to Routes AI; ${routing.blocked} still need an adapter or remain forbidden.`
-                  : 'Each write still needs a typed adapter and your Base Account approval.'}
+                Every read stays here. Every action needs a typed adapter and your Base Account
+                approval, and every routable intent finishes in Routes AI.
               </p>
             </>
           ) : (

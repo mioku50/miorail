@@ -15,6 +15,7 @@ import {
   baseMcpPluginReachV1,
   baseMcpPluginSummaryLineV1,
   baseMcpToolsWithReviewedAdaptersV1,
+  baseMcpPluginCapabilitiesV1,
   filterBaseMcpPluginsV1,
   groupBaseMcpPluginsV1,
   selectBaseMcpExampleV1,
@@ -22,7 +23,7 @@ import {
   type BaseMcpPluginRowV1,
 } from '../src/console/BaseMcpPluginsCard';
 
-test('the summary rail exposes released ACTION tools instead of calling the console read-only', () => {
+test('the rail counts capabilities exactly once, in the header\'s own words', () => {
   const html = renderToStaticMarkup(BaseMcpSummaryRail({
     connection: 'connected',
     enabled: true,
@@ -33,9 +34,20 @@ test('the summary rail exposes released ACTION tools instead of calling the cons
     drift: null,
     generatedAt: null,
   }));
-  assert.match(html, /3\/4 typed ACTION tools are released/);
-  assert.match(html, /hand off to Routes AI/);
+  // The rail used to group these fifteen tools by SAFETY CLASS (Readable /
+  // Needs your approval / Not callable) while the header above grouped the
+  // same fifteen by ROUTING. Two taxonomies on one screen, and a reader seeing
+  // 7 beside 5 with no way to reconcile them. One tally now.
+  assert.match(html, /Reads<\/span><span class="v mono">8</);
+  assert.match(html, /Actions ready<\/span><span class="v mono">3</);
+  assert.match(html, /Actions needing an adapter<\/span><span class="v mono">1</);
+  assert.match(html, /Routes AI handoffs<\/span><span class="v mono">1</);
+  assert.match(html, /Not callable here<\/span><span class="v mono">2</);
+  assert.doesNotMatch(html, /Needs your approval/);
+  assert.doesNotMatch(html, /typed ACTION tools are released/);
   assert.doesNotMatch(html, /Only the readable ones are offered/);
+  // The buckets partition the tool list rather than overlapping it.
+  assert.equal(8 + 3 + 1 + 1 + 2, 15);
 });
 
 // ---------------------------------------------------------------------------
@@ -338,7 +350,7 @@ describe('the plugin catalogue is an immediately usable explorer', () => {
     }),
   ];
 
-  test('cards expose identity, owner, lifecycle, source/version and two prompts without nested reach groups', () => {
+  test('cards lead with what you can do here, and keep the plumbing in Technical details', () => {
     const html = renderToStaticMarkup(React.createElement(BaseMcpPluginsCard, {
       loading: false,
       plugins: catalogue,
@@ -351,7 +363,19 @@ describe('the plugin catalogue is an immediately usable explorer', () => {
     assert.match(html, /Search plugins…/);
     assert.match(html, /Base plugin spec · v0\.3\.0/);
     assert.match(html, /Owner<\/dt><dd>Routes AI/);
-    assert.match(html, /Lifecycle<\/dt><dd class="mono">proven/);
+    // The transport pill and the lifecycle word used to be the first things on
+    // the card. "HTTP path" reads as a promise that the plugin does something
+    // here, and `proven` / `scored` / `manifested` under a heading reads as a
+    // quality rating rather than as how far our own integration got. Both are
+    // still on the page, one fold down, under their real names.
+    assert.match(html, /<summary>Technical details<\/summary>/);
+    assert.match(html, /Transport<\/dt><dd>HTTP path/);
+    assert.match(html, /Integration stage<\/dt><dd class="mono">proven/);
+    assert.doesNotMatch(html, /Lifecycle<\/dt>/);
+    // What the head carries instead: what a person can do with it, here.
+    assert.match(html, /class="mcp-plugin-caps"/);
+    assert.match(html, /<span class="mcp-disposition read">READ<\/span>/);
+    assert.match(html, /<span class="mcp-disposition provider">OPEN PROVIDER<\/span>/);
     assert.match(html, /Show Morpho vaults/);
     assert.match(html, /Show my Morpho positions/);
     assert.match(html, /Example prompts/);
@@ -381,5 +405,67 @@ describe('the plugin catalogue is an immediately usable explorer', () => {
     const selected: string[] = [];
     selectBaseMcpExampleV1((prompt) => selected.push(prompt), 'Show my Morpho positions');
     assert.deepEqual(selected, ['Show my Morpho positions']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The card answers "what can I do with this here", not "how does it connect".
+// ---------------------------------------------------------------------------
+describe('plugin capabilities are read off the router, not the transport', () => {
+  const plugin = (examples: { surface: string; disposition: string }[]): BaseMcpPluginRowV1 => ({
+    id: 'x',
+    title: 'X',
+    summary: 's',
+    version: '0.1.0',
+    integration: 'http',
+    chains: ['base'],
+    tags: [],
+    risk: [],
+    auth: 'none',
+    shell: 'none',
+    hosts: ['api.example'],
+    externalMcpHost: null,
+    cliPackage: null,
+    productSurface: 'extensions',
+    lifecycleStage: 'documented',
+    examples: examples.map((entry, index) => ({
+      id: `e${index}`,
+      prompt: 'p',
+      surface: entry.surface,
+      disposition: entry.disposition,
+    })),
+  } as unknown as BaseMcpPluginRowV1);
+
+  test('every released disposition becomes a capability, in reading order', () => {
+    assert.deepEqual(
+      baseMcpPluginCapabilitiesV1(plugin([
+        { surface: 'routable', disposition: 'handoff_to_routes' },
+        { surface: 'action', disposition: 'handoff_to_provider_ui' },
+        { surface: 'read', disposition: 'read_in_extensions' },
+        { surface: 'action', disposition: 'action_in_extensions' },
+      ])),
+      ['read', 'action', 'routes', 'provider_ui'],
+    );
+  });
+
+  test('a stopped intent is not a capability', () => {
+    // Each of these is a REASON the intent ends here. A card that counted them
+    // as capabilities would advertise exactly the dead ends the badge exists
+    // to expose.
+    for (const disposition of ['adapter_required', 'route_unavailable_here', 'typed_x402_required']) {
+      assert.deepEqual(
+        baseMcpPluginCapabilitiesV1(plugin([{ surface: 'read', disposition }])),
+        ['unavailable'],
+        disposition,
+      );
+    }
+  });
+
+  test('a plugin with a reviewed HTTP host but nothing callable still says UNAVAILABLE', () => {
+    // The exact case that made "HTTP path" misleading: a declared transport,
+    // and no prompt this surface can finish.
+    const row = plugin([{ surface: 'read', disposition: 'adapter_required' }]);
+    assert.equal(baseMcpPluginReachV1(row), 'http');
+    assert.deepEqual(baseMcpPluginCapabilitiesV1(row), ['unavailable']);
   });
 });

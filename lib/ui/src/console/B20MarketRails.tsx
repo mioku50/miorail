@@ -278,6 +278,41 @@ function RailGuide({ children, summary }: { summary: string; children: React.Rea
   );
 }
 
+// ---------------------------------------------------------------------------
+// When the whole rail is historical, the rail says so — in its NAME.
+//
+// A per-row `stale` chip is the right marker for one row among fresh ones. It
+// is the wrong marker when every row carries it: the reader meets the title
+// first, then a ranked list of big numbers, and only afterwards a chip they
+// have already learned to skip. The list reads as a current leaderboard for as
+// long as it takes to notice five identical chips.
+//
+// So the title changes with the content. "Measured exit liquidity" is a claim
+// about now; "Historical exit measurements" is a claim about the past, and only
+// one of them can be true of a rail where nothing is inside its window. The
+// badge sits beside it for the reader who scans headers and never reads prose,
+// and the row chips stay exactly as they were.
+// ---------------------------------------------------------------------------
+function RailHeading({
+  live,
+  historical,
+  allStale,
+  trailing,
+}: {
+  live: string;
+  historical: string;
+  allStale: boolean;
+  trailing?: React.ReactNode;
+}) {
+  return (
+    <div className="rph">
+      {allStale ? historical : live}
+      {allStale && <span className="pill a">STALE DATA</span>}
+      {trailing}
+    </div>
+  );
+}
+
 export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
   const { shown, outsideReference } = defaultRailLeadersV1(model.leaders);
   const visible = shown.slice(0, model.expanded ? RAIL_FULL_V1 : RAIL_TOP_V1);
@@ -288,13 +323,15 @@ export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
 
   return (
     <div className="rp">
-      <div className="rph">
-        {/* "Capacity" is the measurement's word. "Exit liquidity" is the thing
-            it measures, and "Measured" stays in front of it because the whole
-            rail is a claim about what was tested, not about what is available. */}
-        Measured exit liquidity
-        <span className="rt">{bpsLabelV1(model.toleranceBps)} exit slippage</span>
-      </div>
+      {/* "Capacity" is the measurement's word. "Exit liquidity" is the thing
+          it measures, and "Measured" stays in front of it because the whole
+          rail is a claim about what was tested, not about what is available. */}
+      <RailHeading
+        live="Measured exit liquidity"
+        historical="Historical exit measurements"
+        allStale={allStale}
+        trailing={<span className="rt">{bpsLabelV1(model.toleranceBps)} exit slippage</span>}
+      />
       <div className="rpb">
         <RailGuide summary="How this is ranked">
           <p>
@@ -373,13 +410,19 @@ export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
 
 export function B20MeasuredMoversCard(model: B20MarketRailsModelV1) {
   const visible = model.movers.slice(0, model.expanded ? RAIL_FULL_V1 : RAIL_TOP_V1);
+  // Same rule as the exit rail. A 24h comparison built from two readings that
+  // are both past their window is still useful evidence, and it is still not a
+  // live signal — "24h" in the title is what makes it read as one.
+  const allStale = visible.length > 0 && visible.every((mover) => mover.freshness === 'stale');
 
   return (
     <div className="rp">
-      <div className="rph">
-        24h Route Cost Changes
-        <span className="rt">Miorail quotes</span>
-      </div>
+      <RailHeading
+        live="24h Route Cost Changes"
+        historical="Historical route cost changes"
+        allStale={allStale}
+        trailing={<span className="rt">Miorail quotes</span>}
+      />
       <div className="rpb">
         {/* The server's own label and note, said once and verbatim. Shortening
             "24h change from Miorail measured quotes" to "24h" is exactly the
@@ -393,6 +436,12 @@ export function B20MeasuredMoversCard(model: B20MarketRailsModelV1) {
             freshness window: historical evidence, not a current quote. {MARKET_RAIL_DISCLAIMER_V1}
           </p>
         </RailGuide>
+        {allStale && (
+          <p className="note warn">
+            Both readings behind every change below are past their freshness window. This is a comparison
+            of past measurements, not a live move.
+          </p>
+        )}
         {model.loading ? (
           <RailEmpty>Reading measured quotes…</RailEmpty>
         ) : model.unavailableReason ? (

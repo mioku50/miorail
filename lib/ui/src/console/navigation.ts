@@ -41,8 +41,14 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
     // "Opportunities" describes the shape of the list, not what is in it. This
     // is the B20 launch feed, and Discover is what a user looking for new
     // tokens would scan for.
-    label: 'Discover',
-    compactLabel: 'Discover',
+    //
+    // "Discover B20" rather than "Discover", because the feed is not a general
+    // token scanner: every card is built around a token found through the
+    // pinned B20 factory. The card inside the page has said so for a while, and
+    // a reader who only sees the nav should not have to open it to find out
+    // which universe they are discovering.
+    label: 'Discover B20',
+    compactLabel: 'Discover B20',
     path: '/opportunities',
     blurb: 'Measured B20 launches, and what getting back out would cost.',
   },

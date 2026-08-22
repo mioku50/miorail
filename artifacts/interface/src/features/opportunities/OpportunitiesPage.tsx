@@ -210,7 +210,7 @@ export function OpportunitiesPage() {
   return (
     <ConsoleShell
       header={{
-        crumb: ['Discover'],
+        crumb: ['Discover B20'],
         nav: nav.header,
         onNavigate: nav.navigate,
         blockNumber: chainBlockNumberV1(status.data ?? null),

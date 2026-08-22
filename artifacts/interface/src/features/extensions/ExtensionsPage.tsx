@@ -75,6 +75,12 @@ export function ExtensionsPage() {
     (tool) => tool.surface === 'action' && tool.surfaceEnabled,
   ).length;
 
+  // Built once and handed to BOTH the rail and the console header, so the two
+  // cannot print different numbers for the same fifteen tools again.
+  const routingCounts = probe.data
+    ? { ...probe.data.routing, releasedActions: releasedActionTools }
+    : null;
+
   const readCatalogue = useCallback(() => {
     if (!enabled) return;
     setAskedOnce(true);
@@ -171,14 +177,7 @@ export function ExtensionsPage() {
                 }
               : null
           }
-          routingCounts={
-            probe.data
-              ? {
-                  ...probe.data.routing,
-                  releasedActions: releasedActionTools,
-                }
-              : null
-          }
+          routingCounts={routingCounts}
           plugins={plugins.plugins}
           drift={plugins.drift}
           generatedAt={plugins.generatedAt}
@@ -215,10 +214,7 @@ export function ExtensionsPage() {
                 ? { ...consoleAsk.data, action: reconcileAction.data }
                 : consoleAsk.data ?? null
             }
-            readTools={probe.data?.routing.read}
-            actionTools={probe.data?.routing.action}
-            releasedActionTools={probe.data ? releasedActionTools : undefined}
-            routableTools={probe.data?.routing.routable}
+            routing={routingCounts}
             reconcilingAction={reconcileAction.isPending}
             onOpenRoutes={(message) => {
               sessionStorage.setItem(GOAL_HANDOFF_KEY_V1, message);

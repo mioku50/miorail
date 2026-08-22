@@ -806,6 +806,7 @@ export function B20WatchPage() {
       )}
       {walletError && <p className="note warn">{walletError}</p>}
       <B20WatchScreen
+        now={new Date()}
         tokens={sweep.data?.tokens ?? []}
         holdings={holdings}
         console={{

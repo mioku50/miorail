@@ -1940,6 +1940,22 @@ export const BaseMcpConsoleResponseV1Schema = z.object({
   checkedAt: z.string(),
   handoff: BaseMcpHandoffV1Schema.nullable().default(null),
   action: BaseMcpActionEnvelopeV1Schema.nullable().default(null),
+  /**
+   * A link to the provider's own interface, built server-side from a code-owned
+   * registry keyed by the plugin the ROUTER resolved.
+   *
+   * The url is validated here as well as at the source. The model can write
+   * anything into `reply`; it can never write into this field, and a schema
+   * that accepted a bare string would make that distinction invisible to
+   * anyone reading the contract.
+   */
+  cta: z
+    .object({
+      label: z.string().min(1).max(80),
+      url: z.string().url().max(300).startsWith('https://'),
+    })
+    .nullable()
+    .default(null),
 });
 
 export const BaseMcpActionReconcileResponseV1Schema = BaseMcpActionEnvelopeV1Schema;
