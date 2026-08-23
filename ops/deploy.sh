@@ -107,7 +107,15 @@ fi
 step "2/7  dependencies"
 # --frozen-lockfile: a deploy that silently resolves a different tree is not a
 # deploy of the commit that was reviewed.
-as_service_user pnpm install --frozen-lockfile
+#
+# CI=true because this script runs detached, with no TTY. When the repository
+# pinned `packageManager`, Corepack fetched a pnpm that wanted to recreate
+# `node_modules` left by the previous one — and pnpm will not remove a modules
+# directory it did not write without confirming, so it aborted with
+# ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY and the deploy stopped between
+# source and build. A deploy IS a non-interactive context; saying so is not the
+# same as forcing anything, and `--frozen-lockfile` still decides the tree.
+as_service_user env CI=true pnpm install --frozen-lockfile
 
 step "3/7  build"
 # `pnpm -r build` runs each package's own build. For the interface that is
