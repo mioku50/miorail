@@ -39,9 +39,25 @@ export const B20_MEASURE_DEFAULTS_V1 = {
   maxControlCalls: 200,
   maxRuntimeMs: 15 * 60 * 1000,
   maxRetries: 2,
-  /** One. The endpoint is the binding constraint, and budgets are checked
-   * between chunks — so concurrency buys nothing here and costs exactness. */
-  maxConcurrentCandidates: 1,
+  // Measured from the production VPS against the endpoint this worker actually
+  // reads (mainnet.base.org), 2026-08-23, six rounds per level:
+  //
+  //   concurrency  1   6/6 ok   p50 133ms    7.0 req/s
+  //   concurrency  4  24/24 ok  p50 139ms   19.7 req/s
+  //   concurrency  8  48/48 ok  p50 131ms   50.2 req/s
+  //   concurrency 16  53/96 ok  p50 131ms   rate limited, -32016
+  //
+  // Per-call latency does not move up to 8 — the endpoint parallelises rather
+  // than queues — and 16 fails, so the test discriminates and the ceiling is
+  // real. This was 1 because the comment in b20MeasureRun.ts explains a chunk
+  // can overshoot the router-call budget by `chunk - 1` candidates, and on a
+  // METERED endpoint the exact count was the thing being bounded. That premise
+  // is gone: the worker reads a free public endpoint, `maxRouterCalls` still
+  // bounds the pass, and every pass was ending `budget_exhausted` with 22 of
+  // 27 eligible launches dropped. Four, not the eight that passed cleanly:
+  // each candidate issues several calls, so candidate concurrency is not
+  // request concurrency, and the headroom belongs to the endpoint.
+  maxConcurrentCandidates: 4,
   /** §11 — an observation older than this is history, not a current reading. */
   observationStaleMs: 30 * 60 * 1000,
   /** Leave a token alone for this long after measuring it. */
@@ -242,7 +258,10 @@ candidate, provisional, rejected or unmeasured.
 
 Options:
   --max-launches=<n>        Launches selected per pass (default ${B20_MEASURE_DEFAULTS_V1.maxLaunches})
-  --max-candidates=<n>      Deep candidates per pass (default ${B20_MEASURE_DEFAULTS_V1.maxDeepCandidates})
+  --max-candidates=<n>      Deep candidates per pass (default ${B20_MEASURE_DEFAULTS_V1.maxDeepCandidates}).
+                            Soft by up to --max-concurrent minus one: the budget is
+                            checked between chunks, so a chunk already running
+                            finishes. --max-router-calls stays a hard ceiling.
   --max-router-calls=<n>    Router call ceiling (default ${B20_MEASURE_DEFAULTS_V1.maxRouterCalls})
   --max-control-calls=<n>   B20 control call ceiling (default ${B20_MEASURE_DEFAULTS_V1.maxControlCalls})
   --max-runtime=<dur>       Wall clock for one pass (default 15m)

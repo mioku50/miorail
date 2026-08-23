@@ -418,9 +418,13 @@ export async function runB20MeasurePassV1(input: MeasurePassInputV1): Promise<Me
     let index = 0;
     while (index < eligible.length) {
       // Budgets are checked BETWEEN chunks. Within one chunk the router-call
-      // count can overshoot by at most `chunk - 1` candidates' worth, which is
-      // why the default concurrency is 1 — on a metered endpoint the exact
-      // count is the thing being bounded.
+      // count can overshoot by at most `chunk - 1` candidates' worth. That
+      // overshoot was why the default concurrency was 1: on a METERED endpoint
+      // the exact count is the thing being bounded. This worker reads a free
+      // public endpoint now, so an overshoot of a few calls costs nothing and
+      // `maxRouterCalls` still stops the pass. See the measurement recorded on
+      // `maxConcurrentCandidates` in b20MeasureCli.ts for the endpoint's real
+      // ceiling.
       if (
         input.now().getTime() > deadline ||
         outcome.routerCalls >= input.config.maxRouterCalls ||

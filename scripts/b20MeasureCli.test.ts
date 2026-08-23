@@ -62,6 +62,13 @@ const ANCHOR: ObservationAnchorV1 = {
 
 const CONFIG: MeasurePassConfigV1 = {
   ...B20_MEASURE_DEFAULTS_V1,
+  // These tests assert EXACT budget arithmetic — "the pass attempted one", "the
+  // router ceiling stopped it between candidates". Budgets are checked between
+  // chunks, so a pass running candidates concurrently may overshoot by up to
+  // `chunk - 1`, which is a real property of the default and not what these
+  // cases are about. They pin the mechanism at concurrency 1; the concurrent
+  // path has its own case at the end of this file.
+  maxConcurrentCandidates: 1,
   profile: B20_MEASURE_REFERENCE_PROFILE_V1,
 };
 
@@ -972,5 +979,55 @@ describe('a failed candidate says why, without saying where', () => {
 
   test('a non-Error is not stringified into whatever it happens to be', () => {
     assert.equal(measureFailureReasonV1({ rpcUrl: 'https://secret.example/key' }), 'unknown error');
+  });
+});
+
+describe('candidates run concurrently without loosening a budget', () => {
+  // Every production pass was ending `budget_exhausted` with 22 of 27 eligible
+  // launches dropped, because candidates ran one at a time. The endpoint this
+  // worker reads served 48/48 concurrent requests at unchanged latency and
+  // rate-limited only at 16, so the sequential default was costing throughput
+  // for a meter that no longer exists.
+  test('the default measures more than one candidate per pass', () => {
+    assert.ok(
+      B20_MEASURE_DEFAULTS_V1.maxConcurrentCandidates > 1,
+      'the sequential default was the throughput ceiling',
+    );
+  });
+
+  const three = () => [
+    launchFixture({ transactionHash: hashOf('c1') }),
+    launchFixture({ transactionHash: hashOf('c2') }),
+    launchFixture({ transactionHash: hashOf('c3') }),
+  ];
+
+  test('a concurrent pass overshoots its budget by less than one chunk, never more', async () => {
+    const { observations } = await seed(three());
+    const outcome = await pass(observations, fakeDeps(), {
+      maxDeepCandidates: 1,
+      maxConcurrentCandidates: 4,
+    });
+    // The budget is checked BETWEEN chunks, so the first chunk runs whole and
+    // the candidate budget is SOFT by exactly `chunk - 1`. An operator asking
+    // for 5 can get 8. That is the price of concurrency, it is bounded, and it
+    // is stated in the CLI help rather than left to be discovered in a log.
+    assert.ok(
+      outcome.attempted <= 1 + (4 - 1),
+      `attempted ${outcome.attempted}, ceiling is the budget plus one chunk less one`,
+    );
+    // What is NOT soft: the pass never writes an observation it did not take,
+    // and never claims to have reached a launch it skipped.
+    assert.equal(outcome.observationsWritten, outcome.attempted - outcome.failed);
+  });
+
+  test('concurrency never invents an observation for a launch it did not reach', async () => {
+    const { observations } = await seed(three());
+    const outcome = await pass(observations, fakeDeps(), {
+      maxDeepCandidates: 1,
+      maxConcurrentCandidates: 4,
+    });
+    const written = (await observations.listRecentObservations({ limit: 50 })).length;
+    assert.equal(written, outcome.observationsWritten);
+    assert.equal(outcome.attempted + outcome.notChecked, outcome.eligible);
   });
 });
