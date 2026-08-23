@@ -983,16 +983,15 @@ describe('a failed candidate says why, without saying where', () => {
 });
 
 describe('candidates run concurrently without loosening a budget', () => {
-  // Every production pass was ending `budget_exhausted` with 22 of 27 eligible
-  // launches dropped, because candidates ran one at a time. The endpoint this
-  // worker reads served 48/48 concurrent requests at unchanged latency and
-  // rate-limited only at 16, so the sequential default was costing throughput
-  // for a meter that no longer exists.
-  test('the default measures more than one candidate per pass', () => {
-    assert.ok(
-      B20_MEASURE_DEFAULTS_V1.maxConcurrentCandidates > 1,
-      'the sequential default was the throughput ceiling',
-    );
+  // Concurrency is configurable and the chunked path has to stay correct even
+  // though the default does not use it: an operator with a bigger endpoint
+  // budget can raise it, and these cases say what that does and does not
+  // loosen.
+  // The default is 1 and stays 1 until someone measures `eth_call` — not
+  // `eth_getBlockByNumber`, which is metered nothing alike — and shows the
+  // endpoint has room. Raising it once on the wrong method cost a revert.
+  test('the default stays sequential while the endpoint meters eth_call', () => {
+    assert.equal(B20_MEASURE_DEFAULTS_V1.maxConcurrentCandidates, 1);
   });
 
   const three = () => [

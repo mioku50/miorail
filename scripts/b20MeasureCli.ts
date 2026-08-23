@@ -39,25 +39,34 @@ export const B20_MEASURE_DEFAULTS_V1 = {
   maxControlCalls: 200,
   maxRuntimeMs: 15 * 60 * 1000,
   maxRetries: 2,
-  // Measured from the production VPS against the endpoint this worker actually
-  // reads (mainnet.base.org), 2026-08-23, six rounds per level:
-  //
-  //   concurrency  1   6/6 ok   p50 133ms    7.0 req/s
-  //   concurrency  4  24/24 ok  p50 139ms   19.7 req/s
-  //   concurrency  8  48/48 ok  p50 131ms   50.2 req/s
-  //   concurrency 16  53/96 ok  p50 131ms   rate limited, -32016
-  //
-  // Per-call latency does not move up to 8 — the endpoint parallelises rather
-  // than queues — and 16 fails, so the test discriminates and the ceiling is
-  // real. This was 1 because the comment in b20MeasureRun.ts explains a chunk
-  // can overshoot the router-call budget by `chunk - 1` candidates, and on a
-  // METERED endpoint the exact count was the thing being bounded. That premise
-  // is gone: the worker reads a free public endpoint, `maxRouterCalls` still
-  // bounds the pass, and every pass was ending `budget_exhausted` with 22 of
-  // 27 eligible launches dropped. Four, not the eight that passed cleanly:
-  // each candidate issues several calls, so candidate concurrency is not
-  // request concurrency, and the headroom belongs to the endpoint.
-  maxConcurrentCandidates: 4,
+  /**
+   * One. Not a leftover — measured, twice, the second time correctly.
+   *
+   * The first probe raised this to 4 on evidence from `eth_getBlockByNumber`:
+   * 48/48 concurrent at unchanged latency, rate-limited only at 16. That was
+   * the wrong method. This worker's traffic is `eth_call`, and base.org meters
+   * the two nothing alike. Measured from a clean IP, 20 calls per level:
+   *
+   *     1 call / 2000ms  (0.5/s)   20/20   100%
+   *     1 call / 1000ms  (1.0/s)   14/20    70%
+   *     1 call /  500ms  (2.0/s)   11/20    55%
+   *     1 call /  200ms  (5.0/s)   10/20    50%
+   *
+   * `eth_call` sustains about half a call per second and degrades steeply
+   * above it. Batching does not lift it — the meter counts calls, not HTTP
+   * requests (batch of 5: 40% ok; batch of 10: 20%; batch of 20 is refused,
+   * `-32014 maximum 10 calls in 1 batch`).
+   *
+   * The arithmetic closes: production writes ~168 observations/hour with a
+   * steady 19% `route_search_degraded`, which is exactly where the 1/s row
+   * above sits. The worker is already running at the endpoint's ceiling, so
+   * candidate concurrency multiplies the call rate into the 50% band and buys
+   * fewer measurements, not more.
+   *
+   * Raising this is not a throughput fix. Fewer calls per candidate, a
+   * narrower universe, or an endpoint with a bigger eth_call budget are.
+   */
+  maxConcurrentCandidates: 1,
   /** §11 — an observation older than this is history, not a current reading. */
   observationStaleMs: 30 * 60 * 1000,
   /** Leave a token alone for this long after measuring it. */
