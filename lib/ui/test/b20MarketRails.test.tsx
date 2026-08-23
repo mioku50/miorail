@@ -133,7 +133,7 @@ describe('§4 — measured profile misses remain visible and are said plainly', 
     // The reference is named once, under the header, and the count of measured
     // profiles above it comes with it. It used to be repeated under every
     // value, which is what made a five-row rail unreadable.
-    assert.match(markup, /Round-trip cost in amber is above the feed’s 3% reference/);
+    assert.match(markup, /buy-in and sell-back cost in amber is above the feed’s 3% reference/);
     assert.match(markup, /1 of the measured profiles here is above that reference/);
     assert.equal((markup.match(/above the feed’s 3% reference/g) ?? []).length, 1);
   });
@@ -317,7 +317,7 @@ describe('§8 — every rail figure is named, and every bound survives', () => {
       leaders: [leader(ADDRESSES[0]!), leader(ADDRESSES[1]!), leader(ADDRESSES[2]!)],
     });
     assert.match(markup, /Largest tested exit/);
-    assert.match(markup, /Round-trip cost/);
+    assert.match(markup, /Buy in, sell back/);
     assert.match(markup, /Freshness/);
     assert.match(markup, /≥ 4000 tokens/);
     // Three rows, one explanation. The rail used to carry a qualifier under
@@ -342,7 +342,7 @@ describe('§8 — every rail figure is named, and every bound survives', () => {
     const markup = renderLeaders({
       leaders: [leader(ADDRESSES[0]!, { optimisticRoundTripBps: null })],
     });
-    assert.match(markup, /Round-trip cost/);
+    assert.match(markup, /Buy in, sell back/);
     assert.match(markup, /not measured/);
     assert.ok(!/>0%</.test(markup), 'an unmeasured round trip rendered as zero');
   });

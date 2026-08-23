@@ -167,6 +167,40 @@ export function b20PercentLabelV1(bps: number): string {
 }
 
 /**
+ * The kinds where a measured round trip IS the answer the reader came for.
+ *
+ * Both mean a purchase and a sale priced against the same pool. They differ
+ * only in whether the cost sat above a threshold this product chose, and that
+ * difference had taken over the sentence: "Entry and exit were both priced"
+ * describes the PROCESS, while the number the reader came for sat two rows
+ * down under an engineering label. Measured on the live 48-hour feed on
+ * 2026-08-23, 190 of the 197 launches with both directions priced were
+ * carrying a measured cost and leading with the process instead.
+ */
+const ROUND_TRIP_HEADLINE_KINDS_V1: ReadonlySet<B20ExitStandingKindV1> = new Set([
+  'two_sided',
+  'ruled_out',
+]);
+
+/**
+ * The headline when a round trip priced, or null to keep the kind's constant.
+ *
+ * Two things this sentence must not do. It must not say "getting out cost X":
+ * the measurement is a ROUND TRIP, so X covers buying in as well, and hanging
+ * the whole figure on the exit would be a true number placed where a reader
+ * infers a false one. And it must stay in the past tense — this is what one
+ * measurement cost at one moment, not what a sale will cost now. Freshness is
+ * its own fact and says how old that moment is.
+ */
+function roundTripHeadlineV1(
+  kind: B20ExitStandingKindV1,
+  roundTripBps: number | null,
+): string | null {
+  if (roundTripBps === null || !ROUND_TRIP_HEADLINE_KINDS_V1.has(kind)) return null;
+  return `Buying in and selling back cost ${b20PercentLabelV1(roundTripBps)}.`;
+}
+
+/**
  * The consumer projection.
  *
  * Total over the standing kinds by construction:
@@ -175,13 +209,16 @@ export function b20PercentLabelV1(bps: number): string {
  */
 export function b20ConsumerCardV1(input: B20ConsumerCardInputV1): B20ConsumerCardV1 {
   const copy = B20_CONSUMER_STANDING_COPY_V1[input.standing.kind];
+  const measuredHeadline = roundTripHeadlineV1(input.standing.kind, input.roundTripBps);
   const facts: B20ConsumerFactV1[] = [];
 
   // Round-trip first when it exists: it is the number the reader came for, and
   // on a `ruled_out` card it is the whole reason the card looks different.
   if (input.roundTripBps !== null) {
     facts.push({
-      label: 'Round-trip cost',
+      // Not "Round-trip cost". The row names the two things a person does,
+      // in the order they do them, so the figure needs no glossary.
+      label: 'Buy in, sell back',
       value: b20PercentLabelV1(input.roundTripBps),
       note:
         input.referenceBps === null
@@ -237,7 +274,9 @@ export function b20ConsumerCardV1(input: B20ConsumerCardInputV1): B20ConsumerCar
   return {
     status: copy.status,
     tone: copy.tone,
-    headline: copy.headline,
+    // The measured cost wins over the kind's constant when there is one; the
+    // constant stays the fallback, so a kind with no round trip is unchanged.
+    headline: measuredHeadline ?? copy.headline,
     body: copy.body,
     // Four is the ceiling for a collapsed card; the rest stays in the evidence
     // sections, which lost nothing.

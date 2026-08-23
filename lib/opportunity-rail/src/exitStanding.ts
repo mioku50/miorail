@@ -279,10 +279,15 @@ export function b20ExitStandingV1(input: B20ExitStandingInputV1): B20ExitStandin
   }
 
   if (observation.state === 'rejected') {
+    // The headline used to lead with "a reference check failed" — a PROCESS
+    // outcome — on 190 of the 197 launches that had actually priced a round
+    // trip. What was measured is the same thing `two_sided` measured; only the
+    // comparison against a threshold this product chose came out differently,
+    // and that belongs in the detail beside the threshold's own name.
     return {
       kind: 'ruled_out',
-      headline: 'Buying and selling both priced, but a reference check failed.',
-      detail: `Both directions quoted. The launch was still ruled out for the feed's reference profile${observation.reasonCode ? ` (${observation.reasonCode})` : ''}. ${NOT_A_RECOMMENDATION_V1}`,
+      headline: 'Buying and selling back were both priced.',
+      detail: `Both directions quoted against the same measured pool. The round-trip cost sat above the ceiling in the feed's reference profile${observation.reasonCode ? ` (${observation.reasonCode})` : ''}, which is a threshold Miorail set for this feed rather than a fault found in the token. ${NOT_A_RECOMMENDATION_V1}`,
       aboutToken: true,
     };
   }

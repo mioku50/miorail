@@ -245,10 +245,12 @@ function roundTripFactV1(input: {
   profileStatus: string;
 }): RailFactV1 {
   if (input.optimisticRoundTripBps === null) {
-    return { label: 'Round-trip cost', value: 'not measured', mark: null, tone: 'off' };
+    return { label: 'Buy in, sell back', value: 'not measured', mark: null, tone: 'off' };
   }
   return {
-    label: 'Round-trip cost',
+    // One name for one number. The consumer card calls it the same thing; two
+    // labels on one screen make a reader look for two measurements.
+    label: 'Buy in, sell back',
     value: bpsLabelV1(input.optimisticRoundTripBps),
     mark: null,
     tone: input.profileStatus === 'outside_round_trip_reference' ? 'warn' : 'plain',
@@ -338,7 +340,7 @@ export function B20ExitCapacityLeadersCard(model: B20MarketRailsModelV1) {
             Ordered only by measured exit coverage relative to one Miorail reference entry, within{' '}
             {bpsLabelV1(model.toleranceBps)} slippage. Largest tested exit is a lower bound: it is the biggest
             size that passed, nothing above it was tested, and nothing between it and the first failing size was
-            measured either. Round-trip cost in amber is above the feed’s {bpsLabelV1(model.toleranceBps)}{' '}
+            measured either. The buy-in and sell-back cost in amber is above the feed’s {bpsLabelV1(model.toleranceBps)}{' '}
             reference; the measurement stays on the rail rather than being hidden by it.
             {outsideReference > 0
               ? ` ${outsideReference} of the measured profiles here ${outsideReference === 1 ? 'is' : 'are'} above that reference.`

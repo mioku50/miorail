@@ -112,8 +112,11 @@ describe('the nine cases a reader actually meets', () => {
     const view = card({ standing: { kind: 'two_sided', aboutToken: true }, roundTripBps: 210 });
     assert.equal(view.status, 'Both routes measured');
     assert.equal(view.tone, 'measured');
-    assert.match(view.headline, /both priced/i);
-    const cost = view.facts.find((fact) => fact.label === 'Round-trip cost');
+    // Superseded premise: this asserted /both priced/, which is the PROCESS.
+    // A card that priced a round trip now leads with what it cost, and the
+    // "both directions" fact moved to the status chip asserted above.
+    assert.match(view.headline, /2\.10%/);
+    const cost = view.facts.find((fact) => fact.label === 'Buy in, sell back');
     assert.equal(cost?.value, '2.10%');
     assert.equal(cost?.note, 'within 3% reference');
   });
@@ -126,7 +129,7 @@ describe('the nine cases a reader actually meets', () => {
     const two = card({ standing: { kind: 'two_sided', aboutToken: true }, roundTripBps: 210 });
     assert.equal(ruled.status, two.status);
     assert.equal(ruled.tone, two.tone);
-    const cost = ruled.facts.find((fact) => fact.label === 'Round-trip cost');
+    const cost = ruled.facts.find((fact) => fact.label === 'Buy in, sell back');
     assert.equal(cost?.value, '4.38%');
     assert.equal(cost?.note, 'above 3% reference');
     // And the body says whose threshold it was.
@@ -204,7 +207,7 @@ describe('the nine cases a reader actually meets', () => {
 describe('null is unknown, and never renders as zero', () => {
   test('a null round trip omits the row rather than printing 0%', () => {
     const view = card({ roundTripBps: null });
-    assert.equal(view.facts.some((fact) => fact.label === 'Round-trip cost'), false);
+    assert.equal(view.facts.some((fact) => fact.label === 'Buy in, sell back'), false);
   });
 
   test('a null buyer count omits the row rather than printing 0', () => {
@@ -222,7 +225,7 @@ describe('null is unknown, and never renders as zero', () => {
 
   test('a missing reference leaves the cost unqualified rather than guessing one', () => {
     const view = card({ roundTripBps: 438, referenceBps: null });
-    assert.equal(view.facts.find((fact) => fact.label === 'Round-trip cost')?.note, null);
+    assert.equal(view.facts.find((fact) => fact.label === 'Buy in, sell back')?.note, null);
   });
 
   test('a lower-bound capacity is never presented as a measured ceiling', () => {
@@ -274,5 +277,58 @@ describe('the projection agrees with the standing it is built from', () => {
     });
     assert.equal(standing.kind, 'bought_not_sellable');
     assert.equal(card({ standing, buyerCount: 3 }).tone, 'finding');
+  });
+});
+
+describe('the measured cost is the sentence', () => {
+  // The product measures the one number a person came for and used to spend
+  // the headline on the process that produced it. 190 of the 197 launches with
+  // both directions priced in the live 48-hour window on 2026-08-23 carried a
+  // measured cost while their headline talked about a reference check.
+  test('a priced round trip becomes the headline', () => {
+    const ruled = card({ standing: { kind: 'ruled_out', aboutToken: true }, roundTripBps: 440 });
+    const two = card({ standing: { kind: 'two_sided', aboutToken: true }, roundTripBps: 210 });
+    assert.match(ruled.headline, /4\.40%/);
+    assert.match(two.headline, /2\.10%/);
+  });
+
+  // The measurement is a round trip. Attributing the whole figure to the exit
+  // would be a true number placed where the reader infers a false one.
+  test('the headline never blames the cost on the exit alone', () => {
+    const view = card({ standing: { kind: 'ruled_out', aboutToken: true }, roundTripBps: 440 });
+    assert.match(view.headline, /buying in and selling back/i);
+    assert.doesNotMatch(view.headline, /getting out cost|exit cost|cost to exit/i);
+  });
+
+  // Past tense: this is what one measurement cost at one moment.
+  test('the headline does not promise a future sale', () => {
+    const view = card({ standing: { kind: 'ruled_out', aboutToken: true }, roundTripBps: 440 });
+    assert.match(view.headline, /\bcost\b/);
+    assert.doesNotMatch(view.headline, /\bcosts\b|\bwill\b|\byou can\b/i);
+  });
+
+  // No round trip, no number — the kind's own sentence still stands.
+  test('a kind with no priced round trip keeps its constant headline', () => {
+    const noPrice = card({ standing: { kind: 'ruled_out', aboutToken: true }, roundTripBps: null });
+    assert.doesNotMatch(noPrice.headline, /%/);
+    assert.equal(noPrice.headline, 'Entry and exit were both priced.');
+  });
+
+  // A cost must never surface on a card that did not price both directions,
+  // and never on one describing Miorail's own limits.
+  test('only the two priced kinds ever take a measured headline', () => {
+    for (const kind of B20_EXIT_STANDING_KINDS_V1) {
+      if (kind === 'two_sided' || kind === 'ruled_out') continue;
+      const view = card({ standing: { kind, aboutToken: false }, roundTripBps: 440 });
+      assert.doesNotMatch(view.headline, /4\.40%/, `${kind} took a round-trip headline`);
+    }
+  });
+
+  // The threshold is still stated, just no longer as the headline.
+  test('the reference qualifier survives beside the number', () => {
+    const view = card({ standing: { kind: 'ruled_out', aboutToken: true }, roundTripBps: 440, referenceBps: 300 });
+    const fact = view.facts.find((f) => f.label === 'Buy in, sell back');
+    assert.equal(fact?.value, '4.40%');
+    assert.match(fact?.note ?? '', /above 3% reference/);
   });
 });
