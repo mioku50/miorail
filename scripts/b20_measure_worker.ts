@@ -139,6 +139,14 @@ async function main(): Promise<number> {
           // identical failures with no reason read as ten bad tokens.
           ...(outcome.failureReasons.length > 0 ? { failureReasons: outcome.failureReasons } : {}),
           budgetExhausted: outcome.budgetExhausted,
+          // The endpoint's meter is the product's binding constraint and it
+          // was invisible here: `mainnet.base.org` sustains roughly half an
+          // `eth_call` per second from one IP, and 19% of observations were
+          // landing on `route_search_degraded` because the pass runs at that
+          // ceiling. The pass already counted both; not printing them meant
+          // the only way to learn the rate was to probe the endpoint by hand.
+          routerCalls: outcome.routerCalls,
+          controlCalls: outcome.controlCalls,
           byState: outcome.byState,
         }),
       );

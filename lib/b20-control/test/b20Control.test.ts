@@ -10,6 +10,7 @@ import {
   B20_FACTORY_V1,
   B20_FEATURE_KEYS_V1,
   B20_MAX_BATCH_SIZE_V1,
+  B20_THROTTLED_GAP_CEILING_MS_V1,
   B20_THROTTLED_GAP_MS_V1,
   B20_SELECTORS_V1,
   b20TokenIdentityHashV1,
@@ -813,6 +814,29 @@ describe('many reads cost few round trips, and none of them changes an answer', 
       waits.some((ms) => ms >= B20_THROTTLED_GAP_MS_V1 * 8 * 0.9),
       `expected a wait scaled by the call count, got ${waits.join(', ')}`,
     );
+  });
+
+  test('a reader that keeps being refused paces down to the measured rate', async () => {
+    // The ceiling was 1,000ms, so a throttled reader could never pace below
+    // one call a second — and mainnet.base.org serves one call a second at
+    // 70%. A brake that bottoms out above the rate that works never stops the
+    // refusals, and every refusal is retried out of the same allowance.
+    //
+    // `maxRetries: 0` on purpose: retry backoff and the pacing gap both go
+    // through `sleepImpl`, and only the second one is under test here.
+    const waits: number[] = [];
+    const reader = createB20ReaderV1({
+      rpcUrl: 'https://rpc.example/key',
+      maxRetries: 0,
+      fetchImpl: async () => new Response('', { status: 429 }),
+      sleepImpl: async (ms) => {
+        waits.push(ms);
+      },
+    });
+    for (let i = 0; i < 8; i += 1) await reader.readIsB20(TOKEN, '0x1');
+    const paced = Math.max(0, ...waits);
+    assert.ok(paced > 1_000, `the gap never passed the old 1,000ms ceiling: ${waits.join(', ')}`);
+    assert.equal(paced, B20_THROTTLED_GAP_CEILING_MS_V1, 'the gap must stop at its ceiling');
   });
 
   test('a healthy endpoint is never paced, so batching costs it nothing', async () => {

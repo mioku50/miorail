@@ -79,6 +79,33 @@ export const B20_MAX_BATCH_SIZE_V1 = 10;
  */
 export const B20_THROTTLED_GAP_MS_V1 = 400;
 
+/**
+ * The slowest the adaptive gap may become, per call.
+ *
+ * This was 1,000ms inline, so a throttled reader could never pace below one
+ * call a second. Measured against `mainnet.base.org` on 2026-08-23 from a
+ * clean IP, 20 `eth_call` per level:
+ *
+ *     one call / 2000ms  (0.5/s)   20/20   100%
+ *     one call / 1000ms  (1.0/s)   14/20    70%
+ *     one call /  500ms  (2.0/s)   11/20    55%
+ *
+ * The old ceiling sat exactly one doubling short of the rate that works, and
+ * the shortfall compounds: a refused call is retried, the retry spends the
+ * same allowance, and the brake has already bottomed out. A separate probe
+ * driving at 1/s spent 36 calls to get 25 answers — so the endpoint was
+ * actually being asked for ~1.44 calls a second while the pacer believed it
+ * had slowed to one.
+ *
+ * Raising the floor is close to throughput-neutral in CALLS and positive in
+ * completed MEASUREMENTS, which is the unit that matters: a measurement that
+ * degrades discards every call it already spent. Production ran a steady 19%
+ * `route_search_degraded`, and that is what this is aimed at.
+ *
+ * A keyed endpoint never trips the gap at all and pays nothing for this.
+ */
+export const B20_THROTTLED_GAP_CEILING_MS_V1 = 2_000;
+
 export interface B20BatchCallV1 {
   to: string;
   data: string;
@@ -250,7 +277,7 @@ export function createB20ReaderV1(config: B20ReaderConfigV1): B20ReaderV1 {
   let lastRequestAt = 0;
 
   function noteThrottled(): void {
-    gapMs = Math.min(gapMs === 0 ? B20_THROTTLED_GAP_MS_V1 : gapMs * 2, 1_000);
+    gapMs = Math.min(gapMs === 0 ? B20_THROTTLED_GAP_MS_V1 : gapMs * 2, B20_THROTTLED_GAP_CEILING_MS_V1);
   }
   function noteServed(): void {
     gapMs = gapMs <= 120 ? 0 : Math.floor(gapMs / 2);
