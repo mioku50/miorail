@@ -37,12 +37,14 @@ export interface B20ConsolePlanResolutionV1 {
 }
 
 const OUTPUT_KEYS_V1 = ['intent', 'confidence'] as const;
-// Grok 4.5 is the production primary. Its hidden reasoning makes even this
-// small classification take 10–16 seconds in ordinary runs (measured against
-// TokenForge on 2026-08-20), so the old six-second ceiling turned correct
-// answers into `semantic_classifier_invalid_or_timed_out`. Known phrases and
-// every address bypass the classifier; this budget is spent only on the old
-// silent-fallback path.
+// Sized for a reasoning model, not for the fastest one configured today. Hidden
+// reasoning made even this small classification take 10–16 seconds in ordinary
+// runs (measured on the production gateway, 2026-08-20), so the old six-second
+// ceiling turned correct answers into `semantic_classifier_invalid_or_timed_out`.
+// Which model serves that lane changes without notice — the ceiling stays
+// generous rather than being retuned per model. Known phrases and every address
+// bypass the classifier; this budget is spent only on the old silent-fallback
+// path.
 const SEMANTIC_TIMEOUT_MS_V1 = 20_000;
 const MIN_CONFIDENCE_V1 = 0.72;
 

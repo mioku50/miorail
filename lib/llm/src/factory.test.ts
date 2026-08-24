@@ -272,7 +272,7 @@ test('createStructuredLlmProvider', async (t) => {
     process.env.LLM_PROVIDER = 'openai-compatible';
     process.env.LLM_BASE_URL = 'https://primary.example/v1';
     process.env.LLM_API_KEY = 'primary-key';
-    process.env.LLM_MODEL = 'grok-4.5';
+    process.env.LLM_MODEL = 'deepseek-v4-pro';
     assert.ok(createStructuredLlmProvider() instanceof OpenAiCompatibleClient);
   });
 

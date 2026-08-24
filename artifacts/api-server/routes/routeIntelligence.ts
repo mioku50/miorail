@@ -360,7 +360,7 @@ export const routePlanRouteRuntime = {
       });
     const coordinator = new RoutePlanCoordinator({
       // RouteIntentV2 extraction is a short, closed JSON contract. Keep it on
-      // the structured lane; Grok remains the primary narrator/reasoner.
+      // the structured lane; the primary lane remains the narrator/reasoner.
       llm: createStructuredLlmProvider(),
       // T67C.1 Part 2: supplied ONLY when the flag is on. Absent means the
       // snapshot reader is never called, no reliability evidence is created,

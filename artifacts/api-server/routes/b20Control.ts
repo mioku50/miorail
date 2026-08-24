@@ -339,7 +339,8 @@ export const b20RouteRuntime = {
   },
   /** Closed-enum intent classification is separate from evidence narration.
    * This keeps the quick Mistral lane away from user-facing conclusions while
-   * Grok remains available to explain the already-built fact bundle. */
+   * the primary lane remains available to explain the already-built fact
+   * bundle. */
   classifier: (): LlmProvider | null => {
     try {
       return createStructuredLlmProvider();
