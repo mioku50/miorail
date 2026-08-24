@@ -141,73 +141,73 @@ export function createDatabaseB20ObservationRepository(
     async selectMeasurableLaunches(input) {
       const now = new Date(input.now).toISOString();
       const oldest = new Date(Date.parse(input.now) - input.maxLaunchAgeMs).toISOString();
-      // One cutoff per backoff class rather than one for everything. The class
-      // is chosen in SQL because the choice depends on `repeats`, which only
-      // the database can count — but the reason lists and the durations come
-      // from the shared policy, so this query and the in-memory repository
+      // One interval per backoff class rather than one for everything. The
+      // class is chosen in SQL because the choice depends on `repeats`, which
+      // only the database can count — but the reason lists and the durations
+      // come from the shared policy, so this query and the in-memory repository
       // cannot drift apart on what a rejection means.
       const backoff = { ...B20_MEASUREMENT_BACKOFF_V1, baseMs: input.minReMeasureIntervalMs };
-      const cutoff = (ms: number) => new Date(Date.parse(input.now) - ms).toISOString();
-      const baseCutoff = cutoff(backoff.baseMs);
       // `canonical` is in the WHERE clause, not filtered afterwards: a launch
       // the chain took back is not a token anybody should be shown a
       // measurement of, and a filter applied later is a filter that can be
       // forgotten.
       const rows = await sql`
-        SELECT l.id, l.token_address, l.block_number, l.block_hash, l.detected_at,
-               l.ingestion_source, o.last_measured_at
-        FROM b20_launches l
-        LEFT JOIN LATERAL (
-          SELECT last.measured_at AS last_measured_at,
-                 last.state       AS last_state,
-                 last.reason_code AS last_reason_code,
-                 -- Consecutive, not total: everything newer than the most
-                 -- recent observation that said something different. A token
-                 -- that flipped back to provisional and then rejected again
-                 -- starts its count over, which is the point.
-                 (
-                   SELECT count(*)
-                   FROM b20_opportunity_observations r
-                   WHERE r.launch_id = l.id
-                     AND r.measured_at > COALESCE((
-                       SELECT max(x.measured_at)
-                       FROM b20_opportunity_observations x
-                       WHERE x.launch_id = l.id
-                         AND (x.state IS DISTINCT FROM last.state
-                              OR x.reason_code IS DISTINCT FROM last.reason_code)
-                     ), '-infinity'::timestamptz)
-                 ) AS repeats
-          FROM b20_opportunity_observations last
-          WHERE last.launch_id = l.id
-          ORDER BY last.measured_at DESC, last.id DESC
-          LIMIT 1
-        ) o ON true
-        WHERE l.canonical
-          AND l.chain_id = 8453
-          AND l.detected_at >= ${oldest}::timestamptz
-          AND l.detected_at <= ${now}::timestamptz
-          AND (
-            o.last_measured_at IS NULL
-            OR o.last_measured_at < (
-              CASE
-                WHEN o.last_state <> 'rejected' THEN ${baseCutoff}::timestamptz
-                WHEN o.last_reason_code = ANY(${[...B20_REPRICEABLE_REJECTIONS_V1]}::text[])
-                  THEN ${cutoff(backoff.repriceableMs)}::timestamptz
-                WHEN o.last_reason_code = ANY(${[...B20_ROUTE_EXISTENCE_REJECTIONS_V1]}::text[])
-                  THEN CASE
-                         WHEN o.repeats >= ${backoff.settledAfterRepeats}
-                           THEN ${cutoff(backoff.settledMs)}::timestamptz
-                         ELSE ${cutoff(backoff.settlingMs)}::timestamptz
-                       END
-                ELSE ${baseCutoff}::timestamptz
-              END
-            )
-          )
-        -- Live first, then newest FOUND within each group.
-        --
-        -- The second key is the original one: Discover lists launches
-        -- newest-first, so oldest-first made the top of the home screen the
-        -- part the worker reached last.
+        SELECT q.id, q.token_address, q.block_number, q.block_hash, q.detected_at,
+               q.ingestion_source, q.last_measured_at
+        FROM (
+          SELECT l.id, l.token_address, l.block_number, l.block_hash, l.detected_at,
+                 l.ingestion_source, o.last_measured_at,
+                 CASE
+                   WHEN o.last_measured_at IS NULL THEN ${backoff.baseMs}
+                   WHEN o.last_state <> 'rejected' THEN ${backoff.baseMs}
+                   WHEN o.last_reason_code = ANY(${[...B20_REPRICEABLE_REJECTIONS_V1]}::text[])
+                     THEN ${backoff.repriceableMs}
+                   WHEN o.last_reason_code = ANY(${[...B20_ROUTE_EXISTENCE_REJECTIONS_V1]}::text[])
+                     THEN CASE
+                            WHEN o.repeats >= ${backoff.settledAfterRepeats} THEN ${backoff.settledMs}
+                            ELSE ${backoff.settlingMs}
+                          END
+                   ELSE ${backoff.baseMs}
+                 -- Cast once, here: every branch above is a bound parameter,
+                 -- which postgres-js sends as text, and numeric / text has no
+                 -- operator. The in-memory repository divides numbers and could
+                 -- never have caught it.
+                 END::bigint AS interval_ms
+          FROM b20_launches l
+          LEFT JOIN LATERAL (
+            SELECT last.measured_at AS last_measured_at,
+                   last.state       AS last_state,
+                   last.reason_code AS last_reason_code,
+                   -- Consecutive, not total: everything newer than the most
+                   -- recent observation that said something different. A token
+                   -- that flipped back to provisional and then rejected again
+                   -- starts its count over, which is the point.
+                   (
+                     SELECT count(*)
+                     FROM b20_opportunity_observations r
+                     WHERE r.launch_id = l.id
+                       AND r.measured_at > COALESCE((
+                         SELECT max(x.measured_at)
+                         FROM b20_opportunity_observations x
+                         WHERE x.launch_id = l.id
+                           AND (x.state IS DISTINCT FROM last.state
+                                OR x.reason_code IS DISTINCT FROM last.reason_code)
+                       ), '-infinity'::timestamptz)
+                   ) AS repeats
+            FROM b20_opportunity_observations last
+            WHERE last.launch_id = l.id
+            ORDER BY last.measured_at DESC, last.id DESC
+            LIMIT 1
+          ) o ON true
+          WHERE l.canonical
+            AND l.chain_id = 8453
+            AND l.detected_at >= ${oldest}::timestamptz
+            AND l.detected_at <= ${now}::timestamptz
+        ) q
+        WHERE q.last_measured_at IS NULL
+           OR q.last_measured_at < ${now}::timestamptz - (q.interval_ms || ' milliseconds')::interval
+        -- Live first, then the brand-new band, then by how far past its OWN
+        -- interval a launch is.
         --
         -- The first key exists because a backfill writes detected_at = now()
         -- — truthfully, since that is when Miorail found the row — which makes
@@ -216,7 +216,41 @@ export function createDatabaseB20ObservationRepository(
         -- detected_at alone, filling it would put all of them ahead of every
         -- live launch and starve the thing the worker exists for. Repairing
         -- history must not cost the present.
-        ORDER BY (l.ingestion_source = 'live') DESC, l.detected_at DESC, l.id DESC
+        --
+        -- The other two replace a plain "detected_at DESC", and the premise
+        -- that justified newest-first is what changed. It was written when
+        -- launches arrived at 8-28/hour against ~200 measurements/hour: the
+        -- newest were covered within minutes and the surplus walked backwards
+        -- through the backlog. Measured 2026-08-24: ~54 launches/hour against
+        -- 168 measurements/hour, because one measurement now costs 10-12
+        -- eth_call and the endpoint meters ~0.5/s. At 3x rather than 7x, the
+        -- surplus never reaches the back, and newest-first spent it by AGE:
+        -- 237 of 2,603 launches in the window had never been measured at all,
+        -- the tokens a reader actually opens (a buyer, or a priced exit) sat
+        -- at a median of 13.6 hours since their last reading, and 131 launches
+        -- whose only reading was OUR failed read were never retried.
+        --
+        -- Urgency is (now - last measured) / that launch's own interval, so
+        -- it is comparable across classes: 1.0 is exactly due, 3.0 is three
+        -- intervals late. A settled no_exit_route on a 24-hour interval
+        -- cannot pass a two-sided token on a 20-minute one without being 72x
+        -- more overdue, which inside a 48-hour window it can never be. A
+        -- never-measured launch counts from detected_at, so the class that
+        -- has no verdict at all rises fastest — and that set is finite, so it
+        -- drains instead of holding the front.
+        --
+        -- The brand-new band keeps discovery intact: an unmeasured launch
+        -- younger than one base interval has an urgency near zero and would
+        -- otherwise queue behind every stale row in the window. It is bounded
+        -- by the arrival rate — about 18 launches at any moment — so it costs
+        -- the rest of the queue minutes, not budget.
+        ORDER BY (q.ingestion_source = 'live') DESC,
+                 (q.last_measured_at IS NULL
+                  AND q.detected_at >= ${now}::timestamptz
+                      - (${backoff.baseMs} || ' milliseconds')::interval) DESC,
+                 (EXTRACT(EPOCH FROM (${now}::timestamptz - COALESCE(q.last_measured_at, q.detected_at)))
+                   * 1000 / q.interval_ms) DESC,
+                 q.detected_at DESC, q.id DESC
         LIMIT ${Math.max(1, Math.min(500, input.limit))}`;
       return rows.map((row): B20MeasurableLaunchV1 => {
         const record = row as Record<string, unknown>;

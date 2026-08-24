@@ -732,6 +732,135 @@ export function describeB20ObservationRepositoryV1(
     });
   });
 
+  describe(`${name}: a scarce budget goes to the most overdue, not the newest`, () => {
+    // Measured on production, 2026-08-24. Newest-first was correct while
+    // launches arrived at 8-28/hour against ~200 measurements/hour: the newest
+    // were covered within minutes and the surplus walked backwards through the
+    // backlog. A measurement now costs 10-12 `eth_call` and the endpoint meters
+    // ~0.5/s, so it is ~54 launches/hour against 168 measurements/hour. At 3x
+    // instead of 7x the surplus never reaches the back, and ordering by
+    // detection age spent the shortfall on the oldest of everything: 237 of
+    // 2,603 launches in the window had never been measured at all, and the
+    // tokens a reader opens — a buyer, or a priced exit — sat at a median of
+    // 13.6 hours since their last reading.
+    //
+    // The fix is not a bigger budget, which the endpoint will not sell. It is
+    // to spend the budget by how far past its OWN interval each launch is.
+    const HOUR = 3_600_000;
+    const at = (ms: number) => new Date(Date.parse(T0) + ms).toISOString();
+
+    async function seedMeasured(
+      harness: B20ObservationHarnessV1,
+      input: {
+        seed: string;
+        detectedAtMs: number;
+        history?: { atMs: number; state: string; reasonCode: string }[];
+      },
+    ): Promise<string> {
+      const tokenAddress = `0xb2${input.seed.repeat(38).slice(0, 38)}`;
+      const launchId = `${observationHashV1(input.seed)}:0`;
+      await harness.seedLaunch({
+        id: launchId,
+        tokenAddress,
+        detectedAt: at(input.detectedAtMs),
+        blockNumber: String(49_500_000 + Number.parseInt(input.seed, 16) * 1_000),
+      });
+      let block = 49_600_000 + Number.parseInt(input.seed, 16) * 1_000;
+      for (const entry of input.history ?? []) {
+        block += 1;
+        await harness.repository.insertObservation(
+          observationFixtureV1({
+            launchId,
+            tokenAddress,
+            state: entry.state as B20OpportunityObservationV1['state'],
+            reasonCode: entry.reasonCode as B20OpportunityObservationV1['reasonCode'],
+            entryRouteFound: entry.reasonCode !== 'no_entry_route',
+            exitRouteFound:
+              entry.reasonCode !== 'no_entry_route' && entry.reasonCode !== 'no_exit_route',
+            observationBlockNumber: String(block),
+            measuredAt: at(entry.atMs),
+            staleAfter: at(entry.atMs + 30 * 60_000),
+          }),
+        );
+      }
+      return tokenAddress;
+    }
+
+    test('a token that reprices hourly outranks one whose reading is far older', async () => {
+      // The starvation this fixes, in one comparison. `settled` was last read
+      // 26 hours ago and `repriceable` 3 hours ago, so by absolute staleness
+      // the settled one wins every time — which is how a feed spends its whole
+      // budget re-confirming `no_entry_route` on tokens nobody can trade while
+      // the priced ones go stale. Against its OWN interval the settled token is
+      // barely due (1.1x) and the repriceable one is three times late.
+      const harness = await createHarness();
+      const settled = await seedMeasured(harness, {
+        seed: '2',
+        detectedAtMs: 0,
+        history: [
+          { atMs: 0, state: 'rejected', reasonCode: 'no_entry_route' },
+          { atMs: 2 * HOUR, state: 'rejected', reasonCode: 'no_entry_route' },
+          { atMs: 4 * HOUR, state: 'rejected', reasonCode: 'no_entry_route' },
+        ],
+      });
+      const repriceable = await seedMeasured(harness, {
+        seed: '3',
+        detectedAtMs: HOUR,
+        history: [{ atMs: 27 * HOUR, state: 'rejected', reasonCode: 'round_trip_above_tolerance' }],
+      });
+      const due = await harness.repository.selectMeasurableLaunches({
+        limit: 10,
+        maxLaunchAgeMs: 48 * HOUR,
+        minReMeasureIntervalMs: 20 * 60_000,
+        now: at(30 * HOUR),
+      });
+      assert.deepEqual(
+        due.map((launch) => launch.tokenAddress),
+        [repriceable, settled],
+      );
+    });
+
+    test('a launch nobody has measured yet is not left to age out of the window', async () => {
+      // 237 launches were in exactly this state: inside the 48-hour window,
+      // never measured, and permanently behind newer arrivals. A launch with no
+      // verdict at all is the one case where the feed can say nothing, so its
+      // urgency counts from detection — 40 hours against a 20-minute interval
+      // is 120x late, and no re-measurement can outbid that.
+      const harness = await createHarness();
+      const neverMeasured = await seedMeasured(harness, { seed: '4', detectedAtMs: 0 });
+      await seedMeasured(harness, {
+        seed: '5',
+        detectedAtMs: 39 * HOUR,
+        history: [{ atMs: 39 * HOUR + 35 * 60_000, state: 'provisional', reasonCode: 'quoted_pre_entry' }],
+      });
+      const due = await harness.repository.selectMeasurableLaunches({
+        limit: 1,
+        maxLaunchAgeMs: 48 * HOUR,
+        minReMeasureIntervalMs: 20 * 60_000,
+        now: at(40 * HOUR),
+      });
+      assert.deepEqual(due.map((launch) => launch.tokenAddress), [neverMeasured]);
+    });
+
+    test('a launch detected minutes ago still goes first, however overdue the rest is', async () => {
+      // Discovery is why the worker exists, and an unmeasured launch younger
+      // than one base interval has an urgency near zero — without a band of its
+      // own it would queue behind every stale row in the window. The band is
+      // bounded by the arrival rate (~18 launches at any moment), so it costs
+      // the queue minutes rather than budget.
+      const harness = await createHarness();
+      await seedMeasured(harness, { seed: '6', detectedAtMs: 0 });
+      const brandNew = await seedMeasured(harness, { seed: '7', detectedAtMs: 40 * HOUR - 60_000 });
+      const due = await harness.repository.selectMeasurableLaunches({
+        limit: 1,
+        maxLaunchAgeMs: 48 * HOUR,
+        minReMeasureIntervalMs: 20 * 60_000,
+        now: at(40 * HOUR),
+      });
+      assert.deepEqual(due.map((launch) => launch.tokenAddress), [brandNew]);
+    });
+  });
+
   describe(`${name}: one worker measures at a time`, () => {
     test('a second worker cannot take a held lease', async () => {
       const { repository } = await createHarness();

@@ -16,7 +16,11 @@ import {
   B20_MEASURE_RUN_WINDOW_MS_V1,
   type B20PipelineCountsV1,
 } from './b20Observations.js';
-import { B20_MEASUREMENT_BACKOFF_V1, b20ReMeasureIntervalMsV1 } from './b20MeasurementBackoff.js';
+import {
+  B20_MEASUREMENT_BACKOFF_V1,
+  b20MeasurementUrgencyV1,
+  b20ReMeasureIntervalMsV1,
+} from './b20MeasurementBackoff.js';
 import type { InMemoryB20DiscoverRepositoryV1 } from './b20DiscoverMemory.js';
 
 /**
@@ -60,7 +64,8 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
       limit: 1_000,
     });
 
-    const rows: B20MeasurableLaunchV1[] = [];
+    const rows: Array<B20MeasurableLaunchV1 & { urgency: number; brandNew: boolean }> = [];
+    const backoff = { ...B20_MEASUREMENT_BACKOFF_V1, baseMs: input.minReMeasureIntervalMs };
     for (const launch of canonical) {
       const detected = Date.parse(launch.detectedAt);
       if (now - detected > input.maxLaunchAgeMs) continue;
@@ -76,10 +81,10 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
         .sort((left, right) => Date.parse(right.measuredAt) - Date.parse(left.measuredAt));
       const latest = observations[0] ?? null;
       const lastMeasuredAt = latest?.measuredAt ?? null;
-      if (latest && lastMeasuredAt) {
-        // The same policy the Postgres query applies, from the same module.
-        // These two disagreeing is how three T65 bugs reached production.
-        let repeats = 0;
+      // The same policy the Postgres query applies, from the same module.
+      // These two disagreeing is how three T65 bugs reached production.
+      let repeats = 0;
+      if (latest) {
         for (const row of observations) {
           if (
             row.state !== latest.state ||
@@ -88,14 +93,14 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
             break;
           repeats += 1;
         }
-        const dueAfterMs = b20ReMeasureIntervalMsV1({
-          state: latest.state,
-          reasonCode: latest.reasonCode ?? null,
-          repeats,
-          backoff: { ...B20_MEASUREMENT_BACKOFF_V1, baseMs: input.minReMeasureIntervalMs },
-        });
-        if (now - Date.parse(lastMeasuredAt) < dueAfterMs) continue;
       }
+      const intervalMs = b20ReMeasureIntervalMsV1({
+        state: latest?.state ?? null,
+        reasonCode: latest?.reasonCode ?? null,
+        repeats,
+        backoff,
+      });
+      if (lastMeasuredAt && now - Date.parse(lastMeasuredAt) < intervalMs) continue;
       rows.push({
         launchId: launch.id,
         tokenAddress: launch.tokenAddress,
@@ -104,35 +109,42 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
         detectedAt: launch.detectedAt,
         ingestionSource: launch.ingestionSource,
         lastMeasuredAt,
+        urgency: b20MeasurementUrgencyV1({
+          lastMeasuredAt,
+          detectedAt: launch.detectedAt,
+          nowMs: now,
+          intervalMs,
+        }),
+        brandNew: lastMeasuredAt === null && now - detected < backoff.baseMs,
       });
     }
-    // NEWEST first. This was oldest-first, on the reasoning that a backlog
-    // should drain in arrival order — which is right for a backfill and wrong
-    // for a live feed. Discover lists launches newest-first, so the top of the
-    // product's home screen was permanently the part the worker would reach
-    // last: on 2026-08-10 the newest fifty canonical launches had ZERO
-    // observations between them while 1,828 older ones were being ground
-    // through at 200/hour.
+    // Live first, then the brand-new band, then by how far past its OWN
+    // interval a launch is — the same three keys, in the same order, as the
+    // Postgres query, which carries the measurement that decided them.
     //
-    // Starvation is what oldest-first was protecting against, and it is not a
-    // real risk here: launches arrive at 8-28 an hour against a measurement
-    // capacity of ~200, so the newest are covered within minutes and the rest
-    // of the capacity walks backwards through the backlog. What this does give
-    // up is the very oldest unmeasured launches, which now age out of
-    // `maxLaunchAgeMs` unmeasured — an acceptable trade, because a six-day-old
-    // launch nobody measured is not what a Discover feed is for.
-    // Live first, then newest found — the same two keys, in the same order, as
-    // the Postgres query. A backfill sets detectedAt to now, so without the
-    // first key a repaired gap would push every historical launch ahead of the
-    // live feed the worker exists to serve.
+    // A backfill sets detectedAt to now, so without the first key a repaired
+    // gap would push every historical launch ahead of the live feed the worker
+    // exists to serve.
+    //
+    // This was `detected_at DESC` alone, and the premise it rested on — the
+    // newest are covered within minutes and the surplus walks backwards
+    // through the backlog — stopped holding when a measurement grew to 10-12
+    // `eth_call` against an endpoint that meters ~0.5/s. Newest-first then
+    // spends the whole budget at the front and starves everything by age.
     return rows
       .sort((left, right) => {
-        const priority = (row: B20MeasurableLaunchV1) => (row.ingestionSource === 'live' ? 0 : 1);
+        const priority = (row: { ingestionSource: string }) =>
+          row.ingestionSource === 'live' ? 0 : 1;
         const bySource = priority(left) - priority(right);
         if (bySource !== 0) return bySource;
+        const byBand = Number(right.brandNew) - Number(left.brandNew);
+        if (byBand !== 0) return byBand;
+        const byUrgency = right.urgency - left.urgency;
+        if (byUrgency !== 0) return byUrgency;
         return Date.parse(right.detectedAt) - Date.parse(left.detectedAt);
       })
-      .slice(0, Math.max(1, Math.min(500, input.limit)));
+      .slice(0, Math.max(1, Math.min(500, input.limit)))
+      .map(({ urgency: _urgency, brandNew: _brandNew, ...launch }) => launch);
   }
 
   /**

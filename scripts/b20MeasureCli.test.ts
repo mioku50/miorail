@@ -529,15 +529,18 @@ describe('a background pass can never certify', () => {
 describe('the pair-forming queue is spent before the newest-first one', () => {
   /** 24h after T0: a launch measured at T0 is now one measurement from a pair. */
   const IN_BAND = '2026-08-05T00:00:00.000Z';
-  /** Launches that arrived AFTER the one measured at T0. This is the shape
-   * that starves it: the newest-first queue puts them in front of it forever. */
-  const LATER = '2026-08-04T23:00:00.000Z';
+  /** Launches nobody has measured, detected BEFORE the one measured at T0.
+   * Against their own base interval they are 28 hours late where the
+   * pair-forming token is 24 — so the primary queue reaches them first, and the
+   * reservation is the only thing that can put a pair ahead of them. */
+  const UNMEASURED = '2026-08-03T20:00:00.000Z';
 
-  /** One old launch, then two newer ones — production in miniature. */
+  /** One launch that will carry a pair, and two the primary queue wants more —
+   * production in miniature. */
   const arrivals = () => [
     launchFixture({ transactionHash: hashOf('1'), detectedAt: T0 }),
-    launchFixture({ transactionHash: hashOf('2'), detectedAt: LATER }),
-    launchFixture({ transactionHash: hashOf('3'), detectedAt: LATER }),
+    launchFixture({ transactionHash: hashOf('2'), detectedAt: UNMEASURED }),
+    launchFixture({ transactionHash: hashOf('3'), detectedAt: UNMEASURED }),
   ];
 
   test('a token measured a day ago is reached again, ahead of newer candidates', async () => {
@@ -550,9 +553,9 @@ describe('the pair-forming queue is spent before the newest-first one', () => {
     assert.equal(first.pairRemeasures, 0, 'nothing can be pair-forming on the first pass');
     const measuredFirst = first.candidates[0]!.launchId;
 
-    // A day later, with two newer launches in front of it and the same budget
-    // of one. Under the single queue this pass measured a newer launch and the
-    // token that could have carried a pair was never seen again.
+    // A day later, with two hungrier launches in front of it and the same
+    // budget of one. Under the single queue this pass measured one of those and
+    // the token that could have carried a pair was never seen again.
     const second = await pass(observations, fakeDeps(), { maxDeepCandidates: 1 }, 'worker-a', IN_BAND);
     assert.equal(second.pairRemeasures, 1);
     assert.equal(second.attempted, 1);
@@ -583,10 +586,18 @@ describe('the pair-forming queue is spent before the newest-first one', () => {
 
   test('a zero reservation restores the old single-queue pass — and its starvation', async () => {
     // The control. Without the reservation the day-old token is behind two
-    // never-measured launches in a newest-first queue with a budget of one, so
-    // it is not reached — which is precisely the production behaviour this
-    // change exists to end. If this test ever stops showing a DIFFERENT launch,
-    // the one above proves nothing.
+    // never-measured launches with a budget of one, so it is not reached —
+    // which is precisely the production behaviour this change exists to end. If
+    // this test ever stops showing a DIFFERENT launch, the one above proves
+    // nothing.
+    //
+    // It was two NEWER launches until 2026-08-24, when the primary queue
+    // stopped ordering by arrival and started ordering by how far past its own
+    // interval each launch is. Under that order the day-old token is the most
+    // overdue thing in the window, so the control stopped discriminating: the
+    // single queue reached it anyway. What the reservation still does, and the
+    // ordering cannot, is prefer the 24-hour BAND a pair needs over launches
+    // that are simply later.
     const { observations } = await seed(arrivals());
     const first = await pass(observations, fakeDeps(), { maxDeepCandidates: 1 }, 'worker-a', T0);
     const outcome = await pass(

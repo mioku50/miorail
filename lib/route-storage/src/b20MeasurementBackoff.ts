@@ -99,6 +99,32 @@ export interface B20ReMeasureInputV1 {
   backoff?: B20MeasurementBackoffV1;
 }
 
+/**
+ * How far past its own interval a launch is: 1.0 is exactly due, 3.0 is three
+ * intervals late, below 1.0 is not due yet.
+ *
+ * Dividing by the launch's OWN interval is what makes the number comparable
+ * across classes, and that comparison is the scheduling decision. Absolute
+ * staleness is not comparable: a settled `no_exit_route` 20 hours old and a
+ * two-sided token 20 minutes old are both exactly due, and serving the older
+ * one first would spend a scarce budget re-confirming the answer that has
+ * repeated three times while the one that moves waits.
+ *
+ * A launch that has never been measured counts from `detectedAt`. It has no
+ * verdict at all, so every interval it waits is a launch the feed can say
+ * nothing about.
+ */
+export function b20MeasurementUrgencyV1(input: {
+  lastMeasuredAt: string | null;
+  detectedAt: string;
+  nowMs: number;
+  intervalMs: number;
+}): number {
+  const since = Date.parse(input.lastMeasuredAt ?? input.detectedAt);
+  if (!Number.isFinite(since) || input.intervalMs <= 0) return 0;
+  return (input.nowMs - since) / input.intervalMs;
+}
+
 /** The interval that must have passed before this launch is worth measuring. */
 export function b20ReMeasureIntervalMsV1(input: B20ReMeasureInputV1): number {
   const backoff = input.backoff ?? B20_MEASUREMENT_BACKOFF_V1;
