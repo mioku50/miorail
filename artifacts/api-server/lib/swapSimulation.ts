@@ -256,17 +256,43 @@ export async function probeSimulationProviderHealthV1(
   // refusal is what let one exhausted key speak for a capability another
   // configured endpoint could serve.
   let lastErrorCode: string | null = null;
+  const refusals: string[] = [];
   for (const provider of batchProviders) {
     try {
       const result = await provider.simulate(probeRequest);
       if (result.ok) {
         noteSimulationHealthV1(null, nowIso, provider.providerId);
+        // The VERDICT goes through the same channel as the refusals above.
+        // It used to be a bare console line while they were structured JSON,
+        // so anything reading levels saw two warnings and never saw that a
+        // later provider had answered — which is exactly how this deployment
+        // was read as having no simulator while it had one.
+        logger.info('Simulation provider health probe answered', {
+          provider: provider.providerId,
+          refusedBefore: refusals,
+        });
         return simulationProviderHealthV1();
       }
       lastErrorCode = result.errorCode;
+      // Two different facts wear the same shape here, and only one of them is
+      // an incident. `provider_method_unsupported` means this endpoint can
+      // NEVER serve eth_simulateV1 — Infura answers -32601 and always will —
+      // so it is a configuration fact that will repeat at every boot forever.
+      // Capacity is an outage that ends. Saying which is what stops an
+      // operator chasing a permanent line, and what stops a reader concluding
+      // from two warnings that simulation is down when the next provider
+      // proved it.
+      refusals.push(provider.providerId);
+      const permanent = result.errorCode === 'provider_method_unsupported';
       logger.warn('Simulation provider health probe did not answer', {
         provider: provider.providerId,
         errorCode: result.errorCode,
+        // Structured, because the message is what a human reads and this is
+        // what a filter reads.
+        permanent,
+        detail: permanent
+          ? 'this endpoint does not implement eth_simulateV1 and will not on retry; the next provider decides'
+          : 'temporary — the next provider decides',
       });
       if (!BATCH_CANNOT_SERVE_CODES_V1.has(result.errorCode)) return simulationProviderHealthV1();
     } catch (error) {

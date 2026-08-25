@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
+import { logger } from '@mioagent/utils';
 import { hashApprovedCallsV1, type ExecutionCallV1 } from '@mioagent/route-domain';
 import type { SimulationProvider } from '@mioagent/paid-intelligence';
 
 import {
   resetSimulationProviderHealthV1,
   simulateSwapCallsV1,
+  probeSimulationProviderHealthV1,
   simulationProviderHealthV1,
   swapSimulationCapabilityV1,
 } from './swapSimulation.js';
@@ -369,5 +371,81 @@ describe('the simulation endpoint is chosen independently of the read endpoint',
       now: () => NOW,
     });
     assert.deepEqual(seen, ['base-rpc-eth-simulate-v1']);
+  });
+});
+
+describe('the boot probe reports through one channel', () => {
+  const originalFetch = globalThis.fetch;
+  const originalInfo = logger.info.bind(logger);
+  const originalWarn = logger.warn.bind(logger);
+
+  const restore = () => {
+    globalThis.fetch = originalFetch;
+    logger.info = originalInfo;
+    logger.warn = originalWarn;
+  };
+
+  const jsonResponse = (body: unknown) =>
+    new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+
+  test('a refusal and the answer that followed it are both structured', async () => {
+    resetSimulationProviderHealthV1();
+    const infos: Array<{ message: string; meta: Record<string, unknown> }> = [];
+    const warns: Array<{ message: string; meta: Record<string, unknown> }> = [];
+    logger.info = ((message: string, meta?: Record<string, unknown>) => {
+      infos.push({ message, meta: meta ?? {} });
+    }) as typeof logger.info;
+    logger.warn = ((message: string, meta?: Record<string, unknown>) => {
+      warns.push({ message, meta: meta ?? {} });
+    }) as typeof logger.warn;
+
+    // The production shape exactly: the configured read RPC cannot serve
+    // eth_simulateV1 (Infura answers -32601), and Base's own endpoint can.
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      // The id must be echoed: the adapter refuses a reply it did not ask for,
+      // and a mock that ignores that tests a path production never takes.
+      const id = JSON.parse(String(init?.body ?? '{}')).id as string;
+      if (url.includes('mainnet.base.org')) {
+        return jsonResponse({
+          jsonrpc: '2.0',
+          id,
+          result: [
+            {
+              number: '0x2071e81',
+              calls: [{ status: '0x1', gasUsed: '0x5e0f', returnData: '0x', logs: [] }],
+            },
+          ],
+        });
+      }
+      return jsonResponse({ jsonrpc: '2.0', id, error: { code: -32601, message: 'method not found' } });
+    }) as typeof fetch;
+
+    try {
+      const health = await probeSimulationProviderHealthV1({
+        BASE_MAINNET_RPC_URL: 'https://read-only.example/v3/key',
+      } as NodeJS.ProcessEnv);
+
+      assert.equal(health.batchProven, true);
+      assert.equal(health.batchProviderId, 'base-public-eth-simulate-v1');
+
+      // The refusal says which KIND it is. An endpoint that does not implement
+      // the method will refuse identically at every boot forever, and calling
+      // that an incident sends an operator after a permanent line.
+      const refusal = warns.find((entry) => entry.message.includes('did not answer'));
+      assert.equal(refusal?.meta.provider, 'base-rpc-eth-simulate-v1');
+      assert.equal(refusal?.meta.errorCode, 'provider_method_unsupported');
+      assert.equal(refusal?.meta.permanent, true);
+
+      // And the verdict goes through the SAME channel. It used to be a bare
+      // console line while the refusals were structured, so anything reading
+      // levels saw two warnings and never saw that a later provider answered —
+      // which is how a working deployment gets read as having no simulator.
+      const verdict = infos.find((entry) => entry.message.includes('probe answered'));
+      assert.equal(verdict?.meta.provider, 'base-public-eth-simulate-v1');
+      assert.deepEqual(verdict?.meta.refusedBefore, ['base-rpc-eth-simulate-v1']);
+    } finally {
+      restore();
+    }
   });
 });

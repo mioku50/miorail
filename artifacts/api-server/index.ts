@@ -1,3 +1,5 @@
+import { logger } from '@mioagent/utils';
+
 import { app } from './app';
 import { getMiorailProductMigrationFlags } from './lib/productMigrationConfig';
 import { resolveEarnContractPreflightV1 } from './lib/earnPreflight';
@@ -56,15 +58,17 @@ export function startServer() {
     // Learn at boot whether the simulator can serve requests. A key that is
     // present but out of monthly capacity used to leave every capability read
     // claiming a batch simulation this deployment could not run.
+    // The probe logs its own refusals and its own verdict, structured, through
+    // the same logger. This adds only the failure verdict, which has no line of
+    // its own inside the probe — and it goes through the logger rather than
+    // `console`, because a boot report split across two channels is how two
+    // warnings get read as an outage while a third provider was answering.
     void probeSimulationProviderHealthV1().then((health) => {
       if (health.batchProven === false) {
-        console.warn(`Simulation provider is not serving requests (${health.lastErrorCode}) — provider routes needing a simulation report unavailable`);
-        return;
-      }
-      // Which endpoint proved it matters to whoever reads this line: the paid
-      // key and the chain's own RPC go down for entirely different reasons.
-      if (health.batchProven === true) {
-        console.info(`Batch simulation proven by ${health.batchProviderId} — provider routes needing a simulation are available`);
+        logger.warn('No simulation provider is serving requests', {
+          lastErrorCode: health.lastErrorCode,
+          detail: 'provider routes needing a simulation report unavailable',
+        });
       }
     });
   });
