@@ -1,0 +1,260 @@
+import { stableHashV1, type HashV1 } from '@mioagent/route-domain';
+import { z } from 'zod';
+
+const Address = z.string().regex(/^0x[0-9a-f]{40}$/);
+const Hash = z.string().regex(/^0x[0-9a-f]{64}$/);
+const Timestamp = z.string().datetime();
+const Digits = z.string().regex(/^(0|[1-9][0-9]*)$/);
+
+export const DossierEvidenceRefV1Schema = z
+  .object({
+    kind: z.enum(['reviewed_source_snapshot', 'base_chain_call', 'chainlink_feed', 'stored_market_tail']),
+    source: z.string().min(1).max(160),
+    observedAt: Timestamp,
+    blockNumber: Digits.nullable(),
+    blockHash: Hash.nullable(),
+    targetAddress: Address.nullable(),
+    method: z.string().min(1).max(120).nullable(),
+    evidenceHash: Hash.nullable(),
+  })
+  .strict();
+export type DossierEvidenceRefV1 = z.infer<typeof DossierEvidenceRefV1Schema>;
+
+export const OfficialDossierListingV1Schema = z
+  .object({
+    sourceKind: z.enum(['base_docs_technical', 'base_product_list']),
+    sourceUrl: z.string().url().startsWith('https://'),
+    ticker: z.string().min(1).max(16),
+    displayName: z.string().min(1).max(120).nullable(),
+    referenceFeedAddress: Address.nullable(),
+    firstSeenAt: Timestamp,
+    lastSeenAt: Timestamp,
+    currentlyListed: z.boolean(),
+    sourceCheckedAt: Timestamp.nullable(),
+    sourceStatus: z.enum(['ok', 'unreachable', 'unparsable']).nullable(),
+    evidence: DossierEvidenceRefV1Schema,
+  })
+  .strict();
+
+export const OfficialDossierIdentityV1Schema = z
+  .object({
+    status: z.literal('official_exact_address_match'),
+    chainId: z.literal(8453),
+    tokenAddress: Address,
+    issuer: z.string().min(1).max(80),
+    ticker: z.string().min(1).max(16),
+    displayName: z.string().min(1).max(120).nullable(),
+    underlying: z
+      .object({
+        status: z.enum(['supported_by_reviewed_source', 'not_established']),
+        symbol: z.string().min(1).max(24).nullable(),
+        name: z.string().min(1).max(120).nullable(),
+        reason: z.string().min(1).max(240).nullable(),
+      })
+      .strict(),
+    listings: z.array(OfficialDossierListingV1Schema).min(1).max(8),
+    sourceDiscrepancy: z.boolean(),
+  })
+  .strict();
+
+export const DossierControlFieldV1Schema = z
+  .object({
+    key: z.enum([
+      'token_name',
+      'token_symbol',
+      'token_decimals',
+      'supply_cap',
+      'paused_features',
+      'transfer_sender_policy',
+      'transfer_receiver_policy',
+      'transfer_executor_policy',
+      'rebase_multiplier',
+    ]),
+    status: z.enum(['exact_chain_read', 'unavailable', 'unsupported_by_variant']),
+    value: z.string().max(300).nullable(),
+    reason: z.string().min(1).max(400).nullable(),
+    evidence: DossierEvidenceRefV1Schema.nullable(),
+  })
+  .strict();
+
+export const DossierControlsV1Schema = z
+  .object({
+    status: z.enum(['complete', 'partial', 'unavailable']),
+    blockNumber: Digits.nullable(),
+    blockHash: Hash.nullable(),
+    observedAt: Timestamp,
+    multiplier: z
+      .object({
+        status: z.enum(['exact_chain_read', 'unavailable']),
+        atomic: Digits.nullable(),
+        decimals: z.literal(18),
+        evidence: DossierEvidenceRefV1Schema.nullable(),
+      })
+      .strict(),
+    fields: z.array(DossierControlFieldV1Schema).max(16),
+  })
+  .strict();
+
+export const ReferenceValueV1Schema = z
+  .object({
+    status: z.enum(['fresh', 'stale', 'paused', 'unavailable', 'invalid']),
+    feedAddress: Address.nullable(),
+    valueAtomic: z.string().regex(/^-?(0|[1-9][0-9]*)$/).nullable(),
+    decimals: z.number().int().min(0).max(36).nullable(),
+    feedUpdatedAt: Timestamp.nullable(),
+    ageSeconds: z.number().int().min(0).nullable(),
+    totalReturnValue: z.literal(true),
+    multiplierAppliedByFeed: z.literal(true),
+    registryPause: z.enum(['not_paused', 'paused', 'unknown']),
+    comparisonEligible: z.boolean(),
+    withheldReason: z
+      .enum([
+        'reference_stale',
+        'reference_paused',
+        'reference_unavailable',
+        'reference_invalid',
+        'registry_pause_state_unavailable',
+      ])
+      .nullable(),
+    evidence: DossierEvidenceRefV1Schema.nullable(),
+  })
+  .strict();
+export type ReferenceValueV1 = z.infer<typeof ReferenceValueV1Schema>;
+
+export const ExecutableValueV1Schema = z
+  .object({
+    status: z.enum(['not_measured', 'measured', 'unavailable']),
+    valueAtomic: Digits.nullable(),
+    decimals: z.number().int().min(0).max(36).nullable(),
+    requestedSizeAtomic: Digits.nullable(),
+    destination: z.enum(['USDC', 'ETH']).nullable(),
+    observedAt: Timestamp.nullable(),
+    evidence: DossierEvidenceRefV1Schema.nullable(),
+  })
+  .strict();
+export type ExecutableValueV1 = z.infer<typeof ExecutableValueV1Schema>;
+
+export const ReferenceExecutableComparisonV1Schema = z
+  .object({
+    status: z.enum(['comparable', 'withheld']),
+    differenceBps: z.string().regex(/^-?(0|[1-9][0-9]*)$/).nullable(),
+    reason: z
+      .enum([
+        'reference_stale',
+        'reference_paused',
+        'reference_unavailable',
+        'reference_invalid',
+        'registry_pause_state_unavailable',
+        'executable_value_not_measured',
+        'executable_value_unavailable',
+      ])
+      .nullable(),
+  })
+  .strict();
+export type ReferenceExecutableComparisonV1 = z.infer<typeof ReferenceExecutableComparisonV1Schema>;
+
+export const DossierVenueV1Schema = z
+  .object({
+    address: Address,
+    kind: z.enum(['paired_pool', 'singleton']),
+    token0: Address.nullable(),
+    token1: Address.nullable(),
+    quoteAddress: Address.nullable(),
+    quoteCategory: z.enum(['USDC', 'ETH_WETH', 'other_official_asset', 'unknown']).nullable(),
+    directCashReachable: z.boolean().nullable(),
+    firstSeenAt: Timestamp,
+    identifiedAt: Timestamp.nullable(),
+  })
+  .strict();
+
+export const MarketTopologyV1Schema = z
+  .object({
+    status: z.enum(['observed', 'unavailable']),
+    checkedAt: Timestamp.nullable(),
+    checkedThroughBlock: z.number().int().positive().nullable(),
+    venueCount: z.number().int().min(0).nullable(),
+    pairedPoolCount: z.number().int().min(0).nullable(),
+    singletonCount: z.number().int().min(0).nullable(),
+    directCashPoolCount: z.number().int().min(0).nullable(),
+    directUsdcPoolCount: z.number().int().min(0).nullable(),
+    directEthPoolCount: z.number().int().min(0).nullable(),
+    venues: z.array(DossierVenueV1Schema).max(1_000),
+    evidence: DossierEvidenceRefV1Schema.nullable(),
+  })
+  .strict();
+
+export const RecentMarketActivityV1Schema = z
+  .object({
+    status: z.enum(['observed', 'no_movements_observed', 'unavailable']),
+    semantics: z.literal('venue_transfers_not_confirmed_swaps'),
+    checkedAt: Timestamp.nullable(),
+    windowFromBlock: z.number().int().positive().nullable(),
+    windowToBlock: z.number().int().positive().nullable(),
+    movementCount: z.number().int().min(0).nullable(),
+    outOfVenueCount: z.number().int().min(0).nullable(),
+    intoVenueCount: z.number().int().min(0).nullable(),
+    confirmedSwapCount: z.null(),
+    latest: z
+      .array(
+        z
+          .object({
+            venueAddress: Address,
+            direction: z.enum(['out_of_venue', 'into_venue']),
+            counterparty: Address,
+            counterpartyRole: z.literal('unattributed_counterparty'),
+            amountAtomic: Digits,
+            blockNumber: z.number().int().positive(),
+            transactionHash: Hash,
+            logIndex: z.number().int().min(0),
+            observedAt: Timestamp,
+          })
+          .strict(),
+      )
+      .max(20),
+    evidence: DossierEvidenceRefV1Schema.nullable(),
+  })
+  .strict();
+
+export const OfficialAssetDossierV1Schema = z
+  .object({
+    schemaVersion: z.literal('official-asset-dossier/v1'),
+    dossierHash: Hash,
+    assembly: z.literal('deterministic_no_llm_facts'),
+    status: z.enum(['assembled', 'partial']),
+    chainId: z.literal(8453),
+    tokenAddress: Address,
+    assembledAt: Timestamp,
+    identity: OfficialDossierIdentityV1Schema,
+    referenceValue: ReferenceValueV1Schema,
+    executableValue: ExecutableValueV1Schema,
+    comparison: ReferenceExecutableComparisonV1Schema,
+    controls: DossierControlsV1Schema,
+    marketTopology: MarketTopologyV1Schema,
+    recentMarketActivity: RecentMarketActivityV1Schema,
+    gaps: z.array(z.string().min(1).max(120)).max(32),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.dossierHash !== hashOfficialAssetDossierV1(value)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['dossierHash'], message: 'dossier hash mismatch' });
+    }
+  });
+export type OfficialAssetDossierV1 = z.infer<typeof OfficialAssetDossierV1Schema>;
+
+export const OfficialAssetDossierResponseV1Schema = z.discriminatedUnion('outcome', [
+  z.object({ outcome: z.literal('dossier'), dossier: OfficialAssetDossierV1Schema }).strict(),
+  z
+    .object({
+      outcome: z.literal('not_in_reviewed_corpus'),
+      chainId: z.literal(8453),
+      tokenAddress: Address,
+      detail: z.string().min(1).max(300),
+    })
+    .strict(),
+]);
+export type OfficialAssetDossierResponseV1 = z.infer<typeof OfficialAssetDossierResponseV1Schema>;
+
+export function hashOfficialAssetDossierV1(value: Record<string, unknown>): HashV1 {
+  const { dossierHash: _dossierHash, ...content } = value;
+  return stableHashV1('official-asset-dossier/v1', content);
+}

@@ -19,8 +19,11 @@ import {
  */
 export class InMemoryB20StorageRepositoryV1 implements B20StorageRepositoryV1 {
   private readonly rows = new Map<string, B20SnapshotRecordV1>();
+  private readonly now: () => Date;
 
-  constructor(private readonly now: () => Date = () => new Date()) {}
+  constructor(now: () => Date = () => new Date()) {
+    this.now = now;
+  }
 
   /** Mirrors the database's unique index on (user_id, token_address, block_number). */
   private uniqueKey(userId: string, snapshot: B20ControlSnapshotV1): string {

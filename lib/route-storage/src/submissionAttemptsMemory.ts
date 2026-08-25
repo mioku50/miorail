@@ -24,14 +24,17 @@ import {
  */
 export class InMemorySubmissionAttemptRepositoryV1 implements SubmissionAttemptRepositoryV1 {
   private readonly rows = new Map<string, SubmissionAttemptV1>();
+  private readonly nextId: () => string;
 
   constructor(
     /** Injected so a test can produce stable ids; production passes a random
      * generator. Never derived from the blueprint: a terminal attempt frees the
      * blueprint for a genuinely new one, which must not reuse the old id. */
-    private readonly nextId: () => string = () =>
+    nextId: () => string = () =>
       `submission-attempt:${Math.random().toString(16).slice(2)}`,
-  ) {}
+  ) {
+    this.nextId = nextId;
+  }
 
   private clone(value: SubmissionAttemptV1): SubmissionAttemptV1 {
     return structuredClone(value);

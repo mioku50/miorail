@@ -129,6 +129,9 @@ export type PortfolioToken = z.infer<typeof schemas.PortfolioTokenSchema>;
 export type PortfolioResponse = z.infer<typeof schemas.PortfolioResponseSchema>;
 export type StatusResponse = z.infer<typeof schemas.StatusResponseSchema>;
 export type MarketSnapshotResponseV1 = z.infer<typeof schemas.MarketSnapshotResponseV1Schema>;
+export type OfficialAssetDossierResponseV1 = z.infer<
+  typeof schemas.OfficialAssetDossierResponseV1Schema
+>;
 export type BaseMcpToolProbeResponse = z.infer<typeof schemas.BaseMcpToolProbeResponseSchema>;
 export type BaseMcpPluginCatalogueResponse = z.infer<typeof schemas.BaseMcpPluginCatalogueResponseSchema>;
 export type BaseMcpConsoleRequestV1 = z.infer<typeof schemas.BaseMcpConsoleRequestV1Schema>;

@@ -7,6 +7,9 @@
 export const ERC20_TRANSFER_TOPIC_V1 =
   '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef' as const;
 
+/** Durable cursor identity shared by the worker and every read projection. */
+export const OFFICIAL_ASSET_LEDGER_TAIL_KEY_V1 = 'official_asset_ledger' as const;
+
 /**
  * Uniswap v4's singleton.
  *

@@ -732,6 +732,29 @@ export function useMarketSnapshot(
   });
 }
 
+/** Phase 3 official-asset dossier shared by Web and Base App. Read-only: the
+ * endpoint assembles stored source/market evidence plus pinned Base reads and
+ * returns no quote, call, approval or execution payload. */
+export function useOfficialAssetDossier(
+  tokenAddress: string | null | undefined,
+  options?: { enabled?: boolean },
+) {
+  const address = typeof tokenAddress === 'string' ? tokenAddress.toLowerCase() : null;
+  const addressIsExact = address !== null && /^0x[0-9a-f]{40}$/.test(address);
+  return useQuery({
+    queryKey: ['official-asset-dossier', address ?? 'none'],
+    queryFn: async () => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/rwa/official/${encodeURIComponent(address ?? '')}/dossier`,
+      );
+      return apiSpec.OfficialAssetDossierResponseV1Schema.parse(response);
+    },
+    retry: false,
+    enabled: options?.enabled !== false && addressIsExact,
+    staleTime: 30_000,
+  });
+}
+
 /**
  * T67E §1 — B20 Control for one token, read-only.
  *

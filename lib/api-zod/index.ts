@@ -30,6 +30,12 @@ import {
 import { SwapRouteEvaluationV1Schema } from '@mioagent/route-engine/contracts';
 import { RoutePlanProjectionV1Schema } from '@mioagent/route-card/contracts';
 import { TransactionReviewProjectionV1Schema } from '@mioagent/route-card/transactionReview';
+export {
+  OfficialAssetDossierResponseV1Schema,
+  OfficialAssetDossierV1Schema,
+  type OfficialAssetDossierResponseV1,
+  type OfficialAssetDossierV1,
+} from '@mioagent/rwa-dossier/contracts';
 
 // Shared
 export const PaginationParamsSchema = z.object({

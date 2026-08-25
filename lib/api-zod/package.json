@@ -9,6 +9,7 @@
     "@mioagent/route-card": "workspace:*",
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/route-engine": "workspace:*",
+    "@mioagent/rwa-dossier": "workspace:*",
     "zod": "^3.25.76"
   }
 }

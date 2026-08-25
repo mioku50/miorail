@@ -43,8 +43,11 @@ export class InMemoryB20ObservationRepositoryV1 implements B20ObservationReposit
 
   /** Test seam: fail the next write the way a database outage would. */
   failNextWrite: string | null = null;
+  private readonly launches: InMemoryB20DiscoverRepositoryV1;
 
-  constructor(private readonly launches: InMemoryB20DiscoverRepositoryV1) {}
+  constructor(launches: InMemoryB20DiscoverRepositoryV1) {
+    this.launches = launches;
+  }
 
   async selectMeasurableLaunches(input: {
     limit: number;

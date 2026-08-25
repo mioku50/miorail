@@ -17,8 +17,11 @@ import {
  */
 export class InMemoryPublicProofShareRepositoryV1 implements PublicProofShareRepositoryV1 {
   private readonly rows = new Map<string, PublicProofShareV1>();
+  private readonly newId: () => string;
 
-  constructor(private readonly newId: () => string = newPublicProofIdV1) {}
+  constructor(newId: () => string = newPublicProofIdV1) {
+    this.newId = newId;
+  }
 
   private clone(value: PublicProofShareV1): PublicProofShareV1 {
     return structuredClone(value);

@@ -69,8 +69,11 @@ export function reliabilityEvidencePayloadV1(
 }
 
 export class ReliabilityEvidenceError extends Error {
-  constructor(readonly code: 'snapshot_not_before_run' | 'snapshot_pair_mismatch') {
+  readonly code: 'snapshot_not_before_run' | 'snapshot_pair_mismatch';
+
+  constructor(code: 'snapshot_not_before_run' | 'snapshot_pair_mismatch') {
     super(code);
+    this.code = code;
     this.name = 'ReliabilityEvidenceError';
   }
 }

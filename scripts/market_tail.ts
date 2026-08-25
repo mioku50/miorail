@@ -35,6 +35,7 @@
 import { client, closeDb } from '@mioagent/db';
 import {
   MARKET_TAIL_MAX_SPAN_V1,
+  OFFICIAL_ASSET_LEDGER_TAIL_KEY_V1,
   UNISWAP_V4_SINGLETON_V1,
   assetTransfersFromLogsV1,
   createMarketTailSourceV1,
@@ -54,7 +55,6 @@ import {
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 
 const CHAIN_ID_V1 = 8453 as const;
-const TAIL_KEY_V1 = 'official_asset_ledger';
 
 interface ArgsV1 {
   passes: number;
@@ -107,7 +107,7 @@ async function main(): Promise<void> {
       console.log(`pass ${pass + 1}: ${head.reason}`);
       break;
     }
-    const cursor = await tail.readCursor({ tailKey: TAIL_KEY_V1 });
+    const cursor = await tail.readCursor({ tailKey: OFFICIAL_ASSET_LEDGER_TAIL_KEY_V1 });
     const lastBlock = cursor?.lastBlock ?? Math.max(1, head.value - args.fromHead);
     const range = tailRangeV1({ lastBlock, headBlock: head.value, maxSpan: args.blocks });
     if (!range.ok) {
@@ -250,7 +250,7 @@ async function main(): Promise<void> {
 
     if (args.dry) continue;
     const outcome = await tail.recordPass({
-      tailKey: TAIL_KEY_V1,
+      tailKey: OFFICIAL_ASSET_LEDGER_TAIL_KEY_V1,
       chainId: CHAIN_ID_V1,
       toBlock: range.toBlock,
       observedAt,

@@ -66,8 +66,11 @@ export function assertReliabilitySnapshotV1(value: unknown): ProviderReliability
 }
 
 export class ProviderOutcomeConflictError extends Error {
-  constructor(readonly reason: string) {
+  readonly reason: string;
+
+  constructor(reason: string) {
     super(`provider outcome write conflict: ${reason}`);
+    this.reason = reason;
     this.name = 'ProviderOutcomeConflictError';
   }
 }
