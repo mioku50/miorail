@@ -11,6 +11,7 @@
     "@mioagent/db": "workspace:*",
     "@mioagent/intent-engine": "workspace:*",
     "@mioagent/llm": "workspace:*",
+    "@mioagent/market-tail": "workspace:*",
     "@mioagent/nft-engine": "workspace:*",
     "@mioagent/o1-compat": "workspace:*",
     "@mioagent/opportunity-rail": "workspace:*",
