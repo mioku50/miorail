@@ -119,7 +119,10 @@ function runV1(): CashExitMeasurementRunV1 {
 
 before(async () => {
   if (!throwaway) return;
-  sql = postgres(url!, { max: 1, onnotice: () => {} });
+  // Production's shared DB client uses unprepared postgres-js queries. JSONB
+  // parameters serialize differently in that mode, so this test must exercise
+  // the same boundary rather than the driver's prepared-query convenience.
+  sql = postgres(url!, { max: 1, prepare: false, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS official_cash_exit_runs CASCADE');
   const migration = await readFile(resolve(drizzleDir(), '0052_official_cash_exit.sql'), 'utf8');
   await sql.unsafe(migration);

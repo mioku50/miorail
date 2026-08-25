@@ -38,8 +38,10 @@ export function createDatabaseOfficialCashExitRepository(
           destinations, started_at, completed_at, observations
         ) VALUES (
           ${run.runId}, ${run.chainId}, ${run.tokenAddress}, ${run.scope}, ${run.tenantId},
-          ${run.approvedSources}::jsonb, ${run.destinations}::jsonb,
-          ${run.startedAt}, ${run.completedAt}, ${run.observations}::jsonb
+          ${JSON.stringify(run.approvedSources)}::text::jsonb,
+          ${JSON.stringify(run.destinations)}::text::jsonb,
+          ${run.startedAt}, ${run.completedAt},
+          ${JSON.stringify(run.observations)}::text::jsonb
         )
         ON CONFLICT (run_id) DO NOTHING`;
       const stored = await sql`
