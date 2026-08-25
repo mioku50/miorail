@@ -38,19 +38,18 @@ export interface ConsoleSectionDefinitionV1 {
 export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, ConsoleSectionDefinitionV1>> = {
   opportunities: {
     id: 'opportunities',
-    // "Opportunities" describes the shape of the list, not what is in it. This
-    // is the B20 launch feed, and Discover is what a user looking for new
-    // tokens would scan for.
+    // "Discover B20" was exactly right while this surface WAS the launch feed:
+    // every card was a token found through the pinned B20 factory, and a reader
+    // who only saw the nav deserved to know which universe they were scanning.
     //
-    // "Discover B20" rather than "Discover", because the feed is not a general
-    // token scanner: every card is built around a token found through the
-    // pinned B20 factory. The card inside the page has said so for a while, and
-    // a reader who only sees the nav should not have to open it to find out
-    // which universe they are discovering.
-    label: 'Discover B20',
-    compactLabel: 'Discover B20',
+    // Phase 6 changed what the surface is. It now opens on the official
+    // corpus — assets an issuer publishes, identified by address — with the
+    // launch feed a page deeper. Keeping "B20" in the label would name the
+    // smaller half of the page after the part that moved.
+    label: 'Discover',
+    compactLabel: 'Discover',
     path: '/opportunities',
-    blurb: 'Measured B20 launches, and what getting back out would cost.',
+    blurb: 'Officially issued assets, what getting back out costs, and what changed.',
   },
   portfolio: {
     id: 'portfolio',

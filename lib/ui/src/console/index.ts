@@ -36,3 +36,5 @@ export * from './BaseMcpExtensionsCard';
 export * from './BaseMcpPluginsCard';
 export * from './BaseMcpActionReceiptsCard';
 export * from './PublicProofPanels';
+export * from './rwaDiscoverView';
+export * from './RwaDiscoverScreen';
