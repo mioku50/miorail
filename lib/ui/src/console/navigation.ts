@@ -15,7 +15,7 @@
 
 /** Every place a user can be. `settings` is deliberately last: it is where you
  * go to change something, not a surface you work in. */
-export const CONSOLE_SECTIONS_V1 = ['opportunities', 'portfolio', 'routes', 'activity', 'extensions', 'settings'] as const;
+export const CONSOLE_SECTIONS_V1 = ['opportunities', 'investigate', 'portfolio', 'routes', 'activity', 'extensions', 'settings'] as const;
 
 export type ConsoleSectionV1 = (typeof CONSOLE_SECTIONS_V1)[number];
 
@@ -50,6 +50,17 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
     compactLabel: 'Discover',
     path: '/opportunities',
     blurb: 'Officially issued assets, what getting back out costs, and what changed.',
+  },
+  investigate: {
+    id: 'investigate',
+    // Phase 7 — one address, read as deeply as the evidence allows. Its own
+    // section rather than a control inside Discover: a reader arrives here
+    // with an address from somewhere else entirely, and a research surface
+    // buried inside a feed is a research surface nobody finds.
+    label: 'Investigate',
+    compactLabel: 'Investigate',
+    path: '/investigate',
+    blurb: 'Paste a Base address and see what is established, what is not, and what it costs to get out.',
   },
   portfolio: {
     id: 'portfolio',
@@ -119,7 +130,7 @@ export const CONSOLE_PRIMARY_SECTIONS_V1 = ['opportunities', 'portfolio', 'route
 /** T70 §3 — the mobile drawer is exactly these six and nothing else. */
 // Activity and Extensions sit in the drawer rather than the tab bar. Neither
 // is where work starts; both are places you go to look something up.
-export const CONSOLE_DRAWER_SECTIONS_V1 = [...CONSOLE_PRIMARY_SECTIONS_V1, 'activity', 'extensions', 'settings'] as const;
+export const CONSOLE_DRAWER_SECTIONS_V1 = [...CONSOLE_PRIMARY_SECTIONS_V1, 'investigate', 'activity', 'extensions', 'settings'] as const;
 
 export function consoleSectionLabelV1(section: ConsoleSectionV1): string {
   return CONSOLE_SECTION_TABLE_V1[section].label;

@@ -158,15 +158,17 @@ describe('§9.2 — an unconfigured pipeline is never an empty feed', () => {
 describe('§9.5/§9.6 — the drawer is navigation, not a control panel', () => {
   const shell = read('../src/console/ConsoleShell.tsx');
 
-  test('the drawer carries the three tabs plus Activity, Extensions and Settings', () => {
-    // Activity and Extensions are here and NOT in the tab bar. Neither is
-    // where work starts, and a bar of three working surfaces is more honest
-    // than four where one is a viewer for records nobody has produced.
-    assert.equal(CONSOLE_DRAWER_SECTIONS_V1.length, 6);
+  test('the drawer carries the three tabs plus Investigate, Activity, Extensions and Settings', () => {
+    // None of the four is in the tab bar, and none is where work starts.
+    // Investigate is where you go with an address you already have, and a bar
+    // of three working surfaces is more honest than one that grows a tab for
+    // every surface that exists.
+    assert.equal(CONSOLE_DRAWER_SECTIONS_V1.length, 7);
     assert.deepEqual([...CONSOLE_DRAWER_SECTIONS_V1], [
       'opportunities',
       'portfolio',
       'routes',
+      'investigate',
       'activity',
       'extensions',
       'settings',

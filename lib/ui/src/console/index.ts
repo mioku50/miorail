@@ -38,3 +38,5 @@ export * from './BaseMcpActionReceiptsCard';
 export * from './PublicProofPanels';
 export * from './rwaDiscoverView';
 export * from './RwaDiscoverScreen';
+export * from './investigateView';
+export * from './InvestigateScreen';
