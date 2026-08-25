@@ -78,7 +78,7 @@ function hostScopedApiKeyV1(baseUrl: string): string {
  * environment demanded that the same secret be written a second time under a
  * second name, and a secret stored twice is a secret that gets rotated once.
  */
-function primaryApiKeyV1(baseUrl: string): string {
+export function primaryApiKeyV1(baseUrl: string): string {
   return trimmed('LLM_API_KEY') || hostScopedApiKeyV1(baseUrl);
 }
 

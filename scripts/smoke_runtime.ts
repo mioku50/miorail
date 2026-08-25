@@ -2,6 +2,7 @@ import {
   createLlmProvider,
   createStructuredLlmProvider,
   fallbackLinkV1,
+  primaryApiKeyV1,
   providerLabelV1,
 } from '../lib/llm/src/factory.js';
 import { FallbackLlmProvider } from '../lib/llm/src/fallback.js';
@@ -25,8 +26,14 @@ async function run() {
     process.exit(1);
   }
 
-  if (!process.env.LLM_BASE_URL?.trim() || !process.env.LLM_API_KEY?.trim() || !process.env.LLM_MODEL?.trim()) {
-    console.error('❌ LLM_BASE_URL, LLM_API_KEY, LLM_MODEL must be set (an empty value counts as unset)');
+  // The credential is resolved exactly as the factory resolves it, including
+  // the host-scoped keys. A smoke that used a narrower rule would report the
+  // primary broken while the primary was fine, and an operator acts on that.
+  const primaryBaseUrl = (process.env.LLM_BASE_URL || '').trim();
+  const primaryKey = primaryBaseUrl ? primaryApiKeyV1(primaryBaseUrl) : '';
+  if (!primaryBaseUrl || !primaryKey || !process.env.LLM_MODEL?.trim()) {
+    console.error('❌ LLM_BASE_URL, LLM_API_KEY, LLM_MODEL must be set (an empty value counts as unset;'
+      + ' a host-scoped key such as AGENTROUTER_API_KEY counts as LLM_API_KEY for that host)');
     process.exit(1);
   }
 
@@ -229,8 +236,13 @@ function reportError(err: unknown): void {
     process.env.LLM_API_KEY,
     process.env.LLM_STRUCTURED_API_KEY,
     process.env.LLM_FALLBACK_API_KEY,
+    process.env.LLM_FALLBACK_2_API_KEY,
     process.env.OPENROUTER_API_KEY,
     process.env.OPENROUTER_KEY,
+    // Host-scoped keys are credentials too. This list existed before they did,
+    // and a key missing from it is a key the leak check cannot catch.
+    process.env.AGENTROUTER_API_KEY,
+    process.env.MISTRAL_API_KEY,
   ]
     .map((value) => (value || '').trim())
     .filter((value) => value.length >= 8);
