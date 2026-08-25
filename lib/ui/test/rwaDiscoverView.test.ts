@@ -105,7 +105,13 @@ function overviewV1(assets: OfficialAssetWireV1[], overrides: Partial<OfficialAs
         lastSuccessfulAt: '2026-08-25T11:00:00.000Z',
       },
     ],
-    marketObservation: { status: 'never_run', checkedThroughBlock: null, checkedAt: null },
+    marketObservation: {
+      status: 'never_run',
+      checkedThroughBlock: null,
+      checkedAt: null,
+      identifiedVenueCount: null,
+      candidatesPendingIdentification: null,
+    },
     assets,
     ...overrides,
   };
@@ -271,6 +277,27 @@ describe('rwa discover view — official assets', () => {
     const carried = view.assets[0]!.ladder.find((rung) => rung.label === '$100,000')!;
     assert.equal(carried.value, '0.09%');
     assert.equal(carried.note, 'carried from $100');
+  });
+
+  test('a tail that has identified no venue is our backlog, not a quiet market', () => {
+    // Measured on the first production pass: 10,824 transfers read, 97
+    // counterparties found, none yet identified — so nothing could be
+    // attributed and every asset would have shown "0 recent movements".
+    const view = officialAssetsViewV1(
+      overviewV1([assetV1()], {
+        marketObservation: {
+          status: 'observed',
+          checkedThroughBlock: 50_447_451,
+          checkedAt: '2026-08-25T11:55:00.000Z',
+          identifiedVenueCount: 0,
+          candidatesPendingIdentification: 97,
+        },
+      }),
+      NOW,
+    );
+    assert.match(view.marketObservation, /No counterparty has been identified as a venue yet/);
+    assert.match(view.marketObservation, /97 still to ask/);
+    assert.match(view.marketObservation, /our backlog, not a quiet market/);
   });
 
   test('a ledger tail that never ran is never rendered as a quiet market', () => {

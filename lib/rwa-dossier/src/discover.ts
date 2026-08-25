@@ -181,6 +181,18 @@ export const OfficialAssetsOverviewV1Schema = z
         status: z.enum(['observed', 'never_run']),
         checkedThroughBlock: z.number().int().positive().nullable(),
         checkedAt: Timestamp.nullable(),
+        /**
+         * Pools the tail has identified, and counterparties it has not asked
+         * about yet.
+         *
+         * A movement is only attributed once its counterparty is known to be a
+         * venue, so with nothing identified the tail can read ten thousand
+         * transfers and store zero events. Reporting THAT as "no movements
+         * observed" would be a finding about thirteen assets authored entirely
+         * by our own backlog.
+         */
+        identifiedVenueCount: z.number().int().min(0).nullable(),
+        candidatesPendingIdentification: z.number().int().min(0).nullable(),
       })
       .strict(),
     assets: z.array(OfficialAssetSummaryV1Schema).max(64),

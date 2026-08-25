@@ -62,7 +62,13 @@ const OVERVIEW_V1: OfficialAssetsOverviewV1 = {
       lastSuccessfulAt: '2026-08-25T11:00:00.000Z',
     },
   ],
-  marketObservation: { status: 'never_run' as const, checkedThroughBlock: null, checkedAt: null },
+  marketObservation: {
+    status: 'never_run' as const,
+    checkedThroughBlock: null,
+    checkedAt: null,
+    identifiedVenueCount: null,
+    candidatesPendingIdentification: null,
+  },
   assets: [],
   gaps: [],
 };

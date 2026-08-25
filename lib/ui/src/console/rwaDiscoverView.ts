@@ -119,6 +119,8 @@ export interface OfficialAssetsOverviewWireV1 {
     status: 'observed' | 'never_run';
     checkedThroughBlock: number | null;
     checkedAt: string | null;
+    identifiedVenueCount: number | null;
+    candidatesPendingIdentification: number | null;
   };
   assets: readonly OfficialAssetWireV1[];
 }
@@ -448,12 +450,33 @@ export function officialAssetsViewV1(
     };
   });
 
-  const marketObservation =
-    wire.marketObservation.status === 'never_run'
-      ? 'The ledger tail has not run on this deployment, so no movement has been observed for any asset. That is not a quiet market.'
-      : `Ledger tail read through Base block ${(wire.marketObservation.checkedThroughBlock ?? 0).toLocaleString(
+  const observation = wire.marketObservation;
+  const read =
+    observation.status === 'never_run'
+      ? null
+      : `Ledger tail read through Base block ${(observation.checkedThroughBlock ?? 0).toLocaleString(
           'en-US',
-        )} · ${rwaAgeLabelV1(wire.marketObservation.checkedAt, now) ?? 'unknown'}.`;
+        )} · ${rwaAgeLabelV1(observation.checkedAt, now) ?? 'unknown'}.`;
+  const marketObservation =
+    read === null
+      ? 'The ledger tail has not run on this deployment, so no movement has been observed for any asset. That is not a quiet market.'
+      : (observation.identifiedVenueCount ?? 0) === 0
+        ? // The tail can read ten thousand transfers and store nothing: a
+          // movement is only attributed once its counterparty is known to be a
+          // venue. Saying "no movements" here would be a finding about the
+          // assets authored entirely by our own backlog.
+          `${read} No counterparty has been identified as a venue yet${
+            observation.candidatesPendingIdentification
+              ? `, with ${observation.candidatesPendingIdentification.toLocaleString('en-US')} still to ask`
+              : ''
+          }, so no movement can be attributed to one. That is our backlog, not a quiet market.`
+        : `${read} ${(observation.identifiedVenueCount ?? 0).toLocaleString('en-US')} venue${
+            observation.identifiedVenueCount === 1 ? '' : 's'
+          } identified${
+            observation.candidatesPendingIdentification
+              ? `, ${observation.candidatesPendingIdentification.toLocaleString('en-US')} counterparties still to ask`
+              : ''
+          }.`;
 
   return {
     counters,
@@ -547,7 +570,7 @@ function officialAssetCardViewV1(asset: OfficialAssetWireV1, now: Date): Officia
           : String(observation.pairedPoolCount ?? 0),
       note:
         observation.status === 'not_observed'
-          ? 'The ledger tail has not read this token'
+          ? 'No venue has been identified to attribute a movement to'
           : 'Identified pools holding this token as one side',
       tone: observation.status === 'not_observed' ? 'off' : 'neutral',
     },

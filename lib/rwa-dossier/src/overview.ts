@@ -306,6 +306,22 @@ export async function assembleOfficialAssetsOverviewV1(
       poolsByToken.set(side, (poolsByToken.get(side) ?? 0) + 1);
     }
   }
+  // Everything the tail has identified, and everything it has not asked about.
+  //
+  // A movement is stored only once its counterparty is known to be a venue, so
+  // with nothing identified the tail can read ten thousand transfers and store
+  // zero events -- which is what it did on the first production pass: 10,824
+  // transfers, 97 candidates, 0 identified. Rendering that as "no movements
+  // observed" is a finding about thirteen assets authored by our own backlog.
+  const identified =
+    cursor === null
+      ? []
+      : await deps.marketTail.venues({ chainId: 8453, kinds: ['paired_pool', 'singleton'], limit: 1_000 });
+  const pending =
+    cursor === null
+      ? []
+      : await deps.marketTail.venues({ chainId: 8453, kinds: ['candidate'], limit: 1_000 });
+  const attributionReady = cursor !== null && identified.length > 0;
 
   const anchorRead = await deps.reader.readBlockAnchor();
   const anchor = anchorRead.ok ? anchorRead.value : null;
@@ -351,15 +367,17 @@ export async function assembleOfficialAssetsOverviewV1(
         // Three states, and the third is about us. `not_observed` means the
         // tail has not read this token's ledger at all; it is never rendered
         // as a quiet market.
-        status:
-          cursor === null
-            ? 'not_observed'
-            : (observed?.transfers ?? 0) > 0
-              ? 'movements_observed'
-              : 'no_movements_observed',
+        // `not_observed` covers both ways we cannot answer yet: the tail has
+        // never run, or it has run and knows no venue to attribute a movement
+        // to. Neither is a quiet market, and neither is allowed to read as one.
+        status: !attributionReady
+          ? 'not_observed'
+          : (observed?.transfers ?? 0) > 0
+            ? 'movements_observed'
+            : 'no_movements_observed',
         semantics: 'venue_transfers_not_confirmed_swaps',
-        pairedPoolCount: cursor === null ? null : (poolsByToken.get(identity.tokenAddress) ?? 0),
-        movementCount: cursor === null ? null : (observed?.transfers ?? 0),
+        pairedPoolCount: attributionReady ? (poolsByToken.get(identity.tokenAddress) ?? 0) : null,
+        movementCount: attributionReady ? (observed?.transfers ?? 0) : null,
       },
     };
 
@@ -418,6 +436,7 @@ export async function assembleOfficialAssetsOverviewV1(
   const gaps = new Set<string>();
   if (anchor === null) gaps.add('base_block_anchor_unavailable');
   if (cursor === null) gaps.add('market_tail_never_run');
+  if (cursor !== null && !attributionReady) gaps.add('market_tail_has_identified_no_venue');
   if (counts.notMeasured > 0) gaps.add('cash_exit_not_measured_for_every_asset');
   if (sources.some((source) => source.status !== 'ok')) gaps.add('official_source_check_incomplete');
   if (discrepancies.length > 0) gaps.add('official_sources_disagree');
@@ -433,6 +452,8 @@ export async function assembleOfficialAssetsOverviewV1(
       status: cursor === null ? 'never_run' : 'observed',
       checkedThroughBlock: cursor?.lastBlock ?? null,
       checkedAt: cursor?.lastRunAt ?? null,
+      identifiedVenueCount: cursor === null ? null : identified.length,
+      candidatesPendingIdentification: cursor === null ? null : pending.length,
     },
     assets: summaries,
     gaps: [...gaps].sort(),
