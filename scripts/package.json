@@ -21,6 +21,8 @@
     "@mioagent/route-proof": "workspace:*",
     "@mioagent/route-storage": "workspace:*",
     "@mioagent/rwa-official": "workspace:*",
+    "@mioagent/rwa-cash-exit": "workspace:*",
+    "@mioagent/rwa-dossier": "workspace:*",
     "@mioagent/security": "workspace:*",
     "@mioagent/swap-adapters": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",

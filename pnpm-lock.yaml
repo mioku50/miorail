@@ -137,6 +137,9 @@ importers:
       '@mioagent/runtime-skills':
         specifier: workspace:*
         version: link:../../lib/runtime-skills
+      '@mioagent/rwa-cash-exit':
+        specifier: workspace:*
+        version: link:../../lib/rwa-cash-exit
       '@mioagent/rwa-dossier':
         specifier: workspace:*
         version: link:../../lib/rwa-dossier
@@ -1018,6 +1021,28 @@ importers:
         specifier: ^5.4.5
         version: 5.9.3
 
+  lib/rwa-cash-exit:
+    dependencies:
+      '@mioagent/route-domain':
+        specifier: workspace:*
+        version: link:../route-domain
+      '@mioagent/route-storage':
+        specifier: workspace:*
+        version: link:../route-storage
+      '@mioagent/swap-adapters':
+        specifier: workspace:*
+        version: link:../swap-adapters
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+
   lib/rwa-dossier:
     dependencies:
       '@mioagent/b20-control':
@@ -1032,6 +1057,9 @@ importers:
       '@mioagent/route-storage':
         specifier: workspace:*
         version: link:../route-storage
+      '@mioagent/rwa-cash-exit':
+        specifier: workspace:*
+        version: link:../rwa-cash-exit
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -1436,6 +1464,12 @@ importers:
       '@mioagent/route-storage':
         specifier: workspace:*
         version: link:../lib/route-storage
+      '@mioagent/rwa-cash-exit':
+        specifier: workspace:*
+        version: link:../lib/rwa-cash-exit
+      '@mioagent/rwa-dossier':
+        specifier: workspace:*
+        version: link:../lib/rwa-dossier
       '@mioagent/rwa-official':
         specifier: workspace:*
         version: link:../lib/rwa-official
@@ -6975,8 +7009,8 @@ snapshots:
 
   '@coinbase/cdp-sdk@1.51.2(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@6.0.6)':
     dependencies:
-      '@solana-program/system': 0.10.0(@solana/kit@5.5.1(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@6.0.6))
-      '@solana-program/token': 0.9.0(@solana/kit@5.5.1(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@6.0.6))
+      '@solana-program/system': 0.10.0(@solana/kit@5.5.1(typescript@6.0.3))
+      '@solana-program/token': 0.9.0(@solana/kit@5.5.1(typescript@6.0.3))
       '@solana/kit': 5.5.1(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@6.0.6)
       abitype: 1.0.6(typescript@6.0.3)(zod@3.25.76)
       axios: 1.16.0
@@ -8952,21 +8986,21 @@ snapshots:
     optionalDependencies:
       viem: 2.53.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@3.25.76)
 
-  '@solana-program/system@0.10.0(@solana/kit@5.5.1(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@6.0.6))':
-    dependencies:
-      '@solana/kit': 5.5.1(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@6.0.6)
-
   '@solana-program/system@0.10.0(@solana/kit@5.5.1(typescript@5.9.3))':
     dependencies:
       '@solana/kit': 5.5.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
 
-  '@solana-program/token@0.9.0(@solana/kit@5.5.1(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@6.0.6))':
+  '@solana-program/system@0.10.0(@solana/kit@5.5.1(typescript@6.0.3))':
     dependencies:
       '@solana/kit': 5.5.1(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@6.0.6)
 
   '@solana-program/token@0.9.0(@solana/kit@5.5.1(typescript@5.9.3))':
     dependencies:
       '@solana/kit': 5.5.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
+
+  '@solana-program/token@0.9.0(@solana/kit@5.5.1(typescript@6.0.3))':
+    dependencies:
+      '@solana/kit': 5.5.1(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@6.0.6)
 
   '@solana/accounts@5.5.1(typescript@5.9.3)':
     dependencies:

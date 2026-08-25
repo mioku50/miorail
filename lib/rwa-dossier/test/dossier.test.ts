@@ -4,9 +4,15 @@ import test, { describe } from 'node:test';
 import { type B20ReaderV1, type B20RpcResultV1 } from '@mioagent/b20-control';
 import { OFFICIAL_ASSET_LEDGER_TAIL_KEY_V1 } from '@mioagent/market-tail';
 import {
+  CashExitMeasurementRunV1Schema,
+  CashExitSourceObservationV1Schema,
   createMemoryMarketTailRepository,
+  createMemoryOfficialCashExitRepository,
   createMemoryOfficialAssetRepository,
+  hashCashExitObservationV1,
+  hashCashExitRunV1,
 } from '@mioagent/route-storage';
+import { ZERO_HASH_V1 } from '@mioagent/route-domain';
 
 import {
   assembleOfficialAssetDossierV1,
@@ -40,7 +46,9 @@ function roundData(input: {
   return `0x${word(roundId)}${word(input.answer)}${word(input.updatedAt - 60n)}${word(input.updatedAt)}${word(input.answeredInRound ?? roundId)}`;
 }
 
-function reader(input: { answer?: bigint; updatedAt?: bigint; answeredInRound?: bigint } = {}): B20ReaderV1 {
+function reader(
+  input: { answer?: bigint; updatedAt?: bigint; answeredInRound?: bigint } = {},
+): B20ReaderV1 {
   const ok = (value: string): B20RpcResultV1<string> => ({ ok: true, value, raw: value });
   const updatedAt = input.updatedAt ?? BigInt(NOW.getTime() / 1_000 - 3_600);
   return {
@@ -177,11 +185,112 @@ async function tail() {
   return marketTail;
 }
 
+async function cashExit() {
+  const repository = createMemoryOfficialCashExitRepository();
+  const startedAt = '2026-08-25T11:59:50.000Z';
+  const expiresAt = '2026-08-25T12:00:30.000Z';
+  const runId = hashCashExitRunV1({
+    schemaVersion: 'official-cash-exit-run/v1',
+    chainId: 8453,
+    tokenAddress: TOKEN,
+    scope: 'public_ladder',
+    tenantId: null,
+    approvedSources: ['kyberswap'],
+    destinations: ['USDC'],
+    startedAt,
+    completedAt: NOW.toISOString(),
+    observations: [] as never,
+  });
+  const leg = (
+    direction: 'buy' | 'sell',
+    inputAddress: string,
+    outputAddress: string,
+    inputAtomic: string,
+    outputAtomic: string,
+  ) => ({
+    direction,
+    inputAddress,
+    outputAddress,
+    inputAtomic,
+    outputAtomic,
+    routeKey: `route-${direction}`,
+    candidateHash: `0x${direction === 'buy' ? '11' : '22'.repeat(1)}`.padEnd(
+      66,
+      direction === 'buy' ? '1' : '2',
+    ),
+    evidenceHash: `0x${direction === 'buy' ? '33' : '44'.repeat(1)}`.padEnd(
+      66,
+      direction === 'buy' ? '3' : '4',
+    ),
+    observedAt: NOW.toISOString(),
+    expiresAt,
+    blockNumber: '5000',
+    liquiditySources: ['aerodrome-cl'],
+  });
+  const draft = {
+    schemaVersion: 'official-cash-exit-observation/v1' as const,
+    observationHash: ZERO_HASH_V1,
+    runId,
+    chainId: 8453 as const,
+    tokenAddress: TOKEN,
+    tokenSymbol: 'ACMEon',
+    tokenDecimals: 8,
+    scope: 'public_ladder' as const,
+    tenantId: null,
+    sizeKind: 'cash_equivalent' as const,
+    requestedCashAtomic: '100000000',
+    requestedTokenAtomic: null,
+    testedTokenAtomic: '50000000',
+    destination: 'USDC' as const,
+    destinationAddress: USDC,
+    destinationDecimals: 6,
+    source: 'kyberswap',
+    status: 'full' as const,
+    evidenceStrength: 'router_quote' as const,
+    executionProven: false as const,
+    buyQuote: leg('buy', USDC, TOKEN, '100000000', '50000000'),
+    sellQuote: leg('sell', TOKEN, USDC, '50000000', '99000000'),
+    errorCode: null,
+    observedAt: NOW.toISOString(),
+    expiresAt,
+  };
+  const observation = CashExitSourceObservationV1Schema.parse({
+    ...draft,
+    observationHash: hashCashExitObservationV1(draft),
+  });
+  const run = CashExitMeasurementRunV1Schema.parse({
+    schemaVersion: 'official-cash-exit-run/v1',
+    runId,
+    chainId: 8453,
+    tokenAddress: TOKEN,
+    scope: 'public_ladder',
+    tenantId: null,
+    approvedSources: ['kyberswap'],
+    destinations: ['USDC'],
+    startedAt,
+    completedAt: NOW.toISOString(),
+    observations: [observation],
+  });
+  await repository.recordCompletedRun(run);
+  return repository;
+}
+
 describe('official asset dossier assembly', () => {
   test('assembles exact-address evidence deterministically without inventing trades or an underlying', async () => {
-    const deps = { official: await corpus(), marketTail: await tail(), reader: reader(), now: () => NOW };
-    const first = await assembleOfficialAssetDossierV1(deps, { chainId: 8453, tokenAddress: TOKEN.toUpperCase() });
-    const second = await assembleOfficialAssetDossierV1(deps, { chainId: 8453, tokenAddress: TOKEN });
+    const deps = {
+      official: await corpus(),
+      marketTail: await tail(),
+      reader: reader(),
+      now: () => NOW,
+    };
+    const first = await assembleOfficialAssetDossierV1(deps, {
+      chainId: 8453,
+      tokenAddress: TOKEN.toUpperCase(),
+    });
+    const second = await assembleOfficialAssetDossierV1(deps, {
+      chainId: 8453,
+      tokenAddress: TOKEN,
+    });
 
     assert.equal(first.outcome, 'dossier');
     assert.equal(second.outcome, 'dossier');
@@ -190,7 +299,11 @@ describe('official asset dossier assembly', () => {
     assert.equal(first.dossier.assembly, 'deterministic_no_llm_facts');
     assert.equal(first.dossier.identity.tokenAddress, TOKEN);
     assert.equal(first.dossier.identity.underlying.status, 'not_established');
-    assert.equal(first.dossier.identity.underlying.symbol, null, 'a ticker suffix is never stripped into a fact');
+    assert.equal(
+      first.dossier.identity.underlying.symbol,
+      null,
+      'a ticker suffix is never stripped into a fact',
+    );
 
     assert.equal(first.dossier.referenceValue.status, 'fresh');
     assert.equal(first.dossier.referenceValue.totalReturnValue, true);
@@ -200,12 +313,21 @@ describe('official asset dossier assembly', () => {
     assert.equal(first.dossier.comparison.reason, 'registry_pause_state_unavailable');
 
     assert.equal(first.dossier.marketTopology.directUsdcPoolCount, 1);
-    assert.deepEqual(first.dossier.marketTopology.venues.map((venue) => venue.address), [POOL]);
+    assert.deepEqual(
+      first.dossier.marketTopology.venues.map((venue) => venue.address),
+      [POOL],
+    );
     assert.equal(first.dossier.recentMarketActivity.windowFromBlock, 3_001);
     assert.equal(first.dossier.recentMarketActivity.movementCount, 1);
     assert.equal(first.dossier.recentMarketActivity.confirmedSwapCount, null);
-    assert.equal(first.dossier.recentMarketActivity.semantics, 'venue_transfers_not_confirmed_swaps');
-    assert.equal(first.dossier.recentMarketActivity.latest[0]?.counterpartyRole, 'unattributed_counterparty');
+    assert.equal(
+      first.dossier.recentMarketActivity.semantics,
+      'venue_transfers_not_confirmed_swaps',
+    );
+    assert.equal(
+      first.dossier.recentMarketActivity.latest[0]?.counterpartyRole,
+      'unattributed_counterparty',
+    );
     assert.ok(!JSON.stringify(first.dossier).includes('"trader"'));
   });
 
@@ -223,6 +345,32 @@ describe('official asset dossier assembly', () => {
     );
     assert.equal(result.outcome, 'not_in_reviewed_corpus');
     assert.equal(chainCalls, 0);
+  });
+
+  test('populates executable value only from a fresh exact quote while keeping reference independent', async () => {
+    const result = await assembleOfficialAssetDossierV1(
+      {
+        official: await corpus(),
+        marketTail: await tail(),
+        cashExit: await cashExit(),
+        reader: reader(),
+        now: () => NOW,
+      },
+      { chainId: 8453, tokenAddress: TOKEN },
+    );
+    assert.equal(result.outcome, 'dossier');
+    if (result.outcome !== 'dossier') return;
+    assert.equal(result.dossier.executableValue.status, 'full');
+    assert.equal(result.dossier.executableValue.valueAtomic, '19800000000');
+    assert.equal(result.dossier.executableValue.decimals, 8);
+    assert.equal(result.dossier.executableValue.evidence?.kind, 'router_quote');
+    assert.equal(result.dossier.cashExitLadder.rungs[0]?.executionProven, false);
+    assert.equal(
+      result.dossier.cashExitLadder.rungs[0]?.simulationEvidence.status,
+      'not_simulated',
+    );
+    assert.equal(result.dossier.referenceValue.valueAtomic, '12345000000');
+    assert.equal(result.dossier.comparison.reason, 'registry_pause_state_unavailable');
   });
 
   test('retains the reviewed feed address when the Base anchor is unavailable', async () => {
@@ -261,10 +409,11 @@ describe('tokenized stock reference boundary', () => {
     assert.equal(value.comparisonEligible, true);
 
     const executable: ExecutableValueV1 = {
-      status: 'measured',
+      status: 'full',
       valueAtomic: '11000000000',
       decimals: 8,
       requestedSizeAtomic: '1000000000000000000',
+      executableSizeAtomic: '1000000000000000000',
       destination: 'USDC',
       observedAt: NOW.toISOString(),
       evidence: null,
@@ -290,10 +439,11 @@ describe('tokenized stock reference boundary', () => {
     assert.equal(stale.comparisonEligible, false);
     assert.deepEqual(
       compareReferenceAndExecutableV1(stale, {
-        status: 'measured',
+        status: 'full',
         valueAtomic: '1',
         decimals: 8,
         requestedSizeAtomic: '1',
+        executableSizeAtomic: '1',
         destination: 'USDC',
         observedAt: NOW.toISOString(),
         evidence: null,

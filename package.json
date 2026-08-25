@@ -53,6 +53,7 @@
     "b20:reverify-projects": "node --import tsx scripts/b20_reverify_projects.ts",
     "rwa:ingest-official": "tsx scripts/rwa_ingest_official.ts",
     "rwa:probe-cash-exit": "tsx scripts/probe_official_cash_exit.ts",
+    "rwa:measure-cash-exit": "tsx scripts/rwa_measure_cash_exit.ts",
     "rwa:market-tail": "tsx scripts/market_tail.ts"
   },
   "devDependencies": {

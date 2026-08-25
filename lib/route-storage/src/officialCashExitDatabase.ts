@@ -1,0 +1,77 @@
+import {
+  assertCashExitRunV1,
+  type CashExitMeasurementRunV1,
+  type OfficialCashExitRepositoryV1,
+} from './officialCashExit.js';
+import { stableHashV1 } from '@mioagent/route-domain';
+import {
+  RouteStorageConflictError,
+  RouteStorageTenantError,
+  type SqlTemplateExecutor,
+} from './types.js';
+
+function runFromRowV1(row: Record<string, unknown>): CashExitMeasurementRunV1 {
+  return assertCashExitRunV1({
+    schemaVersion: 'official-cash-exit-run/v1',
+    runId: row.run_id,
+    chainId: Number(row.chain_id),
+    tokenAddress: row.token_address,
+    scope: row.scope,
+    tenantId: row.tenant_id ?? null,
+    approvedSources: row.approved_sources,
+    destinations: row.destinations,
+    startedAt: new Date(row.started_at as string).toISOString(),
+    completedAt: new Date(row.completed_at as string).toISOString(),
+    observations: row.observations,
+  });
+}
+
+export function createDatabaseOfficialCashExitRepository(
+  sql: SqlTemplateExecutor,
+): OfficialCashExitRepositoryV1 {
+  return {
+    async recordCompletedRun(value) {
+      const run = assertCashExitRunV1(value, 'write');
+      await sql`
+        INSERT INTO official_cash_exit_runs (
+          run_id, chain_id, token_address, scope, tenant_id, approved_sources,
+          destinations, started_at, completed_at, observations
+        ) VALUES (
+          ${run.runId}, ${run.chainId}, ${run.tokenAddress}, ${run.scope}, ${run.tenantId},
+          ${run.approvedSources}::jsonb, ${run.destinations}::jsonb,
+          ${run.startedAt}, ${run.completedAt}, ${run.observations}::jsonb
+        )
+        ON CONFLICT (run_id) DO NOTHING`;
+      const stored = await sql`
+        SELECT run_id, chain_id, token_address, scope, tenant_id, approved_sources,
+               destinations, started_at, completed_at, observations
+        FROM official_cash_exit_runs
+        WHERE run_id = ${run.runId}`;
+      if (
+        !stored[0] ||
+        stableHashV1('official-cash-exit-run-record/v1', runFromRowV1(stored[0])) !==
+          stableHashV1('official-cash-exit-run-record/v1', run)
+      ) {
+        throw new RouteStorageConflictError('cash-exit run hash collision');
+      }
+    },
+    async latestCompletedRun(input) {
+      const tenantId = input.tenantId ?? null;
+      if (input.scope === 'tenant_position' && tenantId === null)
+        throw new RouteStorageTenantError('tenant position read requires tenantId');
+      if (input.scope === 'public_ladder' && tenantId !== null)
+        throw new RouteStorageTenantError('public ladder is not tenant scoped');
+      const rows = await sql`
+        SELECT run_id, chain_id, token_address, scope, tenant_id, approved_sources,
+               destinations, started_at, completed_at, observations
+        FROM official_cash_exit_runs
+        WHERE chain_id = ${input.chainId}
+          AND token_address = ${input.tokenAddress.toLowerCase()}
+          AND scope = ${input.scope}
+          AND tenant_id IS NOT DISTINCT FROM ${tenantId}
+        ORDER BY completed_at DESC, run_id DESC
+        LIMIT 1`;
+      return rows[0] ? runFromRowV1(rows[0]) : null;
+    },
+  };
+}

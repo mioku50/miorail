@@ -8,9 +8,11 @@ import {
 } from '@mioagent/b20-control';
 import { OFFICIAL_ASSET_LEDGER_TAIL_KEY_V1 } from '@mioagent/market-tail';
 import { stableHashV1 } from '@mioagent/route-domain';
+import { assembleCashExitLadderV1, type CashExitLadderRungV1 } from '@mioagent/rwa-cash-exit';
 import {
   isOfficialV1,
   type MarketTailRepositoryV1,
+  type OfficialCashExitRepositoryV1,
   type OfficialAssetIdentityV1,
   type OfficialAssetRepositoryV1,
   type OfficialSourceDiscrepancyV1,
@@ -56,9 +58,74 @@ export interface OfficialAssetDossierDepsV1 {
   marketTail: MarketTailRepositoryV1;
   reader: B20ReaderV1;
   now: () => Date;
+  cashExit?: OfficialCashExitRepositoryV1;
+  tenantId?: string;
 }
 
-function discrepancyTouchesV1(discrepancy: OfficialSourceDiscrepancyV1, tokenAddress: string): boolean {
+function executableFromLadderV1(rungs: readonly CashExitLadderRungV1[]): ExecutableValueV1 {
+  const usdc = rungs.filter((rung) => rung.destination === 'USDC');
+  const preferred =
+    usdc.find(
+      (rung) => rung.sizeKind === 'actual_position' && ['full', 'partial'].includes(rung.status),
+    ) ??
+    usdc.find((rung) => ['full', 'partial'].includes(rung.status)) ??
+    usdc.find((rung) => rung.sizeKind === 'actual_position') ??
+    usdc[0];
+  if (!preferred) {
+    return {
+      status: 'not_measured',
+      valueAtomic: null,
+      decimals: null,
+      requestedSizeAtomic: null,
+      executableSizeAtomic: null,
+      destination: null,
+      observedAt: null,
+      evidence: null,
+    };
+  }
+  const exactToken = preferred.exactExecutableTokenAtomic;
+  const sellEvidence =
+    [...preferred.quoteEvidence].reverse().find((item) => item.direction === 'sell') ?? null;
+  const valueAtomic =
+    ['full', 'partial'].includes(preferred.status) &&
+    exactToken !== null &&
+    BigInt(exactToken) > 0n &&
+    preferred.returnedAtomic !== null
+      ? (
+          (BigInt(preferred.returnedAtomic) * 10n ** BigInt(preferred.tokenDecimals + 2)) /
+          BigInt(exactToken)
+        ).toString()
+      : null;
+  return {
+    status: preferred.status,
+    valueAtomic,
+    decimals: valueAtomic === null ? null : 8,
+    requestedSizeAtomic:
+      preferred.requestedTokenAtomic ??
+      preferred.exactTestedTokenAtomic ??
+      preferred.exactExecutableTokenAtomic,
+    executableSizeAtomic: preferred.exactExecutableTokenAtomic,
+    destination: 'USDC',
+    observedAt: preferred.observedAt,
+    evidence: sellEvidence
+      ? {
+          kind: 'router_quote',
+          source: sellEvidence.source,
+          observedAt: sellEvidence.observedAt,
+          blockNumber: sellEvidence.blockNumber,
+          blockHash: null,
+          targetAddress: null,
+          method: `route:${sellEvidence.routeKey}`,
+          evidenceHash: sellEvidence.evidenceHash,
+        }
+      : null,
+  };
+}
+
+function discrepancyTouchesV1(
+  discrepancy: OfficialSourceDiscrepancyV1,
+  tokenAddress: string,
+): boolean {
   if (discrepancy.kind === 'ticker_maps_to_multiple_addresses') {
     return discrepancy.tokenAddresses.includes(tokenAddress);
   }
@@ -103,7 +170,9 @@ function identityProjectionV1(
         evidenceHash: null,
       },
     })),
-    sourceDiscrepancy: discrepancies.some((item) => discrepancyTouchesV1(item, identity.tokenAddress)),
+    sourceDiscrepancy: discrepancies.some((item) =>
+      discrepancyTouchesV1(item, identity.tokenAddress),
+    ),
   };
 }
 
@@ -151,7 +220,8 @@ function controlsFromSnapshotV1(snapshot: B20ControlSnapshotV1 | null, now: Date
               ? ('unsupported_by_variant' as const)
               : ('unavailable' as const),
         value: field.status === 'exact_chain_read' ? field.value : null,
-        reason: field.status === 'exact_chain_read' ? null : field.reason ?? 'No exact value was read.',
+        reason:
+          field.status === 'exact_chain_read' ? null : (field.reason ?? 'No exact value was read.'),
         evidence: evidence ? controlEvidenceRefV1(evidence) : null,
       };
     });
@@ -223,11 +293,14 @@ async function marketProjectionV1(
   // `recentTransfers` is bounded but intentionally all-time. Keep the dossier's
   // venue set and examples inside the same block window as its activity counts;
   // otherwise an old singleton could silently survive as "recent" evidence.
-  const recentInWindow = recent.filter((row) => row.blockNumber >= sinceBlock && row.blockNumber <= cursor.lastBlock);
+  const recentInWindow = recent.filter(
+    (row) => row.blockNumber >= sinceBlock && row.blockNumber <= cursor.lastBlock,
+  );
   const recentVenueAddresses = new Set(recentInWindow.map((row) => row.venueAddress));
   const relevant = allVenues.filter(
     (venue) =>
-      (venue.kind === 'paired_pool' && (venue.token0 === tokenAddress || venue.token1 === tokenAddress)) ||
+      (venue.kind === 'paired_pool' &&
+        (venue.token0 === tokenAddress || venue.token1 === tokenAddress)) ||
       (venue.kind === 'singleton' && recentVenueAddresses.has(venue.address)),
   );
   const venues = relevant.map((venue) => {
@@ -256,7 +329,8 @@ async function marketProjectionV1(
       token1: venue.token1,
       quoteAddress,
       quoteCategory,
-      directCashReachable: quoteCategory === null ? null : quoteCategory === 'USDC' || quoteCategory === 'ETH_WETH',
+      directCashReachable:
+        quoteCategory === null ? null : quoteCategory === 'USDC' || quoteCategory === 'ETH_WETH',
       firstSeenAt: venue.firstSeenAt,
       identifiedAt: venue.identifiedAt,
     };
@@ -318,13 +392,19 @@ async function marketProjectionV1(
   return { topology, activity };
 }
 
-function feedAddressV1(identity: OfficialAssetIdentityV1): { address: string | null; conflict: boolean } {
+function feedAddressV1(identity: OfficialAssetIdentityV1): {
+  address: string | null;
+  conflict: boolean;
+} {
   const addresses = new Set(
     identity.listings
       .filter((listing) => listing.currentlyListed && listing.referenceFeedAddress !== null)
       .map((listing) => listing.referenceFeedAddress!),
   );
-  return { address: addresses.size === 1 ? [...addresses][0]! : null, conflict: addresses.size > 1 };
+  return {
+    address: addresses.size === 1 ? [...addresses][0]! : null,
+    conflict: addresses.size > 1,
+  };
 }
 
 export async function assembleOfficialAssetDossierV1(
@@ -339,7 +419,8 @@ export async function assembleOfficialAssetDossierV1(
       outcome: 'not_in_reviewed_corpus',
       chainId: 8453,
       tokenAddress,
-      detail: 'No currently listed reviewed source snapshot establishes this exact address as official.',
+      detail:
+        'No currently listed reviewed source snapshot establishes this exact address as official.',
     });
   }
 
@@ -375,15 +456,25 @@ export async function assembleOfficialAssetDossierV1(
           // proof that no pause just began.
           registryPause: null,
         });
-  const executableValue: ExecutableValueV1 = {
-    status: 'not_measured',
-    valueAtomic: null,
-    decimals: null,
-    requestedSizeAtomic: null,
-    destination: null,
-    observedAt: null,
-    evidence: null,
-  };
+  const [publicExitRun, positionExitRun] = deps.cashExit
+    ? await Promise.all([
+        deps.cashExit.latestCompletedRun({ chainId: 8453, tokenAddress, scope: 'public_ladder' }),
+        deps.tenantId
+          ? deps.cashExit.latestCompletedRun({
+              chainId: 8453,
+              tokenAddress,
+              scope: 'tenant_position',
+              tenantId: deps.tenantId,
+            })
+          : Promise.resolve(null),
+      ])
+    : [null, null];
+  const cashExitLadder = assembleCashExitLadderV1({
+    publicRun: publicExitRun,
+    positionRun: positionExitRun,
+    now,
+  });
+  const executableValue = executableFromLadderV1(cashExitLadder.rungs);
   const comparison = compareReferenceAndExecutableV1(referenceValue, executableValue);
   const market = await marketProjectionV1(
     deps,
@@ -395,8 +486,9 @@ export async function assembleOfficialAssetDossierV1(
     'underlying_identity_not_established',
     'oracle_registry_pause_abi_not_established',
     'confirmed_swap_semantics_not_implemented',
-    'executable_value_not_measured_phase_4',
   ]);
+  if (executableValue.status === 'not_measured') gaps.add('executable_value_not_measured');
+  if (executableValue.status === 'measurement_failed') gaps.add('cash_exit_measurement_failed');
   if (feed.conflict) gaps.add('reference_feed_source_conflict');
   if (anchor === null) gaps.add('base_block_anchor_unavailable');
   if (controls.status === 'unavailable') gaps.add('b20_controls_unavailable');
@@ -420,12 +512,16 @@ export async function assembleOfficialAssetDossierV1(
     identity: identityProjectionV1(identity!, discrepancies),
     referenceValue,
     executableValue,
+    cashExitLadder,
     comparison,
     controls,
     marketTopology: market.topology,
     recentMarketActivity: market.activity,
     gaps: [...gaps].sort(),
   };
-  const dossier = OfficialAssetDossierV1Schema.parse({ ...draft, dossierHash: hashOfficialAssetDossierV1(draft) });
+  const dossier = OfficialAssetDossierV1Schema.parse({
+    ...draft,
+    dossierHash: hashOfficialAssetDossierV1(draft),
+  });
   return OfficialAssetDossierResponseV1Schema.parse({ outcome: 'dossier', dossier });
 }

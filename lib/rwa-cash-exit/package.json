@@ -1,5 +1,5 @@
 {
-  "name": "@mioagent/rwa-dossier",
+  "name": "@mioagent/rwa-cash-exit",
   "version": "0.0.0",
   "license": "AGPL-3.0-only",
   "private": true,
@@ -14,11 +14,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mioagent/b20-control": "workspace:*",
-    "@mioagent/market-tail": "workspace:*",
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/route-storage": "workspace:*",
-    "@mioagent/rwa-cash-exit": "workspace:*",
+    "@mioagent/swap-adapters": "workspace:*",
     "zod": "^3.25.76"
   },
   "devDependencies": {

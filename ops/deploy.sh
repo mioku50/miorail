@@ -91,7 +91,11 @@ cd "$REPO"
 # above put us on an immutable copy; all that is left is to notice that the
 # repository copy moved and hand over to a fresh snapshot of it.
 digest_before_pull=$(file_digest "$DEPLOY_SOURCE")
-as_service_user git pull --ff-only
+# The checkout historically tracked mioku50/mioagent under one of its remote
+# names. Never let branch tracking or the on-disk directory name select the
+# deployment source implicitly: `origin` is normalized to the canonical
+# mioku50/miorail repository before this script is allowed to run.
+as_service_user git pull --ff-only origin main
 if [ "$(file_digest "$DEPLOY_SOURCE")" != "$digest_before_pull" ]; then
   # A second change can only mean something other than this pull is writing to
   # the working tree. Looping would hide that; stop instead.

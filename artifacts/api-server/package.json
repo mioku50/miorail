@@ -39,6 +39,7 @@
     "@mioagent/route-proof": "workspace:*",
     "@mioagent/route-storage": "workspace:*",
     "@mioagent/rwa-dossier": "workspace:*",
+    "@mioagent/rwa-cash-exit": "workspace:*",
     "@mioagent/runtime-skills": "workspace:*",
     "@mioagent/security": "workspace:*",
     "@mioagent/swap-adapters": "workspace:*",

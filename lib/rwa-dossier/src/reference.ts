@@ -72,17 +72,32 @@ export async function readTokenizedStockReferenceV1(
   },
 ): Promise<ReferenceValueV1> {
   if (input.feedAddress === null) {
-    return unavailableTokenizedStockReferenceV1({ feedAddress: null, reason: 'reference_unavailable' });
+    return unavailableTokenizedStockReferenceV1({
+      feedAddress: null,
+      reason: 'reference_unavailable',
+    });
   }
   const feedAddress = input.feedAddress.toLowerCase();
   const [decimalsRead, roundRead] = await (reader.callMany
     ? reader.callMany([
         { to: feedAddress, data: CHAINLINK_DECIMALS_SELECTOR_V1, blockTag: input.anchor.blockTag },
-        { to: feedAddress, data: CHAINLINK_LATEST_ROUND_DATA_SELECTOR_V1, blockTag: input.anchor.blockTag },
+        {
+          to: feedAddress,
+          data: CHAINLINK_LATEST_ROUND_DATA_SELECTOR_V1,
+          blockTag: input.anchor.blockTag,
+        },
       ])
     : Promise.all([
-        reader.call({ to: feedAddress, data: CHAINLINK_DECIMALS_SELECTOR_V1, blockTag: input.anchor.blockTag }),
-        reader.call({ to: feedAddress, data: CHAINLINK_LATEST_ROUND_DATA_SELECTOR_V1, blockTag: input.anchor.blockTag }),
+        reader.call({
+          to: feedAddress,
+          data: CHAINLINK_DECIMALS_SELECTOR_V1,
+          blockTag: input.anchor.blockTag,
+        }),
+        reader.call({
+          to: feedAddress,
+          data: CHAINLINK_LATEST_ROUND_DATA_SELECTOR_V1,
+          blockTag: input.anchor.blockTag,
+        }),
       ]));
 
   if (!decimalsRead?.ok || !roundRead?.ok) {
@@ -108,16 +123,25 @@ export async function readTokenizedStockReferenceV1(
     answeredInRound === null ||
     answeredInRound < roundId
   ) {
-    return unavailableTokenizedStockReferenceV1({ feedAddress, reason: 'reference_invalid', status: 'invalid' });
+    return unavailableTokenizedStockReferenceV1({
+      feedAddress,
+      reason: 'reference_invalid',
+      status: 'invalid',
+    });
   }
 
   const updatedMs = Number(updatedAt) * 1_000;
   if (!Number.isSafeInteger(updatedMs) || updatedMs > input.now.getTime() + 5 * 60 * 1_000) {
-    return unavailableTokenizedStockReferenceV1({ feedAddress, reason: 'reference_invalid', status: 'invalid' });
+    return unavailableTokenizedStockReferenceV1({
+      feedAddress,
+      reason: 'reference_invalid',
+      status: 'invalid',
+    });
   }
   const ageSeconds = Math.max(0, Math.floor((input.now.getTime() - updatedMs) / 1_000));
   const stale = ageSeconds > (input.maxAgeSeconds ?? TOKENIZED_STOCK_REFERENCE_MAX_AGE_SECONDS_V1);
-  const registryPause = input.registryPause === null ? 'unknown' : input.registryPause ? 'paused' : 'not_paused';
+  const registryPause =
+    input.registryPause === null ? 'unknown' : input.registryPause ? 'paused' : 'not_paused';
   const status = registryPause === 'paused' ? 'paused' : stale ? 'stale' : 'fresh';
   const comparisonEligible = status === 'fresh' && registryPause === 'not_paused';
   const withheldReason = comparisonEligible
@@ -176,13 +200,25 @@ export function compareReferenceAndExecutableV1(
           : reference.status === 'invalid'
             ? 'reference_invalid'
             : 'reference_unavailable');
-    return ReferenceExecutableComparisonV1Schema.parse({ status: 'withheld', differenceBps: null, reason });
-  }
-  if (executable.status !== 'measured') {
     return ReferenceExecutableComparisonV1Schema.parse({
       status: 'withheld',
       differenceBps: null,
-      reason: executable.status === 'not_measured' ? 'executable_value_not_measured' : 'executable_value_unavailable',
+      reason,
+    });
+  }
+  if (!['full', 'partial'].includes(executable.status)) {
+    const reason =
+      executable.status === 'not_measured'
+        ? 'executable_value_not_measured'
+        : executable.status === 'buy_only'
+          ? 'executable_value_buy_only'
+          : executable.status === 'measurement_failed'
+            ? 'executable_value_measurement_failed'
+            : 'executable_value_unavailable';
+    return ReferenceExecutableComparisonV1Schema.parse({
+      status: 'withheld',
+      differenceBps: null,
+      reason,
     });
   }
   if (
@@ -198,8 +234,10 @@ export function compareReferenceAndExecutableV1(
     });
   }
   const commonDecimals = Math.max(reference.decimals, executable.decimals);
-  const referenceScaled = BigInt(reference.valueAtomic) * 10n ** BigInt(commonDecimals - reference.decimals);
-  const executableScaled = BigInt(executable.valueAtomic) * 10n ** BigInt(commonDecimals - executable.decimals);
+  const referenceScaled =
+    BigInt(reference.valueAtomic) * 10n ** BigInt(commonDecimals - reference.decimals);
+  const executableScaled =
+    BigInt(executable.valueAtomic) * 10n ** BigInt(commonDecimals - executable.decimals);
   if (referenceScaled <= 0n) {
     return ReferenceExecutableComparisonV1Schema.parse({
       status: 'withheld',

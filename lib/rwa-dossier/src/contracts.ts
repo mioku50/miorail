@@ -1,4 +1,5 @@
 import { stableHashV1, type HashV1 } from '@mioagent/route-domain';
+import { CashExitLadderV1Schema } from '@mioagent/rwa-cash-exit/contracts';
 import { z } from 'zod';
 
 const Address = z.string().regex(/^0x[0-9a-f]{40}$/);
@@ -8,7 +9,13 @@ const Digits = z.string().regex(/^(0|[1-9][0-9]*)$/);
 
 export const DossierEvidenceRefV1Schema = z
   .object({
-    kind: z.enum(['reviewed_source_snapshot', 'base_chain_call', 'chainlink_feed', 'stored_market_tail']),
+    kind: z.enum([
+      'reviewed_source_snapshot',
+      'base_chain_call',
+      'chainlink_feed',
+      'stored_market_tail',
+      'router_quote',
+    ]),
     source: z.string().min(1).max(160),
     observedAt: Timestamp,
     blockNumber: Digits.nullable(),
@@ -99,7 +106,10 @@ export const ReferenceValueV1Schema = z
   .object({
     status: z.enum(['fresh', 'stale', 'paused', 'unavailable', 'invalid']),
     feedAddress: Address.nullable(),
-    valueAtomic: z.string().regex(/^-?(0|[1-9][0-9]*)$/).nullable(),
+    valueAtomic: z
+      .string()
+      .regex(/^-?(0|[1-9][0-9]*)$/)
+      .nullable(),
     decimals: z.number().int().min(0).max(36).nullable(),
     feedUpdatedAt: Timestamp.nullable(),
     ageSeconds: z.number().int().min(0).nullable(),
@@ -123,10 +133,18 @@ export type ReferenceValueV1 = z.infer<typeof ReferenceValueV1Schema>;
 
 export const ExecutableValueV1Schema = z
   .object({
-    status: z.enum(['not_measured', 'measured', 'unavailable']),
+    status: z.enum([
+      'full',
+      'partial',
+      'buy_only',
+      'unavailable',
+      'not_measured',
+      'measurement_failed',
+    ]),
     valueAtomic: Digits.nullable(),
     decimals: z.number().int().min(0).max(36).nullable(),
     requestedSizeAtomic: Digits.nullable(),
+    executableSizeAtomic: Digits.nullable(),
     destination: z.enum(['USDC', 'ETH']).nullable(),
     observedAt: Timestamp.nullable(),
     evidence: DossierEvidenceRefV1Schema.nullable(),
@@ -137,7 +155,10 @@ export type ExecutableValueV1 = z.infer<typeof ExecutableValueV1Schema>;
 export const ReferenceExecutableComparisonV1Schema = z
   .object({
     status: z.enum(['comparable', 'withheld']),
-    differenceBps: z.string().regex(/^-?(0|[1-9][0-9]*)$/).nullable(),
+    differenceBps: z
+      .string()
+      .regex(/^-?(0|[1-9][0-9]*)$/)
+      .nullable(),
     reason: z
       .enum([
         'reference_stale',
@@ -147,6 +168,8 @@ export const ReferenceExecutableComparisonV1Schema = z
         'registry_pause_state_unavailable',
         'executable_value_not_measured',
         'executable_value_unavailable',
+        'executable_value_buy_only',
+        'executable_value_measurement_failed',
       ])
       .nullable(),
   })
@@ -227,6 +250,7 @@ export const OfficialAssetDossierV1Schema = z
     identity: OfficialDossierIdentityV1Schema,
     referenceValue: ReferenceValueV1Schema,
     executableValue: ExecutableValueV1Schema,
+    cashExitLadder: CashExitLadderV1Schema,
     comparison: ReferenceExecutableComparisonV1Schema,
     controls: DossierControlsV1Schema,
     marketTopology: MarketTopologyV1Schema,
@@ -236,7 +260,11 @@ export const OfficialAssetDossierV1Schema = z
   .strict()
   .superRefine((value, ctx) => {
     if (value.dossierHash !== hashOfficialAssetDossierV1(value)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['dossierHash'], message: 'dossier hash mismatch' });
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['dossierHash'],
+        message: 'dossier hash mismatch',
+      });
     }
   });
 export type OfficialAssetDossierV1 = z.infer<typeof OfficialAssetDossierV1Schema>;
