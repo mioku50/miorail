@@ -29,8 +29,10 @@ before(async () => {
   if (!throwaway) return;
   sql = postgres(url!, { max: 1, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS official_asset_lookalikes CASCADE');
-  const migration = await readFile(resolve(drizzleDir(), '0053_official_asset_lookalikes.sql'), 'utf8');
-  await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));
+  for (const file of ['0053_official_asset_lookalikes.sql', '0054_lookalike_matched_alias.sql']) {
+    const migration = await readFile(resolve(drizzleDir(), file), 'utf8');
+    await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));
+  }
 });
 
 after(async () => {
@@ -49,6 +51,7 @@ if (!throwaway) {
         token_address: IMPOSTOR,
         official_address: AAPL,
         match_kind: 'symbol_exact',
+        matched_alias: 'published_ticker',
         matched_value: 'AAPLc',
         launch_symbol: 'AAPLc',
         launch_name: 'Apple',
@@ -59,11 +62,12 @@ if (!throwaway) {
       };
       await sql!`
         INSERT INTO official_asset_lookalikes (
-          chain_id, token_address, official_address, match_kind, matched_value,
+          chain_id, token_address, official_address, match_kind, matched_alias, matched_value,
           launch_symbol, launch_name, launched_at, first_flagged_at, last_seen_at
         ) VALUES (
           ${values.chain_id as number}, ${values.token_address as string},
           ${values.official_address as string}, ${values.match_kind as string},
+          ${values.matched_alias as string},
           ${values.matched_value as string}, ${values.launch_symbol as string},
           ${values.launch_name as string}, ${values.launched_at as string | null},
           ${values.first_flagged_at as string}::timestamptz, ${values.last_seen_at as string}::timestamptz
@@ -86,6 +90,10 @@ if (!throwaway) {
 
     test('a match kind outside the three observable ones is refused', async () => {
       await assert.rejects(row({ match_kind: 'looks_dodgy' }), /official_asset_lookalikes_match_kind/);
+    });
+
+    test('an alias outside the three spellings is refused', async () => {
+      await assert.rejects(row({ matched_alias: 'vibes' }), /official_asset_lookalikes_matched_alias/);
     });
 
     test('a flag with nothing that matched is refused', async () => {

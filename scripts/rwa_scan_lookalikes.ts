@@ -75,6 +75,7 @@ async function main(): Promise<void> {
       tokenAddress: match.tokenAddress,
       officialAddress: match.officialAddress,
       matchKind: match.matchKind,
+      matchedAlias: match.matchedAlias,
       matchedValue: match.matchedValue,
       launchSymbol: (launch.symbol ?? '').slice(0, 120),
       launchName: (launch.name ?? '').slice(0, 200),
@@ -88,7 +89,14 @@ async function main(): Promise<void> {
   for (const row of rows) byOfficial.set(row.officialAddress, (byOfficial.get(row.officialAddress) ?? 0) + 1);
   const tickerOf = new Map(officials.map((asset) => [asset.tokenAddress, asset.ticker]));
 
+  const byAlias = new Map<string, number>();
+  for (const row of rows) byAlias.set(row.matchedAlias, (byAlias.get(row.matchedAlias) ?? 0) + 1);
   console.log(`${rows.length} contract(s) resemble an official asset`);
+  // Which SPELLING was worn is the distinction that matters: nobody names a
+  // token AAPLc by accident, while COIN and META are ordinary words.
+  for (const [alias, count] of [...byAlias].sort(([, a], [, b]) => b - a)) {
+    console.log(`  ${alias.padEnd(18)} ${count}`);
+  }
   for (const [address, count] of [...byOfficial].sort(([, a], [, b]) => b - a)) {
     console.log(`  ${(tickerOf.get(address) ?? address).padEnd(8)} ${count}`);
   }
@@ -96,7 +104,7 @@ async function main(): Promise<void> {
   if (dry) {
     for (const row of rows.slice(0, 20)) {
       console.log(
-        `    ${row.tokenAddress}  ${row.matchKind.padEnd(18)} "${row.launchSymbol}" / "${row.launchName}"`,
+        `    ${row.tokenAddress}  ${row.matchedAlias.padEnd(16)} ${row.matchKind.padEnd(18)} "${row.launchSymbol}" / "${row.launchName}"`,
       );
     }
     if (rows.length > 20) console.log(`    … and ${rows.length - 20} more`);

@@ -18,6 +18,7 @@ function rowFixtureV1(overrides: Partial<OfficialLookalikeRowV1> = {}): Official
     tokenAddress: IMPOSTOR,
     officialAddress: AAPL,
     matchKind: 'symbol_exact',
+    matchedAlias: 'published_ticker',
     matchedValue: 'AAPLc',
     launchSymbol: 'AAPLc',
     launchName: 'Apple',

@@ -25,12 +25,18 @@ const Address = z.string().regex(/^0x[0-9a-f]{40}$/, 'expected a lowercase 20-by
 export const LOOKALIKE_MATCH_KINDS_V1 = ['symbol_exact', 'symbol_normalized', 'name_normalized'] as const;
 export type LookalikeMatchKindV1 = (typeof LOOKALIKE_MATCH_KINDS_V1)[number];
 
+/** WHICH spelling of the official asset was worn. Recorded, never ranked —
+ * see the migration for why the three are not the same finding. */
+export const LOOKALIKE_ALIAS_KINDS_V1 = ['published_ticker', 'underlying', 'display_name'] as const;
+export type LookalikeAliasKindV1 = (typeof LOOKALIKE_ALIAS_KINDS_V1)[number];
+
 export const OfficialLookalikeRowV1Schema = z
   .object({
     chainId: z.literal(8453),
     tokenAddress: Address,
     officialAddress: Address,
     matchKind: z.enum(LOOKALIKE_MATCH_KINDS_V1),
+    matchedAlias: z.enum(LOOKALIKE_ALIAS_KINDS_V1),
     /** The normalized string both sides shared, so a reader can see why. */
     matchedValue: z.string().min(1).max(120),
     /** What the contract declared when it was flagged. Copied rather than

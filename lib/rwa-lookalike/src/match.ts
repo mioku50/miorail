@@ -28,6 +28,21 @@
 export const LOOKALIKE_MATCH_KINDS_V1 = ['symbol_exact', 'symbol_normalized', 'name_normalized'] as const;
 export type LookalikeMatchKindV1 = (typeof LOOKALIKE_MATCH_KINDS_V1)[number];
 
+/**
+ * WHICH spelling of the official asset was worn.
+ *
+ * Orthogonal to `matchKind`, which says HOW the strings matched. Measured over
+ * the real launch index on 2026-08-25, the three are not the same finding:
+ * 12 contracts wore the published ticker, 95 the underlying and 5 the display
+ * name. Nobody names a token `AAPLc` by accident -- the trailing `c` is the
+ * issuer's convention -- while `COIN` and `META` are ordinary English words,
+ * and most of the 95 are exactly that.
+ *
+ * Recorded, not ranked. It says what matched, never how bad it is.
+ */
+export const LOOKALIKE_ALIAS_KINDS_V1 = ['published_ticker', 'underlying', 'display_name'] as const;
+export type LookalikeAliasKindV1 = (typeof LOOKALIKE_ALIAS_KINDS_V1)[number];
+
 /** Strongest first. A tie between two officials is broken by address, so the
  * same corpus always produces the same answer. */
 const MATCH_STRENGTH_V1: Record<LookalikeMatchKindV1, number> = {
@@ -52,6 +67,8 @@ export interface LookalikeMatchV1 {
   tokenAddress: string;
   officialAddress: string;
   matchKind: LookalikeMatchKindV1;
+  /** Which spelling of the official asset was worn. */
+  matchedAlias: LookalikeAliasKindV1;
   /** The normalized string both sides shared. Stored so a reader can see WHY
    * this was flagged rather than trust that it was. */
   matchedValue: string;
@@ -77,16 +94,22 @@ export function normalizeIdentityTextV1(value: string): string {
  * dropping a trailing `c` — which is the issuer's own convention and the
  * reason Miorail's index and the live contract disagree about the same token.
  */
-export function officialAliasesV1(asset: OfficialIdentityForMatchV1): string[] {
-  const aliases = new Set<string>();
+export function officialAliasesV1(
+  asset: OfficialIdentityForMatchV1,
+): { value: string; kind: LookalikeAliasKindV1 }[] {
+  const aliases: { value: string; kind: LookalikeAliasKindV1 }[] = [];
+  const seen = new Set<string>();
+  const add = (value: string, kind: LookalikeAliasKindV1) => {
+    const trimmed = value.trim();
+    if (trimmed.length === 0 || seen.has(trimmed)) return;
+    seen.add(trimmed);
+    aliases.push({ value: trimmed, kind });
+  };
   const ticker = asset.ticker.trim();
-  if (ticker.length > 0) {
-    aliases.add(ticker);
-    if (/c$/i.test(ticker) && ticker.length > 1) aliases.add(ticker.slice(0, -1));
-  }
-  const name = (asset.displayName ?? '').trim();
-  if (name.length > 0) aliases.add(name);
-  return [...aliases];
+  add(ticker, 'published_ticker');
+  if (/c$/i.test(ticker) && ticker.length > 1) add(ticker.slice(0, -1), 'underlying');
+  add(asset.displayName ?? '', 'display_name');
+  return aliases;
 }
 
 /**
@@ -124,10 +147,16 @@ export function lookalikeMatchV1(input: {
   for (const asset of input.officials) {
     const officialAddress = asset.tokenAddress.toLowerCase();
     for (const alias of officialAliasesV1(asset)) {
-      const normalizedAlias = normalizeIdentityTextV1(alias);
+      const normalizedAlias = normalizeIdentityTextV1(alias.value);
       if (normalizedAlias.length === 0) continue;
-      if (launchSymbol === alias) {
-        consider({ tokenAddress: launchAddress, officialAddress, matchKind: 'symbol_exact', matchedValue: alias });
+      if (launchSymbol === alias.value) {
+        consider({
+          tokenAddress: launchAddress,
+          officialAddress,
+          matchKind: 'symbol_exact',
+          matchedAlias: alias.kind,
+          matchedValue: alias.value,
+        });
         continue;
       }
       if (normalizedSymbol.length > 0 && normalizedSymbol === normalizedAlias) {
@@ -135,6 +164,7 @@ export function lookalikeMatchV1(input: {
           tokenAddress: launchAddress,
           officialAddress,
           matchKind: 'symbol_normalized',
+          matchedAlias: alias.kind,
           matchedValue: normalizedAlias,
         });
         continue;
@@ -144,6 +174,7 @@ export function lookalikeMatchV1(input: {
           tokenAddress: launchAddress,
           officialAddress,
           matchKind: 'name_normalized',
+          matchedAlias: alias.kind,
           matchedValue: normalizedAlias,
         });
       }

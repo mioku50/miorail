@@ -14,6 +14,7 @@ function rowToLookalikeV1(row: Record<string, unknown>): OfficialLookalikeRowV1 
       tokenAddress: row.token_address,
       officialAddress: row.official_address,
       matchKind: row.match_kind,
+      matchedAlias: row.matched_alias,
       matchedValue: row.matched_value,
       launchSymbol: String(row.launch_symbol ?? ''),
       launchName: String(row.launch_name ?? ''),
@@ -55,16 +56,17 @@ export function createDatabaseOfficialLookalikeRepository(
         // wearing the name is a fact a later scan must not reset.
         await sql`
           INSERT INTO official_asset_lookalikes (
-            chain_id, token_address, official_address, match_kind, matched_value,
+            chain_id, token_address, official_address, match_kind, matched_alias, matched_value,
             launch_symbol, launch_name, launched_at, first_flagged_at, last_seen_at
           ) VALUES (
             ${row.chainId}, ${row.tokenAddress}, ${row.officialAddress}, ${row.matchKind},
-            ${row.matchedValue}, ${row.launchSymbol}, ${row.launchName},
+            ${row.matchedAlias}, ${row.matchedValue}, ${row.launchSymbol}, ${row.launchName},
             ${row.launchedAt}, ${row.firstFlaggedAt}::timestamptz, ${row.lastSeenAt}::timestamptz
           )
           ON CONFLICT (chain_id, token_address) DO UPDATE SET
             official_address = EXCLUDED.official_address,
             match_kind = EXCLUDED.match_kind,
+            matched_alias = EXCLUDED.matched_alias,
             matched_value = EXCLUDED.matched_value,
             launch_symbol = EXCLUDED.launch_symbol,
             launch_name = EXCLUDED.launch_name,

@@ -379,6 +379,13 @@
       "when": 1787900000000,
       "tag": "0053_official_asset_lookalikes",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1787910000000,
+      "tag": "0054_lookalike_matched_alias",
+      "breakpoints": true
     }
   ]
 }

@@ -23,8 +23,15 @@ describe('official aliases', () => {
     // Measured: the contracts answer AAPLc while Miorail's launch index stored
     // AAPL for the same token, because B20 metadata is mutable and the index
     // holds what the launch event said. An impostor may wear either.
-    assert.deepEqual(officialAliasesV1(OFFICIALS[0]), ['AAPLc', 'AAPL', 'Apple']);
-    assert.deepEqual(officialAliasesV1(OFFICIALS[1]), ['NVDAc', 'NVDA']);
+    assert.deepEqual(officialAliasesV1(OFFICIALS[0]), [
+      { value: 'AAPLc', kind: 'published_ticker' },
+      { value: 'AAPL', kind: 'underlying' },
+      { value: 'Apple', kind: 'display_name' },
+    ]);
+    assert.deepEqual(officialAliasesV1(OFFICIALS[1]), [
+      { value: 'NVDAc', kind: 'published_ticker' },
+      { value: 'NVDA', kind: 'underlying' },
+    ]);
   });
 
   test('normalization removes case and punctuation and nothing else', () => {
@@ -63,6 +70,7 @@ describe('the matcher', () => {
       tokenAddress: IMPOSTOR,
       officialAddress: AAPL,
       matchKind: 'symbol_exact',
+      matchedAlias: 'published_ticker',
       matchedValue: 'AAPLc',
     });
   });
@@ -75,6 +83,10 @@ describe('the matcher', () => {
     assert.equal(match?.matchKind, 'symbol_exact');
     assert.equal(match?.matchedValue, 'AAPL');
     assert.equal(match?.officialAddress, AAPL);
+    // Measured over the real index: 95 of 112 matches wore the underlying and
+    // most are ordinary words -- one is a memecoin called "we like the coin".
+    // Still a resemblance, and now distinguishable from wearing `AAPLc`.
+    assert.equal(match?.matchedAlias, 'underlying');
   });
 
   test('dressing the ticker up in punctuation does not hide it', () => {
@@ -93,6 +105,7 @@ describe('the matcher', () => {
     });
     assert.equal(nameOnly?.matchKind, 'name_normalized');
     assert.equal(nameOnly?.officialAddress, AAPL);
+    assert.equal(nameOnly?.matchedAlias, 'display_name');
 
     const both = lookalikeMatchV1({
       launch: { tokenAddress: IMPOSTOR, symbol: 'NVDA', name: 'apple' },

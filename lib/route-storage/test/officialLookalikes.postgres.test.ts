@@ -32,8 +32,10 @@ before(async () => {
   if (!throwaway) return;
   sql = postgres(url!, { max: 1, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS official_asset_lookalikes CASCADE');
-  const migration = await readFile(resolve(drizzleDir(), '0053_official_asset_lookalikes.sql'), 'utf8');
-  await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));
+  for (const file of ['0053_official_asset_lookalikes.sql', '0054_lookalike_matched_alias.sql']) {
+    const migration = await readFile(resolve(drizzleDir(), file), 'utf8');
+    await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));
+  }
 });
 
 after(async () => {
