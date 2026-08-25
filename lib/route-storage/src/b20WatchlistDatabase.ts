@@ -102,5 +102,18 @@ export function createDatabaseB20WatchlistRepository(
         SET last_swept_at = ${input.at.toISOString()}, last_outcome = ${input.outcome}
         WHERE id = ${input.id}`;
     },
+
+    async distinctWatchedAddresses(input) {
+      // DISTINCT, and ordered so the set is stable between passes: the
+      // scheduler diffs this against what it has scheduled, and an unstable
+      // order would make that diff look like churn.
+      const rows = (await sql`
+        SELECT DISTINCT token_address
+          FROM b20_watchlist
+         WHERE chain_id = ${input.chainId}
+         ORDER BY token_address
+         LIMIT ${Math.max(1, Math.min(1_000, input.limit))}`) as Record<string, unknown>[];
+      return rows.map((row) => String(row.token_address));
+    },
   };
 }

@@ -66,6 +66,16 @@ export interface B20WatchlistRepositoryV1 {
   /** Records that a sweep reached this entry. Never fails a sweep: the read
    * already happened and its snapshot is already stored. */
   recordSweep(input: { id: string; at: Date; outcome: B20WatchSweepOutcomeV1 }): Promise<void>;
+
+  /**
+   * Every address under watch, once, across all accounts.
+   *
+   * The dedupe rule made concrete: two people watching one token is one
+   * address, one schedule and one measurement. Reading this rather than the
+   * entry list is what stops the operator paying twice for the same answer,
+   * and it is the only number the capacity model takes from storage.
+   */
+  distinctWatchedAddresses(input: { chainId: number; limit: number }): Promise<string[]>;
 }
 
 export type B20WatchlistAddEffectV1 =

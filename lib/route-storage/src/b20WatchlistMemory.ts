@@ -74,6 +74,17 @@ export class InMemoryB20WatchlistRepositoryV1 implements B20WatchlistRepositoryV
     if (!row) return;
     this.rows.set(input.id, { ...row, lastSweptAt: input.at.toISOString(), lastOutcome: input.outcome });
   }
+
+  async distinctWatchedAddresses(input: { chainId: number; limit: number }): Promise<string[]> {
+    const seen = new Set<string>();
+    for (const row of this.rows.values()) {
+      if (row.chainId !== input.chainId) continue;
+      seen.add(row.tokenAddress);
+    }
+    // Sorted for the same reason the database sorts: the scheduler diffs this
+    // set against what it has scheduled, and an unstable order is churn.
+    return [...seen].sort().slice(0, Math.max(1, Math.min(1_000, input.limit)));
+  }
 }
 
 function compareNullableTimesV1(left: string | null, right: string | null): number {

@@ -80,3 +80,6 @@ export * from './validation.js';
 export * from './history.js';
 export * from './memory.js';
 export * from './database.js';
+export * from './watchSchedule.js';
+export * from './watchScheduleDatabase.js';
+export * from './watchScheduleMemory.js';
