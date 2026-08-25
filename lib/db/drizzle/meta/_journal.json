@@ -372,6 +372,13 @@
       "when": 1787846600000,
       "tag": "0052_official_cash_exit",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1787900000000,
+      "tag": "0053_official_asset_lookalikes",
+      "breakpoints": true
     }
   ]
 }
