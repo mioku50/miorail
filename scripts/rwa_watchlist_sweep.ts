@@ -85,10 +85,14 @@ async function main(): Promise<void> {
   // scheduled and re-promised onto every row: one more address changes what
   // every other address can be promised.
   const capacity = watchlistCapacityV1({ distinctAddresses: watched.length });
+  // Seconds below a minute, minutes above it. Rounding 13 seconds to "0m"
+  // reads as "the budget supports nothing", which is the opposite of true.
+  const spanV1 = (seconds: number) =>
+    seconds < 60 ? `${Math.round(seconds)}s` : `${Math.round(seconds / 60)}m`;
   console.log(
-    `${watched.length} distinct address(es) under watch · advertising ${
-      capacity.advertisedIntervalSeconds / 60
-    }m (budget supports ${Math.round(capacity.achievableIntervalSeconds / 60)}m, limited by ${
+    `${watched.length} distinct address(es) under watch · advertising ${spanV1(
+      capacity.advertisedIntervalSeconds,
+    )} (budget supports ${spanV1(capacity.achievableIntervalSeconds)}, limited by ${
       capacity.limitedBy
     }, utilisation ${(capacity.utilisation * 100).toFixed(0)}%)`,
   );
