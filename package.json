@@ -51,7 +51,8 @@
     "smoke:mcp-private": "tsx scripts/smoke_mcp_private.ts",
     "smoke:paid-intelligence": "tsx scripts/smoke_paid_intelligence.ts",
     "b20:reverify-projects": "node --import tsx scripts/b20_reverify_projects.ts",
-    "rwa:ingest-official": "tsx scripts/rwa_ingest_official.ts"
+    "rwa:ingest-official": "tsx scripts/rwa_ingest_official.ts",
+    "rwa:probe-cash-exit": "tsx scripts/probe_official_cash_exit.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

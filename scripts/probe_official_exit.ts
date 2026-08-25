@@ -24,6 +24,19 @@ import {
 // round trip under 10% — but the bound is not the answer, and printing the
 // quote is the difference between arithmetic and a measurement.
 //
+// WHAT THIS PROBE DOES NOT MEASURE, corrected 2026-08-25
+//
+// One venue. Its readings below are accurate about Uniswap v4 and were
+// published as if they were facts about the assets, which they are not: the
+// same $1,000 AAPLc position that sells back at no size in ANY of these pools
+// round-trips for 11 basis points through an Aerodrome concentrated-liquidity
+// pool. The market was never here.
+//
+// Keep this probe for what it is good at -- reading one pool exactly, hook
+// included, with the size ladder that separates "the position reverts" from
+// "nothing sells". For whether a holder can get out at all, use
+// probe_official_cash_exit.ts, which asks every venue an aggregator reaches.
+//
 // Signs nothing, sends nothing, prints no endpoint.
 // ---------------------------------------------------------------------------
 
