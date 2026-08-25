@@ -1,4 +1,6 @@
 import React from 'react';
+
+import { watchRowScheduleViewV1, watchSlaViewV1, type WatchScheduleWireV1, type WatchSlaWireV1 } from './watchSlaView';
 import { B20ControlWatchPanel, type B20WatchLikeV1 } from './B20Panels';
 import { B20ExitCard, type ExitCheckLikeV1, type ExitProfileV1 } from './B20ExitCard';
 import { B20PortfolioPanel, type B20HoldingV1 } from './B20PortfolioPanel';
@@ -46,6 +48,13 @@ export interface B20TrackedTokenLikeV1 {
    * watching. Null means never read, which is not the same as unchanged. */
   lastSweptAt: string | null;
   lastOutcome: 'read' | 'not_b20' | 'unreadable' | null;
+  /** Phase 8 — what is owed on this ADDRESS, shared with every other account
+   * watching it. Null until the sweep has reconciled it, which is "no promise
+   * has been made" rather than "never checked". */
+  schedule?: WatchScheduleWireV1 | null;
+  /** Recorded transitions, newest first. What CHANGED — never the current
+   * state repeated back. */
+  changes?: readonly { signalId: string; kind: string; occurredAt: string }[];
 }
 
 /**
@@ -203,6 +212,16 @@ export interface B20WatchScreenModelV1 {
    * T68B — each entry now carries when MIORAIL last read it, which is a
    * different fact from when this browser last asked. */
   trackedTokens: readonly B20TrackedTokenLikeV1[];
+  /** Phase 8 — the promise, and the arithmetic behind it. Null on a build
+   * whose server does not send one. */
+  watchSla?: WatchSlaWireV1 | null;
+  /** Enrols the official corpus. Absent when the surface is not wired — a
+   * control that leads to a refusal is worse than an absent one. */
+  onWatchOfficialAssets?: (() => void) | null;
+  /** Addresses this page has already read a balance for and which are not yet
+   * watched. Suggested, never enrolled: reading a wallet changes what the
+   * operator pays for and what the account discloses. */
+  suggestedFromHoldings?: readonly string[];
   /** How many more the account may add. Stated before a user types an address
    * and is refused. */
   trackRemaining: number | null;
@@ -426,6 +445,37 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
               Track
             </button>
           </form>
+          {/* The promise, stated once above the list rather than repeated on
+              every row. Both halves of "checked every 30 minutes · next check
+              in 11 minutes" come from the same stored schedule, so they cannot
+              disagree the day the list grows. */}
+          {model.watchSla && (
+            <>
+              <p className={watchSlaViewV1(model.watchSla).tone === 'warn' ? 'note warn' : 'lnote'}>
+                <strong>{watchSlaViewV1(model.watchSla).headline}</strong>{' '}
+                {watchSlaViewV1(model.watchSla).detail}
+              </p>
+            </>
+          )}
+
+          {(model.onWatchOfficialAssets || (model.suggestedFromHoldings?.length ?? 0) > 0) && (
+            <div className="ctarow">
+              {model.onWatchOfficialAssets && (
+                <button type="button" className="btn sec" onClick={model.onWatchOfficialAssets}>
+                  Watch every official asset
+                </button>
+              )}
+              {(model.suggestedFromHoldings?.length ?? 0) > 0 && (
+                <span className="nt">
+                  {model.suggestedFromHoldings!.length} token
+                  {model.suggestedFromHoldings!.length === 1 ? '' : 's'} you hold are not watched —
+                  add them from the list above. Miorail does not enrol a wallet’s positions on its
+                  own.
+                </span>
+              )}
+            </div>
+          )}
+
           {model.trackedTokens.length > 0 && (
             <ul className="watchrows">
               {model.trackedTokens.map((entry) => {
@@ -466,6 +516,34 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
                           and neither is the same as a reading that found no
                           change. Only shown when there is one. */}
                       {outcome && <span className="watchrow-note">{outcome}</span>}
+                      {model.watchSla &&
+                        (() => {
+                          const promise = watchRowScheduleViewV1(entry.schedule ?? null, model.now);
+                          return (
+                            <>
+                              <span
+                                className={
+                                  promise.tone === 'warn' ? 'watchrow-v warn' : 'watchrow-note'
+                                }
+                              >
+                                {promise.next}
+                              </span>
+                              {/* The COMPLETED clock. Showing the last attempt
+                                  here would report freshness after an outage. */}
+                              <span className="watchrow-note">{promise.lastCompleted}</span>
+                              {promise.lastFailure && (
+                                <span className="watchrow-note">{promise.lastFailure}</span>
+                              )}
+                            </>
+                          );
+                        })()}
+                      {(entry.changes?.length ?? 0) > 0 && (
+                        <span className="watchrow-note">
+                          {entry.changes!.length} recorded change
+                          {entry.changes!.length === 1 ? '' : 's'}, newest{' '}
+                          {entry.changes![0]!.kind.replace(/_/g, ' ')}
+                        </span>
+                      )}
                     </div>
                     <div className="watchrow-acts">
                       {/* Re-reads through the same sweep the panel's own button

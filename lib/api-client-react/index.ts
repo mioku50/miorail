@@ -982,6 +982,44 @@ export function useRwaSignals(options?: { enabled?: boolean; limit?: number }) {
 }
 
 /**
+ * Phase 8 — enrol the official corpus in one action.
+ *
+ * The one preset the server may apply: it is a list Miorail already holds, so
+ * it costs the reader nothing they have not seen and discloses nothing about
+ * them. A wallet's own positions are suggested from balances this client has
+ * already read and go through the ordinary add — never enrolled by the server,
+ * because that would change what the operator pays for and what the account
+ * reveals without anyone agreeing to it.
+ */
+export function useB20WatchPreset(
+  options?: Omit<
+    UseMutationOptions<apiSpec.B20WatchlistResponseV1, Error, { preset: 'official_assets' }>,
+    'mutationFn'
+  >,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    retry: false,
+    mutationFn: async (input) => {
+      const response = await fetchApi<unknown>('/api/route-intelligence/b20/watchlist/preset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      return apiSpec.B20WatchlistResponseV1Schema.parse(response);
+    },
+    ...options,
+    onSuccess: (data, variables, onMutateResult, context) => {
+      // The response IS the new list, written straight into the cache. A
+      // refetch would show the old list for a beat, and a watchlist that
+      // flickers back reads as a failed add.
+      queryClient.setQueryData(['b20-watchlist'], data);
+      options?.onSuccess?.(data, variables, onMutateResult, context);
+    },
+  });
+}
+
+/**
  * Phase 7 — one pasted address, read as deeply as the evidence allows.
  *
  * The address is the query. There is no symbol form of this hook and there is

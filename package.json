@@ -55,7 +55,8 @@
     "rwa:probe-cash-exit": "tsx scripts/probe_official_cash_exit.ts",
     "rwa:measure-cash-exit": "tsx scripts/rwa_measure_cash_exit.ts",
     "rwa:market-tail": "tsx scripts/market_tail.ts",
-    "rwa:scan-lookalikes": "tsx scripts/rwa_scan_lookalikes.ts"
+    "rwa:scan-lookalikes": "tsx scripts/rwa_scan_lookalikes.ts",
+    "rwa:watchlist-sweep": "tsx scripts/rwa_watchlist_sweep.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

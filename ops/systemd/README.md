@@ -39,8 +39,16 @@ what makes Discover's Official Assets tab able to say anything:
 | `miorail-rwa-cash-exit` | 1h | 13 `eth_call` + ~104 aggregator quotes, paced |
 | `miorail-rwa-lookalikes` | 6h | nothing outbound at all — two stored tables |
 | `miorail-rwa-market-tail` | 1h | ~4 `eth_getLogs` for the whole vertical |
+| `miorail-rwa-watchlist` | 5m | whatever is due: 1 `eth_call` + 8 quotes each |
 
 None of them holds a signer, a key or a wallet, and none writes to the chain.
+
+`miorail-rwa-watchlist`'s timer is not its promise. The promise is the interval
+each watched address is scheduled at, derived from how many addresses are
+watched across every account; the timer only decides how often the queue is
+looked at, and running it more often than the promise is what keeps a
+fifteen-minute schedule near fifteen minutes instead of drifting by a tick. A
+pass with nothing due exits in milliseconds.
 
 The order matters once, on a new host: nothing else can run usefully until
 `miorail-rwa-official` has recorded a corpus, because the other three read the

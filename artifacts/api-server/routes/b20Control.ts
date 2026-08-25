@@ -13,6 +13,7 @@ import {
   B20WatchRequestV1Schema,
   B20WatchResponseV1Schema,
   B20WatchlistAddRequestV1Schema,
+  B20WatchPresetRequestV1Schema,
   B20WatchlistResponseV1Schema,
   B20ExitCheckRequestV1Schema,
   B20ExitCheckResponseV1Schema,
@@ -63,6 +64,9 @@ import {
   RouteStorageIntegrityError,
   createDatabaseB20StorageRepository,
   createDatabaseB20WatchlistRepository,
+  createDatabaseOfficialAssetRepository,
+  createDatabaseRwaSignalRepository,
+  createDatabaseWatchScheduleRepository,
   createDatabaseB20ClearanceRepository,
   createDatabaseB20EntryPlanRepository,
   createDatabaseB20EntrySubmissionRepository,
@@ -81,6 +85,9 @@ import {
   type B20StorageRepositoryV1,
   type B20WatchlistEntryV1,
   type B20WatchlistRepositoryV1,
+  type OfficialAssetRepositoryV1,
+  type RwaSignalRepositoryV1,
+  type WatchScheduleRepositoryV1,
   createDatabaseB20ObservationRepository,
   createDatabaseB20LaunchDeployerRepository,
   createDatabaseB20ProjectRepository,
@@ -100,6 +107,7 @@ import {
   type B20LaunchBuyersRepositoryV1,
   type B20LaunchPoolRepositoryV1,
 } from '@mioagent/route-storage';
+import { watchlistCapacityV1 } from '@mioagent/rwa-dossier';
 import { client } from '@mioagent/db';
 import { stableHashV1 } from '@mioagent/route-domain';
 import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
@@ -298,6 +306,12 @@ export const b20RouteRuntime = {
   flags: getMiorailProductMigrationFlags,
   repository: (): B20StorageRepositoryV1 => createDatabaseB20StorageRepository(client),
   watchlist: (): B20WatchlistRepositoryV1 => createDatabaseB20WatchlistRepository(client),
+  // Phase 8 — the per-ADDRESS schedule and the transitions recorded against
+  // it. Separate repositories because the subscription and the promise are
+  // different facts: one belongs to a user, the other to a contract.
+  watchSchedule: (): WatchScheduleRepositoryV1 => createDatabaseWatchScheduleRepository(client),
+  officialAssets: (): OfficialAssetRepositoryV1 => createDatabaseOfficialAssetRepository(client),
+  rwaSignals: (): RwaSignalRepositoryV1 => createDatabaseRwaSignalRepository(client),
   clearances: (): B20ClearanceRepositoryV1 => createDatabaseB20ClearanceRepository(client),
   entryPlans: (): B20EntryPlanRepositoryV1 => createDatabaseB20EntryPlanRepository(client),
   entrySubmissions: (): B20EntrySubmissionRepositoryV1 =>
@@ -3290,15 +3304,74 @@ async function watchlistGuard(
   return { user: guard.user, repository: b20RouteRuntime.watchlist() };
 }
 
-function watchlistBodyV1(entries: readonly B20WatchlistEntryV1[]) {
+/**
+ * Phase 8 — the list, the promise, and what changed.
+ *
+ * Three reads beside the entries. The schedule is per ADDRESS, so two accounts
+ * watching one token share one row and one measurement; the SLA is derived
+ * from how many distinct addresses exist across every account, because that is
+ * what the budget is actually divided by; and the changes are the recorded
+ * transitions for each address, never its current state repeated.
+ *
+ * `scheduleActive` is false until the sweep has reconciled at least once. An
+ * interval printed before then would be a schedule nothing is keeping.
+ */
+async function watchlistBodyV1(entries: readonly B20WatchlistEntryV1[]) {
+  const addresses = entries.map((entry) => entry.tokenAddress);
+  const schedule = b20RouteRuntime.watchSchedule();
+  const signals = b20RouteRuntime.rwaSignals();
+
+  const [rows, distinctAddresses, changes] = await Promise.all([
+    schedule.readSchedules({ chainId: 8453, tokenAddresses: addresses }),
+    schedule.scheduledAddressCount({ chainId: 8453 }),
+    Promise.all(
+      addresses.map((tokenAddress) =>
+        signals.signalsForSubject({ chainId: 8453, subjectAddress: tokenAddress, limit: 5 }),
+      ),
+    ),
+  ]);
+  const scheduled = new Map(rows.map((row) => [row.tokenAddress, row]));
+  const capacity = watchlistCapacityV1({ distinctAddresses });
+
   return {
-    tokens: entries.map((entry) => ({
-      tokenAddress: entry.tokenAddress,
-      addedAt: entry.createdAt,
-      lastSweptAt: entry.lastSweptAt,
-      lastOutcome: entry.lastOutcome,
-    })),
+    tokens: entries.map((entry, index) => {
+      const row = scheduled.get(entry.tokenAddress) ?? null;
+      return {
+        tokenAddress: entry.tokenAddress,
+        addedAt: entry.createdAt,
+        lastSweptAt: entry.lastSweptAt,
+        lastOutcome: entry.lastOutcome,
+        schedule:
+          row === null
+            ? null
+            : {
+                intervalSeconds: row.intervalSeconds,
+                nextDueAt: row.nextDueAt,
+                lastCheckedAt: row.lastCheckedAt,
+                lastCompletedAt: row.lastCompletedAt,
+                lastOutcome: row.lastOutcome,
+                checks: row.checks,
+                completedChecks: row.completedChecks,
+              },
+        changes: (changes[index] ?? []).map((signal) => ({
+          signalId: signal.signalId,
+          kind: signal.kind,
+          occurredAt: signal.occurredAt,
+          recordedAt: signal.recordedAt,
+          facts: signal.facts,
+        })),
+      };
+    }),
     remaining: Math.max(0, B20_WATCHLIST_CAPACITY_V1 - entries.length),
+    sla: {
+      distinctAddresses,
+      advertisedIntervalSeconds: capacity.advertisedIntervalSeconds,
+      achievableIntervalSeconds: capacity.achievableIntervalSeconds,
+      limitedBy: capacity.limitedBy,
+      utilisation: capacity.utilisation,
+      beyondSlowestTier: capacity.beyondSlowestTier,
+      scheduleActive: distinctAddresses > 0,
+    },
   };
 }
 
@@ -4284,7 +4357,7 @@ b20ControlRouter.get('/b20/watchlist', async (req: Request, res: Response) => {
   if (!guard) return;
   try {
     const entries = await guard.repository.listForUser(guard.user.id);
-    res.json(B20WatchlistResponseV1Schema.parse(watchlistBodyV1(entries)));
+    res.json(B20WatchlistResponseV1Schema.parse(await watchlistBodyV1(entries)));
   } catch (error) {
     storageFailure(res, error, 'watchlist');
   }
@@ -4322,7 +4395,7 @@ b20ControlRouter.post('/b20/watchlist', async (req: Request, res: Response) => {
       .status(201)
       .json(
         B20WatchlistResponseV1Schema.parse(
-          watchlistBodyV1(await guard.repository.listForUser(guard.user.id)),
+          await watchlistBodyV1(await guard.repository.listForUser(guard.user.id)),
         ),
       );
   } catch (error) {
@@ -4337,6 +4410,63 @@ b20ControlRouter.post('/b20/watchlist', async (req: Request, res: Response) => {
       return;
     }
     storageFailure(res, error, 'watchlist');
+  }
+});
+
+/**
+ * Phase 8 — the one preset the SERVER may apply.
+ *
+ * The official corpus is a list Miorail already holds, so enrolling it costs
+ * the user nothing they have not seen and reveals nothing about them. A wallet's
+ * own positions are a different matter: reading them changes what the operator
+ * pays for and what the account discloses, so the roadmap says they may be
+ * SUGGESTED and never silently enrolled — the client offers them from balances
+ * it has already read, and each one goes through the ordinary add.
+ *
+ * Idempotent, and it stops at the account's cap rather than failing: a preset
+ * that refuses everything because it would overflow by one is a preset nobody
+ * can use.
+ */
+b20ControlRouter.post('/b20/watchlist/preset', async (req: Request, res: Response) => {
+  const guard = await watchlistGuard(req, res);
+  if (!guard) return;
+
+  const parsed = B20WatchPresetRequestV1Schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'b20_watch_preset_invalid', code: 'b20_watch_preset_invalid' });
+    return;
+  }
+  try {
+    const official = b20RouteRuntime.officialAssets();
+    const universe = await official.officialAssets({ chainId: 8453, limit: 64 });
+    const existing = new Set(
+      (await guard.repository.listForUser(guard.user.id)).map((entry) => entry.tokenAddress),
+    );
+    const now = b20RouteRuntime.now();
+    for (const identity of universe) {
+      if (existing.has(identity.tokenAddress)) continue;
+      if (existing.size >= B20_WATCHLIST_CAPACITY_V1) break;
+      try {
+        await guard.repository.addToken({
+          userId: guard.user.id,
+          tokenAddress: identity.tokenAddress,
+          now,
+        });
+        existing.add(identity.tokenAddress);
+      } catch (error) {
+        // The cap, reached between the read and the write. Stop, and return
+        // the list as it stands: what was added is added.
+        if (error instanceof RouteStorageConflictError) break;
+        throw error;
+      }
+    }
+    res.json(
+      B20WatchlistResponseV1Schema.parse(
+        await watchlistBodyV1(await guard.repository.listForUser(guard.user.id)),
+      ),
+    );
+  } catch (error) {
+    storageFailure(res, error, 'watchlist-preset');
   }
 });
 
@@ -4355,7 +4485,7 @@ b20ControlRouter.delete('/b20/watchlist/:tokenAddress', async (req: Request, res
     await guard.repository.removeToken(guard.user.id, address);
     res.json(
       B20WatchlistResponseV1Schema.parse(
-        watchlistBodyV1(await guard.repository.listForUser(guard.user.id)),
+        await watchlistBodyV1(await guard.repository.listForUser(guard.user.id)),
       ),
     );
   } catch (error) {

@@ -30,6 +30,7 @@ import {
 } from '@mioagent/ui';
 import {
   useAddB20Watch,
+  useB20WatchPreset,
   useB20BeginEntrySubmission,
   useB20EntryStatus,
   useB20ExitCheck,
@@ -217,6 +218,11 @@ export function B20WatchPage() {
   // that runs on a timer has no browser to ask. A list in localStorage is a
   // list nothing can watch.
   const watchlist = useB20Watchlist({ enabled: gateOn && Boolean(address) });
+  // Phase 8 — the one preset the server may apply. A wallet's own positions
+  // are suggested below from balances this page has already read, and each one
+  // goes through the ordinary add: enrolling them here would change what the
+  // operator pays for and what the account discloses without anyone agreeing.
+  const watchPreset = useB20WatchPreset();
   const addWatch = useAddB20Watch();
   const removeWatch = useRemoveB20Watch();
   const tracked = useMemo(
@@ -837,6 +843,19 @@ export function B20WatchPage() {
         walletTokens={portfolio.data?.tokens ?? []}
         trackedTokens={watchlist.data?.tokens ?? []}
         trackRemaining={watchlist.data?.remaining ?? null}
+        watchSla={watchlist.data?.sla ?? null}
+        onWatchOfficialAssets={
+          watchlist.data ? () => watchPreset.mutate({ preset: 'official_assets' }) : null
+        }
+        suggestedFromHoldings={(() => {
+          const watched = new Set<string>(
+            (watchlist.data?.tokens ?? []).map((entry) => String(entry.tokenAddress).toLowerCase()),
+          );
+          const held = (portfolio.data?.tokens ?? []).map((token) =>
+            String((token as { address?: string }).address ?? '').toLowerCase(),
+          );
+          return held.filter((token) => /^0x[0-9a-f]{40}$/.test(token) && !watched.has(token));
+        })()}
         trackError={trackError}
         onTrackToken={(token) => addWatch.mutate({ tokenAddress: token })}
         onUntrackToken={(token) => removeWatch.mutate({ tokenAddress: token })}

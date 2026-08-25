@@ -1,0 +1,20 @@
+[Unit]
+# Every five minutes.
+#
+# The timer is NOT the promise. The promise is the interval each address is
+# scheduled at, and it is derived from how many addresses are watched; this
+# timer only decides how often the queue is looked at. Running it more often
+# than the promise is what lets a fifteen-minute schedule actually land near
+# fifteen minutes instead of drifting by a whole tick.
+#
+# A pass with nothing due exits in milliseconds and costs one query.
+Description=Check what the watchlist is owed
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+Persistent=true
+RandomizedDelaySec=1min
+
+[Install]
+WantedBy=timers.target

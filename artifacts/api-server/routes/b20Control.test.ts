@@ -7,6 +7,9 @@ import type { B20ReaderV1, B20RpcResultV1 } from '@mioagent/b20-control';
 import {
   InMemoryB20StorageRepositoryV1,
   InMemoryB20WatchlistRepositoryV1,
+  createMemoryOfficialAssetRepository,
+  createMemoryRwaSignalRepository,
+  createMemoryWatchScheduleRepository,
   InMemoryB20ClearanceRepositoryV1,
   InMemoryB20EntryPlanRepositoryV1,
   InMemoryB20EntrySubmissionRepositoryV1,
@@ -57,6 +60,8 @@ const FLAGS = {
 const original = { ...b20RouteRuntime };
 let repository: InMemoryB20StorageRepositoryV1;
 let watchlist: InMemoryB20WatchlistRepositoryV1;
+let watchSchedule: ReturnType<typeof createMemoryWatchScheduleRepository>;
+let rwaSignals: ReturnType<typeof createMemoryRwaSignalRepository>;
 let clearances: InMemoryB20ClearanceRepositoryV1;
 let entryPlans: InMemoryB20EntryPlanRepositoryV1;
 let entrySubmissions: InMemoryB20EntrySubmissionRepositoryV1;
@@ -200,6 +205,14 @@ beforeEach(async () => {
   watchlist = new InMemoryB20WatchlistRepositoryV1();
   b20RouteRuntime.watchlist = () => watchlist;
   b20RouteRuntime.watchlistAvailable = async () => true;
+  // Phase 8 — the schedule and the recorded transitions the watchlist body
+  // reads beside the entries. In-memory twins, so these tests never open a
+  // database connection.
+  watchSchedule = createMemoryWatchScheduleRepository();
+  b20RouteRuntime.watchSchedule = () => watchSchedule;
+  rwaSignals = createMemoryRwaSignalRepository();
+  b20RouteRuntime.rwaSignals = () => rwaSignals;
+  b20RouteRuntime.officialAssets = () => createMemoryOfficialAssetRepository();
   clearances = new InMemoryB20ClearanceRepositoryV1();
   b20RouteRuntime.clearances = () => clearances;
   b20RouteRuntime.clearanceAvailable = async () => true;
@@ -1755,5 +1768,126 @@ describe('snapshots', () => {
   test('an unknown id is 404', async () => {
     const response = await request(app()).get('/api/route-intelligence/b20/snapshots/b20-snapshot:nope');
     assert.equal(response.status, 404);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 8 — the freshness promise, as the API serves it.
+// ---------------------------------------------------------------------------
+
+describe('the watchlist freshness promise', () => {
+  const list = (server = app()) => request(server).get('/api/route-intelligence/b20/watchlist');
+  const add = (body: unknown, server = app()) =>
+    request(server).post('/api/route-intelligence/b20/watchlist').send(body as object);
+  const preset = (server = app()) =>
+    request(server)
+      .post('/api/route-intelligence/b20/watchlist/preset')
+      .send({ preset: 'official_assets' });
+  const TOKEN = '0xb2000000000000000000007bf6d5cbb0e24cb301';
+
+  test('an unscheduled address promises nothing rather than an interval', async () => {
+    await add({ chainId: 8453, tokenAddress: TOKEN });
+    const response = await list();
+    assert.equal(response.status, 200);
+    // Null, not a number. An interval here would be a schedule nothing is
+    // keeping — the sweep has not reconciled this address yet.
+    assert.equal(response.body.tokens[0].schedule, null);
+    assert.equal(response.body.sla.scheduleActive, false);
+    assert.deepEqual(response.body.tokens[0].changes, []);
+  });
+
+  test('the promise is derived from every account, not from this one', async () => {
+    await add({ chainId: 8453, tokenAddress: TOKEN });
+    await watchSchedule.ensureScheduled({
+      chainId: 8453,
+      // Two more addresses nobody in this session watches. The budget is
+      // divided by the whole set, because that is what it actually pays for.
+      tokenAddresses: [TOKEN, '0xb2000000000000000000007bf6d5cbb0e24cb302', '0xb2000000000000000000007bf6d5cbb0e24cb303'],
+      intervalSeconds: 900,
+      now: NOW.toISOString(),
+    });
+    const response = await list();
+    assert.equal(response.body.sla.distinctAddresses, 3);
+    assert.equal(response.body.sla.scheduleActive, true);
+    assert.equal(response.body.sla.advertisedIntervalSeconds, 900);
+    // What a surface may say is never faster than what the budget supports.
+    assert.ok(
+      response.body.sla.advertisedIntervalSeconds >= response.body.sla.achievableIntervalSeconds,
+    );
+  });
+
+  test('a failed check moves the clock and claims no freshness', async () => {
+    await add({ chainId: 8453, tokenAddress: TOKEN });
+    await watchSchedule.ensureScheduled({
+      chainId: 8453,
+      tokenAddresses: [TOKEN],
+      intervalSeconds: 900,
+      now: '2026-08-25T10:00:00.000Z',
+    });
+    await watchSchedule.recordCheck({
+      chainId: 8453,
+      tokenAddress: TOKEN,
+      at: '2026-08-25T10:00:00.000Z',
+      outcome: 'measured',
+      intervalSeconds: 900,
+    });
+    await watchSchedule.recordCheck({
+      chainId: 8453,
+      tokenAddress: TOKEN,
+      at: '2026-08-25T11:00:00.000Z',
+      outcome: 'measurement_failed',
+      intervalSeconds: 900,
+    });
+    const entry = (await list()).body.tokens[0];
+    assert.equal(entry.schedule.lastCheckedAt, '2026-08-25T11:00:00.000Z');
+    // The one the surface reads for freshness stayed where it was.
+    assert.equal(entry.schedule.lastCompletedAt, '2026-08-25T10:00:00.000Z');
+    assert.equal(entry.schedule.completedChecks, 1);
+    assert.equal(entry.schedule.checks, 2);
+  });
+
+  test('the preset enrols the corpus and is idempotent', async () => {
+    const official = createMemoryOfficialAssetRepository();
+    await official.recordSnapshot({
+      snapshot: {
+        sourceKind: 'base_docs_technical',
+        sourceUrl: 'https://docs.base.org/x.md',
+        observedAt: NOW.toISOString(),
+        status: 'ok',
+        documentHash: 'a'.repeat(64),
+        corpusHash: 'b'.repeat(64),
+        detail: null,
+      },
+      assets: [
+        {
+          chainId: 8453,
+          tokenAddress: '0xb200000000000000000000c2e324d24d7eecd1fb',
+          sourceKind: 'base_docs_technical',
+          ticker: 'AAPLc',
+          displayName: 'Coinbase AAPL',
+          issuer: 'coinbase',
+          referenceFeedAddress: null,
+        },
+      ],
+    });
+    b20RouteRuntime.officialAssets = () => official;
+
+    const first = await preset();
+    assert.equal(first.status, 200);
+    assert.deepEqual(
+      first.body.tokens.map((entry: { tokenAddress: string }) => entry.tokenAddress),
+      ['0xb200000000000000000000c2e324d24d7eecd1fb'],
+    );
+    // Twice is once. A double-click is not two recurring costs forever.
+    const second = await preset();
+    assert.equal(second.body.tokens.length, 1);
+  });
+
+  test('the preset takes no argument it was not offered', async () => {
+    const response = await request(app())
+      .post('/api/route-intelligence/b20/watchlist/preset')
+      .send({ preset: 'everything_i_hold' });
+    assert.equal(response.status, 400);
+    assert.equal(response.body.code, 'b20_watch_preset_invalid');
   });
 });

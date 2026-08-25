@@ -3450,6 +3450,42 @@ export const B20WatchResponseV1Schema = z
 // Miorail will next read a token is an operator's concern; what a holder needs
 // is when it LAST read one, which is `lastSweptAt` and is a fact rather than a
 // promise.
+/**
+ * Phase 8 — what is owed on one address, and when.
+ *
+ * Null when the sweep has not reconciled this address yet. That is not "never
+ * checked": it is "no promise has been made", and a surface that printed an
+ * interval there would be advertising a schedule nothing is keeping.
+ *
+ * `lastCompletedAt` is separate from `lastCheckedAt` on purpose. A failed pass
+ * moves the clock so a broken address cannot monopolise the queue, and moves
+ * nothing else — freshness is never read out of an outage.
+ */
+export const B20WatchScheduleV1Schema = z
+  .object({
+    intervalSeconds: z.number().int().min(900).max(86_400),
+    nextDueAt: z.string().datetime(),
+    lastCheckedAt: z.string().datetime().nullable(),
+    lastCompletedAt: z.string().datetime().nullable(),
+    lastOutcome: z.enum(['measured', 'measurement_failed', 'unreadable']).nullable(),
+    checks: z.number().int().min(0),
+    completedChecks: z.number().int().min(0),
+  })
+  .strict();
+
+/** One recorded transition on a watched address. Kinds and facts exactly as
+ * the signal feed carries them, so the two surfaces cannot describe one event
+ * in two vocabularies. */
+export const B20WatchChangeV1Schema = z
+  .object({
+    signalId: z.string().min(1).max(40),
+    kind: z.string().min(1).max(60),
+    occurredAt: z.string().datetime(),
+    recordedAt: z.string().datetime(),
+    facts: z.record(z.unknown()),
+  })
+  .strict();
+
 export const B20WatchlistEntryV1Schema = z
   .object({
     tokenAddress: AddressV1Schema,
@@ -3459,6 +3495,35 @@ export const B20WatchlistEntryV1Schema = z
      * not render alike. */
     lastSweptAt: z.string().min(1).max(60).nullable(),
     lastOutcome: z.enum(['read', 'not_b20', 'unreadable']).nullable(),
+    schedule: B20WatchScheduleV1Schema.nullable(),
+    /** Newest first. What CHANGED, never the current state repeated. */
+    changes: z.array(B20WatchChangeV1Schema).max(10),
+  })
+  .strict();
+
+/**
+ * The promise, and the arithmetic behind it.
+ *
+ * Published rather than kept internal because the interval on screen is a
+ * commitment: a reader is entitled to see what it is derived from, and an
+ * operator is entitled to see which budget ran out first.
+ */
+export const B20WatchSlaV1Schema = z
+  .object({
+    /** Distinct addresses across every account. Two people watching one token
+     * is one check — that is what makes the interval affordable. */
+    distinctAddresses: z.number().int().min(0),
+    /** What a surface may say. Never faster than `achievableIntervalSeconds`. */
+    advertisedIntervalSeconds: z.number().int().min(900).max(86_400),
+    /** What the budget supports, to the second. Arithmetic, not a promise. */
+    achievableIntervalSeconds: z.number().int().min(0),
+    limitedBy: z.enum(['rpc', 'router', 'tier_floor', 'nothing_watched']),
+    utilisation: z.number().min(0).max(1),
+    /** True when the list has outgrown the slowest interval we publish. The
+     * promise is then not keepable and the surface says so. */
+    beyondSlowestTier: z.boolean(),
+    /** False until the sweep has reconciled the schedule at least once. */
+    scheduleActive: z.boolean(),
   })
   .strict();
 
@@ -3468,7 +3533,15 @@ export const B20WatchlistResponseV1Schema = z
     /** How many more this account may add, so a surface can say so before a
      * user types an address and is refused. */
     remaining: z.number().int().min(0).max(25),
+    sla: B20WatchSlaV1Schema,
   })
+  .strict();
+
+/** The presets a surface may offer. `official_assets` is the corpus the server
+ * already holds; a wallet's own positions are suggested by the client from
+ * balances it has already read, never enrolled by the server. */
+export const B20WatchPresetRequestV1Schema = z
+  .object({ preset: z.literal('official_assets') })
   .strict();
 
 export const B20WatchlistAddRequestV1Schema = z
