@@ -31,8 +31,8 @@ import { useUiStore } from '../../lib/state';
 //
 // This page reads three endpoints and draws what they returned. It holds no
 // clearance, prepares no plan and opens no wallet: "Investigate" hands an
-// address to the dossier surface and "Find route" hands it to the goal flow,
-// both of which already own those boundaries.
+// address to the Phase 7 dossier surface and "Find route" hands it to the goal
+// flow, both of which already own those boundaries.
 //
 // The launch feed is not deleted. It moved to /opportunities/launches and is
 // linked from the bottom of this page — it is still the deepest thing Miorail
@@ -201,7 +201,7 @@ export function RwaDiscoverPage() {
             disabledNotice ?? (signals.error ? failureCopyV1(signals.error, 'recorded changes') : null),
 
           actions: {
-            onInvestigate: (tokenAddress) => navigate(`/portfolio?token=${tokenAddress}`),
+            onInvestigate: (tokenAddress) => navigate(`/investigate?token=${tokenAddress}`),
             onFindRoute: (tokenAddress) => navigate(`/routes?token=${tokenAddress}`),
             ...(watchAvailable
               ? { onWatch: (tokenAddress: string) => addWatch.mutate({ tokenAddress }) }

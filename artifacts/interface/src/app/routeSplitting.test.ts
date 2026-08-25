@@ -30,6 +30,7 @@ const LAZY_SCREENS_V1 = [
   'B20WatchPage',
   'OpportunitiesPage',
   'RwaDiscoverPage',
+  'InvestigatePage',
   'SettingsPage',
   'PublicMetricsPage',
 ] as const;

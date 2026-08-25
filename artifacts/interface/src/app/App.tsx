@@ -59,6 +59,9 @@ const OpportunitiesPage = lazy(() =>
 const RwaDiscoverPage = lazy(() =>
   import('../features/rwa/RwaDiscoverPage').then((m) => ({ default: m.RwaDiscoverPage })),
 );
+const InvestigatePage = lazy(() =>
+  import('../features/rwa/InvestigatePage').then((m) => ({ default: m.InvestigatePage })),
+);
 const SettingsPage = lazy(() =>
   import('../features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })),
 );
@@ -192,6 +195,15 @@ export function App() {
         <Route path="/opportunities">
           <RequireSession>
             <RwaDiscoverPage />
+          </RequireSession>
+        </Route>
+
+        {/* Phase 7 — one address, read as deeply as the evidence allows. The
+            address lives in `?token=`, so a refresh, a Back press and a link
+            from Discover all land on the same read. */}
+        <Route path="/investigate">
+          <RequireSession>
+            <InvestigatePage />
           </RequireSession>
         </Route>
 

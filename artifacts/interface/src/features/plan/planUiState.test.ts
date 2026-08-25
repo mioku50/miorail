@@ -67,11 +67,12 @@ test('no payment surface became a tab', () => {
 
 test('no command carries an emoji or the retired vocabulary', () => {
   const commands = appCommands();
-  // Six: the four primary sections plus Extensions and Settings, which the
-  // palette reaches and the header deliberately does not. Extensions is in the
-  // drawer rather than the tab bar — a fifth tab would push every label into
-  // an ellipsis at 390px to make room for the surface used least often.
-  assert.equal(commands.length, 6, 'the console exposes exactly six entries');
+  // Seven: the three primary sections plus Investigate, Activity, Extensions
+  // and Settings, which the palette reaches and the header deliberately does
+  // not. None of the four belongs in the tab bar — each is entered with
+  // something you already have — and a wider bar would push every label into
+  // an ellipsis at 390px to make room for the surfaces used least often.
+  assert.equal(commands.length, 7, 'the console exposes exactly seven entries');
   assert.equal(commands.some((command) => command.path === '/plan/history'), true);
   assert.equal(commands.some((command) => command.path === '/portfolio'), true);
   assert.equal(commands.some((command) => command.path === '/opportunities'), true);
