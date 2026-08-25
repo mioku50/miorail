@@ -201,6 +201,7 @@ import { client } from '@mioagent/db';
 import { nftRouteIntelligenceRouter } from './nftRouteIntelligence.js';
 import { aiRouteIntelligenceRouter } from './aiRouteIntelligence.js';
 import { b20ControlRouter } from './b20Control.js';
+import { rwaDiscoverRouter } from './rwaDiscover.js';
 import { rwaDossierRouter } from './rwaDossier.js';
 import { submissionRecoveryRouter } from './submissionRecovery.js';
 import { publicProofOwnerRouter } from './publicProof.js';
@@ -3999,6 +4000,7 @@ routeIntelligenceRouter.use(b20ControlRouter);
 // Phase 3 RWA dossier: read-only, address-first and deterministic. It mounts
 // no quote, prepare, approval or wallet route.
 routeIntelligenceRouter.use(rwaDossierRouter);
+routeIntelligenceRouter.use(rwaDiscoverRouter);
 // T67C.2: submission recovery. It mounts here so swap, earn and NFT share one
 // recovery rail rather than growing one each — and it sends nothing: the only
 // writes it makes are to the attempt table.

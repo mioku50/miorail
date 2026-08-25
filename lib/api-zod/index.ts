@@ -36,6 +36,26 @@ export {
   type OfficialAssetDossierResponseV1,
   type OfficialAssetDossierV1,
 } from '@mioagent/rwa-dossier/contracts';
+// T-Phase-6 — the three Discover reads. Re-exported rather than restated: the
+// projection that assembles them and the schema a client parses them with have
+// to be the same object, or a field can be dropped on one side and nobody
+// notices until a card renders blank.
+export {
+  LOOKALIKE_DISCLAIMER_V1,
+  OfficialAssetsOverviewV1Schema,
+  OfficialAssetSummaryV1Schema,
+  OfficialLookalikeCardV1Schema,
+  OfficialLookalikeFeedV1Schema,
+  RwaSignalCardV1Schema,
+  RwaSignalFeedV1Schema,
+  RWA_SIGNALS_NOT_REPORTED_V1,
+  type OfficialAssetsOverviewV1,
+  type OfficialAssetSummaryV1,
+  type OfficialLookalikeCardV1,
+  type OfficialLookalikeFeedV1,
+  type RwaSignalCardV1,
+  type RwaSignalFeedV1,
+} from '@mioagent/rwa-dossier/discover';
 
 // Shared
 export const PaginationParamsSchema = z.object({

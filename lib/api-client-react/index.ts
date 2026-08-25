@@ -907,6 +907,81 @@ export function useB20Opportunities(
 }
 
 /**
+ * Phase 6 — the Official Assets overview.
+ *
+ * Read-only over stored evidence plus one live price feed per asset. Every
+ * failure mode this endpoint has answers the same way twice — the flag off, no
+ * migration, an unreachable database — so `retry: false`, and the body's own
+ * counts and gaps say which one it was.
+ */
+export function useRwaOfficialAssets(options?: { enabled?: boolean; limit?: number }) {
+  const limit = options?.limit ?? 64;
+  return useQuery({
+    queryKey: ['rwa-official-assets', limit],
+    queryFn: async () => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/rwa/official/assets?limit=${limit}`,
+      );
+      return apiSpec.OfficialAssetsOverviewV1Schema.parse(response);
+    },
+    retry: false,
+    enabled: options?.enabled !== false,
+  });
+}
+
+/**
+ * Phase 6 — contracts wearing an official asset's name.
+ *
+ * The spelling filter is a SERVER parameter: 95 of the 112 contracts on file
+ * wear the underlying word rather than the published ticker, so a client
+ * narrowing one page would almost always narrow it to a page of the same
+ * thing. The counts beside the filters describe the whole corpus, never the
+ * page.
+ */
+export function useRwaLookalikes(
+  input?: { alias?: 'published_ticker' | 'underlying' | 'display_name' | null; limit?: number },
+  options?: { enabled?: boolean },
+) {
+  const alias = input?.alias ?? null;
+  const limit = input?.limit ?? 50;
+  return useQuery({
+    queryKey: ['rwa-lookalikes', alias, limit],
+    queryFn: async () => {
+      const query = new URLSearchParams({ limit: String(limit) });
+      if (alias) query.set('alias', alias);
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/rwa/lookalikes?${query.toString()}`,
+      );
+      return apiSpec.OfficialLookalikeFeedV1Schema.parse(response);
+    },
+    retry: false,
+    enabled: options?.enabled !== false,
+  });
+}
+
+/**
+ * Phase 6 — what changed about the official corpus.
+ *
+ * The response carries `watching`, which is what an empty feed means: a kind
+ * absent from it has never had an emitter run, and nothing before its date can
+ * ever appear. The surface renders that instead of an empty list.
+ */
+export function useRwaSignals(options?: { enabled?: boolean; limit?: number }) {
+  const limit = options?.limit ?? 50;
+  return useQuery({
+    queryKey: ['rwa-signals', limit],
+    queryFn: async () => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/rwa/signals?limit=${limit}`,
+      );
+      return apiSpec.RwaSignalFeedV1Schema.parse(response);
+    },
+    retry: false,
+    enabled: options?.enabled !== false,
+  });
+}
+
+/**
  * T73-UI — the two market rails.
  *
  * Read-only over stored observations. The server does the ranking; this hook
