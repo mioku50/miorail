@@ -17,8 +17,10 @@ import { lookalikeMatchV1, type OfficialIdentityForMatchV1 } from '@mioagent/rwa
 import {
   createDatabaseOfficialAssetRepository,
   createDatabaseOfficialLookalikeRepository,
+  createDatabaseRwaSignalRepository,
   type OfficialLookalikeRowV1,
 } from '@mioagent/route-storage';
+import { lookalikeSignalsV1 } from '@mioagent/rwa-dossier';
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 
@@ -37,6 +39,7 @@ async function main(): Promise<void> {
 
   const official = createDatabaseOfficialAssetRepository(client);
   const lookalikes = createDatabaseOfficialLookalikeRepository(client);
+  const signals = createDatabaseRwaSignalRepository(client);
 
   const assets = await official.officialAssets({ chainId: CHAIN_ID_V1, limit: 200 });
   if (assets.length === 0) {
@@ -111,6 +114,16 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Opened BEFORE the scan runs. The pass that opens a watch reports nothing:
+  // the first scan of an index holding 22,000 launches would otherwise
+  // announce every contract that has ever worn the name as news, and the
+  // oldest of them launched months ago.
+  const [watch] = await signals.openSignalWatch({
+    chainId: CHAIN_ID_V1,
+    kinds: ['official_asset_lookalike_created'],
+    at: observedAt,
+  });
+
   const outcome = await lookalikes.recordLookalikes({
     chainId: CHAIN_ID_V1,
     officialAddresses: corpus,
@@ -118,6 +131,27 @@ async function main(): Promise<void> {
   });
   console.log(`\nnewly flagged ${outcome.flagged.length}, already known ${outcome.refreshed.length}`);
   for (const address of outcome.flagged.slice(0, 20)) console.log(`  + ${address}`);
+
+  if (watch?.openedNow) {
+    console.log(
+      `\nsignals: watch opened at ${watch.watchingSince} — this pass reports nothing, because nothing here is a change yet`,
+    );
+    return;
+  }
+  const emitted = lookalikeSignalsV1({
+    flagged: outcome.flagged,
+    rows,
+    officialTickers: tickerOf,
+    occurredAt: observedAt,
+  });
+  const recorded = await signals.recordSignals({
+    chainId: CHAIN_ID_V1,
+    recordedAt: new Date().toISOString(),
+    signals: emitted,
+  });
+  console.log(
+    `signals: ${recorded.recorded.length} recorded, ${recorded.alreadyRecorded.length} already on file`,
+  );
 }
 
 main()

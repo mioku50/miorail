@@ -1,0 +1,18 @@
+[Unit]
+# Every six hours.
+#
+# The scan costs no RPC and no outbound request: it compares the official
+# corpus with the launch index, both already stored. The interval is set by
+# how often the inputs move — a new launch arrives constantly, but a scan is
+# only useful once the index has ingested it, and only a contract flagged for
+# the FIRST time produces a signal.
+Description=Scan the launch index for contracts wearing an official name
+
+[Timer]
+OnBootSec=20min
+OnUnitActiveSec=6h
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

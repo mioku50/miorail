@@ -1,0 +1,21 @@
+[Unit]
+# Hourly, four passes each time.
+#
+# One eth_getLogs covers all thirteen assets over 2,000 blocks — measured, it
+# returned 5,833 transfers in 1.5 seconds. Four passes an hour keeps the cursor
+# roughly current at Base's two-second blocks while costing about four calls an
+# hour for the whole vertical, against ten to twelve per token for the
+# pool-by-pool measurement it replaces.
+#
+# The cursor never rewinds and re-reading a range writes nothing, so a missed
+# hour costs only the blocks it did not reach.
+Description=Read the official assets' own ledger for venue movements
+
+[Timer]
+OnBootSec=8min
+OnUnitActiveSec=1h
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

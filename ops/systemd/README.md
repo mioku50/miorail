@@ -24,7 +24,39 @@ while its cursor never moves. The worker journal exposes
 `logWindowsCompleted/logWindowsAttempted` so this failure is visible.
 
 The older `mioagent-b20-*` files remain adaptable templates for another host.
-No timers: see the header of each worker unit for why.
+The two long-running B20 workers have no timers: see the header of each unit
+for why.
+
+## The RWA vertical's four oneshot workers
+
+`miorail-rwa-*.service` are oneshots driven by a `.timer` of the same stem, and
+`ops/deploy.sh` installs and enables all four pairs on every deploy. They are
+what makes Discover's Official Assets tab able to say anything:
+
+| Timer | Every | What a pass costs |
+| --- | --- | --- |
+| `miorail-rwa-official` | 6h | two HTTPS requests to published documents |
+| `miorail-rwa-cash-exit` | 1h | 13 `eth_call` + ~104 aggregator quotes, paced |
+| `miorail-rwa-lookalikes` | 6h | nothing outbound at all — two stored tables |
+| `miorail-rwa-market-tail` | 1h | ~4 `eth_getLogs` for the whole vertical |
+
+None of them holds a signer, a key or a wallet, and none writes to the chain.
+
+The order matters once, on a new host: nothing else can run usefully until
+`miorail-rwa-official` has recorded a corpus, because the other three read the
+official universe to decide what to look at.
+
+Each emitter opens its signal watch before its first pass and reports nothing
+on that pass — a transition can only be seen by something that was already
+watching. So the Signals tab is empty after the first run of each, by design,
+and the tab states the date it started watching rather than implying silence.
+
+Check them:
+
+```bash
+systemctl list-timers 'miorail-rwa-*' --no-pager
+journalctl -u miorail-rwa-cash-exit -n 50 --no-pager
+```
 
 Install the MiniApp unit manually only when bootstrapping a host without the
 deploy script:

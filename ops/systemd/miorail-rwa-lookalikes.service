@@ -1,0 +1,33 @@
+[Unit]
+# Which contracts in the launch index wear an official asset's name. No RPC and no network at all: it compares two things already stored.
+#
+# Oneshot, driven by miorail-rwa-lookalikes.timer. Read-only outside Miorail's own
+# evidence tables: no signer, no key, no chain write, no wallet.
+Description=Miorail official-asset lookalike scan
+Documentation=https://github.com/mioku50/miorail
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=miorail
+Group=miorail
+WorkingDirectory=/home/miorail/mioagent
+EnvironmentFile=/home/miorail/mioagent/.env
+Environment=NODE_ENV=production
+Environment=PATH=/home/miorail/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/rwa_scan_lookalikes.ts
+
+TimeoutStartSec=600
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/miorail/mioagent
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=miorail-rwa-lookalikes

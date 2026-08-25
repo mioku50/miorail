@@ -1,0 +1,22 @@
+[Unit]
+# Hourly.
+#
+# The cost of a pass is thirteen assets times eight router quotes, paced at
+# 2.5s between assets — about a minute of wall clock and roughly a hundred
+# requests to an aggregator we do not pay. Measured on the launch corpus, the
+# median round-trip cost moves by zero out to six hours, so a tighter interval
+# would buy noise and spend somebody else's capacity to get it.
+#
+# What it does buy, hourly: the moment an asset with no route acquires one, and
+# the moment one loses it. Both are recorded against the run before, so a pass
+# that finds nothing changed writes nothing at all.
+Description=Measure the official-asset cash-exit ladder
+
+[Timer]
+OnBootSec=12min
+OnUnitActiveSec=1h
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

@@ -68,6 +68,8 @@ B20_DISCOVER_DROPIN_SOURCE="$REPO/ops/systemd/miorail-b20-discover-runtime.conf"
 B20_DISCOVER_DROPIN_TARGET=/etc/systemd/system/miorail-b20-discover.service.d/rpc.conf
 B20_MEASURE_DROPIN_SOURCE="$REPO/ops/systemd/miorail-b20-measure-runtime.conf"
 B20_MEASURE_DROPIN_TARGET=/etc/systemd/system/miorail-b20-measure.service.d/rpc.conf
+# Filled by step 4. Declared here so `set -u` cannot trip on an empty array.
+RWA_TIMERS=()
 
 export PATH="$NODE_BIN:$PATH"
 as_service_user() { sudo -u "$SERVICE_USER" env PATH="$PATH" "$@"; }
@@ -230,8 +232,31 @@ install -m 0644 "$B20_MEASURE_UNIT_SOURCE" "$B20_MEASURE_UNIT_TARGET"
 install -d -m 0755 "$(dirname "$B20_DISCOVER_DROPIN_TARGET")" "$(dirname "$B20_MEASURE_DROPIN_TARGET")"
 install -m 0644 "$B20_DISCOVER_DROPIN_SOURCE" "$B20_DISCOVER_DROPIN_TARGET"
 install -m 0644 "$B20_MEASURE_DROPIN_SOURCE" "$B20_MEASURE_DROPIN_TARGET"
+
+# The RWA vertical's four oneshot workers and their timers.
+#
+# Installed from the repository on every deploy for the same reason the B20
+# units are: a schedule that only exists on the host is state nobody can review
+# and nobody can restore. Each pair is (service, timer) with the same stem, and
+# the loop refuses a pair that is missing half of itself rather than leaving a
+# timer pointing at a unit that is not there.
+for stem in rwa-official rwa-cash-exit rwa-lookalikes rwa-market-tail; do
+  unit_source="$REPO/ops/systemd/miorail-$stem.service"
+  timer_source="$REPO/ops/systemd/miorail-$stem.timer"
+  if [ ! -f "$unit_source" ] || [ ! -f "$timer_source" ]; then
+    echo "FAILED: miorail-$stem is missing its service or its timer"
+    exit 1
+  fi
+  install -m 0644 "$unit_source" "/etc/systemd/system/miorail-$stem.service"
+  install -m 0644 "$timer_source" "/etc/systemd/system/miorail-$stem.timer"
+  RWA_TIMERS+=("miorail-$stem.timer")
+done
+
 systemctl daemon-reload
 systemctl enable miorail-miniapp miorail-b20-discover miorail-b20-measure >/dev/null
+# `enable --now` on a timer starts the clock without running the pass, so a
+# deploy never fires four workers at once.
+systemctl enable --now "${RWA_TIMERS[@]}" >/dev/null
 
 step "5/7  publish the frontend"
 # THE step that was missing. --delete so a removed asset actually disappears

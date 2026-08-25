@@ -1,0 +1,18 @@
+[Unit]
+# Every six hours.
+#
+# The corpus is a published document, not a feed: Coinbase adds an equity every
+# few weeks, and the product page moves separately from the technical one. Six
+# hours bounds how long a listing change can sit unnoticed without pointlessly
+# re-fetching a document that has not moved — the snapshot records the document
+# hash, so an unchanged page costs one request and writes one row.
+Description=Check the reviewed official-asset sources
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=6h
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

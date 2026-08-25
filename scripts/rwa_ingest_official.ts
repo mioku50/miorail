@@ -26,9 +26,11 @@ import {
 } from '@mioagent/rwa-official';
 import {
   createDatabaseOfficialAssetRepository,
+  createDatabaseRwaSignalRepository,
   type OfficialAssetInputV1,
   type OfficialSourceSnapshotV1,
 } from '@mioagent/route-storage';
+import { officialSourceSignalsV1 } from '@mioagent/rwa-dossier';
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 
@@ -43,7 +45,24 @@ async function main(): Promise<void> {
   const dry = process.argv.includes('--dry');
   reportLoadedEnvFileV1(loadRootEnvFileV1());
   const repository = createDatabaseOfficialAssetRepository(client);
+  const signals = createDatabaseRwaSignalRepository(client);
   const observedAt = new Date().toISOString();
+
+  // Opened before the first source is fetched, and the pass that opens it says
+  // nothing. Coinbase issued these thirteen equities well before Miorail first
+  // read the document; reporting them as listings that just happened would
+  // date somebody else's history to our first request.
+  const watch = dry
+    ? []
+    : await signals.openSignalWatch({
+        chainId: CHAIN_ID_V1,
+        kinds: ['official_source_added_asset', 'official_source_removed_asset'],
+        at: observedAt,
+      });
+  const watchOpenedNow = watch.some((row) => row.openedNow);
+  if (watchOpenedNow) {
+    console.log(`signals: watch opened at ${observedAt} — this pass reports no transitions\n`);
+  }
 
   for (const kind of Object.keys(PARSERS_V1) as OfficialSourceKeyV1[]) {
     const source = OFFICIAL_SOURCES_V1[kind];
@@ -123,6 +142,31 @@ async function main(): Promise<void> {
     if (outcome.delisted.length > 0) console.log(`  DELISTED: ${outcome.delisted.join(', ')}`);
     if (outcome.added.length === 0 && outcome.delisted.length === 0 && outcome.status === 'ok') {
       console.log('  membership unchanged');
+    }
+
+    if (watchOpenedNow) continue;
+    // A delisted asset is not in `assets` -- this check is why it was dropped.
+    // Its name comes from what the corpus already holds, so the signal can say
+    // WHICH asset left rather than printing an address.
+    const named = new Map(
+      assets.map((asset) => [asset.tokenAddress, { ticker: asset.ticker, displayName: asset.displayName }]),
+    );
+    for (const tokenAddress of outcome.delisted) {
+      if (named.has(tokenAddress)) continue;
+      const identity = await repository.officialIdentity({ chainId: CHAIN_ID_V1, tokenAddress });
+      const listing = identity?.listings.find((row) => row.sourceKind === kind) ?? identity?.listings[0];
+      if (listing) named.set(tokenAddress, { ticker: listing.ticker, displayName: listing.displayName });
+    }
+    const emitted = officialSourceSignalsV1({ outcome, named, sourceUrl: source.url });
+    if (emitted.length > 0) {
+      const recorded = await signals.recordSignals({
+        chainId: CHAIN_ID_V1,
+        recordedAt: new Date().toISOString(),
+        signals: emitted,
+      });
+      console.log(
+        `  signals: ${recorded.recorded.length} recorded, ${recorded.alreadyRecorded.length} already on file`,
+      );
     }
   }
 
