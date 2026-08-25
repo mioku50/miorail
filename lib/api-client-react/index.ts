@@ -982,6 +982,31 @@ export function useRwaSignals(options?: { enabled?: boolean; limit?: number }) {
 }
 
 /**
+ * Phase 7 — one pasted address, read as deeply as the evidence allows.
+ *
+ * The address is the query. There is no symbol form of this hook and there is
+ * no symbol form of the endpoint: a symbol is exactly what an impostor
+ * supplies, and 61.7% of indexed launches share one with another launch.
+ *
+ * `retry: false` because every failure mode answers the same way twice, and an
+ * address nothing knows is a 200 carrying a dossier of unknowns rather than an
+ * error — that is the answer, and the most common one.
+ */
+export function useRwaAddressDossier(tokenAddress: string | null, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['rwa-address-dossier', tokenAddress],
+    queryFn: async () => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/rwa/investigate/${String(tokenAddress)}`,
+      );
+      return apiSpec.AddressDossierV1Schema.parse(response);
+    },
+    retry: false,
+    enabled: options?.enabled !== false && Boolean(tokenAddress),
+  });
+}
+
+/**
  * T73-UI — the two market rails.
  *
  * Read-only over stored observations. The server does the ranking; this hook

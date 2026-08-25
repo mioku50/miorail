@@ -56,6 +56,17 @@ export {
   type RwaSignalCardV1,
   type RwaSignalFeedV1,
 } from '@mioagent/rwa-dossier/discover';
+// Phase 7 — one pasted address. Re-exported rather than restated for the same
+// reason the Discover schemas are: the projection that assembles a dossier and
+// the schema a client parses it with have to be the same object.
+export {
+  AddressDossierV1Schema,
+  AddressIdentityV1Schema,
+  ADDRESS_STANDINGS_V1,
+  type AddressDossierV1,
+  type AddressIdentityV1,
+  type AddressStandingV1,
+} from '@mioagent/rwa-dossier/addressDossier';
 
 // Shared
 export const PaginationParamsSchema = z.object({
