@@ -298,8 +298,24 @@ printf '  built  %s\n  served %s\n' "$built_entry" "$served_entry"
 [ "$built_entry" = "$served_entry" ] || { echo 'FAILED: the served bundle is not the built one'; exit 1; }
 
 MINIAPP_PORT=3020
-miniapp_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:$MINIAPP_PORT/")
-printf '  miniapp http://127.0.0.1:%s/  %s\n' "$MINIAPP_PORT" "$miniapp_status"
+# Next.js binds about thirteen seconds after systemd starts it, and step 6 does
+# not wait. On 2026-08-25 this line ran into a refused connection, and because
+# a failed command substitution aborts under `set -e`, the deploy exited with
+# curl's own message and printed neither FAILED nor Deployed — the exact
+# half-applied-without-saying-so failure this script exists to prevent. The
+# service was serving normally seconds later.
+#
+# `|| miniapp_status=''` is what makes this a loop rather than one attempt: it
+# swallows curl's non-zero status so `set -e` cannot abort the assignment. Same
+# construction, and the same reasoning, as the MCP readiness wait below.
+miniapp_status=''
+for attempt in $(seq 1 15); do
+  miniapp_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    --connect-timeout 3 --max-time 10 "http://127.0.0.1:$MINIAPP_PORT/") || miniapp_status=''
+  [ "$miniapp_status" = 200 ] && break
+  sleep 2
+done
+printf '  miniapp http://127.0.0.1:%s/  %s\n' "$MINIAPP_PORT" "${miniapp_status:-no answer}"
 if [ "$miniapp_status" != 200 ]; then
   # Name the process holding the port. The previous message said only that the
   # service was not serving its build, which is the symptom of a bind failure
