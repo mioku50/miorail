@@ -371,8 +371,20 @@ export async function marketProjectionV1(
   });
 
   const activityRow = activities[0] ?? null;
+  // A movement is stored only once its counterparty is known to be a venue, so
+  // with nothing identified the tail can read ten thousand transfers and store
+  // zero events. Measured on the first production pass: 10,824 transfers,
+  // 97 candidates, none identified. `no_movements_observed` there would be a
+  // finding about the asset authored entirely by our own backlog, so the
+  // absence of any identified venue reads as `unavailable` — the same rule the
+  // Discover overview applies, because the two surfaces describe one fact.
+  const attributionReady = allVenues.length > 0;
   const activity = RecentMarketActivityV1Schema.parse({
-    status: activityRow && activityRow.transfers > 0 ? 'observed' : 'no_movements_observed',
+    status: !attributionReady
+      ? 'unavailable'
+      : activityRow && activityRow.transfers > 0
+        ? 'observed'
+        : 'no_movements_observed',
     semantics: 'venue_transfers_not_confirmed_swaps',
     checkedAt: cursor.lastRunAt,
     windowFromBlock: sinceBlock,

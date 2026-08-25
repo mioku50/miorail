@@ -185,6 +185,32 @@ async function tail() {
   return marketTail;
 }
 
+/** A tail that has read blocks and identified no venue at all. */
+async function tailWithNoIdentifiedVenue() {
+  const marketTail = createMemoryMarketTailRepository();
+  await marketTail.recordPass({
+    tailKey: OFFICIAL_ASSET_LEDGER_TAIL_KEY_V1,
+    chainId: 8453,
+    toBlock: 5_000,
+    observedAt: NOW.toISOString(),
+    logCalls: 1,
+    identityCalls: 0,
+    venues: [
+      {
+        chainId: 8453,
+        address: POOL,
+        kind: 'candidate',
+        token0: null,
+        token1: null,
+        firstSeenAt: NOW.toISOString(),
+        identifiedAt: null,
+      },
+    ],
+    events: [],
+  });
+  return marketTail;
+}
+
 async function cashExit() {
   const repository = createMemoryOfficialCashExitRepository();
   const startedAt = '2026-08-25T11:59:50.000Z';
@@ -276,6 +302,28 @@ async function cashExit() {
 }
 
 describe('official asset dossier assembly', () => {
+  test('a tail with no identified venue is unavailable, not a quiet market', async () => {
+    // A movement is stored only once its counterparty is known to be a venue,
+    // so with nothing identified the tail can read ten thousand transfers and
+    // store none. Measured on the first production pass: 10,824 transfers, 97
+    // candidates, none identified. `no_movements_observed` there is a finding
+    // about the asset authored entirely by our own backlog — and the Discover
+    // overview and this dossier have to agree, because they describe one fact.
+    const result = await assembleOfficialAssetDossierV1(
+      {
+        official: await corpus(),
+        marketTail: await tailWithNoIdentifiedVenue(),
+        reader: reader(),
+        now: () => NOW,
+      },
+      { chainId: 8453, tokenAddress: TOKEN },
+    );
+    assert.equal(result.outcome, 'dossier');
+    if (result.outcome !== 'dossier') return;
+    assert.equal(result.dossier.recentMarketActivity.status, 'unavailable');
+    assert.equal(result.dossier.recentMarketActivity.confirmedSwapCount, null);
+  });
+
   test('assembles exact-address evidence deterministically without inventing trades or an underlying', async () => {
     const deps = {
       official: await corpus(),
