@@ -51,9 +51,15 @@ export function providerHeadersV1(baseUrl: string, env: NodeJS.ProcessEnv = proc
   return { 'User-Agent': agent };
 }
 
-function fallbackApiKeyV1(baseUrl: string, prefix: string): string {
-  const explicit = trimmed(`${prefix}_API_KEY`);
-  if (explicit) return explicit;
+/**
+ * The shared credential a host publishes for itself, or ''.
+ *
+ * One table, used by every lane. It used to be three copies with the same
+ * three lines, and the copies are how a lane ends up honouring a key the
+ * others do not -- which is discovered as an authentication failure on a
+ * gateway that was configured correctly.
+ */
+function hostScopedApiKeyV1(baseUrl: string): string {
   const host = providerLabelV1(baseUrl);
   if (OPENROUTER_HOSTS_V1.includes(host)) {
     return trimmed('OPENROUTER_API_KEY') || trimmed('OPENROUTER_KEY');
@@ -61,6 +67,23 @@ function fallbackApiKeyV1(baseUrl: string, prefix: string): string {
   if (AGENTROUTER_HOSTS_V1.includes(host)) return trimmed('AGENTROUTER_API_KEY');
   if (MISTRAL_HOSTS_V1.includes(host)) return trimmed('MISTRAL_API_KEY');
   return '';
+}
+
+/**
+ * The credential for the PRIMARY lane.
+ *
+ * `LLM_API_KEY` still wins, so nothing an operator has already set changes.
+ * The host-scoped fallback exists because the primary lane was the only one
+ * without it: pointing `LLM_BASE_URL` at a host whose key is already in the
+ * environment demanded that the same secret be written a second time under a
+ * second name, and a secret stored twice is a secret that gets rotated once.
+ */
+function primaryApiKeyV1(baseUrl: string): string {
+  return trimmed('LLM_API_KEY') || hostScopedApiKeyV1(baseUrl);
+}
+
+function fallbackApiKeyV1(baseUrl: string, prefix: string): string {
+  return trimmed(`${prefix}_API_KEY`) || hostScopedApiKeyV1(baseUrl);
 }
 
 /**
@@ -72,15 +95,7 @@ function fallbackApiKeyV1(baseUrl: string, prefix: string): string {
  * never be sent to an unrelated gateway.
  */
 function structuredApiKeyV1(baseUrl: string): string {
-  const explicit = trimmed('LLM_STRUCTURED_API_KEY');
-  if (explicit) return explicit;
-  const host = providerLabelV1(baseUrl);
-  if (OPENROUTER_HOSTS_V1.includes(host)) {
-    return trimmed('OPENROUTER_API_KEY') || trimmed('OPENROUTER_KEY');
-  }
-  if (AGENTROUTER_HOSTS_V1.includes(host)) return trimmed('AGENTROUTER_API_KEY');
-  if (MISTRAL_HOSTS_V1.includes(host)) return trimmed('MISTRAL_API_KEY');
-  return '';
+  return trimmed('LLM_STRUCTURED_API_KEY') || hostScopedApiKeyV1(baseUrl);
 }
 
 /**
@@ -204,7 +219,7 @@ export function createLlmProvider(): LlmProvider {
     // Empty counts as unset. `LLM_BASE_URL=` in a .env is the exact shape this
     // has failed as in production: a duplicate key whose second, blank value won.
     const baseUrl = trimmed('LLM_BASE_URL');
-    const apiKey = trimmed('LLM_API_KEY');
+    const apiKey = baseUrl ? primaryApiKeyV1(baseUrl) : trimmed('LLM_API_KEY');
     const model = trimmed('LLM_MODEL');
     if (!baseUrl || !apiKey || !model) {
       const missing = [

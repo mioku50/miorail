@@ -42,6 +42,31 @@ test('createLlmProvider', async (t) => {
     process.env = { ...originalEnv };
   });
 
+  await t.test('the primary lane accepts a host-scoped key, so the secret is stored once', () => {
+    // The primary was the only lane without this, which meant pointing
+    // LLM_BASE_URL at a host whose key was already in the environment demanded
+    // the same secret under a second name. A secret written twice is a secret
+    // rotated once.
+    process.env.LLM_PROVIDER = 'openai-compatible';
+    process.env.LLM_BASE_URL = 'https://agentrouter.org/v1';
+    process.env.LLM_MODEL = 'deepseek-v4-flash';
+    delete process.env.LLM_API_KEY;
+    process.env.AGENTROUTER_API_KEY = 'ar-key';
+    assert.doesNotThrow(() => createLlmProvider());
+  });
+
+  await t.test('a host-scoped key is not resolved for an unrelated host', () => {
+    // A bearer token belongs to one host. Resolving AgentRouter's key for a
+    // gateway that merely happens to be configured would hand the credential
+    // to whoever that host is.
+    process.env.LLM_PROVIDER = 'openai-compatible';
+    process.env.LLM_BASE_URL = 'https://tokengate-cqt9ivzs.manus.space/v1';
+    process.env.LLM_MODEL = 'deepseek-v4-pro';
+    delete process.env.LLM_API_KEY;
+    process.env.AGENTROUTER_API_KEY = 'ar-key';
+    assert.throws(() => createLlmProvider(), /LLM_API_KEY is not set/);
+  });
+
   await t.test('LLM_PROVIDER=mock is rejected by the production factory', () => {
     process.env.LLM_PROVIDER = 'mock';
     assert.throws(() => createLlmProvider(), /Unsupported production LLM_PROVIDER/);

@@ -93,9 +93,14 @@ export class OpenAiCompatibleClient implements LlmProvider {
 
     const data = await response.json() as {
       choices?: Array<{
+        finish_reason?: string;
         message?: {
           role?: string;
           content?: string;
+          /** Reasoning models put their working here and the answer in
+           * `content`. Read only to tell an empty answer from a truncated
+           * one — never returned, never logged, never stored. */
+          reasoning_content?: string;
           name?: string;
           tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
         };
@@ -113,8 +118,33 @@ export class OpenAiCompatibleClient implements LlmProvider {
       throw new Error('Invalid response structure from OpenAI API');
     }
 
-    const firstMessage = data.choices[0].message;
+    const firstChoice = data.choices[0];
+    // The guard above already proved this is present; the local binding is
+    // what the narrowing is lost across.
+    const firstMessage = firstChoice.message!;
     const role = firstMessage.role as 'system' | 'user' | 'assistant' | 'tool' | undefined;
+
+    // A reasoning model that ran out of budget mid-thought answers with an
+    // EMPTY `content` and a full `reasoning_content`. Returning '' from here
+    // hands the caller a silent non-answer: the verifier rejects it, the
+    // narration falls back, and the log says the model replied.
+    //
+    // Measured on 2026-08-25 against deepseek-v4-flash: at max_tokens 300 the
+    // content was empty with 1,222 characters of reasoning and
+    // finish_reason "length"; with no cap it answered normally in 3-6s. So
+    // this is a truncation, it is a property of the provider and the request
+    // budget, and it must fall over to the next link rather than pass for a
+    // reply. Tool calls are exempt — an empty content beside them is the
+    // documented shape.
+    const emptyContent = (firstMessage.content ?? '').trim().length === 0;
+    const hasToolCalls = Array.isArray(firstMessage.tool_calls) && firstMessage.tool_calls.length > 0;
+    const reasoningLength = (firstMessage.reasoning_content ?? '').length;
+    if (emptyContent && !hasToolCalls && reasoningLength > 0) {
+      throw new Error(
+        `Model ${model} returned no content after ${reasoningLength} characters of reasoning` +
+          ` (finish_reason: ${firstChoice.finish_reason ?? 'absent'})`,
+      );
+    }
 
     return {
       message: {
