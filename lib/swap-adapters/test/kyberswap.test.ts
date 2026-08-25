@@ -108,6 +108,45 @@ test('KyberSwap no-route response produces no fake candidate', async () => {
   });
 });
 
+test('KyberSwap 400 "route not found" is the router answering, not our failure', async () => {
+  // The production shape, measured 2026-08-25: an unroutable pair comes back
+  // as HTTP 400 with `{"code":4008,"message":"route not found"}`. Read as a
+  // transport fault it turned eight of thirteen Coinbase tokenized equities
+  // into "measurement did not finish" — a fact about Miorail printed where a
+  // fact about the market belongs.
+  const intent = makeIntent();
+  const adapter = new KyberSwapRouteAdapter({
+    executorFactory: () =>
+      mockKyberExecutor({
+        status: 400,
+        data: { code: 4008, message: 'route not found', details: null },
+      }),
+  });
+  const result = await adapter.quote({ intent, walletAddress: WALLET, requestId: 'no-route-400', now: NOW });
+  assert.equal(result.outcome, 'unavailable');
+  assert.equal(result.errorCode, 'provider_no_route');
+});
+
+test('KyberSwap 400 that is not about a route stays our failure', async () => {
+  const intent = makeIntent();
+  const adapter = new KyberSwapRouteAdapter({
+    executorFactory: () =>
+      mockKyberExecutor({ status: 400, data: { code: 4001, message: 'invalid amountIn' } }),
+  });
+  const result = await adapter.quote({ intent, walletAddress: WALLET, requestId: 'bad-request', now: NOW });
+  assert.equal(result.errorCode, 'provider_http_error');
+});
+
+test('a 5xx is never allowed to become a statement about the asset', async () => {
+  // A server fault whose body happens to carry the words is still a fault.
+  const intent = makeIntent();
+  const adapter = new KyberSwapRouteAdapter({
+    executorFactory: () => mockKyberExecutor({ status: 502, data: { message: 'route not found' } }),
+  });
+  const result = await adapter.quote({ intent, walletAddress: WALLET, requestId: 'gateway', now: NOW });
+  assert.equal(result.errorCode, 'provider_http_error');
+});
+
 test('KyberSwap normalizes a successful HTTP response that explicitly reports no route', async () => {
   const intent = makeIntent();
   const result = await adapterFor({ message: 'No route found for this pair' }).quote({

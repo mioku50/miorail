@@ -173,11 +173,27 @@ async function main(): Promise<void> {
   for (const [index, identity] of universe.entries()) {
     const listing = identity.listings.find((row) => row.currentlyListed) ?? identity.listings[0]!;
     const tokenAddress = identity.tokenAddress;
-    const decimalsRead = await reader.call({
+    // Retried when the endpoint throttled us, and only then.
+    //
+    // Measured on the first production pass: three of thirteen assets came
+    // back `rate_limited` and were skipped, so three tokenized equities went
+    // unmeasured because Miorail shares one IP with two other workers on an
+    // endpoint that serves about half a call a second. A throttle is our
+    // problem and it passes; a revert does not, and retrying one would just
+    // spend the budget twice to learn the same thing.
+    let decimalsRead = await reader.call({
       to: tokenAddress,
       data: DECIMALS_SELECTOR_V1,
       blockTag: anchor.value.blockTag,
     });
+    for (let retry = 0; !decimalsRead.ok && decimalsRead.reason === 'rate_limited' && retry < 3; retry += 1) {
+      await sleep(gapMs * (retry + 1));
+      decimalsRead = await reader.call({
+        to: tokenAddress,
+        data: DECIMALS_SELECTOR_V1,
+        blockTag: anchor.value.blockTag,
+      });
+    }
     // Our read failed. Nothing is written and nothing is claimed: an asset
     // whose decimals we could not read is not an asset without a market, and
     // one unreadable token does not end the pass for the other twelve.

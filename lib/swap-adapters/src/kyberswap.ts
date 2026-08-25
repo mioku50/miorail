@@ -159,6 +159,22 @@ export class KyberSwapRouteAdapter implements SwapRouteAdapter {
     }
     if (response.status === 404) return providerFailure(this.id, 'provider_no_route', 404);
     if (response.status === 429) return providerFailure(this.id, 'provider_rate_limited', 429);
+    // A 4xx whose body says there is no route is the ROUTER answering, not a
+    // transport fault, and the difference decides whether a screen reads "no
+    // route at the measured sizes" or "measurement did not finish".
+    //
+    // Measured 2026-08-25: KyberSwap answers an unroutable pair with HTTP 400
+    // and `{"code":4008,"message":"route not found"}`. The generic non-2xx
+    // branch below fired first, so eight of thirteen Coinbase tokenized
+    // equities were recorded as OUR failure — the exact inverse of the bug
+    // class this codebase already names, with a finding about the market
+    // wearing our outage's name.
+    //
+    // 4xx only. A 5xx body saying "route not found" is a server fault, and a
+    // fault is never allowed to become a statement about an asset.
+    if (response.status >= 400 && response.status < 500 && reportsNoRoute(response.data)) {
+      return providerFailure(this.id, 'provider_no_route', response.status);
+    }
     if (response.status < 200 || response.status >= 300) {
       return providerFailure(this.id, 'provider_http_error', response.status);
     }
