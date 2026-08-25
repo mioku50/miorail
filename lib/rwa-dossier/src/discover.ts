@@ -46,14 +46,26 @@ export const OFFICIAL_SOURCE_KINDS_V1 = ['base_docs_technical', 'base_product_li
 /**
  * What a measured ladder said, in one word.
  *
- * `measurement_failed` is separate from `no_route_at_measured_sizes` on
- * purpose. A router that timed out and a router that answered "no route" look
- * identical in an empty result and mean opposite things, and this product has
- * shipped that confusion three times under a different name.
+ * `measurement_failed` is separate from the two no-route words on purpose. A
+ * router that timed out and a router that answered "no route" look identical
+ * in an empty result and mean opposite things, and this product has shipped
+ * that confusion three times under a different name.
+ *
+ * The two no-route words are separate from each other for a reason the Phase 4
+ * measurement is careful about. The ladder is sized in CASH, so it buys the
+ * asset first to learn an exact token amount. If the buy leg has no route the
+ * sell was never attempted -- which proves nothing about selling a position
+ * somebody already holds, and must never be reported as "cannot be exited".
+ *
+ * It does prove something, though, and the something is worth a word:
+ * `no_entry_route_at_measured_sizes` means an approved router would not sell
+ * you the asset for cash at any measured size. Nine of thirteen Coinbase
+ * tokenized equities read this way on 2026-08-25.
  */
 export const OFFICIAL_ROUTE_STATUSES_V1 = [
   'cash_route_established',
   'no_route_at_measured_sizes',
+  'no_entry_route_at_measured_sizes',
   'measurement_failed',
   'not_measured',
 ] as const;
@@ -70,6 +82,15 @@ export const OfficialCashExitRungPreviewV1Schema = z
      * that the number belongs to a different size. */
     derivedFromExactRung: z.boolean(),
     lowerBoundRequestedCashAtomic: Digits.nullable(),
+    /**
+     * The router explicitly refused the BUY leg at this size.
+     *
+     * Carried as a typed flag rather than left in an error string, because it
+     * is the difference between "our measurement did not finish" and "no
+     * approved router will sell you this at this size" -- and the second is a
+     * fact about the market that a surface is entitled to state.
+     */
+    entryRouteRefused: z.boolean(),
   })
   .strict();
 export type OfficialCashExitRungPreviewV1 = z.infer<typeof OfficialCashExitRungPreviewV1Schema>;
@@ -148,6 +169,7 @@ export const OfficialAssetsOverviewV1Schema = z
         officialIssuance: z.number().int().min(0),
         cashRouteEstablished: z.number().int().min(0),
         noRouteAtMeasuredSizes: z.number().int().min(0),
+        noEntryRouteAtMeasuredSizes: z.number().int().min(0),
         measurementFailed: z.number().int().min(0),
         notMeasured: z.number().int().min(0),
       })
@@ -170,6 +192,7 @@ export const OfficialAssetsOverviewV1Schema = z
     const sum =
       counts.cashRouteEstablished +
       counts.noRouteAtMeasuredSizes +
+      counts.noEntryRouteAtMeasuredSizes +
       counts.measurementFailed +
       counts.notMeasured;
     if (sum !== counts.officialIssuance) {

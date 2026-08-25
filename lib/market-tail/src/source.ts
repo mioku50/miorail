@@ -20,7 +20,18 @@ import type { RawLogV1 } from './ledger.js';
 // a log line.
 // ---------------------------------------------------------------------------
 
-export type MarketSourceResultV1<T> = { ok: true; value: T } | { ok: false; reason: string };
+export type MarketSourceResultV1<T> =
+  | { ok: true; value: T }
+  | {
+      ok: false;
+      reason: string;
+      /**
+       * The endpoint refused because the ANSWER was too big, not because the
+       * request was wrong or the endpoint was busy. The only refusal a caller
+       * can act on: ask for less and the same question succeeds.
+       */
+      oversize?: true;
+    };
 
 /**
  * Whether a JSON-RPC error is the CONTRACT answering or the ENDPOINT failing.
@@ -34,6 +45,19 @@ export type MarketSourceResultV1<T> = { ok: true; value: T } | { ok: false; reas
  */
 function isContractRefusalV1(message: string): boolean {
   return /execution reverted|invalid opcode|out of gas|revert/i.test(message);
+}
+
+/**
+ * Whether the endpoint refused because the answer was too large.
+ *
+ * Measured 2026-08-25 on mainnet.base.org: thirteen official assets over 1,987
+ * blocks came back HTTP 500 with `-32020 backend response too large`, while
+ * the same request over 999 blocks succeeded. The bound is on the RESPONSE, so
+ * it moves with how busy the assets are — a fixed smaller span would work
+ * today and fail on a busy hour. This is what lets the caller split instead.
+ */
+function isOversizeRefusalV1(code: number | undefined, message: string): boolean {
+  return code === -32020 || /response too large|query returned more than|limit exceeded/i.test(message);
 }
 
 export interface MarketTailSourceV1 {
@@ -96,19 +120,30 @@ export function createMarketTailSourceV1(config: {
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
         signal: controller.signal,
       });
-      if (!response.ok) return { ok: false, reason: `endpoint answered ${response.status}` };
-      const envelope = (await response.json()) as {
-        result?: unknown;
-        error?: { code?: number; message?: string };
-      };
-      // The message is inspected and dropped, never reported: there is no
-      // action its text would change, and it may contain the URL.
-      if (envelope.error) {
-        return isContractRefusalV1(envelope.error.message ?? '')
-          ? { ok: true, value: CONTRACT_REVERTED_V1 }
-          : { ok: false, reason: `endpoint refused the ${method} request` };
+      // The body is read even on a non-2xx. A JSON-RPC endpoint carries its
+      // refusal there, and mainnet.base.org answers "backend response too
+      // large" with HTTP 500 — so returning on the status alone threw away the
+      // one refusal a caller can do something about and reported it as an
+      // unexplained server error.
+      type JsonRpcEnvelopeV1 = { result?: unknown; error?: { code?: number; message?: string } };
+      let envelope: JsonRpcEnvelopeV1 | null = null;
+      try {
+        envelope = (await response.json()) as JsonRpcEnvelopeV1;
+      } catch {
+        envelope = null;
       }
-      return { ok: true, value: envelope.result ?? null };
+      if (envelope?.error) {
+        const message = envelope.error.message ?? '';
+        // The message is inspected and dropped, never reported: there is no
+        // action its text would change, and it may contain the URL.
+        if (isContractRefusalV1(message)) return { ok: true, value: CONTRACT_REVERTED_V1 };
+        if (isOversizeRefusalV1(envelope.error.code, message)) {
+          return { ok: false, reason: `the ${method} answer was too large`, oversize: true };
+        }
+        return { ok: false, reason: `endpoint refused the ${method} request` };
+      }
+      if (!response.ok) return { ok: false, reason: `endpoint answered ${response.status}` };
+      return { ok: true, value: envelope?.result ?? null };
     } catch {
       return { ok: false, reason: `${method} did not reach the endpoint` };
     } finally {
@@ -136,26 +171,51 @@ export function createMarketTailSourceV1(config: {
 
     async transferLogs(input) {
       if (input.tokens.length === 0) return { ok: true, value: [] };
-      const result = await rpcV1('eth_getLogs', [
-        {
-          address: input.tokens.map((token) => token.toLowerCase()),
-          topics: [ERC20_TRANSFER_TOPIC_V1],
-          fromBlock: hexV1(input.fromBlock),
-          toBlock: hexV1(input.toBlock),
-        },
-      ]);
-      if (!result.ok) return result;
-      if (!Array.isArray(result.value)) return { ok: false, reason: 'logs were not a list' };
-      // A malformed entry stops the pass: the cursor must not advance past a
-      // range that was only partly readable.
-      const logs: RawLogV1[] = [];
-      for (const entry of result.value) {
-        if (typeof entry !== 'object' || entry === null) {
-          return { ok: false, reason: 'a log entry was not an object' };
+      const tokens = input.tokens.map((token) => token.toLowerCase());
+
+      const readV1 = async (
+        fromBlock: number,
+        toBlock: number,
+      ): Promise<MarketSourceResultV1<RawLogV1[]>> => {
+        const result = await rpcV1('eth_getLogs', [
+          {
+            address: tokens,
+            topics: [ERC20_TRANSFER_TOPIC_V1],
+            fromBlock: hexV1(fromBlock),
+            toBlock: hexV1(toBlock),
+          },
+        ]);
+        if (!result.ok) {
+          // Ask for less rather than give up. The endpoint's bound is on the
+          // response, so it moves with how busy the assets are — and a pass
+          // that stops here leaves the cursor where it was and re-reads the
+          // same oversized range on the next one, forever.
+          //
+          // The requested range is still fully covered when this returns: the
+          // caller advances the cursor to `toBlock`, so a partial read that
+          // reported success would silently skip blocks.
+          if (!result.oversize || fromBlock >= toBlock) return result;
+          const middle = fromBlock + Math.floor((toBlock - fromBlock) / 2);
+          const left = await readV1(fromBlock, middle);
+          if (!left.ok) return left;
+          const right = await readV1(middle + 1, toBlock);
+          if (!right.ok) return right;
+          return { ok: true, value: [...left.value, ...right.value] };
         }
-        logs.push(entry as RawLogV1);
-      }
-      return { ok: true, value: logs };
+        if (!Array.isArray(result.value)) return { ok: false, reason: 'logs were not a list' };
+        // A malformed entry stops the pass: the cursor must not advance past a
+        // range that was only partly readable.
+        const logs: RawLogV1[] = [];
+        for (const entry of result.value) {
+          if (typeof entry !== 'object' || entry === null) {
+            return { ok: false, reason: 'a log entry was not an object' };
+          }
+          logs.push(entry as RawLogV1);
+        }
+        return { ok: true, value: logs };
+      };
+
+      return readV1(input.fromBlock, input.toBlock);
     },
 
     async pairReads(address) {

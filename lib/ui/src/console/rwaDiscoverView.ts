@@ -52,6 +52,7 @@ export interface OfficialLadderRungWireV1 {
   roundTripCostBps: string | null;
   derivedFromExactRung: boolean;
   lowerBoundRequestedCashAtomic: string | null;
+  entryRouteRefused: boolean;
 }
 
 export interface OfficialAssetWireV1 {
@@ -81,6 +82,7 @@ export interface OfficialAssetWireV1 {
     routeStatus:
       | 'cash_route_established'
       | 'no_route_at_measured_sizes'
+      | 'no_entry_route_at_measured_sizes'
       | 'measurement_failed'
       | 'not_measured';
     measuredAt: string | null;
@@ -101,6 +103,7 @@ export interface OfficialAssetsOverviewWireV1 {
     officialIssuance: number;
     cashRouteEstablished: number;
     noRouteAtMeasuredSizes: number;
+    noEntryRouteAtMeasuredSizes: number;
     measurementFailed: number;
     notMeasured: number;
   };
@@ -241,11 +244,20 @@ const ROUTE_STATUS_V1: Readonly<
     body: 'An approved router returned a completed round trip at a measured size.',
   },
   no_route_at_measured_sizes: {
-    chip: 'NO ROUTE AT MEASURED SIZES',
+    chip: 'NO EXIT AT MEASURED SIZES',
     tone: 'warn',
     // The distinction the whole tab exists for. Officially issued is not the
     // same as tradeable, and this sentence is the product.
-    body: 'The asset is officially issued and no approved router returned a route at any measured size. That is a reading about the market, not about the issuance.',
+    body: 'The asset is officially issued and no approved router would sell it back to cash at any measured size. That is a reading about the market, not about the issuance.',
+  },
+  no_entry_route_at_measured_sizes: {
+    chip: 'NO CASH ENTRY AT MEASURED SIZES',
+    tone: 'warn',
+    // Carefully bounded. The ladder is sized in cash, so it buys first to
+    // learn an exact token amount; with no buy route the sell was never
+    // attempted. Saying "cannot be exited" here would be a claim about a
+    // position nobody tested.
+    body: 'The asset is officially issued and no approved router would sell it to you for cash at any measured size, so a round trip could not be started. Selling a position already held was never tested and is not claimed either way.',
   },
   measurement_failed: {
     chip: 'MEASUREMENT DID NOT FINISH',
@@ -263,10 +275,14 @@ const RUNG_STATUS_V1: Readonly<Record<OfficialLadderRungWireV1['status'], { labe
   full: { label: 'round trip', tone: 'good' },
   partial: { label: 'partial', tone: 'warn' },
   buy_only: { label: 'buy only', tone: 'warn' },
-  unavailable: { label: 'no route', tone: 'warn' },
+  unavailable: { label: 'no exit route', tone: 'warn' },
   not_measured: { label: 'not measured', tone: 'off' },
   measurement_failed: { label: 'did not finish', tone: 'off' },
 };
+
+/** The one rung label that depends on WHY the measurement stopped: a refused
+ * buy leg is the router's answer, not our failure. */
+const ENTRY_REFUSED_LABEL_V1 = { label: 'no cash entry', tone: 'warn' as ToneV1 };
 
 const REFERENCE_NOTE_V1: Readonly<Record<OfficialAssetWireV1['referenceValue']['status'], string>> = {
   fresh: 'Chainlink total-return feed',
@@ -379,9 +395,15 @@ export function officialAssetsViewV1(
       tone: 'good',
     },
     {
-      label: 'No route at measured sizes',
+      label: 'No exit at measured sizes',
       value: String(wire.counts.noRouteAtMeasuredSizes),
-      note: 'Officially issued, and no router returned a route',
+      note: 'Bought, and no router would sell it back',
+      tone: 'warn',
+    },
+    {
+      label: 'No cash entry at measured sizes',
+      value: String(wire.counts.noEntryRouteAtMeasuredSizes),
+      note: 'No router would sell it to you for cash',
       tone: 'warn',
     },
   ];
@@ -467,9 +489,11 @@ function officialAssetCardViewV1(asset: OfficialAssetWireV1, now: Date): Officia
       value: executable ?? 'not measured',
       note:
         executable === null
-          ? status.chip === 'NO ROUTE AT MEASURED SIZES'
-            ? 'No approved router returned a route'
-            : 'No completed round trip on file'
+          ? asset.market.routeStatus === 'no_route_at_measured_sizes'
+            ? 'Bought, and no approved router would sell it back'
+            : asset.market.routeStatus === 'no_entry_route_at_measured_sizes'
+              ? 'No approved router would sell it to you for cash'
+              : 'No completed round trip on file'
           : `Router quote for ${cashSizeLabelV1(asset.executableValue.requestedSizeAtomic ?? '0')} · measured ${
               rwaAgeLabelV1(asset.executableValue.observedAt, now) ?? 'at an unknown time'
             }`,
@@ -500,7 +524,7 @@ function officialAssetCardViewV1(asset: OfficialAssetWireV1, now: Date): Officia
     .filter((rung) => rung.destination === 'USDC' && rung.status !== 'not_measured')
     .map((rung) => {
       const cost = rwaBpsLabelV1(rung.roundTripCostBps);
-      const meta = RUNG_STATUS_V1[rung.status];
+      const meta = rung.entryRouteRefused ? ENTRY_REFUSED_LABEL_V1 : RUNG_STATUS_V1[rung.status];
       return {
         label: cashSizeLabelV1(rung.requestedCashAtomic),
         value: cost ?? meta.label,

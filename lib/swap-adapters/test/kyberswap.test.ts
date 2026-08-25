@@ -124,7 +124,7 @@ test('KyberSwap 400 "route not found" is the router answering, not our failure',
   });
   const result = await adapter.quote({ intent, walletAddress: WALLET, requestId: 'no-route-400', now: NOW });
   assert.equal(result.outcome, 'unavailable');
-  assert.equal(result.errorCode, 'provider_no_route');
+  assert.equal(result.outcome === 'unavailable' && result.errorCode, 'provider_no_route');
 });
 
 test('KyberSwap 400 that is not about a route stays our failure', async () => {
@@ -134,7 +134,8 @@ test('KyberSwap 400 that is not about a route stays our failure', async () => {
       mockKyberExecutor({ status: 400, data: { code: 4001, message: 'invalid amountIn' } }),
   });
   const result = await adapter.quote({ intent, walletAddress: WALLET, requestId: 'bad-request', now: NOW });
-  assert.equal(result.errorCode, 'provider_http_error');
+  assert.equal(result.outcome, 'unavailable');
+  assert.equal(result.outcome === 'unavailable' && result.errorCode, 'provider_http_error');
 });
 
 test('a 5xx is never allowed to become a statement about the asset', async () => {
@@ -144,7 +145,8 @@ test('a 5xx is never allowed to become a statement about the asset', async () =>
     executorFactory: () => mockKyberExecutor({ status: 502, data: { message: 'route not found' } }),
   });
   const result = await adapter.quote({ intent, walletAddress: WALLET, requestId: 'gateway', now: NOW });
-  assert.equal(result.errorCode, 'provider_http_error');
+  assert.equal(result.outcome, 'unavailable');
+  assert.equal(result.outcome === 'unavailable' && result.errorCode, 'provider_http_error');
 });
 
 test('KyberSwap normalizes a successful HTTP response that explicitly reports no route', async () => {

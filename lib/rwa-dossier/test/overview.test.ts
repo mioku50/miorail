@@ -15,6 +15,7 @@ function observationV1(input: {
   returned?: string;
   destination?: 'USDC' | 'ETH';
   source?: string;
+  errorCode?: string;
 }) {
   const destination = input.destination ?? 'USDC';
   const full = input.status === 'full';
@@ -42,7 +43,7 @@ function observationV1(input: {
       : null,
     sizeKind: 'cash_equivalent' as const,
     tenantId: null,
-    errorCode: full ? null : 'provider_no_route',
+    errorCode: full ? null : (input.errorCode ?? 'provider_no_route'),
     expiresAt: '2026-08-20T10:00:20.000Z',
     sellQuote: full
       ? {
@@ -113,6 +114,7 @@ describe('the Discover ladder preview', () => {
         roundTripCostBps: '9',
         derivedFromExactRung: false,
         lowerBoundRequestedCashAtomic: null,
+        entryRouteRefused: false,
       },
     ]);
     assert.equal(routeStatusFromPreviewV1(preview), 'cash_route_established');
@@ -137,6 +139,44 @@ describe('the Discover ladder preview', () => {
       ),
       'measurement_failed',
     );
+  });
+
+  test('a refused buy leg is the router answering, and it gets its own word', () => {
+    // The measurement stops at `measurement_failed` on purpose: the ladder is
+    // sized in cash, so with no buy route the sell was never attempted and
+    // nothing may be claimed about exiting a held position. But the router DID
+    // answer, and that answer is a fact about the market.
+    const preview = previewLadderFromRunV1(
+      runV1([
+        observationV1({
+          size: '100000000',
+          status: 'measurement_failed',
+          errorCode: 'cash_size_anchor_no_route',
+        }),
+      ]),
+    );
+    assert.equal(preview[0]!.entryRouteRefused, true);
+    assert.equal(routeStatusFromPreviewV1(preview), 'no_entry_route_at_measured_sizes');
+  });
+
+  test('one asset with a refused entry and one with a real outage is an outage', () => {
+    // Mixed, so the pass cannot claim a market finding it does not have for
+    // every size it asked about.
+    const preview = previewLadderFromRunV1(
+      runV1([
+        observationV1({
+          size: '100000000',
+          status: 'measurement_failed',
+          errorCode: 'cash_size_anchor_no_route',
+        }),
+        observationV1({
+          size: '1000000000',
+          status: 'measurement_failed',
+          errorCode: 'provider_timeout',
+        }),
+      ]),
+    );
+    assert.equal(routeStatusFromPreviewV1(preview), 'measurement_failed');
   });
 
   test('sizes are ordered smallest first and never interpolated between', () => {

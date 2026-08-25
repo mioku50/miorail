@@ -54,6 +54,7 @@ function assetV1(overrides: Partial<OfficialAssetWireV1> = {}): OfficialAssetWir
           roundTripCostBps: '9',
           derivedFromExactRung: false,
           lowerBoundRequestedCashAtomic: null,
+          entryRouteRefused: false,
         },
         {
           requestedCashAtomic: '100000000000',
@@ -62,6 +63,7 @@ function assetV1(overrides: Partial<OfficialAssetWireV1> = {}): OfficialAssetWir
           roundTripCostBps: '9',
           derivedFromExactRung: true,
           lowerBoundRequestedCashAtomic: '100000000',
+          entryRouteRefused: false,
         },
       ],
       observation: { status: 'not_observed', pairedPoolCount: null, movementCount: null },
@@ -76,6 +78,9 @@ function overviewV1(assets: OfficialAssetWireV1[], overrides: Partial<OfficialAs
     officialIssuance: assets.length,
     cashRouteEstablished: assets.filter((a) => a.market.routeStatus === 'cash_route_established').length,
     noRouteAtMeasuredSizes: assets.filter((a) => a.market.routeStatus === 'no_route_at_measured_sizes').length,
+    noEntryRouteAtMeasuredSizes: assets.filter(
+      (a) => a.market.routeStatus === 'no_entry_route_at_measured_sizes',
+    ).length,
     measurementFailed: assets.filter((a) => a.market.routeStatus === 'measurement_failed').length,
     notMeasured: assets.filter((a) => a.market.routeStatus === 'not_measured').length,
   };
@@ -166,6 +171,7 @@ describe('rwa discover view — official assets', () => {
                 roundTripCostBps: null,
                 derivedFromExactRung: false,
                 lowerBoundRequestedCashAtomic: null,
+                entryRouteRefused: false,
               },
             ],
             observation: { status: 'not_observed', pairedPoolCount: null, movementCount: null },
@@ -175,14 +181,65 @@ describe('rwa discover view — official assets', () => {
       NOW,
     );
     const card = view.assets[0]!;
-    assert.equal(card.status.chip, 'NO ROUTE AT MEASURED SIZES');
+    assert.equal(card.status.chip, 'NO EXIT AT MEASURED SIZES');
     assert.match(card.status.body, /reading about the market, not about the issuance/);
 
     const executable = card.facts.find((fact) => fact.label === 'Executable value')!;
     assert.equal(executable.value, 'not measured');
-    assert.equal(executable.note, 'No approved router returned a route');
+    assert.equal(executable.note, 'Bought, and no approved router would sell it back');
     // A rung with no cost renders the words, never a percentage.
-    assert.deepEqual(card.ladder.map((rung) => rung.value), ['no route']);
+    assert.deepEqual(card.ladder.map((rung) => rung.value), ['no exit route']);
+  });
+
+  test('a refused buy leg is the router answering, and claims nothing about exiting', () => {
+    // Nine of thirteen Coinbase equities read this way. The ladder is sized in
+    // cash, so it buys first; with no buy route the sell was never attempted,
+    // and saying "cannot be exited" would be a claim about a position nobody
+    // tested.
+    const view = officialAssetsViewV1(
+      overviewV1([
+        assetV1({
+          tokenAddress: COIN,
+          ticker: 'COINc',
+          executableValue: {
+            status: 'measurement_failed',
+            valueAtomic: null,
+            decimals: null,
+            requestedSizeAtomic: null,
+            destination: null,
+            observedAt: null,
+          },
+          comparison: { status: 'withheld', differenceBps: null, reason: null },
+          market: {
+            routeStatus: 'no_entry_route_at_measured_sizes',
+            measuredAt: '2026-08-25T11:00:00.000Z',
+            approvedSources: ['kyberswap'],
+            ladder: [
+              {
+                requestedCashAtomic: '100000000',
+                destination: 'USDC',
+                status: 'measurement_failed',
+                roundTripCostBps: null,
+                derivedFromExactRung: false,
+                lowerBoundRequestedCashAtomic: null,
+                entryRouteRefused: true,
+              },
+            ],
+            observation: { status: 'not_observed', pairedPoolCount: null, movementCount: null },
+          },
+        }),
+      ]),
+      NOW,
+    );
+    const card = view.assets[0]!;
+    assert.equal(card.status.chip, 'NO CASH ENTRY AT MEASURED SIZES');
+    assert.match(card.status.body, /never tested and is not claimed either way/);
+    // The rung says the router refused, not that our measurement broke.
+    assert.deepEqual(card.ladder.map((rung) => rung.value), ['no cash entry']);
+    assert.equal(
+      card.facts.find((fact) => fact.label === 'Executable value')!.note,
+      'No approved router would sell it to you for cash',
+    );
   });
 
   test('an unmeasured asset and an asset with no route do not share a sentence', () => {
@@ -231,7 +288,12 @@ describe('rwa discover view — official assets', () => {
     const measured = officialAssetsViewV1(overviewV1([assetV1()]), NOW);
     assert.deepEqual(
       measured.counters.map((counter) => counter.label),
-      ['Official issuance', 'Cash route established', 'No route at measured sizes'],
+      [
+        'Official issuance',
+        'Cash route established',
+        'No exit at measured sizes',
+        'No cash entry at measured sizes',
+      ],
     );
 
     const withGap = officialAssetsViewV1(

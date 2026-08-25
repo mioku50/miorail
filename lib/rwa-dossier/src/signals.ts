@@ -155,7 +155,13 @@ export function cashExitSignalsV1(input: {
   // this product has shipped three times.
   if (nextStatus === 'measurement_failed' || nextStatus === 'not_measured') return [];
 
-  if (previousStatus === 'cash_route_established' && nextStatus === 'no_route_at_measured_sizes') {
+  // Both no-route words are market findings, so both close a market. They stay
+  // separate everywhere a reader can see them and are treated alike only here,
+  // where the question is whether a route that existed still does.
+  const closed =
+    nextStatus === 'no_route_at_measured_sizes' ||
+    nextStatus === 'no_entry_route_at_measured_sizes';
+  if (previousStatus === 'cash_route_established' && closed) {
     const smallest = nextRungs[0];
     if (!smallest) return [];
     return [

@@ -171,6 +171,11 @@ export function previewLadderFromRunV1(
         roundTripCostBps: roundTripCostBpsV1(best),
         derivedFromExactRung: false,
         lowerBoundRequestedCashAtomic: null,
+        // The measurement's own code for "the router refused the buy leg".
+        // Read here once and carried as a flag, so no surface has to know an
+        // error string to tell a market finding from an outage.
+        entryRouteRefused:
+          best.status === 'measurement_failed' && best.errorCode === 'cash_size_anchor_no_route',
       };
     });
 }
@@ -191,9 +196,17 @@ export function routeStatusFromPreviewV1(
     return 'cash_route_established';
   }
   if (rungs.every((rung) => rung.status === 'not_measured')) return 'not_measured';
-  // Every source failing is our outage; the router answering "no route" is the
-  // asset's. They are never merged into one word.
-  if (rungs.some((rung) => rung.status === 'measurement_failed')) return 'measurement_failed';
+  // The router refused to sell the asset for cash at every size it was asked.
+  // A market finding, and specifically NOT a statement about exiting a
+  // position: the sell leg was never attempted, because the ladder had no
+  // exact token amount to attempt it with.
+  const failed = rungs.filter((rung) => rung.status === 'measurement_failed');
+  if (failed.length > 0 && failed.every((rung) => rung.entryRouteRefused)) {
+    return 'no_entry_route_at_measured_sizes';
+  }
+  // Anything else that failed is our outage; the router answering "no route"
+  // is the asset's. They are never merged into one word.
+  if (failed.length > 0) return 'measurement_failed';
   return 'no_route_at_measured_sizes';
 }
 
@@ -374,8 +387,9 @@ export async function assembleOfficialAssetsOverviewV1(
   const rank: Readonly<Record<OfficialRouteStatusV1, number>> = {
     cash_route_established: 0,
     no_route_at_measured_sizes: 1,
-    measurement_failed: 2,
-    not_measured: 3,
+    no_entry_route_at_measured_sizes: 2,
+    measurement_failed: 3,
+    not_measured: 4,
   };
   summaries.sort(
     (left, right) =>
@@ -391,6 +405,9 @@ export async function assembleOfficialAssetsOverviewV1(
     ).length,
     noRouteAtMeasuredSizes: summaries.filter(
       (asset) => asset.market.routeStatus === 'no_route_at_measured_sizes',
+    ).length,
+    noEntryRouteAtMeasuredSizes: summaries.filter(
+      (asset) => asset.market.routeStatus === 'no_entry_route_at_measured_sizes',
     ).length,
     measurementFailed: summaries.filter(
       (asset) => asset.market.routeStatus === 'measurement_failed',

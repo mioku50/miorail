@@ -255,6 +255,60 @@ describe('the endpoint seam', () => {
     assert.ok(slept[0] > 2_000 && slept[0] <= 2_200);
   });
 
+  test('an oversized answer is split rather than abandoned, and the range is covered', async () => {
+    // Measured on mainnet.base.org: thirteen official assets over 1,987 blocks
+    // came back HTTP 500 with `-32020 backend response too large`, while 999
+    // blocks succeeded. The bound is on the RESPONSE, so it moves with how
+    // busy the assets are — and a pass that gives up here leaves the cursor
+    // where it was and re-reads the same oversized range forever.
+    const asked: [number, number][] = [];
+    const source = createMarketTailSourceV1({
+      rpcUrl: RPC,
+      callGapMs: 0,
+      fetchImpl: async (_url, init) => {
+        const body = JSON.parse(String((init as RequestInit).body)) as {
+          params: [{ fromBlock: string; toBlock: string }];
+        };
+        const from = Number(BigInt(body.params[0].fromBlock));
+        const to = Number(BigInt(body.params[0].toBlock));
+        asked.push([from, to]);
+        // Anything wider than two blocks is refused, exactly as the endpoint
+        // refuses: a JSON-RPC error carried on an HTTP 500.
+        if (to - from > 1) {
+          return respond(
+            { jsonrpc: '2.0', id: 1, error: { code: -32020, message: 'backend response too large' } },
+            500,
+          );
+        }
+        return respond({ jsonrpc: '2.0', id: 1, result: [{ blockNumber: `0x${from.toString(16)}` }] });
+      },
+    });
+    const logs = await source.transferLogs({ tokens: [AAPL], fromBlock: 100, toBlock: 103 });
+    assert.equal(logs.ok, true);
+    // Every block in the requested range is covered exactly once. The caller
+    // advances the cursor to `toBlock`, so a partial read reported as success
+    // would skip blocks the cursor can never come back for.
+    const covered = asked.filter(([from, to]) => to - from <= 1).flatMap(([from, to]) => [from, to]);
+    assert.deepEqual([...new Set(covered)].sort((a, b) => a - b), [100, 101, 102, 103]);
+  });
+
+  test('a refusal that is not about size is not retried by splitting', async () => {
+    let calls = 0;
+    const source = createMarketTailSourceV1({
+      rpcUrl: RPC,
+      callGapMs: 0,
+      fetchImpl: async () => {
+        calls += 1;
+        return respond({ jsonrpc: '2.0', id: 1, error: { code: -32000, message: 'busy' } }, 500);
+      },
+    });
+    const logs = await source.transferLogs({ tokens: [AAPL], fromBlock: 100, toBlock: 200 });
+    assert.equal(logs.ok, false);
+    // One attempt. Halving a range because the endpoint was busy just spends
+    // the same failure twice.
+    assert.equal(calls, 1);
+  });
+
   test('a partly readable range is not reported as a clean one', async () => {
     const source = createMarketTailSourceV1({
       rpcUrl: RPC,
