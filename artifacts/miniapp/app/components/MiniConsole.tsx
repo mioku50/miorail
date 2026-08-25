@@ -97,10 +97,17 @@ import {
   stepperFromClockV1,
   useConsoleTheme,
   usagePercentV1,
+  RwaDiscoverRail,
+  RwaDiscoverScreen,
+  lookalikeFeedViewV1,
+  officialAssetsViewV1,
+  signalFeedViewV1,
   type ConsoleScreenV1,
   type ConsoleStageClockV1,
   type ConsoleStageV1,
+  type LookalikeAliasFilterV1,
   type RoutePlanProjectionV1,
+  type RwaDiscoverTabV1,
 } from "@mioagent/ui";
 import {
   useBoundedProofReconciliation,
@@ -120,6 +127,9 @@ import {
   useB20LaunchContext,
   useB20PublicContext,
   useB20Opportunities,
+  useRwaLookalikes,
+  useRwaOfficialAssets,
+  useRwaSignals,
   useB20Watch,
   useB20Watchlist,
   useIntelligenceCharges,
@@ -742,6 +752,9 @@ export function MiniConsole() {
   // T67E §1 — same target rule and same copy as the web console: the card is
   // about the token the route ACQUIRES.
   const b20GateOn = flags?.b20ControlV1 === true;
+  // The official corpus lives behind the route-intelligence flag, not the B20
+  // one: they are two different universes and two different switches.
+  const routeIntelligenceOn = flags?.routeIntelligenceV1 === true;
   const b20Target = b20TargetForRouteV1(primaryRoute?.expectedOutput.asset ?? null);
   const b20 = useB20Inspect(b20Target.address, { enabled: b20GateOn });
   const b20Card = b20.data?.card ?? null;
@@ -931,11 +944,32 @@ export function MiniConsole() {
   const [portfolioScope, setPortfolioScope] = useState<B20ConsoleScopeViewV1>("portfolio");
   const [consoleTokens, setConsoleTokens] = useState<readonly string[]>([]);
   const [contextToken, setContextToken] = useState<string | null>(null);
+
+  // Phase 6 — Discover opens on the official corpus here too.
+  //
+  // Base App has no router, so the launch feed is a view inside this section
+  // rather than a path. Everything else is the SAME shared screen and the same
+  // shared projections the web console uses: §4's rule is that Base App gets
+  // the layer by construction, never by a second implementation that could
+  // disagree about what "not measured" means.
+  const [discoverView, setDiscoverView] = useState<"official" | "launches">("official");
+  const [discoverTab, setDiscoverTab] = useState<RwaDiscoverTabV1>("official");
+  const [lookalikeAlias, setLookalikeAlias] = useState<LookalikeAliasFilterV1>("all");
+  const onOfficial = section === "opportunities" && discoverView === "official";
+  const rwaOfficial = useRwaOfficialAssets({ enabled: routeIntelligenceOn && onOfficial });
+  const rwaLookalikes = useRwaLookalikes(
+    { alias: lookalikeAlias === "all" ? null : lookalikeAlias },
+    { enabled: routeIntelligenceOn && onOfficial && discoverTab === "lookalikes" },
+  );
+  const rwaSignals = useRwaSignals({
+    enabled: routeIntelligenceOn && onOfficial && discoverTab === "signals",
+  });
+
   const opportunities = useB20Opportunities(
     // The verdict section is filtered by the server, so Base App gets the same
     // sections the web console does without a second grouping rule of its own.
     { state: feedFilter, standing: feedStanding, freshness: feedFresh ? "fresh" : "all" },
-    { enabled: b20GateOn && section === "opportunities" },
+    { enabled: b20GateOn && section === "opportunities" && discoverView === "launches" },
   );
   const copilot = useB20CopilotAsk();
   const launchContext = useB20LaunchContext(contextToken);
@@ -1903,18 +1937,79 @@ export function MiniConsole() {
   const nav = consoleNavModelV1({
     mounted: MINIAPP_SECTIONS_V1,
     active: section,
-    unavailable: b20GateOn
-      ? undefined
-      : {
-          opportunities:
-            "B20 Discover is off on this server, so there is no launch feed. This is not a statement about what is launching.",
-          portfolio: "B20 inspection is off on this server, so your tokens were not read.",
-        },
+    // Discover now opens on the official corpus, which is gated separately.
+    // The tab is only unusable when BOTH universes are switched off; with one
+    // of them on, the section works and says which half is missing inside.
+    unavailable:
+      b20GateOn || routeIntelligenceOn
+        ? b20GateOn
+          ? undefined
+          : { portfolio: "B20 inspection is off on this server, so your tokens were not read." }
+        : {
+            opportunities:
+              "Discover is off on this server, so neither the official corpus nor the launch feed is being read. This is not a statement about what exists.",
+            portfolio: "B20 inspection is off on this server, so your tokens were not read.",
+          },
   });
 
+  const now = new Date();
   let sectionContent: ReactNode = content;
-  if (section === "opportunities") {
+  if (section === "opportunities" && discoverView === "official") {
+    const officialView = rwaOfficial.data ? officialAssetsViewV1(rwaOfficial.data, now) : null;
     sectionContent = (
+      <>
+      <RwaDiscoverScreen
+        model={{
+          tab: discoverTab,
+          onTab: setDiscoverTab,
+          official: officialView,
+          officialLoading: rwaOfficial.isPending && routeIntelligenceOn,
+          officialError: routeIntelligenceOn
+            ? rwaOfficial.error
+              ? "The official corpus could not be read on this server. Nothing here is a statement about the assets."
+              : null
+            : "Route intelligence is off on this server, so the official corpus is not being read.",
+          lookalikes: rwaLookalikes.data ? lookalikeFeedViewV1(rwaLookalikes.data, now) : null,
+          lookalikesLoading: rwaLookalikes.isPending && routeIntelligenceOn,
+          lookalikesError: rwaLookalikes.error
+            ? "The lookalike index could not be read on this server."
+            : null,
+          aliasFilter: lookalikeAlias,
+          onAliasFilter: setLookalikeAlias,
+          signals: rwaSignals.data ? signalFeedViewV1(rwaSignals.data, now) : null,
+          signalsLoading: rwaSignals.isPending && routeIntelligenceOn,
+          signalsError: rwaSignals.error ? "Recorded changes could not be read on this server." : null,
+          actions: {
+            // Hands the address to the B20 tab, which owns the wallet-bound
+            // checks. Discover creates no clearance in Base App either.
+            onInvestigate: (token) => {
+              setTokenInput(token);
+              setSection("portfolio");
+            },
+          },
+          // No href: Base App has no URL bar, so the feed is a view switch.
+          onOpenLaunchFeed: b20GateOn ? () => setDiscoverView("launches") : null,
+        }}
+      />
+      {/* Base App has one column, so the web console's right rail is rendered
+          under the screen rather than beside it. Dropping it would leave the
+          phone without the two facts that say what the cards are worth: when
+          each reviewed source was last read, and how far the ledger has been
+          followed. */}
+      <RwaDiscoverRail view={officialView} />
+      </>
+    );
+  } else if (section === "opportunities") {
+    // The launch feed, one level below Discover. The way back is stated rather
+    // than left to the device's Back gesture, which in Base App exits the app.
+    sectionContent = (
+      <>
+        <p className="lnote">
+          <button type="button" className="btn sec" onClick={() => setDiscoverView("official")}>
+            ← Back to Discover
+          </button>
+        </p>
+        {(
       <OpportunitiesScreen
         pipelineNotice={
           b20GateOn
@@ -1997,6 +2092,8 @@ export function MiniConsole() {
           },
         }}
       />
+        )}
+      </>
     );
   } else if (section === "portfolio") {
     sectionContent = (

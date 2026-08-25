@@ -25,15 +25,20 @@ test('navigation is exactly Discover, B20 and Routes AI', () => {
     '/portfolio',
     '/routes',
   ]);
-  // Named for what each surface CONTAINS. Both of the first two are B20:
-  // Discover is the launch feed, B20 is what you already hold. "Opportunities"
-  // described the shape of a list and "Portfolio" the generic category, and
-  // neither told a user which flow they were in — the compact bar had already
-  // said "B20" for the second one since it was built.
+  // Named for what each surface CONTAINS. "Opportunities" described the shape
+  // of a list and "Portfolio" the generic category, and neither told a user
+  // which flow they were in — the compact bar had already said "B20" for the
+  // second one since it was built.
+  //
+  // The first is "Discover" rather than "Discover B20" since Phase 6: it opens
+  // on the official corpus — assets an issuer publishes — and the B20 launch
+  // feed sits a page deeper at /opportunities/launches. Keeping "B20" in the
+  // label would name the whole surface after the half that moved.
+  //
   // Activity (was Proofs) moved to the drawer: it is a viewer for records this
   // deployment has never produced, and a bar of three working surfaces beats
   // four where one is empty.
-  assert.deepEqual(tabs.map((route) => route.label), ['Discover B20', 'B20', 'Routes AI']);
+  assert.deepEqual(tabs.map((route) => route.label), ['Discover', 'B20', 'Routes AI']);
 });
 
 test('the web tabs come from the shared table, not from a list typed here', () => {

@@ -23,8 +23,17 @@ import { useStatus } from '@mioagent/api-client-react';
 // carries the SECTION only — never an address, a balance or a goal.
 // ---------------------------------------------------------------------------
 
+/**
+ * Discover is two universes behind two flags since Phase 6.
+ *
+ * `routeIntelligenceV1` gates the official corpus, which is what the tab opens
+ * on; `b20ControlV1` gates the launch feed a page deeper. Marking the tab
+ * unavailable when only the launch feed is off would hide a working surface,
+ * and marking it available when both are off leads to a refusal after the
+ * click rather than before it.
+ */
 export const DISCOVER_OFF_COPY_V1 =
-  'B20 Discover is off on this server, so there is no launch feed to show. This is not a statement about what is launching.';
+  'Discover is off on this server, so neither the official corpus nor the launch feed is being read. This is not a statement about what exists.';
 
 export interface ConsoleNavV1 {
   /** Three entries for the header bar. */
@@ -41,7 +50,9 @@ export function useConsoleNav(active: ConsoleSectionV1 | null): ConsoleNavV1 {
   // The one section that can be mounted and still have nothing behind it. The
   // server flag is the honest source: when it is off the endpoint refuses, and
   // a tab that leads to a refusal should say so before the click, not after.
-  const discoverOn = status.data?.productMigration?.b20ControlV1 === true;
+  const discoverOn =
+    status.data?.productMigration?.routeIntelligenceV1 === true ||
+    status.data?.productMigration?.b20ControlV1 === true;
   const unavailable = useMemo(
     () => (discoverOn ? undefined : { opportunities: DISCOVER_OFF_COPY_V1 }),
     [discoverOn],

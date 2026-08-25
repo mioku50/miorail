@@ -56,6 +56,9 @@ const B20WatchPage = lazy(() =>
 const OpportunitiesPage = lazy(() =>
   import('../features/opportunities/OpportunitiesPage').then((m) => ({ default: m.OpportunitiesPage })),
 );
+const RwaDiscoverPage = lazy(() =>
+  import('../features/rwa/RwaDiscoverPage').then((m) => ({ default: m.RwaDiscoverPage })),
+);
 const SettingsPage = lazy(() =>
   import('../features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })),
 );
@@ -171,11 +174,24 @@ export function App() {
           <PublicProofPage />
         </Route>
 
-        {/* T70 §1 — Opportunities is the product's home: measured B20 launches
-            and what getting back out of one would cost. */}
-        <Route path="/opportunities">
+        {/* Phase 6 — Discover opens on the official corpus: assets an issuer
+            publishes, what it costs to get back out of one, what has changed,
+            and which contracts are wearing an official name.
+
+            The launch feed below is not deleted — it is the deepest thing
+            Miorail has measured. It is no longer the first screen, because a
+            contract anybody can deploy is not an asset an issuer publishes.
+            The more specific path is declared FIRST: wouter matches in order,
+            and `/opportunities` would otherwise swallow nothing while
+            `/opportunities/launches` fell through to the 404. */}
+        <Route path="/opportunities/launches">
           <RequireSession>
             <OpportunitiesPage />
+          </RequireSession>
+        </Route>
+        <Route path="/opportunities">
+          <RequireSession>
+            <RwaDiscoverPage />
           </RequireSession>
         </Route>
 
