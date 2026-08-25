@@ -117,7 +117,7 @@ async function main(): Promise<void> {
 main().catch((error) => {
   console.error(
     'cash-exit measurement failed:',
-    error instanceof Error ? error.message : String(error),
+    error instanceof Error ? (error.stack ?? error.message) : String(error),
   );
   process.exitCode = 1;
 });
