@@ -368,4 +368,19 @@ export interface OfficialCashExitRepositoryV1 {
     scope: 'public_ladder' | 'tenant_position';
     tenantId?: string | null;
   }): Promise<CashExitMeasurementRunV1 | null>;
+
+  /**
+   * The run BEFORE the newest one, so a surface can say what changed.
+   *
+   * A separate read rather than a two-row page: the caller wants a pair, and
+   * "the previous comparable reading" is a different question from "the last
+   * two rows" the moment a scope or a tenant is involved. Null when only one
+   * run exists, which is a first reading and not a change of nothing.
+   */
+  previousCompletedRun(input: {
+    chainId: 8453;
+    tokenAddress: string;
+    scope: 'public_ladder' | 'tenant_position';
+    tenantId?: string | null;
+  }): Promise<CashExitMeasurementRunV1 | null>;
 }

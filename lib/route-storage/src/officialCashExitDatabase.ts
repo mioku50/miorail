@@ -75,5 +75,28 @@ export function createDatabaseOfficialCashExitRepository(
         LIMIT 1`;
       return rows[0] ? runFromRowV1(rows[0]) : null;
     },
+
+    async previousCompletedRun(input) {
+      const tenantId = input.tenantId ?? null;
+      if (input.scope === 'tenant_position' && tenantId === null)
+        throw new RouteStorageTenantError('tenant position read requires tenantId');
+      if (input.scope === 'public_ladder' && tenantId !== null)
+        throw new RouteStorageTenantError('public ladder is not tenant scoped');
+      // OFFSET 1 on the same total order the newest read uses, so the pair a
+      // caller compares is always adjacent. Ordering by completed_at alone
+      // would let two runs stamped in the same second swap places between the
+      // two reads and produce a change that never happened.
+      const rows = await sql`
+        SELECT run_id, chain_id, token_address, scope, tenant_id, approved_sources,
+               destinations, started_at, completed_at, observations
+        FROM official_cash_exit_runs
+        WHERE chain_id = ${input.chainId}
+          AND token_address = ${input.tokenAddress.toLowerCase()}
+          AND scope = ${input.scope}
+          AND tenant_id IS NOT DISTINCT FROM ${tenantId}
+        ORDER BY completed_at DESC, run_id DESC
+        LIMIT 1 OFFSET 1`;
+      return rows[0] ? runFromRowV1(rows[0]) : null;
+    },
   };
 }

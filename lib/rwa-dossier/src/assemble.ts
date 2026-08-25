@@ -189,7 +189,10 @@ function controlEvidenceRefV1(evidence: B20ControlEvidenceV1): DossierEvidenceRe
   };
 }
 
-function controlsFromSnapshotV1(snapshot: B20ControlSnapshotV1 | null, now: Date) {
+/** Exported so the address dossier renders the same controls block for a
+ * contract nobody has claimed. The rules about what an unread field means do
+ * not change with the trust root. */
+export function controlsFromSnapshotV1(snapshot: B20ControlSnapshotV1 | null, now: Date) {
   if (snapshot === null) {
     return DossierControlsV1Schema.parse({
       status: 'unavailable',
@@ -247,8 +250,10 @@ function controlsFromSnapshotV1(snapshot: B20ControlSnapshotV1 | null, now: Date
   });
 }
 
-async function marketProjectionV1(
-  deps: OfficialAssetDossierDepsV1,
+/** Exported for the same reason as the controls above: a movement through a
+ * venue means the same thing whoever issued the token. */
+export async function marketProjectionV1(
+  deps: Pick<OfficialAssetDossierDepsV1, 'marketTail' | 'now'>,
   tokenAddress: string,
   officialAddresses: ReadonlySet<string>,
 ) {
