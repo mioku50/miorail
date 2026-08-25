@@ -351,6 +351,13 @@
       "when": 1787673600000,
       "tag": "0049_base_mcp_reviewed_plugin_runtime",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1787846400000,
+      "tag": "0050_official_assets",
+      "breakpoints": true
     }
   ]
 }

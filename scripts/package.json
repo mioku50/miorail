@@ -19,6 +19,7 @@
     "@mioagent/route-outcomes": "workspace:*",
     "@mioagent/route-proof": "workspace:*",
     "@mioagent/route-storage": "workspace:*",
+    "@mioagent/rwa-official": "workspace:*",
     "@mioagent/security": "workspace:*",
     "@mioagent/swap-adapters": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",

@@ -50,7 +50,8 @@
     "probe:base-mcp": "tsx scripts/probe_base_mcp_plugins.ts",
     "smoke:mcp-private": "tsx scripts/smoke_mcp_private.ts",
     "smoke:paid-intelligence": "tsx scripts/smoke_paid_intelligence.ts",
-    "b20:reverify-projects": "node --import tsx scripts/b20_reverify_projects.ts"
+    "b20:reverify-projects": "node --import tsx scripts/b20_reverify_projects.ts",
+    "rwa:ingest-official": "tsx scripts/rwa_ingest_official.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
