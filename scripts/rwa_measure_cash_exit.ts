@@ -9,7 +9,7 @@
  *   pnpm rwa:measure-cash-exit --tickers AAPLc,NVDAc
  */
 import { createB20ReaderV1 } from '@mioagent/b20-control';
-import { client } from '@mioagent/db';
+import { client, closeDb } from '@mioagent/db';
 import {
   createDatabaseMarketTailRepository,
   createDatabaseOfficialAssetRepository,
@@ -114,10 +114,26 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error) => {
-  console.error(
-    'cash-exit measurement failed:',
-    error instanceof Error ? (error.stack ?? error.message) : String(error),
-  );
-  process.exitCode = 1;
-});
+async function run(): Promise<void> {
+  try {
+    await main();
+  } catch (error) {
+    console.error(
+      'cash-exit measurement failed:',
+      error instanceof Error ? (error.stack ?? error.message) : String(error),
+    );
+    process.exitCode = 1;
+  } finally {
+    try {
+      await closeDb();
+    } catch (error) {
+      console.error(
+        'cash-exit database close failed:',
+        error instanceof Error ? (error.stack ?? error.message) : String(error),
+      );
+      process.exitCode = 1;
+    }
+  }
+}
+
+void run();
