@@ -1,6 +1,7 @@
 import {
   assertLookalikeIdentityV1,
   assertOfficialLookalikeV1,
+  emptyLookalikeCountsV1,
   type OfficialLookalikeOutcomeV1,
   type OfficialLookalikeRepositoryV1,
   type OfficialLookalikeRowV1,
@@ -60,10 +61,36 @@ export function createMemoryOfficialLookalikeRepository(): OfficialLookalikeRepo
     },
 
     async recentLookalikes(input) {
+      const alias = input.matchedAlias ?? null;
       return [...rows.values()]
-        .filter((row) => row.chainId === input.chainId)
+        .filter(
+          (row) =>
+            row.chainId === input.chainId && (alias === null || row.matchedAlias === alias),
+        )
         .sort(newestFirst)
         .slice(0, Math.max(1, Math.min(200, input.limit)));
+    },
+
+    async lookalikeCountsByOfficial(input) {
+      const counts: Record<string, number> = {};
+      for (const row of rows.values()) {
+        if (row.chainId !== input.chainId) continue;
+        counts[row.officialAddress] = (counts[row.officialAddress] ?? 0) + 1;
+      }
+      return counts;
+    },
+
+    async lookalikeCounts(input) {
+      const byAlias = emptyLookalikeCountsV1();
+      let total = 0;
+      let lastSeenAt: string | null = null;
+      for (const row of rows.values()) {
+        if (row.chainId !== input.chainId) continue;
+        byAlias[row.matchedAlias] += 1;
+        total += 1;
+        if (lastSeenAt === null || row.lastSeenAt > lastSeenAt) lastSeenAt = row.lastSeenAt;
+      }
+      return { total, byAlias, lastSeenAt };
     },
   };
 }

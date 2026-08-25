@@ -173,5 +173,67 @@ export function officialLookalikeContractV1(
       const stored = await repository.lookalikeFor({ chainId: 8453, tokenAddress: IMPOSTOR });
       assert.equal(stored?.launchedAt, null);
     });
+
+    test('the feed narrows to one spelling, and the counts describe the corpus', async () => {
+      const { repository } = await open();
+      await repository.recordLookalikes({
+        chainId: 8453,
+        officialAddresses: CORPUS,
+        rows: [
+          rowFixtureV1(),
+          rowFixtureV1({
+            tokenAddress: SECOND,
+            matchedAlias: 'underlying',
+            matchedValue: 'aapl',
+            launchSymbol: 'AAPL',
+            firstFlaggedAt: '2026-08-26T09:00:00.000Z',
+            lastSeenAt: '2026-08-26T09:00:00.000Z',
+          }),
+          rowFixtureV1({
+            tokenAddress: '0xb200000000000000000000cafe0000000000ca03',
+            matchedAlias: 'underlying',
+            matchedValue: 'aapl',
+            launchSymbol: 'AAPL',
+            firstFlaggedAt: '2026-08-27T09:00:00.000Z',
+            lastSeenAt: '2026-08-27T09:00:00.000Z',
+          }),
+        ],
+      });
+
+      const underlying = await repository.recentLookalikes({
+        chainId: 8453,
+        matchedAlias: 'underlying',
+        limit: 10,
+      });
+      assert.deepEqual(
+        underlying.map((row) => row.tokenAddress),
+        ['0xb200000000000000000000cafe0000000000ca03', SECOND],
+      );
+      const ticker = await repository.recentLookalikes({
+        chainId: 8453,
+        matchedAlias: 'published_ticker',
+        limit: 10,
+      });
+      assert.deepEqual(ticker.map((row) => row.tokenAddress), [IMPOSTOR]);
+
+      const counts = await repository.lookalikeCounts({ chainId: 8453 });
+      assert.equal(counts.total, 3);
+      // Every kind is present even at zero. A filter that disappears when it is
+      // empty reads as a filter the product does not have.
+      assert.deepEqual(counts.byAlias, { published_ticker: 1, underlying: 2, display_name: 0 });
+      assert.equal(counts.lastSeenAt, '2026-08-27T09:00:00.000Z');
+
+      const byOfficial = await repository.lookalikeCountsByOfficial({ chainId: 8453 });
+      assert.deepEqual(byOfficial, { [AAPL]: 3 });
+    });
+
+    test('nothing scanned yet is an absent date, not a scan that found nothing', async () => {
+      const { repository } = await open();
+      const counts = await repository.lookalikeCounts({ chainId: 8453 });
+      assert.equal(counts.total, 0);
+      assert.equal(counts.lastSeenAt, null);
+      assert.deepEqual(counts.byAlias, { published_ticker: 0, underlying: 0, display_name: 0 });
+      assert.deepEqual(await repository.lookalikeCountsByOfficial({ chainId: 8453 }), {});
+    });
   });
 }

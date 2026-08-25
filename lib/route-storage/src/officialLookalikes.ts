@@ -143,6 +143,44 @@ export interface OfficialLookalikeRepositoryV1 {
    * and found honest. */
   lookalikeFor(input: { chainId: number; tokenAddress: string }): Promise<OfficialLookalikeRowV1 | null>;
 
-  /** Newest first, bounded. The Signals feed. */
-  recentLookalikes(input: { chainId: number; limit: number }): Promise<OfficialLookalikeRowV1[]>;
+  /**
+   * Newest first, bounded, optionally one spelling.
+   *
+   * `matchedAlias` is a SERVER filter for the same reason Discover's standing
+   * filter is: 95 of the 112 contracts on file wear the underlying word rather
+   * than the published ticker, so a client narrowing one page of 25 would
+   * almost always narrow it to a page of the same thing.
+   */
+  recentLookalikes(input: {
+    chainId: number;
+    matchedAlias?: LookalikeAliasKindV1;
+    limit: number;
+  }): Promise<OfficialLookalikeRowV1[]>;
+
+  /**
+   * How many contracts wear each spelling.
+   *
+   * Counted over the whole table rather than the returned page, because the
+   * number beside a filter is a claim about the corpus. Every alias kind is
+   * present in the result even at zero -- a filter that vanishes when it is
+   * empty reads as a filter that does not exist.
+   */
+  lookalikeCounts(input: { chainId: number }): Promise<{
+    total: number;
+    byAlias: Record<LookalikeAliasKindV1, number>;
+    /** The newest reading in the table -- when the corpus was last scanned.
+     * Null before the first scan, which is not the same as a scan that found
+     * nothing. */
+    lastSeenAt: string | null;
+  }>;
+
+  /** How many contracts wear each official asset's name, keyed by the official
+   * address. One query rather than one per card. */
+  lookalikeCountsByOfficial(input: { chainId: number }): Promise<Record<string, number>>;
+}
+
+/** Zero for every spelling. The starting point for both counts, so neither
+ * implementation can omit a kind by forgetting it. */
+export function emptyLookalikeCountsV1(): Record<LookalikeAliasKindV1, number> {
+  return { published_ticker: 0, underlying: 0, display_name: 0 };
 }

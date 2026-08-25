@@ -1,6 +1,9 @@
 import {
   assertLookalikeIdentityV1,
   assertOfficialLookalikeV1,
+  emptyLookalikeCountsV1,
+  LOOKALIKE_ALIAS_KINDS_V1,
+  type LookalikeAliasKindV1,
   type OfficialLookalikeOutcomeV1,
   type OfficialLookalikeRepositoryV1,
   type OfficialLookalikeRowV1,
@@ -97,12 +100,47 @@ export function createDatabaseOfficialLookalikeRepository(
     },
 
     async recentLookalikes(input) {
+      const alias = input.matchedAlias ?? null;
       const rows = (await sql`
         SELECT * FROM official_asset_lookalikes
          WHERE chain_id = ${input.chainId}
+           AND (${alias}::text IS NULL OR matched_alias = ${alias}::text)
          ORDER BY first_flagged_at DESC, token_address DESC
          LIMIT ${Math.max(1, Math.min(200, input.limit))}`) as Record<string, unknown>[];
       return rows.map(rowToLookalikeV1);
+    },
+
+    async lookalikeCountsByOfficial(input) {
+      const rows = (await sql`
+        SELECT official_address, count(*)::int AS total
+          FROM official_asset_lookalikes
+         WHERE chain_id = ${input.chainId}
+         GROUP BY official_address`) as Record<string, unknown>[];
+      const counts: Record<string, number> = {};
+      for (const row of rows) counts[String(row.official_address)] = Number(row.total);
+      return counts;
+    },
+
+    async lookalikeCounts(input) {
+      const rows = (await sql`
+        SELECT matched_alias, count(*)::int AS total, max(last_seen_at) AS last_seen_at
+          FROM official_asset_lookalikes
+         WHERE chain_id = ${input.chainId}
+         GROUP BY matched_alias`) as Record<string, unknown>[];
+      // Seeded with every kind at zero, so a spelling nobody currently wears
+      // still appears as a filter rather than disappearing from the surface.
+      const byAlias = emptyLookalikeCountsV1();
+      let total = 0;
+      let lastSeenAt: string | null = null;
+      for (const row of rows) {
+        const alias = String(row.matched_alias) as LookalikeAliasKindV1;
+        if (!LOOKALIKE_ALIAS_KINDS_V1.includes(alias)) continue;
+        byAlias[alias] = Number(row.total);
+        total += Number(row.total);
+        const seen = row.last_seen_at ? new Date(row.last_seen_at as string).toISOString() : null;
+        if (seen !== null && (lastSeenAt === null || seen > lastSeenAt)) lastSeenAt = seen;
+      }
+      return { total, byAlias, lastSeenAt };
     },
   };
 }
