@@ -62,11 +62,18 @@ export {
 // it with have to be the same object, or a field can be dropped on one side
 // and nobody notices until a column renders blank.
 export {
+  MARKET_REALITY_WINDOW_KEYS_V1,
   MarketRealityIndexV1Schema,
   MarketRealityIndexEntryV1Schema,
+  MarketRealityHistoryV1Schema,
+  MarketRealityLiveResponseV1Schema,
+  MarketRealityMeasurementV1Schema,
   MarketRealityResponseV1Schema,
   type MarketRealityIndexV1,
   type MarketRealityIndexEntryV1,
+  type MarketRealityHistoryV1,
+  type MarketRealityLiveResponseV1,
+  type MarketRealityMeasurementV1,
   type MarketRealityResponseV1,
 } from '@mioagent/rwa-market-reality/contracts';
 // Phase 7 — one pasted address. Re-exported rather than restated for the same

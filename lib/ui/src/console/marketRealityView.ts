@@ -153,6 +153,18 @@ export interface MarketRealityRepresentationWireV1 {
   sources: readonly MarketRealitySourceWireV1[];
   observedAt: string | null;
   expiresAt: string | null;
+  liveness: 'live' | 'history_only' | 'never_measured';
+  /** History, never a current price. The engine keeps it in its own field so a
+   * surface cannot render it as one by forgetting to check a freshness flag. */
+  lastObservation: {
+    source: string;
+    status: 'quoted' | 'no_route' | 'measurement_failed';
+    errorCode: string | null;
+    observedAt: string;
+    expiresAt: string;
+    returnedCashAtomic: string | null;
+    open: boolean;
+  } | null;
 }
 
 export interface MarketRealityWireV1 {
@@ -185,6 +197,7 @@ export interface MarketRealityWireV1 {
 export const MARKET_REALITY_OUTCOMES_V1 = [
   'priced',
   'lapsed',
+  'stale_finding',
   'no_route',
   'provider_failed',
   'never_measured',
@@ -204,6 +217,8 @@ export interface UnderlyingChoiceViewV1 {
 }
 
 export interface RepresentationViewV1 {
+  /** History, labelled as history. Null when nobody has ever measured. */
+  lastSeen: { label: string; value: string; note: string } | null;
   tokenAddress: string;
   /** The issuer, as a person says it. */
   issuerName: string;
@@ -327,27 +342,46 @@ export function representationOutcomeV1(
   representation: MarketRealityRepresentationWireV1,
   nowIso: string,
 ): MarketRealityOutcomeV1 {
+  void nowIso;
   if (representation.status === 'full') return 'priced';
-  const now = Date.parse(nowIso);
-  const sources = representation.sources;
-  // A quote we hold whose window has closed. The evidence is real and the
-  // clock is what disqualified it, which is a different sentence from having
-  // nothing.
-  const lapsed = sources.some((source) => {
-    const expires = source.quoteEvidence ? Date.parse(source.quoteEvidence.expiresAt) : Number.NaN;
-    return Number.isFinite(expires) && Number.isFinite(now) && expires <= now;
-  });
-  if (lapsed) return 'lapsed';
+  // `liveness` is the engine's own answer and it is authoritative: it was
+  // computed from the same rows that produced the status, at the same instant.
+  // Re-deriving it here from timestamps was how this module and the engine
+  // could disagree about whether a representation had ever been measured.
+  if (representation.liveness === 'never_measured') return 'never_measured';
+  if (representation.liveness === 'history_only') {
+    // The evidence exists and its window closed. Which KIND of evidence it was
+    // still matters, and all three read differently to a person:
+    //
+    //   quoted             we had a price and it aged out       the clock
+    //   no_route           we had a finding and it aged out     the clock
+    //   measurement_failed our call failed, and that is all     Miorail
+    //
+    // Telling a reader their price expired when we never had one is a small
+    // lie; telling them a FINDING expired when what actually happened is that
+    // our router call failed hands our failure to the market.
+    switch (representation.lastObservation?.status) {
+      case 'quoted':
+        return 'lapsed';
+      case 'no_route':
+        return 'stale_finding';
+      default:
+        return 'provider_failed';
+    }
+  }
   if (representation.status === 'unavailable') return 'no_route';
-  if (sources.some((source) => source.errorCode === 'cash_size_anchor_no_route')) return 'no_route';
+  if (representation.sources.some((source) => source.errorCode === 'cash_size_anchor_no_route')) {
+    return 'no_route';
+  }
   if (representation.status === 'measurement_failed') return 'provider_failed';
-  if (sources.some((source) => source.errorCode !== null)) return 'provider_failed';
+  if (representation.sources.some((source) => source.errorCode !== null)) return 'provider_failed';
   return 'never_measured';
 }
 
 const OUTCOME_CHIP_V1: Readonly<Record<MarketRealityOutcomeV1, string>> = {
   priced: 'Priced now',
   lapsed: 'Price expired',
+  stale_finding: 'Finding expired',
   no_route: 'No route',
   provider_failed: 'Our read failed',
   never_measured: 'Not measured',
@@ -356,6 +390,7 @@ const OUTCOME_CHIP_V1: Readonly<Record<MarketRealityOutcomeV1, string>> = {
 const OUTCOME_TONE_V1: Readonly<Record<MarketRealityOutcomeV1, ToneV1>> = {
   priced: 'good',
   lapsed: 'warn',
+  stale_finding: 'off',
   no_route: 'off',
   provider_failed: 'warn',
   never_measured: 'neutral',
@@ -366,6 +401,7 @@ const OUTCOME_ATTRIBUTION_V1: Readonly<
 > = {
   priced: 'the market',
   lapsed: 'the clock',
+  stale_finding: 'the clock',
   no_route: 'the market',
   provider_failed: 'Miorail',
   never_measured: 'Miorail',
@@ -377,22 +413,33 @@ function outcomeBodyV1(
   sizeLabel: string,
   nowIso: string,
 ): string {
+  // The stored observation first: a failed or refused look carries no quote
+  // evidence at all, and without this the sentence for those two lost its "39
+  // minutes ago" and read as though nothing had ever been tried.
   const age = quoteAgeLabelV1(
-    representation.sources.find((source) => source.quoteEvidence)?.quoteEvidence?.observedAt ?? null,
+    representation.lastObservation?.observedAt ??
+      representation.sources.find((source) => source.quoteEvidence)?.quoteEvidence?.observedAt ??
+      null,
     nowIso,
   );
   switch (outcome) {
     case 'priced':
       return `A router quoted this exact size and the quote is still open.`;
     case 'lapsed':
-      // The most common state on this page, and the one a reader is most
-      // likely to misread as a broken product. It says what happened, and it
-      // says the number is real — just not now.
-      return `A router did quote ${sizeLabel}${age ? ` ${age}` : ''}, and that quote has since expired. Router quotes are good for about twenty seconds; nothing here is stale evidence being passed off as current.`;
+      // The state a reader is most likely to misread as a broken product. It
+      // says what happened, says the number was real, and points at the one
+      // control that fixes it.
+      return `A router did quote ${sizeLabel}${age ? ` ${age}` : ''}, and that quote has since expired — router quotes are good for about twenty seconds. Measure now to get an open one.`;
+    case 'stale_finding':
+      // Not a lapsed price: we never had a price here. What expired was a
+      // finding about the market, and saying "price expired" would invent one.
+      return `The last look at ${sizeLabel}${age ? ` ${age}` : ''} found no usable route, and that finding has since expired. Measure now to ask again.`;
     case 'no_route':
       return `No approved venue would trade ${sizeLabel} of this representation. That is a fact about the market for this contract, not about the issuer.`;
     case 'provider_failed':
-      return `Our router call did not complete, so this size was not measured. That is our failure, and it says nothing about the contract.`;
+      return representation.liveness === 'history_only'
+        ? `Our last router call for ${sizeLabel}${age ? ` ${age}` : ''} did not complete, and that is all we hold. Our failure, not the contract's — measure now to try again.`
+        : `Our router call did not complete, so this size was not measured. That is our failure, and it says nothing about the contract.`;
     case 'never_measured':
     default:
       return `${sizeLabel} has not been measured against this representation yet.`;
@@ -444,6 +491,35 @@ function numbersV1(
       tone: premium === null ? 'neutral' : 'good',
     },
   ];
+}
+
+/**
+ * What the last look found, and when — as HISTORY.
+ *
+ * Deliberately separate from `numbers`, which only ever carries open evidence.
+ * A background sample rendered beside a current price, in the same style, is
+ * the exact confusion the engine grew a second field to prevent; a reader who
+ * has to notice a timestamp to tell them apart will not notice the timestamp.
+ */
+function lastSeenV1(
+  representation: MarketRealityRepresentationWireV1,
+  nowIso: string,
+): RepresentationViewV1['lastSeen'] {
+  const observation = representation.lastObservation;
+  if (!observation) return null;
+  const age = quoteAgeLabelV1(observation.observedAt, nowIso) ?? 'recently';
+  if (observation.status === 'quoted' && observation.returnedCashAtomic) {
+    return {
+      label: 'Last seen',
+      value: usdV1(observation.returnedCashAtomic) ?? '—',
+      note: observation.open ? `measured ${age}, still open` : `measured ${age} — history, not a price now`,
+    };
+  }
+  return {
+    label: 'Last seen',
+    value: observation.status === 'no_route' ? 'No route' : 'Read failed',
+    note: `measured ${age}`,
+  };
 }
 
 function termsV1(representation: MarketRealityRepresentationWireV1): FactViewV1[] {
@@ -636,6 +712,7 @@ export function marketRealityViewV1(input: {
         outcomeBody: outcomeBodyV1(outcome, representation, sizeLabel, input.now),
         outcomeTone: OUTCOME_TONE_V1[outcome],
         attribution: OUTCOME_ATTRIBUTION_V1[outcome],
+        lastSeen: lastSeenV1(representation, input.now),
         numbers: numbersV1(representation, direction),
         terms: [
           {

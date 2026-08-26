@@ -73,6 +73,54 @@ export const MarketRealityReferenceStateV1Schema = z
   .strict();
 export type MarketRealityReferenceStateV1 = z.infer<typeof MarketRealityReferenceStateV1Schema>;
 
+// ---------------------------------------------------------------------------
+// Current evidence and history are not the same thing, and this is where the
+// product stopped being able to say so.
+//
+// A router quote is good for about twenty seconds. The background sampler runs
+// on a timer measured in tens of minutes. So every quote the sampler takes is
+// expired before a reader arrives, and an engine that only knows "open quote or
+// nothing" reports nothing — for a token it measured perfectly forty minutes
+// ago.
+//
+// Both facts are real and they answer different questions:
+//
+//   current           what does this cost RIGHT NOW, on evidence still open
+//   lastObservation   what did it cost the last time anybody looked, and when
+//
+// A background sample may never be rendered as the first. It is history, it is
+// labelled with its age, and a surface that shows it must say so. That is the
+// whole point of keeping them in separate fields rather than in one field with
+// a freshness flag somebody can forget to read.
+// ---------------------------------------------------------------------------
+
+export const MarketRealityObservationV1Schema = z
+  .object({
+    source: z.string().min(1).max(100),
+    /** What the router said. `not_measured` never appears here: an observation
+     * exists because somebody measured. */
+    status: z.enum(['quoted', 'no_route', 'measurement_failed']),
+    errorCode: z.string().min(1).max(120).nullable(),
+    observedAt: Timestamp,
+    expiresAt: Timestamp,
+    /** Cash returned at the exact size, when the observation carried a quote. */
+    returnedCashAtomic: Digits.nullable(),
+    /** True while this observation is still inside its own validity window. */
+    open: z.boolean(),
+  })
+  .strict();
+export type MarketRealityObservationV1 = z.infer<typeof MarketRealityObservationV1Schema>;
+
+/**
+ * Whether this representation has anything current, anything at all, or nothing.
+ *
+ * Three values because a reader needs three different sentences, and the middle
+ * one is the ordinary state of this product: measured, and not measured
+ * recently enough for the number to still be true.
+ */
+export const MARKET_REALITY_LIVENESS_V1 = ['live', 'history_only', 'never_measured'] as const;
+export type MarketRealityLivenessV1 = (typeof MARKET_REALITY_LIVENESS_V1)[number];
+
 export const MarketRealityRepresentationV1Schema = z
   .object({
     tokenAddress: Address,
@@ -97,8 +145,35 @@ export const MarketRealityRepresentationV1Schema = z
     sources: z.array(MarketRealitySourceObservationV1Schema).max(16),
     observedAt: Timestamp.nullable(),
     expiresAt: Timestamp.nullable(),
+    liveness: z.enum(MARKET_REALITY_LIVENESS_V1),
+    /** The newest observation whatever its age. History, never a current price
+     * — every field above it is computed from OPEN evidence only. */
+    lastObservation: MarketRealityObservationV1Schema.nullable(),
   })
-  .strict();
+  .strict()
+  .superRefine((row, ctx) => {
+    if (row.liveness === 'never_measured' && row.lastObservation !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['liveness'],
+        message: 'a representation with an observation has been measured',
+      });
+    }
+    if (row.liveness !== 'never_measured' && row.lastObservation === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['lastObservation'],
+        message: 'a measured representation carries the observation that measured it',
+      });
+    }
+    if (row.liveness === 'history_only' && row.status === 'full') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['status'],
+        message: 'a full answer requires open evidence, and history is not open evidence',
+      });
+    }
+  });
 
 export const MarketRealityResponseV1Schema = z
   .object({
@@ -180,3 +255,123 @@ export const MarketRealityIndexV1Schema = z
   })
   .strict();
 export type MarketRealityIndexV1 = z.infer<typeof MarketRealityIndexV1Schema>;
+
+// ---------------------------------------------------------------------------
+// The series. Same exact question, moved along a time axis.
+//
+// `interpolated` is a literal `false` rather than a comment, because the one
+// thing a chart makes irresistibly easy is drawing a line through a gap. A
+// consumer that ever needs to know whether these points were smoothed can read
+// it off the payload instead of trusting the code that produced it.
+// ---------------------------------------------------------------------------
+
+export const MARKET_REALITY_WINDOW_KEYS_V1 = ['1h', '6h', '24h', '7d'] as const;
+
+export const MarketRealityHistoryPointV1Schema = z
+  .object({
+    observedAt: Timestamp,
+    status: z.enum(['quoted', 'no_route', 'measurement_failed']),
+    source: z.string().min(1).max(100),
+    /** Cash at the exact size. Null on a point that is a failure or a refusal
+     * — which is still a point, because an hour with no route is a fact. */
+    returnedCashAtomic: Digits.nullable(),
+    testedTokenAtomic: Digits.nullable(),
+    errorCode: z.string().min(1).max(120).nullable(),
+    /** The router set behind this point. Two points measured through different
+     * sets are not comparable with each other. */
+    approvedSources: z.array(z.string().min(1).max(100)).max(16),
+  })
+  .strict();
+export type MarketRealityHistoryPointV1 = z.infer<typeof MarketRealityHistoryPointV1Schema>;
+
+export const MarketRealityHistorySeriesV1Schema = z
+  .object({
+    tokenAddress: Address,
+    issuerId: z.enum(['coinbase', 'dinari', 'backed']).nullable(),
+    representationKind: z
+      .enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper'])
+      .nullable(),
+    /** Oldest first. */
+    points: z.array(MarketRealityHistoryPointV1Schema).max(500),
+    pointCount: z.number().int().min(0),
+    quotedCount: z.number().int().min(0),
+    firstObservedAt: Timestamp.nullable(),
+    lastObservedAt: Timestamp.nullable(),
+  })
+  .strict()
+  .superRefine((row, ctx) => {
+    if (row.quotedCount > row.pointCount) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['quotedCount'],
+        message: 'a quoted point is a point',
+      });
+    }
+    if ((row.pointCount === 0) !== (row.firstObservedAt === null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['firstObservedAt'],
+        message: 'a series with points has a first observation',
+      });
+    }
+  });
+
+export const MarketRealityHistoryV1Schema = z
+  .object({
+    schemaVersion: z.literal('market-reality-history/v1'),
+    chainId: z.literal(8453),
+    underlyingKey: z
+      .string()
+      .regex(/^[a-z0-9_]+:[a-z0-9_]+:.+$/)
+      .max(200),
+    direction: MarketRealityDirectionV1Schema,
+    requestedCashAtomic: Digits,
+    destination: z.enum(['USDC', 'ETH']),
+    window: z.enum(MARKET_REALITY_WINDOW_KEYS_V1),
+    since: Timestamp,
+    /** Never true. A gap in the record stays a gap. */
+    interpolated: z.literal(false),
+    representations: z.array(MarketRealityHistorySeriesV1Schema).max(256),
+    assembledAt: Timestamp,
+  })
+  .strict();
+export type MarketRealityHistoryV1 = z.infer<typeof MarketRealityHistoryV1Schema>;
+
+/**
+ * What a live measurement actually spent.
+ *
+ * Returned beside the answer so a surface can say "nothing needed measuring"
+ * instead of implying it refreshed — a button that silently did nothing reads
+ * as a button that does not work.
+ */
+export const MarketRealityMeasurementV1Schema = z
+  .object({
+    /** Representations a router was asked about on this call. */
+    measured: z.array(Address).max(256),
+    /** Left alone: their evidence was still inside its own validity window. */
+    reusedOpen: z.array(Address).max(256),
+    /** Left alone: measured moments ago, inside the cooldown. */
+    reusedCooldown: z.array(Address).max(256),
+    /** Could not be measured, and accused of nothing. */
+    unresolved: z
+      .array(z.object({ tokenAddress: Address, reason: z.string().min(1).max(120) }).strict())
+      .max(256),
+    /** True when this caller joined a measurement already running for the same
+     * exact question. Sharing, not staleness. */
+    joinedInFlight: z.boolean(),
+  })
+  .strict();
+export type MarketRealityMeasurementV1 = z.infer<typeof MarketRealityMeasurementV1Schema>;
+
+/**
+ * The answer plus what the measurement spent.
+ *
+ * `.extend` rather than `.and`: an intersection evaluates BOTH schemas against
+ * the whole input, so a strict object on the left rejects the very key the
+ * right-hand side adds. That failure arrives as a thrown parse error inside a
+ * route's catch block and leaves a 500 with nothing in the log.
+ */
+export const MarketRealityLiveResponseV1Schema = MarketRealityResponseV1Schema.extend({
+  measurement: MarketRealityMeasurementV1Schema,
+}).strict();
+export type MarketRealityLiveResponseV1 = z.infer<typeof MarketRealityLiveResponseV1Schema>;

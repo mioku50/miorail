@@ -98,5 +98,27 @@ export function createDatabaseOfficialCashExitRepository(
         LIMIT 1 OFFSET 1`;
       return rows[0] ? runFromRowV1(rows[0]) : null;
     },
+
+    async completedRunsSince(input) {
+      const tenantId = input.tenantId ?? null;
+      if (input.scope === 'tenant_position' && tenantId === null)
+        throw new RouteStorageTenantError('tenant position read requires tenantId');
+      if (input.scope === 'public_ladder' && tenantId !== null)
+        throw new RouteStorageTenantError('public ladder is not tenant scoped');
+      // The same total order the newest and previous reads use, so a series and
+      // a pair drawn from it can never disagree about which run came first.
+      const rows = await sql`
+        SELECT run_id, chain_id, token_address, scope, tenant_id, approved_sources,
+               destinations, started_at, completed_at, observations
+        FROM official_cash_exit_runs
+        WHERE chain_id = ${input.chainId}
+          AND token_address = ${input.tokenAddress.toLowerCase()}
+          AND scope = ${input.scope}
+          AND tenant_id IS NOT DISTINCT FROM ${tenantId}
+          AND completed_at >= ${input.since}::timestamptz
+        ORDER BY completed_at DESC, run_id DESC
+        LIMIT ${Math.max(1, Math.min(500, input.limit))}`;
+      return rows.map(runFromRowV1);
+    },
   };
 }

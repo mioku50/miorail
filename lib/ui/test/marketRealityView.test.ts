@@ -44,9 +44,22 @@ function representation(
     sources: [],
     observedAt: null,
     expiresAt: null,
+    liveness: 'never_measured',
+    lastObservation: null,
     ...over,
   };
 }
+
+/** The observation the engine emits beside a lapsed row: real, and closed. */
+const LAPSED_OBSERVATION = {
+  source: 'kyberswap',
+  status: 'quoted' as const,
+  errorCode: null,
+  observedAt: '2026-08-26T19:55:03.000Z',
+  expiresAt: '2026-08-26T19:55:23.000Z',
+  returnedCashAtomic: '99952618',
+  open: false,
+};
 
 /** The measured production shape: a real quote whose 20-second window closed. */
 const LAPSED_SOURCE = {
@@ -85,7 +98,7 @@ function wire(over: Partial<MarketRealityWireV1> = {}): MarketRealityWireV1 {
       orderedTokenAddresses: [],
       reason: 'Coverage comparability did not pass; no BEST representation is emitted.',
     },
-    representations: [representation({ sources: [LAPSED_SOURCE] })],
+    representations: [representation({ sources: [LAPSED_SOURCE], liveness: 'history_only', lastObservation: LAPSED_OBSERVATION })],
     assembledAt: NOW,
     ...over,
   };
@@ -97,7 +110,7 @@ describe('the five outcomes stay apart', () => {
     // for about twenty seconds and the worker runs on a much longer timer. The
     // engine reports `not_measured` for it, correctly — but a reader told
     // "not measured" concludes nobody ever looked.
-    const outcome = representationOutcomeV1(representation({ sources: [LAPSED_SOURCE] }), NOW);
+    const outcome = representationOutcomeV1(representation({ sources: [LAPSED_SOURCE], liveness: 'history_only', lastObservation: LAPSED_OBSERVATION }), NOW);
     assert.equal(outcome, 'lapsed');
   });
 
@@ -108,6 +121,8 @@ describe('the five outcomes stay apart', () => {
   test('a market with no venue is the asset, not us', () => {
     const outcome = representationOutcomeV1(
       representation({
+        liveness: 'live',
+        lastObservation: { ...LAPSED_OBSERVATION, status: 'no_route', returnedCashAtomic: null, open: true },
         sources: [{ source: 'kyberswap', status: 'no_route', errorCode: 'cash_size_anchor_no_route', quoteEvidence: null }],
       }),
       NOW,
@@ -118,6 +133,8 @@ describe('the five outcomes stay apart', () => {
   test('a provider that would not answer is us, not the asset', () => {
     const outcome = representationOutcomeV1(
       representation({
+        liveness: 'live',
+        lastObservation: { ...LAPSED_OBSERVATION, status: 'measurement_failed', returnedCashAtomic: null, open: true },
         sources: [{ source: 'kyberswap', status: 'not_measured', errorCode: 'provider_http_error', quoteEvidence: null }],
       }),
       NOW,
@@ -132,7 +149,7 @@ describe('the five outcomes stay apart', () => {
       quoteEvidence: { ...LAPSED_SOURCE.quoteEvidence, expiresAt: '2026-08-26T20:35:00.000Z' },
     };
     assert.equal(
-      representationOutcomeV1(representation({ status: 'full', sources: [open] }), NOW),
+      representationOutcomeV1(representation({ status: 'full', sources: [open], liveness: 'live', lastObservation: { ...LAPSED_OBSERVATION, open: true } }), NOW),
       'priced',
     );
   });
@@ -141,12 +158,14 @@ describe('the five outcomes stay apart', () => {
     const view = marketRealityViewV1({
       wire: wire({
         representations: [
-          representation({ sources: [LAPSED_SOURCE] }),
+          representation({ sources: [LAPSED_SOURCE], liveness: 'history_only', lastObservation: LAPSED_OBSERVATION }),
           representation({
             tokenAddress: BACKED_NVDA,
             issuerId: 'backed',
             representationKind: 'rebasing_erc20',
             issuerInstrumentKey: 'backed:instrument_id:c1077d76',
+            liveness: 'live',
+            lastObservation: { ...LAPSED_OBSERVATION, status: 'no_route', returnedCashAtomic: null, open: true },
             sources: [
               { source: 'kyberswap', status: 'no_route', errorCode: 'cash_size_anchor_no_route', quoteEvidence: null },
             ],
@@ -156,6 +175,8 @@ describe('the five outcomes stay apart', () => {
             issuerId: 'backed',
             representationKind: 'non_rebasing_erc4626_wrapper',
             issuerInstrumentKey: 'backed:instrument_id:c1077d76',
+            liveness: 'live',
+            lastObservation: { ...LAPSED_OBSERVATION, status: 'measurement_failed', returnedCashAtomic: null, open: true },
             sources: [
               { source: 'kyberswap', status: 'not_measured', errorCode: 'provider_http_error', quoteEvidence: null },
             ],
@@ -269,6 +290,8 @@ describe('an absent number never renders as a zero', () => {
         representations: [
           representation({
             status: 'full',
+            liveness: 'live',
+            lastObservation: { ...LAPSED_OBSERVATION, open: true },
             sources: [open],
             returnedCashAtomic: '99952618',
             normalizedExposureAtomic: '47673533',
@@ -295,7 +318,7 @@ describe('an absent number never renders as a zero', () => {
     const view = marketRealityViewV1({
       wire: wire({
         representations: [
-          representation({ normalization: 'reviewed_token_already_applied', issuerId: 'backed' }),
+          representation({ normalization: 'reviewed_token_already_applied', issuerId: 'backed', liveness: 'live', lastObservation: { ...LAPSED_OBSERVATION, open: true } }),
         ],
       }),
       choice: null,
@@ -415,5 +438,129 @@ describe('ages, not timestamps', () => {
     assert.match(body, /39 min ago/);
     assert.match(body, /twenty seconds/);
     assert.doesNotMatch(body, /no data|unavailable/i);
+  });
+});
+
+describe('history is history, and says so', () => {
+  test('an expired quote is a lapsed PRICE and points at the fix', () => {
+    const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    const row = view?.representations[0];
+    assert.equal(row?.outcome, 'lapsed');
+    assert.match(row?.outcomeBody ?? '', /Measure now/);
+  });
+
+  test('an expired no-route is not a lapsed price', () => {
+    // Telling a reader their price expired when we never had one is a small
+    // lie, and it is the one a single "not measured" bucket forces.
+    const view = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({
+            liveness: 'history_only',
+            lastObservation: {
+              ...LAPSED_OBSERVATION,
+              status: 'no_route',
+              returnedCashAtomic: null,
+            },
+            sources: [LAPSED_SOURCE],
+          }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    const row = view?.representations[0];
+    assert.equal(row?.outcome, 'stale_finding');
+    assert.equal(row?.outcomeChip, 'Finding expired');
+    assert.doesNotMatch(row?.outcomeBody ?? '', /price/i);
+  });
+
+  test('the last observation is shown apart from the current numbers', () => {
+    // A background sample rendered in the same list as open evidence is the
+    // confusion the engine grew a second field to prevent.
+    const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    const row = view?.representations[0];
+    assert.equal(row?.lastSeen?.value, '$99.95');
+    assert.match(row?.lastSeen?.note ?? '', /history, not a price now/);
+    // And the current numbers stay empty.
+    assert.deepEqual(
+      row?.numbers.map((fact) => fact.value),
+      ['—', '—', '—'],
+    );
+  });
+
+  test('an open observation is labelled open, not as history', () => {
+    const view = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({
+            status: 'full',
+            liveness: 'live',
+            lastObservation: { ...LAPSED_OBSERVATION, open: true },
+            returnedCashAtomic: '99952618',
+          }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    assert.match(view?.representations[0]?.lastSeen?.note ?? '', /still open/);
+  });
+
+  test('an expired failed read stays OUR failure, however long ago it was', () => {
+    // "Finding expired" for a call that never completed hands our failure to
+    // the market. Whose fact it is does not change with time.
+    const view = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({
+            liveness: 'history_only',
+            lastObservation: {
+              ...LAPSED_OBSERVATION,
+              status: 'measurement_failed',
+              returnedCashAtomic: null,
+            },
+            sources: [LAPSED_SOURCE],
+          }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    const row = view?.representations[0];
+    assert.equal(row?.outcome, 'provider_failed');
+    assert.equal(row?.attribution, 'Miorail');
+    assert.match(row?.outcomeBody ?? '', /39 min ago/, 'and it still says when');
+    assert.match(row?.outcomeBody ?? '', /not the contract/);
+  });
+
+  test('a representation nobody measured shows no history row at all', () => {
+    const view = marketRealityViewV1({
+      wire: wire({ representations: [representation()] }),
+      choice: null,
+      now: NOW,
+    });
+    assert.equal(view?.representations[0]?.lastSeen, null, 'absence, not a zeroed row');
+    assert.equal(view?.representations[0]?.outcome, 'never_measured');
+  });
+
+  test('liveness comes from the engine, not from re-reading timestamps here', () => {
+    // The two disagreeing about whether something was ever measured is exactly
+    // the drift that put "not measured" over a token measured minutes ago.
+    const view = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({
+            liveness: 'never_measured',
+            lastObservation: null,
+            // Sources present but carrying nothing — the engine already ruled.
+            sources: [{ source: 'kyberswap', status: 'not_measured', errorCode: null, quoteEvidence: null }],
+          }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    assert.equal(view?.representations[0]?.outcome, 'never_measured');
   });
 });

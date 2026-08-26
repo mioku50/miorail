@@ -29,6 +29,15 @@ export function createMemoryOfficialCashExitRepository(): OfficialCashExitReposi
     async previousCompletedRun(input) {
       return orderedRunsV1(input)[1] ?? null;
     },
+
+    async completedRunsSince(input) {
+      const since = Date.parse(input.since);
+      return orderedRunsV1(input)
+        // Inclusive on `completedAt`, matching the SQL: a run that started
+        // before the window and finished inside it belongs to the window.
+        .filter((run) => Date.parse(run.completedAt) >= since)
+        .slice(0, Math.max(1, Math.min(500, input.limit)));
+    },
   };
 
   /** The same total order Postgres produces: newest completion first, then the

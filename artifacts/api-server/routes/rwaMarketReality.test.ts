@@ -152,3 +152,120 @@ describe('GET the reviewed-securities chooser', () => {
     assert.equal(response.body.code, 'market_reality_storage_unavailable');
   });
 });
+
+describe('POST the live measurement', () => {
+  test('reports what it spent, not just what it found', async () => {
+    // A surface must be able to say "everything was already current" rather
+    // than implying it refreshed. The counts are the difference.
+    rwaMarketRealityRuntime.migrationAvailable = async () => true;
+    rwaMarketRealityRuntime.coordinator = () =>
+      ({
+        inFlightCount: () => 0,
+        measure: async () => ({
+          answer: {
+            schemaVersion: 'market-reality/v1' as const,
+            question: {
+              chainId: 8453 as const,
+              underlyingKey: UNDERLYING,
+              direction: 'sell' as const,
+              requestedCashAtomic: '100000000',
+              cashAsset: 'USDC' as const,
+              cashAddress: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+              cashDecimals: 6 as const,
+              destination: 'USDC' as const,
+              exactSizeOnly: true as const,
+              baseOnly: true as const,
+            },
+            coverage: {
+              policy: 'same_approved_router_set_exact_size_and_destination' as const,
+              reviewedRepresentations: 0,
+              comparableRepresentations: 0,
+              status: 'incomplete' as const,
+              reason: 'nothing bound',
+            },
+            ranking: { status: 'withheld' as const, orderedTokenAddresses: [], reason: 'no coverage' },
+            quoteEvidenceIsExecutionProof: false as const,
+            representations: [],
+            assembledAt: new Date().toISOString(),
+          },
+          measured: ['0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],
+          reusedOpen: ['0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'],
+          reusedCooldown: [],
+          unresolved: [],
+          joinedInFlight: false,
+        }),
+      }) as unknown as ReturnType<typeof rwaMarketRealityRuntime.coordinator>;
+
+    process.env.BASE_MAINNET_RPC_URL = 'https://example.invalid/rpc';
+    const response = await request(app()).post(
+      `/api/route-intelligence/rwa/market-reality/${UNDERLYING}/measure?direction=sell&requestedCashAtomic=100000000`,
+    );
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.deepEqual(response.body.measurement.measured, [
+      '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    ]);
+    assert.deepEqual(response.body.measurement.reusedOpen, [
+      '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    ]);
+    // A quote is never execution, on the write path exactly as on the read.
+    assert.equal(response.body.quoteEvidenceIsExecutionProof, false);
+  });
+
+  test('measuring refuses a session the way reading does', async () => {
+    rwaMarketRealityRuntime.migrationAvailable = async () => {
+      throw new Error('authentication must stop first');
+    };
+    const response = await request(app(null)).post(
+      `/api/route-intelligence/rwa/market-reality/${UNDERLYING}/measure?direction=sell&requestedCashAtomic=100000000`,
+    );
+    assert.equal(response.status, 401);
+  });
+
+  test('an inexact size is refused before a router is called', async () => {
+    rwaMarketRealityRuntime.migrationAvailable = async () => {
+      throw new Error('validation must stop first');
+    };
+    const response = await request(app()).post(
+      `/api/route-intelligence/rwa/market-reality/${UNDERLYING}/measure?direction=sell&requestedCashAtomic=100.5`,
+    );
+    assert.equal(response.status, 400);
+    assert.equal(response.body.code, 'invalid_market_reality_question');
+  });
+});
+
+describe('GET the comparable series', () => {
+  test('a window outside the reviewed set is refused', async () => {
+    // An unbounded window is a table scan wearing a query string.
+    rwaMarketRealityRuntime.migrationAvailable = async () => {
+      throw new Error('validation must stop first');
+    };
+    const response = await request(app()).get(
+      `/api/route-intelligence/rwa/market-reality/${UNDERLYING}/history?direction=sell&requestedCashAtomic=100000000&window=all`,
+    );
+    assert.equal(response.status, 400);
+    assert.equal(response.body.code, 'invalid_history_window');
+  });
+
+  test('a series says it was never interpolated', async () => {
+    rwaMarketRealityRuntime.migrationAvailable = async () => true;
+    rwaMarketRealityRuntime.assembleHistory = async () => ({
+      schemaVersion: 'market-reality-history/v1' as const,
+      chainId: 8453 as const,
+      underlyingKey: UNDERLYING,
+      direction: 'sell' as const,
+      requestedCashAtomic: '100000000',
+      destination: 'USDC' as const,
+      window: '24h' as const,
+      since: new Date(Date.now() - 86_400_000).toISOString(),
+      interpolated: false as const,
+      representations: [],
+      assembledAt: new Date().toISOString(),
+    });
+    const response = await request(app()).get(
+      `/api/route-intelligence/rwa/market-reality/${UNDERLYING}/history?direction=sell&requestedCashAtomic=100000000&window=24h`,
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.body.interpolated, false);
+    assert.equal(response.body.window, '24h');
+  });
+});

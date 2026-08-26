@@ -18,7 +18,12 @@ import {
   useConsoleTheme,
   type MarketRealityDirectionV1,
 } from '@mioagent/ui';
-import { useRwaMarketReality, useRwaUnderlyings, useStatus } from '@mioagent/api-client-react';
+import {
+  useMeasureRwaMarketReality,
+  useRwaMarketReality,
+  useRwaUnderlyings,
+  useStatus,
+} from '@mioagent/api-client-react';
 import { useConsoleNav } from '../console/useConsoleNav';
 
 // ---------------------------------------------------------------------------
@@ -150,6 +155,37 @@ export function MarketRealityPage() {
     [reality.data, choices, selectedKey, nowIso],
   );
 
+  const measure = useMeasureRwaMarketReality();
+
+  /**
+   * What the measurement spent, in a reader's words.
+   *
+   * "Nothing needed measuring" is the honest answer when every representation
+   * was already inside its quote window, and a button that silently did nothing
+   * reads as a button that does not work.
+   */
+  const measurementNote = useMemo(() => {
+    const spent = measure.data?.measurement;
+    if (!spent) return null;
+    const parts: string[] = [];
+    if (spent.measured.length > 0) {
+      parts.push(
+        `${spent.measured.length} representation${spent.measured.length === 1 ? '' : 's'} measured just now`,
+      );
+    }
+    if (spent.reusedOpen.length > 0) {
+      parts.push(`${spent.reusedOpen.length} already had an open quote`);
+    }
+    if (spent.reusedCooldown.length > 0) {
+      parts.push(`${spent.reusedCooldown.length} measured moments ago`);
+    }
+    for (const row of spent.unresolved) {
+      parts.push(`${row.tokenAddress.slice(0, 8)}… could not be measured (${row.reason})`);
+    }
+    if (parts.length === 0) return 'Nothing needed measuring.';
+    return `${parts.join(' · ')}.${spent.joinedInFlight ? ' Shared with a measurement already running.' : ''}`;
+  }, [measure.data]);
+
   const setQuestion = (patch: Record<string, string>) => {
     const params = new URLSearchParams(search);
     if (selectedKey) params.set('key', selectedKey);
@@ -220,8 +256,24 @@ export function MarketRealityPage() {
             disabledNotice ??
             (reality.error ? failureCopyV1(reality.error, 'this comparison') : null),
 
+          measuring: measure.isPending,
+          measurementNote,
+          measurementError: measure.error
+            ? failureCopyV1(measure.error, 'this measurement')
+            : null,
+
           actions: {
             onUnderlying: (underlyingKey) => setQuestion({ key: underlyingKey }),
+            ...(enabled && selectedKey
+              ? {
+                  onMeasure: () =>
+                    measure.mutate({
+                      underlyingKey: selectedKey,
+                      direction: question.direction,
+                      requestedCashAtomic: question.requestedCashAtomic,
+                    }),
+                }
+              : {}),
             onDirection: (direction) => setQuestion({ direction }),
             onSize: (requestedCashAtomic) => setQuestion({ size: requestedCashAtomic }),
             onInvestigate: (tokenAddress) => navigate(`/investigate?token=${tokenAddress}`),

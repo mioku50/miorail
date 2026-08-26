@@ -1052,6 +1052,110 @@ export function useRwaMarketReality(
 }
 
 /**
+ * Phase 10C — measure the exact question now.
+ *
+ * A mutation, because it spends router calls and writes evidence. It takes the
+ * whole question so the measurement and the read that follows it cannot drift:
+ * on success the matching read's cache entry is replaced with the answer the
+ * measurement returned, rather than invalidated — an invalidation would send
+ * the reader back through a fetch to learn what this response already carries.
+ */
+export function useMeasureRwaMarketReality(
+  options?: Omit<
+    UseMutationOptions<
+      apiSpec.MarketRealityLiveResponseV1,
+      Error,
+      {
+        underlyingKey: string;
+        direction: 'buy' | 'sell';
+        requestedCashAtomic: string;
+        destination?: 'USDC' | 'ETH';
+      }
+    >,
+    'mutationFn'
+  >,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...options,
+    mutationFn: async (input) => {
+      const destination = input.destination ?? 'USDC';
+      const query = new URLSearchParams({
+        direction: input.direction,
+        requestedCashAtomic: input.requestedCashAtomic,
+        destination,
+      });
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/rwa/market-reality/${encodeURIComponent(input.underlyingKey)}/measure?${query.toString()}`,
+        { method: 'POST' },
+      );
+      return apiSpec.MarketRealityLiveResponseV1Schema.parse(response);
+    },
+    onSuccess: (data, variables, onMutateResult, context) => {
+      // The response IS the new answer, written straight into the read's cache
+      // entry. Invalidating instead would send the reader through a fetch to
+      // learn what this response already carries — and show the pre-measurement
+      // board for a beat, which reads as a refresh that did nothing.
+      queryClient.setQueryData(
+        [
+          'rwa-market-reality',
+          variables.underlyingKey,
+          variables.direction,
+          variables.requestedCashAtomic,
+          variables.destination ?? 'USDC',
+        ],
+        data,
+      );
+      options?.onSuccess?.(data, variables, onMutateResult, context);
+    },
+  });
+}
+
+/**
+ * Phase 10C — the same exact question over a bounded window.
+ *
+ * Where the background sampler's work finally lives. Fetched only when a reader
+ * opens the series: it is a second database read per representation, and a page
+ * that never shows it should not pay for it.
+ */
+export function useRwaMarketRealityHistory(
+  input: {
+    underlyingKey: string | null;
+    direction: 'buy' | 'sell';
+    requestedCashAtomic: string;
+    destination?: 'USDC' | 'ETH';
+    window: '1h' | '6h' | '24h' | '7d';
+  },
+  options?: { enabled?: boolean },
+) {
+  const destination = input.destination ?? 'USDC';
+  return useQuery({
+    queryKey: [
+      'rwa-market-reality-history',
+      input.underlyingKey,
+      input.direction,
+      input.requestedCashAtomic,
+      destination,
+      input.window,
+    ],
+    queryFn: async () => {
+      const query = new URLSearchParams({
+        direction: input.direction,
+        requestedCashAtomic: input.requestedCashAtomic,
+        destination,
+        window: input.window,
+      });
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/rwa/market-reality/${encodeURIComponent(input.underlyingKey!)}/history?${query.toString()}`,
+      );
+      return apiSpec.MarketRealityHistoryV1Schema.parse(response);
+    },
+    retry: false,
+    enabled: options?.enabled !== false && Boolean(input.underlyingKey),
+  });
+}
+
+/**
  * Phase 8 — enrol the official corpus in one action.
  *
  * The one preset the server may apply: it is a list Miorail already holds, so

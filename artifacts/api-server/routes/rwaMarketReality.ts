@@ -1,15 +1,25 @@
 import { Router, type Request } from 'express';
+import { decodeFunctionResult, encodeFunctionData } from 'viem';
+import { createB20ReaderV1 } from '@mioagent/b20-control';
 import { client } from '@mioagent/db';
+import { measureOfficialCashExitV1 } from '@mioagent/rwa-cash-exit';
+import { KyberSwapRouteAdapter } from '@mioagent/swap-adapters';
 import {
   createDatabaseOfficialCashExitRepository,
   createDatabaseRepresentationRatioRepository,
   createDatabaseUnderlyingAssetRepository,
 } from '@mioagent/route-storage';
 import {
+  MARKET_REALITY_WINDOWS_V1,
+  MarketRealityHistoryV1Schema,
   MarketRealityIndexV1Schema,
+  MarketRealityLiveResponseV1Schema,
   MarketRealityResponseV1Schema,
+  assembleMarketRealityHistoryV1,
   assembleMarketRealityIndexV1,
   assembleMarketRealityV1,
+  createMarketRealityCoordinatorV1,
+  type MarketRealityWindowV1,
 } from '@mioagent/rwa-market-reality';
 import type { TenantUser } from '../middleware/tenantAuth.js';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
@@ -28,6 +38,24 @@ function sessionUserV1(req: Request): TenantUser | null {
   return user;
 }
 
+const ERC20_METADATA_ABI_V1 = [
+  { type: 'function', name: 'decimals', inputs: [], outputs: [{ type: 'uint8' }], stateMutability: 'view' },
+  { type: 'function', name: 'symbol', inputs: [], outputs: [{ type: 'string' }], stateMutability: 'view' },
+] as const;
+
+function rpcUrlV1(): string {
+  return (process.env.BASE_MAINNET_RPC_URL || process.env.BASE_RPC_URL || '').trim();
+}
+
+/**
+ * One coordinator for the process, created once.
+ *
+ * Its whole value is the in-flight map: a coordinator built per request would
+ * deduplicate nothing, because every caller would arrive holding its own empty
+ * map and start its own measurement.
+ */
+const marketRealityCoordinatorV1 = createMarketRealityCoordinatorV1();
+
 export const rwaMarketRealityRuntime = {
   enabled: (env: NodeJS.ProcessEnv): boolean =>
     getMiorailProductMigrationFlags(env).routeIntelligenceV1,
@@ -37,6 +65,11 @@ export const rwaMarketRealityRuntime = {
   now: () => new Date(),
   assemble: assembleMarketRealityV1,
   assembleIndex: assembleMarketRealityIndexV1,
+  assembleHistory: assembleMarketRealityHistoryV1,
+  coordinator: () => marketRealityCoordinatorV1,
+  quoteAdapters: () => [new KyberSwapRouteAdapter()],
+  measureOne: measureOfficialCashExitV1,
+  reader: () => createB20ReaderV1({ rpcUrl: rpcUrlV1() }),
   migrationAvailable: async (): Promise<boolean> => {
     const rows = await client`
       SELECT
@@ -86,6 +119,49 @@ rwaMarketRealityRouter.get('/rwa/underlyings', async (req, res) => {
   }
 });
 
+/**
+ * The exact question, parsed once for every route that takes it.
+ *
+ * Shared rather than repeated so the read, the measurement and the series
+ * cannot drift into three slightly different ideas of what was asked — which
+ * would show up as a measurement that never satisfies the read it was taken
+ * for.
+ */
+type QuestionParseV1 =
+  | {
+      ok: true;
+      underlyingKey: string;
+      direction: 'buy' | 'sell';
+      requestedCashAtomic: string;
+      destination: 'USDC' | 'ETH';
+    }
+  | { ok: false; code: string; detail?: string };
+
+function questionFromRequestV1(req: Request): QuestionParseV1 {
+  const underlyingKey = String(req.params.underlyingKey ?? '');
+  const direction = String(req.query.direction ?? '').toLowerCase();
+  const requestedCashAtomic = String(req.query.requestedCashAtomic ?? '');
+  const destination = String(req.query.destination ?? 'USDC').toUpperCase();
+  if (!/^[a-z0-9_]+:[a-z0-9_]+:.+$/.test(underlyingKey)) {
+    return { ok: false, code: 'invalid_underlying_key' };
+  }
+  if (!['buy', 'sell'].includes(direction) || !/^[1-9][0-9]*$/.test(requestedCashAtomic)) {
+    return {
+      ok: false,
+      code: 'invalid_market_reality_question',
+      detail: 'direction=buy|sell and an exact positive requestedCashAtomic are required.',
+    };
+  }
+  if (!['USDC', 'ETH'].includes(destination)) return { ok: false, code: 'invalid_destination' };
+  return {
+    ok: true,
+    underlyingKey,
+    direction: direction as 'buy' | 'sell',
+    requestedCashAtomic,
+    destination: destination as 'USDC' | 'ETH',
+  };
+}
+
 rwaMarketRealityRouter.get('/rwa/market-reality/:underlyingKey', async (req, res) => {
   if (!rwaMarketRealityRuntime.enabled(process.env)) {
     res
@@ -97,24 +173,9 @@ rwaMarketRealityRouter.get('/rwa/market-reality/:underlyingKey', async (req, res
     res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
     return;
   }
-  const underlyingKey = String(req.params.underlyingKey ?? '');
-  const direction = String(req.query.direction ?? '').toLowerCase();
-  const requestedCashAtomic = String(req.query.requestedCashAtomic ?? '');
-  const destination = String(req.query.destination ?? 'USDC').toUpperCase();
-  if (!/^[a-z0-9_]+:[a-z0-9_]+:.+$/.test(underlyingKey)) {
-    res.status(400).json({ error: 'invalid_underlying_key', code: 'invalid_underlying_key' });
-    return;
-  }
-  if (!['buy', 'sell'].includes(direction) || !/^[1-9][0-9]*$/.test(requestedCashAtomic)) {
-    res.status(400).json({
-      error: 'invalid_market_reality_question',
-      code: 'invalid_market_reality_question',
-      detail: 'direction=buy|sell and an exact positive requestedCashAtomic are required.',
-    });
-    return;
-  }
-  if (!['USDC', 'ETH'].includes(destination)) {
-    res.status(400).json({ error: 'invalid_destination', code: 'invalid_destination' });
+  const question = questionFromRequestV1(req);
+  if (!question.ok) {
+    res.status(400).json({ error: question.code, code: question.code, detail: question.detail });
     return;
   }
   try {
@@ -133,13 +194,239 @@ rwaMarketRealityRouter.get('/rwa/market-reality/:underlyingKey', async (req, res
         now: rwaMarketRealityRuntime.now,
       },
       {
-        underlyingKey,
-        direction: direction as 'buy' | 'sell',
-        requestedCashAtomic,
-        destination: destination as 'USDC' | 'ETH',
+        underlyingKey: question.underlyingKey,
+        direction: question.direction,
+        requestedCashAtomic: question.requestedCashAtomic,
+        destination: question.destination,
       },
     );
     res.status(200).json(MarketRealityResponseV1Schema.parse(result));
+  } catch {
+    res.status(500).json({ error: 'market_reality_failed', code: 'market_reality_failed' });
+  }
+});
+
+/**
+ * Measure the exact question, now.
+ *
+ * POST because it spends router calls and writes evidence. The body is empty:
+ * the question is the URL and the query string, exactly as on the read, so a
+ * measurement and the read that follows it cannot drift apart.
+ *
+ * Read-only outside Miorail's own evidence tables: no signer, no wallet call,
+ * no allowance, no transaction. A quote is not execution and never becomes it.
+ */
+rwaMarketRealityRouter.post('/rwa/market-reality/:underlyingKey/measure', async (req, res) => {
+  if (!rwaMarketRealityRuntime.enabled(process.env)) {
+    res
+      .status(404)
+      .json({ error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    return;
+  }
+  const user = sessionUserV1(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  const question = questionFromRequestV1(req);
+  if (!question.ok) {
+    res.status(400).json({ error: question.code, code: question.code, detail: question.detail });
+    return;
+  }
+  if (!rpcUrlV1()) {
+    res.status(503).json({
+      error: 'market_reality_chain_unavailable',
+      code: 'market_reality_chain_unavailable',
+    });
+    return;
+  }
+  try {
+    if (!(await rwaMarketRealityRuntime.migrationAvailable())) {
+      res.status(503).json({
+        error: 'market_reality_storage_unavailable',
+        code: 'market_reality_storage_unavailable',
+      });
+      return;
+    }
+    const cashExit = rwaMarketRealityRuntime.cashExit();
+    const adapters = rwaMarketRealityRuntime.quoteAdapters();
+
+    // The anchor is read on FIRST USE, not up front. A call where every
+    // representation already holds an open quote must touch nothing: the point
+    // of this path is to spend router calls only when they buy something, and
+    // an eager anchor spends an RPC call to discover it had nothing to do.
+    let anchorOnce: ReturnType<ReturnType<typeof rwaMarketRealityRuntime.reader>['readBlockAnchor']> | null =
+      null;
+    let readerOnce: ReturnType<typeof rwaMarketRealityRuntime.reader> | null = null;
+    const chainAnchor = async () => {
+      readerOnce ??= rwaMarketRealityRuntime.reader();
+      anchorOnce ??= readerOnce.readBlockAnchor();
+      return { reader: readerOnce, anchor: await anchorOnce };
+    };
+
+    const result = await rwaMarketRealityRuntime.coordinator().measure(
+      {
+        underlyings: rwaMarketRealityRuntime.underlyings(),
+        cashExit,
+        ratios: rwaMarketRealityRuntime.ratios(),
+        now: rwaMarketRealityRuntime.now,
+        approvedSources: adapters.map((adapter) => adapter.id),
+        // `decimals` and `symbol` come off the chain because a representation
+        // binding does not carry them, and a wrong decimals turns an exact size
+        // into a different size entirely.
+        resolveToken: async (tokenAddress) => {
+          const { reader, anchor } = await chainAnchor();
+          if (!anchor.ok) return { ok: false, reason: `chain_anchor_${anchor.reason}` };
+          const reads = await Promise.all(
+            (['decimals', 'symbol'] as const).map((functionName) =>
+              reader.call({
+                to: tokenAddress,
+                data: encodeFunctionData({ abi: ERC20_METADATA_ABI_V1, functionName }),
+                blockTag: anchor.value.blockTag,
+              }),
+            ),
+          );
+          if (!reads[0]?.ok) return { ok: false, reason: 'token_decimals_unavailable' };
+          const decimals = Number(
+            decodeFunctionResult({
+              abi: ERC20_METADATA_ABI_V1,
+              functionName: 'decimals',
+              data: reads[0].value as `0x${string}`,
+            }),
+          );
+          if (!Number.isInteger(decimals) || decimals < 6 || decimals > 18) {
+            return { ok: false, reason: 'token_decimals_unusable' };
+          }
+          // A symbol that will not read is cosmetic here — the quote is keyed
+          // by address — so it falls back rather than refusing the measurement.
+          let symbol = 'TOKEN';
+          if (reads[1]?.ok) {
+            try {
+              symbol = String(
+                decodeFunctionResult({
+                  abi: ERC20_METADATA_ABI_V1,
+                  functionName: 'symbol',
+                  data: reads[1].value as `0x${string}`,
+                }),
+              ).slice(0, 32);
+            } catch {
+              symbol = 'TOKEN';
+            }
+          }
+          return {
+            ok: true,
+            token: { tokenAddress, symbol: symbol.length > 0 ? symbol : 'TOKEN', decimals },
+          };
+        },
+        measureOne: async ({ token, requestedCashAtomic, destination }) =>
+          rwaMarketRealityRuntime.measureOne({
+            repository: cashExit,
+            adapters,
+            token: {
+              address: token.tokenAddress as `0x${string}`,
+              symbol: token.symbol,
+              decimals: token.decimals,
+            },
+            walletAddress: user.address as `0x${string}`,
+            tenantId: user.id,
+            // A public-ladder run with one rung. The scope is what the evidence
+            // IS — a public size, no tenant position — not how it was started.
+            scope: 'public_ladder',
+            cashSizesAtomic: [requestedCashAtomic],
+            destinations: [destination],
+            now: rwaMarketRealityRuntime.now,
+          }),
+      },
+      {
+        underlyingKey: question.underlyingKey,
+        direction: question.direction,
+        requestedCashAtomic: question.requestedCashAtomic,
+        destination: question.destination,
+      },
+    );
+
+    // Parsed on the way out, envelope included: the measurement counts are the
+    // only thing telling a reader whether the button did anything, so a shape
+    // change there must fail here rather than render as an empty sentence.
+    res.status(200).json(
+      MarketRealityLiveResponseV1Schema.parse({
+        ...result.answer,
+        measurement: {
+          measured: result.measured,
+          reusedOpen: result.reusedOpen,
+          reusedCooldown: result.reusedCooldown,
+          unresolved: result.unresolved,
+          joinedInFlight: result.joinedInFlight,
+        },
+      }),
+    );
+  } catch (error) {
+    // Named apart from a measurement failure. A response this build cannot
+    // serialize is OUR contract drifting, and reporting it as
+    // `market_reality_failed` sends whoever is debugging to look at routers.
+    const code =
+      error instanceof Error && error.name === 'ZodError'
+        ? 'market_reality_response_invalid'
+        : 'market_reality_failed';
+    res.status(500).json({ error: code, code });
+  }
+});
+
+/**
+ * The comparable series: the same exact question, over a bounded window.
+ *
+ * This is where the background sampler's work finally has a home. Every pass it
+ * has ever run is a real measurement of a real size; on a time axis they are a
+ * record, and the only thing that was ever wrong was calling them current.
+ */
+rwaMarketRealityRouter.get('/rwa/market-reality/:underlyingKey/history', async (req, res) => {
+  if (!rwaMarketRealityRuntime.enabled(process.env)) {
+    res
+      .status(404)
+      .json({ error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    return;
+  }
+  if (!sessionUserV1(req)) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  const question = questionFromRequestV1(req);
+  if (!question.ok) {
+    res.status(400).json({ error: question.code, code: question.code, detail: question.detail });
+    return;
+  }
+  const window = String(req.query.window ?? '24h');
+  if (!Object.keys(MARKET_REALITY_WINDOWS_V1).includes(window)) {
+    res.status(400).json({
+      error: 'invalid_history_window',
+      code: 'invalid_history_window',
+      detail: `window must be one of ${Object.keys(MARKET_REALITY_WINDOWS_V1).join(', ')}.`,
+    });
+    return;
+  }
+  try {
+    if (!(await rwaMarketRealityRuntime.migrationAvailable())) {
+      res.status(503).json({
+        error: 'market_reality_storage_unavailable',
+        code: 'market_reality_storage_unavailable',
+      });
+      return;
+    }
+    const history = await rwaMarketRealityRuntime.assembleHistory(
+      {
+        underlyings: rwaMarketRealityRuntime.underlyings(),
+        cashExit: rwaMarketRealityRuntime.cashExit(),
+        now: rwaMarketRealityRuntime.now,
+      },
+      {
+        underlyingKey: question.underlyingKey,
+        direction: question.direction,
+        requestedCashAtomic: question.requestedCashAtomic,
+        destination: question.destination,
+        window: window as MarketRealityWindowV1,
+      },
+    );
+    res.status(200).json(MarketRealityHistoryV1Schema.parse(history));
   } catch {
     res.status(500).json({ error: 'market_reality_failed', code: 'market_reality_failed' });
   }

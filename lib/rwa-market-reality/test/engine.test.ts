@@ -201,3 +201,46 @@ test('a stale B20 multiplier cannot normalize a fresh router quote', async () =>
   assert.equal(result.coverage.status, 'incomplete');
   assert.equal(result.ranking.status, 'withheld');
 });
+
+test('a background sample is history, never a current quote', async () => {
+  // The mismatch, in the read path. The sampler measured this token perfectly
+  // forty minutes ago and the quote window closed twenty seconds later. The
+  // engine must not offer that number as what it costs now — and must not
+  // pretend it never happened either.
+  const lapsed = run(A, '500000000000000000');
+  lapsed.observations[0]!.expiresAt = '2026-08-26T12:00:20.000Z';
+  lapsed.observations[0]!.buyQuote!.expiresAt = '2026-08-26T12:00:20.000Z';
+  const result = await assembleMarketRealityV1(
+    deps({ [A]: lapsed }, { bindings: [binding(A, 'backed:instrument_id:a')] }),
+    { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
+  );
+  const row = result.representations[0]!;
+  assert.equal(row.liveness, 'history_only');
+  assert.equal(row.status, 'not_measured', 'nothing current');
+  assert.equal(row.returnedCashAtomic, null, 'and no number presented as current');
+  assert.ok(row.lastObservation, 'but the measurement is not thrown away');
+  assert.equal(row.lastObservation?.status, 'quoted');
+  assert.equal(row.lastObservation?.open, false);
+  assert.equal(row.lastObservation?.observedAt, '2026-08-26T12:00:00.000Z');
+});
+
+test('open evidence is live, and its observation is marked open', async () => {
+  const result = await assembleMarketRealityV1(
+    deps({ [A]: run(A, '500000000000000000') }, { bindings: [binding(A, 'backed:instrument_id:a')] }),
+    { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
+  );
+  const row = result.representations[0]!;
+  assert.equal(row.liveness, 'live');
+  assert.equal(row.status, 'full');
+  assert.equal(row.lastObservation?.open, true);
+});
+
+test('a representation nobody ever measured has no observation to show', async () => {
+  const result = await assembleMarketRealityV1(
+    deps({}, { bindings: [binding(A, 'backed:instrument_id:a')] }),
+    { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
+  );
+  const row = result.representations[0]!;
+  assert.equal(row.liveness, 'never_measured');
+  assert.equal(row.lastObservation, null, 'absence, not a zeroed point');
+});

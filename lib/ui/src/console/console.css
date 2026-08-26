@@ -1140,3 +1140,19 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 @media (max-width: 720px) {
   .mio-console .mr-board { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Phase 10C — the live path.
+   The control that closes the twenty-second gap, and the history row that keeps
+   a background sample from being read as a current price. */
+.mio-console .mr-measure { margin-left: auto; flex: none; }
+.mio-console .mr-spent { margin: 0; color: var(--faint); }
+/* Visually apart from `.cr-facts` on purpose: history must not look like the
+   open-evidence rows above it. Quieter, boxed, and it says "Last seen". */
+.mio-console .mr-lastseen { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px;
+  margin: 8px 0 0; padding: 6px 8px; border-radius: 7px; background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line); font-size: 11.5px; color: var(--faint); }
+.mio-console .mr-lastseen-k { color: var(--dim); text-transform: uppercase; letter-spacing: .06em; font-size: 9.5px; }
+.mio-console .mr-lastseen-v { color: var(--muted); font-size: 12px; font-weight: 600; }
+@media (max-width: 720px) {
+  .mio-console .mr-measure { margin-left: 0; }
+}

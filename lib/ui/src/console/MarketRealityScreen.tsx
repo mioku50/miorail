@@ -72,6 +72,9 @@ export interface MarketRealityActionsV1 {
   onSize: (requestedCashAtomic: string) => void;
   /** Open the full dossier for one address. Absent when not wired. */
   onInvestigate?: (tokenAddress: string) => void;
+  /** Measure the exact question now. Absent when the server does not offer it,
+   * because a control that answers with a refusal reads as a broken product. */
+  onMeasure?: () => void;
 }
 
 export interface MarketRealityScreenModelV1 {
@@ -88,6 +91,12 @@ export interface MarketRealityScreenModelV1 {
   view: MarketRealityViewV1 | null;
   viewLoading: boolean;
   viewError: string | null;
+
+  /** A measurement is running. */
+  measuring: boolean;
+  /** What the last measurement spent, in a reader's words. Null before one. */
+  measurementNote: string | null;
+  measurementError: string | null;
 
   actions: MarketRealityActionsV1;
 }
@@ -136,6 +145,18 @@ function RepresentationCard({
       <p className="cr-verdict">{representation.outcomeBody}</p>
 
       <FactList facts={representation.numbers} label={`${representation.issuerName} outcome`} />
+
+      {/* History, and marked as history. Never in the same list as the numbers
+          above it, which carry open evidence only — a background sample sitting
+          in that list, in that style, is the confusion the engine grew a second
+          field to prevent. */}
+      {representation.lastSeen ? (
+        <p className="mr-lastseen">
+          <span className="mr-lastseen-k">{representation.lastSeen.label}</span>
+          <strong className="mr-lastseen-v mono">{representation.lastSeen.value}</strong>
+          <span className="cr-fact-note"> · {representation.lastSeen.note}</span>
+        </p>
+      ) : null}
 
       <p className="lnote">{representation.structureNote}</p>
 
@@ -276,6 +297,18 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
             </button>
           ))}
         </div>
+        {/* The control that closes the twenty-second gap. Absent rather than
+            disabled when the server does not offer it. */}
+        {actions.onMeasure && (
+          <button
+            type="button"
+            className="btn mr-measure"
+            onClick={actions.onMeasure}
+            disabled={model.measuring || !model.selectedKey}
+          >
+            {model.measuring ? 'Measuring…' : 'Measure now'}
+          </button>
+        )}
       </div>
 
       {/* The sizes are the ladder's own rungs. A free size field would ask the
@@ -284,7 +317,15 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
       <p className="lnote">
         Sizes are the rungs the public ladder actually measures. An exact size is
         the whole question — a $10,000 answer is not a $100 answer multiplied.
+        A router quote is good for about twenty seconds, so a board that has been
+        open a while is history until you measure again.
       </p>
+
+      {model.measurementError ? <p className="note warn">{model.measurementError}</p> : null}
+      {/* What the measurement actually spent. "Everything was already current"
+          and "two routers answered" are different facts, and a reader who
+          pressed a button deserves to know which one happened. */}
+      {model.measurementNote ? <p className="lnote mr-spent">{model.measurementNote}</p> : null}
 
       {model.viewError ? <p className="note warn">{model.viewError}</p> : null}
 

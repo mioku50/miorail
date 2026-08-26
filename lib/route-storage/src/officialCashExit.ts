@@ -383,4 +383,25 @@ export interface OfficialCashExitRepositoryV1 {
     scope: 'public_ladder' | 'tenant_position';
     tenantId?: string | null;
   }): Promise<CashExitMeasurementRunV1 | null>;
+
+  /**
+   * Every completed run in a window, newest first.
+   *
+   * The read a comparable series is built from. Bounded by BOTH a time window
+   * and a row limit, because the two bound different failures: a window keeps a
+   * caller from asking for the whole table, and a limit keeps a busy token's
+   * hour from being a bigger answer than a quiet token's month.
+   *
+   * `since` is inclusive and compared against `completed_at`, which is when the
+   * evidence was finished rather than when the pass began — a run that started
+   * before the window and finished inside it belongs to the window.
+   */
+  completedRunsSince(input: {
+    chainId: 8453;
+    tokenAddress: string;
+    scope: 'public_ladder' | 'tenant_position';
+    tenantId?: string | null;
+    since: string;
+    limit: number;
+  }): Promise<CashExitMeasurementRunV1[]>;
 }

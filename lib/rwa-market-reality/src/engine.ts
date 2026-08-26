@@ -15,6 +15,8 @@ import {
   MarketRealityQuestionV1Schema,
   MarketRealityResponseV1Schema,
   type MarketRealityDirectionV1,
+  type MarketRealityLivenessV1,
+  type MarketRealityObservationV1,
   type MarketRealityReferenceStateV1,
   type MarketRealityIndexV1,
   type MarketRealityResponseV1,
@@ -139,6 +141,58 @@ function bestRowV1(
   );
 }
 
+/**
+ * The newest observation for this exact question, whatever its age.
+ *
+ * History. The background sampler produces one of these every time it runs, and
+ * it is never a current price — the caller must place it in `lastObservation`
+ * and nowhere else.
+ *
+ * "Newest" is by `observedAt` across sources, with the source name breaking a
+ * tie so the same run always yields the same row.
+ */
+function latestObservationV1(
+  rows: readonly CashExitSourceObservationV1[],
+  direction: MarketRealityDirectionV1,
+  nowMs: number,
+): MarketRealityObservationV1 | null {
+  const observed = rows
+    .map((row) => {
+      const quote = quoteForDirectionV1(row, direction);
+      const observedAt = quote?.observedAt ?? row.observedAt;
+      return { row, quote, observedAt };
+    })
+    .filter((item) => Number.isFinite(Date.parse(item.observedAt)))
+    .sort(
+      (left, right) =>
+        Date.parse(right.observedAt) - Date.parse(left.observedAt) ||
+        left.row.source.localeCompare(right.row.source),
+    );
+  const newest = observed[0];
+  if (!newest) return null;
+  const expiresAt = newest.quote?.expiresAt ?? newest.row.expiresAt;
+  return {
+    source: newest.row.source,
+    // A row that carried a quote WAS quoted, however long ago. Reporting it as
+    // `not_measured` because time passed is the collapse this field exists to
+    // undo.
+    status: newest.quote
+      ? 'quoted'
+      : newest.row.errorCode === 'cash_size_anchor_no_route' ||
+          ['buy_only', 'unavailable'].includes(newest.row.status)
+        ? 'no_route'
+        : 'measurement_failed',
+    errorCode: newest.row.errorCode ?? null,
+    observedAt: newest.observedAt,
+    expiresAt,
+    returnedCashAtomic:
+      direction === 'sell'
+        ? (newest.row.sellQuote?.outputAtomic ?? null)
+        : (newest.row.buyQuote?.inputAtomic ?? null),
+    open: Date.parse(expiresAt) > nowMs,
+  };
+}
+
 function exactRowsV1(
   run: CashExitMeasurementRunV1 | null,
   requestedCashAtomic: string,
@@ -253,6 +307,13 @@ export async function assembleMarketRealityV1(
             destinations: [...run.destinations].sort(),
           })
         : null;
+      const lastObservation = latestObservationV1(rows, question.direction, nowMs);
+      const liveness: MarketRealityLivenessV1 =
+        lastObservation === null
+          ? 'never_measured'
+          : sourceStates.some((item) => item.status !== 'not_measured')
+            ? 'live'
+            : 'history_only';
       return {
         tokenAddress: binding.tokenAddress,
         issuerId: binding.issuerId!,
@@ -299,6 +360,8 @@ export async function assembleMarketRealityV1(
         }),
         observedAt: quote?.observedAt ?? null,
         expiresAt: quote?.expiresAt ?? null,
+        liveness,
+        lastObservation,
       };
     }),
   );

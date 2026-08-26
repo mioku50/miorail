@@ -160,6 +160,76 @@ if (!throwaway) {
       );
     });
 
+    test('the series read returns the same total order the pair reads use', async () => {
+      // A series and a pair drawn from it must never disagree about which run
+      // came first: `completed_at` alone lets two runs stamped in the same
+      // second swap places between reads and invent a change.
+      const executor: SqlTemplateExecutor = (strings, ...values) =>
+        (
+          sql as unknown as (
+            strings: TemplateStringsArray,
+            ...values: unknown[]
+          ) => Promise<Record<string, unknown>[]>
+        )(strings, ...values);
+      const repository = createDatabaseOfficialCashExitRepository(executor);
+      const run = runV1();
+      await repository.recordCompletedRun(run);
+
+      const inside = await repository.completedRunsSince({
+        chainId: 8453,
+        tokenAddress: TOKEN,
+        scope: 'public_ladder',
+        since: new Date(Date.parse(run.completedAt) - 60_000).toISOString(),
+        limit: 50,
+      });
+      assert.deepEqual(inside, [run], 'a run inside the window is in the window');
+
+      const outside = await repository.completedRunsSince({
+        chainId: 8453,
+        tokenAddress: TOKEN,
+        scope: 'public_ladder',
+        since: new Date(Date.parse(run.completedAt) + 60_000).toISOString(),
+        limit: 50,
+      });
+      assert.deepEqual(outside, [], 'and outside it, it is not');
+    });
+
+    test('the series read refuses to cross the tenant boundary', async () => {
+      // Same guard the other two reads carry. A history query is exactly where
+      // a tenant position would leak if the check were only on the newest read.
+      const executor: SqlTemplateExecutor = (strings, ...values) =>
+        (
+          sql as unknown as (
+            strings: TemplateStringsArray,
+            ...values: unknown[]
+          ) => Promise<Record<string, unknown>[]>
+        )(strings, ...values);
+      const repository = createDatabaseOfficialCashExitRepository(executor);
+      await assert.rejects(
+        () =>
+          repository.completedRunsSince({
+            chainId: 8453,
+            tokenAddress: TOKEN,
+            scope: 'public_ladder',
+            tenantId: 'tenant',
+            since: new Date(0).toISOString(),
+            limit: 10,
+          }),
+        /public ladder is not tenant scoped/,
+      );
+      await assert.rejects(
+        () =>
+          repository.completedRunsSince({
+            chainId: 8453,
+            tokenAddress: TOKEN,
+            scope: 'tenant_position',
+            since: new Date(0).toISOString(),
+            limit: 10,
+          }),
+        /tenant position read requires tenantId/,
+      );
+    });
+
     test('database refuses public evidence carrying a tenant', async () => {
       await assert.rejects(
         sql!`INSERT INTO official_cash_exit_runs (
