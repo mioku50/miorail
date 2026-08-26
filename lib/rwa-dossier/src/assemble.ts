@@ -34,6 +34,7 @@ import {
   readTokenizedStockReferenceV1,
   unavailableTokenizedStockReferenceV1,
 } from './reference.js';
+import { readB20MultiplierV1, unavailableMultiplierV1 } from './multiplier.js';
 
 const USDC_BASE_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 const WETH_BASE_V1 = '0x4200000000000000000000000000000000000006';
@@ -473,6 +474,13 @@ export async function assembleOfficialAssetDossierV1(
           // proof that no pause just began.
           registryPause: null,
         });
+  // A disclosure, never an adjustment: the feed above is total-return and has
+  // already applied this. Read at the same anchor so the two facts describe
+  // one block rather than two moments.
+  const multiplier =
+    anchor === null
+      ? unavailableMultiplierV1({ tokenAddress, reason: 'chain_read_failed' })
+      : await readB20MultiplierV1(deps.reader, { tokenAddress, anchor, now });
   const [publicExitRun, positionExitRun] = deps.cashExit
     ? await Promise.all([
         deps.cashExit.latestCompletedRun({ chainId: 8453, tokenAddress, scope: 'public_ladder' }),
@@ -528,6 +536,7 @@ export async function assembleOfficialAssetDossierV1(
     assembledAt: now.toISOString(),
     identity: identityProjectionV1(identity!, discrepancies),
     referenceValue,
+    multiplier,
     executableValue,
     cashExitLadder,
     comparison,

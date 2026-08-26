@@ -86,6 +86,62 @@ describe('reading the chain', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Phase 9A: four causes used to arrive as `rpc_unreachable`.
+//
+// On 2026-08-26 the console header showed "Block —" beside a rail that showed a
+// stored ledger position, and the log said the RPC "did not answer" — while a
+// direct probe of both configured endpoints answered in 118-226ms. Being
+// declined this second is not being down, and an operator who cannot tell them
+// apart cannot tell whether to wait or to page someone.
+// ---------------------------------------------------------------------------
+
+describe('the reason says which failure it was', () => {
+  test('a 429 is throttling, not an outage', async () => {
+    globalThis.fetch = (async () => new Response('slow down', { status: 429 })) as typeof globalThis.fetch;
+    const conditions = await readChainConditionsV1(RPC);
+    assert.equal(conditions.reason, 'rpc_rate_limited');
+    assert.equal(conditions.blockNumber, null);
+  });
+
+  test('a 5xx is the endpoint failing, not the endpoint missing', async () => {
+    globalThis.fetch = (async () => new Response('boom', { status: 502 })) as typeof globalThis.fetch;
+    assert.equal((await readChainConditionsV1(RPC)).reason, 'rpc_http_error');
+  });
+
+  test('a throttle inside a 200 envelope is still a throttle', async () => {
+    // Some providers answer 200 and put the refusal per-call. Reading that as
+    // an unreadable shape would blame the payload for a quota.
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify([
+          { jsonrpc: '2.0', id: 1, error: { code: -32005, message: 'over rate limit' } },
+          { jsonrpc: '2.0', id: 2, error: { code: -32005, message: 'over rate limit' } },
+        ]),
+        { status: 200 },
+      )) as typeof globalThis.fetch;
+    assert.equal((await readChainConditionsV1(RPC)).reason, 'rpc_rate_limited');
+  });
+
+  test('our own abort is a timeout, not an unreachable endpoint', async () => {
+    globalThis.fetch = ((_url: string, init?: { signal?: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+        });
+      })) as unknown as typeof globalThis.fetch;
+    assert.equal((await readChainConditionsV1(RPC)).reason, 'rpc_timeout');
+  });
+
+  test('a 200 whose shape is wrong is still about the shape', async () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: '0x1' }), {
+        status: 200,
+      })) as typeof globalThis.fetch;
+    assert.equal((await readChainConditionsV1(RPC)).reason, 'rpc_invalid_response');
+  });
+});
+
 describe('the gas history is measured, never interpolated', () => {
   test('a failed read adds no point', async () => {
     globalThis.fetch = batchResponder('0x64', '0x3b9aca0');

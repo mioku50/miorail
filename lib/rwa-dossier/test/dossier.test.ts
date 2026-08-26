@@ -17,6 +17,7 @@ import { ZERO_HASH_V1 } from '@mioagent/route-domain';
 import {
   assembleOfficialAssetDossierV1,
   compareReferenceAndExecutableV1,
+  readB20MultiplierV1,
   readTokenizedStockReferenceV1,
   type ExecutableValueV1,
 } from '../src/index.js';
@@ -544,5 +545,92 @@ describe('tokenized stock reference boundary', () => {
     assert.equal(invalid.status, 'invalid');
     assert.equal(invalid.valueAtomic, null);
     assert.equal(invalid.withheldReason, 'reference_invalid');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 9A — the multiplier is read, disclosed, and never applied twice.
+//
+// Measured on Base at block 50,473,631: all thirteen Coinbase representations
+// return exactly 1e18, and `WAD_PRECISION()` returns 1e18 alongside. A value
+// that is 1.0 everywhere today is exactly why this is read rather than assumed
+// — the day a dividend moves it, a stored 1.0 becomes a lie.
+// ---------------------------------------------------------------------------
+
+describe('representation multiplier', () => {
+  const ANCHOR = { blockNumber: '5000', blockHash: BLOCK_HASH, blockTag: '0x1388' } as const;
+  const WAD = `0x${(10n ** 18n).toString(16).padStart(64, '0')}`;
+
+  function multiplierReader(answers: Record<string, { ok: boolean; value?: string; reason?: string }>) {
+    return {
+      async call(input: { data: string }) {
+        const answer = answers[input.data];
+        if (!answer) return { ok: false as const, reason: 'reverted' as const };
+        return answer.ok
+          ? { ok: true as const, value: answer.value!, raw: answer.value! }
+          : { ok: false as const, reason: answer.reason as never };
+      },
+      async readBlockAnchor() {
+        return { ok: true as const, value: ANCHOR };
+      },
+    } as never;
+  }
+
+  test('reads the scale rather than assuming 1e18, and never applies it to the reference', async () => {
+    const value = 1_057_380_318_816_778_075n;
+    const read = await readB20MultiplierV1(
+      multiplierReader({
+        '0x1b3ed722': { ok: true, value: `0x${value.toString(16).padStart(64, '0')}` },
+        '0x664808a8': { ok: true, value: WAD },
+      }),
+      { tokenAddress: TOKEN, anchor: ANCHOR, now: NOW },
+    );
+    assert.equal(read.status, 'read');
+    assert.equal(read.rawValue, value.toString());
+    assert.equal(read.scale, (10n ** 18n).toString());
+    // Decimal string arithmetic: the last digits are the difference between a
+    // share count that reconciles and one that does not.
+    assert.equal(read.normalized, '1.057380318816778075');
+    assert.equal(read.oneToOne, false);
+    assert.equal(read.appliedToReference, false, 'the total-return feed already applied it');
+    assert.equal(read.evidence?.method, 'multiplier(); WAD_PRECISION()');
+  });
+
+  test('one token is one share only when the two words are equal', async () => {
+    const read = await readB20MultiplierV1(
+      multiplierReader({ '0x1b3ed722': { ok: true, value: WAD }, '0x664808a8': { ok: true, value: WAD } }),
+      { tokenAddress: TOKEN, anchor: ANCHOR, now: NOW },
+    );
+    assert.equal(read.oneToOne, true);
+    assert.equal(read.normalized, '1.000000000000000000');
+  });
+
+  test('a contract that does not implement it is absent; an endpoint that would not answer is ours', async () => {
+    const absent = await readB20MultiplierV1(
+      multiplierReader({ '0x1b3ed722': { ok: false, reason: 'reverted' }, '0x664808a8': { ok: true, value: WAD } }),
+      { tokenAddress: TOKEN, anchor: ANCHOR, now: NOW },
+    );
+    assert.equal(absent.status, 'absent');
+    assert.equal(absent.unavailableReason, 'not_implemented');
+    assert.equal(absent.oneToOne, null, 'an unread multiplier never claims one-to-one');
+
+    const ours = await readB20MultiplierV1(
+      multiplierReader({ '0x1b3ed722': { ok: false, reason: 'rate_limited' }, '0x664808a8': { ok: true, value: WAD } }),
+      { tokenAddress: TOKEN, anchor: ANCHOR, now: NOW },
+    );
+    assert.equal(ours.status, 'unavailable');
+    assert.equal(ours.unavailableReason, 'chain_read_failed');
+  });
+
+  test('a scale that is not a power of ten has no decimal rendering this build will invent', async () => {
+    const read = await readB20MultiplierV1(
+      multiplierReader({
+        '0x1b3ed722': { ok: true, value: WAD },
+        '0x664808a8': { ok: true, value: `0x${(3n).toString(16).padStart(64, '0')}` },
+      }),
+      { tokenAddress: TOKEN, anchor: ANCHOR, now: NOW },
+    );
+    assert.equal(read.status, 'invalid');
+    assert.equal(read.unavailableReason, 'answer_unusable');
   });
 });

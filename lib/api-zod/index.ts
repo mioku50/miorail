@@ -2491,7 +2491,17 @@ export const StatusResponseSchema = z.object({
       observedAt: z.string().nullable(),
       // Measured samples only, oldest first. A gap here is a real gap.
       gasPoints: z.array(z.object({ at: z.string(), gwei: z.string() })),
-      reason: z.enum(['ok', 'rpc_unreachable', 'rpc_invalid_response', 'not_configured']),
+      // Four causes used to arrive as `rpc_unreachable`, and they are four
+      // different operator actions. Throttled is not down.
+      reason: z.enum([
+        'ok',
+        'rpc_rate_limited',
+        'rpc_http_error',
+        'rpc_timeout',
+        'rpc_unreachable',
+        'rpc_invalid_response',
+        'not_configured',
+      ]),
     })
     .optional(),
   // T67X-A1: MIORAIL_PAID_INTELLIGENCE says an operator wants paid routes.

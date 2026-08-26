@@ -337,6 +337,14 @@ export function chainUnavailableReasonV1(status: ConsoleServerStatusV1 | null): 
   const reason = status?.chain?.reason;
   if (!reason || reason === 'ok') return reason ? null : 'Chain conditions are not reported by this server.';
   if (reason === 'not_configured') return 'No Base RPC is configured, so block and gas are unavailable.';
+  // Being declined this second is not being down, and a reader who cannot tell
+  // them apart cannot tell whether to wait or to page someone.
+  if (reason === 'rpc_rate_limited')
+    return 'The Base RPC is throttling us right now. Route comparison still works.';
+  if (reason === 'rpc_http_error')
+    return 'The Base RPC answered with an error. Route comparison still works.';
+  if (reason === 'rpc_timeout')
+    return 'The Base RPC did not answer in time. Route comparison still works.';
   if (reason === 'rpc_unreachable') return 'The Base RPC did not answer. Route comparison still works.';
   return 'The Base RPC returned something unreadable. Route comparison still works.';
 }

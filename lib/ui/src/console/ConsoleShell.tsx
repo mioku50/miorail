@@ -106,6 +106,10 @@ export interface ConsoleHeaderModelV1 {
   onNavigate?: (section: ConsoleSectionV1) => void;
   blockNumber: string | null;
   gasLabel: string | null;
+  /** Why block and gas are absent, when they are. A bare dash beside a rail
+   * that shows a stored block number reads as "our data is broken"; it usually
+   * means one live probe was declined this second. */
+  chainUnavailableReason?: string | null;
   networkLabel: string;
   connected: boolean;
   walletLabel: string | null;
@@ -219,7 +223,7 @@ export function ConsoleShell(props: ConsoleShellProps) {
             ))}
           </nav>
           <div className="hspace" />
-          <div className="hstat">
+          <div className="hstat" title={header.chainUnavailableReason ?? undefined}>
             <span>
               Block <b className="mono">{header.blockNumber ?? '—'}</b>
             </span>

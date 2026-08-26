@@ -33,9 +33,27 @@ export interface ChainConditionsV1 {
   observedAt: string | null;
   /** Measured gas samples, oldest first, for the sparkline. */
   gasPoints: Array<{ at: string; gwei: string }>;
-  /** Why the values are absent, when they are. */
-  reason: 'ok' | 'rpc_unreachable' | 'rpc_invalid_response' | 'not_configured';
+  /** Why the values are absent, when they are.
+   *
+   * Four different things used to arrive as `rpc_unreachable`: a throttled
+   * request, a server-side error, a request that ran out of time, and an
+   * endpoint that never answered. They are four different operator actions,
+   * and on 2026-08-26 the console showed a dash while the endpoint was in
+   * fact answering every probe in ~120ms — the reason had to be readable to
+   * tell throttling apart from an outage. */
+  reason:
+    | 'ok'
+    | 'rpc_rate_limited'
+    | 'rpc_http_error'
+    | 'rpc_timeout'
+    | 'rpc_unreachable'
+    | 'rpc_invalid_response'
+    | 'not_configured';
 }
+
+/** Why one read did not produce a sample. Separate from the public reason so
+ * a caller cannot accidentally report `ok` for a failed read. */
+type ReadFailureV1 = Exclude<ChainConditionsV1['reason'], 'ok' | 'not_configured'>;
 
 const SAMPLE_TTL_MS = 12_000;
 const HISTORY_WINDOW_MS = 60 * 60 * 1000;
@@ -53,7 +71,8 @@ interface SampleV1 {
 
 const history: Array<{ at: number; gwei: string }> = [];
 let cached: { value: SampleV1; expiresAt: number } | null = null;
-let inflight: Promise<SampleV1 | null> | null = null;
+let inflight: Promise<{ ok: true; sample: SampleV1 } | { ok: false; reason: ReadFailureV1 }> | null =
+  null;
 
 /** Exported for tests: module-level caches make a suite order-dependent. */
 export function resetChainConditionsForTests(): void {
@@ -74,9 +93,16 @@ function weiToGwei(wei: string): string {
 /** `now` is threaded in rather than read from the clock inside: the cache
  * window and the history thinning both compare against it, and mixing an
  * injected clock with `Date.now()` made those two disagree. */
-async function rpcBatchV1(url: string, now: number): Promise<SampleV1 | null> {
+async function rpcBatchV1(
+  url: string,
+  now: number,
+): Promise<{ ok: true; sample: SampleV1 } | { ok: false; reason: ReadFailureV1 }> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), RPC_TIMEOUT_MS);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, RPC_TIMEOUT_MS);
   try {
     const response = await fetch(url, {
       method: 'POST',
@@ -87,25 +113,44 @@ async function rpcBatchV1(url: string, now: number): Promise<SampleV1 | null> {
       ]),
       signal: controller.signal,
     });
-    if (!response.ok) return null;
+    // A 429 is the endpoint declining to serve us this second; a 5xx is the
+    // endpoint failing. Neither is "did not answer", and an operator reading
+    // the first as the second goes looking for an outage that isn't there.
+    if (response.status === 429) return { ok: false, reason: 'rpc_rate_limited' };
+    if (!response.ok) return { ok: false, reason: 'rpc_http_error' };
     const payload: unknown = await response.json();
-    if (!Array.isArray(payload)) return null;
+    if (!Array.isArray(payload)) return { ok: false, reason: 'rpc_invalid_response' };
     const byId = new Map<number, unknown>();
+    let rateLimited = false;
     for (const entry of payload) {
-      if (entry && typeof entry === 'object' && 'id' in entry) {
+      if (!entry || typeof entry !== 'object') continue;
+      if ('id' in entry) {
         byId.set(Number((entry as { id: unknown }).id), (entry as { result?: unknown }).result);
+      }
+      // Some providers answer 200 and put the throttle inside the envelope,
+      // per-call. Reading that as an unreadable response would blame the shape.
+      const error = (entry as { error?: { message?: unknown } }).error;
+      if (error && /rate limit|too many requests/i.test(String(error.message ?? ''))) {
+        rateLimited = true;
       }
     }
     const block = byId.get(1);
     const gas = byId.get(2);
-    if (typeof block !== 'string' || typeof gas !== 'string') return null;
+    if (typeof block !== 'string' || typeof gas !== 'string') {
+      return { ok: false, reason: rateLimited ? 'rpc_rate_limited' : 'rpc_invalid_response' };
+    }
     return {
-      at: now,
-      blockNumber: BigInt(block).toString(),
-      gasPriceWei: BigInt(gas).toString(),
+      ok: true,
+      sample: {
+        at: now,
+        blockNumber: BigInt(block).toString(),
+        gasPriceWei: BigInt(gas).toString(),
+      },
     };
   } catch {
-    return null;
+    // The abort we scheduled ourselves is a timeout. Anything else never
+    // reached a server we can describe.
+    return { ok: false, reason: timedOut ? 'rpc_timeout' : 'rpc_unreachable' };
   } finally {
     clearTimeout(timer);
   }
@@ -148,16 +193,16 @@ export async function readChainConditionsV1(
     inflight = null;
   });
 
-  const sample = await inflight;
-  if (!sample) {
-    logger.warn('Chain conditions unavailable', { reason: 'rpc_unreachable' });
+  const read = await inflight;
+  if (!read.ok) {
+    logger.warn('Chain conditions unavailable', { reason: read.reason });
     // The previous reading is NOT served as current. A block number from two
     // minutes ago presented without qualification is worse than a dash.
-    return emptyV1('rpc_unreachable');
+    return emptyV1(read.reason);
   }
-  cached = { value: sample, expiresAt: sample.at + SAMPLE_TTL_MS };
-  recordSampleV1(sample);
-  return presentV1(sample);
+  cached = { value: read.sample, expiresAt: read.sample.at + SAMPLE_TTL_MS };
+  recordSampleV1(read.sample);
+  return presentV1(read.sample);
 }
 
 function presentV1(sample: SampleV1): ChainConditionsV1 {

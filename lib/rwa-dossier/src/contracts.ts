@@ -102,6 +102,57 @@ export const DossierControlsV1Schema = z
   })
   .strict();
 
+/**
+ * The current multiplier for one representation.
+ *
+ * `appliedToReference` is a literal `false` and must stay one. The Chainlink
+ * total-return feed has already applied the multiplier, which is what
+ * `ReferenceValueV1.multiplierAppliedByFeed` asserts; a second application
+ * here would double-count every corporate action.
+ *
+ * `oneToOne` is the sentence a reader needs — "one token is one share" — and
+ * it is `null`, never `true`, when the value could not be read.
+ */
+export const RepresentationMultiplierV1Schema = z
+  .object({
+    status: z.enum(['read', 'absent', 'unavailable', 'invalid']),
+    tokenAddress: Address.nullable(),
+    /** As the chain returned it, in `scale` units. */
+    rawValue: Digits.nullable(),
+    /** Read from `WAD_PRECISION()`, never assumed to be 1e18. */
+    scale: Digits.nullable(),
+    /** Decimal string, e.g. `1.057380318816778075`. */
+    normalized: z
+      .string()
+      .regex(/^(0|[1-9][0-9]*)\.[0-9]+$/)
+      .nullable(),
+    oneToOne: z.boolean().nullable(),
+    source: z.enum(['b20_asset_multiplier']).nullable(),
+    appliedToReference: z.literal(false),
+    unavailableReason: z
+      .enum(['token_address_unknown', 'not_implemented', 'chain_read_failed', 'answer_unusable'])
+      .nullable(),
+    evidence: DossierEvidenceRefV1Schema.nullable(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.status === 'read' && value.normalized === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['normalized'],
+        message: 'a multiplier that was read has a value',
+      });
+    }
+    if (value.status !== 'read' && value.oneToOne !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['oneToOne'],
+        message: 'an unread multiplier never claims that one token is one share',
+      });
+    }
+  });
+export type RepresentationMultiplierV1 = z.infer<typeof RepresentationMultiplierV1Schema>;
+
 export const ReferenceValueV1Schema = z
   .object({
     status: z.enum(['fresh', 'stale', 'paused', 'unavailable', 'invalid']),
@@ -249,6 +300,9 @@ export const OfficialAssetDossierV1Schema = z
     assembledAt: Timestamp,
     identity: OfficialDossierIdentityV1Schema,
     referenceValue: ReferenceValueV1Schema,
+    // One token is not permanently one share. Read at the same block anchor as
+    // the reference, disclosed rather than applied.
+    multiplier: RepresentationMultiplierV1Schema,
     executableValue: ExecutableValueV1Schema,
     cashExitLadder: CashExitLadderV1Schema,
     comparison: ReferenceExecutableComparisonV1Schema,
