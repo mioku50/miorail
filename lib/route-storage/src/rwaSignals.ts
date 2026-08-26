@@ -47,7 +47,7 @@ export const RWA_CASH_EXIT_CHANGE_THRESHOLD_BPS_V1 = 50;
 
 const AddedFactsV1Schema = z
   .object({
-    sourceKind: z.enum(['base_docs_technical', 'base_product_list']),
+    sourceKind: z.enum(['base_docs_technical', 'base_product_list', 'backed_assets_api']),
     sourceUrl: z.string().url().startsWith('https://'),
     ticker: z.string().min(1).max(16),
     displayName: z.string().min(1).max(120).nullable(),
@@ -72,7 +72,10 @@ const MarketFactsV1Schema = z
     ticker: z.string().min(1).max(16),
     destination: z.enum(['USDC', 'ETH']),
     requestedCashAtomic: z.string().regex(/^(0|[1-9][0-9]*)$/),
-    roundTripCostBps: z.string().regex(/^-?(0|[1-9][0-9]*)$/).nullable(),
+    roundTripCostBps: z
+      .string()
+      .regex(/^-?(0|[1-9][0-9]*)$/)
+      .nullable(),
     approvedSources: z.array(z.string().min(1).max(100)).min(1).max(16),
   })
   .strict();
@@ -212,10 +215,15 @@ export interface RwaSignalOutcomeV1 {
   alreadyRecorded: string[];
 }
 
-export function assertRwaSignalV1(value: unknown, direction: 'read' | 'write' = 'read'): RwaSignalV1 {
+export function assertRwaSignalV1(
+  value: unknown,
+  direction: 'read' | 'write' = 'read',
+): RwaSignalV1 {
   const parsed = RwaSignalV1Schema.safeParse(value);
   if (parsed.success) return parsed.data;
-  const detail = parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ');
+  const detail = parsed.error.issues
+    .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+    .join('; ');
   throw new RouteStorageIntegrityError(`rwa signal failed validation on ${direction}: ${detail}`);
 }
 

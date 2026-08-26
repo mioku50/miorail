@@ -400,6 +400,27 @@
       "when": 1788010000000,
       "tag": "0056_watch_schedule",
       "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1788010100000,
+      "tag": "0057_representation_ratio",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1788010200000,
+      "tag": "0058_issuer_membership",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1788010300000,
+      "tag": "0059_underlying_identity_and_backed",
+      "breakpoints": true
     }
   ]
 }

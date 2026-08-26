@@ -32,7 +32,11 @@ const Hash = z.string().regex(/^0x[0-9a-f]{64}$/);
 
 /** The reviewed adapters. Adding one is a review decision: it means somebody
  * proved which function to call AND which side applies the result. */
-export const RATIO_KINDS_V1 = ['b20_multiplier', 'dinari_balance_per_share'] as const;
+export const RATIO_KINDS_V1 = [
+  'b20_multiplier',
+  'dinari_balance_per_share',
+  'backed_evm_multiplier',
+] as const;
 export type RatioKindV1 = (typeof RATIO_KINDS_V1)[number];
 
 export const RATIO_APPLICATIONS_V1 = ['apply_to_raw_balance', 'already_applied_by_token'] as const;
@@ -47,6 +51,9 @@ export const RATIO_APPLICATION_BY_KIND_V1: Readonly<Record<RatioKindV1, RatioApp
   // DShare extends ERC20Rebasing: `balanceOf` already divides by
   // balance-per-share. Applying it again double-counts every split.
   dinari_balance_per_share: 'already_applied_by_token',
+  // Backed's published EVM implementation keeps internal shares and returns
+  // the multiplier-adjusted amount from balanceOf().
+  backed_evm_multiplier: 'already_applied_by_token',
 };
 
 /**
@@ -69,6 +76,7 @@ export type RatioScaleSourceV1 = (typeof RATIO_SCALE_SOURCES_V1)[number];
 export const RATIO_SCALE_SOURCE_BY_KIND_V1: Readonly<Record<RatioKindV1, RatioScaleSourceV1>> = {
   b20_multiplier: 'read_from_contract',
   dinari_balance_per_share: 'reviewed_constant',
+  backed_evm_multiplier: 'reviewed_constant',
 };
 
 /** The scale a reviewed adapter declares, for the kinds whose contracts do not
@@ -77,6 +85,7 @@ export const RATIO_SCALE_SOURCE_BY_KIND_V1: Readonly<Record<RatioKindV1, RatioSc
 export const RATIO_DECLARED_SCALE_BY_KIND_V1: Readonly<Record<RatioKindV1, string | null>> = {
   b20_multiplier: null,
   dinari_balance_per_share: '1000000000000000000',
+  backed_evm_multiplier: '1000000000000000000',
 };
 
 export const RepresentationRatioRowV1Schema = z
@@ -131,7 +140,8 @@ export const RepresentationRatioRowV1Schema = z
     if (row.changes > 0 && row.changes >= row.reads) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'the first read of a representation is never a change, so changes stay below reads',
+        message:
+          'the first read of a representation is never a change, so changes stay below reads',
       });
     }
   });
@@ -175,7 +185,9 @@ export function assertRepresentationRatioV1(
   const parsed = RepresentationRatioRowV1Schema.safeParse(value);
   if (parsed.success) return parsed.data;
   const detail = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
-  throw new RouteStorageIntegrityError(`representation ratio failed validation on ${direction}: ${detail}`);
+  throw new RouteStorageIntegrityError(
+    `representation ratio failed validation on ${direction}: ${detail}`,
+  );
 }
 
 export function assertRepresentationRatioChangeV1(

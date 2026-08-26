@@ -1,4 +1,11 @@
-import { rwaAgeLabelV1, rwaBpsLabelV1, cashSizeLabelV1, moneyLabelV1, type FactViewV1, type ToneV1 } from './rwaDiscoverView';
+import {
+  rwaAgeLabelV1,
+  rwaBpsLabelV1,
+  cashSizeLabelV1,
+  moneyLabelV1,
+  type FactViewV1,
+  type ToneV1,
+} from './rwaDiscoverView';
 
 // ---------------------------------------------------------------------------
 // Phase 7 — one pasted address, turned into something a person reads.
@@ -34,7 +41,7 @@ export interface AddressDossierWireV1 {
       ticker: string;
       displayName: string | null;
       issuer: string;
-      listedIn: readonly ('base_docs_technical' | 'base_product_list')[];
+      listedIn: readonly ('base_docs_technical' | 'base_product_list' | 'backed_assets_api')[];
       sourceDiscrepancy: boolean;
       referenceFeedAddress: string | null;
     } | null;
@@ -176,9 +183,12 @@ const STANDING_COPY_V1: Readonly<
   },
 };
 
-const SOURCE_LABEL_V1: Readonly<Record<'base_docs_technical' | 'base_product_list', string>> = {
+const SOURCE_LABEL_V1: Readonly<
+  Record<'base_docs_technical' | 'base_product_list' | 'backed_assets_api', string>
+> = {
   base_docs_technical: 'Base docs',
   base_product_list: 'Base product page',
+  backed_assets_api: 'Backed bTokens API',
 };
 
 const ORIGIN_COPY_V1: Readonly<
@@ -200,11 +210,13 @@ const ORIGIN_COPY_V1: Readonly<
   },
   not_read: {
     label: 'Not read yet',
-    detail: 'This launch’s transaction has not been read. That is about our backfill, not the launch.',
+    detail:
+      'This launch’s transaction has not been read. That is about our backfill, not the launch.',
   },
   no_launch_row: {
     label: 'Not established',
-    detail: 'The B20 index does not hold a launch for this address, so there is no transaction to read.',
+    detail:
+      'The B20 index does not hold a launch for this address, so there is no transaction to read.',
   },
 };
 
@@ -268,7 +280,8 @@ export function investigateViewV1(wire: AddressDossierWireV1, now: Date): Invest
   if (identity.official) {
     identityFacts.push({
       label: 'Listed by',
-      value: identity.official.listedIn.map((kind) => SOURCE_LABEL_V1[kind]).join(' + ') || 'no source',
+      value:
+        identity.official.listedIn.map((kind) => SOURCE_LABEL_V1[kind]).join(' + ') || 'no source',
       note: identity.official.sourceDiscrepancy
         ? 'The reviewed sources do not agree; both readings are kept'
         : null,
@@ -336,7 +349,9 @@ export function investigateViewV1(wire: AddressDossierWireV1, now: Date): Invest
       : [
           {
             label: 'Reference value',
-            value: moneyLabelV1(wire.referenceValue.valueAtomic, wire.referenceValue.decimals) ?? 'not available',
+            value:
+              moneyLabelV1(wire.referenceValue.valueAtomic, wire.referenceValue.decimals) ??
+              'not available',
             note:
               wire.referenceValue.status === 'fresh'
                 ? `Chainlink total-return feed${
@@ -344,7 +359,9 @@ export function investigateViewV1(wire: AddressDossierWireV1, now: Date): Invest
                       ? ''
                       : ` · updated ${
                           rwaAgeLabelV1(
-                            new Date(now.getTime() - wire.referenceValue.ageSeconds * 1000).toISOString(),
+                            new Date(
+                              now.getTime() - wire.referenceValue.ageSeconds * 1000,
+                            ).toISOString(),
                             now,
                           ) ?? 'recently'
                         }`
@@ -358,7 +375,8 @@ export function investigateViewV1(wire: AddressDossierWireV1, now: Date): Invest
     label: CONTROL_LABEL_V1[field.key] ?? field.key,
     // Null renders the reason, never a blank and never a guess.
     value: field.status === 'exact_chain_read' ? (field.value ?? 'not read') : 'not read',
-    note: field.status === 'exact_chain_read' ? null : (field.reason ?? 'This field could not be read'),
+    note:
+      field.status === 'exact_chain_read' ? null : (field.reason ?? 'This field could not be read'),
     tone: field.status === 'exact_chain_read' ? 'neutral' : 'off',
   }));
 
@@ -368,7 +386,11 @@ export function investigateViewV1(wire: AddressDossierWireV1, now: Date): Invest
       label: cashSizeLabelV1(rung.requestedCashAtomic),
       value:
         rwaBpsLabelV1(rung.roundTripCostBps) ??
-        (rung.entryRouteRefused ? 'no cash entry' : rung.status === 'full' ? 'round trip' : 'no exit route'),
+        (rung.entryRouteRefused
+          ? 'no cash entry'
+          : rung.status === 'full'
+            ? 'round trip'
+            : 'no exit route'),
       note: rung.derivedFromExactRung
         ? `carried from ${cashSizeLabelV1(rung.lowerBoundRequestedCashAtomic ?? '0')}`
         : null,
@@ -387,7 +409,14 @@ export function investigateViewV1(wire: AddressDossierWireV1, now: Date): Invest
         move === null
           ? 'One of the two readings carried no cost, so there is nothing to subtract'
           : `${rwaBpsLabelV1(rung.previousRoundTripCostBps) ?? '—'} → ${rwaBpsLabelV1(rung.roundTripCostBps) ?? '—'}`,
-      tone: move === null ? 'off' : move === '0.00%' ? 'neutral' : move.startsWith('-') ? 'good' : 'warn',
+      tone:
+        move === null
+          ? 'off'
+          : move === '0.00%'
+            ? 'neutral'
+            : move.startsWith('-')
+              ? 'good'
+              : 'warn',
     };
   });
 
@@ -401,8 +430,10 @@ export function investigateViewV1(wire: AddressDossierWireV1, now: Date): Invest
   const activity = market.activity;
   return {
     tokenAddress: wire.tokenAddress,
-    displaySymbol: identity.contract.symbol ?? identity.official?.ticker ?? identity.launch?.symbol ?? null,
-    displayName: identity.contract.name ?? identity.official?.displayName ?? identity.launch?.name ?? null,
+    displaySymbol:
+      identity.contract.symbol ?? identity.official?.ticker ?? identity.launch?.symbol ?? null,
+    displayName:
+      identity.contract.name ?? identity.official?.displayName ?? identity.launch?.name ?? null,
     standing,
     readAt: rwaAgeLabelV1(wire.assembledAt, now) ?? 'just now',
     established: wire.established,
@@ -440,7 +471,10 @@ export function investigateViewV1(wire: AddressDossierWireV1, now: Date): Invest
     topology: [
       {
         label: 'Identified pools',
-        value: market.topology.status === 'unavailable' ? 'not observed' : String(market.topology.pairedPoolCount ?? 0),
+        value:
+          market.topology.status === 'unavailable'
+            ? 'not observed'
+            : String(market.topology.pairedPoolCount ?? 0),
         note:
           market.topology.status === 'unavailable'
             ? 'The ledger tail has not read this token'
@@ -450,7 +484,9 @@ export function investigateViewV1(wire: AddressDossierWireV1, now: Date): Invest
       {
         label: 'Reachable in one hop to cash',
         value:
-          market.topology.status === 'unavailable' ? 'not observed' : String(market.topology.directCashPoolCount ?? 0),
+          market.topology.status === 'unavailable'
+            ? 'not observed'
+            : String(market.topology.directCashPoolCount ?? 0),
         note: 'Pools pairing it directly with USDC or WETH',
         tone: market.topology.status === 'unavailable' ? 'off' : 'neutral',
       },

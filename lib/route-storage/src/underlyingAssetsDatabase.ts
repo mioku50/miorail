@@ -14,8 +14,22 @@ function rowToUnderlyingV1(row: Record<string, unknown>): UnderlyingAssetV1 {
       underlyingKey: String(row.underlying_key),
       assetClass: String(row.asset_class),
       canonicalName: String(row.canonical_name),
+      displaySymbol:
+        row.display_symbol === null || row.display_symbol === undefined
+          ? null
+          : String(row.display_symbol),
+      identifierScheme:
+        row.identifier_scheme === null || row.identifier_scheme === undefined
+          ? null
+          : String(row.identifier_scheme),
+      identifierValue:
+        row.identifier_value === null || row.identifier_value === undefined
+          ? null
+          : String(row.identifier_value),
       sourceKind: String(row.source_kind),
       sourceRef: String(row.source_ref),
+      sourceHash:
+        row.source_hash === null || row.source_hash === undefined ? null : String(row.source_hash),
       observedAt: new Date(row.observed_at as string).toISOString(),
     },
     'read',
@@ -30,6 +44,31 @@ function rowToBindingV1(row: Record<string, unknown>): RepresentationUnderlyingV
       underlyingKey: String(row.underlying_key),
       sourceKind: String(row.source_kind),
       sourceRef: String(row.source_ref),
+      sourceHash:
+        row.source_hash === null || row.source_hash === undefined ? null : String(row.source_hash),
+      issuerId:
+        row.issuer_id === null || row.issuer_id === undefined ? null : String(row.issuer_id),
+      issuerInstrumentKey:
+        row.issuer_instrument_key === null || row.issuer_instrument_key === undefined
+          ? null
+          : String(row.issuer_instrument_key),
+      caip10: row.caip10 === null || row.caip10 === undefined ? null : String(row.caip10),
+      representationKind:
+        row.representation_kind === null || row.representation_kind === undefined
+          ? null
+          : String(row.representation_kind),
+      evidenceStrength:
+        row.evidence_strength === null || row.evidence_strength === undefined
+          ? null
+          : String(row.evidence_strength),
+      observedBlockNumber:
+        row.observed_block_number === null || row.observed_block_number === undefined
+          ? null
+          : String(row.observed_block_number),
+      observedBlockHash:
+        row.observed_block_hash === null || row.observed_block_hash === undefined
+          ? null
+          : String(row.observed_block_hash),
       observedAt: new Date(row.observed_at as string).toISOString(),
     },
     'read',
@@ -44,16 +83,31 @@ export function createDatabaseUnderlyingAssetRepository(
       const parsed = assertUnderlyingAssetV1(input, 'write');
       const rows = (await sql`
         INSERT INTO underlying_asset (
-          underlying_key, asset_class, canonical_name, source_kind, source_ref, observed_at
+          underlying_key, asset_class, canonical_name, display_symbol,
+          identifier_scheme, identifier_value, source_kind, source_ref, source_hash, observed_at
         ) VALUES (
           ${parsed.underlyingKey}, ${parsed.assetClass}, ${parsed.canonicalName},
-          ${parsed.sourceKind}, ${parsed.sourceRef}, ${parsed.observedAt}::timestamptz
+          ${parsed.displaySymbol ?? null}, ${parsed.identifierScheme ?? null},
+          ${parsed.identifierValue ?? null}, ${parsed.sourceKind}, ${parsed.sourceRef},
+          ${parsed.sourceHash ?? null}, ${parsed.observedAt}::timestamptz
         )
         ON CONFLICT (underlying_key) DO UPDATE SET
-          asset_class = EXCLUDED.asset_class,
-          canonical_name = EXCLUDED.canonical_name,
-          source_kind = EXCLUDED.source_kind,
-          source_ref = EXCLUDED.source_ref,
+          asset_class = CASE WHEN EXCLUDED.observed_at >= underlying_asset.observed_at
+            THEN EXCLUDED.asset_class ELSE underlying_asset.asset_class END,
+          canonical_name = CASE WHEN EXCLUDED.observed_at >= underlying_asset.observed_at
+            THEN EXCLUDED.canonical_name ELSE underlying_asset.canonical_name END,
+          display_symbol = CASE WHEN EXCLUDED.observed_at >= underlying_asset.observed_at
+            THEN EXCLUDED.display_symbol ELSE underlying_asset.display_symbol END,
+          identifier_scheme = CASE WHEN EXCLUDED.observed_at >= underlying_asset.observed_at
+            THEN EXCLUDED.identifier_scheme ELSE underlying_asset.identifier_scheme END,
+          identifier_value = CASE WHEN EXCLUDED.observed_at >= underlying_asset.observed_at
+            THEN EXCLUDED.identifier_value ELSE underlying_asset.identifier_value END,
+          source_kind = CASE WHEN EXCLUDED.observed_at >= underlying_asset.observed_at
+            THEN EXCLUDED.source_kind ELSE underlying_asset.source_kind END,
+          source_ref = CASE WHEN EXCLUDED.observed_at >= underlying_asset.observed_at
+            THEN EXCLUDED.source_ref ELSE underlying_asset.source_ref END,
+          source_hash = CASE WHEN EXCLUDED.observed_at >= underlying_asset.observed_at
+            THEN EXCLUDED.source_hash ELSE underlying_asset.source_hash END,
           observed_at = GREATEST(underlying_asset.observed_at, EXCLUDED.observed_at)
         RETURNING *
       `) as Record<string, unknown>[];
@@ -72,26 +126,84 @@ export function createDatabaseUnderlyingAssetRepository(
 
       const rows = (await sql`
         INSERT INTO representation_underlying (
-          chain_id, token_address, underlying_key, source_kind, source_ref, observed_at
+          chain_id, token_address, underlying_key, source_kind, source_ref, source_hash,
+          issuer_id, issuer_instrument_key, caip10, representation_kind, evidence_strength,
+          observed_block_number, observed_block_hash, observed_at
         ) VALUES (
           ${parsed.chainId}, ${address}, ${parsed.underlyingKey}, ${parsed.sourceKind},
-          ${parsed.sourceRef}, ${parsed.observedAt}::timestamptz
+          ${parsed.sourceRef}, ${parsed.sourceHash ?? null}, ${parsed.issuerId ?? null},
+          ${parsed.issuerInstrumentKey ?? null}, ${parsed.caip10 ?? null},
+          ${parsed.representationKind ?? null}, ${parsed.evidenceStrength ?? null},
+          ${parsed.observedBlockNumber ?? null}, ${parsed.observedBlockHash ?? null},
+          ${parsed.observedAt}::timestamptz
         )
         ON CONFLICT (chain_id, token_address) DO UPDATE SET
-          underlying_key = EXCLUDED.underlying_key,
-          source_kind = EXCLUDED.source_kind,
-          source_ref = EXCLUDED.source_ref,
+          underlying_key = CASE
+            WHEN EXCLUDED.observed_at >= representation_underlying.observed_at
+            THEN EXCLUDED.underlying_key ELSE representation_underlying.underlying_key END,
+          source_kind = CASE WHEN EXCLUDED.observed_at >= representation_underlying.observed_at
+            THEN EXCLUDED.source_kind ELSE representation_underlying.source_kind END,
+          source_ref = CASE WHEN EXCLUDED.observed_at >= representation_underlying.observed_at
+            THEN EXCLUDED.source_ref ELSE representation_underlying.source_ref END,
+          source_hash = CASE WHEN EXCLUDED.observed_at >= representation_underlying.observed_at
+            THEN EXCLUDED.source_hash ELSE representation_underlying.source_hash END,
+          issuer_id = CASE WHEN EXCLUDED.observed_at >= representation_underlying.observed_at
+            THEN EXCLUDED.issuer_id ELSE representation_underlying.issuer_id END,
+          issuer_instrument_key = CASE
+            WHEN EXCLUDED.observed_at >= representation_underlying.observed_at
+            THEN EXCLUDED.issuer_instrument_key
+            ELSE representation_underlying.issuer_instrument_key END,
+          caip10 = CASE WHEN EXCLUDED.observed_at >= representation_underlying.observed_at
+            THEN EXCLUDED.caip10 ELSE representation_underlying.caip10 END,
+          representation_kind = CASE
+            WHEN EXCLUDED.observed_at >= representation_underlying.observed_at
+            THEN EXCLUDED.representation_kind ELSE representation_underlying.representation_kind END,
+          evidence_strength = CASE
+            WHEN EXCLUDED.observed_at >= representation_underlying.observed_at
+            THEN EXCLUDED.evidence_strength ELSE representation_underlying.evidence_strength END,
+          observed_block_number = CASE
+            WHEN EXCLUDED.observed_at >= representation_underlying.observed_at
+            THEN EXCLUDED.observed_block_number
+            ELSE representation_underlying.observed_block_number END,
+          observed_block_hash = CASE
+            WHEN EXCLUDED.observed_at >= representation_underlying.observed_at
+            THEN EXCLUDED.observed_block_hash ELSE representation_underlying.observed_block_hash END,
           observed_at = GREATEST(representation_underlying.observed_at, EXCLUDED.observed_at)
         RETURNING *
       `) as Record<string, unknown>[];
-      return rowToBindingV1(rows[0]);
+      const stored = rowToBindingV1(rows[0]);
+      if (
+        parsed.sourceHash &&
+        parsed.issuerId &&
+        parsed.issuerInstrumentKey &&
+        parsed.caip10 &&
+        parsed.representationKind &&
+        parsed.evidenceStrength
+      ) {
+        await sql`
+          INSERT INTO underlying_identity_observation (
+            chain_id, token_address, underlying_key, source_kind, source_ref, source_hash,
+            issuer_id, issuer_instrument_key, caip10, representation_kind, evidence_strength,
+            observed_block_number, observed_block_hash, observed_at
+          ) VALUES (
+            ${parsed.chainId}, ${address}, ${parsed.underlyingKey},
+            ${parsed.sourceKind}, ${parsed.sourceRef}, ${parsed.sourceHash}, ${parsed.issuerId},
+            ${parsed.issuerInstrumentKey}, ${parsed.caip10}, ${parsed.representationKind},
+            ${parsed.evidenceStrength}, ${parsed.observedBlockNumber ?? null},
+            ${parsed.observedBlockHash ?? null}, ${parsed.observedAt}::timestamptz
+          ) ON CONFLICT DO NOTHING
+        `;
+      }
+      return stored;
     },
 
     async underlyingOf(input) {
       const rows = (await sql`
-        SELECT b.*, u.asset_class, u.canonical_name,
+        SELECT b.*, u.asset_class, u.canonical_name, u.display_symbol,
+               u.identifier_scheme, u.identifier_value,
                u.source_kind AS underlying_source_kind,
                u.source_ref AS underlying_source_ref,
+               u.source_hash AS underlying_source_hash,
                u.observed_at AS underlying_observed_at
           FROM representation_underlying b
           JOIN underlying_asset u ON u.underlying_key = b.underlying_key
@@ -107,8 +219,12 @@ export function createDatabaseUnderlyingAssetRepository(
           underlying_key: row.underlying_key,
           asset_class: row.asset_class,
           canonical_name: row.canonical_name,
+          display_symbol: row.display_symbol,
+          identifier_scheme: row.identifier_scheme,
+          identifier_value: row.identifier_value,
           source_kind: row.underlying_source_kind,
           source_ref: row.underlying_source_ref,
+          source_hash: row.underlying_source_hash,
           observed_at: row.underlying_observed_at,
         }),
       };

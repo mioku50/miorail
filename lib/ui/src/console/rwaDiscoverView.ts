@@ -60,7 +60,7 @@ export interface OfficialAssetWireV1 {
   ticker: string;
   displayName: string | null;
   issuer: string;
-  listedIn: readonly ('base_docs_technical' | 'base_product_list')[];
+  listedIn: readonly ('base_docs_technical' | 'base_product_list' | 'backed_assets_api')[];
   sourceDiscrepancy: boolean;
   referenceValue: {
     status: 'fresh' | 'stale' | 'paused' | 'unavailable' | 'invalid';
@@ -77,7 +77,11 @@ export interface OfficialAssetWireV1 {
     destination: 'USDC' | 'ETH' | null;
     observedAt: string | null;
   };
-  comparison: { status: 'comparable' | 'withheld'; differenceBps: string | null; reason: string | null };
+  comparison: {
+    status: 'comparable' | 'withheld';
+    differenceBps: string | null;
+    reason: string | null;
+  };
   market: {
     routeStatus:
       | 'cash_route_established'
@@ -108,7 +112,7 @@ export interface OfficialAssetsOverviewWireV1 {
     notMeasured: number;
   };
   sources: readonly {
-    sourceKind: 'base_docs_technical' | 'base_product_list';
+    sourceKind: 'base_docs_technical' | 'base_product_list' | 'backed_assets_api';
     sourceUrl: string;
     checkedAt: string | null;
     status: 'ok' | 'unreachable' | 'unparsable' | null;
@@ -232,9 +236,12 @@ export function rwaAgeLabelV1(iso: string | null, now: Date): string | null {
 // Copy
 // ---------------------------------------------------------------------------
 
-const SOURCE_LABEL_V1: Readonly<Record<'base_docs_technical' | 'base_product_list', string>> = {
+const SOURCE_LABEL_V1: Readonly<
+  Record<'base_docs_technical' | 'base_product_list' | 'backed_assets_api', string>
+> = {
   base_docs_technical: 'Base docs',
   base_product_list: 'Base product page',
+  backed_assets_api: 'Backed bTokens API',
 };
 
 const ROUTE_STATUS_V1: Readonly<
@@ -273,7 +280,9 @@ const ROUTE_STATUS_V1: Readonly<
   },
 };
 
-const RUNG_STATUS_V1: Readonly<Record<OfficialLadderRungWireV1['status'], { label: string; tone: ToneV1 }>> = {
+const RUNG_STATUS_V1: Readonly<
+  Record<OfficialLadderRungWireV1['status'], { label: string; tone: ToneV1 }>
+> = {
   full: { label: 'round trip', tone: 'good' },
   partial: { label: 'partial', tone: 'warn' },
   buy_only: { label: 'buy only', tone: 'warn' },
@@ -286,13 +295,14 @@ const RUNG_STATUS_V1: Readonly<Record<OfficialLadderRungWireV1['status'], { labe
  * buy leg is the router's answer, not our failure. */
 const ENTRY_REFUSED_LABEL_V1 = { label: 'no cash entry', tone: 'warn' as ToneV1 };
 
-const REFERENCE_NOTE_V1: Readonly<Record<OfficialAssetWireV1['referenceValue']['status'], string>> = {
-  fresh: 'Chainlink total-return feed',
-  stale: 'Chainlink feed has not updated inside its window',
-  paused: 'Chainlink feed is paused',
-  unavailable: 'Reference feed could not be read',
-  invalid: 'Reference feed answered something this build will not accept',
-};
+const REFERENCE_NOTE_V1: Readonly<Record<OfficialAssetWireV1['referenceValue']['status'], string>> =
+  {
+    fresh: 'Chainlink total-return feed',
+    stale: 'Chainlink feed has not updated inside its window',
+    paused: 'Chainlink feed is paused',
+    unavailable: 'Reference feed could not be read',
+    invalid: 'Reference feed answered something this build will not accept',
+  };
 
 const COMPARISON_REASON_V1: Readonly<Record<string, string>> = {
   reference_stale: 'the reference feed is stale',
@@ -446,7 +456,11 @@ export function officialAssetsViewV1(
             `Membership is unchanged; the last successful check was ${
               rwaAgeLabelV1(source.lastSuccessfulAt, now) ?? 'never'
             }.`,
-      tone: (source.checkedAt === null ? 'off' : source.status === 'ok' ? 'good' : 'warn') as ToneV1,
+      tone: (source.checkedAt === null
+        ? 'off'
+        : source.status === 'ok'
+          ? 'good'
+          : 'warn') as ToneV1,
     };
   });
 
@@ -454,9 +468,9 @@ export function officialAssetsViewV1(
   const read =
     observation.status === 'never_run'
       ? null
-      : `Ledger tail read through Base block ${(observation.checkedThroughBlock ?? 0).toLocaleString(
-          'en-US',
-        )} · ${rwaAgeLabelV1(observation.checkedAt, now) ?? 'unknown'}.`;
+      : `Ledger tail read through Base block ${(
+          observation.checkedThroughBlock ?? 0
+        ).toLocaleString('en-US')} · ${rwaAgeLabelV1(observation.checkedAt, now) ?? 'unknown'}.`;
   const marketObservation =
     read === null
       ? 'The ledger tail has not run on this deployment, so no movement has been observed for any asset. That is not a quiet market.'
@@ -489,11 +503,17 @@ export function officialAssetsViewV1(
 function officialAssetCardViewV1(asset: OfficialAssetWireV1, now: Date): OfficialAssetCardViewV1 {
   const status = ROUTE_STATUS_V1[asset.market.routeStatus];
   const reference = moneyLabelV1(asset.referenceValue.valueAtomic, asset.referenceValue.decimals);
-  const executable = moneyLabelV1(asset.executableValue.valueAtomic, asset.executableValue.decimals);
+  const executable = moneyLabelV1(
+    asset.executableValue.valueAtomic,
+    asset.executableValue.decimals,
+  );
   const referenceAge =
     asset.referenceValue.ageSeconds === null
       ? null
-      : rwaAgeLabelV1(new Date(now.getTime() - asset.referenceValue.ageSeconds * 1000).toISOString(), now);
+      : rwaAgeLabelV1(
+          new Date(now.getTime() - asset.referenceValue.ageSeconds * 1000).toISOString(),
+          now,
+        );
 
   const facts: FactViewV1[] = [
     {
@@ -625,7 +645,10 @@ function officialAssetCardViewV1(asset: OfficialAssetWireV1, now: Date): Officia
       { label: 'Reference status', value: asset.referenceValue.status },
       { label: 'Executable status', value: asset.executableValue.status },
       { label: 'Observation', value: observation.status },
-      { label: 'Reference feed', value: asset.referenceValue.feedAddress ?? 'none bound by the source' },
+      {
+        label: 'Reference feed',
+        value: asset.referenceValue.feedAddress ?? 'none bound by the source',
+      },
       { label: 'Issuer', value: asset.issuer },
     ],
   };
@@ -665,7 +688,11 @@ export function lookalikeFeedViewV1(
         label: LOOKALIKE_ALIAS_LABEL_V1.published_ticker,
         count: wire.counts.publishedTicker,
       },
-      { id: 'underlying', label: LOOKALIKE_ALIAS_LABEL_V1.underlying, count: wire.counts.underlying },
+      {
+        id: 'underlying',
+        label: LOOKALIKE_ALIAS_LABEL_V1.underlying,
+        count: wire.counts.underlying,
+      },
       {
         id: 'display_name',
         label: LOOKALIKE_ALIAS_LABEL_V1.display_name,
@@ -698,7 +725,10 @@ export function lookalikeFeedViewV1(
           label: 'Launched',
           // Null renders the words. The index not knowing when a contract
           // launched is different from it launching at the epoch.
-          value: card.launchedAt === null ? 'not known to the index' : (rwaAgeLabelV1(card.launchedAt, now) ?? 'unknown'),
+          value:
+            card.launchedAt === null
+              ? 'not known to the index'
+              : (rwaAgeLabelV1(card.launchedAt, now) ?? 'unknown'),
           note: null,
           tone: card.launchedAt === null ? 'off' : 'neutral',
         },
@@ -742,16 +772,24 @@ function signalDetailV1(card: RwaSignalCardWireV1): string {
     case 'official_source_added_asset':
     case 'official_source_removed_asset': {
       const ticker = text('ticker') ?? card.subjectTicker ?? 'an asset';
-      const source = text('sourceKind') === 'base_product_list' ? 'the Base product page' : 'the Base docs corpus';
+      const sourceKind = text('sourceKind');
+      const source =
+        sourceKind === 'base_product_list'
+          ? 'the Base product page'
+          : sourceKind === 'backed_assets_api'
+            ? 'the Backed bTokens API'
+            : 'the Base docs corpus';
       return card.kind === 'official_source_added_asset'
         ? `${ticker} is now listed by ${source}.`
-        : `${ticker} is no longer listed by ${source}. It may still be listed by the other reviewed source.`;
+        : `${ticker} is no longer listed by ${source}. Only this successfully read source changed; no other issuer is inferred.`;
     }
     case 'official_asset_lookalike_created': {
       const official = text('officialTicker') ?? card.officialTicker ?? 'an official asset';
       const declared = text('launchSymbol') || text('launchName') || 'no symbol';
       return `A launch declaring “${declared}” matches ${official} on ${
-        text('matchedAlias') === 'published_ticker' ? 'its published ticker' : 'a name it also answers to'
+        text('matchedAlias') === 'published_ticker'
+          ? 'its published ticker'
+          : 'a name it also answers to'
       }. Addresses differ; this is a resemblance and nothing more.`;
     }
     case 'official_asset_market_became_active': {

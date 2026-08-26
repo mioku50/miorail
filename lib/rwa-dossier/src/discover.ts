@@ -41,7 +41,11 @@ const Timestamp = z.string().datetime();
 const Digits = z.string().regex(/^(0|[1-9][0-9]*)$/);
 const SignedDigits = z.string().regex(/^-?(0|[1-9][0-9]*)$/);
 
-export const OFFICIAL_SOURCE_KINDS_V1 = ['base_docs_technical', 'base_product_list'] as const;
+export const OFFICIAL_SOURCE_KINDS_V1 = [
+  'base_docs_technical',
+  'base_product_list',
+  'backed_assets_api',
+] as const;
 
 /**
  * What a measured ladder said, in one word.
@@ -75,7 +79,14 @@ export const OfficialCashExitRungPreviewV1Schema = z
   .object({
     requestedCashAtomic: Digits,
     destination: z.enum(['USDC', 'ETH']),
-    status: z.enum(['full', 'partial', 'buy_only', 'unavailable', 'not_measured', 'measurement_failed']),
+    status: z.enum([
+      'full',
+      'partial',
+      'buy_only',
+      'unavailable',
+      'not_measured',
+      'measurement_failed',
+    ]),
     roundTripCostBps: SignedDigits.nullable(),
     /** True when this rung's cost is a SMALLER rung's cost, carried forward
      * because the larger size did not complete. The reader must be able to see
@@ -317,11 +328,7 @@ export const RwaSignalFeedV1Schema = z
      * date can ever appear.
      */
     watching: z
-      .array(
-        z
-          .object({ kind: z.enum(RWA_SIGNAL_KINDS_V1), watchingSince: Timestamp })
-          .strict(),
-      )
+      .array(z.object({ kind: z.enum(RWA_SIGNAL_KINDS_V1), watchingSince: Timestamp }).strict())
       .max(16),
     /** What is deliberately NOT reported here, so its absence is not read as
      * quiet. Rendered by the surface, not written by it. */

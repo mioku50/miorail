@@ -20,7 +20,9 @@ import { underlyingAssetContractV1 } from './underlyingAssets.contract.js';
 // ---------------------------------------------------------------------------
 
 const url = process.env.MIOAGENT_MIGRATION_TEST_URL?.trim();
-const throwaway = Boolean(url && /(localhost|127\.0\.0\.1)/.test(url) && !/neon|amazonaws/i.test(url));
+const throwaway = Boolean(
+  url && /(localhost|127\.0\.0\.1)/.test(url) && !/neon|amazonaws/i.test(url),
+);
 
 let sql: ReturnType<typeof postgres> | null = null;
 
@@ -36,6 +38,7 @@ before(async () => {
   sql = postgres(url!, { max: 1, onnotice: () => {} });
   for (const table of [
     'representation_underlying',
+    'underlying_identity_observation',
     'underlying_asset',
     'issuer_representation',
     'issuer_membership_check',
@@ -44,7 +47,12 @@ before(async () => {
   ]) {
     await sql.unsafe(`DROP TABLE IF EXISTS ${table} CASCADE`);
   }
-  for (const file of ['0057_representation_ratio.sql', '0058_issuer_membership.sql']) {
+  for (const file of [
+    '0050_official_assets.sql',
+    '0057_representation_ratio.sql',
+    '0058_issuer_membership.sql',
+    '0059_underlying_identity_and_backed.sql',
+  ]) {
     const migration = await readFile(resolve(drizzleDir(), file), 'utf8');
     await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));
   }
@@ -60,12 +68,16 @@ if (!throwaway) {
   });
 } else {
   underlyingAssetContractV1('postgres', async () => {
-    await sql!.unsafe('TRUNCATE representation_underlying, underlying_asset');
+    await sql!.unsafe(
+      'TRUNCATE underlying_identity_observation, representation_underlying, underlying_asset',
+    );
     const executor: SqlTemplateExecutor = (strings, ...values) =>
-      (sql as unknown as (
-        strings: TemplateStringsArray,
-        ...values: unknown[]
-      ) => Promise<Record<string, unknown>[]>)(strings, ...values);
+      (
+        sql as unknown as (
+          strings: TemplateStringsArray,
+          ...values: unknown[]
+        ) => Promise<Record<string, unknown>[]>
+      )(strings, ...values);
     return { repository: createDatabaseUnderlyingAssetRepository(executor) };
   });
 }

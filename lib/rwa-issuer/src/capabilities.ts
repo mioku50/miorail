@@ -144,28 +144,28 @@ const COINBASE_PROFILE_V1: IssuerCapabilityProfileV1 = {
     note: 'Balances are stored raw. The caller applies raw * multiplier / scale; the scale is read, never assumed.',
   },
   transfer_policy: {
-    documented: 'undocumented',
-    callable: 'not_probed',
-    probe: null,
-    note: 'No reviewed transfer-restriction surface has been established for these contracts.',
+    documented: 'documented',
+    callable: 'callable',
+    probe: 'senderPolicy(), receiverPolicy(), executorPolicy(), isAuthorized()',
+    note: 'Base Docs and the B20 interface define policy checks and blocked-address controls. Secondary holding is not the same permission as primary mint or redemption.',
   },
   eligibility: {
-    documented: 'undocumented',
-    callable: 'not_probed',
+    documented: 'documented',
+    callable: 'off_chain',
     probe: null,
-    note: 'Who may hold these is not stated in a reviewed source we hold, and nothing on chain has been established to test it.',
+    note: 'Primary access is KYC/authorized-participant controlled and the product is limited to eligible non-US users; secondary token policy is a separate onchain fact.',
   },
   pause_state: {
-    documented: 'undocumented',
-    callable: 'not_probed',
-    probe: null,
-    note: 'The registry pause surface has no published ABI and twenty candidate selectors all revert.',
+    documented: 'documented',
+    callable: 'callable',
+    probe: 'pausedFeatures() / B20 feature-pause state',
+    note: 'B20 exposes feature-specific pause state. The separate corporate-action feed pause is off chain and must not be inferred from this call.',
   },
   redemption: {
-    documented: 'undocumented',
-    callable: 'not_probed',
+    documented: 'documented',
+    callable: 'off_chain',
     probe: null,
-    note: 'No reviewed on-chain redemption path has been established.',
+    note: 'Primary redemption is an authenticated authorized-participant process; no permissionless consumer redemption route is claimed.',
   },
   distributions: {
     documented: 'documented',
@@ -175,15 +175,80 @@ const COINBASE_PROFILE_V1: IssuerCapabilityProfileV1 = {
   },
   corporate_actions: {
     documented: 'documented',
-    callable: 'absent',
-    probe: 'uiMultiplier() 0xa60bf13d, newUIMultiplier() 0xdc767007, effectiveAt() 0x97a4064f',
-    note: 'The interface documents a scheduled-update surface for advance notice. All three revert on all thirteen deployments, so a stored history is the only warning available.',
+    callable: 'callable',
+    probe: 'multiplier() 0x1b3ed722; advance state is the separate issuer registry/feed',
+    note: 'The active economic ratio is callable. Base Docs place advance corporate-action state in a separate offchain registry, so invented token selectors are not evidence of its absence.',
   },
   bridge: {
     documented: 'undocumented',
     callable: 'not_probed',
     probe: null,
     note: 'No reviewed cross-chain surface has been established for these contracts.',
+  },
+};
+
+/** Legacy Backed bTokens on Base. Current xStocks-only behavior is not copied
+ * across the product-family boundary. */
+const BACKED_PROFILE_V1: IssuerCapabilityProfileV1 = {
+  structure: {
+    documented: 'documented',
+    callable: 'callable',
+    probe: 'ERC-20 rebasing implementation; balanceOf(), sharesOf(), getCurrentMultiplier()',
+    note: 'A Swiss-law tracker certificate represented by a legacy rebasing ERC-20. Optional ERC-4626 wrappers are separate exact addresses.',
+  },
+  reference_price: {
+    documented: 'undocumented',
+    callable: 'not_probed',
+    probe: null,
+    note: 'The reviewed identity API does not establish a fresh bToken reference-price observation.',
+  },
+  ratio: {
+    documented: 'documented',
+    callable: 'callable',
+    probe: 'getCurrentMultiplier() / multiplier()',
+    note: 'The EVM contract returns an already-adjusted balanceOf. Applying the multiplier again would double-count corporate actions.',
+  },
+  transfer_policy: {
+    documented: 'documented',
+    callable: 'not_probed',
+    probe: null,
+    note: 'Current issuer legal documentation states there are no technical transfer restrictions; exact deployment pause state is still an independent read.',
+  },
+  eligibility: {
+    documented: 'documented',
+    callable: 'off_chain',
+    probe: null,
+    note: 'Jurisdiction and issuer-redemption eligibility remain off chain and are not inferred from possession of a freely transferable token.',
+  },
+  pause_state: {
+    documented: 'documented',
+    callable: 'not_probed',
+    probe: null,
+    note: 'The published legacy contract has a pauser role; no current value is claimed until the exact Base deployment is called.',
+  },
+  redemption: {
+    documented: 'documented',
+    callable: 'off_chain',
+    probe: null,
+    note: 'New bToken issuance is closed and redemption remains supported for existing holders through the issuer process.',
+  },
+  distributions: {
+    documented: 'documented',
+    callable: 'callable',
+    probe: 'getCurrentMultiplier() / balanceOf()',
+    note: 'The published legacy implementation carries rebase effects through the multiplier and adjusted balance.',
+  },
+  corporate_actions: {
+    documented: 'documented',
+    callable: 'callable',
+    probe: 'newMultiplierActivationTime(), multiplierUpdatesLength()',
+    note: 'The published legacy implementation schedules and records multiplier changes; the exact deployment still needs fresh reads for current state.',
+  },
+  bridge: {
+    documented: 'undocumented',
+    callable: 'not_probed',
+    probe: null,
+    note: 'The current public xStocks bridge is not evidence that a legacy Base bToken has a supported bridge route.',
   },
 };
 
@@ -262,7 +327,8 @@ const DINARI_PROFILE_V1: IssuerCapabilityProfileV1 = {
   bridge: {
     documented: 'documented',
     callable: 'callable',
-    probe: 'endpoint() 0x5e280f11, token() 0xfc0c546a, approvalRequired() 0x9f68b964, sharedDecimals() 0x857749b0',
+    probe:
+      'endpoint() 0x5e280f11, token() 0xfc0c546a, approvalRequired() 0x9f68b964, sharedDecimals() 0x857749b0',
     note: 'The token is itself a LayerZero V2 OFT and returns the canonical EndpointV2. Which destinations are wired is not established: peers(uint32) reverts on this deployment.',
   },
 };
@@ -272,6 +338,7 @@ export const ISSUER_CAPABILITY_PROFILES_V1: Readonly<
 > = {
   coinbase: COINBASE_PROFILE_V1,
   dinari: DINARI_PROFILE_V1,
+  backed: BACKED_PROFILE_V1,
 };
 
 /** Every capability for one issuer, with its verdict. Ordered, so two cards

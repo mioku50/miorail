@@ -76,7 +76,14 @@ async function main(): Promise<void> {
   const issuers = createDatabaseIssuerRepresentationRepository(client);
   const reader = createB20ReaderV1({ rpcUrl });
 
-  const assets = await official.officialAssets({ chainId: CHAIN_ID_V1, limit: 500 });
+  // A reviewed issuer adapter selects its own corpus. Backed is also an
+  // OFFICIAL source now, but calling the B20 multiplier selectors on a Backed
+  // token would turn one issuer's convention into another issuer's evidence.
+  const coinbaseB20 = await official.officialAssets({
+    chainId: CHAIN_ID_V1,
+    limit: 500,
+    sourceKind: 'base_docs_technical',
+  });
   // Every issuer gets its OWN adapter. Reading `multiplier()` off a dShare
   // would be a guess, and a guess of exactly that shape was measured to
   // contradict another issuer's own published value.
@@ -86,10 +93,10 @@ async function main(): Promise<void> {
     limit: 500,
   });
   console.log(
-    `${assets.length} representation(s) in the official corpus, ` +
+    `${coinbaseB20.length} reviewed Coinbase B20 representation(s), ` +
       `${dinari.length} established Dinari representation(s)`,
   );
-  if (assets.length === 0 && dinari.length === 0) return;
+  if (coinbaseB20.length === 0 && dinari.length === 0) return;
 
   const anchorRead = await reader.readBlockAnchor();
   if (!anchorRead.ok) {
@@ -114,7 +121,7 @@ async function main(): Promise<void> {
   const changed: string[] = [];
   const firstSeen: string[] = [];
 
-  for (const asset of assets) {
+  for (const asset of coinbaseB20) {
     const value = await readB20MultiplierV1(reader, {
       tokenAddress: asset.tokenAddress,
       anchor,

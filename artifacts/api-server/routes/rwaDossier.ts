@@ -6,6 +6,7 @@ import {
   createDatabaseMarketTailRepository,
   createDatabaseOfficialCashExitRepository,
   createDatabaseOfficialAssetRepository,
+  createDatabaseUnderlyingAssetRepository,
   isOfficialV1,
 } from '@mioagent/route-storage';
 import { measureOfficialCashExitV1 } from '@mioagent/rwa-cash-exit';
@@ -16,6 +17,7 @@ import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.j
 // Loads the express-session augmentation as well as documenting which session
 // identity this read-only evidence surface requires.
 import type { TenantUser } from '../middleware/tenantAuth.js';
+import { rwaMarketRealityRouter } from './rwaMarketReality.js';
 
 export const rwaDossierRouter = Router();
 
@@ -29,6 +31,7 @@ export const rwaDossierRuntime = {
   official: () => createDatabaseOfficialAssetRepository(client),
   marketTail: () => createDatabaseMarketTailRepository(client),
   cashExit: () => createDatabaseOfficialCashExitRepository(client),
+  underlying: () => createDatabaseUnderlyingAssetRepository(client),
   quoteAdapters: () => [new KyberSwapRouteAdapter()],
   measure: measureOfficialCashExitV1,
   reader: () => createB20ReaderV1({ rpcUrl: rpcUrlV1() }),
@@ -42,10 +45,17 @@ export const rwaDossierRuntime = {
         to_regclass('public.market_venues') AS venues,
         to_regclass('public.market_venue_transfers') AS transfers,
         to_regclass('public.market_tail_cursors') AS cursors,
-        to_regclass('public.official_cash_exit_runs') AS cash_exit`;
+        to_regclass('public.official_cash_exit_runs') AS cash_exit,
+        to_regclass('public.representation_underlying') AS underlying`;
     const row = rows[0];
     return Boolean(
-      row?.sources && row.assets && row.venues && row.transfers && row.cursors && row.cash_exit,
+      row?.sources &&
+      row.assets &&
+      row.venues &&
+      row.transfers &&
+      row.cursors &&
+      row.cash_exit &&
+      row.underlying,
     );
   },
 };
@@ -97,6 +107,7 @@ rwaDossierRouter.get('/rwa/official/:tokenAddress/dossier', async (req, res) => 
         official: rwaDossierRuntime.official(),
         marketTail: rwaDossierRuntime.marketTail(),
         cashExit: rwaDossierRuntime.cashExit(),
+        underlying: rwaDossierRuntime.underlying(),
         reader: rwaDossierRuntime.reader(),
         now: rwaDossierRuntime.now,
         tenantId: user.id,
@@ -167,6 +178,7 @@ rwaDossierRouter.post('/rwa/official/:tokenAddress/dossier/measure', async (req,
       official,
       marketTail: rwaDossierRuntime.marketTail(),
       cashExit,
+      underlying: rwaDossierRuntime.underlying(),
       reader,
       now: rwaDossierRuntime.now,
       tenantId: user.id,
@@ -263,3 +275,8 @@ rwaDossierRouter.post('/rwa/official/:tokenAddress/dossier/measure', async (req,
     });
   }
 });
+
+// Phase 10A shares the same authenticated RWA evidence boundary. Keeping the
+// mount here avoids widening the root route coordinator with product-specific
+// projection code.
+rwaDossierRouter.use(rwaMarketRealityRouter);

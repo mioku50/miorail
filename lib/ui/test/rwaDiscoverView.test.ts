@@ -73,11 +73,17 @@ function assetV1(overrides: Partial<OfficialAssetWireV1> = {}): OfficialAssetWir
   };
 }
 
-function overviewV1(assets: OfficialAssetWireV1[], overrides: Partial<OfficialAssetsOverviewWireV1> = {}): OfficialAssetsOverviewWireV1 {
+function overviewV1(
+  assets: OfficialAssetWireV1[],
+  overrides: Partial<OfficialAssetsOverviewWireV1> = {},
+): OfficialAssetsOverviewWireV1 {
   const counts = {
     officialIssuance: assets.length,
-    cashRouteEstablished: assets.filter((a) => a.market.routeStatus === 'cash_route_established').length,
-    noRouteAtMeasuredSizes: assets.filter((a) => a.market.routeStatus === 'no_route_at_measured_sizes').length,
+    cashRouteEstablished: assets.filter((a) => a.market.routeStatus === 'cash_route_established')
+      .length,
+    noRouteAtMeasuredSizes: assets.filter(
+      (a) => a.market.routeStatus === 'no_route_at_measured_sizes',
+    ).length,
     noEntryRouteAtMeasuredSizes: assets.filter(
       (a) => a.market.routeStatus === 'no_entry_route_at_measured_sizes',
     ).length,
@@ -194,7 +200,10 @@ describe('rwa discover view — official assets', () => {
     assert.equal(executable.value, 'not measured');
     assert.equal(executable.note, 'Bought, and no approved router would sell it back');
     // A rung with no cost renders the words, never a percentage.
-    assert.deepEqual(card.ladder.map((rung) => rung.value), ['no exit route']);
+    assert.deepEqual(
+      card.ladder.map((rung) => rung.value),
+      ['no exit route'],
+    );
   });
 
   test('a refused buy leg is the router answering, and claims nothing about exiting', () => {
@@ -241,7 +250,10 @@ describe('rwa discover view — official assets', () => {
     assert.equal(card.status.chip, 'NO CASH ENTRY AT MEASURED SIZES');
     assert.match(card.status.body, /never tested and is not claimed either way/);
     // The rung says the router refused, not that our measurement broke.
-    assert.deepEqual(card.ladder.map((rung) => rung.value), ['no cash entry']);
+    assert.deepEqual(
+      card.ladder.map((rung) => rung.value),
+      ['no cash entry'],
+    );
     assert.equal(
       card.facts.find((fact) => fact.label === 'Executable value')!.note,
       'No approved router would sell it to you for cash',
@@ -305,7 +317,10 @@ describe('rwa discover view — official assets', () => {
     assert.match(view.marketObservation, /has not run on this deployment/);
     assert.match(view.marketObservation, /not a quiet market/);
     const market = view.assets[0]!.market;
-    assert.deepEqual(market.map((fact) => fact.value), ['not observed', 'not observed']);
+    assert.deepEqual(
+      market.map((fact) => fact.value),
+      ['not observed', 'not observed'],
+    );
     // Never the word "trades". Six per cent of measured movements through the
     // v4 singleton carried no swap at all.
     assert.equal(market[1]!.note, 'Transfers through a venue, not confirmed swaps');
@@ -424,7 +439,10 @@ describe('rwa discover view — lookalikes', () => {
     assert.equal(card.matchedLabel, 'Published ticker · AAPLc');
     // The index not knowing when a contract launched is different from it
     // launching at the epoch.
-    assert.equal(card.facts.find((fact) => fact.label === 'Launched')!.value, 'not known to the index');
+    assert.equal(
+      card.facts.find((fact) => fact.label === 'Launched')!.value,
+      'not known to the index',
+    );
 
     const rendered = JSON.stringify(view).toLowerCase();
     for (const word of ['scam', 'suspicious', 'fraud', 'high risk', 'malicious', 'severity']) {
@@ -460,7 +478,9 @@ describe('rwa discover view — signals', () => {
     const watched = signalFeedViewV1(
       {
         observedAt: NOW.toISOString(),
-        watching: [{ kind: 'official_asset_lookalike_created', watchingSince: '2026-08-25T10:00:00.000Z' }],
+        watching: [
+          { kind: 'official_asset_lookalike_created', watchingSince: '2026-08-25T10:00:00.000Z' },
+        ],
         notReported: [],
         cards: [],
       },
@@ -470,11 +490,49 @@ describe('rwa discover view — signals', () => {
     assert.match(watched.emptyNote!, /Nothing has changed since/);
   });
 
+  test('a Backed source transition is never mislabeled as Coinbase evidence', () => {
+    const view = signalFeedViewV1(
+      {
+        observedAt: NOW.toISOString(),
+        watching: [
+          { kind: 'official_source_added_asset', watchingSince: '2026-08-20T10:00:00.000Z' },
+        ],
+        notReported: [],
+        cards: [
+          {
+            signalId: 'backed-1',
+            kind: 'official_source_added_asset',
+            subjectAddress: COIN,
+            subjectTicker: 'bCOIN',
+            officialAddress: null,
+            officialTicker: null,
+            occurredAt: '2026-08-25T11:00:00.000Z',
+            recordedAt: '2026-08-25T11:00:05.000Z',
+            facts: {
+              sourceKind: 'backed_assets_api',
+              sourceUrl: 'https://api.xstocks.fi/api/v1/token?type=btokens',
+              ticker: 'bCOIN',
+              displayName: 'Backed Coinbase Global',
+            },
+          },
+        ],
+      },
+      NOW,
+    );
+    assert.match(view.cards[0]!.detail, /Backed bTokens API/);
+    assert.doesNotMatch(view.cards[0]!.detail, /Base docs corpus/);
+  });
+
   test('a market signal names the size it was decided on', () => {
     const view = signalFeedViewV1(
       {
         observedAt: NOW.toISOString(),
-        watching: [{ kind: 'official_asset_market_became_active', watchingSince: '2026-08-20T10:00:00.000Z' }],
+        watching: [
+          {
+            kind: 'official_asset_market_became_active',
+            watchingSince: '2026-08-20T10:00:00.000Z',
+          },
+        ],
         notReported: ['Trades.'],
         cards: [
           {
@@ -513,7 +571,10 @@ describe('rwa discover view — signals', () => {
       {
         observedAt: NOW.toISOString(),
         watching: [
-          { kind: 'official_asset_market_became_unreachable', watchingSince: '2026-08-20T10:00:00.000Z' },
+          {
+            kind: 'official_asset_market_became_unreachable',
+            watchingSince: '2026-08-20T10:00:00.000Z',
+          },
         ],
         notReported: [],
         cards: [

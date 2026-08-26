@@ -24,17 +24,28 @@ export function createMemoryUnderlyingAssetRepository(): UnderlyingAssetReposito
     async declareUnderlying(input) {
       const parsed = assertUnderlyingAssetV1(input, 'write');
       const existing = underlyings.get(parsed.underlyingKey);
-      // The name is the source's, taken on first declaration and refreshed by a
-      // later reading of the same source; the key never moves.
-      const row: UnderlyingAssetV1 = existing ? { ...existing, ...parsed } : parsed;
+      // Current projection only moves forward. The database twin uses the
+      // same observedAt guard so a delayed worker cannot restore older
+      // identity metadata over a newer reviewed observation.
+      const row: UnderlyingAssetV1 =
+        existing && Date.parse(existing.observedAt) > Date.parse(parsed.observedAt)
+          ? existing
+          : existing
+            ? { ...existing, ...parsed }
+            : parsed;
       underlyings.set(parsed.underlyingKey, row);
       return row;
     },
 
     async bindRepresentation(input) {
       const parsed = assertRepresentationUnderlyingV1(input, 'write');
-      if (!underlyings.has(parsed.underlyingKey)) throw new UnknownUnderlyingError(parsed.underlyingKey);
-      const row: RepresentationUnderlyingV1 = { ...parsed, tokenAddress: parsed.tokenAddress.toLowerCase() };
+      if (!underlyings.has(parsed.underlyingKey))
+        throw new UnknownUnderlyingError(parsed.underlyingKey);
+      const existing = bindings.get(key(parsed.chainId, parsed.tokenAddress));
+      const row: RepresentationUnderlyingV1 =
+        existing && Date.parse(existing.observedAt) > Date.parse(parsed.observedAt)
+          ? existing
+          : { ...parsed, tokenAddress: parsed.tokenAddress.toLowerCase() };
       bindings.set(key(row.chainId, row.tokenAddress), row);
       return row;
     },

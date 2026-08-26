@@ -16,6 +16,7 @@ import {
   type OfficialAssetIdentityV1,
   type OfficialAssetRepositoryV1,
   type OfficialSourceDiscrepancyV1,
+  type UnderlyingAssetRepositoryV1,
 } from '@mioagent/route-storage';
 
 import {
@@ -32,6 +33,7 @@ import {
 import {
   compareReferenceAndExecutableV1,
   readTokenizedStockReferenceV1,
+  unestablishedIssuerReferenceV1,
   unavailableTokenizedStockReferenceV1,
 } from './reference.js';
 import { readB20MultiplierV1, unavailableMultiplierV1 } from './multiplier.js';
@@ -60,6 +62,7 @@ export interface OfficialAssetDossierDepsV1 {
   reader: B20ReaderV1;
   now: () => Date;
   cashExit?: OfficialCashExitRepositoryV1;
+  underlying?: UnderlyingAssetRepositoryV1;
   tenantId?: string;
 }
 
@@ -136,6 +139,7 @@ function discrepancyTouchesV1(
 function identityProjectionV1(
   identity: OfficialAssetIdentityV1,
   discrepancies: readonly OfficialSourceDiscrepancyV1[],
+  establishedUnderlying: Awaited<ReturnType<UnderlyingAssetRepositoryV1['underlyingOf']>>,
 ) {
   const current = identity.listings.filter((listing) => listing.currentlyListed);
   const primary =
@@ -149,15 +153,42 @@ function identityProjectionV1(
     issuer: identity.issuer,
     ticker: primary.ticker,
     displayName: primary.displayName,
-    // The stored source snapshot carries a token ticker and feed address, not
-    // a separately reviewed underlying identity. Stripping a suffix would be
-    // a guess, so the bundle names the gap instead.
-    underlying: {
-      status: 'not_established' as const,
-      symbol: null,
-      name: null,
-      reason: 'The stored reviewed snapshot does not carry a separate underlying identity.',
-    },
+    underlying: establishedUnderlying
+      ? {
+          status: 'supported_by_reviewed_source' as const,
+          underlyingKey: establishedUnderlying.underlying.underlyingKey,
+          identifierScheme: establishedUnderlying.underlying.identifierScheme ?? null,
+          identifierValue: establishedUnderlying.underlying.identifierValue ?? null,
+          symbol: establishedUnderlying.underlying.displaySymbol ?? null,
+          name: establishedUnderlying.underlying.canonicalName,
+          reason: null,
+          evidence: {
+            kind: 'reviewed_identity_mapping' as const,
+            source: establishedUnderlying.binding.sourceRef,
+            observedAt: establishedUnderlying.binding.observedAt,
+            blockNumber: establishedUnderlying.binding.observedBlockNumber ?? null,
+            blockHash: establishedUnderlying.binding.observedBlockHash ?? null,
+            targetAddress: identity.tokenAddress,
+            method:
+              establishedUnderlying.binding.sourceKind === 'coinbase_b20_metadata'
+                ? 'extraMetadata(isin)'
+                : 'issuer machine-readable exact-address mapping',
+            evidenceHash: establishedUnderlying.binding.sourceHash
+              ? (`0x${establishedUnderlying.binding.sourceHash}` as `0x${string}`)
+              : null,
+          },
+        }
+      : {
+          status: 'not_established' as const,
+          underlyingKey: null,
+          identifierScheme: null,
+          identifierValue: null,
+          symbol: null,
+          name: null,
+          reason:
+            'No reviewed source has bound this exact address to a stable underlying identifier.',
+          evidence: null,
+        },
     listings: identity.listings.map((listing) => ({
       ...listing,
       evidence: {
@@ -248,6 +279,24 @@ export function controlsFromSnapshotV1(snapshot: B20ControlSnapshotV1 | null, no
       evidence: multiplierField?.evidence ?? null,
     },
     fields,
+  });
+}
+
+function controlsOutsideB20V1(now: Date) {
+  return DossierControlsV1Schema.parse({
+    status: 'unavailable',
+    blockNumber: null,
+    blockHash: null,
+    observedAt: now.toISOString(),
+    multiplier: { status: 'unavailable', atomic: null, decimals: 18, evidence: null },
+    fields: CONTROL_KEYS_V1.map((key) => ({
+      key,
+      status: 'unsupported_by_variant',
+      value: null,
+      reason:
+        'B20 selectors are not called on another issuer; use that issuer’s reviewed capability adapter.',
+      evidence: null,
+    })),
   });
 }
 
@@ -442,25 +491,38 @@ export async function assembleOfficialAssetDossierV1(
     });
   }
 
-  const [discrepancies, officialUniverse] = await Promise.all([
+  const [discrepancies, officialUniverse, establishedUnderlying] = await Promise.all([
     deps.official.sourceDiscrepancies({ chainId: 8453 }),
     deps.official.officialAssets({ chainId: 8453, limit: 500 }),
+    deps.underlying
+      ? deps.underlying.underlyingOf({ chainId: 8453, tokenAddress })
+      : Promise.resolve(null),
   ]);
-  const anchorRead = await deps.reader.readBlockAnchor();
+  const isCoinbaseB20 = identity!.listings.some(
+    (listing) =>
+      listing.currentlyListed &&
+      (listing.sourceKind === 'base_docs_technical' || listing.sourceKind === 'base_product_list'),
+  );
+  const anchorRead = isCoinbaseB20
+    ? await deps.reader.readBlockAnchor()
+    : ({ ok: false, reason: 'not_b20' } as const);
   const anchor: B20BlockAnchorV1 | null = anchorRead.ok ? anchorRead.value : null;
   let controlSnapshot: B20ControlSnapshotV1 | null = null;
-  if (anchor !== null) {
+  if (isCoinbaseB20 && anchor !== null) {
     const inspected = await inspectB20TokenV1(
       { reader: deps.reader },
       { tenantId: 'official-asset-dossier', chainId: 8453, tokenAddress, now, anchor },
     );
     controlSnapshot = inspected.snapshot;
   }
-  const controls = controlsFromSnapshotV1(controlSnapshot, now);
+  const controls = isCoinbaseB20
+    ? controlsFromSnapshotV1(controlSnapshot, now)
+    : controlsOutsideB20V1(now);
 
   const feed = feedAddressV1(identity!);
-  const referenceValue =
-    anchor === null
+  const referenceValue = !isCoinbaseB20
+    ? unestablishedIssuerReferenceV1()
+    : anchor === null
       ? unavailableTokenizedStockReferenceV1({
           feedAddress: feed.address,
           reason: 'reference_unavailable',
@@ -477,8 +539,9 @@ export async function assembleOfficialAssetDossierV1(
   // A disclosure, never an adjustment: the feed above is total-return and has
   // already applied this. Read at the same anchor so the two facts describe
   // one block rather than two moments.
-  const multiplier =
-    anchor === null
+  const multiplier = !isCoinbaseB20
+    ? unavailableMultiplierV1({ tokenAddress, reason: 'not_implemented' })
+    : anchor === null
       ? unavailableMultiplierV1({ tokenAddress, reason: 'chain_read_failed' })
       : await readB20MultiplierV1(deps.reader, { tokenAddress, anchor, now });
   const [publicExitRun, positionExitRun] = deps.cashExit
@@ -507,16 +570,18 @@ export async function assembleOfficialAssetDossierV1(
     new Set(officialUniverse.map((asset) => asset.tokenAddress)),
   );
 
-  const gaps = new Set<string>([
-    'underlying_identity_not_established',
-    'oracle_registry_pause_abi_not_established',
-    'confirmed_swap_semantics_not_implemented',
-  ]);
+  const gaps = new Set<string>(['confirmed_swap_semantics_not_implemented']);
+  if (isCoinbaseB20) gaps.add('oracle_registry_pause_abi_not_established');
+  else {
+    gaps.add('issuer_reference_adapter_not_established');
+    gaps.add('issuer_callable_controls_not_projected');
+  }
+  if (establishedUnderlying === null) gaps.add('underlying_identity_not_established');
   if (executableValue.status === 'not_measured') gaps.add('executable_value_not_measured');
   if (executableValue.status === 'measurement_failed') gaps.add('cash_exit_measurement_failed');
   if (feed.conflict) gaps.add('reference_feed_source_conflict');
-  if (anchor === null) gaps.add('base_block_anchor_unavailable');
-  if (controls.status === 'unavailable') gaps.add('b20_controls_unavailable');
+  if (isCoinbaseB20 && anchor === null) gaps.add('base_block_anchor_unavailable');
+  if (isCoinbaseB20 && controls.status === 'unavailable') gaps.add('b20_controls_unavailable');
   if (referenceValue.status === 'stale') gaps.add('reference_value_stale');
   if (referenceValue.status === 'unavailable' || referenceValue.status === 'invalid') {
     gaps.add('reference_value_unavailable');
@@ -534,7 +599,7 @@ export async function assembleOfficialAssetDossierV1(
     chainId: 8453 as const,
     tokenAddress,
     assembledAt: now.toISOString(),
-    identity: identityProjectionV1(identity!, discrepancies),
+    identity: identityProjectionV1(identity!, discrepancies, establishedUnderlying),
     referenceValue,
     multiplier,
     executableValue,

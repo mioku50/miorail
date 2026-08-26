@@ -26,8 +26,19 @@ const Address = z.string().regex(/^0x[0-9a-f]{40}$/, 'expected a lowercase 20-by
 const Sha256 = z.string().regex(/^[0-9a-f]{64}$/, 'expected a lowercase sha-256 digest');
 
 /** The reviewed sources. Adding one is a review decision, not a config value. */
-export const OFFICIAL_SOURCE_KINDS_V1 = ['base_docs_technical', 'base_product_list'] as const;
+export const OFFICIAL_SOURCE_KINDS_V1 = [
+  'base_docs_technical',
+  'base_product_list',
+  'backed_assets_api',
+] as const;
 export type OfficialSourceKindV1 = (typeof OFFICIAL_SOURCE_KINDS_V1)[number];
+
+/** Sources are compared for omissions only inside one issuer trust root. */
+export const OFFICIAL_SOURCE_ISSUERS_V1: Readonly<Record<OfficialSourceKindV1, string>> = {
+  base_docs_technical: 'coinbase',
+  base_product_list: 'coinbase',
+  backed_assets_api: 'backed',
+};
 
 /**
  * How a check ended.
@@ -175,8 +186,12 @@ export function assertOfficialSnapshotV1(
 ): OfficialSourceSnapshotV1 {
   const parsed = OfficialSourceSnapshotV1Schema.safeParse(value);
   if (parsed.success) return parsed.data;
-  const detail = parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ');
-  throw new RouteStorageIntegrityError(`official source snapshot failed validation on ${direction}: ${detail}`);
+  const detail = parsed.error.issues
+    .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+    .join('; ');
+  throw new RouteStorageIntegrityError(
+    `official source snapshot failed validation on ${direction}: ${detail}`,
+  );
 }
 
 export function assertOfficialAssetV1(
@@ -185,8 +200,12 @@ export function assertOfficialAssetV1(
 ): OfficialAssetInputV1 {
   const parsed = OfficialAssetInputV1Schema.safeParse(value);
   if (parsed.success) return parsed.data;
-  const detail = parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ');
-  throw new RouteStorageIntegrityError(`official asset failed validation on ${direction}: ${detail}`);
+  const detail = parsed.error.issues
+    .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+    .join('; ');
+  throw new RouteStorageIntegrityError(
+    `official asset failed validation on ${direction}: ${detail}`,
+  );
 }
 
 /**
@@ -283,8 +302,14 @@ export function officialSourceDiscrepanciesV1(input: {
     listedBy.set(row.tokenAddress, entry);
   }
 
-  for (const [tokenAddress, entry] of [...listedBy].sort(([left], [right]) => left.localeCompare(right))) {
-    const missingFrom = input.reviewedKinds.filter((kind) => !entry.kinds.includes(kind));
+  for (const [tokenAddress, entry] of [...listedBy].sort(([left], [right]) =>
+    left.localeCompare(right),
+  )) {
+    const issuer = OFFICIAL_SOURCE_ISSUERS_V1[entry.kinds[0]!];
+    const comparableKinds = input.reviewedKinds.filter(
+      (kind) => OFFICIAL_SOURCE_ISSUERS_V1[kind] === issuer,
+    );
+    const missingFrom = comparableKinds.filter((kind) => !entry.kinds.includes(kind));
     if (missingFrom.length === 0) continue;
     found.push({
       kind: 'listed_in_one_source',
@@ -301,7 +326,9 @@ export function officialSourceDiscrepanciesV1(input: {
     addresses.add(tokenAddress);
     byTicker.set(entry.ticker, addresses);
   }
-  for (const [ticker, addresses] of [...byTicker].sort(([left], [right]) => left.localeCompare(right))) {
+  for (const [ticker, addresses] of [...byTicker].sort(([left], [right]) =>
+    left.localeCompare(right),
+  )) {
     if (addresses.size < 2) continue;
     found.push({
       kind: 'ticker_maps_to_multiple_addresses',
@@ -344,7 +371,10 @@ export interface OfficialAssetRepositoryV1 {
    * Null when no source has ever listed it -- which is the ordinary answer for
    * almost every token, and is emphatically not "unofficial, proven".
    */
-  officialIdentity(input: { chainId: number; tokenAddress: string }): Promise<OfficialAssetIdentityV1 | null>;
+  officialIdentity(input: {
+    chainId: number;
+    tokenAddress: string;
+  }): Promise<OfficialAssetIdentityV1 | null>;
 
   /** The official universe, bounded. Ordered by ticker then address so two
    * contracts sharing a ticker stay adjacent instead of interleaved. */

@@ -76,9 +76,12 @@ export const EXIT_FAMILY_MODELS_V1: Readonly<Record<ExitFamilyV1, ExitFamilyMode
 
 /** Which families an issuer has at all. Presence is not availability, and it is
  * certainly not eligibility for any particular holder. */
-export const ISSUER_EXIT_FAMILIES_V1: Readonly<Record<ReviewedIssuerIdV1, readonly ExitFamilyV1[]>> = {
+export const ISSUER_EXIT_FAMILIES_V1: Readonly<
+  Record<ReviewedIssuerIdV1, readonly ExitFamilyV1[]>
+> = {
   coinbase: ['secondary_market_cash'],
   dinari: ['secondary_market_cash', 'issuer_redemption'],
+  backed: ['secondary_market_cash', 'issuer_redemption'],
 };
 
 export class ExitFamilyMismatchError extends Error {

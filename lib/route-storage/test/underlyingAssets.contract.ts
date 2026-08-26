@@ -28,7 +28,10 @@ export function underlyingAssetContractV1(
     observedAt: '2026-08-26T12:00:00.000Z',
   });
 
-  const binding = (over: Partial<ReturnType<typeof bindingBase>> = {}) => ({ ...bindingBase(), ...over });
+  const binding = (over: Partial<ReturnType<typeof bindingBase>> = {}) => ({
+    ...bindingBase(),
+    ...over,
+  });
   function bindingBase() {
     return {
       chainId: 8453 as const,
@@ -44,12 +47,16 @@ export function underlyingAssetContractV1(
     test('nothing is bound until a source declared it', async () => {
       const { repository } = await open();
       await assert.rejects(() => repository.bindRepresentation(binding()), /no reviewed source/);
-      assert.equal(await repository.underlyingOf({ chainId: 8453, tokenAddress: DINARI_AAPL }), null);
+      assert.equal(
+        await repository.underlyingOf({ chainId: 8453, tokenAddress: DINARI_AAPL }),
+        null,
+      );
     });
 
     test('the empty graph is a legible answer, not a missing one', async () => {
-      // The current production state. A surface must be able to say "no
-      // reviewed source has grouped these" rather than render an empty group.
+      // A new source or clean install starts here. A surface must be able to
+      // say "no reviewed source has grouped these" rather than render an
+      // empty group.
       const { repository } = await open();
       assert.deepEqual(await repository.underlyingCounts({ chainId: 8453 }), {
         underlyings: 0,
@@ -90,6 +97,32 @@ export function underlyingAssetContractV1(
       assert.equal(found?.underlying.canonicalName, 'Apple Inc.');
       assert.equal(found?.binding.sourceKind, 'dinari_stock_api');
       assert.match(found?.underlying.sourceRef ?? '', /market_data\/stocks/);
+    });
+
+    test('a delayed older observation cannot replace the current identity projection', async () => {
+      const { repository } = await open();
+      await repository.declareUnderlying({
+        ...underlying(),
+        canonicalName: 'Apple Inc. reviewed later',
+        observedAt: '2026-08-26T14:00:00.000Z',
+      });
+      await repository.bindRepresentation(
+        binding({
+          sourceRef: 'newer exact-address mapping',
+          observedAt: '2026-08-26T14:00:00.000Z',
+        }),
+      );
+      await repository.declareUnderlying(underlying());
+      await repository.bindRepresentation(binding());
+
+      const found = await repository.underlyingOf({
+        chainId: 8453,
+        tokenAddress: DINARI_AAPL,
+      });
+      assert.equal(found?.underlying.canonicalName, 'Apple Inc. reviewed later');
+      assert.equal(found?.underlying.observedAt, '2026-08-26T14:00:00.000Z');
+      assert.equal(found?.binding.sourceRef, 'newer exact-address mapping');
+      assert.equal(found?.binding.observedAt, '2026-08-26T14:00:00.000Z');
     });
   });
 }

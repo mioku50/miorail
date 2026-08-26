@@ -56,6 +56,26 @@ export function unavailableTokenizedStockReferenceV1(input: {
   });
 }
 
+/** Another issuer's reference model was not established. Null semantics are
+ * intentional: Coinbase's total-return guarantees must not leak merely
+ * because the common dossier contract has fields for them. */
+export function unestablishedIssuerReferenceV1(): ReferenceValueV1 {
+  return ReferenceValueV1Schema.parse({
+    status: 'unavailable',
+    feedAddress: null,
+    valueAtomic: null,
+    decimals: null,
+    feedUpdatedAt: null,
+    ageSeconds: null,
+    totalReturnValue: null,
+    multiplierAppliedByFeed: null,
+    registryPause: 'unknown',
+    comparisonEligible: false,
+    withheldReason: 'reference_unavailable',
+    evidence: null,
+  });
+}
+
 export function referenceReadFailureReasonV1(reason: B20RpcReasonV1): string {
   return `chain_read_${reason}`;
 }

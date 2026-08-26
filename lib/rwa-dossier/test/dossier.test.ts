@@ -9,6 +9,7 @@ import {
   createMemoryMarketTailRepository,
   createMemoryOfficialCashExitRepository,
   createMemoryOfficialAssetRepository,
+  createMemoryUnderlyingAssetRepository,
   hashCashExitObservationV1,
   hashCashExitRunV1,
 } from '@mioagent/route-storage';
@@ -109,6 +110,33 @@ async function corpus() {
         displayName: 'ACME Tokenized Stock',
         issuer: 'Coinbase',
         referenceFeedAddress: FEED,
+      },
+    ],
+  });
+  return official;
+}
+
+async function backedCorpus() {
+  const official = createMemoryOfficialAssetRepository();
+  await official.recordSnapshot({
+    snapshot: {
+      sourceKind: 'backed_assets_api',
+      sourceUrl: 'https://api.xstocks.fi/api/v1/token?type=btokens',
+      observedAt: '2026-08-25T10:00:00.000Z',
+      status: 'ok',
+      documentHash: 'c'.repeat(64),
+      corpusHash: 'd'.repeat(64),
+      detail: null,
+    },
+    assets: [
+      {
+        chainId: 8453,
+        tokenAddress: TOKEN,
+        sourceKind: 'backed_assets_api',
+        ticker: 'bNVDA',
+        displayName: 'Backed NVIDIA',
+        issuer: 'Backed Assets',
+        referenceFeedAddress: null,
       },
     ],
   });
@@ -303,6 +331,35 @@ async function cashExit() {
 }
 
 describe('official asset dossier assembly', () => {
+  test('does not call B20 selectors or inherit B20 reference semantics for Backed', async () => {
+    let b20Calls = 0;
+    const blocked = reader();
+    blocked.readBlockAnchor = async () => {
+      b20Calls += 1;
+      throw new Error('another issuer must not enter the B20 adapter');
+    };
+    const result = await assembleOfficialAssetDossierV1(
+      {
+        official: await backedCorpus(),
+        marketTail: await tail(),
+        reader: blocked,
+        now: () => NOW,
+      },
+      { chainId: 8453, tokenAddress: TOKEN },
+    );
+    assert.equal(result.outcome, 'dossier');
+    if (result.outcome !== 'dossier') return;
+    assert.equal(b20Calls, 0);
+    assert.equal(result.dossier.referenceValue.totalReturnValue, null);
+    assert.equal(result.dossier.referenceValue.multiplierAppliedByFeed, null);
+    assert.equal(result.dossier.multiplier.status, 'unavailable');
+    assert.ok(
+      result.dossier.controls.fields.every((field) => field.status === 'unsupported_by_variant'),
+    );
+    assert.ok(result.dossier.gaps.includes('issuer_reference_adapter_not_established'));
+    assert.ok(!result.dossier.gaps.includes('b20_controls_unavailable'));
+  });
+
   test('a tail with no identified venue is unavailable, not a quiet market', async () => {
     // A movement is stored only once its counterparty is known to be a venue,
     // so with nothing identified the tail can read ten thousand transfers and
@@ -380,6 +437,55 @@ describe('official asset dossier assembly', () => {
       'unattributed_counterparty',
     );
     assert.ok(!JSON.stringify(first.dossier).includes('"trader"'));
+  });
+
+  test('projects an underlying only from the exact-address reviewed binding', async () => {
+    const underlying = createMemoryUnderlyingAssetRepository();
+    await underlying.declareUnderlying({
+      underlyingKey: 'security:isin:US67066G1040',
+      assetClass: 'equity',
+      canonicalName: 'NVIDIA Corporation',
+      displaySymbol: 'NVDA',
+      identifierScheme: 'isin',
+      identifierValue: 'US67066G1040',
+      sourceKind: 'coinbase_b20_metadata',
+      sourceRef: 'https://www.coinbase.com/tokenize',
+      sourceHash: 'cd'.repeat(32),
+      observedAt: NOW.toISOString(),
+    });
+    await underlying.bindRepresentation({
+      chainId: 8453,
+      tokenAddress: TOKEN,
+      underlyingKey: 'security:isin:US67066G1040',
+      sourceKind: 'coinbase_b20_metadata',
+      sourceRef: 'https://www.coinbase.com/tokenize#extraMetadata(isin)',
+      sourceHash: 'cd'.repeat(32),
+      issuerId: 'coinbase',
+      issuerInstrumentKey: `coinbase:b20_address:${TOKEN}`,
+      caip10: `eip155:8453:${TOKEN}`,
+      representationKind: 'b20_asset',
+      evidenceStrength: 'reviewed_machine_mapping_with_onchain_cross_check',
+      observedBlockNumber: '5000',
+      observedBlockHash: BLOCK_HASH,
+      observedAt: NOW.toISOString(),
+    });
+    const result = await assembleOfficialAssetDossierV1(
+      {
+        official: await corpus(),
+        marketTail: await tail(),
+        underlying,
+        reader: reader(),
+        now: () => NOW,
+      },
+      { chainId: 8453, tokenAddress: TOKEN },
+    );
+    assert.equal(result.outcome, 'dossier');
+    if (result.outcome !== 'dossier') return;
+    assert.equal(result.dossier.identity.underlying.status, 'supported_by_reviewed_source');
+    assert.equal(result.dossier.identity.underlying.underlyingKey, 'security:isin:US67066G1040');
+    assert.equal(result.dossier.identity.underlying.identifierValue, 'US67066G1040');
+    assert.equal(result.dossier.identity.underlying.evidence?.kind, 'reviewed_identity_mapping');
+    assert.ok(!result.dossier.gaps.includes('underlying_identity_not_established'));
   });
 
   test('returns a typed absence for another valid address and opens no chain seam', async () => {
@@ -561,7 +667,9 @@ describe('representation multiplier', () => {
   const ANCHOR = { blockNumber: '5000', blockHash: BLOCK_HASH, blockTag: '0x1388' } as const;
   const WAD = `0x${(10n ** 18n).toString(16).padStart(64, '0')}`;
 
-  function multiplierReader(answers: Record<string, { ok: boolean; value?: string; reason?: string }>) {
+  function multiplierReader(
+    answers: Record<string, { ok: boolean; value?: string; reason?: string }>,
+  ) {
     return {
       async call(input: { data: string }) {
         const answer = answers[input.data];
@@ -598,7 +706,10 @@ describe('representation multiplier', () => {
 
   test('one token is one share only when the two words are equal', async () => {
     const read = await readB20MultiplierV1(
-      multiplierReader({ '0x1b3ed722': { ok: true, value: WAD }, '0x664808a8': { ok: true, value: WAD } }),
+      multiplierReader({
+        '0x1b3ed722': { ok: true, value: WAD },
+        '0x664808a8': { ok: true, value: WAD },
+      }),
       { tokenAddress: TOKEN, anchor: ANCHOR, now: NOW },
     );
     assert.equal(read.oneToOne, true);
@@ -607,7 +718,10 @@ describe('representation multiplier', () => {
 
   test('a contract that does not implement it is absent; an endpoint that would not answer is ours', async () => {
     const absent = await readB20MultiplierV1(
-      multiplierReader({ '0x1b3ed722': { ok: false, reason: 'reverted' }, '0x664808a8': { ok: true, value: WAD } }),
+      multiplierReader({
+        '0x1b3ed722': { ok: false, reason: 'reverted' },
+        '0x664808a8': { ok: true, value: WAD },
+      }),
       { tokenAddress: TOKEN, anchor: ANCHOR, now: NOW },
     );
     assert.equal(absent.status, 'absent');
@@ -615,7 +729,10 @@ describe('representation multiplier', () => {
     assert.equal(absent.oneToOne, null, 'an unread multiplier never claims one-to-one');
 
     const ours = await readB20MultiplierV1(
-      multiplierReader({ '0x1b3ed722': { ok: false, reason: 'rate_limited' }, '0x664808a8': { ok: true, value: WAD } }),
+      multiplierReader({
+        '0x1b3ed722': { ok: false, reason: 'rate_limited' },
+        '0x664808a8': { ok: true, value: WAD },
+      }),
       { tokenAddress: TOKEN, anchor: ANCHOR, now: NOW },
     );
     assert.equal(ours.status, 'unavailable');
@@ -669,7 +786,7 @@ describe('representation multiplier', () => {
     const read = await readB20MultiplierV1(
       multiplierReader({
         '0x1b3ed722': { ok: true, value: WAD },
-        '0x664808a8': { ok: true, value: `0x${(3n).toString(16).padStart(64, '0')}` },
+        '0x664808a8': { ok: true, value: `0x${3n.toString(16).padStart(64, '0')}` },
       }),
       { tokenAddress: TOKEN, anchor: ANCHOR, now: NOW },
     );

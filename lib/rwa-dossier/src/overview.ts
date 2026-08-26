@@ -34,6 +34,7 @@ import {
 import {
   compareReferenceAndExecutableV1,
   readTokenizedStockReferenceV1,
+  unestablishedIssuerReferenceV1,
   unavailableTokenizedStockReferenceV1,
 } from './reference.js';
 
@@ -67,6 +68,7 @@ const SOURCE_URLS_V1: Readonly<Record<OfficialSourceKindV1, string>> = {
   base_docs_technical:
     'https://docs.base.org/base-chain/asset-issuance/tokenized-stocks-on-base.md',
   base_product_list: 'https://brand.base.org/stocks',
+  backed_assets_api: 'https://api.xstocks.fi/api/v1/token?type=btokens',
 };
 
 function currentTickerV1(identity: OfficialAssetIdentityV1): {
@@ -135,7 +137,11 @@ function bestObservationV1(
     if (order !== 0) return order;
     const leftOut = BigInt(left.sellQuote?.outputAtomic ?? '0');
     const rightOut = BigInt(right.sellQuote?.outputAtomic ?? '0');
-    return leftOut < rightOut ? 1 : leftOut > rightOut ? -1 : left.source.localeCompare(right.source);
+    return leftOut < rightOut
+      ? 1
+      : leftOut > rightOut
+        ? -1
+        : left.source.localeCompare(right.source);
   })[0]!;
 }
 
@@ -298,7 +304,10 @@ export async function assembleOfficialAssetsOverviewV1(
   const activityByToken = new Map(activity.map((row) => [row.tokenAddress.toLowerCase(), row]));
   // Paired pools only. A singleton holds every v4 pool on Base, so counting it
   // per asset would credit this token with venues belonging to other tokens.
-  const pools = cursor === null ? [] : await deps.marketTail.venues({ chainId: 8453, kinds: ['paired_pool'], limit: 1_000 });
+  const pools =
+    cursor === null
+      ? []
+      : await deps.marketTail.venues({ chainId: 8453, kinds: ['paired_pool'], limit: 1_000 });
   const poolsByToken = new Map<string, number>();
   for (const pool of pools) {
     for (const side of [pool.token0, pool.token1]) {
@@ -316,7 +325,11 @@ export async function assembleOfficialAssetsOverviewV1(
   const identified =
     cursor === null
       ? []
-      : await deps.marketTail.venues({ chainId: 8453, kinds: ['paired_pool', 'singleton'], limit: 1_000 });
+      : await deps.marketTail.venues({
+          chainId: 8453,
+          kinds: ['paired_pool', 'singleton'],
+          limit: 1_000,
+        });
   const pending =
     cursor === null
       ? []
@@ -332,8 +345,15 @@ export async function assembleOfficialAssetsOverviewV1(
     const feedAddress =
       identity.listings.find((listing) => listing.referenceFeedAddress !== null)
         ?.referenceFeedAddress ?? null;
-    const referenceValue =
-      anchor === null
+    const isCoinbaseB20 = identity.listings.some(
+      (listing) =>
+        listing.currentlyListed &&
+        (listing.sourceKind === 'base_docs_technical' ||
+          listing.sourceKind === 'base_product_list'),
+    );
+    const referenceValue = !isCoinbaseB20
+      ? unestablishedIssuerReferenceV1()
+      : anchor === null
         ? unavailableTokenizedStockReferenceV1({ feedAddress, reason: 'reference_unavailable' })
         : await readTokenizedStockReferenceV1(deps.reader, {
             feedAddress,
@@ -360,7 +380,8 @@ export async function assembleOfficialAssetsOverviewV1(
       // executing on this exact quote is no longer possible, without turning
       // the reading itself into "not measured".
       expiresAt:
-        run?.observations.map((observation) => observation.expiresAt).find((value) => value) ?? null,
+        run?.observations.map((observation) => observation.expiresAt).find((value) => value) ??
+        null,
       approvedSources: run?.approvedSources ?? [],
       ladder: preview,
       observation: {
@@ -438,7 +459,8 @@ export async function assembleOfficialAssetsOverviewV1(
   if (cursor === null) gaps.add('market_tail_never_run');
   if (cursor !== null && !attributionReady) gaps.add('market_tail_has_identified_no_venue');
   if (counts.notMeasured > 0) gaps.add('cash_exit_not_measured_for_every_asset');
-  if (sources.some((source) => source.status !== 'ok')) gaps.add('official_source_check_incomplete');
+  if (sources.some((source) => source.status !== 'ok'))
+    gaps.add('official_source_check_incomplete');
   if (discrepancies.length > 0) gaps.add('official_sources_disagree');
   gaps.add('confirmed_swap_semantics_not_implemented');
 
@@ -535,7 +557,9 @@ export async function assembleRwaSignalFeedV1(
     deps.signals.signalWatch({ chainId: 8453 }),
     deps.official.officialAssets({ chainId: 8453, limit: 64, currentlyListedOnly: false }),
   ]);
-  const named = new Map(universe.map((identity) => [identity.tokenAddress, currentTickerV1(identity)]));
+  const named = new Map(
+    universe.map((identity) => [identity.tokenAddress, currentTickerV1(identity)]),
+  );
 
   return RwaSignalFeedV1Schema.parse({
     schemaVersion: 'rwa-signal-feed/v1',
