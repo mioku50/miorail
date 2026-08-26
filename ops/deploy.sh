@@ -233,14 +233,14 @@ install -d -m 0755 "$(dirname "$B20_DISCOVER_DROPIN_TARGET")" "$(dirname "$B20_M
 install -m 0644 "$B20_DISCOVER_DROPIN_SOURCE" "$B20_DISCOVER_DROPIN_TARGET"
 install -m 0644 "$B20_MEASURE_DROPIN_SOURCE" "$B20_MEASURE_DROPIN_TARGET"
 
-# The RWA vertical's four oneshot workers and their timers.
+# The RWA vertical's oneshot workers and their timers.
 #
 # Installed from the repository on every deploy for the same reason the B20
 # units are: a schedule that only exists on the host is state nobody can review
 # and nobody can restore. Each pair is (service, timer) with the same stem, and
 # the loop refuses a pair that is missing half of itself rather than leaving a
 # timer pointing at a unit that is not there.
-for stem in rwa-official rwa-cash-exit rwa-lookalikes rwa-market-tail rwa-watchlist rwa-ratio; do
+for stem in rwa-official rwa-cash-exit rwa-lookalikes rwa-market-tail rwa-watchlist rwa-ratio rwa-issuer; do
   unit_source="$REPO/ops/systemd/miorail-$stem.service"
   timer_source="$REPO/ops/systemd/miorail-$stem.timer"
   if [ ! -f "$unit_source" ] || [ ! -f "$timer_source" ]; then
@@ -255,7 +255,10 @@ done
 systemctl daemon-reload
 systemctl enable miorail-miniapp miorail-b20-discover miorail-b20-measure >/dev/null
 # `enable --now` on a timer starts the clock without running the pass, so a
-# deploy never fires four workers at once.
+# deploy never fires every worker at once. A NEW timer with Persistent=true
+# still fires on its first enable, so a migration a new worker needs must be
+# applied BEFORE the deploy, not after it. That ordering has been learned twice
+# here — watch_schedule in Phase 8, representation_ratio in Phase 9A.5.
 systemctl enable --now "${RWA_TIMERS[@]}" >/dev/null
 
 step "5/7  publish the frontend"

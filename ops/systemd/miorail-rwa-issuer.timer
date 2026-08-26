@@ -1,0 +1,22 @@
+[Unit]
+# Every twelve hours.
+#
+# Issuer membership is the slowest-moving fact in this product: a factory's
+# answer about an address it already knows changes only when the issuer
+# deprecates or re-deploys a contract. Twelve hours bounds how long such a move
+# can sit unnoticed, and an unchanged pass writes no transition — so the quiet
+# case, which is every case so far, costs one eth_call per candidate and
+# nothing else.
+#
+# It runs BEFORE the ratio timer's usual slot on purpose: the ratio worker
+# reads Dinari through the set this one establishes.
+Description=Verify issuer membership against each issuer's own root
+
+[Timer]
+OnBootSec=6min
+OnUnitActiveSec=12h
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

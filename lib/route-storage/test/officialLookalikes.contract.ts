@@ -11,6 +11,10 @@ const NVDA = '0xb20000000000000000000078ee7ce2fe4908108c';
 const IMPOSTOR = '0xb200000000000000000000dead0000000000ad01';
 const SECOND = '0xb200000000000000000000beef0000000000be02';
 const CORPUS = [AAPL, NVDA];
+/** The measured Dinari Apple dShare on Base. A real address, because the
+ * finding it stands for was real: its own issuer's factory vouches for it and
+ * Miorail had it filed as an impostor. */
+const DINARI_AAPL = '0x41f7a63713e76c0ab800be03bae9f17b8a356348';
 
 function rowFixtureV1(overrides: Partial<OfficialLookalikeRowV1> = {}): OfficialLookalikeRowV1 {
   return {
@@ -55,7 +59,7 @@ export function officialLookalikeContractV1(
         officialAddresses: CORPUS,
         rows: [rowFixtureV1()],
       });
-      assert.deepEqual(outcome, { flagged: [IMPOSTOR], refreshed: [] });
+      assert.deepEqual(outcome, { flagged: [IMPOSTOR], refreshed: [], withdrawn: [] });
 
       const stored = await repository.lookalikeFor({ chainId: 8453, tokenAddress: IMPOSTOR });
       assert.equal(stored?.officialAddress, AAPL);
@@ -63,6 +67,57 @@ export function officialLookalikeContractV1(
       assert.equal(stored?.launchSymbol, 'AAPLc');
       // A comparison with one address in it is the shape that gets misread.
       assert.notEqual(stored?.tokenAddress, stored?.officialAddress);
+    });
+
+    test("another issuer's reviewed contract leaves the list, and the rest stay", async () => {
+      // Constraint from Phase 9B: once a reviewed root vouches for an address,
+      // the sentence "this is not the official contract and is dressed as if it
+      // were" is false about it, so the row goes rather than being annotated.
+      //
+      // DINARI_AAPL is the measured Dinari Apple dShare. It declares
+      // `symbol() = "AAPL"`, which is exactly Miorail's `underlying` alias for
+      // AAPLc — so it really was on this list, on the strongest match kind.
+      const { repository } = await open();
+      const first = await repository.recordLookalikes({
+        chainId: 8453,
+        officialAddresses: CORPUS,
+        rows: [
+          rowFixtureV1(),
+          rowFixtureV1({ tokenAddress: DINARI_AAPL, matchedValue: 'AAPL', launchSymbol: 'AAPL' }),
+        ],
+      });
+      assert.deepEqual(first.flagged.sort(), [DINARI_AAPL, IMPOSTOR].sort());
+
+      const after = await repository.recordLookalikes({
+        chainId: 8453,
+        officialAddresses: CORPUS,
+        reviewedAddresses: [...CORPUS, DINARI_AAPL],
+        rows: [rowFixtureV1()],
+      });
+      assert.deepEqual(after.withdrawn, [DINARI_AAPL], 'the reviewed contract is withdrawn');
+      assert.equal(
+        await repository.lookalikeFor({ chainId: 8453, tokenAddress: DINARI_AAPL }),
+        null,
+        'and it is gone, not downgraded',
+      );
+      // The unreviewed impostor wearing the same official name is untouched.
+      assert.equal(
+        (await repository.lookalikeFor({ chainId: 8453, tokenAddress: IMPOSTOR }))?.officialAddress,
+        AAPL,
+      );
+    });
+
+    test('a reviewed representation can never be written as an impostor', async () => {
+      const { repository } = await open();
+      await assert.rejects(
+        repository.recordLookalikes({
+          chainId: 8453,
+          officialAddresses: CORPUS,
+          reviewedAddresses: [...CORPUS, DINARI_AAPL],
+          rows: [rowFixtureV1({ tokenAddress: DINARI_AAPL })],
+        }),
+        /reviewed representation of a named issuer/,
+      );
     });
 
     test('an official contract can never be recorded as an impostor', async () => {
@@ -127,7 +182,7 @@ export function officialLookalikeContractV1(
           }),
         ],
       });
-      assert.deepEqual(again, { flagged: [], refreshed: [IMPOSTOR] });
+      assert.deepEqual(again, { flagged: [], refreshed: [IMPOSTOR], withdrawn: [] });
       const stored = await repository.lookalikeFor({ chainId: 8453, tokenAddress: IMPOSTOR });
       assert.equal(stored?.firstFlaggedAt, '2026-08-25T09:00:00.000Z');
       assert.equal(stored?.lastSeenAt, '2026-08-26T09:00:00.000Z');

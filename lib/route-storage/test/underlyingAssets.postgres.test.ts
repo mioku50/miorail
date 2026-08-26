@@ -6,18 +6,17 @@ import postgres from 'postgres';
 
 import type { SqlTemplateExecutor } from '../src/types.js';
 
-import { createDatabaseRepresentationRatioRepository } from '../src/representationRatioDatabase.js';
-import { representationRatioContractV1 } from './representationRatio.contract.js';
+import { createDatabaseUnderlyingAssetRepository } from '../src/underlyingAssetsDatabase.js';
+import { underlyingAssetContractV1 } from './underlyingAssets.contract.js';
 
 // ---------------------------------------------------------------------------
 // The same contract, against real Postgres. It DROPS the tables, so it runs
 // only against a throwaway local database.
 //
-//   MIOAGENT_MIGRATION_TEST_URL=postgres://postgres:x@127.0.0.1:55437/t \
-//     npx tsx --test lib/route-storage/test/representationRatio.postgres.test.ts
+//   MIOAGENT_MIGRATION_TEST_URL=postgres://postgres:x@127.0.0.1:55441/t \
+//     npx tsx --test lib/route-storage/test/underlyingAssets.postgres.test.ts
 //
-// The in-memory twin is only worth having if it refuses what Postgres refuses;
-// three production bugs in this project came from the gap between them.
+// The in-memory twin is only worth having if it refuses what Postgres refuses.
 // ---------------------------------------------------------------------------
 
 const url = process.env.MIOAGENT_MIGRATION_TEST_URL?.trim();
@@ -56,17 +55,17 @@ after(async () => {
 });
 
 if (!throwaway) {
-  describe('postgres representation ratio', () => {
+  describe('postgres underlying assets', () => {
     test('skipped: set MIOAGENT_MIGRATION_TEST_URL to a throwaway local database', () => {});
   });
 } else {
-  representationRatioContractV1('postgres', async () => {
-    await sql!.unsafe('TRUNCATE representation_ratio_change, representation_ratio');
+  underlyingAssetContractV1('postgres', async () => {
+    await sql!.unsafe('TRUNCATE representation_underlying, underlying_asset');
     const executor: SqlTemplateExecutor = (strings, ...values) =>
       (sql as unknown as (
         strings: TemplateStringsArray,
         ...values: unknown[]
       ) => Promise<Record<string, unknown>[]>)(strings, ...values);
-    return { repository: createDatabaseRepresentationRatioRepository(executor) };
+    return { repository: createDatabaseUnderlyingAssetRepository(executor) };
   });
 }

@@ -1,5 +1,6 @@
 import {
   RATIO_APPLICATION_BY_KIND_V1,
+  RATIO_SCALE_SOURCE_BY_KIND_V1,
   assertRepresentationRatioChangeV1,
   assertRepresentationRatioV1,
   type RepresentationRatioChangeV1,
@@ -28,6 +29,10 @@ export function createMemoryRepresentationRatioRepository(): RepresentationRatio
       const id = key(input.chainId, address, input.ratioKind);
       const existing = rows.get(id);
       const application = RATIO_APPLICATION_BY_KIND_V1[input.ratioKind];
+      // Derived from the kind, never taken from the caller: a worker that
+      // passed 'read_from_contract' for a constant it was told would make the
+      // column a decoration.
+      const scaleSource = RATIO_SCALE_SOURCE_BY_KIND_V1[input.ratioKind];
 
       if (!existing) {
         const row = assertRepresentationRatioV1(
@@ -38,6 +43,7 @@ export function createMemoryRepresentationRatioRepository(): RepresentationRatio
             application,
             rawValue: input.rawValue,
             scale: input.scale,
+            scaleSource,
             blockNumber: input.blockNumber,
             blockHash: input.blockHash,
             evidenceHash: input.evidenceHash,
@@ -70,6 +76,7 @@ export function createMemoryRepresentationRatioRepository(): RepresentationRatio
           ...existing,
           rawValue: input.rawValue,
           scale: input.scale,
+          scaleSource,
           blockNumber: input.blockNumber,
           blockHash: input.blockHash,
           evidenceHash: input.evidenceHash,

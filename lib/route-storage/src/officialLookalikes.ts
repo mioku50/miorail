@@ -87,19 +87,43 @@ export class OfficialLookalikeIdentityError extends RouteStorageIntegrityError {
 /**
  * The identity check both repositories run, written once.
  *
- * `officialAddresses` is the corpus AS THE CALLER SEES IT, passed in with the
- * write. That is deliberate: a store that looked the corpus up itself would
- * check a different list from the one the matcher used, and the disagreement
- * would surface as an official asset accused of impersonating itself.
+ * TWO SETS, AND THEY ARE NOT THE SAME SET.
+ *
+ * `officialAddresses` is the alias corpus: the assets a row may POINT AT,
+ * because a reviewed source published a name for them. `reviewedAddresses` is
+ * every address a reviewed root vouches for, and it is the set that may never
+ * BE a lookalike. The second is a superset of the first, and the gap between
+ * them is real:
+ *
+ *   Dinari's Base dShare declares `symbol() = "AAPL"`, exactly. Its issuer's
+ *   own factory vouches for the address. But no reviewed source says which
+ *   security it stands for — Dinari's own guide says the ticker is a display
+ *   field — so it cannot be an alias target. It can only be excluded.
+ *
+ * Collapsing the two would force a choice between accusing a reviewed
+ * contract of impersonation and inventing an underlying identity for it. Both
+ * are wrong; the split is what makes neither necessary.
+ *
+ * Both sets are passed in with the write, AS THE CALLER SEES THEM. That is
+ * deliberate: a store that looked them up itself would check a different list
+ * from the one the matcher used, and the disagreement would surface as a
+ * reviewed asset accused of impersonating itself.
  */
 export function assertLookalikeIdentityV1(
   row: OfficialLookalikeRowV1,
   officialAddresses: ReadonlySet<string>,
+  reviewedAddresses: ReadonlySet<string> = officialAddresses,
 ): void {
   if (officialAddresses.has(row.tokenAddress)) {
     throw new OfficialLookalikeIdentityError(
       row.tokenAddress,
       'it is itself an official contract, and an official contract is never an impostor',
+    );
+  }
+  if (reviewedAddresses.has(row.tokenAddress)) {
+    throw new OfficialLookalikeIdentityError(
+      row.tokenAddress,
+      "it is a reviewed representation of a named issuer, and an issuer's own contract is never an impostor",
     );
   }
   if (!officialAddresses.has(row.officialAddress)) {
@@ -115,6 +139,19 @@ export interface OfficialLookalikeOutcomeV1 {
   flagged: string[];
   /** Contracts already flagged, whose reading was refreshed. */
   refreshed: string[];
+  /**
+   * Contracts REMOVED because a reviewed root now vouches for them.
+   *
+   * A resemblance is withdrawn, not annotated. Once an issuer's own factory
+   * answers for an address, the sentence "this contract is not the official
+   * one and is dressed as if it were" is simply false about it, and leaving a
+   * row behind with a caveat would keep the accusation on the page.
+   *
+   * Withdrawal is a transition and is reported as one, because the day a
+   * legitimate contract stops being listed as an impostor is a fact worth
+   * seeing in the log rather than a silently shorter list.
+   */
+  withdrawn: string[];
 }
 
 export interface OfficialLookalikeRepositoryV1 {
@@ -126,8 +163,18 @@ export interface OfficialLookalikeRepositoryV1 {
    */
   recordLookalikes(input: {
     chainId: number;
-    /** The official corpus the matcher ran against. */
+    /** The alias corpus the matcher ran against: what a row may point at. */
     officialAddresses: readonly string[];
+    /**
+     * Every address a reviewed root vouches for: what may never be a row.
+     *
+     * Optional, and defaulting to the alias corpus, so a caller that has no
+     * issuer registry yet behaves exactly as before. When it is supplied, any
+     * existing row for one of these addresses is DELETED by the write — that
+     * is how a newly reviewed representation leaves this list without anybody
+     * having to remember to clean up after the registry.
+     */
+    reviewedAddresses?: readonly string[];
     rows: readonly OfficialLookalikeRowV1[];
   }): Promise<OfficialLookalikeOutcomeV1>;
 

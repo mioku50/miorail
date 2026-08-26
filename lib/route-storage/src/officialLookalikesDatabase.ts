@@ -35,10 +35,27 @@ export function createDatabaseOfficialLookalikeRepository(
   return {
     async recordLookalikes(input) {
       const corpus = new Set(input.officialAddresses.map((address) => address.toLowerCase()));
+      const reviewedList = [
+        ...new Set((input.reviewedAddresses ?? input.officialAddresses).map((a) => a.toLowerCase())),
+      ];
+      const reviewed = new Set(reviewedList);
       const parsed = input.rows.map((row) => assertOfficialLookalikeV1(row, 'write'));
-      for (const row of parsed) assertLookalikeIdentityV1(row, corpus);
+      for (const row of parsed) assertLookalikeIdentityV1(row, corpus, reviewed);
 
-      const outcome: OfficialLookalikeOutcomeV1 = { flagged: [], refreshed: [] };
+      const outcome: OfficialLookalikeOutcomeV1 = { flagged: [], refreshed: [], withdrawn: [] };
+
+      // A contract a reviewed root now vouches for stops being a resemblance,
+      // whatever it is called. Run before the inserts and independently of
+      // whether this scan found anything, so the withdrawal happens on the pass
+      // that learns about the issuer rather than on the next one that matches.
+      if (reviewedList.length > 0) {
+        const removed = (await sql`
+          DELETE FROM official_asset_lookalikes
+           WHERE chain_id = ${input.chainId} AND token_address = ANY(${reviewedList})
+           RETURNING token_address`) as Record<string, unknown>[];
+        outcome.withdrawn = removed.map((row) => String(row.token_address)).sort();
+      }
+
       if (parsed.length === 0) return outcome;
 
       // What the store knew before this scan. Read up front rather than

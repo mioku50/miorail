@@ -1,5 +1,6 @@
 import {
   RATIO_APPLICATION_BY_KIND_V1,
+  RATIO_SCALE_SOURCE_BY_KIND_V1,
   assertRepresentationRatioChangeV1,
   assertRepresentationRatioV1,
   type RatioReadOutcomeV1,
@@ -18,6 +19,7 @@ function rowToRatioV1(row: Record<string, unknown>): RepresentationRatioRowV1 {
       application: String(row.application),
       rawValue: String(row.raw_value),
       scale: String(row.scale),
+      scaleSource: String(row.scale_source),
       blockNumber: String(row.block_number),
       blockHash: String(row.block_hash),
       evidenceHash: String(row.evidence_hash),
@@ -60,6 +62,8 @@ export function createDatabaseRepresentationRatioRepository(
     async recordRead(input) {
       const address = input.tokenAddress.toLowerCase();
       const application = RATIO_APPLICATION_BY_KIND_V1[input.ratioKind];
+      // Derived from the kind, never taken from the caller. See the contract.
+      const scaleSource = RATIO_SCALE_SOURCE_BY_KIND_V1[input.ratioKind];
 
       const previous = (await sql`
         SELECT raw_value FROM representation_ratio
@@ -93,17 +97,18 @@ export function createDatabaseRepresentationRatioRepository(
 
       const rows = (await sql`
         INSERT INTO representation_ratio (
-          chain_id, token_address, ratio_kind, application, raw_value, scale,
+          chain_id, token_address, ratio_kind, application, raw_value, scale, scale_source,
           block_number, block_hash, evidence_hash, observed_at,
           last_checked_at, last_changed_at, reads, changes, created_at
         ) VALUES (
           ${input.chainId}, ${address}, ${input.ratioKind}, ${application}, ${input.rawValue},
-          ${input.scale}, ${input.blockNumber}, ${input.blockHash}, ${input.evidenceHash},
-          ${input.observedAt}, ${input.now}, ${null}, 1, 0, ${input.now}
+          ${input.scale}, ${scaleSource}, ${input.blockNumber}, ${input.blockHash},
+          ${input.evidenceHash}, ${input.observedAt}, ${input.now}, ${null}, 1, 0, ${input.now}
         )
         ON CONFLICT (chain_id, token_address, ratio_kind) DO UPDATE SET
           raw_value       = EXCLUDED.raw_value,
           scale           = EXCLUDED.scale,
+          scale_source    = EXCLUDED.scale_source,
           block_number    = EXCLUDED.block_number,
           block_hash      = EXCLUDED.block_hash,
           evidence_hash   = EXCLUDED.evidence_hash,

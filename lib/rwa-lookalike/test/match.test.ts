@@ -40,6 +40,79 @@ describe('official aliases', () => {
   });
 });
 
+/**
+ * The measured Dinari Apple dShare on Base, and its own wrapper.
+ *
+ * Real addresses, because the finding is real: `symbol()` on the dShare is
+ * exactly `AAPL`, and Miorail's `underlying` alias for `AAPLc` is exactly
+ * `AAPL`, so this contract sat in the Lookalikes list on the strongest match
+ * kind there is — flagged for wearing a name its own issuer gave it.
+ */
+const DINARI_AAPL = '0x41f7a63713e76c0ab800be03bae9f17b8a356348';
+const DINARI_AAPL_LAUNCH = {
+  tokenAddress: DINARI_AAPL,
+  symbol: 'AAPL',
+  name: 'Apple Inc. - Dinari',
+};
+
+describe("another issuer's reviewed representation", () => {
+  test('is a lookalike while nothing has reviewed it', () => {
+    // The state before Phase 9B: nothing vouches for the address, so the
+    // resemblance is all the product knows, and reporting it is correct.
+    const match = lookalikeMatchV1({ launch: DINARI_AAPL_LAUNCH, officials: OFFICIALS });
+    assert.equal(match?.officialAddress, AAPL);
+    assert.equal(match?.matchKind, 'symbol_exact');
+    assert.equal(match?.matchedAlias, 'underlying');
+  });
+
+  test('stops being one the moment a reviewed root vouches for it', () => {
+    // Dinari's own factory answers isTokenDShare(0x41f7…6348) = true. The
+    // sentence "this is not the official contract and is dressed as if it
+    // were" is simply false about it after that, so the row goes — it is not
+    // annotated, downgraded or kept with a caveat.
+    assert.equal(
+      lookalikeMatchV1({
+        launch: DINARI_AAPL_LAUNCH,
+        officials: OFFICIALS,
+        reviewedRepresentations: [DINARI_AAPL],
+      }),
+      null,
+    );
+  });
+
+  test('and an unreviewed contract wearing the same name still is one', () => {
+    // The half that must NOT change. Excluding one reviewed address cannot
+    // become an amnesty for everything that spells AAPL.
+    const match = lookalikeMatchV1({
+      launch: { tokenAddress: IMPOSTOR, symbol: 'AAPL', name: 'Apple' },
+      officials: OFFICIALS,
+      reviewedRepresentations: [DINARI_AAPL],
+    });
+    assert.equal(match?.tokenAddress, IMPOSTOR);
+    assert.equal(match?.officialAddress, AAPL);
+    assert.equal(match?.matchKind, 'symbol_exact');
+  });
+
+  test('is excluded by address, not by the name it shares with the reviewed one', () => {
+    // A checksummed or upper-cased address from a registry is the same
+    // address. An impostor that copies the reviewed contract's NAME is not.
+    assert.equal(
+      lookalikeMatchV1({
+        launch: DINARI_AAPL_LAUNCH,
+        officials: OFFICIALS,
+        reviewedRepresentations: [DINARI_AAPL.toUpperCase().replace('0X', '0x')],
+      }),
+      null,
+    );
+    const copycat = lookalikeMatchV1({
+      launch: { tokenAddress: OTHER, symbol: 'AAPL', name: 'Apple Inc. - Dinari' },
+      officials: OFFICIALS,
+      reviewedRepresentations: [DINARI_AAPL],
+    });
+    assert.equal(copycat?.tokenAddress, OTHER, 'wearing a reviewed contract name grants nothing');
+  });
+});
+
 describe('the matcher', () => {
   test('an official contract is never a lookalike', () => {
     // Not of another official asset, and not of itself. Checked before any

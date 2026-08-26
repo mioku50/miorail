@@ -117,16 +117,37 @@ export function officialAliasesV1(
  *
  * `null` is the ordinary answer and means only that nothing matched — never
  * that the launch was checked and found honest.
+ *
+ * `reviewedRepresentations` is a SECOND, wider set: every address a reviewed
+ * issuer root vouches for. It exists because the two sets came apart the
+ * moment a second issuer arrived. Measured 2026-08-26, Dinari's Base dShare
+ * declares `symbol() = "AAPL"` exactly, and Miorail's own `underlying` alias
+ * for `AAPLc` is `AAPL` — so the matcher flags a contract whose issuer's own
+ * factory vouches for it, on the strongest match kind there is.
+ *
+ * It cannot be fixed by adding that contract to `officials`, because nothing
+ * reviewed says WHICH security it represents: Dinari's own guidance is that
+ * the ticker is a display field. So it is excluded from being a lookalike
+ * without being adopted as an alias target — which is exactly the shape of
+ * "this is a legitimate contract we cannot yet group".
  */
 export function lookalikeMatchV1(input: {
   launch: LaunchForMatchV1;
   officials: readonly OfficialIdentityForMatchV1[];
+  /** Addresses a reviewed issuer root vouches for, beyond the alias corpus. */
+  reviewedRepresentations?: readonly string[];
 }): LookalikeMatchV1 | null {
   const launchAddress = input.launch.tokenAddress.toLowerCase();
   // An official contract is not a lookalike of anything, including of another
   // official asset. Checked before any string is compared, so the strongest
   // possible match cannot outrank identity.
   if (input.officials.some((asset) => asset.tokenAddress.toLowerCase() === launchAddress)) return null;
+  // Neither is any other issuer's own contract. Same rule, wider set.
+  if (
+    input.reviewedRepresentations?.some((address) => address.toLowerCase() === launchAddress) === true
+  ) {
+    return null;
+  }
 
   const launchSymbol = input.launch.symbol.trim();
   const normalizedSymbol = normalizeIdentityTextV1(launchSymbol);

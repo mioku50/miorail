@@ -26,12 +26,23 @@ export function createMemoryOfficialLookalikeRepository(): OfficialLookalikeRepo
   return {
     async recordLookalikes(input) {
       const corpus = new Set(input.officialAddresses.map((address) => address.toLowerCase()));
+      const reviewed = new Set(
+        (input.reviewedAddresses ?? input.officialAddresses).map((address) => address.toLowerCase()),
+      );
       const parsed = input.rows.map((row) => assertOfficialLookalikeV1(row, 'write'));
       // Every row is checked BEFORE any is written, so a refused row does not
       // leave half a scan behind.
-      for (const row of parsed) assertLookalikeIdentityV1(row, corpus);
+      for (const row of parsed) assertLookalikeIdentityV1(row, corpus, reviewed);
 
-      const outcome: OfficialLookalikeOutcomeV1 = { flagged: [], refreshed: [] };
+      const outcome: OfficialLookalikeOutcomeV1 = { flagged: [], refreshed: [], withdrawn: [] };
+      // A contract a reviewed root now vouches for stops being a resemblance,
+      // whatever it is called. Done before the writes so one pass cannot both
+      // withdraw and re-flag the same address.
+      for (const [id, row] of [...rows]) {
+        if (row.chainId !== input.chainId || !reviewed.has(row.tokenAddress)) continue;
+        rows.delete(id);
+        outcome.withdrawn.push(row.tokenAddress);
+      }
       for (const row of parsed) {
         const id = key(row.chainId, row.tokenAddress);
         const previous = rows.get(id);
@@ -45,6 +56,7 @@ export function createMemoryOfficialLookalikeRepository(): OfficialLookalikeRepo
       }
       outcome.flagged.sort();
       outcome.refreshed.sort();
+      outcome.withdrawn.sort();
       return outcome;
     },
 

@@ -5,6 +5,9 @@ import type { RepresentationRatioRepositoryV1 } from '../src/representationRatio
 
 const AAPL = '0xb200000000000000000000c2e324d24d7eecd1fb';
 const NVDA = '0xb20000000000000000000078ee7ce2fe4908108c';
+/** The measured Dinari Apple dShare on Base. A real address, because the point
+ * of this case is that a real second issuer arrived. */
+const DINARI_AAPL = '0x41f7a63713e76c0ab800be03bae9f17b8a356348';
 const WAD = (10n ** 18n).toString();
 const HASH_A = `0x${'a1'.repeat(32)}`;
 const HASH_B = `0x${'b2'.repeat(32)}`;
@@ -126,6 +129,29 @@ export function representationRatioContractV1(
         [AAPL],
         'the absent address is absent, not defaulted',
       );
+    });
+
+    test("two issuers' conventions never merge into one column", async () => {
+      // The whole reason this is not a B20 table. Same shape of number, and
+      // applying it the same way on both would double-count every dShare
+      // split — Dinari's balanceOf has already applied it.
+      const { repository } = await open();
+      const b20 = await repository.recordRead(read());
+      const dshare = await repository.recordRead(
+        read({
+          tokenAddress: DINARI_AAPL,
+          ratioKind: 'dinari_balance_per_share',
+          rawValue: WAD,
+          scale: WAD,
+        }),
+      );
+      assert.equal(b20.row.application, 'apply_to_raw_balance');
+      assert.equal(dshare.row.application, 'already_applied_by_token');
+      // And where the scale came from is carried too: a B20 publishes
+      // WAD_PRECISION() and a dShare publishes nothing, so one is measured and
+      // one is a reviewed constant even though both read 1e18.
+      assert.equal(b20.row.scaleSource, 'read_from_contract');
+      assert.equal(dshare.row.scaleSource, 'reviewed_constant');
     });
 
     test('two representations keep separate histories', async () => {

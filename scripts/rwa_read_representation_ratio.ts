@@ -29,10 +29,12 @@
 import { createB20ReaderV1 } from '@mioagent/b20-control';
 import { client, closeDb } from '@mioagent/db';
 import {
+  createDatabaseIssuerRepresentationRepository,
   createDatabaseOfficialAssetRepository,
   createDatabaseRepresentationRatioRepository,
 } from '@mioagent/route-storage';
 import { readB20MultiplierV1 } from '@mioagent/rwa-dossier';
+import { readDinariBalancePerShareV1 } from '@mioagent/rwa-issuer';
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 
@@ -71,11 +73,23 @@ async function main(): Promise<void> {
 
   const official = createDatabaseOfficialAssetRepository(client);
   const ratios = createDatabaseRepresentationRatioRepository(client);
+  const issuers = createDatabaseIssuerRepresentationRepository(client);
   const reader = createB20ReaderV1({ rpcUrl });
 
   const assets = await official.officialAssets({ chainId: CHAIN_ID_V1, limit: 500 });
-  console.log(`${assets.length} representation(s) in the official corpus`);
-  if (assets.length === 0) return;
+  // Every issuer gets its OWN adapter. Reading `multiplier()` off a dShare
+  // would be a guess, and a guess of exactly that shape was measured to
+  // contradict another issuer's own published value.
+  const dinari = await issuers.establishedRepresentations({
+    chainId: CHAIN_ID_V1,
+    issuerId: 'dinari',
+    limit: 500,
+  });
+  console.log(
+    `${assets.length} representation(s) in the official corpus, ` +
+      `${dinari.length} established Dinari representation(s)`,
+  );
+  if (assets.length === 0 && dinari.length === 0) return;
 
   const anchorRead = await reader.readBlockAnchor();
   if (!anchorRead.ok) {
@@ -134,6 +148,40 @@ async function main(): Promise<void> {
     console.log(
       `  ${asset.tokenAddress}  ${normalizedV1(value.rawValue, value.scale)}  ${outcome.outcome}`,
     );
+    await sleep(gapMs);
+  }
+
+  // Dinari, through its own adapter and its own ratio kind. `balanceOf` has
+  // already applied this value, so the store carries
+  // `already_applied_by_token` and nothing downstream may apply it twice.
+  for (const representation of dinari) {
+    const value = await readDinariBalancePerShareV1(reader, {
+      tokenAddress: representation.tokenAddress,
+      anchor,
+    });
+    if (value.outcome !== 'read') {
+      if (value.outcome === 'absent') absent += 1;
+      else failed += 1;
+      console.log(`  ${representation.tokenAddress}  ${value.outcome} (${value.reason})`);
+      await sleep(gapMs);
+      continue;
+    }
+    read += 1;
+    const outcome = await ratios.recordRead({
+      chainId: CHAIN_ID_V1,
+      tokenAddress: value.tokenAddress,
+      ratioKind: 'dinari_balance_per_share',
+      rawValue: value.rawValue,
+      scale: value.scale,
+      blockNumber: value.blockNumber,
+      blockHash: value.blockHash,
+      evidenceHash: value.evidenceHash,
+      observedAt: now.toISOString(),
+      now: now.toISOString(),
+    });
+    if (outcome.outcome === 'changed') changed.push(value.tokenAddress);
+    if (outcome.outcome === 'first_observation') firstSeen.push(value.tokenAddress);
+    console.log(`  ${value.tokenAddress}  ${value.normalized}  ${outcome.outcome}`);
     await sleep(gapMs);
   }
 

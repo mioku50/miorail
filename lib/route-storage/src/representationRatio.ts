@@ -32,7 +32,7 @@ const Hash = z.string().regex(/^0x[0-9a-f]{64}$/);
 
 /** The reviewed adapters. Adding one is a review decision: it means somebody
  * proved which function to call AND which side applies the result. */
-export const RATIO_KINDS_V1 = ['b20_multiplier'] as const;
+export const RATIO_KINDS_V1 = ['b20_multiplier', 'dinari_balance_per_share'] as const;
 export type RatioKindV1 = (typeof RATIO_KINDS_V1)[number];
 
 export const RATIO_APPLICATIONS_V1 = ['apply_to_raw_balance', 'already_applied_by_token'] as const;
@@ -44,6 +44,39 @@ export const RATIO_APPLICATION_BY_KIND_V1: Readonly<Record<RatioKindV1, RatioApp
   // IB20Asset: "Holder balances are stored [raw]"; `toScaledBalance(raw) =
   // raw * multiplier / WAD_PRECISION`.
   b20_multiplier: 'apply_to_raw_balance',
+  // DShare extends ERC20Rebasing: `balanceOf` already divides by
+  // balance-per-share. Applying it again double-counts every split.
+  dinari_balance_per_share: 'already_applied_by_token',
+};
+
+/**
+ * WHERE the scale came from, which is not the same as what it is.
+ *
+ * A B20 publishes its own scale — `WAD_PRECISION()` — so the reader READS it,
+ * and a deployment that ever changed it would be followed rather than
+ * misread. A dShare does not publish one: the divisor is a constant in the
+ * issuer's own source ("This amount is assumed to have 18 decimals and is
+ * divided by 10**18 when applied" — ERC20Rebasing.sol), so a reviewed adapter
+ * DECLARES it.
+ *
+ * Both end up as the same digits in `scale`. The difference is whether the
+ * chain told us or a person did, and a surface that cannot see the difference
+ * will eventually claim we measured something we were told.
+ */
+export const RATIO_SCALE_SOURCES_V1 = ['read_from_contract', 'reviewed_constant'] as const;
+export type RatioScaleSourceV1 = (typeof RATIO_SCALE_SOURCES_V1)[number];
+
+export const RATIO_SCALE_SOURCE_BY_KIND_V1: Readonly<Record<RatioKindV1, RatioScaleSourceV1>> = {
+  b20_multiplier: 'read_from_contract',
+  dinari_balance_per_share: 'reviewed_constant',
+};
+
+/** The scale a reviewed adapter declares, for the kinds whose contracts do not
+ * publish one. Null where the scale is read instead of declared, so a caller
+ * cannot quietly substitute a constant for a missing read. */
+export const RATIO_DECLARED_SCALE_BY_KIND_V1: Readonly<Record<RatioKindV1, string | null>> = {
+  b20_multiplier: null,
+  dinari_balance_per_share: '1000000000000000000',
 };
 
 export const RepresentationRatioRowV1Schema = z
@@ -54,6 +87,7 @@ export const RepresentationRatioRowV1Schema = z
     application: z.enum(RATIO_APPLICATIONS_V1),
     rawValue: PositiveDigits,
     scale: PositiveDigits,
+    scaleSource: z.enum(RATIO_SCALE_SOURCES_V1),
     blockNumber: Digits,
     blockHash: Hash,
     evidenceHash: Hash,
@@ -71,6 +105,21 @@ export const RepresentationRatioRowV1Schema = z
         code: z.ZodIssueCode.custom,
         path: ['application'],
         message: `a ${row.ratioKind} ratio is applied by ${RATIO_APPLICATION_BY_KIND_V1[row.ratioKind]}`,
+      });
+    }
+    if (RATIO_SCALE_SOURCE_BY_KIND_V1[row.ratioKind] !== row.scaleSource) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['scaleSource'],
+        message: `a ${row.ratioKind} scale comes from ${RATIO_SCALE_SOURCE_BY_KIND_V1[row.ratioKind]}`,
+      });
+    }
+    const declared = RATIO_DECLARED_SCALE_BY_KIND_V1[row.ratioKind];
+    if (declared !== null && row.scale !== declared) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['scale'],
+        message: `a ${row.ratioKind} scale is the reviewed constant ${declared}, and this row carries ${row.scale}`,
       });
     }
     if ((row.changes === 0) !== (row.lastChangedAt === null)) {
