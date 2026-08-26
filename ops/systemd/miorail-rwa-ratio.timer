@@ -1,0 +1,19 @@
+[Unit]
+# Every six hours.
+#
+# A multiplier moves on a corporate action, and a corporate action is announced
+# days ahead in the world even though these tokens publish no onchain notice
+# this build can call. Six hours bounds how long a split or a dividend can sit
+# unnoticed, and an unchanged read costs two eth_calls per representation and
+# writes no transition — so the quiet case, which is nearly every case, is
+# nearly free.
+Description=Read the ratio between one token and one underlying share
+
+[Timer]
+OnBootSec=9min
+OnUnitActiveSec=6h
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

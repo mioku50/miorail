@@ -56,6 +56,7 @@
     "rwa:measure-cash-exit": "tsx scripts/rwa_measure_cash_exit.ts",
     "rwa:market-tail": "tsx scripts/market_tail.ts",
     "rwa:scan-lookalikes": "tsx scripts/rwa_scan_lookalikes.ts",
+    "rwa:read-ratio": "node --import tsx scripts/rwa_read_representation_ratio.ts",
     "rwa:watchlist-sweep": "tsx scripts/rwa_watchlist_sweep.ts"
   },
   "devDependencies": {

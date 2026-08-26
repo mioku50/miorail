@@ -622,6 +622,49 @@ describe('representation multiplier', () => {
     assert.equal(ours.unavailableReason, 'chain_read_failed');
   });
 
+  test('a selector echoed back is the contract saying no, whatever the coarse reason said', async () => {
+    // Measured on Base: the B20 precompile reverts with the CALLED SELECTOR as
+    // its revert data for a function it does not implement — proven with a
+    // `0xdeadbeef` control that echoed itself. `uiMultiplier()` echoes too,
+    // which is how a documented function turns out not to be deployed here.
+    const reader = {
+      async call(input: { data: string }) {
+        return {
+          ok: false as const,
+          reason: 'rpc_error' as const,
+          revertSelector: input.data.slice(0, 10),
+        };
+      },
+      async readBlockAnchor() {
+        return { ok: true as const, value: ANCHOR };
+      },
+    } as never;
+    const read = await readB20MultiplierV1(reader, {
+      tokenAddress: TOKEN,
+      anchor: ANCHOR,
+      now: NOW,
+    });
+    assert.equal(read.status, 'absent');
+    assert.equal(read.unavailableReason, 'not_implemented');
+
+    // A revert carrying something else is a real revert, not an absent
+    // function, and must not be laundered into "this contract has no ratio".
+    const elsewhere = {
+      async call() {
+        return { ok: false as const, reason: 'rpc_error' as const, revertSelector: '0xdeadbeef' };
+      },
+      async readBlockAnchor() {
+        return { ok: true as const, value: ANCHOR };
+      },
+    } as never;
+    const other = await readB20MultiplierV1(elsewhere, {
+      tokenAddress: TOKEN,
+      anchor: ANCHOR,
+      now: NOW,
+    });
+    assert.equal(other.unavailableReason, 'chain_read_failed');
+  });
+
   test('a scale that is not a power of ten has no decimal rendering this build will invent', async () => {
     const read = await readB20MultiplierV1(
       multiplierReader({

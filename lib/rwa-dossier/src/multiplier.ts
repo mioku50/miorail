@@ -102,10 +102,24 @@ export async function readB20MultiplierV1(
   // A contract that does not implement the pair is `absent`, not a failure of
   // ours; an endpoint that would not answer is a failure of ours. Reporting
   // either as the other has shipped here three times under different names.
+  //
+  // The B20 precompile makes the difference readable: an unknown function
+  // reverts with its OWN SELECTOR as the revert data. Measured against a
+  // control on 2026-08-26 — `0xdeadbeef` came back as `0xdeadbeef`, and so did
+  // `uiMultiplier()`, which the interface reference documents but this
+  // deployment does not implement. When the echo is there we trust it over the
+  // coarse reason, and a revert carrying anything else is a real revert.
   if (!multiplierRead?.ok || !scaleRead?.ok) {
     const failed = multiplierRead?.ok === false ? multiplierRead : scaleRead;
+    const attempted =
+      multiplierRead?.ok === false ? B20_MULTIPLIER_SELECTOR_V1 : B20_WAD_PRECISION_SELECTOR_V1;
+    const echoedItsOwnSelector =
+      failed?.ok === false &&
+      typeof failed.revertSelector === 'string' &&
+      failed.revertSelector.toLowerCase() === attempted;
     const contractSaidNo =
-      failed?.ok === false && (failed.reason === 'reverted' || failed.reason === 'empty_result');
+      echoedItsOwnSelector ||
+      (failed?.ok === false && (failed.reason === 'reverted' || failed.reason === 'empty_result'));
     const reason = contractSaidNo ? 'not_implemented' : 'chain_read_failed';
     return unavailableMultiplierV1({
       tokenAddress,
