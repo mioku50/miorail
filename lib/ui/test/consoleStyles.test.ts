@@ -162,6 +162,18 @@ describe('a KPI stacks whatever element it is given', () => {
   // Coinbase source". `.kpi` styled its children but never declared how they
   // stack, so the one screen that used spans instead of divs ran the label,
   // the number and the note together into a single sentence.
+  test('an identity keeps its two labels apart in any card', () => {
+    // `symbol` and `name` render as adjacent inline spans, so the separator is
+    // pure CSS. Scoped to `.cardrow` it produced "CoinbaseB20 asset" on every
+    // card that was not a `.cardrow` — the two strings ran together with no
+    // space, on a component whose entire job is to keep an identity legible.
+    assert.match(css, /\.mio-console \.cr-name \.sub\s*\{[^}]*margin-left/);
+    assert.ok(
+      !/\.mio-console \.cardrow \.cr-name \.sub\s*\{/.test(css),
+      'the identity separator must not be scoped to one card class',
+    );
+  });
+
   test('.kpi declares its own stacking rather than inheriting it from divs', () => {
     const bodies = rulesFor(/\.mio-console \.kpi\s*$/);
     assert.ok(bodies.length > 0, '.mio-console .kpi must have a rule of its own');

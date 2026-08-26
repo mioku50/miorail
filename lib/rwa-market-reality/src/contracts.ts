@@ -126,3 +126,57 @@ export const MarketRealityResponseV1Schema = z
   })
   .strict();
 export type MarketRealityResponseV1 = z.infer<typeof MarketRealityResponseV1Schema>;
+
+// ---------------------------------------------------------------------------
+// The chooser.
+//
+// Phase 10B's first control is "which underlying", and until this existed
+// there was no read that could answer it: the graph could be walked from a key
+// but not enumerated. A surface with no list would have had to accept a typed
+// ISIN, which is a research tool, not a product.
+//
+// `representationCount` and `issuerIds` are both here because they are
+// different sentences. Two representations from one issuer is a structure
+// choice — a rebasing token and its wrapper. Two representations from two
+// issuers is the thing this whole phase exists to compare. A single number
+// cannot tell a reader which one they are looking at.
+// ---------------------------------------------------------------------------
+
+export const MarketRealityIndexEntryV1Schema = z
+  .object({
+    underlyingKey: z
+      .string()
+      .regex(/^[a-z0-9_]+:[a-z0-9_]+:.+$/)
+      .max(200),
+    canonicalName: z.string().min(1).max(200),
+    displaySymbol: z.string().min(1).max(40).nullable(),
+    assetClass: z.enum(['equity', 'fund_share', 'other', 'unknown']),
+    identifierScheme: z.string().min(1).max(40).nullable(),
+    identifierValue: z.string().min(1).max(120).nullable(),
+    representationCount: z.number().int().min(0),
+    issuerIds: z.array(z.enum(['coinbase', 'dinari', 'backed'])).max(8),
+    /** True when more than one ISSUER carries it — the comparable case. */
+    multiIssuer: z.boolean(),
+  })
+  .strict();
+export type MarketRealityIndexEntryV1 = z.infer<typeof MarketRealityIndexEntryV1Schema>;
+
+export const MarketRealityIndexV1Schema = z
+  .object({
+    schemaVersion: z.literal('market-reality-index/v1'),
+    chainId: z.literal(8453),
+    /** Every reviewed underlying, most-represented first. */
+    entries: z.array(MarketRealityIndexEntryV1Schema).max(500),
+    /** Corpus-wide, never the page: a count beside a filter is a claim about
+     * the corpus, and this surface pages. */
+    totals: z
+      .object({
+        underlyings: z.number().int().min(0),
+        boundRepresentations: z.number().int().min(0),
+        multiIssuerUnderlyings: z.number().int().min(0),
+      })
+      .strict(),
+    observedAt: Timestamp,
+  })
+  .strict();
+export type MarketRealityIndexV1 = z.infer<typeof MarketRealityIndexV1Schema>;

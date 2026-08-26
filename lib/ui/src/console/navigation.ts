@@ -15,7 +15,7 @@
 
 /** Every place a user can be. `settings` is deliberately last: it is where you
  * go to change something, not a surface you work in. */
-export const CONSOLE_SECTIONS_V1 = ['opportunities', 'investigate', 'portfolio', 'routes', 'activity', 'extensions', 'settings'] as const;
+export const CONSOLE_SECTIONS_V1 = ['opportunities', 'market', 'investigate', 'portfolio', 'routes', 'activity', 'extensions', 'settings'] as const;
 
 export type ConsoleSectionV1 = (typeof CONSOLE_SECTIONS_V1)[number];
 
@@ -50,6 +50,23 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
     compactLabel: 'Discover',
     path: '/opportunities',
     blurb: 'Officially issued assets, what getting back out costs, and what changed.',
+  },
+  market: {
+    id: 'market',
+    // Phase 10B. Discover answers "which assets are real"; this answers "and
+    // which of the several ways to hold THIS one actually works at my size".
+    // Its own surface rather than a Discover tab because the subject is
+    // different: Discover's row is a contract, and this page's row is a
+    // security that several contracts claim to represent.
+    //
+    // Not in the three-up bar. While the coverage gate is withheld for every
+    // security in the corpus, a tab promising a comparison would be promising
+    // more than the evidence currently supports — the drawer is honest about
+    // where the surface stands without hiding it.
+    label: 'Market Reality',
+    compactLabel: 'Reality',
+    path: '/market',
+    blurb: 'One security, every reviewed way to hold it on Base, at one exact size.',
   },
   investigate: {
     id: 'investigate',
@@ -127,10 +144,10 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
  */
 export const CONSOLE_PRIMARY_SECTIONS_V1 = ['opportunities', 'portfolio', 'routes'] as const;
 
-/** T70 §3 — the mobile drawer is exactly these six and nothing else. */
+/** T70 §3 — the mobile drawer is exactly these eight and nothing else. */
 // Activity and Extensions sit in the drawer rather than the tab bar. Neither
 // is where work starts; both are places you go to look something up.
-export const CONSOLE_DRAWER_SECTIONS_V1 = [...CONSOLE_PRIMARY_SECTIONS_V1, 'investigate', 'activity', 'extensions', 'settings'] as const;
+export const CONSOLE_DRAWER_SECTIONS_V1 = [...CONSOLE_PRIMARY_SECTIONS_V1, 'market', 'investigate', 'activity', 'extensions', 'settings'] as const;
 
 export function consoleSectionLabelV1(section: ConsoleSectionV1): string {
   return CONSOLE_SECTION_TABLE_V1[section].label;

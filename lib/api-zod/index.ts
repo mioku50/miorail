@@ -56,6 +56,19 @@ export {
   type RwaSignalCardV1,
   type RwaSignalFeedV1,
 } from '@mioagent/rwa-dossier/discover';
+// Phase 10A/10B — one underlying, every reviewed Base representation of it.
+// Re-exported rather than restated for the same reason the Discover schemas
+// are: the projection that assembles the answer and the schema a client parses
+// it with have to be the same object, or a field can be dropped on one side
+// and nobody notices until a column renders blank.
+export {
+  MarketRealityIndexV1Schema,
+  MarketRealityIndexEntryV1Schema,
+  MarketRealityResponseV1Schema,
+  type MarketRealityIndexV1,
+  type MarketRealityIndexEntryV1,
+  type MarketRealityResponseV1,
+} from '@mioagent/rwa-market-reality/contracts';
 // Phase 7 — one pasted address. Re-exported rather than restated for the same
 // reason the Discover schemas are: the projection that assembles a dossier and
 // the schema a client parses it with have to be the same object.

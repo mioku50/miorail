@@ -67,15 +67,17 @@ test('no payment surface became a tab', () => {
 
 test('no command carries an emoji or the retired vocabulary', () => {
   const commands = appCommands();
-  // Seven: the three primary sections plus Investigate, Activity, Extensions
-  // and Settings, which the palette reaches and the header deliberately does
-  // not. None of the four belongs in the tab bar — each is entered with
-  // something you already have — and a wider bar would push every label into
-  // an ellipsis at 390px to make room for the surfaces used least often.
-  assert.equal(commands.length, 7, 'the console exposes exactly seven entries');
+  // Eight: the three primary sections plus Market Reality, Investigate,
+  // Activity, Extensions and Settings, which the palette reaches and the
+  // header deliberately does not. None of the five belongs in the tab bar —
+  // each is entered with something you already have, an address or a company —
+  // and a wider bar would push every label into an ellipsis at 390px to make
+  // room for the surfaces used least often.
+  assert.equal(commands.length, 8, 'the console exposes exactly eight entries');
   assert.equal(commands.some((command) => command.path === '/plan/history'), true);
   assert.equal(commands.some((command) => command.path === '/portfolio'), true);
   assert.equal(commands.some((command) => command.path === '/opportunities'), true);
+  assert.equal(commands.some((command) => command.path === '/market'), true);
   assert.equal(commands.some((command) => command.path === '/settings'), true);
   for (const command of commands) {
     assert.equal(command.icon, '', 'navigation carries no emoji');

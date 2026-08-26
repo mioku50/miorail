@@ -1048,10 +1048,95 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .call .cs,
 .mio-console .kv .v,
 .mio-console .qrow .v { overflow-wrap: anywhere; }
-.mio-console .cardrow .cr-name .sub { font-size: 11.5px; font-weight: 400; color: var(--faint); margin-left: 6px; }
+/* The secondary label inside an identity. Scoped to `.cr-name` rather than to
+   `.cardrow`, because the gap belongs to the pair of strings and not to the
+   container that happens to hold them: Market Reality's cards are `.mr-rep`,
+   and under the old selector "Coinbase" and "B20 asset" rendered as
+   "CoinbaseB20 asset" with no separator at all. */
+.mio-console .cr-name .sub { font-size: 11.5px; font-weight: 400; color: var(--faint); margin-left: 6px; }
 
 .mio-console .aitext { margin: 10px 0 0; padding: 12px; border-radius: var(--r);
   background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line);
   font-size: 12.5px; line-height: 1.55; color: var(--ink);
   white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow-y: auto; }
 .mio-console.mini .aitext { max-height: 300px; font-size: 12px; }
+
+/* --------------------------------------------------------------------------
+   Phase 10B — Market Reality.
+
+   One security, every reviewed way to hold it on Base, side by side.
+
+   The board is a grid of cards rather than a table because most cells on this
+   page are empty, for five reasons that mean different things. A table cell
+   can hold a number or a dash; it cannot hold "a router did quote this and the
+   quote aged out, which is the clock's fault and not the asset's". The reason
+   has to be as prominent as the number, so each representation gets a card and
+   each card carries its own verdict.
+
+   Outcome is encoded twice on purpose — as a chip a reader can read, and as a
+   left stripe they can scan. Colour alone is never the carrier: the chip says
+   the word.
+   -------------------------------------------------------------------------- */
+
+/* The four tone words the RWA views have always emitted. They had no rules, so
+   every status pill on Discover and Market Reality rendered in the neutral
+   pill style and the computed tone was thrown away on the way to the screen. */
+.mio-console .cr-status[data-tone='good'] { color: var(--g-text); background: var(--g-bg); box-shadow: inset 0 0 0 1px var(--g-line); }
+.mio-console .cr-status[data-tone='warn'] { color: var(--a-text); background: var(--a-bg); box-shadow: inset 0 0 0 1px var(--a-line); }
+.mio-console .cr-status[data-tone='off'] { color: var(--muted); background: var(--n-bg); box-shadow: inset 0 0 0 1px var(--line); font-weight: 500; }
+.mio-console .cr-status[data-tone='neutral'] { color: var(--muted); background: var(--n-bg); box-shadow: inset 0 0 0 1px var(--line); font-weight: 500; }
+/* `off` is "the evidence is absent", not "something is wrong" — muted, never amber. */
+.mio-console .cr-v.off { color: var(--muted); }
+
+.mio-console .mr { display: grid; gap: 12px; }
+
+/* The chooser. A horizontal rail rather than a select, because which securities
+   Base carries TWO ways is the page's whole promise and a collapsed control
+   hides it. */
+.mio-console .mr-choices { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+.mio-console .mr-choice { flex: none; display: grid; gap: 3px; justify-items: start; text-align: left;
+  padding: 9px 12px; border: 0; border-radius: var(--r); cursor: pointer;
+  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); color: var(--muted); font: inherit; }
+.mio-console .mr-choice:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line2); }
+.mio-console .mr-choice.on { color: var(--ink); box-shadow: inset 0 0 0 1px var(--accent-line); }
+.mio-console .mr-choice-name { font-size: 12.5px; font-weight: 650; color: var(--ink); white-space: nowrap; }
+.mio-console .mr-choice-sub { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--faint); white-space: nowrap; }
+.mio-console .mr-choice-tag { padding: 1px 7px; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
+
+/* Direction and size, two rails on one line so the question reads as one
+   sentence rather than as two unrelated controls. */
+.mio-console .mr-question { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+
+.mio-console .mr-head { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: flex-start; justify-content: space-between; }
+.mio-console .mr-head-l { display: grid; gap: 2px; min-width: 0; }
+.mio-console .mr-head-r { display: grid; gap: 4px; justify-items: end; text-align: right; }
+.mio-console .mr-title { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -0.01em; color: var(--ink); text-wrap: balance; }
+.mio-console .mr-identifier { margin: 0; font-size: 11px; color: var(--faint); letter-spacing: .02em; }
+/* The no-BEST sentence. Full width, in the body, above the board. */
+.mio-console .mr-ranking { margin: 0; }
+
+.mio-console .mr-board { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(272px, 1fr)); align-items: start; }
+
+.mio-console .mr-rep { position: relative; border-radius: var(--r); padding: 12px 12px 12px 15px; background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); min-width: 0; }
+/* The stripe. Scannable at a glance; the chip beside it carries the word, so
+   nothing here depends on telling two colours apart. */
+.mio-console .mr-rep::before { content: ''; position: absolute; inset: 10px auto 10px 0; width: 3px; border-radius: 3px; background: var(--line2); }
+.mio-console .mr-rep[data-outcome='priced']::before { background: var(--green); }
+.mio-console .mr-rep[data-outcome='lapsed']::before { background: var(--amber); }
+.mio-console .mr-rep[data-outcome='provider_failed']::before { background: var(--amber); }
+.mio-console .mr-rep[data-outcome='no_route']::before { background: var(--line2); }
+.mio-console .mr-rep[data-outcome='never_measured']::before { background: var(--line2); }
+/* A representation nobody has measured is quieter, never struck through: it is
+   an absence of evidence about a real contract, not a disqualified one. */
+.mio-console .mr-rep[data-outcome='never_measured'] { opacity: .84; }
+
+/* Whose fact the verdict is. The smallest line on the card and the one that
+   stops "not measured" from being read as "untradeable". */
+.mio-console .mr-attribution { margin: 8px 0 0; font-size: 11px; color: var(--faint); }
+.mio-console .mr-attribution-k { color: var(--dim); text-transform: uppercase; letter-spacing: .06em; font-size: 9.5px; margin-right: 5px; }
+
+.mio-console.mini .mr-board { grid-template-columns: minmax(0, 1fr); }
+.mio-console.mini .mr-title { font-size: 15px; }
+@media (max-width: 720px) {
+  .mio-console .mr-board { grid-template-columns: minmax(0, 1fr); }
+}

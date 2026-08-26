@@ -500,6 +500,9 @@ importers:
       '@mioagent/rwa-dossier':
         specifier: workspace:*
         version: link:../rwa-dossier
+      '@mioagent/rwa-market-reality':
+        specifier: workspace:*
+        version: link:../rwa-market-reality
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -1275,6 +1278,9 @@ importers:
       '@mioagent/route-domain':
         specifier: workspace:*
         version: link:../route-domain
+      '@mioagent/rwa-issuer':
+        specifier: workspace:*
+        version: link:../rwa-issuer
     devDependencies:
       '@types/react':
         specifier: ^19.2.17

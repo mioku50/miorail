@@ -63,11 +63,50 @@ export function createMemoryUnderlyingAssetRepository(): UnderlyingAssetReposito
         .sort((a, b) => a.tokenAddress.localeCompare(b.tokenAddress));
     },
 
+    async listUnderlyings(input) {
+      const byKey = new Map<string, { count: number; issuers: Set<string> }>();
+      for (const row of bindings.values()) {
+        if (row.chainId !== input.chainId) continue;
+        const entry = byKey.get(row.underlyingKey) ?? { count: 0, issuers: new Set<string>() };
+        entry.count += 1;
+        if (row.issuerId) entry.issuers.add(row.issuerId);
+        byKey.set(row.underlyingKey, entry);
+      }
+      return [...underlyings.values()]
+        .map((underlying) => {
+          const entry = byKey.get(underlying.underlyingKey);
+          return {
+            underlying,
+            representationCount: entry?.count ?? 0,
+            issuerIds: [...(entry?.issuers ?? [])].sort(),
+          };
+        })
+        // Most-represented first: a security Base carries two ways is the only
+        // kind this surface can compare, so it sorts above one it carries once.
+        .sort(
+          (a, b) =>
+            b.representationCount - a.representationCount ||
+            a.underlying.canonicalName.localeCompare(b.underlying.canonicalName) ||
+            a.underlying.underlyingKey.localeCompare(b.underlying.underlyingKey),
+        )
+        .slice(0, Math.max(1, input.limit));
+    },
+
     async underlyingCounts(input) {
+      const issuersByKey = new Map<string, Set<string>>();
+      for (const row of bindings.values()) {
+        if (row.chainId !== input.chainId || !row.issuerId) continue;
+        const seen = issuersByKey.get(row.underlyingKey) ?? new Set<string>();
+        seen.add(row.issuerId);
+        issuersByKey.set(row.underlyingKey, seen);
+      }
       return {
         underlyings: underlyings.size,
         boundRepresentations: [...bindings.values()].filter((row) => row.chainId === input.chainId)
           .length,
+        // Distinct ISSUERS, never binding count: a rebasing token and its own
+        // wrapper are one issuer's structure choice, not a comparison.
+        multiIssuerUnderlyings: [...issuersByKey.values()].filter((set) => set.size > 1).length,
       };
     },
   };

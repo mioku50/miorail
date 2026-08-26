@@ -982,6 +982,76 @@ export function useRwaSignals(options?: { enabled?: boolean; limit?: number }) {
 }
 
 /**
+ * Phase 10B — every reviewed underlying, most-represented first.
+ *
+ * The chooser's read. Cached hard: the underlying graph moves when an issuer
+ * publishes a new instrument, which is a daily-to-weekly event, and this is the
+ * read that decides whether the surface has anything to show at all.
+ */
+export function useRwaUnderlyings(options?: { enabled?: boolean; limit?: number }) {
+  const limit = options?.limit ?? 100;
+  return useQuery({
+    queryKey: ['rwa-underlyings', limit],
+    queryFn: async () => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/rwa/underlyings?limit=${limit}`,
+      );
+      return apiSpec.MarketRealityIndexV1Schema.parse(response);
+    },
+    retry: false,
+    enabled: options?.enabled !== false,
+  });
+}
+
+/**
+ * Phase 10B — one underlying, every reviewed Base representation, one size.
+ *
+ * The question is the cache key, and every part of it matters: a different
+ * direction, size or destination is a different measurement, not a filter over
+ * the same one. Sharing a key across sizes is how a $100 answer ends up under
+ * a $10,000 heading.
+ *
+ * `retry: false` for the reason every read here uses it — the flag being off,
+ * the migration being absent and the database being unreachable all answer the
+ * same way twice, and the body says which one it was.
+ */
+export function useRwaMarketReality(
+  input: {
+    underlyingKey: string | null;
+    direction: 'buy' | 'sell';
+    requestedCashAtomic: string;
+    destination?: 'USDC' | 'ETH';
+  },
+  options?: { enabled?: boolean },
+) {
+  const destination = input.destination ?? 'USDC';
+  return useQuery({
+    queryKey: [
+      'rwa-market-reality',
+      input.underlyingKey,
+      input.direction,
+      input.requestedCashAtomic,
+      destination,
+    ],
+    queryFn: async () => {
+      const query = new URLSearchParams({
+        direction: input.direction,
+        requestedCashAtomic: input.requestedCashAtomic,
+        destination,
+      });
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/rwa/market-reality/${encodeURIComponent(input.underlyingKey!)}?${query.toString()}`,
+      );
+      return apiSpec.MarketRealityResponseV1Schema.parse(response);
+    },
+    retry: false,
+    // A null key is not an error and not an empty result: it is a question
+    // nobody has asked yet, so nothing is fetched and nothing is rendered.
+    enabled: options?.enabled !== false && Boolean(input.underlyingKey),
+  });
+}
+
+/**
  * Phase 8 — enrol the official corpus in one action.
  *
  * The one preset the server may apply: it is a list Miorail already holds, so

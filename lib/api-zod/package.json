@@ -10,6 +10,7 @@
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/route-engine": "workspace:*",
     "@mioagent/rwa-dossier": "workspace:*",
+    "@mioagent/rwa-market-reality": "workspace:*",
     "zod": "^3.25.76"
   }
 }

@@ -6,7 +6,9 @@ import {
   createDatabaseUnderlyingAssetRepository,
 } from '@mioagent/route-storage';
 import {
+  MarketRealityIndexV1Schema,
   MarketRealityResponseV1Schema,
+  assembleMarketRealityIndexV1,
   assembleMarketRealityV1,
 } from '@mioagent/rwa-market-reality';
 import type { TenantUser } from '../middleware/tenantAuth.js';
@@ -34,6 +36,7 @@ export const rwaMarketRealityRuntime = {
   ratios: () => createDatabaseRepresentationRatioRepository(client),
   now: () => new Date(),
   assemble: assembleMarketRealityV1,
+  assembleIndex: assembleMarketRealityIndexV1,
   migrationAvailable: async (): Promise<boolean> => {
     const rows = await client`
       SELECT
@@ -45,6 +48,43 @@ export const rwaMarketRealityRuntime = {
     return Boolean(row?.underlying && row.representations && row.cash_exit && row.ratios);
   },
 };
+
+/**
+ * The chooser: every reviewed underlying, most-represented first.
+ *
+ * Registered BEFORE the parameterised route so `/rwa/underlyings` can never be
+ * read as an underlying key — Express matches in declaration order, and a
+ * static path that sits behind a `:param` is a path nobody can reach.
+ */
+rwaMarketRealityRouter.get('/rwa/underlyings', async (req, res) => {
+  if (!rwaMarketRealityRuntime.enabled(process.env)) {
+    res
+      .status(404)
+      .json({ error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    return;
+  }
+  if (!sessionUserV1(req)) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  const limit = Number.parseInt(String(req.query.limit ?? '100'), 10);
+  try {
+    if (!(await rwaMarketRealityRuntime.migrationAvailable())) {
+      res.status(503).json({
+        error: 'market_reality_storage_unavailable',
+        code: 'market_reality_storage_unavailable',
+      });
+      return;
+    }
+    const index = await rwaMarketRealityRuntime.assembleIndex(
+      { underlyings: rwaMarketRealityRuntime.underlyings(), now: rwaMarketRealityRuntime.now },
+      { limit: Number.isFinite(limit) && limit > 0 ? Math.min(500, limit) : 100 },
+    );
+    res.status(200).json(MarketRealityIndexV1Schema.parse(index));
+  } catch {
+    res.status(500).json({ error: 'market_reality_failed', code: 'market_reality_failed' });
+  }
+});
 
 rwaMarketRealityRouter.get('/rwa/market-reality/:underlyingKey', async (req, res) => {
   if (!rwaMarketRealityRuntime.enabled(process.env)) {

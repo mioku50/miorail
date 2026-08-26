@@ -6,7 +6,9 @@
   "type": "module",
   "main": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./structureAdapters": "./src/structureAdapters.ts",
+    "./capabilities": "./src/capabilities.ts"
   },
   "scripts": {
     "test": "NODE_ENV=test node --import tsx --test test/*.test.ts",

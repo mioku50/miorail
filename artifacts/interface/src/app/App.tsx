@@ -62,6 +62,9 @@ const RwaDiscoverPage = lazy(() =>
 const InvestigatePage = lazy(() =>
   import('../features/rwa/InvestigatePage').then((m) => ({ default: m.InvestigatePage })),
 );
+const MarketRealityPage = lazy(() =>
+  import('../features/rwa/MarketRealityPage').then((m) => ({ default: m.MarketRealityPage })),
+);
 const SettingsPage = lazy(() =>
   import('../features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })),
 );
@@ -195,6 +198,15 @@ export function App() {
         <Route path="/opportunities">
           <RequireSession>
             <RwaDiscoverPage />
+          </RequireSession>
+        </Route>
+
+        {/* Phase 10B — one security, every reviewed way to hold it on Base.
+            The whole question lives in the query string, so a refresh, a Back
+            press and a shared link all restore the same comparison. */}
+        <Route path="/market">
+          <RequireSession>
+            <MarketRealityPage />
           </RequireSession>
         </Route>
 

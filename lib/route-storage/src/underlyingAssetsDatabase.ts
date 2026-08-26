@@ -239,16 +239,51 @@ export function createDatabaseUnderlyingAssetRepository(
       return rows.map(rowToBindingV1);
     },
 
+    async listUnderlyings(input) {
+      // One query rather than one per underlying: the corpus is small today and
+      // the join is what keeps the count and the issuer list describing the
+      // same rows. `array_agg` over a filtered join yields `{NULL}` for an
+      // underlying nothing is bound to, which is why the null is stripped here
+      // rather than trusted to be absent.
+      const rows = (await sql`
+        SELECT u.*,
+               count(r.token_address)::int AS representation_count,
+               array_remove(array_agg(DISTINCT r.issuer_id), NULL) AS issuer_ids
+          FROM underlying_asset u
+          LEFT JOIN representation_underlying r
+            ON r.underlying_key = u.underlying_key AND r.chain_id = ${input.chainId}
+         GROUP BY u.underlying_key
+         ORDER BY representation_count DESC, u.canonical_name ASC, u.underlying_key ASC
+         LIMIT ${Math.max(1, Math.min(500, input.limit))}
+      `) as Record<string, unknown>[];
+      return rows.map((row) => ({
+        underlying: rowToUnderlyingV1(row),
+        representationCount: Number(row.representation_count ?? 0),
+        issuerIds: [...new Set((row.issuer_ids as string[] | null) ?? [])].sort(),
+      }));
+    },
+
     async underlyingCounts(input) {
       const rows = (await sql`
         SELECT
           (SELECT count(*)::int FROM underlying_asset) AS underlyings,
           (SELECT count(*)::int FROM representation_underlying
-            WHERE chain_id = ${input.chainId}) AS bound
+            WHERE chain_id = ${input.chainId}) AS bound,
+          -- Distinct ISSUERS per underlying, never binding count: a rebasing
+          -- token and its own wrapper are one issuer's structure choice, and
+          -- counting them as two would promise a comparison with nothing on
+          -- the other side of it.
+          (SELECT count(*)::int FROM (
+             SELECT underlying_key
+               FROM representation_underlying
+              WHERE chain_id = ${input.chainId} AND issuer_id IS NOT NULL
+              GROUP BY underlying_key
+             HAVING count(DISTINCT issuer_id) > 1) AS multi) AS multi_issuer
       `) as Record<string, unknown>[];
       return {
         underlyings: Number(rows[0]?.underlyings ?? 0),
         boundRepresentations: Number(rows[0]?.bound ?? 0),
+        multiIssuerUnderlyings: Number(rows[0]?.multi_issuer ?? 0),
       };
     },
   };

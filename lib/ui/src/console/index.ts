@@ -38,6 +38,8 @@ export * from './BaseMcpActionReceiptsCard';
 export * from './PublicProofPanels';
 export * from './rwaDiscoverView';
 export * from './RwaDiscoverScreen';
+export * from './marketRealityView';
+export * from './MarketRealityScreen';
 export * from './investigateView';
 export * from './InvestigateScreen';
 export * from './watchSlaView';

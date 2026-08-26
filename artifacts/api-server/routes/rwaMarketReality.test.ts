@@ -100,3 +100,55 @@ describe('GET multi-issuer Market Reality', () => {
     });
   });
 });
+
+describe('GET the reviewed-securities chooser', () => {
+  test('a static path is not read as an underlying key', async () => {
+    // Express matches in declaration order, so `/rwa/underlyings` sitting
+    // behind `/rwa/market-reality/:underlyingKey` would be unreachable. It is
+    // a different route entirely, and this proves it resolves as one.
+    rwaMarketRealityRuntime.migrationAvailable = async () => true;
+    rwaMarketRealityRuntime.assembleIndex = async () => ({
+      schemaVersion: 'market-reality-index/v1' as const,
+      chainId: 8453 as const,
+      entries: [
+        {
+          underlyingKey: UNDERLYING,
+          canonicalName: 'NVIDIA Corporation',
+          displaySymbol: null,
+          assetClass: 'equity' as const,
+          identifierScheme: 'isin',
+          identifierValue: 'US67066G1040',
+          representationCount: 3,
+          issuerIds: ['backed' as const, 'coinbase' as const],
+          multiIssuer: true,
+        },
+      ],
+      totals: { underlyings: 19, boundRepresentations: 25, multiIssuerUnderlyings: 2 },
+      observedAt: new Date().toISOString(),
+    });
+    const response = await request(app()).get('/api/route-intelligence/rwa/underlyings');
+    assert.equal(response.status, 200);
+    assert.equal(response.body.schemaVersion, 'market-reality-index/v1');
+    assert.equal(response.body.entries[0].multiIssuer, true);
+    // The headline is corpus-wide, never the page: one entry, two comparable.
+    assert.equal(response.body.totals.multiIssuerUnderlyings, 2);
+  });
+
+  test('the chooser refuses a session the way every other read does', async () => {
+    rwaMarketRealityRuntime.migrationAvailable = async () => {
+      throw new Error('authentication must stop first');
+    };
+    const response = await request(app(null)).get('/api/route-intelligence/rwa/underlyings');
+    assert.equal(response.status, 401);
+    assert.equal(response.body.code, 'authentication_required');
+  });
+
+  test('absent storage is a 503, never an empty corpus', async () => {
+    // An empty list would read as "no issuer has published anything on Base",
+    // which is a claim about the world rather than about this deployment.
+    rwaMarketRealityRuntime.migrationAvailable = async () => false;
+    const response = await request(app()).get('/api/route-intelligence/rwa/underlyings');
+    assert.equal(response.status, 503);
+    assert.equal(response.body.code, 'market_reality_storage_unavailable');
+  });
+});

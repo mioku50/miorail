@@ -11,10 +11,12 @@ import type {
 } from '@mioagent/route-storage';
 
 import {
+  MarketRealityIndexV1Schema,
   MarketRealityQuestionV1Schema,
   MarketRealityResponseV1Schema,
   type MarketRealityDirectionV1,
   type MarketRealityReferenceStateV1,
+  type MarketRealityIndexV1,
   type MarketRealityResponseV1,
 } from './contracts.js';
 
@@ -362,5 +364,45 @@ export async function assembleMarketRealityV1(
     quoteEvidenceIsExecutionProof: false,
     representations,
     assembledAt: now.toISOString(),
+  });
+}
+
+/**
+ * The chooser's read: every reviewed underlying, most-represented first.
+ *
+ * A projection rather than a query, so both repositories produce the same
+ * ordering and the same `multiIssuer` rule. That flag is the one derived value
+ * here and it is derived from the ISSUER set, never from the count: a rebasing
+ * token and its own wrapper are two representations of one issuer's structure
+ * choice, and calling that "two issuers" would promise a comparison that has
+ * nothing on the other side of it.
+ */
+export async function assembleMarketRealityIndexV1(
+  deps: Pick<MarketRealityDepsV1, 'underlyings' | 'now'>,
+  input: { limit: number },
+): Promise<MarketRealityIndexV1> {
+  const rows = await deps.underlyings.listUnderlyings({ chainId: 8453, limit: input.limit });
+  const counts = await deps.underlyings.underlyingCounts({ chainId: 8453 });
+  const entries = rows.map((row) => ({
+    underlyingKey: row.underlying.underlyingKey,
+    canonicalName: row.underlying.canonicalName,
+    displaySymbol: row.underlying.displaySymbol ?? null,
+    assetClass: row.underlying.assetClass,
+    identifierScheme: row.underlying.identifierScheme ?? null,
+    identifierValue: row.underlying.identifierValue ?? null,
+    representationCount: row.representationCount,
+    issuerIds: row.issuerIds,
+    multiIssuer: row.issuerIds.length > 1,
+  }));
+  return MarketRealityIndexV1Schema.parse({
+    schemaVersion: 'market-reality-index/v1',
+    chainId: 8453,
+    entries,
+    totals: {
+      underlyings: counts.underlyings,
+      boundRepresentations: counts.boundRepresentations,
+      multiIssuerUnderlyings: counts.multiIssuerUnderlyings,
+    },
+    observedAt: deps.now().toISOString(),
   });
 }

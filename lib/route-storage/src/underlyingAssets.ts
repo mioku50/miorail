@@ -230,9 +230,43 @@ export interface UnderlyingAssetRepositoryV1 {
     underlyingKey: string;
   }): Promise<RepresentationUnderlyingV1[]>;
 
-  /** How many underlyings and bindings exist. Zero is a legible answer and the
-   * current one; a surface may say so rather than showing an empty group. */
-  underlyingCounts(input: {
+  /**
+   * How many underlyings and bindings exist, over the WHOLE corpus.
+   *
+   * Zero is a legible answer; a surface may say so rather than showing an empty
+   * group. `multiIssuerUnderlyings` is counted here rather than over a returned
+   * page because it is the headline claim of the Market Reality surface — how
+   * many securities Base carries more than one issuer's way — and a headline
+   * computed from a page silently shrinks when the page does.
+   */
+  underlyingCounts(input: { chainId: number }): Promise<{
+    underlyings: number;
+    boundRepresentations: number;
+    multiIssuerUnderlyings: number;
+  }>;
+
+  /**
+   * The reviewed underlyings, bounded, with how many representations each has.
+   *
+   * The read a chooser is built from. Ordered by representation count first,
+   * because the whole point of the surface is a security that Base carries
+   * MORE THAN ONE way — a one-representation underlying has nothing to compare
+   * and belongs below the ones that do.
+   *
+   * `issuerIds` is de-duplicated and sorted, and it is deliberately a list
+   * rather than a count: "Coinbase and Backed" and "Backed twice" are two very
+   * different sentences about the same number two.
+   */
+  listUnderlyings(input: {
     chainId: number;
-  }): Promise<{ underlyings: number; boundRepresentations: number }>;
+    limit: number;
+  }): Promise<UnderlyingIndexEntryV1[]>;
+}
+
+/** One row of the chooser. */
+export interface UnderlyingIndexEntryV1 {
+  underlying: UnderlyingAssetV1;
+  representationCount: number;
+  /** Distinct issuers behind those representations, sorted. */
+  issuerIds: string[];
 }

@@ -31,6 +31,7 @@ const LAZY_SCREENS_V1 = [
   'OpportunitiesPage',
   'RwaDiscoverPage',
   'InvestigatePage',
+  'MarketRealityPage',
   'SettingsPage',
   'PublicMetricsPage',
 ] as const;
