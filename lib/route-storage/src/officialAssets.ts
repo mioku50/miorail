@@ -320,16 +320,35 @@ export function officialSourceDiscrepanciesV1(input: {
     });
   }
 
-  const byTicker = new Map<string, Set<string>>();
+  // A presentation ticker may intentionally name more than one exact
+  // representation (for example a Backed rebasing token and its ERC-4626
+  // wrapper). That is not a source discrepancy and must not be collapsed into
+  // one identity. Only report this legacy presentation alarm when two reviewed
+  // sources inside the same issuer root publish different address sets for the
+  // same ticker.
+  const byTicker = new Map<string, Map<OfficialSourceKindV1, Set<string>>>();
   for (const [tokenAddress, entry] of listedBy) {
-    const addresses = byTicker.get(entry.ticker) ?? new Set<string>();
-    addresses.add(tokenAddress);
-    byTicker.set(entry.ticker, addresses);
+    const bySource = byTicker.get(entry.ticker) ?? new Map<OfficialSourceKindV1, Set<string>>();
+    for (const kind of entry.kinds) {
+      const addresses = bySource.get(kind) ?? new Set<string>();
+      addresses.add(tokenAddress);
+      bySource.set(kind, addresses);
+    }
+    byTicker.set(entry.ticker, bySource);
   }
-  for (const [ticker, addresses] of [...byTicker].sort(([left], [right]) =>
+  for (const [ticker, bySource] of [...byTicker].sort(([left], [right]) =>
     left.localeCompare(right),
   )) {
-    if (addresses.size < 2) continue;
+    if (bySource.size < 2) continue;
+    const issuerRoots = new Set(
+      [...bySource.keys()].map((kind) => OFFICIAL_SOURCE_ISSUERS_V1[kind]),
+    );
+    if (issuerRoots.size !== 1) continue;
+    const addressSets = [...bySource.values()].map((addresses) =>
+      [...addresses].sort().join(','),
+    );
+    if (new Set(addressSets).size < 2) continue;
+    const addresses = new Set([...bySource.values()].flatMap((values) => [...values]));
     found.push({
       kind: 'ticker_maps_to_multiple_addresses',
       ticker,

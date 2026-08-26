@@ -16,6 +16,7 @@ const SNDK = '0xb200000000000000000000397293cb8cda9a10c5';
 
 const DOCS_URL = 'https://docs.base.org/base-chain/asset-issuance/tokenized-stocks-on-base.md';
 const LIST_URL = 'https://brand.base.org/stocks';
+const BACKED_URL = 'https://api.xstocks.fi/api/v1/token?type=btokens';
 
 const HASH_A = 'a'.repeat(64);
 const HASH_B = 'b'.repeat(64);
@@ -320,6 +321,43 @@ export function officialAssetContractV1(
       assert.deepEqual(
         discrepancies.filter((row) => row.kind === 'ticker_maps_to_multiple_addresses'),
         [{ kind: 'ticker_maps_to_multiple_addresses', ticker: 'AAPLc', tokenAddresses: [AAPL, LOOKALIKE] }],
+      );
+    });
+
+    test('one source may publish direct and wrapped representations under one display ticker', async () => {
+      const { repository } = await open();
+      await repository.recordSnapshot({
+        snapshot: snapshotFixtureV1({
+          sourceKind: 'backed_assets_api',
+          sourceUrl: BACKED_URL,
+        }),
+        assets: [
+          assetFixtureV1({
+            sourceKind: 'backed_assets_api',
+            ticker: 'bNVDA',
+            issuer: 'backed',
+            referenceFeedAddress: null,
+          }),
+          assetFixtureV1({
+            sourceKind: 'backed_assets_api',
+            tokenAddress: LOOKALIKE,
+            ticker: 'bNVDA',
+            issuer: 'backed',
+            referenceFeedAddress: null,
+          }),
+        ],
+      });
+
+      assert.deepEqual(await repository.sourceDiscrepancies({ chainId: 8453 }), []);
+      assert.deepEqual(
+        (
+          await repository.officialAssets({
+            chainId: 8453,
+            sourceKind: 'backed_assets_api',
+            limit: 10,
+          })
+        ).map((identity) => identity.tokenAddress),
+        [AAPL, LOOKALIKE],
       );
     });
 
