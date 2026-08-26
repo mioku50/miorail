@@ -358,7 +358,9 @@ describe('official asset dossier assembly', () => {
     assert.equal(first.dossier.referenceValue.multiplierAppliedByFeed, true);
     assert.equal(first.dossier.referenceValue.registryPause, 'unknown');
     assert.equal(first.dossier.comparison.status, 'withheld');
-    assert.equal(first.dossier.comparison.reason, 'registry_pause_state_unavailable');
+    // An unread registry pause no longer withholds anything; what is missing
+    // here is the other half of the comparison.
+    assert.equal(first.dossier.comparison.reason, 'executable_value_not_measured');
 
     assert.equal(first.dossier.marketTopology.directUsdcPoolCount, 1);
     assert.deepEqual(
@@ -418,7 +420,11 @@ describe('official asset dossier assembly', () => {
       'not_simulated',
     );
     assert.equal(result.dossier.referenceValue.valueAtomic, '12345000000');
-    assert.equal(result.dossier.comparison.reason, 'registry_pause_state_unavailable');
+    // A feed publishing inside its heartbeat is a feed that was not paused when
+    // it published, so both halves are present and the comparison stands.
+    assert.equal(result.dossier.referenceValue.registryPause, 'unknown');
+    assert.equal(result.dossier.comparison.status, 'comparable');
+    assert.equal(result.dossier.comparison.reason, null);
   });
 
   test('retains the reviewed feed address when the Base anchor is unavailable', async () => {
@@ -443,6 +449,34 @@ describe('official asset dossier assembly', () => {
 });
 
 describe('tokenized stock reference boundary', () => {
+  test('an unread pause flag reports unknown and still compares; a read pause withholds', async () => {
+    // The registry publishes no callable ABI, so `registryPause` is null on
+    // every production read. Requiring a positive `not_paused` withheld the
+    // comparison on every card forever — a refusal about us wearing the feed's
+    // name. Publication is the evidence: a paused registry stops the feed.
+    const unknown = await readTokenizedStockReferenceV1(reader({ answer: 10_000_000_000n }), {
+      feedAddress: FEED,
+      anchor: { blockNumber: '5000', blockHash: BLOCK_HASH, blockTag: '0x1388' },
+      now: NOW,
+      registryPause: null,
+    });
+    assert.equal(unknown.registryPause, 'unknown', 'unknown is reported, never guessed');
+    assert.equal(unknown.status, 'fresh');
+    assert.equal(unknown.comparisonEligible, true);
+    assert.equal(unknown.withheldReason, null);
+
+    const paused = await readTokenizedStockReferenceV1(reader({ answer: 10_000_000_000n }), {
+      feedAddress: FEED,
+      anchor: { blockNumber: '5000', blockHash: BLOCK_HASH, blockTag: '0x1388' },
+      now: NOW,
+      registryPause: true,
+    });
+    assert.equal(paused.registryPause, 'paused');
+    assert.equal(paused.status, 'paused');
+    assert.equal(paused.comparisonEligible, false);
+    assert.equal(paused.withheldReason, 'reference_paused');
+  });
+
   test('carries the feed total-return value unchanged and compares only when pause state is known', async () => {
     const value = await readTokenizedStockReferenceV1(reader({ answer: 10_000_000_000n }), {
       feedAddress: FEED,

@@ -224,12 +224,16 @@ function OfficialTab({
 
   return (
     <>
+      {/* Blocks, not spans. `.kpi` styles its children but never declared their
+          display, so inline elements ran the label, the number and the note
+          together into one sentence — "Official issuance13Currently listed
+          by…" — on every viewport. */}
       <div className="kpis" aria-label="Official corpus">
         {view.counters.map((counter) => (
           <div className="kpi" key={counter.label}>
-            <span className="k">{counter.label}</span>
-            <span className={factClassV1(counter.tone).replace('cr-v', 'v')}>{counter.value}</span>
-            {counter.note ? <span className="d">{counter.note}</span> : null}
+            <div className="k">{counter.label}</div>
+            <div className={factClassV1(counter.tone).replace('cr-v', 'v')}>{counter.value}</div>
+            {counter.note ? <div className="d">{counter.note}</div> : null}
           </div>
         ))}
       </div>

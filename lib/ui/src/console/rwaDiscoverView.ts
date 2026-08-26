@@ -529,7 +529,12 @@ function officialAssetCardViewV1(asset: OfficialAssetWireV1, now: Date): Officia
     facts.push({
       label: 'Reference vs executable',
       value: difference,
-      note: 'What a round trip costs against the feed',
+      // The feed's age travels with the comparison. A US equity feed holds the
+      // last close overnight and at weekends, so a difference read without it
+      // would be taken for a live spread.
+      note: referenceAge
+        ? `Against a feed that last published ${referenceAge}`
+        : 'What a round trip costs against the feed',
       tone: 'neutral',
     });
   } else if (asset.comparison.reason !== null) {

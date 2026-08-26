@@ -66,7 +66,8 @@ export async function readTokenizedStockReferenceV1(
     feedAddress: string | null;
     anchor: B20BlockAnchorV1;
     now: Date;
-    /** Null until a reviewed registry ABI exists. Never guessed from a stale feed. */
+    /** Null until a reviewed registry ABI exists — reported as `unknown`, never
+     * guessed. Unknown does not withhold the comparison; `true` does. */
     registryPause: boolean | null;
     maxAgeSeconds?: number;
   },
@@ -143,14 +144,20 @@ export async function readTokenizedStockReferenceV1(
   const registryPause =
     input.registryPause === null ? 'unknown' : input.registryPause ? 'paused' : 'not_paused';
   const status = registryPause === 'paused' ? 'paused' : stale ? 'stale' : 'fresh';
-  const comparisonEligible = status === 'fresh' && registryPause === 'not_paused';
+  // An unread pause flag is not a reason to withhold the comparison, and
+  // requiring a positive `not_paused` withheld it on every card forever —
+  // no code path can produce that value while the registry publishes no ABI.
+  // Base's own documentation makes the pause observable through publication:
+  // while the registry's pause flag is set, the feed stops publishing and holds
+  // its last value. So a round published inside the feed's heartbeat is itself
+  // the evidence that it was published unpaused, and the heartbeat is the thing
+  // we actually read. A flag we CAN read and that says `paused` still withholds.
+  const comparisonEligible = status === 'fresh';
   const withheldReason = comparisonEligible
     ? null
     : status === 'paused'
       ? 'reference_paused'
-      : status === 'stale'
-        ? 'reference_stale'
-        : 'registry_pause_state_unavailable';
+      : 'reference_stale';
   const observedAt = input.now.toISOString();
   const evidenceHash = stableHashV1('tokenized-stock-reference-read/v1', {
     chainId: 8453,

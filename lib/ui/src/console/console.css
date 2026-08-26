@@ -232,7 +232,10 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .why b { color: var(--ink); }
 .mio-console .kpis { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) minmax(0,1fr); gap: 12px 16px; }
 .mio-console .kpis.two { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
-.mio-console .kpi { min-width: 0; }
+.mio-console .kpi { min-width: 0; display: grid; }
+/* The stack is the grid's, not the element's. Every KPI in the console used
+   block children, so nothing said out loud that a `<span>` would collapse the
+   label, the value and the note onto one line — until one screen used spans. */
 .mio-console .kpi .k { font-size: 10.5px; color: var(--faint); }
 .mio-console .kpi .v { min-width: 0; font-size: 15px; font-weight: 600; line-height: 1.25; margin-top: 2px;
   overflow-wrap: anywhere; word-break: normal; font-variant-numeric: tabular-nums; }

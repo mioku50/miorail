@@ -129,7 +129,9 @@ export function InvestigatePage() {
       }}
       footer={{
         adaptersLabel: '—',
-        sourcesLabel: view ? '1' : '0',
+        // Before an address is entered nothing has been read, and `0` reads as
+        // "we looked and found none". An em dash is the absence of a reading.
+        sourcesLabel: view ? '1' : '—',
         spendLabel: '$0',
         blockNumber: chainBlockNumberV1(status.data ?? null),
       }}

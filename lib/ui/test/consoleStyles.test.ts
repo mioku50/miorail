@@ -156,6 +156,22 @@ function rulesFor(pattern: RegExp): string[] {
   return bodies;
 }
 
+describe('a KPI stacks whatever element it is given', () => {
+  // Shipped bug, seen on a phone and on a desktop alike: Discover's corpus
+  // counters rendered as "Official issuance13Currently listed by a reviewed
+  // Coinbase source". `.kpi` styled its children but never declared how they
+  // stack, so the one screen that used spans instead of divs ran the label,
+  // the number and the note together into a single sentence.
+  test('.kpi declares its own stacking rather than inheriting it from divs', () => {
+    const bodies = rulesFor(/\.mio-console \.kpi\s*$/);
+    assert.ok(bodies.length > 0, '.mio-console .kpi must have a rule of its own');
+    assert.ok(
+      bodies.some((body) => /display:\s*(grid|flex)/.test(body)),
+      'the stack must come from the rule, not from the element the caller picked',
+    );
+  });
+});
+
 describe('the drawer is an opaque overlay', () => {
   test('--drawer-bg is defined and fully opaque in both themes', () => {
     const values = [...css.matchAll(/--drawer-bg:\s*([^;]+);/g)].map((match) => match[1]!.trim());
