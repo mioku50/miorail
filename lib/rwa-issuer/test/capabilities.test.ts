@@ -31,7 +31,7 @@ describe('capability verdicts', () => {
   test('not applicable is a decision and outranks whatever the chain did', () => {
     // A reviewed "this cannot exist here" is not overturned by a selector that
     // happens to answer, and it is never softened into "unknown".
-    for (const callable of ['callable', 'absent', 'not_probed'] as const) {
+    for (const callable of ['callable', 'absent', 'off_chain', 'not_probed'] as const) {
       assert.equal(capabilityVerdictV1({ documented: 'not_applicable', callable }), 'not_applicable');
     }
   });
@@ -44,9 +44,22 @@ describe('capability verdicts', () => {
     assert.equal(capabilityVerdictV1({ documented: 'undocumented', callable: 'not_probed' }), 'unknown');
   });
 
+  test('a documented off-chain process is not an absent one', () => {
+    // Dinari pays dividends in USD+ to registered accounts. Probing a selector
+    // for that would return `absent`, which reads as "this issuer does not do
+    // dividends" — false, and the opposite of what the issuer documents.
+    assert.equal(
+      capabilityVerdictV1({ documented: 'documented', callable: 'off_chain' }),
+      'documented_off_chain',
+    );
+    // But we do not assert an off-chain process nobody documented: there is
+    // nothing on chain to point at and no source to quote.
+    assert.equal(capabilityVerdictV1({ documented: 'undocumented', callable: 'off_chain' }), 'unknown');
+  });
+
   test('every verdict it can return is a declared one', () => {
     for (const documented of ['documented', 'undocumented', 'not_applicable'] as const) {
-      for (const callable of ['callable', 'absent', 'not_probed'] as const) {
+      for (const callable of ['callable', 'absent', 'off_chain', 'not_probed'] as const) {
         assert.ok(CAPABILITY_VERDICTS_V1.includes(capabilityVerdictV1({ documented, callable })));
       }
     }
@@ -90,6 +103,29 @@ describe('issuer profiles', () => {
       (state) => state.capability === 'corporate_actions',
     );
     assert.equal(actions?.verdict, 'documented_not_callable');
+  });
+
+  test('a distribution reaches every B20 holder and only a registered dShare holder', () => {
+    // The sharpest difference between the two issuers, and the reason the exit
+    // families are separate. A B20 dividend is a multiplier change visible to
+    // anybody holding the token; a dShare dividend needs an account.
+    const coinbase = issuerCapabilitiesV1('coinbase').find(
+      (state) => state.capability === 'distributions',
+    );
+    const dinari = issuerCapabilitiesV1('dinari').find(
+      (state) => state.capability === 'distributions',
+    );
+    assert.equal(coinbase?.verdict, 'supported');
+    assert.equal(dinari?.verdict, 'documented_off_chain');
+    assert.match(dinari?.note ?? '', /never registered does not receive them/);
+  });
+
+  test('holding a dShare is not the same permission as redeeming one', () => {
+    const eligibility = issuerCapabilitiesV1('dinari').find(
+      (state) => state.capability === 'eligibility',
+    );
+    assert.equal(eligibility?.verdict, 'documented_off_chain');
+    assert.match(eligibility?.note ?? '', /blacklist/);
   });
 
   test('one issuer never inherits the other issuer’s ratio convention', () => {

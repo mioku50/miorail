@@ -30,11 +30,14 @@ import type { ReviewedIssuerIdV1 } from './issuers.js';
 // ---------------------------------------------------------------------------
 
 export const REPRESENTATION_CAPABILITIES_V1 = [
+  'structure',
   'reference_price',
   'ratio',
   'transfer_policy',
+  'eligibility',
   'pause_state',
   'redemption',
+  'distributions',
   'corporate_actions',
   'bridge',
 ] as const;
@@ -45,8 +48,17 @@ export type RepresentationCapabilityV1 = (typeof REPRESENTATION_CAPABILITIES_V1)
 export const CAPABILITY_DOCUMENTED_V1 = ['documented', 'undocumented', 'not_applicable'] as const;
 export type CapabilityDocumentedV1 = (typeof CAPABILITY_DOCUMENTED_V1)[number];
 
-/** What the exact deployment did when asked. `not_probed` is ours. */
-export const CAPABILITY_CALLABLE_V1 = ['callable', 'absent', 'not_probed'] as const;
+/**
+ * What the exact deployment did when asked.
+ *
+ * `not_probed` is ours: we did not look. `off_chain` is different and is a
+ * review decision — the capability is real and does not live in the contract,
+ * so asking the contract about it would be asking the wrong question. Dinari
+ * redemption and Dinari dividends are both that: they run through accounts and
+ * KYC, and probing a selector for them would produce an `absent` that reads as
+ * "this issuer does not do dividends".
+ */
+export const CAPABILITY_CALLABLE_V1 = ['callable', 'absent', 'off_chain', 'not_probed'] as const;
 export type CapabilityCallableV1 = (typeof CAPABILITY_CALLABLE_V1)[number];
 
 export const CAPABILITY_VERDICTS_V1 = [
@@ -59,6 +71,9 @@ export const CAPABILITY_VERDICTS_V1 = [
   /** This address answers; no reviewed source we hold describes it. Usable as
    * a read, never as a promise about what the issuer will do. */
   'callable_not_documented',
+  /** A reviewed source describes it and it deliberately does not live in the
+   * contract. Real, and never measurable by this product. */
+  'documented_off_chain',
   /** A reviewed decision that this capability cannot exist here. */
   'not_applicable',
   /** Not established either way. */
@@ -80,8 +95,11 @@ export function capabilityVerdictV1(input: {
   // is stays readable in `documented`, so the verdict does not have to guess.
   if (input.callable === 'not_probed') return 'unknown';
   if (input.documented === 'documented') {
+    if (input.callable === 'off_chain') return 'documented_off_chain';
     return input.callable === 'callable' ? 'supported' : 'documented_not_callable';
   }
+  // An off-chain process nobody documented is not something this product may
+  // assert on its own; there is nothing on chain to point at.
   return input.callable === 'callable' ? 'callable_not_documented' : 'unknown';
 }
 
@@ -107,6 +125,12 @@ export type IssuerCapabilityProfileV1 = Readonly<
  * without publishing an on-chain redemption path we have called.
  */
 const COINBASE_PROFILE_V1: IssuerCapabilityProfileV1 = {
+  structure: {
+    documented: 'documented',
+    callable: 'callable',
+    probe: 'multiplier() 0x1b3ed722, scaledBalanceOf() 0x1da24f3e',
+    note: 'A B20 asset holding a raw balance plus a disclosed multiplier. Base Docs open with the warning that one token does not permanently equal one share.',
+  },
   reference_price: {
     documented: 'documented',
     callable: 'callable',
@@ -125,6 +149,12 @@ const COINBASE_PROFILE_V1: IssuerCapabilityProfileV1 = {
     probe: null,
     note: 'No reviewed transfer-restriction surface has been established for these contracts.',
   },
+  eligibility: {
+    documented: 'undocumented',
+    callable: 'not_probed',
+    probe: null,
+    note: 'Who may hold these is not stated in a reviewed source we hold, and nothing on chain has been established to test it.',
+  },
   pause_state: {
     documented: 'undocumented',
     callable: 'not_probed',
@@ -136,6 +166,12 @@ const COINBASE_PROFILE_V1: IssuerCapabilityProfileV1 = {
     callable: 'not_probed',
     probe: null,
     note: 'No reviewed on-chain redemption path has been established.',
+  },
+  distributions: {
+    documented: 'documented',
+    callable: 'callable',
+    probe: 'multiplier() 0x1b3ed722',
+    note: 'A distribution reaches every holder as a change in the multiplier, so it is visible on chain to anybody holding the token — no registration and no account.',
   },
   corporate_actions: {
     documented: 'documented',
@@ -169,6 +205,12 @@ const COINBASE_PROFILE_V1: IssuerCapabilityProfileV1 = {
  * to is not established from this deployment.
  */
 const DINARI_PROFILE_V1: IssuerCapabilityProfileV1 = {
+  structure: {
+    documented: 'documented',
+    callable: 'callable',
+    probe: 'balancePerShare() 0xa781a3fd, decimals() 0x313ce567',
+    note: 'A rebasing ERC-20 dShare, 18 decimals, paired with an ERC-4626 wrapped dShare that is NOT a member of the issuer root.',
+  },
   reference_price: {
     documented: 'documented',
     callable: 'not_probed',
@@ -187,6 +229,12 @@ const DINARI_PROFILE_V1: IssuerCapabilityProfileV1 = {
     probe: 'transferRestrictor() 0xd4ec137a',
     note: 'Each dShare names its own restrictor contract, which holds a blacklist. There is no allowlist and no on-chain residency test.',
   },
+  eligibility: {
+    documented: 'documented',
+    callable: 'off_chain',
+    probe: null,
+    note: 'Who may mint or redeem is decided by KYC and residency rules held off chain. A secondary-market transfer is stopped only by the blacklist, so holding is not the same permission as redeeming.',
+  },
   pause_state: {
     documented: 'documented',
     callable: 'callable',
@@ -195,9 +243,15 @@ const DINARI_PROFILE_V1: IssuerCapabilityProfileV1 = {
   },
   redemption: {
     documented: 'documented',
-    callable: 'not_probed',
+    callable: 'off_chain',
     probe: null,
-    note: 'Redemption runs through Dinari accounts and KYC, not through a permissionless on-chain call. It is a different exit family from a market sale.',
+    note: 'Redemption runs through Dinari accounts and KYC, not through a permissionless on-chain call. It is a different exit family from a market sale, and never a measured cost.',
+  },
+  distributions: {
+    documented: 'documented',
+    callable: 'off_chain',
+    probe: null,
+    note: 'Dividends are paid in USD+ to a wallet registered to an account with valid KYC. A holder who bought on the secondary market and never registered does not receive them.',
   },
   corporate_actions: {
     documented: 'documented',
